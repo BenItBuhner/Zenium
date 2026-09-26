@@ -227,6 +227,21 @@ vi.mock('electron', async () => {
     sendInputEvent(event: Record<string, unknown>): void {
       this.widgetEvents.push(event)
     }
+    /** Every `setBackgroundThrottling` call's `allowed`, in order (the stage's surface revival toggles it). */
+    readonly throttling: boolean[] = []
+    setBackgroundThrottling(allowed: boolean): void {
+      this.throttling.push(allowed)
+    }
+    /**
+     * Every `capturePage` ask's rect and options (the revival's one-pixel hidden capture among
+     * them); the base answers a refusal, as a page without a frame does – a test that paints
+     * replaces the method on its instance.
+     */
+    readonly captureAsks: Array<{ rect: unknown; options: unknown }> = []
+    capturePage(rect?: unknown, options?: unknown): Promise<unknown> {
+      this.captureAsks.push({ rect, options })
+      return Promise.reject(new Error('Current display surface not available'))
+    }
     /** Every message posted to the page's preload (`webContents.send`), by channel. */
     readonly sent: Array<{ channel: string; args: unknown[] }> = []
     send(channel: string, ...args: unknown[]): void {
@@ -2256,6 +2271,117 @@ describe('an agent’s hidden page and the stage (MCP B)', () => {
     late.setAgentDriven(true)
     expect(late.isStaged()).toBe(false)
     expect(stagesMade).toHaveLength(1)
+  })
+
+  describe('the surface on the way off the stage (the hand-off)', () => {
+    type Wc = {
+      throttling: boolean[]
+      captureAsks: Array<{ rect: unknown; options: unknown }>
+      emit(event: string, ...args: unknown[]): boolean
+      close(): void
+    }
+    const wcOf = (view: ElectronTabView): Wc => view.webContents as unknown as Wc
+    /** The revival's capture: one pixel, the page left hidden. */
+    const REVIVAL = { rect: { x: 0, y: 0, width: 1, height: 1 }, options: { stayHidden: true } }
+    /** A driven page as `prepare` leaves it: the throttling off, then on the stage. */
+    const driven = (view: ElectronTabView): Wc => {
+      view.setBackgroundThrottling(false)
+      view.setAgentDriven(true)
+      const wc = wcOf(view)
+      expect(view.isStaged()).toBe(true)
+      expect(wc.throttling).toEqual([false])
+      expect(wc.captureAsks).toEqual([])
+      return wc
+    }
+
+    it('revives the surface as a staged page leaves for the window – a layout showing it, the keyboard, a glance: the throttling on and off again with nothing between, a one-pixel hidden capture asked, while the view is still the stage’s', () => {
+      const handOffs: Array<[string, (view: ElectronTabView) => void]> = [
+        [
+          'shown',
+          (view) => {
+            view.setBounds(box)
+            view.setVisible(true)
+          }
+        ],
+        ['focused', (view) => view.focus()],
+        ['glanced', (view) => view.bringToFront()]
+      ]
+      for (const [name, handOff] of handOffs) {
+        const { window, create } = setup()
+        window.chrome.focus()
+        const view = create()
+        const wc = driven(view)
+        const stagedAtAsk: boolean[] = []
+        Object.assign(wc, {
+          capturePage: (rect: unknown, options: unknown) => {
+            stagedAtAsk.push(view.isStaged())
+            wc.captureAsks.push({ rect, options })
+            return Promise.reject(new Error('Current display surface not available'))
+          }
+        })
+        handOff(view)
+        expect([name, view.isStaged()]).toEqual([name, false])
+        expect([name, window.win.children]).toEqual([name, [view.view]])
+        expect([name, wc.throttling]).toEqual([name, [false, true, false]])
+        expect([name, wc.captureAsks]).toEqual([name, [REVIVAL]])
+        expect([name, stagedAtAsk]).toEqual([name, [true]])
+      }
+    })
+
+    it('revives the surface at each document committing on the stage, and at none committing in the window or on a page no agent drives', () => {
+      const { create } = setup()
+      const view = create()
+      const wc = driven(view)
+      wc.emit('did-navigate', {}, 'https://example.com/')
+      expect(wc.throttling).toEqual([false, true, false])
+      expect(wc.captureAsks).toEqual([REVIVAL])
+      wc.emit('did-navigate', {}, 'https://example.com/next')
+      expect(wc.throttling).toEqual([false, true, false, true, false])
+      expect(wc.captureAsks).toEqual([REVIVAL, REVIVAL])
+      // Into the window (one revival on the way): a commit there is left alone.
+      view.setBounds(box)
+      view.setVisible(true)
+      expect(wc.captureAsks).toHaveLength(3)
+      wc.emit('did-navigate', {}, 'https://example.com/shown')
+      expect(wc.captureAsks).toHaveLength(3)
+      expect(wc.throttling).toHaveLength(7)
+      // A page no agent drives, hidden: nothing.
+      const plain = create()
+      const plainWc = wcOf(plain)
+      plainWc.emit('did-navigate', {}, 'https://example.com/plain')
+      expect(plainWc.throttling).toEqual([])
+      expect(plainWc.captureAsks).toEqual([])
+    })
+
+    it('ends with the throttling the core last set, revives a page that left the stage for nowhere on its way into a window, and leaves a destroyed page alone', () => {
+      const { window, create } = setup()
+      const view = create()
+      const wc = driven(view)
+      // The agent lets go (`detach`'s order: throttling back, then the word): off the stage for
+      // nowhere, no revival there.
+      view.setBackgroundThrottling(true)
+      view.setAgentDriven(false)
+      expect(view.isStaged()).toBe(false)
+      expect(wc.throttling).toEqual([false, true])
+      expect(wc.captureAsks).toEqual([])
+      // The user opens the tab: revived on the way in, the throttling allowed again after.
+      view.setBounds(box)
+      view.setVisible(true)
+      expect(window.win.children).toEqual([view.view])
+      expect(wc.throttling).toEqual([false, true, true, false, true])
+      expect(wc.captureAsks).toEqual([REVIVAL])
+      // Shown again later: nothing more to revive.
+      view.setVisible(false)
+      view.setVisible(true)
+      expect(wc.captureAsks).toHaveLength(1)
+      // A staged page that goes: off the stage, no toggle on a dead page.
+      const gone = create()
+      const goneWc = driven(gone)
+      goneWc.close()
+      expect(gone.isStaged()).toBe(false)
+      expect(goneWc.throttling).toEqual([false])
+      expect(goneWc.captureAsks).toEqual([])
+    })
   })
 
   describe('captures on the stage', () => {

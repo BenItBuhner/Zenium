@@ -497,6 +497,17 @@ export class ElectronTabView implements TabView {
   private stagedIn: BaseWindow | null = null
   /** The staged view stands grown to the document for a paint (`captureOnStage`): its box is not to be refreshed meanwhile. */
   private grown = false
+  /**
+   * The view left the stage for nowhere (`leaveStage('hidden')`: the agent let the tab go, the
+   * tab changed windows, the window went) with a surface the stage may have left dormant
+   * (`reviveSurface`): the next window it joins revives it first (`enterWindow`).
+   */
+  private surfaceStale = false
+  /**
+   * The page's throttling as the core last set it (`setBackgroundThrottling`; allowed unless an
+   * agent turned it off), so a revival of the surface ends with the page as it was.
+   */
+  private throttlingAllowed = true
   /** The user chose to leave: the next `beforeunload` objection is overruled. */
   private leaveApproved = false
   /** The last navigation this host started, for the "Leave site?" replay. */
@@ -627,6 +638,9 @@ export class ElectronTabView implements TabView {
       this.navigatingUrl = null
       ev.onNavigated(url, false, this.commitDetails(wc))
       this.fontsAfterNavigation()
+      // A document committing on the never-shown stage leaves the widget's surface dormant:
+      // brought back at once, so the agent's next capture has a frame (`reviveSurface`).
+      if (this.stagedIn) this.reviveSurface()
     })
     wc.on('did-navigate-in-page', (_e, url, isMainFrame) => {
       if (isMainFrame) ev.onNavigated(url, true)
@@ -754,7 +768,7 @@ export class ElectronTabView implements TabView {
       this.hangMonitor.dispose()
       // A page gone on its own (`window.close()`) leaves the stage too, so the stage holds no
       // dead view for the window's lifetime.
-      this.leaveStage()
+      this.leaveStage('hidden')
       ev.onDestroyed()
       this.owner.forget(id)
     })
@@ -1301,7 +1315,7 @@ export class ElectronTabView implements TabView {
     // being activated) leaves the stage for the window, as it would for its layout.
     const win = this.win
     if (win) {
-      this.leaveStage()
+      this.leaveStage('window')
       this.enterWindow(win)
     }
     this.wc.focus()
@@ -1389,7 +1403,7 @@ export class ElectronTabView implements TabView {
     // a shown one when another window takes it in (`enterWindow` from `focus`, `bringToFront`).
     // A staged view leaves this window's stage the same way, hidden and out of every window.
     this.unparkHidden()
-    this.leaveStage()
+    this.leaveStage('hidden')
     const win = this.win
     if (win && this.inWindow) win.contentView.removeChildView(this.view)
     this.inWindow = false
@@ -1399,9 +1413,14 @@ export class ElectronTabView implements TabView {
     this.refreshHangWatch()
   }
 
-  /** Into the window's `contentView` (on top), once; a view already there is left where it is. */
+  /**
+   * Into the window's `contentView` (on top), once; a view already there is left where it is.
+   * A view that left a stage for nowhere earlier has its surface brought back on the way in
+   * (`surfaceStale`), as one leaving the stage for the window does (`leaveStage`).
+   */
   private enterWindow(win: BrowserWindow): void {
     if (this.inWindow) return
+    if (this.surfaceStale) this.reviveSurface()
     win.contentView.addChildView(this.view)
     this.inWindow = true
   }
@@ -1453,7 +1472,7 @@ export class ElectronTabView implements TabView {
       // The first showing puts the view into the window, at the box the layout gave it just
       // before (`setBounds`), as the popup surface is placed: added, then shown. A staged view
       // (an agent's page the user switches to) leaves the stage for the window first.
-      this.leaveStage()
+      this.leaveStage('window')
       const win = this.win
       if (win) this.enterWindow(win)
       const parked = this.parked !== null
@@ -1671,7 +1690,7 @@ export class ElectronTabView implements TabView {
     if (this.agentDriven === driven) return
     this.agentDriven = driven
     if (driven) this.enterStage()
-    else this.leaveStage()
+    else this.leaveStage('hidden')
   }
 
   /**
@@ -1707,22 +1726,56 @@ export class ElectronTabView implements TabView {
   /**
    * Off the stage: hidden, out of every window, back in the layout's last box (`bounds`) where
    * there is one. Nothing for a view not staged. Safe on a stage being destroyed and on a
-   * destroyed page (only the child is taken out then).
+   * destroyed page (only the child is taken out then). `bound` says where the view goes next:
+   * `'window'` (the user's, at once – `focus`, `setVisible`, `bringToFront`) has the surface
+   * brought back first (`reviveSurface`), while it is still the stage's; `'hidden'` (nowhere:
+   * the agent let go, the tab changed windows, the window or the page went) leaves that to the
+   * window it next joins (`surfaceStale`, `enterWindow`).
    */
-  private leaveStage(): void {
+  private leaveStage(bound: 'window' | 'hidden'): void {
     const stage = this.stagedIn
     if (!stage) return
+    const alive = !this.wc.isDestroyed()
+    if (alive && bound === 'window') this.reviveSurface()
     this.stagedIn = null
     this.grown = false
     if (!stage.isDestroyed()) stage.contentView.removeChildView(this.view)
-    if (this.wc.isDestroyed()) return
+    if (!alive) return
+    if (bound === 'hidden') this.surfaceStale = true
     this.view.setVisible(false)
     if (this.bounds) this.view.setBounds(this.bounds)
   }
 
+  /**
+   * The staged surface brought back (MCP B's hand-off). A document that commits while the view
+   * stands on the never-shown stage leaves its widget's surface dormant – Chromium treats the
+   * widget as hidden at `DidNavigate` and the renderer defers its frames – so `capturePage` is
+   * refused ("Current display surface not available") and a move into the user's window shows
+   * the page's box with nothing painted, the page reading `document.visibilityState` `hidden`
+   * for good. The one sequence found to wake it (probes 1–6 under Xvfb, twenty remedies
+   * tried): the throttling turned on and off again with no tick between – Electron's
+   * `setBackgroundThrottling(false)` shows a widget it finds hidden – and a capture asked for
+   * at once, which has Chromium notify the page's visibility and allocate the surface (a
+   * one-pixel `stayHidden` capture; its answer, mostly a refusal, does not matter). Neither
+   * half works alone; `invalidate()`, a bounds nudge, a reload, the window hidden and shown, a
+   * second `WebContentsView` around the page, and a toggle with a tick between do not work.
+   * Ends with the throttling the core last set. The page reads `visible` from here on, staged
+   * or not – the trade-off the design notes (`stage.ts`). Run at each commit on the stage and
+   * on the way into a window; nothing on a destroyed page.
+   */
+  private reviveSurface(): void {
+    const wc = this.wc
+    if (wc.isDestroyed()) return
+    this.surfaceStale = false
+    wc.setBackgroundThrottling(true)
+    wc.setBackgroundThrottling(false)
+    if (this.throttlingAllowed) wc.setBackgroundThrottling(true)
+    wc.capturePage({ x: 0, y: 0, width: 1, height: 1 }, { stayHidden: true }).catch(() => undefined)
+  }
+
   /** The window's stage is going with the window (`ElectronTabViewHost.stageFor`). */
   stageClosing(stage: BaseWindow): void {
-    if (this.stagedIn === stage) this.leaveStage()
+    if (this.stagedIn === stage) this.leaveStage('hidden')
   }
 
   /** The box a staged view stands in: the window's page area (`stageBox`). */
@@ -1752,7 +1805,8 @@ export class ElectronTabView implements TabView {
     // agent's) leaves the stage for the window: a view has one parent.
     const win = this.win
     if (!win) return
-    this.leaveStage()
+    this.leaveStage('window')
+    if (this.surfaceStale) this.reviveSurface()
     win.contentView.addChildView(this.view)
     this.inWindow = true
   }
@@ -2513,6 +2567,7 @@ export class ElectronTabView implements TabView {
   }
 
   setBackgroundThrottling(allowed: boolean): void {
+    this.throttlingAllowed = allowed
     if (!this.wc.isDestroyed()) this.wc.setBackgroundThrottling(allowed)
   }
 
