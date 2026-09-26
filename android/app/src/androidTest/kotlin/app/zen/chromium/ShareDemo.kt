@@ -673,8 +673,9 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
         Finger().tap(point.x, point.y)
         val up = awaitTrue(12_000) { panelUp() }
         val seenAt = SystemClock.uptimeMillis()
+        if (up) awaitPanelRest()
         val grabbed = burst?.let {
-            SystemClock.sleep(700)
+            SystemClock.sleep(if (up) BURST_TAIL_MS else 700)
             it.halt()
         }
         // The click's wall time: the landing, read from the page (a touch on the page leaves no mark in the chrome).
@@ -784,8 +785,16 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
         }
         val up = awaitTrue(10_000) { panelUp() }
         val seenAt = SystemClock.uptimeMillis()
+        // The panel is in the DOM before it is at rest: the menu's chassis re-detents to the panel's
+        // height on its spring (the seam) and the rows' copy fades for 120 ms. A caller's touch waits
+        // for the rest (a chip read on the way down is tapped where it no longer is), the burst runs
+        // through the settle, and the probe's record is read with the fade over.
+        if (up) awaitPanelRest()
         val grabbed = burst?.let {
-            SystemClock.sleep(700)
+            // The display trails the chrome's DOM by some hundreds of ms under the burst (the
+            // emulator's software renderer): the tail runs on past the rest so the settled panel
+            // is on the sheet.
+            SystemClock.sleep(if (up) BURST_TAIL_MS else 700)
             it.halt()
         }
         val open = noteOpen(frames ?: "again", touchAt, seenAt, up)
@@ -1000,9 +1009,10 @@ ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({from:P.from,fromWa
 
     /**
      * The open's numbers into the findings, and the probe's record for the seam's checks. The
-     * touch goes into the emulator's input queue, which takes it when it gets to it – under the
-     * frame burst as much as a second after it was sent – so the times count from the finger's
-     * landing where the chrome or the page recorded it: the chrome's pointerup for a tap on the
+     * finger lands some time after the harness sets out to tap (the target's bounds settled first
+     * on the menu path; the touch then queued for the emulator, which under the frame burst takes
+     * it as much as a second later) – so the times count from the finger's landing where the
+     * chrome or the page recorded it: the chrome's pointerup for a tap on the
      * menu, the page's click (`clickEpoch`, `Date.now()` in the page) for a tap on its share
      * button, the device's wall clock being one clock for the chrome, the page and the harness;
      * from the touch as sent when neither did. The wall time is the landing to the panel as the
@@ -1040,7 +1050,7 @@ ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({from:P.from,fromWa
         val landing = landedEpoch?.let { uptimeOf(it) }?.takeIf { it in touchAt..seenAt }
         val wall = when {
             !up -> "no panel within $sent ms of the touch as sent"
-            landing != null -> "${seenAt - landing} ms from the touch's landing to the panel as the harness saw it (wall; the emulator took the touch ${landing - touchAt} ms after it was sent)"
+            landing != null -> "${seenAt - landing} ms from the touch's landing to the panel as the harness saw it (wall; the finger landed ${landing - touchAt} ms after the harness set out to tap – the target's bounds settled, the input queue)"
             else -> "$sent ms from the touch as sent to the panel (wall; the landing not recorded)"
         }
         val menuGone = first[MARK_MENU_GONE]
@@ -1603,8 +1613,9 @@ ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({from:P.from,fromWa
 
         // The frame bursts: a screenshot as often as the emulator gives one, at most this many (the wait for the
         // input queue to take the touch spends some of them; those are dropped from the sheet), a fifth the size,
-        // eight to a row.
-        private const val MAX_FRAMES = 32
+        // eight to a row; the burst runs this long past the panel's rest for the display to catch up.
+        private const val MAX_FRAMES = 40
+        private const val BURST_TAIL_MS = 900L
         private const val FRAME_PERIOD_MS = 60L
         private const val THUMB_SCALE = 5
         private const val SHEET_COLUMNS = 8
