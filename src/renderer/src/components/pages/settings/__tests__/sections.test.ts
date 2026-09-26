@@ -1509,6 +1509,53 @@ describe('the section model', () => {
     expect(row(packed, 'newtab-add-shortcut').disabled).toBe(true)
   })
 
+  it('NTP-16: a Cards row beside Layout on the phone layout opens the stack’s own Show list – the second door to the one setting (§9.29); the other layouts have no stack and no row', async () => {
+    const { magicStackCustomizeStore, closeMagicStackCustomize } =
+      await import('@renderer/components/newtab/magicStackCustomize')
+    const host = state({ capabilities: { ...ANDROID, newTabPage: true } } as Partial<UIState>)
+    const on = (layout: FormFactor): Model =>
+      buildSections(availableSections(PAGE, host.capabilities, layout), {
+        ...context(host).ctx,
+        formFactor: layout
+      }).find((m) => m.section.id === 'newtab')!
+    const phone = on('phone')
+    const group = phone.groups[0]!
+    expect(group.heading).toBe('New tab page')
+    const ids = group.rows.map((r) => r.id)
+    expect(ids.indexOf('newtab-cards')).toBe(ids.indexOf('newtab-layout') + 1)
+    expect(ids.indexOf('newtab-shortcuts')).toBe(ids.indexOf('newtab-cards') + 1)
+    const cards = row(phone, 'newtab-cards')
+    if (cards.kind !== 'action') throw new Error('not an action')
+    expect(cards).toMatchObject({
+      label: 'Cards',
+      description: 'Choose which cards show under the shortcuts',
+      leaves: 'chevron',
+      layouts: ['phone']
+    })
+    expect(cards.page).toBeUndefined()
+    expect(rowText(cards)).not.toMatch(/magic stack/i)
+    // The press opens the very sheet the page's gear opens – a store, not a page or a copy.
+    expect(magicStackCustomizeStore.get().open).toBe(false)
+    cards.onPress?.()
+    expect(magicStackCustomizeStore.get().open).toBe(true)
+    closeMagicStackCustomize()
+    expect(invoke).not.toHaveBeenCalledWith('newtab.setModuleHidden', expect.anything())
+    // The landing's search reaches it by what the cards hold.
+    for (const query of ['recently closed', 'downloads', 'default browser']) {
+      expect(
+        searchRows([phone], query).map((h) => h.row.id),
+        query
+      ).toContain('newtab-cards')
+    }
+    // The desktop and the tablet: the page keeps its rows, and this one is not among them.
+    for (const layout of ['desktop', 'tablet'] as const) {
+      const model = on(layout)
+      const rows = allRows(model.groups).map((r) => r.id)
+      expect(rows, layout).toContain('newtab-layout')
+      expect(rows, layout).not.toContain('newtab-cards')
+    }
+  })
+
   it('carries #92’s Passwords rows: the ways into the manager, the preferences, protection and lock, import and export; behind `passwords`', async () => {
     const without = { ...ANDROID, passwords: false }
     expect(availableSections(PAGE, without, 'phone').some((s) => s.id === 'passwords')).toBe(false)

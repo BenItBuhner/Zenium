@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -26,7 +28,11 @@ import { browserStore, uiStore } from '@renderer/lib/ui'
  * This and Customise; Hide This writing the device's hidden set and taking the card out on the
  * 120 ms fade (a cut under reduced motion), the card kept out between the command and the state
  * and back when the state re-enables it; the Customise sheet's switch rows writing the set; the
- * stack not drawn at all when nothing has content.
+ * stack not drawn at all when nothing has content. A card a switch turns on arrives in view –
+ * the strip pages to it on the spring, a cut under reduced motion, a finger taking the motion
+ * over – and a card a switch turns off leaves as Hide This's does, the strip closing the gap and
+ * the dots following, nothing paging (§9.29, §11.4). The page's gear sheet seats its Cards row
+ * first, above Layout, a hairline after it (§9.13). The dots' one dimmed number is .4 (§9.30).
  */
 
 const run = vi.fn()
@@ -242,6 +248,32 @@ async function openMenu(
   expect(menu).not.toBeNull()
   return menu!
 }
+
+/**
+ * happy-dom neither lays out nor scrolls: the strip's offset gets a backing value here and every
+ * write the pager makes is recorded. A card is 0 wide, so the pitch is the 8 gap alone and the
+ * third card's snap position is 16, the fourth's 24.
+ */
+function scroller(strip: HTMLElement, at = 0): { writes: number[]; readonly offset: number } {
+  const writes: number[] = []
+  let offset = at
+  Object.defineProperty(strip, 'scrollLeft', {
+    configurable: true,
+    get: () => offset,
+    set: (v: number) => {
+      offset = v
+      writes.push(v)
+    }
+  })
+  return {
+    writes,
+    get offset() {
+      return offset
+    }
+  }
+}
+
+const snapOf = (strip: HTMLElement): string => strip.style.getPropertyValue('scroll-snap-type')
 
 /** Pick the open menu's item labelled `label`: the sheet is unpainted over two frames first. */
 function pick(label: string): void {
@@ -489,6 +521,178 @@ describe('the Magic Stack on the page (NTP-16)', () => {
     expect(q('[data-leaving]')).toBeNull()
   })
 
+  it('a card a switch turns on arrives in view: the strip pages to it on the spring, its snapping off for the motion and on again a frame after the rest; the card comes in on the fade’s mirror and the dots follow', () => {
+    render(stack(state({ newTabHiddenModules: ['bookmarks'] })))
+    expect(cardIds()).toEqual(['continue', 'downloads', 'default-browser'])
+    const strip = q<HTMLUListElement>('.zen-mstack-strip')!
+    const scroll = scroller(strip)
+    // The switch: the core's list drops the id.
+    render(stack(state({ newTabHiddenModules: [] })))
+    expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'default-browser'])
+    const card = q('.zen-mstack-card[data-cell="bookmarks"]')!
+    expect(card.dataset.arriving).toBe('true')
+    expect(q('[data-leaving]')).toBeNull()
+    // The paging is under way: the snap is off and a frame asked for, nothing written yet.
+    expect(snapOf(strip)).toBe('none')
+    expect(frames.scheduled).toBe(true)
+    expect(scroll.writes).toEqual([])
+    // Frame by frame towards the third card's snap position.
+    act(() => frames.run(3))
+    expect(scroll.writes).toHaveLength(3)
+    for (const w of scroll.writes) {
+      expect(w).toBeGreaterThan(0)
+      expect(w).toBeLessThan(16)
+    }
+    expect(snapOf(strip)).toBe('none')
+    // To the rest, one frame at a time, the frame before each one remembered.
+    let before = { snap: '', offset: -1 }
+    for (let i = 0; i < 200 && snapOf(strip) === 'none'; i++) {
+      before = { snap: snapOf(strip), offset: scroll.offset }
+      act(() => frames.run(1))
+    }
+    // The snap is back, with the offset on the snap position exactly and nothing more to run…
+    expect(snapOf(strip)).toBe('')
+    expect(scroll.offset).toBe(16)
+    expect(scroll.writes.at(-1)).toBe(16)
+    expect(frames.scheduled).toBe(false)
+    // …a frame after the rest, which had put the offset there with the snap still off.
+    expect(before).toEqual({ snap: 'none', offset: 16 })
+    // The dots follow the strip to the card.
+    act(() => {
+      strip.dispatchEvent(new Event('scroll'))
+    })
+    expect(q('.zen-mstack-dots')!.textContent).toBe('Page 3 of 4')
+    expect(qa('.zen-mstack-dot').map((d) => d.hasAttribute('data-current'))).toEqual([
+      false,
+      false,
+      true,
+      false
+    ])
+    // The fade's end takes the arriving mark off.
+    act(() => {
+      card.dispatchEvent(new AnimationEvent('animationend', { bubbles: true }))
+    })
+    expect(card.hasAttribute('data-arriving')).toBe(false)
+  })
+
+  it('a finger on the strip takes the paging over: the spring stops where it is and the snap returns at once', () => {
+    render(stack(state({ newTabHiddenModules: ['default-browser'] })))
+    const strip = q<HTMLUListElement>('.zen-mstack-strip')!
+    const scroll = scroller(strip)
+    render(stack(state({ newTabHiddenModules: [] })))
+    expect(q('.zen-mstack-card[data-cell="default-browser"]')!.dataset.arriving).toBe('true')
+    // Two frames on the way to the fourth card (24)…
+    act(() => frames.run(2))
+    const caught = scroll.offset
+    expect(caught).toBeGreaterThan(0)
+    expect(caught).toBeLessThan(24)
+    expect(snapOf(strip)).toBe('none')
+    // …and the finger lands: no frame is asked for, the offset stays where it was, the snap is on.
+    act(() => {
+      strip.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    })
+    expect(frames.scheduled).toBe(false)
+    expect(snapOf(strip)).toBe('')
+    expect(scroll.offset).toBe(caught)
+    const written = scroll.writes.length
+    act(() => frames.run(3))
+    expect(scroll.writes).toHaveLength(written)
+  })
+
+  it('under reduced motion the paging is a cut: the offset lands on the card at once and the snap is back a frame later', () => {
+    reduced = true
+    render(stack(state({ newTabHiddenModules: ['bookmarks'] })))
+    const strip = q<HTMLUListElement>('.zen-mstack-strip')!
+    const scroll = scroller(strip)
+    render(stack(state({ newTabHiddenModules: [] })))
+    expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'default-browser'])
+    expect(scroll.offset).toBe(16)
+    expect(scroll.writes.every((w) => w === 16)).toBe(true)
+    expect(snapOf(strip)).toBe('none')
+    act(() => frames.run(1))
+    expect(snapOf(strip)).toBe('')
+    expect(frames.scheduled).toBe(false)
+  })
+
+  it('a card a switch turns off leaves as Hide This’s does – the fade, the strip closing the gap, the dots following – and nothing pages; Hide This pages nothing either', async () => {
+    render(stack(state()))
+    const strip = q<HTMLUListElement>('.zen-mstack-strip')!
+    const scroll = scroller(strip)
+    // The switch: the core's list gains the id, the card's own menu having asked nothing.
+    render(stack(state({ newTabHiddenModules: ['downloads'] })))
+    expect(commands('newtab.setModuleHidden')).toEqual([])
+    const leaving = q('.zen-mstack-card[data-cell="downloads"]')!
+    expect(leaving.dataset.leaving).toBe('true')
+    expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'default-browser'])
+    expect(q('[data-arriving]')).toBeNull()
+    expect(scroll.writes).toEqual([])
+    expect(snapOf(strip)).toBe('')
+    expect(frames.scheduled).toBe(false)
+    // The fade's end: the gap closed, a dot fewer, the page read anew.
+    act(() => {
+      leaving.dispatchEvent(new AnimationEvent('animationend', { bubbles: true }))
+    })
+    expect(cardIds()).toEqual(['continue', 'bookmarks', 'default-browser'])
+    expect(qa('.zen-mstack-dot')).toHaveLength(3)
+    expect(q('.zen-mstack-dots')!.textContent).toBe('Page 1 of 3')
+    expect(scroll.writes).toEqual([])
+    // Hide This from a card's menu keeps its rule: the departure under the finger, no paging.
+    await openMenu('bookmarks')
+    pick('Hide This')
+    expect(commands('newtab.setModuleHidden')).toEqual([{ id: 'bookmarks', hidden: true }])
+    const hidden = q('.zen-mstack-card[data-cell="bookmarks"]')!
+    expect(hidden.dataset.leaving).toBe('true')
+    expect(scroll.writes).toEqual([])
+    expect(snapOf(strip)).toBe('')
+    act(() => {
+      hidden.dispatchEvent(new AnimationEvent('animationend', { bubbles: true }))
+    })
+    // The state carries both ids now: the same two cards, no second departure, nothing paged.
+    render(stack(state({ newTabHiddenModules: ['downloads', 'bookmarks'] })))
+    expect(cardIds()).toEqual(['continue', 'default-browser'])
+    expect(q('[data-leaving]')).toBeNull()
+    expect(q('[data-arriving]')).toBeNull()
+    expect(scroll.writes).toEqual([])
+  })
+
+  it('a hidden set that changed by more than one id is no switch’s act: the cards are cut, nothing leaves, arrives or pages', () => {
+    render(stack(state({ newTabHiddenModules: ['continue', 'downloads'] })))
+    const strip = q<HTMLUListElement>('.zen-mstack-strip')!
+    const scroll = scroller(strip)
+    render(stack(state({ newTabHiddenModules: ['bookmarks', 'default-browser'] })))
+    expect(cardIds()).toEqual(['continue', 'downloads'])
+    expect(q('[data-leaving]')).toBeNull()
+    expect(q('[data-arriving]')).toBeNull()
+    expect(scroll.writes).toEqual([])
+    expect(snapOf(strip)).toBe('')
+    expect(frames.scheduled).toBe(false)
+  })
+
+  it('the stylesheet: 6 px dots, the current at full ink and the rest at .4 – §9.30’s one dimmed number – and the arrival the leave’s 120 ms mirror', () => {
+    const css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
+    const rule = (selector: string): string => {
+      const at = css.indexOf(`${selector} {`)
+      expect(at, selector).toBeGreaterThan(-1)
+      return css.slice(at, css.indexOf('}', at))
+    }
+    const dot = rule(":root[data-form-factor='phone'] .zen-mstack-dot")
+    expect(dot).toMatch(/width: 6px;/)
+    expect(dot).toMatch(/height: 6px;/)
+    expect(dot.match(/opacity: [\d.]+;/g)).toEqual(['opacity: 0.4;'])
+    expect(rule(":root[data-form-factor='phone'] .zen-mstack-dot[data-current]")).toMatch(
+      /opacity: 1;/
+    )
+    expect(rule(":root[data-form-factor='phone'] .zen-mstack-card[data-leaving]")).toMatch(
+      /animation: zen-mstack-leave 120ms/
+    )
+    expect(rule(":root[data-form-factor='phone'] .zen-mstack-card[data-arriving]")).toMatch(
+      /animation: zen-mstack-arrive 120ms/
+    )
+    expect(rule('@keyframes zen-mstack-arrive')).toMatch(
+      /from \{\s*opacity: 0;\s*transform: scale\(0\.96\);/
+    )
+  })
+
   it('Customise opens the sheet of switch rows, one per module the host has; a switch writes the hidden set at once', async () => {
     browserStore.set({ state: state({ newTabHiddenModules: ['downloads'] }) })
     render(
@@ -551,7 +755,7 @@ describe('the Magic Stack on the page (NTP-16)', () => {
     ])
   })
 
-  it('the page’s gear sheet carries a Cards row – the way to the switches once every card is hidden; it leaves first and the stack’s sheet comes up as it has gone', async () => {
+  it('the page’s gear sheet seats its Cards row first, above Layout with a hairline after it – the way to the switches once every card is hidden; it leaves first and the stack’s sheet comes up as it has gone', async () => {
     browserStore.set({
       state: state({
         settings: { newTab: structuredClone(DEFAULT_NEW_TAB_SETTINGS) },
@@ -578,6 +782,19 @@ describe('the Magic Stack on the page (NTP-16)', () => {
     expect(row!.dataset.row).toBe('magic-stack')
     expect(row!.textContent).toContain('Choose which cards show under the shortcuts')
     expect(gear.textContent).not.toContain('Magic Stack')
+    // The seat (§9.13: a control panel's action rows first): the row is the body's first child,
+    // a hairline the second, the Layout section – the first heading – the third, so the sheet
+    // at its rest height shows the row and the fold cuts Layout's grid.
+    const body = gear.querySelector('.zen-ntp-customize')!
+    const [first, second, third] = [...body.children] as HTMLElement[]
+    expect(first).toBe(row)
+    expect(second!.classList.contains('zen-sheet-sep')).toBe(true)
+    expect(second!.getAttribute('aria-hidden')).toBe('true')
+    expect(third!.classList.contains('zen-v2-section')).toBe(true)
+    expect(third!.querySelector('h3.zen-v2-heading')?.textContent).toBe('Layout')
+    expect(qa('.zen-sheet[role="dialog"] h3.zen-v2-heading')[0]!.textContent).toBe('Layout')
+    // One Cards row on the sheet: the Show section's foot no longer carries a copy.
+    expect(qa('.zen-sheet[role="dialog"] [data-row="magic-stack"]')).toHaveLength(1)
     click(row!)
     // One sheet over the page (§9.24): the stack's waits for the gear's landing.
     expect(magicStackCustomizeStore.get().open).toBe(false)

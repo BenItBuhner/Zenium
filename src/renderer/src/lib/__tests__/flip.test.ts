@@ -405,4 +405,61 @@ describe('FlipTracker', () => {
     )
     flip.dispose()
   })
+
+  it('shift carries the baseline along with a scroller whose offset moved with its content: the card the strip kept snapped stands still, the cards after a departure glide (NTP-16)', () => {
+    // A snapping strip scrolled to its second card: content x 0, 110, 220, 330 at an offset of
+    // 110, so on screen a is at -110, b at 0, c at 110, d at 220.
+    const strip = document.createElement('ul')
+    let offset = 110
+    Object.defineProperty(strip, 'scrollLeft', {
+      configurable: true,
+      get: () => offset,
+      set: (v: number) => {
+        offset = v
+      }
+    })
+    const a = cell('a', -110, 0)
+    const b = cell('b', 0, 0)
+    const c = cell('c', 110, 0)
+    const d = cell('d', 220, 0)
+    const flip = tracker()
+    const cells = new Map<string, HTMLElement>([
+      ['a', a],
+      ['b', b],
+      ['c', c],
+      ['d', d]
+    ])
+    flip.commit(cells, strip, true)
+    expect(flip.layoutRect('b')).toMatchObject({ x: 0 })
+
+    // c leaves, after the card in view: the offset stays and d closes the gap (content 330 to
+    // 220, on screen 220 to 110) – the layout's own movement, and d glides it.
+    cells.delete('c')
+    d.moveTo(110, 0)
+    flip.commit(cells, strip, true)
+    expect(translate(d)).toEqual({ x: 110, y: 0 })
+    expect(b.style.transform).toBe('')
+    settle()
+    expect(d.style.transform).toBe('')
+
+    // a leaves, before the card in view: Chromium keeps b snapped through the layout change, so
+    // the offset falls to 0 with the content (b at content 0, d at 110) and nothing on screen
+    // moved. Read against the new offset alone the baseline would put b a pitch to the right…
+    cells.delete('a')
+    offset = 0
+    expect(flip.layoutRect('b')).toMatchObject({ x: 110 })
+    // …so the owner shifts it by the offset's move before its commit, and nothing glides.
+    flip.shift(-110)
+    expect(flip.layoutRect('b')).toMatchObject({ x: 0 })
+    flip.commit(cells, strip, true)
+    expect(b.style.transform).toBe('')
+    expect(d.style.transform).toBe('')
+    expect(frames).toHaveLength(0)
+    expect(flip.layoutRect('b')).toMatchObject({ x: 0, width: 100 })
+    expect(flip.layoutRect('d')).toMatchObject({ x: 110 })
+    // A shift of nothing is nothing.
+    flip.shift(0)
+    expect(flip.layoutRect('b')).toMatchObject({ x: 0 })
+    flip.dispose()
+  })
 })
