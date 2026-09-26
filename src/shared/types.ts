@@ -2053,6 +2053,12 @@ export interface ExtensionControl {
   extensionId: string
   /** The extension's name as the Extensions page shows it. */
   name: string
+  /**
+   * The extension's value, the one in effect: the disabled control shows it, as Chrome's
+   * shows the preference's effective value (a family's name, a size in px, a toggle's state),
+   * over the user's own kept in the setting. Absent, the row keeps to the setting's value.
+   */
+  value?: string | number | boolean
 }
 
 export interface SearchEngine {

@@ -1,5 +1,11 @@
 // @vitest-environment happy-dom
-import { createElement, isValidElement, type ComponentProps, type ReactNode } from 'react'
+import {
+  createElement,
+  isValidElement,
+  type ComponentProps,
+  type ReactElement,
+  type ReactNode
+} from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
@@ -3009,49 +3015,73 @@ describe('what a row does', () => {
       expect(c.patches.at(-1)).toEqual({ fonts: DEFAULT_SETTINGS.fonts })
     })
 
-    it('a slot or size an extension holds (chrome.fontSettings; state.extensionControls keyed fonts.<slot>, fonts.size, fonts.minimumSize) is drawn controlled in both of the row’s forms, the user’s own value kept in the row, its neighbours not; Disable takes the Extensions page’s path', () => {
-      const control = { extensionId: 'a'.repeat(32), name: 'Advanced Font Settings' }
-      const extensionControls = { 'fonts.standard': control, 'fonts.size': control }
+    it('a slot or size an extension holds (chrome.fontSettings; state.extensionControls keyed fonts.<slot>, fonts.size, fonts.minimumSize) is drawn controlled in both of the row’s forms showing the extension’s value – the one in effect – over the user’s own, its neighbours not; the preview renders in the effective fonts, Reset keeps to the user’s; Disable takes the Extensions page’s path', () => {
+      const extension = { extensionId: 'a'.repeat(32), name: 'Advanced Font Settings' }
+      const extensionControls = {
+        'fonts.standard': { ...extension, value: 'Inter' },
+        'fonts.size': { ...extension, value: 20 }
+      }
+      // The user's own values underneath differ from the extension's: Georgia at 16 px.
       const held = state(
         {
           platform: 'linux',
           capabilities: { ...ANDROID, genericFontFamilies: true },
           extensionControls
         },
-        { fonts: { ...DEFAULT_SETTINGS.fonts, standard: 'Inter', size: 20 } }
+        { fonts: { ...DEFAULT_SETTINGS.fonts, standard: 'Georgia', size: 16 } }
       )
       const c = context(held)
       const desktop = buildSection(PAGE.sections[0], {
         ...c.ctx,
         formFactor: 'desktop',
-        localFonts: ['Inter']
+        localFonts: ['Georgia']
       })
-      // The held rows carry the extension; the row's value stays the user's own (what stands
-      // again when the extension lets go), and the pages render the extension's meanwhile.
+      // The held rows carry the extension and show its value in their disabled control, as
+      // Chrome's fonts page shows the preference's effective value; the family is listed even
+      // though the computer has no such face, so the row never shows a value its list lacks.
       const standard = row(desktop, 'fonts-standard')
       if (standard.kind !== 'value') throw new Error('not a value row')
-      expect(standard.controlled).toMatchObject(control)
+      expect(standard.controlled).toMatchObject({ ...extension, value: 'Inter' })
       expect(standard.value).toBe('Inter')
+      expect(standard.options.some((o) => o.value === 'Inter')).toBe(true)
       const size = row(desktop, 'fonts-size')
       if (size.kind !== 'value') throw new Error('not a value row')
-      expect(size.controlled).toMatchObject(control)
+      expect(size.controlled).toMatchObject({ ...extension, value: 20 })
       expect(size.value).toBe('20')
-      // The rows beside them are the user's, and so are the preview and Reset.
+      // The rows beside them are the user's, and so is Reset, which resets the user's own
+      // values (the held preferences stay the extension's until it is disabled, as in Chrome).
       for (const id of ['fonts-minimum-size', 'fonts-serif', 'fonts-sansSerif', 'fonts-fixed'])
         expect(row(desktop, id).controlled).toBeUndefined()
       expect(row(desktop, 'fonts-preview').controlled).toBeUndefined()
-      expect(row(desktop, 'fonts-reset').controlled).toBeUndefined()
+      const reset = row(desktop, 'fonts-reset')
+      expect(reset.controlled).toBeUndefined()
+      if (reset.kind !== 'action') throw new Error('not an action')
+      reset.onPress?.()
+      expect(c.patches.at(-1)).toEqual({ fonts: DEFAULT_SETTINGS.fonts })
+      // The preview renders in the effective fonts – what a page gets: Inter at 20 px.
+      const preview = row(desktop, 'fonts-preview')
+      if (preview.kind !== 'custom') throw new Error('not a custom row')
+      const html = renderToStaticMarkup(preview.render() as ReactElement)
+      expect(html).toContain('--zen-settings-preview-family:&quot;Inter&quot;')
+      expect(html).toContain('--zen-settings-preview-size:20px')
+      expect(html).not.toContain('Georgia')
       // Disable goes through the host's own path, the one the Extensions page's switch takes.
       standard.controlled!.onDisable()
       expect(invoke).toHaveBeenCalledWith('extension.setEnabled', {
-        id: control.extensionId,
+        id: extension.extensionId,
         enabled: false
       })
 
-      // The phone shell's forms of the same rows carry the same control.
+      // The phone shell's forms of the same rows carry the same control and value: the family
+      // row's description is the extension's face, the slider stands on its stop.
       const phone = buildSection(PAGE.sections[0], { ...c.ctx, formFactor: 'phone' })
-      expect(row(phone, 'fonts-standard-phone').controlled).toMatchObject(control)
-      expect(row(phone, 'fonts-size-phone').controlled).toMatchObject(control)
+      const standardPhone = row(phone, 'fonts-standard-phone')
+      expect(standardPhone.controlled).toMatchObject({ ...extension, value: 'Inter' })
+      expect(standardPhone.description).toBe('Inter')
+      const sizePhone = row(phone, 'fonts-size-phone')
+      expect(sizePhone.controlled).toMatchObject({ ...extension, value: 20 })
+      if (sizePhone.kind !== 'slider') throw new Error('not a slider row')
+      expect(sizePhone.format(sizePhone.value)).toBe('20 px')
       expect(row(phone, 'fonts-minimum-size-phone').controlled).toBeUndefined()
 
       // No extension holding anything: no row is controlled.

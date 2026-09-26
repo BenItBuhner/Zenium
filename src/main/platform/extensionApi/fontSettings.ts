@@ -378,14 +378,20 @@ export class FontSettingsApi {
   /**
    * The Settings page's "Controlled by <extension>" rows (`UIState.extensionControls`): every
    * preference an extension holds, under the Customize fonts row's key in `Settings['fonts']`
-   * – the six preferences are the six rows, so the key is the preference's own name.
+   * – the six preferences are the six rows, so the key is the preference's own name – with the
+   * value in effect, the extension's, for the row's disabled control to show as Chrome's does.
    */
   private publishControls(layered: LayeredFonts): void {
     const controls: Record<string, ExtensionControl> = {}
     for (const pref of FONT_PREFS) {
       const controller = layered.controllers[pref]
       if (controller === null) continue
-      controls[`fonts.${pref}`] = { extensionId: controller, name: this.nameOf(controller) }
+      const value = layered.fonts[pref]
+      controls[`fonts.${pref}`] = {
+        extensionId: controller,
+        name: this.nameOf(controller),
+        ...(value === null ? {} : { value })
+      }
     }
     this.host.controls.publish('fontSettings', controls)
   }

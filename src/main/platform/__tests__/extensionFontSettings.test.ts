@@ -542,15 +542,15 @@ describe('FontSettingsApi events', () => {
 })
 
 describe('the Settings rows an extension holds (UIState.extensionControls)', () => {
-  it('publishes the controlling extension of each Customize fonts row, named as the Extensions page names it, and nothing for a preference no row sets', () => {
+  it('publishes the controlling extension of each Customize fonts row, named as the Extensions page names it, with its value – the one in effect – and nothing for a preference no row sets', () => {
     const w = world()
     // Nothing set: the map is empty and no snapshot was committed for it.
     expect(w.controls).toEqual([])
     call(w, OLD, 'setFont', { genericFamily: 'standard', fontId: 'Georgia' })
     call(w, OLD, 'setDefaultFontSize', { pixelSize: 20 })
     expect(w.controls.at(-1)).toEqual({
-      'fonts.standard': { extensionId: OLD, name: 'Older Fonts' },
-      'fonts.size': { extensionId: OLD, name: 'Older Fonts' }
+      'fonts.standard': { extensionId: OLD, name: 'Older Fonts', value: 'Georgia' },
+      'fonts.size': { extensionId: OLD, name: 'Older Fonts', value: 20 }
     })
     // The fixed-width size, the cursive slot and a per-script family set no row of the page.
     const before = w.controls.length
@@ -578,14 +578,15 @@ describe('the Settings rows an extension holds (UIState.extensionControls)', () 
     call(w, OLD, 'setFont', { genericFamily: 'standard', fontId: 'Georgia' })
     call(w, NEW, 'setFont', { genericFamily: 'standard', fontId: 'Inter' })
     expect(w.controls.at(-1)).toEqual({
-      'fonts.standard': { extensionId: NEW, name: 'Advanced Font Settings' }
+      'fonts.standard': { extensionId: NEW, name: 'Advanced Font Settings', value: 'Inter' }
     })
     // The newer extension lets go: the older one's value is in effect, and its name shows.
     call(w, NEW, 'clearFont', { genericFamily: 'standard' })
     expect(w.controls.at(-1)).toEqual({
-      'fonts.standard': { extensionId: OLD, name: 'Older Fonts' }
+      'fonts.standard': { extensionId: OLD, name: 'Older Fonts', value: 'Georgia' }
     })
-    // The user's own change of the setting moves no control: the extension still holds it.
+    // The user's own change of the setting moves no control: the extension still holds it,
+    // and the value in effect is still the extension's.
     const before = w.controls.length
     w.user.standard = 'Verdana'
     await w.broadcast()
@@ -598,7 +599,7 @@ describe('the Settings rows an extension holds (UIState.extensionControls)', () 
     w.loaded.add(OLD)
     w.api.load(OLD)
     expect(w.controls.at(-1)).toEqual({
-      'fonts.standard': { extensionId: OLD, name: 'Older Fonts' }
+      'fonts.standard': { extensionId: OLD, name: 'Older Fonts', value: 'Georgia' }
     })
   })
 })

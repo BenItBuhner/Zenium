@@ -68,6 +68,12 @@ export interface RowControl {
   extensionId: string
   /** The extension's name as the Extensions page shows it. */
   name: string
+  /**
+   * The extension's value, in effect over the user's own: the held row shows it in its
+   * disabled control, as Chrome's Settings shows the preference's effective value. Absent,
+   * the row keeps to the setting's value.
+   */
+  value?: string | number | boolean
   onDisable(): void
 }
 
