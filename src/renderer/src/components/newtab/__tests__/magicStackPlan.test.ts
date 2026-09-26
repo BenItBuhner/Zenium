@@ -14,7 +14,7 @@ import {
   pageAt,
   planMagicStack,
   type MagicStackSources
-} from '../magicStack'
+} from '../magicStackPlan'
 
 function closed(over: Partial<ClosedEntrySummary> = {}): ClosedEntrySummary {
   return {

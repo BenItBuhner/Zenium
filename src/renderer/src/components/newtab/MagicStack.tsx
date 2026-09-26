@@ -43,7 +43,7 @@ import {
   planMagicStack,
   type MagicStackCard,
   type MagicStackSources
-} from './magicStack'
+} from './magicStackPlan'
 import {
   closeMagicStackCustomize,
   magicStackCustomizeStore,

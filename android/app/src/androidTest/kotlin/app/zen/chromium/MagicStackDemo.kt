@@ -676,7 +676,7 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         private const val GEAR_LABEL = "Customise the new tab page"
         private const val SHEET_TITLE = "Magic Stack"
         private const val GEAR_TITLE = "New tab page"
-        /** The modules in the stack's fixed order (`magicStack.ts`); the sheet lists all four on Android, which can ask to be the default. */
+        /** The modules in the stack's fixed order (`magicStackPlan.ts`); the sheet lists all four on Android, which can ask to be the default. */
         private val MODULES = listOf("continue", "downloads", "bookmarks", "default-browser")
         private const val DOWNLOAD_DIR = "magic-stack-demo-files"
         private const val DOWNLOAD_NAME = "field-guide.pdf"
