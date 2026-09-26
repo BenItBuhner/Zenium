@@ -10,7 +10,8 @@ import {
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { is } from '@electron-toolkit/utils'
-import { devtoolsQuitHoldNotice, quitChordOf, relayDevtoolsQuitChord } from './devtoolsKeys'
+import { quitChordOf, relayDevtoolsQuitChord } from './devtoolsKeys'
+import { devtoolsQuitHoldNotice } from './devtoolsQuitHoldNotice'
 import { focusedDocumentOf } from './focusedDocument'
 import { ElectronShortcuts } from './shortcuts'
 import type {

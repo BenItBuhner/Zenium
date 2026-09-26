@@ -40,11 +40,8 @@ import {
   dockFromConsoleMessage,
   pageBoundsFromConsoleMessage
 } from './devtoolsFrontend'
-import {
-  DevtoolsQuitHoldNotice,
-  devtoolsQuitHoldNotice,
-  relayDevtoolsQuitChord
-} from './devtoolsKeys'
+import { relayDevtoolsQuitChord } from './devtoolsKeys'
+import { DevtoolsQuitHoldNotice, devtoolsQuitHoldNotice } from './devtoolsQuitHoldNotice'
 import { isDockedInFrame } from '../../shared/devtoolsDock'
 import { refusedFromDocument } from '../../shared/internalPages'
 import { PAGE_HOST_CHANNEL } from '../../shared/pageScript'

@@ -24,7 +24,7 @@ import {
 } from '../pageDebugger'
 import { HANG_MISSES, HANG_PING_MS, HANG_PROBE_TIMEOUT_MS } from '../hangMonitor'
 import { PAINT_STATE_SCRIPT } from '../firstPaint'
-import { DevtoolsQuitHoldNotice } from '../devtoolsKeys'
+import { DevtoolsQuitHoldNotice } from '../devtoolsQuitHoldNotice'
 import type { QuitHoldPanel } from '../../../shared/quitHoldPanel'
 import {
   ElectronTabViewHost,

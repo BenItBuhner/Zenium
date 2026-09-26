@@ -1,6 +1,4 @@
-import devtoolsQuitHoldPanelSource from 'virtual:zenium-devtools-quit-hold-panel'
 import type { KeyEventInput } from '../../core/platform'
-import type { QuitHoldPanel } from '../../shared/quitHoldPanel'
 import type { KeyBinding, Shortcut } from '../../shared/types'
 
 /**
@@ -152,95 +150,12 @@ export interface DevtoolsToolbox {
 }
 
 /**
- * The toolbox's held-key panel script: the bundled `devtoolsQuitHoldPanel.ts` installed on the
- * first run (its listener left on the window), then the panel posted to it – or null, the
- * panel's way down. Resolves `shown` or `down`.
+ * The held-key notice as the relay reports to it (`devtoolsQuitHoldNotice.ts`): the chord went
+ * down in a toolbox, or a key came up there – said before the key table hears the key.
  */
-export function devtoolsQuitHoldPanelScript(panel: QuitHoldPanel | null): string {
-  return `(() => {
-  if (!window.__zeniumQuitHoldPanel) {
-    ${devtoolsQuitHoldPanelSource}
-  }
-  window.__zeniumQuitHoldPanel(${JSON.stringify(panel)})
-  return ${JSON.stringify(panel ? 'shown' : 'down')}
-})()`
+export interface DevtoolsKeyWitness {
+  heard(toolbox: DevtoolsToolbox, key: KeyEventInput): void
 }
-
-/**
- * "Hold ⌘Q to quit" over a detached toolbox (design language v2 §9.23: the held-key notice is
- * drawn where the keyboard is; #486's R2). A hold armed from a toolbox that stands in a window
- * of its own runs with the browser window blurred, and the panel the window's page or chrome
- * drew would stand behind the toolbox, or off where nobody is looking. So the relay marks the
- * toolbox the chord went down in (`heard`, before the key table hears the key; the key up line
- * clears it); while that toolbox is detached, the page's own panel yields
- * (`inToolbox`, `ElectronTabView.showQuitHold`) and the window's state stream, which carries the
- * hold as the chrome reads it, is mirrored into the toolbox's document (`mirror`,
- * `ElectronWindow.send`): the panel drawn by the frontend itself at its centre from the page's
- * source (`shared/quitHoldPanel.ts`, `devtoolsQuitHoldPanel.ts`), taken down with its fade when
- * the hold ends either way. The toolbox alone draws it. A docked toolbox changes nothing: the
- * mark is set, the toolbox is not detached, the page draws as before.
- *
- * One keyboard, one notice: the platform keeps a single instance (`devtoolsQuitHoldNotice`),
- * which every window's state passes through with its own hold – a window with none leaves
- * another window's panel standing.
- */
-export class DevtoolsQuitHoldNotice {
-  /** The toolbox the chord is down in, from its key down line to its key up line. */
-  private keyboard: DevtoolsToolbox | null = null
-  /** The toolbox a panel stands in, the window whose hold it shows and that hold. */
-  private standing: { toolbox: DevtoolsToolbox; window: object; startedAt: number } | null = null
-
-  constructor(
-    private readonly script: (panel: QuitHoldPanel | null) => string = devtoolsQuitHoldPanelScript
-  ) {}
-
-  /** The relay's report, ahead of the key table: the chord went down in `toolbox`, or a key came up there. */
-  heard(toolbox: DevtoolsToolbox, key: KeyEventInput): void {
-    if (key.type === 'keyDown') this.keyboard = toolbox
-    else if (this.keyboard === toolbox) this.keyboard = null
-  }
-
-  /**
-   * True while the chord is down in a detached toolbox that still stands: the notice is the
-   * toolbox's to draw, and the page's own panel yields.
-   */
-  inToolbox(): boolean {
-    const toolbox = this.keyboard
-    return toolbox !== null && !toolbox.frontend.isDestroyed() && toolbox.detached()
-  }
-
-  /**
-   * `window`'s hold as its state stream carries it: the panel drawn in the keyboard's detached
-   * toolbox when that toolbox is the window's, a change of hold replacing it, a repeat of the
-   * same hold (its `startedAt`) running nothing; null takes the window's panel down. Another
-   * window's state, hold or none, leaves the panel standing.
-   */
-  mirror(window: object, panel: QuitHoldPanel | null): void {
-    if (panel) {
-      const toolbox = this.keyboard
-      if (!toolbox || !this.inToolbox() || toolbox.window() !== window) return
-      const standing = this.standing
-      if (standing?.toolbox === toolbox && standing.startedAt === panel.startedAt) return
-      if (standing && standing.toolbox !== toolbox) this.run(standing.toolbox, null)
-      this.standing = { toolbox, window, startedAt: panel.startedAt }
-      this.run(toolbox, panel)
-      return
-    }
-    const standing = this.standing
-    if (!standing || standing.window !== window) return
-    this.standing = null
-    this.run(standing.toolbox, null)
-  }
-
-  private run(toolbox: DevtoolsToolbox, panel: QuitHoldPanel | null): void {
-    const { frontend } = toolbox
-    if (frontend.isDestroyed()) return
-    frontend.executeJavaScript(this.script(panel), true).catch(() => undefined)
-  }
-}
-
-/** The one notice of the process: one keyboard, one chord down at a time. */
-export const devtoolsQuitHoldNotice = new DevtoolsQuitHoldNotice()
 
 const relayed = new WeakSet<object>()
 
@@ -248,8 +163,8 @@ const relayed = new WeakSet<object>()
  * The relay on one toolbox: its console watched for the keys the script says, the script run
  * with the chord as bound at this moment. Once per frontend; `onKey` gets each key in the key
  * table's shape, for the window the toolbox belongs to. With `toolbox` named, each key is
- * reported to the held-key notice first (`DevtoolsQuitHoldNotice.heard`), so a hold the key
- * table arms from it knows where the keyboard is.
+ * reported to the held-key notice first (`DevtoolsKeyWitness.heard`), so a hold the key table
+ * arms from it knows where the keyboard is.
  *
  * Only the frontend document's own frame is heard (the first line's R1 on #486): the console
  * event carries every frame's lines, and an extension's `devtools_page` – Zenium loads extensions
@@ -263,7 +178,7 @@ export function relayDevtoolsQuitChord(
   frontend: DevtoolsFrontendLike,
   chord: () => KeyBinding | null,
   onKey: (key: KeyEventInput) => void,
-  toolbox?: { notice: DevtoolsQuitHoldNotice; window(): object | null; detached(): boolean }
+  toolbox?: { notice: DevtoolsKeyWitness; window(): object | null; detached(): boolean }
 ): void {
   if (relayed.has(frontend)) return
   relayed.add(frontend)
