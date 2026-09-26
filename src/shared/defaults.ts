@@ -274,6 +274,7 @@ export const DEFAULT_SETTINGS: Settings = {
   newTabPosition: 'end',
   restoreSession: true,
   warnOnCloseWindow: true,
+  warnBeforeQuitting: true,
   confirmCloseAll: true,
   crashRestore: 'ask',
   askWhereToSave: false,

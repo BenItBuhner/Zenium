@@ -110,6 +110,7 @@ import { visibleToExtensions } from './extensionApi/model'
 import type { PermissionsApi } from './extensionApi/permissions'
 import type { ApiStore } from './extensionApi/store'
 import { ExtensionErrorConsole } from './extensionErrors'
+import { popupKey } from './extensionPopupKeys'
 import { extensionPageOpenHandler } from './extensionPopupOpen'
 import { liveWebContents } from './popupContents'
 import type { SessionManager } from './sessions'
@@ -1545,11 +1546,15 @@ export class ExtensionService implements ExtensionHost {
         this.closePopup()
       }, 120)
     )
+    // Escape closes the popup; every other key goes through the window's key table as a key of
+    // the chrome (`extensionPopupKeys.ts`) – Zenium's shortcuts, extension commands, and the
+    // quit chord's hold, which a popup's ⌘Q would otherwise bypass on its way to the menu bar.
     wc.on('before-input-event', (event, input) => {
-      if (input.type === 'keyDown' && input.key === 'Escape') {
-        event.preventDefault()
-        this.closePopup('escape')
-      }
+      const consumed = popupKey(input, {
+        close: () => this.closePopup('escape'),
+        handle: (key) => win.alive && this.browser.keys.handle(key, null, win)
+      })
+      if (consumed) event.preventDefault()
     })
     // Chrome gives the popup's `window.open` a real page, so the call's return value is a
     // live window (Secure Shell opens an empty one and sets its location to its connection

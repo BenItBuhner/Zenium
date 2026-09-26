@@ -89,8 +89,9 @@ class Share(private val host: Host, private val io: Executor) {
     /**
      * A link (or plain text). `EXTRA_TITLE` and a `ClipData` thumbnail are what the sharesheet
      * shows as the preview on Android 10+; the favicon is written to the cache so the sheet can
-     * read it through the FileProvider. Below Android 14 the browser's own share (not a page's
-     * awaited one) goes to the panel instead, as a link's or a selection's ([panelStandsIn]).
+     * read it through the FileProvider. Below Android 14 the share goes to the panel instead, as a
+     * link's or a selection's ([panelStandsIn]) – a page's awaited one too, the panel then holding
+     * the page's promise until it is answered.
      */
     private fun shareText(title: String?, text: String?, body: String, url: String?, favicon: String?, tabId: String?, awaitOutcome: Boolean, reply: (Any?) -> Unit) {
         io.execute {
@@ -108,9 +109,9 @@ class Share(private val host: Host, private val io: Executor) {
                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     }
                 }
-                if (panelStandsIn(awaitOutcome)) {
+                if (panelStandsIn()) {
                     val kind = if (text == null) PANEL_LINK else PANEL_TEXT
-                    openPanel(send, ShareHistory.TYPE_TEXT, panelPreview(kind, title, url, text, favicon, null), url, tabId, reply)
+                    openPanel(send, ShareHistory.TYPE_TEXT, panelPreview(kind, title, url, text, favicon, null, awaitOutcome), url, tabId, awaitOutcome, reply)
                 } else {
                     launchChooser(send, url, tabId, reply, awaitOutcome)
                 }
@@ -212,7 +213,7 @@ class Share(private val host: Host, private val io: Executor) {
         val userAgent = tabId?.let { host.tabs.get(it) }?.settings?.userAgentString
         io.execute {
             val file = runCatching { cacheImage(imageUrl, "image", userAgent) }.getOrNull()
-            val preview = if (file != null && panelStandsIn(false)) runCatching { previewDataUrl(file) }.getOrNull() else null
+            val preview = if (file != null && panelStandsIn()) runCatching { previewDataUrl(file) }.getOrNull() else null
             main.post {
                 if (file == null) {
                     reply(Host.Rejection("the image could not be downloaded"))
@@ -226,7 +227,7 @@ class Share(private val host: Host, private val io: Executor) {
                     clipData = ClipData.newUri(activity.contentResolver, title ?: "Image", file)
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
-                if (panelStandsIn(false)) openPanel(send, ShareHistory.TYPE_IMAGE, panelPreview(PANEL_IMAGE, title, null, null, null, preview), null, tabId, reply)
+                if (panelStandsIn()) openPanel(send, ShareHistory.TYPE_IMAGE, panelPreview(PANEL_IMAGE, title, null, null, null, preview, false), null, tabId, false, reply)
                 else launchChooser(send, null, tabId, reply)
             }
         }
@@ -360,18 +361,24 @@ class Share(private val host: Host, private val io: Executor) {
      * in the chrome, as Chrome 152's sharing hub stands in for the system sheet there
      * (`ShareDelegateImpl.isSharingHubEnabled`: not a custom tab, below 14): the share's preview,
      * the apps the user shares to, Zenium's own chips, and More for the system sheet. A page's
-     * awaited share (`navigator.share`) keeps the system sheet, whose closing settles the page's
-     * promise; so do a page's files. Android 14 and later keep the system sheet as it is.
+     * awaited share (`navigator.share`) takes the same fork, as it does in Chrome (a Web Share
+     * goes through `ShareDelegateImpl.share` like the menu's): the panel then holds the page's
+     * promise until it is answered ([Panel.awaited]). A page's files keep the system sheet, as
+     * Chrome's do. Android 14 and later keep the system sheet as it is.
      */
-    private fun panelStandsIn(awaitOutcome: Boolean): Boolean =
-        !awaitOutcome && Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+    private fun panelStandsIn(): Boolean = panelStandsIn(Build.VERSION.SDK_INT, files = false)
 
     /**
      * A share the panel is showing: its intent, kept for the chrome's answer, and the `app.share`
-     * call still waiting on it – answered once the chrome has the request, or [PANEL_CANCELLED]
-     * when a fresh share supersedes it first. Answered once; later answers are nothing.
+     * call still waiting on it. The browser's own share is answered once the chrome has the
+     * request, or [PANEL_CANCELLED] when a fresh share supersedes it first. A page's [awaited]
+     * share is answered as Chrome answers a Web Share's promise from its hub
+     * (`ShareParams.TargetChosenCallback`): [SHARE_SHARED] once an app has the share, once
+     * one of the browser's own chips ran (Chrome's `callTargetChosenCallback()` on a first-party
+     * tap), or as the system sheet ends after More; [SHARE_ABORTED] on a dismissal, an app that
+     * could not be started, or a fresh share superseding it. Answered once; later answers are nothing.
      */
-    private class Panel(val send: Intent, val type: String, val url: String?, val tabId: String?, val private: Boolean, reply: (Any?) -> Unit) {
+    private class Panel(val send: Intent, val type: String, val url: String?, val tabId: String?, val private: Boolean, val awaited: Boolean, reply: (Any?) -> Unit) {
         private var pending: ((Any?) -> Unit)? = reply
 
         fun answer(result: Any?) {
@@ -379,6 +386,18 @@ class Share(private val host: Host, private val io: Executor) {
             pending = null
             reply(result)
         }
+
+        /**
+         * The chrome's action on the panel, as the `app.share` call hears it: a page's awaited
+         * share gets [awaitedPanelAnswer]'s word (none for More, whose word is the system sheet's);
+         * the browser's own was answered at the event and hears nothing more.
+         */
+        fun settle(kind: String, started: Boolean = true) {
+            if (awaited) awaitedPanelAnswer(kind, started)?.let { answer(it) } else answer(null)
+        }
+
+        /** The answer when the panel goes without a share: nothing for the browser's own, `aborted` for a page's. */
+        fun release() = settle("dismiss")
     }
 
     /** One app of the panel's row. */
@@ -414,23 +433,30 @@ class Share(private val host: Host, private val io: Executor) {
     private val history by lazy { ShareHistory(PrefsStore(activity.getSharedPreferences(PANEL_PREFS, Context.MODE_PRIVATE))) }
     private val icons = IconCache()
 
-    /** The preview the panel draws: what is shared, as the chrome shows it at the sheet's head. */
-    private fun panelPreview(kind: String, title: String?, url: String?, text: String?, favicon: String?, image: String?): JSONObject =
-        json("kind" to kind, "title" to title, "url" to url, "text" to text, "favicon" to favicon, "image" to image)
+    /**
+     * The preview the panel draws: what is shared, as the chrome shows it at the sheet's head,
+     * and where the share came from – the browser's menu (`menu`) or a page's `navigator.share`
+     * (`page`), which decides the chrome's chips (a page's share is not the page: no Long
+     * screenshot, no Print).
+     */
+    private fun panelPreview(kind: String, title: String?, url: String?, text: String?, favicon: String?, image: String?, fromPage: Boolean): JSONObject =
+        json("kind" to kind, "title" to title, "url" to url, "text" to text, "favicon" to favicon, "image" to image, "source" to if (fromPage) PANEL_SOURCE_PAGE else PANEL_SOURCE_MENU)
 
     /**
      * Put the panel up for `send`: the intent is held under the panel's id, the apps for its type
      * are found and ranked off the main thread, and the chrome hears `share.panel` with the
      * preview, the tab, whether it is private (nothing is recorded then) and the row. The answer
-     * to `app.share` comes as the event is sent, as it does when the system sheet is up. A panel
+     * to `app.share` comes as the event is sent, as it does when the system sheet is up – unless
+     * the share is a page's `awaited` one, whose answer is the panel's outcome ([Panel]). A panel
      * still up – or still gathering its row – is superseded: the chrome replaces its sheet under
-     * the new id, and its own call is answered [PANEL_CANCELLED] rather than left waiting.
+     * the new id, and its own call is answered [PANEL_CANCELLED] (a page's: `aborted`) rather
+     * than left waiting.
      */
-    private fun openPanel(send: Intent, type: String, preview: JSONObject, url: String?, tabId: String?, reply: (Any?) -> Unit) {
+    private fun openPanel(send: Intent, type: String, preview: JSONObject, url: String?, tabId: String?, awaited: Boolean, reply: (Any?) -> Unit) {
         val id = "share-panel-${++panelSeq}"
         val private = tabId?.let { host.tabs.get(it) }?.let { Profiles.isPrivate(it.containerId) } == true
-        panel?.second?.answer(PANEL_CANCELLED)
-        val entry = Panel(send, type, url, tabId, private, reply)
+        panel?.second?.let { if (it.awaited) it.answer(SHARE_ABORTED) else it.answer(PANEL_CANCELLED) }
+        val entry = Panel(send, type, url, tabId, private, awaited, reply)
         panel = id to entry
         io.execute {
             val targets = runCatching { panelTargets(send.type, type) }.getOrElse { emptyList() }
@@ -440,7 +466,7 @@ class Share(private val host: Host, private val io: Executor) {
                 for (target in targets) row.put(json("component" to target.component, "label" to target.label, "icon" to target.icon))
                 val payload = JSONObject(preview.toString()).put("id", id).put("tabId", tabId).put("private", private).put("targets", row)
                 host.chrome.hostEvent("share.panel", payload)
-                entry.answer(null)
+                if (!awaited) entry.answer(null)
             }
         }
     }
@@ -485,8 +511,11 @@ class Share(private val host: Host, private val io: Executor) {
      * `FLAG_ACTIVITY_FORWARD_RESULT | FLAG_ACTIVITY_PREVIOUS_IS_TOP`), and the choice is recorded
      * unless the tab was private (`ShareHistory.record` writes nothing for one); More gets the
      * system sheet; QR the code dialog; Copy image the image on the clipboard; a dismissal
-     * releases the intent. The chrome's own chips (Copy link, Long screenshot, Print) run in the
-     * chrome and end here as a dismissal. What the user is told goes through the chrome's toast.
+     * releases the intent. The chrome's own chips (Copy link, Copy text, Long screenshot, Print)
+     * run in the chrome and end here as `chip`. A page's awaited share is answered by the action
+     * ([Panel]): an app started, a chip, QR or Copy image → `shared`; More → the system sheet's
+     * own outcome; a dismissal or an app that would not start → `aborted`. What the user is told
+     * goes through the chrome's toast.
      */
     fun onPanelAction(args: JSONObject, reply: (Any?) -> Unit) {
         val id = args.str("id")
@@ -502,6 +531,7 @@ class Share(private val host: Host, private val io: Executor) {
                 val flat = args.str("component")
                 val component = ComponentName.unflattenFromString(flat)
                 if (component == null) {
+                    entry.settle("target", started = false)
                     reply(Host.Rejection("no such app"))
                     return
                 }
@@ -510,18 +540,34 @@ class Share(private val host: Host, private val io: Executor) {
                 try {
                     activity.startActivity(direct)
                     io.execute { history.record(entry.type, flat, entry.private) }
+                    entry.settle("target")
                 } catch (e: ActivityNotFoundException) {
                     toast("That app is no longer installed")
                     io.execute { history.forget(flat) }
+                    entry.settle("target", started = false)
                 } catch (e: SecurityException) {
                     toast("That app could not be opened")
+                    entry.settle("target", started = false)
                 }
             }
             "more" -> launchChooser(entry.send, entry.url, entry.tabId, { result ->
-                if (result is Host.Rejection) toast(result.message)
-            })
-            "qr" -> entry.url?.let { showQrCode(it) }
-            "copyImage" -> copyImage(entry.send)
+                if (result is Host.Rejection) {
+                    toast(result.message)
+                    entry.release()
+                } else {
+                    entry.answer(if (entry.awaited) result else null)
+                }
+            }, awaitOutcome = entry.awaited)
+            "qr" -> {
+                entry.url?.let { showQrCode(it) }
+                entry.settle("qr")
+            }
+            "copyImage" -> {
+                copyImage(entry.send)
+                entry.settle("copyImage")
+            }
+            "chip" -> entry.settle("chip")
+            else -> entry.release()
         }
         reply(null)
     }
@@ -767,6 +813,9 @@ class Share(private val host: Host, private val io: Executor) {
         const val PANEL_LINK = "link"
         const val PANEL_TEXT = "text"
         const val PANEL_IMAGE = "image"
+        /** Where the panel's share came from (`SharePanelRequest.source`): the browser's menu, or a page's `navigator.share`. */
+        const val PANEL_SOURCE_MENU = "menu"
+        const val PANEL_SOURCE_PAGE = "page"
         /**
          * What a superseded panel's `app.share` is answered: the core awaits a share of its own for
          * its failure alone (`Browser.share`), so the word is the bridge's record, not a rejection.
@@ -788,6 +837,29 @@ class Share(private val host: Host, private val io: Executor) {
         /** The sheet's way out before the row's Long screenshot is relayed: its stitch copies the page off the screen. */
         private const val SCREENSHOT_DELAY_MS = 450L
         private const val FETCH_TIMEOUT_MS = 10_000
+
+        /**
+         * Whether Zenium's own share panel stands in for the system sheet: below Android 14 (where
+         * the sheet has no row for the sharing app's actions), for a link, text or an image – a
+         * page's awaited `navigator.share` included, as Chrome's hub takes one – but never for a
+         * page's files, which Chrome too hands to the system sheet.
+         */
+        fun panelStandsIn(sdkInt: Int, files: Boolean): Boolean = !files && sdkInt < Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+
+        /**
+         * What a page's awaited share hears for the panel's answer (`share.panelAction`), as
+         * Chrome's hub answers a Web Share's `TargetChosenCallback`: [SHARE_SHARED] when an app
+         * took the share (`started`), when one of the browser's own chips ran (a first-party
+         * tap calls `callTargetChosenCallback()` in Chrome), for QR and Copy image; [SHARE_ABORTED]
+         * for a dismissal or an app that would not start; nothing for More – the system sheet
+         * it opens answers for itself ([Outcome]).
+         */
+        fun awaitedPanelAnswer(kind: String, started: Boolean = true): String? = when (kind) {
+            "target" -> if (started) SHARE_SHARED else SHARE_ABORTED
+            "chip", "qr", "copyImage" -> SHARE_SHARED
+            "more" -> null
+            else -> SHARE_ABORTED
+        }
 
         /** The sheet's type for a set of files: their one type, the group's wildcard (`image` slash star) for pictures of several kinds, else anything. */
         fun commonMimeType(types: List<String>): String {

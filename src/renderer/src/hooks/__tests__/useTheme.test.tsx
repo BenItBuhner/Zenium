@@ -23,8 +23,10 @@ import { PRIVATE_ACCENT, PRIVATE_ACCENT_RGB } from '@shared/newTabPageScript'
  * theme in one blend over 240 ms on one value, through intermediate colours, and flips the
  * polarity (`data-theme`, the returned `isDark`) at the midpoint, 120 ms in; leaving it runs
  * them back; a Space switch blends the same way. A chrome that mounts on a private tab is
- * painted private at once, with no run; under reduced motion the blend is a cut; the desktop
- * paints at once. The host hears the painted theme through `zen-theme-painted`.
+ * painted private at once, with no run; under reduced motion the blend runs all the same (§11.3
+ * removes springs and travel, not fades, and a colour blend moves no pixel – §11.6 as amended at
+ * #497's design gate); the desktop paints at once. The host hears the painted theme through
+ * `zen-theme-painted`.
  */
 
 Object.assign(window, { zen: { invoke: async () => null, on: () => () => undefined } })
@@ -354,19 +356,42 @@ describe('the theme blend (MOT-14, v2 §11.6)', () => {
     expect(frames.queue.size).toBe(0)
   })
 
-  it('under reduced motion the blend is a cut: the private theme at once, no frame, one word to the host', () => {
+  it('under reduced motion the blend stays: the same 240 ms run, the flip at its midpoint, no cut (§11.6 as amended)', () => {
+    // §11.3 removes springs and travel, not fades; a colour blend is a fade in colour and moves
+    // no pixel, where a whole window cutting from one Space's colour to another's – the scheme
+    // flipping with it – is a flash (#497's design gate). The root is not cut to the private
+    // theme: a frame is pending and the space theme still stands.
     media(true)
     render(stateOn('r1'))
     heard.length = 0
     rerender(stateOn('x1'))
-    expect(frames.queue.size).toBe(0)
+    expect(frames.queue.size).toBe(1)
+    expect(painted()).toBe(bgOf(SPACE_LIGHT))
+    expect(paintedDark()).toBe(false)
+    expect(heard).toEqual([])
+    // 48 ms in: a fifth of the way, the scheme still light – the very run full motion gets.
+    frames.run(3)
+    expect(painted()).toBe(between(SPACE_LIGHT, PRIVATE_RESOLVED, 48 / 240))
+    expect(paintedDark()).toBe(false)
+    // 240 ms: at rest on the private theme; the host heard the flip (on the first frame past
+    // the midpoint, 128 ms at 16 ms a frame) and then the rest, and nothing else.
+    frames.run(12)
+    expect(frames.now).toBe(240)
     expect(painted()).toBe(bgOf(PRIVATE_RESOLVED))
     expect(paintedDark()).toBe(true)
     expect(answer.returned).toBe(PRIVATE_RESOLVED)
-    expect(heard).toEqual([{ dark: true, background: rgbToHex(PRIVATE_RESOLVED.averageColor) }])
-    rerender(stateOn('r1'))
     expect(frames.queue.size).toBe(0)
+    expect(heard).toEqual([
+      { dark: true, background: between(SPACE_LIGHT, PRIVATE_RESOLVED, 128 / 240) },
+      { dark: true, background: rgbToHex(PRIVATE_RESOLVED.averageColor) }
+    ])
+    // And back the same way.
+    rerender(stateOn('r1'))
+    expect(frames.queue.size).toBe(1)
+    frames.run(15)
     expect(painted()).toBe(bgOf(SPACE_LIGHT))
+    expect(paintedDark()).toBe(false)
+    expect(frames.queue.size).toBe(0)
   })
 
   it("the desktop paints its theme at once, with no run (the blend is the phone's)", () => {

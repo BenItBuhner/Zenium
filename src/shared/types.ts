@@ -171,6 +171,13 @@ export interface HostCapabilities {
   /** The host has a system share sheet (`app.share`); menus offer Share items when true. */
   share: boolean
   /**
+   * The browser's own share panel stands in for the system sheet (Android below 14, SH-03): a
+   * share the menu starts comes back to the chrome as `share.panel`, so the menu's Share row
+   * holds its sheet for the panel to take over (§9.38's hand-off) instead of leaving first.
+   * False wherever the share sheet is the system's alone.
+   */
+  sharePanel: boolean
+  /**
    * The OS itself confirms copies with a clipboard chip (Android 13+); the chrome then stays
    * quiet instead of toasting "Link copied" a second time.
    */
@@ -612,6 +619,18 @@ export interface Tab {
    * without a hang monitor (Android's WebView) and on records older than the field.
    */
   unresponsive?: true
+  /**
+   * The hang monitor's own reading of the renderer, kept apart from the prompt's mark above
+   * (session-08's C4 on #486, the first line's R3): set with `unresponsive` when the host
+   * reports the page hung, and standing until the renderer answers again (`onResponsive`), a
+   * navigation commits, or the renderer goes – NOT cleared by the prompt's Wait, which takes the
+   * prompt down and nothing else: the page is as hung as it was until the host reports it again.
+   * Read where the chrome must know whether the page can paint what is posted to it: "Hold ⌘Q to
+   * quit" over a hung page is the chrome's own to draw (`lib/quitHoldRoute.ts`), and the page's
+   * view gives way to its picture for the hold. A session's own (not persisted); absent on hosts
+   * without a hang monitor and on records older than the field.
+   */
+  hung?: true
   /**
    * The user typed into a form field of the current document (OS-37; Chrome's
    * `kHasFormInteraction` protection): the sleep policies leave the page loaded, timer and
@@ -2769,6 +2788,14 @@ export interface Settings {
   /** Ask before a window with more than one tab closes (Firefox's warning; Edge has the setting). */
   warnOnCloseWindow: boolean
   /**
+   * Chrome's "Warn Before Quitting (⌘Q)" (session-08), the macOS menu bar's checkbox: the quit
+   * chord asks to be held for a moment – "Hold ⌘Q to Quit" over the front window – and quits
+   * only once it was (`QuitHoldService`); off, the chord quits at once. On by default, as
+   * Chrome's is. Read by the macOS host alone (the menu bar is its; other hosts' quit chords
+   * never hold); absent in profiles from before it existed (read as true).
+   */
+  warnBeforeQuitting: boolean
+  /**
    * Phone: the tab overview's "Close all tabs" asks first ("Close N tabs?"); its "Don't ask
    * again" turns this off. Absent in profiles from before it existed (read as true).
    */
@@ -2937,6 +2964,14 @@ export interface SharePanelRequest {
   tabId: string | null
   /** A private tab's share: the host records nothing of where it went. */
   private: boolean
+  /**
+   * Where the share came from: the browser's own menu (`menu`), or a page's `navigator.share`
+   * (`page`, Android below 14 – Chrome's hub takes a Web Share the same way). A page's share is
+   * of what the page handed over, not of the page: its chips follow the payload (Copy text for
+   * text, Copy link and QR for a link), never Long screenshot or Print. The host holds the
+   * page's promise until the panel is answered.
+   */
+  source: 'menu' | 'page'
   targets: SharePanelTarget[]
 }
 
@@ -2945,11 +2980,15 @@ export interface SharePanelAction {
   id: string
   /**
    * `target`: send to `component`; `more`: the system sheet; `qr`: the link as a QR code;
-   * `copyImage`: the image onto the clipboard; `dismiss`: nothing more – the intent is released
-   * (the chrome's own chips – Copy link, Long screenshot, Print – ran in the chrome and end so).
+   * `copyImage`: the image onto the clipboard; `chip`: one of the chrome's own chips (Copy link,
+   * Copy text, Long screenshot, Print) ran in the chrome – the share is done (a page's promise
+   * resolves, as Chrome's does on a first-party tap); `dismiss`: nothing more – the intent is
+   * released (a page's promise rejects).
    */
-  kind: 'target' | 'more' | 'qr' | 'copyImage' | 'dismiss'
+  kind: 'target' | 'more' | 'qr' | 'copyImage' | 'chip' | 'dismiss'
   component?: string
+  /** The chip that ran, for `chip`. */
+  chip?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -3441,6 +3480,18 @@ export type OverlayKind =
   /** The print preview (`zen://print`) on a host without page tabs: a tab-modal dialog over the page. */
   | 'print'
 
+/**
+ * A quit chord held down (`QuitHoldService`): when the hold began (the host's clock, epoch ms),
+ * how long it must last before the app quits, and the chord as the platform spells it ("⌘Q";
+ * the key cap in "Hold ⌘Q to quit"). The panel draws the hold's progress from the first two;
+ * the hold ends – the state goes null – when a key comes up or the time is reached.
+ */
+export interface QuitHoldState {
+  startedAt: number
+  durationMs: number
+  chord: string
+}
+
 export interface WindowState {
   id: string
   kind: WindowKind
@@ -3454,6 +3505,12 @@ export interface WindowState {
   htmlFullscreenTabId: string | null
   /** A window-modal question waiting for an answer ("Close N tabs?"), if any. */
   prompt: WindowPrompt | null
+  /**
+   * The quit chord being held in this window (session-08, the macOS hold): the chrome shows
+   * "Hold ⌘Q to Quit" with the hold's progress; null while no hold runs. Desktop hosts alone
+   * ever set it (the phone has no quit chord).
+   */
+  quitHold: QuitHoldState | null
   /** The web app a standalone window shows (`chrome` `app`); null for browser windows. */
   app: AppWindowInfo | null
   /**

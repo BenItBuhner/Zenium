@@ -49,6 +49,7 @@ import { SecurityPromptService } from './security'
 import { DeviceChooserService } from './deviceChooser'
 import { PageDialogService } from './pageDialogs'
 import { WindowPrompts } from './windowPrompts'
+import { QuitHoldService } from './quitHold'
 import { TabManager, bookmarkFaviconOf, isTabSection } from './tabs'
 import { TabDragController, parseDropKey } from './tabDrag'
 import { surfaceMounted, ZenWindow } from './window'
@@ -262,6 +263,8 @@ export class Browser {
   readonly pageDialogs: PageDialogService
   /** Window-modal questions ("Close N tabs?", "Quit Zenium?"), shown by a window's chrome. */
   readonly windowPrompts: WindowPrompts
+  /** The macOS hold-to-quit ("Hold ⌘Q to Quit", session-08), shown by a window's chrome. */
+  readonly quitHold: QuitHoldService
   readonly tabs: TabManager
   /** A sidebar tab drag in flight, followed across windows (drops into them, tear-offs). */
   readonly tabDrag: TabDragController
@@ -456,6 +459,7 @@ export class Browser {
     this.devices = new DeviceChooserService(this)
     this.pageDialogs = new PageDialogService(this)
     this.windowPrompts = new WindowPrompts(this)
+    this.quitHold = new QuitHoldService(this)
     this.pageControls = new PageControls(this)
     this.fullscreen = new FullscreenService(this)
     this.pages = new PageService(this)
@@ -1057,6 +1061,7 @@ export class Browser {
 
   onWindowClosing(win: ZenWindow): void {
     this.windowPrompts.cancelForWindow(win)
+    this.quitHold.onWindowClosing(win)
     this.tabs.releaseWindow(win, this.quitting)
   }
 
@@ -1167,17 +1172,27 @@ export class Browser {
    * Quit as the user asked (Ctrl+Q, the app menu, the Dock): the warning about the open tabs
    * (the window setting applies – closing the last window is quitting), then every objecting
    * page's "Leave site?". The app quits once everything agreed. Hosts route their own quit
-   * requests here and quit for real only once `quitting` is set (`shutdown`).
+   * requests here and quit for real only once `quitting` is set (`shutdown`). A quit the user
+   * confirmed by holding the chord (`QuitHoldService`, `held`) skips the tab-count question –
+   * the hold was the confirmation (design language v2 §10.5) – and keeps the rest.
+   *
+   * A request that is not the hold's while the chord's press is in progress – a hold running,
+   * or one that fired whose keys are still down – is refused: the chord that arms the hold is
+   * left unconsumed so its release can be seen (`KeyboardHandler`), and on macOS Chromium hands
+   * an unconsumed ⌘Q and each of its repeats on to the menu bar, whose Quit role asks to quit at
+   * once – that request is the chord's own, and the hold decides it (a fired hold already has
+   * its own request in flight; a repeat's must not ask the questions again once it is refused).
    */
-  async requestQuit(from?: ZenWindow): Promise<boolean> {
+  async requestQuit(from?: ZenWindow, { held = false }: { held?: boolean } = {}): Promise<boolean> {
     if (this.quitting) return true
+    if (!held && this.quitHold.engaged) return false
     if (!this.quitCheck) {
       // Clear browsing data on exit once the quit is agreed, with a budget: what does not
       // finish in time is owed to the next launch (`SiteDataService.runOnExit` writes the
       // marker first). Part of the check, so a second request during the run waits for it
       // rather than asking again; ahead of `shutdown`, so what the run clears from the core's
       // own stores goes into the profile's final write.
-      this.quitCheck = this.confirmQuit(from)
+      this.quitCheck = this.confirmQuit(from, held)
         .then(async (agreed) => {
           if (agreed) await this.siteData.runOnExit()
           return agreed
@@ -1216,12 +1231,12 @@ export class Browser {
     })
   }
 
-  private async confirmQuit(from?: ZenWindow): Promise<boolean> {
+  private async confirmQuit(from?: ZenWindow, held = false): Promise<boolean> {
     const windows = this.allWindows()
     if (windows.length === 0) return true
     const win = from?.alive ? from : this.focusedWindow()
     const count = this.tabs.openTabCount()
-    const warnTabs = this.state.settings.warnOnCloseWindow && count > 1
+    const warnTabs = !held && this.state.settings.warnOnCloseWindow && count > 1
     // The downloads a quit ends are asked about in the same prompt as the tabs (downloads-35).
     const downloads = this.downloadsEndedByQuit()
     if (warnTabs || downloads) {
@@ -1933,14 +1948,15 @@ export class Browser {
   }
 
   /**
-   * The macOS menu bar's "Warn Before Quitting (⌘Q)" (Chrome's checkbox): the one setting behind
-   * Zenium's quit warning – `requestQuit` asks "Quit Zenium?" while it is set, and a window with
-   * several tabs asks before it closes on the same setting. Set with no window needed: the menu
-   * bar stands with every window closed.
+   * The macOS menu bar's "Warn Before Quitting (⌘Q)" (Chrome's checkbox, session-08): while it
+   * is set the quit chord asks to be held – "Hold ⌘Q to Quit" – and quits once it was
+   * (`QuitHoldService`); off, the chord quits at once. Its own setting, apart from the tab-count
+   * warning `warnOnCloseWindow` governs (a window with several tabs closing; a quit from the menu
+   * or the Dock). Set with no window needed: the menu bar stands with every window closed.
    */
   setWarnBeforeQuitting(on: boolean): void {
-    if (this.state.settings.warnOnCloseWindow === on) return
-    this.state.settings.warnOnCloseWindow = on
+    if (this.state.settings.warnBeforeQuitting === on) return
+    this.state.settings.warnBeforeQuitting = on
     this.state.commit()
   }
 
