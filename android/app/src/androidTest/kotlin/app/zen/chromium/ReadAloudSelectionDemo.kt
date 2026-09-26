@@ -135,6 +135,7 @@ class ReadAloudSelectionDemo : DemoHarness("read-aloud-selection-demo-state.json
         fromSentence()
         dark()
         fromWord("C", "dark")
+        light()
         finding("\nend: session=${readAloud()}${if (failures == 0) "" else "; $failures FAIL"}")
     }
 
@@ -281,6 +282,15 @@ class ReadAloudSelectionDemo : DemoHarness("read-aloud-selection-demo-state.json
         ensureForeground()
         awaitLoaded("$ORIGIN/")
         shot("C-page-dark")
+    }
+
+    /**
+     * The device's scheme as it was found: the nightly sweep runs its drivers back to back on one
+     * boot, and its reset between two puts the app's data back but not the device's night mode.
+     */
+    private fun light() {
+        shell("cmd uimode night no")
+        finding("  the device's night mode put back off for the next driver")
     }
 
     // --- the session ---------------------------------------------------------------------------------
