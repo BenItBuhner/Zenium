@@ -3166,6 +3166,25 @@ abstract class DemoHarness(
          * read at once.
          */
         const val TREE_WINDOW_MS = 15_000L
+
+        /**
+         * The About section's BROWSER-ROLE row (settings/sections.tsx, Android only), a harness
+         * contract like the cards' names: an action row reading [DEFAULT_BROWSER_OFFER] while the
+         * role is open ("Open links from other apps in Zenium." under it; the first run's Skip
+         * leaves it so), an info row reading [DEFAULT_BROWSER_HELD] once Zenium holds it ("Zenium
+         * is your default browser."). [OPEN_BY_DEFAULT_ROW] is the row under it on Android 12+
+         * (DEF-06), the system's link-handling screen. A driver reads the role row through
+         * [defaultBrowserRow] – either state – and names the state it found; FirstRunDemo read
+         * "Default browser" / "Set as default" (the labels before the About page took Chrome's
+         * words) and failed its step 6 on every run of W6-HF1's (run 36200834282).
+         */
+        const val DEFAULT_BROWSER_OFFER = "Set as default browser"
+        const val DEFAULT_BROWSER_HELD = "Default browser"
+        const val OPEN_BY_DEFAULT_ROW = "Open by default"
+
+        /** The About section's browser-role row in either state: [DEFAULT_BROWSER_OFFER] or [DEFAULT_BROWSER_HELD]. */
+        fun defaultBrowserRow(): (String) -> Boolean = { it == DEFAULT_BROWSER_OFFER || it == DEFAULT_BROWSER_HELD }
+
         /** Settings section ids to the labels of their landing rows (`internalPages.ts`), for [openSettingsSection]. */
         val SETTINGS_SECTIONS: Map<String, String> = mapOf(
             LOOK_SECTION to LOOK_AND_FEEL_LABEL,

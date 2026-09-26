@@ -16,8 +16,9 @@ import java.io.File
  * the app started again for two more sessions until the promo sheet is due (the third session –
  * the rules in `shared/defaultBrowser.ts` run unchanged, nothing is lowered), "Not now", the
  * banner (#72's top banner carrying the default-browser message) in the session after, swiped
- * away, and Settings > About with the row still offering the role. Only asserts that it could
- * run; what the chrome does is what the recording shows, with one PASS or FAIL per surface in
+ * away, and Settings > About with the row still offering the role (the row's labels are the
+ * shared names in [DemoHarness]: `DEFAULT_BROWSER_OFFER`, `OPEN_BY_DEFAULT_ROW`). Only asserts
+ * that it could run; what the chrome does is what the recording shows, with one PASS or FAIL per surface in
  * `firstrun-findings.txt` next to the screenshots. The role dialog itself is on record from the
  * functional half's run (#46).
  *
@@ -123,12 +124,17 @@ class FirstRunDemo : DemoHarness(stateAsset = null, shotPrefix = "firstrun", han
             finding("banner gone after the swipe ${verdict(findByLabel(BANNER_TITLE) == null)}")
         }
 
-        // 6. Settings > About: the row still offers the role.
+        // 6. Settings > About: the row still offers the role – the shared names for the row's two
+        // states (DemoHarness.defaultBrowserRow), the offering one expected after the tour's Skip.
         openAbout(f)
         shot("11-settings-set-as-default")
+        val offers = findByLabel(DEFAULT_BROWSER_OFFER) != null
+        val held = findByLabel(DEFAULT_BROWSER_HELD) != null
+        val reads = if (offers) DEFAULT_BROWSER_OFFER else if (held) DEFAULT_BROWSER_HELD else "no browser-role row"
         finding(
-            "Settings > About row: Default browser ${verdict(findByLabel("Default browser") != null)}, " +
-                "Set as default ${verdict(findByLabel("Set as default") != null)}"
+            "Settings > About row: the browser-role row ${verdict(offers || held)} (reads '$reads'), " +
+                "still offers the role ('$DEFAULT_BROWSER_OFFER') ${verdict(offers)}, " +
+                "Open by default beside it ${verdict(findByLabel(OPEN_BY_DEFAULT_ROW) != null)}"
         )
         SystemClock.sleep(1_500)
     }
@@ -177,7 +183,7 @@ class FirstRunDemo : DemoHarness(stateAsset = null, shotPrefix = "firstrun", han
             Log.w(tag, "no About section")
             return
         }
-        if (waitFor("Default browser", 5_000) == null) Log.w(tag, "no Default browser row")
+        if (waitFor(defaultBrowserRow(), 5_000) == null) Log.w(tag, "no browser-role row ($DEFAULT_BROWSER_OFFER / $DEFAULT_BROWSER_HELD)")
         SystemClock.sleep(1_500)
     }
 
