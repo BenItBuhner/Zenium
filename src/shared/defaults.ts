@@ -206,7 +206,14 @@ export function emptyResourceSnapshot(): ResourceSnapshot {
     memory: { ...gauge },
     cpu: { ...gauge },
     gpu: { ...gauge },
-    system: { totalMemoryMb: 0, cpuCount: 0, onBattery: false, idle: false },
+    system: {
+      totalMemoryMb: 0,
+      cpuCount: 0,
+      onBattery: false,
+      batteryPercent: null,
+      energySaver: false,
+      idle: false
+    },
     tabs: [],
     overheadMb: 0,
     loadedTabs: 0,
@@ -261,6 +268,7 @@ export const DEFAULT_SETTINGS: Settings = {
   unloadEnabled: true,
   unloadTimeoutMinutes: 20,
   unloadExcludedDomains: [],
+  energySaver: 'on-battery',
   inactiveTabsArchiveDays: 21,
   inactiveTabsAutoClose: true,
   mutedHosts: [],

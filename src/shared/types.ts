@@ -2506,6 +2506,18 @@ export type GlanceTrigger = 'alt' | 'ctrl' | 'shift'
 export type PinnedCloseBehavior =
   'reset-unload-switch' | 'reset-unload' | 'reset' | 'unload' | 'unload-switch' | 'switch' | 'close'
 export type ThirdPartyPinnedBehavior = 'new-tab' | 'glance' | 'same-tab'
+/**
+ * When Energy Saver is on (`Settings.energySaver`): Chrome's `BatterySaverModeState` less
+ * `kEnabled` (always on), which its page never offers – `kDisabled` → `off`,
+ * `kEnabledBelowThreshold` → `low-battery`, `kEnabledOnBattery` → `on-battery`.
+ */
+export type EnergySaverMode = 'off' | 'low-battery' | 'on-battery'
+/**
+ * Chrome's `BatterySaverModeManager::kLowBatteryThresholdPercent`: Energy Saver's
+ * `low-battery` mode turns on at this charge or lower (Chrome's row: "Turn on only when your
+ * battery is at 20% or lower").
+ */
+export const ENERGY_SAVER_LOW_BATTERY_PERCENT = 20
 export type ColorScheme = 'system' | 'light' | 'dark'
 export type SidebarSide = 'left' | 'right'
 /**
@@ -2872,6 +2884,19 @@ export interface Settings {
   unloadEnabled: boolean
   unloadTimeoutMinutes: number
   unloadExcludedDomains: string[]
+  /**
+   * Energy Saver (settings-26; Chrome's `performance_tuning.battery_saver_mode.state`, a
+   * local-state pref Chrome never syncs – device-local here too, `DEVICE_LOCAL_SETTINGS`):
+   * when the resource governor tightens its budgets by `resources.batteryFactor`. `on-battery`
+   * whenever the computer runs on its battery (Electron's `powerMonitor`); `low-battery` only
+   * once the battery is at `ENERGY_SAVER_LOW_BATTERY_PERCENT` or lower – Chrome's
+   * `kLowBatteryThresholdPercent`, 20 – where the host can read the level (Linux's sysfs,
+   * macOS's `pmset`; Windows exposes it to a native module alone, so there the mode waits and
+   * the row says so); `off` never. Chrome's default is the threshold; Zenium keeps its present
+   * behaviour – the budgets shrank on battery before the mode had a name – so `on-battery`.
+   * Absent in profiles from before it existed (read as `on-battery`).
+   */
+  energySaver: EnergySaverMode
   /**
    * Inactive tabs (TAB-20, SET-34; Chrome's archive): a tab nobody has looked at for this many
    * days leaves the grid for the Inactive tabs list, its page kept as a recently-closed entry
@@ -3606,6 +3631,18 @@ export interface ResourceSnapshot {
     totalMemoryMb: number
     cpuCount: number
     onBattery: boolean
+    /**
+     * The battery's charge, 0–100, where the host can read it (Linux's sysfs, macOS's `pmset`);
+     * null on a computer without a battery and on a host that cannot read the level (Windows
+     * without a native module) – Energy Saver's `low-battery` mode waits on it.
+     */
+    batteryPercent: number | null
+    /**
+     * Energy Saver is on now – `Settings.energySaver` met by the power state – and the budgets
+     * are tightened by `batteryFactor` (Chrome's `BatterySaverModeManager::IsBatterySaverActive`,
+     * what its toolbar leaf shows).
+     */
+    energySaver: boolean
     /** System idle long enough for the idle-freeze rule to apply. */
     idle: boolean
   }
