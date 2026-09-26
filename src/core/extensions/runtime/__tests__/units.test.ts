@@ -3,6 +3,9 @@ import { buildExtensionBoot } from '../boot'
 import { parseRuntimeManifest, type RuntimeManifest } from '../manifest'
 import type { RegisteredContentScript } from '../plan'
 import {
+  FOLD_ABOVE_UNITS,
+  FOLD_UNIT_CHARS,
+  foldFilesFor,
   injectsProgrammatically,
   mergeAlikeGroups,
   originRulesFor,
@@ -457,6 +460,102 @@ describe('planUnits', () => {
       ['isolated:https://docs.google.com', 'thin']
     ])
     expect(withTransport.units[0].groups).toEqual([])
+  })
+
+  /** Twelve hostname rule sets with a file each: what a uBO Lite fork registers, in small. */
+  const SITES = Array.from({ length: 12 }, (_, i) => `s${String(i).padStart(2, '0')}`)
+  const hostnameSets = (world?: 'MAIN'): Array<Record<string, unknown>> =>
+    SITES.map((s) => ({
+      matches: [`https://${s}.example/*`],
+      js: [`${s}.js`],
+      ...(world ? { world } : {})
+    }))
+  const sized = (chars: number, except: Record<string, number | null> = {}): Record<string, number> =>
+    Object.fromEntries(
+      SITES.flatMap((s) => {
+        const own = except[`${s}.js`]
+        return own === null ? [] : [[`${s}.js`, own ?? chars]]
+      })
+    )
+
+  it("folds a world's many hostname units by the files' sizes, smallest first under the cap – the groups keep their own patterns (compat round 21)", () => {
+    const manifest = manifestOf({ content_scripts: hostnameSets() })
+    const boot = buildExtensionBoot(ID, manifest, null, [], 'with')
+    const without = { ...env, isolatedWorlds: false }
+    // Without the sizes nothing folds: the runtime asks the host for these files first.
+    expect(planUnits(boot, manifest, without).units).toHaveLength(12)
+    expect(foldFilesFor(boot, manifest, without)).toEqual(SITES.map((s) => `${s}.js`))
+    // 100 K each: five to a bucket under the 512 K cap; equal sizes pack in key order.
+    const planned = planUnits(boot, manifest, { ...without, fileChars: sized(100_000) })
+    expect(planned.units.map((u) => [u.origins.length, u.groups.length, u.shape, u.isolation])).toEqual([
+      [5, 5, 'whole', 'with'],
+      [5, 5, 'whole', 'with'],
+      [2, 2, 'whole', 'with']
+    ])
+    const first = planned.units[0]
+    expect(first.key).toBe(
+      'isolated:https://s00.example https://s01.example https://s02.example https://s03.example https://s04.example'
+    )
+    expect(first.worldName).toBeNull()
+    // Each group still names its own pattern: the bootstrap runs it only where that matches.
+    expect(first.config.extension.groups.map((g) => g.matches)).toEqual(
+      SITES.slice(0, 5).map((s) => [`https://${s}.example/*`])
+    )
+    expect(first.groups.map((g) => g.js)).toEqual(SITES.slice(0, 5).map((s) => [`${s}.js`]))
+    expect(planned.units[2].origins).toEqual(['https://s10.example', 'https://s11.example'])
+    // The plan is stable: the same sizes make the same units.
+    expect(sameUnits(planned, planUnits(boot, manifest, { ...without, fileChars: sized(100_000) }))).toBe(true)
+    // Smallest first: the eleven 100 K files pack five, five and one, and the 300 K one joins
+    // the bucket with room rather than opening its own.
+    const uneven = planUnits(boot, manifest, {
+      ...without,
+      fileChars: sized(100_000, { 's00.js': 300_000 })
+    })
+    expect(uneven.units.map((u) => u.origins.length).sort()).toEqual([2, 5, 5])
+    expect(uneven.units.find((u) => u.origins.length === 2)?.origins).toEqual([
+      'https://s00.example',
+      'https://s11.example'
+    ])
+  })
+
+  it('leaves alone a unit over the cap, one the host could not size and a world under the count, and folds the main world only beside isolated worlds', () => {
+    const manifest = manifestOf({ content_scripts: hostnameSets() })
+    const boot = buildExtensionBoot(ID, manifest, null, [], 'with')
+    const without = { ...env, isolatedWorlds: false }
+    // tl;dv's shape (compat round 18): a unit over the cap alone is never folded; nor is one
+    // naming a file the host did not size.
+    const planned = planUnits(boot, manifest, {
+      ...without,
+      fileChars: sized(100_000, { 's00.js': FOLD_UNIT_CHARS + 1, 's01.js': null })
+    })
+    expect(planned.units.map((u) => [u.key.slice(0, 33), u.origins.length])).toEqual([
+      ['isolated:https://s00.example', 1],
+      ['isolated:https://s01.example', 1],
+      ['isolated:https://s02.example http', 5],
+      ['isolated:https://s07.example http', 5]
+    ])
+    // Up to the count nothing is weighed or asked for.
+    const few = manifestOf({ content_scripts: hostnameSets().slice(0, FOLD_ABOVE_UNITS) })
+    const fewBoot = buildExtensionBoot(ID, few, null, [], 'with')
+    expect(foldFilesFor(fewBoot, few, without)).toBeNull()
+    expect(planUnits(fewBoot, few, { ...without, fileChars: sized(100_000) }).units).toHaveLength(
+      FOLD_ABOVE_UNITS
+    )
+    // With isolated worlds the extension's world goes thin (no bootstrap to save) and only the
+    // main world's whole units fold.
+    const both = manifestOf({ content_scripts: [...hostnameSets(), ...hostnameSets('MAIN')] })
+    const bothBoot = buildExtensionBoot(ID, both, null, [], 'world')
+    expect(foldFilesFor(bothBoot, both, env)).toEqual(SITES.map((s) => `${s}.js`))
+    const worlds = planUnits(bothBoot, both, { ...env, fileChars: sized(100_000) })
+    expect(worlds.units.filter((u) => u.world === 'isolated').map((u) => u.shape)).toEqual([
+      'holder',
+      ...Array<string>(12).fill('thin')
+    ])
+    expect(worlds.units.filter((u) => u.world === 'main').map((u) => [u.shape, u.origins.length])).toEqual([
+      ['whole', 5],
+      ['whole', 5],
+      ['whole', 2]
+    ])
   })
 })
 

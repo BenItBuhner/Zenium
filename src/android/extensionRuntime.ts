@@ -82,7 +82,13 @@ import { stripJsonComments } from '@core/extensions/manifest'
 import { parseRuntimeManifest } from '@core/extensions/runtime/manifest'
 import { extensionUrl, type RegisteredContentScript } from '@core/extensions/runtime/plan'
 import { MessageRouter, type Endpoint } from '@core/extensions/runtime/router'
-import { planUnits, sameUnits, type ExtensionUnits } from '@core/extensions/runtime/units'
+import {
+  foldFilesFor,
+  planUnits,
+  sameUnits,
+  type ExtensionUnits,
+  type UnitEnvironment
+} from '@core/extensions/runtime/units'
 import {
   ExtensionApi,
   LANGUAGE_SAMPLE_CHARS,
@@ -1274,20 +1280,27 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         isolation,
         this.data.grants[id]?.permissions ?? []
       )
-    const plan = (isolatedWorlds: boolean): ExtensionUnits =>
-      planUnits(bootFor(isolatedWorlds ? 'world' : 'with'), ext.manifest, {
+    const plan = async (isolatedWorlds: boolean): Promise<ExtensionUnits> => {
+      const boot = bootFor(isolatedWorlds ? 'world' : 'with')
+      const unitEnv: UnitEnvironment = {
         token: env.token,
         uiLanguage: env.uiLanguage,
         isolatedWorlds,
         userScriptMessaging: this.data.userScriptMessaging[id] === true,
         ...(env.messageLimit ? { messageLimit: env.messageLimit } : {})
-      })
-    let units = plan(env.isolatedWorlds)
+      }
+      // A plan with many hostname units folds them by the files' sizes, which the host has
+      // (`units.ts`, `foldUnits`); the host's refusal leaves the plan unfolded, as before.
+      const files = foldFilesFor(boot, ext.manifest, unitEnv)
+      const fileChars = files ? await this.fileChars(ext, files) : null
+      return planUnits(boot, ext.manifest, fileChars ? { ...unitEnv, fileChars } : unitEnv)
+    }
+    let units = await plan(env.isolatedWorlds)
     if (env.isolatedWorlds && !this.worldsFit(id, units, env.worldSlots)) {
       console.warn(
         `[Zenium] extension ${id}: the tab's ${env.worldSlots} isolated worlds are taken; its content scripts run under the emulation proxy`
       )
-      units = plan(false)
+      units = await plan(false)
     }
     const access = accessKey(ext.record)
     if (sameUnits(ext.units, units) && ext.configuredAccess === access) return
@@ -1333,6 +1346,32 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     ext.units = units
     ext.configuredAccess = access
     ext.configureStats = stats
+  }
+
+  /**
+   * The sizes of the extension's files the planner's fold weighs (`ext.fileSizes`: `{ sizes:
+   * { path: bytes } }` for the files that are there), or null when the host cannot answer – the
+   * plan is then made without them and folds nothing.
+   */
+  private async fileChars(
+    ext: Attached,
+    files: string[]
+  ): Promise<Readonly<Record<string, number>> | null> {
+    try {
+      const answer = await this.bridge.call<{ sizes?: Record<string, number> }>('ext.fileSizes', {
+        id: ext.record.id,
+        path: ext.record.path,
+        files
+      })
+      return answer && typeof answer.sizes === 'object' && answer.sizes !== null
+        ? answer.sizes
+        : null
+    } catch (e) {
+      console.warn(
+        `[Zenium] extension ${ext.record.id}: the host did not size its ${files.length} content-script files (${e instanceof Error ? e.message : String(e)}); its units stay unfolded`
+      )
+      return null
+    }
   }
 
   /**

@@ -487,6 +487,7 @@ class Extensions(private val host: Host) {
                 )
             }
             "ext.open" -> open(args.str("id"), args.str("path"), reply)
+            "ext.fileSizes" -> fileSizes(args, reply)
             "ext.configure" -> configure(args, reply)
             "ext.detach" -> { detachExtension(args.str("id")); reply(null) }
             "ext.expect" -> {
@@ -635,6 +636,36 @@ class Extensions(private val host: Host) {
     }
 
     /**
+     * `ext.fileSizes`: `{ id, path, files: [extension-relative path] }` → `{ sizes: { path:
+     * bytes } }` for the files that are there, unread – what the core's planner folds a plan of
+     * many hostname units by (`units.ts`, `foldUnits`; `UnitCompiler` measures a unit the same
+     * way before reading it). File IO, so off the main thread.
+     */
+    private fun fileSizes(args: JSONObject, reply: (Any?) -> Unit) {
+        val id = args.str("id")
+        if (!VALID_ID.matches(id)) {
+            reply(Host.Rejection("'$id' is not an extension id"))
+            return
+        }
+        val dir = recordDir(args.str("path"))
+        if (dir == null) {
+            reply(Host.Rejection("The extension directory is not under the install root"))
+            return
+        }
+        val files = args.arr("files")
+        io.execute {
+            val sizes = JSONObject()
+            for (i in 0 until files.length()) {
+                val path = files.optString(i, "")
+                if (path.isEmpty()) continue
+                val length = fileIn(dir, path)?.takeIf { it.isFile }?.length() ?: continue
+                sizes.put(path, length)
+            }
+            main.post { reply(json("sizes" to sizes)) }
+        }
+    }
+
+    /**
      * `ext.configure { id, name, version, path, allowFileAccess, allowPrivate, units: [{ key,
      * origins, world, config, groups: [{ ext, index, js, isolation }], css: [{ ext, path }] }],
      * served: { webAccessible, backgroundHtml, backgroundUrl, page, late }, debug }` → `{ units:
@@ -662,6 +693,18 @@ class Extensions(private val host: Host) {
                 main.post { reply(Host.Rejection("The extension directory is not under the install root")) }
                 return@execute
             }
+            // The plan as it arrives, before a file is read: what the compile is about to do
+            // and the heap it does it on (compat round 21 – a 60-unit plan met a heap the
+            // blocking engine's rules had half filled, and only the death told of it).
+            val planned = args.arr("units")
+            val runtime = Runtime.getRuntime()
+            Log.i(
+                TAG,
+                "configure ${id.take(8)} ${args.str("version")}: ${planned.length()} unit(s) planned, " +
+                    "${(0 until planned.length()).sumOf { i -> planned.optJSONObject(i)?.optString("config")?.length ?: 0 }} config chars, " +
+                    "shapes ${(0 until planned.length()).map { i -> planned.optJSONObject(i)?.optString("shape", ExtensionScripts.SHAPE_WHOLE) ?: ExtensionScripts.SHAPE_WHOLE }.groupingBy { it }.eachCount().entries.joinToString(" ") { (shape, n) -> "$n $shape" }}, " +
+                    "heap ${(runtime.totalMemory() - runtime.freeMemory()) shr 20}/${runtime.maxMemory() shr 20} MB"
+            )
             val s = args.obj("served")
             val servedNow = Served(
                 id = id,
@@ -734,7 +777,8 @@ class Extensions(private val host: Host) {
                         "${unitsNow.sumOf { it.script.length }} chars (${compiled.count { it.cached }} cached, " +
                         "${compiled.count { it.refused != null }} refused) in $ms ms, " +
                         "shapes ${shapes.entries.joinToString(" ") { (shape, n) -> "$n $shape" }}, " +
-                        "worlds ${unitsNow.mapNotNull { u -> u.world?.let(worldSlots::slot) }.toSet()}"
+                        "worlds ${unitsNow.mapNotNull { u -> u.world?.let(worldSlots::slot) }.toSet()}, " +
+                        "heap ${(runtime.totalMemory() - runtime.freeMemory()) shr 20}/${runtime.maxMemory() shr 20} MB"
                 )
                 reply(stats)
             }

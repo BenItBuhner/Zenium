@@ -62,6 +62,12 @@ export class FakeKotlin implements RuntimeBridge {
   /** `_locales/<locale>/messages.json` texts per install path, as `ext.open` hands them over. */
   readonly locales = new Map<string, Record<string, string>>()
   readonly files = new Map<string, string>()
+  /**
+   * File sizes `ext.fileSizes` answers, by `<id>/<path>`, over a file's text in `files` when
+   * unset; a path in neither is left out of the answer (Kotlin sizes what is there). `null`
+   * makes the call fail, as a host without it would.
+   */
+  fileBytes: Map<string, number> | null = new Map()
   /** Background pages Kotlin holds right now, by extension id. */
   readonly backgrounds = new Set<string>()
   /** The engine snapshot's build count `blocking.stats` answers; null for a host without the call. */
@@ -227,6 +233,16 @@ export class FakeKotlin implements RuntimeBridge {
         return undefined
       case 'ext.readFile':
         return this.files.get(`${args.id}/${args.path}`) ?? null
+      case 'ext.fileSizes': {
+        if (!this.fileBytes) throw new Error('Unknown method ext.fileSizes')
+        const sizes: Record<string, number> = {}
+        for (const path of args.files as string[]) {
+          const key = `${args.id}/${path}`
+          const bytes = this.fileBytes.get(key) ?? this.files.get(key)?.length
+          if (bytes !== undefined) sizes[path] = bytes
+        }
+        return { sizes }
+      }
       case 'ext.i18n.detectLanguage':
         return this.languageAnswer(String(args.text))
       case 'ext.system.cpu':
