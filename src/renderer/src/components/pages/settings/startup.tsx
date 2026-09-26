@@ -10,11 +10,14 @@ import type { SectionContext } from './sections'
  * Settings › On startup (settings-47; Chrome's Settings › On startup): the choice – "Open the
  * New Tab page", "Continue where you left off", "Open a specific page or set of pages" – as a
  * §9.13 value row (the desktop's menulist, the phone's picker sheet, as the section's other
- * choices are), and under the third choice the pages list: one item row per page whose sheet
- * holds Edit (a one-field form, the address) and Remove, then Add a new page (the same form)
- * and Use current pages (the open tabs' web addresses, in the sidebar's order, replacing the
- * list – Chrome's) – the list capped at `MAX_STARTUP_PAGES`, and an empty list saying so in one
- * row (§9.17's in-group form) since it starts on the New Tab page until a page is added.
+ * choices are), and under the third choice the pages list: one item row per page – a row with
+ * several actions and nothing to set, so on a mouse it trails §10.5's 28 ⋯ ("Options for
+ * <page>") whose menu is Edit… (a one-field form, the address) and Remove, the latter in the
+ * plain ink and asking nothing (§10.4: a preference re-entered in one field is not the user's
+ * data; Languages' Remove is the precedent) – then Add a new page (the same form) and Use
+ * current pages (the open tabs' web addresses, in the sidebar's order, replacing the list –
+ * Chrome's) – the list capped at `MAX_STARTUP_PAGES`, and an empty list saying so in one row
+ * (§9.17's in-group form) since it starts on the New Tab page until a page is added.
  *
  * An enabled extension's `chrome_settings_overrides.startup_pages` holds the setting
  * (`state.extensionControls` keyed `startup.mode` and `startup.pages`, the host's word): the
@@ -89,6 +92,7 @@ export function startupGroup({ state, set }: Pick<SectionContext, 'state' | 'set
       id,
       label: pageLabel(url),
       keywords: [url, 'startup page'],
+      menu: `Options for ${pageLabel(url)}`,
       sheet: {
         title: pageLabel(url),
         description: url,
@@ -121,8 +125,8 @@ export function startupGroup({ state, set }: Pick<SectionContext, 'state' | 'set
                 kind: 'action',
                 id: `${id}:remove`,
                 label: 'Remove',
+                button: 'Remove',
                 description: 'Takes the page out of the list; the tabs open now are left alone.',
-                destructive: true,
                 onPress: () => setPages(pages.filter((_, i) => i !== index))
               }
             ]
@@ -140,6 +144,10 @@ export function startupGroup({ state, set }: Pick<SectionContext, 'state' | 'set
     })
 
   const current = currentPages(state)
+  // A private window's pages are not written into a setting (`currentPages`): the row is held
+  // there with the reason and the way out, not the line that says "open pages first" while
+  // pages stand open (the #525 lead check, C5).
+  const privateWindow = state.window.kind === 'private'
   const full = pages.length >= MAX_STARTUP_PAGES
   rows.push(
     {
@@ -166,8 +174,9 @@ export function startupGroup({ state, set }: Pick<SectionContext, 'state' | 'set
       kind: 'action',
       id: 'startup-use-current',
       label: 'Use current pages',
-      description:
-        current.length === 0
+      description: privateWindow
+        ? 'Open the pages you want in a regular window first. Private windows are not used.'
+        : current.length === 0
           ? 'Open the pages you want first.'
           : current.length === 1
             ? 'Replaces the list with the page open now.'

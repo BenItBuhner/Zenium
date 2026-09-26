@@ -1,18 +1,21 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, type ReactElement } from 'react'
+import { act, useState, type JSX, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { MAX_STARTUP_PAGES } from '@core/startup'
+import { FrameDialogHost, closeAllPopovers } from '@renderer/lib/portals'
+import { viewportStore } from '@renderer/lib/formFactor'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
 import type { ExtensionControl, Settings, Tab, UIState } from '@shared/types'
+import type { RowContext, SheetRequest } from '../rows'
 
 /*
  * Settings › On startup (W6-3, settings-47): the group as data – the "When Zenium starts" choice
  * with Chrome's three options, and under "Open a specific page or set of pages" the list rows
- * (Edit… / Remove in each page's sheet), Add a new page, Use current pages, the empty state and
- * the cap; drawn controlled with an extension's pages as static rows while an enabled
- * extension's `chrome_settings_overrides.startup_pages` holds the setting; and the one-field
- * form Add and Edit share.
+ * (Edit… / Remove in each page's sheet; on a mouse the row's §10.5 ⋯), Add a new page, Use
+ * current pages, the empty state and the cap; drawn controlled with an extension's pages as
+ * static rows while an enabled extension's `chrome_settings_overrides.startup_pages` holds the
+ * setting; and the one-field form Add and Edit share.
  */
 
 const invoke = vi.fn<(name: string, args?: unknown) => Promise<null>>(async () => null)
@@ -21,6 +24,8 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 const { currentPages, startupGroup } = await import('../startup')
 const { StartupPageForm } = await import('../startupBlocks')
 const { allRows, controlledRuns, findRow } = await import('../model')
+const { DialogStack } = await import('../dialogs')
+const { RowView } = await import('../rows')
 
 type Row = ReturnType<typeof allRows>[number]
 
@@ -124,17 +129,27 @@ describe('Settings › On startup – "Open a specific page or set of pages"', (
       'startup-page:0:edit',
       'startup-page:0:remove'
     ])
+    // A row with several actions and nothing to set: on a mouse it trails §10.5's ⋯, named for
+    // the page (the #525 lead check, C2), whose menu is the sheet's two actions.
+    expect(first.menu).toBe('Options for example.com')
+    if (second.kind !== 'item') throw new Error('not an item row')
+    expect(second.menu).toBe('Options for news.example/today')
+    expect(first.action).toBeUndefined()
   })
 
-  it('a page\u2019s sheet holds Edit… as a form and Remove as a destructive action', () => {
+  it('a page\u2019s sheet holds Edit… as a form and Remove as a plain action that asks nothing (§10.4; the #525 lead check, C3)', () => {
     const { group: g, patches } = group({ startup: { mode: 'pages', pages: PAGES } })
     const edit = row(g, 'startup-page:1:edit')
     if (edit.kind !== 'action') throw new Error('not an action row')
     expect(edit.button).toBe('Edit…')
     expect(edit.form?.title).toBe('Edit page')
+    expect(edit.destructive).toBeUndefined()
     const remove = row(g, 'startup-page:1:remove')
     if (remove.kind !== 'action') throw new Error('not an action row')
-    expect(remove.destructive).toBe(true)
+    // A preference re-entered in one field is not the user's data: the plain ink, no prompt.
+    expect(remove.button).toBe('Remove')
+    expect(remove.destructive).toBeUndefined()
+    expect(remove.confirm).toBeUndefined()
     expect(remove.form).toBeUndefined()
     remove.onPress?.()
     expect(patches).toEqual([{ startup: { mode: 'pages', pages: [PAGES[0]] } }])
@@ -189,7 +204,7 @@ describe('Settings › On startup – "Open a specific page or set of pages"', (
     ])
   })
 
-  it('Use current pages is held with no web page open, and in a private window', () => {
+  it('Use current pages is held with no web page open, and in a private window – there with the reason and the way out (the #525 lead check, C5)', () => {
     const none = row(
       group(
         { startup: { mode: 'pages', pages: [] } },
@@ -203,6 +218,20 @@ describe('Settings › On startup – "Open a specific page or set of pages"', (
 
     const priv = state({}, { window: { id: 'p', kind: 'private' } as never })
     expect(currentPages(priv)).toEqual([])
+    // Three web pages stand open in the private window; none is written, and the row says why
+    // rather than "open pages first".
+    const held = row(
+      group(
+        { startup: { mode: 'pages', pages: [] } },
+        { window: { id: 'p', kind: 'private' } as never }
+      ).group,
+      'startup-use-current'
+    )
+    if (held.kind !== 'action') throw new Error('not an action row')
+    expect(held.disabled).toBe(true)
+    expect(held.description).toBe(
+      'Open the pages you want in a regular window first. Private windows are not used.'
+    )
     const one = state(
       {},
       { essentialTabIds: [], spaces: [{ id: 'space', tabIds: ['a'] }] as never }
@@ -411,5 +440,115 @@ describe('StartupPageForm – Add a new page / Edit page', () => {
     type(field, 'news.example/tomorrow')
     act(() => button(el, 'Save').click())
     expect(onSubmit).toHaveBeenCalledWith('https://news.example/tomorrow')
+  })
+})
+
+/**
+ * The page's rows as the desktop draws them (`RowView`, rows.tsx) over the settings dialog host,
+ * the stack kept as `useSheetStack` keeps it: a row's control pushes a request, `closeTop` drops
+ * the last. The host stands in a wrapper of its own so its frame cover (the `inert` it puts on
+ * its siblings while a dialog is open, as the content frame's host does on the page) does not
+ * fall on the rows: what the test is about is the way back, not the cover's release.
+ */
+function Page({ rows }: { rows: Row[] }): JSX.Element {
+  const [requests, setRequests] = useState<readonly SheetRequest[]>([])
+  const ctx: RowContext = { open: (request) => setRequests([...requests, request]) }
+  return (
+    <>
+      {rows.map((r) => (
+        <RowView key={r.id} row={r} ctx={ctx} variant="desktop" />
+      ))}
+      <div>
+        <FrameDialogHost>
+          <DialogStack
+            requests={requests}
+            groups={[{ id: 'startup', heading: 'On startup', rows }]}
+            ctx={ctx}
+            closeTop={() => setRequests(requests.slice(0, -1))}
+          />
+        </FrameDialogHost>
+      </div>
+    </>
+  )
+}
+
+const escape = (): void =>
+  act(() => {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  })
+
+describe('Settings › On startup – a page row on a mouse (§10.5; the #525 lead check, C2 / C3)', () => {
+  afterEach(() => {
+    document.getElementById('zen-chrome-layer')?.remove()
+    closeAllPopovers()
+  })
+
+  it('is static and trails the ⋯ named for the page, whose menu is Edit… / Remove in the plain ink: Edit… opens the Edit page form over the page with the way back the ⋯ – after Escape and after Save – and Remove takes the page out at once, asking nothing', async () => {
+    viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop', coarse: false })
+    const { group: g, patches } = group({ startup: { mode: 'pages', pages: PAGES } })
+    const el = render(<Page rows={g.rows.filter((r) => r.kind === 'item')} />)
+    const pageRow = el.querySelector<HTMLElement>('[data-row="startup-page:1"]')!
+    expect(pageRow).not.toBeNull()
+    expect(pageRow.hasAttribute('data-static')).toBe(true)
+    expect(pageRow.textContent).toContain('news.example/today')
+    const dots = pageRow.querySelector<HTMLButtonElement>('button.zen-settings-row-menu')!
+    expect(dots).not.toBeNull()
+    expect(dots.getAttribute('aria-label')).toBe('Options for news.example/today')
+    // The ⋯ is the row's one control: no 32 px button, no pressable row opening an item dialog.
+    expect(pageRow.querySelectorAll('button')).toHaveLength(1)
+    expect(el.querySelectorAll('button.zen-settings-row-menu')).toHaveLength(PAGES.length)
+
+    /** Open the ⋯ from the keyboard's seat on it and pick the item `label` names. */
+    const pick = async (label: string): Promise<void> => {
+      act(() => dots.focus())
+      // The menu holds its first paint until the page's capture is in place (useFloatingChrome):
+      // a few microtasks here, where there is no page.
+      await act(async () => {
+        dots.click()
+        await Promise.resolve()
+      })
+      const menu = document.querySelector<HTMLElement>('[role="menu"]')!
+      expect(menu).not.toBeNull()
+      const items = [...menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+      // The desktop's word for Edit (§9.1's ellipsis: it opens a dialog); Remove plain (§10.4).
+      expect(items.map((i) => i.textContent)).toEqual(['Edit…', 'Remove'])
+      expect(items.map((i) => i.hasAttribute('data-danger'))).toEqual([false, false])
+      const item = items.find((i) => i.textContent === label)!
+      act(() => item.click())
+      expect(document.querySelector('[role="menu"]')).toBeNull()
+    }
+
+    // Edit… from the menu: the one-field form over the page – the page's address in the field,
+    // which holds the focus (a form opens on its field) – not an item dialog under it.
+    await pick('Edit…')
+    const dialog = el.querySelector<HTMLElement>('[data-dialog="form:startup-page:1:edit"]')!
+    expect(dialog).not.toBeNull()
+    expect(el.querySelectorAll('[data-dialog]:not([data-leaving])')).toHaveLength(1)
+    expect(dialog.querySelector('.zen-v2-title-block-title')!.textContent).toBe('Edit page')
+    const field = input(dialog)
+    expect(field.value).toBe(PAGES[1])
+    expect(document.activeElement).toBe(field)
+    // Escape is Cancel: nothing written, and the ⋯ has the keyboard again (§9.5).
+    escape()
+    expect(el.querySelector('[data-dialog]:not([data-leaving])')).toBeNull()
+    expect(patches).toEqual([])
+    expect(document.activeElement).toBe(dots)
+
+    // Save: the page is rewritten in place, the form goes, and the way back is the same ⋯.
+    await pick('Edit…')
+    const again = el.querySelector<HTMLElement>('[data-dialog="form:startup-page:1:edit"]')!
+    type(input(again), 'news.example/tomorrow')
+    enter(input(again))
+    expect(patches).toEqual([
+      { startup: { mode: 'pages', pages: [PAGES[0], 'https://news.example/tomorrow'] } }
+    ])
+    expect(el.querySelector('[data-dialog]:not([data-leaving])')).toBeNull()
+    expect(document.activeElement).toBe(dots)
+
+    // Remove: the row's press, no prompt and no dialog.
+    await pick('Remove')
+    expect(patches).toHaveLength(2)
+    expect(patches[1]).toEqual({ startup: { mode: 'pages', pages: [PAGES[0]] } })
+    expect(el.querySelector('[data-dialog]:not([data-leaving])')).toBeNull()
   })
 })
