@@ -153,6 +153,14 @@ const SNAPSHOT_TARGET_PIXELS = 3_700_000
 /** The stand-in's JPEG quality (`snapshot`: the numbers behind it). */
 const SNAPSHOT_JPEG_QUALITY = 90
 
+/**
+ * The corner radius a parked view wears (`park`): its one pixel still inside the window is the
+ * box's top-left, and at a radius of 4 or more that pixel lies wholly outside the rounded rect
+ * (the corner's arc is at (4, 4); the pixel's far corner (1, 1) is 4.24 away), so the layer's
+ * mask shows none of it – the chrome's picture under the cover is the only thing on screen.
+ */
+const PARK_RADIUS = 4
+
 /** Keys that never count as a gesture in Chromium's user-activation model. */
 const NON_ACTIVATING_KEYS = new Set(['Escape', 'Shift', 'Control', 'Alt', 'Meta', 'AltGr'])
 
@@ -414,6 +422,13 @@ export class ElectronTabView implements TabView {
   private devtoolsPageBounds: Rect | null = null
   /** The view's box as the chrome last laid it out (`setBounds`), in DIP; null before the first. */
   private bounds: Rect | null = null
+  /** The corner radius the chrome last gave the box (`setBorderRadius`). */
+  private radius = 0
+  /**
+   * Whether the engine's view stands parked under a chrome cover rather than hidden (`park`):
+   * shown, at its size, with one pixel still inside the window. Never true while `visible` is.
+   */
+  private parked = false
   /** The user chose to leave: the next `beforeunload` objection is overruled. */
   private leaveApproved = false
   /** The last navigation this host started, for the "Leave site?" replay. */
@@ -1234,6 +1249,9 @@ export class ElectronTabView implements TabView {
   }
 
   detach(): void {
+    // A view parked under this window's cover leaves it hidden: the engine's view must not be
+    // a shown one when another window takes it in (`enterWindow` from `focus`, `bringToFront`).
+    this.coverLifted()
     const win = this.win
     if (win && this.inWindow) win.contentView.removeChildView(this.view)
     this.inWindow = false
@@ -1250,17 +1268,39 @@ export class ElectronTabView implements TabView {
 
   setBounds(rect: Rect): void {
     this.bounds = rect
-    this.view.setBounds(rect)
+    // A parked view takes its new box parked: the layout that shows it again sets the box first
+    // and `setVisible(true)` puts the view in it.
+    this.view.setBounds(this.parked ? this.parkedBox(rect) : rect)
   }
 
   setBorderRadius(radius: number): void {
-    this.view.setBorderRadius(radius)
+    this.radius = radius
+    this.view.setBorderRadius(this.parked ? Math.max(radius, PARK_RADIUS) : radius)
   }
 
   /**
    * Show or hide the page. Always passed on to the engine's view (a shown page has its visibility
    * re-asserted this way after a thaw); the owner hears of a flip, so the resource governor can
    * put its CPU clamp on a page that went behind and take it off one that came in front.
+   *
+   * A page taken down because chrome UI covers it – the window's `contentHidden` at the time of
+   * the call: the omnibox dropdown, a menu, a sheet or dialog, the first-run tour, a drag – is
+   * parked rather than hidden (`park`). The views composite above the chrome, so the chrome
+   * cannot draw over a page and asks for it to go away instead; but a `WebContentsView` hidden,
+   * detached, sized to nothing or moved wholly off the window is HIDDEN to Chromium (its aura
+   * occlusion tracker), and Chromium starts a page's speculation-rules prefetches only while the
+   * page's `WebContents` is VISIBLE (`PrefetchDocumentManager::CanPrefetchNow`) – a prefetch the
+   * page asked for meanwhile waits in `PrefetchScheduler`'s queue, and nothing re-runs that queue
+   * when the page is shown again: it starts only once the page next changes its candidates, which
+   * for most pages is never. Chrome keeps the page visible under its own popups, and a
+   * speculation rule in a page loaded under Zenium's omnibox dropdown (the address on the command
+   * line, a fresh profile) never prefetched at all. A parked view keeps its size and stays shown
+   * with one pixel inside the window, which Chromium counts as VISIBLE: the page keeps painting,
+   * `document.visibilityState` stays `visible`, its prefetches run, and the view comes back with
+   * `setVisible(true)` untouched, as Chrome's pages do from under a popup. The window's host ends
+   * the parking of a view the next uncovered layout leaves out (`coverLifted`: a tab switched
+   * under the cover). The page hidden by a tab switch, a chrome page tab or a move between
+   * windows (no cover on) is hidden as before.
    */
   setVisible(visible: boolean): void {
     const flipped = this.visible !== visible
@@ -1270,12 +1310,78 @@ export class ElectronTabView implements TabView {
       // before (`setBounds`), as the popup surface is placed: added, then shown.
       const win = this.win
       if (win) this.enterWindow(win)
+      if (this.parked) this.unpark()
+      this.view.setVisible(true)
+    } else if (this.coverable()) {
+      this.park()
+    } else {
+      if (this.parked) this.unpark()
+      this.view.setVisible(false)
     }
-    this.view.setVisible(visible)
     if (flipped) {
       this.refreshHangWatch()
       this.owner.visibilityChanged(this)
     }
+  }
+
+  /**
+   * Whether a hide asked for now is a chrome cover's: the window's chrome covers the content and
+   * the engine's view is on screen in it (a page never shown, or shown in no window, has nothing
+   * to keep visible).
+   */
+  private coverable(): boolean {
+    const host = this.host
+    return (
+      host !== null &&
+      this.win !== null &&
+      this.inWindow &&
+      this.bounds !== null &&
+      this.view.getVisible() &&
+      host.zen.contentHidden
+    )
+  }
+
+  /**
+   * The box a parked view stands in: its own size, moved so that only its top-left pixel is
+   * still inside the window, at the box's bottom-right corner (clamped to the window's content,
+   * should the box outrun a window mid-resize). Each pane of a split keeps its own corner, so
+   * none is occluded by another's pixel.
+   */
+  private parkedBox(rect: Rect): Rect {
+    let x = rect.x + rect.width - 1
+    let y = rect.y + rect.height - 1
+    const win = this.win
+    if (win) {
+      const [width, height] = win.getContentSize()
+      x = Math.min(x, width - 1)
+      y = Math.min(y, height - 1)
+    }
+    return { x: Math.max(0, x), y: Math.max(0, y), width: rect.width, height: rect.height }
+  }
+
+  private park(): void {
+    const rect = this.bounds
+    if (!rect) return
+    this.parked = true
+    this.view.setBorderRadius(Math.max(this.radius, PARK_RADIUS))
+    this.view.setBounds(this.parkedBox(rect))
+  }
+
+  private unpark(): void {
+    this.parked = false
+    if (this.bounds) this.view.setBounds(this.bounds)
+    this.view.setBorderRadius(this.radius)
+  }
+
+  /**
+   * The chrome's cover lifted (a layout applied with `contentHidden` off) without the layout
+   * showing this view: it was switched away from under the cover, and is hidden now the way a
+   * tab switch hides a page. Nothing for a view that is not parked.
+   */
+  coverLifted(): void {
+    if (!this.parked) return
+    this.unpark()
+    this.view.setVisible(false)
   }
 
   isVisible(): boolean {

@@ -28,6 +28,7 @@ import type { Browser } from '../../core/browser'
 import type { ZenWindow } from '../../core/window'
 import type {
   KeyEventInput,
+  TabView,
   WindowCreateInit,
   WindowHost,
   WindowHostFactory
@@ -398,6 +399,14 @@ export class ElectronWindow implements WindowHost {
     // chord is down in draws it in its own document, and the chrome reads no hold meanwhile
     // (`DevtoolsQuitHoldNotice`); it is taken down there with the hold.
     if (name === 'state') payload = this.quitHoldRouted(payload as UIState) as Events[K]
+    // A layout applied with no chrome cover on: a view parked under the cover that this layout
+    // did not show again (its tab switched away from meanwhile) is hidden for good
+    // (`ElectronTabView.setVisible` on why a covered page is parked, not hidden).
+    if (name === 'layout.applied' && !(payload as Events['layout.applied']).contentHidden) {
+      for (const view of this.browser.tabs.viewsOwnedBy(this.zen).values()) {
+        if (hasCoverLifted(view)) view.coverLifted()
+      }
+    }
     this.win.webContents.send('zen:event', name, payload)
     // The popup surface mirrors the window's state like the chrome does (the picker lives in it).
     const popup = this.popup?.webContents
@@ -741,6 +750,14 @@ export class ElectronWindowFactory implements WindowHostFactory {
     const win = this.byWebContentsId.get(id)
     return win?.alive ? win : undefined
   }
+}
+
+/**
+ * A tab view that parks under a chrome cover (`ElectronTabView.coverLifted`); the core hands
+ * its views out as `TabView`s, and a host of another kind (tests) has no parking to end.
+ */
+function hasCoverLifted(view: TabView): view is TabView & { coverLifted(): void } {
+  return typeof (view as { coverLifted?: unknown }).coverLifted === 'function'
 }
 
 /**
