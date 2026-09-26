@@ -216,6 +216,51 @@ What no runner confirms: the user's "Set default" press in Settings (no runner p
 `awaitChoice`'s poll and the `true` it resolves on the yes stay unexercised), and whether the
 deep link lands on Zenium's page rather than the list (the screenshot shows what came up).
 
+## A page's visibilityState follows its window (`visibility`)
+
+`visibility-scenario.mjs` (W6-F6) runs on the Linux job (its own step), the Windows unpacked leg
+and the macOS legs. A Chrome tab's `document.visibilityState` is `hidden` while its window is
+minimised, hidden, or fully covered where the OS tracks occlusion (Windows, macOS), and
+`visible` through a blur that leaves the window on screen; Zenium's tab views are
+`WebContentsView`s the host shows and hides itself, and W6-F6 has the window host take them down
+to Chromium while the window is minimised or hidden (`src/main/platform/window.ts`,
+`ElectronTabView.applyWindowVisible`) – a view parked under a chrome cover (W6-F5) included,
+parked again when the window returns. The scenario installs a logger in the fixture's first page
+(every `visibilitychange`, stamped) and moves the main window from the main process; each move
+Chrome reports as one transition has to be exactly one event here (a flicker is a failure).
+`native-forwarding` first makes the same moves on a throwaway `BrowserWindow` +
+`WebContentsView` created in the app's process, with no host logic in between – what Electron
+forwards natively on the OS, recorded and not judged (the slice's "before" column).
+
+One harness detail this scenario needs: Playwright turns `Emulation.setFocusEmulationEnabled` on
+for every page it attaches, which pins `document.visibilityState` to `visible` whatever the window
+does. Left on, every reading here would be `visible`. `s.honestVisibility` turns it back off (per
+page, through the page's own CDP session) for the tab it reads and for the throwaway native view,
+so both follow their window as a user's page does; no other scenario changes it. (The earlier
+report that a page never reads `hidden` on Xvfb was this pin, not the platform.)
+
+| step                  | reads                                                                                                                                                                                                                                                                                                                                                                      | confirmed by                                    |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| `page-visible`        | the page in a tab, its view shown in its box, the window in front: `visible`                                                                                                                                                                                                                                                                                              | the page                                        |
+| `native-forwarding`   | the throwaway window minimised, restored, hidden, shown, covered whole, uncovered, covered in part, uncovered: the throwaway page's state and events per move, with the window's own state and events – recorded                                                                                                                                                       | Electron, natively (recorded)                   |
+| `minimize`            | `minimize()`: `hidden`, one event, the tab view hidden to Chromium (`getVisible()` false). Under Xvfb (no window manager) `minimize()` does nothing – the step records `skipped` with that reason and the page has to stay `visible` with no event                                                                                                                       | the page, the view                              |
+| `restore`             | `restore()`: `visible`, one event, the view back in its box (`skipped` where minimize was)                                                                                                                                                                                                                                                                                | the page, the view                              |
+| `hide`                | `hide()`: the window not visible, `hidden`, one event, the view hidden to Chromium                                                                                                                                                                                                                                                                                        | the page, the view                              |
+| `show`                | `show()`: `visible`, one event, the view back in its box                                                                                                                                                                                                                                                                                                                  | the page, the view                              |
+| `blur-partial-cover`  | a window of the harness's own over the top-left quarter of the main window, focused (the main window blurs): `visible`, no event; the cover closed: the same                                                                                                                                                                                                              | the page                                        |
+| `blur-full-cover`     | a window over the whole of the main window and a margin beyond: Windows and macOS, where this display reported occlusion to the bare window of `native-forwarding` (its `cover-full` row `hidden`) – `hidden`, one event (Chromium's native occlusion tracking; gates), `visible` again with one event once the cover closes; elsewhere recorded – Linux (the X server's word: Xvfb reports the window fully obscured and the page reads `hidden`, a compositing desktop does not) and the macOS arm64 runner, whose virtual display reports no occlusion to any window (the page stays `visible`) – the events exactly the flips that happened | the OS's occlusion tracking through the page    |
+| `parked-under-cover`  | the Web capture overlay (`capture.start`) parks the page's view (shown, one pixel in a window corner; W6-F5) and the page reads `visible`; `hide()` takes the parked view down for real (hidden, its box its own) and the page reads `hidden`; `show()` parks it again and the page reads `visible`; the overlay stays up throughout; Escape closes it and the view is back in its box | the page, the view                              |
+
+The screenshots of a window minimised or under a cover are taken as the screen stands
+(`s.shotAsIs`): `s.shot` brings the app's window to the front first, and `show()` un-minimises a
+window on Windows and macOS – the first run's `minimize` step had its view back up before it was
+checked, on all four legs.
+
+What no runner confirms: a real desktop's minimise on Linux (Xvfb has no window manager, so the
+hide / show pair stands in), a compositing Linux desktop's occlusion (none, as Chrome's), and
+occlusion on an Apple-silicon Mac (the arm64 runner's display reports none; macOS x64 confirms
+the OS's tracking).
+
 ## Teardown
 
 Removing a tree a launched build wrote into retries or polls, never a plain `rmSync`: Chromium's

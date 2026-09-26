@@ -115,7 +115,13 @@ jobs:
           # (this leg runs before the install), so its request has to resolve false without
           # opening Settings and without writing the per-user http/https classes – the registry
           # read before and after through win-install.ps1 -Action registration.
-          node "$env:SMOKE\smoke.mjs" --exe "$exe" --label unpacked --out "$env:SMOKE_OUT" --scenarios notifications,boot,restore,scale,dark,restart-registration,private-taskbar,default-browser
+          # visibility (W6-F6): a tab page's document.visibilityState follows its window – the
+          # main window minimised, restored, hidden and shown from the main process reads
+          # hidden / visible in the page with one visibilitychange each way; a window over the
+          # whole of it reads hidden through Chromium's native occlusion tracking (judged here and
+          # on macOS; recorded on Linux), one over a quarter of it leaves the page visible; the
+          # same moves on a throwaway window record what Electron forwards natively on Windows.
+          node "$env:SMOKE\smoke.mjs" --exe "$exe" --label unpacked --out "$env:SMOKE_OUT" --scenarios notifications,boot,restore,scale,dark,visibility,restart-registration,private-taskbar,default-browser
       - name: Windows and processes left behind by the unpacked build
         if: always()
         run: |
@@ -236,7 +242,13 @@ jobs:
         # answers (mac-facts.sh after-run reads LaunchServices' handlers and the unified log).
         # quit-hold (session-08) is the Mac's: the Warn Before Quitting (⌘Q) row, the hold's
         # release, the setting off and persisted; every scenario's quit runs the hold itself.
-        run: node "$SMOKE/smoke.mjs" --exe "${{ steps.app.outputs.app }}/Contents/MacOS/Zenium" --label unpacked --out "$SMOKE_OUT" --scenarios boot,restore,scale,dark,quit-hold,default-browser
+        # visibility (W6-F6): a tab page's document.visibilityState follows its window – the
+        # main window miniaturised, restored, hidden and shown from the main process reads
+        # hidden / visible in the page with one visibilitychange each way; a window over the
+        # whole of it reads hidden through NSWindow's occlusion state (judged here and on
+        # Windows; recorded on Linux), one over a quarter of it leaves the page visible; the same
+        # moves on a throwaway window record what Electron forwards natively on macOS.
+        run: node "$SMOKE/smoke.mjs" --exe "${{ steps.app.outputs.app }}/Contents/MacOS/Zenium" --label unpacked --out "$SMOKE_OUT" --scenarios boot,restore,scale,dark,visibility,quit-hold,default-browser
       - name: Bundle facts and crash reports after the run
         if: always()
         run: bash "$SMOKE/mac-facts.sh" "${{ steps.app.outputs.app }}" "$SMOKE_OUT" after-run

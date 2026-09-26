@@ -364,6 +364,15 @@ class FakeBrowserWindow extends EventEmitter {
   isFocused(): boolean {
     return this.focused
   }
+  /** The window's minimise / hide state, for the view adopting it on attach (W6-F6). */
+  minimized = false
+  hidden = false
+  isMinimized(): boolean {
+    return this.minimized
+  }
+  isVisible(): boolean {
+    return !this.hidden
+  }
   /** The window's content, in DIP: what a parked view's pixel is kept inside. */
   contentSize: [number, number] = [1280, 820]
   getContentSize(): [number, number] {
@@ -1657,6 +1666,140 @@ describe('a hidden tab page and the window', () => {
       view.bringToFront()
       view.detach()
     }).not.toThrow()
+  })
+
+  it('hides a shown page to Chromium while its window is minimised or hidden, and shows it again on restore – the core’s flag and the visibility accounting untouched (W6-F6)', () => {
+    const { host, create } = setup()
+    const view = create()
+    const flips: boolean[] = []
+    host.onVisibilityChanged((v) => flips.push(v.isVisible()))
+    view.setBounds(box)
+    view.setVisible(true)
+    expect(engine(view)).toEqual({ visible: true, bounds: box })
+    expect(view.isVisible()).toBe(true)
+    // The window is minimised (or hidden): the page goes down to Chromium so it reads `hidden`.
+    view.applyWindowVisible(false)
+    expect(engine(view).visible).toBe(false)
+    // The core still has the page in front – `isVisible` reports the core’s flag, no flip is
+    // announced (the governor and snapshot logic read the same as before).
+    expect(view.isVisible()).toBe(true)
+    // Restored: the page comes back at its box.
+    view.applyWindowVisible(true)
+    expect(engine(view)).toEqual({ visible: true, bounds: box })
+    expect(view.isVisible()).toBe(true)
+    expect(flips).toEqual([true])
+    // Idempotent: the same state again does nothing.
+    view.applyWindowVisible(true)
+    expect(engine(view).visible).toBe(true)
+  })
+
+  it('hides a parked page for real while the window is minimised, then parks it again when the window returns with the cover still up (W6-F6 over W6-F5)', () => {
+    const { window, create } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setVisible(true)
+    // A chrome cover parks the page: shown to Chromium at one corner pixel.
+    window.zen.contentHidden = true
+    view.setVisible(false)
+    expect(engine(view)).toEqual({ visible: true, bounds: parkedAt(box) })
+    expect(view.parkedCorner()).toBe(0)
+    // The window is minimised while the cover is up: the parked view is hidden for real, its box
+    // back to its own so nothing is left a pixel on screen behind the hidden window; the corner
+    // is remembered.
+    view.applyWindowVisible(false)
+    expect(engine(view)).toEqual({ visible: false, bounds: box })
+    expect(view.parkedCorner()).toBe(0)
+    expect(view.isVisible()).toBe(false)
+    // Restored with the cover still up: parked again, a pixel in its corner.
+    view.applyWindowVisible(true)
+    expect(engine(view)).toEqual({ visible: true, bounds: parkedAt(box) })
+    expect(view.isVisible()).toBe(false)
+  })
+
+  it('keeps the parking through a layout re-applied under the cover while the window is away, and lets the cover lift there: the page comes back where the layout left it (W6-F6 over W6-F5)', () => {
+    const { window, create } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setVisible(true)
+    window.zen.contentHidden = true
+    view.setVisible(false)
+    view.applyWindowVisible(false)
+    expect(engine(view)).toEqual({ visible: false, bounds: box })
+    // The chrome re-applies its layout with the cover still up (a state change under the
+    // minimised window): the engine's view is down, but the parking is kept for the return –
+    // not dropped for a plain hide.
+    view.setVisible(false)
+    expect(view.parkedCorner()).toBe(0)
+    expect(engine(view).visible).toBe(false)
+    view.applyWindowVisible(true)
+    expect(engine(view)).toEqual({ visible: true, bounds: parkedAt(box) })
+    // Away again, and this time the cover lifts while the window is hidden: the layout shows the
+    // page, which stays down to Chromium until the window is back – then in its box.
+    view.applyWindowVisible(false)
+    window.zen.contentHidden = false
+    view.setVisible(true)
+    expect(view.parkedCorner()).toBeNull()
+    expect(engine(view)).toEqual({ visible: false, bounds: box })
+    expect(view.isVisible()).toBe(true)
+    view.applyWindowVisible(true)
+    expect(engine(view)).toEqual({ visible: true, bounds: box })
+    // And a cover lifting while away with the page switched from under it: hidden, as a tab
+    // switch hides a page, and still hidden on the window’s return.
+    window.zen.contentHidden = true
+    view.setVisible(false)
+    view.applyWindowVisible(false)
+    view.coverLifted()
+    expect(view.parkedCorner()).toBeNull()
+    view.applyWindowVisible(true)
+    expect(engine(view)).toEqual({ visible: false, bounds: box })
+    expect(view.isVisible()).toBe(false)
+  })
+
+  it('leaves a hidden page hidden across a minimise and restore (W6-F6)', () => {
+    const { create } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setVisible(true)
+    view.setVisible(false)
+    expect(engine(view).visible).toBe(false)
+    view.applyWindowVisible(false)
+    expect(engine(view).visible).toBe(false)
+    view.applyWindowVisible(true)
+    // Still the core’s hidden page: it does not come back on the window’s restore.
+    expect(engine(view)).toEqual({ visible: false, bounds: box })
+    expect(view.isVisible()).toBe(false)
+  })
+
+  it('leaves a page visible when its window merely loses focus while on screen – blur alone is not concealment (W6-F6)', () => {
+    const { window, create } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setVisible(true)
+    // The window resigns key status but stays on screen (`ElectronTabViewHost.watchFocus` calls
+    // `windowFocusChanged`): nothing conceals the page.
+    window.win.focused = false
+    view.windowFocusChanged()
+    expect(engine(view)).toEqual({ visible: true, bounds: box })
+    expect(view.isVisible()).toBe(true)
+  })
+
+  it('adopts a window that is itself minimised or hidden on attach: a page shown into it does not paint until the window returns (W6-F6)', () => {
+    const { host } = setup()
+    const concealed = fakeWindow()
+    concealed.win.hidden = true
+    const view = host.createView(
+      { id: 'tab_adopt', containerId: 'default' } as Tab,
+      noEvents,
+      concealed
+    ) as ElectronTabView
+    view.setBounds(box)
+    view.setVisible(true)
+    // The core has it in front, but the window is hidden: nothing on screen.
+    expect(engine(view).visible).toBe(false)
+    expect(view.isVisible()).toBe(true)
+    // The window is shown: the page paints.
+    view.applyWindowVisible(true)
+    expect(engine(view)).toEqual({ visible: true, bounds: box })
   })
 })
 
