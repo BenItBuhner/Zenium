@@ -527,6 +527,7 @@ function lookSection({
             'reader view',
             'translate',
             'bookmark',
+            'energy saver',
             'media',
             'downloads'
           ],

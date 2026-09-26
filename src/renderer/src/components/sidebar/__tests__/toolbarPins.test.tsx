@@ -57,8 +57,18 @@ function media(over: Partial<MediaState> = {}): MediaState {
   }
 }
 
+/** The governor's snapshot with Energy Saver on: what puts the leaf in the row (W8-2). */
+const SAVING = {
+  resources: { system: { onBattery: true, batteryPercent: 42, energySaver: true } }
+} as unknown as Partial<UIState>
+
 /** Enough of a snapshot for the whole row, the pill and its chips included. */
-function state(t: Tab, settings: Partial<Settings> = {}, entries: MediaState[] = []): UIState {
+function state(
+  t: Tab,
+  settings: Partial<Settings> = {},
+  entries: MediaState[] = [],
+  patch: Partial<UIState> = {}
+): UIState {
   return {
     platform: 'linux',
     capabilities: { windowControls: false, windows: true },
@@ -81,7 +91,8 @@ function state(t: Tab, settings: Partial<Settings> = {}, entries: MediaState[] =
     autofill: { prompts: [], picker: null },
     // The site-information slot (#406) reads the site's blocked permissions from the engine's rules.
     permissionRules: [],
-    media: entries
+    media: entries,
+    ...patch
   } as unknown as UIState
 }
 
@@ -194,6 +205,41 @@ describe('the desktop toolbar’s pins (settings-36)', () => {
     expect(toolbarTiering.get().hidden).not.toContain('media')
   })
 
+  it('the Energy Saver leaf (W8-2) is in the row while the governor says the mode is on, ahead of the hub – and its pin folds it away with no menu row', () => {
+    const leaf = (): HTMLElement | null => q('[data-zen-energy-saver-button]')
+    // The mode off (the shipped snapshot, no battery): no leaf, whatever the pin says.
+    render(<NavRow state={state(page, {}, [media()])} tab={page} compact={false} />)
+    expect(leaf()).toBeNull()
+    // On: the leaf, named by Chrome's one line, before the hub's button in the row.
+    render(<NavRow state={state(page, {}, [media()], SAVING)} tab={page} compact={false} />)
+    const button = leaf()!
+    expect(button).not.toBeNull()
+    expect(button.getAttribute('aria-label')).toBe('Energy Saver is on')
+    expect(button.getAttribute('data-tooltip')).toBe('Energy Saver is on')
+    expect(button.getAttribute('aria-haspopup')).toBe('dialog')
+    expect(button.getAttribute('aria-expanded')).toBe('false')
+    const buttons = [...document.querySelectorAll<HTMLButtonElement>('[data-zen-nav-row] > button')]
+    const hub = q('[data-zen-media-hub-button]')!
+    expect(buttons.indexOf(button as HTMLButtonElement)).toBeLessThan(
+      buttons.indexOf(hub as HTMLButtonElement)
+    )
+    // The compact rail draws it too.
+    render(<NavRow state={state(page, {}, [], SAVING)} tab={page} compact />)
+    expect(leaf()).not.toBeNull()
+    // Unpinned: not drawn, and nothing of it on ⋯ – the mode runs on, Settings says so.
+    render(
+      <NavRow
+        state={state(page, { toolbarPins: { 'energy-saver': false } }, [], SAVING)}
+        tab={page}
+        compact={false}
+      />
+    )
+    expect(leaf()).toBeNull()
+    expect(nameOf(q<HTMLButtonElement>('[data-zen-app-menu-button]')!)).not.toMatch(/energy/i)
+    // Never the width's to hide: not tiered, so never published as hidden.
+    expect(toolbarTiering.get().hidden).not.toContain('energy-saver')
+  })
+
   it('publishes what the width tier hid of the pinned controls, and clears it as the row leaves', () => {
     // The row at the 240 sidebar: no room for the hub's button (`mediaHubButtonFits`).
     const widths = { row: 240 - 16, pill: 0 }
@@ -266,15 +312,19 @@ describe('the desktop toolbar’s pins (settings-36)', () => {
     viewportStore.set({ formFactor: 'tablet' })
     render(
       <NavRow
-        state={state(page, { toolbarPins: { forward: false, star: false, media: false } }, [
-          media()
-        ])}
+        state={state(
+          page,
+          { toolbarPins: { forward: false, star: false, 'energy-saver': false, media: false } },
+          [media()],
+          SAVING
+        )}
         tab={page}
         compact={false}
       />
     )
     expect(forwardButton()).not.toBeNull()
     expect(q('[data-bm-star]')).not.toBeNull()
+    expect(q('[data-zen-energy-saver-button]')).not.toBeNull()
     expect(q('[data-zen-media-hub-button]')).not.toBeNull()
   })
 })

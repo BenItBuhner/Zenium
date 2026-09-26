@@ -43,7 +43,8 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 const { buildSection } = await import('../sections')
 const { findRow } = await import('../model')
 const { DialogStack } = await import('../dialogs')
-const { DOWNLOADS_UNCHECKED, HIDDEN_AT_THIS_WIDTH } = await import('../CustomizeToolbarForm')
+const { DOWNLOADS_UNCHECKED, ENERGY_SAVER_ROW, HIDDEN_AT_THIS_WIDTH } =
+  await import('../CustomizeToolbarForm')
 
 type Ctx = Parameters<typeof buildSection>[1]
 type Row = NonNullable<ReturnType<typeof findRow>>
@@ -304,6 +305,7 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
       'toolbar-control:reader',
       'toolbar-control:translate',
       'toolbar-control:star',
+      'toolbar-control:energy-saver',
       'toolbar-control:media',
       'toolbar-control:downloads'
     ])
@@ -312,6 +314,7 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
       'Reader View',
       'Translate',
       'Bookmark this page',
+      'Energy Saver',
       'Media',
       'Downloads'
     ])
@@ -359,7 +362,7 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
 
   it('checked is in the bar: the default bar has every box checked but Downloads, whose key is the downloads block’s', () => {
     const { h } = openDialog(state())
-    for (const control of ['forward', 'reader', 'translate', 'star', 'media'])
+    for (const control of ['forward', 'reader', 'translate', 'star', 'energy-saver', 'media'])
       expect(box(h, control).checked, control).toBe(true)
     expect(box(h, 'downloads').checked).toBe(false)
     act(() => root?.unmount())
@@ -402,6 +405,8 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
       reader: 'Shows on pages with an article.',
       translate: null,
       star: null,
+      // The leaf (W8-2): a control the mode has to earn, its line says when it shows.
+      'energy-saver': ENERGY_SAVER_ROW,
       media: 'Shows while media plays.',
       downloads: DOWNLOADS_UNCHECKED
     })
@@ -410,7 +415,14 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
     // Every box the other way: the same lines, row for row.
     const flipped = openDialog(
       state({
-        toolbarPins: { forward: false, reader: false, translate: false, star: false, media: false },
+        toolbarPins: {
+          forward: false,
+          reader: false,
+          translate: false,
+          star: false,
+          'energy-saver': false,
+          media: false
+        },
         downloads: { ...DEFAULT_SETTINGS.downloads, alwaysShowButton: true }
       })
     )
@@ -424,6 +436,8 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
     const atWidth = lines(narrow.h)
     expect(atWidth.forward).toBe(HIDDEN_AT_THIS_WIDTH)
     expect(atWidth.downloads).toBe(DOWNLOADS_UNCHECKED)
+    // The leaf is never the width's to hide (it is not tiered, as Chrome's is not): its own line.
+    expect(atWidth['energy-saver']).toBe(ENERGY_SAVER_ROW)
     for (const line of [...Object.values(atWidth), ...Object.values(atRest)]) {
       if (line !== null) expect(line, line).toMatch(/[a-z]\.$/)
     }

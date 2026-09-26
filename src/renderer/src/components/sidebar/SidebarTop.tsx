@@ -94,8 +94,10 @@ import { Favicon } from './Favicon'
 import { isZoomed } from '../zoom/bubble'
 import { ZoomChip } from '../zoom/ZoomChip'
 import { DownloadButton } from '../downloads/DownloadButton'
+import { EnergySaverButton } from '../energysaver/EnergySaverButton'
 import { MediaHubButton, MediaLiveDot } from '../media/MediaHubButton'
 import { downloadButtonVisible, downloadsUi } from '@renderer/lib/downloads'
+import { energySaverLeafUp } from '@renderer/lib/energySaver'
 import { actionable } from '@renderer/lib/extensions/toolbar'
 import { useViewport } from '@renderer/lib/formFactor'
 import { pinsFor, publishToolbarTiering } from '@renderer/lib/toolbarPins'
@@ -292,10 +294,16 @@ export function NavRow({
   // still holds the box the star returned at (126 / 110: the 302 sidebar with the always-there
   // buttons), so the pill reads the same on either side of the return. The buttons it makes
   // room against are the ones always in the row (back, forward, reload, ⋯), the puzzle piece
-  // while there are extensions and the downloads button while it is up; the compact column has
-  // no pill to keep, so there the button stays whenever there is media.
+  // while there are extensions, the downloads button while it is up and the Energy Saver leaf
+  // while the mode is on; the compact column has no pill to keep, so there the button stays
+  // whenever there is media.
   const downloadsUp = downloadButtonVisible(state, downloadsUiState)
   const puzzleUp = actionable(state.extensions).length > 0
+  // The Energy Saver leaf (W8-2; Chrome's `BatterySaverButton`): in the row while the governor
+  // says the mode is on and the control is pinned, ahead of the hub as Chrome's stands ahead of
+  // its media button. Not tiered by the width – Chrome's is not, and the downloads button is
+  // not – so it joins the fixed set the hub and the pinned actions make room against.
+  const saverUp = energySaverLeafUp(state, pins)
   // Forward folded by its pin leaves the fixed set (the hub's tier and the extensions' overflow
   // count the buttons actually in the row); a trailing control joins it.
   const fixedButtons = FIXED_BUTTONS - (forwardUp ? 0 : 1) + (trailing ? 1 : 0)
@@ -303,7 +311,10 @@ export function NavRow({
     mediaPinned &&
     mediaHubVisible(state) &&
     (compact ||
-      mediaHubButtonFits(rowWidth, fixedButtons - (puzzleUp ? 0 : 1) + (downloadsUp ? 1 : 0)))
+      mediaHubButtonFits(
+        rowWidth,
+        fixedButtons - (puzzleUp ? 0 : 1) + (downloadsUp ? 1 : 0) + (saverUp ? 1 : 0)
+      ))
   // The hub's toolbar button off the row (§9.29's fold): the ⋯ button then wears the hub's dot.
   // Decided here, from the same width the button is mounted by, so the dot and the button move
   // in one commit as the sidebar crosses 270 ↔ 240 – never both in a frame, never neither.
@@ -959,14 +970,15 @@ export function NavRow({
           </span>
         </div>
       )}
+      {saverUp && <EnergySaverButton />}
       {hubUp && <MediaHubButton state={state} />}
       <DownloadButton state={state} activeTabId={tab?.id ?? null} />
       <ToolbarActions
         state={state}
         rowWidth={compact ? null : rowWidth}
-        // The media and downloads buttons join the fixed set while they are in the row – the
-        // hub's only while the tier has it up, not while it has folded into the menu.
-        fixedButtons={fixedButtons + (hubUp ? 1 : 0) + (downloadsUp ? 1 : 0)}
+        // The leaf, the media and the downloads buttons join the fixed set while they are in
+        // the row – the hub's only while the tier has it up, not while it has folded into the menu.
+        fixedButtons={fixedButtons + (saverUp ? 1 : 0) + (hubUp ? 1 : 0) + (downloadsUp ? 1 : 0)}
         compact={compact}
       />
       {trailing}
