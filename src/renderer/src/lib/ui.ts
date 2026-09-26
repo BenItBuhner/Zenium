@@ -1559,7 +1559,21 @@ export function closeMediaSheet(): void {
  */
 export function onboardingUp(): boolean {
   const state = browserStore.get().state
-  return state !== null && !isPhone() && onboardingCovers(state)
+  return state !== null && firstRunCovers(state)
+}
+
+/**
+ * The first-run tour stands over this window's whole chrome (`onboardingCovers`; not the phone,
+ * whose tour is its shell's own flow). What `onboardingUp` reads of the state, and one of the
+ * terms of the layout report's `contentHidden` (`useLayoutReporter`): the pages' views composite
+ * ABOVE the chrome, so a page left showing under the tour stands over it – the New Tab's view
+ * over the tour's panel, since the window has had a tab from creation (#490) and the bar that
+ * used to open under the tour, and hid the page under its cover, waits for the tour's end
+ * (#347). Nothing is captured for this: the panel is opaque over the window, there is no
+ * picture to wait for, and the views hide at once (`decideHidden`, nothing to wait for).
+ */
+export function firstRunCovers(state: Pick<UIState, 'settings' | 'window'>): boolean {
+  return !isPhone() && onboardingCovers(state)
 }
 
 export async function openUrlbar(
