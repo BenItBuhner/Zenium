@@ -404,6 +404,32 @@ export const THEME_PRESETS: Array<{ name: string; theme: SpaceTheme }> = [
 ]
 
 /**
+ * The name Settings › Appearance's theme row reads for a space's theme (settings-30; Chrome's
+ * `themeSublabel_` names the installed theme, "Chrome colours" for a picked colour and nothing
+ * for the classic theme): "Default" for the base look, a preset's name while the theme is that
+ * preset as the picker wrote it, "From image" while the colours follow the background picture,
+ * else "Custom" – a preset the editor changed, or colours of the user's own.
+ */
+export function themeName(theme: SpaceTheme | null): string {
+  if (!theme || theme.colors.length === 0) return 'Default'
+  if (theme.fromImage === true) return 'From image'
+  const preset = THEME_PRESETS.find((p) => sameTheme(p.theme, theme))
+  return preset ? preset.name : 'Custom'
+}
+
+function sameTheme(a: SpaceTheme, b: SpaceTheme): boolean {
+  return (
+    a.opacity === b.opacity &&
+    a.texture === b.texture &&
+    a.algorithm === b.algorithm &&
+    a.monochrome === b.monochrome &&
+    a.rotation === b.rotation &&
+    (a.scheme ?? null) === (b.scheme ?? null) &&
+    sameColors(a.colors, b.colors)
+  )
+}
+
+/**
  * Base colour of panels, sheets and popovers: paper (or near-black) carrying the space's own
  * colour, the way Zen's popups are a few percent of the primary colour over white or `#101010`.
  */

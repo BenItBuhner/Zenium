@@ -24,6 +24,7 @@ import {
   rgbToHsl,
   themeCssVariables,
   themeInk,
+  themeName,
   toMonochrome,
   unfollowedTheme,
   wantsLightInk,
@@ -285,5 +286,25 @@ describe('editedTheme (the theme editor against a theme following the picture, N
     expect(editedTheme(null, { ...own, fromImage: true })).toEqual(own)
     expect(editedTheme(own, own)).toBe(own)
     expect(editedTheme(following, null)).toBeNull()
+  })
+})
+
+describe('themeName (settings-30: the Appearance theme row)', () => {
+  it('names the base look, a preset as the picker wrote it, a followed picture, and anything else Custom', () => {
+    expect(themeName(null)).toBe('Default')
+    expect(themeName({ ...makeTheme('#9d7cff'), colors: [] })).toBe('Default')
+    for (const preset of THEME_PRESETS) {
+      expect(themeName(preset.theme)).toBe(preset.name)
+      // A structural copy, as the theme comes back from the state file, reads the same.
+      expect(themeName(JSON.parse(JSON.stringify(preset.theme)) as SpaceTheme)).toBe(preset.name)
+    }
+    const ocean = THEME_PRESETS[1].theme
+    expect(themeName({ ...ocean, opacity: 0.3 })).toBe('Custom')
+    expect(themeName({ ...ocean, rotation: 90 })).toBe('Custom')
+    expect(themeName({ ...ocean, monochrome: true })).toBe('Custom')
+    expect(themeName({ ...ocean, scheme: 'dark' })).toBe('Custom')
+    expect(themeName(makeTheme('#c82828'))).toBe('Custom')
+    expect(themeName(PRIVATE_THEME)).toBe('Custom')
+    expect(themeName({ ...ocean, fromImage: true })).toBe('From image')
   })
 })
