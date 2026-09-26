@@ -405,6 +405,92 @@ describe('MediaHubPopover', () => {
 })
 
 /*
+ * A session lingering after its media paused or ended (W7-5, Chrome's global media controls):
+ * the core keeps the tab's entry in `UIState.media` for Chrome's inactivity window
+ * (`MEDIA_HUB_INACTIVE_MS`, 60 minutes without an interaction) and lets it go after, or at once
+ * with its tab or its element. The hub draws what it is given: the paused player with its title,
+ * artwork and a Play that resumes it through the core, the button without the dot, and the same
+ * fold into the "⋯" menu at narrow widths as any entry's.
+ */
+describe('a paused session lingering in the hub (W7-5)', () => {
+  it('shows the paused session with its title and artwork and a Play, which sends the resume through the core', async () => {
+    const paused = track({
+      playing: false,
+      position: { duration: 120, position: 47, playbackRate: 1 }
+    })
+    await open(stateWith([paused]))
+    // The button is in the row for the paused session, bare of the dot: nothing plays.
+    const button = q('[data-zen-media-hub-button]')!
+    expect(button.getAttribute('aria-label')).toBe('Media controls')
+    expect(button.querySelector('.zen-mhub-dot')).toBeNull()
+
+    const player = hub()!.querySelector<HTMLElement>('[data-media-player="t1"]')!
+    expect(player.hasAttribute('data-playing')).toBe(false)
+    expect(player.querySelector('.zen-mhub-name')!.textContent).toBe('Nocturne')
+    expect(player.querySelector('.zen-mhub-detail')!.textContent).toBe(
+      'The Band · music.example.com'
+    )
+    expect(player.querySelector('img.zen-media-art')!.getAttribute('src')).toBe(
+      'data:image/png;base64,AAAA'
+    )
+    // Paused, the position stands where the pause left it (no extrapolation), and Play is offered.
+    expect([...player.querySelectorAll('.zen-mhub-time')].map((t) => t.textContent)).toEqual([
+      '0:47',
+      '2:00'
+    ])
+    const toggle = player.querySelector<HTMLButtonElement>('[data-media-toggle]')!
+    expect(toggle.getAttribute('aria-label')).toBe('Play')
+    expect(toggle.disabled).toBe(false)
+    // The resume: `media.toggle` for the tab, which the core posts to the page as `toggle` and
+    // the page shim runs as the page's `play` handler, else the element's `play()`.
+    click(toggle)
+    expect(commands().at(-1)).toEqual(['media.toggle', { tabId: 't1' }])
+  })
+
+  it('an ended track is a paused one: the position at the end, the same Play to replay it', async () => {
+    await open(
+      stateWith([
+        track({ playing: false, position: { duration: 120, position: 120, playbackRate: 1 } })
+      ])
+    )
+    const player = hub()!.querySelector<HTMLElement>('[data-media-player="t1"]')!
+    expect([...player.querySelectorAll('.zen-mhub-time')].map((t) => t.textContent)).toEqual([
+      '2:00',
+      '2:00'
+    ])
+    click(player.querySelector('[data-media-toggle]'))
+    expect(commands().at(-1)).toEqual(['media.toggle', { tabId: 't1' }])
+  })
+
+  it('leaves when the core lets the lingering session go: the popover closes and the button leaves the row', async () => {
+    await open(stateWith([track({ playing: false })]))
+    expect(hub()).not.toBeNull()
+    expect(q('[data-zen-media-hub-button]')).not.toBeNull()
+    // The linger ran out (or the tab closed, or the element went): the core's list is empty.
+    const state = stateWith([])
+    browserStore.set({ state })
+    render(
+      <>
+        <MediaHubButton state={state} />
+        <MediaHubLayer />
+      </>
+    )
+    expect(mediaHubUi.get().open).toBe(false)
+    expect(hub()).toBeNull()
+    expect(q('[data-zen-media-hub-button]')).toBeNull()
+    expect(uiStore.get().floatingChrome).toBe(0)
+  })
+
+  it('folds into the "⋯" menu at narrow widths as any entry does, and has nothing to fold once let go (§9.29)', () => {
+    // The row's decision, from its width, is the same for a paused entry as for a playing one:
+    // with the button off the row the menu request says folded (the "Now Playing…" row, no dot).
+    expect(mediaHubFoldedAt(stateWith([track({ playing: false })]), false)).toBe(true)
+    expect(mediaHubFoldedAt(stateWith([track({ playing: false })]), true)).toBe(false)
+    expect(mediaHubFoldedAt(stateWith([]), false)).toBe(false)
+  })
+})
+
+/*
  * The hub folded into the app menu (design language v2 §9.29): at the 240 sidebar the toolbar
  * button gives way to a "Now Playing" row at the menu's top (the core's, `core/menus.ts`) and
  * the "⋯" menu button carries the hub's accent dot while something plays. The row's pick opens
