@@ -90,14 +90,21 @@ function phoneCapabilities(overrides: Partial<HostCapabilities> = {}): HostCapab
   }
 }
 
-/** A browser on a phone-shaped host, not yet started; the window host records what it is sent. */
-function phone(capabilities: HostCapabilities): {
+/**
+ * A browser on a phone-shaped host, not yet started; the window host records what it is sent.
+ * `region` is the device's country as the host reports it (`PlatformInfo.region`, W6-13; every
+ * host before it reports none).
+ */
+function phone(
+  capabilities: HostCapabilities,
+  region: string | null = null
+): {
   browser: Browser
   sent: Array<{ name: EventName; payload: unknown }>
 } {
   const sent: Array<{ name: EventName; payload: unknown }> = []
   const platform: Platform = {
-    info: { os: 'android' as PlatformOs, version: '0.0.0' },
+    info: { os: 'android' as PlatformOs, version: '0.0.0', region },
     capabilities,
     io: memoryIo(),
     windows: {
@@ -520,6 +527,103 @@ describe("READY under the phone's first-run tour", () => {
       { mode: 'new-tab' }
     ])
     // With the tour gone the page is a page to place, as on any boot past the first run.
+    expect(bootNeedsPlacement(browser, win, true)).toBe(true)
+  })
+})
+
+/*
+ * The EEA's search-engine choice screen (W6-2 / #514; R3 of #505's review): past the tour, on a
+ * device in the EEA with no choice made, the screen stands on its own over the whole window and
+ * the chrome reports the content hidden under it (`firstRunCovers` counts `searchChoiceCovers`;
+ * W6-13's phone screen hides the page the same way), so a profile restored on a page has no
+ * placement coming until the choice is made or skipped. The arm reads the screen through the
+ * core's own rule on the core's own terms – what the chrome's `UIState.searchChoice.required` is
+ * built from – and waits for nothing. The screen is owed on the region the host reports
+ * (`PlatformInfo.region`): W6-13 supplies it; every host before it reports none, and nothing
+ * here changes for them.
+ */
+describe("READY under the EEA's search-engine choice screen", () => {
+  /** A profile past its first run, restored on a page, on a host that reports `region`. */
+  function restoredOnPage(region: string | null): { browser: Browser; win: ZenWindow } {
+    const { browser } = phone(phoneCapabilities(), region)
+    browser.state.settings.onboardingDone = true
+    seedTab(browser, 'https://open.example/')
+    browser.start()
+    return { browser, win: only(browser) }
+  }
+
+  it('in the EEA with no choice made, the screen is owed and the arm waits for no placement', () => {
+    const { browser, win } = restoredOnPage('DE')
+    // The chrome's own term, off the same state: the screen stands.
+    expect(browser.state.snapshot(win).searchChoice.required).toBe(true)
+    expect(browser.tabs.activeTabFor(win)?.url).toBe('https://open.example/')
+    expect(bootNeedsPlacement(browser, win, false)).toBe(false)
+  })
+
+  it("the phone reads the same terms: W6-13's screen of its own hides the page there too", () => {
+    // Before W6-13 no phone host reports a region, so this profile cannot exist on one; with it
+    // the phone's `firstRunCovers` counts the screen like the tablet's, and the arm agrees.
+    const { browser, win } = restoredOnPage('DE')
+    expect(bootNeedsPlacement(browser, win, true)).toBe(false)
+  })
+
+  it('a choice made on this device: the screen is not owed, the page is waited for as before', () => {
+    const { browser } = phone(phoneCapabilities(), 'DE')
+    browser.state.settings.onboardingDone = true
+    browser.state.settings.searchChoice = {
+      engineId: browser.state.settings.searchEngineId,
+      region: 'DE',
+      madeAt: 1,
+      version: 2
+    }
+    seedTab(browser, 'https://open.example/')
+    browser.start()
+    const win = only(browser)
+    expect(browser.state.snapshot(win).searchChoice.required).toBe(false)
+    expect(bootNeedsPlacement(browser, win, false)).toBe(true)
+    expect(bootNeedsPlacement(browser, win, true)).toBe(true)
+  })
+
+  it('outside the EEA the page is waited for as before', () => {
+    const { browser, win } = restoredOnPage('US')
+    expect(browser.state.snapshot(win).searchChoice.required).toBe(false)
+    expect(bootNeedsPlacement(browser, win, false)).toBe(true)
+    expect(bootNeedsPlacement(browser, win, true)).toBe(true)
+  })
+
+  it('a host that reports no region (every Android host before W6-13) owes the screen to nobody', () => {
+    const { browser, win } = restoredOnPage(null)
+    expect(browser.state.snapshot(win).searchChoice.required).toBe(false)
+    expect(bootNeedsPlacement(browser, win, false)).toBe(true)
+    expect(bootNeedsPlacement(browser, win, true)).toBe(true)
+  })
+
+  it("the tour's end leaves the screen owed until the choice is made; the arm follows the same terms", () => {
+    // A fresh EEA profile launched from a link: the arm false under the tour; `onboarding.complete`
+    // writes no record (the tour's search step sends `searchChoice.choose` on its own), so with
+    // the tour done the screen is owed and the arm stays false; the choice frees the page.
+    const { browser } = phone(phoneCapabilities(), 'DE')
+    browser.start()
+    const win = only(browser)
+    browser.openExternalUrl('https://linked.example/', win, { fromIntent: true })
+    expect(bootNeedsPlacement(browser, win, false)).toBe(false)
+    expect(bootNeedsPlacement(browser, win, true)).toBe(false)
+    browser.handleCommand(win, 'onboarding.complete', {
+      searchEngineId: browser.state.settings.searchEngineId,
+      colorScheme: 'system',
+      essentials: []
+    })
+    expect(browser.state.settings.onboardingDone).toBe(true)
+    expect(browser.state.snapshot(win).searchChoice.required).toBe(true)
+    expect(bootNeedsPlacement(browser, win, false)).toBe(false)
+    expect(bootNeedsPlacement(browser, win, true)).toBe(false)
+    browser.handleCommand(win, 'searchChoice.choose', {
+      engineId: browser.state.settings.searchEngineId
+    })
+    expect(browser.state.settings.searchChoice?.region).toBe('DE')
+    expect(browser.state.snapshot(win).searchChoice.required).toBe(false)
+    expect(browser.tabs.activeTabFor(win)?.url).toBe('https://linked.example/')
+    expect(bootNeedsPlacement(browser, win, false)).toBe(true)
     expect(bootNeedsPlacement(browser, win, true)).toBe(true)
   })
 })

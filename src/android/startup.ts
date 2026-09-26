@@ -2,6 +2,8 @@ import { BLANK_URL, isEmptyTabUrl } from '@shared/url'
 import type { Tab } from '@shared/types'
 import type { Browser } from '@core/browser'
 import { tabVisibleIn } from '@core/model'
+import { searchChoiceRequired } from '@core/searchChoice'
+import type { BrowserState } from '@core/state'
 import type { ZenWindow } from '@core/window'
 import type { Bridge } from './bridge'
 
@@ -79,17 +81,44 @@ function hasHistory(browser: Browser, tab: Tab): boolean {
  * synced window with the full chrome – is that same flag), and `Window.applyLayout` places
  * nothing of a hidden report. So a fresh profile's first launch from a link (a VIEW intent's
  * page, active and loaded before the arm) has no placement coming until the tour ends: READY on
- * the theme's paint and the insets, the splash lifting to the tour. (The tablet's
- * `firstRunCovers` hides the page under the EEA's search-engine choice screen too, past the
- * tour – W6-2, `searchChoiceCovers`; the core owes that screen on `PlatformInfo.region`, which
- * Android does not report, so no boot here has it. When Android does, the arm must read
- * `searchChoiceRequired` as well.)
+ * the theme's paint and the insets, the splash lifting to the tour.
+ *
+ * Nor while the EEA's search-engine choice screen stands on its own past the tour (W6-2 / #514:
+ * `firstRunCovers` counts `searchChoiceCovers`, so the page is hidden under it the same way; the
+ * phone's screen of its own, W6-13, hides it too): the screen is owed on the region the host
+ * reports (`PlatformInfo.region` → `BrowserState.searchChoiceRegion`) with no record on this
+ * device, read here through the core's own rule on the core's own terms (`searchChoiceCovers`
+ * below) – the terms the chrome's `UIState.searchChoice.required` is built from – so a profile
+ * past its first run in the EEA with no choice made, restored on a page, arms READY without a
+ * placement to wait for. A host that reports no region (every Android host before W6-13) owes
+ * the screen to nobody, and the clause is never taken.
  */
 export function bootNeedsPlacement(browser: Browser, win: ZenWindow, phone: boolean): boolean {
   const active = browser.tabs.activeTabFor(win)
   if (active === undefined || browser.pages.isChromePage(active)) return false
   if (!browser.state.settings.onboardingDone) return false
+  if (searchChoiceCovers(browser.state)) return false
   return !(phone && active.url === BLANK_URL)
+}
+
+/**
+ * Whether the choice screen stands on its own over Android's one window – the desktop's
+ * `searchChoiceCovers` (`renderer/lib/searchChoice.ts`: the screen owed and the tour done, on the
+ * profile's synced window with the full chrome, which Android's window always is) read on the
+ * core side: the same `searchChoiceRequired` the state's snapshot puts in `UIState.searchChoice`,
+ * on the same terms – the host's region, the device's record, and the run's "Skip for now" and
+ * "Choose your search engine again", both false at a boot.
+ */
+function searchChoiceCovers(state: BrowserState): boolean {
+  return (
+    state.settings.onboardingDone &&
+    searchChoiceRequired({
+      region: state.searchChoiceRegion,
+      record: state.settings.searchChoice,
+      skipped: state.searchChoiceSession.skipped,
+      askAgain: state.searchChoiceSession.askAgain
+    })
+  )
 }
 
 /** The four sides as the host sends them and the chrome's store keeps them. */
