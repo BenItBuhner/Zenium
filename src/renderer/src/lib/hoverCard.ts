@@ -312,6 +312,10 @@ export const hoverCard = new HoverCardController(
 /**
  * A card host mounted (`TabHoverCard`'s mount effect): the controller may raise the card until
  * the returned release runs at the unmount, which takes down whatever card the last host left.
+ * The desktop shell's HTML-fullscreen return (`App.tsx`) unmounts its card with the rest of the
+ * chrome, so the host count falls to none for the duration and a pointer entering a row in the
+ * frame the card remounts on the way out is dropped, not captured – the `hide()` here at that
+ * moment is the last host leaving, not a card lost.
  */
 export function hostHoverCard(): () => void {
   hosts++

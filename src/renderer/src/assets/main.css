@@ -314,10 +314,12 @@
 }
 /*
  * Hover is gated by the root's `data-hover` (`lib/formFactor.ts`, `lib/livePointer.ts`), not by
- * `@media (hover: hover)`: every hover fill and hover reveal in this file and the other
+ * `@media (hover: hover)`: every hover rule the media query gated in this file and the other
  * stylesheets is written `:where(:root[data-hover='hover']) <selector>:hover` – `:where()` adds
- * no specificity, so the cascade is the bare selector's. Two reasons the media query could not
- * be the gate. Chromium keeps a tap's `:hover` on the element until the next touch, so on a
+ * no specificity, so the cascade is the bare selector's. (A hover fill or reveal that stood bare
+ * before the gate – the split row's, the page heading's and page row's reveals among them –
+ * stands bare still, with the tap's sticky `:hover` it always had; gating those is a change of
+ * its own.) Two reasons the media query could not be the gate. Chromium keeps a tap's `:hover` on the element until the next touch, so on a
  * phone or a touch tablet an ungated hover rule leaves a tapped button lit (the media query did
  * gate that); and Android's WebView answers `(hover: hover)` from the primary pointer, which is
  * the touch screen whenever there is one – a mouse on a tablet or under Samsung DeX never turns
@@ -8852,6 +8854,12 @@
 :root[data-form-factor='tablet'] .zen-tab[data-active='true'] .zen-tab-close {
   opacity: 1;
 }
+/*
+ * The one hover rule whose gate is on the root's own selector, not in `:where()`: it carries the
+ * form-factor attribute already, so the hover gate joins it there and the rule weighs one
+ * attribute (0,1,0) more than its media-query form did – the only gated rule that gained any.
+ * A later `.zen-tab-close` rule meant to win over it on the tablet has to weigh as much.
+ */
 :root[data-hover='hover'][data-form-factor='tablet'] .zen-tab:hover .zen-tab-close {
   opacity: 1;
 }
