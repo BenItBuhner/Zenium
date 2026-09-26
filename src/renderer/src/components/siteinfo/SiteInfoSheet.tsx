@@ -16,6 +16,7 @@ import {
   LockOpen,
   MapPin,
   Mic,
+  MonitorPlay,
   Music2,
   Puzzle,
   Settings,
@@ -51,6 +52,7 @@ import {
   type ExtensionPageChrome
 } from '@renderer/lib/extensions/pages'
 import { useViewport } from '@renderer/lib/formFactor'
+import { mediaOf } from '@renderer/lib/media'
 import { LevelMotion, paintLevels, type LevelState } from '@renderer/lib/motion/levels'
 import { openSettings as openSettingsPage } from '@renderer/lib/pages'
 import { privateLockStore } from '@renderer/lib/privateLock'
@@ -78,7 +80,13 @@ import {
   siteInfoStore,
   stepBackSiteInfo
 } from '@renderer/lib/siteInfo'
-import { showsSoundRow, soundChoice } from '@renderer/lib/siteInfoCopy'
+import {
+  BACKGROUND_VIDEO_LINE,
+  backgroundVideoChoice,
+  showsBackgroundVideoRow,
+  showsSoundRow,
+  soundChoice
+} from '@renderer/lib/siteInfoCopy'
 import { browserStore, overlayAvailable, pushToast, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { useConfirmKeyboard } from '../dialogs/confirmKeyboard'
@@ -639,9 +647,30 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
         mediaSheetOpen,
         activeTabId: activeTab(state)?.id ?? null
       })
+  // The Background video row (MED-08 / EDGE-32): earned by a stored answer or the tab's video
+  // (`showsBackgroundVideoRow`), and kept for the life of the sheet once earned – turning it
+  // off on a page without video takes the stored answer away, and the row must not leave under
+  // the finger that did it (Chrome's page info keeps a row through its reset until the bubble
+  // closes). The hold is the ORIGIN's, not the tab's: the sheet stays up through a same-tab
+  // navigation, and a page of another origin under it has to earn the row itself – the hold
+  // drops the moment the origin under the sheet changes. Only a reading OF the site under the
+  // sheet can earn it: the last origin's reading stays up while the new one is read.
+  const media = mediaOf(state, tab.id)
+  const earnsBackgroundVideo =
+    info !== null &&
+    info.origin === site.origin &&
+    showsBackgroundVideoRow(info.permissions, media, state.platform)
+  const [backgroundVideoOrigin, setBackgroundVideoOrigin] = useState<string | null>(null)
+  // The origin the hold names after this render: the site's while it earns or keeps the row,
+  // none once another origin is under the sheet. Stored from the render that decides it
+  // (React's "adjusting state while rendering"); the same value twice is no store.
+  const heldOrigin =
+    earnsBackgroundVideo || backgroundVideoOrigin === site.origin ? site.origin : null
+  if (heldOrigin !== backgroundVideoOrigin) setBackgroundVideoOrigin(heldOrigin)
+  const backgroundVideo = heldOrigin !== null
   // The chassis measures its detents again when this changes: a level, the reading arriving,
-  // or the pill's rows changing under it.
-  const contentKey = `${tab.id}:${level}:${info ? 'ready' : 'reading'}:${allCookies ? 'all' : 'fold'}:${pillChips.length}:${lockMasking ? 'masked' : ''}`
+  // the pill's rows changing under it, or the Background video row arriving.
+  const contentKey = `${tab.id}:${level}:${info ? 'ready' : 'reading'}:${allCookies ? 'all' : 'fold'}:${pillChips.length}:${lockMasking ? 'masked' : ''}:${backgroundVideo ? 'video' : ''}`
 
   return (
     <>
@@ -726,6 +755,8 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
                 onSettings={() => actions.openSettings()}
                 onClear={() => push('clear-data')}
                 onSound={(allowed) => void actions.setSound(allowed)}
+                backgroundVideo={backgroundVideo}
+                onBackgroundVideo={(allowed) => void actions.setBackgroundVideo(allowed)}
               />
             )}
           </section>
@@ -945,8 +976,10 @@ function PillChipRows({
 /**
  * The four rows of the root level – with the Sound switch row after Permissions for a tab that
  * plays or has played sound, or whose site has its own `sound` answer (the one setting "Mute
- * Site" and Settings write too), as Chrome Android's page info shows Sound for an audible tab –
- * and the two actions under a hairline.
+ * Site" and Settings write too), as Chrome Android's page info shows Sound for an audible tab;
+ * then, its media neighbour (§9.29 / §10.4, seated as Site settings seats it after Sound), the
+ * Background video switch row where the sheet earns it (`backgroundVideo`, the caller's
+ * reading of `showsBackgroundVideoRow`) – and the two actions under a hairline.
  */
 function SheetMainRows({
   tab,
@@ -958,7 +991,9 @@ function SheetMainRows({
   push,
   onSettings,
   onClear,
-  onSound
+  onSound,
+  backgroundVideo,
+  onBackgroundVideo
 }: {
   tab: Tab
   site: SiteDescription
@@ -970,6 +1005,8 @@ function SheetMainRows({
   onSettings: () => void
   onClear: () => void
   onSound: (allowed: boolean) => void
+  backgroundVideo: boolean
+  onBackgroundVideo: (allowed: boolean) => void
 }): JSX.Element {
   const reading = loading && !info
   const cookies = info?.cookies.items ?? []
@@ -977,6 +1014,7 @@ function SheetMainRows({
   const hasData = info ? cookies.length > 0 || storesAnything(info) : false
   const sound = info !== null && showsSoundRow(permissions, tab)
   const soundAllowed = soundChoice(permissions) !== 'deny'
+  const backgroundVideoAllowed = backgroundVideoChoice(permissions) === 'allow'
   return (
     <div className="flex flex-col pb-2">
       <SheetRow
@@ -1019,6 +1057,13 @@ function SheetMainRows({
               allowed={soundAllowed}
               busy={busy === 'permission:sound'}
               onChange={onSound}
+            />
+          )}
+          {backgroundVideo && (
+            <BackgroundVideoSwitchRow
+              allowed={backgroundVideoAllowed}
+              busy={busy === 'permission:background-video'}
+              onChange={onBackgroundVideo}
             />
           )}
           <div aria-hidden className="zen-sheet-sep" />
@@ -1078,6 +1123,55 @@ function SoundSwitchRow({
     >
       <span className="zen-sheet-item-glyph">{allowed ? <Volume2 /> : <VolumeX />}</span>
       <span className="min-w-0 flex-1 truncate">Sound</span>
+      <span className="zen-v2-switch" aria-hidden />
+    </button>
+  )
+}
+
+/**
+ * The Background video row as a switch (MED-08 / EDGE-32; the lead's ruling on services' #523:
+ * a per-site quick toggle belongs among the sheet's permission rows, in the Sound row's form,
+ * nothing on the media notification): the §9.2 two-line chassis row – the catalogue's label,
+ * and under it one line, the same in both states, naming what the switch does for this site
+ * (`BACKGROUND_VIDEO_LINE`: "Keeps playing video in the background"; the state is the switch's
+ * alone, so the line never tells it twice – the lead's ruling on #531) – with the shared
+ * `.zen-v2-switch` trailing, the whole row the target. The inverse of Sound: off is the default
+ * (Block), on stores an `allow` for the site, which the core carries to the host on the media
+ * session before the next background transition. Busy while the core writes (§9.30):
+ * `aria-busy`, a second press does nothing, the switch shows the value the core still holds.
+ */
+function BackgroundVideoSwitchRow({
+  allowed,
+  busy,
+  onChange
+}: {
+  allowed: boolean
+  busy: boolean
+  onChange: (allowed: boolean) => void
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={allowed}
+      aria-busy={busy || undefined}
+      // The row's name is its label and its line, as `SheetRow` composes a two-line row's: the
+      // line says what the switch does here, which the name would otherwise drop; the state is
+      // the switch's (`aria-checked`), read as on or off after the name.
+      aria-label={`Background video, ${BACKGROUND_VIDEO_LINE}`}
+      className="zen-sheet-item zen-sheet-item-two-line"
+      data-permission="background-video"
+      onClick={busy ? undefined : () => onChange(!allowed)}
+    >
+      <span className="zen-sheet-item-glyph">
+        <MonitorPlay />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate">Background video</span>
+        <span className="zen-sheet-item-secondary block text-[13px] leading-[var(--v2-line-small)] [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden">
+          {BACKGROUND_VIDEO_LINE}
+        </span>
+      </span>
       <span className="zen-v2-switch" aria-hidden />
     </button>
   )
@@ -1516,6 +1610,7 @@ function useActions(
   clearData: () => Promise<void>
   resetPermission: (permission?: string) => Promise<void>
   setSound: (allowed: boolean) => Promise<void>
+  setBackgroundVideo: (allowed: boolean) => Promise<void>
   setSiteData: (current: SiteInfo['siteData'], choice: SiteDataChoice) => Promise<void>
   openSettings: () => void
 } {
@@ -1566,6 +1661,25 @@ function useActions(
             origin: site.origin,
             permission: 'sound',
             decision: 'deny'
+          })
+        refreshSiteInfo()
+      }),
+    // The Background video row, Sound's inverse (the default is Block): on stores an `allow` for
+    // the site (what Settings' exception list writes); off takes the stored answer away rather
+    // than storing a deny, as Chrome clears an exception equal to the default. The core's
+    // `permissions.set` path carries either onto the media session and re-pushes it to the host.
+    setBackgroundVideo: (allowed: boolean) =>
+      act('permission:background-video', async () => {
+        if (allowed)
+          await cmd('permissions.set', {
+            origin: site.origin,
+            permission: 'background-video',
+            decision: 'allow'
+          })
+        else
+          await cmd('permissions.forget', {
+            origin: site.origin,
+            permission: 'background-video'
           })
         refreshSiteInfo()
       }),
