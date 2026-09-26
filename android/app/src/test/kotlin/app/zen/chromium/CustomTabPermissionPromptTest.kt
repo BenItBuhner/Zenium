@@ -82,8 +82,8 @@ class CustomTabPermissionPromptTest {
         assertTrue("the next ask waiting comes up once this one is answered", show.contains("permissionAsks.settle()") && show.contains("showPermissionPrompt()"))
         val destroy = Regex("""fun destroy\(\) \{([\s\S]*?)\n    \}""").find(host)?.groupValues?.get(1) ?: error("CustomTabHost.kt has no destroy")
         assertTrue("the window's end takes the sheet down without an answer", destroy.contains("permissionPrompt?.dismiss()") && destroy.contains("permissionAsks.clear()"))
-        // The 'Open in app' confirm is out of this change's scope and stays the dialog it was.
-        assertTrue(Regex("""private fun askExternal\(args: JSONObject\) \{[\s\S]*?MaterialAlertDialogBuilder\(activity\)""").containsMatchIn(host))
+        // The Open in <App>? confirmation followed onto the chassis (CustomTabOpenInAppPromptTest): no Material dialog is left in the host.
+        assertFalse("no alert dialog anywhere in the custom tab's host", host.contains("MaterialAlertDialogBuilder") || host.contains("AlertDialog"))
     }
 
     /** One sheet per window: a second request waits behind the first, or shares its answer when it asks the same question of the same site. */

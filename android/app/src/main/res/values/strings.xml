@@ -83,8 +83,24 @@
     <string name="cct_permission_question_protected_media">Allow %1$s to play protected content?</string>
     <string name="cct_allow">Allow</string>
     <string name="cct_block">Block</string>
+    <!-- A custom tab's Open in <App>? confirmation on the native prompt sheet (CustomTabOpenInAppPrompt, v2 §9.23):
+         the browser window's ExternalProtocolSheet's words. The title with the app's name or without one; the
+         sentence under it – a site's own app offered for a web address (the page loads regardless), or the page
+         wanting to open the object its link's scheme names (one object per scheme the browser sheet names, the
+         others as "a <scheme>: link"); the address on its own line; the pair Not now | Open (cct_not_now, cct_open). -->
     <string name="cct_open_in_app">Open in %1$s?</string>
     <string name="cct_open_in_another_app">Open in another app?</string>
+    <string name="cct_open_link_also_in_app">This link can also open in %1$s</string>
+    <string name="cct_open_link_also_in_an_app">This link can also open in an app</string>
+    <string name="cct_open_wants">%1$s wants to open %2$s</string>
+    <string name="cct_this_page">This page</string>
+    <string name="cct_open_object_mailto">an email address</string>
+    <string name="cct_open_object_tel">a phone number</string>
+    <string name="cct_open_object_sms">a text message</string>
+    <string name="cct_open_object_market">a Play Store listing</string>
+    <string name="cct_open_object_geo">a map location</string>
+    <string name="cct_open_object_app">an app</string>
+    <string name="cct_open_object_other">a %1$s: link</string>
     <string name="cct_open">Open</string>
     <string name="cct_not_now">Not now</string>
     <string name="cct_no_app">No app can open this link</string>
