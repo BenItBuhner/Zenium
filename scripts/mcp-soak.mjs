@@ -38,9 +38,11 @@
 //   --verbose           one line per session, the shim's stderr
 //
 // Checks are HARD (the run fails) or SOFT (reported, never failing the run without --strict). A
-// soft check is named with the PR it waits on: `background-snapshot (until B)`,
-// `background-screenshot (until B)`, `foreground-screenshot (until B)`, `drop-force-adopt (until E)`.
-// A hard check that has nothing to act on (no orphaned group to adopt) is counted as skipped.
+// soft check is named with the PR it waits on: `drop-force-adopt (until E)`. The pictures of a
+// page – `background-snapshot`, `background-screenshot`, `foreground-screenshot` – are hard since
+// PR B put a hidden agent-driven page on a never-shown stage of its window, where it has its
+// window's page area and paints. A hard check that has nothing to act on (no orphaned group to
+// adopt) is counted as skipped.
 //
 // Output: a compact table on stdout and <out>/soak.json – counts (sessions, calls, hard and soft
 // failures by check), client latency p50 / p95 / max per tool and leg, the server's diagnostics
@@ -62,10 +64,18 @@ export const DEFAULTS = Object.freeze({ sessions: 30, concurrency: 6, rounds: 3,
 
 /** Soft checks, named with the PR that turns them hard. */
 export const SOFT_CHECKS = Object.freeze({
-  backgroundSnapshot: 'background-snapshot (until B)',
-  backgroundScreenshot: 'background-screenshot (until B)',
-  foregroundScreenshot: 'foreground-screenshot (until B)',
   dropForceAdopt: 'drop-force-adopt (until E)'
+})
+
+/**
+ * The pictures of a session's page, hard checks since PR B: a snapshot of the page while it is
+ * in the background (a viewport with a size, the fixture's heading among the refs), a screenshot
+ * of it there, and one once it is in the foreground.
+ */
+export const PICTURE_CHECKS = Object.freeze({
+  backgroundSnapshot: 'background-snapshot',
+  backgroundScreenshot: 'background-screenshot',
+  foregroundScreenshot: 'foreground-screenshot'
 })
 
 const PROTOCOL_VERSION = '2025-06-18'
@@ -1054,10 +1064,6 @@ export async function soakSession(client, ctx, { index, leg }) {
     return r
   }
   let at = 'initialize'
-  let softFailed = 0
-  const soft = (name, ok, detail) => {
-    if (!verdict.soft(name, ok, detail)) softFailed++
-  }
   try {
     await client.initialize()
     verdict.hard(at, true)
@@ -1076,7 +1082,7 @@ export async function soakSession(client, ctx, { index, leg }) {
     verdict.hard(at, !r.isError && Boolean(tabId), r.text)
 
     if (tabId) {
-      at = SOFT_CHECKS.backgroundSnapshot
+      at = PICTURE_CHECKS.backgroundSnapshot
       r = await call('browser_snapshot', { tabId })
       const snap = parseSnapshot(r.text)
       const heading = fixture.custom
@@ -1085,7 +1091,7 @@ export async function soakSession(client, ctx, { index, leg }) {
       const viewportOk = Boolean(
         snap.viewport && snap.viewport.width > 0 && snap.viewport.height > 0
       )
-      soft(
+      verdict.hard(
         at,
         !r.isError && viewportOk && heading,
         r.isError
@@ -1093,9 +1099,13 @@ export async function soakSession(client, ctx, { index, leg }) {
           : `viewport ${snap.viewport ? `${snap.viewport.width}×${snap.viewport.height}` : 'missing'}, headings ${JSON.stringify(snap.headings)}, ${snap.nodes.length} refs`
       )
 
-      at = SOFT_CHECKS.backgroundScreenshot
+      at = PICTURE_CHECKS.backgroundScreenshot
       r = await call('browser_take_screenshot', { tabId })
-      soft(at, !r.isError && hasImage(r.result), r.isError ? r.text : 'no image part in the result')
+      verdict.hard(
+        at,
+        !r.isError && hasImage(r.result),
+        r.isError ? r.text : 'no image part in the result'
+      )
 
       // The form: by the refs the snapshot gave, else by CSS selector (the built-in fixture's).
       const form = FIXTURE.form
@@ -1129,9 +1139,13 @@ export async function soakSession(client, ctx, { index, leg }) {
       r = await call('zen_mode', { mode: 'foreground' })
       verdict.hard(at, !r.isError, r.text)
 
-      at = SOFT_CHECKS.foregroundScreenshot
+      at = PICTURE_CHECKS.foregroundScreenshot
       r = await call('browser_take_screenshot', { tabId })
-      soft(at, !r.isError && hasImage(r.result), r.isError ? r.text : 'no image part in the result')
+      verdict.hard(
+        at,
+        !r.isError && hasImage(r.result),
+        r.isError ? r.text : 'no image part in the result'
+      )
     }
 
     at = closeOnFirstEnd ? 'zen_session end closeTabs' : 'zen_session end'
@@ -1201,9 +1215,7 @@ export async function soakSession(client, ctx, { index, leg }) {
   }
   const ms = performance.now() - started
   latencies?.record(leg, '(whole session)', ms)
-  ctx.verbose(
-    `${label}: ${fmtSeconds(ms)}${softFailed ? `, ${softFailed} soft check(s) failed` : ''}`
-  )
+  ctx.verbose(`${label}: ${fmtSeconds(ms)}`)
 }
 
 // ---------------------------------------------------------------------------------------------

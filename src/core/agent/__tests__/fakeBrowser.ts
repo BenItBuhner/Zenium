@@ -48,6 +48,12 @@ export interface FakeBrowser {
   pages: Map<string, FakePage>
   /** Real input the pages received, by tab id. */
   input: Map<string, AgentInputEvent[]>
+  /**
+   * What the host heard about each page's standing with the agent, by tab id, in order:
+   * `throttling:<allowed>` for `TabView.setBackgroundThrottling`, `agentDriven:<on>` for
+   * `TabView.setAgentDriven`.
+   */
+  hostCalls: Map<string, string[]>
   /** What the user does from the chrome. */
   user: {
     openTab(url: string, opts?: { essential?: boolean; pinned?: boolean; folderId?: string }): Tab
@@ -133,6 +139,7 @@ export function fakeBrowser(
   const pages = new Map<string, FakePage>()
   const views = new Map<string, TabView>()
   const input = new Map<string, AgentInputEvent[]>()
+  const hostCalls = new Map<string, string[]>()
   const gates = new Map<string, Promise<void>>()
   let commits = 0
   const transport: AgentTransport = {
@@ -160,6 +167,8 @@ export function fakeBrowser(
     pages.set(tab.id, page)
     const events: AgentInputEvent[] = []
     input.set(tab.id, events)
+    const heard = hostCalls.get(tab.id) ?? []
+    hostCalls.set(tab.id, heard)
     const view = {
       executeJavaScript: async (code: string, frameId?: number) => {
         const gate = gates.get(tab.id)
@@ -180,7 +189,12 @@ export function fakeBrowser(
       canGoBack: () => false,
       canGoForward: () => false,
       focus: () => undefined,
-      setBackgroundThrottling: () => undefined,
+      setBackgroundThrottling: (allowed: boolean) => {
+        heard.push(`throttling:${allowed}`)
+      },
+      setAgentDriven: (on: boolean) => {
+        heard.push(`agentDriven:${on}`)
+      },
       snapshot: async () => null
     } as unknown as TabView
     return view
@@ -399,6 +413,7 @@ export function fakeBrowser(
     userSpace,
     pages,
     input,
+    hostCalls,
     user,
     hold: (tabId) => {
       let release = (): void => undefined

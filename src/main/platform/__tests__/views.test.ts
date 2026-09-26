@@ -45,7 +45,7 @@ const constructed: Array<Record<string, unknown>> = []
  * Which page has the keyboard. `takeKeyboard` moves it the way Chromium does: the holder gets
  * `blur`, the taker `focus`.
  */
-const { keyboard, takeKeyboard, cursor } = vi.hoisted(() => {
+const { keyboard, takeKeyboard, cursor, stages } = vi.hoisted(() => {
   /** Where the OS pointer stands on the screen (`screen.getCursorScreenPoint`); a test moves it. */
   const cursor = { x: -100, y: -100 }
   const keyboard = { current: null as { emit(event: string): unknown } | null }
@@ -56,7 +56,14 @@ const { keyboard, takeKeyboard, cursor } = vi.hoisted(() => {
     previous?.emit('blur')
     taker.emit('focus')
   }
-  return { keyboard, takeKeyboard, cursor }
+  /** Every `BaseWindow` made in the test (the stages), in order. */
+  const stages: Array<{
+    options: Record<string, unknown>
+    children: unknown[]
+    destroyed: boolean
+    contentSizes: Array<[number, number]>
+  }> = []
+  return { keyboard, takeKeyboard, cursor, stages }
 })
 
 vi.mock('electron', async () => {
@@ -301,6 +308,90 @@ vi.mock('electron', async () => {
       this.closed = true
       this.emit('destroyed')
     }
+    /** Every `setBackgroundThrottling` call, in order. */
+    readonly throttlingCalls: boolean[] = []
+    /**
+     * Whether the renderer paints: a frame subscription on a painting page delivers a frame a
+     * turn later, sized as the view's box (`frameSize`, device pixels at scale 1). A renderer
+     * made hidden paints only once kicked – throttling set on and off again (`paintsWhenKicked`)
+     * – as a staged one does.
+     */
+    painting = true
+    paintsWhenKicked = false
+    frameSize = { width: 0, height: 0 }
+    setBackgroundThrottling(allowed: boolean): void {
+      this.throttlingCalls.push(allowed)
+      const kicked = !allowed && this.throttlingCalls.at(-2) === true
+      if (kicked && this.paintsWhenKicked && !this.painting) {
+        this.painting = true
+        this.deliverFrame()
+      }
+    }
+    /** The frame subscriptions begun, and the callback of the one standing (null once ended). */
+    subscriptions = 0
+    private subscriber: ((image: Electron.NativeImage, dirty: unknown) => void) | null = null
+    beginFrameSubscription(
+      _onlyDirty: boolean,
+      callback: (image: Electron.NativeImage, dirty: unknown) => void
+    ): void {
+      this.subscriptions++
+      this.subscriber = callback
+      this.deliverFrame()
+    }
+    endFrameSubscription(): void {
+      this.subscriber = null
+    }
+    private deliverFrame(): void {
+      const callback = this.subscriber
+      if (!callback || !this.painting) return
+      setImmediate(() => {
+        if (this.subscriber !== callback) return
+        const { width, height } = this.frameSize
+        callback(fakeFrame(width, height), { x: 0, y: 0, width, height })
+      })
+    }
+  }
+  /** A frame as the subscriber hands it over: a bitmap of the view's size, cropped on demand. */
+  const fakeFrame = (width: number, height: number): Electron.NativeImage =>
+    ({
+      isEmpty: () => width === 0 || height === 0,
+      getSize: () => ({ width, height }),
+      crop: (r: { width: number; height: number }) => fakeFrame(r.width, r.height),
+      toPNG: () => Buffer.from(`png-${width}x${height}`),
+      toJPEG: (q: number) => Buffer.from(`jpeg-${width}x${height}-${q}`)
+    }) as unknown as Electron.NativeImage
+  /**
+   * A `BaseWindow` as the view host's stage sees it: never shown, its `contentView` and its
+   * content size, destroyed with its window. Recorded in `stages` for the tests.
+   */
+  class FakeBaseWindow extends EventEmitter {
+    readonly children: unknown[] = []
+    readonly contentSizes: Array<[number, number]> = []
+    destroyed = false
+    readonly contentView = {
+      addChildView: (view: unknown): void => {
+        const at = this.children.indexOf(view)
+        if (at >= 0) this.children.splice(at, 1)
+        this.children.push(view)
+      },
+      removeChildView: (view: unknown): void => {
+        const at = this.children.indexOf(view)
+        if (at >= 0) this.children.splice(at, 1)
+      }
+    }
+    constructor(readonly options: Record<string, unknown>) {
+      super()
+      stages.push(this)
+    }
+    isDestroyed(): boolean {
+      return this.destroyed
+    }
+    destroy(): void {
+      this.destroyed = true
+    }
+    setContentSize(width: number, height: number): void {
+      this.contentSizes.push([width, height])
+    }
   }
   /**
    * Electron 44 resolves `WebContentsView.webContents` through a weak pointer to the API wrapper,
@@ -329,6 +420,8 @@ vi.mock('electron', async () => {
     bounds: { x: number; y: number; width: number; height: number } | null = null
     setBounds(rect: { x: number; y: number; width: number; height: number }): void {
       this.bounds = rect
+      // The widget follows the box: a frame of the page's is the box's size (device pixels at 1x).
+      if (this.contents) this.contents.frameSize = { width: rect.width, height: rect.height }
     }
   }
   /** The view host follows the chrome's scheme for dark theme for sites; light and quiet here. */
@@ -341,7 +434,7 @@ vi.mock('electron', async () => {
     getAllDisplays: () => [{ scaleFactor: 1 }],
     getCursorScreenPoint: () => ({ ...cursor })
   }
-  return { WebContentsView: FakeWebContentsView, nativeTheme, screen }
+  return { WebContentsView: FakeWebContentsView, BaseWindow: FakeBaseWindow, nativeTheme, screen }
 })
 
 /** A window's chrome page: the keyboard's home when no page on screen has it. */
@@ -1931,6 +2024,370 @@ describe('a hidden tab page and the window', () => {
     // The window is shown: the page paints.
     view.applyWindowVisible(true)
     expect(engine(view)).toEqual({ visible: true, bounds: box })
+  })
+})
+
+/**
+ * An agent drives a page the user is not looking at (`TabView.setAgentDriven`, on from the
+ * agent service's `prepare()` to its release). A view in no window has no box – `innerWidth` 0,
+ * no element boxes for `browser_snapshot`, an empty `capturePage` for `browser_take_screenshot`
+ * – and a hidden view in the window has none either, so such a view is kept on the window's
+ * STAGE: a `BaseWindow` that is never shown, cannot take focus and is in no taskbar, where the
+ * view is laid out at the window's page area and paints, with nothing on the user's screen. Its
+ * pictures are frames of its renderer's own, never `capturePage` copies, which would count as a
+ * capturer and (with background throttling off) make the page `visible` for good.
+ */
+describe('an agent-driven tab page and the stage', () => {
+  const settle = (): Promise<void> => new Promise((r) => setImmediate(r))
+  const pageArea = { x: 260, y: 8, width: 1332, height: 984 }
+  const box = { x: 250, y: 44, width: 1000, height: 700 }
+  type Engine = {
+    bounds: unknown
+    getVisible(): boolean
+  }
+  type Page = {
+    throttlingCalls: boolean[]
+    painting: boolean
+    paintsWhenKicked: boolean
+    subscriptions: number
+    emit(event: string, ...args: unknown[]): unknown
+  }
+  const engine = (view: ElectronTabView): Engine => view.view as unknown as Engine
+  const pageOf = (view: ElectronTabView): Page => view.webContents as unknown as Page
+  const setup = (): {
+    host: ElectronTabViewHost
+    window: ReturnType<typeof fakeWindow>
+    stage: () => (typeof stages)[number] | undefined
+    create: (window?: ReturnType<typeof fakeWindow>) => ElectronTabView
+  } => {
+    keyboard.current = null
+    stages.length = 0
+    const host = new ElectronTabViewHost(sessions)
+    const window = fakeWindow()
+    // The chrome's last layout put the one page at the page area (`ZenWindow.contentRect`).
+    Object.assign(window.zen, { contentRect: () => pageArea })
+    let n = 0
+    const create = (target = window): ElectronTabView => {
+      const view = host.createView(
+        { id: `tab_stage${++n}`, containerId: 'default' } as Tab,
+        noEvents,
+        target
+      ) as ElectronTabView
+      // As the agent service has the page: throttling off before the view is staged.
+      view.setBackgroundThrottling(false)
+      return view
+    }
+    return { host, window, stage: () => stages[0], create }
+  }
+
+  it('puts a hidden agent-driven page on a never-shown, unfocusable stage of its window, at the page area, shown there and kicked into painting', () => {
+    const { window, stage, create } = setup()
+    const view = create()
+    expect(view.isStaged()).toBe(false)
+    view.setAgentDriven(true)
+    expect(view.isStaged()).toBe(true)
+    // Out of the user's window still: nothing on screen, no keyboard to take.
+    expect(window.win.children).toEqual([])
+    expect(view.isVisible()).toBe(false)
+    const made = stage()!
+    expect(made.options).toMatchObject({
+      show: false,
+      focusable: false,
+      skipTaskbar: true,
+      frame: false,
+      width: 1280,
+      height: 820
+    })
+    expect(made.children).toEqual([view.view])
+    expect(engine(view).bounds).toEqual(pageArea)
+    expect(engine(view).getVisible()).toBe(true)
+    // Throttling off before the view had a compositor un-hides nothing: set on and off again on
+    // the stage, the widget of the moment paints.
+    expect(pageOf(view).throttlingCalls).toEqual([false, true, false])
+  })
+
+  it('sizes a page area before the first layout as a window with the sidebar open', () => {
+    const { window, create } = setup()
+    Object.assign(window.zen, { contentRect: () => null })
+    const view = create()
+    view.setAgentDriven(true)
+    expect(engine(view).bounds).toEqual({ x: 260, y: 8, width: 1280 - 268, height: 820 - 16 })
+  })
+
+  it('shares one stage between the pages of a window and makes another window its own', () => {
+    const { window, create } = setup()
+    const a = create()
+    const b = create()
+    a.setAgentDriven(true)
+    b.setAgentDriven(true)
+    expect(stages).toHaveLength(1)
+    expect(stages[0]!.children).toEqual([a.view, b.view])
+    const other = fakeWindow()
+    const c = create(other)
+    c.setAgentDriven(true)
+    expect(stages).toHaveLength(2)
+    expect(stages[1]!.children).toEqual([c.view])
+    expect(window.win.children).toEqual([])
+    expect(other.win.children).toEqual([])
+  })
+
+  it('leaves the stage for the window when the layout shows the page, and returns to it when the page is hidden again', () => {
+    const { window, stage, create } = setup()
+    const view = create()
+    view.setAgentDriven(true)
+    view.setBounds(box)
+    view.setVisible(true)
+    expect(view.isStaged()).toBe(false)
+    expect(stage()!.children).toEqual([])
+    expect(window.win.children).toEqual([view.view])
+    expect(engine(view).getVisible()).toBe(true)
+    expect(view.isVisible()).toBe(true)
+    // Hidden by a tab switch: not left in the window as other pages are (no box there) – back
+    // on the stage, at the page area.
+    view.setVisible(false)
+    expect(view.isStaged()).toBe(true)
+    expect(window.win.children).toEqual([])
+    expect(stage()!.children).toEqual([view.view])
+    expect(engine(view).bounds).toEqual(pageArea)
+    expect(engine(view).getVisible()).toBe(true)
+    expect(view.isVisible()).toBe(false)
+  })
+
+  it('leaves the stage when the core asks for its keyboard or brings it to the front, hidden, as a page never shown does', () => {
+    const { window, stage, create } = setup()
+    const focused = create()
+    focused.setAgentDriven(true)
+    focused.focus()
+    expect(focused.isStaged()).toBe(false)
+    expect(window.win.children).toEqual([focused.view])
+    expect(engine(focused).getVisible()).toBe(false)
+    const fronted = create()
+    fronted.setAgentDriven(true)
+    fronted.bringToFront()
+    expect(fronted.isStaged()).toBe(false)
+    expect(window.win.children).toEqual([focused.view, fronted.view])
+    expect(stage()!.children).toEqual([])
+  })
+
+  it('leaves the stage, hidden, when the agent lets the page go, when it is detached, and when it is destroyed', () => {
+    const { stage, create } = setup()
+    const released = create()
+    released.setAgentDriven(true)
+    released.setAgentDriven(false)
+    expect(released.isStaged()).toBe(false)
+    expect(engine(released).getVisible()).toBe(false)
+    const detached = create()
+    detached.setAgentDriven(true)
+    detached.detach()
+    expect(detached.isStaged()).toBe(false)
+    const destroyed = create()
+    destroyed.setAgentDriven(true)
+    destroyed.destroy()
+    expect(destroyed.isStaged()).toBe(false)
+    expect(stage()!.children).toEqual([])
+  })
+
+  it('moves to the new window’s stage with the page when it changes windows', () => {
+    const { create } = setup()
+    const view = create()
+    view.setAgentDriven(true)
+    const other = fakeWindow()
+    Object.assign(other.zen, { contentRect: () => ({ x: 0, y: 40, width: 900, height: 600 }) })
+    view.attachTo(other)
+    expect(view.isStaged()).toBe(true)
+    expect(stages).toHaveLength(2)
+    expect(stages[0]!.children).toEqual([])
+    expect(stages[1]!.children).toEqual([view.view])
+    expect(engine(view).bounds).toEqual({ x: 0, y: 40, width: 900, height: 600 })
+  })
+
+  it('stays on the stage, painting, while its window is minimised, and is not parked under a chrome cover', () => {
+    const { window, stage, create } = setup()
+    const view = create()
+    view.setAgentDriven(true)
+    view.applyWindowVisible(false)
+    expect(engine(view).getVisible()).toBe(true)
+    view.applyWindowVisible(true)
+    expect(engine(view).getVisible()).toBe(true)
+    expect(view.isStaged()).toBe(true)
+    // Hidden under a cover while staged: no parking (a parked view is a shown one in the
+    // window); on the stage as before.
+    window.zen.contentHidden = true
+    view.setVisible(false)
+    expect(view.parkedCorner()).toBeNull()
+    expect(stage()!.children).toEqual([view.view])
+  })
+
+  it('follows the window’s size a moment after a resize, stage and page area alike, and goes with the window, its pages off it first', () => {
+    vi.useFakeTimers()
+    try {
+      const { window, stage, create } = setup()
+      const view = create()
+      view.setAgentDriven(true)
+      window.win.contentSize = [1600, 1000]
+      Object.assign(window.zen, { contentRect: () => ({ x: 260, y: 8, width: 1332, height: 984 }) })
+      window.win.emit('resize')
+      expect(stage()!.contentSizes).toEqual([])
+      vi.advanceTimersByTime(200)
+      expect(stage()!.contentSizes).toEqual([[1600, 1000]])
+      expect(engine(view).bounds).toEqual({ x: 260, y: 8, width: 1332, height: 984 })
+      window.win.emit('closed')
+      expect(stage()!.destroyed).toBe(true)
+      expect(stage()!.children).toEqual([])
+      expect(view.isStaged()).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('kicks the renderer again after a navigation on the stage, whose new widget is made hidden', () => {
+    const { create } = setup()
+    const view = create()
+    view.setAgentDriven(true)
+    pageOf(view).throttlingCalls.length = 0
+    pageOf(view).emit('did-navigate', {}, 'https://example.com/')
+    expect(pageOf(view).throttlingCalls).toEqual([true, false])
+    // Not off the stage, and not while the core lets the page throttle.
+    view.setAgentDriven(false)
+    pageOf(view).throttlingCalls.length = 0
+    pageOf(view).emit('did-navigate', {}, 'https://example.com/two')
+    expect(pageOf(view).throttlingCalls).toEqual([])
+  })
+
+  it('does not kick a page the core lets throttle: the stage lays it out, the service is what un-hides it', () => {
+    const { create } = setup()
+    const view = create()
+    view.setBackgroundThrottling(true)
+    pageOf(view).throttlingCalls.length = 0
+    view.setAgentDriven(true)
+    expect(view.isStaged()).toBe(true)
+    expect(pageOf(view).throttlingCalls).toEqual([])
+  })
+
+  describe('captures', () => {
+    /**
+     * The page's geometry as `VIEWPORT_SCRIPT` reports it: a view the size of the widget (the
+     * page area, or the grown view) over a 1332 × 3000 document.
+     */
+    const GEOMETRY = { sx: 0, sy: 0, dpr: 1, dw: 1332, dh: 3000 }
+    const staged = (
+      geometry: Record<string, unknown> | null = GEOMETRY
+    ): { view: ElectronTabView; page: Page; boxes: unknown[] } => {
+      const { create } = setup()
+      const view = create()
+      const page = pageOf(view)
+      Object.assign(view.webContents, {
+        capturePage: () => Promise.reject(new Error('capturePage counts as a capturer')),
+        executeJavaScriptInIsolatedWorld: () => {
+          if (geometry === null) return Promise.reject(new Error('Script failed to execute'))
+          const { width, height } = (
+            page as unknown as { frameSize: { width: number; height: number } }
+          ).frameSize
+          return Promise.resolve({ ...geometry, vw: width, vh: height, cw: width, ch: height })
+        }
+      })
+      const boxes: unknown[] = []
+      const raw = view.view as unknown as { setBounds(rect: unknown): void }
+      const setBounds = raw.setBounds.bind(raw)
+      raw.setBounds = (rect: unknown): void => {
+        boxes.push(rect)
+        setBounds(rect)
+      }
+      view.setAgentDriven(true)
+      return { view, page, boxes }
+    }
+
+    it('pictures the viewport from a frame of the renderer’s own, never capturePage, at the page area’s size on the first try', async () => {
+      const { view, page } = staged()
+      const capture = await view.capture({ mode: 'viewport', format: 'png' })
+      expect(capture).toEqual({
+        data: Buffer.from('png-1332x984').toString('base64'),
+        mimeType: 'image/png',
+        width: 1332,
+        height: 984
+      })
+      expect(page.subscriptions).toBe(1)
+      await settle()
+    })
+
+    it('kicks a renderer that shows nothing and takes its first frame, once', async () => {
+      vi.useFakeTimers()
+      try {
+        const { view, page } = staged()
+        page.painting = false
+        page.paintsWhenKicked = true
+        page.throttlingCalls.length = 0
+        const pending = view.capture({ mode: 'viewport', format: 'jpeg' })
+        await vi.advanceTimersByTimeAsync(700)
+        expect(page.throttlingCalls).toEqual([])
+        await vi.advanceTimersByTimeAsync(200)
+        expect(page.throttlingCalls).toEqual([true, false])
+        const capture = await pending
+        expect(capture).toMatchObject({ mimeType: 'image/jpeg', width: 1332, height: 984 })
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('gives up on a renderer that paints nothing even kicked, with the subscription ended', async () => {
+      vi.useFakeTimers()
+      try {
+        const { view, page } = staged()
+        page.painting = false
+        const pending = view.capture({ mode: 'viewport', format: 'png' })
+        await vi.advanceTimersByTimeAsync(3000)
+        expect(await pending).toBeNull()
+        expect(page.throttlingCalls.slice(-2)).toEqual([true, false])
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('paints a full page by growing the view on the stage to the document’s height and putting the box back', async () => {
+      const { view, boxes } = staged()
+      boxes.length = 0
+      const capture = await view.capture({ mode: 'fullPage', format: 'png' })
+      expect(capture).toEqual({
+        data: Buffer.from('png-1332x3000').toString('base64'),
+        mimeType: 'image/png',
+        width: 1332,
+        height: 3000
+      })
+      expect(boxes).toEqual([{ ...pageArea, height: 3000 }, pageArea])
+      await settle()
+    })
+
+    it('cuts a region out of the grown frame, in device pixels from the document’s scroll offset', async () => {
+      const { view } = staged()
+      const capture = await view.capture({
+        mode: 'region',
+        format: 'png',
+        region: { x: 100, y: 1500, width: 400, height: 300 }
+      })
+      expect(capture).toMatchObject({ width: 400, height: 300 })
+      await settle()
+    })
+
+    it('stands the viewport in for a full page when the page does not say its geometry, and says so', async () => {
+      const { view, boxes } = staged(null)
+      boxes.length = 0
+      const capture = await view.capture({ mode: 'fullPage', format: 'png' })
+      expect(capture).toMatchObject({ width: 1332, height: 984, fallback: 'viewport' })
+      expect(boxes).toEqual([])
+      await settle()
+    })
+
+    it('takes captures one after the other: the engine keeps one frame subscription', async () => {
+      const { view, page } = staged()
+      const [a, b] = await Promise.all([
+        view.capture({ mode: 'viewport', format: 'png' }),
+        view.capture({ mode: 'viewport', format: 'png' })
+      ])
+      expect(a).not.toBeNull()
+      expect(b).not.toBeNull()
+      expect(page.subscriptions).toBe(2)
+      await settle()
+    })
   })
 })
 
