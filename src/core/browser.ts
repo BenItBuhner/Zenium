@@ -3600,7 +3600,12 @@ export class Browser {
       'window.toggleFullscreen': (_a, win) => this.toggleFullscreen(win),
       'window.fullscreenInset': ({ bottom }, win) => win.setFullscreenInset(bottom),
       'window.formFactor': ({ formFactor }, win) => {
+        if (win.formFactor === formFactor) return
         win.formFactor = formFactor
+        // The page tabs follow the window's class: one the new layout is no tab in gives way to
+        // its overlay there (a tablet's `zen://history` tab when the window narrows into the
+        // phone class; a tablet profile's on a phone at the chrome's first report).
+        this.pages.reconcileLayout(win)
       },
       'ui.surface': ({ surface, mounted }, win) => {
         if (mounted) win.surfaces.add(surface)
