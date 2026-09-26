@@ -289,12 +289,19 @@ export class ElectronPlatform implements Platform {
       quitHoldEverywhere?: boolean
       /** The launch's `--kiosk` / `--start-maximized` (`cli.ts`), for every browser window. */
       windowSwitches?: WindowSwitches
+      /**
+       * `--zen-region` / `ZEN_REGION` (`cli.ts` `regionOverride`): the region reported in the
+       * OS's place, for the EEA's search-engine choice screen (W6-2); a normal launch has none.
+       */
+      regionOverride?: string | null
     } = {}
   ) {
     this.info = {
       os: process.platform as PlatformOs,
       version: app.getVersion(),
-      locales: systemLocales()
+      locales: systemLocales(),
+      // The OS's region as Electron reads it (`''` when it cannot tell), the override first.
+      region: options.regionOverride ?? app.getLocaleCountryCode()
     }
     this.performance = electronPerformanceHost({
       holdBackgroundWork: options.holdBackgroundWork === true,

@@ -2193,6 +2193,33 @@ export interface SearchEngine {
   visitedAt?: number
 }
 
+/**
+ * The search-engine choice screen's record (W6-2; DMA Art. 6(3), Chrome's choice screen): the
+ * engine the user set as the default on this device's screen, the OS region the screen was shown
+ * for (ISO 3166-1 alpha-2, `''` when the OS did not say), when, and the screen's version (the
+ * eligible list's revision). Device-local, never synced (`DEVICE_LOCAL_SETTINGS`): as Chrome's,
+ * the screen is each device's to show once; a synced default engine does not stand in for it.
+ */
+export interface SearchChoiceRecord {
+  engineId: string
+  region: string
+  madeAt: number
+  version: number
+}
+
+/**
+ * What the chrome reads to show the choice screen (`core/searchChoice.ts`): the region the host
+ * reported, whether it is in the EEA, whether the screen is owed right now – EEA and no record,
+ * not skipped this run; or Settings' "Choose your search engine again" asked for it – and the
+ * run's shuffle seed, one per session, so the list keeps its order while the app is open.
+ */
+export interface SearchChoiceState {
+  region: string | null
+  eea: boolean
+  required: boolean
+  seed: number
+}
+
 /** What the clipboard holds, read from its description only (never its content). */
 export type ClipboardPeekKind = 'url' | 'text' | 'image' | 'none'
 
@@ -2802,6 +2829,13 @@ export interface Settings {
    * synced with the settings. Absent in profiles from before it existed (read as none).
    */
   searchEngines?: SearchEngine[]
+  /**
+   * The EEA's search-engine choice screen's record (W6-2): the engine set as the default on it,
+   * or null while the screen has not been answered on this device (it is shown at the first run
+   * in the EEA and re-asked each run until answered; "Skip for now" records nothing). Absent in
+   * profiles from before it existed (read as null). Device-local, never synced.
+   */
+  searchChoice: SearchChoiceRecord | null
   searchSuggestions: boolean
   /**
    * Suggestion privacy (omnibox-45, Chrome's "Autocomplete searches and URLs", Edge's per-source
@@ -4089,6 +4123,8 @@ export interface UIState {
   searchEngines: SearchEngine[]
   /** The extension holding the default search engine, if one does (`defaultSearchEngineOf`). */
   searchEngineControl: SearchEngineControl | null
+  /** The EEA's search-engine choice screen: whether it is owed, and the run's list order (W6-2). */
+  searchChoice: SearchChoiceState
   /**
    * The settings an extension holds, keyed by the setting's path in `Settings` (`fonts.
    * standard`, `fonts.size`, `fonts.minimumSize`) or by a name for a setting kept elsewhere
@@ -5749,6 +5785,16 @@ export interface Commands {
     args: { searchEngineId: string; colorScheme: ColorScheme; essentials: string[] }
     result: void
   }
+
+  /**
+   * The EEA's search-engine choice screen (W6-2). `choose`: the picked engine becomes the
+   * default (copied into the user's list when it is one of the EEA set) and the device's record
+   * is written; `skip`: "Skip for now" – nothing is written, the screen waits for the next run;
+   * `askAgain`: Settings › Search › "Choose your search engine again" puts the screen up.
+   */
+  'searchChoice.choose': { args: { engineId: string }; result: void }
+  'searchChoice.skip': { args: void; result: void }
+  'searchChoice.askAgain': { args: void; result: void }
 
   /**
    * Ask the system to make Zenium the default browser (Android's role dialog, or the default-apps

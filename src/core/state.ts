@@ -116,6 +116,7 @@ import {
 import { emptyReadingList, sanitizeReadingList, sortReadingList } from '../shared/readingList'
 import { JsonStore } from './store/JsonStore'
 import { createSpace, createTabRecord, emptyModel, tabVisibleIn, type Model } from './model'
+import { newSearchChoiceSeed, sanitizeSearchChoice, searchChoiceState } from './searchChoice'
 import { sanitizeResourceSettings } from './resources/switches'
 import { sanitizeAgentSettings } from './agent/settings'
 import {
@@ -585,6 +586,21 @@ export class BrowserState {
    * CT-41): the translate service folds the languages its own document listed into it, once.
    */
   languagesDefaulted = false
+  /**
+   * The OS's region (`PlatformInfo.region`; a tester's override in its place), set by the
+   * browser before `load()`: the EEA's search-engine choice screen is gated on it (W6-2).
+   */
+  searchChoiceRegion: string | null = null
+  /**
+   * The choice screen's run-only terms (`core/searchChoice.ts`): the list's order for this
+   * session, whether "Skip for now" put the screen off until the next run, and whether Settings
+   * asked for it again. Volatile – broadcast, never written; the record itself is a setting.
+   */
+  searchChoiceSession: { seed: number; skipped: boolean; askAgain: boolean } = {
+    seed: newSearchChoiceSeed(),
+    skipped: false,
+    askAgain: false
+  }
 
   constructor(
     io: StoreIO,
@@ -724,6 +740,9 @@ export class BrowserState {
       data.settings?.searchEngines,
       typeof data.settings?.searchEngineId === 'string' ? data.settings.searchEngineId : undefined
     )
+    // The choice screen's record (W6-2): a profile from before it, or one that skipped, reads
+    // null – the screen is owed again in the EEA.
+    this.settings.searchChoice = sanitizeSearchChoice(data.settings?.searchChoice)
     this.settings.privacy = sanitizePrivacySettings(data.settings?.privacy)
     this.settings.spellcheck = sanitizeSpellcheck(data.settings?.spellcheck)
     this.settings.reader = sanitizeReaderPreferences(data.settings?.reader)
@@ -1056,6 +1075,13 @@ export class BrowserState {
       shortcuts: this.shortcuts,
       searchEngines: this.searchEngines,
       searchEngineControl: this.extensionSearch.control,
+      searchChoice: searchChoiceState({
+        region: this.searchChoiceRegion,
+        record: settings.searchChoice,
+        skipped: this.searchChoiceSession.skipped,
+        askAgain: this.searchChoiceSession.askAgain,
+        seed: this.searchChoiceSession.seed
+      }),
       extensionControls: this.extensionControls,
       glance: win.glance,
       compactSidebarRevealed: win.compactSidebarRevealed,

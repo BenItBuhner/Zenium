@@ -368,4 +368,27 @@ describe('useLayoutReporter under the recede', () => {
     render(<Probe state={firstRun(false, 'normal')} />)
     expect(lastReport().contentHidden).toBe(false)
   })
+
+  /*
+   * The EEA's search-engine choice screen (W6-2) stands where the tour stood: opaque over the
+   * whole window, so it reports the views hidden the same way (`firstRunCovers` counts
+   * `searchChoiceCovers`), until the choice is made or skipped.
+   */
+  const eeaFirstRun = (done: boolean, required: boolean): UIState =>
+    ({
+      ...firstRun(done),
+      searchChoice: { region: required ? 'DE' : 'US', eea: required, required, seed: 7 }
+    }) as unknown as UIState
+
+  it('the choice screen owed after the tour keeps the views hidden until the choice', () => {
+    vi.mocked(run).mockClear()
+    // In the EEA the tour's end leaves the choice screen standing: the views stay hidden until
+    // the choice is made or skipped, and return then.
+    const { rerender } = render(<Probe state={eeaFirstRun(false, true)} />)
+    expect(lastReport().contentHidden).toBe(true)
+    rerender(<Probe state={eeaFirstRun(true, true)} />)
+    expect(lastReport().contentHidden).toBe(true)
+    rerender(<Probe state={eeaFirstRun(true, false)} />)
+    expect(lastReport().contentHidden).toBe(false)
+  })
 })

@@ -138,9 +138,17 @@ import {
   isPickableSearchEngine,
   matchKeyword,
   sanitizeSearchEngines,
+  searchChoiceEngine,
   withDefaultSearchEngineActive
 } from '../shared/search'
 import { SearchEngineService } from './searchEngines'
+import {
+  isSearchChoiceEngine,
+  normalizeRegion,
+  searchChoiceListRegion,
+  searchChoiceRecord,
+  searchChoiceShownFor
+} from './searchChoice'
 import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
 import { copyConfirmation } from '../shared/clipboard'
 import { IMAGE_URL_PREFIX } from '../shared/zenPages'
@@ -399,6 +407,9 @@ export class Browser {
     this.state.liveWindows = () => this.allWindows()
     // A profile without a preferred languages list starts from the OS's languages (CT-41).
     this.state.systemLocales = platform.info.locales ?? []
+    // The OS's region, for the EEA's search-engine choice screen (W6-2); a fact the state
+    // carries, read by the chrome at its first render – no startup step of its own.
+    this.state.searchChoiceRegion = normalizeRegion(platform.info.region)
     this.state.load()
     const performance = platform.performance
     this.background = new BackgroundWork({
@@ -4044,10 +4055,80 @@ export class Browser {
         else this.openNewTab(win)
       },
 
+      'searchChoice.choose': ({ engineId }, win) => {
+        if (this.chooseSearchEngine(engineId)) this.afterSearchChoice(win)
+      },
+      'searchChoice.skip': (_, win) => {
+        // Nothing is written: the screen waits for the next run (Chrome's choice screen comes
+        // back until it is answered). Settings' ask, if one was pending, is answered by the skip.
+        state.searchChoiceSession.skipped = true
+        state.searchChoiceSession.askAgain = false
+        state.commitVolatile()
+        this.afterSearchChoice(win)
+      },
+      'searchChoice.askAgain': () => {
+        state.searchChoiceSession.askAgain = true
+        state.searchChoiceSession.skipped = false
+        state.commitVolatile()
+      },
+
       'defaultBrowser.request': ({ source }) => this.defaultBrowser.request(source),
       'defaultBrowser.dismiss': ({ prompt }) => this.defaultBrowser.dismiss(prompt),
       'defaultBrowser.refresh': () => this.defaultBrowser.refresh()
     }
+  }
+
+  /**
+   * The choice screen's "Set as default" (W6-2): the picked engine – one of the list shown for
+   * the region (`searchChoiceListRegion`), or nothing happens – becomes the default (active, as
+   * `updateSettings` makes a default), and the device's record is written – for the region the
+   * list was shown for (`searchChoiceShownFor`) – so the screen is not owed again. An engine of
+   * the screen's that is not shipped is copied into the user's list
+   * first, the registry's entry as it is (`id`, `name`, `searchUrl`, `suggestUrl`, `keyword`,
+   * `glyph`, `favicon` – the engine's documented icon address, a reference and never the
+   * picture) with `source: 'custom'`: the id resolves on every device the profile syncs to,
+   * the phone draws its icon from the address as it draws any added engine's, and Settings ›
+   * Search lists it under Added.
+   */
+  private chooseSearchEngine(engineId: string): boolean {
+    const state = this.state
+    const engine = searchChoiceEngine(engineId)
+    const region = searchChoiceListRegion(state.searchChoiceRegion, state.settings.searchChoice)
+    if (!engine || !isSearchChoiceEngine(engineId, region)) return false
+    if (!state.searchEngines.some((e) => e.id === engineId)) {
+      state.settings.searchEngines = [
+        ...(state.settings.searchEngines ?? []),
+        { ...engine, source: 'custom' }
+      ]
+    }
+    state.settings.searchEngineId = engineId
+    if (state.settings.searchEngines)
+      state.settings.searchEngines = withDefaultSearchEngineActive(
+        state.settings.searchEngines,
+        engineId
+      )
+    state.settings.searchChoice = searchChoiceRecord(
+      engineId,
+      searchChoiceShownFor(state.searchChoiceRegion, state.settings.searchChoice),
+      Date.now()
+    )
+    state.searchChoiceSession.askAgain = false
+    state.searchChoiceSession.skipped = false
+    state.commit()
+    return true
+  }
+
+  /**
+   * The screen standing on its own – after the tour, over the first run's new tab – goes with
+   * the answer; the tab under it is announced again as the tour's end announces its
+   * (`onboarding.complete`), so the URL bar the screen held back comes up. Inside the tour the
+   * tour's own end does this; over a Settings page there is no fresh tab to announce.
+   */
+  private afterSearchChoice(win: ZenWindow): void {
+    if (!this.state.settings.onboardingDone) return
+    const active = this.tabs.activeTabFor(win)
+    if (active && isEmptyTabUrl(active.url) && !this.extensions.newTabUrl())
+      this.state.afterBroadcast(() => this.revealFreshTab(active, win))
   }
 
   updateSettings(patch: Partial<Settings>, win: ZenWindow): void {
