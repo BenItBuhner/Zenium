@@ -1,7 +1,52 @@
-import { BLANK_URL } from '@shared/url'
+import { BLANK_URL, isEmptyTabUrl } from '@shared/url'
+import type { Tab } from '@shared/types'
 import type { Browser } from '@core/browser'
+import { tabVisibleIn } from '@core/model'
 import type { ZenWindow } from '@core/window'
 import type { Bridge } from './bridge'
+
+/**
+ * The blank tab #490's first tab left in every phone profile made on v0.4.71–v0.4.76
+ * (`Browser.ensureFirstTab` opened one `zen://blank` tab for a startup window without a tab; #503
+ * stopped that on a host without the new tab page): restored, it shows the phone's new tab page
+ * where the space was EMPTY before #490 – the phone's own view with no tab. Closed here, once,
+ * right after `browser.start()` and before anything of this boot opens a tab (the widget's or a
+ * shortcut's landing, an intent's page), so the space is empty again and READY's arm reads the
+ * healed state. Only the tab that rule made can match: on the phone (the tablet placed and kept
+ * #490's tab as a page view; what it shows is the coordinator's question, not this seam's), the
+ * window's ACTIVE tab, exactly `zen://blank`, the ONLY tab the active space has in this window
+ * (a blank tab among other restored tabs stays, where Chrome keeps a new tab page tab too), and
+ * never navigated – no back/forward stack in the profile (`BrowserState.tabNavigation`, what a
+ * restored tab carries of its history) and none on the tab. A blank tab the user opened and left
+ * alone as the space's only tab is the same tab to every rule here and goes the same way: the
+ * pre-#490 empty space stands in for it. Returns whether a tab was closed. A healed profile has
+ * no such tab and heals no further.
+ */
+export function healRestoredBlankTab(browser: Browser, win: ZenWindow, phone: boolean): boolean {
+  if (!phone) return false
+  const active = browser.tabs.activeTabFor(win)
+  if (active === undefined || active.url !== BLANK_URL) return false
+  if (!lonelyIn(browser, win, active) || hasHistory(browser, active)) return false
+  browser.tabs.closeTab(active.id, false, win)
+  return true
+}
+
+/** Whether `tab` is the only tab of the window's active space that the window shows. */
+function lonelyIn(browser: Browser, win: ZenWindow, tab: Tab): boolean {
+  const tabs = browser.state.model.tabs
+  const own = win.activeSpace().tabIds.filter((id) => {
+    const t = tabs[id]
+    return t !== undefined && tabVisibleIn(t, win.id)
+  })
+  return own.length === 1 && own[0] === tab.id
+}
+
+/** Whether the profile holds a back/forward stack for `tab` with a page in it, or the tab says so. */
+function hasHistory(browser: Browser, tab: Tab): boolean {
+  if (tab.canGoBack || tab.canGoForward) return true
+  const stack = browser.state.tabNavigation.get(tab.id)
+  return stack !== undefined && stack.entries.some((entry) => !isEmptyTabUrl(entry.url))
+}
 
 /**
  * What `bootAndroid` arms READY with once the core has started: whether the boot has a page to

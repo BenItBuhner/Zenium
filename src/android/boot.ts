@@ -54,7 +54,7 @@ import { landFromIntent } from './landing'
 import { syncNativeTheme } from './nativeTheme'
 import { AndroidPlatform, windowInsetsOf, type BootInfo, type HostEventPayloads } from './platform'
 import { createPreviewBridge } from './preview'
-import { ChromeReady, bootNeedsPlacement } from './startup'
+import { ChromeReady, bootNeedsPlacement, healRestoredBlankTab } from './startup'
 import { AndroidStoreIO, readDocument } from './storeIo'
 import type { ViewEventPayloads } from './views'
 
@@ -204,6 +204,12 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
     }
   )
   browser.start()
+  // The blank tab #490 left in the phone profiles made on v0.4.71–v0.4.76 goes before this boot
+  // opens anything of its own (the landing below, an intent's page at the flush): the space is
+  // empty again, as it was before #490, and the arm below reads the healed state (startup.ts).
+  const phone = isPhone()
+  if (healRestoredBlankTab(browser, platform.window, phone))
+    console.debug('[zen] boot: closed the restored blank tab (#490) – the space is empty again')
   // The state a widget face or a launcher shortcut asked this cold start to open in (WID-07):
   // the boot answer carried it, and it lands here, in the same synchronous run as the start and
   // before `main.tsx` can render – the restored tab never takes a frame. The ready queue the
@@ -216,7 +222,7 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
   // placed the page slot – when there is a page to place (the active tab restored as a page;
   // a window without a tab, on a chrome page, or on the blank page the phone draws itself has
   // no view and nothing to wait for).
-  ready.arm(bootNeedsPlacement(browser, platform.window, isPhone()))
+  ready.arm(bootNeedsPlacement(browser, platform.window, phone))
 
   // Shortcuts typed into the chrome itself go through the same table as page keys.
   window.addEventListener(

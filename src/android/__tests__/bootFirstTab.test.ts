@@ -11,8 +11,9 @@ import { Browser } from '@core/browser'
 import { createTabRecord } from '@core/model'
 import type { Platform, StoreIO, TabView, TabViewHost, WindowHost } from '@core/platform'
 import type { ZenWindow } from '@core/window'
+import { landFromIntent, type LandingSurfaces } from '../landing'
 import { androidCapabilities } from '../platform'
-import { bootNeedsPlacement } from '../startup'
+import { bootNeedsPlacement, healRestoredBlankTab } from '../startup'
 
 /*
  * The boot's first tab on the phone (the P0 hotfix after #490, W5-F2): `Browser.ensureFirstTab`
@@ -257,5 +258,127 @@ describe("the boot's first tab on the phone (no new tab page capability)", () =>
     seedTab(browser, BLANK_URL)
     browser.start()
     expect(bootNeedsPlacement(browser, only(browser), false)).toBe(true)
+  })
+})
+
+/*
+ * The heal (W6-HF2, hole 1): every phone profile made on v0.4.71–v0.4.76 restores with #490's
+ * `zen://blank` tab as the space's only tab – the phone's new tab page where the space was empty
+ * before #490. `healRestoredBlankTab` closes that tab once, right after `browser.start()` and
+ * before the boot opens anything of its own, so the space is empty again and the arm reads the
+ * healed state. The rules: the phone only; the window's active tab, exactly `zen://blank`; the
+ * only tab the active space has; no history in the profile or on the tab. Everything else stays.
+ */
+describe("the heal of #490's restored blank tab on the phone", () => {
+  /** A phone past its first run, restored on one blank tab, as v0.4.71–v0.4.76 left it. */
+  function upgraded(): { browser: Browser; id: string; win: ZenWindow } {
+    const { browser } = phone(phoneCapabilities())
+    browser.state.settings.onboardingDone = true
+    const id = seedTab(browser, BLANK_URL)
+    browser.start()
+    return { browser, id, win: only(browser) }
+  }
+
+  it('closes the lone restored blank tab: the space is empty again, the arm reads no placement', () => {
+    const { browser, id, win } = upgraded()
+    expect(browser.tabs.activeTabFor(win)?.id).toBe(id)
+    expect(healRestoredBlankTab(browser, win, true)).toBe(true)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([])
+    expect(browser.tabs.activeTabFor(win)).toBeUndefined()
+    expect(win.activeSpace().tabIds).toEqual([])
+    expect(bootNeedsPlacement(browser, win, true)).toBe(false)
+    // An unvisited blank tab leaves no "Recently closed" entry behind (`captureClosed`).
+    expect(browser.state.recentlyClosed).toEqual([])
+  })
+
+  it('heals exactly once: the healed profile has nothing to heal at its next boot', () => {
+    const { browser, win } = upgraded()
+    expect(healRestoredBlankTab(browser, win, true)).toBe(true)
+    expect(healRestoredBlankTab(browser, win, true)).toBe(false)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([])
+  })
+
+  it('leaves a blank tab that carries history (a back/forward stack with a page in it)', () => {
+    const { browser, id, win } = upgraded()
+    browser.state.tabNavigation.set(id, {
+      entries: [
+        { url: 'https://visited.example/', title: 'Visited' },
+        { url: BLANK_URL, title: '' }
+      ],
+      index: 1
+    })
+    expect(healRestoredBlankTab(browser, win, true)).toBe(false)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([id])
+  })
+
+  it('leaves a blank tab that can go back or forward', () => {
+    const { browser, id, win } = upgraded()
+    browser.state.model.tabs[id].canGoBack = true
+    expect(healRestoredBlankTab(browser, win, true)).toBe(false)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([id])
+  })
+
+  it('leaves a blank tab that sits among other restored tabs (the user opened more since)', () => {
+    const { browser } = phone(phoneCapabilities())
+    browser.state.settings.onboardingDone = true
+    const blank = seedTab(browser, BLANK_URL)
+    const page = seedTab(browser, 'https://open.example/')
+    // Back on the blank tab, as the last run left it.
+    browser.state.model.spaces[0].activeTabId = blank
+    browser.start()
+    const win = only(browser)
+    expect(browser.tabs.activeTabFor(win)?.id).toBe(blank)
+    expect(healRestoredBlankTab(browser, win, true)).toBe(false)
+    expect(Object.keys(browser.state.model.tabs).sort()).toEqual([blank, page].sort())
+    // The arm still reads the blank tab as nothing to place (#503).
+    expect(bootNeedsPlacement(browser, win, true)).toBe(false)
+  })
+
+  it('leaves a restored page tab alone', () => {
+    const { browser } = phone(phoneCapabilities())
+    browser.state.settings.onboardingDone = true
+    const id = seedTab(browser, 'https://open.example/')
+    browser.start()
+    const win = only(browser)
+    expect(healRestoredBlankTab(browser, win, true)).toBe(false)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([id])
+    expect(bootNeedsPlacement(browser, win, true)).toBe(true)
+  })
+
+  it('does nothing on a fresh profile (no tab to heal)', () => {
+    const { browser } = phone(phoneCapabilities())
+    browser.start()
+    const win = only(browser)
+    expect(healRestoredBlankTab(browser, win, true)).toBe(false)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([])
+  })
+
+  it("never touches the tablet's restored blank tab (its view is placed like any page)", () => {
+    const { browser, id, win } = upgraded()
+    expect(healRestoredBlankTab(browser, win, false)).toBe(false)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([id])
+    expect(bootNeedsPlacement(browser, win, false)).toBe(true)
+  })
+
+  it('never closes the blank tab a widget or shortcut landing makes: the heal runs before the landing', () => {
+    // `bootAndroid`'s order: `browser.start()`, the heal, then `landFromIntent` for the boot's
+    // landing, the host queue's flush (an intent's page), and the arm. A landing over the
+    // upgraded profile: the restored blank tab goes, the landing's own blank tab stands.
+    const { browser, id, win } = upgraded()
+    expect(healRestoredBlankTab(browser, win, true)).toBe(true)
+    const surfaces: LandingSurfaces = {
+      omnibox: () => undefined,
+      voice: () => undefined,
+      scan: () => undefined,
+      unavailable: () => undefined
+    }
+    const landed = landFromIntent('search', browser, win, surfaces, (fn) => fn())
+    expect(landed).not.toBeNull()
+    expect(landed?.url).toBe(BLANK_URL)
+    expect(landed?.id).not.toBe(id)
+    expect(browser.tabs.activeTabFor(win)?.id).toBe(landed?.id)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([landed?.id])
+    // A second heal at this point would take the landing's tab – the order is the guard.
+    expect(bootNeedsPlacement(browser, win, true)).toBe(false)
   })
 })
