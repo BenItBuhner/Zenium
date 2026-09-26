@@ -1,6 +1,6 @@
 import { useViewport } from '@renderer/lib/formFactor'
 import type { CSSProperties, JSX } from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { FolderInput, VenetianMask } from 'lucide-react'
 import type { UIState } from '@shared/types'
 import { forcesRail, hasTopToolbar } from '@shared/toolbarLayout'
@@ -144,6 +144,35 @@ export function Sidebar({
   // out (the setting off, the layout changed) folds it first.
   const flyoutBox = flyoutOffered || flyoutOut
 
+  // The space STRIP slides only for a switch (v2 §11.4: a move). The panes are keyed by space
+  // id, so a space created, deleted or reordered BEFORE the current one moves the current pane's
+  // slot – `activeIndex` changes with the same space current – and the transform changes with
+  // it in the same commit; left alone, the 280 ms transition would slide the strip for a change
+  // that is no switch. That commit marks the strip `data-reflow` (main.css: `transition: none`
+  // under it) and the mark is lifted on the next animation frame. The `getBoundingClientRect`
+  // read in between is the point: a frame callback asked for from this task runs BEFORE the
+  // frame's own style recalculation, so a mark set here and lifted there would never be seen –
+  // the transform's change would be resolved with the transition on and the strip would slide
+  // after all. The read pins a style change event while the mark is on, which resolves the new
+  // transform under `transition: none` (the cut); the frame that lifts the mark then finds the
+  // transform unchanged and starts nothing. The read costs one layout per re-seat.
+  const stripRef = useRef<HTMLDivElement>(null)
+  const seatRef = useRef<{ activeSpaceId: string; activeIndex: number } | null>(null)
+  useLayoutEffect(() => {
+    const seat = seatRef.current
+    seatRef.current = { activeSpaceId: state.activeSpaceId, activeIndex }
+    const strip = stripRef.current
+    if (!strip || !seat) return
+    if (seat.activeSpaceId !== state.activeSpaceId || seat.activeIndex === activeIndex) return
+    strip.setAttribute('data-reflow', '')
+    void strip.getBoundingClientRect()
+    const frame = requestAnimationFrame(() => strip.removeAttribute('data-reflow'))
+    return () => {
+      cancelAnimationFrame(frame)
+      strip.removeAttribute('data-reflow')
+    }
+  }, [state.activeSpaceId, activeIndex])
+
   if (rail) {
     // Docked, the rail is a stretched item of the columns row with the window's 8 gutter above
     // and below it: it starts level with the frame at 82 and ends level with the frame's bottom,
@@ -254,24 +283,20 @@ export function Sidebar({
                     </div>
                   )}
                   <div className="relative min-h-0 flex-1 overflow-hidden">
-                    {/* The strip is one pane per space, `spaces.length` panes wide, and slides
-                        by whole panes. A percentage in `translateX` is a share of the element's
-                        OWN border box (the strip's, N panes), so one pane is `100 / N` percent
-                        of it – a shift of `activeIndex × 100%` moved the strip by N panes at a
-                        time and left the list blank on every space but the first (W8-F1). */}
+                    {/* The strip is the container's width and slides by whole panes: every pane
+                        is `flex: 0 0 100%` of it – one container width, side by side past its
+                        edge – and a percentage in `translateX` is a share of the element's OWN
+                        border box, the strip's, so `activeIndex × 100%` is exactly `activeIndex`
+                        panes for every N, and a space's create or delete leaves the width the
+                        percentage is taken of alone (W8-F1; the scaffold's N-panes-wide strip
+                        shifted by `activeIndex × 100%` of ITSELF moved N panes at a time). */}
                     <div
+                      ref={stripRef}
                       className="zen-space-strip h-full"
-                      style={{
-                        transform: `translateX(-${(activeIndex * 100) / state.spaces.length}%)`,
-                        width: `${state.spaces.length * 100}%`
-                      }}
+                      style={{ transform: `translateX(-${activeIndex * 100}%)`, width: '100%' }}
                     >
                       {state.spaces.map((s) => (
-                        <div
-                          key={s.id}
-                          className="h-full"
-                          style={{ width: `${100 / state.spaces.length}%` }}
-                        >
+                        <div key={s.id} className="h-full min-w-0" style={{ flex: '0 0 100%' }}>
                           <SpacePanel
                             state={state}
                             space={s}

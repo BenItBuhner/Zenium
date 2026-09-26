@@ -16,13 +16,24 @@ import { browserStore, uiStore } from '@renderer/lib/ui'
 import { Sidebar } from '../Sidebar'
 
 /*
- * The space strip (W8-F1): one pane per space, `spaces.length` panes wide, slid by whole panes
- * to bring the current space's pane over the container. A percentage in `translateX` is a
- * share of the element's OWN border box – the strip's, N panes – so one pane is `100 / N`
- * percent of it. The scaffold shifted by `activeIndex × 100%`: N panes at a time, the strip off
- * screen and the list blank on every space but the first (measured on the packaged build: three
- * spaces, the second current, the strip at x −720 for a pane of 240). happy-dom lays nothing
- * out, so the geometry is computed here from the inline styles under that CSS rule.
+ * The space strip (W8-F1): the strip is the container's width (`width: 100%`), one pane per
+ * space at `flex: 0 0 100%` of it – so every pane is the container's box, laid side by side –
+ * and it slides by whole panes: `translateX(-${activeIndex * 100}%)`, a percentage of the
+ * strip's OWN width, which is one pane. (The scaffold made the strip N panes wide and shifted it
+ * by `activeIndex × 100%` of THAT: N panes at a time, the list blank on every space but the
+ * first – measured on the packaged build with three spaces, the second current, the strip at
+ * x −720 for a pane of 240.) The form is exact for every N, and a space's create or delete no
+ * longer changes the width the transform's percentage is taken of.
+ *
+ * The strip slides only for a SWITCH (v2 §11.4: a move). When the current pane's slot moves
+ * under it with the same space current – a space created, deleted or reordered before it – the
+ * strip is re-seated in place: `Sidebar` marks it `data-reflow` for that commit (main.css:
+ * `transition: none` under the mark), pins a style change event while the mark is on, and lifts
+ * the mark on the next animation frame, so no frame shows the pane anywhere but x 0 and the
+ * next switch has its slide back.
+ *
+ * happy-dom lays nothing out, so the geometry is computed here from the inline styles under
+ * the CSS rule.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -61,6 +72,7 @@ function tab(id: string, spaceId: string): Tab {
 let root: Root | null = null
 let mount: HTMLElement | null = null
 
+/** Renders into ONE root, so a second call re-renders the same `Sidebar` (its refs kept). */
 function render(el: ReactElement): void {
   if (!root) {
     mount = document.createElement('div')
@@ -130,6 +142,7 @@ const strip = (): HTMLElement => {
   expect(el).toBeTruthy()
   return el!
 }
+const panes = (): HTMLElement[] => [...strip().children] as HTMLElement[]
 
 /** The percentage a `<n>%` or `translateX(<n>%)` inline value carries. */
 const percent = (value: string): number => {
@@ -138,11 +151,21 @@ const percent = (value: string): number => {
   return Number(m![1])
 }
 
+/** A pane's inline `flex`, as the shorthand or – a DOM shim that splits it – its longhands. */
+const flexOf = (pane: HTMLElement): string => {
+  const shorthand = pane.style.flex || pane.style.getPropertyValue('flex')
+  if (shorthand) return shorthand
+  const { flexGrow, flexShrink, flexBasis } = pane.style
+  if (flexGrow || flexShrink || flexBasis) return `${flexGrow} ${flexShrink} ${flexBasis}`
+  return /flex:\s*([^;]+)/.exec(pane.getAttribute('style') ?? '')?.[1]?.trim() ?? ''
+}
+
 /**
  * The panes laid out under the CSS rule, for a container `width` wide: the strip's width is its
- * percentage of the container; its translate is its percentage of the STRIP's own width; each
- * pane's left edge is its index times its share of the strip, shifted by the translate – all
- * relative to the container's left edge.
+ * percentage of the container; every pane is `flex: 0 0 100%` of the strip – one container
+ * width – side by side; the strip's translate is its percentage of the STRIP's own width; each
+ * pane's left edge is its index times a pane, shifted by the translate – all relative to the
+ * container's left edge.
  */
 function laidOut(width = 240): {
   strip: number
@@ -152,68 +175,85 @@ function laidOut(width = 240): {
   const el = strip()
   const stripWidth = (percent(el.style.width) / 100) * width
   const shift = (percent(el.style.transform) / 100) * stripWidth
-  const panes = [...el.children].map((child, i) => {
-    const paneWidth = (percent((child as HTMLElement).style.width) / 100) * stripWidth
-    return { left: i * paneWidth + shift, width: paneWidth }
+  const laid = panes().map((pane, i) => {
+    expect(flexOf(pane)).toBe('0 0 100%')
+    return { left: i * stripWidth + shift, width: stripWidth }
   })
-  return { strip: stripWidth, shift, panes }
+  return { strip: stripWidth, shift, panes: laid }
 }
 
 const activePane = (): number =>
-  [...strip().children].findIndex(
+  panes().findIndex(
     (child) => child.querySelector('[data-tab-panel]')?.getAttribute('data-active') === 'true'
   )
+
+/** The no-slide mark on the strip for the commit that re-seats it. */
+const reflowMarked = (): boolean => strip().hasAttribute('data-reflow')
+
+/**
+ * The animation frames the component asks for, held back until `nextFrame()` runs them – the
+ * mark is lifted on the frame after the commit that set it.
+ */
+const frames = new Map<number, FrameRequestCallback>()
+let handles = 0
+function holdFrames(): void {
+  frames.clear()
+  vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((cb) => {
+    frames.set(++handles, cb)
+    return handles
+  })
+  vi.spyOn(globalThis, 'cancelAnimationFrame').mockImplementation((handle) => {
+    frames.delete(handle)
+  })
+}
+/** Runs the frames asked for so far; the number run. */
+function nextFrame(): number {
+  const due = [...frames.values()]
+  frames.clear()
+  act(() => {
+    for (const cb of due) cb(performance.now())
+  })
+  return due.length
+}
 
 afterEach(() => {
   act(() => root?.unmount())
   root = null
   mount?.remove()
   mount = null
+  vi.restoreAllMocks()
 })
 
 describe('the space strip slides by one pane per space (W8-F1)', () => {
-  it('with two spaces: 200% wide, shifted by half of itself for the second', () => {
-    sidebar(['work', 'home'], 'work')
-    expect(strip().style.width).toBe('200%')
-    expect(strip().style.transform).toBe('translateX(-0%)')
-    expect(activePane()).toBe(0)
-
-    sidebar(['work', 'home'], 'home')
-    expect(strip().style.width).toBe('200%')
-    expect(strip().style.transform).toBe('translateX(-50%)')
-    expect(activePane()).toBe(1)
-  })
-
-  it('with three spaces: 300% wide, shifted by a third of itself per space', () => {
-    const shifts = ['translateX(-0%)', `translateX(-${100 / 3}%)`, `translateX(-${200 / 3}%)`]
-    expect(shifts).toEqual([
-      'translateX(-0%)',
-      'translateX(-33.333333333333336%)',
-      'translateX(-66.66666666666667%)'
-    ])
-    const ids = ['work', 'home', 'play']
-    for (const [i, id] of ids.entries()) {
-      sidebar(ids, id)
-      expect(strip().style.width).toBe('300%')
-      expect(strip().style.transform).toBe(shifts[i])
-      expect(strip().children).toHaveLength(3)
-      for (const child of strip().children)
-        expect(percent((child as HTMLElement).style.width)).toBeCloseTo(100 / 3, 10)
-      expect(activePane()).toBe(i)
+  it.each([
+    { ids: ['work', 'home'] },
+    { ids: ['work', 'home', 'play'] },
+    { ids: ['a', 'b', 'c', 'd', 'e', 'f', 'g'] }
+  ])(
+    'with $ids: 100% wide, one pane per space at 100% of it, shifted by whole panes',
+    ({ ids }) => {
+      for (const [i, id] of ids.entries()) {
+        sidebar(ids, id)
+        expect(strip().style.width).toBe('100%')
+        expect(strip().style.transform).toBe(`translateX(-${i * 100}%)`)
+        expect(panes()).toHaveLength(ids.length)
+        for (const pane of panes()) expect(flexOf(pane)).toBe('0 0 100%')
+        expect(activePane()).toBe(i)
+      }
     }
-  })
+  )
 
   it('lays the current pane over the container – its left edge the container’s, its width the container’s – on every space', () => {
     const ids = ['work', 'home', 'play']
     for (const [i, id] of ids.entries()) {
       sidebar(ids, id)
-      const { strip: stripWidth, panes } = laidOut(240)
-      expect(stripWidth).toBe(720)
-      expect(panes).toHaveLength(3)
+      const { strip: stripWidth, panes: laid } = laidOut(240)
+      expect(stripWidth).toBe(240)
+      expect(laid).toHaveLength(3)
       // The current pane stands on the container; the others one pane apart on either side.
-      expect(panes[i]!.left).toBeCloseTo(0, 6)
-      expect(panes[i]!.width).toBeCloseTo(240, 6)
-      for (const [k, pane] of panes.entries()) expect(pane.left).toBeCloseTo((k - i) * 240, 6)
+      expect(laid[i]!.left).toBe(0)
+      expect(laid[i]!.width).toBe(240)
+      for (const [k, pane] of laid.entries()) expect(pane.left).toBe((k - i) * 240)
     }
   })
 
@@ -224,10 +264,110 @@ describe('the space strip slides by one pane per space (W8-F1)', () => {
 
     const ids = ['a', 'b', 'c', 'd', 'e', 'f', 'g']
     sidebar(ids, 'f')
-    expect(strip().style.width).toBe('700%')
-    const { panes } = laidOut(300)
-    expect(panes[5]!.left).toBeCloseTo(0, 6)
-    expect(panes[5]!.width).toBeCloseTo(300, 6)
-    expect(panes[6]!.left).toBeCloseTo(300, 6)
+    expect(strip().style.transform).toBe('translateX(-500%)')
+    const { panes: laid } = laidOut(300)
+    expect(laid[5]!.left).toBe(0)
+    expect(laid[5]!.width).toBe(300)
+    expect(laid[6]!.left).toBe(300)
+    expect(laid[0]!.left).toBe(-1500)
+  })
+})
+
+describe('the strip slides only for a switch (v2 §11.4; W8-F1)', () => {
+  it('a space deleted before the current one re-seats the strip in place: the pane at 0 throughout, the mark for that commit and not the next', () => {
+    holdFrames()
+    sidebar(['work', 'home', 'play'], 'play')
+    expect(strip().style.transform).toBe('translateX(-200%)')
+    expect(reflowMarked()).toBe(false)
+    const before = strip()
+
+    sidebar(['home', 'play'], 'play')
+    // The same strip element, its slot moved: one pane less before the current one.
+    expect(strip()).toBe(before)
+    expect(strip().style.transform).toBe('translateX(-100%)')
+    expect(activePane()).toBe(1)
+    expect(laidOut(240).panes[1]!.left).toBe(0)
+    // The commit that moved the slot carries the mark – `transition: none` under it.
+    expect(reflowMarked()).toBe(true)
+    expect(frames.size).toBe(1)
+
+    // The next frame lifts it: the switch after this one has its slide.
+    expect(nextFrame()).toBe(1)
+    expect(reflowMarked()).toBe(false)
+    expect(strip().style.transform).toBe('translateX(-100%)')
+    expect(laidOut(240).panes[1]!.left).toBe(0)
+  })
+
+  it('a space created before the current one, or reordered past it, re-seats the strip the same way', () => {
+    holdFrames()
+    sidebar(['home', 'play'], 'play')
+    expect(strip().style.transform).toBe('translateX(-100%)')
+
+    sidebar(['work', 'home', 'play'], 'play')
+    expect(strip().style.transform).toBe('translateX(-200%)')
+    expect(laidOut(240).panes[2]!.left).toBe(0)
+    expect(reflowMarked()).toBe(true)
+    nextFrame()
+    expect(reflowMarked()).toBe(false)
+
+    // A reorder: the current space carried to the front, no switch.
+    sidebar(['play', 'work', 'home'], 'play')
+    expect(strip().style.transform).toBe('translateX(-0%)')
+    expect(laidOut(240).panes[0]!.left).toBe(0)
+    expect(reflowMarked()).toBe(true)
+    nextFrame()
+    expect(reflowMarked()).toBe(false)
+  })
+
+  it('a space created after the current one moves nothing – and needs no mark', () => {
+    holdFrames()
+    sidebar(['work', 'home'], 'work')
+    expect(strip().style.transform).toBe('translateX(-0%)')
+
+    sidebar(['work', 'home', 'extra'], 'work')
+    expect(strip().style.transform).toBe('translateX(-0%)')
+    expect(panes()).toHaveLength(3)
+    expect(laidOut(240).panes[0]!.left).toBe(0)
+    expect(reflowMarked()).toBe(false)
+    expect(frames.size).toBe(0)
+
+    // Nor does one deleted after it.
+    sidebar(['work', 'home'], 'work')
+    expect(strip().style.transform).toBe('translateX(-0%)')
+    expect(reflowMarked()).toBe(false)
+    expect(frames.size).toBe(0)
+  })
+
+  it('a switch keeps its slide: no mark, the transform alone changes', () => {
+    holdFrames()
+    sidebar(['work', 'home', 'play'], 'work')
+
+    sidebar(['work', 'home', 'play'], 'home')
+    expect(strip().style.transform).toBe('translateX(-100%)')
+    expect(activePane()).toBe(1)
+    expect(reflowMarked()).toBe(false)
+    expect(frames.size).toBe(0)
+
+    // Even a switch that comes with a create – `space.create` switches to the new space.
+    sidebar(['work', 'home', 'play', 'more'], 'more')
+    expect(strip().style.transform).toBe('translateX(-300%)')
+    expect(reflowMarked()).toBe(false)
+    expect(frames.size).toBe(0)
+  })
+
+  it('a switch in the frame the mark is still up lifts it with the commit, not the frame', () => {
+    holdFrames()
+    sidebar(['work', 'home', 'play'], 'play')
+    sidebar(['home', 'play'], 'play')
+    expect(reflowMarked()).toBe(true)
+
+    // The switch's commit runs the previous effect's cleanup: the mark goes with it and its
+    // frame is cancelled, so the switch's own transform change transitions.
+    sidebar(['home', 'play'], 'home')
+    expect(strip().style.transform).toBe('translateX(-0%)')
+    expect(reflowMarked()).toBe(false)
+    expect(frames.size).toBe(0)
+    expect(nextFrame()).toBe(0)
+    expect(reflowMarked()).toBe(false)
   })
 })

@@ -2710,6 +2710,12 @@
     display: flex;
     transition: transform 280ms var(--zen-ease);
   }
+  /* The strip re-seated in place (Sidebar.tsx, W8-F1): the current pane's slot moved under it
+     with the same space current – a space created, deleted or reordered before it – which is
+     no switch and gets no slide (v2 §11.4). Set for that commit, lifted on the next frame. */
+  .zen-space-strip[data-reflow] {
+    transition: none;
+  }
 
   .zen-live-dot {
     animation: zen-pulse 2.4s var(--zen-ease) infinite;
