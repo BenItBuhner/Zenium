@@ -7108,7 +7108,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         ),
         Row("ndgimibanhlabgdgjcpbbndiehljcpfh", "SelectorsHub", "selectorshub", core = ownPage("SelectorsHub", "side-panel/side-shub-panel.html", SELECTORSHUB_PANEL)),
         Row("oejgccbfbmkkpaidnkphaiaecficdnfn", "Toggl Track", "toggl-track", core = accountGate("Toggl Track", Regex("toggl\\.com", RegexOption.IGNORE_CASE), gate = "a Toggl account (its popup signs in at toggl.com; its timer posts to its service)")),
-        Row("caclkomlalccbpcdllchkeecicepbmbm", "Advanced Font Settings", "advanced-font-settings", core = ::fontSettingsPage),
+        Row("caclkomlalccbpcdllchkeecicepbmbm", "Advanced Font Settings", "advanced-font-settings", core = ::fontSettingsProof),
         Row("ldmmifpegigmeammaeckplhnjbbpccmm", "Save.to", "save-to", core = accountGate("Save.to", Regex("notion\\.so|save\\.to", RegexOption.IGNORE_CASE), injects = "iframe[src*='popup/index.html'], iframe[src*='restricted_popup'], iframe[src*='ldmmifpegigmeammaeckplhnjbbpccmm']", gate = "a Notion login (its clipper frame reads notion.so's session)")),
         Row("jdopnakmnlnccgpfpmjmdjjohmcdgabp", "Screen Recorder", "screen-recorder-3", core = recorderPage("Screen Recorder", Regex("/pages/popup/popup\\.html"), "/capture|record|screen|camera|microphone|stop capturing/i")),
         Row("jiaopdjbehhjgokpphdfgmapkobbnmjp", "Youtube-shorts block", "youtube-shorts-block", core = shortsRedirect("Youtube-shorts block", "https://www.youtube.com/shorts/zV4uBH9S1KI")),
@@ -7259,7 +7259,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // Zenium a package. Run alone by id (the trigger's `[proof]` lanes); a full sweep reads it
         // after the store rows in table order (its rule stands only while its row runs: the
         // row's cleanup disables the blocker as it does any row's extension).
-        Row(PROOF_BLOCKER_ID, PROOF_BLOCKER_NAME, "proof-own-pages-exempt", fixture = PROOF_BLOCKER_FILES, core = ::ownPagesExempt)
+        Row(PROOF_BLOCKER_ID, PROOF_BLOCKER_NAME, "proof-own-pages-exempt", fixture = PROOF_BLOCKER_FILES, core = ::ownPagesExempt),
+        // Round 20's two `chrome.fontSettings` proof rows beside Advanced Font Settings' (the
+        // bridge's proof at rank 433): fixtures of the sweep's own with the `fontSettings`
+        // permission and a probe page – A the sizes, `clearFont` and the reverts, B two
+        // extensions' precedence (its core enables A again, so A's row comes first). The ids are
+        // [fixtureId]'s of the names, not the desktop's #500 probes' (those were unpacked
+        // fixtures of the desktop worker's, never in the repository).
+        Row(FONTS_PROBE_A_ID, FONTS_PROBE_A_NAME, "proof-fonts-probe-a", fixture = FONTS_PROBE_A_FILES, core = ::fontsProbeSizes),
+        Row(FONTS_PROBE_B_ID, FONTS_PROBE_B_NAME, "proof-fonts-probe-b", fixture = FONTS_PROBE_B_FILES, core = ::fontsProbePrecedence)
     )
 
     // --- the core checks of compat round 20 (ranks 481-510 by installs) --------------------------
@@ -7749,30 +7757,347 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     }
 
     /**
-     * Advanced Font Settings: an `options_page` alone (no popup, no scripts) that lists the
-     * writing scripts and, per script, the standard, serif, sans-serif and fixed fonts and their
-     * sizes, all read from and written to `chrome.fontSettings`. The page rendering its script
-     * list and its font selects is the runtime's part (the API present, its `getFontList` and
-     * `getFont` answered); the WebView has no per-script font preferences to set, so the
-     * runtime answers its reads empty and `not_controllable`, and the row is `n/a` on the page
-     * rendered (WebView limit, named). A page without its controls within the wait is `F` with
-     * the blank-page evidence.
+     * Advanced Font Settings – the `chrome.fontSettings` bridge's proof (compat round 20). The
+     * extension is an `options_page` alone (no popup, no scripts) that lists the writing scripts
+     * and, per script, the standard, serif, sans-serif and fixed fonts and the three sizes, all
+     * read from and written to `chrome.fontSettings`. The fixture `fonts-lang.html` is opened
+     * first and read as the baseline (`r0`): no `lang` on its root and no font-family anywhere
+     * but its control spans, so every plain span shows the WebView's standard family. The
+     * options page is opened in a tab and its standard list awaited filled from `getFontList`
+     * (the device's fonts.xml named families; `casual` – Coming Soon on the AOSP images – is
+     * picked, a fallback list behind it), and the four events counted on the page. Then, through
+     * the page's own controls (the script list and the standard list's `change`, the size
+     * slider's handler, the Apply button): the default script's standard face to the picked
+     * family and the default size to 24 px; the Japanese script's standard face to `serif` and
+     * the Cyrillic's to `monospace`; `math` to `serif` through the API (the page has no math
+     * picker). The open fixture tab is read (`r1`), a fresh fixture tab (`r2`); everything is
+     * then cleared through the page's per-script reset and the API's clears, and the open tab
+     * read again (`r3`). `P` needs: the list filled; the body in the picked family at 24 px, the
+     * plain span's text as wide as the control span styled with the picked family and not as
+     * wide as the monospace control (the face is on the glyphs, not only in the computed value);
+     * the `lang="ja"` span in `serif` while the unlabelled Japanese span keeps the standard
+     * family (divergence i of the `:lang()` approximation); the `lang="ru"` spans in
+     * `monospace` – the one carrying Latin text too, as wide as the monospace control
+     * (divergence ii); the MathML element in `serif` while the span asking for `font-family:
+     * math` is not (divergence iii); the fresh tab reading as the open one; the readings back
+     * to the baseline after the clears; `onFontChanged` seen three times or more and
+     * `onDefaultFontSizeChanged` once; `getFont` for Japanese answering `serif` controlled by
+     * this extension. `PARTIAL` is the standard face and size applied with a later reading off
+     * (each named); `F` is an empty list or the standard face never applied, with the blank-page
+     * evidence where the page drew nothing.
      */
-    private fun fontSettingsPage(row: Row, entry: JSONObject): Grade {
+    private fun fontSettingsProof(row: Row, entry: JSONObject): Grade {
         val factor = speedFactor(entry)
+        val slug = entry.optString("slug")
         val extra = JSONObject()
-        val tab = createTab("chrome-extension://${row.id}/options.html")
-        val view = waitForView(tab)
-        val found = pollExpr(view, FONT_SETTINGS_PAGE, scaled(30_000, factor))
-        found.put("console", JSONArray(consoleOf(view).takeLast(10)))
-        extra.put("page", found).put("url", (tabUrls()[tab] ?: "").take(160))
-        if (!found.optBoolean("pass")) extra.put("blankTab", blankPageEvidence(view, row, 0L))
+        val (fixture1, fixtureView) = fixture("fonts-lang.html", factor, 1_500)
+        val r0 = fontReadings(fixtureView)
+        extra.put("r0", r0)
+        val options = createTab("chrome-extension://${row.id}/options.html")
+        val optionsView = waitForView(options)
+        val list = pollExpr(optionsView, FONT_SETTINGS_LIST, scaled(30_000, factor))
+        list.put("console", JSONArray(consoleOf(optionsView).takeLast(8)))
+        extra.put("list", list).put("url", (tabUrls()[options] ?: "").take(160))
+        if (!list.optBoolean("pass")) {
+            extra.put("blankTab", blankPageEvidence(optionsView, row, 0L))
+            SystemClock.sleep(800)
+            snap("$slug-fonts-list")
+            closeTab(options)
+            closeTab(fixture1)
+            showTab(fixtureTab)
+            return Grade("F", "Advanced Font Settings: its standard font list is not filled from getFontList within ${scaled(30_000, factor) / 1000} s: ${list.toString().take(220)}", extra)
+        }
+        val picked = list.optString("picked")
+        tabEval(optionsView, FONT_EVENTS_ARM)
         SystemClock.sleep(800)
-        snap("${entry.optString("slug")}-font-settings")
-        return if (found.optBoolean("pass")) {
-            Grade("n/a", "Advanced Font Settings: its options page renders its script list and font selects (${found.optInt("selects")} selects, ${found.optInt("scriptOptions")} scripts listed, `chrome.fontSettings` with ${found.optInt("apiKeys")} members), but the WebView has no per-script font preferences for `chrome.fontSettings` to set (the runtime answers its reads empty and not_controllable): WebView limit", extra)
-        } else {
-            Grade("F", "Advanced Font Settings: its options page shows no script list or font selects within ${scaled(30_000, factor) / 1000} s: ${found.toString().take(200)}", extra)
+        snap("$slug-fonts-list")
+        // Step 1: the default script's standard face and the default size, through the page's controls.
+        extra.put("applyStandard", json(tabEval(optionsView, fontApplyScript(mapOf("Zyyy" to picked), size = 24))))
+        showTab(fixture1)
+        val standard = pollFonts(fixtureView, scaled(15_000, factor)) { familyOf(it, "body") == picked && sizeOf(it, "body") == "24px" }
+        extra.put("r1standard", standard)
+        snap("$slug-fonts-standard")
+        // Step 2: the Japanese and Cyrillic scripts' standard faces through the page, math through the API.
+        showTab(options)
+        extra.put("applyScripts", json(tabEval(optionsView, fontApplyScript(mapOf("Jpan" to "serif", "Cyrl" to "monospace")))))
+        extra.put("math", probe(optionsView, FONT_MATH_SET, "__zenMath", scaled(10_000, factor)))
+        val get = probe(optionsView, FONT_GET, "__zenGet", scaled(10_000, factor))
+        extra.put("get", get)
+        showTab(fixture1)
+        val r1 = pollFonts(fixtureView, scaled(15_000, factor)) { familyOf(it, "ja") == "serif" && familyOf(it, "ru") == "monospace" && familyOf(it, "math") == "serif" }
+        extra.put("r1", r1)
+        snap("$slug-fonts-scripts")
+        val (fixture2, view2) = fixture("fonts-lang.html", factor, 1_500)
+        val r2 = fontReadings(view2)
+        extra.put("r2", r2)
+        snap("$slug-fonts-new-tab")
+        closeTab(fixture2)
+        // The revert: the page's per-script reset (four clearFont each) and the API's clears.
+        showTab(options)
+        extra.put("clear", tabEval(optionsView, FONT_CLEAR_ALL))
+        showTab(fixture1)
+        val r3 = pollFonts(fixtureView, scaled(15_000, factor)) { sameFonts(it, r0) }
+        extra.put("r3", r3)
+        snap("$slug-fonts-reverted")
+        val events = json(tabEval(optionsView, "JSON.stringify(window.__zenEv||null)"))
+        extra.put("events", events).put("optionsConsole", JSONArray(consoleOf(optionsView).takeLast(8)))
+        closeTab(options)
+        closeTab(fixture1)
+        showTab(fixtureTab)
+        val standardOn = familyOf(r1, "body") == picked && sizeOf(r1, "body") == "24px"
+        val control = "probe-$picked"
+        val glyphs = if (r1.optJSONObject(control) != null) near(widthOf(r1, "latin"), widthOf(r1, control)) && !near(widthOf(r1, "latin"), widthOf(r1, "probe-mono")) else null
+        val jaOn = familyOf(r1, "ja") == "serif" && familyOf(r1, "plain-ja") == picked
+        val ruOn = familyOf(r1, "ru") == "monospace" && familyOf(r1, "ru-latin") == "monospace" && near(widthOf(r1, "ru-latin"), widthOf(r1, "probe-mono"))
+        val mathOn = familyOf(r1, "math") == "serif" && familyOf(r1, "math-text") == "math"
+        val newTabSame = sameFonts(r1, r2)
+        val reverted = sameFonts(r3, r0)
+        val eventsOk = events.optInt("font") >= 3 && events.optInt("size") >= 1
+        val jpan = get.optJSONObject("jpan")
+        val getOk = jpan != null && jpan.optString("fontId") == "serif" && jpan.optString("levelOfControl") == "controlled_by_this_extension"
+        val note = "list ${list.optInt("fontOptions")} fonts (${list.optJSONArray("names")?.join(", ")?.replace("\"", "") ?: ""}), picked `$picked`; " +
+            "body ${familyOf(r0, "body")} ${sizeOf(r0, "body")} → ${familyOf(r1, "body")} ${sizeOf(r1, "body")}" +
+            (glyphs?.let { "; glyphs ${if (it) "on the picked face" else "NOT on the picked face"} (latin ${widthOf(r1, "latin")} px, the $picked control ${widthOf(r1, control)} px, the monospace control ${widthOf(r1, "probe-mono")} px)" } ?: "; no width control for `$picked`") +
+            "; lang=ja ${familyOf(r1, "ja")}, unlabelled Japanese ${familyOf(r1, "plain-ja")}; lang=ru ${familyOf(r1, "ru")}, Latin text under lang=ru ${familyOf(r1, "ru-latin")} (${widthOf(r1, "ru-latin")} px against the monospace control's ${widthOf(r1, "probe-mono")} px); " +
+            "MathML ${familyOf(r1, "math")}, font-family: math ${familyOf(r1, "math-text")}; a new tab ${if (newTabSame) "reads the same" else "reads differently"}; after the clears ${if (reverted) "back to the baseline" else "NOT back: body ${familyOf(r3, "body")} ${sizeOf(r3, "body")}, ja ${familyOf(r3, "ja")}, ru ${familyOf(r3, "ru")}, math ${familyOf(r3, "math")}"}; " +
+            "events font ${events.optInt("font")} size ${events.optInt("size")}; getFont Jpan ${jpan?.toString() ?: "no answer"}"
+        val off = listOfNotNull(
+            if (glyphs == false) "the glyphs" else null,
+            if (!jaOn) "the Japanese label" else null,
+            if (!ruOn) "the Cyrillic label" else null,
+            if (!mathOn) "math" else null,
+            if (!newTabSame) "the new tab" else null,
+            if (!reverted) "the revert" else null,
+            if (!eventsOk) "the events" else null,
+            if (!getOk) "getFont" else null
+        )
+        return when {
+            !standardOn -> Grade("F", "Advanced Font Settings: the standard face and size set through its page never reached the fixture: $note", extra)
+            off.isEmpty() -> Grade("P", "Advanced Font Settings: $note", extra)
+            else -> Grade("PARTIAL", "Advanced Font Settings: the standard face and size applied; off: ${off.joinToString(", ")}: $note", extra)
+        }
+    }
+
+    /** `window.__zenFonts()` of the fonts fixture: the computed family, size and box per span, and the injected sheet. */
+    private fun fontReadings(view: WebView): JSONObject =
+        json(tabEval(view, "typeof window.__zenFonts==='function'?window.__zenFonts():JSON.stringify({error:'no __zenFonts on the page'})"))
+
+    /** The readings polled until `ready` holds, for up to `timeoutMs`; the last reading either way. */
+    private fun pollFonts(view: WebView, timeoutMs: Long, ready: (JSONObject) -> Boolean): JSONObject {
+        var last = JSONObject()
+        poll(timeoutMs, 600) {
+            last = fontReadings(view)
+            if (ready(last)) true else null
+        }
+        return last
+    }
+
+    /** The first family of a span's computed `font-family` in a reading, unquoted and lower-cased; empty when absent. */
+    private fun familyOf(reading: JSONObject?, id: String): String =
+        reading?.optJSONObject(id)?.optString("ff")?.substringBefore(',')?.trim()?.trim('"', '\'')?.lowercase() ?: ""
+
+    private fun sizeOf(reading: JSONObject?, id: String): String = reading?.optJSONObject(id)?.optString("fs") ?: ""
+
+    private fun widthOf(reading: JSONObject?, id: String): Double = reading?.optJSONObject(id)?.optDouble("w") ?: Double.NaN
+
+    private fun near(a: Double, b: Double, tolerance: Double = 1.0): Boolean = !a.isNaN() && !b.isNaN() && Math.abs(a - b) < tolerance
+
+    /** Whether two readings agree on every graded span's computed family and size. */
+    private fun sameFonts(a: JSONObject?, b: JSONObject?): Boolean =
+        a != null && b != null && FONT_SPANS.all { familyOf(a, it) == familyOf(b, it) && sizeOf(a, it) == sizeOf(b, it) }
+
+    /**
+     * On Advanced Font Settings' options page: `sets` (script code → font id) through its script
+     * list and standard font list (their `change` events reach its handlers as a user's picks
+     * do), an optional default size through its slider handler, then its Apply button, which
+     * commits the pending changes as `chrome.fontSettings.setFont` / `setDefaultFontSize`.
+     */
+    private fun fontApplyScript(sets: Map<String, String>, size: Int? = null): String =
+        "(function(){var sets=${JSONObject(sets)};var out={};var s=document.getElementById('scriptList');var l=document.getElementById('standardFontList');" +
+            "for(var sc in sets){s.value=sc;s.dispatchEvent(new Event('change'));l.value=sets[sc];l.dispatchEvent(new Event('change'));out[sc]={script:s.value,font:l.value}}" +
+            (size?.let { "advancedFonts.handleFontSizeSliderChange('defaultFontSize','$it');" } ?: "") +
+            "var b=document.getElementById('apply-settings');out.disabled=b.disabled;b.click();return JSON.stringify(out)})()"
+
+    /** A step's answer in a probe's `steps` array ([FONTS_PROBE_SET] and friends), by name; null when the step is not there. */
+    private fun stepOf(probe: JSONObject, name: String): JSONObject? {
+        val steps = probe.optJSONArray("steps") ?: return null
+        for (i in 0 until steps.length()) {
+            val step = steps.optJSONObject(i) ?: continue
+            if (step.optString("name") == name) return step
+        }
+        return null
+    }
+
+    /**
+     * Fonts probe A – the sizes, `clearFont` and the reverts (the round's second proof row, a
+     * fixture of the sweep's own with the `fontSettings` permission and a probe page). From its
+     * page: `setDefaultFontSize` 20, `setMinimumFontSize` 12, `setDefaultFixedFontSize` 18 and
+     * the standard face to `monospace`, each read back with its level of control. The fixture
+     * read after (`r1`): the body at 20 px in `monospace`, the `<code>` at 18 px (the fixed
+     * default size, through the monospace quirk), the six-pixel span's box grown to the minimum
+     * (the computed value keeps the specified size; the box shows the rendered one), a fresh
+     * tab the same (`r2`). Then the four clears, each read back as `controllable_by_this_extension`
+     * with the browser's own value, and the open tab back to the baseline (`r3`). The four
+     * events counted on the page (armed at its load). `P` on all of it; `PARTIAL` with the
+     * sizes and face applied and a later reading off; `F` when they never reached the fixture.
+     */
+    private fun fontsProbeSizes(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val slug = entry.optString("slug")
+        val extra = JSONObject()
+        val (fixture1, fixtureView) = fixture("fonts-lang.html", factor, 1_500)
+        val r0 = fontReadings(fixtureView)
+        extra.put("r0", r0)
+        val page = createTab("chrome-extension://${row.id}/probe.html")
+        val pageView = waitForView(page)
+        val ready = poll(scaled(15_000, factor), 400) { if (tabEval(pageView, "String(!!(window.__zenEv&&typeof chrome!=='undefined'&&chrome.fontSettings))") == "true") true else null }
+        extra.put("pageReady", ready == true)
+        val set = probe(pageView, FONTS_PROBE_A_SET, "__zenA", scaled(15_000, factor))
+        extra.put("set", set)
+        showTab(fixture1)
+        val r1 = pollFonts(fixtureView, scaled(15_000, factor)) { familyOf(it, "body") == "monospace" && sizeOf(it, "body") == "20px" && sizeOf(it, "fixed") == "18px" }
+        extra.put("r1", r1)
+        snap("$slug-sizes")
+        val (fixture2, view2) = fixture("fonts-lang.html", factor, 1_500)
+        val r2 = fontReadings(view2)
+        extra.put("r2", r2)
+        closeTab(fixture2)
+        showTab(page)
+        val clear = probe(pageView, FONTS_PROBE_A_CLEAR, "__zenAClear", scaled(15_000, factor))
+        extra.put("clear", clear)
+        showTab(fixture1)
+        val r3 = pollFonts(fixtureView, scaled(15_000, factor)) { sameFonts(it, r0) && near(widthOf(it, "tiny"), widthOf(r0, "tiny")) }
+        extra.put("r3", r3)
+        snap("$slug-cleared")
+        val events = json(tabEval(pageView, "JSON.stringify(window.__zenEv||null)"))
+        extra.put("events", events).put("pageConsole", JSONArray(consoleOf(pageView).takeLast(8)))
+        closeTab(page)
+        closeTab(fixture1)
+        showTab(fixtureTab)
+        val sizesOn = familyOf(r1, "body") == "monospace" && sizeOf(r1, "body") == "20px" && sizeOf(r1, "fixed") == "18px"
+        val minimumOn = widthOf(r1, "tiny") > widthOf(r0, "tiny") * 1.5
+        val sizeRead = stepOf(set, "getDefaultFontSize")?.optJSONObject("r")
+        val levelsOn = sizeRead != null && sizeRead.optInt("pixelSize") == 20 && sizeRead.optString("levelOfControl") == "controlled_by_this_extension" &&
+            stepOf(set, "getMinimumFontSize")?.optJSONObject("r")?.optInt("pixelSize") == 12 &&
+            stepOf(set, "getDefaultFixedFontSize")?.optJSONObject("r")?.optInt("pixelSize") == 18 &&
+            stepOf(set, "getFont")?.optJSONObject("r")?.optString("fontId") == "monospace"
+        val newTabSame = sameFonts(r1, r2) && near(widthOf(r1, "tiny"), widthOf(r2, "tiny"))
+        val clearedLevel = stepOf(clear, "getDefaultFontSize")?.optJSONObject("r")?.optString("levelOfControl")
+        val reverted = sameFonts(r3, r0) && near(widthOf(r3, "tiny"), widthOf(r0, "tiny")) && clearedLevel == "controllable_by_this_extension"
+        val eventsOk = events.optInt("font") >= 1 && events.optInt("size") >= 1 && events.optInt("fixed") >= 1 && events.optInt("min") >= 1
+        val note = "body ${familyOf(r0, "body")} ${sizeOf(r0, "body")} → ${familyOf(r1, "body")} ${sizeOf(r1, "body")}; code ${sizeOf(r0, "fixed")} → ${sizeOf(r1, "fixed")}; " +
+            "the six-pixel span ${widthOf(r0, "tiny")} → ${widthOf(r1, "tiny")} px wide (${if (minimumOn) "the minimum applied" else "the minimum NOT applied"}); " +
+            "read back: default size ${sizeRead?.toString() ?: "no answer"}, minimum ${stepOf(set, "getMinimumFontSize")?.optJSONObject("r")?.optInt("pixelSize")}, fixed ${stepOf(set, "getDefaultFixedFontSize")?.optJSONObject("r")?.optInt("pixelSize")}, standard ${stepOf(set, "getFont")?.optJSONObject("r")?.optString("fontId")}; " +
+            "a new tab ${if (newTabSame) "reads the same" else "reads differently"}; after the clears ${if (reverted) "back to the baseline, the level $clearedLevel" else "NOT back: body ${familyOf(r3, "body")} ${sizeOf(r3, "body")}, code ${sizeOf(r3, "fixed")}, the six-pixel span ${widthOf(r3, "tiny")} px, the level $clearedLevel"}; " +
+            "events font ${events.optInt("font")} size ${events.optInt("size")} fixed ${events.optInt("fixed")} min ${events.optInt("min")}"
+        val off = listOfNotNull(
+            if (!minimumOn) "the minimum size" else null,
+            if (!levelsOn) "the reads' levels" else null,
+            if (!newTabSame) "the new tab" else null,
+            if (!reverted) "the revert" else null,
+            if (!eventsOk) "the events" else null
+        )
+        return when {
+            !sizesOn -> Grade("F", "fonts probe A: the sizes and the standard face never reached the fixture: $note", extra)
+            off.isEmpty() -> Grade("P", "fonts probe A: $note", extra)
+            else -> Grade("PARTIAL", "fonts probe A: the sizes and the face applied; off: ${off.joinToString(", ")}: $note", extra)
+        }
+    }
+
+    /**
+     * Fonts probe B – two extensions' precedence (the round's third proof row; needs probe A's
+     * row before it in the table, its fixture installed). A is enabled again and, from its
+     * page, sets the standard face to `monospace`; B, installed after A and so ahead of it in
+     * Chrome's install-order precedence, sets it to `casual` (or the first of its fallbacks
+     * `getFontList` carries). The fixture shows B's face; A's `getFont` answers B's face as
+     * `controlled_by_other_extensions`, B's its own as `controlled_by_this_extension`. B's
+     * `clearFont` lets A's `monospace` surface (A's level `controlled_by_this_extension`; B's
+     * reading is recorded – the shared model answers `controlled_by_other_extensions` where
+     * Chrome, which weighs the caller's precedence, answers `controllable_by_this_extension`);
+     * A's `clearFont` returns the fixture to the baseline. A is disabled again at the end as
+     * every row's extension is. `P` on all of it; `PARTIAL` with B's face applied and a later
+     * reading off; `F` when B's face never reached the fixture; `n/m` when A is not installed.
+     */
+    private fun fontsProbePrecedence(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val slug = entry.optString("slug")
+        val extra = JSONObject()
+        if (extensions().none { it.getString("id") == FONTS_PROBE_A_ID }) return Grade("n/m", "fonts probe B: fonts probe A is not installed (its row runs first in the table)", extra)
+        coreCall("extension.setEnabled", JSONObject().put("id", FONTS_PROBE_A_ID).put("enabled", true).toString())
+        val aEnabled = poll(scaled(20_000, factor), 400) { extensions().firstOrNull { it.getString("id") == FONTS_PROBE_A_ID }?.takeIf { it.getBoolean("enabled") } } != null
+        extra.put("aEnabled", aEnabled)
+        val (fixture1, fixtureView) = fixture("fonts-lang.html", factor, 1_500)
+        val r0 = fontReadings(fixtureView)
+        extra.put("r0", r0)
+        val aPage = createTab("chrome-extension://$FONTS_PROBE_A_ID/probe.html")
+        val aView = waitForView(aPage)
+        poll(scaled(15_000, factor), 400) { if (tabEval(aView, "String(!!(window.__zenEv&&typeof chrome!=='undefined'&&chrome.fontSettings))") == "true") true else null }
+        val aSet = probe(aView, fontsProbeSet("monospace"), "__zenSet", scaled(15_000, factor))
+        extra.put("aSet", aSet)
+        val bPage = createTab("chrome-extension://${row.id}/probe.html")
+        val bView = waitForView(bPage)
+        poll(scaled(15_000, factor), 400) { if (tabEval(bView, "String(!!(window.__zenEv&&typeof chrome!=='undefined'&&chrome.fontSettings))") == "true") true else null }
+        val bSet = probe(bView, FONTS_PROBE_B_SET, "__zenSet", scaled(15_000, factor))
+        extra.put("bSet", bSet)
+        val picked = bSet.optString("picked")
+        showTab(fixture1)
+        val r1 = pollFonts(fixtureView, scaled(15_000, factor)) { familyOf(it, "body") == picked }
+        extra.put("r1", r1)
+        snap("$slug-b-wins")
+        showTab(aPage)
+        val aUnder = probe(aView, FONTS_PROBE_GET, "__zenGet", scaled(10_000, factor))
+        extra.put("aUnderB", aUnder)
+        showTab(bPage)
+        val bClear = probe(bView, FONTS_PROBE_CLEAR, "__zenClear", scaled(15_000, factor))
+        extra.put("bClear", bClear)
+        showTab(fixture1)
+        val r2 = pollFonts(fixtureView, scaled(15_000, factor)) { familyOf(it, "body") == "monospace" }
+        extra.put("r2", r2)
+        snap("$slug-a-surfaces")
+        showTab(aPage)
+        val aAfter = probe(aView, FONTS_PROBE_GET, "__zenGet", scaled(10_000, factor))
+        extra.put("aAfterBClear", aAfter)
+        val aClear = probe(aView, FONTS_PROBE_CLEAR, "__zenClear", scaled(15_000, factor))
+        extra.put("aClear", aClear)
+        showTab(fixture1)
+        val r3 = pollFonts(fixtureView, scaled(15_000, factor)) { sameFonts(it, r0) }
+        extra.put("r3", r3)
+        snap("$slug-cleared")
+        extra.put("aEvents", json(tabEval(aView, "JSON.stringify(window.__zenEv||null)")))
+        extra.put("bEvents", json(tabEval(bView, "JSON.stringify(window.__zenEv||null)")))
+        closeTab(bPage)
+        closeTab(aPage)
+        closeTab(fixture1)
+        runCatching { coreCall("extension.setEnabled", JSONObject().put("id", FONTS_PROBE_A_ID).put("enabled", false).toString()) }
+        val aOff = poll(scaled(20_000, factor), 400) { extensions().firstOrNull { it.getString("id") == FONTS_PROBE_A_ID }?.takeIf { !it.getBoolean("enabled") } } != null
+        extra.put("aDisabledAgain", aOff)
+        showTab(fixtureTab)
+        val bWins = picked.isNotEmpty() && familyOf(r1, "body") == picked
+        val aRead = stepOf(aUnder, "getFont")?.optJSONObject("r")
+        val bRead = stepOf(bSet, "getFont")?.optJSONObject("r")
+        val levelsOn = aRead != null && aRead.optString("fontId") == picked && aRead.optString("levelOfControl") == "controlled_by_other_extensions" &&
+            bRead != null && bRead.optString("fontId") == picked && bRead.optString("levelOfControl") == "controlled_by_this_extension"
+        val aSurfaces = familyOf(r2, "body") == "monospace"
+        val aAfterRead = stepOf(aAfter, "getFont")?.optJSONObject("r")
+        val aControlsAfter = aAfterRead != null && aAfterRead.optString("fontId") == "monospace" && aAfterRead.optString("levelOfControl") == "controlled_by_this_extension"
+        val reverted = sameFonts(r3, r0)
+        val bAfterClear = stepOf(bClear, "getFont")?.optJSONObject("r")
+        val note = "A set monospace (${stepOf(aSet, "getFont")?.optJSONObject("r")?.toString() ?: "no read"}); B picked `$picked` (${bRead?.toString() ?: "no read"}); " +
+            "body ${familyOf(r0, "body")} → ${familyOf(r1, "body")} with both set; A under B: ${aRead?.toString() ?: "no read"}; " +
+            "B cleared: body ${familyOf(r2, "body")} (B reads ${bAfterClear?.toString() ?: "no read"}; A reads ${aAfterRead?.toString() ?: "no read"}); " +
+            "A cleared: ${if (reverted) "back to the baseline" else "NOT back: body ${familyOf(r3, "body")} ${sizeOf(r3, "body")}"}; A disabled again ${aOff}; " +
+            "events A ${extra.optJSONObject("aEvents")?.optInt("font")} B ${extra.optJSONObject("bEvents")?.optInt("font")}"
+        val off = listOfNotNull(
+            if (!levelsOn) "the levels with both set" else null,
+            if (!aSurfaces) "A's face surfacing after B's clear" else null,
+            if (!aControlsAfter) "A's level after B's clear" else null,
+            if (!reverted) "the revert" else null
+        )
+        return when {
+            !aEnabled -> Grade("n/m", "fonts probe B: fonts probe A did not enable again: $note", extra)
+            !bWins -> Grade("F", "fonts probe B: the later-installed extension's face never reached the fixture: $note", extra)
+            off.isEmpty() -> Grade("P", "fonts probe B: $note", extra)
+            else -> Grade("PARTIAL", "fonts probe B: the later-installed extension's face applied; off: ${off.joinToString(", ")}: $note", extra)
         }
     }
 
@@ -10519,6 +10844,30 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "setTimeout(function(){if(!p.done){if(p.ownImage==='pending')p.ownImage='timeout';if(p.webFetch==='pending')p.webFetch='timeout';if(p.webImage==='pending')p.webImage='timeout';if(p.webImageNamed==='pending')p.webImageNamed='timeout';settle()}},15000)})();\n",
             "own.svg" to "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><rect width=\"64\" height=\"64\" fill=\"#3a6\"/><circle cx=\"32\" cy=\"32\" r=\"18\" fill=\"#fff\"/></svg>"
         )
+
+        /**
+         * The `chrome.fontSettings` probes ([fontsProbeSizes], [fontsProbePrecedence]): an
+         * extension with the `fontSettings` permission and one page (`probe.html`, its
+         * `options_ui` in a tab) that arms the four events' counters at load
+         * (`window.__zenEv`, the shape [FONT_EVENTS_ARM] makes); the calls themselves come from
+         * the driver. Two of them, alike but for the name, so the second is installed after the
+         * first and ahead of it in the install-order precedence.
+         */
+        private const val FONTS_PROBE_A_NAME = "Zenium compat proof: fonts probe A"
+        private val FONTS_PROBE_A_ID = fixtureId(FONTS_PROBE_A_NAME)
+        private const val FONTS_PROBE_B_NAME = "Zenium compat proof: fonts probe B"
+        private val FONTS_PROBE_B_ID = fixtureId(FONTS_PROBE_B_NAME)
+        private fun fontsProbeFiles(name: String): Map<String, String> = mapOf(
+            "manifest.json" to """{"manifest_version":3,"name":"$name","version":"1.0","description":"A fixture of the Zenium compat sweep: a page with the fontSettings permission, driven by the sweep.","permissions":["fontSettings"],"options_ui":{"page":"probe.html","open_in_tab":true}}""",
+            "probe.html" to
+                "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>$name</title><script src=\"probe.js\"></script></head>" +
+                "<body style=\"font:16px system-ui,sans-serif;margin:24px\"><h1 style=\"font-size:20px\">$name</h1><p id=\"status\">A page with the fontSettings permission; the sweep drives the calls.</p></body></html>",
+            "probe.js" to
+                "(function(){var e=window.__zenEv={font:0,size:0,fixed:0,min:0,last:null};var f=chrome.fontSettings;if(!f){document.addEventListener('DOMContentLoaded',function(){document.getElementById('status').textContent='chrome.fontSettings is missing'});return}" +
+                "f.onFontChanged.addListener(function(d){e.font++;e.last=d||null});f.onDefaultFontSizeChanged.addListener(function(){e.size++});f.onDefaultFixedFontSizeChanged.addListener(function(){e.fixed++});f.onMinimumFontSizeChanged.addListener(function(){e.min++})})();\n"
+        )
+        private val FONTS_PROBE_A_FILES = fontsProbeFiles(FONTS_PROBE_A_NAME)
+        private val FONTS_PROBE_B_FILES = fontsProbeFiles(FONTS_PROBE_B_NAME)
         private const val YOUTUBE_URL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
         private const val INSTALL_TIMEOUT_MS = 240_000L
         /** uBlock Origin (MV2) on Edge Add-ons: the heaviest row, run last by default. */
@@ -11817,13 +12166,113 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "return JSON.stringify({pass:es.length>0,entries:es.length,names:names.slice(0,5),mode:document.body?document.body.getAttribute('data-mode'):null,intro:!!intro&&getComputedStyle(intro).display!=='none',text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,160)})})()"
 
         /**
-         * Advanced Font Settings' options page: its script list (`#scriptList`) and the four font
-         * selects (`#standardFontList` and the serif, sans-serif, fixed lists) rendered, the
-         * `chrome.fontSettings` namespace's members counted from the page.
+         * Advanced Font Settings' options page with its standard font list filled from
+         * `getFontList` (the first option is its own "(Use default)"): the option ids and names,
+         * the script list's size, the `chrome.fontSettings` members counted; the family the proof
+         * picks – `casual` where the list has it, else the first of the fallbacks (they mirror the
+         * fixture's control spans), else the first listed.
          */
-        private const val FONT_SETTINGS_PAGE =
-            "(function(){var s=document.getElementById('scriptList');var std=document.getElementById('standardFontList');var selects=document.querySelectorAll('select').length;var api=(typeof chrome!=='undefined'&&chrome.fontSettings)?Object.keys(chrome.fontSettings).length:0;" +
-                "return JSON.stringify({pass:!!s&&!!std&&selects>=3,scriptList:!!s,standardFontList:!!std,selects:selects,scriptOptions:s?s.options.length:0,fontOptions:std?std.options.length:0,apiKeys:api,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,160)})})()"
+        private const val FONT_SETTINGS_LIST =
+            "(function(){var s=document.getElementById('scriptList');var std=document.getElementById('standardFontList');var api=(typeof chrome!=='undefined'&&chrome.fontSettings)?Object.keys(chrome.fontSettings).length:0;" +
+                "var ids=std?Array.prototype.slice.call(std.options).map(function(o){return o.value}).filter(function(v){return v!==''}):[];var names=std?Array.prototype.slice.call(std.options).map(function(o){return o.text}).slice(0,12):[];" +
+                "var picks=['casual','serif-monospace','sans-serif-smallcaps','sans-serif-condensed'];var picked=picks.filter(function(p){return ids.indexOf(p)>=0})[0]||ids[0]||'';" +
+                "return JSON.stringify({pass:!!s&&!!std&&ids.length>0,scriptOptions:s?s.options.length:0,fontOptions:ids.length,ids:ids.slice(0,40),names:names,picked:picked,apiKeys:api,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,120)})})()"
+
+        /** The four `chrome.fontSettings` events counted on an extension page, on `window.__zenEv`. */
+        private const val FONT_EVENTS_ARM =
+            "(function(){var e=window.__zenEv={font:0,size:0,fixed:0,min:0,last:null};var f=chrome.fontSettings;f.onFontChanged.addListener(function(d){e.font++;e.last=d||null});f.onDefaultFontSizeChanged.addListener(function(){e.size++});" +
+                "f.onDefaultFixedFontSizeChanged.addListener(function(){e.fixed++});f.onMinimumFontSizeChanged.addListener(function(){e.min++});return 'armed'})()"
+
+        /** `math` to `serif` through the API (Advanced Font Settings has no math picker), read back. Lands on `window.__zenMath`. */
+        private const val FONT_MATH_SET =
+            "(function(){var p=window.__zenMath={done:false,error:null,math:null};try{chrome.fontSettings.setFont({genericFamily:'math',fontId:'serif'},function(){p.error=chrome.runtime.lastError?String(chrome.runtime.lastError.message):null;" +
+                "chrome.fontSettings.getFont({genericFamily:'math'},function(d){p.math=d||null;p.done=true})})}catch(e){p.error='threw: '+String(e&&e.message||e);p.done=true}return 'asked'})()"
+
+        /** `getFont` for the Japanese and Cyrillic standard faces and the common one, and the default size. Lands on `window.__zenGet`. */
+        private const val FONT_GET =
+            "(function(){var p=window.__zenGet={done:false};var f=chrome.fontSettings;f.getFont({script:'Jpan',genericFamily:'standard'},function(a){p.jpan=a||null;f.getFont({script:'Cyrl',genericFamily:'standard'},function(b){p.cyrl=b||null;" +
+                "f.getFont({genericFamily:'standard'},function(c){p.standard=c||null;f.getDefaultFontSize({},function(d){p.size=d||null;p.done=true})})})});return 'asked'})()"
+
+        /** The revert on Advanced Font Settings' page: its per-script reset (four `clearFont` each) for the three scripts set, the size's clear and math's. */
+        private const val FONT_CLEAR_ALL =
+            "(function(){['Zyyy','Jpan','Cyrl'].forEach(function(s){advancedFonts.clearSettingsForScript(s)});chrome.fontSettings.clearDefaultFontSize();chrome.fontSettings.clearFont({genericFamily:'math'});return 'cleared'})()"
+
+        /** The fixture's spans two readings are compared on ([sameFonts]): computed family and size each. */
+        private val FONT_SPANS = listOf("body", "latin", "ja", "plain-ja", "ru", "plain-ru", "ru-latin", "math", "math-text", "tiny", "fixed")
+
+        /**
+         * The probe pages' step runner: `calls` (name → the call's code with `cb` its callback)
+         * run one after another, each step's answer and `lastError` kept on `steps`, the events
+         * counted so far beside them; lands on `window.<slot>`. `p` is the slot object, `f` the
+         * `chrome.fontSettings` namespace, for the calls' code.
+         */
+        private fun fontsProbeSteps(slot: String, calls: List<Pair<String, String>>): String {
+            val chain = calls.joinToString("") { (name, code) -> ".then(function(){return step('$name',function(cb){$code})})" }
+            return "(function(){var p=window.$slot={done:false,steps:[],error:null};var f=chrome.fontSettings;" +
+                "function step(name,fn){return new Promise(function(res){try{fn(function(r){p.steps.push({name:name,r:r===undefined?null:r,err:chrome.runtime.lastError?String(chrome.runtime.lastError.message):null});res()})}catch(e){p.steps.push({name:name,threw:String(e&&e.message||e)});res()}})}" +
+                "Promise.resolve()$chain.then(function(){p.events=window.__zenEv||null;p.done=true},function(e){p.error=String(e&&e.message||e);p.done=true});return 'asked'})()"
+        }
+
+        /** Fonts probe A's sets: the three sizes and the standard face to `monospace`, each read back. */
+        private val FONTS_PROBE_A_SET = fontsProbeSteps(
+            "__zenA",
+            listOf(
+                "setDefaultFontSize" to "f.setDefaultFontSize({pixelSize:20},cb)",
+                "setMinimumFontSize" to "f.setMinimumFontSize({pixelSize:12},cb)",
+                "setDefaultFixedFontSize" to "f.setDefaultFixedFontSize({pixelSize:18},cb)",
+                "setFont" to "f.setFont({genericFamily:'standard',fontId:'monospace'},cb)",
+                "getDefaultFontSize" to "f.getDefaultFontSize({},cb)",
+                "getMinimumFontSize" to "f.getMinimumFontSize({},cb)",
+                "getDefaultFixedFontSize" to "f.getDefaultFixedFontSize({},cb)",
+                "getFont" to "f.getFont({genericFamily:'standard'},cb)"
+            )
+        )
+
+        /** Fonts probe A's clears, each read back (the browser's own value, `controllable_by_this_extension`). */
+        private val FONTS_PROBE_A_CLEAR = fontsProbeSteps(
+            "__zenAClear",
+            listOf(
+                "clearDefaultFontSize" to "f.clearDefaultFontSize({},cb)",
+                "clearMinimumFontSize" to "f.clearMinimumFontSize({},cb)",
+                "clearDefaultFixedFontSize" to "f.clearDefaultFixedFontSize({},cb)",
+                "clearFont" to "f.clearFont({genericFamily:'standard'},cb)",
+                "getDefaultFontSize" to "f.getDefaultFontSize({},cb)",
+                "getMinimumFontSize" to "f.getMinimumFontSize({},cb)",
+                "getDefaultFixedFontSize" to "f.getDefaultFixedFontSize({},cb)",
+                "getFont" to "f.getFont({genericFamily:'standard'},cb)"
+            )
+        )
+
+        /** A probe page's standard face set to `fontId` and read back. */
+        private fun fontsProbeSet(fontId: String): String = fontsProbeSteps(
+            "__zenSet",
+            listOf(
+                "setFont" to "f.setFont({genericFamily:'standard',fontId:'$fontId'},cb)",
+                "getFont" to "f.getFont({genericFamily:'standard'},cb)"
+            )
+        )
+
+        /** Fonts probe B's set: the family picked off `getFontList` (`casual` first, `serif-monospace`, `cursive`, `sans-serif-smallcaps` behind it), set and read back. */
+        private val FONTS_PROBE_B_SET = fontsProbeSteps(
+            "__zenSet",
+            listOf(
+                "getFontList" to "f.getFontList(function(list){var ids=(list||[]).map(function(x){return x.fontId});var picks=['casual','serif-monospace','cursive','sans-serif-smallcaps'];p.picked=picks.filter(function(x){return ids.indexOf(x)>=0})[0]||'';p.fonts=ids.length;cb(ids.slice(0,12))})",
+                "setFont" to "f.setFont({genericFamily:'standard',fontId:p.picked},cb)",
+                "getFont" to "f.getFont({genericFamily:'standard'},cb)"
+            )
+        )
+
+        /** A probe page's standard face read. */
+        private val FONTS_PROBE_GET = fontsProbeSteps("__zenGet", listOf("getFont" to "f.getFont({genericFamily:'standard'},cb)"))
+
+        /** A probe page's standard face cleared and read back. */
+        private val FONTS_PROBE_CLEAR = fontsProbeSteps(
+            "__zenClear",
+            listOf(
+                "clearFont" to "f.clearFont({genericFamily:'standard'},cb)",
+                "getFont" to "f.getFont({genericFamily:'standard'},cb)"
+            )
+        )
 
         /**
          * Search by Image's image-pick mode on the page: its `src/select/script.js` (run through
