@@ -152,8 +152,23 @@ object WebAppStore {
      */
     fun write(dir: File, record: WebAppRecord, tile: Bitmap?) {
         dir.mkdirs()
-        File(dir, "${record.shortcutId}.json").writeText(record.toJson().toString())
+        replace(File(dir, "${record.shortcutId}.json"), record.toJson().toString())
         if (tile != null) File(dir, "${record.shortcutId}.png").outputStream().use { tile.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
+
+    /**
+     * [text] into [file] whole or not at all: a temp beside it, renamed over it (the shape
+     * `Storage.writeBytes` has), so a death mid-write leaves the file as it was rather than torn –
+     * a torn record reads as none to [load] and to [WebAppDisclosure]. Throws when nothing landed.
+     */
+    fun replace(file: File, text: String) {
+        file.parentFile?.mkdirs()
+        val tmp = File(file.parentFile, "${file.name}.tmp")
+        tmp.writeText(text)
+        if (!tmp.renameTo(file)) {
+            file.delete()
+            if (!tmp.renameTo(file)) throw java.io.IOException("could not rename ${tmp.name} over ${file.name}")
+        }
     }
 
     fun load(context: Context, shortcutId: String): WebAppRecord? =

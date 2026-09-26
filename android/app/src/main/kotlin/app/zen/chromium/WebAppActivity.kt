@@ -346,26 +346,37 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
 
     /**
      * PWA-13: on the install's first launch, once the page is on screen and the splash has lifted,
-     * the window says whose it is – "Running in Zenium" on the §9.33 card with OK – and the launch
-     * is remembered in the app's record, so no later launch says it again. The record's read and
-     * the mark's write are one small file's, off the main thread; the card comes up on it.
+     * the window says whose it is – "Running in Zenium" on the §9.33 card in the first-time hint's
+     * plain form, 2.8 s, a swipe sends it off early – and the launch is remembered in the app's
+     * record once the card has LEFT (the clock's end or the swipe), not when it shows, so a launch
+     * killed under the card says it once more and no launch after a seen card says it again. The
+     * record's read here and the mark's write in [showDisclosure] are one small file's, off the
+     * main thread; the card comes up on the read.
      */
     private fun discloseOnFirstLaunch() {
         val record = record
         Thread({
-            val due = WebAppDisclosure.claimFirstLaunch(this, record, System.currentTimeMillis())
+            val due = WebAppDisclosure.dueFor(this, record)
             Log.i(WebAppDisclosure.TAG, "disclosure ${if (due) "due: the first launch of" else "not due: a later launch of"} ${record.shortcutId}")
             if (due) shell.post { if (!isFinishing && !isDestroyed && disclosure == null) showDisclosure() }
         }, "zen-webapp-disclosure").start()
     }
 
     private fun showDisclosure() {
+        val record = record
         val card = NativeToastCard(
             this, V2Ink(this, scheme.dark),
             text = WebAppDisclosure.text(this),
-            action = getString(R.string.webapp_disclosure_ok),
+            action = null,
             showMs = WebAppDisclosure.SHOW_MS,
-            onGone = { gone -> if (disclosure === gone) disclosure = null }
+            onGone = { gone ->
+                if (disclosure === gone) disclosure = null
+                // Seen: the card left by its clock or under a swipe (a detach at teardown does not come here).
+                Thread({
+                    val written = WebAppDisclosure.markSeenFor(this, record, System.currentTimeMillis())
+                    Log.i(WebAppDisclosure.TAG, "disclosure ${if (written) "seen: marked in the record of" else "seen: the record already marked for"} ${record.shortcutId}")
+                }, "zen-webapp-disclosure").start()
+            }
         )
         disclosure = card
         // Under the fullscreen layer, so a page gone fullscreen covers the card as it covers the chrome's.

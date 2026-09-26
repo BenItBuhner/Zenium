@@ -226,12 +226,12 @@ class WebAppDemo : DemoHarness("pwa-demo-state.json", "android-pwa-display", "we
             return false
         }
         waitForPage(webApp, "/app/")
-        disclosure(f, webApp)
+        val window = disclosure(f, webApp) ?: return false
         SystemClock.sleep(2_500)
         shot("design-standalone-$THEME")
         beat()
-        describeWindow(webApp, "standalone", THEME_COLOR, expectToolbar = false, expectBarsHidden = false, expectMode = "standalone")
-        recents(webApp)
+        describeWindow(window, "standalone", THEME_COLOR, expectToolbar = false, expectBarsHidden = false, expectMode = "standalone")
+        recents(window)
         return true
     }
 
@@ -239,40 +239,69 @@ class WebAppDemo : DemoHarness("pwa-demo-state.json", "android-pwa-display", "we
 
     /**
      * The install's first launch says whose window it is – "Running in Zenium" on the §9.33 toast
-     * card with OK, drawn natively ([NativeToastCard]) – the still is the lead read's; OK takes the
-     * card away under a real finger; the launch is remembered in the app's own record, so the
-     * relaunch (scene 8) says nothing.
+     * card drawn natively ([NativeToastCard]) in the first-time hint's plain form: no action, the
+     * 2.8 s clock, a swipe sends it off early – and the launch is remembered in the app's own
+     * record once the card has LEFT, not when it shows (the lead read on #561). So, in order: the
+     * card up on the first launch with the record unmarked under it; the window finished under the
+     * card (the in-process stand-in for a kill – [WebAppActivity.onDestroy] detaches the card, which
+     * reports no leaving) and still no mark; the relaunch shows the card once more – the still, the
+     * lead read's, a finger on the card holding its clock as a reader's would; the same finger's
+     * swipe sends the card off and the record is marked; scene 8's relaunch says nothing. Returns
+     * the window in front after the relaunch, or null when none came back.
      */
-    private fun disclosure(f: Finger, webApp: WebAppActivity) {
-        finding("\n3b. The first launch: 'Running in Zenium' on the toast card, once per install (PWA-13)")
+    private fun disclosure(f: Finger, first: WebAppActivity): WebAppActivity? {
+        finding("\n3b. The first launch: 'Running in Zenium' on the toast card, seen once it leaves (PWA-13)")
         val text = WebAppDisclosure.text(app)
+        val file = WebAppStore.recordFile(app, first.record.shortcutId)
+        fun marked(): Boolean = runCatching { WebAppDisclosure.shown(JSONObject(file.readText())) }.getOrDefault(false)
         val card = waitFor(text, 6_000)
         check("the first launch shows '$text' on the toast card", card != null)
-        // The arrival spring's settle, then the still with the card at rest over the page.
-        SystemClock.sleep(900)
-        shot("disclosure-$THEME")
-        val ok = findByLabel(OK_LABEL)
-        check("the card carries the one action, OK", ok != null)
-        val marked = runCatching { WebAppDisclosure.shown(JSONObject(WebAppStore.recordFile(app, webApp.record.shortcutId).readText())) }.getOrDefault(false)
-        check("the launch is remembered in the app's record (${webApp.record.shortcutId}.json: ${WebAppDisclosure.KEY})", marked)
-        // The label's node re-read at rest: `waitFor` answers the instant the node exists, mid-arrival,
-        // when its bounds still lie below the screen's edge.
+        check("the card showing is not the card seen: no mark in the record yet (${first.record.shortcutId}.json: ${WebAppDisclosure.KEY})", !marked())
+        // The window goes under the card, well inside its 2.8 s: nothing is marked.
+        onMain { first.finishAndRemoveTask() }
+        awaitTrue(6_000) { webApps(Stage.RESUMED, Stage.PAUSED, Stage.STOPPED).isEmpty() }
+        SystemClock.sleep(1_000)
+        check("a window killed under the card leaves no mark", !marked())
+        val relaunch = launch(shortcutIntent ?: Shortcuts.launchIntent(app, APP_URL, SKETCH), "/app/")
+        finding("relaunched after the kill ${relaunch.route}${if (relaunch.timing.isEmpty()) "" else "; am start -W: ${relaunch.timing}"}")
+        val webApp = relaunch.webApp ?: run {
+            fail("no WebAppActivity came back after the kill")
+            return null
+        }
+        val again = waitFor(text, 6_000)
+        check("a kill before the card leaves shows it once more", again != null)
+        if (again == null) return webApp
+        // The arrival spring's settle (`waitFor` answers the instant the node exists, mid-arrival, its
+        // bounds still below the edge), then the label's node at rest.
+        SystemClock.sleep(600)
         val rested = findByLabel(text)
-        if (rested != null) {
-            val bottom = onMain { webApp.window.decorView.height }
-            finding("the card's text at rest: $rested, ${rested.height()} px tall, ${bottom - rested.bottom} px above the window's bottom edge")
-        }
-        if (ok != null) {
-            f.tap(ok.exactCenterX(), ok.exactCenterY())
-            val gone = awaitTrue(4_000) { findByLabel(text) == null && onMain { webApp.disclosure == null } }
-            check("OK takes the card away", gone)
-        }
+        check("the card is at rest on the page", rested != null)
+        if (rested == null) return webApp
+        val bottom = onMain { webApp.window.decorView.height }
+        finding("the card's text at rest: $rested, ${rested.height()} px tall, ${bottom - rested.bottom} px above the window's bottom edge")
+        // A finger on the card holds its clock (the chrome's card pauses under a pointer too): the
+        // still is the card at rest, nothing of the finger on it.
+        f.down(rested.exactCenterX(), rested.exactCenterY())
+        f.hold(300)
+        shot("disclosure-$THEME")
+        val plain = onMain { webApp.disclosure?.let { it.actionView == null && it.view.childCount == 1 } == true }
+        check("the plain card: the text alone, no OK, no action on it", plain && findByLabel(OK_LABEL) == null)
+        check("the finger on the card has not marked it", !marked() && onMain { webApp.disclosure?.shown == true })
+        // The swipe: off to the right, past the fling speed (§9.33's SWIPE_THRESHOLDS on the shared numbers).
+        f.moveBy(width * 0.4f, 0f, 120)
+        f.up()
+        val gone = awaitTrue(4_000) { findByLabel(text) == null && onMain { webApp.disclosure == null } }
+        check("the swipe sends the card off", gone)
+        check("the card leaving marks the record as seen (${WebAppDisclosure.KEY})", awaitTrue(3_000) { marked() })
+        return webApp
     }
 
-    /** A fixture launched without the install (minimal-ui, fullscreen): its first-launch disclosure marked ahead, so its design still is the window's alone. */
+    /** A fixture launched without the install (minimal-ui, fullscreen): its first-launch disclosure marked seen ahead, so its design still is the window's alone. */
     private fun quietFirstLaunch(record: WebAppRecord) {
-        val claimed = WebAppDisclosure.claim(WebAppStore.recordFile(app, record.shortcutId), record, System.currentTimeMillis())
-        finding("${record.name}: first-launch disclosure marked ahead of the launch (${if (claimed) "was due" else "already marked"})")
+        val file = WebAppStore.recordFile(app, record.shortcutId)
+        val wasDue = WebAppDisclosure.due(file)
+        WebAppDisclosure.markSeen(file, record, System.currentTimeMillis())
+        finding("${record.name}: first-launch disclosure marked seen ahead of the launch (${if (wasDue) "was due" else "already marked"})")
     }
 
     // --- 4. links inside and outside the scope -----------------------------------------------------
@@ -911,7 +940,7 @@ class WebAppDemo : DemoHarness("pwa-demo-state.json", "android-pwa-display", "we
         private const val GALLERY_LINK = "gallery"
         private const val NOTES_LINK = "notes"
         private const val CLOSE_LABEL = "Close"
-        /** The disclosure card's one action (webapp_disclosure_ok). */
+        /** The action the disclosure card must NOT carry: the plain card, no OK (the lead read on #561). */
         private const val OK_LABEL = "OK"
         private const val MENU_LABEL = "Menu"
         private const val MINIMIZE_LABEL = "Minimize"

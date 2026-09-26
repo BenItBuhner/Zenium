@@ -195,6 +195,23 @@ class V2TokensPinTest {
         }
         assertEquals(springOf("SPRING_GENTLE"), ToastCardSpec.IN_STIFFNESS to ToastCardSpec.IN_DAMPING)
         assertEquals(springOf("SPRING_SNAPPY"), ToastCardSpec.OUT_STIFFNESS to ToastCardSpec.OUT_DAMPING)
+        // §9.33's swipe: the one release rule every swipe shares (`SWIPE_THRESHOLDS`, lib/gestures/swipe.ts) and
+        // the message card's own slop and rubber band (lib/gestures/dismiss.ts) – the numbers the native card decides on.
+        val swipe = File(root, "src/renderer/src/lib/gestures/swipe.ts").readText()
+        val thresholds = Regex("""export const SWIPE_THRESHOLDS: SwipeThresholds = \{([\s\S]*?)\}""").find(swipe)!!.groupValues[1]
+        fun threshold(name: String): Float = Regex("""\b$name: ([\d.]+)""").find(thresholds)?.groupValues?.get(1)?.toFloat() ?: error("SWIPE_THRESHOLDS states no $name")
+        assertEquals(threshold("flingVelocity"), ToastCardSpec.FLING_VELOCITY)
+        assertEquals(threshold("commitFraction"), ToastCardSpec.COMMIT_FRACTION)
+        assertEquals(threshold("projectionSeconds"), ToastCardSpec.PROJECTION_SECONDS)
+        assertEquals(Regex("""export function rubberBand\(overshoot: number, extent: number, coefficient = ([\d.]+)\)""").find(swipe)!!.groupValues[1].toFloat(), ToastCardSpec.RUBBER_COEFFICIENT)
+        val dismiss = File(root, "src/renderer/src/lib/gestures/dismiss.ts").readText()
+        assertEquals(Regex("""export const DISMISS_SLOP = (\d+)""").find(dismiss)!!.groupValues[1].toInt(), ToastCardSpec.SLOP_DP)
+        assertEquals(Regex("""const RESIST_EXTENT = (\d+)""").find(dismiss)!!.groupValues[1].toInt(), ToastCardSpec.RESIST_DP)
+        // The toast's open ways, `TOAST_DIRS` (ToastCard.tsx): sideways both ways, down.
+        val toastCardTsx = File(root, "src/renderer/src/components/messages/ToastCard.tsx").readText()
+        val dirs = Regex("""const TOAST_DIRS: DismissDirections = \{ x: \[([-\d, ]+)\], y: \[([-\d, ]+)\] \}""").find(toastCardTsx)!!
+        assertEquals(dirs.groupValues[1].split(",").map { it.trim().toInt() }.toSet(), ToastSwipe.TOAST_WAYS.x)
+        assertEquals(dirs.groupValues[2].split(",").map { it.trim().toInt() }.toSet(), ToastSwipe.TOAST_WAYS.y)
     }
 
     @Test

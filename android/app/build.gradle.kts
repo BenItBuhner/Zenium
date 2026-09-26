@@ -225,11 +225,14 @@ android {
                 webRoot.resolve("src/renderer/src/assets/main.css"),
                 webRoot.resolve("src/renderer/src/lib/motion/sheet.ts"),
                 webRoot.resolve("src/renderer/src/components/sheet/BottomSheet.tsx"),
-                // The toast card's pin (ToastCardSpec): the shared card numbers, the chrome's clocks, the springs.
+                // The toast card's pin (ToastCardSpec): the shared card numbers, the chrome's clocks, the springs, the swipe's rule.
                 webRoot.resolve("src/shared/toastCard.ts"),
                 webRoot.resolve("src/shared/spring.ts"),
                 webRoot.resolve("src/renderer/src/lib/ui.ts"),
-                webRoot.resolve("src/renderer/src/lib/bookmarkUndo.ts")
+                webRoot.resolve("src/renderer/src/lib/bookmarkUndo.ts"),
+                webRoot.resolve("src/renderer/src/lib/gestures/swipe.ts"),
+                webRoot.resolve("src/renderer/src/lib/gestures/dismiss.ts"),
+                webRoot.resolve("src/renderer/src/components/messages/ToastCard.tsx")
             ).withPathSensitivity(PathSensitivity.RELATIVE)
             it.inputs.dir(projectDir.resolve("src/main/res/values")).withPathSensitivity(PathSensitivity.RELATIVE)
             it.inputs.dir(projectDir.resolve("src/main/res/anim")).withPathSensitivity(PathSensitivity.RELATIVE)
