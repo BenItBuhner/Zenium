@@ -3939,7 +3939,12 @@ export class Menus {
       label: 'Help',
       click: () =>
         tabs.createTab(
-          { url: HELP_URL, active: true, openerTabId: active?.id, containerId: active?.containerId },
+          {
+            url: HELP_URL,
+            active: true,
+            openerTabId: active?.id,
+            containerId: active?.containerId
+          },
           win
         )
     }
