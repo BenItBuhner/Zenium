@@ -2110,18 +2110,17 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       case 'msg':
       case 'connect': {
         // `runtime.sendMessage` / `connect` to the extension's pages start a stopped worker, as
-        // in Chrome; the message waits until it is ready. Tab-directed and cross-extension
-        // messages, and the background's own, go straight to the router.
+        // in Chrome; the message waits until it is ready. A running worker takes it at once –
+        // through `deliver` all the same, so the message resets its idle clock the way every
+        // event and message dispatched to a worker does in Chrome (SingleFile's options page
+        // opened 28 s into its worker's quiet on the slow lane: the stop landed with the page's
+        // first messages in flight and each came back "The message port closed"). Tab-directed
+        // and cross-extension messages, and the background's own, go straight to the router.
         const target = asRecord(message.target)
         const toPages =
           (target.tabId === undefined || target.tabId === null) &&
           (!target.extensionId || target.extensionId === id)
-        if (
-          toPages &&
-          endpoint.context !== 'background' &&
-          this.background.has(id) &&
-          this.background.state(id) !== 'running'
-        ) {
+        if (toPages && endpoint.context !== 'background' && this.background.has(id)) {
           this.background.deliver(id, null, () => {
             if (this.router.endpoint(ep)) this.router.handle(ep, message)
           })

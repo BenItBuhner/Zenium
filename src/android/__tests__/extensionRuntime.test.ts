@@ -367,6 +367,27 @@ describe('AndroidExtensionRuntime: the background lifecycle', () => {
     expect(h.runtime.backgroundStats(ID)).toMatchObject({ starts: 2, idleStops: 1, queued: 1 })
   })
 
+  it("a page's message to a running worker resets its idle clock, as every message dispatched to a worker does in Chrome", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    // 25 s of quiet, then the options page opens and asks the worker for its config (SingleFile
+    // on the slow lane: its worker's listener answers late, or never, and the stop must not land
+    // on the message).
+    h.tick(25_000)
+    hello(h, 'opt1', 'options', { url: `https://${ID}.ext.zenium.invalid/options.html` })
+    message(h, 'opt1', { t: 'msg', id: 3, target: {}, data: { method: 'config.get' } })
+    expect(h.kt.to('bg1').filter((m) => m.t === 'deliver')).toHaveLength(1)
+    // 30 s from the worker's own last frame pass with the message still unanswered: it stays.
+    h.tick(10_000)
+    expect(h.kt.calledWith('ext.background.stop')).toEqual([])
+    expect(h.runtime.background.state(ID)).toBe('running')
+    // 30 s of quiet after the message: now it idles out.
+    h.tick(20_000)
+    expect(h.kt.calledWith('ext.background.stop')).toEqual([{ id: ID }])
+    expect(h.runtime.backgroundStats(ID)).toMatchObject({ starts: 1, idleStops: 1, queued: 0 })
+  })
+
   it('remembers listeners across sessions so the first event of the next start wakes the worker', async () => {
     const h = harness()
     await h.runtime.attach(record(h))
