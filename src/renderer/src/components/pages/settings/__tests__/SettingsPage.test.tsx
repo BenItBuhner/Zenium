@@ -1193,3 +1193,151 @@ describe('a landing reaches the top of the column at a 1000 px window (the deskt
     expect(css.match(/--zen-settings-landing-pad/g)).toHaveLength(1)
   })
 })
+
+/* ---- W7-6: the Privacy and security hub cards land on their groups; Reset settings ---- */
+
+const { FrameDialogHost } = await import('@renderer/lib/portals')
+
+/** The page under the frame's dialog host, so a row's dialog has somewhere to portal to. */
+function mountHosted(s: UIState): HTMLElement {
+  mount = document.createElement('div')
+  document.body.appendChild(mount)
+  root = createRoot(mount)
+  act(() =>
+    root!.render(
+      createElement(
+        FrameDialogHost,
+        null,
+        createElement(SettingsPage, { state: s, tab: s.tabs.settings! })
+      )
+    )
+  )
+  return mount
+}
+
+describe('a section asked for one of its groups (zen://settings/<section>?group=<id>; the hub cards, W7-6)', () => {
+  it('the two-pane Privacy and security leads with the cards; the phone layout has none', () => {
+    const markup = render(state(DESKTOP, 'linux', {}, 'zen://settings/privacy'))
+    const cards = [...markup.matchAll(/data-row="(hub-[\w-]+)"/g)].map((m) => m[1])
+    expect(cards).toEqual([
+      'hub-clear-data',
+      'hub-cookies',
+      'hub-security',
+      'hub-site-settings',
+      'hub-safety-check'
+    ])
+    // The cards stand first in the column, before Safety check's own group.
+    expect(markup.indexOf('data-group="privacy-hub"')).toBeLessThan(
+      markup.indexOf('data-group="safety-check"')
+    )
+    viewport(TWO_PANE_MIN_WIDTH - 1, false)
+    const phone = render(state(ANDROID, 'android', {}, 'zen://settings/privacy'))
+    expect(phone).toContain('zen-settings-phone')
+    expect(phone).not.toContain('data-row="hub-')
+    expect(phone).not.toContain('data-group="privacy-hub"')
+  })
+
+  it('a card asks the page for its group through page.navigate (`?group=`, the entry rewritten), and the group is scrolled to the top', () => {
+    const scrolled = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
+    const el = mountPage(state(DESKTOP, 'linux', {}, 'zen://settings/privacy'))
+    expect(scrolled).not.toHaveBeenCalled()
+    const card = el.querySelector<HTMLButtonElement>('[data-row="hub-security"]')!
+    expect(card.tagName).toBe('BUTTON')
+    expect(card.textContent).toContain('Security')
+    act(() => card.click())
+    expect(invoke).toHaveBeenCalledWith('page.navigate', {
+      tabId: 'settings',
+      section: 'privacy',
+      query: { group: 'safe-browsing' },
+      replace: true
+    })
+    act(() => root!.unmount())
+    root = null
+    // The address the card asked for, as the core answers it: the group at the column's top.
+    mountPage(state(DESKTOP, 'linux', {}, 'zen://settings/privacy?group=safe-browsing'))
+    expect(scrolled).toHaveBeenCalledTimes(1)
+    const target = scrolled.mock.instances[0] as Element
+    expect(target.getAttribute('data-group')).toBe('safe-browsing')
+    expect(scrolled).toHaveBeenCalledWith({ block: 'start' })
+    expect(mount!.querySelector('.zen-settings-page')?.hasAttribute('data-landing')).toBe(true)
+    scrolled.mockRestore()
+  })
+
+  it('a group the section does not have, or an id that is not one, opens the section at the top', () => {
+    const scrolled = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
+    mountPage(state(DESKTOP, 'linux', {}, 'zen://settings/privacy?group=no-such-group'))
+    expect(scrolled).not.toHaveBeenCalled()
+    act(() => root!.unmount())
+    root = null
+    mountPage(state(DESKTOP, 'linux', {}, 'zen://settings/privacy?group=%22%5D%2C%20*'))
+    expect(scrolled).not.toHaveBeenCalled()
+    expect(mount!.querySelector('.zen-settings-page')?.hasAttribute('data-landing')).toBe(false)
+    scrolled.mockRestore()
+  })
+
+  it('Delete browsing data opens the PS-13 dialog over the section instead of landing anywhere', () => {
+    const el = mountHosted(state(DESKTOP, 'linux', {}, 'zen://settings/privacy'))
+    const card = el.querySelector<HTMLButtonElement>('[data-row="hub-clear-data"]')!
+    expect(card.getAttribute('aria-haspopup')).toBe('dialog')
+    act(() => card.click())
+    expect(invoke).not.toHaveBeenCalledWith('page.navigate', expect.anything())
+    const dialog = el.querySelector<HTMLElement>('[data-dialog="form:hub-clear-data"]')
+    expect(dialog).not.toBeNull()
+    expect(dialog!.textContent).toContain('Clear browsing data')
+  })
+})
+
+describe('Reset settings (zen://settings/reset; W7-6, settings-70)', () => {
+  it('is the last category before About with one row and its trailing danger button', () => {
+    const markup = render(state(DESKTOP, 'linux', {}, 'zen://settings/reset'))
+    const items = navItems(markup)
+    expect(items.indexOf('Reset Settings')).toBe(items.indexOf('|', items.indexOf('Sync')) - 1)
+    expect(items[items.length - 1]).toBe('About')
+    expect(markup).toContain('Restore settings to their original defaults')
+    expect(markup).toMatch(/data-row="reset-settings"[\s\S]*?aria-haspopup="dialog"[^>]*>Reset…</)
+  })
+
+  it('confirms on §9.23’s prompt with Chrome’s copy – Cancel runs nothing, Reset settings runs settings.reset', () => {
+    const el = mountHosted(state(DESKTOP, 'linux', {}, 'zen://settings/reset'))
+    const button = el.querySelector<HTMLButtonElement>('[data-row="reset-settings"] button')!
+    expect(button.textContent).toBe('Reset…')
+    act(() => button.click())
+    let prompt = el.querySelector<HTMLElement>('[data-dialog="confirm:reset-settings"]')!
+    expect(prompt).not.toBeNull()
+    expect(prompt.getAttribute('role')).toBe('alertdialog')
+    expect(document.getElementById(prompt.getAttribute('aria-labelledby')!)?.textContent).toBe(
+      'Reset settings?'
+    )
+    expect(document.getElementById(prompt.getAttribute('aria-describedby')!)?.textContent).toBe(
+      'This will reset your startup page, new tab page, search engine, and pinned tabs. It will also disable all extensions and clear temporary data like cookies. Your bookmarks, history, and saved passwords will not be cleared.'
+    )
+    let [cancel, verb] = [...prompt.querySelectorAll<HTMLButtonElement>('button')]
+    expect(cancel!.textContent).toBe('Cancel')
+    expect(verb!.textContent).toBe('Reset settings')
+    // A destructive prompt: the verb in the danger ink, no primary (§9.23).
+    expect(verb!.hasAttribute('data-danger')).toBe(true)
+    expect(verb!.hasAttribute('data-primary')).toBe(false)
+    // The host keeps a closed prompt through its exit animation, `data-leaving` (#188): open
+    // is what is not leaving.
+    const open = (): HTMLElement | null =>
+      el.querySelector<HTMLElement>('[data-dialog="confirm:reset-settings"]:not([data-leaving])')
+    act(() => cancel!.click())
+    expect(open()).toBeNull()
+    expect(invoke).not.toHaveBeenCalledWith('settings.reset', undefined)
+
+    act(() => button.click())
+    prompt = open()!
+    expect(prompt).not.toBeNull()
+    ;[cancel, verb] = [...prompt.querySelectorAll<HTMLButtonElement>('button')]
+    act(() => verb!.click())
+    expect(invoke).toHaveBeenCalledWith('settings.reset', undefined)
+    expect(open()).toBeNull()
+  })
+
+  it('is not among the phone layout’s categories', () => {
+    viewport(TWO_PANE_MIN_WIDTH - 1, false)
+    const markup = render(state(ANDROID, 'android', {}, 'zen://settings'))
+    expect(markup).toContain('zen-settings-landing')
+    expect(markup).not.toContain('Reset Settings')
+  })
+})
