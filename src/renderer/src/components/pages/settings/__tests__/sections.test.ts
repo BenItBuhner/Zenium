@@ -279,6 +279,7 @@ function state(patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): 
     },
     downloads: [],
     bookmarks: [],
+    readingList: [],
     recentlyClosedCount: 0,
     media: [],
     findResult: null,

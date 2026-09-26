@@ -438,11 +438,17 @@ export interface MediaContextFlags {
 
 /**
  * Chrome elements with a context menu of their own, marked `data-zen-menu` in the renderer: the
- * URL bar's field and pill, the reload button.
+ * URL bar's field and pill, the reload button, the pill's star (its bookmark and reading list
+ * rows, W6-1).
  */
-export type ChromeMenuTarget = 'urlbar' | 'urlpill' | 'reload'
+export type ChromeMenuTarget = 'urlbar' | 'urlpill' | 'reload' | 'star'
 
-export const CHROME_MENU_TARGETS: readonly ChromeMenuTarget[] = ['urlbar', 'urlpill', 'reload']
+export const CHROME_MENU_TARGETS: readonly ChromeMenuTarget[] = [
+  'urlbar',
+  'urlpill',
+  'reload',
+  'star'
+]
 
 /**
  * A right-click inside the chrome document (URL bar, toolbar, overlays): what the host's own
@@ -1274,6 +1280,8 @@ export type MenuSource =
   | 'bookmark'
   | 'history'
   | 'download'
+  /** A reading list row's menu (W6-1). */
+  | 'readingList'
   | 'urlbar'
   | 'translate'
 
