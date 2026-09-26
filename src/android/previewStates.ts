@@ -92,7 +92,7 @@ import {
 } from '@shared/blocking'
 import { syncSetupStore } from '@renderer/lib/syncSetup'
 import { cancelVoiceSearch, startVoiceSearch } from '@renderer/lib/voiceSearch'
-import { downloadQrCode, showQrCode } from '@renderer/lib/qrCode'
+import { dismissQrCode, downloadQrCode, showQrCode } from '@renderer/lib/qrCode'
 import { cancelQrScan, startQrScan } from '@renderer/lib/qrScan'
 import type { HostGlobal } from './boot'
 import {
@@ -332,6 +332,8 @@ function apply(browser: Browser, spec: string): void {
     abortPull()
     cancelVoiceSearch()
     cancelQrScan()
+    // The QR code sheet a `qrcode=` state put up goes with the page it rose over.
+    dismissQrCode()
     resetBarHide()
     // A flash a `screenshot=` state held, and the long-screenshot editor it opened, go too.
     resetPreviewScreenshots()
