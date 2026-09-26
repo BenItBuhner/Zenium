@@ -27,7 +27,9 @@ export function sharedImage(
 /**
  * The targets a share offers, in Chrome's order: copy, QR (drawn above), email, save, the OS's.
  * Email carries the share's link or text in a `mailto:` and so is offered only when there is
- * one to carry – a share of files alone has nothing a mail could take.
+ * one to carry – a share of files alone has nothing a mail could take. Save's description is
+ * the files' size alone: the preview above names the file, and a screenshot's name beside its
+ * size wrapped the row to three lines (pr-543 F5); the row stays the two-line 52.
  */
 export function shareTargets(request: ShareRequest): ShareTarget[] {
   const image = sharedImage(request)
@@ -45,7 +47,7 @@ export function shareTargets(request: ShareRequest): ShareTarget[] {
     targets.push({
       answer: 'save',
       label: files === 1 ? 'Save file' : `Save ${files} files`,
-      description: `${files === 1 ? request.files[0].name : `${files} files`} · ${formatBytes(size)}`,
+      description: formatBytes(size),
       icon: Download
     })
   } else if (request.imageUrl) {

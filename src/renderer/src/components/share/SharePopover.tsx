@@ -9,12 +9,14 @@ import { run } from '@renderer/lib/api'
 import { useLightDismiss } from '@renderer/lib/popoverStore'
 import {
   ChromePortal,
+  measuringStyle,
   POPOVER_MARGIN,
   POPOVER_WIDTH,
   type PopoverBox,
   placePopover,
   popoverStyle,
   toRect,
+  useMeasuredHeight,
   viewportSize
 } from '@renderer/lib/portals'
 import { qrLayout, qrSymbol } from '@renderer/lib/qr'
@@ -59,9 +61,13 @@ export function ShareLayer({ state }: { state: UIState }): JSX.Element | null {
 
 /**
  * The popover (§9.20) 320 wide with its top border on the pill's bottom edge, start-aligned with
- * the pill – or on the control that asked for the share where one marks itself the anchor
- * (`data-share-anchor`: the capture card's Share, the popover hanging from the button over the
- * dimmed page) – placed by `placePopover` (flip, slide, shrink, 8 inside the window); radius 8,
+ * the pill – or, for a control that asked for the share and marks itself the anchor
+ * (`data-share-anchor`: the capture card's Share, a footer verb over the dimmed page), aligned
+ * by the halves of the dialog the verb stands in and hanging from that dialog's bottom edge,
+ * overlapping none of it (§9.20: a dialog's footer is the bar of its verbs) – placed by
+ * `placePopover` (flip, slide, shrink, 8 inside the window) on its content's measured height
+ * (`useMeasuredHeight`, the 60% cap a ceiling on that: a 216 panel fits under a footer 282 from
+ * the window's edge and stays below it); radius 8,
  * the panel shadow, no scrim (§9.5), through the chrome layer (`ChromePortal`). A title block
  * (§9.23) – "Share" with the sharing site as its description for a page's `navigator.share`,
  * "Share this page" for the menu's, "Share" for a share of files alone (a capture's) – stays
@@ -89,9 +95,13 @@ function SharePopover({
   const panelRef = useRef<HTMLDivElement>(null)
   // The body's scroll, read inline: the body mounts after the first paint is released.
   const [scrolled, setScrolled] = useState(false)
-  const anchor = useAnchorRect(state)
-  const box = place(anchor)
+  const seat = useAnchorRect(state)
   const ready = useFloatingChrome()
+  // The first pass after the page has given way measures the content; the panel is placed on
+  // the number and takes the keyboard then (a hidden panel cannot be focused).
+  const measured = useMeasuredHeight(panelRef, ready)
+  const placed = ready && measured !== null
+  const box = place(seat, measured)
 
   // The answer goes once: the request leaves the state with it and this unmounts.
   const answered = useRef(false)
@@ -104,7 +114,7 @@ function SharePopover({
     [request.id]
   )
   const dismiss = useCallback(() => answer('dismiss'), [answer])
-  usePopover(panelRef, { onClose: dismiss, active: ready })
+  usePopover(panelRef, { onClose: dismiss, active: placed })
   useLightDismiss(panelRef, dismiss, { anchor: anchorElement })
 
   const preview = sharePreview(request)
@@ -122,7 +132,8 @@ function SharePopover({
         data-share-popover=""
         data-surface="page"
         className="zen-v2 zen-animate-pop zen-bm-popover zen-share-popover fixed z-[70] flex flex-col outline-none"
-        style={popoverStyle(box)}
+        style={placed ? popoverStyle(box) : measuringStyle(WIDTH)}
+        data-measuring={placed ? undefined : ''}
         tabIndex={-1}
       >
         <V2TitleBlock
@@ -195,17 +206,36 @@ function SharePopover({
 }
 
 /**
- * The viewport rect of the anchor – a control marked `data-share-anchor`, else the address pill
- * – measured after layout, again on every state push (the pill's chips come and go with the
- * page) and when it or the window resizes; null while neither is on screen.
+ * What the popover hangs from: the anchor's viewport rect and its bar's – the pill is its own
+ * bar; a control that asked for the share stands in a dialog's footer, whose bar is the dialog
+ * (`role="dialog"`: the footer's halves are the dialog's, and its bottom edge is where the
+ * popover hangs from, §9.20), or itself with no dialog around it. Both on whole pixels (§9.16:
+ * the popover's hairline on one row, though the dialog is centred on a half). Measured after
+ * layout, again on every state push (the pill's chips come and go with the page) and when the
+ * anchor or the window resizes; null while neither is on screen.
  */
-function useAnchorRect(state: UIState): Rect | null {
-  const [rect, setRect] = useState<Rect | null>(null)
+interface Seat {
+  anchor: Rect
+  bar: Rect
+}
+
+function useAnchorRect(state: UIState): Seat | null {
+  const [seat, setSeat] = useState<Seat | null>(null)
   useLayoutEffect(() => {
     const anchor = anchorElement()
     const measure = (): void => {
-      const next = anchor ? toRect(anchor.getBoundingClientRect()) : null
-      setRect((prev) => (sameRect(prev, next) ? prev : next))
+      if (!anchor) {
+        setSeat(null)
+        return
+      }
+      const dialog = anchor.hasAttribute('data-share-anchor')
+        ? anchor.closest<HTMLElement>('[role="dialog"]')
+        : null
+      const next: Seat = {
+        anchor: snap(toRect(anchor.getBoundingClientRect())),
+        bar: snap(toRect((dialog ?? anchor).getBoundingClientRect()))
+      }
+      setSeat((prev) => (sameSeat(prev, next) ? prev : next))
     }
     measure()
     if (!anchor) return
@@ -217,11 +247,19 @@ function useAnchorRect(state: UIState): Rect | null {
       observer?.disconnect()
     }
   }, [state])
-  return rect
+  return seat
 }
 
-function sameRect(a: Rect | null, b: Rect | null): boolean {
+function snap(r: Rect): Rect {
+  return { x: Math.round(r.x), y: Math.round(r.y), width: r.width, height: r.height }
+}
+
+function sameSeat(a: Seat | null, b: Seat | null): boolean {
   if (!a || !b) return a === b
+  return sameRect(a.anchor, b.anchor) && sameRect(a.bar, b.bar)
+}
+
+function sameRect(a: Rect, b: Rect): boolean {
   return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
 }
 
@@ -231,17 +269,20 @@ function filesAlone(request: Pick<ShareRequest, 'files' | 'url' | 'text'>): bool
 }
 
 /**
- * Where the popover goes: hanging from the anchor's bottom edge, start-aligned with it (the
- * pill is its own bar; a control that asked for the share stands for one); with neither on
- * screen (an app window's chrome), in the window's top trailing corner like the star bubble.
+ * Where the popover goes: hanging from the bar's bottom edge – the pill's, or the dialog's a
+ * footer verb stands in – aligned with the anchor by its half of the bar (start-aligned with
+ * the pill; end-aligned with a Share in a footer's trailing half), as tall as its content
+ * measured (`height`; the cap while the measure is not in yet); with no anchor on screen (an
+ * app window's chrome), in the window's top trailing corner like the star bubble.
  */
-function place(anchor: Rect | null): PopoverBox {
+function place(seat: Seat | null, height: number | null): PopoverBox {
   const viewport = viewportSize()
-  const rect: Rect = anchor ?? {
+  const corner: Rect = {
     x: viewport.width - POPOVER_MARGIN - 28,
     y: 28,
     width: 28,
     height: 28
   }
-  return placePopover(rect, rect, viewport, WIDTH)
+  const { anchor, bar } = seat ?? { anchor: corner, bar: corner }
+  return placePopover(anchor, bar, viewport, WIDTH, height && height > 0 ? height : undefined)
 }

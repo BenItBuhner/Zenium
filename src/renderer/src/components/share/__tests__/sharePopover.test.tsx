@@ -106,14 +106,16 @@ describe('shareTargets', () => {
         { name: 'b.png', type: 'image/png', size: 1024 }
       ]
     })
+    // Save's description is the size alone: the preview names the file, and a screenshot's long
+    // name beside its size wrapped the row past its two lines (pr-543 F5).
     expect(files[2]).toMatchObject({
       answer: 'save',
       label: 'Save 2 files',
-      description: '2 files · 2.0 KB'
+      description: '2.0 KB'
     })
     expect(
       shareTargets({ ...REQUEST, files: [{ name: 'a.png', type: 'image/png', size: 512 }] })[2]
-    ).toMatchObject({ label: 'Save file', description: 'a.png · 512 B' })
+    ).toMatchObject({ label: 'Save file', description: '512 B' })
     expect(shareTargets({ ...REQUEST, imageUrl: 'https://x/i.png' })[2].label).toBe('Save image')
     expect(shareTargets({ ...REQUEST, system: true }).at(-1)).toMatchObject({
       answer: 'system',
@@ -233,18 +235,33 @@ describe('ShareLayer as the share surface', () => {
     expect(panel.querySelector('.zen-share-preview-detail')!.textContent).toBe('Read this')
   })
 
-  it('a capture’s share of the picture alone is titled "Share", names the file, and hangs from the control that asked for it (data-share-anchor) ahead of the pill', async () => {
-    // The address pill and, over the page, the capture card's Share button.
+  it('a capture’s share of the picture alone is titled "Share", names the file, and hangs from the card the control that asked for it (data-share-anchor) stands in – end-aligned with the control, on the card’s bottom edge, as tall as its content measured – ahead of the pill', async () => {
+    // The 1600 × 1000 window of the stills; the address pill and, over the page, the capture
+    // card (a dialog at 400, centred on a half pixel) with its Share in the footer's trailing half.
+    const size = { width: window.innerWidth, height: window.innerHeight }
+    window.innerWidth = 1600
+    window.innerHeight = 1000
     const pill = document.createElement('div')
     pill.className = 'zen-pill'
     pill.getBoundingClientRect = () =>
       ({ left: 300, top: 8, width: 600, height: 32, right: 900, bottom: 40 }) as DOMRect
+    const card = document.createElement('div')
+    card.setAttribute('role', 'dialog')
+    card.getBoundingClientRect = () =>
+      ({ left: 716, top: 290.5, width: 400, height: 419, right: 1116, bottom: 709.5 }) as DOMRect
     const share = document.createElement('button')
     share.setAttribute('data-share-anchor', '')
-    // Under the window's 60 % cap there is room below the button (happy-dom's 1024 × 768).
     share.getBoundingClientRect = () =>
-      ({ left: 200, top: 300, width: 80, height: 32, right: 280, bottom: 332 }) as DOMRect
-    document.body.append(pill, share)
+      ({ left: 931, top: 661, width: 80, height: 32, right: 1011, bottom: 693 }) as DOMRect
+    card.append(share)
+    document.body.append(pill, card)
+    // The panel's content stands 216 tall once laid out (happy-dom lays nothing out itself).
+    const measure = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function (this: HTMLElement) {
+        const tall = this.hasAttribute('data-share-popover') ? 216 : 0
+        return { left: 0, top: 0, width: 320, height: tall, right: 320, bottom: tall } as DOMRect
+      })
     try {
       const picture = { name: 'Screenshot 2026-09-26 at 14.05.09.png', type: 'image/png', size: 3 }
       render(
@@ -263,12 +280,25 @@ describe('ShareLayer as the share surface', () => {
       expect(
         [...panel.querySelectorAll('[data-share-target] .zen-v2-label')].map((b) => b.textContent)
       ).toEqual(['Copy image', 'Save file'])
-      // Under the Share button's bottom edge, start-aligned with it – not under the pill.
-      expect(panel.style.top).toBe('332px')
-      expect(panel.style.left).toBe('200px')
+      // Placed on the measured 216, not the 60 % cap (600, which would not fit the 282 under the
+      // card and would have flipped it above the footer, pr-543 F1): below the card, its top on
+      // the card's bottom edge – on a whole pixel (§9.16) – end-aligned with Share, the verb in
+      // the footer's trailing half, and never under the pill. The measuring pass has left.
+      expect(panel.style.maxHeight).toBe('216px')
+      expect(panel.style.top).toBe('710px')
+      expect(panel.style.bottom).toBe('')
+      expect(panel.style.left).toBe('691px')
+      expect(panel.style.width).toBe('320px')
+      expect(panel.hasAttribute('data-measuring')).toBe(false)
+      expect(panel.style.visibility).toBe('')
+      // The keyboard lands once the panel is placed – a hidden panel takes no focus.
+      expect(document.activeElement).toBe(panel.querySelector('[data-share-target="copy"]'))
     } finally {
+      measure.mockRestore()
       pill.remove()
-      share.remove()
+      card.remove()
+      window.innerWidth = size.width
+      window.innerHeight = size.height
     }
   })
 
