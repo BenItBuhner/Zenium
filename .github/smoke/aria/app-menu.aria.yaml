@@ -7,11 +7,11 @@
   - menuitem "Bookmarks"
   - menuitem "History"
   - menuitem "Downloads"
-  - menuitem "Passwords"
+  - menuitem "Passwords and Autofill"
   - menuitem "Add-ons and Themes"
   - menuitem "Delete Browsing Data…"
   - separator
-  - menuitem "Find in Page…"
+  - menuitem "Find and Edit"
   - menuitem "Zoom (100%)"
   - menuitem "Translate Page…"
   - menuitem "Reader View" [disabled]
