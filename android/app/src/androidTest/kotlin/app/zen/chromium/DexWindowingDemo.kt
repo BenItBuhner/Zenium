@@ -569,8 +569,20 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
             awaitUntil(2_000) { opacityOf("${row(GAMMA)} .zen-tab-close") == 1.0 },
             "close opacity ${opacityOf("${row(GAMMA)} .zen-tab-close")}"
         )
+        // The pointer has rested on the row past the hover card's delay (800 ms). The card is the
+        // desktop's (TabletShell mounts no host for it): its controller must raise nothing here,
+        // or it would capture the live page and hide it behind the still for a card that never
+        // shows – and keep it hidden past a tab switch under the resting pointer, the stage
+        // empty until the pointer left the rows (runs 3 and 4 of this demo, before the fix).
         SystemClock.sleep(900)
-        finding("  cursor over the row: ${cursorOf(host.chrome)}; hover card store: ${jsText("JSON.stringify(window.__zenStores.ui.get().hoverCard)")} (the desktop's card; TabletShell mounts none)")
+        val cardStore = jsText("JSON.stringify(window.__zenStores.ui.get().hoverCard)")
+        val cardTab = jsText("JSON.stringify(window.__zenStores.ui.get().hoverCard.tabId)")
+        finding("  cursor over the row: ${cursorOf(host.chrome)}; hover card store: $cardStore (the desktop's card; the tablet chrome mounts no host for it)")
+        check(
+            "resting the mouse on a row keeps the page live: the tablet chrome hosts no hover card, so its controller raises none and captures nothing – the page view stays shown",
+            cardTab == "null" && pageCenter(ALPHA) != null,
+            "hover card tab $cardTab, Alpha's page view shown ${pageCenter(ALPHA) != null}"
+        )
         still("hover-strip")
 
         val toggle = at(SIDEBAR_TOGGLE)
@@ -620,9 +632,11 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
             "data-hover '${jsText(DATA_HOVER)}', Gamma ${backgroundOf(row(GAMMA))}"
         )
         // Cursor shapes: the hand over the page's link, the beam in the URL field. Alpha (the
-        // page with the link) back in front first: the finger put Delta there. The swap waits on
-        // the chrome's frames, and the recipe's emulator draws them slowly under this window
-        // (run 3: six seconds from the activation to the page view shown, past a 5 s wait).
+        // page with the link) back in front first: the finger put Delta there. The activation
+        // lands while the mouse rests on the Gamma row – the very switch the hover card's
+        // controller used to hold the stage empty for (runs 3 and 4: the page shown only once
+        // the pointer left the row). The swap itself waits on the chrome's frames, which the
+        // recipe's emulator draws slowly under this window.
         coreInvoke("tab.activate", JSONObject().put("tabId", ALPHA).toString())
         val shown = awaitUntil(PAGE_SWAP_MS) { activeTabId() == ALPHA && pageCenter(ALPHA) != null }
         SystemClock.sleep(400)

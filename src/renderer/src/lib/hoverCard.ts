@@ -260,6 +260,23 @@ export function hoverCardPreviews(state: UIState | null, tabId: string): boolean
 }
 
 /**
+ * Card hosts mounted: `TabHoverCard`, which the desktop shell mounts (App.tsx) and the tablet
+ * chrome does not. Every row drives the controller (`TabItem`, for a mouse pointer on any
+ * chrome), and the card's dismissals live in the host – a tab coming to the front, a press, a
+ * wheel, a key. With no host no card could show, while the controller's capture-and-hide of
+ * the live page would still run for a pointer resting on a row, and hold past a tab switch
+ * under it until the pointer left the rows – the stage empty meanwhile, the new page having no
+ * capture (a mouse on the tablet chrome under Samsung DeX, OS-12). So the app's controller
+ * raises nothing until a host is mounted.
+ */
+let hosts = 0
+
+/** Whether a card host is mounted: without one the controller raises no card. */
+export function hoverCardHosted(): boolean {
+  return hosts > 0
+}
+
+/**
  * The app's controller. The card lives in the UI state so the content frame knows chrome
  * covers the page (`overlayCoversContent`), the active page is captured before it shows, and
  * the capture is let go once it is down and nothing else needs it. Hiding the page takes the
@@ -288,9 +305,24 @@ export const hoverCard = new HoverCardController(
         : Promise.resolve(null)
       return Promise.all([cover, preview])
     },
-    blocked: chromeBusy
+    blocked: () => !hoverCardHosted() || chromeBusy()
   }
 )
+
+/**
+ * A card host mounted (`TabHoverCard`'s mount effect): the controller may raise the card until
+ * the returned release runs at the unmount, which takes down whatever card the last host left.
+ */
+export function hostHoverCard(): () => void {
+  hosts++
+  let mounted = true
+  return () => {
+    if (!mounted) return
+    mounted = false
+    hosts--
+    if (hosts === 0) hoverCard.hide()
+  }
+}
 
 /**
  * A row's box and its sidebar's – or, for a row of the strip along the caption band (§9.37),
