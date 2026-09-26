@@ -205,7 +205,10 @@ object PromptSheetSpec {
  * Answering: the primary accepts ([Answer.accepted] true, a field's text with it; the field's
  * Done key is the primary); the secondary, the scrim, the system back and the grabber answer
  * the secondary – `accepted` false – so a dismissal is always the answer that changes nothing.
- * One answer per sheet, ever.
+ * The scrim's, the back's and the grabber's answer says so ([Answer.dismissed] true) for the
+ * one family whose secondary is a choice of its own – a permission prompt's Block is a record,
+ * a dismissal leaves its question open ([PermissionPromptSheet]); every other consumer reads
+ * `accepted` alone, as before. One answer per sheet, ever.
  *
  * TalkBack: the window is a dialog named by the title (the platform announces it as the sheet
  * comes up); the title is a heading; the container takes the focus, as §9.22 has a
@@ -270,8 +273,12 @@ class NativePromptSheet(
     /** How a footer button is drawn (§6, §9.11): the accent primary, the plain secondary, the destructive secondary. */
     enum class Tone { ACCENT, PLAIN, DANGER }
 
-    /** The one answer: whether the primary was taken, the field's text if it was, the check row's tick. */
-    class Answer(val accepted: Boolean, val text: String?, val checked: Boolean)
+    /**
+     * The one answer: whether the primary was taken, the field's text if it was, the check row's
+     * tick – and whether a declining answer was a dismissal (the scrim, the system back, the
+     * grabber) rather than the secondary peer's tap; false with an accepting answer.
+     */
+    class Answer(val accepted: Boolean, val text: String?, val checked: Boolean, val dismissed: Boolean = false)
 
     private val density = context.resources.displayMetrics.density
     /** Every hairline's width on this screen: one dp in whole pixels. */
@@ -311,7 +318,8 @@ class NativePromptSheet(
         dialog.setOnDismissListener {
             if (this.dialog !== dialog) return@setOnDismissListener
             this.dialog = null
-            answer(accepted = false)
+            // The scrim's tap and the system back arrive here first: a dismissal.
+            answer(accepted = false, dismissed = true)
         }
         dialog.show()
         // §9.22: the container takes the focus, not the first control.
@@ -331,16 +339,23 @@ class NativePromptSheet(
         dialog?.cancel()
     }
 
+    /** The secondary peer's tap: the declining answer, chosen. */
     private fun decline() {
         answer(accepted = false)
         dialog?.cancel()
     }
 
-    private fun answer(accepted: Boolean) {
+    /** The grabber's tap: the declining answer, as a dismissal (its label says Dismiss). */
+    private fun dismissByGrabber() {
+        answer(accepted = false, dismissed = true)
+        dialog?.cancel()
+    }
+
+    private fun answer(accepted: Boolean, dismissed: Boolean = false) {
         if (answered) return
         answered = true
         val text = if (accepted) field?.text?.toString() else null
-        onAnswer(Answer(accepted, text, check?.isChecked == true))
+        onAnswer(Answer(accepted, text, check?.isChecked == true, dismissed = dismissed && !accepted))
     }
 
     // --- the composition -----------------------------------------------------------------------
@@ -397,7 +412,7 @@ class NativePromptSheet(
         strip.isClickable = true
         strip.isFocusable = true
         announceAsButton(strip)
-        strip.setOnClickListener { decline() }
+        strip.setOnClickListener { dismissByGrabber() }
         return strip
     }
 

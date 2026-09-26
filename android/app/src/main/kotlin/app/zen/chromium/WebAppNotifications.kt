@@ -17,7 +17,6 @@ import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.ScriptHandler
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import org.json.JSONObject
 import java.io.File
 import java.security.SecureRandom
@@ -75,6 +74,8 @@ class WebAppNotifications(private val activity: WebAppActivity, private val reco
     private var destroyed = false
     /** The prompt up, and who waits for its answer (requests while it is up share it). */
     private var promptWaiters: ArrayList<() -> Unit>? = null
+    /** The sheet itself while it is up, so the window's end takes it down without an answer. */
+    private var prompt: PermissionPromptSheet? = null
 
     private val notificationAsk = NotificationAsk(
         askedBefore = { appPrefs().getBoolean(Permissions.KEY_NOTIFICATIONS_ASKED, false) },
@@ -189,7 +190,13 @@ class WebAppNotifications(private val activity: WebAppActivity, private val reco
         }
     }
 
-    /** The native prompt: "<app> wants to: Send you notifications", Allow or Block; a dismissal answers nothing and leaves the question open. */
+    /**
+     * The native prompt on §9.23's sheet ([PermissionPromptSheet], the theme's inks in the
+     * window's light or dark): "Allow <app> to show notifications?", Block the plain peer, Allow
+     * the accent primary. Allow and Block are written ([remember]); the scrim, the system back and
+     * the grabber are a dismissal that writes nothing and leaves the question open – the page
+     * reads `default` and may ask again on its next gesture.
+     */
     private fun ask(then: () -> Unit) {
         promptWaiters?.let { waiting ->
             waiting += then
@@ -202,18 +209,28 @@ class WebAppNotifications(private val activity: WebAppActivity, private val reco
             if (!answered) {
                 answered = true
                 promptWaiters = null
+                prompt = null
                 if (decision != null) remember(decision)
                 if (decision == ALLOW) ensureAllowed { for (w in waiting) w() } else for (w in waiting) w()
             }
         }
         if (activity.isFinishing || activity.isDestroyed) return settle(null)
-        MaterialAlertDialogBuilder(activity)
-            .setTitle(activity.getString(R.string.cct_permission_message, record.name))
-            .setMessage(R.string.webapp_permission_notifications)
-            .setPositiveButton(R.string.cct_allow) { _, _ -> settle(ALLOW) }
-            .setNegativeButton(R.string.cct_block) { _, _ -> settle(DENY) }
-            .setOnCancelListener { settle(null) }
-            .show()
+        val sheet = PermissionPromptSheet(
+            activity,
+            activity.scheme.dark,
+            requester = record.name,
+            question = R.string.webapp_notifications_question,
+            block = activity.getString(R.string.cct_block),
+            allow = NativePromptSheet.Peer(activity.getString(R.string.cct_allow), NativePromptSheet.Tone.ACCENT)
+        ) { answer ->
+            when (answer) {
+                PermissionPromptSheet.Answer.ALLOWED -> settle(ALLOW)
+                PermissionPromptSheet.Answer.BLOCKED -> settle(DENY)
+                PermissionPromptSheet.Answer.DISMISSED -> settle(null)
+            }
+        }
+        prompt = sheet
+        sheet.show()
     }
 
     /** Android 13's `POST_NOTIFICATIONS`, the app's own right to post: the browser's once-only ask, the same memory ([Permissions.KEY_NOTIFICATIONS_ASKED]). */
@@ -317,6 +334,9 @@ class WebAppNotifications(private val activity: WebAppActivity, private val reco
 
     fun destroy() {
         destroyed = true
+        prompt?.dismiss()
+        prompt = null
+        promptWaiters = null
         detach()
         runCatching { context.unregisterReceiver(receiver) }
         io.shutdown()
