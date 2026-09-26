@@ -1,6 +1,6 @@
 {
   "id": "tablet-newtab",
-  "order": 117,
+  "order": 118,
   "class": "TabletNewTabDemo",
   "shard": "tablet-webview",
   "mirrors": "android-tablet-newtab-demo.yml",
