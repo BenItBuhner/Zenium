@@ -236,8 +236,73 @@ describe('the desktop toolbar’s pins (settings-36)', () => {
     )
     expect(leaf()).toBeNull()
     expect(nameOf(q<HTMLButtonElement>('[data-zen-app-menu-button]')!)).not.toMatch(/energy/i)
-    // Never the width's to hide: not tiered, so never published as hidden.
+    // A control the pins folded is not "hidden at this width".
     expect(toolbarTiering.get().hidden).not.toContain('energy-saver')
+  })
+
+  it('tiers the leaf by the row’s width on the hub’s rule (L2): folded at the 240 sidebar and published as hidden, back at the 302; where one of the two fits, the leaf stands and the hub folds', () => {
+    const leaf = (): HTMLElement | null => q('[data-zen-energy-saver-button]')
+    const hub = (): HTMLElement | null => q('[data-zen-media-hub-button]')
+    const widths = { row: 240 - 16 }
+    const rects = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: Element
+    ) {
+      const width = this.hasAttribute('data-zen-nav-row') ? widths.row : 0
+      return { x: 0, y: 0, top: 0, left: 0, right: width, bottom: 0, width, height: 0 } as DOMRect
+    })
+    try {
+      // The 240 sidebar with back, forward, reload and ⋯: no room for the leaf (it took the
+      // pill from "Settings" to "S…"), none for the hub – both fold, both published, in the
+      // bar's order; the hub keeps its menu row and dot, the leaf has no row (the mode runs on).
+      render(
+        <NavRow key="240" state={state(page, {}, [media()], SAVING)} tab={page} compact={false} />
+      )
+      expect(leaf()).toBeNull()
+      expect(hub()).toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual(['energy-saver', 'media'])
+      expect(q('[data-zen-app-menu-button]')!.querySelector('.zen-mhub-dot')).not.toBeNull()
+      // One px short of the leaf's return: still folded.
+      widths.row = 285
+      render(
+        <NavRow key="285" state={state(page, {}, [media()], SAVING)} tab={page} compact={false} />
+      )
+      expect(leaf()).toBeNull()
+      // The 302 sidebar (the 286 row): the leaf returns over a pill at the tier's floor; the
+      // hub, counting the leaf among the buttons it makes room against, needs 318 and folds.
+      widths.row = 286
+      render(
+        <NavRow key="286" state={state(page, {}, [media()], SAVING)} tab={page} compact={false} />
+      )
+      expect(leaf()).not.toBeNull()
+      expect(hub()).toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual(['media'])
+      // Without media the same width has nothing else to fold.
+      render(
+        <NavRow key="286-quiet" state={state(page, {}, [], SAVING)} tab={page} compact={false} />
+      )
+      expect(leaf()).not.toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual([])
+      // 32 more: both stand.
+      widths.row = 318
+      render(
+        <NavRow key="318" state={state(page, {}, [media()], SAVING)} tab={page} compact={false} />
+      )
+      expect(leaf()).not.toBeNull()
+      expect(hub()).not.toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual([])
+      // The compact rail has no pill to keep: the leaf stays at any width.
+      widths.row = 60
+      render(<NavRow key="compact" state={state(page, {}, [], SAVING)} tab={page} compact />)
+      expect(leaf()).not.toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual([])
+      // The mode off at the narrow width: nothing to fold, nothing published.
+      widths.row = 240 - 16
+      render(<NavRow key="240-off" state={state(page, {}, [])} tab={page} compact={false} />)
+      expect(leaf()).toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual([])
+    } finally {
+      rects.mockRestore()
+    }
   })
 
   it('publishes what the width tier hid of the pinned controls, and clears it as the row leaves', () => {

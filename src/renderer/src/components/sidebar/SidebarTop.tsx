@@ -97,7 +97,7 @@ import { DownloadButton } from '../downloads/DownloadButton'
 import { EnergySaverButton } from '../energysaver/EnergySaverButton'
 import { MediaHubButton, MediaLiveDot } from '../media/MediaHubButton'
 import { downloadButtonVisible, downloadsUi } from '@renderer/lib/downloads'
-import { energySaverLeafUp } from '@renderer/lib/energySaver'
+import { energySaverLeafFits, energySaverLeafUp } from '@renderer/lib/energySaver'
 import { actionable } from '@renderer/lib/extensions/toolbar'
 import { useViewport } from '@renderer/lib/formFactor'
 import { pinsFor, publishToolbarTiering } from '@renderer/lib/toolbarPins'
@@ -295,18 +295,27 @@ export function NavRow({
   // buttons), so the pill reads the same on either side of the return. The buttons it makes
   // room against are the ones always in the row (back, forward, reload, ⋯), the puzzle piece
   // while there are extensions, the downloads button while it is up and the Energy Saver leaf
-  // while the mode is on; the compact column has no pill to keep, so there the button stays
+  // while it stands; the compact column has no pill to keep, so there the button stays
   // whenever there is media.
   const downloadsUp = downloadButtonVisible(state, downloadsUiState)
   const puzzleUp = actionable(state.extensions).length > 0
-  // The Energy Saver leaf (W8-2; Chrome's `BatterySaverButton`): in the row while the governor
-  // says the mode is on and the control is pinned, ahead of the hub as Chrome's stands ahead of
-  // its media button. Not tiered by the width – Chrome's is not, and the downloads button is
-  // not – so it joins the fixed set the hub and the pinned actions make room against.
-  const saverUp = energySaverLeafUp(state, pins)
   // Forward folded by its pin leaves the fixed set (the hub's tier and the extensions' overflow
   // count the buttons actually in the row); a trailing control joins it.
   const fixedButtons = FIXED_BUTTONS - (forwardUp ? 0 : 1) + (trailing ? 1 : 0)
+  // The Energy Saver leaf (W8-2; Chrome's `BatterySaverButton`): the row's to draw while the
+  // governor says the mode is on and the control is pinned, ahead of the hub as Chrome's stands
+  // ahead of its media button – and tiered by the row's width on the hub's one rule
+  // (`energySaverLeafFits`, pr-584 L2): at the 240 sidebar it took the pill from "Settings" to
+  // "S…", so there it folds, unmounted like the hub's button, and returns at the 302 sidebar
+  // (the 286 row with the four always-there buttons; 32 more a button for the puzzle piece and
+  // the downloads button). The leaf counts the row's other buttons and not the hub, while the
+  // hub counts the leaf: where the row has room for one of the two, the leaf stands and the hub
+  // folds to its menu row – the leaf has no fold home, and the mode it speaks for runs on.
+  const saverPinned = energySaverLeafUp(state, pins)
+  const saverUp =
+    saverPinned &&
+    (compact ||
+      energySaverLeafFits(rowWidth, fixedButtons - (puzzleUp ? 0 : 1) + (downloadsUp ? 1 : 0)))
   const hubUp =
     mediaPinned &&
     mediaHubVisible(state) &&
@@ -456,22 +465,25 @@ export function NavRow({
   }
   const fits = fittingChips(pillInner, chipsPresent)
   // What the width tier hid of the pinned controls, for the Customise toolbar dialog's "Hidden
-  // at this width" (settings-36): the chips present in the pill that did not fit, and the hub's
-  // button while media plays and the row has no room for it – never a control the pins folded,
-  // and never one the page has no chip for. From the layout phase, as the hub's own word is.
+  // at this width" (settings-36): the chips present in the pill that did not fit, the Energy
+  // Saver leaf while the mode is on and the row has no room for it, and the hub's button while
+  // media plays and the row has none for that – never a control the pins folded, and never one
+  // the page has no chip for. In the bar's order. From the layout phase, as the hub's own word is.
   const hiddenStar = Boolean(tab && starUp && !fits.has('star'))
   const hiddenTranslate = Boolean(translation && !fits.has('translate'))
   const hiddenReader = Boolean(tab && readerUp && !isReader && !fits.has('reader'))
+  const hiddenSaver = saverPinned && !saverUp
   const hiddenMedia = mediaPinned && mediaHubVisible(state) && !hubUp
   useLayoutEffect(() => {
     const hidden: ToolbarControl[] = []
     if (hiddenReader) hidden.push('reader')
     if (hiddenTranslate) hidden.push('translate')
     if (hiddenStar) hidden.push('star')
+    if (hiddenSaver) hidden.push('energy-saver')
     if (hiddenMedia) hidden.push('media')
     publishToolbarTiering(hidden)
     return () => publishToolbarTiering([])
-  }, [hiddenReader, hiddenTranslate, hiddenStar, hiddenMedia])
+  }, [hiddenReader, hiddenTranslate, hiddenStar, hiddenSaver, hiddenMedia])
   return (
     // The row's buttons sit 4 apart (Firefox's 32 pitch: the 28 box plus its 2 px outer
     // padding each side, `TOOLBAR_GAP`); the pill takes the rest between them.

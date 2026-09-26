@@ -1,6 +1,7 @@
 import type { UIState } from '@shared/types'
 import { toolbarPinned, type ToolbarPins } from '@shared/toolbarPins'
 import { run } from '@renderer/lib/api'
+import { mediaHubButtonFits } from '@renderer/lib/mediaHub'
 import { createStore } from '@renderer/lib/store'
 
 /**
@@ -10,9 +11,10 @@ import { createStore } from '@renderer/lib/store'
  * the power state (`core/resources/energySaver.ts`) – and the bubble under it, "Energy Saver is
  * on" with the one sentence on what that does here and Chrome's "Turn off now" for the battery
  * session. The button is a pin like the hub's (`shared/toolbarPins.ts`, `energy-saver`): unpinned
- * it is not drawn and the mode runs on, Settings › Performance saying so. This module is the
- * leaf's own state (the media hub's shape, `lib/mediaHub.ts`): what it reads of the snapshot,
- * the bubble's open state, and its opener's selector for the anchor and the keyboard's return.
+ * it is not drawn and the mode runs on, Settings › Performance saying so; pinned, it is tiered
+ * by the row's width as the hub's button is (`energySaverLeafFits`). This module is the leaf's
+ * own state (the media hub's shape, `lib/mediaHub.ts`): what it reads of the snapshot, the
+ * bubble's open state, and its opener's selector for the anchor and the keyboard's return.
  */
 
 export interface EnergySaverUi {
@@ -20,10 +22,17 @@ export interface EnergySaverUi {
   open: boolean
   /** It was opened with the keyboard on the leaf: the page had no focus to get back (§9.22). */
   fromKeyboard: boolean
+  /**
+   * The leaf is in the row and laid out, published by the button from the commit that mounts
+   * or unmounts it (`EnergySaverButton`; the hub's `mediaHubUi.buttonUp`). The bubble closes on
+   * it: the row's width tier folding the leaf – a sidebar drag, a button joining the row – is
+   * no state push, and a bubble hanging from a leaf that has gone would float unanchored.
+   */
+  leafUp: boolean
 }
 
 export const energySaverUi = createStore<EnergySaverUi>(
-  { open: false, fromKeyboard: false },
+  { open: false, fromKeyboard: false, leafUp: false },
   'energy-saver-ui'
 )
 
@@ -45,9 +54,30 @@ export function energySaverOn(state: UIState): boolean {
   return Boolean(state.resources?.system.energySaver)
 }
 
-/** The leaf is in the row: the mode is on and the control is pinned (the desktop's pins, `pinsFor`). */
+/** The leaf is the row's to draw: the mode is on and the control is pinned (the desktop's pins, `pinsFor`). */
 export function energySaverLeafUp(state: UIState, pins: ToolbarPins | undefined): boolean {
   return energySaverOn(state) && toolbarPinned(pins, 'energy-saver')
+}
+
+/**
+ * Whether the row is wide enough for the leaf (pr-584 L2; design language v2 §9.29): the hub's
+ * rule, one floor for both tiered buttons – the pill the row would give its other buttons and
+ * the leaf's own slot must still hold `MEDIA_HUB_PILL`, the 126 (110 in the row's padding) at
+ * which the star and the tools return to the pill, so the pill reads the same on either side of
+ * the leaf's return. With the four always-there buttons (back, forward, reload, ⋯) that is the
+ * 286 row – the 302 sidebar – and 32 more for each button beside them (the puzzle piece, the
+ * downloads button); at the 240 sidebar the leaf folds. Chrome's `BatterySaverButton` is not
+ * tiered, but Chrome's toolbar has no pill to keep; here the leaf took the 240 pill from
+ * "Settings" to "S…" (96 → 64). The leaf stands where the hub folds: `NavRow` counts the leaf
+ * among the buttons the hub makes room against and not the hub among the leaf's, so at a width
+ * with room for one of them the leaf – the state the user is in – is the one drawn, and the hub
+ * keeps its fold home in the app menu's "Media Controls…" row, which the leaf has none of
+ * (Chrome has no menu row for it either; the mode runs on, and the Customise toolbar row says
+ * "Hidden at this width."). An unmeasured row (0) shows the leaf, as the hub's rule shows its
+ * button. Pure, for the unit tests; the row measures itself and asks.
+ */
+export function energySaverLeafFits(rowWidth: number, otherButtons: number): boolean {
+  return mediaHubButtonFits(rowWidth, otherButtons)
 }
 
 /**

@@ -432,12 +432,18 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
     // One convention per list (§9.1): every line the rows can carry is a sentence with its
     // full stop – the width line, on the pinned controls the tier has folded, included.
     const narrow = openDialog(state())
-    act(() => toolbarTiering.set({ hidden: ['forward', 'reader', 'translate', 'star', 'media'] }))
+    act(() =>
+      toolbarTiering.set({
+        hidden: ['forward', 'reader', 'translate', 'star', 'energy-saver', 'media']
+      })
+    )
     const atWidth = lines(narrow.h)
     expect(atWidth.forward).toBe(HIDDEN_AT_THIS_WIDTH)
     expect(atWidth.downloads).toBe(DOWNLOADS_UNCHECKED)
-    // The leaf is never the width's to hide (it is not tiered, as Chrome's is not): its own line.
-    expect(atWidth['energy-saver']).toBe(ENERGY_SAVER_ROW)
+    // The leaf is tiered by the row's width as the hub's button is (L2): the width line while
+    // the mode is on and the 240 row has folded it; its own line at rest.
+    expect(atWidth['energy-saver']).toBe(HIDDEN_AT_THIS_WIDTH)
+    expect(atRest['energy-saver']).toBe(ENERGY_SAVER_ROW)
     for (const line of [...Object.values(atWidth), ...Object.values(atRest)]) {
       if (line !== null) expect(line, line).toMatch(/[a-z]\.$/)
     }

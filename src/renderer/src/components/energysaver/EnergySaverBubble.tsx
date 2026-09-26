@@ -45,23 +45,25 @@ export const TURN_OFF_DETAIL = 'Until the next time your computer is unplugged.'
  * `container`: a notice with one affordance arms nothing, as Chrome's default button is its
  * no-op OK), Tab reaches the row, Escape returns the keyboard to the leaf; a press anywhere else,
  * a resize and another popover opening put it away. The mode going off – the charger, the
- * threshold, "Turn off now" landing, the setting – or the leaf leaving the row take the bubble
- * with them: it spoke for a leaf that is gone.
+ * threshold, "Turn off now" landing, the setting – or the leaf leaving the row – its pin, or the
+ * row's width tier folding it (`energySaverUi.leafUp`, the button's own word from the commit
+ * that unmounts it; pr-584 L2) – take the bubble with them: it spoke for a leaf that is gone.
  */
 function EnergySaverBubble({ state }: { state: UIState }): JSX.Element | null {
   const [fromKeyboard] = useState(() => energySaverUi.get().fromKeyboard)
   const ready = useFloatingChrome({ pageHadFocus: !fromKeyboard })
   const { formFactor } = useViewport()
-  const gone = !energySaverLeafUp(state, pinsFor(state, formFactor))
-  // Hangs from the leaf in its row, measured again on a window resize and on every state push
-  // (the row's buttons come and go with the tab and the snapshot).
+  const leafUp = energySaverUi.use((s) => s.leafUp)
+  const gone = !leafUp || !energySaverLeafUp(state, pinsFor(state, formFactor))
+  // Hangs from the leaf in its row, measured again on a window resize, on every state push
+  // (the row's buttons come and go with the tab and the snapshot) and as the leaf comes and goes.
   const [rects, setRects] = useState(leafRects)
   useEffect(() => {
     const measure = (): void => setRects(leafRects())
     measure()
     window.addEventListener('resize', measure)
     return () => window.removeEventListener('resize', measure)
-  }, [state])
+  }, [state, leafUp])
   const titleId = 'zen-energy-saver-title'
   if (!ready) return null
   return (

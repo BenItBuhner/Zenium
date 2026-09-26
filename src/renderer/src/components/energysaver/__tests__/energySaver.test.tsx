@@ -15,11 +15,13 @@ import {
   ENERGY_SAVER_TITLE,
   ENERGY_SAVER_TURN_OFF,
   energySaverDetail,
+  energySaverLeafFits,
   energySaverLeafUp,
   energySaverOn,
   energySaverUi,
   openEnergySaverBubble
 } from '@renderer/lib/energySaver'
+import { mediaHubButtonFits, mediaHubReturnRow } from '@renderer/lib/mediaHub'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { closeAllPopovers } from '@renderer/lib/portals'
 import { browserStore, uiStore } from '@renderer/lib/ui'
@@ -115,7 +117,7 @@ afterEach(async () => {
   mount = null
   document.getElementById('zen-chrome-layer')?.remove()
   closeAllPopovers()
-  energySaverUi.set({ open: false, fromKeyboard: false })
+  energySaverUi.set({ open: false, fromKeyboard: false, leafUp: false })
   browserStore.set({ state: null })
   viewportStore.set({ formFactor: 'desktop' })
   vi.mocked(run).mockClear()
@@ -137,6 +139,33 @@ describe('the leaf’s reading of the snapshot (lib/energySaver)', () => {
     expect(energySaverLeafUp(on, { media: false })).toBe(true)
     expect(energySaverLeafUp(on, { 'energy-saver': false })).toBe(false)
     expect(energySaverLeafUp(stateWith({ energySaver: false }), {})).toBe(false)
+  })
+
+  it('tiers the leaf by the row’s width on the hub’s one rule: folded at the 240 sidebar, back at the 302 with the always-there buttons, 32 more a button (L2)', () => {
+    // The 240 sidebar's row (its two 8 gutters aside) with back, forward, reload and ⋯: no room.
+    expect(energySaverLeafFits(240 - 16, 4)).toBe(false)
+    // The 302 sidebar: the 286 row is the pill's 126 plus five 32 slots – the leaf returns there,
+    // over a pill that still holds the 110 box the star and the tools return at.
+    expect(mediaHubReturnRow(4)).toBe(286)
+    expect(energySaverLeafFits(285, 4)).toBe(false)
+    expect(energySaverLeafFits(286, 4)).toBe(true)
+    // A fifth button beside it (the puzzle piece, the downloads button) moves the return by 32.
+    expect(energySaverLeafFits(286, 5)).toBe(false)
+    expect(energySaverLeafFits(318, 5)).toBe(true)
+    // The same floor as the hub's, in both directions, so the two buttons never disagree on
+    // what the pill needs; an unmeasured row shows the leaf as it shows the hub's button.
+    for (const [width, others] of [
+      [0, 4],
+      [224, 4],
+      [285, 4],
+      [286, 4],
+      [317, 5],
+      [318, 5],
+      [400, 6]
+    ]) {
+      expect(energySaverLeafFits(width, others)).toBe(mediaHubButtonFits(width, others))
+    }
+    expect(energySaverLeafFits(0, 9)).toBe(true)
   })
 
   it('says what the mode does here in Zenium’s words, with the factor Settings › Performance holds', () => {
@@ -165,6 +194,15 @@ describe('EnergySaverButton', () => {
     expect(button.getAttribute('aria-haspopup')).toBe('dialog')
     expect(button.getAttribute('aria-expanded')).toBe('false')
     expect(button.querySelector('svg.lucide-leaf')).not.toBeNull()
+  })
+
+  it('publishes its own standing from the commit that mounts or unmounts it – the row’s width tier folding it says so to the bubble (L2)', () => {
+    expect(energySaverUi.get().leafUp).toBe(false)
+    render(<EnergySaverButton />)
+    expect(energySaverUi.get().leafUp).toBe(true)
+    // The row's tier unmounts the leaf (a sidebar narrowed to 240): the word goes with it.
+    render(<></>)
+    expect(energySaverUi.get().leafUp).toBe(false)
   })
 
   it('opens and closes the bubble, wearing the pressed fill off aria-expanded while it is up', async () => {
@@ -258,13 +296,43 @@ describe('EnergySaverBubble', () => {
     })
   })
 
+  it('goes with the leaf the row’s width tier folds – no state push, the button’s own word (L2)', async () => {
+    // The layer stands where `Root` mounts it, the leaf in the row beside it.
+    const shell = (leafInRow: boolean): ReactElement => (
+      <>
+        <EnergySaverBubbleLayer />
+        {leafInRow ? <EnergySaverButton /> : null}
+      </>
+    )
+    browserStore.set({ state: stateWith() })
+    render(shell(true))
+    click(leaf())
+    await settle()
+    expect(bubble()).not.toBeNull()
+    expect(energySaverUi.get().leafUp).toBe(true)
+    // The row unmounts the leaf for want of width (the 240 sidebar): the same state, no push;
+    // the bubble would otherwise float unanchored over a row with no leaf in it.
+    render(shell(false))
+    expect(leaf()).toBeNull()
+    expect(energySaverUi.get().leafUp).toBe(false)
+    await act(async () => {
+      await vi.waitFor(() => expect(energySaverUi.get().open).toBe(false))
+    })
+    expect(bubble()).toBeNull()
+  })
+
   it('opened from the keyboard, it asks the chrome for the focus and leaves the page without it (§9.22)', async () => {
     browserStore.set({ state: stateWith() })
-    render(<EnergySaverBubbleLayer />)
+    render(
+      <>
+        <EnergySaverButton />
+        <EnergySaverBubbleLayer />
+      </>
+    )
     act(() => openEnergySaverBubble({ fromKeyboard: true }))
     await settle()
     expect(bubble()).not.toBeNull()
     expect(vi.mocked(run)).toHaveBeenCalledWith('focus.chrome', undefined)
-    expect(energySaverUi.get()).toEqual({ open: true, fromKeyboard: true })
+    expect(energySaverUi.get()).toEqual({ open: true, fromKeyboard: true, leafUp: true })
   })
 })
