@@ -9,6 +9,8 @@ import type {
   TabSection
 } from '@shared/types'
 import { DEFAULT_FONT_SETTINGS, type PageFontSettings } from '@shared/fonts'
+import { DEFAULT_AUTOFILL_SETTINGS } from '@shared/defaults'
+import { DEFAULT_PRELOAD_PAGES, DEFAULT_PRIVACY_SETTINGS } from '@shared/privacy'
 import { RuleEngine } from '@core/blocking/engine'
 import { moveTab as moveTabInModel, type Model } from '@core/model'
 import type { Browser } from '@core/browser'
@@ -60,6 +62,12 @@ export class FakeKotlin implements RuntimeBridge {
   /** `_locales/<locale>/messages.json` texts per install path, as `ext.open` hands them over. */
   readonly locales = new Map<string, Record<string, string>>()
   readonly files = new Map<string, string>()
+  /**
+   * File sizes `ext.fileSizes` answers, by `<id>/<path>`, over a file's text in `files` when
+   * unset; a path in neither is left out of the answer (Kotlin sizes what is there). `null`
+   * makes the call fail, as a host without it would.
+   */
+  fileBytes: Map<string, number> | null = new Map()
   /** Background pages Kotlin holds right now, by extension id. */
   readonly backgrounds = new Set<string>()
   /** The engine snapshot's build count `blocking.stats` answers; null for a host without the call. */
@@ -225,6 +233,16 @@ export class FakeKotlin implements RuntimeBridge {
         return undefined
       case 'ext.readFile':
         return this.files.get(`${args.id}/${args.path}`) ?? null
+      case 'ext.fileSizes': {
+        if (!this.fileBytes) throw new Error('Unknown method ext.fileSizes')
+        const sizes: Record<string, number> = {}
+        for (const path of args.files as string[]) {
+          const key = `${args.id}/${path}`
+          const bytes = this.fileBytes.get(key) ?? this.files.get(key)?.length
+          if (bytes !== undefined) sizes[path] = bytes
+        }
+        return { sizes }
+      }
       case 'ext.i18n.detectLanguage':
         return this.languageAnswer(String(args.text))
       case 'ext.system.cpu':
@@ -626,6 +644,15 @@ export function harness(
   const search: Harness['search'] = []
   const fonts: PageFontSettings = { ...DEFAULT_FONT_SETTINGS }
   const passwords = { offerToSave: true }
+  // The rest of what `chrome.privacy` reads the browser's own values from (`PrivacyUserSettings`), at the defaults.
+  const settings = {
+    fonts,
+    passwords,
+    autofill: { ...DEFAULT_AUTOFILL_SETTINGS },
+    privacy: structuredClone(DEFAULT_PRIVACY_SETTINGS),
+    searchSuggestions: true,
+    preloadPages: DEFAULT_PRELOAD_PAGES
+  }
   const controls: Harness['controls'] = []
   const browser = {
     platform: { io, speech },
@@ -639,7 +666,7 @@ export function harness(
     },
     state: {
       model: { containers },
-      settings: { fonts, passwords },
+      settings,
       subscribe: (fn: () => void) => {
         listeners.push(fn)
         return () => undefined

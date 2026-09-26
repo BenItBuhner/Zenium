@@ -82,7 +82,13 @@ import { stripJsonComments } from '@core/extensions/manifest'
 import { parseRuntimeManifest } from '@core/extensions/runtime/manifest'
 import { extensionUrl, type RegisteredContentScript } from '@core/extensions/runtime/plan'
 import { MessageRouter, type Endpoint } from '@core/extensions/runtime/router'
-import { planUnits, sameUnits, type ExtensionUnits } from '@core/extensions/runtime/units'
+import {
+  foldFilesFor,
+  planUnits,
+  sameUnits,
+  type ExtensionUnits,
+  type UnitEnvironment
+} from '@core/extensions/runtime/units'
 import {
   ExtensionApi,
   LANGUAGE_SAMPLE_CHARS,
@@ -112,7 +118,8 @@ import { AndroidIdentity, authSheetEvent } from './extensionIdentity'
 import type { ExtensionRuntimeHooks } from './extensionRuntimeHooks'
 import type { ClientInfo } from './extensionServiceWorker'
 import type { AndroidExtensionStoreIo } from './extensionStoreIo'
-import { ExtensionControlsMerge } from './extensionControls'
+import { ExtensionControlsGate } from './extensionControls'
+import { SettingControls } from './settingControls'
 import { EMPTY_WEBVIEW_FONT_LAYER, type WebViewFontLayer } from './extensionFontSettings'
 import type { WebViewPrivacyLayer } from './extensionPrivacy'
 import { webViewProxyOverride } from './extensionProxy'
@@ -837,8 +844,12 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
   readonly screen: () => PhoneScreen
   readonly onScreenChange: (listener: () => void) => void
 
-  /** The settings the extensions hold, merged over the publishing APIs into the core's state (`extensionControls.ts`). */
-  private readonly controls: ExtensionControlsMerge
+  /**
+   * The settings the extensions hold: W6-C6's `SettingControls` (#518) is the phone's one
+   * publisher into the core's state, this runtime's APIs feed it through the value-aware gate of
+   * `extensionControls.ts` (#525's compare; round 21's fold, R21-8).
+   */
+  private readonly controls: ExtensionControlsGate
 
   constructor(
     private readonly bridge: RuntimeBridge,
@@ -846,7 +857,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     private readonly windowOf: () => ZenWindow,
     options: AndroidExtensionRuntimeOptions = {}
   ) {
-    this.controls = new ExtensionControlsMerge((map) => browser.state.setExtensionControls(map))
+    this.controls = new ExtensionControlsGate(new SettingControls(browser.state))
     this.debug = options.debug ?? true
     this.now = options.now ?? (() => Date.now())
     this.timers = {
@@ -1269,20 +1280,27 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         isolation,
         this.data.grants[id]?.permissions ?? []
       )
-    const plan = (isolatedWorlds: boolean): ExtensionUnits =>
-      planUnits(bootFor(isolatedWorlds ? 'world' : 'with'), ext.manifest, {
+    const plan = async (isolatedWorlds: boolean): Promise<ExtensionUnits> => {
+      const boot = bootFor(isolatedWorlds ? 'world' : 'with')
+      const unitEnv: UnitEnvironment = {
         token: env.token,
         uiLanguage: env.uiLanguage,
         isolatedWorlds,
         userScriptMessaging: this.data.userScriptMessaging[id] === true,
         ...(env.messageLimit ? { messageLimit: env.messageLimit } : {})
-      })
-    let units = plan(env.isolatedWorlds)
+      }
+      // A plan with many hostname units folds them by the files' sizes, which the host has
+      // (`units.ts`, `foldUnits`); the host's refusal leaves the plan unfolded, as before.
+      const files = foldFilesFor(boot, ext.manifest, unitEnv)
+      const fileChars = files ? await this.fileChars(ext, files) : null
+      return planUnits(boot, ext.manifest, fileChars ? { ...unitEnv, fileChars } : unitEnv)
+    }
+    let units = await plan(env.isolatedWorlds)
     if (env.isolatedWorlds && !this.worldsFit(id, units, env.worldSlots)) {
       console.warn(
         `[Zenium] extension ${id}: the tab's ${env.worldSlots} isolated worlds are taken; its content scripts run under the emulation proxy`
       )
-      units = plan(false)
+      units = await plan(false)
     }
     const access = accessKey(ext.record)
     if (sameUnits(ext.units, units) && ext.configuredAccess === access) return
@@ -1328,6 +1346,32 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     ext.units = units
     ext.configuredAccess = access
     ext.configureStats = stats
+  }
+
+  /**
+   * The sizes of the extension's files the planner's fold weighs (`ext.fileSizes`: `{ sizes:
+   * { path: bytes } }` for the files that are there), or null when the host cannot answer – the
+   * plan is then made without them and folds nothing.
+   */
+  private async fileChars(
+    ext: Attached,
+    files: string[]
+  ): Promise<Readonly<Record<string, number>> | null> {
+    try {
+      const answer = await this.bridge.call<{ sizes?: Record<string, number> }>('ext.fileSizes', {
+        id: ext.record.id,
+        path: ext.record.path,
+        files
+      })
+      return answer && typeof answer.sizes === 'object' && answer.sizes !== null
+        ? answer.sizes
+        : null
+    } catch (e) {
+      console.warn(
+        `[Zenium] extension ${ext.record.id}: the host did not size its ${files.length} content-script files (${e instanceof Error ? e.message : String(e)}); its units stay unfolded`
+      )
+      return null
+    }
   }
 
   /**

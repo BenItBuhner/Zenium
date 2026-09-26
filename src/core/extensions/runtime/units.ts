@@ -101,7 +101,33 @@ export interface UnitEnvironment {
    * engine keeps Chrome's 64 MB. See `EngineConfig.maxMessageLength`.
    */
   messageLimit?: number
+  /**
+   * The sizes in bytes of the extension's content-script files by the path the groups name them
+   * by, as the host answers `ext.fileSizes` (a UTF-8 file has at most as many chars as bytes);
+   * asked for when the plan would fold units (`foldFilesFor`), absent otherwise. A path the host
+   * could not size is left out, and the unit naming it is never folded.
+   */
+  fileChars?: Readonly<Record<string, number>>
 }
+
+/**
+ * Beyond this many whole units with sources over hostname rules in one world, the planner folds
+ * them by size (`foldUnits`). Up to it, one bootstrap copy per rule set is what compat round 19
+ * budgeted (21 units across six extensions); Adblock Ad Blocker Pro's 58 registered scriptlet
+ * sets (compat round 21) were 58 copies of the 165 K bootstrap over 0.7 M chars of sources –
+ * 9.9 M of the 14.1 M chars of its plan, held 16-bit on the phone, and the compile of them was
+ * the allocation that ended the app process on the 192 MB heap.
+ */
+export const FOLD_ABOVE_UNITS = 8
+
+/**
+ * The most chars of sources and CSS one folded unit carries: what every frame matching any of
+ * its rules receives beside the bootstrap. Round 18's lesson bounds it (tl;dv's three 6-8 MB
+ * units folded into one 20.7 M-char script for every frame took the renderer down): a unit over
+ * the cap alone is never folded, and the cap is a quarter of what an ad blocker's own
+ * every-origin units put into every frame anyway.
+ */
+export const FOLD_UNIT_CHARS = 512 * 1024
 
 /**
  * `addDocumentStartJavaScript` filters by origin rule (`scheme://host[:port]`, `*` wildcards in
@@ -190,16 +216,120 @@ export function mergeAlikeGroups(groups: readonly BootGroup[]): BootGroup[] {
   return out
 }
 
-/** Plan the units and served files of one extension from its boot record. */
-export function planUnits(
+/** A unit in the making: its world and rules, the groups gathered under them, its shape once decided. */
+interface Draft {
+  world: UnitWorld
+  origins: string[]
+  groups: BootGroup[]
+  shape: UnitShape
+}
+
+const hasSources = (draft: Draft): boolean =>
+  draft.groups.some((group) => group.js.length > 0 || group.css.length > 0)
+
+const everyOrigin = (draft: Draft): boolean =>
+  draft.origins.length === 1 && draft.origins[0] === '*'
+
+/** The files a draft's script would embed, in group order. */
+const draftFiles = (draft: Draft): string[] =>
+  draft.groups.flatMap((group) => [...group.js, ...group.css])
+
+/**
+ * The drafts `foldUnits` weighs, by world: whole units (the main world's; every world's where
+ * the host has no isolated worlds – with them the other worlds' rule sets go thin and carry no
+ * bootstrap to save) with sources of their own over hostname rules, in a world that has more
+ * than `FOLD_ABOVE_UNITS` of them.
+ */
+function foldCandidates(drafts: Map<string, Draft>, env: UnitEnvironment): Map<UnitWorld, Draft[]> {
+  const byWorld = new Map<UnitWorld, Draft[]>()
+  for (const draft of drafts.values()) {
+    if (draft.world !== 'main' && env.isolatedWorlds) continue
+    if (everyOrigin(draft) || !hasSources(draft)) continue
+    const list = byWorld.get(draft.world)
+    if (list) list.push(draft)
+    else byWorld.set(draft.world, [draft])
+  }
+  for (const [world, list] of [...byWorld])
+    if (list.length <= FOLD_ABOVE_UNITS) byWorld.delete(world)
+  return byWorld
+}
+
+/**
+ * Fold a world's many hostname units into few: the candidates (`foldCandidates`) whose files
+ * the host sized (`env.fileChars`) and that fit `FOLD_UNIT_CHARS` alone are packed, smallest
+ * first, into units of at most that many chars of sources, each over the union of its members'
+ * rules with all their groups. A frame matching any of the rules receives the folded script
+ * and the bootstrap runs the groups whose own patterns match it – `decideFrameBoot` decides
+ * per group in the frame, the rules only pre-filter the injection – so what runs where is what
+ * ran before; the frame holds the bucket's other sources besides, which the cap bounds. A unit
+ * over the cap alone, or naming a file the host could not size, keeps its own rules.
+ */
+function foldUnits(drafts: Map<string, Draft>, env: UnitEnvironment): void {
+  const fileChars = env.fileChars
+  if (!fileChars) return
+  for (const [world, candidates] of foldCandidates(drafts, env)) {
+    const measured = candidates
+      .map((draft) => {
+        let chars = 0
+        for (const path of draftFiles(draft)) {
+          const size = fileChars[path]
+          if (size === undefined) return { draft, chars: Infinity }
+          chars += size
+        }
+        return { draft, chars }
+      })
+      .filter(({ chars }) => chars <= FOLD_UNIT_CHARS)
+      .sort(
+        (a, b) =>
+          a.chars - b.chars ||
+          unitKey(world, a.draft.origins).localeCompare(unitKey(world, b.draft.origins))
+      )
+    const buckets: Array<{ members: Draft[]; chars: number }> = []
+    for (const { draft, chars } of measured) {
+      const open = buckets[buckets.length - 1]
+      if (open && open.chars + chars <= FOLD_UNIT_CHARS) {
+        open.members.push(draft)
+        open.chars += chars
+      } else buckets.push({ members: [draft], chars })
+    }
+    for (const { members } of buckets) {
+      if (members.length < 2) continue
+      for (const member of members) drafts.delete(unitKey(world, member.origins))
+      const origins = sortedOrigins(members.flatMap((member) => member.origins))
+      const groups = members.flatMap((member) => member.groups)
+      const key = unitKey(world, origins)
+      const standing = drafts.get(key)
+      if (standing) standing.groups.push(...groups)
+      else drafts.set(key, { world, origins, groups, shape: 'whole' })
+    }
+  }
+}
+
+/**
+ * The files whose sizes `planUnits` needs to fold this extension's units, sorted, or null when
+ * the plan has nothing to fold: the runtime asks the host for them (`ext.fileSizes`) and plans
+ * with `env.fileChars` set; a plan made without them folds nothing.
+ */
+export function foldFilesFor(
   boot: ExtensionBoot,
   manifest: RuntimeManifest,
   env: UnitEnvironment
-): ExtensionUnits {
-  const drafts = new Map<
-    string,
-    { world: UnitWorld; origins: string[]; groups: BootGroup[]; shape: UnitShape }
-  >()
+): string[] | null {
+  const candidates = foldCandidates(draftUnits(boot, manifest, env), env)
+  if (candidates.size === 0) return null
+  const files = new Set<string>()
+  for (const list of candidates.values())
+    for (const draft of list) for (const path of draftFiles(draft)) files.add(path)
+  return [...files].sort()
+}
+
+/** The units before their shapes: one draft per world and rule set, the sourceless ones folded into the world's `*` unit. */
+function draftUnits(
+  boot: ExtensionBoot,
+  manifest: RuntimeManifest,
+  env: UnitEnvironment
+): Map<string, Draft> {
+  const drafts = new Map<string, Draft>()
   const add = (world: UnitWorld, origins: string[], groups: BootGroup[]): void => {
     const key = unitKey(world, origins)
     const draft = drafts.get(key)
@@ -251,11 +381,24 @@ export function planUnits(
     if (!everywhere) continue
     for (const [key, draft] of [...drafts]) {
       if (draft.world !== world || draft === everywhere) continue
-      if (draft.groups.some((group) => group.js.length > 0 || group.css.length > 0)) continue
+      if (hasSources(draft)) continue
       everywhere.groups.push(...draft.groups)
       drafts.delete(key)
     }
   }
+  return drafts
+}
+
+/** Plan the units and served files of one extension from its boot record. */
+export function planUnits(
+  boot: ExtensionBoot,
+  manifest: RuntimeManifest,
+  env: UnitEnvironment
+): ExtensionUnits {
+  const drafts = draftUnits(boot, manifest, env)
+  // Many hostname rule sets with sources in one world: folded by size, where the host sized
+  // the files (see `foldUnits` and `FOLD_ABOVE_UNITS`).
+  foldUnits(drafts, env)
   // The extension's isolated world with several rule sets: one bootstrap for the world (see
   // `UnitShape`). Its `*`-rule unit carries it and runs as before; a world without one gets a
   // holder that only defines it; the other sets attach. The main world keeps whole units: its

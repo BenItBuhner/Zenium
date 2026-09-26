@@ -70,6 +70,58 @@ describe('AndroidExtensionRuntime: attaching records', () => {
     expect(h.runtime.isolatedWorlds).toBe(false)
   })
 
+  it("folds many hostname units by the files' sizes Kotlin answers, and leaves the plan as it was when Kotlin cannot size them (compat round 21, Adblock Ad Blocker Pro)", async () => {
+    // uBO Lite's shape on a WebView without isolated worlds: a scriptlet set per hostname, every
+    // unit whole – a copy of the bootstrap per unit in every frame that matches. The planner
+    // asks Kotlin for the files' sizes once and packs the units into capped buckets.
+    const sites = Array.from({ length: 12 }, (_, i) => `s${String(i).padStart(2, '0')}`)
+    const m = manifest({
+      content_scripts: sites.map((s) => ({ matches: [`https://${s}.example/*`], js: [`${s}.js`] }))
+    })
+    const h = harness({ isolatedWorlds: false })
+    for (const s of sites) h.kt.fileBytes?.set(`${ID}/${s}.js`, 100_000)
+    await h.runtime.attach(record(h, {}, m))
+    expect(h.kt.calledWith('ext.fileSizes')).toEqual([
+      { id: ID, path: PATH, files: sites.map((s) => `${s}.js`) }
+    ])
+    const units = h.kt.calledWith('ext.configure')[0].units as Array<Record<string, unknown>>
+    expect(units.map((u) => [u.world, (u.origins as string[]).length])).toEqual([
+      [null, 5],
+      [null, 5],
+      [null, 2]
+    ])
+    // Each group keeps its own pattern inside the bucket: the bootstrap runs a scriptlet only
+    // where its hostname matches, as before the fold.
+    const first = JSON.parse(String(units[0].config)) as Record<string, unknown>
+    const groups = (first.extension as Record<string, unknown>).groups as Array<
+      Record<string, unknown>
+    >
+    expect(groups.map((g) => g.matches)).toEqual(
+      sites.slice(0, 5).map((s) => [`https://${s}.example/*`])
+    )
+    expect(h.runtime.configureStats(ID)?.units).toHaveLength(3)
+
+    // A host without the call, or one whose answer fails, leaves the units unfolded: the plan
+    // stands as the rules alone make it, one unit per hostname.
+    const refused = harness({ isolatedWorlds: false })
+    refused.kt.fileBytes = null
+    await refused.runtime.attach(record(refused, {}, m))
+    expect(refused.kt.calledWith('ext.fileSizes')).toHaveLength(1)
+    const unfolded = refused.kt.calledWith('ext.configure')[0].units as Array<
+      Record<string, unknown>
+    >
+    expect(unfolded).toHaveLength(sites.length)
+    expect(unfolded.map((u) => (u.origins as string[]).length)).toEqual(Array<number>(12).fill(1))
+
+    // With isolated worlds the extension's units go thin – nothing to save – and none is asked for.
+    const worlds = harness()
+    await worlds.runtime.attach(record(worlds, {}, m))
+    expect(worlds.kt.calledWith('ext.fileSizes')).toHaveLength(0)
+    const thin = worlds.kt.calledWith('ext.configure')[0].units as Array<Record<string, unknown>>
+    const ofSites = thin.filter((u) => (u.origins as string[]).some((o) => o.endsWith('.example')))
+    expect(ofSites.map((u) => u.shape)).toEqual(Array<string>(sites.length).fill('thin'))
+  })
+
   it('plans an extension beyond the tab world budget under the with-proxy, later ones too', async () => {
     // Two slots: the first extension takes both (content + USER_SCRIPT world), the second
     // would need one more and runs in the main world instead; a reconfigure of the first that
