@@ -73,12 +73,14 @@
     <string name="cct_find_previous">Previous match</string>
     <string name="cct_downloading">Downloading %1$s</string>
     <string name="cct_download_insecure">%1$s can’t be downloaded securely</string>
-    <string name="cct_permission_camera">Use your camera</string>
-    <string name="cct_permission_microphone">Use your microphone</string>
-    <string name="cct_permission_media">Use your camera and microphone</string>
-    <string name="cct_permission_location">Know your location</string>
-    <string name="cct_permission_protected_media">Play protected content</string>
-    <string name="cct_permission_message">%1$s wants to:</string>
+    <!-- A custom tab's permission prompt on the native prompt sheet (PermissionPromptSheet, v2 §9.23): the
+         permission family's question naming the site's host, one per permission a page can ask for, with the
+         pair Block | Allow (cct_block, cct_allow) under it. Answered per request; a custom tab remembers nothing. -->
+    <string name="cct_permission_question_camera">Allow %1$s to use your camera?</string>
+    <string name="cct_permission_question_microphone">Allow %1$s to use your microphone?</string>
+    <string name="cct_permission_question_media">Allow %1$s to use your camera and microphone?</string>
+    <string name="cct_permission_question_location">Allow %1$s to know your location?</string>
+    <string name="cct_permission_question_protected_media">Allow %1$s to play protected content?</string>
     <string name="cct_allow">Allow</string>
     <string name="cct_block">Block</string>
     <string name="cct_open_in_app">Open in %1$s?</string>
