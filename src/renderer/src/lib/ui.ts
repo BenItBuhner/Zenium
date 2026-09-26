@@ -1164,12 +1164,21 @@ export async function openOverlay(
   activeTabId: string | null,
   spaceId: string | null = null,
   folderId: string | null = null,
-  section: string | null = null
+  section: string | null = null,
+  {
+    handedBack = false
+  }: {
+    /**
+     * The overlay is a page tab's the class change closed, going back to its tab as the window
+     * widens (`useStageContinuity`): the core re-opens it at the slot the tab had.
+     */
+    handedBack?: boolean
+  } = {}
 ): Promise<void> {
   const page = pageForOverlay(kind, folderId, section)
   if (page) {
     // The page's tab, through the core's one route (a Settings section for Shortcuts / Sync).
-    run('page.open', page)
+    run('page.open', handedBack ? { ...page, handedBack } : page)
     return
   }
   await captureActiveTab(activeTabId)

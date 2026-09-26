@@ -110,6 +110,15 @@ export class ZenWindow {
    */
   formFactor: FormFactor = 'desktop'
   /**
+   * The page tab the class change closed in front (`PageService.reconcileLayout`: a tablet's
+   * page tab narrowed into the phone class became the page's overlay) – the page, the space it
+   * stood in and its slot among that space's regular tabs – for the chrome's hand-back when the
+   * window widens again (`page.open` with `handedBack`): the tab comes back where it was while
+   * that still fits. Null once used, or when nothing was handed over; never set on a host whose
+   * window keeps its class.
+   */
+  handedPage: { pageId: string; spaceId: string; index: number } | null = null
+  /**
    * The surfaces this window's chrome has mounted (`ui.surface`): the install prompt, the screen
    * picker, the share sheet. A page's request for one that is absent is answered at once as a
    * cancel (`surfaceMounted`) rather than held for a chrome that is not there.

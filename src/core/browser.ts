@@ -3566,8 +3566,8 @@ export class Browser {
         this.pages.open('history', undefined, win)
       },
 
-      'page.open': ({ id, section, openerTabId, query }, win) =>
-        this.pages.open(id, section, win, openerTabId, { query }),
+      'page.open': ({ id, section, openerTabId, query, handedBack }, win) =>
+        this.pages.open(id, section, win, openerTabId, { query, handedBack }),
       'page.navigate': ({ tabId, section, subpage, replace, query }) =>
         this.pages.navigate(tabId, section, replace ?? false, query, subpage),
 
