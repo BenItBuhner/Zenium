@@ -310,7 +310,8 @@ function sameIds(a: readonly MagicStackModuleId[], b: readonly MagicStackModuleI
  * follows the offset (`shift`) before that commit is measured, and the glide is the layout's
  * own: the cards after a departure closing the gap, a card in view standing still. Between
  * commits that keep the cards the offset is the finger's, which content coordinates already
- * leave out; the last offset is read after each commit and on every scroll.
+ * leave out; the last offset is read after each commit and on every scroll. The strip's
+ * snapping is held off while the glide runs (`holdSnap`), as the pager holds it for its spring.
  */
 function useStackFlip(stripRef: RefObject<HTMLElement | null>, mounted: boolean): void {
   // The cards are measured in layout space: the page stands inside the content frame, which
@@ -319,6 +320,8 @@ function useStackFlip(stripRef: RefObject<HTMLElement | null>, mounted: boolean)
   // every card moving by it (a 6 px lift and a scale about the page's centre, glided).
   const tracker = useMemo(() => new FlipTracker(layoutBox), [])
   const last = useRef({ keys: '', scrollLeft: 0 })
+  // The strip whose snapping the glide in flight holds off, until the glide has rested.
+  const holding = useRef<HTMLElement | null>(null)
   useLayoutEffect(() => {
     const el = stripRef.current
     const cells = collectCells(el)
@@ -331,7 +334,29 @@ function useStackFlip(stripRef: RefObject<HTMLElement | null>, mounted: boolean)
       last.current = { keys, scrollLeft }
     } else last.current = { keys: '', scrollLeft: 0 }
     tracker.commit(cells, el, true)
+    // A glide moves the cards by transform, and a mandatory container snaps to a snap area
+    // where it is drawn – Chromium re-snaps the offset to the transformed card on every frame,
+    // which holds the card at its snap position through the glide (the motion cancelled, the
+    // card cut to the gap's edge and nudged the last of the way). The snap is off for the glide.
+    if (el && tracker.gliding) {
+      holding.current = el
+      holdSnap(el, GLIDE)
+    }
   })
+  useEffect(() => {
+    // The rest is drawn with no glide in flight: the snap comes back a frame after it, the
+    // offset then a snap position the container has nothing to correct.
+    const off = tracker.onFrame(() => {
+      if (tracker.gliding || !holding.current) return
+      releaseSnap(holding.current, GLIDE)
+      holding.current = null
+    })
+    return () => {
+      off()
+      if (holding.current) releaseSnap(holding.current, GLIDE, true)
+      holding.current = null
+    }
+  }, [tracker])
   useEffect(() => {
     const el = stripRef.current
     if (!el) return
@@ -345,6 +370,43 @@ function useStackFlip(stripRef: RefObject<HTMLElement | null>, mounted: boolean)
     tracker.listen()
     return () => tracker.dispose()
   }, [tracker])
+}
+
+/** The two holders of a strip's snapping: the tracker's glide and the pager's spring. */
+const GLIDE = 'glide'
+const PAGER = 'pager'
+
+/**
+ * Who holds a strip's snapping off (`scroll-snap-type: none` inline, over the stylesheet's
+ * mandatory): the pager while its spring runs the offset, the tracker while a glide moves the
+ * cards. Chromium snaps a mandatory container at every programmatic write of its offset and,
+ * on every frame, to a snap area a transform has moved – a spring on the offset would run as a
+ * stair, and a glide would be cancelled by the offset following the card. The snap returns once
+ * no one holds it, a frame after the last release (the rest's write has landed and the offset
+ * is a snap position), or at once when a finger takes the strip.
+ */
+const snapHolds = new WeakMap<HTMLElement, Set<string>>()
+
+function holdSnap(el: HTMLElement, holder: string): void {
+  let holds = snapHolds.get(el)
+  if (!holds) {
+    holds = new Set()
+    snapHolds.set(el, holds)
+  }
+  holds.add(holder)
+  el.style.setProperty('scroll-snap-type', 'none')
+}
+
+function releaseSnap(el: HTMLElement, holder: string, atOnce = false): void {
+  const holds = snapHolds.get(el)
+  if (!holds?.delete(holder) || holds.size > 0) return
+  if (atOnce) {
+    el.style.removeProperty('scroll-snap-type')
+    return
+  }
+  requestAnimationFrame(() => {
+    if ((snapHolds.get(el)?.size ?? 0) === 0) el.style.removeProperty('scroll-snap-type')
+  })
 }
 
 /**
@@ -383,23 +445,21 @@ function useStripPager(
       },
       () => {
         el.scrollLeft = spring.destination
-        requestAnimationFrame(() => {
-          if (!spring.running) el.style.removeProperty('scroll-snap-type')
-        })
+        releaseSnap(el, PAGER)
       }
     )
     springRef.current = spring
     const caught = (): void => {
       if (!spring.running) return
       spring.stop()
-      el.style.removeProperty('scroll-snap-type')
+      releaseSnap(el, PAGER, true)
     }
     const types = ['pointerdown', 'touchstart', 'wheel']
     for (const type of types) el.addEventListener(type, caught, { passive: true })
     return () => {
       for (const type of types) el.removeEventListener(type, caught)
       spring.stop()
-      el.style.removeProperty('scroll-snap-type')
+      releaseSnap(el, PAGER, true)
       springRef.current = null
     }
   }, [stripRef, mounted])
@@ -422,7 +482,7 @@ function useStripPager(
       const target = extent > 0 ? Math.min(index * pitch, extent) : index * pitch
       const from = el.scrollLeft
       if (Math.abs(target - from) < 1) return
-      el.style.setProperty('scroll-snap-type', 'none')
+      holdSnap(el, PAGER)
       spring.start(from, spring.running ? spring.stop().v : 0, target)
     },
     [stripRef]

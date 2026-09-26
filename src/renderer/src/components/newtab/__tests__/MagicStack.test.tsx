@@ -707,6 +707,72 @@ describe('the Magic Stack on the page (NTP-16)', () => {
     expect(scroll.writes).toEqual([])
   })
 
+  it('the departure’s glide – the cards after the gone one closing the gap – runs with the strip’s snapping off and on again a frame after its rest: Chromium re-snaps a mandatory container to a transformed card on every frame, which would hold the card at the gap’s edge; nothing pages', () => {
+    // A laid-out strip: each card 100 wide at 100 times its place, so a card gone moves the ones
+    // after it by a pitch – a glide of 100 (the tracker measures the painted box: no frame here).
+    const rectOf = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'getBoundingClientRect')
+    Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value(this: HTMLElement): DOMRect {
+        const card = this.classList.contains('zen-mstack-card')
+        const index = card ? Array.prototype.indexOf.call(this.parentElement!.children, this) : 0
+        const x = index * 100
+        const width = card ? 100 : 0
+        return { x, y: 0, top: 0, left: x, right: x + width, bottom: 0, width, height: 0 } as DOMRect
+      }
+    })
+    try {
+      render(stack(state()))
+      const strip = q<HTMLUListElement>('.zen-mstack-strip')!
+      const scroll = scroller(strip)
+      expect(snapOf(strip)).toBe('')
+      // The switch turns Downloads off: the fade, the snap still on – nothing has moved yet.
+      render(stack(state({ newTabHiddenModules: ['downloads'] })))
+      const leaving = q('.zen-mstack-card[data-cell="downloads"]')!
+      expect(leaving.dataset.leaving).toBe('true')
+      expect(snapOf(strip)).toBe('')
+      expect(frames.scheduled).toBe(false)
+      // The fade's end takes the card out: the two after it are drawn where they were, a pitch
+      // to the right of their new slots, the glide under way and the snap off for it.
+      act(() => {
+        leaving.dispatchEvent(new AnimationEvent('animationend', { bubbles: true }))
+      })
+      expect(cardIds()).toEqual(['continue', 'bookmarks', 'default-browser'])
+      const glided = (): string[] =>
+        ['bookmarks', 'default-browser'].map(
+          (id) => q(`.zen-mstack-card[data-cell="${id}"]`)!.style.transform
+        )
+      expect(glided()).toEqual(['translate(100px, 0px)', 'translate(100px, 0px)'])
+      expect(q('.zen-mstack-card[data-cell="continue"]')!.style.transform).toBe('')
+      expect(snapOf(strip)).toBe('none')
+      expect(frames.scheduled).toBe(true)
+      expect(scroll.writes).toEqual([])
+      // Frame by frame to the slots, the snap off throughout, the frame before each remembered.
+      act(() => frames.run(2))
+      for (const t of glided()) {
+        const x = Number.parseFloat(t.slice('translate('.length))
+        expect(x).toBeGreaterThan(0)
+        expect(x).toBeLessThan(100)
+      }
+      expect(snapOf(strip)).toBe('none')
+      let before = { snap: '', transforms: ['?'] }
+      for (let i = 0; i < 200 && snapOf(strip) === 'none'; i++) {
+        before = { snap: snapOf(strip), transforms: glided() }
+        act(() => frames.run(1))
+      }
+      // The snap is back a frame after the rest, which had drawn the cards in their slots with
+      // the snap still off; the offset was never written – the departure pages nothing.
+      expect(snapOf(strip)).toBe('')
+      expect(before).toEqual({ snap: 'none', transforms: ['', ''] })
+      expect(glided()).toEqual(['', ''])
+      expect(frames.scheduled).toBe(false)
+      expect(scroll.writes).toEqual([])
+    } finally {
+      if (rectOf) Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', rectOf)
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>).getBoundingClientRect
+    }
+  })
+
   it('a hidden set that changed by more than one id is no switch’s act: the cards are cut, nothing leaves, arrives or pages', () => {
     render(stack(state({ newTabHiddenModules: ['continue', 'downloads'] })))
     const strip = q<HTMLUListElement>('.zen-mstack-strip')!
