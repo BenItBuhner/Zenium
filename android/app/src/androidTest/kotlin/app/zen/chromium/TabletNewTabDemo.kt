@@ -99,6 +99,9 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
     /** Where the last hold's finger was on the screen ([holdTile]): the point the menu must NOT hang from. */
     private var lastHold: PointF? = null
 
+    /** The box of the tile last held, on the screen, read at the hold while the page was in view. */
+    private var lastTileBox: RectF? = null
+
     /** The sites: a host each, the page's title (the tile's caption) and an icon colour. */
     private class Site(val n: Int, val title: String, val color: Int) {
         val address get() = "127.0.0.$n"
@@ -326,7 +329,7 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
         check("one separator stands between the open rows and Remove: five rows in all", rows.size == 4 && jsNumber("document.querySelectorAll('$MENU_SEPARATOR').length") == 1.0, "separators ${jsNumber("document.querySelectorAll('$MENU_SEPARATOR').length")}")
         check("no Edit Shortcut on a most-visited tile; the desktop's window rows are not here", rows.none { it.startsWith("Edit") || it.contains("Window") }, "rows $rows")
         check("the menu is the tablet's anchored popover (`.zen-v2-menu`), not a sheet", inDom(MENU) && !inDom(SHEET), "")
-        menuHangsFromTile(id, TILE, lastHold)
+        menuHangsFromTile(lastTileBox, lastHold)
         SystemClock.sleep(1_200)
         still("tile-menu-light")
         val before = privateTabIds().toSet()
@@ -355,6 +358,9 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
         }
         onMain { clipboard().setPrimaryClip(ClipData.newPlainText("demo", SENTINEL)) }
         check("the clipboard holds the sentinel before the copy", clipText() == SENTINEL, "clip '${clipText()}'")
+        // Setting the clip raises the system's clipboard overlay (and its text classifier), which
+        // starves the emulator's UI thread for seconds: the hold waits for it to pass.
+        settle("the clipboard sentinel's overlay")
         val rows = holdTile(id, TILE, tile.title)
         check("the menu is up again with the same rows", rows == TOUCH_ROWS, "rows $rows")
         val copied = touchUntil("Copy Link", { menuRow("Copy Link") }, { clipText() == tile.url }, waitMs = 6_000)
@@ -395,10 +401,19 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
     /**
      * A real hold on the middle of the tile at `index` (its box read off the served page's DOM,
      * scaled by the page's device pixel ratio, from the page view's own origin) and the menu's
-     * rows once it is up; empty when no menu came.
+     * rows once it is up; empty when no menu came. The tile's box on the screen is kept
+     * ([lastTileBox]) for the anchor's claim: under the menu the page view is hidden (the cover,
+     * `overlayCoversContent`), so the box cannot be read once the menu is up. A menu that answers
+     * late – past the first attempt's wait, on an emulator whose UI thread is starved (the system's
+     * clipboard overlay, a splash) – is still the hold's menu and is read at the next attempt.
      */
     private fun holdTile(tabId: String, index: Int, caption: String): List<String> {
         for (attempt in 1..3) {
+            if (attempt > 1 && jsBoolean(MENU_OPEN) && awaitDom(MENU_ITEM, 6_000)) {
+                finding("  (the menu came late, past the wait; read at attempt $attempt)")
+                SystemClock.sleep(600)
+                return textsOf(MENU_ITEM)
+            }
             // The live view comes back a beat after a menu or the bar goes (the chrome's layout
             // report, then the host's placement): the tile is waited for on the screen.
             if (!awaitUntil(6_000) { tileOnScreen(tabId, index) != null }) {
@@ -407,20 +422,39 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
             }
             val point = tileOnScreen(tabId, index) ?: return emptyList()
             lastHold = point
-            finding("  hold at ${point.x.toInt()},${point.y.toInt()} on the tile '$caption'")
+            lastTileBox = tileBoxOnScreen(tabId, index)
+            finding("  hold at ${point.x.toInt()},${point.y.toInt()} on the tile '$caption' (its box ${lastTileBox?.toShortString()})")
             Finger().apply {
                 press(point.x, point.y)
                 up()
             }
-            if (awaitJs(MENU_OPEN, true, 6_000) && awaitDom(MENU_ITEM, 4_000)) {
+            if (awaitJs(MENU_OPEN, true, 8_000) && awaitDom(MENU_ITEM, 6_000)) {
                 SystemClock.sleep(600)
                 return textsOf(MENU_ITEM)
             }
-            finding("  (the hold did not bring the menu, attempt $attempt)")
+            finding("  (the hold did not bring the menu within the wait, attempt $attempt)")
             if (inDom(MENU)) back()
             SystemClock.sleep(800)
         }
         return emptyList()
+    }
+
+    /**
+     * Waits for the app's UI thread to answer promptly again – three `onMain` round trips in a row
+     * under 50 ms – for up to `timeoutMs`; how long it took is a finding. The emulator's UI thread
+     * starves for seconds after `what` (the system's clipboard overlay and its text classifier
+     * loading on a two-core emulator), and a hold pressed into that stall is answered late.
+     */
+    private fun settle(what: String, timeoutMs: Long = 12_000) {
+        val start = SystemClock.uptimeMillis()
+        var prompt = 0
+        while (SystemClock.uptimeMillis() - start < timeoutMs && prompt < 3) {
+            val t0 = SystemClock.uptimeMillis()
+            onMain { }
+            prompt = if (SystemClock.uptimeMillis() - t0 < 50) prompt + 1 else 0
+            SystemClock.sleep(150)
+        }
+        finding("  (the UI thread settled after $what in ${SystemClock.uptimeMillis() - start} ms${if (prompt < 3) " – still stalling at the wait's end" else ""})")
     }
 
     private fun menuRow(prefix: String) = textRect(MENU_ITEM, prefix)
@@ -550,15 +584,15 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
      * the tile's rect (`.zen-tile`: the square and its caption) up the bridge, the core puts it on
      * the anchor's `rect` on a touch layout and the tablet's `placeRootMenu` sets the popover
      * flush under it, start-aligned, above it when the room below runs out (§9.20). Read as
-     * screen px on both sides once they hold still: the tile's box off the page (its CSS px by
-     * the page's ratio, from the view's origin), the menu's off the chrome ([screen]). `hold` is
+     * screen px on both sides: the tile's box off the page at the hold (its CSS px by the page's
+     * ratio, from the view's origin – read then because under the menu the page view is hidden,
+     * the cover in its place), the menu's off the chrome ([screen]) once it holds still. `hold` is
      * where the finger was: the tile's middle, which no edge of the menu may sit at.
      */
-    private fun menuHangsFromTile(tabId: String, index: Int, hold: PointF?) {
-        val tile = steady { tileBoxOnScreen(tabId, index) }
+    private fun menuHangsFromTile(tile: RectF?, hold: PointF?) {
         val menu = steady { screen(domRect(MENU))?.let { RectF(it) } }
         if (tile == null || menu == null) {
-            check("the tile's box and the menu are both on the screen to compare", false, "tile $tile, menu $menu")
+            check("the tile's box (read at the hold) and the menu (on the screen) are both there to compare", false, "tile $tile, menu $menu")
             return
         }
         val startAligned = abs(menu.left - tile.left) <= SLACK
