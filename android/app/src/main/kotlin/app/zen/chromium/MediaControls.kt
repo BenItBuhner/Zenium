@@ -45,7 +45,15 @@ class MediaSessionInfo(
      * setting is allow, as the core resolved it (false under the default, for a chrome player, and
      * from an older core without the field); what [BackgroundVideoRule] reads.
      */
-    val backgroundVideo: Boolean = false
+    val backgroundVideo: Boolean = false,
+    /**
+     * The tab's site may go into picture-in-picture by itself when the user leaves – its
+     * `auto-picture-in-picture` content setting is not deny, as the core resolved it (allow is the
+     * row's default, so a core without the field says allow; false for a chrome player); what the
+     * auto-enter rule reads ([MediaControls.autoEnterPictureInPicture]). The user's own `media.pip`
+     * request is not the setting's to refuse (Chrome's rule: it governs the automatic entry alone).
+     */
+    val autoPictureInPicture: Boolean = true
 ) {
     /** Whether the controls may move playback: a known, finite duration (Chrome offers no seek on a live stream). */
     val seekable: Boolean get() = hasPosition && duration > 0 && duration.isFinite()
@@ -93,7 +101,8 @@ class MediaSessionInfo(
                 private = json.bool("private"),
                 source = json.strOrNull("source")?.takeIf { it.isNotEmpty() } ?: SOURCE_PAGE,
                 sourceId = json.strOrNull("sourceId")?.takeIf { it.isNotEmpty() },
-                backgroundVideo = json.bool("backgroundVideo")
+                backgroundVideo = json.bool("backgroundVideo"),
+                autoPictureInPicture = json.bool("autoPictureInPicture", default = true)
             )
         }
     }
@@ -202,10 +211,12 @@ object MediaControls {
     /**
      * Whether the window should go into picture-in-picture by itself when the user leaves for
      * Home: Chrome does it for a video playing fullscreen, and for nothing else (a chrome player
-     * has no video, whatever its fields say).
+     * has no video, whatever its fields say), and only where the site's `auto-picture-in-picture`
+     * setting allows ([MediaSessionInfo.autoPictureInPicture]; a deny governs the automatic entry
+     * alone, never the user's own request).
      */
     fun autoEnterPictureInPicture(session: MediaSessionInfo?): Boolean =
-        session != null && !session.chrome && !session.private &&
+        session != null && !session.chrome && !session.private && session.autoPictureInPicture &&
             session.video && session.playing && session.fullscreen
 
     /** The picture-in-picture window's aspect ratio: the video's, within what Android accepts (1:2.39 … 2.39:1). */
