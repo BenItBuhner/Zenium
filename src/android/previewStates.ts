@@ -2812,14 +2812,13 @@ function typeInto(input: HTMLInputElement, text: string): void {
   input.dispatchEvent(new Event('input', { bubbles: true }))
 }
 
-/** Take `list` in order, a settle between steps, then `then`. */
 /**
  * The footer taps that take the phone's tour from its welcome to `step`: "Get started" leaves
  * the welcome, "Continue" each step after it – except the EEA's choice step (OMN-26,
  * `tourAsksSearchChoice`), which has no Continue and is left behind with "Skip for now", so a
  * later step is reached without a record being written.
  */
-function firstRunTaps(step: PreviewFirstRunStep, state: UIState): PreviewStep[] {
+export function firstRunTaps(step: PreviewFirstRunStep, state: UIState): PreviewStep[] {
   const order = phoneSteps({
     defaultBrowser: state.capabilities.defaultBrowser,
     isDefault: state.defaultBrowser.isDefault
@@ -2833,6 +2832,7 @@ function firstRunTaps(step: PreviewFirstRunStep, state: UIState): PreviewStep[] 
   }))
 }
 
+/** Take `list` in order, a settle between steps, then `then`. */
 function steps(list: readonly PreviewStep[], then: () => void): void {
   const [step, ...rest] = list
   if (!step) {
