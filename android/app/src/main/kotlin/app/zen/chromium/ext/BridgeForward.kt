@@ -210,6 +210,11 @@ class BridgeForward(
         forget(queues.values.filter { it.source.extensionId == id }.map { it.source.ep })
     }
 
+    /** Every endpoint is gone (the runtime is destroyed): whatever was waiting goes with them. */
+    fun forgetAll() {
+        forget(queues.keys.toList())
+    }
+
     private fun canForwardNow(entry: Entry): Boolean {
         if (!ready()) return false
         if (tokens <= 0 || forwardedThisFrame >= limits.frameCount) return false

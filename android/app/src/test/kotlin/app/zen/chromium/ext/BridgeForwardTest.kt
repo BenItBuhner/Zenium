@@ -111,6 +111,30 @@ class BridgeForwardTest {
     }
 
     @Test
+    fun `a destroyed runtime forgets everything waiting over every source, nothing forwarded or answered for it`() {
+        // One message a frame: the first goes, the rest of the frame's arrivals wait, over two sources.
+        val guard = guard(BridgeForward.Limits(frameCount = 1))
+        offer(guard, call(1, "action", "getBadgeText", """{"tabId":1}"""))
+        offer(guard, call(2, "action", "getBadgeText", """{"tabId":1}"""))
+        offer(guard, call(3, "action", "getBadgeText", """{"tabId":1}"""))
+        offer(guard, call(4, "storage", "get", """{"k":1}""", ep = "other-ep"), ep = "other-ep")
+        assertEquals(1, sink.forwarded.size)
+        assertEquals(3, guard.pendingCount)
+        guard.forgetAll()
+        assertEquals(0, guard.pendingCount)
+        assertEquals(0L, guard.pendingChars)
+        // The frames that were scheduled find nothing: nothing more crosses, nothing is answered.
+        frames.tick()
+        frames.tick()
+        assertEquals(1, sink.forwarded.size)
+        assertTrue(replies.isEmpty())
+        // A source heard from again starts clean: its message goes at once in the new frame.
+        offer(guard, call(5, "action", "getBadgeText", """{"tabId":1}"""))
+        assertEquals(2, sink.forwarded.size)
+        assertEquals(0, guard.pendingCount)
+    }
+
+    @Test
     fun `action state coalesces to the last value per tab, in order with the source's other messages`() {
         val guard = guard()
         sink.keepTexts = true
