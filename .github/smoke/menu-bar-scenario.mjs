@@ -8,7 +8,8 @@
 // through the item's own `click` in the main process – the nearest a runner gets to the native
 // menu without UI scripting); the Help menu's rows under the `help` role (macOS's Search field)
 // with no Report Unsafe Site and no About; and About Zenium an enabled plain row of the
-// application menu that opens Settings › About. Off macOS Zenium draws no menu bar
+// application menu that opens Settings › About as a page tab, closed again with the tab's
+// close chord. Off macOS Zenium draws no menu bar
 // (`Menu.setApplicationMenu(null)` in `src/main/index.ts`): the one step there reads null.
 //
 // No screenshots judge anything here: a native menu is not on the window's pixels until it is
@@ -192,6 +193,22 @@ export function aboutRowProblems(items) {
   if (!first.enabled) problems.push('About Zenium is greyed')
   if (first.role) problems.push(`About Zenium has the ${first.role} role`)
   if (first.type !== 'normal') problems.push(`About Zenium is a ${first.type} item`)
+  return problems
+}
+
+/**
+ * What is wrong with the page the About row's pick opened: the Settings page reading `about`,
+ * as a page tab in front (`zen://settings/about` – `PageService.open` on a host with page tabs,
+ * which the desktop is, opens Settings as a tab beside the one that was in front, never as an
+ * overlay). `reading` is `{ section, frontTabUrl }`: the page's `data-section` and the front
+ * tab's URL once the page is up.
+ */
+export function aboutPageProblems({ section, frontTabUrl }) {
+  const problems = []
+  if (section !== 'about') problems.push(`the Settings page opened at ${section}, not about`)
+  if (!frontTabUrl?.startsWith('zen://settings/about')) {
+    problems.push(`the front tab is ${frontTabUrl ?? 'none'}, not the Settings › About page tab`)
+  }
   return problems
 }
 
@@ -413,25 +430,51 @@ export async function scenarioMenuBar(h) {
       return { role: bar.menus.find((m) => m.label === 'Help')?.role ?? null, rows }
     })
 
+    /** The front tab of the active space, as the core's state has it. */
+    const frontTab = async () => {
+      const state = await s.appState()
+      const space = state?.spaces?.find((sp) => sp.id === state.activeSpaceId)
+      const tab = space ? state.tabs?.[space.activeTabId] : null
+      return tab ? { id: tab.id, url: tab.url } : null
+    }
+
     await s.step('about-row', async () => {
       // The application menu's About Zenium: enabled, Zenium's own row, and its pick opens the
-      // About page – Settings › About in the front window (the desktop's Settings overlay).
+      // About page – Settings › About as a page tab in the front window (`PageService.open`: a
+      // desktop host has page tabs, so Settings is a tab beside the one that was in front, never
+      // the overlay). A page is no dialog: Escape has no work on it (v2 draft §9.23 – Escape
+      // closes popovers and dialogs; pages have an X or a back control), which is what the
+      // step's earlier Escape and its wait for the page to hide ran out on (W7-4's runs: the
+      // key reached the chrome, the page stayed, 5 s went by). The tab's close chord is the
+      // page's way out, and the step takes it: the session's tabs are the two site pages again
+      // for the quit.
       const bar = await read()
       const items = menuOf(bar, 'Zenium')
       const problems = aboutRowProblems(items)
       const row = items?.[0] ?? null
       if (problems.length) throw withDetail(problems.join('; '), { row })
+      const before = await frontTab()
       const picked = await pick('Zenium', 'About Zenium')
       if (!picked.picked) throw withDetail('About Zenium could not be picked', { row, picked })
       const page = s.chrome.locator('[data-testid="settings-page"]').first()
       await page.waitFor({ state: 'visible', timeout: 10000 })
       const section = await page.getAttribute('data-section')
-      if (section !== 'about') {
-        throw withDetail(`the Settings page opened at ${section}, not about`, { row, section })
+      const front = await frontTab()
+      const pageProblems = aboutPageProblems({ section, frontTabUrl: front?.url ?? null })
+      if (pageProblems.length) {
+        throw withDetail(pageProblems.join('; '), { row, section, before, front })
       }
-      await s.press('Escape')
-      await page.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => undefined)
-      return { row, section }
+      const closeTab = `${isMac ? 'Meta' : 'Control'}+w`
+      await s.press(closeTab)
+      await page.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {
+        throw withDetail(`the Settings page is still up 5 s after ${closeTab}`, {
+          row,
+          section,
+          front
+        })
+      })
+      const after = await frontTab()
+      return { row, section, page: front, closedWith: closeTab, before, after }
     })
 
     // The session ends the way every scenario's does: the quit chord, the "Quit Zenium?" question
