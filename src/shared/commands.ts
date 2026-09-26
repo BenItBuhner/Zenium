@@ -253,7 +253,8 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     requires: 'devtools'
   },
   {
-    // Chrome's More Tools › Task Manager (Shift+Esc): the `zen://tasks` page, desktop alone.
+    // Chrome's More Tools › Task Manager (Shift+Esc): the `zen://tasks` page – in its own
+    // window on a host with windows (W5-18) – desktop alone.
     id: 'task-manager',
     label: 'Task Manager',
     keywords: ['task manager', 'tasks', 'processes', 'memory', 'cpu', 'end process'],

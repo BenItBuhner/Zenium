@@ -5,7 +5,7 @@ import type { Browser } from '../browser'
 import type { HistoryVisitsEvent } from '../history'
 import { RETENTION_MS } from '../history'
 import type { ZenWindow } from '../window'
-import type { SyncHost, SyncPlatformHost, SyncTransport } from '../platform'
+import { defer, type SyncHost, type SyncPlatformHost, type SyncTransport } from '../platform'
 import { fromBase64, toBase64 } from '../credentials/crypto'
 import { applyRemote } from './apply'
 import { decryptJson, deriveKey, encryptJson, newSalt } from './crypto'
@@ -16,8 +16,10 @@ import {
   frozenRecords,
   hashData,
   inScope,
+  isSettingsRecord,
   metaFromRemote,
   newestByRecord,
+  seedSettingsMeta,
   winningRemote,
   type LocalSources,
   type MetaMap,
@@ -147,6 +149,8 @@ export class SyncEngine implements SyncHost {
   private firstSyncTimer: Timer | null = null
   private running: Promise<void> | null = null
   private applying = false
+  /** The credential records have had the boot seed (`seedMeta`): the vault was open for one. */
+  private seededVault = false
   /** A remote stream is being applied to the history model: its events are not ours to publish. */
   private applyingHistory = false
   private syncing = false
@@ -190,9 +194,60 @@ export class SyncEngine implements SyncHost {
   }
 
   start(): void {
+    this.seedMeta(this.sources())
     this.browser.state.subscribe(() => this.onLocalChange())
     this.browser.history.onVisits((event) => this.onVisits(event))
     if (this.data.enabled && this.data.folder && this.key) this.connect(this.data.folder)
+  }
+
+  /**
+   * The boot seed: every local record hashed against the metadata the last run persisted, a
+   * changed hash adopted WITHOUT a new `modified`. Nothing that differs at start was made by the
+   * user in this session – it is the build's: a settings default this build added and the load
+   * spread onto the settings (`state.ts` loads `{ ...DEFAULT_SETTINGS, ...persisted }`), a
+   * sanitiser's new normal form, a boot migration. Stamped, such a change would go out as a
+   * whole-record edit at this device's first sync on the new build and beat a peer's real edit
+   * the device had not pulled yet (see `DiffLocalOptions.stamp`). Runs before the state is
+   * subscribed, so the subscriber's first diff sees this session's edits alone; unconditionally,
+   * with no knowledge of which key changed, so a future default or sanitiser cannot bring the
+   * fault back. A record new to the local set stays out of the metadata (it takes `modified = 0`
+   * at its first diff, as always: a record no one edited never beats a peer's); a record the
+   * metadata knows but the set lacks keeps its entry (the next diff tombstones it, as before).
+   *
+   * The credential records are behind the vault's lock at start (`syncSources()` is null until
+   * it opens, silently for an OS-protected vault a moment after `start()`, or by the user's
+   * hand): they get the same seed at the first broadcast that finds the vault open
+   * (`credentialsOnly`: nothing else is seeded then – by that time the other records' changes
+   * are the user's), before that broadcast's diff could stamp the build's change to a login's
+   * record shape as an edit of every login.
+   *
+   * The settings record is seeded key by key (`seedSettingsMeta`): an entry from before per-key
+   * merge gains its per-key entries here, every key at the record's time; a key this build
+   * added starts at 0; a changed value's hash is adopted at the key's own time.
+   */
+  private seedMeta(sources: LocalSources, credentialsOnly = false): void {
+    if (sources.credentials) this.seededVault = true
+    if (!this.data.enabled || this.data.pendingMerge) return
+    const meta = this.data.meta
+    let changed = false
+    for (const [id, { type, data }] of collectLocal(sources, this.data.scope)) {
+      if (credentialsOnly && type !== 'credential') continue
+      const prev = meta[id]
+      if (!prev || prev.deleted) continue
+      if (isSettingsRecord(id, type)) {
+        const seeded = seedSettingsMeta(prev, data)
+        if (seeded !== prev) {
+          meta[id] = seeded
+          changed = true
+        }
+        continue
+      }
+      const hash = hashData(data)
+      if (prev.hash === hash) continue
+      meta[id] = { ...prev, hash }
+      changed = true
+    }
+    if (changed) this.persist()
   }
 
   status(): SyncStatus {
@@ -528,23 +583,26 @@ export class SyncEngine implements SyncHost {
 
   /**
    * Stamp local edits the moment they are committed (not when the next sync happens to run), so
-   * last-writer-wins reflects the real order of edits across devices. A push is scheduled only
+   * last-writer-wins reflects the real order of edits across devices. This is the ONE place an
+   * edit is stamped: the state broadcast that carries it runs this, and the round (`run()`)
+   * never stamps what it merely notices (`DiffLocalOptions.stamp`). A push is scheduled only
    * when something to publish changed: a record, or the open-tabs list.
    */
   private onLocalChange(): void {
     if (!this.data.enabled || this.applying || this.data.pendingMerge) return
     const sources = this.sources()
-    const diff = diffLocal(
-      this.data.meta,
-      collectLocal(sources, this.data.scope),
-      Date.now(),
-      undefined,
-      frozenRecords(sources, this.data.scope, this.data.meta)
-    )
-    if (diff.changed) {
-      this.data.meta = diff.meta
-      this.persist()
-    }
+    if (sources.credentials && !this.seededVault) this.seedMeta(sources, true)
+    const now = Date.now()
+    const diff = diffLocal(this.data.meta, collectLocal(sources, this.data.scope), now, {
+      stamp: now,
+      frozen: frozenRecords(sources, this.data.scope, this.data.meta)
+    })
+    // The metadata is taken whether or not a record changed: a settings entry the last round
+    // left without per-key entries (the record first seen there) has them now, from the values
+    // as they stand at its time (`RecordMeta.keys`), so this session's first edit of a key is
+    // placed on that key and not on the record whole.
+    this.data.meta = diff.meta
+    if (diff.changed) this.persist()
     if (diff.changed || this.openTabsChanged()) this.schedulePush()
   }
 
@@ -626,17 +684,21 @@ export class SyncEngine implements SyncHost {
     this.browser.state.commitVolatile()
     try {
       const remote = await this.readRemote()
+      // A state broadcast already scheduled (the store defers them a macrotask) is delivered
+      // before the local set is read, so an edit it carries reaches the diff below stamped by
+      // `onLocalChange` – the round never stamps, and would otherwise publish that edit under
+      // its previous timestamp and adopt its hash, leaving it unstamped for good.
+      await new Promise<void>((resolve) => defer(resolve))
       const now = Date.now()
       const scope = this.data.scope
       const sources = this.sources()
-      // Local snapshot first, so records we changed since the last sync carry a fresh timestamp.
-      let local = diffLocal(
-        this.data.meta,
-        collectLocal(sources, scope),
-        now,
-        undefined,
-        frozenRecords(sources, scope, this.data.meta)
-      )
+      // The local snapshot, `stamp: null`: an edit made since the last round is already stamped
+      // (`onLocalChange`, at its commit), and a hash change the round alone sees is not an edit
+      // – it keeps its `modified` (`DiffLocalOptions.stamp` names the rule and the fault).
+      let local = diffLocal(this.data.meta, collectLocal(sources, scope), now, {
+        stamp: null,
+        frozen: frozenRecords(sources, scope, this.data.meta)
+      })
       // Types turned off are not received either (Chrome's toggles), and credential records
       // wait for the vault to be open: left out of the metadata, they win again next round.
       const vaultOpen = Boolean(sources.credentials)
@@ -650,17 +712,22 @@ export class SyncEngine implements SyncHost {
         } finally {
           this.applying = false
         }
-        // Re-snapshot after applying; remote winners keep their own timestamps.
-        const merged: MetaMap = { ...local.meta, ...metaFromRemote(winners) }
+        // Re-snapshot after applying; remote winners keep their own timestamps. `stamp: null`
+        // here too: a winner this device's sanitisers normalise differently from the peer that
+        // sent it re-publishes under the PEER's timestamp, so every peer skips it (`<=`) – two
+        // builds' normal forms never bounce a record back and forth. The settings winner is a
+        // set of keys: its entry is this device's with those keys at the peer's times, and the
+        // re-snapshot places each key the same way (`diffSettings`).
+        const merged: MetaMap = { ...local.meta, ...metaFromRemote(winners, local.meta) }
         const after = this.sources()
-        local = diffLocal(
-          merged,
-          collectLocal(after, scope),
-          now,
-          undefined,
-          frozenRecords(after, scope, merged)
-        )
+        local = diffLocal(merged, collectLocal(after, scope), now, {
+          stamp: null,
+          frozen: frozenRecords(after, scope, merged)
+        })
         for (const w of winners) {
+          // The settings entry the re-snapshot made is the one to keep: per key at the peer's
+          // times, the record hash this device's own – the winner whole has nothing to add.
+          if (isSettingsRecord(w.id, w.type)) continue
           const entry = local.meta[w.id]
           const fromRemote = metaFromRemote([w])[w.id]
           if (entry && fromRemote && entry.hash === fromRemote.hash) local.meta[w.id] = fromRemote

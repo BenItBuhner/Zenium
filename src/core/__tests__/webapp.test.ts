@@ -301,10 +301,19 @@ describe('WebAppService', () => {
       type: 'webapp',
       webapp: 'manifest',
       manifestUrl: MANIFEST_URL,
-      manifest: { ...MANIFEST, display: 'minimal-ui', theme_color: 'rgb(0, 128, 255)', background_color: '#FFF' }
+      manifest: {
+        ...MANIFEST,
+        display: 'minimal-ui',
+        theme_color: 'rgb(0, 128, 255)',
+        background_color: '#FFF'
+      }
     })
     await h.service.pin(h.tab.id, 'Sketch', h.win)
-    expect(h.pins[0]).toMatchObject({ display: 'minimal-ui', themeColor: '#0080ff', backgroundColor: '#ffffff' })
+    expect(h.pins[0]).toMatchObject({
+      display: 'minimal-ui',
+      themeColor: '#0080ff',
+      backgroundColor: '#ffffff'
+    })
   })
 
   it('leaves the display mode out of a plain page shortcut', async () => {

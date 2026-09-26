@@ -31,6 +31,13 @@ const CHROME_SHEETS: ReadonlyArray<readonly [name: string, css: string]> = [
       fileURLToPath(new URL('../../components/phone/phonePanels.css', import.meta.url)),
       'utf8'
     )
+  ],
+  [
+    'readerCrossing.css',
+    readFileSync(
+      fileURLToPath(new URL('../../components/content/readerCrossing.css', import.meta.url)),
+      'utf8'
+    )
   ]
 ]
 

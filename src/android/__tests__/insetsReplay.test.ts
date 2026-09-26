@@ -99,7 +99,9 @@ describe('windowInsetsOf', () => {
   it('reads a missing, garbled or negative side as 0 and drops a non-boolean settling', () => {
     expect(windowInsetsOf({})).toEqual({ top: 0, right: 0, bottom: 0, left: 0 })
     expect(windowInsetsOf(null)).toEqual({ top: 0, right: 0, bottom: 0, left: 0 })
-    expect(windowInsetsOf({ top: 'x', right: NaN, bottom: -3, left: Infinity, settling: 1 })).toEqual({
+    expect(
+      windowInsetsOf({ top: 'x', right: NaN, bottom: -3, left: Infinity, settling: 1 })
+    ).toEqual({
       top: 0,
       right: 0,
       bottom: 0,

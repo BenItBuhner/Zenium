@@ -198,6 +198,9 @@ for (let i = 0; i < marks.length; i++) {
     say(`${mark.name}: recorded only; judged by the driver's own rule`)
     continue
   }
+  // -fps_mode passthrough on every rawvideo dump: the muxer carries no timestamps, so ffmpeg's
+  // default sync pads a VFR screenrecord to its nominal rate (1457 frames for 616); the cadence
+  // is the fps filter's alone.
   const ffmpeg = spawnSync(
     'ffmpeg',
     [
@@ -212,6 +215,8 @@ for (let i = 0; i < marks.length; i++) {
       video,
       '-vf',
       `fps=${FPS},crop=${crop.w}:${crop.h}:${crop.x}:${crop.y}`,
+      '-fps_mode',
+      'passthrough',
       '-f',
       'rawvideo',
       '-pix_fmt',

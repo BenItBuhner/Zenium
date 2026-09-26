@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.Activity
 import android.app.UiAutomation
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -15,13 +16,16 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Log
+import android.view.Choreographer
 import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityManager
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import android.webkit.TracingConfig
 import android.webkit.TracingController
+import android.webkit.WebView
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.platform.app.InstrumentationRegistry
@@ -62,15 +66,16 @@ import kotlin.math.roundToInt
  * from the workflow script: the instrumentation shares the process, so no driver survives that)
  * and this one proves what came back – passes `keepProfile`: the profile and the app's caches
  * are left as the first act's process left them, and only the handshake directory is reset.
- * `uiAutomationFlags` go to [android.app.Instrumentation.getUiAutomation]: by default connecting
- * suspends every other accessibility service for the run, and a demo that wants TalkBack to stay
- * up passes [UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES].
+ * `uiAutomationFlags` go to [android.app.Instrumentation.getUiAutomation]. Connecting with none
+ * suspends every other accessibility service for the run; the harness connects with
+ * [UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES] because it enables one of its own for
+ * every run, [holdEventsOpen] (and a demo that turns TalkBack on wants the same).
  */
 abstract class DemoHarness(
     private val stateAsset: String?,
     private val shotPrefix: String,
     handshakeDir: String,
-    uiAutomationFlags: Int = 0,
+    uiAutomationFlags: Int = UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES,
     private val keepProfile: Boolean = false
 ) {
     protected val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -118,9 +123,39 @@ abstract class DemoHarness(
      * Seed, launch, warm up, hand over to the recorder, run the sequence. Fails once the
      * recording is done when a touch a step injected did not take ([touchFault]). The stills
      * are flushed whether the sequence ran through or threw, so a failed run keeps the
-     * evidence it took on the way ([awaitShots]).
+     * evidence it took on the way ([awaitShots]). With `holdEvents` (the default) the
+     * accessibility events of a current WebView are held open for the whole of it
+     * ([holdEventsOpen]) and released after the recording.
+     *
+     * A PERF driver passes `holdEvents = false`, because the hold changes what it measures: the
+     * hold's service asks for every event type, and Chromium from 124 on reads a service with the
+     * whole mask as a complex-interaction one (`AccessibilityState`, the
+     * `isComplexUserInteractionServiceEnabled` flip in the runs' logcat) and moves the WebView
+     * from `kAXModeBasic` with no events – the state it holds under UiAutomation alone, which
+     * `getEnabledAccessibilityServiceList` does not list – to `kAXModeComplete` (at 145 with
+     * inline text boxes and the extended properties, at 124 with the screen reader's and the HTML
+     * attributes) with every event type built on the app's UI thread and sent over binder: work
+     * inside what `PerfCapture` reads (the gfxinfo framestats, the Perfetto trace, the Chromium
+     * trace). Every perf baseline – PERF-5's, the services' (#458, #469, #472), W6-0's (#480) –
+     * was taken on the API 35 image (124) under Basic with no events (on API 34's 113 the WebView
+     * sent everything anyway, so there the hold adds only a consumer process), and a perf reading
+     * compared across passes must stay there. A perf driver therefore runs the way every driver
+     * ran before the hold: UiAutomation alone, its tree reads as they were.
      */
-    protected fun runDemo() {
+    protected fun runDemo(holdEvents: Boolean = true) {
+        if (!holdEvents) {
+            runSequence()
+            return
+        }
+        holdEventsOpen()
+        try {
+            runSequence()
+        } finally {
+            releaseEvents()
+        }
+    }
+
+    private fun runSequence() {
         val info = ui.serviceInfo
         info.flags = info.flags or
             AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
@@ -167,6 +202,92 @@ abstract class DemoHarness(
     }
 
     // --- setup -----------------------------------------------------------------------------------
+
+    /** The harness's own accessibility service as the shell setting names it: the instrumentation APK's package, the class. */
+    protected val eventsTapService: String
+        get() = ComponentName(instrumentation.context.packageName, EVENTS_TAP_SERVICE_CLASS).flattenToString()
+
+    private var servicesBefore: String? = null
+    private var accessibilityEnabledBefore: String? = null
+    private var servicesHeld: String? = null
+
+    /**
+     * Keep a current WebView sending accessibility events for the run. Chromium's WebView from
+     * 124 on (the API 35 image's own; the 145 the recipe installs over the API 33 image's 109,
+     * whose gate sat behind the `OnDemandAccessibilityEvents` flag, off) dispatches an event only
+     * when its type is among those some ENABLED accessibility service asked for – the union of
+     * `eventTypes` over `AccessibilityManager.getEnabledAccessibilityServiceList`
+     * (`AccessibilityState.relevantEventTypesForCurrentServices`, applied in
+     * `AccessibilityEventDispatcher.enqueueEvent`), and UiAutomation is not in that list. With no
+     * service enabled the mask is empty: the chrome answers every node request and never
+     * announces a change, UiAutomation's node cache – invalidated by events alone; its
+     * `clearCache()` ([dropTreeCache]) exists only from API 34 – keeps the tree as it was, and on
+     * API 33 a driver read the menu's rows at their peek positions after the sheet was pulled up.
+     * So the run gets one enabled service, the instrumentation APK's [EVENTS_TAP_SERVICE_CLASS]
+     * (every event type, generic feedback, no flags, no capabilities, doing nothing with them):
+     * Chromium then dispatches every event as before 124, the framework forwards them to
+     * UiAutomation too, and the WebView moves from `kAXModeBasic` – its state under UiAutomation
+     * alone: the tree answered on request, no events (accessibility was never off, and a WebView
+     * is never an auto-disable candidate) – to its complete tree mode, a service asking for the
+     * whole mask counting as a complex one; the app sees no touch exploration and no screen
+     * reader. The service is added to whatever the setting held, and `accessibility_enabled` is
+     * set; [releaseEvents] puts both back unless a demo wrote the services setting itself.
+     */
+    private fun holdEventsOpen() {
+        servicesBefore = secureSetting("enabled_accessibility_services")
+        accessibilityEnabledBefore = secureSetting("accessibility_enabled")
+        val before = servicesBefore?.split(':')?.filter { it.isNotEmpty() } ?: emptyList()
+        val component = ComponentName.unflattenFromString(eventsTapService)
+        if (before.none { ComponentName.unflattenFromString(it) == component }) {
+            // API 33's restricted settings hold a sideloaded service's toggle in the Settings app
+            // behind the first op; the second is the one AccessibilityManagerService asks before
+            // it binds any service. Allowed, the shell's write below stands on every image the same.
+            shellCommand("appops set ${instrumentation.context.packageName} ACCESS_RESTRICTED_SETTINGS allow")
+            shellCommand("appops set ${instrumentation.context.packageName} BIND_ACCESSIBILITY_SERVICE allow")
+            val held = (before + eventsTapService).joinToString(":")
+            shellCommand("settings put secure enabled_accessibility_services $held")
+            servicesHeld = held
+        }
+        shellCommand("settings put secure accessibility_enabled 1")
+        val deadline = SystemClock.uptimeMillis() + 10_000
+        var running = false
+        while (SystemClock.uptimeMillis() < deadline) {
+            running = enabledAccessibilityServices().any { ComponentName.unflattenFromString(it) == component }
+            if (running) break
+            SystemClock.sleep(250)
+        }
+        Log.i(
+            tag,
+            "accessibility events: $eventsTapService ${if (running) "running" else "enabled but not reported as running"}" +
+                " (the setting held ${servicesBefore ?: "nothing"} before)"
+        )
+    }
+
+    /**
+     * The two settings as they were before [holdEventsOpen] – when the services setting still
+     * reads what this run left in it (its own write, or the value it found when the service was
+     * listed already and only `accessibility_enabled` was written); a demo that wrote the setting
+     * itself (TalkBack on) keeps its state.
+     */
+    private fun releaseEvents() {
+        val held = servicesHeld
+        if (secureSetting("enabled_accessibility_services") != (held ?: servicesBefore)) return
+        if (held != null) putSecureSetting("enabled_accessibility_services", servicesBefore)
+        putSecureSetting("accessibility_enabled", accessibilityEnabledBefore)
+    }
+
+    /** The ids of the accessibility services the framework has enabled and bound (UiAutomation is not one). */
+    protected fun enabledAccessibilityServices(): List<String> =
+        app.getSystemService(AccessibilityManager::class.java)
+            .getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+            .map { it.id }
+
+    private fun secureSetting(name: String): String? =
+        shellCommand("settings get secure $name").trim().takeUnless { it.isEmpty() || it == "null" }
+
+    private fun putSecureSetting(name: String, value: String?) {
+        if (value == null) shellCommand("settings delete secure $name") else shellCommand("settings put secure $name $value")
+    }
 
     private fun seedProfile() {
         if (!keepProfile) {
@@ -2363,6 +2484,61 @@ abstract class DemoHarness(
         return result
     }
 
+    private var paintSerial = 0L
+
+    /**
+     * The chrome's next painted frame, observed from the host (seed 65). A still of a change just
+     * written to the chrome's DOM wants the frame that CARRIES it on the display; two animation
+     * frames of the document (`requestAnimationFrame` twice, the wait the mid-slide still kept
+     * until now) say only that the renderer began its second frame after the write – on the
+     * emulator's software GPU the raster of a whole layer, the compositor's activation and the
+     * host's draw all come after that, and one mid-slide still in four of #439's runs caught the
+     * frame before the layer. This waits the way the host waits for its own reports
+     * (`Host.reportDrawn`, `MainActivity.onChromeReady`): `postVisualStateCallback` on the chrome
+     * WebView – its callback comes once the DOM's state at the post is rastered and the view's
+     * next draw is bound to carry it – then two Choreographer frames (the draw that carries it,
+     * and the one after, by which the display has composed it), then a beat. What it took, for
+     * the notes; a callback that never comes is not waited on past `timeoutMs`, and the reading
+     * says so.
+     */
+    protected fun awaitChromePaint(timeoutMs: Long = 4_000): String {
+        val started = SystemClock.uptimeMillis()
+        val ready = CountDownLatch(1)
+        val drawn = CountDownLatch(1)
+        var readyAt = -1L
+        instrumentation.runOnMainSync {
+            val chrome = (activity as? MainActivity)?.host?.chrome
+            if (chrome == null) {
+                ready.countDown()
+                drawn.countDown()
+                return@runOnMainSync
+            }
+            chrome.postVisualStateCallback(++paintSerial, object : WebView.VisualStateCallback() {
+                override fun onComplete(requestId: Long) {
+                    readyAt = SystemClock.uptimeMillis()
+                    ready.countDown()
+                    val choreographer = Choreographer.getInstance()
+                    var left = 2
+                    choreographer.postFrameCallback(object : Choreographer.FrameCallback {
+                        override fun doFrame(frameTimeNanos: Long) {
+                            if (--left <= 0) drawn.countDown() else choreographer.postFrameCallback(this)
+                        }
+                    })
+                }
+            })
+        }
+        val deadline = started + timeoutMs
+        val stateReady = ready.await(max(0L, deadline - SystemClock.uptimeMillis()), TimeUnit.MILLISECONDS)
+        val frameDrawn = stateReady && drawn.await(max(0L, deadline - SystemClock.uptimeMillis()), TimeUnit.MILLISECONDS)
+        // The display composes the drawn frame a vsync or so after the draw; the beat covers it.
+        SystemClock.sleep(250)
+        return when {
+            frameDrawn -> "the visual state ready ${readyAt - started} ms after the post, the second frame after it drawn at ${SystemClock.uptimeMillis() - started - 250} ms"
+            stateReady -> "the visual state ready ${readyAt - started} ms after the post, but no second frame within $timeoutMs ms"
+            else -> "no visual state callback within $timeoutMs ms"
+        }
+    }
+
     /**
      * Put the chrome's toasts on record: a MutationObserver in the chrome notes the text of every
      * toast card (`ToastCard`'s `.zen-message-toast`) into `window.__demoToasts` as it appears,
@@ -2631,6 +2807,8 @@ abstract class DemoHarness(
     }
 
     companion object {
+        /** The instrumentation APK's accessibility service ([holdEventsOpen]; EventsTapService.java, its manifest entry). */
+        const val EVENTS_TAP_SERVICE_CLASS = "app.zen.chromium.EventsTapService"
         /** The pill's label carries the address after a comma (`Address, example.com`). */
         const val PILL_LABEL = "Address"
         /** The pill on the new tab page: the empty field's words (pillLabel.ts, #51), no address. */

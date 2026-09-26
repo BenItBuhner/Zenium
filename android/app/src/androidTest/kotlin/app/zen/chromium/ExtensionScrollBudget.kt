@@ -68,7 +68,9 @@ class ExtensionScrollBudget : DemoHarness("ext-scroll-state.json", "ext-scroll",
     @Test
     fun record() {
         try {
-            runDemo()
+            // A perf reading: no events hold (DemoHarness.runDemo – the hold's service moves the WebView to
+            // its complete tree mode with every event, work inside what the frames and the traces measure).
+            runDemo(holdEvents = false)
         } finally {
             record.put("scenes", scenes)
             record.put("missing", JSONArray(missing))

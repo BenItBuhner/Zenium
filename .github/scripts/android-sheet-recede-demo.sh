@@ -27,7 +27,9 @@ if [ -f "$video" ] && [ -f "$DEMO_OUT/marks.txt" ] && command -v ffmpeg > /dev/n
     [ -n "${ms:-}" ] && [ -n "${name:-}" ] || continue
     start=$(awk -v ms="$ms" 'BEGIN { s = (ms + 2500) / 1000 - 0.5; if (s < 0) s = 0; printf "%.2f", s }')
     # -nostdin: ffmpeg would otherwise read the rest of marks.txt as its console.
-    ffmpeg -nostdin -loglevel error -ss "$start" -t 7 -i "$video" -vf fps=10 "$DEMO_OUT/frames/$name-%03d.jpg" || true
+    # -fps_mode passthrough: image2 carries no timestamps, so ffmpeg's default sync pads a VFR
+    # screenrecord to its nominal rate (1457 frames for 616); the cadence is the fps filter's alone.
+    ffmpeg -nostdin -loglevel error -ss "$start" -t 7 -i "$video" -vf fps=10 -fps_mode passthrough "$DEMO_OUT/frames/$name-%03d.jpg" || true
   done < "$DEMO_OUT/marks.txt"
   ls "$DEMO_OUT/frames" | wc -l
   if [ -f "$DEMO_OUT/geometry.txt" ]; then

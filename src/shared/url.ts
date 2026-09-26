@@ -219,6 +219,21 @@ export function inputToUrl(raw: string): string | null {
   return `https://${input}`
 }
 
+/**
+ * The page a Reader View URL stands in for – `zen://reader?id=…&url=<page>`, as `core/reader.ts`
+ * `open` names it – or null for any other URL, a malformed one included. The reader tab is the
+ * page's tab still: its address shows the page (`displayUrl`, `displayHost`, `fullUrl`), and
+ * its identity – the favicon slot's stand-in – reads from the page too (v2 §9.29).
+ */
+export function readerSourceUrl(url: string): string | null {
+  if (!url.startsWith(READER_URL_PREFIX)) return null
+  try {
+    return new URL(url).searchParams.get('url') || null
+  } catch {
+    return null
+  }
+}
+
 /** Strip the scheme and `www.` for display, like Firefox's `browser.urlbar.trimHttps`. */
 export function displayUrl(url: string): string {
   if (isEmptyTabUrl(url)) return ''

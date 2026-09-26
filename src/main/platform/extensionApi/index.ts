@@ -87,6 +87,7 @@ import { OffscreenApi } from './offscreen'
 import { electronOffscreenDocumentHost } from './offscreenBridge'
 import { OmniboxApi } from './omnibox'
 import { PermissionsApi } from './permissions'
+import { FontSettingsApi } from './fontSettings'
 import { PrivacyApi } from './privacy'
 import { ProxyApi } from './proxy'
 import { ContentSettingsApi } from './contentSettings'
@@ -207,6 +208,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly cookies: CookiesApi
   readonly declarativeNetRequest: DeclarativeNetRequestHostApi
   readonly webRequest: WebRequestApi
+  readonly fontSettings: FontSettingsApi
   readonly privacy: PrivacyApi
   readonly proxy: ProxyApi
   readonly contentSettings: ContentSettingsApi
@@ -312,6 +314,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       join(userDataDir, 'zen', 'extension-dnr')
     )
     this.webRequest = new WebRequestApi(this)
+    this.fontSettings = new FontSettingsApi(this)
     this.privacy = new PrivacyApi(this)
     this.proxy = new ProxyApi(this, {
       configure: (hook) =>
@@ -354,6 +357,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       cookies: this.cookies.handlers,
       declarativeNetRequest: this.declarativeNetRequest.handlers,
       webRequest: this.webRequest.handlers,
+      fontSettings: this.fontSettings.handlers,
       privacy: this.privacy.handlers,
       proxy: this.proxy.handlers,
       contentSettings: this.contentSettings.handlers,
@@ -439,6 +443,9 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     })
     this.history.attach()
     this.downloads.attach()
+    // Extensions' font values are laid over the user's page fonts setting; a change of the
+    // setting under them is re-layered.
+    this.fontSettings.attach()
     app.on('before-quit', () => this.flushSync())
   }
 
@@ -463,6 +470,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
         this.declarativeNetRequest.installOrderChanged()
         this.privacy.installOrderChanged()
         this.proxy.installOrderChanged()
+        this.fontSettings.installOrderChanged()
         this.contentSettings.installOrderChanged()
         return
       case 'enabled':
@@ -487,6 +495,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
         this.runtime.openUninstallUrl(event.id)
         this.privacy.forget(event.id)
         this.proxy.forget(event.id)
+        this.fontSettings.forget(event.id)
         this.contentSettings.forget(event.id)
         this.userScripts.uninstalled(event.id)
         this.store.forget(event.id)
@@ -696,6 +705,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.declarativeNetRequest.load(loaded)
     this.privacy.load(ext.id)
     this.proxy.load(ext.id)
+    this.fontSettings.load(ext.id)
     this.contentSettings.load(ext.id)
     this.systemDisplay.load(loaded)
     this.userScripts.load(loaded, info?.allowUserScripts === true)
@@ -741,6 +751,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.webRequest.unload(ext.id)
     this.privacy.unload(ext.id)
     this.proxy.unload(ext.id)
+    this.fontSettings.unload(ext.id)
     this.contentSettings.unload(ext.id)
     this.userScripts.unload(ext.id)
     this.contextMenus.forget(ext.id)
@@ -1170,7 +1181,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
 
   /** Bounds changes never commit state; follow the windows themselves for `onBoundsChanged`. */
   private watchWindows(): void {
-    for (const win of this.browser.allWindows()) {
+    for (const win of this.model.windows()) {
       const bw = this.model.browserWindowOf(win)
       if (!bw || this.watchedWindows.has(bw)) continue
       this.watchedWindows.add(bw)

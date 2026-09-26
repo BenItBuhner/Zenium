@@ -2074,7 +2074,8 @@ export class ExtensionApi {
     // required `file:///*` here and threw, compat round 16 §7.1). A `request` still measures
     // what is missing against the whole granted set: a required pattern asked for again is
     // granted already, withheld or not.
-    const active = (): PermissionSet => activePermissionSet(granted(), ext.record.allowFileAccess === true)
+    const active = (): PermissionSet =>
+      activePermissionSet(granted(), ext.record.allowFileAccess === true)
     // Kotlin's CORS proxy hears the host patterns only when they moved; the grants and the
     // contexts' shims hear every change.
     const commit = (hostsMoved: boolean): void => {

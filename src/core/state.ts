@@ -32,6 +32,7 @@ import type {
   NewTabDeviceState,
   NewTabShortcut,
   PageDialog,
+  PageWindowsDeviceState,
   PasswordsDeviceState,
   PrivateDeviceState,
   ScreenCaptureRequest,
@@ -63,8 +64,10 @@ import type { InstalledWebApp } from '../shared/webApp'
 import {
   DEFAULT_CONTAINER_ID,
   PRIVATE_CONTAINER_ID,
+  emptyPageWindows,
   emptyPasswordsDevice,
   emptyPrivateDevice,
+  sanitizePageWindows,
   sanitizePasswordsDevice,
   sanitizePrivateDevice
 } from '../shared/types'
@@ -82,6 +85,7 @@ import {
   sanitizePasswordSettings
 } from '../shared/defaults'
 import { sanitizePhoneBar } from '../shared/phoneBar'
+import { sanitizeMenuOrder } from '../shared/menuOrder'
 import { sanitizeHomepage } from '../shared/homepage'
 import { sanitizeToolbarLayout } from '../shared/toolbarLayout'
 import { sanitizeToolbarPins } from '../shared/toolbarPins'
@@ -242,6 +246,12 @@ export interface Persisted {
    * before the summary existed.
    */
   passwordsDevice?: PasswordsDeviceState
+  /**
+   * Where the pages' utility windows last stood, by page id (the task manager's, `WindowChrome`
+   * `page`): normal bounds and display. Never synced – a window's place is this screen's; missing
+   * before the task manager had a window.
+   */
+  pageWindowsDevice?: PageWindowsDeviceState
 }
 
 /**
@@ -384,6 +394,12 @@ export class BrowserState {
    * device's view of the vault; another device runs its own checkup).
    */
   passwordsDevice: PasswordsDeviceState = emptyPasswordsDevice()
+  /**
+   * Where each page's utility window last stood (the task manager's, `Browser.openPageWindow`):
+   * its normal bounds and display, so it comes back where it was left, as Chrome's task manager
+   * does. Written by the window's bounds report, persisted with the profile, never synced.
+   */
+  pageWindowsDevice: PageWindowsDeviceState = emptyPageWindows()
   media: MediaState[] = []
   devtoolsOpenFor = new Set<string>()
   resources: ResourceSnapshot = emptyResourceSnapshot()
@@ -639,6 +655,11 @@ export class BrowserState {
     this.settings.agents = sanitizeAgentSettings(data.settings?.agents)
     this.settings.updates = sanitizeUpdateSettings(data.settings?.updates)
     this.settings.phoneBar = sanitizePhoneBar(data.settings?.phoneBar)
+    // The phone menu's order: a list as persisted, the empty list (a Reset) included; absent
+    // when the profile holds none or something that is no list (`shared/menuOrder.ts`).
+    const menuOrder = sanitizeMenuOrder(data.settings?.menuOrder)
+    if (menuOrder !== undefined) this.settings.menuOrder = menuOrder
+    else delete this.settings.menuOrder
     this.settings.homepage = sanitizeHomepage(data.settings?.homepage)
     this.settings.passwords = sanitizePasswordSettings(data.settings?.passwords)
     this.settings.autofill = sanitizeAutofillSettings(data.settings?.autofill)
@@ -707,6 +728,7 @@ export class BrowserState {
     })
     this.privateDevice = sanitizePrivateDevice(data.privateDevice)
     this.passwordsDevice = sanitizePasswordsDevice(data.passwordsDevice)
+    this.pageWindowsDevice = sanitizePageWindows(data.pageWindowsDevice)
     if (Array.isArray(data.windows) && data.windows.length) {
       this.restoredWindows = data.windows.filter((w) => w && typeof w.id === 'string')
     } else {
@@ -1137,7 +1159,8 @@ export class BrowserState {
       cleanExit: this.exiting,
       newTabDevice: this.newTabDevice,
       privateDevice: this.privateDevice,
-      passwordsDevice: this.passwordsDevice
+      passwordsDevice: this.passwordsDevice,
+      pageWindowsDevice: this.pageWindowsDevice
     }
   }
 

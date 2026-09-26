@@ -204,7 +204,18 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
                 val page = if (pageWebView() != null) "a page view is shown" else "no page view is shown"
                 finding("  no editor after $LONG_CAPTURE_WAIT_MS ms; the chrome's toast reads '${toast ?: ""}'; $page")
             }
-            SystemClock.sleep(1_200)
+            // The still of the editor waits on the sheet's rest, not a fixed beat: #443's
+            // `share-02-long-screenshot-editor.png` caught the sheet a beat early on the software
+            // GPU, where its spring up from below the viewport runs well over a second. Its top the
+            // same twice over, then the host's word that the frame carrying it is on the display
+            // (the paint-observed grab, seed 65) – the wait's readings for the notes. A miss (no
+            // editor) is pictured as it stands, after a beat for the toast.
+            if (editor) {
+                val rested = awaitSheetRest(EDITOR_TOP_JS)
+                finding("  the editor's sheet ${if (rested) "came to rest (its top the same over two readings)" else "had not come to rest within 6 s"}; its frame on the display: ${awaitChromePaint()}")
+            } else {
+                SystemClock.sleep(1_200)
+            }
             shot("05-long-screenshot")
             expect("Long screenshot opens the screenshot editor", editor)
             if (editor) {
@@ -626,12 +637,18 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
      * well over a second – so a still taken on the mount catches it rising, its chips below the
      * fold (run 5's selection and image stills). At most `timeoutMs`; the still is taken regardless.
      */
-    private fun awaitPanelRest(timeoutMs: Long = 6_000): Boolean {
+    private fun awaitPanelRest(timeoutMs: Long = 6_000): Boolean = awaitSheetRest(PANEL_TOP_JS, timeoutMs)
+
+    /**
+     * [awaitPanelRest] for any sheet whose top on the viewport `topJs` reads (null while it is
+     * mounted below the viewport, not yet risen): the same twice over means its spring has settled.
+     */
+    private fun awaitSheetRest(topJs: String, timeoutMs: Long = 6_000): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
-        var last = chromeJs(PANEL_TOP_JS)
+        var last = chromeJs(topJs)
         while (SystemClock.uptimeMillis() < deadline) {
             SystemClock.sleep(300)
-            val top = chromeJs(PANEL_TOP_JS)
+            val top = chromeJs(topJs)
             if (top == last && top != "null") {
                 SystemClock.sleep(400)
                 return true
@@ -1244,6 +1261,9 @@ ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({long:P.long,marks:
         /** The panel sheet's top on the chrome's viewport, rounded – null without a panel or while it is still below the viewport (mounted, not yet risen): the same twice over means the spring has settled. */
         private const val PANEL_TOP_JS =
             "(function(){var s=document.querySelector('.zen-share-panel');if(!s)return null;var t=s.getBoundingClientRect().top;return t<innerHeight?Math.round(t):null})()"
+        /** The long-screenshot editor's sheet's top, the same way (`PhoneSheet` `openExpanded`: it springs up from below the viewport to its expanded detent). */
+        private const val EDITOR_TOP_JS =
+            "(function(){var s=document.querySelector('.zen-longshot-sheet');if(!s)return null;var t=s.getBoundingClientRect().top;return t<innerHeight?Math.round(t):null})()"
         /** Whether the preview draws a favicon slot (a page's does; a selection's does not). */
         private const val FAVICON_JS = "!!document.querySelector('.zen-share-panel .zen-menu-link-favicon')"
         /** Whether the preview draws the shared picture itself (an image's). */

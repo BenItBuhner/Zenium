@@ -36,15 +36,57 @@ export interface ActionContext {
 }
 
 /**
+ * The actions that are a page window's own (`WindowChrome` `page`: the task manager's window,
+ * which has no tabs, sidebar or toolbar for the rest to act on): the task manager's (the window
+ * itself comes to the front), closing and minimising it, Find (the page's own field), Quit and
+ * the browser console. Every other action asked with a page window in front runs on the browser
+ * window behind it (`Actions.run`), and no other chord runs from its keyboard
+ * (`KeyboardHandler.handle`) – as Chrome's task manager leaves the browser's keys to the browser.
+ */
+export const PAGE_WINDOW_ACTIONS: ReadonlySet<string> = new Set([
+  'tasks.open',
+  'window.close',
+  'window.minimize',
+  'find.open',
+  'app.quit',
+  'devtools.browserConsole'
+])
+
+/**
+ * Actions a page window answers with one of its own: Close Tab (⌘W / Ctrl+W, the menu bar's
+ * File › Close Tab) closes the window – one page, no strip to close a tab from, as Chrome's task
+ * manager closes on ⌘W – and never a tab of the browser window behind it.
+ */
+const PAGE_WINDOW_STAND_INS: ReadonlyMap<string, AnyAction> = new Map([
+  ['tab.close', 'window.close']
+])
+
+/**
+ * What a page window runs for `action`: the action when it is the window's own, its stand-in
+ * when it has one, null when it is the browser's (to run behind the window, or not at all from
+ * its keyboard).
+ */
+export function pageWindowAction(action: AnyAction): AnyAction | null {
+  if (PAGE_WINDOW_ACTIONS.has(action)) return action
+  return PAGE_WINDOW_STAND_INS.get(action) ?? null
+}
+
+/**
  * Executes keyboard-shortcut / Command Bar actions. Anything that needs UI (URL bar, panels)
  * is delegated to the renderer through events.
  */
 export class Actions {
   constructor(private readonly browser: Browser) {}
 
-  run(action: AnyAction, ctx: ActionContext): void {
+  run(asked: AnyAction, ctx: ActionContext): void {
     const { tabs, state } = this.browser
-    const win = ctx.win
+    // With a page window in front (the task manager), an action that is not the window's own –
+    // the menu bar's File › New Tab, say – is the browser's: it runs on the browser window
+    // behind the page window, brought to the front for it. Close Tab is the window's, as its
+    // Close Window (`pageWindowAction`).
+    const own = ctx.win.chrome === 'page' ? pageWindowAction(asked) : asked
+    const action: AnyAction = own ?? asked
+    const win = own ? ctx.win : this.browserWindowBehind(ctx.win)
     const active = tabs.activeTabFor(win)
     const glance = win.glance
     // Shortcuts pressed while a Glance page is focused act on the glance page for navigation.
@@ -361,10 +403,12 @@ export class Actions {
       case 'devtools.browserConsole':
         if (state.capabilities.devtools) win.host.openChromeDevTools()
         return
-      // Chrome's Shift+Esc: the task manager as a page tab (`zen://tasks`); a layout with no
-      // page tabs drops the ask (`PageService.open` returns null there).
+      // Chrome's Shift+Esc: the task manager in its own window on a host with windows, as
+      // Chrome's and Edge's (one per profile; focused when open); as the `zen://tasks` page tab
+      // on a host with one window – where a layout with no page tabs drops the ask
+      // (`PageService.open` returns null there).
       case 'tasks.open':
-        this.browser.pages.open('tasks', undefined, win)
+        this.browser.openTaskManager(win)
         return
 
       // --- windows ---
@@ -417,6 +461,16 @@ export class Actions {
         console.warn('[zen] unknown action', action)
       }
     }
+  }
+
+  /** The browser window a page window's action runs on (`Browser.browserWindowFor`), in front. */
+  private browserWindowBehind(pageWindow: ZenWindow): ZenWindow {
+    const target = this.browser.browserWindowFor(pageWindow)
+    if (target !== pageWindow && target.alive) {
+      target.host.show()
+      target.host.focus()
+    }
+    return target
   }
 
   // --- find in page -----------------------------------------------------------------

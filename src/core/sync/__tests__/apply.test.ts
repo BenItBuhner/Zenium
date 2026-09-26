@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { HostCapabilities, Platform as PlatformOs } from '../../../shared/types'
+import { DEFAULT_SETTINGS } from '../../../shared/defaults'
 import { DEFAULT_NEW_TAB_SETTINGS } from '../../../shared/newTab'
 import { matchKeywordWord } from '../../../shared/search'
 import { Browser } from '../../../core/browser'
@@ -11,11 +12,11 @@ import {
   SITE_DATA_RECORD_ID,
   collectLocal,
   defaultScope,
+  withoutDeviceLocalSettings,
   type SyncRecord
 } from '../records'
 
-function memoryIo(): StoreIO {
-  const files: Record<string, string> = {}
+function memoryIo(files: Record<string, string> = {}): StoreIO {
   return {
     readSync: (name) => files[name] ?? null,
     write: async (name, text) => {
@@ -34,11 +35,12 @@ function stub<T extends object>(overrides: Partial<T> = {}): T {
   })
 }
 
-function browser(): Browser {
+/** A browser over an empty profile, or over the files given (`state.json` among them). */
+function browser(files: Record<string, string> = {}): Browser {
   const platform: Platform = {
     info: { os: 'linux' as PlatformOs, version: '0.0.0' },
     capabilities: stub<HostCapabilities>({ windows: false, updates: false, agents: false }),
-    io: memoryIo(),
+    io: memoryIo(files),
     windows: {
       create: () =>
         stub<WindowHost>({
@@ -204,6 +206,70 @@ describe('applyRemote: the settings record and the new tab page', () => {
     expect(matchKeywordWord('@other', b.state.searchEngines)).toBeNull()
   })
 
+  it("a peer's device-local keys never land: this device's Expand on hover and onboarding flag stand while the rest applies (W5-F3)", () => {
+    const b = browser()
+    // The device as shipped since v6 (on) and before its onboarding; a v5 peer's record
+    // carries that build's default `false` and, as every older peer's, its `onboardingDone`.
+    b.state.settings.sidebarExpandOnHover = true
+    b.state.settings.onboardingDone = false
+    applyRemote(b, [
+      settingsRecord({
+        ...b.state.settings,
+        colorScheme: 'dark',
+        sidebarWidth: 321,
+        sidebarExpandOnHover: false,
+        onboardingDone: true
+      })
+    ])
+    expect(b.state.settings.sidebarExpandOnHover).toBe(true)
+    expect(b.state.settings.onboardingDone).toBe(false)
+    expect(b.state.settings.colorScheme).toBe('dark')
+    expect(b.state.settings.sidebarWidth).toBe(321)
+  })
+
+  it("a v6 device that turned Expand on hover off stays off when a peer's record applies (W5-F3)", () => {
+    // The profile as a v6 build wrote it after the user turned the row off: a choice.
+    const profile = {
+      version: 6,
+      spaces: [],
+      tabs: [],
+      essentialTabIds: [],
+      activeSpaceId: 'space_1',
+      containers: [],
+      folders: [],
+      splitGroups: [],
+      settings: { ...structuredClone(DEFAULT_SETTINGS), sidebarExpandOnHover: false },
+      shortcutOverrides: {},
+      bookmarks: []
+    }
+    const b = browser({ 'state.json': JSON.stringify(profile) })
+    expect(b.state.settings.sidebarExpandOnHover).toBe(false)
+    // A peer that upgraded later publishes its v6 default (on); one on this build sends no key.
+    applyRemote(b, [
+      settingsRecord({ ...b.state.settings, sidebarExpandOnHover: true, colorScheme: 'dark' })
+    ])
+    expect(b.state.settings.sidebarExpandOnHover).toBe(false)
+    expect(b.state.settings.colorScheme).toBe('dark')
+    const data = withoutDeviceLocalSettings(b.state.settings) as Record<string, unknown>
+    applyRemote(b, [settingsRecord({ ...data, colorScheme: 'light' })])
+    expect(b.state.settings.sidebarExpandOnHover).toBe(false)
+    expect(b.state.settings.colorScheme).toBe('light')
+    // What this device publishes carries the choice nowhere: the next peer's rail is its own.
+    const published = collectLocal(
+      {
+        model: b.state.model,
+        settings: b.state.settings,
+        shortcutOverrides: {},
+        bookmarks: [],
+        boosts: []
+      },
+      defaultScope()
+    ).get(SETTINGS_RECORD_ID)?.data as Record<string, unknown>
+    expect(published).not.toHaveProperty('sidebarExpandOnHover')
+    expect(published).not.toHaveProperty('onboardingDone')
+    expect(published.colorScheme).toBe('light')
+  })
+
   it('takes a synced site-data record whole through the service, ignoring a stray id or a tombstone', () => {
     const b = browser()
     b.siteData.add('allow', 'mine.example')
@@ -240,6 +306,117 @@ describe('applyRemote: the settings record and the new tab page', () => {
       defaultScope()
     ).get(SITE_DATA_RECORD_ID)
     expect(published?.data).toEqual(b.siteData.policy())
+  })
+
+  it("a peer's phone menu order: a list is kept – the empty list of a Reset stored and re-sent, not deleted – a record without the key says nothing, a value that is no list deletes it", () => {
+    const b = browser()
+    const sent = (): Record<string, unknown> =>
+      collectLocal(
+        {
+          model: b.state.model,
+          settings: b.state.settings,
+          shortcutOverrides: {},
+          bookmarks: [],
+          boosts: []
+        },
+        defaultScope()
+      ).get(SETTINGS_RECORD_ID)?.data as Record<string, unknown>
+    expect('menuOrder' in b.state.settings).toBe(false)
+    expect(sent()).not.toHaveProperty('menuOrder')
+
+    // The peer's order lands sanitised (its build's keys read against this one's later).
+    applyRemote(b, [
+      settingsRecord({ ...b.state.settings, menuOrder: ['row.settings', 3, 'row.newTab', ''] })
+    ])
+    expect(b.state.settings.menuOrder).toEqual(['row.settings', 'row.newTab'])
+    expect(sent().menuOrder).toEqual(['row.settings', 'row.newTab'])
+
+    // A peer that never touched the menu carries no key: its record leaves the order alone.
+    const { menuOrder: _absent, ...untouched } = b.state.settings
+    void _absent
+    applyRemote(b, [settingsRecord({ ...untouched, colorScheme: 'dark' })])
+    expect(b.state.settings.colorScheme).toBe('dark')
+    expect(b.state.settings.menuOrder).toEqual(['row.settings', 'row.newTab'])
+
+    // The peer's Reset: the empty list is stored as the value and carried in this device's own
+    // records from now on, so a third device holding the old order offline takes the reset too.
+    applyRemote(b, [settingsRecord({ ...b.state.settings, menuOrder: [] })])
+    expect(b.state.settings.menuOrder).toEqual([])
+    expect(sent().menuOrder).toEqual([])
+
+    // Only something that is no list at all deletes the key.
+    applyRemote(b, [settingsRecord({ ...b.state.settings, menuOrder: 'row.settings' })])
+    expect('menuOrder' in b.state.settings).toBe(false)
+    expect(sent()).not.toHaveProperty('menuOrder')
+  })
+
+  it('a record narrowed to the keys that won (per-key merge) lands those keys alone: every other setting, the new tab page and the engines included, stands', () => {
+    const b = browser()
+    b.updateSettings(
+      {
+        sidebarWidth: 300,
+        newTab: { ...b.state.settings.newTab, background: 'solid' },
+        menuOrder: ['row.settings'],
+        fonts: { ...b.state.settings.fonts, size: 20 }
+      },
+      stub()
+    )
+    const engineId = b.searchEngines.add('Mine', 'https://mine.example/?q=%s', stub())
+    b.updateSettings({ searchEngineId: engineId }, stub())
+    const before = structuredClone(b.state.settings)
+    expect(before.searchEngineId).toBe(engineId)
+
+    // `winningRemote` hands over the winning keys as the record: two keys here, out of the
+    // seventy a whole record carries.
+    applyRemote(b, [
+      {
+        ...settingsRecord({ colorScheme: 'dark', languages: ['de', 'en'] }),
+        keys: { languages: 900 }
+      }
+    ])
+    expect(b.state.settings.colorScheme).toBe('dark')
+    expect(b.state.settings.languages).toEqual(['de', 'en'])
+    const { colorScheme: _scheme, languages: _languages, ...rest } = b.state.settings
+    void _scheme
+    void _languages
+    const { colorScheme: _wasScheme, languages: _wasLanguages, ...wasRest } = before
+    void _wasScheme
+    void _wasLanguages
+    expect(rest).toEqual(wasRest)
+    expect(b.state.settings.newTab).toEqual(before.newTab)
+    expect(b.state.settings.searchEngineId).toBe(engineId)
+    expect(b.state.settings.menuOrder).toEqual(['row.settings'])
+  })
+
+  it("the pair travels as one: a record carrying the peer's engines and default lands both; one carrying newTabPhone alone (a 0.3.x phone's key) folds into newTab", () => {
+    const b = browser()
+    b.updateSettings({ newTab: { ...b.state.settings.newTab, background: 'solid' } }, stub())
+    applyRemote(b, [
+      settingsRecord({
+        searchEngineId: 'custom:peer',
+        searchEngines: [
+          {
+            id: 'custom:peer',
+            name: 'Peer',
+            searchUrl: 'https://peer.example/?q=%s',
+            keyword: '@peer',
+            active: true
+          }
+        ]
+      })
+    ])
+    expect(b.state.settings.searchEngineId).toBe('custom:peer')
+    expect(b.state.settings.searchEngines?.map((e) => e.id)).toEqual(['custom:peer'])
+    expect(b.state.settings.newTab.background).toBe('solid')
+
+    applyRemote(b, [settingsRecord({ newTabPhone: PEER_PHONE })])
+    expect(b.state.settings.newTab).toEqual({
+      ...DEFAULT_NEW_TAB_SETTINGS,
+      preset: 'inspirational',
+      background: 'image'
+    })
+    expect('newTabPhone' in b.state.settings).toBe(false)
+    expect(b.state.settings.searchEngineId).toBe('custom:peer')
   })
 })
 

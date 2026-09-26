@@ -1,11 +1,13 @@
 {
-  "$comment": "The nightly all-drivers sweep (android-nightly-drivers.yml): every instrumentation driver under android/app/src/androidTest/kotlin/app/zen/chromium, the shard (one emulator boot) it runs on and the environment its own workflow gives it. android-nightly-drivers.mjs reads it (the matrix, the plan, the table) and android-nightly-drivers.test.mjs asserts every concrete *Demo class is either a driver here or in `skip` with a reason. Fields: id (its directory in the artifact), class / classes (the *Demo classes it covers), shard, mirrors (the workflow file[:job or input] whose environment it takes), dir (DEMO_DIR, the handshake directory), script (a wrapper instead of android-gesture-demo.sh), out (where a script with a fixed output path leaves its findings, moved into the artifact), env (script-env lines), setup (named steps the shard runs before the emulator: see the runner), needs (pin, browser-role, navigation: state the runner sets or puts back), timeout (seconds for the driver, 720 by default), estimate (minutes, for the plan), note.",
+  "$comment": "The nightly all-drivers sweep (android-nightly-drivers.yml): every instrumentation driver under android/app/src/androidTest/kotlin/app/zen/chromium, the shard (one emulator boot) it runs on and the environment its own workflow gives it. android-nightly-drivers.mjs reads it (the matrix, the plan, the table) and android-nightly-drivers.test.mjs asserts every concrete *Demo class is either a driver here or in `skip` with a reason. Fields: id (its directory in the artifact), class / classes (the *Demo classes it covers), shard, mirrors (the workflow file[:job or input] whose environment it takes), dir (DEMO_DIR, the handshake directory), script (a wrapper instead of android-gesture-demo.sh), out (where a script with a fixed output path leaves its findings, moved into the artifact), env (script-env lines), setup (named steps the shard runs before the emulator: see the runner), cache (a shard's: the path a setup step fills by a pin and the key naming that pin, kept between runs through the recipe's actions/cache inputs), needs (pin, browser-role, navigation: state the runner sets or puts back), timeout (seconds for the driver, 720 by default), estimate (minutes, for the plan), note. Each shard names its image (the SDK system image the recipe boots: system-images;android-<api-level>;<target>;x86_64, checked against those two) and its webview (the WebView provider the drivers run on: the image's own package and version, or what the shard's setup installs over it); both are printed in every run's header, the device's own word beside them.",
   "shards": {
     "phone-a": {
       "title": "Phone A: API 34 Google APIs, pixel_6",
       "api-level": "34",
       "target": "google_apis",
       "profile": "pixel_6",
+      "image": "system-images;android-34;google_apis;x86_64",
+      "webview": "com.google.android.webview 113.0.5672.136, the image's",
       "emulator-gpu": "swangle",
       "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
       "display": "720x1600@280",
@@ -17,6 +19,8 @@
       "api-level": "34",
       "target": "google_apis",
       "profile": "pixel_6",
+      "image": "system-images;android-34;google_apis;x86_64",
+      "webview": "com.google.android.webview 113.0.5672.136, the image's",
       "emulator-gpu": "swangle",
       "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
       "display": "720x1600@280",
@@ -28,6 +32,8 @@
       "api-level": "34",
       "target": "google_apis",
       "profile": "pixel_6",
+      "image": "system-images;android-34;google_apis;x86_64",
+      "webview": "com.google.android.webview 113.0.5672.136, the image's",
       "emulator-gpu": "swangle",
       "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back emulated -camera-front none -show-kernel",
       "display": "720x1600@280",
@@ -40,6 +46,8 @@
       "api-level": "34",
       "target": "google_apis",
       "profile": "pixel_6",
+      "image": "system-images;android-34;google_apis;x86_64",
+      "webview": "com.google.android.webview 113.0.5672.136, the image's",
       "emulator-gpu": "swangle",
       "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
       "display": "720x1600@280",
@@ -51,6 +59,8 @@
       "api-level": "34",
       "target": "google_apis",
       "profile": "pixel_6",
+      "image": "system-images;android-34;google_apis;x86_64",
+      "webview": "com.google.android.webview 113.0.5672.136, the image's",
       "emulator-gpu": "swangle",
       "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
       "display": "720x1600@280",
@@ -63,6 +73,8 @@
       "api-level": "34",
       "target": "google_apis",
       "profile": "pixel_6",
+      "image": "system-images;android-34;google_apis;x86_64",
+      "webview": "com.google.android.webview 113.0.5672.136, the image's",
       "emulator-gpu": "swangle",
       "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
       "display": "720x1600@280",
@@ -75,6 +87,8 @@
       "api-level": "35",
       "target": "google_apis",
       "profile": "pixel_6",
+      "image": "system-images;android-35;google_apis;x86_64",
+      "webview": "com.google.android.webview 124.0.6367.219, the image's",
       "emulator-gpu": "swangle",
       "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
       "display": "720x1600@280",
@@ -87,18 +101,30 @@
       "api-level": "33",
       "target": "google_apis",
       "profile": "pixel_6",
+      "image": "system-images;android-33;google_apis;x86_64",
+      "webview": "com.google.android.webview 145.0.7632.218 installed over the image's 109.0.5414.123 (android-webview-google.sh: the APK out of Google's system-images;android-37.0;google_apis;x86_64 r6, the same signer)",
       "emulator-gpu": "swangle",
       "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
       "display": "720x1600@280",
       "timeout-minutes": 90,
       "budget-minutes": 68,
-      "note": "Android 13, the last version on which the browser's own share panel stands in for the system sheet (SH-03; Share.panelStandsIn): the share demo's panel scenes run here, its system-sheet scenes on phone-b. Same recipe as phone-a otherwise."
+      "setup": ["webview-google"],
+      "cache": {
+        "path": "artifacts/webview-google",
+        "key": "webview-google-com.google.android.webview-145.0.7632.218"
+      },
+      "env": {
+        "WEBVIEW_GOOGLE_DIR": "artifacts/webview-google"
+      },
+      "note": "Android 13, the last version on which the browser's own share panel stands in for the system sheet (SH-03; Share.panelStandsIn): the share demo's panel scenes run here, its system-sheet scenes on phone-b. Same recipe as phone-a otherwise. The image's own WebView 109 keeps no profiles (no private tabs, the share demo's private check N/A – seed 69), so the setup installs a current Google WebView over it; the cache keeps that APK between runs."
     },
     "webview": {
       "title": "AOSP image (-writable-system) with the Chromium snapshot WebView swapped in",
       "api-level": "34",
       "target": "default",
       "profile": "pixel_6",
+      "image": "system-images;android-34;default;x86_64",
+      "webview": "com.android.webview, the Chromium snapshot's SystemWebView swapped in (AndroidDesktop_x64 LAST_CHANGE at run time; the revision in webview-REVISIONS.json)",
       "emulator-gpu": "swiftshader_indirect",
       "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back emulated -camera-front none -writable-system",
       "display": "720x1600@280",
@@ -115,6 +141,8 @@
       "api-level": "34",
       "target": "google_apis",
       "profile": "pixel_tablet",
+      "image": "system-images;android-34;google_apis;x86_64",
+      "webview": "com.google.android.webview 113.0.5672.136, the image's",
       "emulator-gpu": "swangle",
       "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
       "display": "1280x800@160",
@@ -126,6 +154,8 @@
       "api-level": "34",
       "target": "default",
       "profile": "pixel_tablet",
+      "image": "system-images;android-34;default;x86_64",
+      "webview": "com.android.webview, the Chromium snapshot's SystemWebView swapped in (AndroidDesktop_x64 LAST_CHANGE at run time; the revision in webview-REVISIONS.json)",
       "emulator-gpu": "swiftshader_indirect",
       "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system",
       "display": "1280x800@160",
@@ -758,6 +788,19 @@
       "estimate": 3.5
     },
     {
+      "id": "menu-edit",
+      "class": "MenuEditDemo",
+      "shard": "api35",
+      "mirrors": "android-menu-edit-demo.yml",
+      "dir": "menu-edit-demo",
+      "env": {
+        "DEMO_THEME": "light",
+        "DEMO_ARGS": "-e holdBackgroundWork true"
+      },
+      "estimate": 3,
+      "note": "The workflow runs light and dark; the nightly runs light. The startup sweeps held, as the workflow passes, so the list drag's trace reads the reorder alone (RULING 5). On api35 for the room: the driver measured 2:46 / 2:49 on the API 34 image (#483's runs) and every API 34 phone shard stands within 2 of #344's budget; the workflow's dispatch is the API 34 record."
+    },
+    {
       "id": "focus-ring",
       "class": "FocusRingDemo",
       "shard": "phone-d",
@@ -1023,6 +1066,15 @@
       "note": "The memory-pressure row (OS-37, W6-6): thirty background pages with ballast, am send-trim-memory at RUNNING_MODERATE / RUNNING_LOW / RUNNING_CRITICAL and BACKGROUND behind Home, the return to a sleeping page read thirty times a second, the renderer priorities, the memory table from dumpsys meminfo. The workflow runs light and dark; the nightly runs light. The driver waits out the core's one-minute recency guard once (the thirty pages' creation), and Home and back once. The estimate is the author's, not yet a nightly's measure. First on phone-f, the shard opened for it."
     },
     {
+      "id": "reader-entry",
+      "class": "ReaderEntryDemo",
+      "shard": "phone-f",
+      "mirrors": "android-reader-entry-demo.yml",
+      "dir": "reader-entry-demo",
+      "estimate": 4.5,
+      "note": "The reader entry and the crossing into Reader View (PUI-14, MOT-36; W6-2): the offer on the §9.33 banner stack over an article from the driver's five loopback sites, Show under a finger through the crossing (frame scenes both ways), the offer's clock (about 10 s standing, the timeout a mute), the swipe / X / leaving-the-page memory per site, the page that is no article, the site-information sheet's Reader View row and its crossing, the pill's favicon kept through the reader, the strip and the crossing in dark. The driver waits out one clock (about 11 s). Its workflow's runs measured 162 s (before the clock and the sheet's acts) and 226 s: the longer one, rounded up. On phone-f, the shard with the room."
+    },
+    {
       "id": "sheet-leave",
       "class": "SheetLeaveDemo",
       "shard": "api35",
@@ -1208,6 +1260,16 @@
       "dir": "media-demo",
       "timeout": 900,
       "estimate": 5
+    },
+    {
+      "id": "pip",
+      "class": "PipDemo",
+      "shard": "webview",
+      "mirrors": "android-media-demo.yml:driver=pip",
+      "dir": "media-demo",
+      "timeout": 1200,
+      "estimate": 7,
+      "note": "Home during fullscreen video into the picture-in-picture window in both themes: bounds and the page's fill read, the menu's Pause, Play and Next track driven through to the page, expand back inline, the requested window's X; a new document, another tab and the tab's close each end the window; a page without a video and an inline video give Home nothing new (MOT-30, MED-06)."
     },
     {
       "id": "fullscreen",

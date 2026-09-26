@@ -153,3 +153,39 @@ describe('the row’s throbber', () => {
     expect(el.querySelector('img')?.classList.contains('zen-tab-favicon-in')).toBe(false)
   })
 })
+
+/*
+ * A Reader View tab keeps its page's identity (v2 §9.29; the design gate for #491, PUI-14): the
+ * page's icon still – the core keeps `favicon` over the reader's navigation – and, for a page
+ * that had none, the letter tile of the page's host read through the reader URL, where the
+ * slot used to fall to the globe of a siteless page. The phone's pill, the tab overview's card
+ * and the sidebar's row all draw this one slot.
+ */
+describe('Favicon in Reader View', () => {
+  const ARTICLE = 'https://news.example/story'
+  const READER = `zen://reader?id=article_1&url=${encodeURIComponent(ARTICLE)}`
+
+  it('keeps the page’s icon', () => {
+    const el = render(<Favicon tab={source(READER, OWN_FAVICON)} size={20} />)
+    expect(el.querySelector('img')?.getAttribute('src')).toBe(OWN_FAVICON)
+    expect(el.querySelector('svg.lucide-globe')).toBeNull()
+  })
+
+  it('draws the page’s letter tile, not the globe, where the page had no icon', () => {
+    const el = render(<Favicon tab={source(READER)} size={20} />)
+    expect(el.querySelector('img')).toBeNull()
+    expect(el.querySelector('svg.lucide-globe')).toBeNull()
+    expect(el.textContent).toBe('N')
+    // The same tile the article's tab drew.
+    act(() => root?.unmount())
+    host?.remove()
+    const article = render(<Favicon tab={source(ARTICLE)} size={20} />)
+    expect(article.textContent).toBe('N')
+  })
+
+  it('a reader URL without its page, and any other internal page, keep the globe', () => {
+    const el = render(<Favicon tab={source('zen://reader?id=article_1')} size={20} />)
+    expect(el.querySelector('svg.lucide-globe')).not.toBeNull()
+    expect(el.textContent).toBe('')
+  })
+})

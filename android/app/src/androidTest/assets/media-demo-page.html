@@ -89,13 +89,17 @@
     };
     setMetadata();
     // The page handles the track buttons itself (a playlist), and leaves play, pause and the
-    // seeks to the browser's defaults, as most sites do.
-    navigator.mediaSession.setActionHandler('nexttrack', function () {
-      track += 1; state.last = 'nexttrack'; state.track = track; setMetadata(); media.currentTime = 0; update();
-    });
-    navigator.mediaSession.setActionHandler('previoustrack', function () {
-      track = Math.max(1, track - 1); state.last = 'previoustrack'; state.track = track; setMetadata(); media.currentTime = 0; update();
-    });
+    // seeks to the browser's defaults, as most sites do. `?tracks=0` is the single-clip site
+    // that declares no track handlers at all: the window and the notification are to show it
+    // no skip buttons.
+    if (params.get('tracks') !== '0') {
+      navigator.mediaSession.setActionHandler('nexttrack', function () {
+        track += 1; state.last = 'nexttrack'; state.track = track; setMetadata(); media.currentTime = 0; update();
+      });
+      navigator.mediaSession.setActionHandler('previoustrack', function () {
+        track = Math.max(1, track - 1); state.last = 'previoustrack'; state.track = track; setMetadata(); media.currentTime = 0; update();
+      });
+    }
     state.session = 'set';
     state.track = track;
     render();

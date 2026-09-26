@@ -173,7 +173,15 @@ describe('parseRuntimeManifest', () => {
         manifest_version: 2,
         name: 'Legacy',
         version: '1.0',
-        permissions: ['webRequest', 'webRequestBlocking', 'scripting', 'offscreen', 'sidePanel', 'userScripts', 'tabs']
+        permissions: [
+          'webRequest',
+          'webRequestBlocking',
+          'scripting',
+          'offscreen',
+          'sidePanel',
+          'userScripts',
+          'tabs'
+        ]
       },
       null
     )

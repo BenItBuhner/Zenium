@@ -38,6 +38,7 @@ import { afterKeyRelease } from './keyRelease'
 import { onboardingCovers } from './onboarding'
 import { awaitingShow, coverStore, markCoverDrop } from './cover'
 import { pageCovered, pageOffScreen, pageViewStore, type Hold } from './pageView'
+import { crossReaderView } from './readerTransition'
 import { activeTab } from './selectors'
 import { createStore } from './store'
 import { rememberThumbnail, thumbnailOf } from './thumbnails'
@@ -1792,21 +1793,38 @@ function menuItemById(items: MenuItemDescriptor[], itemId: string): MenuItemDesc
  * `tablet-groups` §6), so for it the focus stays where the field is about to take it.
  */
 export function pickMenuItem(itemId: string): void {
-  const menu = uiStore.get().menu
+  const ui = uiStore.get()
+  const menu = ui.menu
   if (!menu) return
-  uiStore.set({ menu: null })
-  invalidateSnapshot()
-  if (!menuItemById(menu.items, itemId)?.keepsKeyboard) returnFocusToPage()
+  const item = menuItemById(menu.items, itemId)
   const local = localMenus.get(menu.id)
   localMenus.delete(menu.id)
   // Run the action once the sheet has been unpainted: hosts that snapshot the window for the
   // dimmed overlay preview (Android's PixelCopy) would otherwise capture the menu itself.
-  requestAnimationFrame(() =>
-    requestAnimationFrame(() => {
-      if (local) local.get(itemId)?.()
-      else run('menu.click', { menuId: menu.id, itemId })
+  const later = (action: () => void): void => {
+    requestAnimationFrame(() => requestAnimationFrame(action))
+  }
+  const click = (): void => {
+    if (local) local.get(itemId)?.()
+    else run('menu.click', { menuId: menu.id, itemId })
+  }
+  // The Reader View row (the app menu's, the page menu's): where the crossing runs (MOT-36,
+  // `lib/readerTransition.ts`) it begins on the sheet's own picture of the page, in this turn –
+  // before the menu's clearing lets the page back – and the core's toggle runs inside it;
+  // elsewhere `crossReaderView` is the click itself.
+  const browser = browserStore.get().state
+  const activeTabId = browser ? (activeTab(browser)?.id ?? null) : null
+  const readerRow = !local && item?.action === 'page.readerMode' && activeTabId !== null
+  if (readerRow) {
+    void crossReaderView(activeTabId, {
+      cross: () => later(click),
+      picture: ui.snapshotTabId === activeTabId ? ui.snapshot : null
     })
-  )
+  }
+  uiStore.set({ menu: null })
+  invalidateSnapshot()
+  if (!item?.keepsKeyboard) returnFocusToPage()
+  if (!readerRow) later(click)
 }
 
 // ---------------------------------------------------------------------------

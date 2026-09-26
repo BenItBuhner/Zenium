@@ -35,7 +35,7 @@ describe('pillChipFold: what each chip is to the pill at rest', () => {
     expect(pillChipFold('save-prompt')).toBe('live')
   })
 
-  it('treats a chip it does not know as informational: the sheet’s (the reader chip, an extension action)', () => {
+  it('names the reader chip the sheet’s (PUI-14), and treats a chip it does not know as informational too: the sheet’s (an extension action)', () => {
     expect(pillChipFold('reader')).toBe('sheet')
     expect(pillChipFold('extension-action')).toBe('sheet')
     expect(Object.keys(PILL_CHIP_FOLDS).sort()).toEqual(
@@ -47,6 +47,7 @@ describe('pillChipFold: what each chip is to the pill at rest', () => {
         'media',
         'not-secure',
         'notifications-blocked',
+        'reader',
         'save-prompt',
         'translate'
       ].sort()
@@ -92,7 +93,10 @@ describe('foldPillChips: a quiet state sits under a live one and above the glyph
       'notifications-blocked'
     ])
     // The media stops: the bell is back in the slot, the lock still yielded.
-    const after = foldPillChips([...page, chip('notifications-blocked')], liveArrival(['media'], []))
+    const after = foldPillChips(
+      [...page, chip('notifications-blocked')],
+      liveArrival(['media'], [])
+    )
     expect(ids(after.shown)).toEqual(['notifications-blocked'])
     expect(ids(after.yielded)).toEqual(['lock'])
   })

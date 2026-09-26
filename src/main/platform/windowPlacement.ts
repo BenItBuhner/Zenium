@@ -57,6 +57,116 @@ export function centredIn(
   }
 }
 
+/** `size` with its centre on `anchor`'s – the size kept whole, however small the anchor. */
+export function centredOver(anchor: Rect, size: { width: number; height: number }): Rect {
+  return {
+    width: size.width,
+    height: size.height,
+    x: anchor.x + Math.round((anchor.width - size.width) / 2),
+    y: anchor.y + Math.round((anchor.height - size.height) / 2)
+  }
+}
+
+export interface FramedPlacementInput {
+  /** The window's last normal bounds – OUTER, as `getNormalBounds()` reports them – if any. */
+  saved: Rect | null
+  /** The display `saved` was on, or the one `anchor` lies on, when known. */
+  displayId: number | null
+  /** The normal bounds of the window this one is asked from, to come up centred over. */
+  anchor: Rect | null
+  /** The smallest the window's CONTENT (the page) may be. */
+  minWidth: number
+  minHeight: number
+  /** The CONTENT size a window without saved bounds opens at. */
+  defaultSize: { width: number; height: number }
+}
+
+/** How a framed window is built, and where its frame then goes. */
+export interface FramedWindowPlan {
+  /**
+   * The `BrowserWindow` options: `useContentSize` makes `width`/`height` and the minimums sizes
+   * of the content, so the OS frame (a title bar, borders) comes on top of them and the page is
+   * the size asked for on every OS. `x`/`y` place the frame; a first guess, taken as if the frame
+   * were no larger than the content, until `outerBounds` knows better.
+   */
+  options: {
+    x: number
+    y: number
+    width: number
+    height: number
+    minWidth: number
+    minHeight: number
+    useContentSize: true
+  }
+  /**
+   * Where the FRAME goes once the window exists and its outer size (`getSize()`: the content plus
+   * the frame, which nothing knows before the OS has drawn it) can be read. Remembered bounds
+   * come back exactly (they were outer when saved, they are outer here – set with `setBounds`,
+   * the matching setter, never as a content size); a first open is centred over the anchor and
+   * fitted into its display's work area.
+   */
+  outerBounds(outer: { width: number; height: number }): Rect
+}
+
+/**
+ * Placement for a window the OS frames (`WindowChrome` `page`: the task manager). The sizes it
+ * is built with are of its content, its remembered bounds are of its frame, and the two never
+ * mix: saving the outer size and restoring it as the content's would grow the window by a frame
+ * on every open. `displays[0]` is the primary.
+ */
+export function planFramedWindow(
+  input: FramedPlacementInput,
+  displays: DisplayArea[]
+): FramedWindowPlan {
+  const { saved, minWidth, minHeight, defaultSize } = input
+  const primary = displays[0] ?? null
+  const fit = (rect: Rect, displayId: number | null): Rect =>
+    placeWindow({ saved: rect, displayId, minWidth, minHeight, defaultSize }, displays)
+  if (saved) {
+    // Fitted once, here, and then set as it is: the frame's rectangle from end to end.
+    const outer = fit(saved, input.displayId)
+    return {
+      options: {
+        x: outer.x,
+        y: outer.y,
+        width: defaultSize.width,
+        height: defaultSize.height,
+        minWidth,
+        minHeight,
+        useContentSize: true
+      },
+      outerBounds: () => outer
+    }
+  }
+  // Centred over the window it was asked from, else on the primary display; at the origin when
+  // no display is known (the placement test's bare host).
+  const anchor = input.anchor ?? primary?.workArea ?? null
+  const target =
+    (input.displayId !== null ? displays.find((d) => d.id === input.displayId) : undefined) ??
+    (anchor ? displayMatching(anchor, displays) : null) ??
+    primary
+  const area = target?.workArea
+  const content = {
+    width: Math.max(minWidth, Math.min(defaultSize.width, area?.width ?? defaultSize.width)),
+    height: Math.max(minHeight, Math.min(defaultSize.height, area?.height ?? defaultSize.height))
+  }
+  const place = (size: { width: number; height: number }): Rect =>
+    anchor ? centredOver(anchor, size) : { x: 0, y: 0, ...size }
+  const guess = place(content)
+  return {
+    options: {
+      x: guess.x,
+      y: guess.y,
+      width: content.width,
+      height: content.height,
+      minWidth,
+      minHeight,
+      useContentSize: true
+    },
+    outerBounds: (outer) => (target ? fit(place(outer), target.id) : place(outer))
+  }
+}
+
 /**
  * Where a window goes when it is created: its saved bounds, on the display they were saved on
  * when that display is still there, otherwise on the display they mostly lie on, otherwise on

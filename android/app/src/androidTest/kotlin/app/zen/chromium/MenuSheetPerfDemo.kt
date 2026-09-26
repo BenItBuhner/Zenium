@@ -100,7 +100,9 @@ class MenuSheetPerfDemo : DemoHarness("menu-perf-demo-state.json", "menu-perf", 
     fun record() {
         server = DemoServer(PORT, routes()).also { it.start() }
         try {
-            runDemo()
+            // A perf reading: no events hold (DemoHarness.runDemo – the hold's service moves the WebView to
+            // its complete tree mode with every event, work inside what the frames and the traces measure).
+            runDemo(holdEvents = false)
         } finally {
             server.close()
             File(out, "menu-perf-findings.txt").writeText(findings.toString())

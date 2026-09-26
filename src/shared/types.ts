@@ -408,9 +408,12 @@ export type WindowSyncMode = 'all' | 'pinned' | 'off'
  * What a window's chrome shows: the sidebar with spaces and tabs; for the sized windows pages
  * open with `window.open(url, name, 'width=…')` a single toolbar row above the page; for a web
  * app launched standalone (`zenium --app=<url>`, an installed app's launcher) no browser chrome
- * at all, only the app's own title bar (Chrome's app window).
+ * at all, only the app's own title bar (Chrome's app window); for a utility window holding one
+ * of the chrome's own pages (the task manager on Shift+Esc, as Chrome's and Edge's task manager
+ * is a window of its own) no browser chrome and no title row of the chrome's either – the OS
+ * frame and the page alone (`page`).
  */
-export type WindowChrome = 'full' | 'popup' | 'app'
+export type WindowChrome = 'full' | 'popup' | 'app' | 'page'
 
 /**
  * The web app a standalone window (`WindowChrome` `app`) is showing: its name and icon for the
@@ -431,6 +434,51 @@ export interface AppWindowInfo {
 }
 /** System-drawn material behind a translucent chrome (Windows 11). */
 export type WindowMaterial = 'none' | 'mica'
+
+/**
+ * Where a page's utility window (`WindowChrome` `page`) last stood: its normal bounds and the
+ * display they were on, so the task manager comes back where it was left, as Chrome's does.
+ */
+export interface PageWindowPlacement {
+  bounds: Rect
+  displayId: number | null
+}
+
+/**
+ * The page windows' device-local placements by page id (`BrowserState.pageWindowsDevice`, the
+ * shape of `newTabDevice`): never synced – a window's place is this screen's.
+ */
+export type PageWindowsDeviceState = Record<string, PageWindowPlacement>
+
+export function emptyPageWindows(): PageWindowsDeviceState {
+  return {}
+}
+
+/** `raw` as a `PageWindowsDeviceState`: every entry that is not a whole placement is dropped. */
+export function sanitizePageWindows(raw: unknown): PageWindowsDeviceState {
+  const out: PageWindowsDeviceState = {}
+  if (!raw || typeof raw !== 'object') return out
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!value || typeof value !== 'object') continue
+    const entry = value as { bounds?: unknown; displayId?: unknown }
+    const b = entry.bounds as Partial<Record<keyof Rect, unknown>> | null | undefined
+    if (
+      !b ||
+      typeof b !== 'object' ||
+      typeof b.x !== 'number' ||
+      typeof b.y !== 'number' ||
+      typeof b.width !== 'number' ||
+      typeof b.height !== 'number' ||
+      ![b.x, b.y, b.width, b.height].every(Number.isFinite)
+    )
+      continue
+    out[id] = {
+      bounds: { x: b.x, y: b.y, width: b.width, height: b.height },
+      displayId: typeof entry.displayId === 'number' ? entry.displayId : null
+    }
+  }
+  return out
+}
 
 // ---------------------------------------------------------------------------
 // Themes (Zen's gradient theme picker)
@@ -2266,8 +2314,10 @@ export type ShortcutAction =
   | 'devtools.console'
   | 'devtools.browserConsole'
   /**
-   * Chrome's task manager (Shift+Esc; More Tools › Task Manager): the `zen://tasks` page tab –
-   * every process with its memory and CPU, End process (`core/tasks.ts`); desktop layouts only.
+   * Chrome's task manager (Shift+Esc; More Tools › Task Manager): the `zen://tasks` page – every
+   * process with its memory and CPU, End process (`core/tasks.ts`) – in a window of its own on a
+   * host with windows (`WindowChrome` `page`, one per profile, focused when open;
+   * `Browser.openTaskManager`), as a page tab on a host with one window; desktop layouts only.
    */
   | 'tasks.open'
   | 'settings.open'
@@ -2607,6 +2657,17 @@ export interface Settings {
   phoneBarPosition: PhoneBarPosition
   /** Phone layout: the controls either side of the address pill (Settings › Navigation bar). */
   phoneBar: PhoneBarLayout
+  /**
+   * Phone layout: the app menu's items in the user's order (Edge's Change menu, TB-22) – the
+   * items' stable keys (`MenuItemDescriptor.key`; `shared/menuOrder.ts` reads it against the
+   * build's default: named items first in this order, the rest after them in the default order,
+   * a key the build has no item for dropped). Absent until the user reorders; the Reset row
+   * writes the EMPTY list, which is kept and synced as a value – both read as the default order,
+   * but the empty list says so to the other devices where an absent key says nothing
+   * (`core/sync/records.ts` sends the settings' keys as they are and never one they lack). The
+   * desktop's menus never read it.
+   */
+  menuOrder?: string[]
   /**
    * The homepage (SET-36 / NTP-30): what the phone's Home button – the bar's optional item, the
    * app menu's icon-row glyph otherwise – opens, or that there is none. Absent in profiles from
@@ -4190,6 +4251,12 @@ export interface MenuDeviceMark {
 
 export interface MenuItemDescriptor {
   id: string
+  /**
+   * The item's stable name across openings (the phone app menu's items: `icon.forward`,
+   * `row.settings`, `sep.3`), what the sheet's edit mode (Change Menu, TB-22) reorders and
+   * saves as `settings.menuOrder`. `id` is numbered per opening and names the click alone.
+   */
+  key?: string
   type: 'normal' | 'separator' | 'checkbox' | 'radio'
   label: string
   enabled: boolean
@@ -4225,6 +4292,12 @@ export interface MenuItemDescriptor {
    * away by the host's focus move.
    */
   keepsKeyboard?: boolean
+  /**
+   * The shortcut action the item stands for, when its template named one: the chrome can then
+   * recognise a row by what it does rather than by its label – the phone's Reader View crossing
+   * takes the page under its picture before the core's toggle runs (`lib/readerTransition.ts`).
+   */
+  action?: ShortcutAction
 }
 
 /**
@@ -4287,6 +4360,13 @@ export interface MenuDescriptor {
     | 'translate'
   /** What the phone sheet calls the menu (a bookmark's name, "3 selected"); the source's generic name when absent. */
   title?: string
+  /**
+   * The phone app menu's item keys in the build's default order (`shared/menuOrder.ts`), for its
+   * edit mode's Reset row (TB-22): the order the items are shown in is `settings.menuOrder`'s,
+   * applied by the core; this is what the default would put them back to. Absent on every other
+   * menu.
+   */
+  defaultOrder?: string[]
   /** Anchor in chrome CSS pixels, when known. */
   x: number | null
   y: number | null

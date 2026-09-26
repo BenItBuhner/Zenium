@@ -20,6 +20,8 @@ export function serialiseMenu(
       if (item.click) handlers.set(itemId, item.click)
       return {
         id: itemId,
+        // The phone app menu's items keep a name across openings for the saved order.
+        ...(item.key ? { key: item.key } : {}),
         type: item.type ?? 'normal',
         label: item.label ?? '',
         enabled: item.enabled ?? true,
@@ -28,15 +30,17 @@ export function serialiseMenu(
         submenu: item.submenu ? serialise(item.submenu) : null,
         // Only an icon-row item carries a glyph, only a saved group's row its mark, only a
         // device's row its kind, only a bound action a chord, only an empty state's sentence the
-        // note, only a destructive item the danger, only a field-mounting item the kept keyboard;
-        // every other descriptor keeps its shape.
+        // note, only a destructive item the danger, only a field-mounting item the kept keyboard,
+        // only an item standing for a shortcut action the action; every other descriptor keeps
+        // its shape.
         ...(item.glyph ? { glyph: item.glyph } : {}),
         ...(item.group ? { group: item.group } : {}),
         ...(item.device ? { device: item.device } : {}),
         ...(item.hint ? { hint: item.hint } : {}),
         ...(item.note ? { note: true } : {}),
         ...(item.danger ? { danger: true } : {}),
-        ...(item.keepsKeyboard ? { keepsKeyboard: true } : {})
+        ...(item.keepsKeyboard ? { keepsKeyboard: true } : {}),
+        ...(item.action ? { action: item.action } : {})
       }
     })
   return { items: serialise(items), handlers }
@@ -61,7 +65,8 @@ export class RendererMenuHost implements MenuHost {
       x: options.x ?? null,
       y: options.y ?? null,
       ...(options.keyboard !== undefined ? { keyboard: options.keyboard } : {}),
-      ...(options.header ? { header: options.header } : {})
+      ...(options.header ? { header: options.header } : {}),
+      ...(options.defaultOrder ? { defaultOrder: options.defaultOrder } : {})
     }
     this.open = { id, win: options.win, handlers }
     options.win.send('menu.show', descriptor)

@@ -322,6 +322,9 @@ export class ZenWindow {
     if (this.kind === 'synced') this.browser.state.commit()
     // An installed app's window opens where it last stood (Chrome remembers per app).
     if (this.app?.appId) this.browser.webApps.rememberBounds(this.app.appId, this.savedBounds)
+    // So does a page's utility window (the task manager), per device.
+    if (this.chrome === 'page')
+      this.browser.rememberPageWindowBounds(this, this.savedBounds, this.savedDisplayId)
   }
 
   /** Maximised / fullscreen / focus flags changed. */

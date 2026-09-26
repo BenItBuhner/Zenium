@@ -25,6 +25,7 @@ import { layoutRectUnder } from '@renderer/lib/layoutRect'
 import { subscribePageRecede } from '@renderer/lib/motion/recede'
 import { pageOffScreen, pageViewStore } from '@renderer/lib/pageView'
 import { usePrivateCoverUp } from '@renderer/lib/privateLock'
+import { readerCrossingHolds, readerCrossingStore } from '@renderer/lib/readerTransition'
 import { activeTab, isEmptySplitPane, visibleTabIds } from '@renderer/lib/selectors'
 import { contentAreaStore, coverBandStore, pageHidden, type UiState } from '@renderer/lib/ui'
 
@@ -160,7 +161,11 @@ export function useLayoutReporter(
   // the dialog's own flag has cleared (`holdFrameDialogCover`); or under the lock cover of a
   // locked private tab (INC-05, `PrivateLockCover`), until the cover has lifted.
   const lockCover = usePrivateCoverUp(state)
-  const contentHidden = pageHidden(ui) || lockCover
+  // Or under the reader crossing's picture and surface (MOT-36, `lib/readerTransition.ts`; the
+  // phone's, where the chrome lies under the pages): from the crossing's start until it asks
+  // the destination's view back (`landing`), the page stays off the screen.
+  const crossingHolds = readerCrossingStore.use((s) => readerCrossingHolds(s, activeTab(state)?.id))
+  const contentHidden = pageHidden(ui) || lockCover || crossingHolds
   // The strips the chrome's message cards cover at the frame's edges (see `coverBandStore`).
   const band = coverBandStore.use()
   // The live page is swapped for its cover, so the hide follows the cover's paint on every host

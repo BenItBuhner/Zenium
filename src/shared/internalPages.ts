@@ -609,12 +609,14 @@ export const INTERNAL_PAGES: Readonly<Record<InternalPageId, InternalPageDefinit
    * The task manager (`zen://tasks`, shortcuts-menus-121 / -149 / -32): every process the app
    * runs – the browser, each tab's renderer, each extension's host, the DevTools frontends, the
    * GPU and the utility processes – with its memory, CPU and network, and End process
-   * (`core/tasks.ts`, `Commands['tasks.list']`). Chrome's is a separate window on Shift+Esc; here
-   * it is a page tab like every other list page (the wave-5 plan's default until Bennett says
-   * otherwise), on the same chord and the More Tools row. Desktop layouts only, with no panel
-   * form: the processes are the desktop host's (Android's WebView runs no process of the app's
-   * own to list), so the page opens nowhere else – `pageOpensAsTab` says no on a tablet or a
-   * phone and, with no `overlay`, the ask is dropped. No star: a page of the browser's own.
+   * (`core/tasks.ts`, `Commands['tasks.list']`). Chrome's is a separate window on Shift+Esc, and
+   * so is this one on a host with windows (W5-18, Bennett's call of 2026-09-24): the same chord
+   * and the More Tools row open the page in a utility window of its own (`WindowChrome` `page`,
+   * one per profile, `Browser.openTaskManager`), while the address typed into a tab still
+   * renders the page there. Desktop layouts only, with no panel form: the processes are the
+   * desktop host's (Android's WebView runs no process of the app's own to list), so the page
+   * opens nowhere else – `pageOpensAsTab` says no on a tablet or a phone and, with no
+   * `overlay`, the ask is dropped. No star: a page of the browser's own.
    */
   tasks: {
     id: 'tasks',

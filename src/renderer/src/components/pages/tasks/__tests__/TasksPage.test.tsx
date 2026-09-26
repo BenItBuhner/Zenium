@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -17,6 +19,8 @@ import type { Tab, TaskInfo, TaskList, UIState } from '@shared/types'
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+const css = readFileSync(resolve(__dirname, '../../../../assets/main.css'), 'utf8')
 
 const MB = 1024 * 1024
 
@@ -80,13 +84,14 @@ const { TasksPage, TASKS_REFRESH_MS } = await import('../TasksPage')
 const { FrameDialogHost } = await import('@renderer/lib/portals')
 const { browserStore } = await import('@renderer/lib/browserStore')
 
-function state(platform = 'linux'): UIState {
+function state(platform = 'linux', chrome: 'full' | 'page' = 'full'): UIState {
   return {
     platform,
     shortcuts: [],
     spaces: [{ id: 'space', activeTabId: null, tabIds: [] }],
     activeSpaceId: 'space',
-    tabs: {}
+    tabs: {},
+    window: { chrome }
   } as unknown as UIState
 }
 
@@ -527,5 +532,86 @@ describe('TasksPage', () => {
       'This host lists no processes'
     )
     expect(rows(el)).toHaveLength(0)
+  })
+
+  it('in the window form drops the title block, names the table for the frame’s bar, and lets Escape by to the window unless the prompt or the field’s text takes it (W5-18)', async () => {
+    const el = await mountPage(tab(), state('linux', 'page'))
+    const page = el.querySelector<HTMLElement>('[data-testid="tasks-page"]')!
+    expect(page.classList.contains('zen-tasks-window')).toBe(true)
+    // The frame's bar is the title: no H1, no description; the search field leads the header.
+    expect(el.querySelector('h1.zen-page-title')).toBeNull()
+    expect(el.querySelector('.zen-page-title-desc')).toBeNull()
+    const field = el.querySelector<HTMLInputElement>('[data-testid="tasks-search"]')!
+    expect(field.closest('.zen-page-header')).not.toBeNull()
+    expect(el.querySelector('.zen-page-header')!.firstElementChild).toBe(
+      field.closest('.zen-page-search')
+    )
+    // R1: the 16 above the field is the HEADER's padding, never the search wrapper's – the
+    // glyph (and the clear button, once there is text) are absolute against that wrapper at the
+    // field's centre, so a padded wrapper would push the field down and leave them 16 high.
+    const wrapper = field.closest('.zen-page-search')!
+    expect(el.querySelector('.zen-page-search-glyph')!.closest('.zen-page-search')).toBe(wrapper)
+    expect(css).toMatch(/\.zen-tasks-window \.zen-page-header \{[^}]*padding-top: 16px;/)
+    expect(css).not.toMatch(/\.zen-tasks-window \.zen-page-search[^{]*\{[^}]*padding/)
+    const table = el.querySelector<HTMLElement>('[data-testid="tasks-table"]')!
+    expect(table.getAttribute('aria-label')).toBe('Task Manager')
+    expect(table.getAttribute('data-form')).toBe('window')
+    expect(
+      [...el.querySelectorAll('.zen-tasks-header [role="columnheader"]')].map((h) => text(h))
+    ).toEqual(['Task', 'Memory', 'CPU', 'Network'])
+    expect(pids(el)).toEqual([100, 201, 202, 301, 401, 501])
+
+    // Escape: the shell closes the window on a key nothing in the page took (`defaultPrevented`).
+    const escapeOn = async (target: HTMLElement): Promise<boolean> => {
+      const e = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      await act(async () => {
+        target.dispatchEvent(e)
+      })
+      return e.defaultPrevented
+    }
+    // A selected row does not swallow it: the selection stands and the key goes by.
+    await act(async () => rowButton(el, 201).click())
+    expect(selectedPid(el)).toBe(201)
+    expect(await escapeOn(rowButton(el, 201))).toBe(false)
+    expect(selectedPid(el)).toBe(201)
+    // An empty field does not either.
+    expect(await escapeOn(field)).toBe(false)
+    expect(field.value).toBe('')
+    // The field's text is the first Escape's: cleared, the key taken.
+    await type(field, 'wiki')
+    expect(pids(el)).toEqual([201])
+    expect(el.querySelector('.zen-page-search-clear')!.closest('.zen-page-search')).toBe(wrapper)
+    expect(await escapeOn(field)).toBe(true)
+    expect(field.value).toBe('')
+    await act(async () => {
+      vi.advanceTimersByTime(200)
+    })
+    expect(pids(el)).toEqual([100, 201, 202, 301, 401, 501])
+    // The prompt's before all: Escape cancels it and stops there; the selection stands.
+    await press(el, 'Delete')
+    await settle()
+    expect(prompt()).not.toBeNull()
+    expect(await escapeOn(page)).toBe(true)
+    await settle()
+    expect(prompt()).toBeNull()
+    await endExit()
+    expect(calls('tasks.end')).toEqual([])
+    expect(selectedPid(el)).toBe(201)
+    // The prompt gone, the next Escape is the window's again.
+    expect(await escapeOn(rowButton(el, 201))).toBe(false)
+
+    // The tab form keeps its title block and names the table for itself.
+    unmountPage()
+    const asTab = await mountPage(tab(), state('linux', 'full'))
+    expect(asTab.querySelector('[data-testid="tasks-page"]')!.classList).not.toContain(
+      'zen-tasks-window'
+    )
+    expect(text(asTab.querySelector('h1.zen-page-title'))).toBe('Task Manager')
+    expect(asTab.querySelector('[data-testid="tasks-table"]')!.getAttribute('aria-label')).toBe(
+      'Processes'
+    )
+    expect(asTab.querySelector('[data-testid="tasks-table"]')!.getAttribute('data-form')).toBe(
+      'tab'
+    )
   })
 })

@@ -246,6 +246,7 @@ function harness(): Harness {
       return undefined
     },
     windowIdOf: (w: ZenWindow) => (w === win ? WINDOW_ID : -1),
+    windows: () => [win],
     zenWindow: (windowId: number) => (windowId === WINDOW_ID ? win : undefined),
     lastFocusedWindow: () => win,
     currentWindowId: () => WINDOW_ID,

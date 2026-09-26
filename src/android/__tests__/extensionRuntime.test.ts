@@ -2885,9 +2885,7 @@ describe('AndroidExtensionRuntime: chrome.permissions', () => {
     expect(
       (await call(h, 'bg1', 'permissions', 'contains', [{ origins: ['file:///*'] }])).result
     ).toBe(false)
-    expect(
-      (await call(h, 'bg1', 'extension', 'isAllowedFileSchemeAccess', [])).result
-    ).toBe(false)
+    expect((await call(h, 'bg1', 'extension', 'isAllowedFileSchemeAccess', [])).result).toBe(false)
     // The start-up trim on a fresh install: every listed origin, none of them the file pattern.
     const listed = (await call(h, 'bg1', 'permissions', 'getAll', [])).result as {
       origins: string[]
@@ -2928,9 +2926,7 @@ describe('AndroidExtensionRuntime: chrome.permissions', () => {
     expect(
       (await call(h, 'bg1', 'permissions', 'contains', [{ origins: ['file:///*'] }])).result
     ).toBe(true)
-    expect(
-      (await call(h, 'bg1', 'extension', 'isAllowedFileSchemeAccess', [])).result
-    ).toBe(true)
+    expect((await call(h, 'bg1', 'extension', 'isAllowedFileSchemeAccess', [])).result).toBe(true)
   })
 })
 
@@ -3352,9 +3348,9 @@ describe("AndroidExtensionRuntime: chrome.downloads' shelf and bubble switches o
       record(h, {}, manifest({ permissions: ['downloads', 'downloads.ui', 'storage'] }))
     )
     backgroundUp(h, 'bg1')
-    expect(await call(h, 'bg1', 'downloads', 'setUiOptions', [{ enabled: false }])).toMatchObject(
-      { ok: true }
-    )
+    expect(await call(h, 'bg1', 'downloads', 'setUiOptions', [{ enabled: false }])).toMatchObject({
+      ok: true
+    })
     expect(await call(h, 'bg1', 'downloads', 'setUiOptions', [{}])).toMatchObject({
       ok: false,
       error: expect.stringContaining("Missing required property 'enabled'")
@@ -3370,12 +3366,10 @@ describe("AndroidExtensionRuntime: chrome.downloads' shelf and bubble switches o
     const h = harness()
     await h.runtime.attach(record(h, {}, manifest({ permissions: ['downloads', 'storage'] })))
     backgroundUp(h, 'bg1')
-    expect(await call(h, 'bg1', 'downloads', 'setUiOptions', [{ enabled: false }])).toMatchObject(
-      {
-        ok: false,
-        error: expect.stringContaining('chrome.downloads.setUiOptions is not implemented')
-      }
-    )
+    expect(await call(h, 'bg1', 'downloads', 'setUiOptions', [{ enabled: false }])).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('chrome.downloads.setUiOptions is not implemented')
+    })
   })
 })
 
