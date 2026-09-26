@@ -97,6 +97,15 @@ object PromptSheetSpec {
     const val SMALL_LINE_SP = 20
     /** `.zen-ext-dialog-body`'s gap: the caption's 8 to the rows under it. */
     const val CAPTION_GAP_DP = 8
+    /**
+     * A prompt's detail line under its description – the address the browser window's Open in
+     * <App>? sheet shows (`ExternalProtocolSheet.tsx`: `truncate px-4 pb-2 text-[13px]
+     * leading-[var(--v2-line-small)] text-[var(--v2-text-deemphasized)]`): the small type at 69 %
+     * ([SMALL_SP] on [SMALL_LINE_SP], [DEEMPHASIZED_ALPHA]) on one line truncated from the end, in
+     * the block's gutter, §9.7's 16 under the description ([BODY_GAP_DP], the title block's
+     * padding-bottom the web line follows) and its own 8 (`pb-2`) over the footer's 16.
+     */
+    const val DETAIL_BOTTOM_DP = 8
     /** `--v2-icon` on a phone: a row's leading glyph (`.zen-v2-row-lead`), in the deemphasised ink. */
     const val ROW_GLYPH_DP = 20
     /** `--v2-text-deemphasized`: the description's ink is the text at 69 %. */
@@ -167,15 +176,20 @@ object PromptSheetSpec {
  * inside the very call the prompt answers, and the unresponsive-page prompt (ERR-16) while that
  * renderer has stopped answering: nothing the chrome's JavaScript draws can come up meanwhile,
  * so the composition is imitated here, held to the sheet's numbers ([PromptSheetSpec]) and the
- * theme's inks ([V2Ink]) exactly, both pinned against main.css by `V2TokensPinTest`.
+ * theme's inks ([V2Ink]) exactly, both pinned against main.css by `V2TokensPinTest`. The two
+ * windows with no chrome renderer at all ask on it too (§9.23 names them): the installed web
+ * app's window its notification question ([PermissionPromptSheet], #515), the Custom Tab its
+ * permission ask and its Open in <App>? confirmation ([CustomTabHost]) – the browser window's
+ * `ExternalProtocolSheet` in the form below, whose address line is the [Content.detail] slot.
  *
  * The composition, top to bottom: the panel surface with its 12 top radii and the hairline round
  * its top and sides (none along the screen's edge, as `.zen-sheet`'s `border-bottom: 0`; every
  * hairline one dp – [PromptSheetSpec.hairlinePx] – as the chrome's 1 CSS px), edge to edge at
  * the bottom; the §9.9 grip strip; the title block, PINNED – an optional 20 glyph on the
- * title's start at the 8 gap, the title 17/600 on 22, and an optional description 15 at 69 % on
+ * title's start at the 8 gap, the title 17/600 on 22, an optional description 15 at 69 % on
  * 20, 4 under it, for a sentence of OURS ("Changes you made may not be saved.", "This page isn't
- * responding…") – 16 to the body; the body, which SCROLLS under the block with §9.7's hairline at
+ * responding…"), and an optional detail line 13 at 69 % on one line, 16 under that (the address
+ * a link would hand to another app) – 16 to the body; the body, which SCROLLS under the block with §9.7's hairline at
  * the boundary once it has moved and above the footer with that line's mirror – at the footer's
  * top edge while content remains beneath, gone at scroll end, so the last visible line never
  * hangs clipped over the buttons; a body that fits draws neither: optional body copy 15/400 in
@@ -228,6 +242,14 @@ class NativePromptSheet(
         val title: CharSequence,
         /** OUR sentence under the title, 15 at 69 %, 4 below it, in the pinned block: "Changes you made may not be saved." Line breaks kept. */
         val description: CharSequence? = null,
+        /**
+         * A detail line 16 under the description, still in the pinned block: 13 at 69 % on ONE line
+         * truncated from the end – the address a link is about to hand to another app, as the
+         * browser window's Open in <App>? sheet shows it ([PromptSheetSpec.DETAIL_BOTTOM_DP]).
+         */
+        val detail: CharSequence? = null,
+        /** The detail's accessible name where the line shows a rendering of it (a decoded address; the full URL): the line's own text when null. */
+        val detailName: CharSequence? = null,
         /** The PAGE's words as body copy, 15/400 in the text ink, in the scrolling body: an alert's or confirm's message. Line breaks kept. */
         val body: CharSequence? = null,
         /** A `.zen-v2-caption` over the rows, 13 at 69 % on 20, in the gutter ("It can:"); shown only with rows. */
@@ -420,12 +442,15 @@ class NativePromptSheet(
      * §9.23: the glyph and the title on one line, our description 4 under, in the block's 16;
      * pinned above the body. Its 16 below is the 16 to the body (§9.7); with nothing in the body
      * the block keeps no bottom padding, since the footer brings its own 16 (`.zen-sheet-footer`).
+     * A detail line ([Content.detail]) stands that 16 under the description and keeps its own 8
+     * beneath it over the footer's 16, as the browser sheet's address line does.
      */
     private fun titleBlock(toBody: Boolean): View {
         val pad = dp(PromptSheetSpec.BLOCK_PADDING_DP)
+        val detail = content.detail?.takeIf { it.isNotEmpty() }
         val block = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(pad, pad, pad, if (toBody) pad else 0)
+            setPadding(pad, pad, pad, if (toBody) pad else if (detail != null) dp(PromptSheetSpec.DETAIL_BOTTOM_DP) else 0)
         }
         val title = TextView(context).apply {
             text = content.title
@@ -455,6 +480,9 @@ class NativePromptSheet(
         val description = content.description
         if (!description.isNullOrEmpty()) block.addView(paragraph(description, ink.textDeemphasized), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(PromptSheetSpec.DESCRIPTION_GAP_DP)
+        })
+        if (detail != null) block.addView(detail(detail), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(PromptSheetSpec.BODY_GAP_DP)
         })
         return block
     }
@@ -576,6 +604,13 @@ class NativePromptSheet(
         setTextSize(TypedValue.COMPLEX_UNIT_SP, PromptSheetSpec.SMALL_SP.toFloat())
         typeface = weight(PromptSheetSpec.BODY_WEIGHT)
         TextViewCompat.setLineHeight(this, sp(PromptSheetSpec.SMALL_LINE_SP))
+    }
+
+    /** The detail line: the caption's type on one line truncated from the end, the full text (or the name given) its accessible name. */
+    private fun detail(text: CharSequence): TextView = caption(text).apply {
+        maxLines = 1
+        ellipsize = TextUtils.TruncateAt.END
+        contentDescription = content.detailName ?: text
     }
 
     /**

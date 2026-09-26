@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import type { Settings } from '../../../shared/types'
+import type { ReadingListEntry, Settings } from '../../../shared/types'
 import { DEFAULT_SETTINGS } from '../../../shared/defaults'
+import { READING_LIST_CAP, compareReadAge, isUnread } from '../../../shared/readingList'
 import { FOLDER_LOST_MESSAGE } from '../engine'
 import {
   SETTINGS_RECORD_ID,
@@ -429,27 +430,28 @@ describe('a build that adds a settings key', () => {
  * The rule: an edit is stamped where it is MADE (`onLocalChange`, at the commit that carries it),
  * never where it is NOTICED (`run()`). The boot seed adopts a build's hashes without a stamp.
  */
+type Files = Record<string, string>
+
+/** Lets the deferred state broadcast (`onLocalChange`) run, and moves the clock by a few ms. */
+const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 5))
+
+/** Close the device: its profile and sync state as this build leaves them on disk. */
+function close(d: Device): Files {
+  d.browser.flushSync()
+  const files = { ...d.io.files }
+  d.engine.disconnect(false)
+  return files
+}
+
+/** Launch a device again on the files a closed one left (and its keystore, when it has a vault). */
+function reopen(name: string, files: Files, keys?: Device['keys']): Device {
+  const io = memoryIo()
+  Object.assign(io.files, files)
+  return device(name, { io, ...(keys ? { keys } : {}) })
+}
+
 describe('an edit is stamped where it is made, not where it is noticed', () => {
   type Json = Record<string, unknown>
-  type Files = Record<string, string>
-
-  /** Lets the deferred state broadcast (`onLocalChange`) run, and moves the clock by a few ms. */
-  const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 5))
-
-  /** Close the device: its profile and sync state as this build leaves them on disk. */
-  function close(d: Device): Files {
-    d.browser.flushSync()
-    const files = { ...d.io.files }
-    d.engine.disconnect(false)
-    return files
-  }
-
-  /** Launch a device again on the files a closed one left (and its keystore, when it has a vault). */
-  function reopen(name: string, files: Files, keys?: Device['keys']): Device {
-    const io = memoryIo()
-    Object.assign(io.files, files)
-    return device(name, { io, ...(keys ? { keys } : {}) })
-  }
 
   async function settingsRecord(d: Device): Promise<SyncRecord> {
     const record = (await published(d)).find((r) => r.id === SETTINGS_RECORD_ID)
@@ -1179,4 +1181,474 @@ describe('the settings record merges per key, as Chrome Sync treats preferences'
     expect(mine.modified).toBe(stamped.modified)
     expect(mine.keys).toBeUndefined()
   }, 30_000)
+})
+
+/**
+ * The reading list across two devices (services pass 11, item 3; ID-48): one `reading-list-entry`
+ * record per entry, every field but `favicon`; the engine's `modified` the clock (an edit stamped
+ * at its commit), tombstones from an entry's absence, the URL dedupe's loser tombstoned at the
+ * round that took it out, no stamp for the entries a profile held before the type existed.
+ */
+describe('the reading list across two devices', () => {
+  const readingRecords = async (d: Device): Promise<SyncRecord[]> =>
+    (await published(d)).filter((r) => r.type === 'reading-list-entry')
+
+  const ids = (d: Device): string[] => d.browser.state.readingList.map((e) => e.id).sort()
+
+  it('replicates the list both ways without favicons, last writer by the stamp; a removal lands as a tombstone', async () => {
+    const a = device('Desk (Linux)')
+    const b = device('Pixel 9')
+    const one = a.browser.readingList.add('https://one.example/', 'One', 'data:fav-one')!
+    const two = a.browser.readingList.add('https://two.example/', 'Two', 'data:fav-two')!
+    expect(one.favicon).toBe('data:fav-one')
+
+    await setup(a)
+    expect(a.engine.status().scope.readingList).toBe(true)
+    // The record as it goes over the wire: the entry's fields but the favicon, in the normal
+    // form's order, `modified` 0 for a record first seen (no one edited it since it was known).
+    const aRecords = await readingRecords(a)
+    expect(aRecords.map((r) => r.id).sort()).toEqual([one.id, two.id].sort())
+    const oneRecord = aRecords.find((r) => r.id === one.id)!
+    expect(oneRecord).toEqual({
+      id: one.id,
+      type: 'reading-list-entry',
+      data: {
+        id: one.id,
+        url: 'https://one.example/',
+        title: 'One',
+        addedAt: one.addedAt,
+        updatedAt: one.updatedAt
+      },
+      modified: 0,
+      deleted: false
+    })
+    expect(Object.keys(oneRecord.data as object)).toEqual([
+      'id',
+      'url',
+      'title',
+      'addedAt',
+      'updatedAt'
+    ])
+    for (const text of folderFiles('/drive').values()) expect(text).not.toContain('fav-one')
+
+    // The phone joins and takes the list: the entries whole, no favicon (the phone resolves its own).
+    await setup(b)
+    await b.engine.confirmMerge(true)
+    expect(ids(b)).toEqual(ids(a))
+    expect(b.browser.readingList.get(one.id)).toEqual({
+      id: one.id,
+      url: 'https://one.example/',
+      title: 'One',
+      addedAt: one.addedAt,
+      updatedAt: one.updatedAt
+    })
+    expect(b.browser.readingList.unreadCount).toBe(2)
+
+    // Read on the phone: the edit is stamped at its commit and lands on the desktop, favicon kept.
+    await settle()
+    expect(b.browser.readingList.setRead(one.id, true)).toBe(true)
+    await settle()
+    await b.engine.syncNow()
+    const theirs = (await readingRecords(b)).find((r) => r.id === one.id)!
+    expect(theirs.modified).toBeGreaterThan(0)
+    expect((theirs.data as ReadingListEntry).readAt).toBeDefined()
+    await a.engine.syncNow()
+    expect(a.browser.readingList.get(one.id)).toMatchObject({
+      readAt: (theirs.data as ReadingListEntry).readAt,
+      favicon: 'data:fav-one'
+    })
+    expect(a.browser.readingList.unreadCount).toBe(1)
+
+    // Both flip the same entry apart: the later stamp wins on both, whichever device made it.
+    await settle()
+    expect(a.browser.readingList.setRead(one.id, false)).toBe(true)
+    await settle()
+    expect(b.browser.readingList.setRead(one.id, false)).toBe(true)
+    await settle()
+    expect(b.browser.readingList.setRead(one.id, true)).toBe(true)
+    await settle()
+    await a.engine.syncNow()
+    await b.engine.syncNow()
+    await a.engine.syncNow()
+    expect(a.browser.readingList.get(one.id)?.readAt).toBeDefined()
+    expect(b.browser.readingList.get(one.id)?.readAt).toBe(
+      a.browser.readingList.get(one.id)?.readAt
+    )
+    const aStamp = (await readingRecords(a)).find((r) => r.id === one.id)!.modified
+    const bStamp = (await readingRecords(b)).find((r) => r.id === one.id)!.modified
+    expect(aStamp).toBe(bStamp)
+
+    // The desktop removes an entry: a tombstone at the removal's time, and the phone drops it.
+    await settle()
+    expect(a.browser.readingList.remove(two.id)).toBe(true)
+    await settle()
+    await a.engine.syncNow()
+    const gone = (await readingRecords(a)).find((r) => r.id === two.id)!
+    expect(gone).toMatchObject({ deleted: true, data: null })
+    expect(gone.modified).toBeGreaterThan(0)
+    await b.engine.syncNow()
+    expect(b.browser.readingList.get(two.id)).toBeNull()
+    expect(ids(a)).toEqual([one.id])
+    expect(ids(b)).toEqual([one.id])
+  }, 30_000)
+
+  it('the same page saved on both devices apart converges on one entry – the later addedAt – with the loser tombstoned at the round that took it out, in both directions', async () => {
+    const a = device('Desk (Linux)')
+    const b = device('Pixel 9')
+    await setup(a)
+    await setup(b)
+    await b.engine.confirmMerge(true)
+
+    // Apart: the desktop saves the page first, the phone a moment later (the later addedAt).
+    const mine = a.browser.readingList.add('https://same.example/', 'Same (desk)', 'data:fav')!
+    await settle()
+    const theirs = b.browser.readingList.add('https://same.example/', 'Same (phone)')!
+    expect(theirs.addedAt).toBeGreaterThan(mine.addedAt)
+    await settle()
+    await a.engine.syncNow()
+    // A record first seen goes out at 0, as every type's does (no one edited it since it was
+    // known); the dedupe reads no timestamp of the engine's, only the entries' `addedAt`.
+    const mineStamp = (await readingRecords(a)).find((r) => r.id === mine.id)!.modified
+    expect(mineStamp).toBe(0)
+
+    // The phone's round: the desktop's entry arrives, loses the dedupe to the phone's own and
+    // never lands; the re-snapshot finds the record it was handed vanished and tombstones it now.
+    await b.engine.syncNow()
+    expect(ids(b)).toEqual([theirs.id])
+    const bRecords = await readingRecords(b)
+    const loser = bRecords.find((r) => r.id === mine.id)!
+    expect(loser).toMatchObject({ deleted: true })
+    expect(loser.modified).toBeGreaterThan(mineStamp)
+    expect(bRecords.find((r) => r.id === theirs.id)).toMatchObject({ deleted: false })
+
+    // The desktop's round: the tombstone takes its entry, the phone's lands – one entry per URL.
+    await a.engine.syncNow()
+    expect(ids(a)).toEqual([theirs.id])
+    expect(a.browser.readingList.findByUrl('https://same.example/')).toEqual({
+      id: theirs.id,
+      url: 'https://same.example/',
+      title: 'Same (phone)',
+      addedAt: theirs.addedAt,
+      updatedAt: theirs.updatedAt
+    })
+    await b.engine.syncNow()
+    expect(ids(b)).toEqual([theirs.id])
+
+    // The other direction: the phone saves first, the desktop later; the phone's own entry goes
+    // out of its list when the desktop's arrives – its tombstone follows, the survivor's stamp is
+    // the desktop's, unchanged.
+    await settle()
+    const early = b.browser.readingList.add('https://other.example/', 'Other (phone)')!
+    await settle()
+    const late = a.browser.readingList.add('https://other.example/', 'Other (desk)')!
+    expect(late.addedAt).toBeGreaterThan(early.addedAt)
+    await settle()
+    await a.engine.syncNow()
+    const lateStamp = (await readingRecords(a)).find((r) => r.id === late.id)!.modified
+    await b.engine.syncNow()
+    expect(ids(b)).toEqual([theirs.id, late.id].sort())
+    const afterB = await readingRecords(b)
+    expect(afterB.find((r) => r.id === early.id)).toMatchObject({ deleted: true })
+    expect(afterB.find((r) => r.id === late.id)!.modified).toBe(lateStamp)
+    await a.engine.syncNow()
+    expect(ids(a)).toEqual([theirs.id, late.id].sort())
+    expect((await readingRecords(a)).find((r) => r.id === late.id)!.modified).toBe(lateStamp)
+    // Steady state: another round each changes nothing.
+    await b.engine.syncNow()
+    await a.engine.syncNow()
+    expect(ids(a)).toEqual(ids(b))
+    expect(a.browser.readingList.findByUrl('https://other.example/')?.id).toBe(late.id)
+  }, 30_000)
+
+  it("the entries a profile held before the type existed go out at modified 0 at the first sync on the new build – never at the launch – so a peer's edit of them wins", async () => {
+    const a = device('Desk (Linux)')
+    const b = device('Pixel 9')
+    await setup(a)
+    await setup(b)
+    await b.engine.confirmMerge(true)
+    await a.engine.syncNow()
+
+    // The desktop is closed; the previous build (the reading list without its sync type) left a
+    // list in the profile and a sync state that knows nothing of it – no metadata for the
+    // entries, no `readingList` in the scope object.
+    const closed = close(a)
+    const held: ReadingListEntry[] = [
+      {
+        id: 'rl_before_1',
+        url: 'https://before.example/1',
+        title: 'Before 1',
+        addedAt: 1_000,
+        updatedAt: 1_000,
+        favicon: 'data:fav-before'
+      },
+      {
+        id: 'rl_before_2',
+        url: 'https://before.example/2',
+        title: 'Before 2',
+        addedAt: 2_000,
+        updatedAt: 2_500,
+        readAt: 2_500
+      }
+    ]
+    const state = JSON.parse(closed['state.json']!) as { readingList?: ReadingListEntry[] }
+    expect(state.readingList ?? []).toEqual([])
+    state.readingList = held
+    closed['state.json'] = JSON.stringify(state)
+    const sync = JSON.parse(closed['sync.json']!) as {
+      meta: MetaMap
+      scope: Record<string, boolean>
+    }
+    delete sync.scope.readingList
+    expect(Object.values(sync.meta).some((m) => m.type === 'reading-list-entry')).toBe(false)
+    closed['sync.json'] = JSON.stringify(sync)
+
+    // The desktop launches into the build: the scope completes to the default (on), the seed at
+    // start writes nothing for the entries (it has no entry to adopt a hash into), and the first
+    // round publishes them at 0 – the timestamp of a record no one edited since it was known.
+    await settle()
+    const launched = Date.now()
+    const upgraded = reopen('Desk (Linux)', closed)
+    expect(upgraded.engine.status().scope.readingList).toBe(true)
+    upgraded.engine.flushSync()
+    const seeded = (JSON.parse(upgraded.io.files['sync.json']!) as { meta: MetaMap }).meta
+    expect(seeded.rl_before_1).toBeUndefined()
+    expect(seeded.rl_before_2).toBeUndefined()
+    await upgraded.engine.syncNow()
+    expect(upgraded.engine.status().lastError).toBeNull()
+    const records = await readingRecords(upgraded)
+    expect(records.map((r) => r.id).sort()).toEqual(['rl_before_1', 'rl_before_2'])
+    for (const r of records) {
+      expect(r.modified).toBe(0)
+      expect(r.modified).toBeLessThan(launched)
+      expect(r.data).not.toHaveProperty('favicon')
+    }
+    expect(records.find((r) => r.id === 'rl_before_2')!.data).toEqual({
+      id: 'rl_before_2',
+      url: 'https://before.example/2',
+      title: 'Before 2',
+      addedAt: 2_000,
+      updatedAt: 2_500,
+      readAt: 2_500
+    })
+    upgraded.engine.flushSync()
+    const meta = (JSON.parse(upgraded.io.files['sync.json']!) as { meta: MetaMap }).meta
+    expect(meta.rl_before_1?.modified).toBe(0)
+    expect(meta.rl_before_2?.modified).toBe(0)
+
+    // The phone takes them, then edits one: its stamp is a real time, and it wins on the desktop.
+    await b.engine.syncNow()
+    expect(ids(b)).toEqual(['rl_before_1', 'rl_before_2'])
+    await settle()
+    expect(b.browser.readingList.setRead('rl_before_1', true)).toBe(true)
+    await settle()
+    await b.engine.syncNow()
+    await upgraded.engine.syncNow()
+    expect(upgraded.browser.readingList.get('rl_before_1')).toMatchObject({
+      readAt: expect.any(Number),
+      favicon: 'data:fav-before'
+    })
+    expect(upgraded.browser.readingList.unreadCount).toBe(0)
+  }, 30_000)
+
+  it('turning the reading list off stops sending and receiving it without deleting anything, on either device', async () => {
+    const a = device('Desk (Linux)')
+    const b = device('Pixel 9')
+    const kept = a.browser.readingList.add('https://kept.example/', 'Kept')!
+    await setup(a)
+    await setup(b)
+    await b.engine.confirmMerge(true)
+    expect(b.browser.readingList.get(kept.id)).not.toBeNull()
+
+    // The desktop turns the type off: its file carries no entry and no tombstone either.
+    a.engine.setScope({ readingList: false })
+    expect(a.engine.status().scope.readingList).toBe(false)
+    await a.engine.syncNow()
+    expect(await readingRecords(a)).toEqual([])
+    await b.engine.syncNow()
+    expect(b.browser.readingList.get(kept.id)).not.toBeNull()
+    expect(a.browser.readingList.get(kept.id)).not.toBeNull()
+
+    // The phone saves a page and removes the shared one meanwhile; the desktop, with the type
+    // off, takes neither the page nor the removal.
+    await settle()
+    const theirs = b.browser.readingList.add('https://phone.example/', 'Phone')!
+    expect(b.browser.readingList.remove(kept.id)).toBe(true)
+    await settle()
+    await b.engine.syncNow()
+    await a.engine.syncNow()
+    expect(a.browser.readingList.get(theirs.id)).toBeNull()
+    expect(a.browser.readingList.get(kept.id)).not.toBeNull()
+
+    // Back on: the desktop publishes again and catches up – the page lands, the removal too.
+    a.engine.setScope({ readingList: true })
+    await a.engine.syncNow()
+    expect(a.browser.readingList.get(theirs.id)).not.toBeNull()
+    expect(a.browser.readingList.get(kept.id)).toBeNull()
+    expect((await readingRecords(a)).filter((r) => !r.deleted).map((r) => r.id)).toEqual([
+      theirs.id
+    ])
+  }, 30_000)
+
+  /**
+   * The cap under sync (services pass 11, item 4; the root's ruling, the mechanism agreed with
+   * desktop): `READING_LIST_CAP` bounds the READ half of the fleet's union alone – the oldest by
+   * `readAt` go, a tie by the id, the same on every device – and an unread entry is never
+   * trimmed, so no sync round ever deletes a page the user has not read.
+   */
+  const tombstoned = async (d: Device): Promise<string[]> =>
+    (await readingRecords(d))
+      .filter((r) => r.deleted)
+      .map((r) => r.id)
+      .sort()
+  const unreadIds = (d: Device): string[] =>
+    d.browser.state.readingList
+      .filter(isUnread)
+      .map((e) => e.id)
+      .sort()
+  const readIds = (d: Device): string[] =>
+    d.browser.state.readingList
+      .filter((e) => !isUnread(e))
+      .map((e) => e.id)
+      .sort()
+
+  it('2 × 600 unread: zero unread lost – both devices converge on all 1 200, no reading-list tombstone in either file, a further round changes nothing', async () => {
+    const a = device('Desk (Linux)')
+    const b = device('Pixel 9')
+    const mine: string[] = []
+    const theirs: string[] = []
+    for (let i = 1; i <= 600; i++) {
+      mine.push(a.browser.readingList.add(`https://desk.example/${i}`, `Desk ${i}`)!.id)
+      theirs.push(b.browser.readingList.add(`https://phone.example/${i}`, `Phone ${i}`)!.id)
+    }
+    const all = [...mine, ...theirs].sort()
+    expect(all).toHaveLength(2 * 600)
+    expect(2 * 600).toBeGreaterThan(READING_LIST_CAP)
+
+    // The phone joins the desktop's folder and merges: the union runs over the old cap, and
+    // nothing goes – every one of the 1 200 is unread.
+    await setup(a)
+    await setup(b)
+    await b.engine.confirmMerge(true)
+    expect(ids(b)).toEqual(all)
+    expect(b.browser.readingList.unreadCount).toBe(1200)
+    await a.engine.syncNow()
+    expect(ids(a)).toEqual(all)
+    expect(a.browser.readingList.unreadCount).toBe(1200)
+    await b.engine.syncNow()
+    expect(ids(b)).toEqual(all)
+
+    // No reading-list tombstone in either device's file: nothing was deleted anywhere.
+    expect(await tombstoned(a)).toEqual([])
+    expect(await tombstoned(b)).toEqual([])
+    expect((await readingRecords(a)).map((r) => r.id).sort()).toEqual(all)
+    expect((await readingRecords(b)).map((r) => r.id).sort()).toEqual(all)
+
+    // A further round each changes nothing: the same 1 200, the same records.
+    const aBefore = await readingRecords(a)
+    const bBefore = await readingRecords(b)
+    await a.engine.syncNow()
+    await b.engine.syncNow()
+    await a.engine.syncNow()
+    expect(ids(a)).toEqual(all)
+    expect(ids(b)).toEqual(all)
+    expect(a.browser.readingList.unreadCount).toBe(1200)
+    expect(b.browser.readingList.unreadCount).toBe(1200)
+    expect(await readingRecords(a)).toEqual(aBefore)
+    expect(await readingRecords(b)).toEqual(bBefore)
+    expect(await tombstoned(a)).toEqual([])
+    expect(await tombstoned(b)).toEqual([])
+  }, 60_000)
+
+  it('1 200 read + 100 unread: 1 000 read, the oldest readAt gone, every unread kept – the same set on both, tombstones for exactly those 200', async () => {
+    const a = device('Desk (Linux)')
+    const b = device('Pixel 9')
+    // 600 read pages on each device (their `readAt`s interleave: each service's clock is its
+    // own, strictly increasing) and 50 unread on each – 1 200 read + 100 unread across the two.
+    const readOn = (d: Device, host: string): ReadingListEntry[] => {
+      const out: ReadingListEntry[] = []
+      for (let i = 1; i <= 600; i++) {
+        const e = d.browser.readingList.add(`https://${host}/${i}`, `${host} ${i}`)!
+        expect(d.browser.readingList.setRead(e.id, true)).toBe(true)
+        out.push(d.browser.readingList.get(e.id)!)
+      }
+      return out
+    }
+    const aRead = readOn(a, 'desk.example')
+    const bRead = readOn(b, 'phone.example')
+    const aUnread = Array.from(
+      { length: 50 },
+      (_, i) => a.browser.readingList.add(`https://desk-later.example/${i}`, `Later ${i}`)!.id
+    )
+    const bUnread = Array.from(
+      { length: 50 },
+      (_, i) => b.browser.readingList.add(`https://phone-later.example/${i}`, `Later ${i}`)!.id
+    )
+    const everyUnread = [...aUnread, ...bUnread].sort()
+    // The 200 the cap must take: the earliest `readAt` across BOTH devices' read entries, a tie
+    // by the id – the shared trim's order, computed here on the union before any sync.
+    const byAge = [...aRead, ...bRead].sort(compareReadAge)
+    const expectedGone = byAge
+      .slice(0, 200)
+      .map((e) => e.id)
+      .sort()
+    const expectedRead = byAge
+      .slice(200)
+      .map((e) => e.id)
+      .sort()
+    expect(expectedRead).toHaveLength(READING_LIST_CAP)
+
+    // The phone merges the desktop's list: 1 200 read land on it, the 200 oldest by `readAt` go
+    // and its round tombstones them; the desktop takes the tombstones and the phone's entries.
+    await setup(a)
+    await setup(b)
+    await b.engine.confirmMerge(true)
+    expect(readIds(b)).toEqual(expectedRead)
+    expect(unreadIds(b)).toEqual(everyUnread)
+    await a.engine.syncNow()
+    expect(readIds(a)).toEqual(expectedRead)
+    expect(unreadIds(a)).toEqual(everyUnread)
+    await b.engine.syncNow()
+    await a.engine.syncNow()
+
+    // Converged: 1 000 read + 100 unread on both, the same set by id; the 200 gone are the
+    // oldest by `readAt`; every unread entry kept.
+    expect(ids(a)).toEqual(ids(b))
+    expect(readIds(a)).toEqual(expectedRead)
+    expect(readIds(b)).toEqual(expectedRead)
+    expect(unreadIds(a)).toEqual(everyUnread)
+    expect(unreadIds(b)).toEqual(everyUnread)
+    expect(a.browser.state.readingList).toHaveLength(READING_LIST_CAP + 100)
+    expect(b.browser.state.readingList).toHaveLength(READING_LIST_CAP + 100)
+    for (const id of expectedGone) {
+      expect(a.browser.readingList.get(id)).toBeNull()
+      expect(b.browser.readingList.get(id)).toBeNull()
+    }
+    // Tombstones for exactly those 200 and nothing else: the phone's file, which made the trim,
+    // carries all 200; the desktop's carries those of the 200 it held – its own read entries the
+    // phone's tombstones took out (a tombstone for an id a device never held is no winner there,
+    // `winningRemote`, so it is not echoed). The two files' tombstones together are the 200, and
+    // no other id is tombstoned anywhere; a live record for every survivor.
+    const aOwn = new Set(aRead.map((e) => e.id))
+    expect(await tombstoned(b)).toEqual(expectedGone)
+    expect(await tombstoned(a)).toEqual(expectedGone.filter((id) => aOwn.has(id)))
+    expect([...new Set([...(await tombstoned(a)), ...(await tombstoned(b))])].sort()).toEqual(
+      expectedGone
+    )
+    for (const d of [a, b]) {
+      const live = (await readingRecords(d))
+        .filter((r) => !r.deleted)
+        .map((r) => r.id)
+        .sort()
+      expect(live).toEqual([...expectedRead, ...everyUnread].sort())
+    }
+    // Steady state: another round each changes nothing.
+    const aTombs = await tombstoned(a)
+    await b.engine.syncNow()
+    await a.engine.syncNow()
+    expect(ids(a)).toEqual(ids(b))
+    expect(readIds(a)).toEqual(expectedRead)
+    expect(unreadIds(a)).toEqual(everyUnread)
+    expect(await tombstoned(a)).toEqual(aTombs)
+    expect(await tombstoned(b)).toEqual(expectedGone)
+  }, 60_000)
 })

@@ -133,6 +133,7 @@ import { formatBytes, relativeTime } from '@renderer/lib/utils'
 import { versionReport } from '@renderer/lib/versionReport'
 import { VaultPassphraseForm } from '../../autofill/PassphraseForm'
 import { ContainerIcon } from '../../ContainerIcon'
+import { openMagicStackCustomize } from '../../newtab/magicStackCustomize'
 import {
   clearDataGroups,
   safetyCheckGroups,
@@ -1356,6 +1357,27 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
           sheetDescription: NEW_TAB_LAYOUT_HINT,
           onChange: (v) => write(pickNewTabPreset(prefs, v))
         }),
+        {
+          // The phone's cards under the shortcuts (NTP-16, Chrome's Magic Stack – "Cards" to the
+          // user): a level beside Layout and Shortcuts, the second door to the one Show list the
+          // page's gear sheet opens (§9.29's two doors, one setting) – the very sheet, over this
+          // page, not a copy of its rows. The hidden set is this device's, so the row is the
+          // phone layout's alone; the desktop has no stack and its page keeps its rows.
+          kind: 'action',
+          id: 'newtab-cards',
+          label: 'Cards',
+          description: 'Choose which cards show under the shortcuts',
+          keywords: [
+            'continue where you left off',
+            'recently closed',
+            'downloads',
+            'bookmarks',
+            'default browser'
+          ],
+          layouts: ['phone'],
+          leaves: 'chevron',
+          onPress: openMagicStackCustomize
+        },
         choice<NewTabShortcutsMode>({
           id: 'newtab-shortcuts',
           label: 'Shortcuts',
@@ -2807,8 +2829,9 @@ function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
         }),
         // The EEA's choice screen again (W6-2; Chrome's chrome://search-engine-choice can be
         // reopened from its Search engine settings): on a device in the EEA, or one that
-        // answered the screen once (a record) wherever it is now. The screen is the desktop's
-        // and the tablet's; the phone draws none yet, so it keeps no row for it.
+        // answered the screen once (a record) wherever it is now. Every shell draws the screen
+        // – the desktop's and tablet's `SearchChoiceScreen`, the phone's
+        // `PhoneSearchChoiceScreen` (OMN-26) – so the row stands on every layout.
         ...(state.searchChoice?.eea || s.searchChoice !== null
           ? [
               {
@@ -2818,7 +2841,6 @@ function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
                 description:
                   'Shows the search engines again, in a random order, to set the default.',
                 keywords: ['choice', 'default', 'eea', 'dma'],
-                layouts: ['desktop', 'tablet'],
                 button: 'Choose…',
                 onPress: () => run('searchChoice.askAgain', undefined)
               } satisfies SettingsRow

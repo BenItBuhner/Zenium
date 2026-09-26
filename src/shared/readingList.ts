@@ -9,9 +9,12 @@ import { displayHost } from './url'
  */
 
 /**
- * How many entries the list holds (Chrome's is unbounded; a thousand pages "for later" is more
- * than anyone reads back). Past it the oldest READ entry goes first – a page already read is
- * the one the list can spare – and only when every entry is unread does the oldest unread one.
+ * How many READ entries the list keeps (services pass 11, item 4; desktop's constant). The cap
+ * bounds the read half alone: past it the oldest read entry goes – by `readAt`, a tie by the
+ * id – and an UNREAD entry is never trimmed, so the unread half is unbounded as Chrome's whole
+ * list is. A page saved and not yet read is the user's to delete, never the cap's: under sync
+ * the cap bounds the fleet's union and a trim's tombstones reach every device, so a cap that
+ * spent unread entries would silently delete saved pages fleet-wide (`trimReadingList`).
  */
 export const READING_LIST_CAP = 1000
 
@@ -49,27 +52,44 @@ export function compareReadingEntries(a: ReadingListEntry, b: ReadingListEntry):
 }
 
 /**
- * The list within its cap: while it runs over, the oldest read entry drops, then – with no
- * read entry left – the oldest unread one. Returns the entries handed in (same array) when
- * nothing had to go, so a caller can tell a no-op from a write.
+ * The list within its cap – the ONE trim every path takes (a write, `ReadingListService.write`;
+ * a load, `sanitizeReadingList`; a sync batch, `ReadingListService.applySynced`), so every
+ * device that holds the same entries keeps the same survivors. The cap bounds the READ entries
+ * alone: while more than `cap` of them are read, the oldest read one goes – the earliest
+ * `readAt`, a tie the lexically smaller id (the same side `readingListSurvivor` lets go), so the
+ * order is total and every device drops the same one – and an UNREAD entry is never trimmed,
+ * whatever their number. Returns the entries handed in (same array, same objects, the input's
+ * order) when nothing had to go, so a caller can tell a no-op from a write.
  */
 export function trimReadingList(
   entries: ReadingListEntry[],
   cap: number = READING_LIST_CAP
 ): ReadingListEntry[] {
-  if (entries.length <= cap) return entries
-  // Oldest read first, then oldest unread: the reverse of the display order, so dropping from
-  // the back of a sorted copy is the cap's rule.
-  const kept = sortReadingList(entries).slice(0, Math.max(0, cap))
-  const keep = new Set(kept.map((e) => e.id))
-  return entries.filter((e) => keep.has(e.id))
+  const read = entries.filter((e) => !isUnread(e))
+  if (read.length <= cap) return entries
+  read.sort(compareReadAge)
+  const gone = new Set(read.slice(0, read.length - Math.max(0, cap)).map((e) => e.id))
+  return entries.filter((e) => !gone.has(e.id))
+}
+
+/**
+ * Two read entries by age of reading, the earlier `readAt` first; a tie falls to the lexically
+ * smaller id, so the order is total. The trim's order (`trimReadingList`): the first is the
+ * first to go.
+ */
+export function compareReadAge(a: ReadingListEntry, b: ReadingListEntry): number {
+  const ra = a.readAt ?? 0
+  const rb = b.readAt ?? 0
+  if (ra !== rb) return ra - rb
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
 }
 
 /**
  * `raw` as a reading list: an array of well-formed entries, anything else – a missing key, a
  * malformed entry, a duplicate id or URL (the later one wins, as a sync would have it) – dropped
- * rather than loaded, and the whole cut to the cap. A profile from before the list existed
- * loads it empty.
+ * rather than loaded, and the read half cut to the cap through the one trim every path takes
+ * (`trimReadingList`: the oldest by `readAt` go, an unread entry never). A profile from before
+ * the list existed loads it empty.
  *
  * Idempotent on a clean list: every entry comes back with the same bytes in the same order
  * (`sanitizeReadingEntry`'s normal form is the one every write produces), so a load changes
@@ -121,6 +141,19 @@ export function sanitizeReadingEntry(raw: unknown): ReadingListEntry | null {
 
 function finiteTime(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
+}
+
+/**
+ * Of two entries for the same URL – one added on each of two devices while apart – the one the
+ * list keeps: the later `addedAt`, and on a tie the lexically greater `id`. A pure function of
+ * the two entries and nothing else (no device id: the apply side has no provenance), so every
+ * device that sees both picks the same survivor and the fleet converges on one entry per URL
+ * (`ReadingListService.applySynced`; `sanitizeReadingList`'s "the later element wins" is the
+ * load-time form for a profile written with a duplicate, this the sync-time rule).
+ */
+export function readingListSurvivor(a: ReadingListEntry, b: ReadingListEntry): ReadingListEntry {
+  if (a.addedAt !== b.addedAt) return a.addedAt > b.addedAt ? a : b
+  return a.id > b.id ? a : b
 }
 
 /** A page the list can hold: a web address; the browser's own pages and blank tabs are not saved. */

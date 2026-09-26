@@ -15,7 +15,8 @@ import { shuffledSearchChoiceTiles } from '@core/searchChoice'
  * "Set as default" live once a tile is picked, "Skip for now" and Escape recording nothing –
  * and the same chassis on its own after the tour while the screen is owed; outside the EEA the
  * tour's step keeps its three tiles; the URL bar waits under the screen as it waits under the
- * tour; the phone shell draws none of it.
+ * tour. The phone draws the screen in its own pose (OMN-26; `PhoneOnboarding.tsx`,
+ * `PhoneSearchChoice.tsx`) on the same model and terms.
  */
 
 const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(async () => null)
@@ -453,7 +454,7 @@ describe('the screen on its own', () => {
     expect(uiStore.get().urlbar).toMatchObject({ open: true, tabId: 't1' })
   })
 
-  it('stands as the tour does for the page views: hidden under both (`firstRunCovers`), never on the phone', () => {
+  it('stands as the tour does for the page views: hidden under both (`firstRunCovers`); on the phone the screen alone', () => {
     // The tour, then the screen after it, then neither: the same terms the layout report reads
     // to hide the views under the opaque panel (`useLayoutReporter` `contentHidden`).
     expect(firstRunCovers(profile(false, EEA))).toBe(true)
@@ -462,12 +463,15 @@ describe('the screen on its own', () => {
     expect(firstRunCovers(profile(true, ANSWERED))).toBe(false)
     expect(firstRunCovers(profile(true, ELSEWHERE))).toBe(false)
     expect(firstRunCovers(profile(true, EEA, { kind: 'private' }))).toBe(false)
-    // The phone's tour is its shell's own flow, laid out with its pages; it reads none of this.
+    // The phone's tour is its shell's own flow over a first run with no page to hide; the
+    // phone's screen standing on its own after the tour (OMN-26) may stand over a live page,
+    // and hides it as the desktop's does.
     const before = viewportStore.get()
     viewportStore.set({ ...before, formFactor: 'phone' })
     try {
       expect(firstRunCovers(profile(false, EEA))).toBe(false)
-      expect(firstRunCovers(profile(true, EEA))).toBe(false)
+      expect(firstRunCovers(profile(true, EEA))).toBe(true)
+      expect(firstRunCovers(profile(true, ANSWERED))).toBe(false)
     } finally {
       viewportStore.set(before)
     }
@@ -475,14 +479,17 @@ describe('the screen on its own', () => {
 })
 
 describe('the form factor', () => {
-  it('the desktop and tablet shells mount the screen; the phone shell draws nothing of it', () => {
+  it('the desktop and tablet shells mount the screen; the phone shell mounts its own (OMN-26)', () => {
     const read = (rel: string): string => readFileSync(resolve(__dirname, rel), 'utf8')
     expect(read('../../../App.tsx')).toMatch(/searchChoiceCovers\(state\)/)
     expect(read('../../../App.tsx')).toMatch(/<SearchChoiceScreen state=\{state\} \/>/)
     expect(read('../../tablet/TabletShell.tsx')).toMatch(/<SearchChoiceScreen state=\{state\} \/>/)
     const phone = read('../../phone/PhoneShell.tsx')
-    expect(phone).not.toMatch(/SearchChoice/)
-    expect(read('../PhoneOnboarding.tsx')).not.toMatch(/SearchChoice/)
+    expect(phone).toMatch(/searchChoiceCovers\(state\)/)
+    expect(phone).toMatch(/<PhoneSearchChoiceScreen state=\{state\} \/>/)
+    expect(phone).not.toMatch(/<SearchChoiceScreen/)
+    expect(read('../PhoneOnboarding.tsx')).toMatch(/tourAsksSearchChoice\(state\)/)
+    expect(read('../PhoneOnboarding.tsx')).not.toMatch(/<SearchChoiceStep/)
   })
 })
 

@@ -16,6 +16,7 @@
  * it. The rows the request engine or the downloads service enforce (`pdf`, `automatic-downloads`,
  * `on-device-site-data`) ask the core as they go.
  */
+import type { ContentGuardId } from './contentGuards'
 import { FILE_SITE, type ContentDecision } from './contentSettings'
 
 /** The rows the document carries, in the catalogue's order. */
@@ -34,7 +35,7 @@ export type ContentRuleId = (typeof CONTENT_RULE_IDS)[number]
  * The rows a page-world guard enforces (`contentGuards.ts`): the engine of neither host has a
  * switch for them, so a blocked site's document gets the API refused at document start.
  */
-export const GUARDED_CONTENT_RULES: readonly ContentRuleId[] = [
+export const GUARDED_CONTENT_RULES: readonly ContentGuardId[] = [
   'sensors',
   'third-party-sign-in',
   'payment-handler'
@@ -101,7 +102,7 @@ export function contentAllowed(rules: ContentRules, id: ContentRuleId, url: stri
  * The guarded rows a document at `url` is refused, for `installContentGuards`. A page without a
  * site (`zen://`, `about:blank`) is refused nothing but what the row's default refuses.
  */
-export function blockedGuardsFor(rules: ContentRules, url: string): ContentRuleId[] {
+export function blockedGuardsFor(rules: ContentRules, url: string): ContentGuardId[] {
   return GUARDED_CONTENT_RULES.filter((id) => !contentAllowed(rules, id, url))
 }
 
@@ -132,7 +133,7 @@ export function blockedGuardsWith(
   rules: ContentRules,
   resolved: ResolvedContentRulesFor | null | undefined,
   url: string
-): ContentRuleId[] {
+): ContentGuardId[] {
   const site = contentRuleSite(url)
   const answer =
     resolved && site && resolved.site === site && isRecord(resolved.allowed)

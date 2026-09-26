@@ -1,0 +1,9 @@
+{
+  "id": "magic-stack",
+  "class": "MagicStackDemo",
+  "shard": "phone-f",
+  "mirrors": "android-magic-stack-demo.yml",
+  "dir": "magic-stack-demo",
+  "estimate": 3,
+  "note": "The new tab page's cards (NTP-16, W6-4; Chrome's Magic Stack, 'Cards' to the user): a seeded recently closed tab, a completed download whose file the driver writes on the device and two bookmarks give the three cards (the Default browser reminder a fourth where the host says the browser is not the default; the driver reads the host and expects what it implies), the cards named for TalkBack, the strip a carousel with indicator dots (no controls among them, a status line reading the page) and one action a card; a real swipe pages the strip (magic-stack-swipe, a gesture scene) and a swipe back returns it; a card's ⋮, Hide This (magic-stack-hide, a spring scene, a probe on the strip for the 120 ms fade and the FLIP glide), the Cards sheet's switch rows, every switch off for the empty state, the gear sheet's Cards row as the way back (seated first, above Layout, in view at the sheet's rest height), one card alone at full width, a card a switch brings back arriving in view (the strip pages to it on the spring; Chrome alone would keep the snapped card and leave it a page to the left), the Continue card's row restoring the closed tab (the strip standing on the card brought back; a swipe back the recovery). The workflow's run measured 122 s of driver time before the swipes back were added (run 36223237081); rounded up with room for them. On phone-f, the shard with the room."
+}

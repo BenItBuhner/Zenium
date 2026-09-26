@@ -24,7 +24,6 @@ import type {
 } from '../../shared/types'
 import { isNewTabUrl } from '../../shared/url'
 import { contentSettingId } from '../../shared/contentSettings'
-import { DISPLAY_MODE_CHANNEL } from '../../shared/displayMode'
 import { SCREEN_CAPTURE_INTENT_CHANNEL } from '../../shared/screenCapture'
 import {
   NOTIFICATION_PERMISSION_CHANNEL,
@@ -116,6 +115,7 @@ import { ElectronBlocking, ElectronBundledLists, bundledListsDirectory } from '.
 import { supportsWindowMaterial } from './appShell'
 import { ElectronPrivacy } from './privacy'
 import { ContentRulesHandler, attachContentGuards } from './contentRules'
+import { attachDocumentStart, registerDocumentStartProvider } from './documentStart'
 import { ElectronSpellcheck } from './spellcheck'
 import { ElectronScreenCapture } from './screenCapture'
 import { StartupHold, extensionLayerNeedsHold } from './startupHold'
@@ -705,11 +705,11 @@ export class ElectronPlatform implements Platform {
     this.requestBlocking.registerHeaderRewrite(webstoreClientHints, { persistentOnly: true })
     this.requestBlocking.registerHeaderRewrite(edgeStoreUserAgent, { persistentOnly: true })
     // Safe Browsing ahead of the rules, the cookie and signal edits after them; the upgrade
-    // observer and the page preload's signals IPC.
+    // observer and the `signals` field of the page preload's document-start answer.
     this.privacy.attach(this.requestBlocking)
     // The per-site content settings that act in the request engine (images, PDF download) and
-    // the page preload's document-start question for the page-world guards (sensors, FedCM,
-    // payment handlers); the core answers both from the permission store.
+    // the `guards` field of the page preload's document-start answer (sensors, FedCM, payment
+    // handlers); the core answers both from the permission store.
     this.requestBlocking.multiplexer.register(new ContentRulesHandler(browser.contentRules))
     attachContentGuards(browser.contentRules, (ses) =>
       this.requestBlocking.multiplexer.containerOf(ses)
@@ -973,12 +973,17 @@ export class ElectronPlatform implements Platform {
       if (!isNewTabUrl(event.senderFrame?.url ?? event.sender.getURL())) return
       browser.newTab.handleAction(tabId, action)
     })
-    // A page's `display-mode` (MW-23), asked synchronously at document start by every frame of a
-    // tab's page; anything else that asks (the chrome, an extension page) is a browser page.
-    ipcMain.on(DISPLAY_MODE_CHANNEL, (event) => {
+    // A page's `display-mode` (MW-23), carried by the one document-start ask every frame of a
+    // tab's page makes; anything else that asks (the chrome, an extension page) is a browser page.
+    registerDocumentStartProvider('displayMode', (event) => {
       const tabId = this.views.tabIdForWebContents(event.sender)
-      event.returnValue = tabId ? browser.displayModeFor(tabId) : 'browser'
+      return tabId ? browser.displayModeFor(tabId) : 'browser'
     })
+    // The page preload's ONE synchronous ask before its first script (`documentStart.ts`): the
+    // privacy signals (`privacy.attach`), the display mode (above), the page-world guards
+    // (`attachContentGuards`) and the extensions' user-script plan (`ExtensionApiHost.install`),
+    // each field from its provider, each provider once per ask, a throw its field's default.
+    attachDocumentStart()
     // A page's `getDisplayMedia` call, announced synchronously by its main-world shim right
     // before the engine sees it (MW-19): whether it asked for audio, which the permission
     // request that follows does not say. Only a tab's page is heard; the answer is immediate,

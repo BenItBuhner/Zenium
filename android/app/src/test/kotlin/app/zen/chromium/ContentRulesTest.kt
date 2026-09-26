@@ -144,4 +144,56 @@ class ContentRulesTest {
         assertNull(ContentRules.resumeReferer("file:///sdcard/page.html", "https://b.example/"))
         assertNull(ContentRules.resumeReferer("https://a.example/", "file:///sdcard/page.html"))
     }
+
+    @Test
+    fun resumeRefererFollowsThePagesOwnPolicy() {
+        val page = "https://a.example/page?x=1#frag"
+        val full = "https://a.example/page?x=1"
+        val origin = "https://a.example/"
+        val plainPage = "http://a.example/page?x=1#frag"
+        val plainFull = "http://a.example/page?x=1"
+        val plainOrigin = "http://a.example/"
+        // policy -> (same-origin, cross-origin, https->http, http->https)
+        val matrix = mapOf(
+            "no-referrer" to listOf(null, null, null, null),
+            "same-origin" to listOf(full, null, null, null),
+            "origin" to listOf(origin, origin, origin, plainOrigin),
+            "strict-origin" to listOf(origin, origin, null, plainOrigin),
+            "origin-when-cross-origin" to listOf(full, origin, origin, plainOrigin),
+            "strict-origin-when-cross-origin" to listOf(full, origin, null, plainOrigin),
+            "no-referrer-when-downgrade" to listOf(full, full, null, plainFull),
+            "unsafe-url" to listOf(full, full, full, plainFull),
+            // Empty and unknown tokens are Chrome's default.
+            "" to listOf(full, origin, null, plainOrigin),
+            "bogus-token" to listOf(full, origin, null, plainOrigin),
+        )
+        for ((policy, expected) in matrix) {
+            assertEquals("$policy same-origin", expected[0], ContentRules.resumeReferer(page, "https://a.example/next", policy))
+            assertEquals("$policy cross-origin", expected[1], ContentRules.resumeReferer(page, "https://b.example/", policy))
+            assertEquals("$policy https->http", expected[2], ContentRules.resumeReferer(page, "http://b.example/", policy))
+            assertEquals("$policy http->https", expected[3], ContentRules.resumeReferer(plainPage, "https://b.example/", policy))
+            // No web origin on either side: nothing under any policy.
+            assertNull("$policy from null", ContentRules.resumeReferer(null, "https://b.example/", policy))
+            assertNull("$policy from zen://", ContentRules.resumeReferer("zen://newtab", "https://b.example/", policy))
+            assertNull("$policy from about:blank", ContentRules.resumeReferer("about:blank", "https://b.example/", policy))
+            assertNull("$policy from file", ContentRules.resumeReferer("file:///sdcard/page.html", "https://b.example/", policy))
+            assertNull("$policy to file", ContentRules.resumeReferer(page, "file:///sdcard/page.html", policy))
+            assertNull("$policy to zen://", ContentRules.resumeReferer(page, "zen://settings", policy))
+        }
+        // The token is matched ASCII-case-insensitively and trimmed, as the page's script hands it over.
+        assertNull(ContentRules.resumeReferer(page, "https://b.example/", " No-Referrer "))
+        assertEquals(full, ContentRules.resumeReferer(page, "https://b.example/", "UNSAFE-URL"))
+        // "Full" strips the fragment and the credentials, never the query; the origin form is unaffected by a port.
+        assertEquals(
+            "https://a.example/page?x=1",
+            ContentRules.resumeReferer("https://user:pw@a.example/page?x=1#frag", "https://b.example/", "unsafe-url"),
+        )
+        assertEquals(
+            "https://a.example:8443/page",
+            ContentRules.resumeReferer("https://a.example:8443/page#f", "https://a.example:8443/next", "same-origin"),
+        )
+        assertEquals("https://a.example:8443/", ContentRules.resumeReferer("https://a.example:8443/page", "https://b.example/", "origin"))
+        // The two-argument form stays the default policy.
+        assertEquals(origin, ContentRules.resumeReferer(page, "https://b.example/"))
+    }
 }
