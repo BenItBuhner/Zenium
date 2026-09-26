@@ -6497,4 +6497,66 @@ describe('SET-36 / NTP-30: the Home group of Look and Feel on a phone', () => {
       )
     ).toEqual(['homepage'])
   })
+
+  it('an extension holding the homepage (chrome_settings_overrides.homepage; state.extensionControls.homepage with its page) holds the rows: the picker at Specific page, the Address showing the extension’s page over the user’s, Use current page with them – one run under one indicator; Off stays the user’s, and the row is free again without the extension', () => {
+    const extension = { extensionId: 'a'.repeat(32), name: 'Bing Homepage & Search' }
+    const extensionControls = { homepage: { ...extension, value: 'https://www.bing.com/' } }
+    // The user's own page underneath differs from the extension's.
+    const held = homeGroup(
+      withHomepage({ mode: 'url', url: 'https://news.example/' }, { extensionControls })
+    )
+    expect(held.rows.map((r) => r.id)).toEqual([
+      'homepage',
+      'homepage-address',
+      'homepage-use-current'
+    ])
+    const picker = held.rows[0]
+    if (picker.kind !== 'value') throw new Error('not a value row')
+    expect(picker.controlled).toMatchObject({ ...extension, value: 'https://www.bing.com/' })
+    expect(currentOptionLabel(picker)).toBe('Specific page')
+    expect(picker.options[2]).toMatchObject({ label: 'Specific page', description: 'bing.com' })
+    const address = held.rows[1]
+    if (address.kind !== 'field') throw new Error('not a field row')
+    expect(address.controlled).toMatchObject(extension)
+    expect(address.value).toBe('bing.com')
+    expect(held.rows[2].controlled).toMatchObject(extension)
+    // One run of three held rows: the indicator stands after the last (§10.5's rule).
+    expect(controlledRuns(held.rows)).toEqual([0, 0, 3])
+
+    // Over the new tab page as well: the extension's page is what Home opens.
+    const overNewTab = homeGroup(withHomepage({ mode: 'newtab', url: '' }, { extensionControls }))
+    expect(overNewTab.rows.map((r) => r.id)).toEqual([
+      'homepage',
+      'homepage-address',
+      'homepage-use-current'
+    ])
+    expect(overNewTab.rows[0].controlled).toMatchObject(extension)
+
+    // Off is the user's – Chrome's "Show home button" is no extension's: the row stands free,
+    // Off, alone; the extension's page waits until the button is on.
+    const off = homeGroup(withHomepage({ mode: 'off', url: '' }, { extensionControls }))
+    expect(off.rows.map((r) => r.id)).toEqual(['homepage'])
+    expect(off.rows[0].controlled).toBeUndefined()
+    if (off.rows[0].kind !== 'value') throw new Error('not a value row')
+    expect(currentOptionLabel(off.rows[0])).toBe('Off')
+
+    // A choice made from the held state's neighbour keeps the user's own address, not the extension's.
+    const c = context(
+      withHomepage({ mode: 'newtab', url: 'https://kept.example/' }, { extensionControls })
+    )
+    const look = buildSection(PAGE.sections[0], c.ctx)
+    const homepage = row(look, 'homepage')
+    if (homepage.kind !== 'value') throw new Error('not a value row')
+    homepage.onChange('url')
+    expect(c.patches).toEqual([{ homepage: { mode: 'url', url: 'https://kept.example/' } }])
+
+    // Disable takes the Extensions page's path; nothing held without the extension.
+    homepage.controlled!.onDisable()
+    expect(invoke).toHaveBeenCalledWith('extension.setEnabled', {
+      id: extension.extensionId,
+      enabled: false
+    })
+    const free = homeGroup(withHomepage({ mode: 'url', url: 'https://news.example/' }))
+    expect(free.rows[0].controlled).toBeUndefined()
+  })
 })
