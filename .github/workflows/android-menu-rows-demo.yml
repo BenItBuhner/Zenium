@@ -1,0 +1,59 @@
+name: Android menu rows demo
+
+# Records the phone app menu's and the toolbar's rows of wave 6 round C on one boot, each under a
+# real finger (see MenuRowsDemo): the app menu's rows read by name against Chrome 152's
+# main_menu.xml and the Help row's touch opening the help page in a new tab in front, a child of
+# the page (TB-07); the bar's optional Bookmark star outlined, filled by a touch, its second touch
+# opening the editor (TB-16, as found on main); a hold on the bar's Home item landing Settings on
+# the Home group and a touch loading the homepage (TB-15); a pinned tile's hold menu with Open in
+# Private Tab second and its touch opening the shortcut in a private tab (GN-11). The driver
+# writes `menu-rows-findings.txt` with an OK or FAIL per claim and fails when any did. Android 15
+# (API 35): its WebView 124 keeps profiles, so the host offers private tabs and the private rows
+# are on; the nightly's phone-f shard runs the same driver on the API 34 image, where the rows are
+# absent by design and the driver says so. Dispatch-only, like the other demos: it takes about
+# eight minutes. The build, the emulator and the Gradle cache live in android-emulator-demo.yml;
+# this file only picks the driver and the image.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-menu-rows-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Menu rows demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.MenuRowsDemo
+        DEMO_DIR=menu-rows-demo
+        DEMO_OUT=artifacts/android-menu-rows-demo
+        DEMO_VIDEO=android-menu-rows-demo.mp4
+      # Android 15: the WebView with profiles, where the private rows are on.
+      api-level: '35'
+      artifact-name: android-menu-rows-demo
+      artifact-path: artifacts/android-menu-rows-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Menu rows demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.MenuRowsDemo
+        DEMO_DIR=menu-rows-demo
+        DEMO_OUT=artifacts/android-menu-rows-demo
+        DEMO_VIDEO=android-menu-rows-demo.mp4
+      api-level: '35'
+      artifact-name: android-menu-rows-demo-second-boot
+      artifact-path: artifacts/android-menu-rows-demo/
