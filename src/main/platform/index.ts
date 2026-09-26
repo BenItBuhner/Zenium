@@ -54,7 +54,7 @@ import type {
 import type { ZenWindow } from '../../core/window'
 import type { WindowSwitches } from '../cli'
 import { MediaAccessGate, mediaRefusedMessage } from './mediaAccess'
-import { DEFAULT_CONTAINER_ID } from '../../shared/types'
+import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../../shared/types'
 import { resolveDownloadSettings } from '../../shared/downloads'
 import {
   DISMISSED_ANSWER,
@@ -648,6 +648,23 @@ export class ElectronPlatform implements Platform {
     // so do the request-side effects of chrome.privacy (pings, Referer, DNT).
     extensionApi.webRequest.attach(this.requestBlocking)
     extensionApi.privacy.attach(this.requestBlocking)
+    // `navigator.doNotTrack` follows the same effective source as the `DNT: 1` header: the
+    // user's setting or an extension's `chrome.privacy.websites.doNotTrackEnabled` (the value
+    // for private windows counts only for a private tab's documents).
+    this.privacy.attachExtensionSignals(
+      {
+        doNotTrack: (privateWindow) =>
+          extensionApi.privacy.effectiveValue('websites', 'doNotTrackEnabled', privateWindow) ===
+          true
+      },
+      (sender) => {
+        const tabId = this.views.tabIdForWebContents(sender)
+        return (
+          tabId !== undefined &&
+          browser.state.model.tabs[tabId]?.containerId === PRIVATE_CONTAINER_ID
+        )
+      }
+    )
     // chrome.fontSettings' per-script families, cursive/fantasy/math and fixed-width size have
     // no slot in the page fonts setting: they reach the pages through the views' font layer.
     extensionApi.fontSettings.attachPages({
