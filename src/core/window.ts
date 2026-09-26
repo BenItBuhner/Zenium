@@ -52,6 +52,8 @@ export interface WindowInit {
   displayId: number | null
   maximized: boolean
   activeSpaceId: string
+  /** The user space the window left for an agent's (`ZenWindow.lastUserSpaceId`); none by default. */
+  lastUserSpaceId?: string | null
   selection: Record<string, string>
   compact: boolean
   /** The private space of a blank / private window (already registered in the model). */
@@ -91,6 +93,14 @@ export class ZenWindow {
   name: string | null
   host!: WindowHost
   activeSpaceId: string
+  /**
+   * The user's space this window stood on when it moved onto an agent's (`TabManager.switchSpace`
+   * records it; an agent's `bringInFront` is how a window gets there), and the space it goes
+   * back to when that agent's space is left empty at the session's end or at a restore
+   * (`Browser.leaveEmptyAgentSpace`, `ProfileState.ensureValid`). Null while the window stands
+   * on a user's space – where it is IS the last user space. Kept with the session.
+   */
+  lastUserSpaceId: string | null
   /** Per-space selected tab of this window (falls back to the space's last selection). */
   readonly selection = new Map<string, string | null>()
   readonly localSpace: Space | null
@@ -179,6 +189,7 @@ export class ZenWindow {
     this.app = init.app ?? null
     this.name = normalizeWindowName(init.name)
     this.activeSpaceId = init.activeSpaceId
+    this.lastUserSpaceId = init.lastUserSpaceId ?? null
     this.localSpace = init.localSpace
     this.compactEnabled = init.compact
     for (const [spaceId, tabId] of Object.entries(init.selection))
@@ -316,6 +327,7 @@ export class ZenWindow {
       displayId: this.savedDisplayId,
       maximized: this.alive ? this.host.isMaximized() : this.initialMaximized,
       activeSpaceId: this.activeSpaceId,
+      lastUserSpaceId: this.lastUserSpaceId,
       selection,
       compact: this.compactEnabled,
       name: this.name
