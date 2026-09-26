@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import type { QrCodeRequest } from '@shared/qrScan'
 import type { MenuDescriptor, MenuItemDescriptor, SharePanelRequest, UIState } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
 import { MenuSheet } from '../MenuSheet'
@@ -9,6 +10,7 @@ import { SharePanelLayer } from '../../share/SharePanelSheet'
 import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { SheetPresence } from '@renderer/lib/motion/presence'
+import { dismissQrCode, showQrCode } from '@renderer/lib/qrCode'
 import {
   SHARE_ROW_KEY,
   SHARE_SEAM_BUSY_MS,
@@ -281,11 +283,14 @@ afterEach(() => {
   root = null
   mount?.remove()
   mount = null
+  dismissQrCode()
   act(() =>
     uiStore.set({
       menu: null,
       sharePanel: null,
       shareSeam: null,
+      qrCode: null,
+      qrCodeSeam: null,
       snapshot: null,
       snapshotTabId: null
     })
@@ -712,5 +717,109 @@ describe('the hand-off (the seam’s second half: the menu’s chassis becomes t
     // The menu stands untouched and the panel is its own sheet over it (the host superseded a share).
     expect(uiStore.get().menu?.id).toBe('menu_1')
     expect(q('.zen-share-panel .zen-share-seam')).toBeNull()
+  })
+})
+
+/*
+ * The seam's third half, once: the hosted panel's QR code chip (SH-06) hands the menu's chassis
+ * on to the code sheet (`lib/shareSeam.ts`'s code seam) – the same sheet element a third time,
+ * the panel's preview and rows fading as an inert copy over the code's content, Close | Download
+ * in the footer; its ways out end the code, the panel and the menu together, the host hearing
+ * the chip's pick and nothing more (`SharePanelSheet.tsx`'s tests read the panel's own sheet).
+ */
+describe("the hosted panel's QR code chip: the menu's chassis becomes the code sheet's", () => {
+  const code = (): QrCodeRequest => ({
+    url: 'https://example.com/',
+    tabId: 'tab-1',
+    rows: ['0000', '0110', '0110', '0000'],
+    error: null
+  })
+  const qrCell = (): HTMLElement =>
+    qa<HTMLElement>('[data-row="chips"] .zen-share-panel-cell').find(
+      (c) => c.dataset.kind === 'qr' && !c.closest('.zen-share-seam-out')
+    )!
+
+  it('draws the code in the same sheet element: one sheet, the seam marked, the panel’s class and preview gone, the copy fading, Close | Download in the footer', async () => {
+    await show()
+    const chassis = sheet()!
+    await pickShare()
+    await arrive()
+    elapse(SHARE_SEAM_OUT_MS)
+    await settle()
+    click(qrCell())
+    expect(commands('share.panelAction')).toEqual([{ id: 'share-panel-1', kind: 'qr' }])
+    expect(uiStore.get().qrCodeSeam).toEqual({ phase: 'encoding', panelId: 'share-panel-1' })
+    expect(sheet()).toBe(chassis)
+    await act(async () => {
+      await showQrCode(code())
+    })
+    runAll()
+    expect(uiStore.get().qrCodeSeam?.phase).toBe('hosting')
+    expect(uiStore.get().sharePanel?.id).toBe('share-panel-1')
+    expect(uiStore.get().shareSeam?.phase).toBe('hosting')
+    expect(uiStore.get().menu?.id).toBe('menu_1')
+    expect(sheets()).toHaveLength(1)
+    expect(sheet()).toBe(chassis)
+    expect(chassis.classList.contains('zen-share-panel')).toBe(false)
+    expect(chassis.querySelector('.zen-sheet-header')).toBeNull()
+    const seam = chassis.querySelector<HTMLElement>('.zen-share-seam')!
+    expect(seam.dataset.seam).toBe('qr-code')
+    const out = seam.querySelector<HTMLElement>('.zen-share-seam-out')!
+    expect(out.hasAttribute('inert')).toBe(true)
+    expect(out.querySelector('.zen-share-panel-preview .zen-menu-link-title')?.textContent).toBe(
+      'Example Domain'
+    )
+    expect(out.querySelectorAll('[data-row="apps"] .zen-share-panel-cell')).toHaveLength(3)
+    expect(seam.querySelector('.zen-share-seam-in [data-testid="qr-code-image"]')).not.toBeNull()
+    expect(
+      [...chassis.querySelectorAll('.zen-sheet-footer button')].map((b) => b.textContent)
+    ).toEqual(['Close', 'Download'])
+    expect(chassis.getAttribute('aria-labelledby')).toBe('zen-qr-code-title')
+    expect(handle()).toBe('Dismiss')
+    elapse(SHARE_SEAM_OUT_MS)
+    await settle()
+    expect(seam.querySelector('.zen-share-seam-out')).toBeNull()
+    expect(seam.querySelector('[data-testid="qr-code-sheet"]')).not.toBeNull()
+  })
+
+  it('Download runs the chassis down and, at the landing, asks for the picture and closes the code, the panel and the menu – the host hears no more', async () => {
+    await show()
+    await pickShare()
+    await arrive()
+    click(qrCell())
+    await act(async () => {
+      await showQrCode(code())
+    })
+    runAll()
+    click(q('[data-testid="qr-code-download"]')!)
+    await settle()
+    runAll()
+    expect(commands('share.panelAction')).toEqual([{ id: 'share-panel-1', kind: 'qr' }])
+    expect(commands('qr.download')).toEqual([{ url: 'https://example.com/' }])
+    expect(commands('menu.close')).toEqual([])
+    expect(uiStore.get().qrCode).toBeNull()
+    expect(uiStore.get().qrCodeSeam).toBeNull()
+    expect(uiStore.get().sharePanel).toBeNull()
+    expect(uiStore.get().shareSeam).toBeNull()
+    expect(uiStore.get().menu).toBeNull()
+  })
+
+  it('Escape (the back gesture’s way too) runs the chassis down and ends the code with no download and no second answer', async () => {
+    await show()
+    await pickShare()
+    await arrive()
+    click(qrCell())
+    await act(async () => {
+      await showQrCode(code())
+    })
+    runAll()
+    escape()
+    await settle()
+    runAll()
+    expect(commands('share.panelAction')).toEqual([{ id: 'share-panel-1', kind: 'qr' }])
+    expect(commands('qr.download')).toEqual([])
+    expect(uiStore.get().qrCode).toBeNull()
+    expect(uiStore.get().sharePanel).toBeNull()
+    expect(uiStore.get().menu).toBeNull()
   })
 })

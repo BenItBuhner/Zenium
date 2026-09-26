@@ -78,6 +78,27 @@ export function handsOverToSharePanel(
   return item.key === SHARE_ROW_KEY && !item.submenu && capabilities?.sharePanel === true
 }
 
+/**
+ * The panel-to-code seam (the same sentence of §9.38, one sheet on): the panel's QR code chip
+ * does not leave the panel first and let the code sheet rise over a bare page; the panel holds
+ * its chassis while the host encodes the link (`Share.showQrCode`, off the main thread), and
+ * when `qr.code` arrives the panel's chassis becomes the code sheet's – the menu's sheet, when
+ * that is the chassis the panel is in (`MenuSheet.tsx`), or the panel's own (`SharePanelSheet.tsx`)
+ * – the content crossfading while the sheet re-detents to the code's height. `lib/ui.ts` runs
+ * it; `lib/qrCode.ts` routes the request into the standing chassis (`hostSheet`).
+ *
+ * - `encoding`: the chip was picked; the panel stands, its cells inert, for the code.
+ * - `hosting`: the code arrived and the panel's chassis draws the code sheet under the prompt's id.
+ */
+export type QrCodeSeam =
+  { phase: 'encoding'; panelId: string } | { phase: 'hosting'; panelId: string; promptId: number }
+
+/**
+ * How long the panel stands for a code that does not come before it leaves on its own, as the
+ * pick would have had it (the encode is milliseconds; the guard is for a host that never answers).
+ */
+export const QR_CODE_SEAM_GUARD_MS = 4000
+
 /** One step of the seam: the state after `event`, and what `lib/ui.ts` does about it. */
 export function shareSeamStep(seam: ShareSeam | null, event: ShareSeamEvent): ShareSeamStep {
   switch (event.type) {

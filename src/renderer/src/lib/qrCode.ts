@@ -5,12 +5,21 @@
  * link, and its Download hands the link back (`qr.download`) for the host to keep the picture in
  * Downloads – the link written above the code, as Chrome 152's `QrCodeShareMediator` composes
  * it (`addUrlToBitmap`) – and to say so through its toast. The sheet closes on Download as
- * Chrome's dialog does (`mCloseDialog.run()` after `downloadQrCode`). This module owns the one
- * request and its side effects; the drawing is `qrCodePath`.
+ * Chrome's dialog does (`mCloseDialog.run()` after `downloadQrCode`). From the panel's chip the
+ * code takes the panel's own chassis (§9.38's hand-off, `lib/shareSeam.ts`): the panel stands
+ * while the host encodes, and `qr.code` lands in the standing sheet rather than raising a
+ * second (`hostSheet`); from the system sheet the code sheet rises on its own (`openSheet`).
+ * This module owns the one request and its side effects; the drawing is `qrCodePath`.
  */
 import type { QrCodeRequest } from '@shared/qrScan'
 import { run } from './api'
-import { closeQrCodeSheet, openQrCodeSheet, type QrCodePrompt } from './ui'
+import {
+  closeQrCodeSheet,
+  hostQrCodeSheet,
+  openQrCodeSheet,
+  qrCodeSeamPanel,
+  type QrCodePrompt
+} from './ui'
 
 /** Chrome's `QrCodeShareMediator.MAX_URL_LENGTH`, the host's limit too (`QrCodeLogic.MAX_URL_LENGTH`). */
 export const QR_CODE_MAX_URL_LENGTH = 2331
@@ -20,12 +29,18 @@ export interface QrCodeIo {
   download(url: string): void
   openSheet(prompt: QrCodePrompt): Promise<void>
   closeSheet(id: number): void
+  /** The share panel whose chassis stands waiting for the code, if one does (`beginQrCodeSeam`). */
+  handOffPanel(): string | null
+  /** The code into that panel's chassis: the hand-off's second half. */
+  hostSheet(prompt: QrCodePrompt, panelId: string): void
 }
 
 const DEFAULT_IO: QrCodeIo = {
   download: (url) => run('qr.download', { url }),
   openSheet: openQrCodeSheet,
-  closeSheet: closeQrCodeSheet
+  closeSheet: closeQrCodeSheet,
+  handOffPanel: qrCodeSeamPanel,
+  hostSheet: hostQrCodeSheet
 }
 
 let io: QrCodeIo = DEFAULT_IO
@@ -47,21 +62,27 @@ export function currentQrCode(): QrCodePrompt | null {
 }
 
 /**
- * `qr.code` came: the sheet goes up with the link's code. A sheet still up from an earlier share
- * is replaced – its request is over and a new sheet rises above its leave (`SheetPresence`).
+ * `qr.code` came: the sheet goes up with the link's code – in the share panel's chassis when the
+ * panel stands for it (its chip was the pick; §9.38's hand-off), on its own otherwise. A sheet
+ * still up from an earlier share is replaced – its request is over and a new sheet rises above
+ * its leave (`SheetPresence`).
  */
 export async function showQrCode(request: QrCodeRequest): Promise<void> {
   const previous = current
   const prompt: QrCodePrompt = { ...request, id: ++seq }
   current = prompt
   if (previous) io.closeSheet(previous.id)
-  await io.openSheet(prompt)
+  const panel = io.handOffPanel()
+  if (panel !== null) io.hostSheet(prompt, panel)
+  else await io.openSheet(prompt)
 }
 
 /**
  * Download: the sheet goes first – Chrome's dialog closes on Download – and the host keeps the
  * picture and toasts the result. Nothing while the sheet shows an error in the code's place
- * (the button is disabled there; the guard is for a keyboard's Enter on a stale focus).
+ * (the button is disabled there; the guard is for a keyboard's Enter on a stale focus). A code
+ * in the panel's chassis runs this at the chassis's landing (`dismiss(then)`): the sheet keeps
+ * the code through its leave.
  */
 export function downloadQrCode(): void {
   const prompt = current
@@ -114,10 +135,10 @@ export function qrCodePath(rows: readonly string[]): string {
 /**
  * The message in the code's place when there is no code – Chrome's `qr_code_error_too_long`
  * ("Can't create QR Code. URL is more than %1$d characters.") and `qr_code_error_unknown`
- * ("Can't create QR Code"), in Zenium's words.
+ * ("Can't create QR Code"), in Zenium's words: a sentence in the card, with its full stop.
  */
 export function qrCodeErrorMessage(error: NonNullable<QrCodeRequest['error']>): string {
   return error === 'too-long'
-    ? `This link is more than ${QR_CODE_MAX_URL_LENGTH.toLocaleString()} characters, too long for a QR code`
-    : 'A QR code could not be made for this link'
+    ? `This link is more than ${QR_CODE_MAX_URL_LENGTH.toLocaleString()} characters, too long for a QR code.`
+    : 'A QR code could not be made for this link.'
 }

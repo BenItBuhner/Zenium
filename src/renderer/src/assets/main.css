@@ -5054,7 +5054,10 @@
    * by the offset the list was scrolled to when Share was tapped (the chassis starts new
    * content at its top) and re-running none of their own entrances; the title's layer sits where
    * the centred title stood. Reduced motion is the cut: the global rule at the foot removes both
-   * fades, and the sheet draws no outgoing layer at all.
+   * fades, and the sheet draws no outgoing layer at all. The panel's QR code chip hands the same
+   * chassis on once more (`QrCodeHandOff`, `data-seam="qr-code"`): the code sheet's title block
+   * and card rise in the panel's place, the panel's preview and rows fading out over them the
+   * same way; the footer's Close and Download take the in-fade as well.
    */
   .zen-share-seam {
     position: relative;

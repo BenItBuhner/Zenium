@@ -4,7 +4,9 @@ import type { QrCodeRequest } from '@shared/qrScan'
 vi.mock('../api', () => ({ cmd: vi.fn(), run: vi.fn() }))
 vi.mock('../ui', () => ({
   openQrCodeSheet: vi.fn(),
-  closeQrCodeSheet: vi.fn()
+  closeQrCodeSheet: vi.fn(),
+  hostQrCodeSheet: vi.fn(),
+  qrCodeSeamPanel: vi.fn(() => null)
 }))
 
 import type { QrCodePrompt } from '../ui'
@@ -20,17 +22,19 @@ import {
   type QrCodeIo
 } from '../qrCode'
 
-/** The module's side effects, recorded. */
-function harness(): {
+/** The module's side effects, recorded; `panel` is the share panel standing for the code, if one does. */
+function harness(panel: string | null = null): {
   io: QrCodeIo
   downloads: string[]
   opened: QrCodePrompt[]
+  hosted: Array<[QrCodePrompt, string]>
   closed: number[]
   order: string[]
 } {
   const rec = {
     downloads: [] as string[],
     opened: [] as QrCodePrompt[],
+    hosted: [] as Array<[QrCodePrompt, string]>,
     closed: [] as number[],
     order: [] as string[]
   }
@@ -46,6 +50,11 @@ function harness(): {
     closeSheet: (id) => {
       rec.closed.push(id)
       rec.order.push('close')
+    },
+    handOffPanel: () => panel,
+    hostSheet: (prompt, panelId) => {
+      rec.hosted.push([prompt, panelId])
+      rec.order.push('host')
     }
   }
   return Object.assign(rec, { io })
@@ -107,6 +116,24 @@ describe('showQrCode', () => {
     await showQrCode(request({ rows: [], error: 'too-long' }))
     expect(h.opened[0]!.error).toBe('too-long')
     expect(h.opened[0]!.rows).toEqual([])
+  })
+
+  it("lands the code in the share panel's chassis when the panel stands for it (§9.38's hand-off), raising no sheet of its own", async () => {
+    const h = harness('share-panel-1')
+    restore = setQrCodeIo(h.io)
+    await showQrCode(request())
+    expect(h.opened).toEqual([])
+    expect(h.hosted).toHaveLength(1)
+    const [prompt, panelId] = h.hosted[0]!
+    expect(panelId).toBe('share-panel-1')
+    expect(prompt.url).toBe('https://example.com/')
+    expect(currentQrCode()).toBe(prompt)
+    // Its ways out are the sheet's own: Close ends the request, Download asks for the picture.
+    downloadQrCode()
+    expect(h.closed).toEqual([prompt.id])
+    expect(h.downloads).toEqual(['https://example.com/'])
+    expect(h.order).toEqual(['host', 'close', 'download'])
+    expect(currentQrCode()).toBeNull()
   })
 })
 
@@ -172,13 +199,14 @@ describe('qrCodePath', () => {
 })
 
 describe('qrCodeErrorMessage', () => {
-  it("names Chrome's limit for a link that is too long", () => {
+  it("names Chrome's limit for a link that is too long, as a sentence with its full stop", () => {
     expect(QR_CODE_MAX_URL_LENGTH).toBe(2331)
-    expect(qrCodeErrorMessage('too-long')).toContain('2,331')
-    expect(qrCodeErrorMessage('too-long')).toMatch(/too long/)
+    expect(qrCodeErrorMessage('too-long')).toBe(
+      'This link is more than 2,331 characters, too long for a QR code.'
+    )
   })
 
-  it('has a plain line for the encoder refusing the link', () => {
-    expect(qrCodeErrorMessage('failed')).toBe('A QR code could not be made for this link')
+  it('has a plain sentence for the encoder refusing the link', () => {
+    expect(qrCodeErrorMessage('failed')).toBe('A QR code could not be made for this link.')
   })
 })
