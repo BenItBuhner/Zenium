@@ -179,8 +179,7 @@ describe('errorPageContent', () => {
         [-7, 'ERR_TIMED_OUT'],
         [-118, 'ERR_CONNECTION_TIMED_OUT'],
         [-101, 'ERR_CONNECTION_RESET'],
-        [-100, 'ERR_CONNECTION_CLOSED'],
-        [-21, 'ERR_NETWORK_CHANGED']
+        [-100, 'ERR_CONNECTION_CLOSED']
       ] as Array<[number, string]>) {
         expect(desktop(code, name), name).toEqual([
           'Checking the connection',
@@ -191,8 +190,11 @@ describe('errorPageContent', () => {
         'Checking the connection',
         'Checking firewall and antivirus configurations'
       ])
-      // Codes Chrome lists nothing for (or only the diagnostics tool Zenium has no counterpart for).
+      // Codes Chrome lists nothing for (or only the diagnostics tool Zenium has no counterpart
+      // for). -21 is `SUGGEST_NONE` in `net_error_options[]`: the network changed under the
+      // request, nothing to check, Reload alone.
       for (const [code, name] of [
+        [-21, 'ERR_NETWORK_CHANGED'],
         [-109, 'ERR_ADDRESS_UNREACHABLE'],
         [-324, 'ERR_EMPTY_RESPONSE'],
         [-107, 'ERR_SSL_PROTOCOL_ERROR'],
@@ -222,6 +224,11 @@ describe('errorPageContent', () => {
       expect(
         content(-324, 'ERR_EMPTY_RESPONSE', 'http://site.example/', 'android').suggestions
       ).toEqual([])
+      // -21 lists nothing on either host (`SUGGEST_NONE`).
+      expect(
+        content(-21, 'ERR_NETWORK_CHANGED', 'http://site.example/', 'android').suggestions
+      ).toEqual([])
+      expect(suggestionsFor(-21, 'android')).toEqual([])
       expect(suggestionsFor(-105, 'android')).toEqual(['Checking the connection'])
       expect(suggestionsFor(-999, 'android')).toEqual([])
     })
@@ -242,9 +249,15 @@ describe('errorPageContent', () => {
         'site.example unexpectedly closed the connection.'
       )
       expect(reason(-109, 'ERR_ADDRESS_UNREACHABLE')).toBe('site.example is unreachable.')
-      expect(reason(-21, 'ERR_NETWORK_CHANGED')).toBe('A network change was detected.')
+      // -21: Chrome's `IDS_ERRORPAGES_HEADING_CONNECTION_INTERRUPTED` over the network-changed
+      // summary – the connection, not the site, is what failed.
+      const changed = content(-21, 'ERR_NETWORK_CHANGED', 'http://site.example/')
+      expect(changed.title).toBe('Your connection was interrupted')
+      expect(changed.reason).toBe('A network change was detected.')
+      expect(changed.code).toBe('ERR_NETWORK_CHANGED')
       const denied = content(-138, 'ERR_NETWORK_ACCESS_DENIED', 'http://site.example/')
-      expect(denied.title).toBe('Your internet access is blocked')
+      // Chrome's casing: "Your Internet access is blocked" (its offline heading has "No internet").
+      expect(denied.title).toBe('Your Internet access is blocked')
       expect(denied.reason).toBe('Firewall or antivirus software may have blocked the connection.')
       expect(denied.code).toBe('ERR_NETWORK_ACCESS_DENIED')
       // The redirect loop carries Chrome's standalone sentence, not a list.

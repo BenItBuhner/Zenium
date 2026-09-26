@@ -113,11 +113,12 @@ const NET_ERRORS: Record<number, NetErrorCopy> = {
   },
   [-21]: {
     // `net_error_list.h`: -21 is the network changing under the request (a Wi-Fi to mobile
-    // handover); `ERR_NETWORK_ACCESS_DENIED` is -138 below.
+    // handover); `ERR_NETWORK_ACCESS_DENIED` is -138 below. Chrome's row
+    // (`IDS_ERRORPAGES_HEADING_CONNECTION_INTERRUPTED`, `SUGGEST_NONE`): the connection, not
+    // the site, is what failed, so there is nothing to check – Reload alone.
     name: 'ERR_NETWORK_CHANGED',
-    title: UNREACHABLE,
-    reason: () => 'A network change was detected.',
-    suggest: CONNECTION_LOST
+    title: 'Your connection was interrupted',
+    reason: () => 'A network change was detected.'
   },
   [-100]: {
     name: 'ERR_CONNECTION_CLOSED',
@@ -183,7 +184,9 @@ const NET_ERRORS: Record<number, NetErrorCopy> = {
   },
   [-138]: {
     name: 'ERR_NETWORK_ACCESS_DENIED',
-    title: 'Your internet access is blocked',
+    // Chrome's casing (`IDS_ERRORPAGES_HEADING_NETWORK_ACCESS_DENIED`): a capital Internet here,
+    // where its offline heading has "No internet".
+    title: 'Your Internet access is blocked',
     reason: () => 'Firewall or antivirus software may have blocked the connection.',
     suggest: ['connection', 'firewall', 'antivirus']
   },
