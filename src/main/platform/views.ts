@@ -2736,14 +2736,16 @@ export class ElectronTabView implements TabView {
         if (settled) return
         settled = true
         if (timer) clearTimeout(timer)
+        // Ended off the subscriber's own callback, and answered only then: the next capture's
+        // subscription (`stagedTurn`) must not be the one this end takes down.
         defer(() => {
           try {
             if (!wc.isDestroyed()) wc.endFrameSubscription()
           } catch {
             /* the subscription is gone with the page */
           }
+          resolve(image)
         })
-        resolve(image)
       }
       const wait = (ms: number): void => {
         timer = setTimeout(() => {
