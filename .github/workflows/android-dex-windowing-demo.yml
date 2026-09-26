@@ -34,10 +34,6 @@ name: Android desktop windowing demo
 # boot per act when the emulator itself went away under the driver, never when the driver failed.
 on:
   workflow_dispatch:
-  # TEMPORARY while the pass is built: every push of its branch records both acts.
-  push:
-    branches:
-      - cursor/android-dex-windowing-46cc
 
 permissions:
   contents: read

@@ -19,11 +19,6 @@ name: Android cold start pair
 # correct, only that the two builds' cold starts measured within the gate on the recipe's
 # emulator. The build, the emulator and the Gradle cache live in android-emulator-demo.yml.
 on:
-  # TEMPORARY (W6-5, desktop windowing): the P0 pair for MainActivity.dispatchGenericMotionEvent
-  # (the Android 14 mouse routing, MouseRouting.kt) – main's tip against this head – removed before
-  # the PR is ready.
-  push:
-    branches: [cursor/android-dex-windowing-46cc]
   workflow_dispatch:
     inputs:
       base-ref:
