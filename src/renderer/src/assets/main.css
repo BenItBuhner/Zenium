@@ -13099,6 +13099,16 @@ ol.zen-page-prose-list {
   align-items: center;
   gap: 8px;
 }
+/*
+ * The family form's heading slot (`READING_ROW_FORM = 'family'`): the width of the rows' two
+ * 28 boxes and their 8, set 12 from the count (the heading's 8 and 4 more) as the rows' slot is
+ * from their times, so the heading's count and the rows' `.zen-page-row-time` end on one edge.
+ */
+.zen-page-heading > .zen-rl-heading-slot {
+  flex-shrink: 0;
+  width: calc(2 * var(--v2-icon-button) + 8px);
+  margin-inline-start: 4px;
+}
 .zen-rl-favicon-seat {
   position: relative;
 }

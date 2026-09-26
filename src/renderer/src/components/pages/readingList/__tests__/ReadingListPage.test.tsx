@@ -111,12 +111,16 @@ function tab(url = 'zen://reading-list'): Tab {
 let root: Root | null = null
 let mount: HTMLElement | null = null
 
-async function mountPage(t: Tab = tab(), s: UIState = state()): Promise<HTMLElement> {
+async function mountPage(
+  t: Tab = tab(),
+  s: UIState = state(),
+  rowForm?: 'chrome' | 'family'
+): Promise<HTMLElement> {
   browserStore.set({ state: s })
   mount = document.createElement('div')
   document.body.appendChild(mount)
   root = createRoot(mount)
-  await act(async () => root!.render(createElement(ReadingListPage, { state: s, tab: t })))
+  await act(async () => root!.render(createElement(ReadingListPage, { state: s, tab: t, rowForm })))
   return mount
 }
 
@@ -237,6 +241,31 @@ describe('the Reading List page tab (§10.1, W6-1)', () => {
     expect(c.hasAttribute('data-unread')).toBe(false)
     expect(c.querySelector('.zen-rl-unread-dot')).toBeNull()
     expect(c.getAttribute('aria-label')).toBe('Yesterday’s story. Read')
+    // Chrome's form (the default) puts nothing in the family's time column or the heading's slot.
+    expect(a.querySelector('.zen-page-row-time')).toBeNull()
+    expect(el.querySelector('.zen-rl-heading-slot')).toBeNull()
+  })
+
+  it('the family form (behind READING_ROW_FORM): the host alone on line 2, the time trailing in the rows’ column, the heading holding the slot', async () => {
+    const el = await mountPage(tab(), state(), 'family')
+    const a = row(el, 'a')
+    expect(text(a.querySelector('.zen-page-row-label'))).toBe('A long essay')
+    expect(text(a.querySelector('.zen-page-row-desc'))).toBe('long.read')
+    const time = a.querySelector<HTMLTimeElement>('.zen-page-row-time')
+    expect(time).not.toBeNull()
+    expect(text(time)).toBe('5 min ago')
+    expect(time!.getAttribute('datetime')).toBe(new Date(unreadNew.addedAt).toISOString())
+    expect(time!.getAttribute('aria-label')).toBe('Added 5 min ago')
+    // The time sits between the row's text and its on-approach slot, as in BookmarkRow and History.
+    expect(time!.previousElementSibling?.classList.contains('zen-page-row-text')).toBe(true)
+    expect(time!.nextElementSibling?.classList.contains('zen-rl-page-actions')).toBe(true)
+    // Both headings reserve the rows' slot so the count and the times end on one edge.
+    const slots = [...el.querySelectorAll('.zen-page-heading > .zen-rl-heading-slot')]
+    expect(slots).toHaveLength(2)
+    expect(slots[0]!.getAttribute('aria-hidden')).toBe('true')
+    // The row's other parts are the same in both forms.
+    expect(a.querySelectorAll('.zen-rl-page-actions button')).toHaveLength(2)
+    expect(a.getAttribute('aria-label')).toBe('A long essay. Unread')
   })
 
   it('the trailing slot holds the state’s verb and the ⋮ on approach: Mark as read on an unread row, Mark as unread on a read one', async () => {

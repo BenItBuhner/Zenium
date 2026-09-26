@@ -33,7 +33,27 @@ import { usePageSearch } from '../usePageSearch'
  * restored tab comes back searching. Keyboard (§9.22): the arrows walk the rows, Enter opens,
  * Delete removes, the Menu key opens the row's menu, Ctrl+F on the tab focuses the field.
  */
-export function ReadingListPage({ state, tab }: { state: UIState; tab: Tab }): JSX.Element {
+
+/**
+ * The row's two forms (design review of #511, F3 / Q1 – the lead's ruling flips `READING_ROW_FORM`
+ * below, one line): `'chrome'` is Chrome's reading-list row, line 2 `host · Added when` under
+ * the title; `'family'` is the page family's row (§10.1, as `BookmarkRow` and History's rows) –
+ * the host alone on line 2, the time trailing in `<time class="zen-page-row-time">` before the
+ * on-approach slot, and the group heading holding the same slot, so at rest the heading's
+ * count and the rows' times end on one edge.
+ */
+export type ReadingRowForm = 'chrome' | 'family'
+export const READING_ROW_FORM: ReadingRowForm = 'chrome'
+
+export function ReadingListPage({
+  state,
+  tab,
+  rowForm = READING_ROW_FORM
+}: {
+  state: UIState
+  tab: Tab
+  rowForm?: ReadingRowForm
+}): JSX.Element {
   const urlQuery = parseInternalPageUrl(tab.url)?.query?.q ?? ''
   const field = useRef<HTMLInputElement>(null)
   const list = useRef<HTMLDivElement>(null)
@@ -106,10 +126,17 @@ export function ReadingListPage({ state, tab }: { state: UIState; tab: Tab }): J
                 aside={waiting.length}
                 entries={waiting}
                 tabId={tab.id}
+                rowForm={rowForm}
               />
             )}
             {done.length > 0 && (
-              <EntryGroup heading="Read" id="read" entries={done} tabId={tab.id} />
+              <EntryGroup
+                heading="Read"
+                id="read"
+                entries={done}
+                tabId={tab.id}
+                rowForm={rowForm}
+              />
             )}
           </>
         )}
@@ -122,29 +149,39 @@ export function ReadingListPage({ state, tab }: { state: UIState; tab: Tab }): J
 // Groups and rows
 // ---------------------------------------------------------------------------
 
+/**
+ * A heading and its rows. In the family form the heading holds the rows' on-approach slot
+ * (two 28 boxes and their 8, `.zen-rl-heading-slot`) as History's day heading holds its ⋮, so
+ * the count ends where the rows' times end.
+ */
 function EntryGroup({
   heading,
   id,
   aside,
   entries,
-  tabId
+  tabId,
+  rowForm
 }: {
   heading: string
   id: string
   aside?: number
   entries: ReadingListEntry[]
   tabId: string
+  rowForm: ReadingRowForm
 }): JSX.Element {
   return (
     <PageGroup
       heading={heading}
       headingId={`zen-reading-list-${id}`}
       aside={aside}
+      control={
+        rowForm === 'family' ? <span className="zen-rl-heading-slot" aria-hidden /> : undefined
+      }
       data-reading-group={id}
     >
       <ul className="zen-page-rows" aria-labelledby={`zen-reading-list-${id}`}>
         {entries.map((entry) => (
-          <EntryRow key={entry.id} entry={entry} tabId={tabId} />
+          <EntryRow key={entry.id} entry={entry} tabId={tabId} rowForm={rowForm} />
         ))}
       </ul>
     </PageGroup>
@@ -156,12 +193,23 @@ function EntryGroup({
  * whole for the arrows (§9.22). The row's text is a button that opens the page here; a middle
  * or Ctrl click anywhere on the row opens it in a tab behind. The favicon seat carries §9.29's
  * dot while the entry is unread. A right click or the Menu key asks the core for the row's menu.
+ * Line 2 follows `rowForm`: Chrome's `host · Added when`, or the family's host alone with the
+ * time trailing in the rows' shared column.
  */
-function EntryRow({ entry, tabId }: { entry: ReadingListEntry; tabId: string }): JSX.Element {
+function EntryRow({
+  entry,
+  tabId,
+  rowForm
+}: {
+  entry: ReadingListEntry
+  tabId: string
+  rowForm: ReadingRowForm
+}): JSX.Element {
   const unread = isUnread(entry)
   const host = displayHost(entry.url) || entry.url
   const title = entry.title || host
   const id = entry.id
+  const added = new Date(entry.addedAt).toISOString()
   const open = (background: boolean): void => {
     run('readingList.open', { id, tabId, newTab: background, background })
   }
@@ -225,12 +273,25 @@ function EntryRow({ entry, tabId }: { entry: ReadingListEntry; tabId: string }):
         <span className="zen-page-row-label">{title}</span>
         <span className="zen-page-row-desc">
           <span className="zen-rl-host">{host}</span>
-          {' · '}
-          <time dateTime={new Date(entry.addedAt).toISOString()}>
-            {`Added ${relativeTime(entry.addedAt).replace(/^Just now$/, 'just now')}`}
-          </time>
+          {rowForm === 'chrome' && (
+            <>
+              {' · '}
+              <time dateTime={added}>
+                {`Added ${relativeTime(entry.addedAt).replace(/^Just now$/, 'just now')}`}
+              </time>
+            </>
+          )}
         </span>
       </button>
+      {rowForm === 'family' && (
+        <time
+          className="zen-page-row-time"
+          dateTime={added}
+          aria-label={`Added ${relativeTime(entry.addedAt)}`}
+        >
+          {relativeTime(entry.addedAt)}
+        </time>
+      )}
       <div className="zen-rl-page-actions">
         <IconAction
           title={unread ? 'Mark as read' : 'Mark as unread'}
