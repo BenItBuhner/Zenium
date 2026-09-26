@@ -94,6 +94,7 @@ import {
 } from '../shared/zenPages'
 import { isCertificateError } from '../shared/siteInfo'
 import type { InterstitialAction } from '../shared/interstitial'
+import type { ImagePost } from '../shared/imageUpload'
 import { closedTabEntry, closedWindowEntry } from './session'
 import { newId } from '../shared/ids'
 import { clampZoom, stepZoom } from '../shared/pageControls'
@@ -428,14 +429,26 @@ export class TabManager {
     }
     // A page the question page stood in for (a new tab opened on the address, a tab woken on
     // it) is held again on the host without the engine's hold; the desktop's engine holds it.
+    let held = false
     if (url && url !== BLANK_URL) {
-      const held = this.lookalikeHold(tabId, url)
-      if (held !== url) tab.url = held
-      url = held
+      const question = this.lookalikeHold(tabId, url)
+      if (question !== url) {
+        tab.url = question
+        held = true
+      }
+      url = question
     }
-    view.loadURL(url || BLANK_URL)
+    // The tab's first load carries the body `createTab` was given (the image upload), once: a
+    // held address (the lookalike question stands in) and a host without `postURL` load by GET.
+    const post = this.pendingPosts.get(tabId)
+    this.pendingPosts.delete(tabId)
+    if (post && url && !held && view.postURL) view.postURL(url, post)
+    else view.loadURL(url || BLANK_URL)
     return view
   }
+
+  /** Bodies waiting for a tab's first load (`createTab`'s `post`), consumed by `load`. */
+  private readonly pendingPosts = new Map<string, ImagePost>()
 
   /** Replay `snapshot` the next time the tab's page is created (reopened tabs and windows). */
   setPendingNavigation(tabId: string, snapshot: NavigationSnapshot): void {
@@ -1710,6 +1723,13 @@ export class TabManager {
       background?: boolean
       /** Opened by another app's intent (see `Tab.fromIntent`). */
       fromIntent?: boolean
+      /**
+       * A body to POST to `url` on the tab's first load (CT-32's image upload: the engine's
+       * fields, `TabView.postURL`); a later load of the tab – a reload, a wake – is a GET of the
+       * address, as Chrome's restore of a POST page is. A host without `postURL` loads the
+       * address alone.
+       */
+      post?: ImagePost
     },
     win: ZenWindow = this.browser.focusedWindow()
   ): Tab {
@@ -1783,6 +1803,7 @@ export class TabManager {
     // Set before the load below so an active tab's single activation load (or a background load)
     // is eligible for the http fallback straight away.
     if (opts.upgradedFrom) this.httpsUpgraded.set(tab.id, `http://${opts.upgradedFrom}`)
+    if (opts.post && tab.url !== BLANK_URL) this.pendingPosts.set(tab.id, opts.post)
     if (opts.active !== false) {
       this.activateTab(tab.id, win)
     } else if (opts.load !== false && tab.url !== BLANK_URL) {
@@ -1877,6 +1898,7 @@ export class TabManager {
     this.views.delete(tabId)
     this.owners.delete(tabId)
     this.httpsUpgraded.delete(tabId)
+    this.pendingPosts.delete(tabId)
     this.pendingTransition.delete(tabId)
     this.splitLinkFlags.delete(tabId)
     this.splitLinkLoads.delete(tabId)

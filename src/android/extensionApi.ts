@@ -615,7 +615,7 @@ export class ExtensionApi {
       privateTabOpen: () => host.privateTabOpen(),
       persistedValues: (id) => host.privacyValues(id),
       persistValues: (id, values) => host.setPrivacyValues(id, values),
-      offerToSavePasswords: () => host.browser.state.settings.passwords.offerToSave,
+      userSettings: () => host.browser.state.settings,
       regularPartitions: () => host.regularPartitions(),
       applyRequestRules: (sets) => host.applyPrivacyRules(sets),
       applyDocumentStart: (layer) => host.applyPrivacyLayer(layer),

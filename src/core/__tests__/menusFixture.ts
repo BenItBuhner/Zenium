@@ -192,6 +192,8 @@ export interface Harness {
   linkApps: string[]
   /** The names of the events sent to the window's chrome, in order. */
   sent: string[]
+  /** The toasts among them, their words and kind. */
+  toasts: Array<{ message: string; kind: string }>
   /** The ids of the windows whose host was asked to come forward (`WindowHost.focus`), in order. */
   focused: string[]
   /** Every `apply` the fake spellchecker host received (empty without `options.spellcheck`). */
@@ -237,6 +239,10 @@ export interface HarnessOptions {
   }
   /** The window starts maximized (`WindowHost.isMaximized`); its `maximize` / `unmaximize` flip it. */
   maximized?: boolean
+  /** What a page script run through the view settles to (absent: `true`). */
+  pageScript?: (code: string) => unknown
+  /** Methods of the fake tab view that answer for themselves rather than record. */
+  view?: Partial<TabView>
 }
 
 /** The languages the fake spellchecker was last told to check in. */
@@ -259,6 +265,7 @@ export function harness(
   const windowCalls: string[] = []
   const clipboardText = { value: '' }
   const sent: string[] = []
+  const toasts: Array<{ message: string; kind: string }> = []
   const focused: string[] = []
   const linkApps: string[] = []
   const spellcheckApplied: SpellcheckApplied[] = []
@@ -297,8 +304,21 @@ export function harness(
         getZoom: () => 1,
         executeJavaScript: (code: string, frameId?: number) => {
           viewCalls.push(`executeJavaScript(${frameId ?? 0}:${code.replace(/\s+/g, ' ').trim()})`)
-          return Promise.resolve(true)
-        }
+          return Promise.resolve(opts.pageScript ? opts.pageScript(code) : true)
+        },
+        // The desktop's view runs a script in the browser's private world (CT-32,
+        // `views.ts`); the phone's WebView has no such world, so the ANDROID harness answers
+        // `undefined` in its place (the proxy below would otherwise answer for every optional
+        // capability). A test may give the view its own.
+        executeJavaScriptInPrivateWorld: capabilities.windows
+          ? (code: string, frameId?: number) => {
+              viewCalls.push(
+                `executeJavaScriptInPrivateWorld(${frameId ?? 0}:${code.replace(/\s+/g, ' ').trim()})`
+              )
+              return Promise.resolve(opts.pageScript ? opts.pageScript(code) : true)
+            }
+          : undefined,
+        ...(opts.view ?? {})
       } as unknown as TabView,
       {
         get: (target, key) => {
@@ -338,7 +358,10 @@ export function harness(
           minimize: () => void windowCalls.push('minimize'),
           isFocused: () => true,
           isVisible: () => true,
-          send: (name) => void sent.push(name),
+          send: (name, payload) => {
+            sent.push(name)
+            if (name === 'toast') toasts.push(payload as { message: string; kind: string })
+          },
           focus: () => void focused.push(win.id),
           ...(opts.chromeDocument
             ? {
@@ -410,6 +433,7 @@ export function harness(
     windowCalls,
     clipboardText,
     sent,
+    toasts,
     focused,
     linkApps,
     spellcheckApplied

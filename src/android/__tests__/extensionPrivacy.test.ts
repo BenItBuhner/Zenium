@@ -5,8 +5,10 @@ import {
   PRIVACY_CONTROL_KEYS,
   PRIVACY_PERMISSION_ERROR,
   PRIVACY_SETTINGS,
+  browserValueOf,
   privacyRequestEffects,
   settingKey,
+  type PrivacyUserSettings,
   type ScopedValues
 } from '@core/extensions/api/privacy'
 import type { ExtensionControl } from '@shared/types'
@@ -61,7 +63,14 @@ class FakeHost implements PrivacyHost {
   readonly removed: string[] = []
   engineUp = false
   privateOpen = false
-  offerToSave = true
+  /** The user's Settings as `shared/defaults.ts` has them for the paired settings. */
+  settings: PrivacyUserSettings = {
+    passwords: { offerToSave: true },
+    autofill: { addresses: true, cards: true },
+    privacy: { safeBrowsingEnabled: true, thirdPartyCookies: 'block-private', dnt: false },
+    searchSuggestions: true,
+    preloadPages: 'standard'
+  }
   partitions: string[] = ['default']
   failRules: string | null = null
 
@@ -87,8 +96,8 @@ class FakeHost implements PrivacyHost {
     if (Object.keys(values).length === 0) this.persisted.delete(id)
     else this.persisted.set(id, values)
   }
-  offerToSavePasswords(): boolean {
-    return this.offerToSave
+  userSettings(): PrivacyUserSettings {
+    return this.settings
   }
   regularPartitions(): readonly string[] {
     return this.partitions
@@ -145,6 +154,11 @@ function make(): { host: FakeHost; api: AndroidPrivacy } {
 const PASSWORDS = settingKey('services', 'passwordSavingEnabled')
 const DNT = settingKey('websites', 'doNotTrackEnabled')
 const REFERRERS = settingKey('websites', 'referrersEnabled')
+
+/** A `get`'s value alone. */
+function value(api: AndroidPrivacy, e: AttachedExtension, category: string, name: string): unknown {
+  return (api.call(e, 'get', [category, name, {}]) as { value: unknown }).value
+}
 
 describe('doNotTrackScript', () => {
   it("defines navigator.doNotTrack on the prototype as '1' while on and null while off", () => {
@@ -258,15 +272,85 @@ describe('AndroidPrivacy', () => {
     expect(() => api.call(a, 'watch', ['services', 'passwordSavingEnabled', {}])).toThrow(
       'chrome.privacy.services.passwordSavingEnabled.watch is not implemented on Zenium for Android'
     )
+    // Nothing held: the browser's own value – the user's Settings for the paired settings (the
+    // autofill pair `true` where the table's default says off), the table's default for the rest.
     for (const spec of PRIVACY_SETTINGS) {
       expect(api.call(a, 'get', [spec.category, spec.name, {}])).toEqual({
-        value: spec.browserDefault,
+        value: browserValueOf(spec, host.settings),
         levelOfControl: 'controllable_by_this_extension'
       })
     }
+    expect(value(api, a, 'services', 'autofillAddressEnabled')).toBe(true)
+    expect(value(api, a, 'services', 'autofillCreditCardEnabled')).toBe(true)
+    expect(value(api, a, 'services', 'safeBrowsingEnabled')).toBe(true)
+    expect(value(api, a, 'websites', 'thirdPartyCookiesAllowed')).toBe(true)
+    expect(value(api, a, 'services', 'spellingServiceEnabled')).toBe(false)
+    host.settings.privacy.thirdPartyCookies = 'block'
+    host.settings.preloadPages = 'none'
+    expect(value(api, a, 'websites', 'thirdPartyCookiesAllowed')).toBe(false)
+    expect(value(api, a, 'network', 'networkPredictionEnabled')).toBe(false)
     // Nothing held: nothing published, no layer sent, no rules.
     expect(host.published).toEqual([])
     expect(host.layers).toEqual([])
+  })
+
+  it("iCloud Passwords' read-before-set takes every setting whose user value differs from its target (R21-9)", () => {
+    const { host, api } = make()
+    const a = host.attach(api, ext(A, 1, ['privacy'], false))
+    // Its `#g(setting, false)`: `get`, return when the value already equals the target, else `set`.
+    const settings = [
+      ['services', 'passwordSavingEnabled'],
+      ['services', 'autofillCreditCardEnabled'],
+      ['services', 'autofillAddressEnabled']
+    ] as const
+    let sets = 0
+    for (const [category, name] of settings) {
+      if (value(api, a, category, name) === false) continue
+      api.call(a, 'set', [category, name, { value: false }])
+      sets++
+    }
+    expect(sets).toBe(3)
+    for (const [category, name] of settings) {
+      expect(api.call(a, 'get', [category, name, {}])).toEqual({
+        value: false,
+        levelOfControl: 'controlled_by_this_extension'
+      })
+    }
+    expect(host.last()).toEqual({
+      'passwords.offerToSave': { extensionId: A, name: 'Ext A', value: false },
+      'autofill.addresses': { extensionId: A, name: 'Ext A', value: false },
+      'autofill.cards': { extensionId: A, name: 'Ext A', value: false }
+    })
+    // The user's Settings do not move: the layer above them answers.
+    expect(host.settings.autofill).toEqual({ addresses: true, cards: true })
+  })
+
+  it("the user's own Do Not Track installs no rule and no layer – the protection service's to send; an extension's does", () => {
+    const { host, api } = make()
+    host.engineUp = true
+    host.settings.privacy.dnt = true
+    const a = host.attach(api, ext(A, 1))
+    expect(api.call(a, 'get', ['websites', 'doNotTrackEnabled', {}])).toEqual({
+      value: true,
+      levelOfControl: 'controllable_by_this_extension'
+    })
+    api.engineReady()
+    expect(host.sets.size).toBe(0)
+    expect(host.layers).toEqual([])
+    expect(host.published).toEqual([])
+    // The extension's own value carries the effects; the user's value shows again once it clears.
+    api.call(a, 'set', ['websites', 'doNotTrackEnabled', { value: true }])
+    expect(host.sets.get(PRIVACY_RULE_SET_ID)?.rules?.[0].action.requestHeaders).toEqual([
+      { header: 'DNT', operation: 'set', value: '1' }
+    ])
+    expect(host.layers[host.layers.length - 1].doNotTrack).toBe(true)
+    api.call(a, 'clear', ['websites', 'doNotTrackEnabled', {}])
+    expect(host.sets.has(PRIVACY_RULE_SET_ID)).toBe(false)
+    expect(host.layers[host.layers.length - 1].doNotTrack).toBe(false)
+    expect(api.call(a, 'get', ['websites', 'doNotTrackEnabled', {}])).toEqual({
+      value: true,
+      levelOfControl: 'controllable_by_this_extension'
+    })
   })
 
   it("iCloud Passwords' shape: set stores, persists, publishes under the desktop's key, answers the caller its level and tells the listeners", () => {
@@ -325,7 +409,7 @@ describe('AndroidPrivacy', () => {
     api.call(a, 'clear', ['services', 'passwordSavingEnabled', {}])
     expect(host.persisted.has(A)).toBe(false)
     expect(host.last()).toEqual({})
-    host.offerToSave = false
+    host.settings.passwords.offerToSave = false
     expect(api.call(a, 'get', ['services', 'passwordSavingEnabled', {}])).toEqual({
       value: false,
       levelOfControl: 'controllable_by_this_extension'
