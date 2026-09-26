@@ -19,14 +19,24 @@
 #               no watchdog line; the intent's page view in the window but GONE – the reporter
 #               says the content is hidden while the phone's first-run tour stands, so the host
 #               never places it and the page cannot cover the tour; the still with the tour
-#               standing (android-boot-heal-tour-over-link-<theme>.png). Then the driver
-#               (BootHealDemo.kt, `am instrument` on the SAME profile, kept): the tour over the
-#               restored page again, walked to its end – the omnibox up in new-tab mode over the
-#               page (the core's rule on a host without the new tab page, no tab made), the page's
-#               view VISIBLE with the slot's size, a back closing the omnibox, the page standing
-#               with its text in the accessibility tree; its stills pulled as
-#               android-boot-heal-tour-restored-<theme>.png, -tour-ended-omnibox-<theme>.png,
-#               -page-placed-<theme>.png, its claims in boot-heal-findings.txt.
+#               standing (android-boot-heal-tour-over-link-<theme>.png). The shell reads no
+#               further (the process is not its own), so the driver (BootHealDemo.kt, `am
+#               instrument`) does the same launch in ITS process: the profile cleared, the
+#               browser started (the tour, no tab), then MainActivity again with the package's
+#               VIEW intent for the link, the task cleared – the chrome booting again on the
+#               fresh profile, the intent's tab made active and loaded before the arm – and the
+#               proof the shell could not give: the page's view GONE under the tour and its text
+#               out of the accessibility tree, the tour walked to its end – the omnibox up in
+#               new-tab mode over the page (the core's rule on a host without the new tab page,
+#               no tab made) – a back closing the omnibox, and the page PLACED once nothing
+#               covers it: its view VISIBLE with the slot's size, its text in the tree. Its
+#               stills pulled as android-boot-heal-tour-hides-page-<theme>.png,
+#               -tour-ended-omnibox-<theme>.png, -page-placed-<theme>.png, its claims in
+#               boot-heal-findings.txt. (A driver started on the profile the shell's cold start
+#               LEFT would see something else: a restored page tab under the tour is neither
+#               loaded nor claimed after the tour ends – `onChromeReady` claims none before the
+#               first run is done and the tour's end claims none on a host without the new tab
+#               page – so no view exists to place; the core's rule, before and after this scene.)
 #
 # Everything lands under DEMO_OUT: per scheme <theme>/ (the am start answers, the stills, the
 # logs, the driver's files), boot-heal-findings.txt (every verdict), boot-heal-table.md (the
@@ -366,7 +376,7 @@ tour_act() {
     "the intent's page view is in the window but hidden under the tour, never placed over it ($theme)" "page views: ${views:-none}"
   rows+=("| the tour, fresh profile through the link ($theme) | ${state:-?} | $(field TotalTime "$answer") | $fully | $held | - | ${views:-none} | - |")
 
-  echo "== the tour ($theme): the driver walks it to its end over the restored page"
+  echo "== the tour ($theme): the driver does the link's launch in its process and walks the tour to its end over the page"
   adb shell am force-stop "$app_id" || true
   sleep 1
   adb shell run-as "$app_id" rm -rf "files/$demo_dir" || true
@@ -397,7 +407,7 @@ tour_act() {
   done
   adb logcat -d -v time > "$dir/driver-logcat.txt" 2> /dev/null || true
   # The driver's stills under the scene's names (a name claims exactly what it shows).
-  [ -f "$pull_dir/boot-heal-01-tour-over-page.png" ] && cp "$pull_dir/boot-heal-01-tour-over-page.png" "$dir/android-boot-heal-tour-restored-$theme.png"
+  [ -f "$pull_dir/boot-heal-01-tour-hides-page.png" ] && cp "$pull_dir/boot-heal-01-tour-hides-page.png" "$dir/android-boot-heal-tour-hides-page-$theme.png"
   [ -f "$pull_dir/boot-heal-02-tour-ended-omnibox.png" ] && cp "$pull_dir/boot-heal-02-tour-ended-omnibox.png" "$dir/android-boot-heal-tour-ended-omnibox-$theme.png"
   [ -f "$pull_dir/boot-heal-03-page-placed.png" ] && cp "$pull_dir/boot-heal-03-page-placed.png" "$dir/android-boot-heal-page-placed-$theme.png"
   echo "---- driver findings ($theme)"

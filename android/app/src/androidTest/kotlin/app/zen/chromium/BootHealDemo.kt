@@ -1,39 +1,42 @@
 package app.zen.chromium
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import org.json.JSONObject
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
 
 /**
  * The second act of the boot heal scene (W6-HF2, `android-boot-heal-demo.sh`): the first-run
- * tour over a page. The script's first act cold-started a FRESH profile through a link
- * (`am start -W -a VIEW -d https://example.com/`, LinkDispatchActivity's path) and read the
- * platform's `Fully drawn` before the splash's watchdog, the tour standing over the intent's
- * page; the process is gone after it (an instrumentation shares the process). This driver
- * starts the browser again on THAT profile (`keepProfile`: `onboardingDone` still false, the
- * intent's tab the space's one tab) – the tour stands over the restored page the same way –
- * and proves what the script cannot from the shell: the page's view is in the window but GONE
+ * tour over a link's page, walked to its end. The script's first act cold-started a FRESH
+ * profile through a link from the shell (`am start -W -a VIEW -d https://example.com/`,
+ * LinkDispatchActivity's path) and read the platform's `Fully drawn` before the splash's
+ * watchdog, the intent's page view in the window but GONE under the tour; the shell can read no
+ * further (the process is not its own). This driver does the same launch in ITS process: the
+ * harness clears the profile and starts the browser (the tour stands, no tab: a fresh phone has
+ * no new tab page), then MainActivity is started again with the package's VIEW intent for the
+ * link, the task cleared – a new Host, the chrome booting again on the fresh profile, the
+ * intent's tab created active and loaded before the arm (`openExternalUrl`), exactly the link's
+ * first launch – and proves what the shell could not: the page's view in the window but GONE
  * under the tour (the reporter says the content is hidden while the phone's tour stands, so the
  * host never places it), its text out of the accessibility tree; then the tour walked to its end
- * (Get started, Continue, Continue, then Skip beside Set as default where the host has a browser
- * role to give, Start browsing where it has not), after which the core's rule on a host without
- * the new tab page puts the omnibox up in new-tab mode over the page, no tab made – and the
- * page's view is VISIBLE with the slot's size: placed by the first layout after the tour. A back
- * closes the omnibox and the page stands, its text in the tree.
+ * (Get started, then Continue / Skip / Start browsing until none is up), after which the core's
+ * rule on a host without the new tab page puts the omnibox up in new-tab mode over the page, no
+ * tab made; a back closes the omnibox and the page stands PLACED – its view VISIBLE with the
+ * slot's size, its text in the tree – by the ordinary layout path, once nothing covers it.
  *
  * Only asserts that it could run; one PASS or FAIL per claim in `boot-heal-findings.txt` beside
- * the stills (`boot-heal-01-tour-over-page`, `-02-tour-ended-omnibox`, `-03-page-placed`), which
- * the script pulls under the scene's names per colour scheme.
+ * the stills (`boot-heal-01-tour-hides-page`, `-02-tour-ended-omnibox`, `-03-page-placed`),
+ * which the script pulls under the scene's names per colour scheme.
  */
 @RunWith(AndroidJUnit4::class)
-class BootHealDemo : DemoHarness(stateAsset = null, shotPrefix = "boot-heal", handshakeDir = "boot-heal-demo", keepProfile = true) {
+class BootHealDemo : DemoHarness(stateAsset = null, shotPrefix = "boot-heal", handshakeDir = "boot-heal-demo") {
     override val tag = "BootHealDemo"
 
     private lateinit var findings: File
@@ -43,43 +46,42 @@ class BootHealDemo : DemoHarness(stateAsset = null, shotPrefix = "boot-heal", ha
         runDemo()
     }
 
-    /** The profile as the link's cold start left it, read before the browser starts on it. */
-    override fun beforeLaunch() {
+    /** The tour is the first frame of the fresh profile's launch: make sure it is there. */
+    override fun warmUp() {
         findings = File(out, "boot-heal-findings.txt")
         findings.writeText(
             "Zenium Android boot heal, act 2: the first-run tour over a link's page (API ${Build.VERSION.SDK_INT})\n\n"
         )
-        val file = File(File(app.filesDir, "zen"), "state.json")
-        if (!file.exists()) {
-            finding("profile on disk before the relaunch: no state.json (the link's cold start left nothing) FAIL")
-            return
-        }
-        val persisted = runCatching { JSONObject(file.readText()) }.getOrNull()
-        if (persisted == null) {
-            finding("profile on disk before the relaunch: state.json unreadable FAIL")
-            return
-        }
-        val tabs = persisted.optJSONArray("tabs")
-        val urls = (0 until (tabs?.length() ?: 0)).map { tabs!!.getJSONObject(it).optString("url") }
-        val done = persisted.optJSONObject("settings")?.optBoolean("onboardingDone", false) ?: false
-        finding(
-            "profile on disk before the relaunch: ${urls.size} tab(s) $urls, onboardingDone $done " +
-                verdict(urls == listOf(LINK) && !done)
-        )
-    }
-
-    /** The tour is the first frame of the relaunch: make sure it is there. */
-    override fun warmUp() {
         val welcome = waitFor("Get started", 20_000) != null
-        if (!welcome) Log.w(tag, "the tour never showed on the relaunch")
-        finding("the tour stands on the relaunch of the profile the link's cold start left ${verdict(welcome)}")
+        if (!welcome) Log.w(tag, "the tour never showed on the fresh profile")
+        finding("the tour stands on the fresh profile's launch ${verdict(welcome)}")
         SystemClock.sleep(1_500)
     }
 
     override fun demo() {
-        val f = Finger()
+        // 0. The fresh profile under its tour, no link: no tab (a phone has no new tab page to
+        //    open), the first run not done. The page the link brings has nothing to share it with.
+        val fresh = coreState()
+        val freshTabs = fresh.getJSONObject("tabs").length()
+        val freshDone = fresh.getJSONObject("settings").optBoolean("onboardingDone", false)
+        finding("fresh profile under the tour: $freshTabs tab(s), onboardingDone $freshDone ${verdict(freshTabs == 0 && !freshDone)}")
 
-        // 1. Under the tour: the core has the intent's page as the one tab, the host has its view
+        // 1. The link's launch in this process: MainActivity again with the package's VIEW intent,
+        //    the task cleared (a new Host, the chrome booting again on the fresh profile), the
+        //    intent's tab created active and loaded before the arm – the link's first launch.
+        val intent = Intent(app, MainActivity::class.java)
+            .setAction(Intent.ACTION_VIEW)
+            .setData(Uri.parse(LINK))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        activity = instrumentation.startActivitySync(intent) as MainActivity
+        val welcome = waitFor("Get started", 30_000) != null
+        if (!welcome) Log.w(tag, "the tour never showed on the link's launch")
+        finding("the tour stands on the link's launch ${verdict(welcome)}")
+        // The page loads under the tour; the reporter's first reports have gone out.
+        SystemClock.sleep(3_000)
+        ensureForeground()
+
+        // 2. Under the tour: the core has the intent's page as the one tab, the host has its view
         //    – GONE (never placed while the tour stands), out of the accessibility tree.
         val before = coreState()
         val activeBefore = activeCoreTab(before)?.optString("url")
@@ -89,13 +91,14 @@ class BootHealDemo : DemoHarness(stateAsset = null, shotPrefix = "boot-heal", ha
                 verdict(before.getJSONObject("tabs").length() == 1 && activeBefore == LINK && !doneBefore)
         )
         val hidden = pageViews()
-        finding("page view under the tour: ${hidden.describe()} ${verdict(hidden.count == 1 && hidden.visible == 0)}")
+        finding("page view under the tour, in the window but hidden: ${hidden.describe()} ${verdict(hidden.count == 1 && hidden.visible == 0)}")
         finding("the page's text is out of the tree under the tour ${verdict(findNode { it.contains(PAGE_TEXT) } == null)}")
-        shot("01-tour-over-page")
+        shot("01-tour-hides-page")
 
-        // 2. The tour to its end: the first step's Get started, then whichever of Skip (the
+        // 3. The tour to its end: the first step's Get started, then whichever of Skip (the
         //    default step, left with the role up for grabs), Start browsing (the last step where
         //    the host has no role to give) or Continue is up, until none is.
+        val f = Finger()
         if (!tapLabel(f, "Get started")) Log.w(tag, "no Get started")
         step()
         var taps = 0
@@ -108,10 +111,11 @@ class BootHealDemo : DemoHarness(stateAsset = null, shotPrefix = "boot-heal", ha
         val ended = waitForGone("Get started", 5_000) && findAny("Continue", "Skip", "Start browsing") == null
         finding("the tour walked to its end in ${taps + 1} taps ${verdict(ended)}")
 
-        // 3. The tour's end, as the core rules it on a host without the new tab page: the flag
-        //    up, no tab made, the omnibox in new-tab mode over the page – and the page's view
-        //    placed by the first layout after the tour.
-        SystemClock.sleep(3_500)
+        // 4. The tour's end, as the core rules it on a host without the new tab page: the flag
+        //    up, no tab made, the omnibox in new-tab mode over the page. The omnibox covers the
+        //    content too (overlayCoversContent), so the page's view is read here and judged
+        //    once the omnibox has closed.
+        val omnibox = waitFor(OMNIBOX_LABEL, 8_000) != null && urlbarOpen()
         val after = coreState()
         val activeAfter = activeCoreTab(after)?.optString("url")
         val doneAfter = after.getJSONObject("settings").optBoolean("onboardingDone", false)
@@ -119,19 +123,20 @@ class BootHealDemo : DemoHarness(stateAsset = null, shotPrefix = "boot-heal", ha
             "core after the tour: ${after.getJSONObject("tabs").length()} tab(s), active $activeAfter, onboardingDone $doneAfter " +
                 verdict(after.getJSONObject("tabs").length() == 1 && activeAfter == LINK && doneAfter)
         )
-        val omnibox = urlbarOpen()
-        finding("the tour ended in the omnibox, new-tab mode, over the page (the core's rule) ${verdict(omnibox && findByLabel(OMNIBOX_LABEL) != null)}")
-        val placed = pageViews()
-        finding("page view once the tour ended: ${placed.describe()} ${verdict(placed.count == 1 && placed.visible == 1 && placed.sized == 1)}")
+        finding("the tour ended in the omnibox, new-tab mode, over the page (the core's rule) ${verdict(omnibox)}")
+        SystemClock.sleep(1_000)
+        val under = pageViews()
+        finding("page view under the omnibox: ${under.describe()} ${verdict(under.count == 1)}")
         shot("02-tour-ended-omnibox")
 
-        // 4. A back closes the omnibox; the page stands placed, its text in the tree.
+        // 5. A back closes the omnibox; nothing covers the page: placed by the ordinary layout
+        //    path – VISIBLE with the slot's size, its text in the tree.
         val close = closeUrlField()
         finding("the omnibox closed by back, the page kept ${verdict(close.ok)} (${close.describe()})")
-        val text = waitFor({ it.contains(PAGE_TEXT) }, 8_000) != null
+        val text = waitFor({ it.contains(PAGE_TEXT) }, 10_000) != null
         SystemClock.sleep(1_500)
-        val standing = pageViews()
-        finding("page view after the omnibox closed: ${standing.describe()} ${verdict(standing.count == 1 && standing.visible == 1 && standing.sized == 1)}")
+        val placed = pageViews()
+        finding("page view once nothing covers it, placed: ${placed.describe()} ${verdict(placed.count == 1 && placed.visible == 1 && placed.sized == 1)}")
         finding("the page's text in the tree after the tour ${verdict(text)}")
         shot("03-page-placed")
         SystemClock.sleep(1_000)
@@ -176,7 +181,7 @@ class BootHealDemo : DemoHarness(stateAsset = null, shotPrefix = "boot-heal", ha
     }
 
     companion object {
-        /** The link the script's cold start opened (the intent's page). */
+        /** The link the launches open (the intent's page). */
         private const val LINK = "https://example.com/"
         /** The page's heading, in the accessibility tree once its view is placed. */
         private const val PAGE_TEXT = "Example Domain"
