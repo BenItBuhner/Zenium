@@ -94,6 +94,25 @@ describe('data-hover on a touch screen', () => {
     expect(viewportStore.get().hover).toBe(false)
   })
 
+  it('a pointer event moves data-hover alone: a viewport the store was handed stands, whatever the window would say now', () => {
+    // The store holds a layout the window would not derive (a test's forced phone; a posture
+    // report's): the mouse's first event must re-derive nothing and publish nothing, or the
+    // shell it is over unmounts under it (the phone menu's edit pose, menuEdit.test.tsx).
+    const forced = {
+      ...viewportStore.get(),
+      formFactor: 'phone' as const,
+      coarse: true,
+      hover: false
+    }
+    viewportStore.set(forced)
+    pointerEvent('pointerover', 'mouse')
+    expect(viewportStore.get()).toEqual(forced)
+    expect(root().hover).toBe('hover')
+    pointerEvent('pointerdown', 'touch')
+    expect(viewportStore.get()).toEqual(forced)
+    expect(root().hover).toBe('none')
+  })
+
   it('a finger after the mouse turns hover off, so a tap’s sticky :hover paints nothing', () => {
     pointerEvent('pointermove', 'mouse')
     expect(root().hover).toBe('hover')

@@ -148,6 +148,18 @@ export function hoverAttribute(
 }
 
 /**
+ * The live pointer changed kind (a mouse after fingers, a finger after a mouse): only the root's
+ * `data-hover` moves. The layout is the media queries' and the store's viewport stands as it is –
+ * a pointer event re-derives nothing and publishes nothing.
+ */
+function refreshHover(): void {
+  document.documentElement.dataset.hover = hoverAttribute(
+    viewportStore.get().hover,
+    livePointerHover()
+  )
+}
+
+/**
  * Re-derive the layout from the window as it stands now (the resize listener's own step): for
  * a report that says the window changed shape another way – a fold's posture (`lib/posture.ts`)
  * – so the class follows the width whether or not the resize was heard first. Nothing without
@@ -165,9 +177,7 @@ if (!flags.__zenViewportWatched && hasViewport()) {
   for (const query of ['(pointer: coarse)', '(hover: hover)']) {
     window.matchMedia(query).addEventListener('change', refresh)
   }
-  // A mouse after fingers, or a finger after a mouse: only `data-hover` moves (the layout is
-  // the media queries'), and the store publishes nothing when the viewport is unchanged.
-  onLivePointerChange(refresh)
+  onLivePointerChange(refreshHover)
   // Subscribed at import, ahead of any React subscription: the first snapshot re-derives the
   // layout before the shell renders, so a popup window never flashes the phone chrome.
   browserStore.subscribe(refresh)
