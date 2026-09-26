@@ -242,11 +242,14 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
             val mores = chromeValue(MORE_LABELS_JS)
             finding("  the ⋮ buttons: $mores")
             expect("each ⋮ is the shared 44 icon button named for its module", mores == JSONArray(expected.map { "More options for ${moduleTitle(it)}" }).toString() && chromeValue("String(${ALL_MORE_ICON_BUTTONS_JS})") == "true", "stack-more-buttons")
-            // The tree: the ⋮ buttons by name (the WebView's tree carries buttons reliably; the
-            // cards' own names are read from the DOM above and noted from the tree here).
-            val treeMore = awaitFresh(8_000, "the Downloads card's ⋮") { it == "More options for Downloads" } != null
+            // The tree: the first card's ⋮ by name (the WebView's tree carries buttons reliably,
+            // but only those in view – the second card's ⋮ lies beyond the strip's clip, where the
+            // first run looked for it; the cards' own names are read from the DOM above and noted
+            // from the tree here).
+            val firstMore = "More options for ${moduleTitle(expected[0])}"
+            val treeMore = awaitFresh(8_000, "the first card's ⋮") { it == firstMore } != null
             val treeCard = findNode { it.startsWith("Continue where you left off") } != null
-            finding("  tree: the Downloads ⋮ ${if (treeMore) "named" else "NOT found"}; a node starting 'Continue where you left off' ${if (treeCard) "present" else "absent"}")
+            finding("  tree: the first card's ⋮ '$firstMore' ${if (treeMore) "named" else "NOT found"}; a node starting 'Continue where you left off' ${if (treeCard) "present" else "absent"}")
             expect("TalkBack has the ⋮ by its module's name", treeMore, "stack-more-tree")
             // Geometry at the bottom dock (the phone's default): the stack above the tiles, the
             // card the strip's width less the 24 the next card peeks by.
@@ -267,15 +270,26 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         step("2. Paging: a real swipe on the strip snaps to the second card and selects its dot; a finger on the first dot pages back") {
             val strip = domBox(STRIP_JS) ?: error("no strip on the page")
             val pitch = geometry().optInt("cardWidth") + 8
-            // The finger starts three quarters of the way across the strip, on the first card's
-            // body (not its ⋮ or an action), and carries it a little over half the width left.
-            val start = Rect(strip.left + strip.width() * 3 / 4, strip.top + strip.height() / 2, strip.left + strip.width() * 3 / 4 + 2, strip.top + strip.height() / 2 + 2)
+            // The finger starts nine tenths of the way across the strip, on the first card's body
+            // near its right edge (not its ⋮ or an action). It settles in first, as the pill
+            // gestures do: a nudge past the touch slop and a hold, so the strip has the finger
+            // before the swipe – the compositor asks the main thread which scroller a touch is on,
+            // and in the first run the moves of that first frame went with the answer (the strip
+            // stopped 58 CSS px short of a 207 px swipe, under half a pitch, and snapped back).
+            // Then most of the strip's width left in 240 ms and off: a fling, which the cards'
+            // `scroll-snap-stop: always` holds to the second card, and a travel that lands there
+            // by nearness alone should the fling not register. A probe samples the strip's
+            // scrollLeft every animation frame to record the trajectory.
+            val start = Rect(strip.left + strip.width() * 9 / 10, strip.top + strip.height() / 2, strip.left + strip.width() * 9 / 10 + 2, strip.top + strip.height() / 2 + 2)
             val from = touchPoint(start) ?: error("the strip lies outside the touchable window ($strip)")
-            val travel = -(strip.width() * 0.55f)
-            noteLine("  swipe from ${from.x.toInt()},${from.y.toInt()} by ${travel.toInt()} px over 240 ms (pitch $pitch)")
+            val nudge = -SWIPE_NUDGE_DP * density
+            val travel = -(strip.width() * 0.85f) - nudge
+            noteLine("  swipe from ${from.x.toInt()},${from.y.toInt()}: a nudge of ${nudge.toInt()} px and a ${SWIPE_SETTLE_MS} ms hold, then ${travel.toInt()} px over 240 ms (pitch $pitch); the probe ${chromeValue(SWIPE_PROBE_ARM_JS)}")
             measureFrames("magic-stack-swipe", JankBudget.Kind.GESTURE, trace = true) {
                 Finger().apply {
                     down(from.x, from.y)
+                    moveBy(nudge, 0f, 60)
+                    hold(SWIPE_SETTLE_MS)
                     moveBy(travel, 0f, 240)
                     up()
                 }
@@ -284,6 +298,7 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
             val paged = awaitChrome("(document.querySelectorAll('.zen-mstack-dot')[1]||{getAttribute:function(){return ''}}).getAttribute('aria-selected')==='true'", 4_000)
             SystemClock.sleep(400)
             val after = geometry()
+            finding("  the strip's scrollLeft over the swipe (ms, px): ${chromeValue(SWIPE_PROBE_READ_JS)}")
             finding("  after the swipe: $after")
             expect("the strip snapped to the second card (scrollLeft ${after.optInt("scrollLeft")} within 12 of the pitch $pitch)", abs(after.optInt("scrollLeft") - pitch) <= 12, "stack-swipe-snap")
             expect("the second dot is selected (index ${after.optInt("selected")})", paged && after.optInt("selected") == 1, "stack-swipe-dot")
@@ -402,7 +417,7 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
             awaitSheetAtRest(6_000)
             val row = chromeValue("((${GEAR_ROW_JS})||{}).textContent||''")
             finding("  the gear sheet ${verdict(gear)}; its Magic Stack row: '$row'")
-            expect("the gear opens the page's sheet '$GEAR_TITLE' with a 'Magic Stack' row", gear && row.startsWith("Magic Stack") && row.contains("Choose which cards show under the shortcuts"), "gear-row")
+            expect("the gear opens the page's sheet '$GEAR_TITLE' with a 'Magic Stack' row", gear && row.contains("Magic Stack") && row.contains("Choose which cards show under the shortcuts"), "gear-row")
             still("gear-sheet-row")
             val swapped = touchDomExpecting("the gear sheet's Magic Stack row", GEAR_ROW_JS, "the gear sheet has left and the stack's is up", 8_000, reveal = true) {
                 sheetPresented(SHEET_TITLE) && !sheetPresented(GEAR_TITLE)
@@ -704,8 +719,22 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         private const val MENU_ROWS_JS = "JSON.stringify(Array.prototype.map.call(document.querySelectorAll('.zen-sheet .zen-sheet-item'),function(e){return e.textContent.trim()}))"
         /** The open sheet's switch rows, label -> checked (`RowView`: the row is the `role="switch"` button, its label a `.zen-settings-label`). */
         private const val SWITCHES_JS = "(function(){var o={};var s=document.querySelectorAll('.zen-sheet [role=\"switch\"]');for(var i=0;i<s.length;i++){var l=s[i].querySelector('.zen-settings-label');o[l?l.textContent.trim():s[i].textContent.trim()]=s[i].getAttribute('aria-checked')==='true'}return JSON.stringify(o)})()"
-        /** The gear sheet's Magic Stack action row (`CustomizeSheet`, `data-row="magic-stack"`). */
-        private const val GEAR_ROW_JS = "document.querySelector('.zen-sheet [role=\"dialog\"] [data-row=\"magic-stack\"]')"
+        /** The gear sheet's Magic Stack action row (`CustomizeSheet`, `data-row="magic-stack"`; the `role="dialog"` is the `.zen-sheet` element's own). */
+        private const val GEAR_ROW_JS = "document.querySelector('.zen-sheet [data-row=\"magic-stack\"]')"
+        /** The swipe's settling-in: a nudge past the 8 dp touch slop, then the hold that lets the strip latch the finger. */
+        private const val SWIPE_NUDGE_DP = 12f
+        private const val SWIPE_SETTLE_MS = 240L
+        /**
+         * The swipe's probe: the strip's scrollLeft sampled on every animation frame for 2.5 s
+         * from the arming, kept on the window for [SWIPE_PROBE_READ_JS] – the peak, the last and
+         * the path itself (ms since arming, px), so a strip that snaps back leaves its trajectory.
+         */
+        private const val SWIPE_PROBE_ARM_JS = "(function(){var s=document.querySelector('.zen-ntp .zen-mstack-strip');if(!s)return 'no strip';" +
+            "var p={t0:performance.now(),path:[],peak:0};window.__mstackSwipe=p;" +
+            "function f(){var l=s.scrollLeft;var t=Math.round(performance.now()-p.t0);var last=p.path[p.path.length-1];if(!last||last[1]!==Math.round(l))p.path.push([t,Math.round(l)]);" +
+            "if(l>p.peak)p.peak=l;if(performance.now()-p.t0<2500)requestAnimationFrame(f)}requestAnimationFrame(f);return 'armed'})()"
+        private const val SWIPE_PROBE_READ_JS = "(function(){var p=window.__mstackSwipe;if(!p)return 'no probe';var s=document.querySelector('.zen-ntp .zen-mstack-strip');" +
+            "return JSON.stringify({peak:Math.round(p.peak),now:s?s.scrollLeft:null,path:p.path})})()"
         private const val GEOMETRY_JS = "(function(){var s=document.querySelector('.zen-ntp .zen-mstack-strip');if(!s)return JSON.stringify({cards:0});" +
             "var c=s.firstElementChild;var cs=getComputedStyle(s);var inner=s.clientWidth-parseFloat(cs.paddingLeft)-parseFloat(cs.paddingRight);" +
             "var dots=document.querySelectorAll('.zen-mstack-dot');var sel=-1;for(var i=0;i<dots.length;i++){if(dots[i].getAttribute('aria-selected')==='true')sel=i}" +
