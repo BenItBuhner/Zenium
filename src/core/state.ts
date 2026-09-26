@@ -116,7 +116,15 @@ import {
 } from '../shared/bookmarks'
 import { emptyReadingList, sanitizeReadingList, sortReadingList } from '../shared/readingList'
 import { JsonStore } from './store/JsonStore'
-import { createSpace, createTabRecord, emptyModel, tabVisibleIn, type Model } from './model'
+import {
+  agentOwnedSpace,
+  createSpace,
+  createTabRecord,
+  emptyModel,
+  tabVisibleIn,
+  userSpaceInstead,
+  type Model
+} from './model'
 import { newSearchChoiceSeed, sanitizeSearchChoice, searchChoiceState } from './searchChoice'
 import { sanitizeResourceSettings } from './resources/switches'
 import { sanitizeAgentSettings } from './agent/settings'
@@ -185,6 +193,11 @@ export interface PersistedWindow {
   displayId?: number | null
   maximized: boolean
   activeSpaceId: string
+  /**
+   * The user space the window left for an agent's (`ZenWindow.lastUserSpaceId`), where it goes
+   * back to when the agent's space is empty at the restore; absent in profiles written before it.
+   */
+  lastUserSpaceId?: string | null
   /** Per-space selected tab. */
   selection: Record<string, string>
   compact: boolean
@@ -997,6 +1010,15 @@ export class BrowserState {
         space.activeTabId = space.tabIds.find((id) => !m.tabs[id].pinned) ?? space.tabIds[0] ?? null
     }
     if (!m.spaces.some((s) => s.id === m.activeSpaceId)) m.activeSpaceId = m.spaces[0].id
+    // An empty agents' space never stays the active space across a restore: the model's default
+    // (what a host with one window, or a window with nothing remembered, comes up on) goes back
+    // to the user's space, as each restored window's does below.
+    m.activeSpaceId = userSpaceInstead(
+      m.spaces,
+      m.activeSpaceId,
+      this.restoredWindows.find((w) => w.activeSpaceId === m.activeSpaceId)?.lastUserSpaceId ??
+        this.restoredWindows[0]?.lastUserSpaceId
+    )
     for (const folder of Object.values(m.folders)) {
       if (!m.spaces.some((s) => s.id === folder.spaceId)) delete m.folders[folder.id]
     }
@@ -1040,6 +1062,14 @@ export class BrowserState {
       )
     for (const w of this.restoredWindows) {
       if (!m.spaces.some((s) => s.id === w.activeSpaceId)) w.activeSpaceId = m.activeSpaceId
+      if (
+        w.lastUserSpaceId &&
+        !m.spaces.some((s) => s.id === w.lastUserSpaceId && !agentOwnedSpace(s))
+      )
+        w.lastUserSpaceId = null
+      // The window left on an agent's space that is empty now (a foreground session that closed
+      // its tabs) comes up on the user's space it left, else the first user space (W7-F3).
+      w.activeSpaceId = userSpaceInstead(m.spaces, w.activeSpaceId, w.lastUserSpaceId)
       w.selection = Object.fromEntries(
         Object.entries(w.selection ?? {}).filter(([spaceId, tabId]) => {
           const space = m.spaces.find((s) => s.id === spaceId)
