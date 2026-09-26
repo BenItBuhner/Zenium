@@ -124,7 +124,10 @@ export function isWebPage(url: string): boolean {
 /**
  * The key a site is remembered under for desktop site and darkening (its registrable domain,
  * the `[*.]example.com` pattern Chrome's per-site content settings use), or null for non-web
- * pages.
+ * pages. A page served from an IP address has no registrable domain: its key is the address
+ * itself, lower-cased, the port off and an IPv6's brackets kept (`127.0.0.1`, `[::1]`), so a
+ * dev server or a router page takes the dark theme and holds its own exception like any site
+ * (`getDomain` passes an address through; Chrome's pattern for one is the address too).
  */
 export function siteKey(url: string): string | null {
   if (!isWebPage(url)) return null
