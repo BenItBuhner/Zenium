@@ -59,6 +59,7 @@ import { useLongPress } from '../phone/useLongPress'
 import { V2_GLYPH } from '../v2/controls'
 import { Highlighted } from '../v2/Highlighted'
 import { EngineFieldGlyph } from './EngineFieldGlyph'
+import { EnginePickerSheet } from './EnginePickerSheet'
 import { matchRanges } from './highlight'
 import { isShareableUrl, showsPageHeader } from './omniboxHeader'
 import {
@@ -228,6 +229,8 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
   const [exit, setExit] = useState<RowExit | null>(null)
   /** The row a hold is asking about (OMN-17): its prompt sheet is up while this is set. */
   const [asking, setAsking] = useState<Suggestion | null>(null)
+  /** The phone's engine picker (OMN-38) is up: the field's glyph control opened it. */
+  const [picking, setPicking] = useState(false)
   /** The list the exit runs in, and where its items stood before the ghosts left the flow. */
   const exitList = useRef<{ list: HTMLElement; before: Map<HTMLElement, number> } | null>(null)
   const exitStop = useRef<(() => void) | null>(null)
@@ -432,6 +435,34 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
     const value = mode.typed || text
     setTyped(value, false)
     void fetchSuggestions(value, false, null)
+  }
+
+  /**
+   * The engine picker's answer (OMN-38, the phone's glyph control): the engine THIS query goes
+   * to. Another engine than the default is keyword mode for it – the form Chrome's site search
+   * takes for one query – over the terms as they stand (a typed `@keyword` gives way to the
+   * pick: its query alone stays), with nothing for Backspace on the empty field to bring back,
+   * as the Ctrl+K search mode has none. The default engine picked again is the plain bar over the
+   * same terms: keyword mode left, the keyword not brought back. The default itself is untouched
+   * either way (`setDefaultEngine` is the footer's).
+   */
+  const pickEngine = (picked: SearchEngine): void => {
+    if (picked.id === engine.id) return
+    const terms = textKeyword?.kind === 'engine' ? textKeyword.query : text
+    if (picked.id !== defaultEngine.id) {
+      enterKeywordMode(picked, '', terms)
+      return
+    }
+    setKeywordMode(null)
+    setSelected(-1)
+    setAction(-1)
+    setTyped(terms, false)
+    void fetchSuggestions(terms, false, null)
+  }
+
+  /** The picker's `Set as default`: the Settings row's command for this query's engine. */
+  const setDefaultEngine = (): void => {
+    run('settings.update', { searchEngineId: engine.id })
   }
 
   const onChange = (e: React.ChangeEvent<HTMLInputElement>): void => {
@@ -1351,6 +1382,17 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
             onConfirm={() => removeFromCard(asking)}
           />
         )}
+        {/* The glyph control's picker (OMN-38): a §9.13 picker over the omnibox, in the same host. */}
+        {picking && (
+          <EnginePickerSheet
+            engines={engines}
+            current={engine}
+            defaultEngine={defaultEngine}
+            onClose={() => setPicking(false)}
+            onPick={pickEngine}
+            onSetDefault={setDefaultEngine}
+          />
+        )}
         <PhoneSheet
           edge={phoneEdge}
           sheetRef={sheetRef}
@@ -1371,15 +1413,30 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
           hint={results.length === 0 && !text ? placeholder : null}
           field={
             <div
-              // The trailing slot's control is a §9.3 icon button, 44 × 44 with the 20 glyph: as
-              // tall as the pill, round, flush with its end, so it is the pill's end cap.
-              className="zen-omnibox-field flex h-11 min-w-0 flex-1 items-center gap-2.5 rounded-full pl-2"
+              // Either slot's control is a §9.3 icon button, 44 × 44 with the 20 glyph: as tall
+              // as the pill, round, flush with its end, so it is the pill's end cap.
+              className="zen-omnibox-field flex h-11 min-w-0 flex-1 items-center gap-2.5 rounded-full"
               style={fieldGrowFrom(barLayout(state))}
             >
               {/* The engine's mark (v2 §6; NTP-09): its favicon at 20, whichever engine it is, the
                 letter tile until it loads or for an engine without one; the morph's double
-                draws the same (FakeboxMorphLayer). */}
-              <EngineFieldGlyph engine={engine} fallback="tile" />
+                draws the same (FakeboxMorphLayer). The mark is the pill's leading end cap (OMN-38):
+                the §9.3 button named for the engine, its tap the picker of the engine this query
+                goes to; -8 on its trailing side (§9.3's overlap on the 36 pitch) keeps the mark
+                and the text where the 8 gutter had them, so the double stays the field's twin. */}
+              <button
+                type="button"
+                className="zen-toolbar-button -mr-2 h-11 w-11 shrink-0 rounded-full"
+                aria-label={`Search engine: ${engine.name}`}
+                aria-haspopup="dialog"
+                aria-expanded={picking}
+                data-testid="urlbar-engine"
+                // Keep the input focused: the sheet gives the focus – and the keyboard – back to it.
+                onPointerDown={(e) => e.preventDefault()}
+                onClick={() => setPicking(true)}
+              >
+                <EngineFieldGlyph engine={engine} fallback="tile" />
+              </button>
               <input
                 ref={inputRef}
                 value={text}
