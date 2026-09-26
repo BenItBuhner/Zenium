@@ -7,6 +7,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -34,6 +35,7 @@ import androidx.core.content.ContextCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
+import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
 import org.junit.Assert.assertTrue
@@ -55,7 +57,10 @@ import kotlin.math.abs
  * followed and back stepping within the tab's history, the toolbar hiding on scroll, the menu,
  * one of the caller's items firing (its PendingIntent lands back in the "app" as a toast), Open
  * in Zenium landing in the browser window with the live page, a second, dark-scheme tab, and X
- * closing back to the caller with the caller's exit animation.
+ * closing back to the caller with the caller's exit animation. In each scheme the page asks for
+ * its location and the tab answers on §9.23's native sheet (W6-S11, the #515 gate's follow-up):
+ * its shape measured from the tree, a touch on the scrim refusing the request and remembering
+ * nothing, the page asking again, Allow under a finger granting it.
  *
  * Then the depth (CCT-07, CCT-11): a third tab with the caller's BOTTOM TOOLBAR – its own
  * `RemoteViews` (a layout of this APK's, inflated by the provider) with two buttons, one under a
@@ -141,6 +146,16 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         scroll(0.45f)
         SystemClock.sleep(1_500)
 
+        // 5b. The page asks for its location: the custom tab's prompt on §9.23's native sheet, in
+        //     the tab's light scheme – dismissed by a touch on the scrim (the page's `denied`,
+        //     nothing remembered), asked again, and answered Allow under a finger.
+        askPermission("05b-permission-light")
+
+        // 5c. A tel: link under a finger: the custom tab's Open in <App>? confirmation on the same
+        //     sheet – Open under a finger starts the dialer, a second ask dismissed by a touch on
+        //     the scrim is refused and nothing comes up.
+        askOpenInApp("05c-open-in-app-light")
+
         // 6. The menu: the caller's items, Zenium's page actions, Open in Zenium.
         openMenu()
         shot("06-menu-light")
@@ -184,6 +199,13 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         openCustomTab()
         shot("09-toolbar-dark")
         beat()
+
+        // 9b. The same ask in the dark tab: the sheet in the tab's dark scheme.
+        askPermission("09b-permission-dark")
+
+        // 9c. The same confirmation in the dark tab.
+        askOpenInApp("09c-open-in-app-dark")
+
         openMenu()
         shot("10-menu-dark")
         beat()
@@ -275,6 +297,264 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         SystemClock.sleep(1_200)
         shot("22-closed-to-caller")
         Log.i(tag, "caller hits: $callerHits; session events: $events")
+        assertTrue("the native sheets' claims held (${sheetFaults.size} did not): $sheetFaults", sheetFaults.isEmpty())
+    }
+
+    // --- the permission prompt (W6-S11) ----------------------------------------------------------
+
+    /** The native sheets' claims (the permission ask's, the Open in <App>? confirmation's) that did not hold; judged at the end of the run so the recording covers the rest. */
+    private val sheetFaults = ArrayList<String>()
+
+    private fun claim(what: String, holds: Boolean) {
+        Log.i(tag, "${if (holds) "PASS" else "FAIL"} $what")
+        if (!holds) sheetFaults += what
+    }
+
+    /**
+     * The page asks for its location – a "Use my location" button planted over it (the way the
+     * link is) under a finger – and the custom tab answers on §9.23's native sheet in the tab's
+     * scheme: "Allow en.m.wikipedia.org to know your location?" over Block | Allow. Its shape is
+     * read from the tree as #515's scene 6 read the app window's: the grip strip over the title,
+     * the title over the pair, Block leading and Allow trailing on one row, each at the chassis's
+     * 40 dp. A touch on the scrim over the page dismisses it: the page's request is refused (the
+     * geolocation error's `denied`) and nothing is remembered, so the next touch on the button
+     * asks again, and Allow under a finger answers that ask – the page's second promise settles
+     * with something other than `denied` (a fix, or the emulator's unavailable / timeout). The
+     * engine's own gate behind Allow, the app's location runtime permissions, is granted ahead so
+     * the answer is the sheet's alone and no system dialog stands in for it.
+     */
+    private fun askPermission(name: String) {
+        val page = customTab()?.page ?: run {
+            Log.w(tag, "no custom tab page to ask a permission from")
+            claim("a custom tab page to ask from ($name)", false)
+            return
+        }
+        shellCommand("pm grant ${app.packageName} android.permission.ACCESS_FINE_LOCATION")
+        shellCommand("pm grant ${app.packageName} android.permission.ACCESS_COARSE_LOCATION")
+        val host = (evalJs(page, "location.host") ?: "").removePrefix("www.")
+        val question = "Allow $host$PERMISSION_QUESTION_SUFFIX"
+        val button = plantLocateButton(page) ?: run {
+            Log.w(tag, "planting the location button returned nothing")
+            claim("the location button planted on the page ($name)", false)
+            return
+        }
+        val f = Finger()
+        f.tap(button.x, button.y)
+        val title = waitFor(question, 8_000)
+        SystemClock.sleep(1_200)
+        val grip = findByLabel(GRIP_LABEL)
+        val block = findByLabel(BLOCK_LABEL)
+        val allow = findByLabel(ALLOW_LABEL)
+        Log.i(tag, "$name: title '$question' ${if (title != null) "up at $title" else "not up"}; grip $grip; Block $block; Allow $allow; page answers ${geoAnswers(page)}")
+        claim("$name: the custom tab's prompt is the native sheet asking '$question' (the page's host in the question) with the grip strip over it (§9.23)", title != null && grip != null)
+        claim("$name: the grip strip stands over the title and the title over the pair", title != null && grip != null && block != null && grip.bottom <= title.top && title.bottom <= block.top)
+        claim(
+            "$name: §9.11's pair under the question, Block leading and Allow trailing on one row",
+            block != null && allow != null && block.right <= allow.left && abs(block.centerY() - allow.centerY()) < 4 * density
+        )
+        claim(
+            "$name: both peers stand at the chassis's ${CONTROL_DP} dp (Block ${block?.height()} px, Allow ${allow?.height()} px at density $density)",
+            block != null && allow != null && abs(block.height() - CONTROL_DP * density) <= 1.5f && abs(allow.height() - CONTROL_DP * density) <= 1.5f
+        )
+        if (title == null) {
+            touchFault("the touch on the page's '$LOCATE_LABEL' brought no prompt in 8 s (page answers ${geoAnswers(page)})")
+            return
+        }
+        shot(name)
+        beat()
+
+        // A touch on the scrim: the sheet leaves, the request is refused (`denied`), nothing is
+        // remembered – the page asks again on the next touch, so the sheet comes back.
+        val sheetTop = grip?.top ?: title.top
+        val scrim = PointF(width / 2f, (touchable.top + sheetTop) / 2f)
+        Log.i(tag, "$name: touch at ${scrim.x.toInt()},${scrim.y.toInt()} on the scrim over the page")
+        f.tap(scrim.x, scrim.y)
+        val scrimGone = awaitTrue(6_000) { findByLabel(question) == null }
+        val refused = awaitTrue(6_000) { geoAnswers(page) == listOf(DENIED) }
+        Log.i(tag, "$name: after the scrim: sheet ${if (scrimGone) "gone" else "still up"}; the page's answers ${geoAnswers(page)}")
+        claim("$name: a touch on the scrim dismisses the sheet and the page's request is refused ('$DENIED')", scrimGone && refused)
+        if (!scrimGone) touchFault("the touch on the scrim did not send the sheet away in 6 s")
+        f.tap(button.x, button.y)
+        val again = waitFor(question, 8_000) != null
+        claim("$name: the page may ask again after a dismissal – nothing was remembered", again)
+        if (!again) {
+            touchFault("the second touch on '$LOCATE_LABEL' brought no prompt in 8 s (page answers ${geoAnswers(page)})")
+            return
+        }
+        SystemClock.sleep(800)
+
+        // Allow under a finger: this ask is granted; the page's second promise settles with
+        // something other than `denied`.
+        val allowed = touchTapLabelExpecting(ALLOW_LABEL, "the page's second request is answered, not '$DENIED'", timeoutMs = 15_000) {
+            geoAnswers(page).let { it.size == 2 && it[1] != DENIED }
+        }
+        Log.i(tag, "$name: after Allow: the page's answers ${geoAnswers(page)}")
+        claim("$name: Allow under a finger grants the ask (the page's answers ${geoAnswers(page)})", allowed)
+        awaitTrue(4_000) { findByLabel(question) == null }
+        SystemClock.sleep(800)
+    }
+
+    /** What the page's location requests settled with so far, in order (`granted`, `denied`, `unavailable`, `timeout`). */
+    private fun geoAnswers(page: TabWebView): List<String> {
+        val text = evalJs(page, GEO_ANSWERS_JS) ?: return emptyList()
+        val array = runCatching { JSONArray(text) }.getOrNull() ?: return emptyList()
+        return List(array.length()) { array.getString(it) }
+    }
+
+    /** Plant the "Use my location" button over the page and return where it is on screen. */
+    private fun plantLocateButton(page: TabWebView): PointF? {
+        val text = evalJs(page, PLANT_LOCATE_JS) ?: return null
+        val origin = IntArray(2)
+        instrumentation.runOnMainSync { page.getLocationOnScreen(origin) }
+        val point = JSONObject(text)
+        return PointF(origin[0] + point.getDouble("x").toFloat(), origin[1] + point.getDouble("y").toFloat())
+    }
+
+    // --- the Open in <App>? confirmation (W6-S11) --------------------------------------------------
+
+    /**
+     * A `tel:` link planted over the page under a finger: the custom tab holds the navigation and
+     * asks on §9.23's native sheet in the tab's scheme, in the browser window's
+     * `ExternalProtocolSheet` form – "Open in Phone?" (the dialer's label; "Open in another app?"
+     * where the resolver stands in), the sentence "en.m.wikipedia.org wants to open a phone
+     * number" under it, the address decoded on its own line with the full URL as its accessible
+     * name, Not now | Open. Its shape is read from the tree as the permission scene reads its
+     * own: the grip strip over the title, the title over the sentence, the sentence over the
+     * address, the address over the pair, Not now leading and Open trailing on one row, each at
+     * the chassis's 40 dp. Open under a finger starts the dialer – the top window leaves the app –
+     * and the system back returns to the tab ([returnFromApp]: up to three, then the shell stops
+     * the dialer to uncover the tab's task). A second
+     * touch on the link asks again – nothing was remembered – and a touch on the scrim dismisses
+     * that ask: the request is refused, no app comes up and the tab stays on its page. On a
+     * device with no app answering to `tel:` the scene is skipped with a word in the log (the CI
+     * image has its dialer; SheetLeaveDemo's second sheet relies on the same).
+     */
+    private fun askOpenInApp(name: String) {
+        val page = customTab()?.page ?: run {
+            Log.w(tag, "no custom tab page to follow a tel: link from")
+            claim("a custom tab page to follow a link from ($name)", false)
+            return
+        }
+        val probe = Intent(Intent.ACTION_VIEW, Uri.parse(TEL_URL)).addCategory(Intent.CATEGORY_BROWSABLE)
+        val dialer = app.packageManager.resolveActivity(probe, PackageManager.MATCH_DEFAULT_ONLY)
+        if (dialer == null) {
+            Log.w(tag, "$name: no app on this device answers to tel:; the confirmation cannot be asked here")
+            return
+        }
+        val dialerPackage = dialer.activityInfo.packageName
+        val dialerLabel = dialer.takeIf { dialerPackage != "android" }?.loadLabel(app.packageManager)?.toString()?.ifEmpty { null }
+        val title = if (dialerLabel != null) "Open in $dialerLabel?" else "Open in another app?"
+        val host = (evalJs(page, "location.host") ?: "").removePrefix("www.")
+        val sentence = "$host$OPEN_SENTENCE_SUFFIX"
+        val pageUrl = evalJs(page, "location.href")
+        val link = plantTelLink(page) ?: run {
+            Log.w(tag, "planting the tel: link returned nothing")
+            claim("the tel: link planted on the page ($name)", false)
+            return
+        }
+        val f = Finger()
+        f.tap(link.x, link.y)
+        val titleRect = waitFor(title, 8_000)
+        SystemClock.sleep(1_200)
+        val grip = findByLabel(GRIP_LABEL)
+        val sentenceRect = findByLabel(sentence)
+        // The address line's accessible name is the URL the page handed over – the link's `tel:%2B…`
+        // as the engine canonicalised it (its escapes kept, or undone) – while its text reads decoded.
+        val addressNode = findNodeWhere { it.contentDescription?.toString()?.startsWith("tel:") == true }
+        val address = addressNode?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
+        val addressText = addressNode?.text?.toString()
+        val addressName = addressNode?.contentDescription?.toString()
+        val notNow = findByLabel(NOT_NOW_LABEL)
+        val open = findByLabel(OPEN_LABEL)
+        Log.i(tag, "$name: title '$title' ${if (titleRect != null) "up at $titleRect" else "not up"}; grip $grip; sentence '$sentence' $sentenceRect; address $address reading '$addressText' named '$addressName'; Not now $notNow; Open $open; top ${topPackage()}")
+        claim("$name: the custom tab's confirmation is the native sheet titled '$title' with the grip strip over it (§9.23)", titleRect != null && grip != null)
+        claim("$name: the browser sheet's sentence under the title: '$sentence'", sentenceRect != null)
+        claim(
+            "$name: the address on its own line reads the decoded address '$TEL_DISPLAY' (read '$addressText') and carries the full URL as its accessible name (named '$addressName')",
+            addressNode != null && addressText == TEL_DISPLAY && (addressName == TEL_URL || addressName == TEL_DISPLAY)
+        )
+        claim(
+            "$name: the grip strip over the title, the title over the sentence, the sentence over the address, the address over the pair",
+            titleRect != null && grip != null && sentenceRect != null && address != null && notNow != null &&
+                grip.bottom <= titleRect.top && titleRect.bottom <= sentenceRect.top && sentenceRect.bottom <= address.top && address.bottom <= notNow.top
+        )
+        claim(
+            "$name: §9.11's pair under the address, Not now leading and Open trailing on one row",
+            notNow != null && open != null && notNow.right <= open.left && abs(notNow.centerY() - open.centerY()) < 4 * density
+        )
+        claim(
+            "$name: both peers stand at the chassis's ${CONTROL_DP} dp (Not now ${notNow?.height()} px, Open ${open?.height()} px at density $density)",
+            notNow != null && open != null && abs(notNow.height() - CONTROL_DP * density) <= 1.5f && abs(open.height() - CONTROL_DP * density) <= 1.5f
+        )
+        if (titleRect == null) {
+            touchFault("the touch on the page's tel: link brought no confirmation in 8 s (top ${topPackage()})")
+            return
+        }
+        shot(name)
+        beat()
+
+        // Open under a finger: the dialer comes up over the tab, with the number.
+        val opened = touchTapLabelExpecting(OPEN_LABEL, "the dialer ($dialerPackage) comes up", timeoutMs = 10_000) { topPackage() == dialerPackage }
+        Log.i(tag, "$name: after Open: top ${topPackage()}")
+        claim("$name: Open under a finger hands the address to the dialer (top ${topPackage()})", opened)
+        if (opened) {
+            SystemClock.sleep(1_500)
+            returnFromApp(dialerPackage)
+        }
+        val backOnPage = awaitTrue(8_000) { customTab() != null }
+        claim("$name: the tab is back in front after the dialer (top ${topPackage()})", backOnPage)
+        if (!backOnPage) return
+        SystemClock.sleep(1_000)
+
+        // The link again: nothing was remembered, so the confirmation is asked again; a touch on
+        // the scrim refuses it – no app comes up and the tab keeps its page.
+        f.tap(link.x, link.y)
+        val againRect = waitFor(title, 8_000)
+        claim("$name: the tab asks again on the next touch – nothing was remembered", againRect != null)
+        if (againRect == null) {
+            touchFault("the second touch on the tel: link brought no confirmation in 8 s (top ${topPackage()})")
+            return
+        }
+        SystemClock.sleep(800)
+        val sheetTop = findByLabel(GRIP_LABEL)?.top ?: againRect.top
+        val scrim = PointF(width / 2f, (touchable.top + sheetTop) / 2f)
+        Log.i(tag, "$name: touch at ${scrim.x.toInt()},${scrim.y.toInt()} on the scrim over the page")
+        f.tap(scrim.x, scrim.y)
+        val scrimGone = awaitTrue(6_000) { findByLabel(title) == null }
+        SystemClock.sleep(1_500)
+        val stayed = topPackage() == app.packageName && customTab()?.page?.let { evalJs(it, "location.href") } == pageUrl
+        Log.i(tag, "$name: after the scrim: sheet ${if (scrimGone) "gone" else "still up"}; top ${topPackage()}; page ${customTab()?.page?.let { evalJs(it, "location.href") }}")
+        claim("$name: a touch on the scrim dismisses the confirmation: the request is refused, no app comes up and the tab keeps its page", scrimGone && stayed)
+        if (!scrimGone) touchFault("the touch on the scrim did not send the confirmation away in 6 s")
+    }
+
+    /**
+     * Back to the tab from the app a link opened: the system back, up to three times – the
+     * Google dialer takes one for the dialpad it opened on the number and one more for its
+     * screen (run 1 sent one and waited) – and, with the app still in front, the shell stops it
+     * (`am force-stop`) so the task under it is in front again: the CALLER's task, which the
+     * custom tab lands in, so `AppTask.moveToFront` is not open to the tab (the app's own tasks
+     * do not list it; the picture-in-picture restore's move is the browser window's, whose task
+     * is the app's).
+     */
+    private fun returnFromApp(packageName: String) {
+        for (attempt in 1..3) {
+            back()
+            if (waitForWindow(app.packageName, 3_000)) return
+            Log.w(tag, "back $attempt did not return the tab from $packageName")
+        }
+        Log.w(tag, "stopping $packageName from the shell to uncover the tab's task")
+        shellCommand("am force-stop $packageName")
+        waitForWindow(app.packageName, 8_000)
+    }
+
+    /** Plant the tel: link over the page and return where it is on screen. */
+    private fun plantTelLink(page: TabWebView): PointF? {
+        val text = evalJs(page, PLANT_TEL_JS) ?: return null
+        val origin = IntArray(2)
+        instrumentation.runOnMainSync { page.getLocationOnScreen(origin) }
+        val point = JSONObject(text)
+        return PointF(origin[0] + point.getDouble("x").toFloat(), origin[1] + point.getDouble("y").toFloat())
     }
 
     // --- the depth's moves -----------------------------------------------------------------------
@@ -941,8 +1221,85 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         private const val FIND_LABEL = "Find in Page"
         private const val FIND_CLOSE_LABEL = "Close find bar"
         private const val FIND_QUERY = "damping"
+        /** The planted button the page asks for its location from. */
+        private const val LOCATE_LABEL = "Use my location"
+        /** strings.xml cct_permission_question_location after its `%1$s`, the page's host. */
+        private const val PERMISSION_QUESTION_SUFFIX = " to know your location?"
+        /** §9.11's pair under the question (`cct_block`, `cct_allow`), and the chassis's grip (`prompt_sheet_dismiss`). */
+        private const val BLOCK_LABEL = "Block"
+        private const val ALLOW_LABEL = "Allow"
+        private const val GRIP_LABEL = "Dismiss"
+        /** The chassis's control height (PromptSheetSpec.CONTROL_DP), the pair's. */
+        private const val CONTROL_DP = PromptSheetSpec.CONTROL_DP
+        /** The geolocation error's PERMISSION_DENIED, as the planted script records it. */
+        private const val DENIED = "denied"
+        /** The planted link's address, its `+` escaped so the sheet's line shows the decode; and as the line reads it. */
+        private const val TEL_URL = "tel:%2B15551234567"
+        private const val TEL_DISPLAY = "tel:+15551234567"
+        /** strings.xml cct_open_wants after its `%1$s` (the page's host), with cct_open_object_tel's words. */
+        private const val OPEN_SENTENCE_SUFFIX = " wants to open a phone number"
+        /** §9.11's pair under the confirmation (`cct_not_now`, `cct_open`). */
+        private const val NOT_NOW_LABEL = "Not now"
+        private const val OPEN_LABEL = "Open"
 
         private const val PAGE_STATE_JS = "location.host + ':' + document.readyState"
+        private const val GEO_ANSWERS_JS = "JSON.stringify(window.__zeniumGeo || [])"
+
+        /**
+         * One tall button over the page that asks for the location on a click, recording how each
+         * request settled in `window.__zeniumGeo`; its centre in device pixels relative to the
+         * WebView. The request's own timeout bounds the wait for a fix once it is granted (the
+         * time under the prompt does not count against it).
+         */
+        private val PLANT_LOCATE_JS = """
+            (function () {
+              var b = document.createElement('button');
+              b.textContent = 'Use my location';
+              b.style.cssText = 'position:fixed;left:16px;right:16px;top:55%;display:block;padding:22px 18px;border:0;' +
+                'border-radius:14px;background:#2e5bff;color:#fff;z-index:2147483647;' +
+                'font:600 18px/1.3 system-ui,sans-serif;box-shadow:0 2px 10px rgba(0,0,0,.14)';
+              window.__zeniumGeo = [];
+              b.addEventListener('click', function () {
+                navigator.geolocation.getCurrentPosition(
+                  function () { window.__zeniumGeo.push('granted'); },
+                  function (e) {
+                    window.__zeniumGeo.push(e.code === 1 ? 'denied' : e.code === 2 ? 'unavailable' : e.code === 3 ? 'timeout' : 'error:' + e.code);
+                  },
+                  { timeout: 5000, maximumAge: 0 });
+              });
+              document.body.appendChild(b);
+              var vv = window.visualViewport;
+              var scale = (vv ? vv.scale : 1) * (window.devicePixelRatio || 1);
+              var r = b.getBoundingClientRect();
+              return JSON.stringify({
+                x: (r.left + r.width / 2 - (vv ? vv.offsetLeft : 0)) * scale,
+                y: (r.top + r.height / 2 - (vv ? vv.offsetTop : 0)) * scale
+              });
+            })()
+        """.trimIndent()
+
+        /**
+         * One tall `tel:` link over the page, below the location button, for the Open in <App>?
+         * confirmation; its centre in device pixels relative to the WebView.
+         */
+        private val PLANT_TEL_JS = """
+            (function () {
+              var a = document.createElement('a');
+              a.href = '$TEL_URL';
+              a.textContent = 'Call the newsroom';
+              a.style.cssText = 'position:fixed;left:16px;right:16px;top:70%;display:block;padding:22px 18px;text-align:center;' +
+                'border-radius:14px;background:#fff;color:#1d1d2c;text-decoration:none;z-index:2147483647;' +
+                'font:600 18px/1.3 system-ui,sans-serif;box-shadow:0 2px 10px rgba(0,0,0,.14)';
+              document.body.appendChild(a);
+              var vv = window.visualViewport;
+              var scale = (vv ? vv.scale : 1) * (window.devicePixelRatio || 1);
+              var r = a.getBoundingClientRect();
+              return JSON.stringify({
+                x: (r.left + r.width / 2 - (vv ? vv.offsetLeft : 0)) * scale,
+                y: (r.top + r.height / 2 - (vv ? vv.offsetTop : 0)) * scale
+              });
+            })()
+        """.trimIndent()
 
         /** One tall link over the page; its centre in device pixels relative to the WebView. */
         private val PLANT_LINK_JS = """
