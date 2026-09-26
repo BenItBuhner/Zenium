@@ -1,0 +1,9 @@
+{
+  "id": "overview-motion",
+  "order": 46,
+  "class": "OverviewMotionDemo",
+  "shard": "phone-c",
+  "mirrors": "android-overview-demo.yml:demo=motion",
+  "dir": "motion-demo",
+  "estimate": 2.5
+}

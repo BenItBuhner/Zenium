@@ -1,0 +1,9 @@
+{
+  "id": "errors",
+  "order": 1,
+  "class": "ErrorPagesDemo",
+  "shard": "phone-a",
+  "mirrors": "android-errors-demo.yml",
+  "dir": "errors-demo",
+  "estimate": 3
+}

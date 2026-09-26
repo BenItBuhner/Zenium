@@ -1,0 +1,9 @@
+{
+  "id": "pdf-viewer",
+  "order": 6,
+  "class": "PdfViewerDemo",
+  "shard": "phone-a",
+  "mirrors": "android-pdf-viewer-demo.yml:driver=engine",
+  "dir": "pdf-viewer-demo",
+  "estimate": 2.5
+}

@@ -1,0 +1,9 @@
+{
+  "$comment": "The *Demo classes under androidTest and the workflows the nightly sweep leaves out, each with its reason (class, or workflow; absent: true for a class not yet landed).",
+  "skip": [
+    {
+      "workflow": "android-ext-compat-sweep.yml",
+      "reason": "the extension program's compatibility sweep (CompatSweep, not a demo driver): two 210-minute jobs over the extension corpus, hours long; that program dispatches it"
+    }
+  ]
+}

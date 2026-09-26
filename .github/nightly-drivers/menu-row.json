@@ -1,0 +1,9 @@
+{
+  "id": "menu-row",
+  "order": 62,
+  "class": "MenuIconRowDemo",
+  "shard": "phone-d",
+  "mirrors": "android-menu-row-demo.yml",
+  "dir": "menu-row-demo",
+  "estimate": 3.5
+}

@@ -1,0 +1,9 @@
+{
+  "id": "select-tabs",
+  "order": 45,
+  "class": "SelectTabsDemo",
+  "shard": "phone-c",
+  "mirrors": "android-select-tabs-demo.yml",
+  "dir": "selecttabs-demo",
+  "estimate": 3.5
+}

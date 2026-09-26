@@ -1,0 +1,9 @@
+{
+  "id": "overview",
+  "order": 28,
+  "class": "OverviewDemo",
+  "shard": "phone-b",
+  "mirrors": "android-overview-demo.yml",
+  "dir": "overview-demo",
+  "estimate": 2.5
+}

@@ -1,0 +1,12 @@
+{
+  "id": "touchfix",
+  "order": 9,
+  "class": "TouchFixDemo",
+  "shard": "phone-a",
+  "mirrors": "android-touchfix-demo.yml",
+  "dir": "touchfix-demo",
+  "env": {
+    "DEMO_THEME": "light"
+  },
+  "estimate": 2.5
+}

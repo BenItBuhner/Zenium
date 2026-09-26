@@ -1,0 +1,14 @@
+{
+  "id": "sheet-recede",
+  "order": 94,
+  "class": "SheetRecedeDemo",
+  "shard": "api35",
+  "mirrors": "android-sheet-recede-demo.yml",
+  "dir": "sheet-recede-demo",
+  "script": ".github/scripts/android-sheet-recede-demo.sh",
+  "env": {
+    "DEMO_THEME": "light"
+  },
+  "setup": ["ffmpeg"],
+  "estimate": 3
+}

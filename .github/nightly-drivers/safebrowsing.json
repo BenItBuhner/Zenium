@@ -1,0 +1,9 @@
+{
+  "id": "safebrowsing",
+  "order": 27,
+  "class": "SafeBrowsingDemo",
+  "shard": "phone-b",
+  "mirrors": "android-safebrowsing-demo.yml",
+  "dir": "safebrowsing-demo",
+  "estimate": 4
+}

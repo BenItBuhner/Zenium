@@ -1,0 +1,12 @@
+{
+  "id": "bar-hide",
+  "order": 82,
+  "class": "BarHideDemo",
+  "shard": "phone-e",
+  "mirrors": "android-bar-hide-demo.yml",
+  "dir": "bar-hide-demo",
+  "env": {
+    "DEMO_THEME": "light"
+  },
+  "estimate": 5.5
+}
