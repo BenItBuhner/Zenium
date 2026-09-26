@@ -182,9 +182,12 @@ export class SiteDataService {
     if (!siteDataPolicyEquals(next, this.policyDoc)) this.update(next)
   }
 
-  /** The policy's word for `url`. */
+  /**
+   * The word for `url` of the policy the hosts apply: these lists with the On-device site data
+   * row folded in (`ProtectionService.effectiveSiteData`).
+   */
   resolve(url: string): SiteDataResolution {
-    return resolveSiteData(this.policyDoc, url)
+    return resolveSiteData(this.browser.protection.effectiveSiteData(), url)
   }
 
   /** What the site-information sheet shows for a page at `url`, and what adding it would add. */

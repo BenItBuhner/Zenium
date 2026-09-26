@@ -62,6 +62,7 @@ import type {
 } from '../shared/types'
 import type { AppIconId } from '../shared/appIcon'
 import type { PageViewport } from '../shared/capture'
+import type { ContentRules } from '../shared/contentRules'
 import type { DisplayMode } from '../shared/displayMode'
 import type { PageFontSettings } from '../shared/fonts'
 import type { FormsCommand, FormsEvent } from '../shared/forms'
@@ -1013,6 +1014,7 @@ export interface TabView {
 }
 
 export type { PageRules } from '../shared/types'
+export type { ContentRules } from '../shared/contentRules'
 
 export interface TabViewHost {
   /** Create the live page for `tab`, attached to `host`'s window. */
@@ -1026,6 +1028,12 @@ export interface TabViewHost {
   setShortcuts?(bindings: KeyBinding[]): void
   /** Page controls changed – hosts that decide per navigation refresh their copy of the rules. */
   setPageRules?(rules: PageRules): void
+  /**
+   * The per-site content settings enforced at the load path changed (`shared/contentRules`):
+   * hosts whose engine must have its answer before a request leaves (the Android WebView's
+   * `WebSettings`) keep a copy; the desktop asks the core directly and leaves this out.
+   */
+  setContentRules?(rules: ContentRules): void
 }
 
 /**

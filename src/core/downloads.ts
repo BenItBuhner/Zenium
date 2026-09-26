@@ -19,6 +19,7 @@ import {
 } from '../shared/downloads'
 import { newId } from '../shared/ids'
 import { JsonStore } from './store/JsonStore'
+import type { DownloadLimiter } from './downloadLimiter'
 import type { DownloadHost, StoreIO } from './platform'
 import type { ZenWindow } from './window'
 import {
@@ -139,7 +140,30 @@ export interface DownloadServiceDeps {
   onBegin?: (item: DownloadItem, init: DownloadInit) => void
   /** Providers asked for a verdict on every new download; the shared registry by default. */
   verdicts?: DangerVerdictRegistry
+  /**
+   * The `automatic-downloads` rule (PS-71): a page's second download without a gesture of its
+   * own is refused or held for the permission prompt by its site's row. Without one, every
+   * transfer runs.
+   */
+  limiter?: DownloadLimiter
   now?: () => number
+}
+
+type FinishState = Extract<
+  DownloadState,
+  'completed' | 'cancelled' | 'interrupted' | 'insecure-blocked'
+>
+
+/**
+ * A transfer waiting for the `automatic-downloads` prompt: out of the list, the engine's item
+ * paused (a host that has not started it yet leaves it unstarted), listed or dropped with the
+ * answer.
+ */
+interface HeldDownload {
+  record: DownloadItem
+  init: DownloadInit
+  /** The transfer ended before the answer came (a small file ahead of the pause): replayed on Allow. */
+  finished: { state: FinishState; patch: ProgressPatch } | null
 }
 
 export type DownloadChange = DownloadChangeKind
@@ -284,6 +308,8 @@ export class DownloadService {
   private readonly recheck = new Set<string>()
   /** Navigations turned into failed rows (`tabId\nurl` → when), see `noteDeadLink`. */
   private readonly deadLinks = new Map<string, number>()
+  /** Transfers the `automatic-downloads` prompt is being asked about (PS-71). */
+  private readonly held = new Map<string, HeldDownload>()
   /** The existence sweep over the loaded list, for callers that want to wait for it (tests). */
   readonly loaded: Promise<void>
 
@@ -367,6 +393,14 @@ export class DownloadService {
    * referrer): the host cancels its engine's item and reports nothing more for it; the row
    * waits for "Keep anyway" (`acceptDanger`, which runs `retry` with `insecureAccepted`) or
    * Discard. Verdict providers are still asked, so a Safe Browsing hit can take Keep away.
+   *
+   * Two more answers come from the `automatic-downloads` rule (PS-71), for a new transfer a
+   * page started without a gesture of its own after its free one: `cancelled` – the site is
+   * blocked, the host drops its engine's item without a row or a word – and `paused` – the
+   * user is being asked; the record is out of the list, the host keeps the item (the core
+   * pauses it through `DownloadHost.pause` a tick later, so the host's own bookkeeping is in
+   * place) and hears `resume` or `cancel` for it with the answer. A host that has not started
+   * the transfer yet (Android's downloader starts on `bind`) leaves it unstarted until then.
    */
   begin(init: DownloadInit): DownloadItem {
     const now = this.now()
@@ -375,6 +409,24 @@ export class DownloadService {
     // the pending attempt is moot, the count carries on until bytes arrive.
     if (existing) this.holdAutoResume(existing)
     const record = existing ? this.continueRecord(existing, init) : this.newRecord(init, now)
+    if (!existing) {
+      const judged = init.sourceTabId ? this.deps.limiter?.judge(init.sourceTabId) : undefined
+      if (judged?.limit === 'refuse') return this.refuseByLimiter(record, now)
+      if (judged?.limit === 'ask') return this.hold(record, init, judged.ask())
+    }
+    return this.admit(record, init, existing !== undefined, now)
+  }
+
+  /**
+   * The transfer runs for a listed row: the rate, the verdict providers (new rows), the
+   * insecure-download rule, the announcement.
+   */
+  private admit(
+    record: DownloadItem,
+    init: DownloadInit,
+    continued: boolean,
+    now: number
+  ): DownloadItem {
     const transfer: Transfer = {
       rate: new RateEstimator(now),
       verdicts: null,
@@ -385,7 +437,8 @@ export class DownloadService {
     }
     transfer.rate.reset(record.receivedBytes, now)
     this.transfers.set(record.id, transfer)
-    if (!existing && this.registry.size > 0) transfer.verdicts = this.askProviders(record, transfer)
+    if (!continued && this.registry.size > 0)
+      transfer.verdicts = this.askProviders(record, transfer)
     if (
       !record.insecureAccepted &&
       insecureDownload(init.urlChain ?? [init.url], record.referrer)
@@ -396,9 +449,74 @@ export class DownloadService {
       return record
     }
     this.persist()
-    if (!existing) this.deps.onBegin?.(record, init)
+    if (!continued) this.deps.onBegin?.(record, init)
     this.onChange(record, 'started')
     return record
+  }
+
+  /**
+   * The limiter refused the transfer (a blocked site's download past its free one): the record
+   * leaves the list it was just put in and comes back `cancelled`, nothing persisted or announced.
+   */
+  private refuseByLimiter(record: DownloadItem, now: number): DownloadItem {
+    this.unlist(record)
+    record.state = 'cancelled'
+    record.endedAt = now
+    return record
+  }
+
+  /** The limiter wants the user asked: the record waits out of the list, the engine's item paused. */
+  private hold(record: DownloadItem, init: DownloadInit, answer: Promise<boolean>): DownloadItem {
+    this.unlist(record)
+    record.state = 'paused'
+    const held: HeldDownload = { record, init, finished: null }
+    this.held.set(record.id, held)
+    // The host maps the record to its item as `begin` returns: the pause waits for that.
+    queueMicrotask(() => {
+      if (this.held.get(record.id) === held) this.host.pause(record.id)
+    })
+    void answer.then(
+      (allowed) => this.settleHeld(held, allowed),
+      () => this.settleHeld(held, false)
+    )
+    return record
+  }
+
+  /** The prompt's answer for a held transfer: listed and running, or dropped for good. */
+  private settleHeld(held: HeldDownload, allowed: boolean): void {
+    const { record, init, finished } = held
+    if (this.held.get(record.id) !== held) return
+    this.held.delete(record.id)
+    if (!allowed || this.quitting) {
+      this.host.cancel(record.id)
+      // A transfer that ran to its end before the pause caught it leaves a file: gone with it.
+      const savePath =
+        finished?.state === 'completed' ? (finished.patch.savePath ?? record.savePath) : ''
+      if (savePath) void this.host.deletePartial({ ...record, savePath })
+      return
+    }
+    record.state = 'progressing'
+    this.items.unshift(record)
+    if (this.items.length > MAX_ITEMS) this.trim()
+    const admitted = this.admit(record, init, false, this.now())
+    if (admitted.state === 'insecure-blocked') {
+      // Refused after all (Chrome's mixed-content rule): the row waits for Keep anyway, the
+      // item the host kept is dropped as it would have been at `begin`.
+      this.host.cancel(record.id)
+      return
+    }
+    this.host.resume(record)
+    if (finished) this.finish(record.id, finished.state, finished.patch)
+  }
+
+  private unlist(record: DownloadItem): void {
+    const index = this.items.indexOf(record)
+    if (index !== -1) this.items.splice(index, 1)
+  }
+
+  /** The tab closed: the limiter's count for it goes with it. */
+  onTabGone(tabId: string): void {
+    this.deps.limiter?.onTabGone(tabId)
   }
 
   /** The row of a refused insecure transfer: nothing on disk, waiting for Keep anyway or Discard. */
@@ -564,6 +682,12 @@ export class DownloadService {
     patch: ProgressPatch = {}
   ): void {
     if (this.quitting) return
+    // A transfer the prompt is being asked about ended first: the answer decides what it was.
+    const held = this.held.get(id)
+    if (held) {
+      held.finished = { state, patch }
+      return
+    }
     const record = this.item(id)
     if (!record || isFinal(record.state)) return
     const transfer = this.transfers.get(id)

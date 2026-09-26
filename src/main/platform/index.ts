@@ -115,6 +115,7 @@ import createBackgroundWorker from './backgroundWorker?nodeWorker'
 import { ElectronBlocking, ElectronBundledLists, bundledListsDirectory } from './blocking'
 import { supportsWindowMaterial } from './appShell'
 import { ElectronPrivacy } from './privacy'
+import { ContentRulesHandler, attachContentGuards } from './contentRules'
 import { ElectronSpellcheck } from './spellcheck'
 import { ElectronScreenCapture } from './screenCapture'
 import { ElectronShareSheet } from './shareSheet'
@@ -704,6 +705,15 @@ export class ElectronPlatform implements Platform {
     // Safe Browsing ahead of the rules, the cookie and signal edits after them; the upgrade
     // observer and the page preload's signals IPC.
     this.privacy.attach(this.requestBlocking)
+    // The per-site content settings that act in the request engine (images, PDF download) and
+    // the page preload's document-start question for the page-world guards (sensors, FedCM,
+    // payment handlers); the core answers both from the permission store.
+    this.requestBlocking.multiplexer.register(new ContentRulesHandler(browser.contentRules))
+    attachContentGuards(browser.contentRules, (ses) =>
+      this.requestBlocking.multiplexer.containerOf(ses)
+    )
+    // The JavaScript switch is each view's own (`Emulation.setScriptExecutionDisabled`).
+    this.views.contentRules = browser.contentRules
     this.downloadsShell = new ElectronDownloadsShell(browser)
     const chromiumLicences = chromiumLicencesResponder()
     this.sessions.configure((ses: Session, containerId: string) => {

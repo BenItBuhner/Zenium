@@ -12,6 +12,12 @@ import { installCaptureReporter, installCaptureShim } from '@shared/captureState
 import { installShareBridge, installShareShim, type ShareOutcome } from '@shared/share'
 import { installTextFragmentScript, type TextFragmentHostMessage } from '@shared/textFragmentScript'
 import { focusEdge } from '@shared/focusEdge'
+import { installContentGuards } from '@shared/contentGuards'
+import {
+  blockedGuardsWith,
+  type ContentRules,
+  type ResolvedContentRulesFor
+} from '@shared/contentRules'
 import { downloadNameOf, rememberDownloadName, type DownloadNames } from './downloadNames'
 import { rememberClearedSelection } from './selectionMemory'
 import { installViewportController, type PageRulesConfig } from './viewport'
@@ -27,7 +33,12 @@ import { installRequestObserver, type RequestObserver } from './requestObserver'
  * view's width (`window.__zenDeviceWidth`), so zoom, the desktop layout and force-zoom are laid
  * out from the first viewport meta on; rule changes arrive live as `pageRules` messages. It
  * prefixes the host's word on rotate-to-fullscreen too (`window.__zenRotateToFullscreen`): the
- * phone's window alone runs it, as Chrome gates it (`PageHost.rotateToFullscreen`, §9.36).
+ * phone's window alone runs it, as Chrome gates it (`PageHost.rotateToFullscreen`, §9.36), and
+ * the per-site content rules the page-world guards of a blocked site's document are installed
+ * from (`contentGuards.ts`) before any of the page's own script: the core's resolved answer for
+ * the navigation (`window.__zenResolvedRules`, tagged with its site – an extension's rule over
+ * the user's, `ContentRulesService.resolveAll`) first, the pushed document
+ * (`window.__zenContentRules`) for a document the navigation did not announce.
  */
 interface PageBridge {
   postMessage(message: string): void
@@ -73,6 +84,26 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
   }
 }
 
+/**
+ * The page-world guards of the rows no WebView switch covers (motion sensors, third-party
+ * sign-in, payment handlers – `contentGuards.ts`), read for the top document's site as the
+ * desktop reads them for its WebContents' URL: a frame follows the page it is in (Chromium's
+ * `location.ancestorOrigins` ends at the top document; a sandboxed top's "null" gets each row's
+ * default, as `contentRuleSite` has no site for it). The core's answer for this navigation
+ * decides where it is the top document's site's (`blockedGuardsWith`); the pushed rules
+ * otherwise.
+ */
+function installGuards(
+  w: Window,
+  rules: ContentRules,
+  resolved: ResolvedContentRulesFor | null | undefined
+): void {
+  const ancestors = w.location.ancestorOrigins
+  const top = ancestors && ancestors.length > 0 ? ancestors.item(ancestors.length - 1) : null
+  const blocked = blockedGuardsWith(rules, resolved, top ?? w.location.href)
+  if (blocked.length > 0) installContentGuards(blocked)
+}
+
 ;(() => {
   const w = window as unknown as Window & {
     __zenPageBridge?: PageBridge
@@ -81,9 +112,20 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
     __zenPageRules?: PageRules
     __zenDeviceWidth?: number
     __zenRotateToFullscreen?: boolean
+    __zenContentRules?: ContentRules
+    __zenResolvedRules?: ResolvedContentRulesFor | null
   }
   if (w.__zenPageInstalled) return
   w.__zenPageInstalled = true
+  // First, before any of the page's own script can reach the APIs: a blocked site's document
+  // gets the refusals of its rows (the desktop asks its main process the same at document start).
+  try {
+    if (w.__zenContentRules) installGuards(w, w.__zenContentRules, w.__zenResolvedRules)
+  } catch {
+    /* a page that has already frozen a prototype keeps the API; the store's word is unchanged */
+  }
+  delete w.__zenContentRules
+  delete w.__zenResolvedRules
   try {
     installDownloadNames(w)
   } catch {

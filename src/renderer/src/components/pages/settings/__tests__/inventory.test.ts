@@ -590,7 +590,9 @@ const INVENTORY: Record<string, readonly string[]> = {
     'File editing',
     'Clipboard',
     'Payment handlers',
-    'Insecure content',
+    // Insecure content is the Android host's row alone (services pass 10): Electron fixes
+    // `allowRunningInsecureContent` per WebContents at creation and has no per-site path, so the
+    // desktop is not offered a row nothing acts on (`support.desktop: 'n-a'`).
     'Virtual reality',
     'Window management',
     'Fonts',
