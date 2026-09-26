@@ -12,11 +12,11 @@ import { displayHost } from '../shared/url'
 import type { BrowserState } from './state'
 
 /**
- * What a store of the reading list offers whoever draws or replicates it (W6-1; the services
- * slice's sync record `reading-list-entry` sits behind the same six calls – see
- * `internal/desktop-parity/reading-list-interface.md`). The desktop's implementation is the
- * {@link ReadingListService} over the profile's state; a host that replicates the list swaps in
- * one that writes records too, and the chrome never knows.
+ * What a store of the reading list offers whoever draws it (W6-1; the services slice's sync
+ * record `reading-list-entry` – every field but `favicon` – is diffed out of the state at each
+ * commit by the sync engine's own subscriber, so the store needs no "emit the record" step; see
+ * `internal/desktop-parity/reading-list-interface.md` and services' read beside it). The
+ * desktop's implementation is the {@link ReadingListService} over the profile's state.
  */
 export interface ReadingListStore {
   /** Save a page; a page already in the list is marked unread and brought to the top instead. */
@@ -35,7 +35,9 @@ export interface ReadingListStore {
  * entries, one per URL). This service is the mutation surface: every write goes through here,
  * keeps the list within its cap (the oldest read entry drops first) and commits the state, so
  * the chrome's `UIState.readingList` and the disk follow in the same tick. Nothing here is
- * synced yet: the list is the profile's, like the bookmarks were before their records.
+ * synced yet: the list is the profile's, like the bookmarks were before their records. Every
+ * write leaves an entry in the sanitiser's normal form (`sanitizeReadingEntry`'s field order),
+ * so a load rewrites nothing – the sync slice relies on that (`readingList.test.ts`).
  */
 export class ReadingListService implements ReadingListStore {
   private lastNow = 0

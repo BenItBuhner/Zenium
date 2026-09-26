@@ -70,6 +70,10 @@ export function trimReadingList(
  * malformed entry, a duplicate id or URL (the later one wins, as a sync would have it) – dropped
  * rather than loaded, and the whole cut to the cap. A profile from before the list existed
  * loads it empty.
+ *
+ * Idempotent on a clean list: every entry comes back with the same bytes in the same order
+ * (`sanitizeReadingEntry`'s normal form is the one every write produces), so a load changes
+ * nothing the sync engine could take for an edit no one made (`readingList.test.ts`).
  */
 export function sanitizeReadingList(raw: unknown): ReadingListEntry[] {
   if (!Array.isArray(raw)) return []
@@ -86,7 +90,15 @@ export function sanitizeReadingList(raw: unknown): ReadingListEntry[] {
   return trimReadingList([...byUrl.values()])
 }
 
-function sanitizeReadingEntry(raw: unknown): ReadingListEntry | null {
+/**
+ * `raw` as one entry in the list's normal form – `id`, `url`, `title`, `addedAt`, `updatedAt`,
+ * then `favicon` and `readAt` when present, the order `ReadingListService`'s writes leave behind
+ * – or null for a malformed one (no id, no URL, no finite `addedAt`). A well-formed entry comes
+ * back byte-for-byte: no time is touched, a missing title takes the URL, a missing `updatedAt`
+ * the latest time the entry has. Unknown fields are dropped. The sync slice's apply side puts a
+ * received record through this before it joins the list.
+ */
+export function sanitizeReadingEntry(raw: unknown): ReadingListEntry | null {
   if (!raw || typeof raw !== 'object') return null
   const r = raw as Record<string, unknown>
   if (typeof r.id !== 'string' || !r.id) return null

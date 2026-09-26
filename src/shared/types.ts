@@ -1775,7 +1775,10 @@ export type BookmarkNodeType = 'url' | 'folder'
  * state as `readingList` (`BrowserState.readingList`, `shared/readingList.ts` for the pure
  * helpers, `core/readingList.ts` for the writes), one entry per URL: re-adding a page marks it
  * unread and brings it to the top. Local to the profile until the services slice replicates it
- * as one `reading-list-entry` record per entry (`internal/desktop-parity/reading-list-interface.md`).
+ * as one `reading-list-entry` record per entry carrying every field but `favicon`
+ * (`internal/desktop-parity/reading-list-interface.md`, services' read beside it). The shape is
+ * frozen: the field order below is the normal form every write and `sanitizeReadingEntry`
+ * produce, so a load rewrites nothing the sync engine could take for an edit.
  */
 export interface ReadingListEntry {
   /** `rl_<uuid>`, stable across renames and read/unread flips; the sync record's key. */
@@ -1784,14 +1787,22 @@ export interface ReadingListEntry {
   url: string
   /** The page's title at the time it was added (the URL's host when the page had none). */
   title: string
-  /** The page's favicon (a data URL or an address) when the tab had one. */
-  favicon?: string
   /** When the page was added, or added again (an add of a page already in the list refreshes it). */
   addedAt: number
+  /**
+   * The last write to the entry of any kind: information for the chrome and the record's
+   * payload. The conflict clock is the sync engine's own `modified` stamp, set at the same
+   * commit (the two agree to the millisecond); nothing reads this field to resolve a conflict.
+   */
+  updatedAt: number
+  /**
+   * The page's favicon (a data URL or an address) when the tab had one. This device's alone,
+   * never in the sync record: a data URL is bytes across the boundary and an address may be
+   * host-local; the receiving side resolves the icon from its favicon cache by `url`.
+   */
+  favicon?: string
   /** When the entry was last marked read; absent while it is unread. */
   readAt?: number
-  /** The last write to the entry of any kind (the record's last-writer clock). */
-  updatedAt: number
 }
 
 /** When the bookmarks bar shows above the content frame (Edge's "Show favorites bar"). */

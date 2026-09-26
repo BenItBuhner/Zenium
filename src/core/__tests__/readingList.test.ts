@@ -4,6 +4,7 @@ import {
   READING_LIST_CAP,
   filterReadingList,
   isReadingListUrl,
+  sanitizeReadingEntry,
   sanitizeReadingList,
   sortReadingList,
   trimReadingList,
@@ -45,6 +46,27 @@ function entry(over: Partial<ReadingListEntry> & { id: string }): ReadingListEnt
     updatedAt: 1000,
     ...over
   }
+}
+
+/** An entry in the list's normal form: the field order every write and the sanitiser produce. */
+function normal(
+  over: Partial<ReadingListEntry> & { id: string; addedAt: number }
+): ReadingListEntry {
+  const e: ReadingListEntry = {
+    id: over.id,
+    url: over.url ?? `https://example.com/${over.id}`,
+    title: over.title ?? over.id,
+    addedAt: over.addedAt,
+    updatedAt: over.updatedAt ?? Math.max(over.addedAt, over.readAt ?? 0)
+  }
+  if (over.favicon) e.favicon = over.favicon
+  if (over.readAt !== undefined) e.readAt = over.readAt
+  return e
+}
+
+/** The bytes the profile writes: what the sync engine's diff would see change. */
+function bytes(value: unknown): string {
+  return JSON.stringify(value)
 }
 
 describe('ReadingListService: add, dedupe, read state', () => {
@@ -201,6 +223,32 @@ describe('ReadingListService: the cap', () => {
     // Within the cap the same array comes back: a caller can tell a no-op.
     expect(trimReadingList(mixed, 4)).toBe(mixed)
   })
+
+  it('never rewrites an entry it keeps: the trim hands back the very objects, the cap in the sanitiser the same bytes', () => {
+    const list = [
+      normal({ id: 'u0', addedAt: 0 }),
+      normal({ id: 'r1', addedAt: 1, readAt: 10, favicon: 'data:,r1' }),
+      normal({ id: 'u2', addedAt: 2 })
+    ]
+    const kept = trimReadingList(list, 2)
+    expect(kept.map((e) => e.id)).toEqual(['u0', 'u2'])
+    // The survivors are the input's own objects, not copies: no `updatedAt` bump, no field moved.
+    for (const e of kept) expect(list.includes(e)).toBe(true)
+    const many = Array.from({ length: READING_LIST_CAP + 5 }, (_, i) =>
+      normal({
+        id: `e${i}`,
+        url: `https://e.example/${i}`,
+        addedAt: i,
+        updatedAt: i + 1,
+        favicon: 'data:,x',
+        readAt: i % 3 === 0 ? i + 1 : undefined
+      })
+    )
+    const loaded = sanitizeReadingList(many)
+    expect(loaded).toHaveLength(READING_LIST_CAP)
+    const byId = new Map(many.map((e) => [e.id, e]))
+    for (const e of loaded) expect(bytes(e)).toBe(bytes(byId.get(e.id)))
+  })
 })
 
 describe('ReadingListService: persistence', () => {
@@ -258,6 +306,62 @@ describe('ReadingListService: persistence', () => {
       entry({ id: `e${i}`, url: `https://e.example/${i}`, addedAt: i })
     )
     expect(sanitizeReadingList(many)).toHaveLength(READING_LIST_CAP)
+  })
+
+  it('is idempotent on a clean profile: a load rewrites no byte of the service’s own writes', async () => {
+    const { service, state, io } = setup()
+    // Every write path once: a new entry with and without a favicon, read, read and back,
+    // a re-add of a read entry (favicon refreshed), mark all, unread again.
+    const a = service.add('https://a.example/', 'A', 'data:,a')!
+    const b = service.add('https://b.example/', 'B')!
+    service.add('https://c.example/', 'C')
+    service.setRead(a.id, true)
+    service.setRead(b.id, true)
+    service.setRead(b.id, false)
+    service.add('https://a.example/', 'A again', 'data:,a2')
+    service.markAllRead()
+    service.setRead(a.id, false)
+    const written = bytes(state.readingList)
+    // Each write left the fields in the normal form's order, whichever path it took.
+    expect(written).toBe(bytes(state.readingList.map((e) => normal(e))))
+    // The sanitiser's normal form is what the writes left: same bytes, same order, twice over.
+    expect(bytes(sanitizeReadingList(JSON.parse(written)))).toBe(written)
+    expect(bytes(sanitizeReadingList(sanitizeReadingList(state.readingList)))).toBe(written)
+    await state.flush()
+    const reloaded = setup(io.writes.at(-1)!)
+    expect(bytes(reloaded.state.readingList)).toBe(written)
+    expect(bytes(reloaded.state.readingList)).toBe(bytes(JSON.parse(io.writes.at(-1)!).readingList))
+  })
+
+  it('imposes the normal form once on an entry written in another order, and drops what it does not know', () => {
+    const scrambled = {
+      readAt: 4,
+      extra: 'not a field',
+      updatedAt: 4,
+      title: 'T',
+      url: 'https://t.example/',
+      id: 'rl_t',
+      addedAt: 3,
+      favicon: 'data:,t'
+    }
+    const once = sanitizeReadingEntry(scrambled)!
+    expect(bytes(once)).toBe(
+      bytes(
+        normal({
+          id: 'rl_t',
+          url: 'https://t.example/',
+          title: 'T',
+          addedAt: 3,
+          updatedAt: 4,
+          favicon: 'data:,t',
+          readAt: 4
+        })
+      )
+    )
+    expect(bytes(sanitizeReadingEntry(once))).toBe(bytes(once))
+    expect(sanitizeReadingEntry({ id: 'x', title: 'no url', addedAt: 1 })).toBeNull()
+    expect(sanitizeReadingEntry({ id: 'x', url: 'https://x.example/', addedAt: -1 })).toBeNull()
+    expect(sanitizeReadingEntry('nonsense')).toBeNull()
   })
 
   it('shows the sorted list in every window snapshot', () => {
