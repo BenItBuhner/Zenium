@@ -27,11 +27,14 @@ import {
   type SessionInit,
   type SessionStore
 } from './http'
+import { Diagnostics, type DiagnosticsSnapshot } from './diagnostics'
 import { TabFrames } from './frames'
 import { RpcError, UNAUTHORIZED } from './jsonrpc'
 import { pageCall, pageDispose, type PageCursorOptions } from './page'
 import {
+  LATEST_PROTOCOL_VERSION,
   McpProtocol,
+  SUPPORTED_PROTOCOL_VERSIONS,
   cleanName,
   newSession,
   type ClientInfo,
@@ -65,8 +68,20 @@ export const AGENT_COLORS = [
   '#ff4d4d'
 ]
 
+/**
+ * Idle this long, a session is PARKED, not closed: its groups become orphaned and its page state
+ * goes, but the record stays, so the client's next call – an hour later, after the user's lunch –
+ * is answered instead of met with a 404 it may never recover from (a client that does not
+ * re-initialize on 404 is dead until the user toggles the server by hand).
+ */
 const SESSION_IDLE_MS = 30 * 60 * 1000
 const SESSIONLESS_IDLE_MS = 10 * 60 * 1000
+/** A parked session nobody came back for is deleted after this long. */
+const PARKED_TTL_MS = 24 * 60 * 60 * 1000
+/** Client identities remembered for resumed sessions (name and version by token, agent and address). */
+const KNOWN_CLIENTS_MAX = 50
+/** `Mcp-Session-Id` as the spec has it: visible ASCII, and a length nothing legitimate exceeds. */
+const SESSION_ID_SHAPE = /^[\x21-\x7e]{1,128}$/
 /** How long a requested navigation may take to report that it has started (see `waitForLoad`). */
 const NAVIGATION_START_GRACE_MS = 1500
 const SERVER_NAME = 'zenium'
@@ -114,6 +129,19 @@ export interface AgentSession extends McpSession {
   readonly cursors: Map<string, { x: number; y: number }>
   /** Per tab: which frame each ref came from and the frame tree of the last snapshot. */
   readonly frames: Map<string, TabFrames>
+  /**
+   * Idle past `SESSION_IDLE_MS`: the groups were orphaned and the page state dropped, the record
+   * kept for the client's return (`park`, `unpark`). Not listed in the UI while parked.
+   */
+  parked: boolean
+  /** The groups parking orphaned, taken back on the client's return while still orphaned. */
+  readonly releasedGroupIds: Set<string>
+}
+
+/** What a client last said about itself, by who it appears to be (`clientKey`). */
+interface KnownClient {
+  name: string
+  version: string
 }
 
 interface StoredEndpoint {
@@ -180,6 +208,10 @@ export class AgentService implements SessionStore, McpHandlers {
   private readonly callStates = new Map<string, CallState>()
   private readonly orphans = new Map<string, Orphan>()
   private readonly leases = new Map<string, Lease>()
+  /** Names of the clients that initialised, for a session resumed without an initialize. */
+  private readonly knownClients = new Map<string, KnownClient>()
+  /** Counters and timings about the server itself (`zenium://diagnostics`). */
+  readonly diagnostics = new Diagnostics()
   /** Spaces agents made for themselves (`zen_groups create {space: "own"}`, `zen_spaces create`). */
   private readonly agentSpaceIds = new Set<string>()
   private status: AgentServerStatus = emptyAgentServerStatus()
@@ -422,7 +454,7 @@ export class AgentService implements SessionStore, McpHandlers {
 
   list(): AgentInfo[] {
     return [...this.sessions.values()]
-      .filter((s) => s.approved || s.pending)
+      .filter((s) => (s.approved || s.pending) && !s.parked)
       .map((s) => this.info(s))
       .sort((a, b) => a.connectedAt - b.connectedAt)
   }
@@ -507,8 +539,7 @@ export class AgentService implements SessionStore, McpHandlers {
   // SessionStore (used by the HTTP transport)
   // ---------------------------------------------------------------------------
 
-  create(init: SessionInit): AgentSession {
-    const id = randomToken().slice(0, 24)
+  create(init: SessionInit, id: string = randomToken().slice(0, 24)): AgentSession {
     const base = newSession(id)
     const now = Date.now()
     const session: AgentSession = {
@@ -531,14 +562,56 @@ export class AgentService implements SessionStore, McpHandlers {
       notices: [],
       queue: Promise.resolve(),
       cursors: new Map(),
-      frames: new Map()
+      frames: new Map(),
+      parked: false,
+      releasedGroupIds: new Set()
     }
     this.sessions.set(id, session)
+    this.diagnostics.sessions.created++
     return session
   }
 
   get(id: string): AgentSession | undefined {
     return this.sessions.get(id)
+  }
+
+  /**
+   * A request named a session no record answers – the browser restarted, or the record was
+   * deleted – from a client that proves itself with the token: the session is re-made under the
+   * same id, initialised, approved, named as that client last introduced itself, and told what
+   * happened. The MCP spec has the client start over on a 404; the clients in the field that do
+   * not would otherwise stay dead until the user toggled the server. Without the token there is
+   * nothing to trust and the 404 stands (the client's initialize brings the approval prompt).
+   */
+  resurrect(
+    id: string,
+    init: SessionInit,
+    protocolVersion: string | null
+  ): AgentSession | undefined {
+    if (!this.isValidToken(init.token) || !SESSION_ID_SHAPE.test(id)) {
+      this.diagnostics.sessions.unknown++
+      this.log(`unknown session ${id.slice(0, 12)}… refused (no valid token)`)
+      return undefined
+    }
+    const s = this.create(init, id)
+    s.protocolVersion =
+      protocolVersion && SUPPORTED_PROTOCOL_VERSIONS.includes(protocolVersion)
+        ? protocolVersion
+        : LATEST_PROTOCOL_VERSION
+    s.initialized = true
+    s.approved = true
+    const known = this.knownClients.get(clientKey(init))
+    if (known) {
+      s.name = known.name
+      s.version = known.version
+    }
+    s.notices.push(
+      'Notice: your connection was resumed without an initialize – the browser restarted or your session had expired. Your earlier groups, if any, are orphaned now: zen_groups {"action":"list","scope":"all"} shows them and zen_groups {"action":"adopt","groupId":"…"} takes them back. Do not open their pages again.'
+    )
+    this.diagnostics.sessions.resurrected++
+    this.log(`session ${s.id} resumed without initialize (${s.name}, ${s.transport})`)
+    this.browser.state.commitVolatile()
+    return s
   }
 
   sessionless(key: string, init: SessionInit): AgentSession {
@@ -552,37 +625,108 @@ export class AgentService implements SessionStore, McpHandlers {
 
   touch(session: McpSession): void {
     const s = this.sessions.get(session.id)
-    if (s) s.lastActiveAt = Date.now()
+    if (!s) return
+    s.lastActiveAt = Date.now()
+    if (s.parked) this.unpark(s)
   }
 
   /**
-   * The session ends (DELETE, idle sweep, Settings → Disconnect): its groups stay with their
-   * tabs – results are never destroyed under the user – and become orphaned, for another
-   * session to adopt.
+   * The session's record goes (DELETE, Settings → Disconnect, the parked limit, shutdown): its
+   * groups stay with their tabs – results are never destroyed under the user – and become
+   * orphaned, for another session to adopt. A request naming the id afterwards is a 404, or a
+   * resumed session when the client carries the token (`resurrect`).
    */
   close(id: string): void {
     const s = this.sessions.get(id)
     if (!s) return
+    this.release(s)
+    this.sessions.delete(id)
+    this.memos.delete(id)
+    this.callStates.delete(id)
+    for (const [key, sid] of this.sessionlessIds) if (sid === id) this.sessionlessIds.delete(key)
+    this.diagnostics.sessions.closed++
+    this.log(`session ${id} closed (${s.name}, ${s.transport})`)
+    this.browser.state.commitVolatile()
+  }
+
+  /**
+   * Let go of everything the session holds in the browser – its tabs' cursors and page runtime,
+   * its groups (orphaned, with its name on them), its screen lease – and leave the record as a
+   * fresh agent's: no home group, no notices, no frames. The connection is not touched.
+   */
+  private release(s: AgentSession): void {
     for (const t of this.ownedTabs(s)) this.detach(s, t.id)
     const now = Date.now()
     for (const groupId of s.groupIds)
       if (this.browser.state.model.folders[groupId])
         this.orphans.set(groupId, { ownerName: s.name, endedAt: now })
-    this.sessions.delete(id)
-    this.memos.delete(id)
-    this.callStates.delete(id)
-    for (const [win, lease] of this.leases) if (lease.sessionId === id) this.leases.delete(win)
-    for (const [key, sid] of this.sessionlessIds) if (sid === id) this.sessionlessIds.delete(key)
-    this.browser.state.commitVolatile()
+    s.groupIds.clear()
+    s.homeGroupId = null
+    s.cursors.clear()
+    s.frames.clear()
+    s.notices.length = 0
+    this.memos.delete(s.id)
+    this.callStates.delete(s.id)
+    for (const [win, lease] of this.leases) if (lease.sessionId === s.id) this.leases.delete(win)
   }
 
-  /** `zen_session end`: the session's own way out, optionally taking its groups with it. */
+  /**
+   * `zen_session end`: the agent is done – its groups are closed or left orphaned – but its
+   * CONNECTION stays. The MCP session the client holds is the transport's, not the agent's to
+   * destroy: ending used to delete the record, and every later call of a client that tidied up
+   * properly was a 404 until the user toggled the server by hand. The next call starts over as
+   * a fresh agent under the same session id (a new home group on first use).
+   */
   endSession(s: AgentSession, closeTabs: boolean): { groups: number; tabs: number } {
     const groups = this.groupsOf(s)
     const tabs = this.ownedTabs(s).length
-    if (closeTabs) for (const g of groups) this.browser.deleteFolder(g.id, false)
-    this.close(s.id)
+    if (closeTabs) for (const g of groups) this.closeGroup(s, g)
+    this.release(s)
+    s.releasedGroupIds.clear()
+    this.diagnostics.sessions.ended++
+    this.log(
+      `session ${s.id} ended by the agent (${s.name}; ${groups.length} groups, ${tabs} tabs${closeTabs ? ' closed' : ' orphaned'})`
+    )
+    this.browser.state.commitVolatile()
     return { groups: groups.length, tabs }
+  }
+
+  /**
+   * Idle past the limit: the session's groups are orphaned and its page state dropped, as a
+   * closed session's would be – but the record stays, parked, so the client's next call is
+   * answered. The groups are remembered: if they are still orphaned when the client returns,
+   * they are its again (`unpark`).
+   */
+  private park(s: AgentSession): void {
+    const groups = [...s.groupIds].filter((id) => this.browser.state.model.folders[id])
+    this.release(s)
+    s.releasedGroupIds.clear()
+    for (const id of groups) s.releasedGroupIds.add(id)
+    s.parked = true
+    this.diagnostics.sessions.parkedTotal++
+    this.log(`session ${s.id} parked after idling (${s.name}; ${groups.length} groups orphaned)`)
+    this.browser.state.commitVolatile()
+  }
+
+  private unpark(s: AgentSession): void {
+    s.parked = false
+    const back: string[] = []
+    for (const id of s.releasedGroupIds) {
+      const folder = this.browser.state.model.folders[id]
+      if (folder && this.isOrphan(id)) {
+        this.adopt(s, folder)
+        back.push(id)
+      }
+    }
+    s.releasedGroupIds.clear()
+    this.diagnostics.sessions.resumed++
+    s.notices.push(
+      back.length
+        ? `Notice: your session was idle for a while and parked; it is back, and your ${back.length} group${back.length === 1 ? '' : 's'} (${back.join(', ')}) ${back.length === 1 ? 'is' : 'are'} yours again. Refs from before are stale: browser_snapshot again before acting.`
+        : 'Notice: your session was idle for a while and parked; it is back. Any groups you had were taken by another agent or closed meanwhile – zen_groups {"action":"list","scope":"all"} shows what is there.'
+    )
+    this.log(`session ${s.id} resumed from parking (${s.name}; ${back.length} groups back)`)
+    this.browser.state.commitVolatile()
   }
 
   private sweep(): void {
@@ -590,9 +734,23 @@ export class AgentService implements SessionStore, McpHandlers {
     for (const s of [...this.sessions.values()]) {
       const sessionless = [...this.sessionlessIds.values()].includes(s.id)
       const idle = now - s.lastActiveAt
-      if (idle > (sessionless ? SESSIONLESS_IDLE_MS : SESSION_IDLE_MS)) this.close(s.id)
-      else if (!s.approved && !s.pending && idle > 60_000) this.close(s.id)
+      if (s.parked) {
+        if (idle > PARKED_TTL_MS) this.close(s.id)
+      } else if (!s.approved && !s.pending && idle > 60_000) this.close(s.id)
+      else if (idle > (sessionless ? SESSIONLESS_IDLE_MS : SESSION_IDLE_MS)) this.park(s)
     }
+  }
+
+  /** A snapshot of the server's own counters and timings (`zenium://diagnostics`, `zen_status`). */
+  diagnosticsSnapshot(): DiagnosticsSnapshot {
+    let parked = 0
+    for (const s of this.sessions.values()) if (s.parked) parked++
+    return this.diagnostics.snapshot({ live: this.sessions.size - parked, parked })
+  }
+
+  /** One terse line per lifecycle event, for the host's log (Cursor shows a stdio server's stderr). */
+  private log(line: string): void {
+    console.info(`[zen mcp] ${line}`)
   }
 
   private pickColor(): string {
@@ -619,6 +777,8 @@ export class AgentService implements SessionStore, McpHandlers {
     if (!s) throw new RpcError(UNAUTHORIZED, 'Unknown session')
     s.name = client.name
     s.version = client.version
+    this.rememberClient(s, client)
+    this.log(`session ${s.id} initialize (${client.name} ${client.version}, ${s.transport})`)
     if (s.approved) return
     const settings = this.settings
     if (
@@ -646,6 +806,17 @@ export class AgentService implements SessionStore, McpHandlers {
     }
     this.browser.state.commitVolatile()
     this.announce(s)
+  }
+
+  /** Who introduced itself from where, so a session resumed without an initialize keeps its name. */
+  private rememberClient(s: AgentSession, client: ClientInfo): void {
+    const key = clientKey(s)
+    this.knownClients.delete(key)
+    this.knownClients.set(key, { name: client.name, version: client.version })
+    if (this.knownClients.size > KNOWN_CLIENTS_MAX) {
+      const oldest = this.knownClients.keys().next().value
+      if (oldest !== undefined) this.knownClients.delete(oldest)
+    }
   }
 
   /** One prompt per agent name, however many times the client retries while it is showing. */
@@ -696,6 +867,7 @@ export class AgentService implements SessionStore, McpHandlers {
       this.reconcile(s)
       const state = this.beginCall(s)
       const ctx: ToolContext = { browser: this.browser, agents: this, session: s }
+      const end = this.diagnostics.begin(name)
       let result: ToolResult
       try {
         result = withUnknownArgsNote(tool.definition, args, await tool.run(ctx, args))
@@ -711,6 +883,7 @@ export class AgentService implements SessionStore, McpHandlers {
         this.remember(s)
         this.browser.state.commitVolatile()
       }
+      end(result.isError ? firstText(result) : null)
       return this.decorate(s, state, result)
     })
   }
@@ -781,6 +954,14 @@ export class AgentService implements SessionStore, McpHandlers {
         description:
           'The tabs in your groups, as JSON. zenium://tabs?scope=all lists every tab agents may see, with its owner.',
         mimeType: 'application/json'
+      },
+      {
+        uri: 'zenium://diagnostics',
+        name: 'diagnostics',
+        title: 'Server diagnostics',
+        description:
+          'How the MCP server is doing, as JSON: sessions created, ended, parked, resumed and refused; calls and errors; per-tool latency percentiles; the last errors. For debugging a slow or dying connection.',
+        mimeType: 'application/json'
       }
     ]
   }
@@ -803,6 +984,15 @@ export class AgentService implements SessionStore, McpHandlers {
     if (path === 'zenium://status') {
       return [
         { uri, mimeType: 'application/json', text: JSON.stringify(this.statusJson(s), null, 2) }
+      ]
+    }
+    if (path === 'zenium://diagnostics') {
+      return [
+        {
+          uri,
+          mimeType: 'application/json',
+          text: JSON.stringify(this.diagnosticsSnapshot(), null, 2)
+        }
       ]
     }
     if (path === 'zenium://tabs') {
@@ -835,7 +1025,9 @@ export class AgentService implements SessionStore, McpHandlers {
 
   instructions(session: McpSession): string {
     const s = this.sessions.get(session.id)
-    const others = [...this.sessions.values()].filter((o) => o.approved && o.id !== session.id)
+    const others = [...this.sessions.values()].filter(
+      (o) => o.approved && !o.parked && o.id !== session.id
+    )
     return agentInstructions(
       s?.mode ?? this.settings.defaultMode,
       this.settings.allowScripts,
@@ -1545,9 +1737,13 @@ export class AgentService implements SessionStore, McpHandlers {
         tabs: folderTabs(m, g.id).map((t) => ({ id: t.id, title: titleOf(t), url: t.url }))
       })),
       agents: [...this.sessions.values()]
-        .filter((o) => o.id !== s.id && (o.approved || o.pending))
+        .filter((o) => o.id !== s.id && (o.approved || o.pending) && !o.parked)
         .map((o) => ({ name: o.name, mode: o.mode, groups: o.groupIds.size, pending: o.pending })),
-      server: { url: this.status.url, running: this.status.running },
+      server: {
+        url: this.status.url,
+        running: this.status.running,
+        diagnostics: this.diagnosticsSnapshot()
+      },
       spaces: m.spaces.map((sp) => ({
         id: sp.id,
         name: sp.name,
@@ -1718,6 +1914,21 @@ export function homeGroupName(s: { name: string; id: string }): string {
  */
 export function legacyGroupOwner(groupName: string): string {
   return /^(.+?) · [0-9a-f]{4}(?: · \d+)?$/.exec(groupName)?.[1] ?? ''
+}
+
+/** Who a client appears to be, for remembering its name: token, agent string and address. */
+function clientKey(init: {
+  token: string | null
+  userAgent: string
+  remoteAddress: string
+}): string {
+  return `${init.token ?? ''}|${init.userAgent}|${init.remoteAddress}`
+}
+
+/** The first text of a result, for the diagnostics' error log. */
+function firstText(result: ToolResult): string {
+  const c = result.content.find((c) => c.type === 'text') as { text: string } | undefined
+  return c?.text ?? 'error'
 }
 
 function endpointUrl(host: string, port: number): string {
