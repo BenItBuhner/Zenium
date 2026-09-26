@@ -271,8 +271,12 @@ export class ShareService {
   /**
    * Shared files into the downloads folder, each listed as a finished download – the bubble
    * and the Downloads page show where it went, with Show in folder, as they do a capture the
-   * card saved itself (capture-22). The host writes the files with bytes in the order given
-   * and answers with their paths in that order.
+   * card saved itself (capture-22). The host is handed the files with bytes alone – the same
+   * set the paths are paired with, so a file held by address only (`uri`, Android's) can never
+   * shift a path onto the wrong file – writes them in the order given and answers with their
+   * paths in that order. The toast is the capture card's own for the same act (§9.33, pr-543
+   * F6): the destination named, not the file – "Saved to Downloads", the folder's own name
+   * where the user moved it.
    */
   private async save(entry: Pending, win: ZenWindow): Promise<void> {
     const { request } = entry
@@ -280,7 +284,7 @@ export class ShareService {
       const host = this.browser.platform.shareSheet
       if (!host) throw new Error('this device cannot save shared files')
       const written = entry.files.filter((f) => f.data !== undefined)
-      const paths = await host.saveFiles(entry.files)
+      const paths = await host.saveFiles(written)
       const tab = request.tabId ? this.browser.tabs.tab(request.tabId) : undefined
       paths.forEach((path, i) => {
         const file = written[i]
@@ -290,13 +294,7 @@ export class ShareService {
           size: file?.size
         })
       })
-      const n = paths.length
-      if (n > 0)
-        this.browser.toast(
-          n === 1 ? 'File saved to Downloads' : `${n} files saved to Downloads`,
-          'info',
-          win
-        )
+      if (paths.length > 0) this.browser.toast(savedToast(paths), 'info', win)
       return
     }
     if (request.imageUrl && request.tabId) {
@@ -329,4 +327,21 @@ export class ShareService {
     }
     this.browser.state.commitVolatile()
   }
+}
+
+/**
+ * What the toast says of files the hub saved: the destination, not the file – the folder the
+ * paths landed in by its own name, "Downloads" where the path gives none (§9.33); several files
+ * are counted. The capture card's Save says the same of the same folder (`folderNameOf` in the
+ * renderer's `lib/captureOverlay.ts` reads a path the same way).
+ */
+export function savedToast(paths: readonly string[]): string {
+  const folder = folderNameOf(paths[0] ?? '') || 'Downloads'
+  return paths.length === 1 ? `Saved to ${folder}` : `${paths.length} files saved to ${folder}`
+}
+
+/** The last segment of a file path's parent, in either separator; '' for a bare name. */
+function folderNameOf(path: string): string {
+  const parts = path.split(/[\\/]+/).filter(Boolean)
+  return parts.length > 1 ? parts[parts.length - 2] : ''
 }

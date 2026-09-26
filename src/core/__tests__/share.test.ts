@@ -64,7 +64,7 @@ function harness(
       : {
           saveFiles: async (files) => {
             saved.push(files)
-            return files.map((f) => `/downloads/${f.name}`)
+            return files.map((f) => `/home/b/Downloads/${f.name}`)
           },
           ...(kind === 'system'
             ? {
@@ -220,12 +220,14 @@ describe('ShareService', () => {
     expect(request.system).toBe(false)
     await h.service.respond(request.id, 'save')
     expect(h.saved[0].map((f) => f.name)).toEqual(['photo.png', 'b.png'])
+    // The destination named, by the folder's own name (§9.33) – the capture card's words for
+    // the same act – the files counted.
     expect(h.toasts).toEqual(['2 files saved to Downloads'])
     // Each written file is a finished download with its size, so the bubble lists it with
     // Show in folder (capture-22) and the Downloads page does not read it as empty (BUG-031).
     expect(h.listed).toEqual([
-      { path: '/downloads/photo.png', mimeType: 'image/png', size: 3, private: false },
-      { path: '/downloads/b.png', mimeType: 'image/png', size: 7, private: false }
+      { path: '/home/b/Downloads/photo.png', mimeType: 'image/png', size: 3, private: false },
+      { path: '/home/b/Downloads/b.png', mimeType: 'image/png', size: 7, private: false }
     ])
 
     const menu = h.service.open(
@@ -240,6 +242,34 @@ describe('ShareService', () => {
     expect(h.downloads).toEqual(['https://news.example/pic.jpg'])
     // A browser share has no page to settle.
     expect(h.posted.filter((m) => m.type === 'share')).toHaveLength(1)
+  })
+
+  it('hands the host the files with bytes alone, so the paths it answers pair with those files; one file saved is "Saved to" the folder it landed in', async () => {
+    const h = harness({ host: 'files' })
+    // A page's share can carry a file the host holds by address only (Android's `uri`): it has
+    // no bytes to write, and were it handed on, the host's paths would shift onto the wrong
+    // files – the second path listed with the first file's type and size.
+    const byAddress: ShareFile = {
+      name: 'held.png',
+      type: 'image/png',
+      size: 9,
+      uri: 'content://x'
+    }
+    h.service.handleMessage('t1', { ...CALL, files: [byAddress, FILE] })
+    const [request] = h.service.listFor(h.win)
+    await h.service.respond(request.id, 'save')
+    expect(h.saved).toEqual([[FILE]])
+    expect(h.listed).toEqual([
+      { path: '/home/b/Downloads/photo.png', mimeType: 'image/png', size: 3, private: false }
+    ])
+    expect(h.toasts).toEqual(['Saved to Downloads'])
+    // A capture's one picture, into a downloads folder the user moved: the folder's own name.
+    const moved = harness({ host: 'files' })
+    moved.browser.platform.shareSheet!.saveFiles = async (files) =>
+      files.map((f) => `C:\\Users\\b\\Pictures\\Captures\\${f.name}`)
+    const capture = moved.service.open({ tabId: 't1', title: 'Story', files: [FILE] }, moved.win)
+    await moved.service.respond(capture.id, 'save')
+    expect(moved.toasts).toEqual(['Saved to Captures'])
   })
 
   it('copies one shared picture as an image, and a share with words beside it as words', async () => {
