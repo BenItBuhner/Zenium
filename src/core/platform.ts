@@ -1036,6 +1036,15 @@ export interface TabView {
   /** Let a hidden page keep running at full speed while an agent drives it. */
   setBackgroundThrottling?(allowed: boolean): void
   /**
+   * An agent works this page while the layout hides it (`true` from the session's prepare in
+   * background mode, `false` when the session lets the tab go or brings it in front). A host
+   * whose hidden pages have no layout viewport and paint nothing – the desktop's
+   * `WebContentsView` kept out of the window – lays the page out and paints it where the user
+   * cannot see it while this is on, so `snapshot`, `viewport` and `capture` read a real page.
+   * Hosts whose hidden pages lay out anyway (Android's WebView) leave it out.
+   */
+  setAgentDriven?(driven: boolean): void
+  /**
    * Screenshot for agents: the viewport, the full page or a region. Hosts without it fall back
    * to `snapshot()` (viewport only).
    */

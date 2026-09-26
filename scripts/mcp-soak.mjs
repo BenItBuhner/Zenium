@@ -38,8 +38,8 @@
 //   --verbose           one line per session, the shim's stderr
 //
 // Checks are HARD (the run fails) or SOFT (reported, never failing the run without --strict). A
-// soft check is named with the PR it waits on: `background-snapshot (until B)`,
-// `background-screenshot (until B)`, `foreground-screenshot (until B)`, `drop-force-adopt (until E)`.
+// soft check is named with the PR it waits on: `drop-force-adopt (until E)`. The background
+// snapshot and the two screenshots are hard since B (the host stages a hidden page an agent drives).
 // A hard check that has nothing to act on (no orphaned group to adopt) is counted as skipped.
 //
 // Output: a compact table on stdout and <out>/soak.json – counts (sessions, calls, hard and soft
@@ -62,9 +62,6 @@ export const DEFAULTS = Object.freeze({ sessions: 30, concurrency: 6, rounds: 3,
 
 /** Soft checks, named with the PR that turns them hard. */
 export const SOFT_CHECKS = Object.freeze({
-  backgroundSnapshot: 'background-snapshot (until B)',
-  backgroundScreenshot: 'background-screenshot (until B)',
-  foregroundScreenshot: 'foreground-screenshot (until B)',
   dropForceAdopt: 'drop-force-adopt (until E)'
 })
 
@@ -1054,10 +1051,6 @@ export async function soakSession(client, ctx, { index, leg }) {
     return r
   }
   let at = 'initialize'
-  let softFailed = 0
-  const soft = (name, ok, detail) => {
-    if (!verdict.soft(name, ok, detail)) softFailed++
-  }
   try {
     await client.initialize()
     verdict.hard(at, true)
@@ -1076,7 +1069,7 @@ export async function soakSession(client, ctx, { index, leg }) {
     verdict.hard(at, !r.isError && Boolean(tabId), r.text)
 
     if (tabId) {
-      at = SOFT_CHECKS.backgroundSnapshot
+      at = 'background-snapshot'
       r = await call('browser_snapshot', { tabId })
       const snap = parseSnapshot(r.text)
       const heading = fixture.custom
@@ -1085,7 +1078,7 @@ export async function soakSession(client, ctx, { index, leg }) {
       const viewportOk = Boolean(
         snap.viewport && snap.viewport.width > 0 && snap.viewport.height > 0
       )
-      soft(
+      verdict.hard(
         at,
         !r.isError && viewportOk && heading,
         r.isError
@@ -1093,9 +1086,13 @@ export async function soakSession(client, ctx, { index, leg }) {
           : `viewport ${snap.viewport ? `${snap.viewport.width}×${snap.viewport.height}` : 'missing'}, headings ${JSON.stringify(snap.headings)}, ${snap.nodes.length} refs`
       )
 
-      at = SOFT_CHECKS.backgroundScreenshot
+      at = 'background-screenshot'
       r = await call('browser_take_screenshot', { tabId })
-      soft(at, !r.isError && hasImage(r.result), r.isError ? r.text : 'no image part in the result')
+      verdict.hard(
+        at,
+        !r.isError && hasImage(r.result),
+        r.isError ? r.text : 'no image part in the result'
+      )
 
       // The form: by the refs the snapshot gave, else by CSS selector (the built-in fixture's).
       const form = FIXTURE.form
@@ -1129,9 +1126,13 @@ export async function soakSession(client, ctx, { index, leg }) {
       r = await call('zen_mode', { mode: 'foreground' })
       verdict.hard(at, !r.isError, r.text)
 
-      at = SOFT_CHECKS.foregroundScreenshot
+      at = 'foreground-screenshot'
       r = await call('browser_take_screenshot', { tabId })
-      soft(at, !r.isError && hasImage(r.result), r.isError ? r.text : 'no image part in the result')
+      verdict.hard(
+        at,
+        !r.isError && hasImage(r.result),
+        r.isError ? r.text : 'no image part in the result'
+      )
     }
 
     at = closeOnFirstEnd ? 'zen_session end closeTabs' : 'zen_session end'
@@ -1201,9 +1202,7 @@ export async function soakSession(client, ctx, { index, leg }) {
   }
   const ms = performance.now() - started
   latencies?.record(leg, '(whole session)', ms)
-  ctx.verbose(
-    `${label}: ${fmtSeconds(ms)}${softFailed ? `, ${softFailed} soft check(s) failed` : ''}`
-  )
+  ctx.verbose(`${label}: ${fmtSeconds(ms)}`)
 }
 
 // ---------------------------------------------------------------------------------------------
