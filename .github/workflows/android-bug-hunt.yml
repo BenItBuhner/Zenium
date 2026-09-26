@@ -1,0 +1,37 @@
+name: Android bug hunt
+
+# Walks every surface of the phone chrome on a hardware-accelerated Android emulator the way a
+# user would (onboarding, omnibox, navigation and back, tab overview, menu, settings, panels,
+# downloads, long-press, rotation, dark mode, font scale, intents, fullscreen video, restart,
+# error pages) while recording the screen and logcat, and uploads it all for a human or an agent
+# to grade. Dispatch-only: it takes about 35 minutes of emulator time and asserts nothing about
+# correctness – android-bug-hunt.sh logs what it could not find or reach as a FINDING line in
+# timeline.txt and carries on. The recording comes from an API 34 Google APIs image on a software
+# GPU, so expect a handful of frames per second; judge motion by whether frames exist between
+# states, not by smoothness. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-bug-hunt-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hunt:
+    name: Walk the app on an API 34 emulator
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-bug-hunt.sh
+      # The walk installs only the app; no instrumentation driver is involved.
+      gradle-tasks: assembleDebug -PskipWeb
+      # The video and long-press test pages are generated with ffmpeg when it is present (the
+      # driver falls back to a public clip otherwise).
+      setup-script: |
+        sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+      artifact-name: android-bug-hunt
+      artifact-path: artifacts/android-bug-hunt/
+      timeout-minutes: 110
