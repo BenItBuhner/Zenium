@@ -3,6 +3,7 @@ import { surfaceMounted, type ZenWindow } from './window'
 import {
   opensInNewTab,
   type ChromeContextParams,
+  type EditCommand,
   type LinkAppTarget,
   type MenuItemTemplate,
   type MenuSource,
@@ -196,6 +197,9 @@ const SPELLCHECK_MENU_LANGUAGES_MAX = 8
 const REMOTE_TABS_MENU_MAX = 10
 /** The name a device with none reads under; the engine fills one in, a seeded list may not. */
 const UNNAMED_DEVICE = 'Another device'
+/** Settings › Autofill's two vault groups (`settings/sections.tsx`), Chrome's Payments and Contact info landings. */
+const AUTOFILL_CARDS_GROUP = 'autofill-cards'
+const AUTOFILL_ADDRESSES_GROUP = 'autofill-addresses'
 
 /**
  * The page's bookmark toggle in one pair of words (§9.1): the app menu's row and the star's
@@ -3773,6 +3777,26 @@ export class Menus {
       label: 'Passwords',
       click: () => this.browser.emit('overlay.open', { kind: 'passwords' }, win)
     })
+    // Chrome's Passwords and autofill ▸ (shortcuts-menus-107; `PasswordsAndAutofillSubMenuModel`,
+    // gated on the profile as the flat row is on the vault): the desktop's row folds the vault's
+    // landings in Chrome's order – Passwords (the flat row, as it is), then Chrome's Payments
+    // and Contact info rows as Zenium's Payment Methods and Addresses, each Settings › Autofill
+    // landed on the group of that name (W7-6's `?group=`; Zenium keeps the two in one section,
+    // Chrome's subpages). Chrome's Identity documents and Travel have no Zenium page and are left
+    // out, not greyed. The tablet keeps the flat row: its menu folds nothing the desktop's does
+    // not have to (§6's count is the desktop's 800 px window).
+    const autofillLanding = (group: string): MenuItemTemplate['click'] => {
+      return () =>
+        void this.browser.pages.open('settings', 'autofill', win, undefined, { query: { group } })
+    }
+    const passwordsAndAutofill = when(caps.passwords, {
+      label: 'Passwords and Autofill',
+      submenu: [
+        ...passwords,
+        { label: 'Payment Methods', click: autofillLanding(AUTOFILL_CARDS_GROUP) },
+        { label: 'Addresses', click: autofillLanding(AUTOFILL_ADDRESSES_GROUP) }
+      ]
+    })
     // The phone's way to the extensions' actions (Firefox for Android's Extensions item, in
     // the library block before the management page): the chrome's sheet of one row per
     // action. The sidebar layouts have the toolbar buttons and the puzzle panel.
@@ -3836,6 +3860,31 @@ export class Menus {
       action: 'find.open',
       enabled: Boolean(active),
       click: () => this.browser.actions.run('find.open', { sourceTabId: null, win })
+    }
+    // Chrome's Find and edit ▸ (shortcuts-menus-119; `FindAndEditSubMenuModel`, in every Chrome
+    // app menu, ungated): the find row, then Cut, Copy and Paste behind a hairline – Chrome's
+    // IDC_CUT/COPY/PASTE, which act on the active page's focused element while no chrome view
+    // holds the focus, here the view's editing command (`TabView.editCommand`). The rows stand
+    // enabled as Chrome's do (Chrome never reads the selection for its app menu; a pick with
+    // nothing to act on does nothing) wherever there is a page to act on; with no page, or on a
+    // host whose views take no such command, they are greyed, and the submenu keeps its shape
+    // (§9.17). The desktop's alone: the tablet's menu keeps the flat find row, its editing being
+    // the touch selection's own.
+    const activeView = active ? tabs.view(active.id) : undefined
+    const editCommand = (command: EditCommand): MenuItemTemplate => ({
+      label: command === 'cut' ? 'Cut' : command === 'copy' ? 'Copy' : 'Paste',
+      enabled: Boolean(activeView?.editCommand),
+      click: () => activeView?.editCommand?.(command)
+    })
+    const findAndEdit: MenuItemTemplate = {
+      label: 'Find and Edit',
+      submenu: [
+        findInPage,
+        { type: 'separator' },
+        editCommand('cut'),
+        editCommand('copy'),
+        editCommand('paste')
+      ]
     }
     const readerView: MenuItemTemplate = {
       label: 'Reader View',
@@ -4159,13 +4208,18 @@ export class Menus {
           ])
         },
         downloads,
-        ...passwords,
+        // The desktop folds the vault's landings into Chrome's Passwords and Autofill ▸ and the
+        // find row into Chrome's Find and Edit ▸ (below), each in the flat row's seat; the tablet
+        // keeps the flat rows.
+        ...desktop(...passwordsAndAutofill),
+        ...when(win.formFactor !== 'desktop', ...passwords),
         ...addons,
         ...deleteBrowsingData,
         separator,
         // The page's actions: find, zoom, translate, then the reader's and the per-site
         // controls; the long tail is the app group's More Tools.
-        findInPage,
+        ...desktop(findAndEdit),
+        ...when(win.formFactor !== 'desktop', findInPage),
         ...zoomSheet,
         ...zoom,
         ...translate,
