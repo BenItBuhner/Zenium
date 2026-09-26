@@ -147,6 +147,11 @@ export class MediaSessionService {
   private readonly lingers = new Map<string, ReturnType<typeof setTimeout>>()
   /** Tabs whose linger ran out: out of the hub until their media plays again. */
   private readonly inactive = new Set<string>()
+  /**
+   * {@link dispose} ran: the browser is shutting down, and no clock may be armed after it – a
+   * report or a refresh that arrives late in the teardown finds this set and starts nothing.
+   */
+  private disposed = false
 
   constructor(
     private readonly browser: Browser,
@@ -219,8 +224,9 @@ export class MediaSessionService {
     return Number.isFinite(ms) && ms > 0 ? ms : null
   }
 
-  /** Start (or restart) the tab's linger; nothing on a host without one. */
+  /** Start (or restart) the tab's linger; nothing on a host without one, nothing once disposed. */
   private startLinger(tabId: string): void {
+    if (this.disposed) return
     const ms = this.lingerMs()
     if (ms === null) return
     this.clearLinger(tabId)
@@ -258,8 +264,14 @@ export class MediaSessionService {
     return this.inactive.has(tabId)
   }
 
-  /** The browser is going away: no linger fires into a torn-down chrome. */
+  /**
+   * The browser is going away (`Browser.shutdown()`, the quit path): every linger is cleared so
+   * none fires into a torn-down chrome, and none can be armed after – a report a page sends as
+   * its view is destroyed, a refresh the teardown provokes, run into {@link startLinger}'s guard.
+   * The blur clock of the automatic picture-in-picture goes the same way.
+   */
   dispose(): void {
+    this.disposed = true
     for (const timer of this.lingers.values()) clearTimeout(timer)
     this.lingers.clear()
     if (this.blurTimer !== null) {
@@ -827,7 +839,7 @@ export class MediaSessionService {
       clearTimeout(this.blurTimer)
       this.blurTimer = null
     }
-    if (!this.autoPipSupported()) return
+    if (this.disposed || !this.autoPipSupported()) return
     if (focused) {
       if (this.autoPip && this.browser.tabs.visibleTabIds(win).includes(this.autoPip.tabId)) {
         void this.leaveAuto()

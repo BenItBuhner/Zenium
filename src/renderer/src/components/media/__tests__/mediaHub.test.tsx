@@ -16,6 +16,7 @@ import { defaultShortcuts } from '@shared/shortcuts'
 import { run } from '@renderer/lib/api'
 import {
   closeMediaHub,
+  mediaHubEntries,
   mediaHubFolded,
   mediaHubFoldedAt,
   mediaHubUi,
@@ -26,6 +27,7 @@ import { closeAllPopovers } from '@renderer/lib/portals'
 import { browserStore, uiStore } from '@renderer/lib/ui'
 import { MediaHubButton, MediaLiveDot } from '../MediaHubButton'
 import { MediaHubLayer } from '../MediaHubPopover'
+import { SidebarBottom } from '../../sidebar/SidebarBottom'
 import { NavRow } from '../../sidebar/SidebarTop'
 
 const css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
@@ -153,7 +155,8 @@ describe('MediaHubButton', () => {
 
     render(<MediaHubButton state={stateWith([track({ playing: false })])} />)
     const button = q('[data-zen-media-hub-button]')!
-    expect(button.getAttribute('aria-label')).toBe('Media controls')
+    // Paused alone: the state joined to the name with §9.31's " · " (the #552 ruling).
+    expect(button.getAttribute('aria-label')).toBe('Media controls · Paused')
     expect(button.getAttribute('data-tooltip')).toBe('Control your music, videos and more')
     expect(button.getAttribute('aria-description')).toBe('Control your music, videos and more')
     expect(button.hasAttribute('title')).toBe(false)
@@ -419,9 +422,10 @@ describe('a paused session lingering in the hub (W7-5)', () => {
       position: { duration: 120, position: 47, playbackRate: 1 }
     })
     await open(stateWith([paused]))
-    // The button is in the row for the paused session, bare of the dot: nothing plays.
+    // The button is in the row for the paused session, bare of the dot: nothing plays – and its
+    // name says so, the state joined to the name with §9.31's " · " (the #552 ruling).
     const button = q('[data-zen-media-hub-button]')!
-    expect(button.getAttribute('aria-label')).toBe('Media controls')
+    expect(button.getAttribute('aria-label')).toBe('Media controls · Paused')
     expect(button.querySelector('.zen-mhub-dot')).toBeNull()
 
     const player = hub()!.querySelector<HTMLElement>('[data-media-player="t1"]')!
@@ -483,16 +487,104 @@ describe('a paused session lingering in the hub (W7-5)', () => {
 
   it('folds into the "⋯" menu at narrow widths as any entry does, and has nothing to fold once let go (§9.29)', () => {
     // The row's decision, from its width, is the same for a paused entry as for a playing one:
-    // with the button off the row the menu request says folded (the "Now Playing…" row, no dot).
+    // with the button off the row the menu request says folded (the "Media Controls…" row, no dot).
     expect(mediaHubFoldedAt(stateWith([track({ playing: false })]), false)).toBe(true)
     expect(mediaHubFoldedAt(stateWith([track({ playing: false })]), true)).toBe(false)
     expect(mediaHubFoldedAt(stateWith([]), false)).toBe(false)
+  })
+
+  it("puts the family's 16 between the row's artwork and its text (the #552 round's N2, from 12)", () => {
+    expect(css).toMatch(/\.zen-mhub-now \{[^}]*gap: 16px;/)
+    // The title pair's press fill reaches 8 into that 16 (its box `-8px` out, `8px` of padding
+    // back), so the ink sits at the 16 and the fill 8 from the tile.
+    expect(css).toMatch(/\.zen-mhub-text \{[^}]*margin: -4px -8px;[^}]*padding: 4px 8px;/)
+  })
+
+  /*
+   * One paused control per session (§9.29 amended, the #552 ruling): the sidebar foot's old
+   * mini player (`SidebarBottom`'s `MediaPlayer` card, one per entry of the same list before
+   * this) reads the PLAYING set alone, so a session that paused or ended is told by the hub –
+   * its button and popover – and nowhere else in the window; the card's retirement into the
+   * hub is the follow-up slice. Mounted on the desktop (`Sidebar`) and on Android's tablet
+   * layout (`TabletShell` → `Sidebar`), never on the phone, whose chip and sheet are their own.
+   */
+  function footState(entries: MediaState[]): UIState {
+    return {
+      ...stateWith(entries),
+      capabilities: { windowControls: false, pictureInPicture: true },
+      window: { kind: 'normal', fullscreen: false, htmlFullscreenTabId: null },
+      agents: [],
+      settings: { sidebarExpanded: true, sidebarSide: 'left', toolbarLayout: 'single' }
+    } as unknown as UIState
+  }
+
+  /** The foot's media cards: the panels carrying a Play / Pause and a Mute / Unmute. */
+  function footCards(): HTMLElement[] {
+    return [...document.querySelectorAll<HTMLElement>('.zen-panel')].filter(
+      (panel) =>
+        panel.querySelector('button[aria-label="Play"], button[aria-label="Pause"]') &&
+        panel.querySelector('button[aria-label="Mute"], button[aria-label="Unmute"]')
+    )
+  }
+
+  function renderFoot(state: UIState): void {
+    browserStore.set({ state })
+    render(
+      <>
+        <MediaHubButton state={state} />
+        <SidebarBottom state={state} compact={false} isDark={false} />
+      </>
+    )
+  }
+
+  it("a paused session shows in the hub's list and not in the mini player's: the foot reads the playing set alone (§9.29)", () => {
+    const paused = footState([track({ playing: false })])
+    renderFoot(paused)
+    // The hub lists the paused session – its button in the row, bare of the dot, named paused…
+    expect(mediaHubEntries(paused).map((m) => m.tabId)).toEqual(['t1'])
+    const button = q('[data-zen-media-hub-button]')!
+    expect(button).not.toBeNull()
+    expect(button.querySelector('.zen-mhub-dot')).toBeNull()
+    expect(button.getAttribute('aria-label')).toBe('Media controls · Paused')
+    // …and the foot draws no card for it: one paused control per session, the hub's.
+    expect(footCards()).toEqual([])
+
+    // Playing, the card is the foot's as before, beside the button with its dot.
+    const playing = footState([track()])
+    renderFoot(playing)
+    expect(footCards()).toHaveLength(1)
+    expect(footCards()[0]!.querySelector('button[aria-label="Pause"]')).not.toBeNull()
+    expect(footCards()[0]!.querySelector('button.truncate')!.textContent).toBe('Album – Music')
+    expect(q('[data-zen-media-hub-button] .zen-mhub-dot')).not.toBeNull()
+
+    // One playing, one paused: the hub lists both (the session first); the foot has the
+    // playing tab's card alone.
+    const both = footState([
+      track({ tabId: 't2', title: 'A film', artist: '', video: true, session: false }),
+      track({ playing: false })
+    ])
+    renderFoot(both)
+    expect(mediaHubEntries(both).map((m) => m.tabId)).toEqual(['t1', 't2'])
+    expect(footCards().map((card) => card.querySelector('button.truncate')!.textContent)).toEqual([
+      'A film'
+    ])
+    expect(q('[data-zen-media-hub-button]')!.getAttribute('aria-label')).toBe(
+      'Media controls, 1 playing'
+    )
+
+    // An ended track is a paused one to the foot too: no card, the hub's replay alone.
+    const ended = footState([
+      track({ playing: false, position: { duration: 120, position: 120, playbackRate: 1 } })
+    ])
+    renderFoot(ended)
+    expect(footCards()).toEqual([])
+    expect(q('[data-zen-media-hub-button]')).not.toBeNull()
   })
 })
 
 /*
  * The hub folded into the app menu (design language v2 §9.29): at the 240 sidebar the toolbar
- * button gives way to a "Now Playing" row at the menu's top (the core's, `core/menus.ts`) and
+ * button gives way to a "Media Controls…" row at the menu's top (the core's, `core/menus.ts`) and
  * the "⋯" menu button carries the hub's accent dot while something plays. The row's pick opens
  * this same popover from the "⋯" button, which then anchors it: placement, light dismiss and
  * the keyboard's return.
@@ -719,14 +811,29 @@ describe('the hub from the app menu (§9.29)', () => {
     expect(q('.zen-mhub-dot')).toBeNull()
   })
 
-  it('folded and paused, neither button is lit; the document read says folded once the button is off the row', () => {
+  it('folded and paused, neither button is lit and ⋯ says nothing of media – the menu’s "Media Controls…" row stands without the dot (§9.29, the #552 ruling); the document read says folded once the button is off the row', () => {
     withRowObserver(() => {
       render(<NavRow state={rowState([track({ playing: false })])} tab={music} compact={false} />)
-      expect(q('[data-zen-media-hub-button]')).not.toBeNull()
+      const hubButton = q('[data-zen-media-hub-button]')!
+      expect(hubButton).not.toBeNull()
+      expect(hubButton.getAttribute('aria-label')).toBe('Media controls · Paused')
       expect(mediaHubFolded()).toBe(false)
       sidebarDraggedTo(240)
       expect(q('[data-zen-media-hub-button]')).toBeNull()
       expect(dots()).toEqual([])
+      // ⋯ is named by its tooltip alone – no ", media playing": the dot and the words mark
+      // playing, and a paused hour has neither. The row the menu carries is the core's
+      // (`core/menus.ts`, "Media Controls…" – the button's own name, tested there); the menu
+      // request says folded so the core builds it.
+      const menu = q<HTMLButtonElement>('[data-zen-app-menu-button]')!
+      expect(menu.getAttribute('aria-label')).toBe(menu.getAttribute('data-tooltip'))
+      expect(menu.getAttribute('aria-label')).not.toContain('media')
+      vi.mocked(run).mockClear()
+      click(menu)
+      expect(vi.mocked(run).mock.calls.at(-1)).toEqual([
+        'app.menu',
+        expect.objectContaining({ mediaHubFolded: true })
+      ])
       // What the menu request and the anchor read between renders agrees with the row.
       expect(mediaHubFolded()).toBe(true)
     })
@@ -967,7 +1074,7 @@ describe('the hub from the app menu (§9.29)', () => {
     const button = mountMenuButton()
     browserStore.set({ state: stateWith([track()]) })
     render(<MediaHubLayer />)
-    // The app menu up (`MenuSheet`'s popover holds the button the same way), its "Now Playing…"
+    // The app menu up (`MenuSheet`'s popover holds the button the same way), its "Media Controls…"
     // row picked: the hub opens as the menu leaves, and the menu's leave must take nothing off
     // the button that the hub still holds.
     const releaseMenu = holdExpanded(button)

@@ -2520,7 +2520,7 @@ export interface MediaSessionHost {
 
 /**
  * The chrome's media hub on a host whose chrome has one (the windowed desktop: the sidebar's
- * control and its popover, the ⋯ menu's Now Playing… row at narrow widths). The one thing the
+ * control and its popover, the ⋯ menu's Media Controls… row at narrow widths). The one thing the
  * core asks of it is Chrome's linger: how long a session whose media paused or ended stays in
  * the hub, with Play, before the hub lets it go (Chrome's global media controls dismiss an
  * inactive item after `kAutoDismissTimerInMinutesDefault`, 60 minutes without an interaction;

@@ -5002,7 +5002,7 @@ export interface Commands {
    * along its bottom edge; without it the menu opens at the pointer. `keyboard` marks a menu
    * opened by a shortcut, whose first item starts selected. `mediaHubFolded` says the media
    * hub's toolbar button is not on screen (design language v2 §9.29: the sidebar's width tier
-   * folds it at 240): the menu then heads with the "Now Playing…" row in its stead. The chrome
+   * folds it at 240): the menu then heads with the "Media Controls…" row in its stead. The chrome
    * reads the fold from the button's box; the core builds the menu without the toolbar's width.
    */
   'app.menu': {
@@ -6527,7 +6527,7 @@ export interface Events {
    */
   'overview.open': void
   /**
-   * The app menu's "Now Playing…" row asked for the media hub (design language v2 §9.29: the
+   * The app menu's "Media Controls…" row asked for the media hub (design language v2 §9.29: the
    * hub's toolbar button folds into the menu at the 240 sidebar): the chrome opens the hub's
    * popover from the "⋯" menu button the row's menu hung from (the toolbar button, were it up).
    */

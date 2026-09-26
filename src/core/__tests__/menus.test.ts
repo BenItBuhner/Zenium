@@ -558,7 +558,7 @@ describe('the app menu', () => {
     expect(top.slice(top.lastIndexOf('-') + 1)).toEqual(['Settings', 'More Tools', 'Help', 'Quit'])
   })
 
-  it('stands on an 800 px window: about eighteen top-level rows and three separators, four with the Now Playing… row (§6)', () => {
+  it('stands on an 800 px window: about eighteen top-level rows and three separators, four with the Media Controls… row (§6)', () => {
     const rows = (h: Harness): string[] => topLabels(h.shown()).filter((l) => l !== '-')
     // The DESKTOP harness has no translate host and no speech engine: Firefox's eighteen, with
     // Chrome's Delete Browsing Data… row in the library group and Save and Share closing the
@@ -576,7 +576,7 @@ describe('the app menu', () => {
     expect(rows(full)).toHaveLength(20)
     expect(separators(full.shown())).toBe(3)
     for (const row of rows(full)) expect(row).toMatch(/^[A-Z]/)
-    // With the media hub folded the Now Playing… row and its separator lead: twenty-one rows
+    // With the media hub folded the Media Controls… row and its separator lead: twenty-one rows
     // and four separators (701 px), which still stand on an 800 px window under the bar's 74.
     full.browser.state.media = [
       { tabId: full.tabId, playing: true, title: 'Nocturne', session: true }
@@ -646,7 +646,7 @@ describe('the app menu', () => {
       expect(appMenu(phone)).not.toContain('Update Zenium')
     })
 
-    it('is a twenty-first row only while the update waits: 21 rows / 4 separators (701 px); the Now Playing… row folded too, 22 / 5 (741 px) and the Update row first', () => {
+    it('is a twenty-first row only while the update waits: 21 rows / 4 separators (701 px); the Media Controls… row folded too, 22 / 5 (741 px) and the Update row first', () => {
       const rows = (h: Harness): string[] => topLabels(h.shown()).filter((l) => l !== '-')
       const full = pageHarness({ ...DESKTOP, readAloud: true }, { translate: true, speech: true })
       appMenu(full)
@@ -667,7 +667,7 @@ describe('the app menu', () => {
       expect(topLabels(full.shown()).slice(0, 5)).toEqual([
         'Update Zenium',
         '-',
-        'Now Playing…',
+        'Media Controls…',
         '-',
         'New Tab'
       ])
@@ -1402,7 +1402,7 @@ describe('the app menu', () => {
     expect(tablet.browser.tabs.activeTabFor(tablet.win)?.url).toBe('zen://whats-new')
   })
 
-  describe('the Now Playing… row (design language v2 §9.29: the hub folded into the menu)', () => {
+  describe('the Media Controls… row (design language v2 §9.29: the hub folded into the menu)', () => {
     /** A media entry for `tabId`, the OS controls' session by default. */
     const media = (tabId: string, over: Partial<MediaState> = {}): MediaState => ({
       tabId,
@@ -1413,7 +1413,7 @@ describe('the app menu', () => {
       session: true,
       ...over
     })
-    const ROW = 'Now Playing…'
+    const ROW = 'Media Controls…'
 
     it('heads the desktop menu while a session is live and the hub button has folded, and is gone otherwise', () => {
       const h = pageHarness(DESKTOP)
@@ -1448,9 +1448,19 @@ describe('the app menu', () => {
       expect(appMenuFolded(h)[0]).toBe(ROW)
     })
 
-    it('stays while the media has paused (the hub keeps its card), keeping its name', () => {
+    it('stays while the media has paused (the hub keeps its card for Chrome’s hour), keeping its name – the button’s own, "Media Controls…", never "Now Playing…" (the #552 ruling)', () => {
       const h = pageHarness(DESKTOP)
       h.browser.state.media = [media(h.tabId, { playing: false, session: false })]
+      const [row] = appMenuFolded(h)
+      expect(row).toBe(ROW)
+      expect(row).toBe('Media Controls…')
+      // The ended track is a paused one: the same row, the same name.
+      h.browser.state.media = [
+        media(h.tabId, {
+          playing: false,
+          position: { duration: 240, position: 240, playbackRate: 1 }
+        })
+      ]
       expect(appMenuFolded(h)[0]).toBe(ROW)
     })
 
@@ -1556,7 +1566,7 @@ describe('the app menu', () => {
       expect(go).toHaveBeenCalledWith(h.tabId)
     })
 
-    it('stands under the Now Playing… row when both have folded: the hub first, then Forward, then the tabs', () => {
+    it('stands under the Media Controls… row when both have folded: the hub first, then Forward, then the tabs', () => {
       const h = pageHarness(DESKTOP)
       h.browser.state.settings.toolbarPins = { forward: false }
       h.browser.state.media = [
@@ -1569,7 +1579,13 @@ describe('the app menu', () => {
           session: true
         }
       ]
-      expect(appMenuFolded(h).slice(0, 5)).toEqual(['Now Playing…', '-', 'Forward', '-', 'New Tab'])
+      expect(appMenuFolded(h).slice(0, 5)).toEqual([
+        'Media Controls…',
+        '-',
+        'Forward',
+        '-',
+        'New Tab'
+      ])
     })
 
     it('is the desktop’s alone: the tablet and the phone keep their bars whatever the field says', () => {
@@ -2060,14 +2076,14 @@ describe('the app menu', () => {
       expect(appMenu(h)).toEqual(DESKTOP_APP_MENU)
     })
 
-    it('keeps the Now Playing… row at the head with the media hub folded: four separators, the window group under it', () => {
+    it('keeps the Media Controls… row at the head with the media hub folded: four separators, the window group under it', () => {
       const h = pageHarness(DESKTOP)
       const priv = h.browser.openWindow('private', h.win)!
       const theirs = h.browser.tabs.createTab({ url: 'https://video.example.org/watch' }, priv)
       h.browser.state.media = [
         { tabId: theirs.id, playing: true, title: 'Nocturne', session: true }
       ]
-      expect(appMenuFolded(h, priv).slice(0, 3)).toEqual(['Now Playing…', '-', 'New Tab'])
+      expect(appMenuFolded(h, priv).slice(0, 3)).toEqual(['Media Controls…', '-', 'New Tab'])
       expect(separators(h.shown())).toBe(4)
     })
 

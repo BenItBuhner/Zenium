@@ -1624,15 +1624,59 @@ describe("the hub's linger for a paused session (W7-5: Chrome's inactivity dismi
     expect(vi.getTimerCount()).toBe(0)
   })
 
-  it('lets no clock fire into a chrome that is going away (dispose)', () => {
+  it('dispose clears the timers; a late report after dispose arms nothing', () => {
+    // `Browser.shutdown()` – the quit path – calls `dispose()`; the services read asked that no
+    // linger outlive it and none be armed after it.
     const h = harness({ mediaHub: LINGER_MS })
     h.addTab('t1', 'https://music.example/a', 'Music')
+    h.addTab('t2', 'https://video.example/b', 'Video')
     play(h, 't1')
     play(h, 't1', report({ playing: false }))
+    play(h, 't2')
+    play(h, 't2', report({ playing: false }))
+    expect(vi.getTimerCount()).toBe(2)
     h.service.dispose()
+    // Every clock is cleared: none stands, none fires into the torn-down chrome.
+    expect(vi.getTimerCount()).toBe(0)
     h.updateMedia.mockClear()
     vi.advanceTimersByTime(LINGER_MS * 2)
     expect(h.updateMedia).not.toHaveBeenCalled()
+    expect(h.service.isInactive('t1')).toBe(false)
+    expect(h.service.isInactive('t2')).toBe(false)
+    // Late in the teardown a page reports a pause (a seek, a fresh pause), the view falls quiet
+    // and a refresh runs: nothing arms – no timer, and the entry never goes inactive.
+    h.service.onReport(
+      't1',
+      report({ playing: false, position: { duration: 240, position: 90, playbackRate: 1 } })
+    )
+    h.service.refresh()
+    play(h, 't2')
+    play(h, 't2', report({ playing: false }))
+    h.service.act('t2', 'seekforward', { seekOffset: 10 })
+    expect(vi.getTimerCount()).toBe(0)
+    h.updateMedia.mockClear()
+    vi.advanceTimersByTime(MEDIA_HUB_INACTIVE_MS * 2)
+    expect(h.updateMedia).not.toHaveBeenCalled()
+    expect(h.service.isInactive('t1')).toBe(false)
+    expect(h.service.isInactive('t2')).toBe(false)
+    expect(entry(h, 't1')).toMatchObject({ tabId: 't1', playing: false })
+    expect(entry(h, 't2')).toMatchObject({ tabId: 't2', playing: false })
+  })
+
+  it("dispose clears the automatic picture-in-picture's blur clock too, and a blur after it arms none", () => {
+    // The desktop's auto-PiP host: no `enterPictureInPicture` of the OS's, the page's own window.
+    const h = harness({ host: false, mediaHub: LINGER_MS })
+    h.addTab('film', 'https://video.example/watch', 'A film')
+    h.activated.add('film')
+    const win = h.addWindow('w1', ['film'])
+    play(h, 'film', report({ video: true, width: 1280, height: 720 }))
+    win.focused = false
+    h.service.onWindowFocusChanged(win as unknown as ZenWindow, false)
+    expect(vi.getTimerCount()).toBe(1)
+    h.service.dispose()
+    expect(vi.getTimerCount()).toBe(0)
+    h.service.onWindowFocusChanged(win as unknown as ZenWindow, false)
+    expect(vi.getTimerCount()).toBe(0)
   })
 })
 

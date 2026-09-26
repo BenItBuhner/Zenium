@@ -7520,11 +7520,13 @@
    * button's), so the body carries the popover's own 16 above the first player (§9.20's
    * padding; 16 under the last one as well), one player per tab, parted by air alone – 28 from
    * one's transport to the next one's artwork, no line – each at the 16 gutter with 12 between
-   * its parts:
+   * its lines and the family's 16 after the leading picture (§9.33's identity row, the phone's
+   * 56 tile "16 to the text"; the #552 round's N2, from 12):
    * the now-playing line – the artwork as the players' one 56 tile (`.zen-media-art`, the phone
    * sheet's rule below: the card radius on the card fill, the card hairline and the §9.3 glyph
-   * when there is no picture) beside the title at 15/600 and the
-   * artist · site line at 13 at 69%, the pair a button to the tab with the row's press fill,
+   * when there is no picture) 16 before the title at 15/600 and the
+   * artist · site line at 13 at 69%, the pair a button to the tab with the row's press fill
+   * (its box 8 out into that 16, so the ink sits at the 16 and the fill 8 from the tile),
    * picture-in-picture trailing as a §9.3 icon button – then §10.4's slider row for the position
    * (the zoom row's track and thumb, `.zen-zoom-slider`, the times at its ends in `tabular-nums`
    * (§4) so 0:09 → 0:10 moves nothing), then the transport – previous, back, play / pause, on,
@@ -7554,7 +7556,7 @@
   .zen-mhub-now {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 16px;
   }
   /* The title pair is the way to the tab: a button the text's size, its press fill 4 out. */
   .zen-mhub-text {

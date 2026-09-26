@@ -3492,7 +3492,7 @@ export class Menus {
    * the submenu Chrome folds it into (shortcuts-menus-120; Firefox keeps save and print in the
    * flat list, and a flat group here spent rows the menu has not got); the app's – Settings,
    * More Tools, Help, Quit, Firefox's order and §6's ("settings, tools, help, quit") – about
-   * eighteen rows and three separators (§6's ceiling; a fourth under the "Now Playing…" row
+   * eighteen rows and three separators (§6's ceiling; a fourth under the "Media Controls…" row
    * while the media hub's button has folded), so the menu stands on an 800 px window without
    * scrolling (§6: a menu is exempt from §9.20's 60% cap and takes the room to the window's
    * bottom margin). What Firefox's count leaves out is not lost but moves into a submenu:
@@ -3506,7 +3506,7 @@ export class Menus {
    * that only act on a window (Chrome's phone menu has none of them either). An item the host
    * cannot do is left out of either rather than greyed (`caps`). `mediaHubFolded` is the
    * chrome's word that the media hub's toolbar button is off the row (§9.29): the menu then
-   * heads with the "Now Playing…" row in its stead.
+   * heads with the "Media Controls…" row in its stead.
    */
   showAppMenu(
     win: ZenWindow,
@@ -4058,7 +4058,7 @@ export class Menus {
         // folded (design language v2 §9.29: the sidebar's width tier folds it at 240, and this
         // row is where it goes; with the button up, the button is the hub). The phone has its
         // own chip and sheet (§9.33).
-        ...when(Boolean(options.mediaHubFolded), ...this.nowPlayingRow(win)),
+        ...when(Boolean(options.mediaHubFolded), ...this.mediaControlsRow(win)),
         // Forward folded off the desktop's bar (Look and Feel › Customise toolbar, settings-36)
         // heads the menu the same way: the row is where the button went.
         ...desktop(...this.foldedForwardRow(win, active)),
@@ -4238,11 +4238,15 @@ export class Menus {
   }
 
   /**
-   * The "Now Playing…" row at the head of the desktop app menu (design language v2 §9.29,
+   * The "Media Controls…" row at the head of the desktop app menu (design language v2 §9.29,
    * §9.32): the media hub's toolbar button is tiered by the sidebar's width like the pill's
-   * chips, and where it has folded (the 240 sidebar) the menu carries the window's live media
+   * chips, and where it has folded (the 240 sidebar) the menu carries the window's media
    * instead – Firefox's badge on its menu button, with the row at the menu's top saying what
-   * the badge is about. The row is its name alone – no picture, no title: the app menu is
+   * the badge is about. The row bears the button's own name, "Media Controls…", not "Now
+   * Playing…": a paused or ended session lingers in the hub for Chrome's hour (W7-5, the #552
+   * ruling), and a row called Now Playing would lie through it – one object, one name, standing
+   * or folded; the accent dot on ⋯ marks playing alone, so through the paused hour the row
+   * stands without it. The row is its name alone – no picture, no title: the app menu is
    * renderer-drawn on every desktop, and §9.29's rule for a renderer-drawn menu is all or
    * nothing per menu, a submenu counting as its own – Firefox's app menu has no icons, and a
    * glyph column reserved only while a session plays would move every label between one
@@ -4259,7 +4263,7 @@ export class Menus {
    * (`shared/mediaHub.ts`'s order – the session first, then what plays – decides that there is
    * a card, not what the row shows), and the row is that hub's, not another window's.
    */
-  private nowPlayingRow(win: ZenWindow): Template {
+  private mediaControlsRow(win: ZenWindow): Template {
     const { state, tabs } = this.browser
     const entries = orderMediaEntries(
       (state.media ?? []).filter((m) => {
@@ -4270,7 +4274,7 @@ export class Menus {
     if (entries.length === 0) return []
     return [
       {
-        label: 'Now Playing…',
+        label: 'Media Controls…',
         click: () => this.browser.emit('mediahub.open', undefined, win)
       },
       { type: 'separator' }
@@ -4284,7 +4288,7 @@ export class Menus {
    * language v2 §9.30), so the menu keeps its shape from one opening to the next. Nothing
    * while the button is pinned – the bar is Forward then, and §9.13's rule is one home per
    * control. The other pinnable controls' rows (Bookmark This Page, Reader View, Translate
-   * Page…, Now Playing…) are in the menu already; only Forward had none.
+   * Page…, Media Controls…) are in the menu already; only Forward had none.
    */
   private foldedForwardRow(win: ZenWindow, active: Tab | undefined): Template {
     if (win.formFactor !== 'desktop') return []
