@@ -363,7 +363,7 @@ class PwaIdentityDemo : DemoHarness("pwa-demo-state.json", "android-pwa-identity
         check("the window kept the answer as the app's own memory (allow) – the one write of the three asks", memory == WebAppNotifications.ALLOW && pageAnswers(page) == listOf("default", "default", "granted"))
         // The channel group, from the system's list.
         val group = notificationManager.notificationChannelGroups.firstOrNull { it.id == GROUP_ID }
-        val channel = notificationManager.notificationChannels.firstOrNull { it.id.startsWith(WebAppChannels.channelPrefix(SHORTCUT_ID)) }
+        val channel = notificationManager.notificationChannels.firstOrNull { it.id.startsWith(Notifications.webAppPrefix(SHORTCUT_ID)) }
         finding("channel group: ${group?.id} '${group?.name}'; channel: ${channel?.id} '${channel?.name}' importance ${channel?.importance} group ${channel?.group} description '${channel?.description}'")
         check("the app's channel group is named for the app ('${group?.name}')", group?.name?.toString() == TILE_LABEL)
         check("the channel under it is the app's, named for the app", channel != null && channel.group == GROUP_ID && channel.name?.toString() == TILE_LABEL)
@@ -377,7 +377,7 @@ class PwaIdentityDemo : DemoHarness("pwa-demo-state.json", "android-pwa-identity
         val dump = shellCommand("dumpsys notification --noredact")
         val record = dump.lines().firstOrNull { it.contains("pkg=${app.packageName}") && it.contains("tag=zenium.webapp/") }?.trim()
         finding("dumpsys notification, the card: ${record?.take(500) ?: "no record with tag=zenium.webapp/"}")
-        check("dumpsys notification lists the card under the app's channel (${WebAppChannels.channelPrefix(SHORTCUT_ID)}…)", record != null && record.contains("channel=${WebAppChannels.channelPrefix(SHORTCUT_ID)}"))
+        check("dumpsys notification lists the card under the app's channel (${Notifications.webAppPrefix(SHORTCUT_ID)}…)", record != null && record.contains("channel=${Notifications.webAppPrefix(SHORTCUT_ID)}"))
         val groupLine = dump.lines().firstOrNull { it.contains(GROUP_ID) && it.contains("mName=") }?.trim()
         finding("dumpsys notification, the group: ${groupLine?.take(400) ?: "no NotificationChannelGroup line for $GROUP_ID"}")
         check("dumpsys notification names the app's group '$TILE_LABEL'", groupLine != null && groupLine.contains("mName=$TILE_LABEL"))
@@ -431,7 +431,7 @@ class PwaIdentityDemo : DemoHarness("pwa-demo-state.json", "android-pwa-identity
         if (awaitSystemWindow(8_000)) {
             SystemClock.sleep(3_000)
             val listed = awaitInWindows(6_000) { it == TILE_LABEL } != null
-            finding("system notification settings: the app's group '$TILE_LABEL' ${if (listed) "listed" else "not in the tree (may be below the fold)"}; Sites ${if (findInWindows { it == SitesChannels.GROUP_NAME } != null) "listed" else "not in the tree"}; labels ${labelsInWindows()}")
+            finding("system notification settings: the app's group '$TILE_LABEL' ${if (listed) "listed" else "not in the tree (may be below the fold)"}; Sites ${if (findInWindows { it == Notifications.SITES.name } != null) "listed" else "not in the tree"}; labels ${labelsInWindows()}")
             check("the system's notification settings list the app's group '$TILE_LABEL' by name (the group named for the app, its one switch)", listed)
             if (listed) {
                 shot("settings-$THEME")
@@ -487,11 +487,11 @@ class PwaIdentityDemo : DemoHarness("pwa-demo-state.json", "android-pwa-identity
         val cards = notificationManager.activeNotifications.filter { it.tag?.startsWith("zenium.web/") == true }
         finding("active cards of the browser: ${cards.map(::describe)}")
         val card = cards.firstOrNull()
-        check("the browser posted the card under the app's channel (${card?.notification?.channelId}), with the app's name as its sub text", card != null && card.notification.channelId.startsWith(WebAppChannels.channelPrefix(SHORTCUT_ID)) && card.notification.extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString() == TILE_LABEL)
+        check("the browser posted the card under the app's channel (${card?.notification?.channelId}), with the app's name as its sub text", card != null && card.notification.channelId.startsWith(Notifications.webAppPrefix(SHORTCUT_ID)) && card.notification.extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString() == TILE_LABEL)
         val dump = shellCommand("dumpsys notification --noredact")
         val record = dump.lines().firstOrNull { it.contains("pkg=${app.packageName}") && it.contains("tag=zenium.web/") }?.trim()
         finding("dumpsys notification, the browser's card: ${record?.take(500) ?: "no record with tag=zenium.web/"}")
-        check("dumpsys notification lists the browser's card under the app's channel", record != null && record.contains("channel=${WebAppChannels.channelPrefix(SHORTCUT_ID)}"))
+        check("dumpsys notification lists the browser's card under the app's channel", record != null && record.contains("channel=${Notifications.webAppPrefix(SHORTCUT_ID)}"))
         SystemClock.sleep(1_000)
         for (sbn in notificationManager.activeNotifications) notificationManager.cancel(sbn.tag, sbn.id)
     }
@@ -846,7 +846,7 @@ class PwaIdentityDemo : DemoHarness("pwa-demo-state.json", "android-pwa-identity
         private val PIN_ACCEPT_LABELS = listOf("Add automatically", "Add to Home screen", "Add to home screen", "Add")
 
         private val SHORTCUT_ID = Shortcuts.shortcutId(APP_ID)
-        private val GROUP_ID = WebAppChannels.groupId(SHORTCUT_ID)
+        private val GROUP_ID = Notifications.webAppGroupId(SHORTCUT_ID)
 
         /** The `theme` argument: `dark`, else light (the shared script's `DEMO_THEME`). */
         private val THEME = InstrumentationRegistry.getArguments().getString("theme").let { if (it == "dark") "dark" else "light" }

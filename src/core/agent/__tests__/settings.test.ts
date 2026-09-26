@@ -16,11 +16,14 @@ describe('sanitizeAgentSettings', () => {
     expect(sanitizeAgentSettings({ port: 8123 }).port).toBe(8123)
   })
 
-  it('keeps a valid mode and rejects a bad one', () => {
+  it('keeps a valid mode, either one, and a bad or missing one is the default: background', () => {
+    expect(DEFAULT_AGENT_SETTINGS.defaultMode).toBe('background')
     expect(sanitizeAgentSettings({ defaultMode: 'background' }).defaultMode).toBe('background')
+    expect(sanitizeAgentSettings({ defaultMode: 'foreground' }).defaultMode).toBe('foreground')
     expect(sanitizeAgentSettings({ defaultMode: 'sideways' as never }).defaultMode).toBe(
-      'foreground'
+      DEFAULT_AGENT_SETTINGS.defaultMode
     )
+    expect(sanitizeAgentSettings({}).defaultMode).toBe(DEFAULT_AGENT_SETTINGS.defaultMode)
   })
 
   it('dedupes and trims approved names', () => {
