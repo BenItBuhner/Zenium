@@ -177,6 +177,14 @@ const SNAPSHOT_JPEG_QUALITY = 90
  */
 const PARK_CORNERS = 4
 
+/**
+ * A staged page's frame (`stagedFrame`): how long a frame of its renderer's is waited for before
+ * the widget is shown as painting once more (`setBackgroundThrottling`, the same un-hide the
+ * session's prepare does), and how long after that before the capture gives up.
+ */
+const STAGED_FRAME_FIRST_MS = 800
+const STAGED_FRAME_RETRY_MS = 2000
+
 /** Keys that never count as a gesture in Chromium's user-activation model. */
 const NON_ACTIVATING_KEYS = new Set(['Escape', 'Shift', 'Control', 'Alt', 'Meta', 'AltGr'])
 
@@ -413,6 +421,13 @@ export class ElectronTabView implements TabView {
    */
   private agentDriven = false
   private staged: BaseWindow | null = null
+  /**
+   * Captures of a staged page take turns (`capture`): a page has one frame subscription, and
+   * the frame one capture waits for must not be taken down by another's end.
+   */
+  private stagedTurn: Promise<unknown> = Promise.resolve()
+  /** Whether the engine may throttle this page in the background, as last told (`setBackgroundThrottling`). */
+  private throttling = true
   /**
    * The engine's view left a window or the stage and is yet to join a window: the next
    * `enterWindow`/`bringToFront` re-stacks it (`restack`). Chromium 152 (Electron 44) on Linux
@@ -2566,6 +2581,7 @@ export class ElectronTabView implements TabView {
   }
 
   setBackgroundThrottling(allowed: boolean): void {
+    this.throttling = allowed
     if (!this.wc.isDestroyed()) this.wc.setBackgroundThrottling(allowed)
   }
 
@@ -2595,8 +2611,29 @@ export class ElectronTabView implements TabView {
    * gutters (`visibleAreaClip`), as Chrome's visible-area capture is, and a region's crop is
    * cut at that area's edge: the gutter is never part of a picture. Without the page's
    * geometry (it did not answer) the bitmap stands as it is.
+   *
+   * A staged page (an agent's, hidden from the user) is pictured from a frame of its renderer's
+   * own (`stagedFrame`), not `capturePage`'s copy: the copy counts as a capturer on the page –
+   * `stayHidden` or not – and the page-lifecycle update that count brings makes a page whose
+   * background throttling is off, an agent's page, read `visible` for good (Electron's
+   * `allow_disabling_blink_scheduler_throttling_per_renderview` patch takes every update as
+   * `visible` while throttling is off; measured on a staged page: `document.visibilityState`
+   * `hidden` until the first `capturePage`, `visible` after it and after each later update). A
+   * frame changes nothing about the page. Its captures take turns (`stagedTurn`): one frame
+   * subscription per page.
    */
   async capture(options: AgentCaptureOptions): Promise<AgentCapture | null> {
+    if (this.wc.isDestroyed()) return null
+    if (!this.staged) return this.paint(options)
+    const turn = this.stagedTurn.then(
+      () => this.paint(options),
+      () => this.paint(options)
+    )
+    this.stagedTurn = turn.catch(() => undefined)
+    return turn
+  }
+
+  private async paint(options: AgentCaptureOptions): Promise<AgentCapture | null> {
     const wc = this.wc
     if (wc.isDestroyed()) return null
     const format = options.format
@@ -2615,8 +2652,8 @@ export class ElectronTabView implements TabView {
       fallback = 'viewport'
     }
     try {
-      let image = await wc.capturePage()
-      if (image.isEmpty()) return null
+      let image = this.staged ? await this.stagedFrame() : await wc.capturePage()
+      if (!image || image.isEmpty()) return null
       // `capturePage` hands the device pixels over as a 1x bitmap: CSS px times the page's device
       // pixel ratio (the display's scale times the zoom – `window.devicePixelRatio` carries both).
       const geometry = await this.viewport()
@@ -2652,6 +2689,57 @@ export class ElectronTabView implements TabView {
     } catch {
       return null
     }
+  }
+
+  /**
+   * One frame of a staged page's renderer, as `capturePage` paints: the whole widget in device
+   * pixels, from the engine's frame subscription (the viz video capturer asks the renderer for
+   * its current frame at once, so a page that changes nothing still answers). A renderer that
+   * shows nothing for `STAGED_FRAME_FIRST_MS` – a widget whose un-hide a navigation undid – is
+   * shown as painting again (`setBackgroundThrottling`, with the setting as it stands) and
+   * waited for once more; null when it still shows nothing, or the view left the stage
+   * meanwhile. The subscription is ended off its own callback.
+   */
+  private stagedFrame(): Promise<Electron.NativeImage | null> {
+    const wc = this.wc
+    return new Promise((resolve) => {
+      let settled = false
+      let kicked = false
+      let timer: ReturnType<typeof setTimeout> | null = null
+      const finish = (image: Electron.NativeImage | null): void => {
+        if (settled) return
+        settled = true
+        if (timer) clearTimeout(timer)
+        // Ended off the subscriber's own callback, and answered only then: the next capture's
+        // subscription (`stagedTurn`) must not be the one this end takes down.
+        defer(() => {
+          try {
+            if (!wc.isDestroyed()) wc.endFrameSubscription()
+          } catch {
+            /* the subscription is gone with the page */
+          }
+          resolve(image)
+        })
+      }
+      const wait = (ms: number): void => {
+        timer = setTimeout(() => {
+          if (kicked || !this.staged || wc.isDestroyed()) {
+            finish(null)
+            return
+          }
+          kicked = true
+          wc.setBackgroundThrottling(this.throttling)
+          wait(STAGED_FRAME_RETRY_MS)
+        }, ms)
+      }
+      try {
+        wc.beginFrameSubscription(false, (image) => finish(image))
+      } catch {
+        finish(null)
+        return
+      }
+      wait(STAGED_FRAME_FIRST_MS)
+    })
   }
 
   /**
