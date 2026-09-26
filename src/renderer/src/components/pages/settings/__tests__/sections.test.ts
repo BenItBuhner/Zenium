@@ -5970,15 +5970,16 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(invoke).toHaveBeenCalledWith('sync.setDeviceName', { name: 'Ben’s phone' })
   })
 
-  it('What you sync: one switch per data type in Chrome’s order, Bookmarks, History, Open tabs, Passwords, Settings first, then Zenium’s own; each runs sync.setScope', () => {
+  it('What you sync: one switch per data type in Chrome’s order, Bookmarks, History, Open tabs, Passwords, Reading list, Settings first, then Zenium’s own; each runs sync.setScope', () => {
     const model = section('sync', syncState(syncStatus()))
     const scope = model.groups.find((g) => g.id === 'sync-scope')
     expect(scope?.heading).toBe('What you sync')
-    expect(scope?.rows.map((r) => r.label).slice(0, 5)).toEqual([
+    expect(scope?.rows.map((r) => r.label).slice(0, 6)).toEqual([
       'Bookmarks',
       'History',
       'Open tabs',
       'Passwords',
+      'Reading list',
       'Settings'
     ])
     // Every key of the engine's scope is a switch here, once.
@@ -5999,6 +6000,14 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(history.checked).toBe(true)
     history.onChange(false)
     expect(invoke).toHaveBeenCalledWith('sync.setScope', { history: false })
+    // The reading list is on by default too, as the bookmarks (services pass 11, ID-48), and
+    // its row says what travels: the pages and their read state (a page's icon stays home).
+    const readingList = row(model, 'sync-scope:readingList')
+    if (readingList.kind !== 'switch') throw new Error('not a switch')
+    expect(readingList.checked).toBe(true)
+    expect(readingList.description).toBe('Pages saved for later and whether you have read them.')
+    readingList.onChange(false)
+    expect(invoke).toHaveBeenCalledWith('sync.setScope', { readingList: false })
     // The same group, same order, once connected.
     const on = section('sync', syncState(connected()))
     expect(on.groups.find((g) => g.id === 'sync-scope')?.rows.map((r) => r.id)).toEqual(

@@ -80,9 +80,10 @@ export const SYNC_COPY = {
 } as const
 
 /**
- * The data types in Chrome's "Manage what you sync" order – Bookmarks, Open tabs, Passwords,
- * Settings – then Zenium's own: Spaces, folders, pinned tabs, Essentials, containers, shortcuts,
- * Boosts. Every key of `SyncScope` is here once (the engine's toggles are the page's).
+ * The data types in Chrome's "Manage what you sync" order – Bookmarks, History, Open tabs,
+ * Passwords, Reading list, Settings – then Zenium's own: Spaces, folders, pinned tabs,
+ * Essentials, containers, shortcuts, Boosts. Every key of `SyncScope` is here once (the engine's
+ * toggles are the page's).
  */
 export const SYNC_SCOPES: ReadonlyArray<{ key: keyof SyncScope; label: string; hint?: string }> = [
   { key: 'bookmarks', label: 'Bookmarks' },
@@ -92,6 +93,13 @@ export const SYNC_SCOPES: ReadonlyArray<{ key: keyof SyncScope; label: string; h
     key: 'passwords',
     label: 'Passwords',
     hint: 'Saved passwords and passkey records, encrypted with your sync passphrase.'
+  },
+  // The reading list's row (services pass 11, the `reading-list-entry` record): the pages and
+  // their read state travel, a page's icon stays with the device that saved it.
+  {
+    key: 'readingList',
+    label: 'Reading list',
+    hint: 'Pages saved for later and whether you have read them.'
   },
   { key: 'settings', label: 'Settings' },
   { key: 'spaces', label: 'Spaces', hint: 'Names, icons, themes and order.' },

@@ -228,7 +228,8 @@ function sync(enabled: boolean, openTabs = true): SyncStatus {
       settings: true,
       shortcuts: true,
       boosts: true,
-      history: true
+      history: true,
+      readingList: true
     },
     lastSyncAt: enabled ? NOW - 60_000 : null,
     lastError: null,
