@@ -621,6 +621,43 @@ describe('a Space switch in the overview', () => {
     expect(placeholderIds()).toEqual(ids('w', 8, 29))
   })
 
+  it('a Space with no tab slides in with §9.17’s note in its slot, and the note carries no fade of its own (TAB-34)', () => {
+    // Home emptied: its slot comes up with the note where the grid would stand.
+    const emptyHome = (active: string): UIState => {
+      const state = stateOf(active)
+      const tabs = Object.fromEntries(
+        Object.entries(state.tabs).filter(([id]) => !id.startsWith('h'))
+      )
+      const spaces = state.spaces.map((s) =>
+        s.id === HOME ? { ...s, tabIds: [], activeTabId: null } : s
+      )
+      return { ...state, tabs, spaces }
+    }
+    render(emptyHome(WORK))
+    expect(cardIds()).toEqual(ids('w', 0, 7))
+    animations = []
+    render(emptyHome(HOME))
+    const note = host!.querySelector<HTMLElement>('[data-testid="overview-tabs-empty"]')!
+    expect(note).not.toBeNull()
+    expect(host!.querySelector('.zen-overview-grid')).toBeNull()
+    expect(note.parentElement).toBe(slot())
+    // The slot's slide is the motion (MOT-05) – the note is marked for no fade of its own (§11.1).
+    const [slide] = slides()
+    expect(slides()).toHaveLength(1)
+    expect(slide.el).toBe(slot())
+    expect(note.hasAttribute('data-in-place')).toBe(false)
+    // A still of Work's grid fades over it, as over any next grid.
+    expect(stills()).toHaveLength(1)
+    // Back to Work: the grid again, sliding from the leading side.
+    animations = []
+    render(emptyHome(WORK))
+    expect(host!.querySelector('[data-testid="overview-tabs-empty"]')).toBeNull()
+    expect(cardIds()).toEqual(ids('w', 0, 7))
+    expect(slides()[0]!.frames[0]).toMatchObject({
+      transform: `translate3d(-${SPACE_SLIDE_PX}px, 0, 0)`
+    })
+  })
+
   it('the FLIP tracker measures the new grid with the slot held at rest, and glides nothing from the grid that left', () => {
     render(stateOf(WORK))
     // Work's New Tab card is the thirty-first cell, row 15; Home's the thirteenth, row 6: the

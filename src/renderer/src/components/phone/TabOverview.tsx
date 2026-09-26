@@ -1,4 +1,4 @@
-import type { CSSProperties, JSX, ReactNode } from 'react'
+import type { CSSProperties, JSX, ReactNode, RefObject } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Archive,
@@ -531,6 +531,18 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   // being a fade and not travel (§11.6 as amended). The Private pane's grid is one slot for the
   // pane's life (its key the pane's), so it never slides.
   const gridKey = pane === 'tabs' ? space.id : `#${pane}`
+  // The empty note's fade is keyed to the REPLACEMENT, not to its mount (v2 §11.1, the gate's
+  // ruling on #562): it runs when the note takes the grid's place in the slot it stands in – the
+  // last card gone, the New Tab card's exit `with` it – and not when the note comes up with its
+  // pane (the panes' cross-fade is the motion) or with its Space (the slot's slide is), or with
+  // the overview itself: one object, one move. `gridDrawn` is the slot whose grid the last commit
+  // drew, written after each commit; the note reads it at its own mount (`TabsEmpty`, whose
+  // layout effect runs before this one, so it still reads the last commit's word) and fades
+  // only if it is its slot's.
+  const gridDrawn = useRef<string | null>(null)
+  useLayoutEffect(() => {
+    gridDrawn.current = pane === 'tabs' && !tabsEmpty ? gridKey : null
+  })
   // The slot in its slide, for as long as it slides – the FLIP tracker measures the cells with
   // its transform held off (`useFlip`'s `frame`), so nothing reads the slide as a move.
   const spaceSlotRef = useRef<HTMLDivElement | null>(null)
@@ -2133,7 +2145,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
                 className="zen-overview-space relative flex min-h-0 flex-1 flex-col"
               >
                 {tabsEmpty ? (
-                  <TabsEmpty />
+                  <TabsEmpty slot={gridKey} gridDrawn={gridDrawn} />
                 ) : (
                   <div
                     ref={gridRef}
@@ -2710,14 +2722,14 @@ function TabSheet({
   // system sheet from 14 (`share.open`, the tab's title and address) – so no sheet stands over
   // a sheet; the bookmark row reads the tab's state and toggles it in place (`bookmark.toggle`:
   // the core's toast says which folder took it, or Undo on the removal), no ellipsis since
-  // nothing opens. Menu items, so Title Case (§9.1); "Remove Bookmark" is the tab row's word
-  // on every host.
+  // nothing opens. Menu items, so Title Case (§9.1); "Bookmark Tab" / "Remove Bookmark" are the
+  // desktop tab row's words – one pair across hosts (the gate's ruling on #562).
   if (pageTabs([tab]).length > 0) {
     actions.push(
       { id: 'share', label: 'Share…', onPick: () => run('share.open', { tabId: tab.id }) },
       {
         id: 'bookmark',
-        label: tab.bookmarked ? 'Remove Bookmark' : 'Add to Bookmarks',
+        label: tab.bookmarked ? 'Remove Bookmark' : 'Bookmark Tab',
         onPick: () => run('bookmark.toggle', { tabId: tab.id })
       }
     )
@@ -2896,11 +2908,29 @@ function PrivateEmpty(): JSX.Element {
  * so a Space with no tabs slides in as a grid would (MOT-05) and the strip above it stays. It is
  * the pane's state, not the search's: while a query stands the grid keeps the room with its "No
  * tabs found" and the reach's rows (`.zen-overview-tabs-empty` in main.css: the two rules the
- * Private pane's note has, and the 120 ms fade a state change comes up on, §11.4).
+ * Private pane's note has). Its 120 ms fade (§11.4) is the replacement's alone: the note that
+ * takes the grid's place in its own slot – the last card gone – is marked `data-in-place`, the
+ * fade rule's key; one that comes up with its pane, its Space or the overview carries no mark
+ * and rides their motion (§11.1: one object, one move). The mark is decided once, at the mount,
+ * before the first paint: `gridDrawn` (the overview's record of the slot whose grid the last
+ * commit drew) still reads the last commit's word here, a child's layout effect running before
+ * its parent's. It is set on the element, outside React's props, so a later render of the same
+ * note leaves what it came up as.
  */
-function TabsEmpty(): JSX.Element {
+function TabsEmpty({
+  slot,
+  gridDrawn
+}: {
+  slot: string
+  gridDrawn: RefObject<string | null>
+}): JSX.Element {
+  const el = useRef<HTMLDivElement | null>(null)
+  useLayoutEffect(() => {
+    if (gridDrawn.current === slot && el.current) el.current.dataset.inPlace = ''
+  }, [slot, gridDrawn])
   return (
     <div
+      ref={el}
       className="zen-overview-tabs-empty relative min-h-0 flex-1"
       data-pane="tabs"
       data-testid="overview-tabs-empty"

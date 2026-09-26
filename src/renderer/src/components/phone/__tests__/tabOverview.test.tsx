@@ -525,7 +525,7 @@ describe('the card and group menus', () => {
     act(() => settleSprings())
   }
 
-  it("a held card's rows are menu items in Title Case, the group's own name as given; Select Tabs leads (TAB-08), Share… and Add to Bookmarks sit between the group rows and the closes (TAB-28)", () => {
+  it("a held card's rows are menu items in Title Case, the group's own name as given; Select Tabs leads (TAB-08), Share… and Bookmark Tab sit between the group rows and the closes (TAB-28)", () => {
     render(grouped())
     hold('a')
     expect(sheetLabels()).toEqual([
@@ -533,7 +533,7 @@ describe('the card and group menus', () => {
       'New Group',
       'Add to Research',
       'Share…',
-      'Add to Bookmarks',
+      'Bookmark Tab',
       'Close Other Tabs (3)',
       'Close Tab'
     ])
@@ -547,7 +547,7 @@ describe('the card and group menus', () => {
       'New Group',
       'Remove from Group',
       'Share…',
-      'Add to Bookmarks',
+      'Bookmark Tab',
       'Close Other Tabs (3)',
       'Close Tab'
     ])
@@ -559,6 +559,8 @@ describe('the card and group menus', () => {
    * from Android 14) and `bookmark.toggle` (the toast names the folder, or offers Undo on the
    * removal) – once the sheet has left, as every row acts. Menu items, so Title Case (§9.1);
    * Share… takes the ellipsis since a sheet follows, the bookmark row none since nothing opens.
+   * The bookmark row's words are the desktop tab row's, Bookmark Tab / Remove Bookmark – one
+   * pair across hosts (the gate's ruling on #562), not Chrome's "Add to bookmarks".
    */
   it('Share… sends the held tab to share.open as the sheet leaves, in the plain ink (TAB-28)', () => {
     render(grouped())
@@ -578,10 +580,10 @@ describe('the card and group menus', () => {
     expect(document.querySelector('.zen-sheet-item')).toBeNull()
   })
 
-  it('Add to Bookmarks toggles the held tab’s bookmark; a bookmarked tab’s row reads Remove Bookmark and toggles it back (TAB-28)', () => {
+  it('Bookmark Tab toggles the held tab’s bookmark; a bookmarked tab’s row reads Remove Bookmark and toggles it back (TAB-28)', () => {
     render(grouped())
     hold('b')
-    pick('Add to Bookmarks')
+    pick('Bookmark Tab')
     expect(commands().filter(([name]) => name === 'bookmark.toggle')).toEqual([
       ['bookmark.toggle', { tabId: 'b' }]
     ])
@@ -596,7 +598,7 @@ describe('the card and group menus', () => {
     )
     hold('b')
     expect(sheetLabels()).toContain('Remove Bookmark')
-    expect(sheetLabels()).not.toContain('Add to Bookmarks')
+    expect(sheetLabels()).not.toContain('Bookmark Tab')
     pick('Remove Bookmark')
     expect(commands().filter(([name]) => name === 'bookmark.toggle')).toEqual([
       ['bookmark.toggle', { tabId: 'b' }],
@@ -612,7 +614,7 @@ describe('the card and group menus', () => {
       hold('n')
       const labels = sheetLabels()
       expect(labels, url).not.toContain('Share…')
-      expect(labels, url).not.toContain('Add to Bookmarks')
+      expect(labels, url).not.toContain('Bookmark Tab')
       expect(labels, url).toEqual(['Select Tabs', 'New Group', 'Close Other Tabs (1)', 'Close Tab'])
       // Escape dismisses the sheet; nothing was sent for it.
       act(() => {
@@ -2835,8 +2837,11 @@ describe('the private pane', () => {
  * one sentence, "No open tabs", on the phone panels' note in place of the grid – no card, not
  * the New Tab card – with New tab as its one follow-up, the note's secondary button (sentence
  * case, §9.1). Chrome's grid at none says the same. It stands inside the Space's slot, so a Space
- * with no tab slides in as a grid would (MOT-05), and comes up on the 120 ms fade a state change
- * in place takes (§11.4), kept under reduced motion (§11.3). One tab of any kind is a card.
+ * with no tab slides in as a grid would (MOT-05). Its 120 ms fade (§11.4, kept under reduced
+ * motion, §11.3) is keyed to the replacement, not the mount (the gate's ruling on #562, §11.1):
+ * the note that takes the grid's place in its own slot – the last card gone – is marked
+ * `data-in-place` and fades; one that comes up with its pane, its Space or the overview carries
+ * no mark and rides their motion. One tab of any kind is a card.
  */
 describe('the Tabs pane with no tab', () => {
   const countShown = (): string =>
@@ -2904,7 +2909,60 @@ describe('the Tabs pane with no tab', () => {
     expect(cellKeys()).toEqual(['a', NEW_TAB_CELL])
   })
 
-  it('takes the Private pane’s two rules and comes up on the 120 ms fade, kept under reduced motion (main.css)', () => {
+  /*
+   * The fade's key (§11.1): `data-in-place` on the note that took the grid's place in its own
+   * slot, none on a note that came up with something else's motion.
+   */
+  it('the note that takes the grid’s place is marked in place, and keeps the mark when it re-renders; mounted with the overview it carries none', () => {
+    // With the overview: the overview's own entrance is the motion.
+    render(stateOf([], []))
+    expect(note()!.hasAttribute('data-in-place')).toBe(false)
+    // A tab, then its close: the note replaces the grid in the same slot.
+    render(stateOf([tab('a', 'https://a.example/')], []))
+    expect(note()).toBeNull()
+    render(stateOf([], []))
+    expect(note()!.hasAttribute('data-in-place')).toBe(true)
+    // The same note, rendered again on some other change: what it came up as, still.
+    render(stateOf([], []))
+    expect(note()!.hasAttribute('data-in-place')).toBe(true)
+    // Round again: a fresh note, a fresh mark.
+    render(stateOf([tab('n', BLANK_URL)], []))
+    render(stateOf([], []))
+    expect(note()!.hasAttribute('data-in-place')).toBe(true)
+  })
+
+  it('the note that comes up with its pane carries no mark: the Tabs segment picked, or the last private tab’s close handing the pane over', () => {
+    const privateHost = (tabs: Tab[]): UIState => {
+      const state = stateOf(tabs, [])
+      return { ...state, capabilities: { ...state.capabilities, privateTabs: true } }
+    }
+    const segment = (pane: 'tabs' | 'private'): HTMLElement =>
+      host!.querySelector<HTMLElement>(`[data-testid="overview-pane-${pane}"]`)!
+    const p1 = tab('p1', 'https://one.example/', { containerId: PRIVATE_CONTAINER_ID })
+    try {
+      // A private tab alone, active: the overview opens on the Private pane and its grid.
+      render(privateHost([p1]))
+      expect(note()).toBeNull()
+      expect(grid().dataset.pane).toBe('private')
+      // The Tabs segment: the Tabs pane enters on the panes' cross-fade, its note with it,
+      // unmarked – though a grid (the Private pane's) stood in the last commit.
+      act(() => segment('tabs').click())
+      expect(note()!.hasAttribute('data-in-place')).toBe(false)
+      expect(countShown()).toBe('0 tabs')
+      // Back on the Private pane, its last tab closed: the pane hands over to the Tabs pane,
+      // whose note comes up on the same cross-fade – unmarked again.
+      act(() => segment('private').click())
+      expect(note()).toBeNull()
+      expect(grid().dataset.pane).toBe('private')
+      render(privateHost([]))
+      expect(note()!.hasAttribute('data-in-place')).toBe(false)
+      expect(countShown()).toBe('0 tabs')
+    } finally {
+      act(() => resetOverviewPane())
+    }
+  })
+
+  it('takes the Private pane’s two rules; the 120 ms fade, kept under reduced motion, is keyed to the mark (main.css)', () => {
     const rules = rulesOf(readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8'))
     // The window family's inks read to the note, one rule for the three panes…
     const family = rules.find(
@@ -2922,10 +2980,15 @@ describe('the Tabs pane with no tab', () => {
     expect(top.selectors).toContain('.zen-overview-private-empty > .zen-phone-empty')
     expect(top.declarations.get('padding-top')?.value).toBe('48px')
     // The fade in place (§11.4): opacity alone, 120 ms, written out again `!important` under
-    // reduced motion past the sheet's closing rule that removes every other animation (§11.3).
+    // reduced motion past the sheet's closing rule that removes every other animation (§11.3) –
+    // and keyed to the mark (§11.1): the bare class animates nothing, so a note that comes up
+    // with its pane, its Space or the overview rides their motion alone.
     const own = rules.filter(
-      (r) => r.selectors.join() === '.zen-overview-tabs-empty' && r.declarations.has('animation')
+      (r) =>
+        r.selectors.join() === '.zen-overview-tabs-empty[data-in-place]' &&
+        r.declarations.has('animation')
     )
+    expect(own).toHaveLength(2)
     expect(own.find((r) => !r.reduced)?.declarations.get('animation')).toEqual({
       value: 'zen-fade 120ms var(--zen-ease)',
       important: false
@@ -2936,6 +2999,15 @@ describe('the Tabs pane with no tab', () => {
     })
     for (const rule of own) {
       expect([...rule.declarations.keys()]).toEqual(['animation'])
+    }
+    const bare = rules.filter((r) =>
+      r.selectors.some(
+        (s) => s === '.zen-overview-tabs-empty' || s.startsWith('.zen-overview-tabs-empty:')
+      )
+    )
+    for (const rule of bare) {
+      expect(rule.declarations.has('animation')).toBe(false)
+      expect(rule.declarations.has('transition')).toBe(false)
     }
   })
 })

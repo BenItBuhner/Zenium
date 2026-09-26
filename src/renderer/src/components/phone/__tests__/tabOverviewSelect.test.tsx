@@ -503,12 +503,12 @@ describe('entering the mode', () => {
     show(five())
     await holdCard('b')
     // The hold sheet leads with the mode's row (a menu item: Title Case, §9.1); the page's own
-    // rows (Share…, Add to Bookmarks, TAB-28) sit between the group row and the closes.
+    // rows (Share…, Bookmark Tab, TAB-28) sit between the group row and the closes.
     expect(sheetRows().map((r) => r.textContent?.trim())).toEqual([
       'Select Tabs',
       'New Group',
       'Share…',
-      'Add to Bookmarks',
+      'Bookmark Tab',
       'Close Other Tabs (3)',
       'Close Tab'
     ])
