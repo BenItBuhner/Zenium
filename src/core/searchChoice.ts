@@ -134,7 +134,9 @@ export function shuffledSearchChoiceTiles(seed: number): SearchChoiceTile[] {
 
 /** Whether `engineId` is one the screen may set as the default. */
 export function isSearchChoiceEngine(engineId: string): boolean {
-  return SEARCH_CHOICE_ENGINES.some((e) => e.id === engineId) && searchChoiceEngine(engineId) !== null
+  return (
+    SEARCH_CHOICE_ENGINES.some((e) => e.id === engineId) && searchChoiceEngine(engineId) !== null
+  )
 }
 
 /** A seed for the run's order: 32 bits from `random` (Math.random by default). */

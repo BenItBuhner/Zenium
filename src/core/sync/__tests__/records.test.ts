@@ -223,7 +223,11 @@ describe('collectLocal', () => {
     src.settings.onboardingDone = true
     src.settings.searchChoice = { engineId: 'duckduckgo', region: 'DE', madeAt: 1, version: 1 }
     const data = collectLocal(src, defaultScope()).get('settings')?.data as Record<string, unknown>
-    expect(DEVICE_LOCAL_SETTINGS).toEqual(['onboardingDone', 'sidebarExpandOnHover', 'searchChoice'])
+    expect(DEVICE_LOCAL_SETTINGS).toEqual([
+      'onboardingDone',
+      'sidebarExpandOnHover',
+      'searchChoice'
+    ])
     expect(data).not.toHaveProperty('sidebarExpandOnHover')
     expect(data).not.toHaveProperty('onboardingDone')
     expect(data).not.toHaveProperty('searchChoice')

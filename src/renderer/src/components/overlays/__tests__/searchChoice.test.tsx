@@ -1,0 +1,357 @@
+// @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { act, createElement, type JSX } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import type { SearchChoiceState, Tab, UIState } from '@shared/types'
+import { DEFAULT_SETTINGS } from '@shared/defaults'
+import { DEFAULT_SEARCH_ENGINES } from '@shared/search'
+import { shuffledSearchChoiceTiles } from '@core/searchChoice'
+
+/*
+ * The EEA's search-engine choice screen (W6-2; DMA Art. 6(3)) as the desktop draws it: the
+ * tour's search step in the EEA – the eligible engines in the run's order, nothing picked,
+ * "Set as default" live once a tile is picked, "Skip for now" and Escape recording nothing –
+ * and the same chassis on its own after the tour while the screen is owed; outside the EEA the
+ * tour's step keeps its three tiles; the URL bar waits under the screen as it waits under the
+ * tour; the phone shell draws none of it.
+ */
+
+const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(async () => null)
+Object.assign(window, { zen: { invoke, on: () => () => undefined } })
+;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+const { Onboarding } = await import('../Onboarding')
+const { SearchChoiceScreen } = await import('../SearchChoice')
+const { browserStore, onboardingUp, openNewTabPageUrlbar, uiStore } =
+  await import('@renderer/lib/ui')
+const { onboardingCovers } = await import('@renderer/lib/onboarding')
+const { searchChoiceCovers, tourAsksSearchChoice } = await import('@renderer/lib/searchChoice')
+
+const SEED = 0x5eed
+const EEA: SearchChoiceState = { region: 'DE', eea: true, required: true, seed: SEED }
+const ELSEWHERE: SearchChoiceState = { region: 'US', eea: false, required: false, seed: SEED }
+const ANSWERED: SearchChoiceState = { region: 'DE', eea: true, required: false, seed: SEED }
+
+function tab(id: string): Tab {
+  return {
+    id,
+    spaceId: 'space',
+    containerId: 'default',
+    url: 'zen://newtab',
+    title: 'New Tab',
+    favicon: null,
+    pinned: false,
+    essential: false,
+    pinnedUrl: null,
+    customTitle: null,
+    customIcon: null,
+    windowId: null,
+    folderId: null,
+    loading: false,
+    canGoBack: false,
+    canGoForward: false,
+    audible: false,
+    muted: false,
+    discarded: false,
+    frozen: false,
+    cpuThrottle: 1,
+    zoom: 1,
+    splitGroupId: null,
+    createdAt: 0,
+    lastActiveAt: 0,
+    errorCode: null,
+    bookmarked: false,
+    readerable: false,
+    blockedCount: 0
+  } as Tab
+}
+
+/** The profile window's state, with the choice screen's terms. */
+function profile(
+  onboardingDone: boolean,
+  searchChoice: SearchChoiceState,
+  window: Partial<UIState['window']> = {}
+): UIState {
+  return {
+    platform: 'linux',
+    capabilities: {},
+    tabs: { t1: tab('t1') },
+    spaces: [{ id: 'space', activeTabId: 't1', tabIds: ['t1'], theme: null }],
+    activeSpaceId: 'space',
+    essentialTabIds: [],
+    folders: {},
+    settings: { ...DEFAULT_SETTINGS, onboardingDone, searchEngineId: 'google' },
+    searchEngines: DEFAULT_SEARCH_ENGINES,
+    searchChoice,
+    shortcuts: [],
+    systemDark: false,
+    window: {
+      kind: 'synced',
+      chrome: 'full',
+      fullscreen: false,
+      htmlFullscreenTabId: null,
+      ...window
+    }
+  } as unknown as UIState
+}
+
+/** What the desktop shell mounts of the two, on its terms. */
+function Shell(): JSX.Element | null {
+  const state = browserStore.use((s) => s.state)
+  if (!state) return null
+  const onboarding = onboardingCovers(state)
+  return createElement(
+    'div',
+    null,
+    onboarding && createElement(Onboarding, { state }),
+    !onboarding && searchChoiceCovers(state) && createElement(SearchChoiceScreen, { state })
+  )
+}
+
+let root: Root | null = null
+let host: HTMLElement | null = null
+
+async function mount(state: UIState): Promise<void> {
+  browserStore.set({ state })
+  host = document.createElement('div')
+  document.body.appendChild(host)
+  root = createRoot(host)
+  await act(async () => root!.render(createElement(Shell)))
+}
+
+const settle = (): Promise<void> =>
+  act(async () => {
+    await new Promise((r) => setTimeout(r, 0))
+  })
+const commands = (): Array<[string, unknown]> =>
+  invoke.mock.calls.map(([name, args]) => [name, args])
+const q = <T extends Element>(selector: string): T | null => document.querySelector<T>(selector)
+const rows = (): HTMLButtonElement[] => [
+  ...document.querySelectorAll<HTMLButtonElement>('[role="radio"].zen-search-choice-row')
+]
+const button = (label: string): HTMLButtonElement | undefined =>
+  [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === label)
+const setDefault = (): HTMLButtonElement =>
+  q<HTMLButtonElement>('[data-testid="search-choice-set"]')!
+
+/** A click as Chromium delivers it: the button takes the focus, then is activated. */
+async function click(b: HTMLButtonElement | undefined): Promise<void> {
+  if (!b) throw new Error('no such button')
+  await act(async () => {
+    b.focus()
+    b.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await Promise.resolve()
+  })
+}
+
+async function key(target: EventTarget, key: string): Promise<void> {
+  await act(async () => {
+    target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+    await Promise.resolve()
+  })
+}
+
+/** Through the tour's first two steps to the search step. */
+async function toSearchStep(): Promise<void> {
+  await click(button('Continue'))
+  await click(button('Continue'))
+}
+
+afterEach(() => {
+  act(() => root?.unmount())
+  host?.remove()
+  root = null
+  host = null
+  uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: false, tabId: null } }))
+  browserStore.set({ state: null })
+  invoke.mockClear()
+})
+
+describe('the tour’s search step in the EEA', () => {
+  it('is the choice screen: the run’s order, nothing picked, Set as default off, no Skip tour', async () => {
+    await mount(profile(false, EEA))
+    await toSearchStep()
+
+    expect(q('[data-testid="search-choice"]')).not.toBeNull()
+    expect(q('h2')?.textContent).toBe('Choose your search engine')
+    const group = q<HTMLElement>('[role="radiogroup"]')!
+    expect(group.getAttribute('aria-labelledby')).toBe(q('h2')!.id)
+    // The run's order, from the state's seed – each tile the engine's name and its own line.
+    const expected = shuffledSearchChoiceTiles(SEED)
+    expect(rows().map((r) => r.dataset.engine)).toEqual(expected.map((t) => t.engine.id))
+    expect(rows()).toHaveLength(5)
+    rows().forEach((r, i) => {
+      expect(r.getAttribute('aria-checked')).toBe('false')
+      expect(r.querySelector('.zen-search-choice-name')?.textContent).toBe(expected[i]!.engine.name)
+      expect(r.querySelector('.zen-search-choice-tagline')?.textContent).toBe(expected[i]!.tagline)
+    })
+    // Nothing chosen for the user: the primary waits; the plain verb is the small one.
+    expect(setDefault().disabled).toBe(true)
+    expect(button('Skip for now')).not.toBeUndefined()
+    expect(button('Skip tour')).toBeUndefined()
+    expect(button('Continue')).toBeUndefined()
+    expect(commands().map(([n]) => n)).not.toContain('searchChoice.choose')
+  })
+
+  it('a pick lights Set as default; Set as default tells the core and goes on', async () => {
+    await mount(profile(false, EEA))
+    await toSearchStep()
+
+    const pick = rows().find((r) => r.dataset.engine === 'duckduckgo')!
+    await click(pick)
+    expect(pick.getAttribute('aria-checked')).toBe('true')
+    expect(rows().filter((r) => r.getAttribute('aria-checked') === 'true')).toHaveLength(1)
+    expect(setDefault().disabled).toBe(false)
+
+    // Another pick moves the mark – one choice at a time.
+    const other = rows().find((r) => r.dataset.engine === 'bing')!
+    await click(other)
+    expect(pick.getAttribute('aria-checked')).toBe('false')
+    expect(other.getAttribute('aria-checked')).toBe('true')
+
+    await click(setDefault())
+    expect(commands()).toContainEqual(['searchChoice.choose', { engineId: 'bing' }])
+    expect(commands().map(([n]) => n)).not.toContain('searchChoice.skip')
+    // The tour goes on past the step.
+    expect(q('[data-testid="search-choice"]')).toBeNull()
+    expect(q('[data-testid="onboarding"]')).not.toBeNull()
+  })
+
+  it('Skip for now and Escape record nothing – the core hears a skip – and the tour goes on', async () => {
+    await mount(profile(false, EEA))
+    await toSearchStep()
+    await click(button('Skip for now'))
+    expect(commands()).toContainEqual(['searchChoice.skip', undefined])
+    expect(commands().map(([n]) => n)).not.toContain('searchChoice.choose')
+    expect(q('[data-testid="search-choice"]')).toBeNull()
+    expect(q('[data-testid="onboarding"]')).not.toBeNull()
+    invoke.mockClear()
+
+    // Escape on the step, wherever the keyboard is.
+    act(() => root?.unmount())
+    host?.remove()
+    await mount(profile(false, EEA))
+    await toSearchStep()
+    await key(window, 'Escape')
+    expect(commands()).toContainEqual(['searchChoice.skip', undefined])
+    expect(q('[data-testid="search-choice"]')).toBeNull()
+  })
+
+  it('arrow keys move the pick as a radio group’s do; Space picks the focused row', async () => {
+    await mount(profile(false, EEA))
+    await toSearchStep()
+    const [first, second] = rows()
+    // One tab stop while nothing is picked: the first row.
+    expect(first!.tabIndex).toBe(0)
+    expect(second!.tabIndex).toBe(-1)
+    await key(first!, 'ArrowDown')
+    expect(second!.getAttribute('aria-checked')).toBe('true')
+    expect(document.activeElement).toBe(second)
+    await key(second!, 'ArrowUp')
+    expect(first!.getAttribute('aria-checked')).toBe('true')
+    await key(first!, 'End')
+    expect(rows().at(-1)!.getAttribute('aria-checked')).toBe('true')
+    await key(rows().at(-1)!, 'ArrowDown')
+    expect(first!.getAttribute('aria-checked')).toBe('true')
+    // The picked row is the group's one tab stop.
+    expect(first!.tabIndex).toBe(0)
+    expect(rows().at(-1)!.tabIndex).toBe(-1)
+    expect(setDefault().disabled).toBe(false)
+  })
+
+  it('outside the EEA the step keeps its three tiles with the shipped default picked', async () => {
+    await mount(profile(false, ELSEWHERE))
+    await toSearchStep()
+    expect(tourAsksSearchChoice(profile(false, ELSEWHERE))).toBe(false)
+    expect(q('[data-testid="search-choice"]')).toBeNull()
+    expect(q('h2')?.textContent).toBe('Pick a search engine')
+    expect(button('Continue')).not.toBeUndefined()
+    expect(button('Skip tour')).not.toBeUndefined()
+    expect(button('Set as default')).toBeUndefined()
+  })
+})
+
+describe('the screen on its own', () => {
+  it('stands over the profile window after the tour while the screen is owed – not over other windows, not when answered', () => {
+    expect(searchChoiceCovers(profile(true, EEA))).toBe(true)
+    // Before the tour is done the tour's step is the screen.
+    expect(searchChoiceCovers(profile(false, EEA))).toBe(false)
+    expect(searchChoiceCovers(profile(true, ANSWERED))).toBe(false)
+    expect(searchChoiceCovers(profile(true, ELSEWHERE))).toBe(false)
+    expect(searchChoiceCovers(profile(true, EEA, { kind: 'private' }))).toBe(false)
+    expect(searchChoiceCovers(profile(true, EEA, { kind: 'unsynced' }))).toBe(false)
+    expect(searchChoiceCovers(profile(true, EEA, { chrome: 'popup' }))).toBe(false)
+    expect(searchChoiceCovers(profile(true, EEA, { chrome: 'app' }))).toBe(false)
+    // A state without the field (an older core): nothing is owed.
+    expect(
+      searchChoiceCovers({ ...profile(true, EEA), searchChoice: undefined } as unknown as UIState)
+    ).toBe(false)
+  })
+
+  it('draws the one step in the tour’s chassis, takes the keyboard, and answers through the core', async () => {
+    await mount(profile(true, EEA))
+    const screen = q<HTMLElement>('[data-testid="search-choice-screen"]')
+    expect(screen).not.toBeNull()
+    expect(q('[data-testid="onboarding"]')).toBeNull()
+    const dialog = q<HTMLElement>('[role="dialog"]')!
+    expect(dialog.getAttribute('aria-modal')).toBe('true')
+    expect(dialog.getAttribute('aria-label')).toBe('Choose your search engine')
+    expect(document.activeElement).toBe(dialog)
+    // One step: no progress spans, no Back.
+    expect(button('Back')).toBeUndefined()
+    expect(button('Continue')).toBeUndefined()
+    expect(rows().every((r) => r.getAttribute('aria-checked') === 'false')).toBe(true)
+    expect(setDefault().disabled).toBe(true)
+
+    await click(rows().find((r) => r.dataset.engine === 'qwant'))
+    expect(setDefault().disabled).toBe(false)
+    await click(setDefault())
+    expect(commands()).toContainEqual(['searchChoice.choose', { engineId: 'qwant' }])
+
+    // The core answers with the record: the screen goes with it.
+    await act(async () => browserStore.set({ state: profile(true, ANSWERED) }))
+    expect(q('[data-testid="search-choice-screen"]')).toBeNull()
+  })
+
+  it('Escape and Skip for now are a skip; the screen stays until the core says otherwise', async () => {
+    await mount(profile(true, EEA))
+    await key(window, 'Escape')
+    expect(commands()).toContainEqual(['searchChoice.skip', undefined])
+    // Nothing is picked or written by the chrome itself.
+    expect(q('[data-testid="search-choice-screen"]')).not.toBeNull()
+    invoke.mockClear()
+    await click(button('Skip for now'))
+    expect(commands()).toEqual([['searchChoice.skip', undefined]])
+    // The core's state (the skip held for the run) takes the screen down.
+    await act(async () => browserStore.set({ state: profile(true, ANSWERED) }))
+    expect(q('[data-testid="search-choice-screen"]')).toBeNull()
+  })
+
+  it('holds the URL bar as the tour does: the new tab’s bar waits until the screen is answered', async () => {
+    await mount(profile(true, EEA))
+    expect(onboardingUp()).toBe(true)
+    openNewTabPageUrlbar('t1', undefined, false)
+    await settle()
+    expect(uiStore.get().urlbar.open).toBe(false)
+
+    await act(async () => browserStore.set({ state: profile(true, ANSWERED) }))
+    expect(onboardingUp()).toBe(false)
+    openNewTabPageUrlbar('t1', undefined, false)
+    await settle()
+    expect(uiStore.get().urlbar).toMatchObject({ open: true, tabId: 't1' })
+  })
+})
+
+describe('the form factor', () => {
+  it('the desktop and tablet shells mount the screen; the phone shell draws nothing of it', () => {
+    const read = (rel: string): string => readFileSync(resolve(__dirname, rel), 'utf8')
+    expect(read('../../../App.tsx')).toMatch(/searchChoiceCovers\(state\)/)
+    expect(read('../../../App.tsx')).toMatch(/<SearchChoiceScreen state=\{state\} \/>/)
+    expect(read('../../tablet/TabletShell.tsx')).toMatch(/<SearchChoiceScreen state=\{state\} \/>/)
+    const phone = read('../../phone/PhoneShell.tsx')
+    expect(phone).not.toMatch(/SearchChoice/)
+    expect(read('../PhoneOnboarding.tsx')).not.toMatch(/SearchChoice/)
+  })
+})

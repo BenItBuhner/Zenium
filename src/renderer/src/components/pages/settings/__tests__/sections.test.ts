@@ -3583,6 +3583,50 @@ describe('what a row does', () => {
       ])
     })
 
+    it('"Choose your search engine again" (W6-2) stands in the EEA or over a record, on the desktop and tablet, and asks the core for the screen', () => {
+      const eea = { region: 'DE', eea: true, required: false, seed: 1 }
+      const elsewhere = { region: 'US', eea: false, required: false, seed: 1 }
+      const record = { engineId: 'duckduckgo', region: 'DE', madeAt: 1, version: 1 }
+
+      // In the EEA the row stands whether or not the choice was made yet.
+      const inEea = buildSection(def, {
+        ...context(state({ searchChoice: eea })).ctx,
+        formFactor: 'desktop'
+      })
+      const again = row(inEea, 'search-choice-again')
+      if (again.kind !== 'action') throw new Error('not an action')
+      expect(again).toMatchObject({
+        label: 'Choose your search engine again',
+        button: 'Choose…',
+        layouts: ['desktop', 'tablet']
+      })
+      expect(again.description).toMatch(/random order/)
+      expect(inEea.groups[0]!.rows.map((r) => r.id)).toEqual(
+        expect.arrayContaining(['search-engine', 'search-choice-again'])
+      )
+      again.onPress?.()
+      expect(invoke).toHaveBeenCalledWith('searchChoice.askAgain', undefined)
+
+      // A device that left the EEA keeps the row while its record stands.
+      const recorded = buildSection(def, {
+        ...context(state({ searchChoice: elsewhere }, { searchChoice: record })).ctx,
+        formFactor: 'desktop'
+      })
+      expect(findRow(recorded.groups, 'search-choice-again')).not.toBeNull()
+
+      // Outside the EEA with no record: no row, and the group is as it was.
+      const outside = buildSection(def, {
+        ...context(state({ searchChoice: elsewhere })).ctx,
+        formFactor: 'desktop'
+      })
+      expect(findRow(outside.groups, 'search-choice-again')).toBeNull()
+      expect(outside.groups.map((g) => g.id)).toEqual([
+        'search',
+        'search-engines',
+        'add-search-engine'
+      ])
+    })
+
     it('Edit is a form row over the chassis’s Add / Edit form pre-filled – name, shortcut, URL – saving through search.updateEngine', () => {
       const { model } = searchOn('desktop')
       const edit = row(model, 'search-engine:custom:wiki:edit')
