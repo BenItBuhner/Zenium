@@ -1,8 +1,6 @@
 package app.zen.chromium
 
 import android.Manifest
-import android.app.NotificationChannel
-import android.app.NotificationChannelGroup
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
@@ -296,45 +294,27 @@ internal fun webNotificationCard(
 
 /**
  * The app's "Sharing" notification channel, Chrome Android's for tabs sent from the user's
- * other devices: one fixed channel of the app's own, beside the sites' group, so the user
- * silences sent tabs without touching any site. Made on first use; blocked here, the core is
- * told `false` and opens the tab right away instead.
+ * other devices: one fixed channel of the app's own ([Notifications.SHARING], under General
+ * beside the sites' group), so the user silences sent tabs without touching any site. Made on
+ * first use through the registry; blocked here, the core is told `false` and opens the tab right
+ * away instead.
  */
 class SharingChannel(private val context: Context) {
-    private val system: NotificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-    private var made = false
-
     /** The channel, made if the app has none yet; its id. */
-    fun ensure(): String {
-        if (made) return ID
-        runCatching {
-            if (system.getNotificationChannel(ID) == null) {
-                system.createNotificationChannel(
-                    NotificationChannel(ID, NAME, NotificationManager.IMPORTANCE_DEFAULT).apply {
-                        description = DESCRIPTION
-                    }
-                )
-            }
-        }
-        made = true
-        return ID
-    }
+    fun ensure(): String = Notifications.ensure(context, Notifications.SHARING)
 
     companion object {
         /** The request's `channel` value (`WebNotificationRequest.channel`). */
         const val KIND = "sharing"
-        const val ID = "zenium.sharing"
-        /** Chrome's channel name. */
-        const val NAME = "Sharing"
-        const val DESCRIPTION = "Tabs sent from your other devices"
     }
 }
 
 /**
  * The sites' notification channels, Chrome Android's way: one per origin, named after the site
- * and grouped under "Sites" in the app's notification settings. A channel's id carries the time
- * it was made ([SitesChannels.ensure]) because Android remembers a deleted channel by id – a site
- * blocked, forgotten and allowed again would come back blocked otherwise, as Chrome found.
+ * and grouped under "Sites" in the app's notification settings ([Notifications.site],
+ * [Notifications.SITES]). A channel's id carries the time it was made because Android remembers
+ * a deleted channel by id – a site blocked, forgotten and allowed again would come back blocked
+ * otherwise, as Chrome found.
  */
 class SitesChannels(private val context: Context) {
     private val system: NotificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -349,16 +329,7 @@ class SitesChannels(private val context: Context) {
             known[origin] = existing
             return existing
         }
-        val id = "$PREFIX$origin;${System.currentTimeMillis()}"
-        runCatching {
-            system.createNotificationChannelGroup(NotificationChannelGroup(GROUP_ID, GROUP_NAME))
-            system.createNotificationChannel(
-                NotificationChannel(id, displayName(origin), NotificationManager.IMPORTANCE_DEFAULT).apply {
-                    description = "Notifications from ${displayName(origin)}"
-                    group = GROUP_ID
-                }
-            )
-        }
+        val id = Notifications.ensure(context, Notifications.site(origin, System.currentTimeMillis()))
         known[origin] = id
         return id
     }
@@ -375,16 +346,11 @@ class SitesChannels(private val context: Context) {
 
     /** The channel id under which `origin`'s notifications live, from the system's list, or null. */
     fun find(origin: String): String? {
-        val prefix = "$PREFIX$origin;"
+        val prefix = Notifications.sitePrefix(origin)
         return runCatching { system.notificationChannels.firstOrNull { it.id.startsWith(prefix) }?.id }.getOrNull()
     }
 
     companion object {
-        const val PREFIX = "zenium.site:"
-        const val GROUP_ID = "zenium.sites"
-        /** Chrome's group for the sites' channels. */
-        const val GROUP_NAME = "Sites"
-
         /** How a site reads on its channel and under its notifications: the host (with a port when it has one), no scheme. */
         fun displayName(origin: String): String {
             val uri = runCatching { URI(origin) }.getOrNull()

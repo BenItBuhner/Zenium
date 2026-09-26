@@ -1,7 +1,5 @@
 package app.zen.chromium
 
-import android.app.NotificationChannel
-import android.app.NotificationChannelGroup
 import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
@@ -25,7 +23,7 @@ import java.io.File
  * deleted channel's settings by id, and an app blocked, uninstalled and installed again would
  * come back blocked otherwise.
  */
-class WebAppChannels(context: Context) {
+class WebAppChannels(private val context: Context) {
     private val system: NotificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     private val installed = InstalledWebApps(File(context.filesDir, INSTALLED_FILE))
     /** Shortcut id → channel id, for the channels seen in this process (the system is asked otherwise). */
@@ -49,16 +47,7 @@ class WebAppChannels(context: Context) {
             known[app.shortcutId] = existing
             return existing
         }
-        val id = channelId(app.shortcutId, System.currentTimeMillis())
-        runCatching {
-            system.createNotificationChannelGroup(NotificationChannelGroup(groupId(app.shortcutId), app.name))
-            system.createNotificationChannel(
-                NotificationChannel(id, app.name, NotificationManager.IMPORTANCE_DEFAULT).apply {
-                    description = "Notifications from ${app.name} (${SitesChannels.displayName(app.origin)})"
-                    group = groupId(app.shortcutId)
-                }
-            )
-        }
+        val id = Notifications.ensure(context, Notifications.webApp(app, System.currentTimeMillis()))
         known[app.shortcutId] = id
         return id
     }
@@ -73,7 +62,7 @@ class WebAppChannels(context: Context) {
 
     /** The channel id under which the app's notifications live, from the system's list, or null. */
     fun find(shortcutId: String): String? {
-        val prefix = channelPrefix(shortcutId)
+        val prefix = Notifications.webAppPrefix(shortcutId)
         return runCatching { system.notificationChannels.firstOrNull { it.id.startsWith(prefix) }?.id }.getOrNull()
     }
 
@@ -82,7 +71,7 @@ class WebAppChannels(context: Context) {
         val id = known.remove(shortcutId) ?: find(shortcutId)
         runCatching {
             if (id != null) system.deleteNotificationChannel(id)
-            system.deleteNotificationChannelGroup(groupId(shortcutId))
+            system.deleteNotificationChannelGroup(Notifications.webAppGroupId(shortcutId))
         }
     }
 
@@ -94,15 +83,6 @@ class WebAppChannels(context: Context) {
     companion object {
         /** The core's registry of the apps on the Home screen (`src/core/webapp.ts`, under `files/zen/`). */
         const val INSTALLED_FILE = "zen/webapps.json"
-        const val PREFIX = "zenium.webapp:"
-
-        /** The app's group: one per installed app, named for it. */
-        fun groupId(shortcutId: String): String = "$PREFIX$shortcutId"
-
-        /** What every channel id of the app starts with; the time it was made follows. */
-        fun channelPrefix(shortcutId: String): String = "$PREFIX$shortcutId;"
-
-        fun channelId(shortcutId: String, madeAt: Long): String = "${channelPrefix(shortcutId)}$madeAt"
     }
 }
 

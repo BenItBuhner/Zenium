@@ -2051,6 +2051,47 @@ class TabWebView(
         super.loadUrl(url, additionalHttpHeaders)
     }
 
+    /**
+     * The image-search upload's POST into this tab (CT-32; `view.post`, [ImagePostNavigation]):
+     * the same preparation as a load the core asked for – the user agent, the content settings
+     * and the policies follow the rules for the engine's URL before the request leaves – then
+     * the WebView's `postUrl` for an urlencoded body, or the core's self-submitting form
+     * document for a multipart one, loaded under an opaque origin with the engine's address as
+     * its history entry. An empty wire loads the address.
+     */
+    fun postForImageSearch(url: String, body: String?, html: String?) {
+        when (val plan = ImagePostNavigation.plan(url, body, html)) {
+            is ImagePostNavigation.Plan.PostUrl -> {
+                prepareRequestedLoad(url)
+                super.postUrl(url, plan.body)
+            }
+            is ImagePostNavigation.Plan.FormDocument -> {
+                prepareRequestedLoad(url)
+                loadDataWithBaseURL(
+                    ImagePostNavigation.FORM_DOCUMENT_BASE,
+                    plan.html,
+                    ImagePostNavigation.FORM_DOCUMENT_MIME,
+                    ImagePostNavigation.FORM_DOCUMENT_ENCODING,
+                    url
+                )
+            }
+            is ImagePostNavigation.Plan.Load -> loadUrl(plan.url)
+        }
+    }
+
+    /** [loadUrl]'s preparation for a request that leaves by another WebView call ([postForImageSearch]). */
+    private fun prepareRequestedLoad(url: String) {
+        localDocumentSeq++
+        heldNavigation = null
+        rememberCurrentPage()
+        reloadAskedAt = 0L
+        leaveCarry.reset()
+        if (url.startsWith("http", ignoreCase = true)) currentDocument = url
+        switchDesktopModeFor(url)
+        applyContentRules(url)
+        if (url.startsWith("http", ignoreCase = true)) applyMixedContentPolicy(host.privacy.flags, url)
+    }
+
     /** Local documents read for this view: a read that ends after the tab moved on lands nowhere. */
     private var localDocumentSeq = 0
 

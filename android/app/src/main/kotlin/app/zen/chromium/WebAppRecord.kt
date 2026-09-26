@@ -142,10 +142,32 @@ object WebAppStore {
 
     /** Any thread but the main one. Failures are swallowed: the intent's extras carry the record too. */
     fun save(context: Context, record: WebAppRecord, tile: Bitmap?) {
-        runCatching {
-            dir(context).mkdirs()
-            recordFile(context, record.shortcutId).writeText(record.toJson().toString())
-            if (tile != null) tileFile(context, record.shortcutId).outputStream().use { tile.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        runCatching { write(dir(context), record, tile) }
+    }
+
+    /**
+     * The install's write into [dir]: the record as [WebAppRecord.toJson] has it – so a record
+     * written before (a re-install) starts over, its first-launch mark ([WebAppDisclosure.KEY])
+     * with it – and the tile beside it.
+     */
+    fun write(dir: File, record: WebAppRecord, tile: Bitmap?) {
+        dir.mkdirs()
+        replace(File(dir, "${record.shortcutId}.json"), record.toJson().toString())
+        if (tile != null) File(dir, "${record.shortcutId}.png").outputStream().use { tile.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
+
+    /**
+     * [text] into [file] whole or not at all: a temp beside it, renamed over it (the shape
+     * `Storage.writeBytes` has), so a death mid-write leaves the file as it was rather than torn –
+     * a torn record reads as none to [load] and to [WebAppDisclosure]. Throws when nothing landed.
+     */
+    fun replace(file: File, text: String) {
+        file.parentFile?.mkdirs()
+        val tmp = File(file.parentFile, "${file.name}.tmp")
+        tmp.writeText(text)
+        if (!tmp.renameTo(file)) {
+            file.delete()
+            if (!tmp.renameTo(file)) throw java.io.IOException("could not rename ${tmp.name} over ${file.name}")
         }
     }
 

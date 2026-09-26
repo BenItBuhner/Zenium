@@ -40,6 +40,13 @@
  * - The other settings stand for Chromium features the WebView exposes no switch for or Zenium
  *   does not have: their values are remembered and reported back, so extensions that toggle them
  *   at start-up run and see their own value.
+ * - The browser's own value, while no extension controls a setting, is the user's Settings value
+ *   for the paired settings (`browserValueOf`: `passwords.offerToSave`, `autofill.addresses`,
+ *   `autofill.cards`, Safe Browsing, the cookie mode, search suggestions, preloading, Do Not
+ *   Track), as Chrome's `get` answers the user's pref – a read-before-set extension (iCloud
+ *   Passwords' `#g`) sets what differs from its target (R21-9); the unpaired settings answer the
+ *   table's default. The effects (rules, the document-start layer) carry an extension's value
+ *   alone: the user's own Do Not Track is the protection service's to send.
  */
 import type { HeaderOp, Rule, RuleSet } from '../core/blocking/rules'
 import { DNR_BAND_SIZE, RULE_SET_PRIORITY } from '../core/blocking/rules'
@@ -48,6 +55,7 @@ import {
   INCOGNITO_SCOPE_ERROR,
   PRIVACY_PERMISSION_ERROR,
   PRIVACY_SETTINGS,
+  browserValueOf,
   effectiveSetting,
   hasValues,
   incognitoSpecific,
@@ -71,6 +79,7 @@ import {
   type PrivacyRank,
   type PrivacyRequestEffects,
   type PrivacySettingSpec,
+  type PrivacyUserSettings,
   type PrivacyValue,
   type ScopedValues,
   type SettingResult
@@ -79,8 +88,6 @@ import { PRIVATE_CONTAINER_ID, type ExtensionControl } from '../shared/types'
 import type { AttachedExtension } from './extensionApi'
 
 export const PRIVACY_PERMISSION = 'privacy'
-
-const PASSWORD_SAVING = settingKey('services', 'passwordSavingEnabled')
 
 /** The engine set of the regular tabs' request effects, and the private tabs'. */
 export const PRIVACY_RULE_SET_ID = 'builtin:extension-privacy'
@@ -198,8 +205,13 @@ export interface PrivacyHost {
   /** An extension's persisted values by setting key (the runtime's store), and the write of them (`{}` forgets). */
   persistedValues(id: string): unknown
   persistValues(id: string, values: Record<string, ScopedValues>): void
-  /** The user's own `Settings.passwords.offerToSave`: the browser's value of `services.passwordSavingEnabled`. */
-  offerToSavePasswords(): boolean
+  /**
+   * The user's Settings document, read live: the browser's own value of every paired setting
+   * (`browserValueOf` – `passwords.offerToSave` for `services.passwordSavingEnabled`,
+   * `autofill.addresses` / `autofill.cards` for the two autofill settings, and the rest of
+   * `PRIVACY_CONTROL_KEYS`), as Chrome's `get` answers the user's pref.
+   */
+  userSettings(): PrivacyUserSettings
   /** The container ids of the regular (non-private) partitions, for the request rules' scope. */
   regularPartitions(): readonly string[]
   /**
@@ -290,8 +302,7 @@ export class AndroidPrivacy {
    */
   engineReady(): void {
     this.appliedEffects = null
-    const regular = privacyRequestEffects((key) => this.effective.get(key))
-    const priv = privacyRequestEffects((key) => this.effective.get(effectiveKey(key, true)))
+    const { regular, priv } = this.requestEffects()
     this.applyRequestRules(regular, priv)
   }
 
@@ -416,10 +427,13 @@ export class AndroidPrivacy {
     }
   }
 
+  /**
+   * The browser's own value while no extension controls the setting: the user's Settings value
+   * for the paired settings, the table's default for the rest (R21-9: a read-before-set
+   * extension takes a setting whose user value differs from its target, as in Chrome).
+   */
   private browserValue(spec: PrivacySettingSpec): PrivacyValue {
-    if (settingKey(spec.category, spec.name) === PASSWORD_SAVING)
-      return this.host.offerToSavePasswords()
-    return spec.browserDefault
+    return browserValueOf(spec, this.host.userSettings())
   }
 
   private persist(holder: Holder): void {
@@ -492,11 +506,27 @@ export class AndroidPrivacy {
     this.host.publish(controls)
   }
 
+  /**
+   * The effects are the extensions': a setting at the browser's own value asks nothing of the
+   * extension host – the user's Do Not Track is the protection service's to send, the rules
+   * and the document-start layer here carry an extension's value alone.
+   */
   private applyEffects(): void {
-    const regular = privacyRequestEffects((key) => this.effective.get(key))
-    const priv = privacyRequestEffects((key) => this.effective.get(effectiveKey(key, true)))
+    const { regular, priv } = this.requestEffects()
     this.applyRequestRules(regular, priv)
     this.applyDocumentStart(regular, priv)
+  }
+
+  /** The request effects for both kinds of tab, from the settings an extension controls alone. */
+  private requestEffects(): { regular: PrivacyRequestEffects; priv: PrivacyRequestEffects } {
+    const controlled = (key: string): EffectiveSetting | undefined => {
+      const setting = this.effective.get(key)
+      return setting && setting.controller !== null ? setting : undefined
+    }
+    return {
+      regular: privacyRequestEffects(controlled),
+      priv: privacyRequestEffects((key) => controlled(effectiveKey(key, true)))
+    }
   }
 
   /** The request effects as the engine's sets: replaced when they moved, applied once the engine is there. */
