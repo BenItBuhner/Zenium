@@ -31,4 +31,32 @@ describe('ExtensionControls', () => {
     controls.publish('proxy', {})
     expect(published).toHaveLength(4)
   })
+
+  it('a key whose value changed is a change – a list by its entries (startup pages)', () => {
+    const published: Array<Record<string, ExtensionControl>> = []
+    const controls = new ExtensionControls({
+      setExtensionControls: (map) => {
+        published.push(map)
+      }
+    })
+    const pages = (value: string[]): Record<string, ExtensionControl> => ({
+      'startup.pages': { extensionId: NEW, name: 'Pages', value }
+    })
+    controls.publish('startupPages', pages(['https://a.example/']))
+    controls.publish('startupPages', pages(['https://a.example/']))
+    expect(published).toHaveLength(1)
+    controls.publish('startupPages', pages(['https://a.example/', 'https://b.example/']))
+    expect(published).toHaveLength(2)
+    controls.publish('startupPages', pages(['https://b.example/', 'https://a.example/']))
+    expect(published).toHaveLength(3)
+    // A scalar value the same way; a list against a scalar is a change.
+    const mode = (value: string | string[]): Record<string, ExtensionControl> => ({
+      'startup.mode': { extensionId: NEW, name: 'Pages', value }
+    })
+    controls.publish('startupPages', mode('pages'))
+    controls.publish('startupPages', mode('pages'))
+    expect(published).toHaveLength(4)
+    controls.publish('startupPages', mode(['pages']))
+    expect(published).toHaveLength(5)
+  })
 })

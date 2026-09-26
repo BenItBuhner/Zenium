@@ -65,11 +65,13 @@ import {
   newRecord,
   newTabOverrideUrl,
   setNewTabOverride,
+  startupOverrideOf,
   withManifest,
   type ExtensionRecord,
   type ExtensionRegistry
 } from '../../core/extensions/registry'
 import { STORE_UPDATE_URLS, isExtensionId, type StoreId } from '../../core/extensions/store'
+import type { StartupOverride } from '../../core/startup'
 import {
   NO_PREVIOUS_BEGIN_INSTALL_ERROR,
   USER_CANCELLED_ERROR,
@@ -423,6 +425,7 @@ export class ExtensionService implements ExtensionHost {
         // Electron derives the id itself (from `manifest.key` or the path); trust what it says.
         if (ext.id !== record.id) this.rekey(record, ext.id)
         this.backfillNewTabPage(record, ext.manifest)
+        this.syncStartupPages(record, ext.manifest)
         if (!this.loadedById.has(ext.id)) this.loadedById.set(ext.id, ext)
         for (const listener of this.loadedListeners) listener(ext, ses)
       } catch (error) {
@@ -561,6 +564,20 @@ export class ExtensionService implements ExtensionHost {
     const page = manifestFields(manifest).newTabPage
     if (!page) return
     record.newTabPage = page
+    this.persist()
+  }
+
+  /**
+   * The record's `startupPages` as the manifest Electron loaded declares them: records written
+   * before the field existed learn theirs, and an unpacked folder whose manifest changed on disk
+   * between boots is brought up to date, so the registry – what the boot reads before any
+   * extension loads, and what the Settings page's indicator shows (`startupPagesOverride`) –
+   * speaks for the extension as it runs.
+   */
+  private syncStartupPages(record: ExtensionRecord, manifest: unknown): void {
+    const pages = manifestFields(manifest).startupPages
+    if (record.startupPages !== undefined && sameStartupPages(record.startupPages, pages)) return
+    record.startupPages = pages
     this.persist()
   }
 
@@ -1074,6 +1091,18 @@ export class ExtensionService implements ExtensionHost {
       if (url && this.loadedById.has(record.id)) return url
     }
     return null
+  }
+
+  /**
+   * The enabled extension whose `chrome_settings_overrides.startup_pages` the boot follows
+   * (`ExtensionHost.startupPagesOverride`): from the registry alone, as Chrome reads the
+   * preference from `ExtensionPrefs` before the extensions load – the boot opens its windows
+   * first (`Browser.start`) – the newest-installed of several (`startupOverrideOf`). The Settings
+   * page's indicator (`StartupPagesApi`) reads the same registry through this, so the two name
+   * one extension.
+   */
+  startupPagesOverride(): StartupOverride | null {
+    return startupOverrideOf(this.registry.extensions)
   }
 
   /**
@@ -1819,6 +1848,10 @@ function publishedExtension(ext: Extension, folded: readonly string[]): Extensio
 
 function sameStrings(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((value, i) => value === b[i])
+}
+
+function sameStartupPages(a: string[] | null, b: string[] | null): boolean {
+  return a === null || b === null ? a === b : sameStrings(a, b)
 }
 
 /**

@@ -79,7 +79,7 @@ function lastSession(): Browser {
   const browser = new Browser(desktopPlatform())
   const state = browser.state
   state.settings.onboardingDone = true
-  state.settings.restoreSession = false
+  state.settings.startup.mode = 'newTab'
   const space = state.model.spaces[0]
   for (const url of PAGES) {
     const tab = createTabRecord({ spaceId: space.id, containerId: space.containerId, url })
@@ -111,7 +111,7 @@ describe('start({ restoreLastSession }) – the --restore-last-session switch', 
     expect(browser.allWindows()).toHaveLength(1)
     expect(openUrls(browser)).toEqual([])
     // The setting itself is not touched by a launch either way.
-    expect(browser.state.settings.restoreSession).toBe(false)
+    expect(browser.state.settings.startup.mode).toBe('newTab')
   })
 
   it('brings every window and tab of the last session back over the setting', () => {
@@ -124,7 +124,7 @@ describe('start({ restoreLastSession }) – the --restore-last-session switch', 
         .sort()
     ).toEqual(['window_1', 'window_2'])
     expect(openUrls(browser)).toEqual([...PAGES].sort())
-    expect(browser.state.settings.restoreSession).toBe(false)
+    expect(browser.state.settings.startup.mode).toBe('newTab')
   })
 
   it('holds for the browser windows a run on an app window alone opens later', () => {

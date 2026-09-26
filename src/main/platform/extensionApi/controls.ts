@@ -44,7 +44,19 @@ function sameControls(
   return keys.every((key) => {
     const other = b[key]
     return (
-      other !== undefined && other.extensionId === a[key].extensionId && other.name === a[key].name
+      other !== undefined &&
+      other.extensionId === a[key].extensionId &&
+      other.name === a[key].name &&
+      sameValue(other.value, a[key].value)
     )
   })
+}
+
+/** The value in effect, a list compared by its entries (an extension's startup pages). */
+function sameValue(a: ExtensionControl['value'], b: ExtensionControl['value']): boolean {
+  if (Array.isArray(a) || Array.isArray(b))
+    return (
+      Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => v === b[i])
+    )
+  return a === b
 }

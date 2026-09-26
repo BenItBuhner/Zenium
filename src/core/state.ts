@@ -120,6 +120,7 @@ import { createSpace, createTabRecord, emptyModel, tabVisibleIn, type Model } fr
 import { newSearchChoiceSeed, sanitizeSearchChoice, searchChoiceState } from './searchChoice'
 import { sanitizeResourceSettings } from './resources/switches'
 import { sanitizeAgentSettings } from './agent/settings'
+import { migrateStartupSettings } from './startup'
 import {
   emptyUpdateStatus,
   sanitizeUpdateSettings,
@@ -698,10 +699,18 @@ export class BrowserState {
     }
     // The phone's frozen key of 0.3.x profiles (`settings.newTabPhone`) is folded into `newTab`
     // below and kept nowhere else: it must not ride along into the settings (or a sync record).
-    const { newTabPhone, ...persistedSettings } = (data.settings ?? {}) as Settings & {
+    // The 0.4.x "Restore previous session" switch (`restoreSession`) is folded into `startup` the
+    // same way (`migrateStartupSettings`: on → continue, off → the New Tab page).
+    const { newTabPhone, restoreSession, ...persistedSettings } = (data.settings ??
+      {}) as Settings & {
       newTabPhone?: unknown
+      restoreSession?: unknown
     }
     this.settings = { ...structuredClone(DEFAULT_SETTINGS), ...persistedSettings }
+    this.settings.startup = migrateStartupSettings({
+      startup: data.settings?.startup,
+      restoreSession
+    })
     this.settings.compactMode = { ...DEFAULT_SETTINGS.compactMode, ...data.settings?.compactMode }
     // Compact mode's "persistent sidebar" toggle is transient by design.
     this.settings.compactMode.sidebarPersistent = false

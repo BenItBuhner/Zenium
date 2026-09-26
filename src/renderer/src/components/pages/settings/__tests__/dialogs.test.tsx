@@ -951,6 +951,127 @@ describe('a prompt holds the focus itself as it opens (§9.22, §9.23)', () => {
     closeAllPopovers()
   })
 
+  it('an item row’s ⋯ (§10.5) picking an action with a form opens that form over the page – Settings › On startup’s Edit… – under the desktop’s word for the row (`button`, §9.1’s ellipsis), at the form width and not stacked, its field holding the focus; and the way back is the ⋯ itself after Escape and after the form’s own close (the #525 lead check, C2)', async () => {
+    viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop', coarse: false })
+    const onSave = vi.fn()
+    const onRemove = vi.fn()
+    const edit: ActionRow = {
+      kind: 'action',
+      id: 'startup-page:1:edit',
+      label: 'Edit',
+      button: 'Edit…',
+      form: {
+        title: 'Edit page',
+        render: (close) => (
+          <>
+            <input id="startup-page-url" defaultValue="https://news.example/today" />
+            <button
+              type="button"
+              onClick={() => {
+                onSave()
+                close()
+              }}
+            >
+              Save
+            </button>
+          </>
+        )
+      }
+    }
+    const page: ItemRow = {
+      kind: 'item',
+      id: 'startup-page:1',
+      label: 'news.example/today',
+      menu: 'Options for news.example/today',
+      sheet: {
+        title: 'news.example/today',
+        description: 'https://news.example/today',
+        groups: [
+          {
+            id: 'startup-page:1-actions',
+            heading: null,
+            rows: [
+              edit,
+              {
+                kind: 'action',
+                id: 'startup-page:1:remove',
+                label: 'Remove',
+                button: 'Remove',
+                onPress: onRemove
+              }
+            ]
+          }
+        ]
+      }
+    }
+    const groups: RowGroup[] = [{ id: 'startup', heading: 'On startup', rows: [page] }]
+    const h = render(<Stack groups={groups} initial={[]} page={page} />)
+    const row = h.querySelector<HTMLElement>('[data-row="startup-page:1"]')!
+    expect(row.hasAttribute('data-static')).toBe(true)
+    const dots = row.querySelector<HTMLButtonElement>('button.zen-settings-row-menu')!
+    expect(dots.getAttribute('aria-label')).toBe('Options for news.example/today')
+    expect(row.querySelectorAll('button')).toHaveLength(1)
+
+    const pick = async (label: string): Promise<void> => {
+      act(() => dots.focus())
+      await act(async () => {
+        dots.click()
+        await Promise.resolve()
+      })
+      const menu = document.querySelector<HTMLElement>('[role="menu"]')!
+      expect(menu).not.toBeNull()
+      const items = [...menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+      // The menu reads the desktop's word where the row has one; neither row is destructive.
+      expect(items.map((i) => i.textContent)).toEqual(['Edit…', 'Remove'])
+      expect(items.map((i) => i.hasAttribute('data-danger'))).toEqual([false, false])
+      const item = items.find((i) => i.textContent === label)!
+      act(() => item.click())
+      expect(document.querySelector('[role="menu"]')).toBeNull()
+    }
+
+    // The pick opens the form itself over the page: one dialog, `form:` not `item:`, at the
+    // form width (nothing under it to make it the 320 notice), the field holding the focus.
+    await pick('Edit…')
+    const live = '[data-dialog]:not([data-leaving])'
+    const form = h.querySelector<HTMLElement>(live)!
+    expect(form).not.toBeNull()
+    expect(form.getAttribute('data-dialog')).toBe('form:startup-page:1:edit')
+    expect(form.getAttribute('role')).toBe('dialog')
+    expect(h.querySelectorAll(live)).toHaveLength(1)
+    expect(form.querySelector('.zen-v2-title-block-title')!.textContent).toBe('Edit page')
+    expect(form.style.width).not.toBe('320px')
+    const field = form.querySelector<HTMLInputElement>('#startup-page-url')!
+    expect(field.value).toBe('https://news.example/today')
+    expect(document.activeElement).toBe(field)
+    expect(onSave).not.toHaveBeenCalled()
+
+    // Escape is Cancel: the form goes, nothing ran, and the ⋯ has the keyboard again (§9.5) –
+    // not `body`, not the row's static div.
+    escape()
+    expect(h.querySelector(live)).toBeNull()
+    expect(onSave).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(dots)
+
+    // The form's own close (its Save): the same way back.
+    await pick('Edit…')
+    const again = h.querySelector<HTMLElement>(live)!
+    const save = [...again.querySelectorAll<HTMLButtonElement>('button')].find(
+      (b) => b.textContent === 'Save'
+    )!
+    act(() => save.focus())
+    act(() => save.click())
+    expect(h.querySelector(live)).toBeNull()
+    expect(onSave).toHaveBeenCalledTimes(1)
+    expect(document.activeElement).toBe(dots)
+
+    // A row with neither `confirm` nor `form` is the row's press from the menu, no dialog.
+    await pick('Remove')
+    expect(onRemove).toHaveBeenCalledTimes(1)
+    expect(h.querySelector(live)).toBeNull()
+    document.getElementById('zen-chrome-layer')?.remove()
+    closeAllPopovers()
+  })
+
   it('an item dialog still opens on its first row, a form on its field (§9.22 leaves the container to a notice)', () => {
     const remove = deleteRow(() => undefined)
     const item = containerRow(remove)

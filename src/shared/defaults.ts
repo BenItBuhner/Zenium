@@ -273,7 +273,7 @@ export const DEFAULT_SETTINGS: Settings = {
   containerSpecificEssentials: true,
   essentialsMax: 12,
   newTabPosition: 'end',
-  restoreSession: true,
+  startup: { mode: 'continue', pages: [] },
   warnOnCloseWindow: true,
   warnBeforeQuitting: true,
   caretBrowsing: false,

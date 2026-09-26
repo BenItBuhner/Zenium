@@ -6,6 +6,7 @@ import {
   newRecord,
   newTabOverrideUrl,
   setNewTabOverride,
+  startupOverrideOf,
   withManifest,
   type ExtensionRecord,
   type MigrationHelpers
@@ -64,7 +65,8 @@ describe('manifestFields', () => {
       optionsPage: 'ui/options/index.html',
       popup: 'ui/popup/index.html',
       newTabPage: null,
-      updateUrl: 'https://clients2.google.com/service/update2/crx'
+      updateUrl: 'https://clients2.google.com/service/update2/crx',
+      startupPages: null
     })
   })
 
@@ -91,9 +93,30 @@ describe('manifestFields', () => {
       optionsPage: null,
       popup: null,
       newTabPage: null,
-      updateUrl: null
+      updateUrl: null,
+      startupPages: null
     })
     expect(manifestFields({ permissions: ['tabs', 7, null] }).permissions).toEqual(['tabs'])
+  })
+
+  it('reads chrome_settings_overrides.startup_pages as http(s) URLs, deduped', () => {
+    expect(
+      manifestFields({
+        chrome_settings_overrides: {
+          startup_pages: [
+            'https://example.com/',
+            'example.org',
+            'https://example.com',
+            7,
+            'ftp://x'
+          ]
+        }
+      }).startupPages
+    ).toEqual(['https://example.com/', 'https://example.org/'])
+    expect(
+      manifestFields({ chrome_settings_overrides: { startup_pages: [] } }).startupPages
+    ).toBeNull()
+    expect(manifestFields({ chrome_settings_overrides: { homepage: 'h' } }).startupPages).toBeNull()
   })
 
   it('reads the new-tab override page without a leading slash', () => {
@@ -151,6 +174,41 @@ describe('new-tab override', () => {
       newTabOverride: true
     })
     expect(migrated.extensions[1]).toMatchObject({ newTabPage: null, newTabOverride: false })
+  })
+})
+
+describe('startup-pages override (startupOverrideOf)', () => {
+  const holder = (
+    id: string,
+    installedAt: number,
+    pages: string[] | null = ['https://p.test/']
+  ): ExtensionRecord =>
+    record({ id: id.repeat(32), name: `Holder ${id}`, installedAt, startupPages: pages })
+
+  it('names the newest-installed enabled record with pages; a disabled one, one without pages or from before the field counts for nothing', () => {
+    const older = holder('a', 1_000)
+    const newer = holder('b', 2_000, ['https://b.test/', 'https://b.test/two'])
+    const disabled = holder('c', 3_000)
+    disabled.enabled = false
+    const none = holder('d', 4_000, null)
+    const before = holder('e', 5_000)
+    delete before.startupPages
+    expect(startupOverrideOf([older, newer, disabled, none, before])).toEqual({
+      extensionId: newer.id,
+      name: 'Holder b',
+      pages: ['https://b.test/', 'https://b.test/two'],
+      installedAt: 2_000
+    })
+    expect(startupOverrideOf([older, disabled, none, before])?.extensionId).toBe(older.id)
+    expect(startupOverrideOf([disabled, none, before])).toBeNull()
+    expect(startupOverrideOf([])).toBeNull()
+  })
+
+  it('breaks an installedAt tie by record order, the same answer for any order the extensions load in', () => {
+    const first = holder('a', 1_000)
+    const second = holder('b', 1_000)
+    expect(startupOverrideOf([first, second])?.extensionId).toBe(first.id)
+    expect(startupOverrideOf([second, first])?.extensionId).toBe(second.id)
   })
 })
 
