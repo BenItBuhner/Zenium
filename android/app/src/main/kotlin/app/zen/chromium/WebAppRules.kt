@@ -151,6 +151,12 @@ object WebAppRules {
         return Parts(u.protocol.lowercase(), host.lowercase(), u.port, u.path ?: "")
     }
 
+    /**
+     * The origin of a URL as the core's `permissionSite` writes it – `scheme://host[:port]`, the
+     * default port folded – or null for a string that is no `http` or `https` URL.
+     */
+    fun origin(url: String?): String? = parse(url)?.let(::originOf)
+
     private fun originOf(parts: Parts): String {
         val port = when {
             parts.port == -1 -> ""
