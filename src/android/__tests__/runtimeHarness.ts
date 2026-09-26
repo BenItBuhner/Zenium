@@ -722,7 +722,11 @@ export function harness(
   const blockingFlushes = { count: 0 }
   ;(
     browser as unknown as {
-      blocking: { engine: RuleEngine; store: { whenSettled: () => Promise<void> } }
+      blocking: {
+        engine: RuleEngine
+        store: { whenSettled: () => Promise<void> }
+        reconcileOwners: () => string[]
+      }
     }
   ).blocking = {
     engine,
@@ -730,7 +734,9 @@ export function harness(
       whenSettled: async () => {
         blockingFlushes.count++
       }
-    }
+    },
+    // `runtime.start()` asks the service to drop stale dNR sets; the fake has none to drop.
+    reconcileOwners: () => []
   }
   const tick = (ms: number): void => {
     clock.now += ms

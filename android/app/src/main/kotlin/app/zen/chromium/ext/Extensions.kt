@@ -181,10 +181,14 @@ class Extensions(private val host: Host) {
         val world: Boolean get() = slot != null
     }
 
-    /** Per tab WebView: the janitor's handler, `chrome.fontSettings`' stylesheet's, and, per extension, the handlers of its units. */
+    /**
+     * Per tab WebView: the janitor's handler, `chrome.fontSettings`' stylesheet's, `chrome.privacy`'s
+     * `navigator.doNotTrack` script's, and, per extension, the handlers of its units.
+     */
     private class ViewHandlers {
         var janitor: ScriptHandler? = null
         var fonts: ScriptHandler? = null
+        var privacy: ScriptHandler? = null
         val byExtension = HashMap<String, MutableList<ScriptHandler>>()
     }
 
@@ -194,6 +198,13 @@ class Extensions(private val host: Host) {
      * while no extension holds a value. Main thread.
      */
     var fontLayer: ExtensionFontLayer = ExtensionFontLayer.EMPTY
+        private set
+
+    /**
+     * `chrome.privacy`'s document-start layer (`ext.privacy.apply`; [ExtensionPrivacyLayer]): whether
+     * `navigator.doNotTrack` reads `'1'` in regular and in private tabs' documents. Main thread.
+     */
+    var privacyLayer: ExtensionPrivacyLayer = ExtensionPrivacyLayer.EMPTY
         private set
 
     @Volatile private var served: Map<String, Served> = emptyMap()
@@ -557,6 +568,7 @@ class Extensions(private val host: Host) {
                 reply(null)
             }
             "ext.fonts.apply" -> { setFontLayer(ExtensionFontLayer.fromJson(args)); reply(null) }
+            "ext.privacy.apply" -> { setPrivacyLayer(ExtensionPrivacyLayer.fromJson(args)); reply(null) }
             "ext.fonts.list" -> {
                 // The configuration files and the font files' `name` tables: file IO, off the main thread.
                 io.execute {
@@ -832,8 +844,9 @@ class Extensions(private val host: Host) {
         if (host.blocking.observer === observer) setObserveResponses(false)
         closeAuthSheets()
         releaseKeepAwake()
-        // The runtime that goes held the layer; the new one lays its own as its extensions attach.
+        // The runtime that goes held the layers; the new one lays its own as its extensions attach.
         setFontLayer(ExtensionFontLayer.EMPTY)
+        setPrivacyLayer(ExtensionPrivacyLayer.EMPTY)
     }
 
     /**
@@ -1241,9 +1254,42 @@ class Extensions(private val host: Host) {
         // `chrome.fontSettings`' stylesheet, for the documents this view will load (its WebSettings
         // values the view took in `applyFonts` as it was built).
         if (fontLayer.css.isNotEmpty()) mine.fonts = addFontStylesheet(view, fontLayer)
+        // `chrome.privacy`'s `navigator.doNotTrack`, for the documents this view will load, by its kind of tab.
+        if (privacyLayer.holds(view.isPrivateTab)) mine.privacy = addPrivacyScript(view, privacyLayer)
         handlers[view] = mine
         for ((id, list) in units) served[id]?.let { installExtension(view, it, list) }
     }
+
+    /**
+     * `ext.privacy.apply`: the Do Not Track value the extensions hold moved for regular or private
+     * tabs. Every open tab of a kind whose value moved has the document-start script re-registered
+     * (on) or dropped (off) for its next documents, and its open document's `navigator.doNotTrack`
+     * moved in place with the matching script. The `DNT: 1` header is the blocking engine's rule
+     * set, installed by the core, not this layer's.
+     */
+    private fun setPrivacyLayer(next: ExtensionPrivacyLayer) {
+        val prev = privacyLayer
+        if (next == prev) return
+        privacyLayer = next
+        var applied = 0
+        for (view in host.tabs.all()) {
+            val mine = handlers[view] ?: continue
+            val privateTab = view.isPrivateTab
+            if (next.holds(privateTab) == prev.holds(privateTab)) continue
+            mine.privacy?.let { runCatching { it.remove() } }
+            mine.privacy = if (next.holds(privateTab)) addPrivacyScript(view, next) else null
+            if (view.currentUrl != null) next.scriptFor(privateTab)?.let { view.evaluateJavascript(it, null) }
+            applied++
+        }
+        Log.i(TAG, "privacy: ${next.summary()}; applied to $applied page(s)")
+    }
+
+    private fun addPrivacyScript(view: WebView, layer: ExtensionPrivacyLayer): ScriptHandler? =
+        layer.on.ifEmpty { null }?.let { script ->
+            runCatching { WebViewCompat.addDocumentStartJavaScript(view, script, setOf("*")) }
+                .onFailure { e -> Log.w(TAG, "privacy: the doNotTrack document-start script was refused: ${e.message}") }
+                .getOrNull()
+        }
 
     /**
      * `ext.fonts.apply`: the layer every tab lays over the user's page fonts moved. The WebSettings
