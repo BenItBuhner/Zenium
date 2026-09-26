@@ -6,7 +6,7 @@ import type { MenuDescriptor, MenuItemDescriptor, SharePanelRequest, UIState } f
 import { DEFAULT_SETTINGS } from '@shared/defaults'
 import { MenuSheet } from '../MenuSheet'
 import { SharePanelLayer } from '../../share/SharePanelSheet'
-import { topBackSurface } from '@renderer/lib/back'
+import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { SheetPresence } from '@renderer/lib/motion/presence'
 import {
@@ -211,6 +211,21 @@ const escape = (): void => {
       new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
     )
   })
+}
+/** A finger on `target` at (x, y), stamped with the frame clock (the sheet reads its velocity). */
+const pointer = (type: string, target: EventTarget, x: number, y: number): void => {
+  const event = new PointerEvent(type, {
+    pointerId: 7,
+    clientX: x,
+    clientY: y,
+    button: 0,
+    bubbles: true,
+    cancelable: true,
+    pointerType: 'touch',
+    isPrimary: true
+  })
+  Object.defineProperty(event, 'timeStamp', { value: frames.now })
+  act(() => void target.dispatchEvent(event))
 }
 const reducedMotion = (matches: boolean): void => {
   Object.assign(window, {
@@ -417,6 +432,92 @@ describe("the app menu's Share row below Android 14 (the seam's first half: the 
     act(() => frames.run(2))
     expect(uiStore.get().menu).toBeNull()
     expect(commands('menu.click')).toEqual([{ menuId: 'menu_1', itemId: 'menu_1_4' }])
+  })
+})
+
+describe('the menu let go while it gathers (Escape, the back gesture, a drag): the sheet’s leave is the gather’s end, not a menu’s close', () => {
+  /** Where every exit comes to: the seam and the menu gone, the host told of no close. */
+  function letGo(): void {
+    expect(uiStore.get().shareSeam).toBeNull()
+    expect(uiStore.get().menu).toBeNull()
+    expect(uiStore.get().sharePanel).toBeNull()
+    expect(commands('menu.close')).toEqual([])
+    expect(commands('share.panelAction')).toEqual([])
+    expect(commands('menu.click')).toEqual([{ menuId: 'menu_1', itemId: 'menu_1_4' }])
+  }
+
+  /**
+   * The request the host went on gathering comes in after the menu left: it rises in the panel's
+   * own sheet, and the guard armed at the pick finds no gather to end.
+   */
+  async function requestRisesAlone(): Promise<void> {
+    await arrive()
+    expect(uiStore.get().sharePanel?.id).toBe('share-panel-1')
+    expect(uiStore.get().shareSeam).toBeNull()
+    expect(uiStore.get().menu).toBeNull()
+    expect(qa('.zen-share-panel')).toHaveLength(1)
+    expect(q('.zen-share-panel [data-row="apps"]')).not.toBeNull()
+    expect(q('.zen-share-panel .zen-share-seam')).toBeNull()
+    expect(topBackSurface()?.name).toBe('share-panel')
+    elapse(SHARE_SEAM_GUARD_MS)
+    await settle()
+    expect(uiStore.get().sharePanel?.id).toBe('share-panel-1')
+    expect(q('.zen-share-panel [data-row="apps"]')).not.toBeNull()
+    expect(commands('share.panelAction')).toEqual([])
+  }
+
+  it('on Escape: the sheet slides away with the seam, the host hears no menu.close, and the request rises on its own', async () => {
+    await show()
+    await pickShare()
+    escape()
+    await settle()
+    runAll()
+    letGo()
+    await requestRisesAlone()
+  })
+
+  it("on the back gesture committed over the menu's surface: the same exit", async () => {
+    await show()
+    await pickShare()
+    expect(topBackSurface()?.name).toBe('menu')
+    act(() => void dispatchBackEvent('start'))
+    act(() => void dispatchBackEvent('progress', { progress: 0.6 }))
+    // Half-way the menu still stands, its gather on.
+    expect(uiStore.get().shareSeam?.phase).toBe('gathering')
+    expect(uiStore.get().menu?.id).toBe('menu_1')
+    act(() => void dispatchBackEvent('commit'))
+    await settle()
+    runAll()
+    letGo()
+    await requestRisesAlone()
+  })
+
+  it('on a drag of the grip past the commit point: the same exit', async () => {
+    await show()
+    await pickShare()
+    const grip = q('[data-sheet-grip]')!
+    pointer('pointerdown', grip, 200, 400)
+    frames.now += 16
+    pointer('pointermove', grip, 200, 420)
+    frames.now += 16
+    pointer('pointermove', grip, 200, 700)
+    frames.now += 16
+    pointer('pointerup', grip, 200, 700)
+    await settle()
+    runAll()
+    letGo()
+    await requestRisesAlone()
+  })
+
+  it('on a press on the scrim: the same exit', async () => {
+    await show()
+    await pickShare()
+    const layerEl = q('[data-sheet-layer]')!
+    pointer('pointerdown', layerEl, 10, 10)
+    await settle()
+    runAll()
+    letGo()
+    await requestRisesAlone()
   })
 })
 
