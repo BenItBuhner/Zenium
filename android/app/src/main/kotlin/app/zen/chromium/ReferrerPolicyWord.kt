@@ -10,12 +10,15 @@ package app.zen.chromium
  *
  * Two words, the policy tokens of the Referrer Policy spec (an empty one is the default):
  *
- * - The NEXT navigation's ([nextNavigation]): sent from a capture-phase click / auxclick /
- *   Enter on an anchor, before the navigation it starts – the anchor's `rel=noreferrer`, else
+ * - The NEXT navigation's ([nextNavigation]): sent from a capture-phase click / Enter on an
+ *   anchor, before the navigation it starts – the anchor's `rel=noreferrer`, else
  *   its `referrerpolicy`, else the document's policy. It is for the one navigation that
  *   follows it in the same input task: the first main-frame navigation through the hook takes
  *   it ([forNavigation]), whether held or not, a document starting drops it ([documentStarted]),
- *   and one older than [windowMs] – a click whose navigation never came – is not read.
+ *   and one older than [windowMs] – a click whose navigation never came – is not read. The
+ *   page's `beforeunload` objection to that navigation stands between the click and the hook
+ *   for as long as the user reads the sheet; a Leave restarts the word's clock ([leaveChosen]),
+ *   so the sheet's time is not counted against the word.
  * - The DOCUMENT's ([document]): the last valid `<meta name=referrer>`, sent at document start
  *   and at every change, tagged with the document's origin. It stands for a navigation without
  *   an anchor ahead of it (`location.assign` under a meta policy) and is read only while the
@@ -62,6 +65,17 @@ class ReferrerPolicyWord(private val windowMs: Long = DEFAULT_WINDOW_MS) {
     fun documentPolicyFor(fromSite: String?): String =
         if (fromSite != null && fromSite == documentOrigin) documentPolicy else ""
 
+    /**
+     * The page objected to the navigation the next word is for (`beforeunload`, its sheet asked
+     * at `askedAt`) and the user chose Leave at `now`: the navigation goes on to the hook from
+     * here, so a word live when the question was asked is live for it – its window runs again
+     * from the Leave, the sheet's time not counted. A word already past its window when the page
+     * asked stays past it (the question was not its navigation's); without a word, nothing.
+     */
+    fun leaveChosen(askedAt: Long, now: Long) {
+        if (next != null && askedAt - nextAt in 0 until windowMs) nextAt = now
+    }
+
     /** A document started on `site`: the next word is the old page's; the document word too unless the origin is the same. */
     fun documentStarted(site: String?) {
         next = null
@@ -74,8 +88,10 @@ class ReferrerPolicyWord(private val windowMs: Long = DEFAULT_WINDOW_MS) {
     companion object {
         /**
          * From the click to the navigation it starts reaching the hook: the renderer starts it
-         * as the click's default action and the hook hears it a hop later; a `beforeunload`
-         * sheet in between is the breadth `LeaveCarry.DEFAULT_WINDOW_MS` gives the same gap.
+         * as the click's default action and the hook hears it a hop later – the breadth
+         * `LeaveCarry.DEFAULT_WINDOW_MS` gives the hop from a Leave to the same hook. A
+         * `beforeunload` sheet in between stands as long as the user reads it, outside any
+         * window: its Leave restarts the clock ([leaveChosen]).
          */
         const val DEFAULT_WINDOW_MS = 2_000L
     }

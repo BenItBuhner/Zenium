@@ -3000,7 +3000,15 @@ class TabWebView(
                 if (check != null) check.settle(leave = leave, destroyView = leave)
                 else if (!leave) stayedOnPage()
                 // A reload never passes shouldOverrideUrlLoading, so nothing of it is held or re-issued.
-                else if (!reload) leaveCarry.leaveChosen(SystemClock.uptimeMillis())
+                else if (!reload) {
+                    val chosenAt = SystemClock.uptimeMillis()
+                    leaveCarry.leaveChosen(chosenAt)
+                    // The sheet stood open from the question (`now`) to this Leave, between the
+                    // tap and its navigation reaching the hook: that time is not the hop's, and
+                    // the page's word on this navigation's referrer policy, live when the page
+                    // objected, is live for the hold past the Leave.
+                    referrerPolicyWord.leaveChosen(askedAt = now, now = chosenAt)
+                }
             }
             return true
         }

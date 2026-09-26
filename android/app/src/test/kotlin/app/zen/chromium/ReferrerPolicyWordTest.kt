@@ -51,6 +51,31 @@ class ReferrerPolicyWordTest {
     }
 
     @Test
+    fun aLeaveAtThePagesObjectionRestartsTheNextWordsClock() {
+        // The tap's word at 0; the page's `beforeunload` objection asked a hop later; the user
+        // reads "Leave site?" for three seconds and leaves; the navigation reaches the hook a hop
+        // after that. The sheet's time is not the hop's: the word is read.
+        word.nextNavigation("no-referrer", now = 0L)
+        word.leaveChosen(askedAt = 60L, now = 3_060L)
+        assertEquals("no-referrer", word.forNavigation(site, now = 3_100L))
+        // Spent by it as by any navigation.
+        assertEquals("", word.forNavigation(site, now = 3_110L))
+    }
+
+    @Test
+    fun aLeaveDoesNotReviveAWordAlreadyPastItsWindowWhenThePageAsked() {
+        // A click whose navigation never came, and a page-started navigation of another kind
+        // objected to two and a half seconds later: the question was not the click's.
+        word.nextNavigation("no-referrer", now = 0L)
+        word.leaveChosen(askedAt = 2_500L, now = 2_600L)
+        assertEquals("", word.forNavigation(site, now = 2_650L))
+        // A Leave without a word changes nothing; the document's word is not the Leave's to touch.
+        word.document("same-origin", site)
+        word.leaveChosen(askedAt = 5_000L, now = 5_100L)
+        assertEquals("same-origin", word.forNavigation(site, now = 5_150L))
+    }
+
+    @Test
     fun theDocumentWordIsReadOnlyForItsOwnOrigin() {
         word.document("no-referrer", site)
         assertEquals("no-referrer", word.forNavigation(site, now = 0L))

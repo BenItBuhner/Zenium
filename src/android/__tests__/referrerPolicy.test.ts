@@ -37,16 +37,22 @@ afterEach(() => {
 })
 
 describe('parseReferrerPolicy', () => {
-  it('takes the eight tokens ASCII case-insensitively and nothing else', () => {
+  it('takes the eight tokens ASCII case-insensitively, whole, and nothing else', () => {
     expect(parseReferrerPolicy('no-referrer')).toBe('no-referrer')
-    expect(parseReferrerPolicy(' Strict-Origin-When-Cross-Origin ')).toBe(
+    expect(parseReferrerPolicy('Strict-Origin-When-Cross-Origin')).toBe(
       'strict-origin-when-cross-origin'
     )
     expect(parseReferrerPolicy('UNSAFE-URL')).toBe('unsafe-url')
-    expect(parseReferrerPolicy('')).toBe('')
+    // Blink matches the keyword whole: a token with whitespace around it is no token.
+    expect(parseReferrerPolicy(' strict-origin-when-cross-origin ')).toBeNull()
+    expect(parseReferrerPolicy('origin\n')).toBeNull()
     expect(parseReferrerPolicy('bogus')).toBeNull()
     expect(parseReferrerPolicy(null)).toBeNull()
     expect(parseReferrerPolicy(undefined)).toBeNull()
+    // The empty string is the anchor attribute's missing-value default; on the meta path the
+    // spec's processing returns on an empty content, so there it is no token either.
+    expect(parseReferrerPolicy('')).toBe('')
+    expect(parseReferrerPolicy('', true)).toBeNull()
     // The legacy meta keywords are the meta's alone.
     expect(parseReferrerPolicy('never')).toBeNull()
     expect(parseReferrerPolicy('never', true)).toBe('no-referrer')
@@ -58,7 +64,7 @@ describe('parseReferrerPolicy', () => {
 })
 
 describe('documentMetaPolicy', () => {
-  it('reads the last valid meta and leaves an invalid one to the one before it', () => {
+  it('reads the last valid meta and leaves an invalid or empty one to the one before it', () => {
     expect(documentMetaPolicy(document)).toBe('')
     document.head.appendChild(meta('no-referrer'))
     expect(documentMetaPolicy(document)).toBe('no-referrer')
@@ -66,9 +72,17 @@ describe('documentMetaPolicy', () => {
     expect(documentMetaPolicy(document)).toBe('same-origin')
     document.head.appendChild(meta('nonsense'))
     expect(documentMetaPolicy(document)).toBe('same-origin')
+    // An empty content is no change (the spec returns on it); `default` is a change, to the
+    // default policy; a name matched whole, as Blink matches it.
+    document.head.appendChild(meta(''))
+    expect(documentMetaPolicy(document)).toBe('same-origin')
+    document.head.appendChild(meta('no-referrer', ' referrer '))
+    expect(documentMetaPolicy(document)).toBe('same-origin')
+    document.head.appendChild(meta('default'))
+    expect(documentMetaPolicy(document)).toBe('')
     // Another meta's content is not a policy; a legacy keyword is.
     document.head.appendChild(meta('no-referrer', 'description'))
-    expect(documentMetaPolicy(document)).toBe('same-origin')
+    expect(documentMetaPolicy(document)).toBe('')
     document.head.appendChild(meta('never'))
     expect(documentMetaPolicy(document)).toBe('no-referrer')
   })
@@ -119,6 +133,8 @@ describe('navigatingAnchorOf', () => {
     expect(navigatingAnchorOf(click(inner), document)).toBe(plain)
     expect(navigatingAnchorOf(click(anchor({ href: '#b', target: '_SELF' })), document)).not.toBeNull()
     expect(navigatingAnchorOf(click(anchor({ href: '#b', target: '_top' })), document)).not.toBeNull()
+    // The keywords are matched whole: `" _self "` names a new window.
+    expect(navigatingAnchorOf(click(anchor({ href: '#b', target: ' _self ' })), document)).toBeNull()
     expect(navigatingAnchorOf(click(anchor({ href: '#b', target: '_blank' })), document)).toBeNull()
     expect(navigatingAnchorOf(click(anchor({ href: '#b', target: 'sidebar' })), document)).toBeNull()
     expect(navigatingAnchorOf(click(anchor({ href: '#b', download: '' })), document)).toBeNull()
@@ -153,6 +169,11 @@ describe('installReferrerPolicyReporter', () => {
     second.setAttribute('content', 'same-origin')
     await flush()
     expect(words.at(-1)).toEqual({ document: 'same-origin', origin })
+    expect(words).toHaveLength(4)
+    // A content emptied, or a new meta with an empty one, leaves the policy where it stands.
+    second.setAttribute('content', '')
+    document.head.appendChild(meta(''))
+    await flush()
     expect(words).toHaveLength(4)
     // A meta whose name becomes `referrer` is processed then; a legacy keyword through the meta.
     const renamed = meta('never', 'other')
@@ -193,13 +214,15 @@ describe('installReferrerPolicyReporter', () => {
     anchor({ href: '#c' }).dispatchEvent(new MouseEvent('click', { bubbles: true }))
     expect(words).toEqual([{ next: 'no-referrer' }, { next: 'same-origin' }])
     words.length = 0
-    // Enter on a focused link and a middle-button auxclick are told; a secondary-button auxclick is not.
+    // Enter on a focused link is told; another key is not, and neither is an `auxclick`: a
+    // middle button's opens the link in a new window (another view's navigation), a secondary
+    // button's is the context menu's.
     const focused = anchor({ href: '#d', referrerpolicy: 'origin' })
     focused.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     focused.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }))
     focused.dispatchEvent(new MouseEvent('auxclick', { button: 1, bubbles: true }))
     focused.dispatchEvent(new MouseEvent('auxclick', { button: 2, bubbles: true }))
-    expect(words).toEqual([{ next: 'origin' }, { next: 'origin' }])
+    expect(words).toEqual([{ next: 'origin' }])
     words.length = 0
     // A click that is not a link's says nothing.
     const button = document.createElement('button')

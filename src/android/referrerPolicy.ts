@@ -9,17 +9,20 @@
  * over a page's stricter one. This module reads what page JS can see of the policy:
  *
  * - the DOCUMENT's: its `<meta name=referrer>` – the last valid one processed wins, an invalid
- *   value leaves the policy as it was, a removal changes nothing (the HTML spec's processing
- *   model; `document.referrerPolicy` is not exposed, so the meta is read from the DOM as it
- *   appears: at document start the document is empty, and every meta comes through the
- *   observer, a parser-inserted one before any inline script that follows it runs);
- * - the NAVIGATION's: the anchor a click / auxclick / Enter is about to follow – `rel=noreferrer`
- *   first, then its `referrerpolicy` attribute (an enumerated attribute: an unknown token is
- *   the empty string, the document's policy), then the document's.
+ *   or empty value leaves the policy as it was, a removal changes nothing (the HTML spec's
+ *   processing model; `document.referrerPolicy` is not exposed, so the meta is read from the
+ *   DOM as it appears: at document start the document is empty, and every meta comes through
+ *   the observer, a parser-inserted one before any inline script that follows it runs);
+ * - the NAVIGATION's: the anchor a click / Enter is about to follow – `rel=noreferrer` first,
+ *   then its `referrerpolicy` attribute (an enumerated attribute: an unknown token is the empty
+ *   string, the document's policy), then the document's. A middle-button `auxclick` opens the
+ *   link in a new window (the view supports multiple windows), which is held in a view of its
+ *   own: no word here for it.
  *
  * What page JS cannot see stays unread: a policy set by the `Referrer-Policy` response header
- * alone (the remaining gap, stated in the PR). The tokens are the Referrer Policy spec's; the
- * empty string stands for the default, which Kotlin computes as before.
+ * alone (the remaining gap, stated in the PR). The tokens are the Referrer Policy spec's, matched
+ * as Blink matches them – ASCII case-insensitively, whitespace and all (`" origin "` is no
+ * token); the empty string stands for the default, which Kotlin computes as before.
  */
 
 /** The eight tokens of the Referrer Policy spec; the empty string is the default policy. */
@@ -64,17 +67,20 @@ export type ReferrerPolicyWord =
 
 /**
  * Parse a policy token as the spec does: ASCII case-insensitively (an enumerated attribute's
- * keywords), with the legacy meta keywords when `legacy` is set. Null for an unknown token –
- * the caller decides what an invalid value means where it stands (the meta: no change; the
- * anchor's attribute: the empty string).
+ * keywords), not stripped of whitespace, with the legacy meta keywords when `legacy` is set.
+ * Null for an unknown token – the caller decides what an invalid value means where it stands
+ * (the meta: no change; the anchor's attribute: the empty string). The empty string is a
+ * token of the anchor's attribute (its missing-value default, deferring to the document) and
+ * none of the meta's: the spec's processing returns on an empty `content`, so on the meta path
+ * it is null too.
  */
 export function parseReferrerPolicy(
   value: string | null | undefined,
   legacy = false
 ): ReferrerPolicyToken | null {
   if (value === null || value === undefined) return null
-  const token = value.trim().toLowerCase()
-  if (token === '') return ''
+  const token = value.toLowerCase()
+  if (token === '') return legacy ? null : ''
   if (TOKENS.has(token)) return token as ReferrerPolicyToken
   if (legacy) {
     const mapped = LEGACY_META_KEYWORDS[token]
@@ -83,18 +89,18 @@ export function parseReferrerPolicy(
   return null
 }
 
-/** A `<meta name=referrer>` (the name matched ASCII case-insensitively) with a content attribute. */
+/** A `<meta name=referrer>` (the name matched ASCII case-insensitively, as Blink matches it). */
 function isReferrerMeta(node: Element): boolean {
   if (node.localName !== 'meta') return false
   const name = node.getAttribute('name')
-  return name !== null && name.trim().toLowerCase() === 'referrer'
+  return name !== null && name.toLowerCase() === 'referrer'
 }
 
 /**
  * The document's policy from its `<meta name=referrer>` elements, in tree order: the last valid
- * one wins; an invalid value leaves the one before it. The spec processes metas as they are
- * inserted or changed rather than in tree order, which for a document read whole is the same
- * order; [installReferrerPolicyReporter] follows the processing order live.
+ * one wins; an invalid or empty value leaves the one before it. The spec processes metas as
+ * they are inserted or changed rather than in tree order, which for a document read whole is
+ * the same order; [installReferrerPolicyReporter] follows the processing order live.
  */
 export function documentMetaPolicy(doc: Document): ReferrerPolicyToken {
   let policy: ReferrerPolicyToken = ''
@@ -157,7 +163,9 @@ export function navigatingAnchorOf(event: Event, doc: Document): Element | null 
   }
   if (anchor === null || anchor.ownerDocument !== doc) return null
   if (anchor.hasAttribute('download')) return null
-  const target = (anchor.getAttribute('target') ?? '').trim().toLowerCase()
+  // The keywords are matched whole, as the navigable's name lookup matches them: `" _self "`
+  // names a new window.
+  const target = (anchor.getAttribute('target') ?? '').toLowerCase()
   if (target !== '' && target !== '_self' && target !== '_top' && target !== '_parent') return null
   return anchor
 }
@@ -166,14 +174,18 @@ export function navigatingAnchorOf(event: Event, doc: Document): Element | null 
  * Install in the top document: the document's word at once (the empty policy of a document
  * without a meta included, so a word of another document of the same origin is replaced) and
  * at every change the observer sees, following the spec's processing order – a meta inserted
- * or whose `content` / `name` changed with a valid value sets the policy, an invalid one and a
- * removal leave it; the next navigation's word at a capture-phase click, auxclick or Enter on
+ * or whose `content` / `name` changed with a valid value sets the policy, an invalid or empty
+ * one and a removal leave it; the next navigation's word at a capture-phase click or Enter on
  * an anchor of this document's own, before the navigation it starts leaves the renderer. A
  * click the page prevents is told again as the document's word at the bubble phase's end, so
  * a `location.assign` the page runs in the link's place LATER (after a confirm, a fetch) is not
  * held under the link's policy; one the preventing handler runs at once has already left the
  * renderer under the link's word – a page that gives a link its own policy and then navigates
- * by script instead is the one shape left out.
+ * by script instead is the one shape left out. Left out too: a `preventDefault()` from a
+ * listener on `window` itself registered after this one (a document-start script comes first)
+ * runs after the check here and is not seen – the link's word then stands for the view's
+ * window, spent by the next navigation or dropped at the next document; the re-send cannot
+ * wait for it, since a deferred one would follow the navigation out of the renderer.
  */
 export function installReferrerPolicyReporter(
   w: Window,
@@ -223,15 +235,13 @@ export function installReferrerPolicyReporter(
   if (initial !== '') documentPolicy = initial
   tellDocument()
 
+  // The primary button's click and Enter on a focused link navigate this frame; a middle
+  // button's `auxclick` opens the link in a new window, another view's navigation, and a
+  // secondary button's is the context menu's – neither is a word for this view.
   const tellNext = (event: Event): void => {
     const anchor = navigatingAnchorOf(event, doc)
     if (anchor === null) return
     send({ next: anchorReferrerPolicy(anchor, documentPolicy) })
-  }
-  const onClick = (event: Event): void => {
-    // An auxclick of the secondary button is the context menu's, not a navigation.
-    if (event.type === 'auxclick' && event instanceof MouseEvent && event.button !== 1) return
-    tellNext(event)
   }
   const onKeyDown = (event: Event): void => {
     if (!(event instanceof KeyboardEvent) || event.key !== 'Enter') return
@@ -242,10 +252,8 @@ export function installReferrerPolicyReporter(
     if (!event.defaultPrevented || navigatingAnchorOf(event, doc) === null) return
     send({ next: documentPolicy })
   }
-  w.addEventListener('click', onClick, true)
-  w.addEventListener('auxclick', onClick, true)
+  w.addEventListener('click', tellNext, true)
   w.addEventListener('keydown', onKeyDown, true)
   w.addEventListener('click', onPrevented, false)
-  w.addEventListener('auxclick', onPrevented, false)
   w.addEventListener('keydown', onPrevented, false)
 }
