@@ -21,6 +21,7 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
 import android.view.View
+import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.RemoteViews
@@ -60,7 +61,10 @@ import kotlin.math.abs
  * closing back to the caller with the caller's exit animation. In each scheme the page asks for
  * its location and the tab answers on §9.23's native sheet (W6-S11, the #515 gate's follow-up):
  * its shape measured from the tree, a touch on the scrim refusing the request and remembering
- * nothing, the page asking again, Allow under a finger granting it.
+ * nothing, the page asking again, Allow under a finger granting it. In the light tab a link no
+ * app can open is followed under a finger (W6-D2): nothing is asked, the request is refused and
+ * the deliberate fallback runs – the intent's web address loads in the tab; a second link without
+ * one has its store listing attempted, the toast where the device has no store.
  *
  * Then the depth (CCT-07, CCT-11): a third tab with the caller's BOTTOM TOOLBAR – its own
  * `RemoteViews` (a layout of this APK's, inflated by the provider) with two buttons, one under a
@@ -95,9 +99,21 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
      */
     @Volatile private var toastsClearAt = 0L
     private var receiver: BroadcastReceiver? = null
+    /** The loopback page an `intent://` link names as its web fallback (W6-D2): the tab lands on it. */
+    private lateinit var server: DemoServer
 
     @Test
-    fun record() = runDemo()
+    fun record() {
+        server = DemoServer(
+            NO_HANDLER_PORT,
+            mapOf(FALLBACK_PATH to DemoServer.page("The app's web page", "<p>The link's app is not installed, so its web address opened here, in the tab.</p>"))
+        ).also { it.start() }
+        try {
+            runDemo()
+        } finally {
+            server.close()
+        }
+    }
 
     override fun warmUp() {
         connect()
@@ -155,6 +171,12 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         //     sheet – Open under a finger starts the dialer, a second ask dismissed by a touch on
         //     the scrim is refused and nothing comes up.
         askOpenInApp("05c-open-in-app-light")
+
+        // 5d. A link no app can open under a finger (W6-D2): no question – the request is refused
+        //     and the deliberate fallback runs: the intent's web address loads in the tab; a
+        //     second link without one has its store listing attempted (the toast where the device
+        //     has no store). Back to the story after, for the scenes that follow.
+        followLinkNoAppCanOpen("05d-no-handler-fallback")
 
         // 6. The menu: the caller's items, Zenium's page actions, Open in Zenium.
         openMenu()
@@ -297,12 +319,12 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         SystemClock.sleep(1_200)
         shot("22-closed-to-caller")
         Log.i(tag, "caller hits: $callerHits; session events: $events")
-        assertTrue("the native sheets' claims held (${sheetFaults.size} did not): $sheetFaults", sheetFaults.isEmpty())
+        assertTrue("the scenes' claims held (${sheetFaults.size} did not): $sheetFaults", sheetFaults.isEmpty())
     }
 
     // --- the permission prompt (W6-S11) ----------------------------------------------------------
 
-    /** The native sheets' claims (the permission ask's, the Open in <App>? confirmation's) that did not hold; judged at the end of the run so the recording covers the rest. */
+    /** The scenes' claims (the permission ask's, the Open in <App>? confirmation's, the no-handler fallback's) that did not hold; judged at the end of the run so the recording covers the rest. */
     private val sheetFaults = ArrayList<String>()
 
     private fun claim(what: String, holds: Boolean) {
@@ -551,6 +573,110 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
     /** Plant the tel: link over the page and return where it is on screen. */
     private fun plantTelLink(page: TabWebView): PointF? {
         val text = evalJs(page, PLANT_TEL_JS) ?: return null
+        val origin = IntArray(2)
+        instrumentation.runOnMainSync { page.getLocationOnScreen(origin) }
+        val point = JSONObject(text)
+        return PointF(origin[0] + point.getDouble("x").toFloat(), origin[1] + point.getDouble("y").toFloat())
+    }
+
+    // --- a link no app can open (W6-D2) ------------------------------------------------------------
+
+    /**
+     * An `intent://` link no app can open, followed under a finger: the custom tab has no app to
+     * ask about, so it asks nothing and REFUSES the request – nothing started – then runs the
+     * deliberate fallback in the browser window's order (services' ruling on #538's divergence;
+     * `ExternalProtocols.refuseWithFallback`). The first link names a package the device does
+     * not have and carries `S.browser_fallback_url`: that page – this driver's loopback server's –
+     * loads IN THE TAB, read from the page's own `location.href`, with no sheet up and no window
+     * over the app. The second link, planted on that page, names the package and no fallback:
+     * the store listing (`market://details?id=`) is attempted – the store comes up where the
+     * device has one, and where it has none (the CI image) the toast says no app can open the
+     * link (read off the accessibility stream, where the system announces its toasts) – and the
+     * tab keeps its page either way. Then back returns the tab to the story for the scenes that
+     * follow.
+     */
+    private fun followLinkNoAppCanOpen(name: String) {
+        val page = customTab()?.page ?: run {
+            Log.w(tag, "no custom tab page to follow an intent: link from")
+            claim("a custom tab page to follow a link no app can open from ($name)", false)
+            return
+        }
+        val fallbackUrl = "${server.origin}$FALLBACK_PATH"
+        val pageUrl = evalJs(page, "location.href")
+        val withFallback = "intent://fallback/#Intent;scheme=https;package=$ABSENT_PACKAGE;S.browser_fallback_url=${Uri.encode(fallbackUrl)};end"
+        val link = plantLinkAt(page, withFallback, "Open the story in the app", 0.25f) ?: run {
+            Log.w(tag, "planting the intent: link with a web fallback returned nothing")
+            claim("the intent: link with a web fallback planted on the page ($name)", false)
+            return
+        }
+        Log.i(tag, "$name: a finger on the intent: link with a web fallback ($withFallback) on $pageUrl; server ${server.selfCheck()}")
+        val f = Finger()
+        f.tap(link.x, link.y)
+        val landed = awaitTrue(10_000) { customTab()?.page?.let { evalJs(it, PAGE_HREF_STATE_JS) } == "$fallbackUrl:complete" }
+        val sheetUp = findByLabel(OPEN_IN_ANOTHER_APP_LABEL) != null || findByLabel(NOT_NOW_LABEL) != null
+        val top = topPackage()
+        Log.i(tag, "$name: after the touch: page ${customTab()?.page?.let { evalJs(it, PAGE_HREF_STATE_JS) }}; sheet ${if (sheetUp) "up" else "none"}; top $top")
+        claim("$name: the intent's browser_fallback_url loads in the tab – the tab's URL is $fallbackUrl", landed)
+        claim("$name: nothing was asked and nothing else started – no sheet, the tab in front (top $top)", !sheetUp && top == app.packageName)
+        SystemClock.sleep(800)
+        shot(name)
+        beat()
+        if (!landed) {
+            touchFault("the touch on the intent: link with a web fallback did not load the fallback page in 10 s (top ${topPackage()})")
+            return
+        }
+
+        // The second link: the package and no web fallback – its store listing, or the word.
+        val fallbackPage = customTab()?.page ?: return
+        val storeUri = (ExternalProtocols.Fallback.of(null, ABSENT_PACKAGE) as ExternalProtocols.Fallback.StoreListing).uri
+        val store = app.packageManager.resolveActivity(Intent(Intent.ACTION_VIEW, Uri.parse(storeUri)), PackageManager.MATCH_DEFAULT_ONLY)
+            ?.activityInfo?.packageName?.takeIf { it != "android" }
+        val announced = Collections.synchronizedList(ArrayList<String>())
+        ui.setOnAccessibilityEventListener { event ->
+            if (event.eventType == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) announced += event.text.joinToString(" ")
+        }
+        val storeOnly = "intent://store/#Intent;scheme=https;package=$ABSENT_PACKAGE;end"
+        val second = plantLinkAt(fallbackPage, storeOnly, "Get the app", 0.4f) ?: run {
+            ui.setOnAccessibilityEventListener(null)
+            claim("the intent: link without a web fallback planted on the fallback page ($name)", false)
+            return
+        }
+        Log.i(tag, "$name: a finger on the intent: link without a web fallback ($storeOnly); the store for $storeUri: ${store ?: "none on this device"}")
+        f.tap(second.x, second.y)
+        if (store != null) {
+            val cameUp = awaitTrue(8_000) { topPackage() == store }
+            claim("$name: with no web fallback the store listing is attempted – $store comes up (top ${topPackage()})", cameUp)
+            if (cameUp) {
+                SystemClock.sleep(1_200)
+                shot("$name-store")
+                returnFromApp(store)
+            }
+        } else {
+            val worded = awaitTrue(6_000) {
+                synchronized(announced) { announced.any { it.contains(ExternalProtocols.NO_APP_TOAST) } } ||
+                    findInWindows(null) { it == ExternalProtocols.NO_APP_TOAST } != null
+            }
+            SystemClock.sleep(300)
+            shot("$name-toast")
+            claim("$name: with no web fallback and no store on this device the word is the toast '${ExternalProtocols.NO_APP_TOAST}' (announced: ${synchronized(announced) { announced.toList() }})", worded)
+        }
+        ui.setOnAccessibilityEventListener(null)
+        val backOnPage = awaitTrue(8_000) { customTab() != null }
+        val kept = customTab()?.page?.let { evalJs(it, "location.href") } == fallbackUrl
+        val sheetAfter = findByLabel(OPEN_IN_ANOTHER_APP_LABEL) != null || findByLabel(NOT_NOW_LABEL) != null
+        Log.i(tag, "$name: after the second touch: tab in front $backOnPage; page kept $kept; sheet ${if (sheetAfter) "up" else "none"}; top ${topPackage()}")
+        claim("$name: the tab keeps its page and asks nothing (page kept $kept, sheet ${if (sheetAfter) "up" else "none"})", backOnPage && kept && !sheetAfter)
+        beat()
+
+        // Back to the story for the scenes that follow (the fallback page is one step of history).
+        back()
+        waitForPage("wikipedia.org")
+        SystemClock.sleep(1_000)
+    }
+
+    /** Plant a tall link with `href` over the page at `top` of its viewport and return where it is on screen. */
+    private fun plantLinkAt(page: TabWebView, href: String, label: String, top: Float): PointF? {
+        val text = evalJs(page, plantLinkJs(href, label, top)) ?: return null
         val origin = IntArray(2)
         instrumentation.runOnMainSync { page.getLocationOnScreen(origin) }
         val point = JSONObject(text)
@@ -1241,8 +1367,16 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         /** §9.11's pair under the confirmation (`cct_not_now`, `cct_open`). */
         private const val NOT_NOW_LABEL = "Not now"
         private const val OPEN_LABEL = "Open"
+        /** strings.xml cct_open_in_another_app: the title a link with an unseen handler is asked under – never up for one with none (W6-D2). */
+        private const val OPEN_IN_ANOTHER_APP_LABEL = "Open in another app?"
+        /** The loopback server the `intent://` link's `S.browser_fallback_url` names (W6-D2), and the page on it. */
+        private const val NO_HANDLER_PORT = 8149
+        private const val FALLBACK_PATH = "/fallback.html"
+        /** A package no device has: the `intent://` links name it, so no app answers and the host's word is `none`. */
+        private const val ABSENT_PACKAGE = "io.github.benitbuhner.zenium.demo.absent"
 
         private const val PAGE_STATE_JS = "location.host + ':' + document.readyState"
+        private const val PAGE_HREF_STATE_JS = "location.href + ':' + document.readyState"
         private const val GEO_ANSWERS_JS = "JSON.stringify(window.__zeniumGeo || [])"
 
         /**
@@ -1300,6 +1434,32 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
               });
             })()
         """.trimIndent()
+
+        /**
+         * One tall link with `href` over the page at `top` of the viewport (the W6-D2 scene's
+         * `intent://` links); its centre in device pixels relative to the WebView.
+         */
+        private fun plantLinkJs(href: String, label: String, top: Float): String {
+            fun js(s: String) = s.replace("\\", "\\\\").replace("'", "\\'")
+            return """
+                (function () {
+                  var a = document.createElement('a');
+                  a.href = '${js(href)}';
+                  a.textContent = '${js(label)}';
+                  a.style.cssText = 'position:fixed;left:16px;right:16px;top:${(top * 100).toInt()}%;display:block;padding:22px 18px;text-align:center;' +
+                    'border-radius:14px;background:#fff;color:#1d1d2c;text-decoration:none;z-index:2147483647;' +
+                    'font:600 18px/1.3 system-ui,sans-serif;box-shadow:0 2px 10px rgba(0,0,0,.14)';
+                  document.body.appendChild(a);
+                  var vv = window.visualViewport;
+                  var scale = (vv ? vv.scale : 1) * (window.devicePixelRatio || 1);
+                  var r = a.getBoundingClientRect();
+                  return JSON.stringify({
+                    x: (r.left + r.width / 2 - (vv ? vv.offsetLeft : 0)) * scale,
+                    y: (r.top + r.height / 2 - (vv ? vv.offsetTop : 0)) * scale
+                  });
+                })()
+            """.trimIndent()
+        }
 
         /** One tall link over the page; its centre in device pixels relative to the WebView. */
         private val PLANT_LINK_JS = """
