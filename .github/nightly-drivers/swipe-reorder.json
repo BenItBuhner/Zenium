@@ -1,0 +1,9 @@
+{
+  "id": "swipe-reorder",
+  "order": 8,
+  "class": "SwipeReorderDemo",
+  "shard": "phone-a",
+  "mirrors": "android-overview-demo.yml:demo=swipe-reorder",
+  "dir": "swipe-demo",
+  "estimate": 2
+}

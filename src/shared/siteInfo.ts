@@ -394,6 +394,9 @@ export const PERMISSION_LABELS: Record<string, string> = {
   'idle-detection': 'Know when you are active',
   ads: 'Ads and trackers',
   sound: 'Sound',
+  // A stored answer the desktop's toast writes ("Turn off for this site", MW-28): the site card
+  // and the phone's sheet name it as the Site settings row does, not by its id.
+  'auto-picture-in-picture': 'Automatic picture-in-picture',
   usb: 'USB devices',
   serial: 'Serial ports',
   hid: 'HID devices',

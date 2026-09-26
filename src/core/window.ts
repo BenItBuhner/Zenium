@@ -110,6 +110,15 @@ export class ZenWindow {
    */
   formFactor: FormFactor = 'desktop'
   /**
+   * The page tab the class change closed in front (`PageService.reconcileLayout`: a tablet's
+   * page tab narrowed into the phone class became the page's overlay) – the page, the space it
+   * stood in and its slot among that space's regular tabs – for the chrome's hand-back when the
+   * window widens again (`page.open` with `handedBack`): the tab comes back where it was while
+   * that still fits. Null once used, or when nothing was handed over; never set on a host whose
+   * window keeps its class.
+   */
+  handedPage: { pageId: string; spaceId: string; index: number } | null = null
+  /**
    * The surfaces this window's chrome has mounted (`ui.surface`): the install prompt, the screen
    * picker, the share sheet. A page's request for one that is absent is answered at once as a
    * cancel (`surfaceMounted`) rather than held for a chrome that is not there.
@@ -127,6 +136,8 @@ export class ZenWindow {
    */
   stripFocusTabId: string | null = null
   lastFocusedAt = 0
+  /** The host window's focus as of the last state change it reported, for telling a change. */
+  private focused = false
   /** The window-modal question the chrome is showing ("Close N tabs?"), owned by `WindowPrompts`. */
   prompt: WindowPrompt | null = null
   /** The quit chord held in this window ("Hold ⌘Q to Quit"), owned by `QuitHoldService`. */
@@ -334,6 +345,12 @@ export class ZenWindow {
   /** Maximised / fullscreen / focus flags changed. */
   onWindowStateChanged(): void {
     if (!this.alive) return
+    const focused = this.host.isFocused()
+    if (focused !== this.focused) {
+      this.focused = focused
+      // The desktop's `focus` / `blur`: automatic picture-in-picture hears the app being left.
+      this.browser.mediaSession.onWindowFocusChanged(this, focused)
+    }
     this.browser.fullscreen.onWindowStateChanged(this)
     this.browser.state.commitVolatile()
   }

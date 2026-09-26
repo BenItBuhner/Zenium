@@ -1,0 +1,9 @@
+{
+  "id": "layout",
+  "order": 42,
+  "class": "LayoutDemo",
+  "shard": "phone-c",
+  "mirrors": "android-layout-demo.yml",
+  "dir": "layout-demo",
+  "estimate": 2
+}

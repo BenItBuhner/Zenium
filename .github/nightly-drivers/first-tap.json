@@ -1,0 +1,9 @@
+{
+  "id": "first-tap",
+  "order": 7,
+  "class": "FirstTapDemo",
+  "shard": "phone-a",
+  "mirrors": "android-overview-demo.yml:demo=first-tap",
+  "dir": "firsttap-demo",
+  "estimate": 3
+}

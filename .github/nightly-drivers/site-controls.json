@@ -1,0 +1,9 @@
+{
+  "id": "site-controls",
+  "order": 40,
+  "class": "SiteControlsDemo",
+  "shard": "phone-c",
+  "mirrors": "android-site-controls-demo.yml",
+  "dir": "site-controls-demo",
+  "estimate": 4
+}

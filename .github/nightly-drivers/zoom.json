@@ -1,0 +1,12 @@
+{
+  "id": "zoom",
+  "order": 85,
+  "class": "ZoomSheetDemo",
+  "shard": "phone-e",
+  "mirrors": "android-zoom-demo.yml",
+  "dir": "zoom-demo",
+  "env": {
+    "DEMO_THEME": "dark"
+  },
+  "estimate": 6
+}

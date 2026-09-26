@@ -1,0 +1,13 @@
+{
+  "id": "voice",
+  "order": 69,
+  "class": "VoiceDemo",
+  "shard": "phone-d",
+  "mirrors": "android-voice-demo.yml",
+  "dir": "voice-demo",
+  "env": {
+    "DEMO_REVOKE": "android.permission.RECORD_AUDIO"
+  },
+  "estimate": 2.5,
+  "note": "RECORD_AUDIO revoked before the driver, granted back after."
+}

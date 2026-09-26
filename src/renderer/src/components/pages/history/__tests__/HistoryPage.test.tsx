@@ -28,7 +28,10 @@ import { dayKeyOf } from '@shared/dayKey'
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const DAY = 86_400_000
-const NOW = Date.now()
+// A pinned local noon (the clock is faked to it in `beforeEach`): the fixtures' "today" and
+// "yesterday" are the page's whatever the hour the run happens at – a run straddling midnight
+// used to relabel the day groups under the assertions.
+const NOW = new Date(2026, 8, 16, 12, 0, 0).getTime()
 const TODAY = dayKeyOf(NOW)
 const YESTERDAY = dayKeyOf(NOW - DAY)
 const WEEKDAY = dayKeyOf(NOW - 3 * DAY)
@@ -375,6 +378,7 @@ function freshDeviceStores(): void {
 
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true })
+  vi.setSystemTime(NOW)
   invoke.mockClear()
   groups = GROUPS
   closed = CLOSED

@@ -276,6 +276,8 @@ export const DEFAULT_SETTINGS: Settings = {
   startup: { mode: 'continue', pages: [] },
   warnOnCloseWindow: true,
   warnBeforeQuitting: true,
+  caretBrowsing: false,
+  caretBrowsingConfirm: true,
   confirmCloseAll: true,
   crashRestore: 'ask',
   askWhereToSave: false,

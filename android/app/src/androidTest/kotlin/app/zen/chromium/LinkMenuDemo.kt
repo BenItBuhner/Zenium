@@ -46,7 +46,7 @@ import kotlin.math.roundToInt
  * state.json`: Research [Alpha, Beta]; Home, Gamma, Delta loose), the pages the driver's own
  * loopback server's – Home's and Gamma's pages carry the link here. Driven by
  * `android-link-menu-demo.yml` and by the nightly sweep's phone-f shard
- * (`.github/nightly-drivers.json`). See [GroupsDemoBase] and [DemoHarness].
+ * (`.github/nightly-drivers/link-menu.json`). See [GroupsDemoBase] and [DemoHarness].
  */
 @RunWith(AndroidJUnit4::class)
 class LinkMenuDemo : GroupsDemoBase("link-menu", "link-menu-demo") {

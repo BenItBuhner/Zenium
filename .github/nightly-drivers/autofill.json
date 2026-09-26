@@ -1,0 +1,12 @@
+{
+  "id": "autofill",
+  "order": 57,
+  "class": "AutofillDemo",
+  "shard": "phone-c",
+  "mirrors": "(none: dispatch-only driver without a workflow)",
+  "dir": "autofill-demo",
+  "needs": ["pin"],
+  "timeout": 900,
+  "estimate": 6.5,
+  "note": "Needs a device PIN (the runner sets 1234 before and clears it after); the shop is served from the instrumentation."
+}

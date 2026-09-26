@@ -1041,7 +1041,40 @@ function accessibilitySection(ctx: SectionContext): RowGroup[] {
   const groups: RowGroup[] = []
   if (ctx.state.capabilities.pageControls) groups.push(...pageZoomGroups(ctx))
   if (ctx.state.capabilities.readAloud) groups.push(...readAloudGroups(ctx))
+  if (ctx.state.capabilities.caretBrowsing) groups.push(caretBrowsingGroup(ctx))
   return groups
+}
+
+/**
+ * Caret browsing (CT-34) on a host whose engine has the switch (the desktop): the state F7
+ * toggles, as a row too – Chrome keeps it in Settings › Accessibility – and whether F7 asks
+ * first, the setting the dialog's "Don't ask again" clears, so it can be turned back on.
+ */
+function caretBrowsingGroup({ state, set }: SectionContext): RowGroup {
+  const s = state.settings
+  return {
+    id: 'caret-browsing',
+    heading: 'Keyboard',
+    rows: [
+      {
+        kind: 'switch',
+        id: 'caret-browsing',
+        label: 'Caret browsing',
+        description:
+          "Move through a page's text with the arrow keys and select it with Shift. F7 turns it on and off.",
+        checked: s.caretBrowsing === true,
+        onChange: (v) => set({ caretBrowsing: v })
+      },
+      {
+        kind: 'switch',
+        id: 'caret-browsing-confirm',
+        label: 'Ask before turning on caret browsing',
+        description: 'F7 asks "Turn on caret browsing?" first.',
+        checked: s.caretBrowsingConfirm !== false,
+        onChange: (v) => set({ caretBrowsingConfirm: v })
+      }
+    ]
+  }
 }
 
 function pageZoomGroups({ state, set }: SectionContext): RowGroup[] {

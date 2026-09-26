@@ -25,6 +25,7 @@ import type {
   Space,
   Tab,
   TabSection,
+  ToastAction,
   WindowChrome,
   WindowKind,
   WindowPromptDownloads
@@ -81,6 +82,7 @@ import { FindMemory } from './find'
 import { FullscreenService } from './fullscreen'
 import { WebAppService } from './webapp'
 import { MediaSessionService } from './mediaSession'
+import { CaretBrowsing } from './caretBrowsing'
 import { ReadAloudService } from './readAloud'
 import { WebNotificationService } from './webNotifications'
 import { ScreenCaptureService } from './screenCapture'
@@ -355,6 +357,8 @@ export class Browser {
   readonly webApps: WebAppService
   /** The pages' media as the OS controls and the in-app player see it (the Media Session). */
   readonly mediaSession: MediaSessionService
+  /** Caret browsing (F7, CT-34): the profile's one state, told to every page's view. */
+  readonly caretBrowsing: CaretBrowsing
   /** Read aloud: the one session's text, playback and highlight state over the host's speech engine. */
   readonly readAloud: ReadAloudService
   /** Web Notifications of pages on hosts whose engine lacks the API (the page script's polyfill). */
@@ -546,6 +550,7 @@ export class Browser {
     this.privacy = new PrivacyService(this)
     this.webApps = new WebAppService(this, platform.io)
     this.mediaSession = new MediaSessionService(this)
+    this.caretBrowsing = new CaretBrowsing(this)
     this.readAloud = new ReadAloudService(this)
     this.webNotifications = new WebNotificationService(this)
     this.searchEngines = new SearchEngineService(this)
@@ -1569,8 +1574,18 @@ export class Browser {
     win.send(name, payload)
   }
 
-  toast(message: string, kind: 'info' | 'error' = 'info', win?: ZenWindow): void {
-    this.emit('toast', { message, kind }, win)
+  /**
+   * A toast in `win`'s chrome (the focused window's without one); `action`, when given, is its
+   * one trailing action – the command the chrome runs on the pick (§9.33's action clock). A
+   * toast without one is sent as it always was.
+   */
+  toast(
+    message: string,
+    kind: 'info' | 'error' = 'info',
+    win?: ZenWindow,
+    action?: ToastAction
+  ): void {
+    this.emit('toast', action ? { message, kind, action } : { message, kind }, win)
   }
 
   /**
@@ -3457,6 +3472,7 @@ export class Browser {
       'media.action': ({ tabId, action, seekTime, seekOffset }) =>
         this.mediaSession.act(tabId, action, { seekTime, seekOffset }),
       'media.pictureInPicture': ({ tabId }, win) => this.mediaSession.pictureInPicture(tabId, win),
+      'media.autoPipOptOut': ({ tabId }) => this.mediaSession.optOutAuto(tabId),
 
       'split.create': ({ tabIds, layout }, win) => tabs.createSplit(tabIds, layout, win),
       'split.toggleLayout': ({ layout }, win) => tabs.toggleSplitLayout(layout, win),
@@ -3590,8 +3606,8 @@ export class Browser {
         this.pages.open('history', undefined, win)
       },
 
-      'page.open': ({ id, section, openerTabId, query }, win) =>
-        this.pages.open(id, section, win, openerTabId, { query }),
+      'page.open': ({ id, section, openerTabId, query, handedBack }, win) =>
+        this.pages.open(id, section, win, openerTabId, { query, handedBack }),
       'page.navigate': ({ tabId, section, subpage, replace, query }) =>
         this.pages.navigate(tabId, section, replace ?? false, query, subpage),
 
@@ -4192,7 +4208,8 @@ export class Browser {
       reader: JSON.stringify(s.reader),
       readAloud: JSON.stringify(s.readAloud),
       fonts: JSON.stringify(s.fonts),
-      languages: s.languages.join(',')
+      languages: s.languages.join(','),
+      caretBrowsing: s.caretBrowsing === true
     }
     for (const [key, value] of Object.entries(patch)) {
       if (value === undefined) continue
@@ -4368,6 +4385,7 @@ export class Browser {
     if (before.readAloud !== JSON.stringify(s.readAloud)) this.readAloud.onSettingsChanged()
     if (before.fonts !== JSON.stringify(s.fonts)) this.pageFonts.onSettingsChanged()
     if (before.languages !== s.languages.join(',')) this.languages.onSettingsChanged()
+    if (before.caretBrowsing !== (s.caretBrowsing === true)) this.caretBrowsing.onSettingsChanged()
     this.state.commit()
   }
 

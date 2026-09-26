@@ -226,9 +226,11 @@ function Still({
     }
   }, [still, onDone])
   // A still is a picture of the pane under the polarity it left in: its rows read the window's
-  // live tokens, and §11.6's blend cuts the ink at its midpoint – a still outliving the cut (a
-  // slow frame, reduced motion's cut at once) would draw the rows that left in the other pose's
-  // ink. main.css draws no still whose `data-still-theme` is not the root's.
+  // live tokens, and §11.6's blend flips the scheme at its midpoint – under reduced motion too,
+  // where the blend stays and only travel is cut (§11.6 as amended at #497's gate) – so a still
+  // outliving the flip (its 120 ms fade ends where the 240 ms blend turns; a slow frame puts it
+  // past) would draw the rows that left in the other pose's ink. main.css draws no still whose
+  // `data-still-theme` is not the root's.
   return (
     <div
       ref={ref}

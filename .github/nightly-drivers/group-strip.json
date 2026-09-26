@@ -1,0 +1,9 @@
+{
+  "id": "group-strip",
+  "order": 30,
+  "class": "GroupStripDemo",
+  "shard": "phone-b",
+  "mirrors": "android-group-strip-demo.yml",
+  "dir": "group-strip-demo",
+  "estimate": 3
+}

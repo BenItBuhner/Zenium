@@ -1,0 +1,10 @@
+{
+  "id": "link-menu",
+  "order": 92,
+  "class": "LinkMenuDemo",
+  "shard": "phone-f",
+  "mirrors": "android-link-menu-demo.yml",
+  "dir": "link-menu-demo",
+  "estimate": 3,
+  "note": "The link menu on a tab in no group (PUI-17, W6-8): the tab-group drivers' seeded profile, a real hold on a loose tab's link, the sheet's rows read by name and checked against the design lead's order (Chrome 152's within Zenium's groups) with each Chrome 152 row looked up, then a real touch on Open Link in New Tab in Group making the group of two; light on Home, dark on Gamma, the two design stills. Its nightly stills are the device record of the ruled order (the dispatch runs 36196152105 and 36198125137 recorded the order before the ruling). About two and a half minutes of driver after the boot; the driver puts the device's night mode back at its end."
+}
