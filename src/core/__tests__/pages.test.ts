@@ -1556,7 +1556,7 @@ describe('the page tabs follow the window’s class (the class-change seam, W6-S
     expect(overlays(f).pop()).toEqual({ kind: 'history', folderId: undefined, reveal: true })
   })
 
-  it('unpins a pinned page tab rather than resetting it to its page, and drops a page with no phone surface', () => {
+  it('unpins a pinned page tab rather than resetting it to its page', () => {
     const { f, site, tabId } = tabletWith('history')
     f.browser.tabs.togglePin(tabId, f.win)
     expect(f.browser.tabs.tab(tabId)?.pinned).toBe(true)
@@ -1564,18 +1564,58 @@ describe('the page tabs follow the window’s class (the class-change seam, W6-S
     expect(f.browser.tabs.tab(tabId)).toBeUndefined()
     expect(activeTab(f)?.id).toBe(site.id)
     expect(overlays(f).pop()).toEqual({ kind: 'history', folderId: undefined, reveal: true })
+  })
 
-    // The task manager is the desktop's alone and has no overlay: a tab of it (a desktop-class
-    // window's) closes when the window becomes a tablet, and nothing opens in its place.
-    const g = fixture()
-    const home = openSite(g, 'https://a.test/')
-    const tasks = g.browser.tabs.createTab({ url: 'zen://tasks', active: true }, g.win)
-    expect(g.browser.pages.isChromePage(tasks)).toBe(true)
-    const before = overlays(g).length
-    report(g, 'tablet')
-    expect(g.browser.tabs.tab(tasks.id)).toBeUndefined()
-    expect(activeTab(g)?.id).toBe(home.id)
-    expect(overlays(g).slice(before)).toEqual([])
+  it('leaves a page with no surface in the new layout – the task manager, the desktop’s alone – as the tab it is', () => {
+    // A desktop host whose primary pointer is a finger (a Windows tablet PC): the chrome reports
+    // the tablet class, then the phone one as the window narrows under 600 px on its short side.
+    // Nothing holds the task manager on either, and nothing is handed anything: the tab stays,
+    // and so does everything around it.
+    const f = fixture({ windows: true })
+    const home = openSite(f, 'https://a.test/')
+    const tasks = f.browser.tabs.createTab({ url: 'zen://tasks', active: true }, f.win)
+    expect(f.browser.pages.isChromePage(tasks)).toBe(true)
+    const urls = spaceUrls(f)
+    const before = overlays(f).length
+    for (const formFactor of ['desktop', 'tablet', 'phone', 'desktop'] as const) {
+      report(f, formFactor)
+      expect(f.browser.tabs.tab(tasks.id)?.url).toBe('zen://tasks')
+      expect(spaceUrls(f)).toEqual(urls)
+      expect(activeTab(f)?.id).toBe(tasks.id)
+    }
+    expect(f.browser.tabs.tab(home.id)).toBeDefined()
+    expect(overlays(f).slice(before)).toEqual([])
+    expect(f.browser.session.summaries()).toEqual([])
+  })
+
+  it('touches nothing in a page window, whatever class its pointer gives it (the task manager’s window, W5-18)', () => {
+    // `formFactorFor`: a popup, app or page window is never a phone, and a tablet under a coarse
+    // pointer – the pointer's class, not a layout the window chose. Its one tab is the host's own
+    // placement (`openInWindow`), so the first report of a coarse-pointer desktop leaves it be:
+    // no close, no blank tab in its place, no overlay asked of a chrome that has none. The
+    // pointer is the device's, so the browser window behind it – whose class `opensAsTab` reads
+    // for a page window (`hostWindowFor`) – reports the tablet too.
+    const f = fixture({ windows: true })
+    openSite(f, 'https://a.test/')
+    const win = f.browser.openTaskManager(f.win)
+    expect(win?.chrome).toBe('page')
+    if (!win) return
+    const tab = f.browser.tabs.activeTabFor(win)
+    expect(tab?.url).toBe('zen://tasks')
+    const tabs = Object.keys(f.browser.state.model.tabs).length
+    const before = f.sent.filter((s) => s.winId === win.id && s.name === 'overlay.open').length
+    for (const formFactor of ['tablet', 'desktop', 'tablet'] as const) {
+      report(f, formFactor)
+      f.browser.handleCommand(win, 'window.formFactor', { formFactor })
+      expect(win.formFactor).toBe(formFactor)
+      expect(f.browser.pages.opensAsTab(INTERNAL_PAGES.tasks, win)).toBe(formFactor === 'desktop')
+      expect(f.browser.tabs.activeTabFor(win)?.id).toBe(tab?.id)
+      expect(f.browser.tabs.visibleTabIds(win)).toEqual([tab?.id])
+    }
+    expect(Object.keys(f.browser.state.model.tabs)).toHaveLength(tabs)
+    expect(
+      f.sent.filter((s) => s.winId === win.id && s.name === 'overlay.open').slice(before)
+    ).toEqual([])
   })
 })
 

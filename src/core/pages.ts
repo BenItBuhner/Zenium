@@ -463,19 +463,29 @@ export class PageService {
    * would put the tab back on the layout that cannot hold it, and a blank tab in its place when
    * it was all its space had, as the root back rule leaves one – and the active tab's page opens
    * as its overlay over what the close leaves in front (`reveal`: an opening the browser makes
-   * for something that happened, not a repeat request that toggles). A page with no overlay
-   * (the task manager) closes and nothing opens, as its ask is dropped. A layout that holds
-   * every page tab the window has – the tablet's, the desktop's, whose full window never leaves
-   * its class – changes nothing. The other way, a phone panel up when the window widens, is the
-   * chrome's (`useStageContinuity`): the panel is `uiStore`'s, not a tab.
+   * for something that happened, not a repeat request that toggles). Only a page with such a
+   * surface is handed over: one with no `overlay` (the task manager, the desktop's alone) keeps
+   * its tab, since there is nothing to hand it to and a close would be one of the user's. And
+   * only in a browser window (`chrome` `full`): a popup, app or page window's class is its
+   * pointer's, not a layout it chose (`formFactorFor`), and its page is the host's own placement
+   * ({@link openInWindow}, the task manager's window), so it stands whatever class its chrome
+   * reports. A layout that holds every page tab the window has – the tablet's, the desktop's,
+   * whose full window under a mouse never narrows past 600 px (`MIN_WIDTH`) – changes nothing.
+   * The other way, a phone panel up when the window widens, is the chrome's
+   * (`useStageContinuity`): the panel is `uiStore`'s, not a tab.
    */
   reconcileLayout(win: ZenWindow): void {
-    if (!this.asTabs) return
+    if (!this.asTabs || win.chrome !== 'full') return
     const tabs = this.browser.tabs
     const activeId = tabs.activeTabFor(win)?.id
     const handed = this.tabsInWindow(win).filter((t) => {
       const page = this.pageOf(t)
-      return page !== null && page.render === 'chrome' && !this.opensAsTab(page, win)
+      return (
+        page !== null &&
+        page.render === 'chrome' &&
+        page.overlay !== undefined &&
+        !this.opensAsTab(page, win)
+      )
     })
     if (handed.length === 0) return
     let overlay: { kind: OverlayKind; folderId?: string } | null = null
