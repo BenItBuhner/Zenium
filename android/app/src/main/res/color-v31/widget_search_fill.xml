@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The search widget's fill in Material You's colours on Android 12+ (WID-03; values-v31/colors.xml):
+     Chrome's colorSurfaceContainerHigh, which MDC 1.12 resolves for dynamic colour to the neutral
+     variant palette at tone 92 (values-v31/tokens.xml:98 → color-v31/m3_ref_palette_dynamic_neutral_variant92.xml)
+     – system_neutral2_600 re-lit to L* 92, since the system publishes no step at 92. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:color="@android:color/system_neutral2_600"
+        android:lStar="92" />
+</selector>

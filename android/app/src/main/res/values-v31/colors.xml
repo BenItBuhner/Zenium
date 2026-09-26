@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The search widget's face in Material You's colours on Android 12+ (WID-03), as Chrome's is:
+     Chrome's widget theme becomes Theme.Material3Expressive.DynamicColors.DayNight on API 31
+     (chrome/android/java/res/values-v31/styles.xml:9), its pill fills with colorSurfaceContainerHigh
+     (res/color/widget_searchbox_bg.xml:8) and its hint and mic take colorOnSurfaceVariant
+     (components/browser_ui/styles/.../semantic_colors_dynamic.xml:21,28). The launcher inflates the
+     face without our theme, so the roles are written out as MDC 1.12 resolves them for dynamic
+     colour (values-v31/tokens.xml:94,109,197,202): the ink onSurfaceVariant = system_neutral2_700,
+     the hairline outlineVariant = system_neutral2_200; the hint sits at the same role as the ink,
+     at full alpha, as Chrome's hint does (default_text_color_secondary). The fill is a tone between
+     the system's steps and lives in res/color-v31/widget_search_fill.xml. The mark keeps its own
+     indigo (values/colors.xml): Chrome's quick action widget likewise keeps its brand mark on the
+     dynamic surface (quick_action_search_widget_small_layout.xml:32-41). Below API 31 the v2 tokens
+     in values/colors.xml stay. -->
+<resources>
+    <color name="widget_search_hairline">@android:color/system_neutral2_200</color>
+    <color name="widget_search_ink">@android:color/system_neutral2_700</color>
+    <color name="widget_search_hint">@color/widget_search_ink</color>
+</resources>

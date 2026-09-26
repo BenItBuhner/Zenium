@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The search widget's dark face in Material You's colours on Android 14+ (WID-03; see
+     values-v34/colors.xml): the platform's dark Material 3 roles, as MDC 1.12 reads them
+     (values-v34/tokens.xml:49,47,57). -->
+<resources>
+    <color name="widget_search_fill">@android:color/system_surface_container_high_dark</color>
+    <color name="widget_search_hairline">@android:color/system_outline_variant_dark</color>
+    <color name="widget_search_ink">@android:color/system_on_surface_variant_dark</color>
+    <color name="widget_search_hint">@color/widget_search_ink</color>
+</resources>
