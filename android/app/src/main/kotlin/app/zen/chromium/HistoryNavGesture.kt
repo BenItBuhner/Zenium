@@ -1,5 +1,7 @@
 package app.zen.chromium
 
+import android.os.Build
+import android.view.Display
 import android.view.MotionEvent
 import android.view.ViewConfiguration
 import app.zen.chromium.HistoryNavClassifier.Edge
@@ -8,12 +10,13 @@ import app.zen.chromium.HistoryNavClassifier.Step
 import app.zen.chromium.PullGestureClassifier.Disposition
 
 /**
- * Overscroll history navigation on one tab's WebView (GN-04, 3-button navigation mode): feeds
- * its touches, its clamped horizontal overscrolls and the page's `overscroll-behavior-x` answer
- * to a [HistoryNavClassifier] and carries out what it decides – which events the WebView sees
- * (with synthetic cancels and downs where the drag takes the finger over or gives it back) and
- * which become `historyNav` events for the chrome, whose `lib/historyNav.ts` draws the arrow
- * bubble and navigates on the release.
+ * Overscroll history navigation on one tab's WebView – a finger's drag in from an edge (GN-04,
+ * 3-button navigation mode) and a touchpad's two-finger swipe from anywhere (GN-23 / A11Y-14,
+ * which Android hands the view as one fake finger): feeds its touches, its clamped horizontal
+ * overscrolls and the page's `overscroll-behavior-x` answer to a [HistoryNavClassifier] and
+ * carries out what it decides – which events the WebView sees (with synthetic cancels and downs
+ * where the drag takes the finger over or gives it back) and which become `historyNav` events
+ * for the chrome, whose `lib/historyNav.ts` draws the arrow bubble and navigates on the release.
  *
  * Touch distances are device pixels here and CSS pixels on the bridge. The wrapper sits ahead
  * of the pull-to-refresh in the view's touch chain: [forward] is the pull's `onTouchEvent`, so
@@ -42,10 +45,12 @@ class HistoryNavGesture(
         val step = when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 remember(event)
+                val touchpad = isTouchpadSwipe(event)
                 val step = classifier.down(
                     event.x, event.y, view.width.toFloat(),
-                    canBack = view.historyNavEligible(Edge.LEFT),
-                    canForward = view.historyNavEligible(Edge.RIGHT)
+                    canBack = view.historyNavEligible(Edge.LEFT, touchpad),
+                    canForward = view.historyNavEligible(Edge.RIGHT, touchpad),
+                    touchpad = touchpad
                 )
                 if (classifier.state == HistoryNavClassifier.State.WATCHING) probe()
                 step
@@ -138,6 +143,16 @@ class HistoryNavGesture(
         )
     }
 
+    /**
+     * Whether `event` (a down) opens a touchpad's two-finger swipe rather than a finger's touch:
+     * the classifier's test on the event's source, tool, buttons and – from API 29, where it
+     * exists – its classification.
+     */
+    private fun isTouchpadSwipe(event: MotionEvent): Boolean {
+        val classification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) event.classification else HistoryNavClassifier.CLASSIFICATION_NONE
+        return HistoryNavClassifier.isTouchpadSwipe(event.source, event.getToolType(0), event.buttonState, classification)
+    }
+
     /** A single-pointer event for the first finger, at its latest position, with the given action. */
     private fun synthetic(action: Int) {
         val source = last ?: return
@@ -146,11 +161,23 @@ class HistoryNavGesture(
         val coords = MotionEvent.PointerCoords()
         source.getPointerCoords(0, coords)
         // The original down time throughout, as a ViewGroup does when it splits a gesture.
-        val event = MotionEvent.obtain(
-            source.downTime, source.eventTime, action, 1, arrayOf(properties), arrayOf(coords),
-            source.metaState, source.buttonState, source.xPrecision, source.yPrecision,
-            source.deviceId, source.edgeFlags, source.source, source.flags
-        )
+        val event = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            // With the classification: the WebView tells a touchpad swipe's events by it
+            // (Chromium's EventForwarder turns them into wheel scrolls), so the cancel that
+            // ends one must carry it too. (This overload is declared nullable.)
+            MotionEvent.obtain(
+                source.downTime, source.eventTime, action, 1, arrayOf(properties), arrayOf(coords),
+                source.metaState, source.buttonState, source.xPrecision, source.yPrecision,
+                source.deviceId, source.edgeFlags, source.source, view.display?.displayId ?: Display.DEFAULT_DISPLAY,
+                source.flags, source.classification
+            ) ?: return
+        } else {
+            MotionEvent.obtain(
+                source.downTime, source.eventTime, action, 1, arrayOf(properties), arrayOf(coords),
+                source.metaState, source.buttonState, source.xPrecision, source.yPrecision,
+                source.deviceId, source.edgeFlags, source.source, source.flags
+            )
+        }
         forward(event)
         event.recycle()
     }

@@ -742,13 +742,14 @@ class TabWebView(
     // --- overscroll history navigation (GN-04) ------------------------------------------------------
 
     /**
-     * Whether a drag in from `edge` may become a history navigation right now: only with the
-     * system's three navigation buttons (in gesture mode the edges are the system's), with no
-     * other transition moving the page, and with an entry to go to that way – behind for the
-     * left edge (the one [goBack] lands on, [backIndex]), ahead for the right.
+     * Whether a drag in from `edge` may become a history navigation right now: with no other
+     * transition moving the page, with an entry to go to that way – behind for the left edge
+     * (the one [goBack] lands on, [backIndex]), ahead for the right – and, for a finger on the
+     * screen, only with the system's three navigation buttons (in gesture mode the edges are the
+     * system's). A `touchpad` two-finger swipe (GN-23) meets no system gesture: it arms in either mode.
      */
-    fun historyNavEligible(edge: HistoryNavClassifier.Edge): Boolean {
-        if (!host.threeButtonNavigation || backTransition != null) return false
+    fun historyNavEligible(edge: HistoryNavClassifier.Edge, touchpad: Boolean = false): Boolean {
+        if ((!touchpad && !host.threeButtonNavigation) || backTransition != null) return false
         return when (edge) {
             HistoryNavClassifier.Edge.LEFT -> canGoBack() && backIndex() >= 0
             HistoryNavClassifier.Edge.RIGHT -> canGoForward()
