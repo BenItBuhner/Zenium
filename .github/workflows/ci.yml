@@ -180,6 +180,24 @@ jobs:
           xvfb-run -a -s '-screen 0 1600x1000x24'
           node .github/smoke/smoke.mjs --exe dist/linux-unpacked/zenium --label visibility
           --out "$SMOKE_OUT" --scenarios visibility --extra-args="--no-sandbox --disable-gpu"
+      - name: MCP server soak under Xvfb (sessions, the shim, a dropped client, a restart)
+        # The mcp scenario on its own run of the harness (mcp-scenario.mjs; the legs of
+        # scripts/mcp-soak.mjs): a profile with Settings → AI Agents on at a free port, scripts
+        # allowed, new agents let in. 6 agent lives 3 at a time over HTTP – a tab on the soak's
+        # fixture page, snapshot, screenshot, the form, `zen_session end`, a call after it on the
+        # same session id, an earlier orphan adopted, DELETE – 2 more through `zenium --mcp`, a
+        # client dropped without DELETE, a made-up session id resumed with the token and refused
+        # without, and an HTTP session plus a shim process carried across a graceful quit and a
+        # relaunch of the profile (`mcp-restart`). Hard checks fail their step; the soft ones
+        # named with the PR they wait on (`… (until B)`, `… (until E)`) are recorded in the
+        # step's detail only, so this leg stays green until those land. soak.json (counts,
+        # client latency per tool, the server's diagnostics), its own log and result.json under
+        # smoke-out/mcp; runs after a red step above as well.
+        if: ${{ !cancelled() }}
+        run: >
+          xvfb-run -a -s '-screen 0 1600x1000x24'
+          node .github/smoke/smoke.mjs --exe dist/linux-unpacked/zenium --label mcp
+          --out "$SMOKE_OUT" --scenarios mcp --extra-args="--no-sandbox --disable-gpu"
       - name: Make the unpacked build's sandbox helper setuid root (for the sandboxed leg)
         # Electron evaluates service-worker preload scripts in its sandboxed renderer client
         # only; Zenium's chrome.* layer for MV3 background workers (src/preload/extension.ts,
@@ -220,7 +238,7 @@ jobs:
         if: always()
         run: >
           node .github/smoke/verdict.mjs --out "$SMOKE_OUT"
-          --expect unpacked,clear-on-exit,features,recaptcha,mv3-worker-sandboxed,mv3-worker-no-sandbox
+          --expect unpacked,clear-on-exit,features,recaptcha,mcp,mv3-worker-sandboxed,mv3-worker-no-sandbox
           --title linux-x64
       - name: Sign-in fidelity smoke test
         # After the boot smoke and its verdict, so a failure here never hides the boot results.
