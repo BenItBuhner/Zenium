@@ -279,14 +279,81 @@ describe('the app menu', () => {
       expect(appMenu(h)).not.toContain('Update Zenium')
     })
 
-    it("is the desktop's alone: the tablet's and the phone's menus keep their shape with an update waiting", () => {
+    it("heads the tablet's menu with the same row over its hairline while the update waits (TB-12), and with nothing otherwise", () => {
       const tablet = harness(ANDROID, 'tablet')
+      const plain = appMenu(tablet)
+      expect(plain[0]).toBe('New Tab')
       updater(tablet, 'ready')
-      expect(appMenu(tablet)).not.toContain('Update Zenium')
-      expect(appMenu(tablet)[0]).toBe('New Tab')
+      const install = vi.spyOn(tablet.browser.updates, 'install').mockResolvedValue(undefined)
+      expect(appMenu(tablet).slice(0, 3)).toEqual(['Update Zenium', '-', 'New Tab'])
+      expect(appMenu(tablet).slice(2)).toEqual(plain)
+      tablet.shown()[0]!.click?.()
+      expect(install).toHaveBeenCalledTimes(1)
+      for (const phase of ['available', 'downloading', 'up-to-date'] as const) {
+        const other = harness(ANDROID, 'tablet')
+        updater(other, phase)
+        expect(appMenu(other), phase).toEqual(plain)
+      }
+    })
+
+    it("seats the row in the phone's menu as Chrome's Android menu does (TB-12): the first text row under the icon row, over a hairline of its own, and only while the update waits", () => {
       const phone = harness(ANDROID, 'phone')
+      const plain = appMenu(phone)
+      const iconRow = plain.indexOf('-')
+      expect(plain.slice(iconRow, iconRow + 2)).toEqual(['-', 'New Tab'])
       updater(phone, 'ready')
-      expect(appMenu(phone)).not.toContain('Update Zenium')
+      const install = vi.spyOn(phone.browser.updates, 'install').mockResolvedValue(undefined)
+      const menu = appMenu(phone)
+      // Chrome's "Update Chrome" (`TabbedAppMenuPropertiesDelegate.populatePageModeMenu`): after
+      // the icon row, before New tab; Chrome's row has no divider of its own under it, the
+      // phone's flat list draws its groups with hairlines and the row is a group of its own.
+      expect(menu.slice(iconRow, iconRow + 4)).toEqual(['-', 'Update Zenium', '-', 'New Tab'])
+      expect(menu.filter((l) => l === 'Update Zenium')).toHaveLength(1)
+      // The rest of the menu is as it was: the row is one row and one hairline more.
+      expect([...menu.slice(0, iconRow + 1), ...menu.slice(iconRow + 3)]).toEqual(plain)
+      const row = item(phone.shown(), 'Update Zenium')
+      expect(row.enabled).not.toBe(false)
+      row.click?.()
+      expect(install).toHaveBeenCalledTimes(1)
+      // Structure, like the Change Menu row: named `menu.update` for the sheet to keep it out
+      // of the edit pose, its hairline unkeyed, neither in the default order the sheet's Reset
+      // restores nor moved by a saved one – the row stays at the head whatever the order says.
+      expect(row.key).toBe('menu.update')
+      const shown = phone.shown()
+      expect(shown[shown.indexOf(row) + 1]).toEqual({ type: 'separator' })
+      const defaults = phone.where()?.defaultOrder ?? []
+      expect(defaults).not.toContain('menu.update')
+      expect(defaults).toContain('row.settings')
+      phone.browser.state.settings.menuOrder = [
+        'menu.update',
+        'row.settings',
+        ...defaults.filter((k) => k !== 'row.settings')
+      ]
+      const ordered = appMenu(phone)
+      expect(ordered.slice(0, iconRow)).toEqual(plain.slice(0, iconRow))
+      expect(ordered.slice(iconRow, iconRow + 4)).toEqual(['-', 'Update Zenium', '-', 'Settings'])
+      expect(ordered.filter((l) => l === 'Update Zenium')).toHaveLength(1)
+      // Nothing while the update is merely found, downloads, or the build is up to date: the
+      // Android host downloads the APK itself, so the row shows once its pick can install
+      // (Chrome keys its row on the update being available, Play downloading after the pick).
+      for (const phase of ['available', 'downloading', 'up-to-date'] as const) {
+        const other = harness(ANDROID, 'phone')
+        updater(other, phase)
+        expect(appMenu(other), phase).toEqual(plain)
+      }
+      const noUpdates = harness({ ...ANDROID, updates: false }, 'phone')
+      updater(noUpdates, 'ready')
+      expect(appMenu(noUpdates)).toEqual(plain)
+    })
+
+    it("leaves the desktop's row as it was: no key, the same two items (the phone's key is added where the phone seats it)", () => {
+      const h = harness(DESKTOP)
+      updater(h, 'ready')
+      appMenu(h)
+      expect(h.shown().slice(0, 2)).toStrictEqual([
+        { label: 'Update Zenium', click: expect.any(Function) },
+        { type: 'separator' }
+      ])
     })
 
     it('is a twenty-first row only while the update waits: 21 rows / 4 separators (701 px); the Media Controls… row folded too, 22 / 5 (741 px) and the Update row first', () => {

@@ -24,6 +24,14 @@ export const MENU_KEY_SEP = 'sep.'
  */
 export const MENU_KEY_CHANGE_MENU = 'menu.change'
 
+/**
+ * The key of the "Update Zenium" row (Chrome's "Update Chrome", TB-12): the first text row
+ * under the icon row while an update waits, outside the order like the Change Menu row – the
+ * sheet keeps it out of the edit mode and the saved order (`lib/menuEdit.ts`), and it comes and
+ * goes with the updater's phase, not with the user's list.
+ */
+export const MENU_KEY_UPDATE = 'menu.update'
+
 /** A saved order longer than this is cut: the phone menu has a few dozen items at most. */
 export const MENU_ORDER_MAX = 96
 /** A key longer than this names nothing of ours (`row.closePrivateTabs` is 20): it is dropped. */

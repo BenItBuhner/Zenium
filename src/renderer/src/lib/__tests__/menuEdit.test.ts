@@ -4,6 +4,7 @@ import {
   countedItems,
   editableMenu,
   isChangeMenuItem,
+  isUpdateMenuItem,
   joinMenuSections,
   menuSectionOf,
   menuSectionsOrder,
@@ -98,6 +99,45 @@ describe('the sections', () => {
     const s = splitMenuSections([...items.slice(0, 3), keyedEnd, ...items.slice(4)])
     expect(s.rowEnd).toBeNull()
     expect(keys(s.list)[0]).toBe('sep.9')
+  })
+
+  it('the Update Zenium row under the icon row (TB-12) is structure with its hairline: out of both sections, out of the saved order, back in its seat on the join', () => {
+    const items = root()
+    const update = [item('Update Zenium', { key: 'menu.update' }), sep()]
+    const withUpdate = [...items.slice(0, 4), ...update, ...items.slice(4)]
+    const s = splitMenuSections(withUpdate)
+    expect(keys(s.row)).toEqual(['icon.forward', 'icon.bookmark', 'icon.reload'])
+    expect(s.rowEnd).toBe(withUpdate[3])
+    expect(keys(s.update)).toEqual(['menu.update', '(separator)'])
+    expect(keys(s.list)[0]).toBe('row.newTab')
+    expect(keys(s.list)).toEqual(keys(splitMenuSections(items).list))
+    expect(joinMenuSections(s)).toEqual(withUpdate)
+    expect(menuSectionOf(s, 'menu.update')).toBeNull()
+    expect(menuSectionsOrder(s)).toEqual(menuSectionsOrder(splitMenuSections(items)))
+    expect(isUpdateMenuItem(withUpdate[4]!)).toBe(true)
+    expect(isUpdateMenuItem(withUpdate[0]!)).toBe(false)
+    // A nudge names no section for it: the row does not move.
+    expect(nudgeMenuItem(s, 'menu.update', 1)).toBe(s)
+    // With no update waiting the section is empty and the split is as before.
+    expect(splitMenuSections(items).update).toEqual([])
+    // A menu without an icon row seats it first, its hairline with it.
+    const bare = [
+      ...update,
+      item('Open', { key: 'row.open' }),
+      sep(),
+      item('Change Menu', { key: 'menu.change' })
+    ]
+    const b = splitMenuSections(bare)
+    expect(b.row).toEqual([])
+    expect(keys(b.update)).toEqual(['menu.update', '(separator)'])
+    expect(keys(b.list)).toEqual(['row.open'])
+    expect(joinMenuSections(b)).toEqual(bare)
+    // The row's hairline is only ever the unkeyed one under it: a keyed hairline is the list's.
+    const keyedUnder = [...items.slice(0, 4), update[0]!, sep('sep.9'), ...items.slice(4)]
+    const k = splitMenuSections(keyedUnder)
+    expect(keys(k.update)).toEqual(['menu.update'])
+    expect(keys(k.list)[0]).toBe('sep.9')
+    expect(joinMenuSections(k)).toEqual(keyedUnder)
   })
 
   it('knows which section a key is in; the structure’s items are in neither', () => {

@@ -19,6 +19,7 @@ import { fileSources } from '@core/import/sources'
 import { READER_URL_PREFIX } from '@core/reader'
 import type { ClearOnExitType, SiteDataList } from '@shared/siteData'
 import { isCertificateError } from '@shared/siteInfo'
+import type { UpdateStatus } from '@shared/updates'
 import { cmd, run } from '@renderer/lib/api'
 import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
 import { dismissOverview, openOverview, overviewIsOpen } from '@renderer/lib/gestures/stage'
@@ -255,7 +256,10 @@ const QR_HAND_OFF_SETTLE_MS = 700
  * presses its controls: `tap:Show`, `tap:Edit`, `tap:Refine`). `rules=<n>` on any spec seeds n
  * remembered site permissions for Settings › Security; `blocking=<variant>` may accompany any
  * spec too (see `seedBlocking`; `&blocked=<n>` sets the count blocked on the page), as may
- * `sync=<variant>` for Settings › Sync (see `seedSync`), `translate=<status>` (the active page
+ * `sync=<variant>` for Settings › Sync (see `seedSync`), `updates=<phase>` (the updater with a
+ * release `available`, `downloading` or `ready` – downloaded and waiting, the phase the menu
+ * button's dot and the app menu's Update Zenium row key on, TB-12; see `seedUpdates`),
+ * `translate=<status>` (the active page
  * `offered` for translation, `translated`, `translating` or `error`, or `idle` for none; the bar
  * stays down unless `&bar`; see `seedTranslate`), `readerTranslate=<status>` (Reader View's
  * article and the engine there, CT-36: `ready` for nothing asked yet, `detecting`,
@@ -307,6 +311,7 @@ function apply(browser: Browser, spec: string): void {
     unseedExtensions()
     unseedControls()
     unseedSync()
+    unseedUpdates(browser)
     unseedImport()
     unseedTranslate()
     unseedReaderTranslate()
@@ -1091,6 +1096,7 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   const extensions = params.get('extensions')
   const controls = parsePreviewControls(params.get('controls'))
   const sync = params.get('sync')
+  const updates = parsePreviewUpdates(params.get('updates'))
   const lastImport = params.get('import')
   const translate = params.get('translate')
   const readerTranslate = params.get('readerTranslate')
@@ -1101,6 +1107,7 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     if (extensions) seedExtensions(extensions)
     if (controls) seedControls(controls)
     if (sync) seedSync(sync, browser)
+    if (updates) seedUpdates(updates, browser)
     if (lastImport) seedImport(lastImport)
     if (translate) seedTranslate(translate, params.has('bar'))
     if (readerTranslate) seedReaderTranslate(readerTranslate, params.has('original'))
@@ -1222,7 +1229,9 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     if (target.article && tab) markArticle(browser, tab.id)
     // A seeded sync stands in the core before the menu is built (its Send to your devices item
     // reads the engine's status), the rest of the seed once the sheet is up, as for every menu.
+    // A seeded updater the same: the Update Zenium row reads the updater's phase (TB-12).
     if (sync) seedSync(sync, browser)
+    if (updates) seedUpdates(updates, browser)
     // The core answers with `menu.show`; the state is reached once the descriptor is in the store.
     const unsubscribe = uiStore.subscribe(() => {
       if (!uiStore.get().menu) return
@@ -2143,6 +2152,91 @@ function unseedSync(): void {
   syncSeed?.()
   syncSeed = null
   syncSetupStore.set({ folder: null })
+}
+
+/** The updater's phases a preview can stand in (`updates=<phase>`); anything else is no seed. */
+const PREVIEW_UPDATE_PHASES = ['available', 'downloading', 'ready'] as const
+type PreviewUpdatePhase = (typeof PREVIEW_UPDATE_PHASES)[number]
+
+function parsePreviewUpdates(value: string | null): PreviewUpdatePhase | null {
+  return (PREVIEW_UPDATE_PHASES as readonly string[]).includes(value ?? '')
+    ? (value as PreviewUpdatePhase)
+    : null
+}
+
+/**
+ * The updater's status as the `updates=<phase>` seed has it: a release one major up from the
+ * running build – found (`available`), two fifths downloaded (`downloading`), or downloaded and
+ * waiting (`ready`, the phase the Update Zenium row and the menu button's dot key on, TB-12) –
+ * over the status the core holds, so the channel, the target and the mode stay the host's.
+ */
+export function updatesFixture(status: UpdateStatus, phase: PreviewUpdatePhase): UpdateStatus {
+  const major = Number.parseInt(status.currentVersion, 10)
+  const version = `${Number.isFinite(major) ? major + 1 : 2}.0.0`
+  const tag = `v${version}`
+  const releaseUrl = `https://github.com/BenItBuhner/Zenium/releases/tag/${tag}`
+  return {
+    ...status,
+    phase,
+    release: {
+      version,
+      tag,
+      prerelease: false,
+      publishedAt: '2026-09-24T09:00:00Z',
+      releaseUrl,
+      notesUrl: releaseUrl,
+      asset: null
+    },
+    progress:
+      phase === 'downloading'
+        ? { percent: 40, transferred: 38_400_000, total: 96_000_000, bytesPerSecond: 2_400_000 }
+        : null,
+    downloadedPath:
+      phase === 'ready'
+        ? `/data/user/0/app.zen.chromium/cache/updates/zenium-${version}.apk`
+        : null,
+    error: null
+  }
+}
+
+let updatesSeed: (() => void) | null = null
+
+/**
+ * While the `updates=<phase>` seed stands the core's updater stands in with the fixture's status
+ * (`updatesFixture`): the menus read it for the Update Zenium row, the state pushed to the chrome
+ * carries it for the menu button's dot and Settings › Updates, and `install` – the row's pick –
+ * says so in a toast and does nothing else, the stand-in host having no APK to hand the system.
+ * Every other call goes to the real updater. The status is pushed once on the seed, so a chrome
+ * already drawn picks the phase up.
+ */
+function seedUpdates(phase: PreviewUpdatePhase, browser: Browser): void {
+  unseedUpdates(browser)
+  const real = browser.updates
+  const standIn = new Proxy(real, {
+    get: (target, key) => {
+      if (key === 'status') return (): UpdateStatus => updatesFixture(real.status(), phase)
+      if (key === 'install')
+        return async (): Promise<void> => {
+          pushToast(
+            `Zenium ${updatesFixture(real.status(), phase).release?.version} would install now`
+          )
+        }
+      return Reflect.get(target, key)
+    }
+  })
+  Object.defineProperty(browser, 'updates', { value: standIn, configurable: true, writable: true })
+  updatesSeed = () => {
+    Object.defineProperty(browser, 'updates', { value: real, configurable: true, writable: true })
+  }
+  browser.state.commitVolatile()
+}
+
+/** Put the real updater back; its status is pushed again so the chrome drops the seeded phase. */
+function unseedUpdates(browser: Browser): void {
+  if (!updatesSeed) return
+  updatesSeed()
+  updatesSeed = null
+  browser.state.commitVolatile()
 }
 
 /**
