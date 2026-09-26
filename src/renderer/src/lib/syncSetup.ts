@@ -80,9 +80,10 @@ export const SYNC_COPY = {
 } as const
 
 /**
- * The data types in Chrome's "Manage what you sync" order – Bookmarks, Open tabs, Passwords,
- * Settings – then Zenium's own: Spaces, folders, pinned tabs, Essentials, containers, shortcuts,
- * Boosts. Every key of `SyncScope` is here once (the engine's toggles are the page's).
+ * The data types in Chrome's "Manage what you sync" order – Bookmarks, History, Open tabs,
+ * Passwords, Reading list, Settings – then Zenium's own: Spaces, folders, pinned tabs,
+ * Essentials, containers, shortcuts, Boosts. Every key of `SyncScope` is here once (the engine's
+ * toggles are the page's).
  */
 export const SYNC_SCOPES: ReadonlyArray<{ key: keyof SyncScope; label: string; hint?: string }> = [
   { key: 'bookmarks', label: 'Bookmarks' },
@@ -93,6 +94,10 @@ export const SYNC_SCOPES: ReadonlyArray<{ key: keyof SyncScope; label: string; h
     label: 'Passwords',
     hint: 'Saved passwords and passkey records, encrypted with your sync passphrase.'
   },
+  // The reading list's row (services pass 11, the `reading-list-entry` record). No hint: a hint
+  // here carries a fact the name cannot (a behaviour, a protection, a scope), never a
+  // restatement – "Reading list" stands on its name as Bookmarks and History do (the lead's rule).
+  { key: 'readingList', label: 'Reading list' },
   { key: 'settings', label: 'Settings' },
   { key: 'spaces', label: 'Spaces', hint: 'Names, icons, themes and order.' },
   { key: 'folders', label: 'Folders' },
