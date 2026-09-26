@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import type { BookmarkNode, Boost, KeyBinding, Settings, SyncScope } from '../../../shared/types'
 import type { Model } from '../../model'
-import { decryptJson, deriveKey } from '../crypto'
+import { decryptJson, deriveKey, encryptJson } from '../crypto'
 import {
   DEVICE_LOCAL_SETTINGS,
+  SETTINGS_RECORD_ID,
   collectLocal,
   diffLocal,
   hashData,
+  settingsKeyTime,
+  winningRemote,
   type MetaMap,
   type SyncRecord
 } from '../records'
@@ -146,6 +149,176 @@ describe('the moved engine on a fixed record set', () => {
     const local = collectLocal(sources, goldenFixture.scope)
     expect([...local.values()].some((r) => r.type === 'credential')).toBe(false)
     expect(local.size).toBe(Object.keys(goldenFixture.hashes).length)
+  })
+})
+
+/**
+ * Per-key merge of the settings record (`SyncRecord.keys`, `RecordMeta.keys`) is additive: the
+ * per-key times sit outside `data`, `hashData(data)` is the same function of the same data, and
+ * every pin above stands untouched. What this build makes of an old build's record, and an old
+ * build of this build's, is pinned here on the same fixtures – the mixed folder of an upgrade
+ * window, where a phone still on the previous build shares the folder with an upgraded desktop.
+ *
+ * "The build before" is the release before per-key merge: it already writes the settings record
+ * without the device-local keys (`goldenAsWritten`), and its metadata is the first-diff pin with
+ * that record's hash (`preBuildMeta`). The legacy device file is older still (it carries
+ * `sidebarExpandOnHover`) and stands for any record without `keys`.
+ */
+describe('the settings record across builds: per-key merge and the builds before it', () => {
+  type Json = Record<string, unknown>
+  const sources = {
+    model: goldenFixture.model,
+    settings: goldenFixture.settings,
+    shortcutOverrides: goldenFixture.shortcutOverrides,
+    bookmarks: goldenFixture.bookmarks,
+    boosts: goldenFixture.boosts
+  }
+  const settingsOf = (records: SyncRecord[]): SyncRecord =>
+    records.find((r) => r.id === SETTINGS_RECORD_ID)!
+
+  /** The metadata the build before per-key merge holds for the golden sources (its first diff). */
+  function preBuildMeta(): MetaMap {
+    const { settingsHash } = goldenAsWritten()
+    return {
+      ...goldenFixture.meta,
+      [SETTINGS_RECORD_ID]: { ...goldenFixture.meta[SETTINGS_RECORD_ID]!, hash: settingsHash }
+    }
+  }
+
+  /**
+   * `winningRemote` as the build before per-key merge had it (`records.ts` at e45bddfe5, the
+   * P0 #502): one copy per record, strictly newer wins, ties and identical content skipped.
+   * An old build reads a record with `keys` through this – `keys` is a field it never looks at.
+   */
+  function oldWinningRemote(local: MetaMap, remote: Map<string, SyncRecord>): SyncRecord[] {
+    const winners: SyncRecord[] = []
+    for (const r of remote.values()) {
+      const mine = local[r.id]
+      if (!mine) {
+        if (!r.deleted) winners.push(r)
+        continue
+      }
+      if (r.modified <= mine.modified) continue
+      if (!r.deleted && !mine.deleted && hashData(r.data) === mine.hash) continue
+      if (r.deleted && mine.deleted) continue
+      winners.push(r)
+    }
+    return winners
+  }
+
+  /** This build's per-key entry for the golden settings, migrated from the build before's meta. */
+  function perKeyMeta(): MetaMap {
+    const local = collectLocal(sources, goldenFixture.scope)
+    const migrated = diffLocal(preBuildMeta(), local, goldenFixture.now, { stamp: null })
+    expect(migrated.changed).toBe(false)
+    return migrated.meta
+  }
+
+  it("the pinned first diff is untouched by per-key merge: no `keys` on the record or in the meta; the next diff's entry has every key at 0 and the same hash", () => {
+    const local = collectLocal(sources, goldenFixture.scope)
+    const first = diffLocal({}, local, goldenFixture.now)
+    expect(settingsOf(first.records)).not.toHaveProperty('keys')
+    expect(first.meta[SETTINGS_RECORD_ID]).toEqual(preBuildMeta()[SETTINGS_RECORD_ID])
+    const entry = perKeyMeta()[SETTINGS_RECORD_ID]!
+    expect(entry.hash).toBe(goldenAsWritten().settingsHash)
+    expect(entry.modified).toBe(0)
+    expect(Object.keys(entry.keys!).sort()).toEqual(
+      Object.keys(settingsOf(first.records).data as Json).sort()
+    )
+    expect(Object.values(entry.keys!).every((k) => k.modified === 0)).toBe(true)
+  })
+
+  it("a record from a build before per-key merge (the legacy device file's) names no `keys`: every key is read at its `modified`, and a newer one lands as the whole record it is", async () => {
+    const key = unhex(legacyFixture.keyHex)
+    const payload = await decryptJson<{ v: 1; records: SyncRecord[] }>(
+      key,
+      legacyFixture.deviceFile.envelope
+    )
+    const legacy = settingsOf(payload.records)
+    expect(legacy).not.toHaveProperty('keys')
+    for (const k of Object.keys(legacy.data as Json)) {
+      expect(settingsKeyTime(legacy, k)).toBe(legacy.modified)
+    }
+    // The old build's peer edits two settings later (its record whole at that time, as it
+    // always was). Against a metadata from before – this device not yet upgraded – the record
+    // wins whole, the same object.
+    const edited: SyncRecord = {
+      ...legacy,
+      modified: goldenFixture.now,
+      data: { ...(legacy.data as Json), colorScheme: 'dark', sidebarWidth: 333 }
+    }
+    const remote = new Map([[SETTINGS_RECORD_ID, edited]])
+    expect(winningRemote(preBuildMeta(), remote)).toEqual([edited])
+    expect(winningRemote(preBuildMeta(), remote)[0]).toBe(edited)
+    // Against this build's per-key entry, every key of it is weighed at that time: the two that
+    // differ win, the rest have nothing to add – landing them yields the peer's record exactly.
+    // The device-local key the old build still sends (`sidebarExpandOnHover`, which this device
+    // holds no entry for) is never a peer's to win.
+    expect(edited.data).toHaveProperty('sidebarExpandOnHover')
+    const won = winningRemote(perKeyMeta(), remote)
+    expect(won).toHaveLength(1)
+    expect(won[0]!.data).toEqual({ colorScheme: 'dark', sidebarWidth: 333 })
+    expect(won[0]!.modified).toBe(goldenFixture.now)
+    expect(won[0]).not.toHaveProperty('keys')
+    expect({ ...goldenFixture.settings, ...(won[0]!.data as Json) }).toEqual(
+      expect.objectContaining(edited.data as Json)
+    )
+    // A key this device edited later than the old build's record keeps its own value; the
+    // old build's other key still lands. Whole, the record would have lost or won both.
+    const mine = perKeyMeta()
+    const entry = mine[SETTINGS_RECORD_ID]!
+    entry.keys!.colorScheme = { hash: hashData('light'), modified: goldenFixture.now + 1 }
+    entry.modified = goldenFixture.now + 1
+    const later = winningRemote(mine, remote)
+    expect(later[0]!.data).toEqual({ sidebarWidth: 333 })
+  })
+
+  it("a record this build writes, `keys` and all, goes through the unchanged file format, parser and cipher with `keys` intact and `hashData(data)` the pinned hash; the old build's rule takes it whole when newer", async () => {
+    // This device edited its colour scheme at 5 once per-key entries existed, then set it back
+    // by hand: the data is the golden data again, the key's time is not the others'.
+    const mine = perKeyMeta()
+    const entry = mine[SETTINGS_RECORD_ID]!
+    entry.keys!.colorScheme = { hash: hashData(goldenFixture.settings.colorScheme), modified: 5 }
+    entry.modified = 5
+    const local = collectLocal(sources, goldenFixture.scope)
+    const diff = diffLocal(mine, local, goldenFixture.now, { stamp: null })
+    const record = settingsOf(diff.records)
+    expect(record.modified).toBe(5)
+    expect(record.keys).toBeDefined()
+    expect(Object.keys(record.keys!)).toHaveLength(Object.keys(record.data as Json).length - 1)
+    expect(Object.values(record.keys!).every((t) => t === 0)).toBe(true)
+    const { settingsHash } = goldenAsWritten()
+    expect(hashData(record.data)).toBe(settingsHash)
+    expect(JSON.stringify(record.data)).toBe(
+      JSON.stringify(settingsOf(diffLocal({}, local, goldenFixture.now).records).data)
+    )
+
+    // The device file as the engine writes it, read back as any device – old or new – reads it.
+    const key = unhex(legacyFixture.keyHex)
+    const file = {
+      deviceId: legacyFixture.deviceFile.deviceId,
+      deviceName: 'Desk (Linux)',
+      updatedAt: goldenFixture.now,
+      envelope: await encryptJson(key, legacyFixture.salt, { v: 1, records: diff.records })
+    }
+    const parsed = parseDeviceFile(serializeDeviceFile(file))
+    expect(parsed).toBeTruthy()
+    const payload = await decryptJson<{ v: 1; records: SyncRecord[] }>(key, parsed!.envelope)
+    expect(payload.records).toEqual(diff.records)
+    expect(settingsOf(payload.records).keys).toEqual(record.keys)
+
+    // The old build's rule over what came through: the record whole, `keys` unread. Newer than
+    // its copy, it takes it; no newer, or the same content, it skips it – as it always did.
+    const oldBuild = (modified: number, hash = 'as-the-old-build-wrote-it'): MetaMap => ({
+      [SETTINGS_RECORD_ID]: { type: 'settings', hash, modified, deleted: false }
+    })
+    const remote = new Map([[SETTINGS_RECORD_ID, settingsOf(payload.records)]])
+    expect(oldWinningRemote(oldBuild(3), remote)).toEqual([settingsOf(payload.records)])
+    expect(oldWinningRemote(oldBuild(5), remote)).toEqual([])
+    expect(oldWinningRemote(oldBuild(3, settingsHash), remote)).toEqual([])
+    // What it then applies is `data` whole (its `applyRemote` spreads it) and what it writes to
+    // its metadata is `hashData(data)` – the pinned hash, `keys` being no part of it.
+    expect(hashData(oldWinningRemote(oldBuild(3), remote)[0]!.data)).toBe(settingsHash)
   })
 })
 
