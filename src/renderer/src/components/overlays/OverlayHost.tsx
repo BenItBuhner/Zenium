@@ -4,6 +4,7 @@ import type { UiState } from '@renderer/lib/ui'
 import { DownloadsSheet } from '../downloads/DownloadsSheet'
 import { PhoneBookmarksPanel } from '../phone/PhoneBookmarksPanel'
 import { PhoneHistoryPanel } from '../phone/PhoneHistoryPanel'
+import { PhoneReadingListPanel } from '../phone/PhoneReadingListPanel'
 import { AddonsPanel } from './AddonsPanel'
 import { BoostPanel } from './BoostPanel'
 import { LiveFolderEditor } from './LiveFolderEditor'
@@ -16,8 +17,8 @@ import { ThemePicker } from './ThemePicker'
  * and Sync sections that used to retarget its overlay) is a page tab on every host
  * (`pages/settings`, design language v2 §10): `openOverlay` routes those kinds to `page.open`
  * before they reach the store, so no `settings | shortcuts | sync` case exists here. History,
- * the bookmarks manager and Downloads are page tabs on the desktop and tablet layouts
- * (`pages/InternalPageHost`, v2 §10.1) and reach this host only as the phone's panels and
+ * the bookmarks manager, the reading list and Downloads are page tabs on the desktop and tablet
+ * layouts (`pages/InternalPageHost`, v2 §10.1) and reach this host only as the phone's panels and
  * sheet – lists a finger reads and touches differently (rows, swipes, a selection header).
  */
 export function OverlayHost({ state, ui }: { state: UIState; ui: UiState }): JSX.Element | null {
@@ -26,6 +27,8 @@ export function OverlayHost({ state, ui }: { state: UIState; ui: UiState }): JSX
       return <PhoneHistoryPanel state={state} />
     case 'bookmarks':
       return <PhoneBookmarksPanel state={state} />
+    case 'reading-list':
+      return <PhoneReadingListPanel state={state} />
     case 'downloads':
       return <DownloadsSheet state={state} />
     case 'theme':

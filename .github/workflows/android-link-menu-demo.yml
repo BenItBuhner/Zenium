@@ -5,8 +5,9 @@ name: Android link menu demo
 # sheet's rows read by name off the chrome's DOM, checked against the design lead's order (Chrome
 # 152's rows in Chrome's order within Zenium's three groups: New Tab · New Tab in Group · Private
 # Tab where the host offers it · Glance · Container | Copy Link Address · Copy Link Text · Save Link
-# As… · Share Link… | Boosts) with each of Chrome 152's rows looked up (Add to reading list a stated
-# limit: no reading list), then a real touch on "Open Link in New Tab in Group" – a row Chrome
+# As… · Add Link to Reading List · Share Link… | Boosts) with each of Chrome 152's rows looked up
+# (Add to reading list → Add Link to Reading List since HB-20, seated before the share by the design
+# gate on #551), then a real touch on "Open Link in New Tab in Group" – a row Chrome
 # keeps on a loose tab – making the group: a new folder around the opener with the link's tab
 # behind it, the two a group of two, the seeded group untouched; light on Home, dark on Gamma, the
 # two design stills `link-menu-design-rows-{light,dark}.png`. The driver writes

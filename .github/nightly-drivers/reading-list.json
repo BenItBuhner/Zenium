@@ -1,0 +1,10 @@
+{
+  "id": "reading-list",
+  "order": 117,
+  "class": "ReadingListDemo",
+  "shard": "phone-f",
+  "mirrors": "android-reading-list-demo.yml",
+  "dir": "reading-list-demo",
+  "estimate": 4.5,
+  "note": "The phone's reading list on desktop's shared model (HB-20, W6-D1, PR #551): the tab-group drivers' seeded profile and loopback pages, every press a real touch, every outcome read off the core's readingList – the app menu's Add to / Remove from Reading List with their toasts, the link menu's Add Link to Reading List before Share Link… (the design gate on #551) saving the link under its text, the panel from the menu's Reading List row (Unread with its count, a row's touch opening the page and marking it read, Read, the row's ⋮ menu, Mark all as read, a row whose page a tab shows bringing that tab forward), the star sheet's Reading list switch, the empty state. Light scheme only: the design record is the preview host's pairs. About three minutes of driver after the boot; seated on phone-f, the phone shard with room (54 of 68 before it)."
+}
