@@ -309,11 +309,11 @@ describe('the checked-in baselines (.github/smoke/aria)', () => {
     // geometry is known, the two whole-page captures and Cancel (capture-01, capture-16).
     const capture = readFileSync(join(ariaDir, ariaBaselineName('web-capture')), 'utf8')
     expect(capture).toMatch(/^- dialog "Screenshot"/)
-    expect(capture).toMatch(/- toolbar "Capture":/)
+    expect(capture).toMatch(/- toolbar "Screenshot":/)
     expect(capture).toMatch(/Drag to select an area/)
     expect(capture).toMatch(/- button "Visible area"/)
     expect(capture).toMatch(/- button "Full page"/)
-    expect(capture).toMatch(/- button "Cancel capture"/)
+    expect(capture).toMatch(/- button "Cancel screenshot"/)
   })
 
   it('the pass-2 baselines carry the facts the snapshot leaves out, each about its own claim', () => {
