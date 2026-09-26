@@ -5,9 +5,16 @@ import {
   PRIVACY_PERMISSION_ERROR,
   type ScopedValues
 } from '../../../core/extensions/api/privacy'
+import type { ExtensionControl } from '../../../shared/types'
 import type { ListenerOptions, WebRequestDetails } from '../blocking'
 import type { WebRequestEvent, WebRequestListener } from '../webRequest'
-import { PRIVACY_REGISTRANT, PrivacyApi, type PrivacyPage } from '../extensionApi/privacy'
+import { ExtensionControls } from '../extensionApi/controls'
+import {
+  PRIVACY_CONTROL_KEYS,
+  PRIVACY_REGISTRANT,
+  PrivacyApi,
+  type PrivacyPage
+} from '../extensionApi/privacy'
 import type { ApiContext, ApiHost } from '../extensionApi/types'
 import type { WebRequestListenerHost } from '../extensionApi/webRequest'
 
@@ -88,14 +95,26 @@ interface Dispatched {
   details: unknown
 }
 
+/** The user's own settings the API answers for and follows (`browserValue`). */
+interface UserSettings {
+  privacy: { safeBrowsingEnabled: boolean; dnt: boolean; thirdPartyCookies: string }
+  passwords: { offerToSave: boolean }
+  searchSuggestions: boolean
+  autofill: { addresses: boolean; cards: boolean }
+}
+
 interface World {
   api: PrivacyApi
   pipeline: FakePipeline
   dispatched: Dispatched[]
+  /** Every map published to the Settings page (`UIState.extensionControls`), in order. */
+  controls: Array<Record<string, ExtensionControl>>
   loaded: Set<string>
   privateAllowed: Set<string>
   privateWindows: number
-  offerToSave: boolean
+  settings: UserSettings
+  /** The user changed a setting: the state committed (`State.subscribe`). */
+  commit(): void
   persisted: Map<string, Record<string, ScopedValues>>
   ctx(extensionId: string): ApiContext
 }
@@ -103,18 +122,34 @@ interface World {
 function world(options: { attach?: boolean } = {}): World {
   const dispatched: Dispatched[] = []
   const persisted = new Map<string, Record<string, ScopedValues>>()
+  const controls: Array<Record<string, ExtensionControl>> = []
+  const listeners: Array<() => void> = []
   const state: World = {
     api: undefined as unknown as PrivacyApi,
     pipeline: new FakePipeline(),
     dispatched,
+    controls,
     loaded: new Set([OLD, NEW, NO_PERMISSION]),
     privateAllowed: new Set(),
     privateWindows: 0,
-    offerToSave: true,
+    settings: {
+      privacy: { safeBrowsingEnabled: true, dnt: false, thirdPartyCookies: 'block-private' },
+      passwords: { offerToSave: true },
+      searchSuggestions: true,
+      autofill: { addresses: true, cards: true }
+    },
+    commit: () => {
+      for (const listener of listeners) listener()
+    },
     persisted,
     ctx: (extensionId) => ({ extensionId }) as unknown as ApiContext
   }
   const host = {
+    controls: new ExtensionControls({
+      setExtensionControls: (map) => {
+        controls.push(map)
+      }
+    }),
     grants: (extensionId: string) => ({
       permissions: extensionId === NO_PERMISSION ? ['storage'] : ['privacy'],
       origins: []
@@ -137,18 +172,20 @@ function world(options: { attach?: boolean } = {}): World {
     browser: {
       extensions: {
         list: () => [
-          { id: OLD, installedAt: 1000 },
-          { id: NEW, installedAt: 2000 },
-          { id: NO_PERMISSION, installedAt: 3000 }
+          { id: OLD, name: 'Older Guard', installedAt: 1000 },
+          { id: NEW, name: 'Newer Guard', installedAt: 2000 },
+          { id: NO_PERMISSION, name: 'Bystander', installedAt: 3000 }
         ]
       },
       allWindows: () => Array.from({ length: state.privateWindows }, () => ({ isPrivate: true })),
       state: {
-        settings: {
-          passwords: {
-            get offerToSave(): boolean {
-              return state.offerToSave
-            }
+        get settings(): UserSettings {
+          return state.settings
+        },
+        subscribe: (listener: () => void) => {
+          listeners.push(listener)
+          return () => {
+            listeners.splice(listeners.indexOf(listener), 1)
           }
         }
       }
@@ -238,11 +275,70 @@ describe('PrivacyApi handlers', () => {
     expect(w.api.effectiveValue('websites', 'hyperlinkAuditingEnabled', false)).toBe(true)
   })
 
-  it('reads the vault setting as the browser value of passwordSavingEnabled', () => {
+  it("answers the user's own settings as the browser value of the settings Zenium has", () => {
     const w = world()
     expect(get(w, OLD, 'services', 'passwordSavingEnabled')).toMatchObject({ value: true })
-    w.offerToSave = false
+    w.settings.passwords.offerToSave = false
     expect(get(w, OLD, 'services', 'passwordSavingEnabled')).toMatchObject({ value: false })
+    expect(get(w, OLD, 'services', 'safeBrowsingEnabled')).toMatchObject({ value: true })
+    expect(get(w, OLD, 'services', 'searchSuggestEnabled')).toMatchObject({ value: true })
+    expect(get(w, OLD, 'services', 'autofillAddressEnabled')).toMatchObject({ value: true })
+    expect(get(w, OLD, 'services', 'autofillCreditCardEnabled')).toMatchObject({ value: true })
+    expect(get(w, OLD, 'websites', 'doNotTrackEnabled')).toMatchObject({ value: false })
+    w.settings.privacy.safeBrowsingEnabled = false
+    w.settings.searchSuggestions = false
+    w.settings.autofill.cards = false
+    w.settings.privacy.dnt = true
+    expect(get(w, OLD, 'services', 'safeBrowsingEnabled')).toMatchObject({ value: false })
+    expect(get(w, OLD, 'services', 'searchSuggestEnabled')).toMatchObject({ value: false })
+    expect(get(w, OLD, 'services', 'autofillAddressEnabled')).toMatchObject({ value: true })
+    expect(get(w, OLD, 'services', 'autofillCreditCardEnabled')).toMatchObject({ value: false })
+    expect(get(w, OLD, 'websites', 'doNotTrackEnabled')).toMatchObject({ value: true })
+    // Third-party cookies read as allowed unless blocked everywhere (Chrome's CookieControlsMode
+    // transform reads its incognito-only mode as allowed too).
+    expect(get(w, OLD, 'websites', 'thirdPartyCookiesAllowed')).toMatchObject({ value: true })
+    w.settings.privacy.thirdPartyCookies = 'allow'
+    expect(get(w, OLD, 'websites', 'thirdPartyCookiesAllowed')).toMatchObject({ value: true })
+    w.settings.privacy.thirdPartyCookies = 'block'
+    expect(get(w, OLD, 'websites', 'thirdPartyCookiesAllowed')).toMatchObject({ value: false })
+    // A setting Zenium has nothing behind keeps the spec's default.
+    expect(get(w, OLD, 'network', 'networkPredictionEnabled')).toMatchObject({ value: true })
+  })
+
+  it("reports the user's own change of a setting through onChange, but not under an extension's value", () => {
+    const w = world()
+    w.settings.privacy.safeBrowsingEnabled = false
+    w.commit()
+    expect(w.dispatched).toEqual([
+      {
+        extensionId: OLD,
+        event: 'privacy.services.safeBrowsingEnabled.onChange',
+        details: { value: false, levelOfControl: 'controllable_by_this_extension' }
+      },
+      {
+        extensionId: NEW,
+        event: 'privacy.services.safeBrowsingEnabled.onChange',
+        details: { value: false, levelOfControl: 'controllable_by_this_extension' }
+      }
+    ])
+    w.dispatched.length = 0
+    // A commit that moved none of the settings the API reads is nothing.
+    w.commit()
+    expect(w.dispatched).toEqual([])
+    // Under an extension's value the user's own change moves nothing: the extension's stands.
+    set(w, NEW, 'services', 'safeBrowsingEnabled', { value: true })
+    w.dispatched.length = 0
+    w.settings.privacy.safeBrowsingEnabled = true
+    w.commit()
+    expect(w.dispatched).toEqual([])
+    expect(w.api.effectiveValue('services', 'safeBrowsingEnabled', false)).toBe(true)
+    // The extension lets go: the user's value (the same) applies, and the level of control
+    // changed, which Chrome reports as a change too.
+    clear(w, NEW, 'services', 'safeBrowsingEnabled')
+    expect(w.dispatched.map((d) => d.details)).toEqual([
+      { value: true, levelOfControl: 'controllable_by_this_extension' },
+      { value: true, levelOfControl: 'controllable_by_this_extension' }
+    ])
   })
 
   it('persists values (but the session-only scope) and reads them back on load', () => {
@@ -354,6 +450,96 @@ describe('PrivacyApi onChange', () => {
   })
 })
 
+describe('PrivacyApi and the Settings page', () => {
+  it("publishes the settings it holds over Zenium's rows, whole, with the extension's value, and drops them as they are let go", () => {
+    const w = world()
+    expect(w.controls).toEqual([])
+    set(w, NEW, 'services', 'passwordSavingEnabled', { value: false })
+    expect(w.controls.at(-1)).toEqual({
+      'passwords.offerToSave': { extensionId: NEW, name: 'Newer Guard', value: false }
+    })
+    set(w, OLD, 'websites', 'doNotTrackEnabled', { value: true })
+    expect(w.controls.at(-1)).toEqual({
+      'passwords.offerToSave': { extensionId: NEW, name: 'Newer Guard', value: false },
+      'privacy.dnt': { extensionId: OLD, name: 'Older Guard', value: true }
+    })
+    // The newer extension's value over the same setting moves the key to it, value and all.
+    set(w, NEW, 'websites', 'doNotTrackEnabled', { value: false })
+    expect(w.controls.at(-1)!['privacy.dnt']).toEqual({
+      extensionId: NEW,
+      name: 'Newer Guard',
+      value: false
+    })
+    // The same extension moving its own value is a change the row sees.
+    const before = w.controls.length
+    set(w, NEW, 'websites', 'doNotTrackEnabled', { value: true })
+    expect(w.controls).toHaveLength(before + 1)
+    expect(w.controls.at(-1)!['privacy.dnt']).toMatchObject({ extensionId: NEW, value: true })
+    // Disabled: its keys go, the older extension's value surfaces on the same publish.
+    w.loaded.delete(NEW)
+    w.api.unload(NEW)
+    expect(w.controls.at(-1)).toEqual({
+      'privacy.dnt': { extensionId: OLD, name: 'Older Guard', value: true }
+    })
+    // Uninstalled: nothing is left.
+    w.loaded.delete(OLD)
+    w.api.forget(OLD)
+    expect(w.controls.at(-1)).toEqual({})
+  })
+
+  it('publishes every row key once an extension holds it, mapped to the row it stands for', () => {
+    const w = world()
+    set(w, OLD, 'services', 'safeBrowsingEnabled', { value: false })
+    set(w, OLD, 'services', 'searchSuggestEnabled', { value: false })
+    set(w, OLD, 'services', 'autofillAddressEnabled', { value: false })
+    set(w, OLD, 'services', 'autofillCreditCardEnabled', { value: false })
+    set(w, OLD, 'websites', 'thirdPartyCookiesAllowed', { value: false })
+    expect(Object.keys(w.controls.at(-1)!).sort()).toEqual([
+      'autofill.addresses',
+      'autofill.cards',
+      'privacy.safeBrowsingEnabled',
+      'privacy.thirdPartyCookies',
+      'search.suggestions'
+    ])
+    expect(Object.values(PRIVACY_CONTROL_KEYS).sort()).toEqual([
+      'autofill.addresses',
+      'autofill.cards',
+      'passwords.offerToSave',
+      'privacy.dnt',
+      'privacy.safeBrowsingEnabled',
+      'privacy.thirdPartyCookies',
+      'search.suggestions'
+    ])
+  })
+
+  it('publishes nothing for a setting no row shows, nor for a private-window-only value', () => {
+    const w = world()
+    set(w, OLD, 'network', 'networkPredictionEnabled', { value: false })
+    set(w, OLD, 'websites', 'hyperlinkAuditingEnabled', { value: false })
+    set(w, OLD, 'network', 'webRTCIPHandlingPolicy', { value: 'disable_non_proxied_udp' })
+    expect(w.controls).toEqual([])
+    // The Settings rows are the regular profile's: a value for private windows alone marks none.
+    w.privateAllowed.add(OLD)
+    w.api.privateAccessChanged()
+    set(w, OLD, 'websites', 'doNotTrackEnabled', { value: true, scope: 'incognito_persistent' })
+    expect(w.api.effectiveValue('websites', 'doNotTrackEnabled', true)).toBe(true)
+    expect(w.controls).toEqual([])
+  })
+
+  it("keeps an extension's value over the user's own, and marks the row even at the user's value", () => {
+    const w = world()
+    // Chrome marks the row whenever an extension holds the pref, whatever the value.
+    set(w, OLD, 'services', 'safeBrowsingEnabled', { value: true })
+    expect(w.controls.at(-1)).toEqual({
+      'privacy.safeBrowsingEnabled': { extensionId: OLD, name: 'Older Guard', value: true }
+    })
+    w.settings.privacy.safeBrowsingEnabled = false
+    w.commit()
+    expect(w.api.effectiveValue('services', 'safeBrowsingEnabled', false)).toBe(true)
+    expect(w.controls.at(-1)!['privacy.safeBrowsingEnabled']).toMatchObject({ value: true })
+  })
+})
+
 describe('PrivacyApi enforcement', () => {
   it('applies the WebRTC policy to the pages of the kind of window it is for', () => {
     const w = world()
@@ -438,5 +624,26 @@ describe('PrivacyApi enforcement', () => {
         partition: 'private'
       })
     ).toEqual([undefined])
+  })
+
+  it("strips the DNT header the user's own setting sends while an extension holds Do Not Track off", () => {
+    const w = world()
+    w.settings.privacy.dnt = true
+    w.commit()
+    // The user's own value needs no hook: the browser's signals layer sends the header.
+    expect(w.pipeline.live()).toEqual([])
+    set(w, OLD, 'websites', 'doNotTrackEnabled', { value: false })
+    expect(w.pipeline.live()).toHaveLength(2)
+    expect(
+      w.pipeline.fire('onBeforeSendHeaders', { requestHeaders: { Accept: '*/*', dnt: '1' } })
+    ).toEqual([{ requestHeaders: { Accept: '*/*' } }])
+    expect(w.pipeline.fire('onBeforeSendHeaders', { requestHeaders: { Accept: '*/*' } })).toEqual([
+      undefined
+    ])
+    // The user turning the signal off leaves the extension's value in place, and the hook idle.
+    w.settings.privacy.dnt = false
+    w.commit()
+    expect(w.pipeline.live()).toEqual([])
+    expect(w.api.effectiveValue('websites', 'doNotTrackEnabled', false)).toBe(false)
   })
 })

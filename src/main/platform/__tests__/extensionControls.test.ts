@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ExtensionControl } from '../../../shared/types'
-import { ExtensionControls } from '../extensionApi/controls'
+import { ExtensionControls, extensionName } from '../extensionApi/controls'
+import type { ApiHost } from '../extensionApi/types'
 
 const OLD = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 const NEW = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
@@ -30,5 +31,37 @@ describe('ExtensionControls', () => {
     // An empty map published into an empty state is no change.
     controls.publish('proxy', {})
     expect(published).toHaveLength(4)
+  })
+
+  it("republishes when the same extension moves its own value: the value is what the row's disabled control shows", () => {
+    const published: Array<Record<string, ExtensionControl>> = []
+    const controls = new ExtensionControls({
+      setExtensionControls: (map) => {
+        published.push(map)
+      }
+    })
+    controls.publish('proxy', { proxy: { extensionId: OLD, name: 'Tunnel', value: 'pac_script' } })
+    controls.publish('proxy', { proxy: { extensionId: OLD, name: 'Tunnel', value: 'pac_script' } })
+    expect(published).toHaveLength(1)
+    controls.publish('proxy', { proxy: { extensionId: OLD, name: 'Tunnel', value: 'direct' } })
+    expect(published).toHaveLength(2)
+    expect(published.at(-1)).toEqual({
+      proxy: { extensionId: OLD, name: 'Tunnel', value: 'direct' }
+    })
+    // A value appearing or going is a change as well.
+    controls.publish('proxy', { proxy: { extensionId: OLD, name: 'Tunnel' } })
+    expect(published).toHaveLength(3)
+  })
+
+  it("names an extension as the Extensions page does, falling back to the engine's record, then the id", () => {
+    const host = {
+      browser: { extensions: { list: () => [{ id: OLD, name: 'Tunnel' }] } },
+      loaded: (id: string) => (id === NEW ? { extension: { name: 'Guard (engine)' } } : undefined)
+    } as unknown as ApiHost
+    expect(extensionName(host, OLD)).toBe('Tunnel')
+    expect(extensionName(host, NEW)).toBe('Guard (engine)')
+    expect(extensionName(host, 'cccccccccccccccccccccccccccccccc')).toBe(
+      'cccccccccccccccccccccccccccccccc'
+    )
   })
 })

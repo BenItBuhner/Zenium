@@ -1,4 +1,4 @@
-import { PRIVATE_CONTAINER_ID } from '../../../shared/types'
+import { PRIVATE_CONTAINER_ID, type ExtensionControl } from '../../../shared/types'
 import {
   INCOGNITO_ERROR,
   INCOGNITO_SCOPE_ERROR,
@@ -34,6 +34,7 @@ import {
   type ProxyErrorDetails,
   type SessionProxyConfig
 } from '../../../core/extensions/api/proxy'
+import { extensionName } from './controls'
 import { installOrderRank } from './privacy'
 import { ApiError, type ApiContext, type ApiHost, type NamespaceHandlers } from './types'
 
@@ -58,6 +59,16 @@ const PERMISSION = 'proxy'
 const SYSTEM_VALUE = proxyConfigValue(SYSTEM_PROXY_CONFIG)
 
 /**
+ * The key the Settings page reads for the proxy (`UIState.extensionControls`, the §10.5
+ * controlled-setting primitive). Chrome's System page marks its "Open your computer's proxy
+ * settings" row with the extension-controlled indicator while an extension holds the proxy;
+ * Zenium has no proxy row yet, so the key is published for the row to take when it exists. The
+ * value is the configuration's mode (`direct`, `auto_detect`, `pac_script`, `fixed_servers`,
+ * `system`), the one word a row can show.
+ */
+export const PROXY_CONTROL_KEY = 'proxy'
+
+/**
  * `chrome.proxy` for the browser layer. `proxy.settings` is one `types.ChromeSetting` whose
  * value is a `ProxyConfig`: every extension holding `proxy` may set it, the values are kept per
  * extension and scope (persisted but for the session-only private-window scope) and resolve per
@@ -66,6 +77,8 @@ const SYSTEM_VALUE = proxyConfigValue(SYSTEM_PROXY_CONFIG)
  * the extension there) to one configuration for the normal windows' sessions and one for the
  * private window's, each applied through Electron's `setProxy` as the configuration changes and
  * to every session that comes up later. The browser's own value is the system's settings.
+ * While an extension holds the normal windows' configuration, the Settings page hears of it
+ * through `ApiHost.controls` (`PROXY_CONTROL_KEY`).
  *
  * A configuration a session refuses is reported to the controlling extension as a fatal
  * `onProxyError`, and the setting stands as the extension set it (Chrome reports there the same
@@ -252,6 +265,26 @@ export class ProxyApi {
         ])
       }
     }
+    this.publishControls()
+  }
+
+  /**
+   * The Settings page's controlled row (`UIState.extensionControls`, through `ApiHost.controls`):
+   * the extension holding the normal windows' configuration – the Settings rows are the regular
+   * profile's, as Chrome's are – with the configuration's mode as the value; an empty map once
+   * the setting is back at the system's (a clear, the extension disabled or uninstalled).
+   */
+  private publishControls(): void {
+    const controls: Record<string, ExtensionControl> = {}
+    const effective = this.effective.get(false)
+    if (effective && effective.controller !== null) {
+      controls[PROXY_CONTROL_KEY] = {
+        extensionId: effective.controller,
+        name: extensionName(this.host, effective.controller),
+        value: proxyConfigOf(effective.value).mode
+      }
+    }
+    this.host.controls.publish('proxy', controls)
   }
 
   // ---------------------------------------------------------------------------
