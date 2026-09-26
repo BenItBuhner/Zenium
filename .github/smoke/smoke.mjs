@@ -3,7 +3,7 @@
 // blocking dialog, takes OS-level screenshots at each step and writes one JSON result per step.
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
-//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,features,recaptcha,downloads,notifications,restart-registration,private-taskbar,quit-hold,default-browser]
+//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,features,recaptcha,downloads,notifications,restart-registration,private-taskbar,quit-hold,visibility,default-browser]
 //        [--extra-args="--no-sandbox --disable-gpu"]   (space-separated, passed to the app)
 //        [--sandbox]             (the run is a sandboxed leg: Chromium's sandbox stays on, so
 //                                 --no-sandbox in --extra-args is refused and ELECTRON_DISABLE_SANDBOX
@@ -199,6 +199,23 @@
 //                mid-hold as <scenario>-quit-hold.png; the harness holds on Linux too when
 //                --extra-args carries the app's --test-quit-hold, the stand-in's chord being
 //                Ctrl+Shift+Q)
+//   visibility   a tab page's document.visibilityState follows its window as a Chrome tab's does
+//                (W6-F6; visibility-scenario.mjs): a profile past onboarding with the fixture's
+//                first page in a tab, its visibilitychange events counted in the page; the main
+//                window minimised from the main process reads `hidden` in the page and its view
+//                hidden to Chromium, restored `visible` again, one event each way (under Xvfb
+//                minimize() is a no-op – no window manager – and the pair records `skipped` with
+//                the reason); hidden and shown the same; a window of the harness's own over a
+//                quarter of the main window takes the focus and the page stays `visible` with no
+//                event (a blur is not hidden); one over the whole of it reads `hidden` where the
+//                OS tracks occlusion natively (Windows, macOS; judged) and is recorded on Linux
+//                (the X server's word), the events exactly the flips either way; the Web
+//                capture overlay parks the page's view (W6-F5, the page `visible`), the window
+//                hidden takes the parked view down for real (`hidden`) and shown parks it again
+//                (`visible`), Escape puts the view back in its box. Before the app's window is
+//                moved, the same moves on a throwaway BrowserWindow + WebContentsView made in
+//                the app's process record what Electron forwards natively on the OS (the
+//                `native-forwarding` step; not judged) (Linux, Windows and macOS jobs)
 //   default-browser  Make default on macOS (os-07; default-browser-scenario.mjs): the bundle's
 //                Info.plist claims http and https (CFBundleURLTypes); `defaultBrowser.request`
 //                calls app.setAsDefaultProtocolClient('http') – the call the OS's "Do you want
@@ -210,10 +227,11 @@
 //                held; LaunchServices' LSHandlers are read before and after for the record
 //                (macOS jobs)
 //
-// Windows and macOS run boot, restore, scale and dark (the installed Windows build boot and
-// restore), Windows notifications, restart-registration and private-taskbar too and macOS
-// quit-hold and default-browser too; the walkthrough, the crash pair, clear-on-exit, the two
-// mv3-worker legs, pip, the split pair, features and recaptcha run on Linux under Xvfb only.
+// Windows and macOS run boot, restore, scale, dark and visibility (the installed Windows build
+// boot and restore), Windows notifications, restart-registration and private-taskbar too and
+// macOS quit-hold and default-browser too; the walkthrough, the crash pair, clear-on-exit, the
+// two mv3-worker legs, pip, the split pair, features and recaptcha run on Linux under Xvfb only
+// (visibility runs there too, on its own step).
 //
 // Zero tolerated JS errors: a chrome console error, a chrome page error, a preload or Electron-side
 // error in a tab view, a main-process exception, a crashed process, a blocking native dialog or a
@@ -277,6 +295,7 @@ import {
 } from './site-data.mjs'
 import { startVideoFixture } from './video-fixture.mjs'
 import { viewInBox } from './views.mjs'
+import { VISIBILITY_SCENARIO, scenarioVisibility } from './visibility-scenario.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const IS_WIN = process.platform === 'win32'
@@ -1249,6 +1268,51 @@ class Session {
     }
     const urls = this.app.windows().map((p) => p.url())
     throw new Error(`no chrome page (file://…/index.html) within ${timeoutMs} ms; pages: ${urls}`)
+  }
+
+  /**
+   * Playwright turns `Emulation.setFocusEmulationEnabled` on for every page it attaches (its
+   * default page overrides), which makes the renderer report itself focused and so pins
+   * `document.visibilityState` to `visible` however the window behaves – a page read through the
+   * harness would never see `hidden`. This turns it off again, through the page's own Playwright
+   * CDP session (the same session that enabled it), so the page's visibility follows its window as
+   * it does for a user. Only the `visibility` scenario needs an honest reading and calls it; every
+   * other scenario leaves Playwright's default in place. Playwright applies the override once, at
+   * page init, so a page just attached is given a moment first (`settleMs`) and this disable is the
+   * last word. Matches every attached page whose URL contains `marker`; returns what it did.
+   */
+  async honestVisibility(marker, { timeoutMs = 8000, settleMs = 600 } = {}) {
+    const found = await waitFor(
+      () => {
+        const pages = this.app.windows().filter((p) => p.url().includes(marker))
+        return pages.length ? pages : null
+      },
+      timeoutMs,
+      `a page whose URL contains ${JSON.stringify(marker)} to read its visibility honestly`
+    )
+    await delay(settleMs)
+    const results = []
+    for (const page of found) results.push(await this.unpinFocusEmulation(page))
+    return { marker, pages: results.length, results }
+  }
+
+  /**
+   * `Emulation.setFocusEmulationEnabled` off for one Playwright `page`, reached through its own CDP
+   * session (`_mainFrameSession._client`, Playwright internals – the harness already uses `toImpl`
+   * for `app.process()`). A shape the internals no longer have, or a page gone, is reported rather
+   * than thrown so the caller's own reading is what judges the outcome.
+   */
+  async unpinFocusEmulation(page) {
+    try {
+      const impl = page._connection?.toImpl?.(page)
+      const client = impl?.delegate?._mainFrameSession?._client
+      if (!client)
+        return { unpinned: false, why: 'no CDP session on the page (Playwright internals moved)' }
+      await client.send('Emulation.setFocusEmulationEnabled', { enabled: false })
+      return { unpinned: true, url: page.url().slice(0, 80) }
+    } catch (e) {
+      return { unpinned: false, why: String(e && (e.message || e)).slice(0, 200) }
+    }
   }
 
   /**
@@ -7468,6 +7532,16 @@ async function main() {
           // executable's directory).
           exe: opts.exe,
           isWin: IS_WIN
+        }),
+      [VISIBILITY_SCENARIO]: () =>
+        scenarioVisibility({
+          freshProfile,
+          runScenario,
+          waitFor,
+          delay,
+          log,
+          fixture: bootSite,
+          platform: process.platform
         }),
       [DEFAULT_BROWSER_SCENARIO]: () =>
         scenarioDefaultBrowser({
