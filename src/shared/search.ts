@@ -1,4 +1,9 @@
-import type { SearchEngine, SearchEngineControl, SearchEngineSource } from './types'
+import type {
+  ImageSearchTemplate,
+  SearchEngine,
+  SearchEngineControl,
+  SearchEngineSource
+} from './types'
 
 /**
  * Zen ships Google, DuckDuckGo and Wikipedia by default and lets you pick Google, DuckDuckGo or
@@ -16,7 +21,9 @@ export const DEFAULT_SEARCH_ENGINES: SearchEngine[] = [
     suggestUrl: 'https://suggestqueries.google.com/complete/search?client=chrome&q=%s',
     keyword: '@google',
     glyph: 'G',
-    favicon: 'https://www.google.com/favicon.ico'
+    favicon: 'https://www.google.com/favicon.ico',
+    // Chrome's own image row for Google goes to Lens.
+    imageSearch: { name: 'Google Lens', url: 'https://lens.google.com/uploadbyurl?url=%s' }
   },
   {
     id: 'duckduckgo',
@@ -43,7 +50,11 @@ export const DEFAULT_SEARCH_ENGINES: SearchEngine[] = [
     suggestUrl: 'https://api.bing.com/osjson.aspx?query=%s',
     keyword: '@bing',
     glyph: 'B',
-    favicon: 'https://www.bing.com/favicon.ico'
+    favicon: 'https://www.bing.com/favicon.ico',
+    imageSearch: {
+      name: 'Bing',
+      url: 'https://www.bing.com/images/search?view=detailv2&iss=sbi&q=imgurl:%s'
+    }
   },
   {
     id: 'wikipedia',
@@ -336,6 +347,40 @@ export function buildSuggestUrl(engine: SearchEngine, query: string): string | n
 /** Every `%s` of a template takes the encoded query (an OpenSearch template may repeat it). */
 function fillTemplate(template: string, query: string): string {
   return template.split('%s').join(encodeURIComponent(query.trim()))
+}
+
+/** Where the image context menu's "Search Image with <engine>" row (CT-32) goes, and whose name it carries. */
+export interface ImageSearch {
+  /** The product the row names, the engine definition's own: "Google Lens", "Bing". */
+  engine: string
+  url: string
+}
+
+/**
+ * The reverse image search for an image's address (CT-32, Chrome's "Search image with …" row),
+ * read from the default engine's definition as Chrome reads a `TemplateURL`'s `image_url`: an
+ * engine with an `imageSearch` gets a row naming its product (Google's goes to Lens, Bing's to
+ * Bing's visual search), an engine without one gets none – DuckDuckGo, Ecosia, Wikipedia, and
+ * a hand-added or discovered engine, as Chrome shows the row only with an engine that has one.
+ * Only an address an engine can fetch has a row: an http(s) URL; a `data:` or `blob:` image
+ * gets null. The address goes into the template encoded once (`fillTemplate`).
+ */
+export function imageSearchFor(
+  engine: Pick<SearchEngine, 'imageSearch'>,
+  imageUrl: string
+): ImageSearch | null {
+  if (!/^https?:\/\/./i.test(imageUrl)) return null
+  const { imageSearch } = engine
+  if (!imageSearch) return null
+  return { engine: imageSearch.name, url: fillTemplate(imageSearch.url, imageUrl) }
+}
+
+/**
+ * Whether `url` can be an image search template: an `http(s)` address carrying `%s` once, where
+ * the image's address goes (`searchTemplateProblem`'s rules, one placeholder).
+ */
+export function isImageSearchTemplate(url: string): boolean {
+  return searchTemplateProblem(url) === null && url.split('%s').length === 2
 }
 
 // ---------------------------------------------------------------------------
@@ -714,7 +759,23 @@ function sanitizeSearchEngine(raw: unknown): SearchEngine | null {
       typeof r.visitedAt === 'number' && Number.isFinite(r.visitedAt) ? r.visitedAt : 0
   }
   if (r.active === false) engine.active = false
+  const imageSearch = sanitizeImageSearch(r.imageSearch)
+  if (imageSearch) engine.imageSearch = imageSearch
   return engine
+}
+
+/**
+ * A stored engine's `imageSearch`, kept when it is whole – a name and an image search template
+ * (`isImageSearchTemplate`) – and dropped otherwise: a record from a peer or a later build that
+ * defines one keeps its row, one that defines nothing valid gets none (the Search settings'
+ * form offers no field, so a hand-added engine carries one only through such a record).
+ */
+function sanitizeImageSearch(raw: unknown): ImageSearchTemplate | null {
+  if (!raw || typeof raw !== 'object') return null
+  const r = raw as Record<string, unknown>
+  if (typeof r.name !== 'string' || !r.name.trim()) return null
+  if (typeof r.url !== 'string' || !isImageSearchTemplate(r.url.trim())) return null
+  return { name: r.name.trim().slice(0, MAX_ENGINE_NAME), url: r.url.trim() }
 }
 
 function sanitizeFavicon(raw: unknown): string | null {

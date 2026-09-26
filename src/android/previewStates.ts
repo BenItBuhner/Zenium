@@ -177,7 +177,7 @@ const QR_EVENT_MARGIN_MS = 250
  * editing), `group=<n>` (the active tab in a group of n members made on the spot, so the group
  * strip is up in the bar band; `then=` steps run once the group has formed), `link=<url>` (the
  * active page's link menu held up for that URL, `text=<label>` the link's text over the address
- * in its header), `overlay=<kind>`
+ * in its header), `image=<url>` (the image sheet held up on an image at that URL), `overlay=<kind>`
  * (history, bookmarks,
  * downloads, addons, …: the chrome overlays a phone still has – Settings is not one, it is
  * `page=settings`; `show=<text>` scrolls the row with that text into view, `expand` rests a
@@ -898,16 +898,16 @@ async function dissolveGroup(): Promise<void> {
  * (`views.ts`: the host's `contextMenu` event with the link's URL, and its text when the hold
  * has one – the phone sheet's header title, PUI-18), at a point in the page's upper third –
  * where a phone's link menu sheet leaves the page showing above it, and a tablet's popover
- * anchors.
+ * anchors. With `image`, the hold is on an image at `url` (the image sheet, CT-32).
  */
-function holdLink(tabId: string, url: string, text?: string): void {
+function holdLink(tabId: string, url: string, text?: string, image = false): void {
   hostGlobal().viewEvent(
     tabId,
     'contextMenu',
     JSON.stringify({
       x: Math.round(window.innerWidth / 2),
       y: Math.round(window.innerHeight / 3),
-      linkURL: url,
+      ...(image ? { mediaType: 'image', srcURL: url } : { linkURL: url }),
       ...(text ? { linkText: text } : {})
     })
   )
@@ -1135,7 +1135,7 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
         return
       }
       whenMenuUp(finish)
-      holdLink(site.id, target.url, target.text)
+      holdLink(site.id, target.url, target.text, target.image ?? false)
     })
   } else if (target.kind === 'overlay') {
     // A seeded engine state stands before the overlay opens: the History page's From your other

@@ -9,6 +9,7 @@ import {
   engineFieldFavicon,
   engineKeywordProblem,
   engineKeywords,
+  imageSearchFor,
   isActiveSearchEngine,
   matchEngineKeyword,
   matchEngineWord,
@@ -23,7 +24,7 @@ import {
   withSearchEngineActive
 } from '../search'
 import { searchCommands } from '../commands'
-import type { FormFactor, HostCapabilities } from '../types'
+import type { FormFactor, HostCapabilities, SearchEngine } from '../types'
 
 const google = DEFAULT_SEARCH_ENGINES.find((e) => e.id === 'google')!
 
@@ -37,6 +38,99 @@ describe('search engines', () => {
     expect(buildSearchUrl(google, 'zen browser & co')).toBe(
       'https://www.google.com/search?q=zen%20browser%20%26%20co'
     )
+  })
+
+  describe('the image search an engine defines (CT-32, Chrome’s image_url)', () => {
+    const image = 'https://pics.example/a b.png?v=2&s=l'
+    const bing = DEFAULT_SEARCH_ENGINES.find((e) => e.id === 'bing')!
+    const yandex: SearchEngine = {
+      id: 'custom:yandex',
+      name: 'Yandex',
+      searchUrl: 'https://yandex.com/search/?text=%s',
+      suggestUrl: null,
+      keyword: '@yandex',
+      glyph: 'Y',
+      source: 'custom',
+      imageSearch: { name: 'Yandex', url: 'https://yandex.com/images/search?rpt=imageview&url=%s' }
+    }
+
+    it('sends the address to Google Lens for Google', () => {
+      expect(imageSearchFor(google, image)).toEqual({
+        engine: 'Google Lens',
+        url: 'https://lens.google.com/uploadbyurl?url=https%3A%2F%2Fpics.example%2Fa%20b.png%3Fv%3D2%26s%3Dl'
+      })
+    })
+
+    it('sends the address to Bing’s visual search for Bing', () => {
+      expect(imageSearchFor(bing, 'http://pics.example/a.png')).toEqual({
+        engine: 'Bing',
+        url: 'https://www.bing.com/images/search?view=detailv2&iss=sbi&q=imgurl:http%3A%2F%2Fpics.example%2Fa.png'
+      })
+    })
+
+    it('names the product of any engine that defines an image search, not only Google’s or Bing’s', () => {
+      expect(imageSearchFor(yandex, 'https://pics.example/a.png')).toEqual({
+        engine: 'Yandex',
+        url: 'https://yandex.com/images/search?rpt=imageview&url=https%3A%2F%2Fpics.example%2Fa.png'
+      })
+    })
+
+    it('encodes the address once: ? and & inside it survive as %3F and %26, the template’s own stay', () => {
+      const url = imageSearchFor(bing, image)!.url
+      expect(url).toBe(
+        'https://www.bing.com/images/search?view=detailv2&iss=sbi&q=imgurl:https%3A%2F%2Fpics.example%2Fa%20b.png%3Fv%3D2%26s%3Dl'
+      )
+      expect(new URL(url).searchParams.get('q')).toBe(`imgurl:${image}`)
+      expect(url).not.toContain('%253A')
+    })
+
+    it.each(['duckduckgo', 'ecosia', 'wikipedia'])('has none for %s, which defines none', (id) => {
+      const engine = DEFAULT_SEARCH_ENGINES.find((e) => e.id === id)!
+      expect(engine.imageSearch).toBeUndefined()
+      expect(imageSearchFor(engine, image)).toBeNull()
+    })
+
+    it('has none for a hand-added engine (the Search form defines none)', () => {
+      const custom = customSearchEngine(
+        'Kagi',
+        'https://kagi.com/search?q=%s',
+        DEFAULT_SEARCH_ENGINES
+      )
+      expect(custom.imageSearch).toBeUndefined()
+      expect(imageSearchFor(custom, image)).toBeNull()
+    })
+
+    it.each(['data:image/png;base64,AAAA', 'blob:https://x.example/1', 'file:///a.png', ''])(
+      'has none for an address no engine can fetch (%s)',
+      (src) => {
+        expect(imageSearchFor(google, src)).toBeNull()
+        expect(imageSearchFor(bing, src)).toBeNull()
+      }
+    )
+
+    it('keeps a stored engine’s valid image search and drops a broken one (the sync record is additive)', () => {
+      const [kept] = sanitizeSearchEngines([yandex])
+      expect(kept.imageSearch).toEqual(yandex.imageSearch)
+      const broken = [
+        { ...yandex, id: 'custom:a', imageSearch: { name: 'A', url: 'https://a.example/i' } },
+        { ...yandex, id: 'custom:b', imageSearch: { name: 'B', url: 'https://b.example/%s/%s' } },
+        { ...yandex, id: 'custom:c', imageSearch: { name: '', url: 'https://c.example/?u=%s' } },
+        { ...yandex, id: 'custom:d', imageSearch: { name: 'D', url: 'ftp://d.example/?u=%s' } },
+        { ...yandex, id: 'custom:e', imageSearch: 'https://e.example/?u=%s' },
+        { ...yandex, id: 'custom:f', imageSearch: undefined }
+      ]
+      for (const engine of sanitizeSearchEngines(broken)) {
+        expect(engine.imageSearch, engine.id).toBeUndefined()
+        expect(imageSearchFor(engine, image), engine.id).toBeNull()
+      }
+      // A record from before the field has no row; an edit keeps a field the record had.
+      const edited = editedSearchEngine(
+        kept,
+        { name: 'Yandex Images', searchUrl: kept.searchUrl, keyword: '@yandex' },
+        [kept]
+      )
+      expect(edited.imageSearch).toEqual(yandex.imageSearch)
+    })
   })
 
   it('parses OpenSearch array and Ecosia object responses', () => {

@@ -204,6 +204,19 @@ describe('Task Manager', () => {
     const reported = collisions(defaultShortcuts('linux', 'chrome'), chromeReference('linux'))
     expect(reported.filter((c) => c.shortcut.action === 'tasks.open')).toEqual([])
   })
+
+  it('F7 is caret browsing in both presets on every platform (CT-34), resolving the reference row', () => {
+    for (const platform of PLATFORMS) {
+      for (const preset of ['zen', 'chrome'] as const) {
+        expect(key('key_caretBrowsing', platform, preset)).toEqual(plain('F7'))
+        const reported = collisions(defaultShortcuts(platform, preset), chromeReference(platform))
+        expect(reported.filter((c) => c.shortcut.action === 'page.caretBrowsing')).toEqual([])
+      }
+    }
+    const row = defaultShortcuts('linux', 'zen').find((s) => s.id === 'key_caretBrowsing')
+    expect(row?.action).toBe('page.caretBrowsing')
+    expect(row?.group).toBe('pageOperations')
+  })
 })
 
 describe('Delete browsing data', () => {

@@ -77,31 +77,40 @@ function WindowPromptView({
     }
   }, [tabId, fromChrome])
 
+  const text = windowPromptText(prompt)
   const respond = (accepted: boolean): void => {
     if (answered.current) return
     answered.current = true
-    // The warning is switched off only by an answer that goes ahead; a cancelled close changes
-    // nothing.
-    if (accepted && !keepWarning) run('settings.update', { warnOnCloseWindow: false })
+    // The warning (or the caret confirm's "ask again") is switched off only by an answer that
+    // goes ahead; a cancelled close – or a declined caret browsing – changes nothing.
+    if (accepted && !keepWarning && text.remember)
+      run('settings.update', { [text.remember]: false })
     run('window.respondPrompt', { id: prompt.id, accepted })
   }
 
-  const text = windowPromptText(prompt)
+  // The tabs warning's checkbox carries the Settings row's words; the caret confirm's is
+  // Chrome's "Don't ask again", whose checked state is the inverse of the setting it clears.
+  const checkbox =
+    text.remember === 'warnOnCloseWindow'
+      ? {
+          label: 'Confirm before closing multiple tabs',
+          checked: keepWarning,
+          onChange: setKeepWarning
+        }
+      : text.remember === 'caretBrowsingConfirm'
+        ? {
+            label: "Don't ask again",
+            checked: !keepWarning,
+            onChange: (checked: boolean) => setKeepWarning(!checked)
+          }
+        : undefined
   return (
     <ConfirmDialog
       name="window-prompt"
       title={text.title}
       description={text.description || undefined}
       action={text.verb}
-      checkbox={
-        text.tabsWarning
-          ? {
-              label: 'Confirm before closing multiple tabs',
-              checked: keepWarning,
-              onChange: setKeepWarning
-            }
-          : undefined
-      }
+      checkbox={checkbox}
       onCancel={() => respond(false)}
       onConfirm={() => respond(true)}
       returnFocus={fromChrome ? undefined : false}

@@ -94,6 +94,7 @@ const DESKTOP: HostCapabilities = {
   readAloud: true,
   pageLanguages: true,
   genericFontFamilies: true,
+  caretBrowsing: true,
   placementAnswered: false
 }
 

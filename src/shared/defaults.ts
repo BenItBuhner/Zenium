@@ -276,6 +276,8 @@ export const DEFAULT_SETTINGS: Settings = {
   restoreSession: true,
   warnOnCloseWindow: true,
   warnBeforeQuitting: true,
+  caretBrowsing: false,
+  caretBrowsingConfirm: true,
   confirmCloseAll: true,
   crashRestore: 'ask',
   askWhereToSave: false,

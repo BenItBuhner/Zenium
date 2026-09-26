@@ -194,6 +194,8 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   pageLanguages: true,
   // Blink on the desktop maps `serif` / `sans-serif` / `monospace` through the web preferences.
   genericFontFamilies: true,
+  // Electron 44's `webContents.setCaretBrowsingEnabled` (`platform/views.ts`), F7's toggle.
+  caretBrowsing: true,
   // DESKTOP FYI (Q1, the observable landing): the page's `WebContentsView` composites above the
   // chrome and the main process places it synchronously, so the chrome's stand-ins leave as
   // they always have; nothing here answers a placement with the view's drawn frame. Were the

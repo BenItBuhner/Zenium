@@ -1124,6 +1124,13 @@ export class ElectronTabView implements TabView {
     this.wc.send('zen:zap', on)
   }
 
+  setCaretBrowsingEnabled(enabled: boolean): void {
+    // One call into the renderer's web preferences (Chromium's `caret_browsing_enabled`); a
+    // page that is already there is left alone.
+    if (this.wc.isDestroyed() || this.wc.isCaretBrowsingEnabled() === enabled) return
+    this.wc.setCaretBrowsingEnabled(enabled)
+  }
+
   showHint(hint: PageHint | null): void {
     if (!this.wc.isDestroyed()) this.wc.send('zen:page-hint', hint)
   }
