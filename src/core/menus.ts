@@ -89,8 +89,10 @@ import {
   ISSUES_URL,
   menuSignature,
   runFromMenuBar,
-  splitViewSubmenu
+  splitViewSubmenu,
+  tabDirectionLabels
 } from './menuBar'
+import { isHorizontalTabs } from '../shared/toolbarLayout'
 import { isSendableUrl } from './sync/sendTab'
 import {
   folderTabs,
@@ -2068,6 +2070,13 @@ export class Menus {
 
     const when = (able: boolean, ...items: Template): Template => (able ? items : [])
     const panes = win.formFactor !== 'phone'
+    // The rows that name a direction read along the strip (`tabDirectionLabels`, Chrome's rule
+    // for its own tab menu): "to the Right" / "to the Left" beside the desktop's horizontal
+    // strip, "Below" / "Above" beside every strip that runs down – the sidebar layouts', the
+    // phone's and the tablet's.
+    const direction = tabDirectionLabels(
+      win.formFactor === 'desktop' && isHorizontalTabs(state.settings.toolbarLayout)
+    )
 
     // Firefox's tab menu in Firefox's groups (design language v2 §6 "Menus": a context menu that
     // runs long is regrouped to the app menu's counts – about eighteen rows, four separators at
@@ -2079,7 +2088,7 @@ export class Menus {
     // the flat menu did is gone – the long tails are in the submenus.
     const openGroup: Template = [
       {
-        label: 'New Tab Below',
+        label: direction.newTab,
         enabled: !tab.essential,
         click: () => this.browser.newTabAfter(tabId, win)
       }
@@ -2320,12 +2329,12 @@ export class Menus {
         label: 'Close Multiple Tabs',
         submenu: [
           {
-            label: 'Close Tabs Above',
+            label: direction.closeBefore,
             enabled: tabs.closeScope(tabId, 'above', win).length > 0,
             click: () => tabs.closeAbove(tabId, win)
           },
           {
-            label: 'Close Tabs Below',
+            label: direction.closeAfter,
             enabled: tabs.closeScope(tabId, 'below', win).length > 0,
             click: () => tabs.closeBelow(tabId, win)
           },
