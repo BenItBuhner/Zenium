@@ -97,6 +97,9 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
     /** The launch's splash (PWA-06): the platform's window held to the page's first frame, dressed as the app's. */
     private lateinit var startupSplash: StartupSplash
     private lateinit var splash: WebAppSplash
+    /** PWA-13: the first launch's "Running in Zenium" card while it is up ([WebAppDisclosure]); the insets move it. */
+    var disclosure: NativeToastCard? = null
+        private set
 
     /** The page (a fresh view after a renderer crash, see `TabHost.replaceCrashed`). */
     val page: TabWebView? get() = if (::host.isInitialized) host.tabs.get(TAB_ID) else null
@@ -154,6 +157,7 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
             toolbar.setTopInset(bars.top)
             statusStrip.layoutParams = (statusStrip.layoutParams as FrameLayout.LayoutParams).apply { height = bars.top }
             layoutPage()
+            disclosure?.setBottomInset(bottomInset)
             WindowInsetsCompat.CONSUMED
         }
 
@@ -335,8 +339,48 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
                 reportFullyDrawn()
                 startupSplash.ready()
                 Log.i(StartupSplash.TAG, "web app page painted: first frame; splash held ${startupSplash.heldForMs ?: -1} ms, lifted by ${startupSplash.hold.liftedBy ?: "nothing yet"}")
+                discloseOnFirstLaunch()
             }
         })
+    }
+
+    /**
+     * PWA-13: on the install's first launch, once the page is on screen and the splash has lifted,
+     * the window says whose it is – "Running in Zenium" on the §9.33 card in the first-time hint's
+     * plain form, 2.8 s, a swipe sends it off early – and the launch is remembered in the app's
+     * record once the card has LEFT (the clock's end or the swipe), not when it shows, so a launch
+     * killed under the card says it once more and no launch after a seen card says it again. The
+     * record's read here and the mark's write in [showDisclosure] are one small file's, off the
+     * main thread; the card comes up on the read.
+     */
+    private fun discloseOnFirstLaunch() {
+        val record = record
+        Thread({
+            val due = WebAppDisclosure.dueFor(this, record)
+            Log.i(WebAppDisclosure.TAG, "disclosure ${if (due) "due: the first launch of" else "not due: a later launch of"} ${record.shortcutId}")
+            if (due) shell.post { if (!isFinishing && !isDestroyed && disclosure == null) showDisclosure() }
+        }, "zen-webapp-disclosure").start()
+    }
+
+    private fun showDisclosure() {
+        val record = record
+        val card = NativeToastCard(
+            this, V2Ink(this, scheme.dark),
+            text = WebAppDisclosure.text(this),
+            action = null,
+            showMs = WebAppDisclosure.SHOW_MS,
+            onGone = { gone ->
+                if (disclosure === gone) disclosure = null
+                // Seen: the card left by its clock or under a swipe (a detach at teardown does not come here).
+                Thread({
+                    val written = WebAppDisclosure.markSeenFor(this, record, System.currentTimeMillis())
+                    Log.i(WebAppDisclosure.TAG, "disclosure ${if (written) "seen: marked in the record of" else "seen: the record already marked for"} ${record.shortcutId}")
+                }, "zen-webapp-disclosure").start()
+            }
+        )
+        disclosure = card
+        // Under the fullscreen layer, so a page gone fullscreen covers the card as it covers the chrome's.
+        card.show(shell, bottomInset, shell.indexOfChild(fullscreenLayer))
     }
 
     /**
@@ -509,6 +553,8 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
 
     override fun onDestroy() {
         displayScript?.remove()
+        disclosure?.detach()
+        disclosure = null
         if (::notifications.isInitialized) notifications.destroy()
         if (::startupSplash.isInitialized) startupSplash.cancel()
         if (::host.isInitialized) host.destroy()

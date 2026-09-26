@@ -130,6 +130,90 @@ class V2TokensPinTest {
         assertEquals(row / 2, PromptSheetSpec.ROW_PAD_DP)
     }
 
+    /**
+     * §9.33's card, drawn natively for the installed app's window ([NativeToastCard]): its numbers
+     * are `@shared/toastCard`'s `TOAST_CARD` (the one source the chrome's `.zen-message` and the
+     * page-drawn fullscreen hint already share), the `.zen-message*` rules' and the clocks' –
+     * read from the sources, never retyped.
+     */
+    @Test
+    fun theToastCardSpecIsTheChromesCard() {
+        val toastCard = File(root, "src/shared/toastCard.ts").readText()
+        fun constant(name: String): Int = Regex("""\b$name: (\d+)""").find(toastCard)?.groupValues?.get(1)?.toInt() ?: error("toastCard.ts states no $name")
+        fun exported(name: String): Long = Regex("""export const $name = (\d+)""").find(toastCard)?.groupValues?.get(1)?.toLong() ?: error("toastCard.ts exports no $name")
+        assertEquals(constant("insetPx"), ToastCardSpec.INSET_DP)
+        assertEquals(constant("maxWidthPx"), ToastCardSpec.MAX_WIDTH_DP)
+        assertEquals(constant("rowPx"), ToastCardSpec.ROW_DP)
+        val row = Regex("""calc\(var\(--v2-line-body-box\) \+ (\d+)px\)""").find(css.phone["--v2-row"]!!)!!.groupValues[1].toInt()
+        assertEquals(PromptSheetSpec.BODY_LINE_SP + row, ToastCardSpec.ROW_DP)
+        assertEquals(constant("radiusPx"), ToastCardSpec.RADIUS_DP)
+        assertEquals(css.px("--v2-radius-card"), ToastCardSpec.RADIUS_DP)
+        assertEquals(constant("gutterPx"), ToastCardSpec.GUTTER_DP)
+        assertEquals(constant("padPx"), ToastCardSpec.PAD_DP)
+        assertEquals(constant("gapPx"), ToastCardSpec.GAP_DP)
+        assertEquals(constant("fontPx"), PromptSheetSpec.BODY_SP)
+        assertEquals(constant("linePx"), PromptSheetSpec.BODY_LINE_SP)
+        assertEquals(constant("weight"), PromptSheetSpec.BODY_WEIGHT)
+        assertEquals(exported("TOAST_SHOW_MS"), ToastCardSpec.SHOW_MS)
+        assertEquals(exported("REDUCED_FADE_MS"), ToastCardSpec.FADE_MS)
+        // `--v2-shadow-panel`: the card's elevation is the shadow's offset.
+        assertEquals("0 ${ToastCardSpec.SHADOW_Y_DP}px 6px rgb(0 0 0 / 0.2)", Regex("""shadow: '([^']+)'""").find(toastCard)!!.groupValues[1])
+        // `.zen-message`: the row's padding – 3 above and below, 14 on the text's side, 6 on the control's – its gap and its hairline.
+        val message = css.rule(".zen-message")
+        assertEquals("${ToastCardSpec.PAD_DP}px ${ToastCardSpec.CONTROL_SIDE_DP}px ${ToastCardSpec.PAD_DP}px ${ToastCardSpec.GUTTER_DP}px", declaration(message, "padding"))
+        assertEquals(ToastCardSpec.GAP_DP, px(message, "gap"))
+        assertEquals("${PromptSheetSpec.HAIRLINE_DP}px solid var(--v2-border)", declaration(message, "border"))
+        assertEquals("var(--v2-row)", declaration(message, "min-height"))
+        assertEquals("var(--v2-panel)", declaration(message, "background"))
+        assertEquals("var(--v2-text)", declaration(message, "color"))
+        // The text's inset: `(--v2-row - --v2-line-body-box) / 2 - 4px`, 8 on a phone.
+        assertTrue(message.contains("--zen-message-text-inset: calc((var(--v2-row) - var(--v2-line-body-box)) / 2 - 4px);"))
+        assertEquals((ToastCardSpec.ROW_DP - PromptSheetSpec.BODY_LINE_SP) / 2 - 4, ToastCardSpec.TEXT_INSET_DP)
+        // A card with an action grows to the control plus 8; a toast without one pads 14 on both sides.
+        assertEquals("calc(var(--v2-control) + 8px)", declaration(css.rule(".zen-message[data-action]"), "min-height"))
+        assertEquals(PromptSheetSpec.CONTROL_DP + 8, ToastCardSpec.ACTION_MIN_DP)
+        assertEquals(ToastCardSpec.GUTTER_DP, px(css.rule(".zen-message-toast:not([data-action])"), "padding-right"))
+        // `.zen-message-button`: the control's height and radius, `padding: 0 12px`, the label at the button weight, the fill and the accent; the press scale.
+        val button = css.rule(".zen-message-button")
+        assertEquals("var(--v2-control)", declaration(button, "height"))
+        assertEquals("var(--v2-radius-control)", declaration(button, "border-radius"))
+        assertEquals("0 ${ToastCardSpec.BUTTON_PADDING_DP}px", declaration(button, "padding"))
+        assertEquals("var(--v2-weight-button)", declaration(button, "font-weight"))
+        assertEquals("var(--v2-control-fill)", declaration(button, "background"))
+        assertEquals("var(--v2-control-accent)", declaration(button, "color"))
+        assertEquals("scale(${ToastCardSpec.PRESS_SCALE})", declaration(css.rule(".zen-message-button:active:not(:disabled)"), "transform"))
+        // The clocks the chrome keeps beside the shared one: 5 s with an action (lib/ui.ts), 8 s for an Undo (bookmarkUndo.ts).
+        val ui = File(root, "src/renderer/src/lib/ui.ts").readText()
+        assertEquals(Regex("""export const TOAST_ACTION_DURATION = (\d+)""").find(ui)!!.groupValues[1].toLong(), ToastCardSpec.ACTION_SHOW_MS)
+        val undo = File(root, "src/renderer/src/lib/bookmarkUndo.ts").readText()
+        assertEquals(Regex("""export const BOOKMARK_UNDO_TOAST_MS = (\d+)""").find(undo)!!.groupValues[1].toLong(), ToastCardSpec.LONG_SHOW_MS)
+        // §11: in on SPRING_GENTLE, out on SPRING_SNAPPY (`@shared/spring`).
+        val spring = File(root, "src/shared/spring.ts").readText()
+        fun springOf(name: String): Pair<Float, Float> {
+            val body = Regex("""export const $name: SpringConfig = \{([\s\S]*?)\}""").find(spring)!!.groupValues[1]
+            return Regex("""stiffness: (\d+)""").find(body)!!.groupValues[1].toFloat() to Regex("""damping: (\d+)""").find(body)!!.groupValues[1].toFloat()
+        }
+        assertEquals(springOf("SPRING_GENTLE"), ToastCardSpec.IN_STIFFNESS to ToastCardSpec.IN_DAMPING)
+        assertEquals(springOf("SPRING_SNAPPY"), ToastCardSpec.OUT_STIFFNESS to ToastCardSpec.OUT_DAMPING)
+        // §9.33's swipe: the one release rule every swipe shares (`SWIPE_THRESHOLDS`, lib/gestures/swipe.ts) and
+        // the message card's own slop and rubber band (lib/gestures/dismiss.ts) – the numbers the native card decides on.
+        val swipe = File(root, "src/renderer/src/lib/gestures/swipe.ts").readText()
+        val thresholds = Regex("""export const SWIPE_THRESHOLDS: SwipeThresholds = \{([\s\S]*?)\}""").find(swipe)!!.groupValues[1]
+        fun threshold(name: String): Float = Regex("""\b$name: ([\d.]+)""").find(thresholds)?.groupValues?.get(1)?.toFloat() ?: error("SWIPE_THRESHOLDS states no $name")
+        assertEquals(threshold("flingVelocity"), ToastCardSpec.FLING_VELOCITY)
+        assertEquals(threshold("commitFraction"), ToastCardSpec.COMMIT_FRACTION)
+        assertEquals(threshold("projectionSeconds"), ToastCardSpec.PROJECTION_SECONDS)
+        assertEquals(Regex("""export function rubberBand\(overshoot: number, extent: number, coefficient = ([\d.]+)\)""").find(swipe)!!.groupValues[1].toFloat(), ToastCardSpec.RUBBER_COEFFICIENT)
+        val dismiss = File(root, "src/renderer/src/lib/gestures/dismiss.ts").readText()
+        assertEquals(Regex("""export const DISMISS_SLOP = (\d+)""").find(dismiss)!!.groupValues[1].toInt(), ToastCardSpec.SLOP_DP)
+        assertEquals(Regex("""const RESIST_EXTENT = (\d+)""").find(dismiss)!!.groupValues[1].toInt(), ToastCardSpec.RESIST_DP)
+        // The toast's open ways, `TOAST_DIRS` (ToastCard.tsx): sideways both ways, down.
+        val toastCardTsx = File(root, "src/renderer/src/components/messages/ToastCard.tsx").readText()
+        val dirs = Regex("""const TOAST_DIRS: DismissDirections = \{ x: \[([-\d, ]+)\], y: \[([-\d, ]+)\] \}""").find(toastCardTsx)!!
+        assertEquals(dirs.groupValues[1].split(",").map { it.trim().toInt() }.toSet(), ToastSwipe.TOAST_WAYS.x)
+        assertEquals(dirs.groupValues[2].split(",").map { it.trim().toInt() }.toSet(), ToastSwipe.TOAST_WAYS.y)
+    }
+
     @Test
     fun theSpecNumbersAreTheSheetRules() {
         // §9.9: the grabber (`.zen-sheet-handle`) in its strip (`.zen-sheet-handle-hit`: 44 tall, pulled back 24).

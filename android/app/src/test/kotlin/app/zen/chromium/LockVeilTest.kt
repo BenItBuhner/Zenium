@@ -137,12 +137,18 @@ class LockVeilTest {
         // the panel token and nothing of a page, only during a live edge drag – a stop's
         // ACTION_CANCEL ends the drag (`HistoryNavGesture` → the chrome's `retract`) and the disc
         // goes down – and it takes no touch.
+        //
+        // Outside the browser window altogether: the toast card an installed web app's own window
+        // draws (PWA-13, `NativeToastCard` in `WebAppActivity`'s shell), whose 2 dp is
+        // `--v2-shadow-panel`'s offset, the card's shadow. No page of the browser's and no veil
+        // stand in that window; the browser's veil never has it for a sibling.
         val sources = File(repoRoot(), "android/app/src/main/kotlin").walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
         val lifts = sources.flatMap { file -> code(file).lines().filter { LIFT.containsMatchIn(it) }.map { "${file.name}: ${it.trim()}" } }.sorted()
         assertEquals(
             listOf(
                 "HistoryNavBubbleView.kt: elevation = SHADOW_ELEVATION_DP * density",
-                "Host.kt: it.elevation = LockVeil.Z_PX"
+                "Host.kt: it.elevation = LockVeil.Z_PX",
+                "NativeToastCard.kt: view.elevation = dp(ToastCardSpec.SHADOW_Y_DP).toFloat()"
             ),
             lifts
         )
