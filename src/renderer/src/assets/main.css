@@ -8125,7 +8125,7 @@
     line-height: var(--v2-line-body);
     color: var(--v2-text-deemphasized);
   }
-  /* The action row at the card's foot: hugging buttons, 8 apart, leading (§9.11's in-row form). */
+  /* The action row at the card's foot: one hugging button, leading (§9.11's in-row form); a card whose rows are its whole act has none. */
   :root[data-form-factor='phone'] .zen-mstack-actions {
     display: flex;
     gap: 8px;
@@ -8133,25 +8133,17 @@
     padding-top: 4px;
   }
   /*
-   * The page dots under the strip, in the window's ink: 6 px discs 8 apart, the current page at
-   * full ink and the rest at 30 %, each inside a 24 touch box; a dot is a tab of the strip.
+   * The page indicator under the strip, in the window's ink: 6 px discs 8 apart, the current
+   * page at full ink and the rest at 30 %. Indicators, not controls (§9.3, §9.9): no touch box,
+   * no press – the discs sit 11 under the cards in a 20 row, where the strip's dots have stood.
    */
   :root[data-form-factor='phone'] .zen-mstack-dots {
     display: flex;
     justify-content: center;
     gap: 8px;
-    padding-top: 8px;
+    padding: 11px 0 3px;
   }
   :root[data-form-factor='phone'] .zen-mstack-dot {
-    display: flex;
-    width: 24px;
-    height: 24px;
-    align-items: center;
-    justify-content: center;
-    margin: -6px 0;
-    border-radius: 12px;
-  }
-  :root[data-form-factor='phone'] .zen-mstack-dot > span {
     display: block;
     width: 6px;
     height: 6px;
@@ -8160,7 +8152,7 @@
     opacity: 0.3;
     transition: opacity 120ms var(--zen-ease);
   }
-  :root[data-form-factor='phone'] .zen-mstack-dot[aria-selected='true'] > span {
+  :root[data-form-factor='phone'] .zen-mstack-dot[data-current] {
     opacity: 1;
   }
   /*

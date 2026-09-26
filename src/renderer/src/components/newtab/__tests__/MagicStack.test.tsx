@@ -19,12 +19,14 @@ import { FrameDialogHost } from '@renderer/lib/portals'
 import { browserStore, uiStore } from '@renderer/lib/ui'
 
 /*
- * The Magic Stack on the page (NTP-16): the cards drawn from the state in the stack's order,
- * each a page surface named for TalkBack, the strip a carousel with its page dots; the ⋮ opening
- * the shared local menu with Hide This and Customise; Hide This writing the device's hidden set
- * and taking the card out on the 120 ms fade (a cut under reduced motion), the card kept out
- * between the command and the state and back when the state re-enables it; the Customise sheet's
- * switch rows writing the set; the stack not drawn at all when nothing has content.
+ * The Magic Stack on the page (NTP-16; "Cards" to the user): the cards drawn from the state in
+ * the stack's order, each a page surface named for TalkBack, the strip a carousel with its page
+ * indicator (dots that are no controls, a status line reading the page); the rows act and a card
+ * carries at most one action its rows cannot do; the ⋮ opening the shared local menu with Hide
+ * This and Customise; Hide This writing the device's hidden set and taking the card out on the
+ * 120 ms fade (a cut under reduced motion), the card kept out between the command and the state
+ * and back when the state re-enables it; the Customise sheet's switch rows writing the set; the
+ * stack not drawn at all when nothing has content.
  */
 
 const run = vi.fn()
@@ -304,7 +306,9 @@ describe('the Magic Stack on the page (NTP-16)', () => {
     const strip = q('.zen-mstack-strip')!
     expect(strip.getAttribute('role')).toBe('list')
     expect(strip.getAttribute('aria-roledescription')).toBe('carousel')
-    expect(q('.zen-mstack')!.getAttribute('aria-label')).toBe('Magic Stack')
+    // The surface is called Cards; Chrome's name stays in Chrome's UI.
+    expect(q('.zen-mstack')!.getAttribute('aria-label')).toBe('Cards')
+    expect(document.body.textContent).not.toContain('Magic Stack')
     for (const card of cards()) expect(card.dataset.surface).toBe('page')
     expect(cards().map((c) => c.getAttribute('aria-label'))).toEqual([
       'Continue where you left off: Espresso - Wikipedia',
@@ -321,20 +325,24 @@ describe('the Magic Stack on the page (NTP-16)', () => {
     ])
     for (const more of qa('.zen-mstack-more'))
       expect(more.classList.contains('zen-v2-icon-button')).toBe(true)
-    // The dots: a tablist of the pages, the first selected, each named for its page.
-    const dots = qa('.zen-mstack-dots [role="tab"]')
-    expect(q('.zen-mstack-dots')!.getAttribute('role')).toBe('tablist')
+    // The indicator: a status line reading the page and a dot per card, the first current; the
+    // dots are no controls – hidden from the reader, no tab, no button, nothing to tap.
+    const indicator = q('.zen-mstack-dots')!
+    expect(indicator.getAttribute('role')).toBe('status')
+    expect(indicator.textContent).toBe('Page 1 of 4')
+    const dots = qa('.zen-mstack-dot')
     expect(dots).toHaveLength(4)
-    expect(dots.map((d) => d.getAttribute('aria-selected'))).toEqual([
-      'true',
-      'false',
-      'false',
-      'false'
-    ])
-    expect(dots[1]!.getAttribute('aria-label')).toBe('Page 2 of 4: Downloads')
+    expect(dots.map((d) => d.hasAttribute('data-current'))).toEqual([true, false, false, false])
+    for (const dot of dots) {
+      expect(dot.getAttribute('aria-hidden')).toBe('true')
+      expect(dot.tagName).toBe('SPAN')
+      expect(dot.hasAttribute('role')).toBe(false)
+    }
+    expect(qa('.zen-mstack-dots button, .zen-mstack-dots [role="tab"]')).toEqual([])
+    expect(q('.zen-mstack [role="tablist"]')).toBeNull()
   })
 
-  it('the dots follow the strip’s scroll on their own subscription, the strip itself untouched', () => {
+  it('the indicator follows the strip’s scroll on its own subscription, the strip itself untouched', () => {
     render(stack(state()))
     const strip = q<HTMLUListElement>('.zen-mstack-strip')!
     // happy-dom lays nothing out: a card is 0 wide, so the pitch is the 8 gap alone.
@@ -344,12 +352,12 @@ describe('the Magic Stack on the page (NTP-16)', () => {
     act(() => {
       strip.dispatchEvent(new Event('scroll'))
     })
-    const dots = qa('.zen-mstack-dots [role="tab"]')
-    expect(dots.map((d) => d.getAttribute('aria-selected'))).toEqual([
-      'false',
-      'true',
-      'false',
-      'false'
+    expect(q('.zen-mstack-dots')!.textContent).toBe('Page 2 of 4')
+    expect(qa('.zen-mstack-dot').map((d) => d.hasAttribute('data-current'))).toEqual([
+      false,
+      true,
+      false,
+      false
     ])
     expect(observer.takeRecords()).toEqual([])
     observer.disconnect()
@@ -379,26 +387,63 @@ describe('the Magic Stack on the page (NTP-16)', () => {
     expect(q('.zen-mstack-dots')).toBeNull()
   })
 
-  it('the actions run their commands: Reopen restores the closed tab, Open opens the download, Set as default asks the host', () => {
+  it('one action a card, and only one its rows do not already do: See all on Downloads and Bookmarks, Set as default on the reminder, none on Continue; the rows reopen, open and open', () => {
     render(stack(state()))
     const buttons = qa<HTMLButtonElement>('.zen-mstack-action')
-    expect(buttons.map((b) => b.textContent)).toEqual([
-      'Reopen',
-      'Open',
-      'See all',
-      'See all',
-      'Set as default'
+    expect(buttons.map((b) => b.textContent)).toEqual(['See all', 'See all', 'Set as default'])
+    expect(qa('.zen-mstack-actions').map((a) => a.closest('li')?.dataset.cell)).toEqual([
+      'downloads',
+      'bookmarks',
+      'default-browser'
     ])
-    click(buttons[0]!)
+    expect(q('.zen-mstack-card[data-cell="continue"] .zen-mstack-actions')).toBeNull()
+    // The reminder's primary asks the host under the card's own source.
+    click(buttons[2]!)
+    expect(commands('defaultBrowser.request')).toEqual([{ source: 'newtab' }])
+    expect(buttons[2]!.dataset.primary).toBe('true')
+    // The rows are the cards' acts, named for what they do.
+    const row = (id: MagicStackModuleId): HTMLElement | null =>
+      q(`.zen-mstack-card[data-cell="${id}"] .zen-mstack-row`)
+    expect(row('continue')!.getAttribute('aria-label')).toBe('Reopen Espresso - Wikipedia')
+    click(row('continue'))
     expect(commands('session.restoreClosed')).toEqual([{ id: 'c1' }])
-    click(buttons[1]!)
+    expect(row('downloads')!.getAttribute('aria-label')).toBe('Open design-language.pdf')
+    click(row('downloads'))
     expect(commands('download.open')).toEqual([{ id: 'd1' }])
-    click(buttons[4]!)
-    expect(commands('defaultBrowser.request')).toEqual([{ source: 'banner' }])
-    expect(buttons[4]!.dataset.primary).toBe('true')
-    // A bookmark row opens its bookmark in this tab.
-    click(q('.zen-mstack-card[data-cell="bookmarks"] .zen-mstack-row'))
+    expect(row('bookmarks')!.getAttribute('aria-label')).toBe('Open Damping - Wikipedia')
+    click(row('bookmarks'))
     expect(commands('bookmark.open')).toEqual([{ id: 'b1', newTab: false, tabId: 'r' }])
+  })
+
+  it('the Continue card’s detail reads the host then the time, the Downloads card’s register; a closed window has the time alone', () => {
+    const now = Date.now()
+    render(
+      stack(
+        state({
+          recentlyClosed: [{ ...CLOSED, closedAt: now - 5 * 60_000 }],
+          downloads: [
+            { ...DOWNLOAD, completedAt: now - 3 * 3_600_000, endedAt: now - 3 * 3_600_000 }
+          ]
+        })
+      )
+    )
+    const detail = (id: MagicStackModuleId): string | undefined =>
+      q(`.zen-mstack-card[data-cell="${id}"] .zen-mstack-row-detail`)?.textContent ?? undefined
+    expect(detail('continue')).toBe('en.wikipedia.org · 5 min ago')
+    expect(detail('downloads')).toBe('2.3 MB · 3 h ago')
+    render(
+      stack(
+        state({
+          recentlyClosed: [
+            { ...CLOSED, kind: 'window', title: '', url: null, tabCount: 3, closedAt: now - 60_000 }
+          ]
+        })
+      )
+    )
+    expect(q('.zen-mstack-card[data-cell="continue"] .zen-mstack-row-title')!.textContent).toBe(
+      'Window with 3 tabs'
+    )
+    expect(detail('continue')).toBe('1 min ago')
   })
 
   it('the ⋮ opens the shared local menu titled by the module, with Hide This and Customise', async () => {
@@ -459,7 +504,10 @@ describe('the Magic Stack on the page (NTP-16)', () => {
     rest()
     const sheet = q('.zen-sheet[role="dialog"]')
     expect(sheet).not.toBeNull()
-    expect(sheet!.textContent).toContain('Magic Stack')
+    // Titled "Cards", its one section "Show"; Chrome's name for the feature is nowhere on it.
+    expect(sheet!.querySelector('h2.zen-sheet-title')?.textContent).toBe('Cards')
+    expect(sheet!.querySelector('h3.zen-v2-heading')?.textContent).toBe('Show')
+    expect(sheet!.textContent).not.toContain('Magic Stack')
     const switches = qa('[role="switch"]')
     expect(switches.map((s) => s.textContent)).toEqual([
       'Continue where you left offThe tab you closed last, ready to reopen',
@@ -503,7 +551,7 @@ describe('the Magic Stack on the page (NTP-16)', () => {
     ])
   })
 
-  it('the page’s gear sheet carries a Magic Stack row – the way to the switches once every card is hidden; it leaves first and the stack’s sheet comes up as it has gone', async () => {
+  it('the page’s gear sheet carries a Cards row – the way to the switches once every card is hidden; it leaves first and the stack’s sheet comes up as it has gone', async () => {
     browserStore.set({
       state: state({
         settings: { newTab: structuredClone(DEFAULT_NEW_TAB_SETTINGS) },
@@ -524,10 +572,12 @@ describe('the Magic Stack on the page (NTP-16)', () => {
     const gear = q('.zen-sheet[role="dialog"]')!
     expect(gear.querySelector('h2.zen-sheet-title')?.textContent).toBe('New tab page')
     const row = qa('.zen-sheet[role="dialog"] .zen-v2-row').find((r) =>
-      r.textContent?.startsWith('Magic Stack')
+      r.textContent?.startsWith('Cards')
     )
     expect(row).toBeDefined()
+    expect(row!.dataset.row).toBe('magic-stack')
     expect(row!.textContent).toContain('Choose which cards show under the shortcuts')
+    expect(gear.textContent).not.toContain('Magic Stack')
     click(row!)
     // One sheet over the page (§9.24): the stack's waits for the gear's landing.
     expect(magicStackCustomizeStore.get().open).toBe(false)
@@ -537,9 +587,7 @@ describe('the Magic Stack on the page (NTP-16)', () => {
     await flush()
     rest()
     const sheets = qa('.zen-sheet[role="dialog"]')
-    expect(sheets.map((s) => s.querySelector('h2.zen-sheet-title')?.textContent)).toEqual([
-      'Magic Stack'
-    ])
+    expect(sheets.map((s) => s.querySelector('h2.zen-sheet-title')?.textContent)).toEqual(['Cards'])
     expect(qa('[role="switch"]').map((s) => s.getAttribute('aria-checked'))).toEqual([
       'false',
       'false',

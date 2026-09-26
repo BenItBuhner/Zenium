@@ -168,17 +168,17 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
             )
           })}
           {/*
-            The Magic Stack's cards are chosen on their own sheet (NTP-16): a card's ⋮ opens it,
-            and this row is the way there once every card is hidden and the stack has no ⋮ to
-            offer. This sheet leaves first (§9.24: one sheet over the page), and the stack's
-            comes up as it has gone.
+            The cards (NTP-16, Chrome's Magic Stack – "Cards" to the user) are chosen on their own
+            sheet: a card's ⋮ opens it, and this row is the way there once every card is hidden
+            and the stack has no ⋮ to offer. This sheet leaves first (§9.24: one sheet over the
+            page), and the stack's comes up as it has gone.
           */}
           <RowView
             ctx={NO_SHEETS}
             row={{
               id: 'magic-stack',
               kind: 'action',
-              label: 'Magic Stack',
+              label: 'Cards',
               description: 'Choose which cards show under the shortcuts',
               leaves: 'chevron',
               onPress: () => sheet.current?.dismiss(openMagicStackCustomize)

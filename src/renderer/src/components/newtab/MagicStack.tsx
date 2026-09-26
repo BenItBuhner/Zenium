@@ -51,19 +51,24 @@ import {
 } from './magicStackCustomize'
 
 /**
- * The new tab page's Magic Stack (NTP-16; Chrome's `HomeModulesCoordinator`): a horizontally
- * paged strip of module cards under the shortcut tiles – the newest recently closed tab, the
- * last download, the newest bookmarks, the default-browser reminder – each on one card chassis
- * with a title row (the module's glyph, its name, the ⋮), its content and one action. The ⋮
- * offers Hide This and Customise; the Customise sheet lists the modules with switches. Hidden
- * modules are this device's (`UIState.newTabHiddenModules`, never synced); a stack with no card
- * to show is not drawn at all, as Chrome draws none.
+ * The new tab page's cards (NTP-16; Chrome's Magic Stack, `HomeModulesCoordinator` – the name
+ * stays Chrome's, the surface is called Cards to the user): a horizontally paged strip of module
+ * cards under the shortcut tiles – the newest recently closed tab, the last download, the newest
+ * bookmarks, the default-browser reminder – each on one card chassis with a title row (the
+ * module's glyph, its name, the ⋮) and its content. The content rows act (the file opens, the
+ * bookmark opens, the closed tab reopens), so a card carries at most one action its rows cannot
+ * do: See all on Downloads and Bookmarks, Set as default on Default browser, none on Continue
+ * where you left off (§9.29). The ⋮ offers Hide This and Customise; the Customise sheet lists
+ * the modules with switches. Hidden modules are this device's (`UIState.newTabHiddenModules`,
+ * never synced); a stack with no card to show is not drawn at all, as Chrome draws none.
  *
  * Design language v2: the page is a window surface, and each card is a page surface on it
  * (§9.29: the field and the sheets are page surfaces; the cards join them) – `--v2-card` under a
  * `--v2-card-border` hairline at the card radius, no shadow (§3). The ⋮ is the shared 44 icon
  * button (§9.3), the action a hugging secondary button (§9.11's in-row form). The strip snaps a
- * card at a time with the next one peeking, and the page dots under it name the page.
+ * card at a time with the next one peeking; the dots under it are indicators, not controls
+ * (§9.3, §9.9: a 24 target is not a control) – the strip pages by swipe, TalkBack walks the
+ * cards as list items, and a status line reads the page.
  *
  * Motion (§11.4): a hidden card leaves on a 120 ms fade as the cards after it close the gap on
  * the FLIP tracker's spring; under reduced motion the card is cut and the others take their
@@ -132,7 +137,7 @@ export function MagicStack({
   return (
     <section
       className={cn('zen-mstack w-full max-w-[520px]', dock === 'bottom' ? 'mb-6' : 'mt-6')}
-      aria-label="Magic Stack"
+      aria-label="Cards"
     >
       <ul ref={stripRef} className="zen-mstack-strip" role="list" aria-roledescription="carousel">
         {cards.map((card) => (
@@ -157,11 +162,13 @@ export function MagicStack({
 }
 
 /**
- * The pages, named and pickable (Chrome's strip announces its page the same way). The dots
- * follow the strip's scroll on their own subscription: a page change re-renders the dots alone,
- * never the strip – a strip re-rendered as the finger crosses the half-way mark would re-run the
- * FLIP commit under it (a forced layout and a transform write per card, on a snap container
- * mid-swipe).
+ * The page indicator: a dot per card with the current one at full ink, and a status line
+ * ("Page 2 of 3") the reader gets as the strip settles on a page – the dots themselves are
+ * hidden from it and take no tap (the strip pages by swipe; a 24 target is not a control, §9.3,
+ * §9.9). The dots follow the strip's scroll on their own subscription: a page change re-renders
+ * the indicator alone, never the strip – a strip re-rendered as the finger crosses the half-way
+ * mark would re-run the FLIP commit under it (a forced layout and a transform write per card, on
+ * a snap container mid-swipe).
  */
 function PageDots({
   strip,
@@ -184,28 +191,17 @@ function PageDots({
     return () => el.removeEventListener('scroll', onScroll)
   }, [strip])
 
-  const goTo = (index: number): void => {
-    const el = strip.current
-    const target = el?.children[index] as HTMLElement | undefined
-    if (!el || !target) return
-    el.scrollTo({ left: target.offsetLeft, behavior: reducedMotion() ? 'auto' : 'smooth' })
-  }
-
   const current = Math.min(page, cards.length - 1)
   return (
-    <div className="zen-mstack-dots" role="tablist" aria-label="Magic Stack pages">
+    <div className="zen-mstack-dots" role="status">
+      <span className="sr-only">{`Page ${current + 1} of ${cards.length}`}</span>
       {cards.map((card, index) => (
-        <button
+        <span
           key={card.id}
-          type="button"
-          role="tab"
           className="zen-mstack-dot"
-          aria-selected={index === current}
-          aria-label={`Page ${index + 1} of ${cards.length}: ${magicStackModule(card.id).title}`}
-          onClick={() => goTo(index)}
-        >
-          <span aria-hidden />
-        </button>
+          data-current={index === current || undefined}
+          aria-hidden
+        />
       ))}
     </div>
   )
@@ -309,25 +305,29 @@ function CardBody({
       {card.id === 'downloads' && <DownloadContent item={card.item} />}
       {card.id === 'bookmarks' && <BookmarksContent items={card.items} tabId={tabId} />}
       {card.id === 'default-browser' && <DefaultBrowserContent />}
-      <div className="zen-mstack-actions">
-        {card.id === 'continue' && (
-          <Action onClick={() => run('session.restoreClosed', { id: card.entry.id })}>
-            Reopen
-          </Action>
-        )}
-        {card.id === 'downloads' && (
-          <>
-            <Action onClick={() => run('download.open', { id: card.item.id })}>Open</Action>
-            <Action onClick={() => openPage('downloads')}>See all</Action>
-          </>
-        )}
-        {card.id === 'bookmarks' && <Action onClick={() => openPage('bookmarks')}>See all</Action>}
-        {card.id === 'default-browser' && (
-          <Action primary onClick={() => run('defaultBrowser.request', { source: 'banner' })}>
+      {/*
+        One action a card, and only one its rows do not already do (§9.29): the rows open the
+        file, the bookmark, the closed tab, so the row at the foot carries the page the card
+        stands for – or the reminder's primary – and the Continue card, whose row is its whole
+        act, carries none. The foot is pinned: the cards share the tallest one's height.
+      */}
+      {card.id === 'downloads' && (
+        <div className="zen-mstack-actions">
+          <Action onClick={() => openPage('downloads')}>See all</Action>
+        </div>
+      )}
+      {card.id === 'bookmarks' && (
+        <div className="zen-mstack-actions">
+          <Action onClick={() => openPage('bookmarks')}>See all</Action>
+        </div>
+      )}
+      {card.id === 'default-browser' && (
+        <div className="zen-mstack-actions">
+          <Action primary onClick={() => run('defaultBrowser.request', { source: 'newtab' })}>
             Set as default
           </Action>
-        )}
-      </div>
+        </div>
+      )}
     </>
   )
 }
@@ -406,13 +406,18 @@ function Favicon({
   return <img src={src} alt="" className="zen-mstack-favicon" />
 }
 
+/**
+ * The closed tab's row: the host, then when it was closed ("en.wikipedia.org · 5 min ago") – the
+ * Downloads card's register ("2.3 MB · 3 h ago"), one across the cards; a closed window has no
+ * host, so its detail is the time alone.
+ */
 function ContinueContent({ entry }: { entry: ClosedEntrySummary }): JSX.Element {
-  const detail =
-    entry.kind === 'window'
-      ? `Closed ${relativeTime(entry.closedAt).toLowerCase()}`
-      : entry.url
-        ? getHost(entry.url)
-        : undefined
+  const detail = [
+    entry.kind === 'tab' && entry.url ? getHost(entry.url) : null,
+    relativeTime(entry.closedAt)
+  ]
+    .filter(Boolean)
+    .join(' · ')
   return (
     <ContentRow
       glyph={<Favicon favicon={entry.favicon} url={entry.url} />}
@@ -497,9 +502,10 @@ export function MagicStackCustomizeLayer(): JSX.Element | null {
 }
 
 /**
- * Chrome's "Customise Magic Stack": every module this host has as a switch row (§10.4, the
- * shared `RowView`), its description under the name; a switch writes the device's hidden set
- * at once, so the page behind the sheet shows the card come or go as the sheet is used.
+ * Chrome's "Customise Magic Stack", titled "Cards" here (Chrome's name for the feature stays
+ * in Chrome's UI): every module this host has as a switch row (§10.4, the shared `RowView`) under
+ * the one section "Show", its description under the name; a switch writes the device's hidden
+ * set at once, so the page behind the sheet shows the card come or go as the sheet is used.
  */
 function MagicStackCustomizeSheet({ state }: { state: UIState }): JSX.Element {
   const hidden = state.newTabHiddenModules
@@ -507,7 +513,7 @@ function MagicStackCustomizeSheet({ state }: { state: UIState }): JSX.Element {
   return (
     <PhoneSheet
       name="newtab-magic-stack-customize"
-      title={{ pose: 'header', text: 'Magic Stack' }}
+      title={{ pose: 'header', text: 'Cards' }}
       onClose={closeMagicStackCustomize}
     >
       <div className="zen-ntp-customize flex flex-col pb-1">

@@ -3235,8 +3235,12 @@ export interface DefaultBrowserStatus {
 /** `allowed`: the system hands web links to this app; `disallowed`: it is set not to; `unknown`: it could not say. */
 export type AppLinkState = 'allowed' | 'disallowed' | 'unknown'
 
-/** Where a request to become the default browser was made from. */
-export type DefaultBrowserRequestSource = 'onboarding' | 'sheet' | 'banner' | 'settings'
+/**
+ * Where a request to become the default browser was made from; `newtab` is the phone's new tab
+ * page card (NTP-16), its own name so the card's explicit tap is never read under the banner's
+ * memory rules.
+ */
+export type DefaultBrowserRequestSource = 'onboarding' | 'sheet' | 'banner' | 'settings' | 'newtab'
 
 // ---------------------------------------------------------------------------
 // Page controls (desktop site, dark theme for sites, page zoom)
