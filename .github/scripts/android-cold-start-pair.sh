@@ -147,10 +147,16 @@ TOTAL_THRESHOLD_MS=${P0_TOTAL_THRESHOLD_MS:-100}
 ALIAS_THRESHOLD_MS=${P0_ALIAS_THRESHOLD_MS:-$TOTAL_THRESHOLD_MS}
 FULLY_DRAWN_THRESHOLD_MS=${P0_FULLY_DRAWN_THRESHOLD_MS:-300}
 FULLY_DRAWN_ALIAS_THRESHOLD_MS=${P0_FULLY_DRAWN_ALIAS_THRESHOLD_MS:-500}
-READY_WAIT_S=12
-FRAMES_AT_S="8 12"
-STATS_AT_S=15
-NEXT_AT_S=22
+# The clock, calibrated (the header): overridable from the environment for a null run at another
+# cadence (P0_* – the trim's proof runs at the candidate cadence before the defaults move).
+READY_WAIT_S=${P0_READY_WAIT_S:-12}
+FRAMES_AT_S=${P0_FRAMES_AT_S:-"8 12"}
+STATS_AT_S=${P0_STATS_AT_S:-15}
+NEXT_AT_S=${P0_NEXT_AT_S:-22}
+# The logcat buffers every read names (`-b`): main,system, the app's lines and the platform's.
+# Overridable (P0_LOGCAT_BUFFERS) so that the UNREAD path can be exercised on a runner with a
+# buffer name adb refuses – the read fails, the rows read UNREAD, the record says why.
+LOGCAT_BUFFERS=${P0_LOGCAT_BUFFERS:-main,system}
 out=${DEMO_OUT:-artifacts/android-cold-start-pair}
 base_apk=${P0_BASE_APK:?P0_BASE_APK must name the APK of the base build}
 head_apk=$(find android/app/build/outputs/apk/debug -name '*.apk' -print -quit)
@@ -231,9 +237,9 @@ read_errors="$out/read-errors.txt"
 read_log() {
   local status=0
   : > "$logcat_tmp"
-  adb logcat -d -b main,system -s "$@" > "$logcat_raw" 2>> "$read_errors" || status=$?
+  adb logcat -d -b "$LOGCAT_BUFFERS" -s "$@" > "$logcat_raw" 2>> "$read_errors" || status=$?
   if [ "$status" -ne 0 ]; then
-    echo "adb logcat -d -b main,system -s $* exited $status" >> "$read_errors"
+    echo "adb logcat -d -b $LOGCAT_BUFFERS -s $* exited $status" >> "$read_errors"
     return 1
   fi
   tr -d '\r' < "$logcat_raw" > "$logcat_tmp"
@@ -385,7 +391,7 @@ measure_one() {
   local seen started answer fully held marks_ stats_ total wait_ state launcher probes t
   local errors_before errors_lines errors_n errors_note=
   to_launcher
-  adb logcat -c -b main,system > /dev/null 2>> "$read_errors" || true
+  adb logcat -c -b "$LOGCAT_BUFFERS" > /dev/null 2>> "$read_errors" || true
   errors_before=$(wc -l < "$read_errors")
   # The count before the start; a failed read here reads as none seen (the wait reads afresh).
   seen=$(fully_drawn_count)
@@ -672,7 +678,7 @@ values_table() {
   echo "MainActivity's cold start, \`am start -W\` after \`am force-stop\`, $pairs starts per build and way on one emulator boot in $runs blocks of $starts, the arms interleaved and the order alternated (odd blocks base then head, even blocks head then base: each block installs one arm, reads its ART state (dexopt ${dexopt_ref:-?}: ART Service leaves a debuggable package no compiled code whatever is asked, so both arms boot in the one state the install leaves), starts it once to settle, measures it $starts times by each way, then the other arm the same; the i-th start of a block's one arm pairs with the i-th of its other; medians in ms): direct, the shell's start of MainActivity (the pair as it was, a start no user makes), and through the icon alias, the launcher's tap. THE GATE is the median of the paired differences (after − before within each pair), which the boot's drift across the run does not enter: TotalTime's paired median over +$TOTAL_THRESHOLD_MS ms on the direct way or +$ALIAS_THRESHOLD_MS ms on the alias way fails, Fully drawn's over +$FULLY_DRAWN_THRESHOLD_MS ms (direct) or +$FULLY_DRAWN_ALIAS_THRESHOLD_MS ms (alias) fails, a row with fewer than half its pairs valid is INCONCLUSIVE and fails – unless every pair it lacks was lost to a read that failed (UNREAD, below) and none to a build's -: that row is UNREAD, a warning, not judged; WaitTime is reported, not judged. The per-arm medians and their deltas are the record beside it; the position reading (the arm installed first in its block against the arm installed second, whatever the build) says what the order alone costs."
   # wm size / density answer two lines once overridden (Physical, Override): the last is the one in force.
   echo "device: $(adb shell getprop ro.build.fingerprint | tr -d '\r'); display $(adb shell wm size | tr -d '\r' | tail -n 1 | sed 's/.*: //') at $(adb shell wm density | tr -d '\r' | tail -n 1 | sed 's/.*: //') dpi"
-  echo "TotalTime: the app window's first frame under the splash (a plain window on a build before the boot theme, the splash's colour with it); on the alias rows from the alias's start to MainActivity's first frame – the trampoline's run in between (one launch to the platform). Fully drawn: the chrome's first real frame, reportFullyDrawn() at READY, from the same start; - when the log was read to the end of the wait and the line was not there (a build without the mark, or one that did not reach READY within the wait: the build's fact), UNREAD when the read itself failed (adb's error, or a start after which the buffers answered nothing: the runner's, its stderr in read-errors.txt beside this record). Every log read is \`adb logcat -d -b main,system -s <tag>\`, its stderr kept. Method: every start with the process gone (\`am force-stop\`) and the launcher in front, by \`am start -W\` from the shell – the direct rows at MainActivity with MAIN/LAUNCHER, the alias rows with the launcher's own intent (MAIN/LAUNCHER, NEW_TASK | RESET_TASK_IF_NEEDED) at the enabled icon alias, whose target (the shortcuts' NoDisplay trampoline on a build before round 4, IconTapActivity under the splash theme from it) forwards to MainActivity; READY waited for up to $READY_WAIT_S s, the log's lines and the frame statistics read $STATS_AT_S s after the start request, the next start $NEXT_AT_S s after it – one clock for both builds and ways."
+  echo "TotalTime: the app window's first frame under the splash (a plain window on a build before the boot theme, the splash's colour with it); on the alias rows from the alias's start to MainActivity's first frame – the trampoline's run in between (one launch to the platform). Fully drawn: the chrome's first real frame, reportFullyDrawn() at READY, from the same start; - when the log was read to the end of the wait and the line was not there (a build without the mark, or one that did not reach READY within the wait: the build's fact), UNREAD when the read itself failed (adb's error, or a start after which the buffers answered nothing: the runner's, its stderr in read-errors.txt beside this record). Every log read is \`adb logcat -d -b $LOGCAT_BUFFERS -s <tag>\`, its stderr kept. Method: every start with the process gone (\`am force-stop\`) and the launcher in front, by \`am start -W\` from the shell – the direct rows at MainActivity with MAIN/LAUNCHER, the alias rows with the launcher's own intent (MAIN/LAUNCHER, NEW_TASK | RESET_TASK_IF_NEEDED) at the enabled icon alias, whose target (the shortcuts' NoDisplay trampoline on a build before round 4, IconTapActivity under the splash theme from it) forwards to MainActivity; READY waited for up to $READY_WAIT_S s, the log's lines and the frame statistics read $STATS_AT_S s after the start request, the next start $NEXT_AT_S s after it – one clock for both builds and ways."
   echo
   echo "| build, way | TotalTime median | Fully drawn median | WaitTime median | TotalTime runs | Fully drawn runs | LaunchState | splash held (by) |"
   echo "| --- | --- | --- | --- | --- | --- | --- | --- |"
