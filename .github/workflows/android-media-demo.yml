@@ -20,6 +20,10 @@ name: Android media demo
 # expand, the X, the host's endings on a navigation, a tab change and the tab's close, and Home
 # with no fullscreen video; stills `android-pip-*`).
 on:
+  # TEMPORARY (W6-S4, removed before READY): the worker's one emulator run of the PiP driver on its branch.
+  push:
+    branches:
+      - cursor/android-auto-pip-permission-9271
   workflow_dispatch:
     inputs:
       driver:
@@ -58,10 +62,10 @@ jobs:
       emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
       # The shared driver picks the demo from its environment (see the script's header).
       script-env: |
-        DEMO_CLASS=${{ inputs.driver == 'pip' && 'app.zen.chromium.PipDemo' || inputs.driver == 'ui' && 'app.zen.chromium.MediaUiDemo' || 'app.zen.chromium.MediaDemo' }}
+        DEMO_CLASS=${{ (inputs.driver == 'pip' || inputs.driver == '') && 'app.zen.chromium.PipDemo' || inputs.driver == 'ui' && 'app.zen.chromium.MediaUiDemo' || 'app.zen.chromium.MediaDemo' }}
         DEMO_DIR=media-demo
         DEMO_OUT=artifacts/android-media-demo
-        DEMO_VIDEO=${{ inputs.driver == 'pip' && 'android-pip-run.mp4' || inputs.driver == 'ui' && 'services-android-media-android-ui-run.mp4' || 'services-android-media-android-run.mp4' }}
+        DEMO_VIDEO=${{ (inputs.driver == 'pip' || inputs.driver == '') && 'android-pip-run.mp4' || inputs.driver == 'ui' && 'services-android-media-android-ui-run.mp4' || 'services-android-media-android-run.mp4' }}
         DEMO_REVOKE=${{ inputs.driver == 'engine' && 'android.permission.POST_NOTIFICATIONS' || '' }}
         WEBVIEW_APK=artifacts/webview/SystemWebView.apk
       # The `AndroidDesktop_x64` snapshot ships com.android.webview with x86_64 native code (the
@@ -94,10 +98,10 @@ jobs:
       emulator-gpu: swiftshader_indirect
       emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
       script-env: |
-        DEMO_CLASS=${{ inputs.driver == 'pip' && 'app.zen.chromium.PipDemo' || inputs.driver == 'ui' && 'app.zen.chromium.MediaUiDemo' || 'app.zen.chromium.MediaDemo' }}
+        DEMO_CLASS=${{ (inputs.driver == 'pip' || inputs.driver == '') && 'app.zen.chromium.PipDemo' || inputs.driver == 'ui' && 'app.zen.chromium.MediaUiDemo' || 'app.zen.chromium.MediaDemo' }}
         DEMO_DIR=media-demo
         DEMO_OUT=artifacts/android-media-demo
-        DEMO_VIDEO=${{ inputs.driver == 'pip' && 'android-pip-run.mp4' || inputs.driver == 'ui' && 'services-android-media-android-ui-run.mp4' || 'services-android-media-android-run.mp4' }}
+        DEMO_VIDEO=${{ (inputs.driver == 'pip' || inputs.driver == '') && 'android-pip-run.mp4' || inputs.driver == 'ui' && 'services-android-media-android-ui-run.mp4' || 'services-android-media-android-run.mp4' }}
         DEMO_REVOKE=${{ inputs.driver == 'engine' && 'android.permission.POST_NOTIFICATIONS' || '' }}
         WEBVIEW_APK=artifacts/webview/SystemWebView.apk
       setup-script: |
