@@ -135,7 +135,8 @@ class WebAppNotifications(private val activity: WebAppActivity, private val reco
                 val request = message.optJSONObject("notification") ?: return
                 when (request.optString("notification")) {
                     "query" -> post(json("type" to "notification", "action" to "status", "status" to status(url)))
-                    "request" -> request(url, request.strOrNull("id"), request.optBoolean("gesture", false))
+                    // `gesture` left out (an engine without `userActivation`) counts as gestured, the core's rule: nothing is quieted on a guess.
+                    "request" -> request(url, request.strOrNull("id"), request.optBoolean("gesture", true))
                     "show" -> show(url, request)
                     "close" -> close(request.strOrNull("id") ?: return)
                 }
