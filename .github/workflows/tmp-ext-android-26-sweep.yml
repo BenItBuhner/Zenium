@@ -26,7 +26,8 @@ name: TEMPORARY - compat round 21 sweep and frame budget trigger
 #     16, 19 and 20, read on the AOSP lane when their rows run, and not re-run on the Google image.
 #     `[sweep113]` fires the System WebView sweep job alone (with its rows-left check and second
 #     boot) – only for a re-run the coordinator grants.
-#     SWEEP_LAST and the rows-left job's LAST_IDS are empty this round.
+#     SWEEP_LAST and the rows-left job's LAST_IDS are empty for the sweep this round; the targeted
+#     lane runs Adblock Ad Blocker Pro last (see `[lane]`).
 #   - `[budget]`: the runtime demo's two jobs with the frame budget alone (ExtensionScrollBudget
 #     under SKIP_DEMO=1: the long fixture scrolled with 0, 2, 3 and 6 extensions and the
 #     fetch-heavy twin, the jank report in the job summary) and, ahead of it, EngineProbe.
@@ -37,8 +38,9 @@ name: TEMPORARY - compat round 21 sweep and frame budget trigger
 #     in results.json), R5's measure (round 18 section 6.1 row 04).
 #   - `[lane]`: a targeted one-row-or-few lane (SWEEP_ONLY set by hand below: Zoom Video, Advanced
 #     Font Settings, the fonts probes A and B, iCloud Passwords, the privacy probe and the fonts
-#     page probe and the storage order probe) for a runtime or
-#     driver change read on its own without the whole sweep.
+#     page probe and the storage order probe, then Adblock Ad Blocker Pro last through SWEEP_LAST –
+#     the capped-bucket fold's early read, after the probe rows are in should the app still die
+#     there) for a runtime or driver change read on its own without the whole sweep.
 # One run per marker push; a re-run past the one attempt is the coordinator's to grant.
 # A sweep whose emulator went away under the driver (the shared workflow's `emulator-died`: qemu
 # gone or the guest frozen, or the runner action's SDK download coming down broken) boots once more
@@ -250,8 +252,8 @@ jobs:
       artifact-name: android-ext-compat-sweep-lane
       artifact-path: artifacts/android-ext-compat-sweep/
       script-env: |
-        SWEEP_ONLY=ochhcgamjcnhpaekcckimgofnedofplf,caclkomlalccbpcdllchkeecicepbmbm,oaopicjopnabmjiginojoghmphbmaoah,aincogolagbkgdpooijhninfkahoidfm,pejdijmoenmkgeppbflobdenhhabjlaj,pkjmmekkikdhpoegdhnbnoopodjfmdck,eicpojjdecdlodehmlcdjigijfepnedb,hnelfnelkfmbnhdelmcbkdcfedmjccjp
-        SWEEP_LAST=
+        SWEEP_ONLY=ochhcgamjcnhpaekcckimgofnedofplf,caclkomlalccbpcdllchkeecicepbmbm,oaopicjopnabmjiginojoghmphbmaoah,aincogolagbkgdpooijhninfkahoidfm,pejdijmoenmkgeppbflobdenhhabjlaj,pkjmmekkikdhpoegdhnbnoopodjfmdck,eicpojjdecdlodehmlcdjigijfepnedb,hnelfnelkfmbnhdelmcbkdcfedmjccjp,dgjbaljgolmlcmmklmmeafecikidmjpi
+        SWEEP_LAST=dgjbaljgolmlcmmklmmeafecikidmjpi
       timeout-minutes: 75
 
   lane-modern-webview:
@@ -267,8 +269,8 @@ jobs:
       script-env: |
         WEBVIEW_APK=artifacts/webview/SystemWebView.apk
         SOFT_FAIL=1
-        SWEEP_ONLY=ochhcgamjcnhpaekcckimgofnedofplf,caclkomlalccbpcdllchkeecicepbmbm,oaopicjopnabmjiginojoghmphbmaoah,aincogolagbkgdpooijhninfkahoidfm,pejdijmoenmkgeppbflobdenhhabjlaj,pkjmmekkikdhpoegdhnbnoopodjfmdck,eicpojjdecdlodehmlcdjigijfepnedb,hnelfnelkfmbnhdelmcbkdcfedmjccjp
-        SWEEP_LAST=
+        SWEEP_ONLY=ochhcgamjcnhpaekcckimgofnedofplf,caclkomlalccbpcdllchkeecicepbmbm,oaopicjopnabmjiginojoghmphbmaoah,aincogolagbkgdpooijhninfkahoidfm,pejdijmoenmkgeppbflobdenhhabjlaj,pkjmmekkikdhpoegdhnbnoopodjfmdck,eicpojjdecdlodehmlcdjigijfepnedb,hnelfnelkfmbnhdelmcbkdcfedmjccjp,dgjbaljgolmlcmmklmmeafecikidmjpi
+        SWEEP_LAST=dgjbaljgolmlcmmklmmeafecikidmjpi
       setup-script: |
         base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
         rev=$(curl -fsSL "$base/LAST_CHANGE")
