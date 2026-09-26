@@ -204,6 +204,8 @@ describe('landing from a widget or a shortcut', () => {
 
     expect(Object.keys(browser.state.model.tabs).length).toBe(before + 1)
     expect(tab.url).toBe(BLANK_URL)
+    // The launcher's 'New tab' beside 'New private tab' (GN-26): a regular tab, never the private container's.
+    expect(tab.containerId).not.toBe(PRIVATE_CONTAINER_ID)
     expect(activeTabId(browser, win)).toBe(tab.id)
     expect(calls).toEqual([])
   })
