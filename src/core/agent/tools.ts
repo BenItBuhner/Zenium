@@ -1343,8 +1343,12 @@ const browserTabs: AgentTool = {
         tab = ctx.agents.openTab(s, group, { url, active }, win)
         where = `in your home group ${JSON.stringify(group.name)} (${group.id})`
       }
+      // A tab created without a view is loaded, and waited for, by prepare; only a tab the host
+      // gave a view at creation (an active one) still has its load to wait for here.
+      const loadedByPrepare = !ctx.browser.tabs.view(tab.id)
       const view = await ctx.agents.prepare(s, tab.id, { activate: active })
-      if (url) await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS, { expectNavigation: true })
+      if (url && !loadedByPrepare)
+        await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS, { expectNavigation: true })
       return pageResult(
         ctx,
         tab,
