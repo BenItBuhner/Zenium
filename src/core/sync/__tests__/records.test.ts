@@ -231,15 +231,24 @@ describe('collectLocal', () => {
     src.settings.sidebarExpandOnHover = false
     src.settings.onboardingDone = true
     src.settings.searchChoice = { engineId: 'duckduckgo', region: 'DE', madeAt: 1, version: 1 }
+    // A laptop that turned Energy Saver off: the desktop beside it keeps its own answer, as
+    // Chrome's battery_saver_mode.state is local state (W8-2).
+    src.settings.energySaver = 'off'
     const data = collectLocal(src, defaultScope()).get('settings')?.data as Record<string, unknown>
     expect(DEVICE_LOCAL_SETTINGS).toEqual([
       'onboardingDone',
       'sidebarExpandOnHover',
-      'searchChoice'
+      'searchChoice',
+      'energySaver'
     ])
     expect(data).not.toHaveProperty('sidebarExpandOnHover')
     expect(data).not.toHaveProperty('onboardingDone')
     expect(data).not.toHaveProperty('searchChoice')
+    expect(data).not.toHaveProperty('energySaver')
+    // Memory Saver's three keys travel, as Chrome syncs tab_discarding.exceptions.
+    expect(data).toHaveProperty('unloadEnabled')
+    expect(data).toHaveProperty('unloadTimeoutMinutes')
+    expect(data).toHaveProperty('unloadExcludedDomains')
     const local = new Set<string>(DEVICE_LOCAL_SETTINGS)
     // Every other key, plus the retired switch mirrored beside `startup` for a release.
     expect(Object.keys(data)).toEqual([
@@ -250,6 +259,7 @@ describe('collectLocal', () => {
     expect(withoutDeviceLocalSettings(src.settings)).not.toBe(src.settings)
     expect(src.settings.sidebarExpandOnHover).toBe(false)
     expect(src.settings.onboardingDone).toBe(true)
+    expect(src.settings.energySaver).toBe('off')
   })
 
   it('mirrors the 0.4.x restoreSession switch beside startup for one release – on unless the mode is newTab – stamped with it as one item; a profile from before the key sends its record as it was', () => {

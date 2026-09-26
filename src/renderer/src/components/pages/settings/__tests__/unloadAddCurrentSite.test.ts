@@ -1,16 +1,17 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest'
 import type { Settings, Tab, UIState } from '@shared/types'
-import { INTERNAL_PAGES } from '@shared/internalPages'
-import { DEFAULT_SETTINGS } from '@shared/defaults'
+import { INTERNAL_PAGES, availableSections } from '@shared/internalPages'
+import { DEFAULT_SETTINGS, emptyResourceSnapshot } from '@shared/defaults'
 
 /*
- * Tab Management › Tab unloading › "Add current site" (settings-25, Chrome's Performance ›
- * "Add current site"): the desktop and tablet shells' button row under "Never unload these
- * domains" adds the registrable domain of the page Settings was opened from – what the core's
- * unload pass matches the list against – and is a dependent row of the switch: laid out at .4
- * with its reason while there is no site (a chrome-page opener, no opener, a private window,
- * a site already listed) or while unloading is off.
+ * Performance › Always keep these sites active › "Add current site" (settings-25, Chrome's
+ * Performance › "Add current site"; W8-2 moved the row from Tab Management › Tab unloading
+ * with the rest of Memory Saver): the desktop and tablet shells' button row after "Add a site"
+ * adds the registrable domain of the page Settings was opened from – what the core's unload
+ * pass matches the list against – and is a dependent row of the Memory Saver switch: laid out
+ * at .4 with its reason while there is no site (a chrome-page opener, no opener, a private
+ * window, a site already listed) or while Memory Saver is off.
  */
 
 const invoke = vi.fn<(name: string, args?: unknown) => Promise<null>>(async () => null)
@@ -22,19 +23,20 @@ const { findRow } = await import('../model')
 type Ctx = Parameters<typeof buildSection>[1]
 type ActionRow = Extract<NonNullable<ReturnType<typeof findRow>>, { kind: 'action' }>
 
+const PERFORMANCE = INTERNAL_PAGES.settings.sections.find((s) => s.id === 'performance')!
 const TABS = INTERNAL_PAGES.settings.sections.find((s) => s.id === 'tabs')!
 
 function tab(id: string, url: string, patch: Partial<Tab> = {}): Tab {
   return { id, url, title: url, openerTabId: null, ...patch } as Tab
 }
 
-/** The slice of the state the Tab Management builder reads, with Settings opened from `opener`. */
+/** The slice of the state the Performance builder reads, with Settings opened from `opener`. */
 function state(
   opener: Tab | null,
   settings: Partial<Settings> = {},
   windowKind: 'main' | 'private' = 'main'
 ): UIState {
-  const settingsTab = tab('settings', 'zen://settings/tabs', {
+  const settingsTab = tab('settings', 'zen://settings/performance', {
     openerTabId: opener ? opener.id : null
   })
   return {
@@ -42,6 +44,7 @@ function state(
     capabilities: { windows: true },
     tabs: opener ? { [opener.id]: opener, settings: settingsTab } : { settings: settingsTab },
     settings: { ...DEFAULT_SETTINGS, unloadEnabled: true, ...settings },
+    resources: emptyResourceSnapshot(),
     extensionControls: {},
     window: { id: 'w', kind: windowKind }
   } as unknown as UIState
@@ -57,17 +60,17 @@ function addRow(s: UIState): { row: ActionRow; patches: Partial<Settings>[] } {
     set: (patch: Partial<Settings>) => patches.push(patch),
     navigate: () => undefined
   } as unknown as Ctx
-  const model = buildSection(TABS, ctx)
-  const row = findRow(model.groups, 'unloading-add-current')
+  const model = buildSection(PERFORMANCE, ctx)
+  const row = findRow(model.groups, 'keep-active-current')
   if (!row || row.kind !== 'action') throw new Error('no Add current site row')
   return { row, patches }
 }
 
-describe('Tab unloading › Add current site', () => {
-  it('sits in the unloading group under the domains field as a button row of the desktop and tablet shells', () => {
+describe('Performance › Always keep these sites active › Add current site', () => {
+  it('sits in the Add group right after "Add a site" as a button row of the desktop and tablet shells', () => {
     const s = state(tab('site', 'https://mail.google.com/mail/u/0/'))
     for (const formFactor of ['desktop', 'tablet'] as const) {
-      const model = buildSection(TABS, {
+      const model = buildSection(PERFORMANCE, {
         state: s,
         tab: s.tabs.settings,
         pointer: true,
@@ -75,9 +78,9 @@ describe('Tab unloading › Add current site', () => {
         set: () => undefined,
         navigate: () => undefined
       } as unknown as Ctx)
-      const group = model.groups.find((g) => g.id === 'unloading')!
+      const group = model.groups.find((g) => g.id === 'keep-active-add')!
       const ids = group.rows.map((r) => r.id)
-      expect(ids.indexOf('unloading-add-current')).toBe(ids.indexOf('unloading-excluded') + 1)
+      expect(ids.indexOf('keep-active-current')).toBe(ids.indexOf('keep-active-add') + 1)
     }
     const { row } = addRow(s)
     expect(row.label).toBe('Add current site')
@@ -131,13 +134,13 @@ describe('Tab unloading › Add current site', () => {
     }
   })
 
-  it('follows the switch: off, the row is a dependent at .4 and still names the site it would add', () => {
+  it('follows the Memory Saver switch: off, the row is a dependent at .4 and still names the site it would add', () => {
     const { row } = addRow(state(tab('site', 'https://news.example/'), { unloadEnabled: false }))
     expect(row.disabled).toBe(true)
     expect(row.description).toBe('news.example – every page of the site stays loaded.')
   })
 
-  it('is the desktop and tablet shells’ row: the phone keeps its never-sleep list', () => {
+  it('is the desktop and tablet shells’ row: the phone keeps its never-sleep list and never lists Performance', () => {
     const s = state(tab('site', 'https://news.example/'))
     const model = buildSection(TABS, {
       state: s,
@@ -147,6 +150,10 @@ describe('Tab unloading › Add current site', () => {
       set: () => undefined,
       navigate: () => undefined
     } as unknown as Ctx)
+    expect(findRow(model.groups, 'keep-active-current')).toBeNull()
     expect(findRow(model.groups, 'unloading-add-current')).toBeNull()
+    expect(
+      availableSections(INTERNAL_PAGES.settings, s.capabilities, 'phone').map((x) => x.id)
+    ).not.toContain('performance')
   })
 })

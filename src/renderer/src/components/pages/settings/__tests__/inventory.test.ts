@@ -462,10 +462,22 @@ const INVENTORY: Record<string, readonly string[]> = {
     'Restore pinned tabs to their pinned URL on startup',
     'Third-party links on pinned and essential tabs',
     'Container-specific Essentials',
-    'Maximum number of Essentials',
-    'Unload inactive tabs',
-    'Unload after',
-    'Never unload these domains'
+    'Maximum number of Essentials'
+    // W8-2: the pane's "Unload inactive tabs", "Unload after" and "Never unload these domains"
+    // are Performance's Memory Saver rows now, under Chrome's names (below).
+  ],
+  // W8-2: Chrome's Performance page. Memory Saver is the tabs pane's Tab unloading under Chrome's
+  // name (the switch, the tiers as a radio in place of the minutes field, the excluded domains as
+  // item rows with Add / Add current site); Energy Saver is new, and took the Resources pane's
+  // "On battery, shrink budgets to" as its effect (one setting, one place).
+  performance: [
+    'Memory Saver',
+    'Memory Saver options',
+    'Add a site',
+    'Add current site',
+    'Energy Saver',
+    'Energy Saver options',
+    'While Energy Saver is on, shrink the budgets to'
   ],
   downloads: [
     'Location',
@@ -487,17 +499,17 @@ const INVENTORY: Record<string, readonly string[]> = {
     'Share of installed RAM',
     'CPU budget',
     'GPU memory budget',
-    'On battery, shrink budgets to',
+    // W8-2: "On battery, shrink budgets to" is Performance › Energy Saver's effect row; the
+    // pane's "Unload hidden pages" twin switch, its "after" field and the "Excluded domains" fact
+    // went with Memory Saver – this row is the link to them (§9.1 one owner).
+    'Memory Saver and Energy Saver',
     'Freeze hidden pages after',
     'Freeze everything when idle for',
-    'Unload hidden pages',
-    'Unload hidden pages after',
     'Maximum live pages',
     'Background loads at once',
     'Pages playing audio',
     'Pinned tabs',
     'Essentials',
-    'Excluded domains',
     'Relaunch to apply',
     'GPU',
     'Renderer process limit',
@@ -714,7 +726,9 @@ const HEADINGS: Record<string, readonly string[]> = {
     'Split view',
     'Glance'
   ],
-  tabs: ['Tabs', 'Window sync', 'Pinned tabs and Essentials', 'Tab unloading'],
+  // W8-2: the pane's "Tab unloading" heading is Performance's "Memory Saver".
+  tabs: ['Tabs', 'Window sync', 'Pinned tabs and Essentials'],
+  performance: ['Memory Saver', 'Always keep these sites active', 'Energy Saver'],
   languages: [
     // CT-41: the pane's "Languages you read" became Preferred languages, the category's first
     // group (Chrome's order on chrome://settings/languages).
@@ -786,6 +800,9 @@ describe('the desktop Settings tab carries every row of the overlay panes it rep
       'Compact Mode',
       'New Tab',
       'Tab Management',
+      // W8-2: Chrome's Performance page (Memory Saver, Energy Saver), the desktop and tablet
+      // shells', right after the tabs it sleeps.
+      'Performance',
       'Downloads',
       'Resources',
       'Search',

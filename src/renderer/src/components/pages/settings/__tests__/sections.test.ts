@@ -5768,7 +5768,7 @@ describe('CT-22: sleeping tabs in Tab Management on a phone, in Edge’s words',
     expect(row(tabs, 'never-sleep-add').label).toBe('Add a site')
   })
 
-  it('is the phone shell’s: the desktop and tablet shells bind the same keys through Zen’s Tab unloading rows', () => {
+  it('is the phone shell’s: the desktop and tablet shells bind the same keys through Performance › Memory Saver (W8-2), and their Tab Management has no unloading rows', () => {
     const def = PAGE.sections.find((x) => x.id === 'tabs')!
     const c = context(state({}, { unloadExcludedDomains: ['mail.example.com'] }))
     const phone = buildSection(def, { ...c.ctx, formFactor: 'phone' })
@@ -5776,37 +5776,377 @@ describe('CT-22: sleeping tabs in Tab Management on a phone, in Edge’s words',
       expect.arrayContaining(['sleeping-tabs', 'never-sleep', 'never-sleep-add'])
     )
     expect(phone.groups.map((g) => g.id)).not.toContain('unloading')
+    expect(phone.groups.map((g) => g.id)).not.toContain('memory-saver')
 
     for (const layout of ['desktop', 'tablet'] as const) {
       const shell = buildSection(def, { ...c.ctx, formFactor: layout })
       const ids = shell.groups.map((g) => g.id)
-      expect(ids).toContain('unloading')
+      // The Tab unloading group went with Memory Saver; nothing of the phone's ladder came.
+      expect(ids).not.toContain('unloading')
       expect(ids).not.toContain('sleeping-tabs')
       expect(ids).not.toContain('never-sleep')
       expect(ids).not.toContain('never-sleep-add')
-      const group = shell.groups.find((g) => g.id === 'unloading')
-      expect(group?.heading).toBe('Tab unloading')
-      expect(group?.rows.map((r) => [r.kind, r.label])).toEqual([
-        ['switch', 'Unload inactive tabs'],
-        ['field', 'Unload after'],
-        ['field', 'Never unload these domains'],
-        ['action', 'Add current site']
-      ])
-      const on = row(shell, 'unloading-enabled')
+      expect(findRow(shell.groups, 'unloading-enabled')).toBeNull()
+      expect(findRow(shell.groups, 'unloading-after')).toBeNull()
+      expect(findRow(shell.groups, 'unloading-excluded')).toBeNull()
+      expect(findRow(shell.groups, 'unloading-add-current')).toBeNull()
+      // The same three keys, from Performance.
+      const performance = buildSection(
+        PAGE.sections.find((x) => x.id === 'performance')!,
+        {
+          ...c.ctx,
+          formFactor: layout
+        }
+      )
+      const on = row(performance, 'memory-saver')
       if (on.kind !== 'switch') throw new Error('not a switch')
       on.onChange(false)
       expect(c.patches.at(-1)).toEqual({ unloadEnabled: false })
-      const after = row(shell, 'unloading-after')
-      if (after.kind !== 'field') throw new Error('not a field')
-      expect(after.display).toBe('20 minutes')
-      expect(after.onCommit('0')).toBe('Enter a number of minutes from 1 to 1440')
-      expect(after.onCommit('45')).toBeUndefined()
-      expect(c.patches.at(-1)).toEqual({ unloadTimeoutMinutes: 45 })
-      const excluded = row(shell, 'unloading-excluded')
-      if (excluded.kind !== 'field') throw new Error('not a field')
-      expect(excluded.value).toBe('mail.example.com')
-      excluded.onCommit('Mail.example.com, notion.so')
-      expect(c.patches.at(-1)).toEqual({ unloadExcludedDomains: ['mail.example.com', 'notion.so'] })
+      const tier = row(performance, 'memory-saver-tier')
+      if (tier.kind !== 'value') throw new Error('not a choice')
+      tier.onChange('240')
+      expect(c.patches.at(-1)).toEqual({ unloadTimeoutMinutes: 240 })
+      const remove = row(performance, 'keep-active:mail.example.com:remove')
+      if (remove.kind !== 'action') throw new Error('not an action')
+      remove.onPress?.()
+      expect(c.patches.at(-1)).toEqual({ unloadExcludedDomains: [] })
+    }
+  })
+})
+
+describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memory Saver and Energy Saver over the governor’s keys', () => {
+  const DESKTOP_STATE = (settings: Partial<Settings> = {}, patch: Partial<UIState> = {}): UIState =>
+    state(
+      {
+        platform: 'linux',
+        capabilities: { ...ANDROID, windows: true, resourceGovernor: true },
+        ...patch
+      },
+      settings
+    )
+  const perf = (
+    s: UIState,
+    formFactor: FormFactor = 'desktop'
+  ): ReturnType<typeof context> & {
+    model: Model
+  } => {
+    const c = context(s, true)
+    const model = buildSection(
+      PAGE.sections.find((x) => x.id === 'performance')!,
+      {
+        ...c.ctx,
+        formFactor
+      }
+    )
+    return { ...c, model }
+  }
+
+  it('draws Chrome’s three groups in Chrome’s order: Memory Saver, Always keep these sites active (with its Add group), Energy Saver', () => {
+    for (const layout of ['desktop', 'tablet'] as const) {
+      const { model } = perf(DESKTOP_STATE({ unloadExcludedDomains: ['mail.example.com'] }), layout)
+      expect(model.groups.map((g) => [g.id, g.heading])).toEqual([
+        ['memory-saver', 'Memory Saver'],
+        ['keep-active', 'Always keep these sites active'],
+        ['keep-active-add', null],
+        ['energy-saver', 'Energy Saver']
+      ])
+      expect(allRows(model.groups).map((r) => [r.kind, r.id])).toEqual([
+        ['switch', 'memory-saver'],
+        ['value', 'memory-saver-tier'],
+        ['item', 'keep-active:mail.example.com'],
+        ['action', 'keep-active:mail.example.com:remove'],
+        ['action', 'keep-active-add'],
+        ['action', 'keep-active-current'],
+        ['switch', 'energy-saver'],
+        ['value', 'energy-saver-mode'],
+        ['value', 'energy-saver-factor']
+      ])
+      for (const group of model.groups) expect(groupShows(group)).toBe(true)
+    }
+  })
+
+  it('binds Memory Saver’s switch to unloadEnabled with Chrome’s sentence, Zenium named', () => {
+    const { model, patches } = perf(DESKTOP_STATE())
+    const on = row(model, 'memory-saver')
+    if (on.kind !== 'switch') throw new Error('not a switch')
+    expect(on.label).toBe('Memory Saver')
+    expect(on.description).toBe(
+      'Zenium frees up memory from inactive tabs. This gives active tabs and other apps more computer resources and keeps Zenium fast. Your inactive tabs automatically become active again when you go back to them.'
+    )
+    expect(on.checked).toBe(true)
+    on.onChange(false)
+    expect(patches).toEqual([{ unloadEnabled: false }])
+  })
+
+  it('maps Chrome’s tiers onto unloadTimeoutMinutes as a radio – Moderate 6 h, Balanced 4 h, Maximum 2 h – and lists the shipped 20 minutes in its place as Custom', () => {
+    const { model, patches } = perf(DESKTOP_STATE())
+    const tier = row(model, 'memory-saver-tier')
+    if (tier.kind !== 'value') throw new Error('not a choice')
+    expect(tier.label).toBe('Memory Saver options')
+    expect(tier.radios).toBe(true)
+    expect(tier.disabled).toBe(false)
+    // The default timer is off Chrome's ladder: shown where it falls, shortest last, and picked.
+    expect(tier.options.map((o) => [o.value, o.label])).toEqual([
+      ['360', 'Moderate'],
+      ['240', 'Balanced (recommended)'],
+      ['120', 'Maximum'],
+      ['20', 'Custom – 20 minutes']
+    ])
+    expect(tier.value).toBe('20')
+    expect(tier.options.map((o) => o.description)).toEqual([
+      'Get moderate memory savings. Your tabs become inactive after a longer period of time – 6 hours.',
+      'Get balanced memory savings. Your tabs become inactive after an optimal period of time – 4 hours.',
+      'Get maximum memory savings. Your tabs become inactive after a shorter period of time – 2 hours.',
+      'The timer set before these options; kept until you pick one of them.'
+    ])
+    tier.onChange('120')
+    expect(patches).toEqual([{ unloadTimeoutMinutes: 120 }])
+
+    // On a tier, Chrome's three alone; an off-tier value between two tiers sits between them.
+    const onTier = row(
+      perf(DESKTOP_STATE({ unloadTimeoutMinutes: 240 })).model,
+      'memory-saver-tier'
+    )
+    if (onTier.kind !== 'value') throw new Error('not a choice')
+    expect(onTier.options.map((o) => o.value)).toEqual(['360', '240', '120'])
+    expect(onTier.value).toBe('240')
+    const between = row(
+      perf(DESKTOP_STATE({ unloadTimeoutMinutes: 180 })).model,
+      'memory-saver-tier'
+    )
+    if (between.kind !== 'value') throw new Error('not a choice')
+    expect(between.options.map((o) => o.value)).toEqual(['360', '240', '180', '120'])
+    expect(between.options[2].label).toBe('Custom – 3 hours')
+    const longer = row(
+      perf(DESKTOP_STATE({ unloadTimeoutMinutes: 720 })).model,
+      'memory-saver-tier'
+    )
+    if (longer.kind !== 'value') throw new Error('not a choice')
+    expect(longer.options.map((o) => o.value)).toEqual(['720', '360', '240', '120'])
+  })
+
+  it('lays the tier radio, the sites list and both Add rows out at .4 while Memory Saver is off (§10.4)', () => {
+    const { model } = perf(
+      DESKTOP_STATE({ unloadEnabled: false, unloadExcludedDomains: ['mail.example.com'] })
+    )
+    for (const id of [
+      'memory-saver-tier',
+      'keep-active:mail.example.com',
+      'keep-active-add',
+      'keep-active-current'
+    ]) {
+      expect(row(model, id).disabled, id).toBe(true)
+    }
+    // Energy Saver is its own switch: Memory Saver off leaves it alone.
+    expect(row(model, 'energy-saver-mode').disabled).toBe(false)
+  })
+
+  it('lists the sites kept active alphabetically as item rows with a trailing destructive Remove, and says "No sites yet" when there are none (§10.5, §9.17)', () => {
+    const { model, patches } = perf(
+      DESKTOP_STATE({ unloadExcludedDomains: ['mail.example.com', 'chat.example'] })
+    )
+    const list = model.groups.find((g) => g.id === 'keep-active')!
+    expect(list.description).toBe(
+      'Sites you add will always stay active and memory won’t be freed up from them.'
+    )
+    expect(list.rows.map((r) => r.id)).toEqual([
+      'keep-active:chat.example',
+      'keep-active:mail.example.com'
+    ])
+    const site = list.rows[0] as ItemRow
+    expect(site.label).toBe('chat.example')
+    expect(site.action).toMatchObject({ label: 'Remove', destructive: true })
+    const remove = row(model, 'keep-active:chat.example:remove')
+    if (remove.kind !== 'action') throw new Error('not an action')
+    remove.onPress?.()
+    expect(patches).toEqual([{ unloadExcludedDomains: ['mail.example.com'] }])
+
+    const empty = perf(DESKTOP_STATE({ unloadExcludedDomains: [] })).model
+    const none = empty.groups.find((g) => g.id === 'keep-active')!
+    expect(none.rows).toEqual([])
+    expect(none.empty).toBe('No sites yet')
+    expect(groupShows(none)).toBe(true)
+  })
+
+  it('adds a site from the Add form cut to its host – scheme, www and path dropped, lower-cased – and never a twin', () => {
+    const { model, patches } = perf(DESKTOP_STATE({ unloadExcludedDomains: ['notion.so'] }))
+    const add = row(model, 'keep-active-add')
+    if (add.kind !== 'action') throw new Error('not an action')
+    expect(add.label).toBe('Add a site')
+    expect(add.button).toBe('Add…')
+    expect(add.form?.title).toBe('Always keep this site active')
+    const form = add.form!.render(() => undefined) as ReactElement<{
+      id: string
+      label: string
+      placeholder: string
+      action: string
+      onSubmit: (raw: string) => void
+    }>
+    expect(form.props).toMatchObject({
+      id: 'keep-active-site',
+      label: 'Site',
+      placeholder: 'mail.example.com',
+      action: 'Add'
+    })
+    form.props.onSubmit('https://www.Mail.Example.com/inbox?x=1')
+    form.props.onSubmit('  ')
+    form.props.onSubmit('notion.so')
+    form.props.onSubmit('chat.example:8443/room')
+    expect(patches).toEqual([
+      { unloadExcludedDomains: ['notion.so', 'mail.example.com'] },
+      { unloadExcludedDomains: ['notion.so', 'chat.example'] }
+    ])
+  })
+
+  it('binds Energy Saver’s switch to energySaver – on lands on Zenium’s default, unplugged; off is off', () => {
+    const { model, patches } = perf(DESKTOP_STATE())
+    const on = row(model, 'energy-saver')
+    if (on.kind !== 'switch') throw new Error('not a switch')
+    expect(on.label).toBe('Energy Saver')
+    expect(on.checked).toBe(true)
+    on.onChange(false)
+    expect(patches.at(-1)).toEqual({ energySaver: 'off' })
+
+    const off = perf(DESKTOP_STATE({ energySaver: 'off' }))
+    const offSwitch = row(off.model, 'energy-saver')
+    if (offSwitch.kind !== 'switch') throw new Error('not a switch')
+    expect(offSwitch.checked).toBe(false)
+    offSwitch.onChange(true)
+    expect(off.patches.at(-1)).toEqual({ energySaver: 'on-battery' })
+  })
+
+  it('offers Chrome’s two conditions as a radio in Chrome’s order – the 20% threshold, then unplugged – dependent on the switch', () => {
+    const { model, patches } = perf(DESKTOP_STATE({ energySaver: 'low-battery' }))
+    const mode = row(model, 'energy-saver-mode')
+    if (mode.kind !== 'value') throw new Error('not a choice')
+    expect(mode.label).toBe('Energy Saver options')
+    expect(mode.radios).toBe(true)
+    expect(mode.value).toBe('low-battery')
+    expect(mode.options.map((o) => [o.value, o.label])).toEqual([
+      ['low-battery', 'Turn on only when your battery is at 20% or lower'],
+      ['on-battery', 'Turn on when your computer is unplugged']
+    ])
+    mode.onChange('on-battery')
+    expect(patches).toEqual([{ energySaver: 'on-battery' }])
+
+    const off = row(perf(DESKTOP_STATE({ energySaver: 'off' })).model, 'energy-saver-mode')
+    if (off.kind !== 'value') throw new Error('not a choice')
+    expect(off.disabled).toBe(true)
+    // Off, the row shows the choice the switch would land on.
+    expect(off.value).toBe('on-battery')
+  })
+
+  it('says under the threshold row when the host cannot read the battery level – Windows without a native module, a computer with no battery', () => {
+    const snapshot = (batteryPercent: number | null): Partial<UIState> => ({
+      resources: {
+        ...emptyResourceSnapshot(),
+        system: { ...emptyResourceSnapshot().system, batteryPercent }
+      }
+    })
+    const threshold = (s: UIState): string | undefined => {
+      const mode = row(perf(s).model, 'energy-saver-mode')
+      if (mode.kind !== 'value') throw new Error('not a choice')
+      return mode.options[0].description
+    }
+    expect(threshold(DESKTOP_STATE({}, snapshot(63)))).toBeUndefined()
+    expect(threshold(DESKTOP_STATE({}, { ...snapshot(null), platform: 'win32' }))).toBe(
+      'Zenium cannot read the battery level on Windows yet, so this option waits until it can.'
+    )
+    expect(threshold(DESKTOP_STATE({}, { ...snapshot(null), platform: 'linux' }))).toBe(
+      'No battery level to read on this computer, so this option waits until there is one.'
+    )
+  })
+
+  it('keeps Energy Saver’s effect beside it – the budget factor the governor applies while it is on – and says whether it is on now', () => {
+    const { model, patches } = perf(DESKTOP_STATE())
+    const factor = row(model, 'energy-saver-factor')
+    if (factor.kind !== 'value') throw new Error('not a choice')
+    expect(factor.label).toBe('While Energy Saver is on, shrink the budgets to')
+    expect(factor.radios).toBeUndefined()
+    expect(factor.value).toBe(String(Math.round(DEFAULT_SETTINGS.resources.batteryFactor * 100)))
+    expect(factor.options.map((o) => o.value)).toEqual(['100', '85', '70', '50', '25'])
+    expect(factor.description).toBeUndefined()
+    factor.onChange('50')
+    expect(patches).toEqual([{ resources: { ...DEFAULT_SETTINGS.resources, batteryFactor: 0.5 } }])
+
+    const system = (patch: Partial<UIState['resources']['system']>): Partial<UIState> => ({
+      resources: {
+        ...emptyResourceSnapshot(),
+        system: { ...emptyResourceSnapshot().system, ...patch }
+      }
+    })
+    const on = row(
+      perf(DESKTOP_STATE({}, system({ onBattery: true, energySaver: true }))).model,
+      'energy-saver-factor'
+    )
+    expect(on.description).toBe('Energy Saver is on now.')
+    const waiting = row(
+      perf(
+        DESKTOP_STATE(
+          { energySaver: 'low-battery' },
+          system({ onBattery: true, batteryPercent: 63 })
+        )
+      ).model,
+      'energy-saver-factor'
+    )
+    expect(waiting.description).toBe('On battery at 63% – Energy Saver is off.')
+    const unknown = row(
+      perf(DESKTOP_STATE({ energySaver: 'low-battery' }, system({ onBattery: true }))).model,
+      'energy-saver-factor'
+    )
+    expect(unknown.description).toBe('On battery – Energy Saver is off.')
+    expect(
+      row(perf(DESKTOP_STATE({ energySaver: 'off' })).model, 'energy-saver-factor').disabled
+    ).toBe(true)
+  })
+
+  it('leaves Resources one owner short: its twin switch, the after field, the battery factor and the excluded-domains fact went; a chevron row leads to Performance (§9.1)', () => {
+    const c = context(DESKTOP_STATE(), true)
+    const resources = buildSection(
+      PAGE.sections.find((x) => x.id === 'resources')!,
+      {
+        ...c.ctx,
+        formFactor: 'desktop'
+      }
+    )
+    for (const gone of [
+      'resources-unload',
+      'resources-unload-after',
+      'battery-factor',
+      'protect-domains'
+    ]) {
+      expect(findRow(resources.groups, gone), gone).toBeNull()
+    }
+    const sleeping = resources.groups.find((g) => g.id === 'sleeping')!
+    expect(sleeping.rows[0].id).toBe('resources-performance')
+    const link = row(resources, 'resources-performance')
+    if (link.kind !== 'action') throw new Error('not an action')
+    expect(link.label).toBe('Memory Saver and Energy Saver')
+    expect(link.leaves).toBe('chevron')
+    expect(link.button).toBeUndefined()
+    link.onPress?.()
+    expect(c.navigated).toEqual(['performance'])
+    expect(c.patches).toEqual([])
+    // The usage note names the mode, not the plug.
+    expect(allRows(resources.groups).some((r) => r.label === 'On battery, shrink budgets to')).toBe(
+      false
+    )
+  })
+
+  it('finds the section from Chrome’s words and the governor’s', () => {
+    const { model } = perf(DESKTOP_STATE({ unloadExcludedDomains: ['mail.example.com'] }))
+    for (const [query, id] of [
+      ['memory saver', 'memory-saver'],
+      ['discard', 'memory-saver-tier'],
+      ['keep active', 'keep-active:mail.example.com'],
+      ['energy saver', 'energy-saver'],
+      ['unplugged', 'energy-saver-mode'],
+      ['shrink', 'energy-saver-factor']
+    ] as const) {
+      expect(
+        searchRows([model], query).map((r) => r.row.id),
+        query
+      ).toContain(id)
     }
   })
 })

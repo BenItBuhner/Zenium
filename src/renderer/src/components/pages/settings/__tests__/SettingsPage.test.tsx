@@ -339,6 +339,8 @@ describe('the two-pane Settings tab (§10.5)', () => {
       'Compact Mode',
       'New Tab',
       'Tab Management',
+      // W8-2: Chrome's Performance page (Memory Saver, Energy Saver) right after the tabs it sleeps.
+      'Performance',
       'Downloads',
       'Resources',
       'Search',
