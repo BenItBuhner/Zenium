@@ -1,0 +1,15 @@
+{
+  "id": "perf-bar-hide",
+  "order": 58,
+  "class": "BarHidePerfDemo",
+  "shard": "phone-c",
+  "mirrors": "android-perf-bar-hide.yml",
+  "dir": "perf-bar-hide",
+  "env": {
+    "DEMO_RECORD": "0",
+    "DEMO_PERFETTO_CONFIG": ".github/scripts/android-perf-bar-hide.pbtx"
+  },
+  "timeout": 1200,
+  "estimate": 4,
+  "note": "No recording (the encoder would load the measurement); the workflow's Perfetto analysis (post-script) is not run: the frames record is the nightly's verdict."
+}

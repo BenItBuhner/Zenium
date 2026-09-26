@@ -2,12 +2,12 @@ name: Android nightly drivers
 
 # Every instrumentation driver under android/app/src/androidTest (the *Demo classes), once a night
 # on main's tip, so that a driver nothing dispatches cannot break silently (#237's accessible-name
-# rename broke six of them for a day; #327 repaired them). The manifest .github/nightly-drivers.json
-# names each driver, the shard it runs on and the environment its own workflow gives it (the theme,
-# DEMO_KEEP, DEMO_REVOKE, DEMO_SCENES, DEMO_ARGS, the display); android-nightly-drivers.mjs reads it
-# and android-nightly-drivers.sh runs a shard's drivers in sequence on one emulator boot, through
-# the shared driver script or the wrapper the driver's workflow names, a failed driver not stopping
-# the ones after it. The manifest's check (vitest, and the plan job here) fails when a *Demo class
+# rename broke six of them for a day; #327 repaired them). The manifest .github/nightly-drivers/
+# (shards.json, one <id>.json per driver, skip.json) names each driver, the shard it runs on and the
+# environment its own workflow gives it (the theme, DEMO_KEEP, DEMO_REVOKE, DEMO_SCENES, DEMO_ARGS,
+# the display); android-nightly-drivers.mjs reads it and android-nightly-drivers.sh runs a shard's
+# drivers in sequence on one emulator boot, through the shared driver script or the wrapper the
+# driver's workflow names, a failed driver not stopping the ones after it. The manifest's check (vitest, and the plan job here) fails when a *Demo class
 # is neither a driver nor skipped with a reason.
 #
 # The shards, each one job of the recipe in android-emulator-demo.yml and all in parallel: six

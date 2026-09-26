@@ -1,0 +1,9 @@
+{
+  "id": "download-safety",
+  "order": 32,
+  "class": "DownloadSafetyDemo",
+  "shard": "phone-b",
+  "mirrors": "android-download-safety-demo.yml",
+  "dir": "download-safety-demo",
+  "estimate": 2
+}

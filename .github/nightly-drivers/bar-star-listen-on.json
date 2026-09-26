@@ -1,0 +1,9 @@
+{
+  "id": "bar-star-listen-on",
+  "order": 11,
+  "class": "BarStarListenOnDemo",
+  "shard": "phone-a",
+  "mirrors": "android-bar-star-listen-on-demo.yml",
+  "dir": "bar-star-listen-on-demo",
+  "estimate": 3
+}

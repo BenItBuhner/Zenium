@@ -1,0 +1,18 @@
+{
+  "id": "menu-perf",
+  "order": 101,
+  "class": "MenuSheetPerfDemo",
+  "shard": "api35",
+  "mirrors": "android-menu-perf.yml",
+  "dir": "menu-perf-demo",
+  "script": ".github/scripts/android-menu-perf.sh",
+  "env": {
+    "DEMO_THEME": "light",
+    "DEMO_ARGS": "-e cycles 10 -e live 1",
+    "DEMO_RECORD": "0"
+  },
+  "setup": ["perfetto-python"],
+  "timeout": 2100,
+  "estimate": 20,
+  "note": "The workflow's ten cycles against the live page, without the recording; its own report (menu-perf-report.md) is in the findings. Last on the shard: the longest."
+}

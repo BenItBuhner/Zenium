@@ -1,0 +1,9 @@
+{
+  "id": "tab-groups",
+  "order": 72,
+  "class": "TabGroupsDemo",
+  "shard": "phone-d",
+  "mirrors": "android-tab-groups-demo.yml:phone",
+  "dir": "tab-groups-demo",
+  "estimate": 3
+}

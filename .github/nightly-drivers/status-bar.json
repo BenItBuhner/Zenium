@@ -1,0 +1,17 @@
+{
+  "id": "status-bar",
+  "order": 97,
+  "class": "StatusBarDemo",
+  "shard": "api35",
+  "mirrors": "android-status-bar-demo.yml",
+  "dir": "status-bar-demo",
+  "script": ".github/scripts/android-status-bar-demo.sh",
+  "out": "artifacts/android-status-bar-demo",
+  "env": {
+    "STATUS_BAR_ASSERT": "true"
+  },
+  "needs": ["navigation"],
+  "timeout": 1500,
+  "estimate": 8,
+  "note": "Its own script (gestural navigation for its scenes; the runner puts three-button navigation back); one take (no before APK)."
+}

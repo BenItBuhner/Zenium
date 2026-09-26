@@ -1,0 +1,13 @@
+{
+  "id": "omnibox-polish",
+  "order": 87,
+  "class": "OmniboxPolishDemo",
+  "shard": "phone-e",
+  "mirrors": "android-omnibox-polish-demo.yml:light",
+  "dir": "omnibox-polish-demo",
+  "env": {
+    "DEMO_THEME": "light"
+  },
+  "estimate": 7.5,
+  "note": "The workflow runs light and dark; the nightly runs light."
+}

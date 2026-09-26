@@ -1,0 +1,16 @@
+{
+  "id": "wake",
+  "order": 96,
+  "class": "WakeDemo",
+  "shard": "api35",
+  "mirrors": "android-wake-demo.yml",
+  "dir": "wake-demo",
+  "script": ".github/scripts/android-wake-demo.sh",
+  "out": "artifacts/android-wake-demo",
+  "env": {
+    "WAKE_ASSERT": "true"
+  },
+  "timeout": 1200,
+  "estimate": 6,
+  "note": "Its own script (renderer deaths and the wake); one take (no before APK)."
+}

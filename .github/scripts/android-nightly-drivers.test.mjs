@@ -3,12 +3,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  MANIFEST_DIR,
   NEEDS,
   REPO_ROOT,
   SETUP_STEPS,
+  SHARDS_FILE,
   SHARED_SCRIPT,
+  SKIP_FILE,
   checkManifest,
   classesOf,
+  driverFiles,
   driversOf,
   environmentOf,
   imageOf,
@@ -71,6 +75,82 @@ const temp = () => {
 afterEach(() => {
   for (const dir of temps.splice(0))
     rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+})
+
+describe('the manifest directory', () => {
+  it('holds the shards, one file per driver named after its id and the skips, read as one manifest', () => {
+    const files = readdirSync(MANIFEST_DIR).sort()
+    expect(files).toContain(SHARDS_FILE)
+    expect(files).toContain(SKIP_FILE)
+    expect(files.filter((f) => !f.endsWith('.json'))).toEqual([])
+    expect(driverFiles()).toEqual(manifest.drivers.map((d) => `${d.id}.json`).sort())
+    expect(manifest.drivers.length).toBe(files.length - 2)
+    expect(manifest.skip.length).toBeGreaterThan(0)
+    expect(typeof manifest.$comment).toBe('string')
+    expect(manifest.$comment).toContain('one <id>.json per driver')
+  })
+
+  it('refuses a driver file not named after its id, and a shards or skip file without its object', () => {
+    const dir = temp()
+    writeFileSync(join(dir, SHARDS_FILE), JSON.stringify({ shards: manifest.shards }))
+    writeFileSync(join(dir, SKIP_FILE), JSON.stringify({ skip: [] }))
+    writeFileSync(join(dir, 'other.json'), JSON.stringify({ id: 'gesture', shard: 'phone-a' }))
+    expect(() => readManifest(dir)).toThrow(
+      "other.json: the driver file is not named after its id 'gesture'"
+    )
+    rmSync(join(dir, 'other.json'))
+    writeFileSync(join(dir, SKIP_FILE), JSON.stringify([]))
+    expect(() => readManifest(dir)).toThrow(`${SKIP_FILE}: no 'skip' array`)
+    writeFileSync(join(dir, SKIP_FILE), JSON.stringify({ skip: [] }))
+    writeFileSync(join(dir, SHARDS_FILE), JSON.stringify(manifest.shards))
+    expect(() => readManifest(dir)).toThrow(`${SHARDS_FILE}: no 'shards' object`)
+  })
+
+  it('runs the drivers by order, ties by id, a driver without an order last (no number needed for a new one)', () => {
+    const dir = temp()
+    writeFileSync(
+      join(dir, SHARDS_FILE),
+      JSON.stringify({ $comment: 'c', shards: manifest.shards })
+    )
+    writeFileSync(join(dir, SKIP_FILE), JSON.stringify({ skip: manifest.skip }))
+    const drivers = {
+      'b-late': { shard: 'phone-a', order: 2 },
+      'a-late': { shard: 'phone-a', order: 2 },
+      first: { shard: 'phone-a', order: 1 },
+      'z-new': { shard: 'phone-a' },
+      'm-new': { shard: 'phone-a' }
+    }
+    for (const [id, driver] of Object.entries(drivers))
+      writeFileSync(join(dir, `${id}.json`), JSON.stringify({ id, ...driver }))
+    const read = readManifest(dir)
+    expect(read.$comment).toBe('c')
+    expect(read.skip).toEqual(manifest.skip)
+    expect(read.drivers.map((d) => d.id)).toEqual(['first', 'a-late', 'b-late', 'm-new', 'z-new'])
+    // The checked-in drivers: every order a positive integer, ascending, the numbered ones first.
+    const orders = manifest.drivers.map((d) => d.order)
+    const numbered = orders.filter((o) => o !== undefined)
+    expect(numbered.every((o) => Number.isInteger(o) && o > 0)).toBe(true)
+    expect([...numbered].sort((a, b) => a - b)).toEqual(numbered)
+    expect(orders.slice(numbered.length).every((o) => o === undefined)).toBe(true)
+    expect(
+      checkManifest(
+        { shards: manifest.shards, drivers: [{ ...manifest.drivers[0], order: 0 }], skip: [] },
+        sourceDriverClasses()
+      ).join('\n')
+    ).toContain('order 0 is not a positive integer')
+  })
+
+  it('generates the matrix main generated from the one-file manifest, byte for byte (the golden)', () => {
+    // .github/scripts/fixtures/android-nightly-drivers-matrix.json is `node
+    // .github/scripts/android-nightly-drivers.mjs matrix` from .github/nightly-drivers.json at
+    // 0abc7784 (the file this directory replaced; the same bytes at b360293e, v0.4.82, where the
+    // file last stood). A shard change regenerates it, on purpose.
+    const golden = readFileSync(
+      join(REPO_ROOT, '.github', 'scripts', 'fixtures', 'android-nightly-drivers-matrix.json'),
+      'utf8'
+    )
+    expect(JSON.stringify(matrix(manifest)) + '\n').toBe(golden)
+  })
 })
 
 describe('the manifest against the sources', () => {
