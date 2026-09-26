@@ -15,12 +15,15 @@ import java.io.File
  * read from the sources, as `CustomTabOpenInAppPromptTest` reads the confirmation's (the Android
  * classes the engine starts are stubs on the JVM). The browser window's path is pinned unchanged:
  * its core answers `false` and runs its own fallback, and the engine's refusal starts nothing.
+ * The store step names a package only when the core's `intentPackage` would (W6-D4, #554's nit):
+ * a malformed one falls through to the toast as a missing one does; the web address wins over both.
  */
 class ExternalProtocolsNoHandlerTest {
     private val root = repoRoot()
     private val engine = File(root, "android/app/src/main/kotlin/app/zen/chromium/ExternalProtocols.kt").readText()
     private val host = File(root, "android/app/src/main/kotlin/app/zen/chromium/CustomTabHost.kt").readText()
     private val core = File(root, "src/core/externalProtocols.ts").readText()
+    private val shared = File(root, "src/shared/externalProtocols.ts").readText()
 
     /** The fallback's order: the web address first, the store listing for a package without one, the toast for neither. */
     @Test
@@ -42,6 +45,66 @@ class ExternalProtocolsNoHandlerTest {
         )
         assertEquals("neither: the word", ExternalProtocols.Fallback.Toast, ExternalProtocols.Fallback.of(null, null))
         assertEquals("No app can open this link", ExternalProtocols.NO_APP_TOAST)
+    }
+
+    /** A package the core's `intentPackage` would not read yields no store listing: the plan falls through to the toast exactly as a missing package does. */
+    @Test
+    fun aPackageTheCoreWouldNotNameYieldsNoStoreListing() {
+        val malformed = listOf(
+            "com.evil/../x",
+            "com.example app",
+            "https://play.google.com/store/apps/details?id=com.example.app",
+            "",
+            "com.example.app;end"
+        )
+        for (pkg in malformed) {
+            assertEquals(
+                "`$pkg` is no package to the core, so the plan is the toast, as for no package at all",
+                ExternalProtocols.Fallback.of(null, null),
+                ExternalProtocols.Fallback.of(null, pkg)
+            )
+        }
+    }
+
+    /** A well-formed package still yields its listing with the package verbatim – well-formed by the core's rule, read from the shared source, which the engine quotes and applies. */
+    @Test
+    fun aWellFormedPackageYieldsItsListingVerbatimByTheCoresRule() {
+        assertEquals(
+            ExternalProtocols.Fallback.StoreListing("market://details?id=com.example.app"),
+            ExternalProtocols.Fallback.of(null, "com.example.app")
+        )
+        assertEquals(
+            ExternalProtocols.Fallback.StoreListing("market://details?id=a_b.c1"),
+            ExternalProtocols.Fallback.of(null, "a_b.c1")
+        )
+        // The core's regex, verbatim from `intentPackage`, is quoted in the engine and its class is the engine's check.
+        val intentPackage = shared.substring(shared.indexOf("export function intentPackage(").also { assertTrue("the shared source has intentPackage", it >= 0) })
+        val coreRegex = Regex("""const match = (/\S+/)\.exec\(url\)""").find(intentPackage)?.groupValues?.get(1) ?: error("intentPackage has no regex to read")
+        assertTrue("the core's regex is quoted verbatim in the engine", engine.contains(coreRegex))
+        val coreClass = Regex("""package=\(\[([^\]]+)\]\+\)""").find(coreRegex)?.groupValues?.get(1) ?: error("the core's regex has no package class to read")
+        assertTrue("the engine's check is the core's class, whole-token", engine.contains("val PACKAGE = Regex(\"[$coreClass]+\")"))
+        val body = body(engine, "fun of(fallbackUrl: String?, pkg: String?): Fallback")
+        assertTrue("the check guards the store step", body.contains("pkg != null && PACKAGE.matches(pkg) -> StoreListing(\"market://details?id=\$pkg\")"))
+        // The plan names a package exactly when the core would: the same samples through the core's regex, whole-token.
+        val core = Regex("[$coreClass]+")
+        val samples = listOf("com.example.app", "a_b.c1", "a", "com.evil/../x", "com.example app", "https://play.google.com/store/apps/details?id=com.example.app", "", "com.example.app;end", "com.example.app#Intent", "com.example.app?x=1", "com.example.app&y=2", "com-example")
+        for (pkg in samples) {
+            val listing = ExternalProtocols.Fallback.of(null, pkg) is ExternalProtocols.Fallback.StoreListing
+            assertEquals("`$pkg`: a listing exactly when the core would name the package", core.matches(pkg), listing)
+        }
+    }
+
+    /** The web address still wins, over a malformed package as over a well-formed one: the check stands behind the URL, never ahead of it. */
+    @Test
+    fun theWebFallbackWinsOverAMalformedPackageToo() {
+        assertEquals(
+            ExternalProtocols.Fallback.LoadInTab("https://example.com/get-the-app"),
+            ExternalProtocols.Fallback.of("https://example.com/get-the-app", "com.evil/../x")
+        )
+        assertEquals(
+            ExternalProtocols.Fallback.LoadInTab("http://127.0.0.1:8149/fallback.html"),
+            ExternalProtocols.Fallback.of("http://127.0.0.1:8149/fallback.html", "")
+        )
     }
 
     /** The engine runs the plan in that order, and the core's `noHandler` reads the same three steps from the same URL. */
