@@ -92,7 +92,10 @@ class BootHealDemo : DemoHarness(stateAsset = null, shotPrefix = "boot-heal", ha
         )
         val hidden = pageViews()
         finding("page view under the tour, in the window but hidden: ${hidden.describe()} ${verdict(hidden.count == 1 && hidden.visible == 0)}")
-        finding("the page's text is out of the tree under the tour ${verdict(findNode { it.contains(PAGE_TEXT) } == null)}")
+        // The heading's own words, whole: the chrome's live region says "Example Domain loaded" on
+        // the core's tab.loaded event (announce.ts, A11Y-02) – a node that CONTAINS the words while
+        // the page's view is GONE – and the open URL field's header row names the page too.
+        finding("the page's text is out of the tree under the tour ${verdict(findNode { it == PAGE_TEXT } == null)}")
         shot("01-tour-hides-page")
 
         // 3. The tour to its end: the first step's Get started, then whichever of Skip (the
@@ -112,10 +115,12 @@ class BootHealDemo : DemoHarness(stateAsset = null, shotPrefix = "boot-heal", ha
         finding("the tour walked to its end in ${taps + 1} taps ${verdict(ended)}")
 
         // 4. The tour's end, as the core rules it on a host without the new tab page: the flag
-        //    up, no tab made, the omnibox in new-tab mode over the page. The omnibox covers the
-        //    content too (overlayCoversContent), so the page's view is read here and judged
-        //    once the omnibox has closed.
-        val omnibox = waitFor(OMNIBOX_LABEL, 8_000) != null && urlbarOpen()
+        //    up, no tab made, the omnibox in new-tab mode over the page – proven by the field
+        //    (awaitOmniboxOpen: the store's word and the focus; the field's name is the EditText's
+        //    hint, which the tree's labels never carry). The omnibox covers the content too
+        //    (overlayCoversContent), so the page's view is read here and judged once the omnibox
+        //    has closed.
+        val omnibox = awaitOmniboxOpen(8_000)
         val after = coreState()
         val activeAfter = activeCoreTab(after)?.optString("url")
         val doneAfter = after.getJSONObject("settings").optBoolean("onboardingDone", false)
@@ -123,7 +128,7 @@ class BootHealDemo : DemoHarness(stateAsset = null, shotPrefix = "boot-heal", ha
             "core after the tour: ${after.getJSONObject("tabs").length()} tab(s), active $activeAfter, onboardingDone $doneAfter " +
                 verdict(after.getJSONObject("tabs").length() == 1 && activeAfter == LINK && doneAfter)
         )
-        finding("the tour ended in the omnibox, new-tab mode, over the page (the core's rule) ${verdict(omnibox)}")
+        finding("the tour ended in the omnibox, new-tab mode, over the page (the core's rule) ${verdict(omnibox.ok)} (${omnibox.describe()})")
         SystemClock.sleep(1_000)
         val under = pageViews()
         finding("page view under the omnibox: ${under.describe()} ${verdict(under.count == 1)}")
@@ -133,7 +138,7 @@ class BootHealDemo : DemoHarness(stateAsset = null, shotPrefix = "boot-heal", ha
         //    path – VISIBLE with the slot's size, its text in the tree.
         val close = closeUrlField()
         finding("the omnibox closed by back, the page kept ${verdict(close.ok)} (${close.describe()})")
-        val text = waitFor({ it.contains(PAGE_TEXT) }, 10_000) != null
+        val text = waitFor({ it == PAGE_TEXT }, 10_000) != null
         SystemClock.sleep(1_500)
         val placed = pageViews()
         finding("page view once nothing covers it, placed: ${placed.describe()} ${verdict(placed.count == 1 && placed.visible == 1 && placed.sized == 1)}")
@@ -183,9 +188,7 @@ class BootHealDemo : DemoHarness(stateAsset = null, shotPrefix = "boot-heal", ha
     companion object {
         /** The link the launches open (the intent's page). */
         private const val LINK = "https://example.com/"
-        /** The page's heading, in the accessibility tree once its view is placed. */
+        /** The page's heading, whole, in the accessibility tree once its view is placed. */
         private const val PAGE_TEXT = "Example Domain"
-        /** The omnibox field's label (components/urlbar/Urlbar.tsx). */
-        private const val OMNIBOX_LABEL = "Search or enter address"
     }
 }
