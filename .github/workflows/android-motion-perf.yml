@@ -34,9 +34,6 @@ name: Android motion perf
 # profile, some ten more for the drivers. The build, the emulator and the Gradle cache live in
 # android-emulator-demo.yml.
 on:
-  # TEMPORARY (H5, removed before READY): #497's O1 – one motion-perf run of main's tree on this branch.
-  push:
-    branches: [cursor/android-harness-h5b-9271]
   workflow_dispatch:
     inputs:
       theme:
