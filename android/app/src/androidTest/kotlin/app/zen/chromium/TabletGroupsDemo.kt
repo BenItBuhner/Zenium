@@ -2,6 +2,7 @@ package app.zen.chromium
 
 import android.graphics.PointF
 import android.graphics.RectF
+import android.os.Build
 import android.os.SystemClock
 import android.view.KeyEvent
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -457,11 +458,21 @@ class TabletGroupsDemo : GroupsDemoBase("tablet-groups", "tablet-groups-demo") {
         still("link-opened-behind")
     }
 
-    /** A touch on Copy Link Address: the menu closes (the copy's confirmation read as a finding). */
+    /**
+     * A touch on Copy Link Address: the menu closes, and the copy's confirmation is the platform's –
+     * below Android 13 the app's toast ("Link copied"); from 13 the OS shows its clipboard chip and
+     * the app withholds its own toast (`src/shared/clipboard.ts`, the `clipboardChip` capability).
+     */
     private fun copies() {
         val copied = touchUntil("Copy Link Address", { menuRow("Copy Link Address") }, { !jsBoolean(MENU_OPEN) }, waitMs = 6_000)
         check("Copy Link Address closes the menu", copied && awaitDomGone(MENU, 3_000), "menu ${jsText(MENU_OPEN)}")
-        finding("  the copy's confirmation: ${awaitToast("Link copied", 4_000) ?: "no toast within 4 s"}")
+        val chip = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+        val toast = awaitToast("Link copied", if (chip) 1_500 else 4_000)
+        if (chip) {
+            check("the copy shows no app toast on Android 13+ (the OS's clipboard chip is the confirmation)", toast == null, "toast '$toast'")
+        } else {
+            check("the copy's toast reads Link copied below Android 13", toast != null, "no toast within 4 s")
+        }
         awaitToastGone()
     }
 
