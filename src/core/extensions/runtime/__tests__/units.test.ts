@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest'
 import { buildExtensionBoot } from '../boot'
 import { parseRuntimeManifest, type RuntimeManifest } from '../manifest'
 import type { RegisteredContentScript } from '../plan'
-import { injectsProgrammatically, originRulesFor, planUnits, sameUnits } from '../units'
+import {
+  injectsProgrammatically,
+  mergeAlikeGroups,
+  originRulesFor,
+  planUnits,
+  sameUnits
+} from '../units'
 
 const ID = 'abcdefghijklmnopabcdefghijklmnop'
 
@@ -46,12 +52,14 @@ describe('planUnits', () => {
     const planned = planUnits(boot, manifest, env)
     expect(planned.id).toBe(ID)
     expect(planned.version).toBe('1.2.3')
-    expect(planned.units.map((u) => u.key)).toEqual([
-      'isolated:http://*.youtube.com https://*.youtube.com',
-      'isolated:https://github.com',
-      'main:https://github.com'
+    // Two rule sets in the extension's world: a holder of the bootstrap ahead of them (see below).
+    expect(planned.units.map((u) => [u.key, u.shape])).toEqual([
+      ['isolated:*', 'holder'],
+      ['isolated:http://*.youtube.com https://*.youtube.com', 'thin'],
+      ['isolated:https://github.com', 'thin'],
+      ['main:https://github.com', 'whole']
     ])
-    const youtube = planned.units[0]
+    const youtube = planned.units[1]
     expect(youtube.worldName).toBe(`zenium-ext-${ID}`)
     expect(youtube.isolation).toBe('world')
     expect(youtube.groups.map((g) => g.js)).toEqual([['yt.js'], ['yt2.js']])
@@ -59,7 +67,7 @@ describe('planUnits', () => {
     expect(youtube.config.world).toBe('isolated')
     // The unit's own config carries only its groups, so a page compiles nothing it cannot run.
     expect(youtube.config.extension.groups.map((g) => g.js)).toEqual([['yt.js'], ['yt2.js']])
-    const main = planned.units[2]
+    const main = planned.units[3]
     expect(main.worldName).toBeNull()
     expect(main.isolation).toBe('none')
     expect(main.groups[0].isolation).toBe('none')
@@ -85,12 +93,15 @@ describe('planUnits', () => {
     })
     const boot = buildExtensionBoot(ID, manifest, null, [], 'world')
     const planned = planUnits(boot, manifest, env)
-    expect(planned.units.map((u) => u.key)).toEqual([
-      'isolated:https://*.wikipedia.org',
-      'isolated:https://example.com'
+    // The transport over wikipedia is a unit that runs there (thin: it boots through the
+    // world's holder, which every frame gets), with no groups of its own.
+    expect(planned.units.map((u) => [u.key, u.shape])).toEqual([
+      ['isolated:*', 'holder'],
+      ['isolated:https://*.wikipedia.org', 'thin'],
+      ['isolated:https://example.com', 'thin']
     ])
-    expect(planned.units[0].groups).toEqual([])
-    expect(planned.units[0].config.extension.groups).toEqual([])
+    expect(planned.units[1].groups).toEqual([])
+    expect(planned.units[1].config.extension.groups).toEqual([])
     const without = planUnits(boot, manifest, { ...env, isolatedWorlds: false })
     expect(without.units.map((u) => u.key)).toEqual(['isolated:https://example.com'])
   })
@@ -305,6 +316,147 @@ describe('planUnits', () => {
     expect(sameUnits(null, b)).toBe(false)
     const c = planUnits(boot, manifest, { ...env, uiLanguage: 'de' })
     expect(sameUnits(a, c)).toBe(false)
+  })
+
+  it('merges groups alike in everything but their patterns under the union, and no other', () => {
+    // Grammarly's shape (compat round 19): the same two files listed under an Outlook set and a
+    // classroom set, 2.67 M chars embedded twice; a third entry with the same files at
+    // document_start is another kind, as is one with a different exclude list.
+    const manifest = manifestOf({
+      content_scripts: [
+        {
+          matches: ['https://*.outlook.live.com/*', 'https://*.outlook.office.com/*'],
+          js: ['a.js', 'b.js']
+        },
+        { matches: ['https://*.nearpod.com/*'], js: ['a.js', 'b.js'] },
+        { matches: ['https://*.nearpod.com/*'], js: ['a.js', 'b.js'], run_at: 'document_start' },
+        {
+          matches: ['https://*.overleaf.com/*'],
+          js: ['a.js', 'b.js'],
+          exclude_matches: ['https://*.overleaf.com/learn/*']
+        },
+        { matches: ['https://docs.google.com/*'], css: ['docs.css'] },
+        { matches: ['https://sheets.google.com/*'], css: ['docs.css'] }
+      ]
+    })
+    const boot = buildExtensionBoot(ID, manifest, null, [], 'world')
+    // The boot orders its groups by run_at (the document_start entry first); read by index here.
+    const merged = mergeAlikeGroups(boot.groups).sort((a, b) => a.index - b.index)
+    expect(merged.map((g) => [g.index, g.matches])).toEqual([
+      [
+        0,
+        [
+          'https://*.outlook.live.com/*',
+          'https://*.outlook.office.com/*',
+          'https://*.nearpod.com/*'
+        ]
+      ],
+      [2, ['https://*.nearpod.com/*']],
+      [3, ['https://*.overleaf.com/*']],
+      [4, ['https://docs.google.com/*', 'https://sheets.google.com/*']]
+    ])
+    // The boot record itself is left as the manifest had it.
+    expect(boot.groups.find((g) => g.index === 0)?.matches).toEqual([
+      'https://*.outlook.live.com/*',
+      'https://*.outlook.office.com/*'
+    ])
+    expect(boot.groups).toHaveLength(6)
+    // Planned: the merged group is one unit over the union's origins, its config naming the
+    // merged patterns for the bootstrap's own matcher.
+    const planned = planUnits(boot, manifest, { ...env, isolatedWorlds: false })
+    const pair = planned.units.find((u) => u.groups.some((g) => g.index === 0))
+    expect(pair?.origins).toEqual([
+      'https://*.nearpod.com',
+      'https://*.outlook.live.com',
+      'https://*.outlook.office.com'
+    ])
+    expect(pair?.groups.map((g) => g.index)).toEqual([0])
+    expect(pair?.config.extension.groups.map((g) => g.matches)).toEqual([
+      ['https://*.outlook.live.com/*', 'https://*.outlook.office.com/*', 'https://*.nearpod.com/*']
+    ])
+    expect(planned.units.every((u) => u.shape === 'whole')).toBe(true)
+  })
+
+  it('gives an isolated world with several rule sets one bootstrap: the everywhere unit carries it, the others go thin', () => {
+    const manifest = manifestOf({
+      content_scripts: [
+        { matches: ['<all_urls>'], js: ['all.js'] },
+        { matches: ['https://docs.google.com/*'], js: ['docs.js'] },
+        { matches: ['https://*.overleaf.com/*'], js: ['leaf.js'] },
+        { matches: ['https://docs.google.com/*'], js: ['docs-main.js'], world: 'MAIN' },
+        { matches: ['https://*.overleaf.com/*'], js: ['leaf-main.js'], world: 'MAIN' }
+      ]
+    })
+    const boot = buildExtensionBoot(ID, manifest, null, [], 'world')
+    const planned = planUnits(boot, manifest, env)
+    expect(planned.units.map((u) => [u.key, u.shape])).toEqual([
+      ['isolated:*', 'carrier'],
+      ['isolated:https://*.overleaf.com', 'thin'],
+      ['isolated:https://docs.google.com', 'thin'],
+      // The main world is the page's: whole units, as before.
+      ['main:https://*.overleaf.com', 'whole'],
+      ['main:https://docs.google.com', 'whole']
+    ])
+    // Every unit still carries its own groups alone, under its own rules.
+    expect(planned.units.map((u) => u.groups.map((g) => g.js))).toEqual([
+      [['all.js']],
+      [['leaf.js']],
+      [['docs.js']],
+      [['leaf-main.js']],
+      [['docs-main.js']]
+    ])
+    // Without isolated worlds every unit is whole (the with proxy in the page's main world).
+    const without = planUnits(boot, manifest, { ...env, isolatedWorlds: false })
+    expect(without.units.every((u) => u.shape === 'whole')).toBe(true)
+    // One rule set in the world: whole, no carrier wanted.
+    const one = manifestOf({
+      content_scripts: [{ matches: ['https://docs.google.com/*'], js: ['docs.js'] }]
+    })
+    expect(
+      planUnits(buildExtensionBoot(ID, one, null, [], 'world'), one, env).units.map((u) => u.shape)
+    ).toEqual(['whole'])
+  })
+
+  it('adds a holder over every origin where a world has several rule sets and none everywhere, first in order', () => {
+    const manifest = manifestOf({
+      content_scripts: [
+        { matches: ['https://docs.google.com/*'], js: ['docs.js'] },
+        { matches: ['https://*.overleaf.com/*'], js: ['leaf.js'] }
+      ]
+    })
+    const boot = buildExtensionBoot(ID, manifest, null, [], 'world')
+    const planned = planUnits(boot, manifest, env)
+    expect(planned.units.map((u) => [u.key, u.shape, u.groups.length])).toEqual([
+      ['isolated:*', 'holder', 0],
+      ['isolated:https://*.overleaf.com', 'thin', 1],
+      ['isolated:https://docs.google.com', 'thin', 1]
+    ])
+    const holder = planned.units[0]
+    expect(holder.origins).toEqual(['*'])
+    expect(holder.worldName).toBe(`zenium-ext-${ID}`)
+    expect(holder.config.extension.groups).toEqual([])
+    expect(holder.css).toEqual([])
+    // The scripting transport over the host permissions is a unit that must run in its frames:
+    // over every origin it is the carrier, not a holder.
+    const scripting = manifestOf({
+      permissions: ['scripting'],
+      host_permissions: ['<all_urls>'],
+      content_scripts: [
+        { matches: ['https://docs.google.com/*'], js: ['docs.js'] },
+        { matches: ['https://*.overleaf.com/*'], js: ['leaf.js'] }
+      ]
+    })
+    const withTransport = planUnits(
+      buildExtensionBoot(ID, scripting, null, [], 'world'),
+      scripting,
+      env
+    )
+    expect(withTransport.units.map((u) => [u.key, u.shape])).toEqual([
+      ['isolated:*', 'carrier'],
+      ['isolated:https://*.overleaf.com', 'thin'],
+      ['isolated:https://docs.google.com', 'thin']
+    ])
+    expect(withTransport.units[0].groups).toEqual([])
   })
 })
 

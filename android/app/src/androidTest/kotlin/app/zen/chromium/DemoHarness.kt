@@ -13,12 +13,18 @@ import android.graphics.PointF
 import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
+import android.os.Handler
+import android.os.HandlerThread
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Log
 import android.view.Choreographer
 import android.view.InputDevice
+import android.view.InputEvent
+import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.PixelCopy
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityManager
 import android.view.accessibility.AccessibilityNodeInfo
@@ -42,6 +48,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -75,7 +82,7 @@ abstract class DemoHarness(
     private val stateAsset: String?,
     private val shotPrefix: String,
     handshakeDir: String,
-    uiAutomationFlags: Int = UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES,
+    private val uiAutomationFlags: Int = UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES,
     private val keepProfile: Boolean = false
 ) {
     protected val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -118,6 +125,13 @@ abstract class DemoHarness(
 
     /** A chance to prepare the device once the profile is seeded and before the app starts. */
     protected open fun beforeLaunch() {}
+
+    /**
+     * The `ActivityOptions` the app starts under, or null for the plain start: a driver that wants
+     * the activity in a FREEFORM WINDOW (the desktop windowing demo) hands over a bundle with the
+     * launch windowing mode and the window's bounds, and [launch] passes it on with the intent.
+     */
+    protected open fun launchOptions(): Bundle? = null
 
     /**
      * Seed, launch, warm up, hand over to the recorder, run the sequence. Fails once the
@@ -318,7 +332,12 @@ abstract class DemoHarness(
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         if (holdBackgroundWork) intent.putExtra(BackgroundWorkHold.EXTRA_HOLD, true)
         appLaunchedAt = SystemClock.uptimeMillis()
-        activity = instrumentation.startActivitySync(intent)
+        val options = launchOptions()
+        activity = if (options != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            instrumentation.startActivitySync(intent, options)
+        } else {
+            instrumentation.startActivitySync(intent)
+        }
         // The chrome is a WebView booting the browser core: wait for the address pill to show up
         // (by either of its names: a state whose active tab is the new tab page has no address).
         val deadline = SystemClock.uptimeMillis() + 30_000
@@ -511,7 +530,21 @@ abstract class DemoHarness(
      * must wait for that itself (poll for the change, or [settle]), not lean on the still.
      */
     protected fun shot(name: String) {
-        val bitmap = ui.takeScreenshot() ?: return
+        if (accessibilityDetached) {
+            windowShot(name)
+            return
+        }
+        // The screenshot service answers null now and then while the display is busy (a window
+        // mid-resize, a heavy frame): a moment and a second and third ask before the still is
+        // given up (three of a run's fourteen were lost to one null each, DexWindowingDemo #494).
+        var taken: Bitmap? = null
+        for (attempt in 1..3) {
+            taken = ui.takeScreenshot()
+            if (taken != null) break
+            Log.w(tag, "takeScreenshot returned null for $shotPrefix-$name (attempt $attempt of 3)")
+            SystemClock.sleep(400)
+        }
+        val bitmap = taken ?: return
         val file = File(out, "$shotPrefix-$name.png")
         shotEncoder.execute {
             file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
@@ -1236,6 +1269,120 @@ abstract class DemoHarness(
             }
         }
         return if (counts.isEmpty()) "none" else counts.entries.joinToString(", ") { "${it.key} x${it.value}" }
+    }
+
+    /**
+     * `block` with the instrumentation's UiAutomation DISCONNECTED from the system – no
+     * accessibility service on the device for its duration, the way the app runs outside a test.
+     * UiAutomation is itself an enabled accessibility service, and while one is enabled the
+     * WebView hands a mouse's hover to accessibility exploration instead of Blink
+     * (`WebContentsViewAndroid::OnMouseEvent` → `WebContentsAccessibilityImpl.onHoverEvent`,
+     * which consumes every hover while `AccessibilityManager.isEnabled()`), so a driver proving
+     * hover on the chrome (`DexWindowingDemo`) runs its mouse inside this. Connecting under
+     * [UiAutomation.FLAG_DONT_USE_ACCESSIBILITY] is not enough: Android 14's
+     * `UiAutomationManager.isUiAutomationRunningLocked` counts a UiAutomation connected under
+     * that flag as running, and the accessibility-enabled state every app reads derives from it
+     * (`AccessibilityUserState.getClientStateLocked`), so the app would still see accessibility
+     * on. Hence the disconnect (`UiAutomation.disconnect`, then `connectWithTimeout` with the
+     * harness's flags on the way out – hidden methods, reached by reflection under
+     * `--no-hidden-api-checks`; where they are not reachable the block runs connected and the
+     * caller's findings say so through [accessibilityDetached]). While detached nothing of
+     * UiAutomation works – not the tree, not the screenshot service, not the shell, not its
+     * injection – so [injectInput] goes through the instrumentation's own injection into the app's
+     * windows (`Instrumentation.sendPointerSync` / `sendKeySync`: the shell that started the run
+     * holds INJECT_EVENTS, the target is the app's uid, and a point outside the app's window is
+     * refused) and [shot] copies the window's own pixels ([windowShot]). The reconnect brings
+     * the tree and the accessibility state back. A driver using this runs [runDemo] with
+     * `holdEvents = false`: the hold's own service ([holdEventsOpen]) is an enabled one too, and
+     * it stays enabled across the disconnect.
+     */
+    protected fun <T> withoutAccessibility(block: () -> T): T {
+        val disconnect = hidden("disconnect")
+        val connect = hidden("connectWithTimeout", Int::class.javaPrimitiveType!!, Long::class.javaPrimitiveType!!)
+            ?: hidden("connect", Int::class.javaPrimitiveType!!)
+        if (disconnect == null || connect == null) {
+            Log.w(tag, "UiAutomation.disconnect / connect are not reachable (the instrumentation needs --no-hidden-api-checks): running with accessibility on")
+            return block()
+        }
+        awaitShots()
+        // The reconnect registers UiAutomation with its stock service info: the flags [runDemo]
+        // set (the interactive windows for [findInWindows], the unimportant views) go back on after.
+        val serviceInfo = ui.serviceInfo
+        disconnect.invoke(ui)
+        accessibilityDetached = true
+        try {
+            return block()
+        } finally {
+            accessibilityDetached = false
+            if (connect.parameterTypes.size == 2) {
+                connect.invoke(ui, uiAutomationFlags, RECONNECT_TIMEOUT_MS)
+            } else {
+                connect.invoke(ui, uiAutomationFlags)
+            }
+            ui.serviceInfo = serviceInfo
+        }
+    }
+
+    private fun hidden(name: String, vararg types: Class<*>): java.lang.reflect.Method? =
+        runCatching { UiAutomation::class.java.getMethod(name, *types) }.getOrNull()
+
+    /** Inside [withoutAccessibility]: UiAutomation is disconnected; input and stills take the app's own paths. */
+    protected var accessibilityDetached = false
+        private set
+
+    /**
+     * An input event into the system: UiAutomation's injection (any window, the dispatcher's
+     * trusted path) while it is connected; inside [withoutAccessibility] the instrumentation's own,
+     * which only reaches windows of the app's uid. Whether the event was taken.
+     */
+    protected fun injectInput(event: InputEvent, sync: Boolean): Boolean {
+        if (!accessibilityDetached) return ui.injectInputEvent(event, sync)
+        return runCatching {
+            when (event) {
+                is MotionEvent -> instrumentation.sendPointerSync(event)
+                is KeyEvent -> instrumentation.sendKeySync(event)
+                else -> throw IllegalArgumentException("not a pointer or key event: $event")
+            }
+        }.onFailure { Log.w(tag, "the instrumentation's injection refused $event: $it") }.isSuccess
+    }
+
+    /**
+     * A still of the app's window through PixelCopy – its own surface at the window's size, the
+     * WebViews' pixels included – named like [shot]'s: the way inside [withoutAccessibility],
+     * where the screenshot service is not reachable.
+     */
+    protected fun windowShot(name: String) {
+        val window = activity.window
+        val decor = window.decorView
+        val width = decor.width
+        val height = decor.height
+        if (width <= 0 || height <= 0) {
+            Log.w(tag, "no window to copy for $shotPrefix-$name")
+            return
+        }
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val latch = CountDownLatch(1)
+        var result = -1
+        val thread = HandlerThread("window-shot").apply { start() }
+        try {
+            PixelCopy.request(window, bitmap, { code ->
+                result = code
+                latch.countDown()
+            }, Handler(thread.looper))
+            if (!latch.await(5, TimeUnit.SECONDS)) result = -2
+        } finally {
+            thread.quitSafely()
+        }
+        if (result != PixelCopy.SUCCESS) {
+            Log.w(tag, "PixelCopy of the window failed for $shotPrefix-$name ($result)")
+            bitmap.recycle()
+            return
+        }
+        val file = File(out, "$shotPrefix-$name.png")
+        shotEncoder.execute {
+            file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            bitmap.recycle()
+        }
     }
 
     /**
@@ -2706,7 +2853,7 @@ abstract class DemoHarness(
                 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0
             )
             try {
-                ui.injectInputEvent(event, false)
+                injectInput(event, false)
             } finally {
                 event.recycle()
             }
@@ -2799,11 +2946,154 @@ abstract class DemoHarness(
                 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0
             )
             try {
-                ui.injectInputEvent(event, false)
+                injectInput(event, false)
             } finally {
                 event.recycle()
             }
         }
+    }
+
+    /**
+     * One mouse (`SOURCE_MOUSE`, `TOOL_TYPE_MOUSE`; the desktop windowing demo), injected through
+     * the system's input dispatcher in the stream a real one arrives in, so the dispatcher's own
+     * hover bookkeeping stays consistent (it turns the first hover move into the window's
+     * HOVER_ENTER, ends the hover under a button, and on API 34 a HOVER_ENTER for a pointer it
+     * already has hovering is an inconsistency it treats as fatal – so nothing here injects an
+     * ENTER or an EXIT of its own):
+     *
+     *  - a move with no button down is `ACTION_HOVER_MOVE`, interpolated in real time as
+     *    [Finger.moveBy] is, so the chrome sees an approach and not a jump;
+     *  - a click is the `CursorInputMapper`'s sequence: `ACTION_DOWN` with the button in
+     *    `buttonState`, `ACTION_BUTTON_PRESS` naming it as the action button, then
+     *    `ACTION_BUTTON_RELEASE` and `ACTION_UP`, and a hover move on the same spot afterwards.
+     *    The WebView reads a mouse's buttons off the BUTTON_PRESS / BUTTON_RELEASE pair (Chromium's
+     *    `EventForwarder` consumes a mouse's DOWN / UP and forwards the changed button from
+     *    `getActionButton()`), and the dispatcher refuses either without an action button
+     *    (`isValidMotionAction`). The action button is written through `MotionEvent.setActionButton`,
+     *    a test API reached by reflection, which is why the demo's workflow runs the instrumentation
+     *    with `--no-hidden-api-checks`; a device that keeps it hidden has no clicks, and [refused]
+     *    says so;
+     *  - a wheel notch is `ACTION_SCROLL` with `AXIS_VSCROLL` (positive away from the user, one per
+     *    notch), Ctrl as the event's meta state.
+     */
+    protected inner class Mouse {
+        private var x = 0f
+        private var y = 0f
+        /** Injections the dispatcher refused, or that could not be built, for a driver's claim. */
+        val refused = ArrayList<String>()
+
+        val position: PointF get() = PointF(x, y)
+
+        /** Hover to (`toX`, `toY`) over `durationMs` of real time, from where the pointer stands. */
+        fun moveTo(toX: Float, toY: Float, durationMs: Long = 160) {
+            if (!placed) {
+                // An entering pointer has no path before it: it appears where it is.
+                x = toX
+                y = toY
+                placed = true
+                inject(MotionEvent.ACTION_HOVER_MOVE, SystemClock.uptimeMillis())
+                return
+            }
+            val fromX = x
+            val fromY = y
+            val steps = max(1L, durationMs / STEP_MS)
+            val start = SystemClock.uptimeMillis()
+            for (i in 1..steps) {
+                val due = start + (durationMs * i) / steps
+                val now = SystemClock.uptimeMillis()
+                if (due > now) SystemClock.sleep(due - now)
+                val t = i.toFloat() / steps
+                x = fromX + (toX - fromX) * t
+                y = fromY + (toY - fromY) * t
+                inject(MotionEvent.ACTION_HOVER_MOVE, SystemClock.uptimeMillis())
+            }
+        }
+
+        /** A click of `button` ([MotionEvent.BUTTON_PRIMARY] by default) where the pointer stands, `holdMs` between press and release. */
+        fun click(button: Int = MotionEvent.BUTTON_PRIMARY, holdMs: Long = 60) {
+            val downTime = SystemClock.uptimeMillis()
+            inject(MotionEvent.ACTION_DOWN, downTime, downTime = downTime, buttonState = button)
+            inject(MotionEvent.ACTION_BUTTON_PRESS, SystemClock.uptimeMillis(), downTime = downTime, buttonState = button, actionButton = button)
+            SystemClock.sleep(holdMs)
+            inject(MotionEvent.ACTION_BUTTON_RELEASE, SystemClock.uptimeMillis(), downTime = downTime, buttonState = 0, actionButton = button)
+            inject(MotionEvent.ACTION_UP, SystemClock.uptimeMillis(), downTime = downTime, buttonState = 0)
+            // The pointer is still there: the hover the button ended is taken up again.
+            SystemClock.sleep(30)
+            inject(MotionEvent.ACTION_HOVER_MOVE, SystemClock.uptimeMillis())
+        }
+
+        /** Hover to the point and click there. */
+        fun click(toX: Float, toY: Float, button: Int = MotionEvent.BUTTON_PRIMARY) {
+            moveTo(toX, toY)
+            SystemClock.sleep(80)
+            click(button)
+        }
+
+        fun rightClick(toX: Float, toY: Float) = click(toX, toY, MotionEvent.BUTTON_SECONDARY)
+
+        /**
+         * `notches` of the wheel where the pointer stands: positive rolls away from the user
+         * (`AXIS_VSCROLL` positive, a page scrolls up, Ctrl zooms in), negative towards. One
+         * `ACTION_SCROLL` a notch, `gapMs` apart.
+         */
+        fun wheel(notches: Int, ctrl: Boolean = false, gapMs: Long = 120) {
+            val meta = if (ctrl) KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON else 0
+            val step = if (notches < 0) -1f else 1f
+            repeat(abs(notches)) { i ->
+                if (i > 0) SystemClock.sleep(gapMs)
+                inject(MotionEvent.ACTION_SCROLL, SystemClock.uptimeMillis(), metaState = meta, vscroll = step)
+            }
+        }
+
+        private var placed = false
+
+        private fun inject(
+            action: Int,
+            eventTime: Long,
+            downTime: Long = eventTime,
+            buttonState: Int = 0,
+            actionButton: Int = 0,
+            metaState: Int = 0,
+            vscroll: Float = 0f
+        ) {
+            val properties = MotionEvent.PointerProperties().apply {
+                id = 0
+                toolType = MotionEvent.TOOL_TYPE_MOUSE
+            }
+            val coords = MotionEvent.PointerCoords().apply {
+                x = this@Mouse.x
+                y = this@Mouse.y
+                pressure = if (buttonState != 0) 1f else 0f
+                size = 1f
+                if (vscroll != 0f) setAxisValue(MotionEvent.AXIS_VSCROLL, vscroll)
+            }
+            val event = MotionEvent.obtain(
+                downTime, eventTime, action, 1, arrayOf(properties), arrayOf(coords),
+                metaState, buttonState, 1f, 1f, 0, 0, InputDevice.SOURCE_MOUSE, 0
+            )
+            try {
+                if (actionButton != 0) {
+                    val setter = setActionButton
+                    if (setter == null) {
+                        refused += "${MotionEvent.actionToString(action)}: MotionEvent.setActionButton is not reachable"
+                        return
+                    }
+                    setter.invoke(event, actionButton)
+                }
+                if (!injectInput(event, true)) {
+                    refused += "${MotionEvent.actionToString(action)} at ${x.roundToInt()},${y.roundToInt()}"
+                }
+            } finally {
+                event.recycle()
+            }
+        }
+    }
+
+    /** `MotionEvent.setActionButton(int)`: a test API, reachable under `--no-hidden-api-checks`. */
+    private val setActionButton: java.lang.reflect.Method? by lazy {
+        runCatching { MotionEvent::class.java.getMethod("setActionButton", Int::class.javaPrimitiveType) }
+            .onFailure { Log.w(tag, "MotionEvent.setActionButton is not reachable (the instrumentation needs --no-hidden-api-checks): $it") }
+            .getOrNull()
     }
 
     companion object {
@@ -2941,6 +3231,8 @@ abstract class DemoHarness(
          */
         private const val STARTUP_SWEEP_ALLOWANCE_MS = 90_000L
         private const val STEP_MS = 8L
+        /** UiAutomation's own connect timeout (`CONNECT_TIMEOUT_MILLIS`), for the reconnect after [withoutAccessibility]. */
+        private const val RECONNECT_TIMEOUT_MS = 60_000L
         /** Two reads of a node's bounds this far apart agreeing count as settled ([steadyBounds]). */
         private const val BOUNDS_SETTLE_MS = 350L
         /**

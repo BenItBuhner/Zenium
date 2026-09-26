@@ -116,6 +116,11 @@ export interface ViewEventPayloads {
   pageMessage: PageMessage
   /** A trusted touch or key reached the WebView (user activation for the pop-up blocker). */
   activation: void
+  /**
+   * Ctrl + the mouse wheel over the page (`TabWebView.onGenericMotionEvent`, OS-12): one whole
+   * notch, away from the user for `in`. Electron's `zoom-changed`; the core's `adjustZoom`.
+   */
+  zoomChanged: { direction: 'in' | 'out' }
   destroyed: void
 }
 
@@ -296,6 +301,12 @@ export class AndroidTabView implements TabView {
       case 'activation':
         ev.onUserActivation()
         return
+      case 'zoomChanged': {
+        const direction = (payload as Partial<ViewEventPayloads['zoomChanged']> | undefined)
+          ?.direction
+        if (direction === 'in' || direction === 'out') ev.onZoomChanged(direction)
+        return
+      }
       case 'destroyed':
         this.destroyed = true
         ev.onDestroyed()

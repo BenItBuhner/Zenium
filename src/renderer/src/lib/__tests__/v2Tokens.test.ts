@@ -1051,18 +1051,26 @@ describe('the v2 primitives (§9.34)', () => {
   it('gate the row’s hover fill, press fill and pointer cursor on [data-static], as part of the one row rule', () => {
     // The static row (§9.34) is the row primitive with `data-static`: the attribute is read in
     // exactly three places, all in the row's own rule set – the static rule, and the `:not()` of
-    // the press gate and of the hover gate inside the row's `(hover: hover)` media block – so no
-    // surface has to fight the fill with a rule of its own, and nothing elsewhere gates on it.
+    // the press gate and of the hover gate, the latter gated on the root's live `data-hover`
+    // as every hover rule is (OS-12; `:where()` adds no specificity) – so no surface has to
+    // fight the fill with a rule of its own, and nothing elsewhere gates on it.
     // (The test above already holds each of them unlayered and free of literal colour.)
     expect([...bare.matchAll(/[^\n]*\[data-static\][^{]*\{/g)].map((m) => m[0].trim())).toEqual([
       '.zen-v2-row[data-static] {',
       ".zen-v2-row:active:not([aria-disabled='true'], [data-static]) {",
-      ".zen-v2-row:hover:not([aria-disabled='true'], [data-static]) {"
+      ":where(:root[data-hover='hover']) .zen-v2-row:hover:not([aria-disabled='true'], [data-static]) {"
     ])
-    const hoverGate = bare.indexOf(".zen-v2-row:hover:not([aria-disabled='true'], [data-static])")
-    const hoverMedia = bare.lastIndexOf('@media (hover: hover) {', hoverGate)
-    expect(hoverMedia).toBeGreaterThan(bare.indexOf('.zen-v2-row[data-static] {'))
-    expect(bare.slice(hoverMedia, hoverGate)).not.toMatch(/\}/)
+    const hoverGate = bare.indexOf(
+      ":where(:root[data-hover='hover']) .zen-v2-row:hover:not([aria-disabled='true'], [data-static])"
+    )
+    expect(hoverGate).toBeGreaterThan(bare.indexOf('.zen-v2-row[data-static] {'))
+    // The one `@media (hover: hover)` left is the new tab tile's: `newTabSharedCss` cuts that
+    // rule into the scriptless zen://newtab document, whose root never carries a live `data-hover`.
+    const tile = bare.indexOf('.zen-v2-shortcut:hover .zen-ntp-tile {')
+    expect(tile).toBeGreaterThan(-1)
+    expect([...bare.matchAll(/@media \(hover: hover\)/g)].map((m) => m.index)).toEqual([
+      bare.lastIndexOf('@media (hover: hover)', tile)
+    ])
     // The static rule turns off the pointer cursor and states nothing else: the row's geometry
     // (height, padding, gap, text and glyph placement) is the row rule's, not a second copy.
     expect(block('.zen-v2-row[data-static]').match(/^ {2}[a-z-]+:[^;]+;/gm)).toEqual([
@@ -1276,13 +1284,11 @@ describe('the v2 primitives (§9.34)', () => {
       'text-underline-offset: 2px;',
       'cursor: pointer;'
     ])
-    // Hover – a mouse's, under the hover media query – and focus-visible: the surface family's
-    // accent through the §9.29 control role, the underline in the same. Beside the rule,
-    // unlayered like it.
-    const media = '\n@media (hover: hover) {'
-    const hover = bare.indexOf('\n  .zen-v2-link:hover {')
+    // Hover – a mouse's, gated on the root's live `data-hover` – and focus-visible: the surface
+    // family's accent through the §9.29 control role, the underline in the same. Beside the
+    // rule, unlayered like it.
+    const hover = bare.indexOf("\n:where(:root[data-hover='hover']) .zen-v2-link:hover {")
     expect(hover).toBeGreaterThan(base)
-    expect(bare.slice(hover - media.length, hover)).toBe(media)
     expect(layered(hover + 1)).toBe(false)
     const focus = ruleAt('.zen-v2-link:focus-visible')
     expect(nesting(focus)).toBe(0)

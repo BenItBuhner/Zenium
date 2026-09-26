@@ -395,10 +395,8 @@
 .zen-v2-row.zen-phone-row[data-disabled]:active {
   background: transparent;
 }
-@media (hover: hover) {
-  .zen-v2-row.zen-phone-row[data-disabled]:hover {
-    background: transparent;
-  }
+:where(:root[data-hover='hover']) .zen-v2-row.zen-phone-row[data-disabled]:hover {
+  background: transparent;
 }
 .zen-swipe[data-moving='true'] .zen-v2-row.zen-phone-row:active {
   background: transparent;
