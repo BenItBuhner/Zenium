@@ -2807,7 +2807,9 @@ export type NewTabPageAction =
   | { type: 'edit-shortcut'; id: string | null }
   /**
    * A tile's menu (right-click, its ⋮ button, Shift+F10): the host's context menu at `x`, `y`
-   * in the page's CSS pixels; `keyboard` starts it with the first item selected.
+   * in the page's CSS pixels; `keyboard` starts it with the first item selected. `rect` is the
+   * tile's box – the square and its caption – in the page's CSS pixels: the touch layouts hang
+   * the menu from it, flush under the tile and start-aligned with it (NTP-35), not at the finger.
    */
   | {
       type: 'tile-menu'
@@ -2817,6 +2819,7 @@ export type NewTabPageAction =
       x: number
       y: number
       keyboard: boolean
+      rect?: Rect
     }
   /** The Customise button: Settings opens on its New Tab section. */
   | { type: 'customize' }
@@ -4710,6 +4713,13 @@ export interface MenuDescriptor {
   /** Anchor in chrome CSS pixels, when known. */
   x: number | null
   y: number | null
+  /**
+   * The box the menu hangs from (chrome CSS pixels, window coordinates), when the opener has one
+   * the renderer cannot read itself – the served new tab page's tile under a finger (NTP-35):
+   * the tablet menu stands flush under it, start-aligned, flipping per §9.20. Absent, the menu
+   * opens at `x`,`y` or at the control that meets the point (`resolveMenuAnchor`).
+   */
+  rect?: Rect
   /**
    * Opened by the keyboard (a shortcut, Shift+F10, the Menu key): a popover menu starts with its
    * first item focused so the arrow keys take over at once (v2 draft §9.22). Absent, the

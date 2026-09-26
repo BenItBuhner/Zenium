@@ -287,6 +287,17 @@ export const NEW_TAB_PAGE_STYLE = `
   .zen-v2-button svg { width: var(--v2-icon); height: var(--v2-icon); flex: none; }
   /* Customise (§9.29): the window-family button 12 in from the page's bottom trailing corner. */
   .zen-customize { position: fixed; right: 12px; bottom: 12px; z-index: 4; }
+  /*
+   * A finger on the page (the tablet's served page, NTP-35): the chrome's touch numbers, which
+   * main.css gates on the root's form factor and pointer – attributes the served document does
+   * not carry, so the pointer query stands in for them here. The field 56 tall, Customise the
+   * touch layouts' 40 control with the coarse block's 6 radius; the tiles stay the 64 square
+   * (§9.29 as amended; the toast's 32 control is the toast's own).
+   */
+  @media (pointer: coarse) {
+    .zen-ntp-field { height: 56px; }
+    .zen-customize { height: 40px; border-radius: 6px; }
+  }
 
   /* The Undo toast: a panel surface holding a 32 px control, so 40 tall (v2 §9.21). */
   .zen-toast {
