@@ -22,6 +22,7 @@ import type { Browser } from './browser'
 import type { PersistedWindow } from './state'
 import { getSpace, tabVisibleIn } from './model'
 import { formatWindowTitle, normalizeWindowName } from '../shared/windowTitle'
+import { isToolbarControl } from '../shared/toolbarPins'
 import { captionDoubleClickEffect } from './captionDoubleClick'
 import {
   CHROME_MENU_TARGETS,
@@ -399,7 +400,7 @@ export class ZenWindow {
    * plain text fields get Chrome's menus for them. Asked for by the keyboard (Shift+F10, the
    * Menu key), the menu hangs from the focused element, whose box the host reads for it.
    */
-  onContextMenu(params: Omit<ChromeContextParams, 'target' | 'tabId'>): void {
+  onContextMenu(params: Omit<ChromeContextParams, 'target' | 'tabId' | 'control'>): void {
     if (!this.alive) return
     // Both reads go to the document at once; a host without one, or one that fails, reads null.
     const ask = <T>(read: (() => Promise<T>) | undefined): Promise<T | null> =>
@@ -416,12 +417,15 @@ export class ZenWindow {
     void Promise.all([lookup, focused]).then(([hit, rect]) => {
       if (!this.alive) return
       const target = CHROME_MENU_TARGETS.find((t): t is ChromeMenuTarget => t === hit?.target)
+      // A control the bar does not know (a newer chrome's attribute) is no control at all.
+      const control = hit?.control
       return this.browser.menus.showChromeContextMenu(
         {
           ...params,
           ...(rect ? { rect } : {}),
           target: target ?? null,
-          tabId: hit?.tabId ?? null
+          tabId: hit?.tabId ?? null,
+          control: isToolbarControl(control) ? control : null
         },
         this
       )

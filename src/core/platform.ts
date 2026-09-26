@@ -101,6 +101,7 @@ import type { VoiceStartOutcome } from '../shared/voice'
 import type { SpellcheckDictionaryStatus } from '../shared/spellcheck'
 import type { GeoPosition, GeolocationErrorCode, WifiAccessPoint } from '../shared/geolocation'
 import type { ShareFile, ShareOutcome } from '../shared/share'
+import type { ToolbarControl } from '../shared/toolbarPins'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import type { AgentHttpRequest, AgentHttpResponse } from './agent/http'
@@ -467,15 +468,20 @@ export interface MediaContextFlags {
 /**
  * Chrome elements with a context menu of their own, marked `data-zen-menu` in the renderer: the
  * URL bar's field and pill, the reload button, the pill's star (its bookmark and reading list
- * rows, W6-1).
+ * rows, W6-1), and the desktop bar's other pinnable controls (`toolbar`, with the control in
+ * `data-zen-menu-control`: Chrome's pinned toolbar button menu, context-menus-112).
  */
-export type ChromeMenuTarget = 'urlbar' | 'urlpill' | 'reload' | 'star'
+export type ChromeMenuTarget = 'urlbar' | 'urlpill' | 'reload' | 'star' | 'toolbar'
+
+/** The editing commands a view runs on its focused element (`TabView.editCommand`). */
+export type EditCommand = 'cut' | 'copy' | 'paste'
 
 export const CHROME_MENU_TARGETS: readonly ChromeMenuTarget[] = [
   'urlbar',
   'urlpill',
   'reload',
-  'star'
+  'star',
+  'toolbar'
 ]
 
 /**
@@ -498,6 +504,12 @@ export interface ChromeContextParams {
   target: ChromeMenuTarget | null
   /** Tab the marked element acts on (`data-zen-menu-tab`); null for a new-tab URL bar. */
   tabId: string | null
+  /**
+   * The pinnable toolbar control the marked element is the button of (`data-zen-menu-control`,
+   * `shared/toolbarPins.ts`): the `toolbar` target's, and the star's, which is one too. Absent
+   * or null for the other marked elements.
+   */
+  control?: ToolbarControl | null
   isEditable: boolean
   selectionText: string
   editFlags: PageContextParams['editFlags']
@@ -939,6 +951,12 @@ export interface TabView {
   downloadURL(url: string, options?: { saveAs?: boolean }): void
   /** Reload one sub-frame of the page (`PageContextParams.frameId`); hosts without frames leave it out. */
   reloadFrame?(frameId: number): void
+  /**
+   * Run one editing command on the page's focused element – the app menu's Find and Edit ▸
+   * Cut, Copy and Paste (Chrome's IDC_CUT/COPY/PASTE act on the active web contents while no
+   * chrome view holds the focus). Hosts whose engine has no such command leave it out.
+   */
+  editCommand?(command: EditCommand): void
   /** Drop the HTTP cache of the page's session ("Empty Cache and Hard Reload"); optional. */
   clearCache?(): Promise<void>
   /** Print through the engine's own flow: Electron's system dialog, Android's print manager. */
@@ -1149,9 +1167,14 @@ export interface WindowHost {
   setCaptionColors?(colors: CaptionColors): void
   /**
    * The marked chrome element (`data-zen-menu`) under a point of the chrome document, for the
-   * chrome's own context menus; hosts whose chrome draws its menus itself leave it out.
+   * chrome's own context menus – with the tab it acts on (`data-zen-menu-tab`) and, for a
+   * toolbar control's button, which control (`data-zen-menu-control`); hosts whose chrome draws
+   * its menus itself leave it out.
    */
-  menuTargetAt?(x: number, y: number): Promise<{ target: string; tabId: string | null } | null>
+  menuTargetAt?(
+    x: number,
+    y: number
+  ): Promise<{ target: string; tabId: string | null; control?: string | null } | null>
   /**
    * The box of the chrome document's focused element (chrome CSS pixels, window coordinates),
    * where a menu the keyboard asked for hangs (§9.23); null when nothing but the document has

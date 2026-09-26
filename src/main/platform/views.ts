@@ -95,6 +95,7 @@ import type {
   ScreenshotOptions,
   AgentFrame,
   AgentInputEvent,
+  EditCommand,
   InputModifier,
   InsertedCssOrigin,
   KeyEventInput,
@@ -1725,6 +1726,16 @@ export class ElectronTabView implements TabView {
   reloadFrame(frameId: number): void {
     const frame = frameById(this.wc, frameId)
     if (frame && !frame.detached) frame.reload()
+  }
+
+  /**
+   * The editing command goes to the page's focused frame whether or not the page holds the
+   * window's focus (the app menu that asks stands in the chrome document): the frame tree keeps
+   * its focused frame, and Blink keeps the selection, while another view has the focus.
+   */
+  editCommand(command: EditCommand): void {
+    if (this.wc.isDestroyed()) return
+    this.wc[command]()
   }
 
   clearCache(): Promise<void> {
