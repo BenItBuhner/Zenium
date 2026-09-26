@@ -319,6 +319,21 @@ export class FlipTracker {
   }
 
   /**
+   * The scroller's offset moved with its content, not by the user – the browser kept the snapped
+   * element through a layout change (a card before it left a snapping strip), or clamped the
+   * offset to content grown shorter – so the cells on screen stayed where they were while their
+   * content coordinates moved by `dx`, `dy`. The baseline follows, and the commit that comes next
+   * finds nothing moved by it. For the owner that reads the offset, before that commit.
+   */
+  shift(dx: number, dy = 0): void {
+    if (dx === 0 && dy === 0) return
+    for (const item of this.tracked.values()) {
+      item.x += dx
+      item.y += dy
+    }
+  }
+
+  /**
    * The cells on screen, not measured: before the grid has settled (it is scaling in, and a
    * measurement per card per frame would slow the very frames the spring is paced by) the set is
    * kept current so `element()` answers, and the first settled commit takes the baseline.

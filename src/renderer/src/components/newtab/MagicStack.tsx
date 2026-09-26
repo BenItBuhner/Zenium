@@ -1,5 +1,5 @@
 import type { JSX, ReactNode, RefObject } from 'react'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Bookmark,
   Download,
@@ -30,7 +30,7 @@ import { run } from '@renderer/lib/api'
 import { fileGlyphFor, type FileGlyph } from '@renderer/lib/downloadsView'
 import { useFaviconSrc } from '@renderer/lib/favicons'
 import { collectCells, FlipTracker } from '@renderer/lib/motion/flip'
-import { reducedMotion } from '@renderer/lib/motion/spring'
+import { reducedMotion, SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
 import { openPage } from '@renderer/lib/pages'
 import { browserStore, showLocalMenu } from '@renderer/lib/ui'
 import { cn, formatBytes, relativeTime } from '@renderer/lib/utils'
@@ -38,6 +38,7 @@ import { RowView, type RowContext } from '../pages/settings/rows'
 import { PhoneSheet } from '../phone/PhoneSheet'
 import {
   availableModules,
+  buildCard,
   magicStackModule,
   pageAt,
   planMagicStack,
@@ -71,9 +72,13 @@ import {
  * cards as list items, and a status line reads the page.
  *
  * Motion (§11.4): a hidden card leaves on a 120 ms fade as the cards after it close the gap on
- * the FLIP tracker's spring; under reduced motion the card is cut and the others take their
- * places on the tracker's own 120 ms fade (§11.3). The strip comes in on the tiles' fade, after
- * the last tile.
+ * the FLIP tracker's spring – from a card's Hide This, where the card is the one under the
+ * finger and nothing pages, and from a switch of the Customise sheet turned off, where the dots
+ * follow the strip closing the gap; a card a switch turns on arrives on the fade's mirror and
+ * the strip pages to it on the same spring, so the card the sheet brought back is the card in
+ * view (§9.29). Under reduced motion the card is cut, the others take their places on the
+ * tracker's own 120 ms fade and the paging is a cut (§11.3). The strip comes in on the tiles'
+ * fade, after the last tile.
  */
 export function MagicStack({
   state,
@@ -94,16 +99,29 @@ export function MagicStack({
   if (settled.length > 0) setPendingHidden(pendingHidden.filter((id) => !hidden.includes(id)))
   // The card on its way out: hidden already, drawn once more for the fade.
   const [leaving, setLeaving] = useState<MagicStackModuleId | null>(null)
+  // The card a switch has just brought back: it arrives on its fade and the strip pages to it.
+  const [arriving, setArriving] = useState<MagicStackModuleId | null>(null)
+  // The hidden set as of the last render that read it (the previous-render pattern again): what
+  // a switch of the Customise sheet did is the difference, and a switch changes one id. An id
+  // that has come in for a card that is drawn – and not from the card's own menu, which
+  // `pendingHidden` already carries – is a departure like Hide This's; an id gone for a module
+  // with something to show is an arrival. A card without content comes and goes in the plan
+  // alone, and nothing moves for it; a set that changed by more than one id is no switch's act
+  // (a state loaded, a fixture) and cuts.
+  const [seenHidden, setSeenHidden] = useState(hidden)
+  if (!sameIds(seenHidden, hidden)) {
+    setSeenHidden(hidden)
+    const came = hidden.filter((id) => !seenHidden.includes(id))
+    const went = seenHidden.filter((id) => !hidden.includes(id))
+    if (came.length + went.length === 1) {
+      const [gone] = came
+      if (gone && !pendingHidden.includes(gone) && buildCard(gone, sources) && !reducedMotion())
+        setLeaving(gone)
+      const [back] = went
+      if (back && buildCard(back, sources)) setArriving(back)
+    }
+  }
   const stripRef = useRef<HTMLUListElement>(null)
-  useStackFlip(stripRef)
-
-  // The fade's end takes the card out; a timer stands in for an `animationend` that never comes
-  // (the page not painted, the animation cut by a stylesheet).
-  useEffect(() => {
-    if (!leaving) return
-    const timer = window.setTimeout(() => setLeaving(null), LEAVE_MS + 80)
-    return () => window.clearTimeout(timer)
-  }, [leaving])
 
   const effectiveHidden = useMemo(() => {
     const all = new Set<MagicStackModuleId>([...hidden, ...pendingHidden])
@@ -112,6 +130,37 @@ export function MagicStack({
   }, [hidden, pendingHidden, leaving])
 
   const cards = useMemo(() => planMagicStack(sources, effectiveHidden), [sources, effectiveHidden])
+  const mounted = cards.length > 0
+
+  useStackFlip(stripRef, mounted)
+  const pageTo = useStripPager(stripRef, mounted)
+
+  // The fade's end takes the card out (or the arriving one's attribute off); a timer stands in
+  // for an `animationend` that never comes (the page not painted, the animation cut by a
+  // stylesheet).
+  useEffect(() => {
+    if (!leaving) return
+    const timer = window.setTimeout(() => setLeaving(null), LEAVE_MS + 80)
+    return () => window.clearTimeout(timer)
+  }, [leaving])
+  useEffect(() => {
+    if (!arriving) return
+    const timer = window.setTimeout(() => setArriving(null), LEAVE_MS + 80)
+    return () => window.clearTimeout(timer)
+  }, [arriving])
+
+  // The strip pages to the card that has come back, once the commit has laid it out – after the
+  // tracker's commit above it in the order, which reads the strip first.
+  useLayoutEffect(() => {
+    if (!arriving) return
+    const strip = stripRef.current
+    if (!strip) return
+    const index = Array.prototype.indexOf.call(
+      strip.children,
+      strip.querySelector(`[data-cell="${arriving}"]`)
+    )
+    if (index >= 0) pageTo(index)
+  }, [arriving, pageTo])
 
   if (cards.length === 0) return null
 
@@ -147,9 +196,12 @@ export function MagicStack({
             data-surface="page"
             data-cell={card.id}
             data-leaving={leaving === card.id || undefined}
+            data-arriving={arriving === card.id || undefined}
             aria-label={cardLabel(card)}
             onAnimationEnd={(e) => {
-              if (e.target === e.currentTarget && leaving === card.id) setLeaving(null)
+              if (e.target !== e.currentTarget) return
+              if (leaving === card.id) setLeaving(null)
+              if (arriving === card.id) setArriving(null)
             }}
           >
             <CardBody card={card} tabId={tab.id} onMenu={() => openMenu(card.id)} />
@@ -240,20 +292,120 @@ function useSources(state: UIState): MagicStackSources {
   )
 }
 
+/** The same ids in the same order. */
+function sameIds(a: readonly MagicStackModuleId[], b: readonly MagicStackModuleId[]): boolean {
+  return a.length === b.length && a.every((id, i) => id === b[i])
+}
+
 /**
  * The strip's FLIP set (`lib/motion/flip.ts`): every card glides to its new slot on the one
- * spring when a card leaves. The positions are read against the strip itself, which is what
- * scrolls here; listening for as long as the strip is mounted, as the tile grid does.
+ * spring when a card leaves or arrives. The positions are read against the strip itself, which
+ * is what scrolls here; listening for as long as the strip is mounted, as the tile grid does.
+ *
+ * A commit that changes the set of cards can move the strip's offset with its content: Chromium
+ * keeps the snapped card through a layout change, so a card leaving or arriving before it moves
+ * the offset by a pitch, and a strip grown shorter has its offset clamped. The cards on screen
+ * did not move by any of that, while their content coordinates did – so the tracker's baseline
+ * follows the offset (`shift`) before that commit is measured, and the glide is the layout's
+ * own: the cards after a departure closing the gap, a card in view standing still. Between
+ * commits that keep the cards the offset is the finger's, which content coordinates already
+ * leave out; the last offset is read after each commit and on every scroll.
  */
-function useStackFlip(strip: RefObject<HTMLElement | null>): void {
+function useStackFlip(stripRef: RefObject<HTMLElement | null>, mounted: boolean): void {
   const tracker = useMemo(() => new FlipTracker(), [])
+  const last = useRef({ keys: '', scrollLeft: 0 })
   useLayoutEffect(() => {
-    tracker.commit(collectCells(strip.current), strip.current, true)
+    const el = stripRef.current
+    const cells = collectCells(el)
+    if (el) {
+      const keys = [...cells.keys()].join(' ')
+      // Reading the offset lays the strip out: what the browser did to it for this commit has
+      // landed, before the tracker reads the cards against it.
+      const scrollLeft = el.scrollLeft
+      if (keys !== last.current.keys) tracker.shift(scrollLeft - last.current.scrollLeft)
+      last.current = { keys, scrollLeft }
+    } else last.current = { keys: '', scrollLeft: 0 }
+    tracker.commit(cells, el, true)
   })
+  useEffect(() => {
+    const el = stripRef.current
+    if (!el) return
+    const onScroll = (): void => {
+      last.current.scrollLeft = el.scrollLeft
+    }
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => el.removeEventListener('scroll', onScroll)
+  }, [stripRef, mounted])
   useEffect(() => {
     tracker.listen()
     return () => tracker.dispose()
   }, [tracker])
+}
+
+/**
+ * Pages the strip to the card at `index` on the FLIP's spring (`SPRING_SNAPPY`; §11.4's arrival
+ * for a card a switch brings back): the offset runs to the card's snap position frame by frame
+ * with the strip's snapping off meanwhile – Chromium snaps every programmatic write to a
+ * mandatory container at its end, which would turn the spring into a stair – and on again a
+ * frame after the rest, where the offset is a snap position and the container has nothing to
+ * correct. A finger on the strip takes the motion over: the spring stops where it is and the
+ * snap returns at once, so the swipe ends as every swipe does. Under reduced motion the spring
+ * jumps (`SpringAnimation.start`): a cut to the card (§11.3).
+ */
+function useStripPager(
+  stripRef: RefObject<HTMLUListElement | null>,
+  mounted: boolean
+): (index: number) => void {
+  // The spring lives with the strip element: made when the strip is mounted, stopped and the
+  // snap restored when it goes (a strip drawn again is a new element and gets a new one).
+  const springRef = useRef<SpringAnimation | null>(null)
+  useEffect(() => {
+    const el = stripRef.current
+    if (!el) return
+    const spring: SpringAnimation = new SpringAnimation(
+      SPRING_SNAPPY,
+      (x) => {
+        el.scrollLeft = x
+      },
+      () => {
+        el.scrollLeft = spring.destination
+        requestAnimationFrame(() => {
+          if (!spring.running) el.style.removeProperty('scroll-snap-type')
+        })
+      }
+    )
+    springRef.current = spring
+    const caught = (): void => {
+      if (!spring.running) return
+      spring.stop()
+      el.style.removeProperty('scroll-snap-type')
+    }
+    const types = ['pointerdown', 'touchstart', 'wheel']
+    for (const type of types) el.addEventListener(type, caught, { passive: true })
+    return () => {
+      for (const type of types) el.removeEventListener(type, caught)
+      spring.stop()
+      el.style.removeProperty('scroll-snap-type')
+      springRef.current = null
+    }
+  }, [stripRef, mounted])
+  return useCallback(
+    (index: number) => {
+      const el = stripRef.current
+      const spring = springRef.current
+      const card = el?.children[index] as HTMLElement | undefined
+      if (!el || !spring || !card) return
+      // The snap position is the card's start less the strip's scroll padding: `index` pitches,
+      // the pitch read off the card itself – a lone card grown to the strip's width shrinks over
+      // 120 ms as a second arrives, while the arriving card, new, has its width at once.
+      const target = index * (card.getBoundingClientRect().width + CARD_GAP)
+      const from = el.scrollLeft
+      if (Math.abs(target - from) < 1) return
+      el.style.setProperty('scroll-snap-type', 'none')
+      spring.start(from, spring.running ? spring.stop().v : 0, target)
+    },
+    [stripRef]
+  )
 }
 
 /** What TalkBack reads for the card: the module, then what it holds. */

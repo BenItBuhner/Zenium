@@ -8120,8 +8120,9 @@
   /*
    * A card: a page surface on the window (§9.29) – the card fill under a hairline at the card
    * radius, no shadow (§3), 16 inside (`--v2-card-padding`); the cards of a strip share the
-   * tallest one's height, each with its action pinned to its foot. A leaving card (Hide This)
-   * fades over 120 ms with a touch of §11.4's departure scale; the FLIP tracker glides the rest.
+   * tallest one's height, each with its action pinned to its foot. A leaving card (Hide This, a
+   * switch off) fades over 120 ms with a touch of §11.4's departure scale, and a card a switch
+   * brings back arrives on the mirror of it; the FLIP tracker glides the rest.
    */
   :root[data-form-factor='phone'] .zen-mstack-card {
     display: flex;
@@ -8154,6 +8155,15 @@
   }
   @keyframes zen-mstack-leave {
     to {
+      opacity: 0;
+      transform: scale(0.96);
+    }
+  }
+  :root[data-form-factor='phone'] .zen-mstack-card[data-arriving] {
+    animation: zen-mstack-arrive 120ms var(--zen-ease);
+  }
+  @keyframes zen-mstack-arrive {
+    from {
       opacity: 0;
       transform: scale(0.96);
     }
