@@ -254,10 +254,15 @@ export function Sidebar({
                     </div>
                   )}
                   <div className="relative min-h-0 flex-1 overflow-hidden">
+                    {/* The strip is one pane per space, `spaces.length` panes wide, and slides
+                        by whole panes. A percentage in `translateX` is a share of the element's
+                        OWN border box (the strip's, N panes), so one pane is `100 / N` percent
+                        of it – a shift of `activeIndex × 100%` moved the strip by N panes at a
+                        time and left the list blank on every space but the first (W8-F1). */}
                     <div
                       className="zen-space-strip h-full"
                       style={{
-                        transform: `translateX(-${activeIndex * 100}%)`,
+                        transform: `translateX(-${(activeIndex * 100) / state.spaces.length}%)`,
                         width: `${state.spaces.length * 100}%`
                       }}
                     >
