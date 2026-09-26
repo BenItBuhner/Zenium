@@ -255,11 +255,20 @@ describe('ShareLayer as the share surface', () => {
       ({ left: 931, top: 661, width: 80, height: 32, right: 1011, bottom: 693 }) as DOMRect
     card.append(share)
     document.body.append(pill, card)
-    // The panel's content stands 216 tall once laid out (happy-dom lays nothing out itself).
+    // The panel's content stands 216 tall once laid out (happy-dom lays nothing out itself). Each
+    // read of the panel's box is noted with the pass it happened in and the entrance it wore.
+    const reads: { measuring: boolean; animation: string }[] = []
     const measure = vi
       .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
       .mockImplementation(function (this: HTMLElement) {
-        const tall = this.hasAttribute('data-share-popover') ? 216 : 0
+        const panel = this.hasAttribute('data-share-popover')
+        if (panel) {
+          reads.push({
+            measuring: this.hasAttribute('data-measuring'),
+            animation: this.style.animation
+          })
+        }
+        const tall = panel ? 216 : 0
         return { left: 0, top: 0, width: 320, height: tall, right: 320, bottom: tall } as DOMRect
       })
     try {
@@ -291,6 +300,11 @@ describe('ShareLayer as the share surface', () => {
       expect(panel.style.width).toBe('320px')
       expect(panel.hasAttribute('data-measuring')).toBe(false)
       expect(panel.style.visibility).toBe('')
+      expect(panel.style.animation).toBe('')
+      // The panel's box was read once, in the measuring pass, with its entrance held: the box
+      // comes through getBoundingClientRect, which carries a transform, and the pop's opening
+      // scale(0.94) would have read a 197 panel as 185 and clipped its body to a scroll.
+      expect(reads).toEqual([{ measuring: true, animation: 'none' }])
       // The keyboard lands once the panel is placed – a hidden panel takes no focus.
       expect(document.activeElement).toBe(panel.querySelector('[data-share-target="copy"]'))
     } finally {

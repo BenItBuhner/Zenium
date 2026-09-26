@@ -1512,11 +1512,14 @@ export function useAnchorRect(ref: RefObject<Element | null>): Rect | null {
  * placed on its content measured, the 60% cap a ceiling on that and never a stand-in for it).
  * Null until measured. While `active` and null the caller renders its panel once unplaced and
  * unseen (`measuringStyle`: at the window's corner, hidden, its width alone set so the text
- * wraps as it will, no `max-height` to read back), and this reads the panel's border-box
- * height in the layout pass, before the browser paints – the pass is never seen, and the chassis
- * holds the first paint anyway while the page gives way (`useFloatingChrome`). Once per mount:
- * the content is the request's, and another request is another panel (its `key`). A panel that
- * measures 0 (not laid out) leaves the placement to the cap, as with no height at all.
+ * wraps as it will, no `max-height` to read back, and no entrance – the box is read through
+ * `getBoundingClientRect`, which carries a transform, and the pop's opening `scale(0.94)` would
+ * have shrunk a 197 panel to 185 and its body to a scroll; the pop plays as the panel is
+ * placed), and this reads the panel's border-box height in the layout pass, before the browser
+ * paints – the pass is never seen, and the chassis holds the first paint anyway while the page
+ * gives way (`useFloatingChrome`). Once per mount: the content is the request's, and another
+ * request is another panel (its `key`). A panel that measures 0 (not laid out) leaves the
+ * placement to the cap, as with no height at all.
  */
 export function useMeasuredHeight(
   ref: RefObject<HTMLElement | null>,
@@ -1531,7 +1534,10 @@ export function useMeasuredHeight(
   return height
 }
 
-/** The pass a popover's content is measured in (`useMeasuredHeight`): unplaced, unseen, at its width. */
+/**
+ * The pass a popover's content is measured in (`useMeasuredHeight`): unplaced, unseen, at its
+ * width, its entrance held so the reading is the layout box and not the pop's first frame.
+ */
 export function measuringStyle(width: number): CSSProperties {
-  return { left: 0, top: 0, width, visibility: 'hidden' }
+  return { left: 0, top: 0, width, visibility: 'hidden', animation: 'none' }
 }
