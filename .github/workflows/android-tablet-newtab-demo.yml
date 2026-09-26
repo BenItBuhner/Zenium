@@ -38,6 +38,11 @@ name: Android tablet new tab page demo
 # `tablet-webview` shard (.github/nightly-drivers/tablet-newtab.json).
 on:
   workflow_dispatch:
+  # TEMPORARY, on the evidence branch alone (left in place for the record): the two samples of
+  # mitigation (1) for #563's boot path – READY not waiting for the served page's placement –
+  # where a dispatch is refused to the agent's token.
+  push:
+    branches: [cursor/android-tablet-newtab-ready-gate-9271]
 
 permissions:
   contents: read
