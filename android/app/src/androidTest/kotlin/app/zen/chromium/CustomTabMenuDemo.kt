@@ -51,9 +51,10 @@ import kotlin.math.abs
  * What it reads and asserts:
  *  - the START animation: the caller sets `setStartAnimations` (a two-second slide in from the
  *    right of its own resources) and starts the tab with the options bundle `launchUrl` passes;
- *    the frames after its button is pressed are sampled and the toolbar's left edge read in each,
- *    so the run says whether the slide ran through the provider's trampoline
- *    (`LinkDispatchActivity`, `Theme.NoDisplay`) or the theme's own 300 ms slide-up took its place;
+ *    the tab's OPEN transition is read from WindowManager's log (how long the shell animated it:
+ *    the caller's two seconds, or the theme's 300 ms slide-up) and the toolbar's landing from a
+ *    screenshot, so the run says whether the slide ran through the provider's trampoline
+ *    (`LinkDispatchActivity`, `Theme.NoDisplay`) or the theme's own animation took its place;
  *  - the menu's ICON ROW on the native sheet: Forward, Bookmark, Download Page, Page Info, Reload
  *    with the caller's two disabled buttons gone from a tab that disabled them; Forward disabled on
  *    a fresh tab and enabled after a navigation and a back step, then taken under a finger;
@@ -86,6 +87,8 @@ class CustomTabMenuDemo : DemoHarness("customtabs-demo-state.json", "customtabs-
     private lateinit var findings: File
     /** The frames after the caller's button: (ms since the press, the toolbar's left edge in px, -1 without a toolbar). */
     private val startFrames = ArrayList<Pair<Long, Int>>()
+    /** Per sampled frame, the bitmap's shape and two probe pixels through the toolbar's band – the sampler's own evidence. */
+    private val startProbes = ArrayList<String>()
 
     @Test
     fun record() = runDemo()
@@ -330,77 +333,161 @@ class CustomTabMenuDemo : DemoHarness("customtabs-demo-state.json", "customtabs-
         note("session events: $events")
         note("start animation frames (ms since the press -> toolbar left edge px, -1 none): $startFrames")
         val honoured = startAnimationHonoured()
-        note("start animation ${if (honoured) "HONOURED: the caller's two-second slide ran" else "NOT SEEN: the toolbar arrived without the caller's slide"}")
+        note("start animation ${if (honoured) "HONOURED: the caller's two-second slide ran" else "NOT SEEN: the tab arrived without the caller's slide"}")
         if (PIN_START_ANIMATION) {
-            assertTrue("the caller's start animation ran (setStartAnimations, CCT-08): a toolbar still sliding past 600 ms, then home; frames $startFrames", honoured)
+            assertTrue(
+                "the caller's start animation ran (setStartAnimations, CCT-08): the tab's OPEN transition animated for the caller's two seconds; " +
+                    "transition ${startTransition?.line}; frames $startFrames",
+                honoured
+            )
         }
     }
 
     // --- the start animation (CCT-08) ------------------------------------------------------------
 
     /**
-     * Press the caller's button and sample the frames while the custom tab arrives: the toolbar's
-     * left edge in each ([toolbarLeftEdge]) says how far a slide from the right has come. The
-     * caller's slide lasts two seconds (linear), the theme's own slide-up 300 ms; a toolbar still
-     * short of the left edge past the first half second is the caller's animation.
+     * Press the caller's button and read how the custom tab arrived. The read that carries the
+     * verdict is the platform's own: WindowManager logs every shell transition, and the OPEN
+     * transition that brings [CustomTabActivity] closes with a `Finish Transition #n: ...
+     * sent=Xms finished=Yms` line whose two stamps bound the animation – the caller's slide is
+     * two seconds, the theme's own slide-up 300 ms, the platform's default open under half a
+     * second ([readStartTransition]). The frames sampled meanwhile ([toolbarLeftEdge]) are the
+     * second witness: run 1 showed a display screenshot does not render the transition's leash
+     * (the toolbar was in none of the frames taken while the recording shows it sliding), so
+     * they say where the toolbar stands once the transition is over, not how it moved.
      */
     private fun openCustomTabReadingStart() {
         startFrames.clear()
+        startProbes.clear()
+        startTransition = null
+        val before = System.currentTimeMillis()
         assertTrue("the caller's button is on screen", clickByLabel(READ_LABEL))
         val pressed = SystemClock.uptimeMillis()
         while (SystemClock.uptimeMillis() - pressed < START_SAMPLE_MS) {
             val at = SystemClock.uptimeMillis() - pressed
             val bitmap = ui.takeScreenshot() ?: continue
             startFrames += at to toolbarLeftEdge(bitmap)
+            startProbes += frameProbe(at, bitmap)
             bitmap.recycle()
         }
         Log.i(tag, "start frames: $startFrames")
+        Log.i(tag, "start probes: $startProbes")
         assertTrue("the custom tab came up", waitForWindow(app.packageName, 15_000))
         assertTrue("the custom tab's toolbar is up", waitFor(CLOSE_LABEL, 10_000) != null)
         waitForPath(STORY_PATH)
-        SystemClock.sleep(2_000)
+        startTransition = readStartTransition(before, 10_000)
+        Log.i(tag, "start transition: $startTransition")
+        SystemClock.sleep(1_000)
+        landedEdge = ui.takeScreenshot()?.let { bitmap -> toolbarLeftEdge(bitmap).also { bitmap.recycle() } } ?: -1
         val honoured = startAnimationHonoured()
         note(
+            "start transition: " + (startTransition?.let { "#${it.id} OPEN ${it.animationMs?.let { ms -> "animated $ms ms" } ?: "animation length not logged"} (${it.line})" } ?: "not found in WindowManager's log")
+        )
+        note(
             "start animation: ${startFrames.size} frames in $START_SAMPLE_MS ms; " +
-                "toolbar edge ${startFrames.map { "${it.first}ms=${it.second}" }}; " +
+                "toolbar edge ${startFrames.map { "${it.first}ms=${it.second}" }}; landed edge $landedEdge; " +
                 if (honoured) "the caller's slide was HONOURED through the trampoline" else "the caller's slide was NOT SEEN"
         )
+        note("start frames probed: $startProbes")
         // The verdict is asserted at the end of the sequence (PIN_START_ANIMATION), once the rest
         // of the evidence is on disk: what the platform does with the options through the
         // trampoline is a reading first, a pin second.
     }
 
+    /** The OPEN transition that brought the custom tab: its id, how long its animation ran, and the line that said so. */
+    private data class StartTransition(val id: Int, val animationMs: Long?, val line: String)
+
+    private var startTransition: StartTransition? = null
+    /** The toolbar's left edge once the tab has landed (a screenshot after the transition), -1 without a toolbar. */
+    private var landedEdge = -1
+
     /**
-     * The caller's slide is honoured when some frame between 600 ms and 1.9 s after the press
-     * shows the toolbar with its left edge still well inside the screen (the slide's toolbar sits
-     * where the slide has brought it; the theme's slide-up is over by 300 ms and never moves the
-     * edge off the left), and the toolbar is home at the end.
+     * WindowManager's account of the custom tab's OPEN transition, read through the shell's
+     * logcat (the instrumentation's shell can read every process's log): the `info={id=n t=OPEN
+     * ... m=OPEN ... CustomTabActivity ...}` line names the transition, and its `Finish
+     * Transition #n: ... sent=Xms finished=Yms` line stamps when the animation was handed to the
+     * shell and when the shell reported it done. The shell's own `Playing animation for (#n)` /
+     * `Transition animation finished ... (#n)` pair is the fallback. Polled, since the finish line
+     * lands when the animation ends and the emulator's log buffer is small.
+     */
+    private fun readStartTransition(sinceEpochMs: Long, timeoutMs: Long): StartTransition? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        var id: Int? = null
+        while (SystemClock.uptimeMillis() < deadline) {
+            val lines = shellCommand("logcat -d -v epoch -s WindowManager:V WindowManagerShell:V").lines()
+            if (id == null) {
+                id = lines.firstOrNull { line ->
+                    epochMsOf(line) >= sinceEpochMs - 1_000 && "t=OPEN" in line && "m=OPEN" in line && "CustomTabActivity" in line && "info={id=" in line
+                }?.let { Regex("info=\\{id=(\\d+)").find(it)?.groupValues?.get(1)?.toIntOrNull() }
+            }
+            val found = id
+            if (found != null) {
+                lines.firstOrNull { "Finish Transition #$found:" in it }?.let { finish ->
+                    val sent = Regex("sent=([\\d.]+)ms").find(finish)?.groupValues?.get(1)?.toDoubleOrNull()
+                    val finished = Regex("finished=([\\d.]+)ms").find(finish)?.groupValues?.get(1)?.toDoubleOrNull()
+                    val ms = if (sent != null && finished != null) (finished - sent).toLong() else null
+                    return StartTransition(found, ms, finish.substringAfter("WindowManager:").trim())
+                }
+                val playing = lines.firstOrNull { "Playing animation for (#$found)" in it }
+                val done = lines.firstOrNull { "Transition animation finished" in it && "(#$found)" in it }
+                if (playing != null && done != null) {
+                    return StartTransition(found, epochMsOf(done) - epochMsOf(playing), "shell: playing ${epochMsOf(playing)} finished ${epochMsOf(done)}")
+                }
+            }
+            SystemClock.sleep(300)
+        }
+        return id?.let { StartTransition(it, null, "no finish line for #$it within $timeoutMs ms") }
+    }
+
+    /** The stamp of a `logcat -v epoch` line in ms (0 for a line without one). */
+    private fun epochMsOf(line: String): Long =
+        line.trim().substringBefore(' ').toDoubleOrNull()?.let { (it * 1_000).toLong() } ?: 0L
+
+    /**
+     * The caller's slide is honoured when the tab's OPEN transition animated for at least
+     * [CALLER_SLIDE_MIN_MS] – the caller's two seconds, against the theme's 300 ms slide-up and
+     * the platform's default open under half a second – and the toolbar stands home once the
+     * tab has landed ([landedEdge] at the screen's edge). Without the transition in the log the
+     * frames decide: a toolbar still well inside the screen 400 ms after the press, then home.
      */
     private fun startAnimationHonoured(): Boolean {
-        val sliding = startFrames.any { (at, edge) -> at in 600..1_900 && edge >= width / 8 }
-        val home = startFrames.lastOrNull()?.second?.let { it in 0..2 } == true
+        val home = landedEdge in 0..2
+        val animated = startTransition?.animationMs
+        if (animated != null) return animated >= CALLER_SLIDE_MIN_MS && home
+        val sliding = startFrames.any { (at, edge) -> at >= 400 && edge >= width / 8 }
         return sliding && home
     }
 
     /**
-     * The leftmost pixel of the custom tab's toolbar colour along three rows through where the
-     * toolbar stands (under the status bar), -1 when no row has it. The colour is this driver's
-     * own (a green no other surface on screen wears: the caller is blue and white, the page white).
+     * The leftmost pixel of the custom tab's toolbar colour in the band where the toolbar stands
+     * (from the status bar's middle to 52 dp under it, every sixth row), -1 when no row has it.
+     * The colour is this driver's own (a green no other surface on screen wears: the caller is
+     * blue and white, the page white).
      */
     private fun toolbarLeftEdge(bitmap: Bitmap): Int {
         val statusBar = statusBarPx()
+        val bottom = minOf(bitmap.height - 1, statusBar + (52 * density).toInt())
         var edge = -1
-        for (dp in intArrayOf(14, 28, 42)) {
-            val y = statusBar + (dp * density).toInt()
-            if (y >= bitmap.height) continue
-            for (x in 0 until bitmap.width) {
+        var y = statusBar / 2
+        while (y <= bottom) {
+            val limit = if (edge < 0) bitmap.width else edge
+            for (x in 0 until limit) {
                 if (isToolbarColour(bitmap.getPixel(x, y))) {
-                    if (edge < 0 || x < edge) edge = x
+                    edge = x
                     break
                 }
             }
+            y += 6
         }
         return edge
+    }
+
+    /** What a sampled frame was: its shape, and the pixels at the band's right end and middle, as hex. */
+    private fun frameProbe(at: Long, bitmap: Bitmap): String {
+        val y = minOf(bitmap.height - 1, statusBarPx() + (24 * density).toInt())
+        val right = bitmap.getPixel(bitmap.width - 8, y) and 0xFFFFFF
+        val mid = bitmap.getPixel(bitmap.width / 2, y) and 0xFFFFFF
+        return "${at}ms ${bitmap.width}x${bitmap.height} ${bitmap.config} ${bitmap.colorSpace?.name} y=$y right=#%06x mid=#%06x".format(right, mid)
     }
 
     private fun isToolbarColour(pixel: Int): Boolean =
@@ -763,8 +850,17 @@ class CustomTabMenuDemo : DemoHarness("customtabs-demo-state.json", "customtabs-
         private const val BOOKMARKED_TITLE = "Damping, bookmarked"
         /** This driver's toolbar colour: a green nothing else on screen wears, so the start frames can find the toolbar. */
         private const val TOOLBAR = 0xFF0E8A5F.toInt()
-        /** How long the frames are sampled after the caller's button: the caller's two-second slide and its landing. */
-        private const val START_SAMPLE_MS = 2_800L
+        /**
+         * How long the frames are sampled after the caller's button: the launch (run 1 took
+         * a second from the press to the transition's start on the CI emulator), the caller's
+         * two-second slide and its landing.
+         */
+        private const val START_SAMPLE_MS = 4_200L
+        /**
+         * The least an OPEN transition must animate to be the caller's two-second slide rather
+         * than the theme's 300 ms slide-up or the platform's default open (under half a second).
+         */
+        private const val CALLER_SLIDE_MIN_MS = 1_200L
         /**
          * Whether the run fails when the caller's start animation is not seen. Off for the first
          * reading (what the platform does with the caller's options across the provider's
