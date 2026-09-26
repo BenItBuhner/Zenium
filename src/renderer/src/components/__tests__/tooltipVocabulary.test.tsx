@@ -343,8 +343,12 @@ describe('the desktop chrome’s sources: title stays off DOM elements (§9.31)'
     'content/ContentArea.tsx': { count: 2, why: 'W5-5 holds the file' },
     // The phone's downloads panel (the desktop opens Downloads as a page tab).
     'downloads/DownloadsSheet.tsx': { count: 3, why: 'a phone surface' },
-    // A dialog's address line, a truncated label: labels in W5-3's chassis and file.
-    'protocol/ExternalProtocolSheet.tsx': { count: 1, why: 'a dialog line, not a control' },
+    // A dialog's address line and, on each chassis, its description – the two-line clamp's whole
+    // sentence (W7-F2, §9.2): truncated lines, not controls; labels in W5-3's chassis and file.
+    'protocol/ExternalProtocolSheet.tsx': {
+      count: 3,
+      why: 'dialog lines, not controls: the address and the description on both chassis'
+    },
     'security/BlockedPopupsPanel.tsx': { count: 1, why: 'a truncated label; W5-3 holds the file' }
   }
 

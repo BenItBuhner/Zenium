@@ -103,6 +103,15 @@ function displayAddress(url: string): string {
   }
 }
 
+/**
+ * The description's classes on both chassis: it wraps to two lines and then ends in an ellipsis
+ * (design language v2 §9.2, the row growing with it; §9.23 names this sheet's one-line cut as the
+ * deviation the Custom Tab's twin corrects), a host with no break in it breaking anywhere rather
+ * than overflowing the second line. The title above it stays on one line; the address below it
+ * is one line too (§9.23). The full sentence is the element's `title`.
+ */
+const DESCRIPTION_CLAMP_CLASS = 'line-clamp-2 wrap-anywhere'
+
 // ---------------------------------------------------------------------------
 // Shared content
 // ---------------------------------------------------------------------------
@@ -118,6 +127,7 @@ function Header({
   titleId?: string
 }): JSX.Element {
   const Icon = wordsFor(request.scheme).icon
+  const subtitle = subtitleOf(request)
   if (phone) {
     // A prompt: a title block (design language v2 §9.23), not a bar header.
     return (
@@ -126,12 +136,15 @@ function Header({
           <Icon className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />
           <span className="min-w-0 truncate">{titleOf(request)}</span>
         </h2>
-        <p className="truncate">{subtitleOf(request)}</p>
+        <p className={DESCRIPTION_CLAMP_CLASS} title={subtitle}>
+          {subtitle}
+        </p>
       </div>
     )
   }
+  // The row is 56 for one line and grows with a second (§9.2): a minimum, never a fixed height.
   return (
-    <div className="flex h-14 items-center gap-3 px-3">
+    <div className="flex min-h-14 items-center gap-3 px-3 py-1.5">
       <span
         className="zen-sheet-badge flex h-10 w-10 shrink-0 items-center justify-center"
         aria-hidden
@@ -142,8 +155,11 @@ function Header({
         <div className="truncate text-[17px] font-semibold leading-tight tracking-[-0.012em]">
           {titleOf(request)}
         </div>
-        <div className="truncate text-[13px] leading-[var(--v2-line-small)] text-[var(--zen-muted)]">
-          {subtitleOf(request)}
+        <div
+          className={`${DESCRIPTION_CLAMP_CLASS} text-[13px] leading-[var(--v2-line-small)] text-[var(--zen-muted)]`}
+          title={subtitle}
+        >
+          {subtitle}
         </div>
       </div>
     </div>
@@ -181,7 +197,7 @@ function Body({
           <span className="min-w-0 flex-1">
             <span className="block truncate">Always open {words.plural}</span>
             <span className="zen-sheet-item-secondary block truncate text-[13px] leading-[var(--v2-line-small)]">
-              {request.appName ? `In ${request.appName}, without asking` : 'Without asking again'}
+              Without asking again
             </span>
           </span>
           <Switch checked={always} onCheckedChange={onAlways} aria-label="Always allow" />
