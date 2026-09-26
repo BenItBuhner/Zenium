@@ -112,7 +112,8 @@ import { AndroidIdentity, authSheetEvent } from './extensionIdentity'
 import type { ExtensionRuntimeHooks } from './extensionRuntimeHooks'
 import type { ClientInfo } from './extensionServiceWorker'
 import type { AndroidExtensionStoreIo } from './extensionStoreIo'
-import { ExtensionControlsMerge } from './extensionControls'
+import { ExtensionControlsGate } from './extensionControls'
+import { SettingControls } from './settingControls'
 import { EMPTY_WEBVIEW_FONT_LAYER, type WebViewFontLayer } from './extensionFontSettings'
 import type { WebViewPrivacyLayer } from './extensionPrivacy'
 import { webViewProxyOverride } from './extensionProxy'
@@ -837,8 +838,12 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
   readonly screen: () => PhoneScreen
   readonly onScreenChange: (listener: () => void) => void
 
-  /** The settings the extensions hold, merged over the publishing APIs into the core's state (`extensionControls.ts`). */
-  private readonly controls: ExtensionControlsMerge
+  /**
+   * The settings the extensions hold: W6-C6's `SettingControls` (#518) is the phone's one
+   * publisher into the core's state, this runtime's APIs feed it through the value-aware gate of
+   * `extensionControls.ts` (#525's compare; round 21's fold, R21-8).
+   */
+  private readonly controls: ExtensionControlsGate
 
   constructor(
     private readonly bridge: RuntimeBridge,
@@ -846,7 +851,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     private readonly windowOf: () => ZenWindow,
     options: AndroidExtensionRuntimeOptions = {}
   ) {
-    this.controls = new ExtensionControlsMerge((map) => browser.state.setExtensionControls(map))
+    this.controls = new ExtensionControlsGate(new SettingControls(browser.state))
     this.debug = options.debug ?? true
     this.now = options.now ?? (() => Date.now())
     this.timers = {
