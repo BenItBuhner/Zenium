@@ -44,7 +44,7 @@ const constructed: Array<Record<string, unknown>> = []
  * Which page has the keyboard. `takeKeyboard` moves it the way Chromium does: the holder gets
  * `blur`, the taker `focus`.
  */
-const { keyboard, takeKeyboard, cursor } = vi.hoisted(() => {
+const { keyboard, takeKeyboard, cursor, stages } = vi.hoisted(() => {
   /** Where the OS pointer stands on the screen (`screen.getCursorScreenPoint`); a test moves it. */
   const cursor = { x: -100, y: -100 }
   const keyboard = { current: null as { emit(event: string): unknown } | null }
@@ -55,7 +55,14 @@ const { keyboard, takeKeyboard, cursor } = vi.hoisted(() => {
     previous?.emit('blur')
     taker.emit('focus')
   }
-  return { keyboard, takeKeyboard, cursor }
+  /** Every `BaseWindow` made (the stages of `ElectronTabViewHost.stageFor`), in order. */
+  const stages: Array<{
+    options: Record<string, unknown>
+    children: unknown[]
+    contentSize: [number, number]
+    destroyed: boolean
+  }> = []
+  return { keyboard, takeKeyboard, cursor, stages }
 })
 
 vi.mock('electron', async () => {
@@ -324,6 +331,43 @@ vi.mock('electron', async () => {
       this.bounds = rect
     }
   }
+  /**
+   * A `BaseWindow` as the stage uses it (`ElectronTabViewHost.stageFor`): its options, its
+   * `contentView`'s children and its content size, recorded in `stages`.
+   */
+  class FakeBaseWindow {
+    readonly children: unknown[] = []
+    contentSize: [number, number]
+    destroyed = false
+    excludedFromShownWindowsMenu = false
+    readonly contentView = {
+      addChildView: (view: unknown): void => {
+        const at = this.children.indexOf(view)
+        if (at >= 0) this.children.splice(at, 1)
+        this.children.push(view)
+      },
+      removeChildView: (view: unknown): void => {
+        const at = this.children.indexOf(view)
+        if (at >= 0) this.children.splice(at, 1)
+      }
+    }
+    constructor(readonly options: Record<string, unknown>) {
+      this.contentSize = [options.width as number, options.height as number]
+      stages.push(this)
+    }
+    getContentSize(): [number, number] {
+      return this.contentSize
+    }
+    setContentSize(width: number, height: number): void {
+      this.contentSize = [width, height]
+    }
+    isDestroyed(): boolean {
+      return this.destroyed
+    }
+    destroy(): void {
+      this.destroyed = true
+    }
+  }
   /** The view host follows the chrome's scheme for dark theme for sites; light and quiet here. */
   // Every view host in the tests listens for a flip (the app has one host; the tests many).
   const nativeTheme = Object.assign(new EventEmitter().setMaxListeners(0), {
@@ -334,7 +378,7 @@ vi.mock('electron', async () => {
     getAllDisplays: () => [{ scaleFactor: 1 }],
     getCursorScreenPoint: () => ({ ...cursor })
   }
-  return { WebContentsView: FakeWebContentsView, nativeTheme, screen }
+  return { BaseWindow: FakeBaseWindow, WebContentsView: FakeWebContentsView, nativeTheme, screen }
 })
 
 /** A window's chrome page: the keyboard's home when no page on screen has it. */
@@ -1924,6 +1968,199 @@ describe('a hidden tab page and the window', () => {
     // The window is shown: the page paints.
     view.applyWindowVisible(true)
     expect(engine(view)).toEqual({ visible: true, bounds: box })
+  })
+})
+
+/**
+ * A hidden page an agent drives (`TabView.setAgentDriven`, MCP B) stands shown on the host's
+ * stage – one `BaseWindow` never shown – so it has a layout viewport and paints for the agent's
+ * snapshots and captures, while the user's window keeps its pixels and its keyboard.
+ */
+describe('a hidden page an agent drives and the stage', () => {
+  const box = { x: 200, y: 60, width: 1000, height: 740 }
+  const staged = (): (typeof stages)[number] | undefined => stages[stages.length - 1]
+  const engine = (view: ElectronTabView): { visible: boolean; bounds: unknown } => {
+    const v = view.view as unknown as { getVisible(): boolean; bounds: unknown }
+    return { visible: v.getVisible(), bounds: v.bounds }
+  }
+  const setup = (): {
+    host: ElectronTabViewHost
+    window: ReturnType<typeof fakeWindow>
+    create: (window?: ReturnType<typeof fakeWindow>) => ElectronTabView
+  } => {
+    keyboard.current = null
+    cursor.x = -100
+    cursor.y = -100
+    stages.length = 0
+    const host = new ElectronTabViewHost(sessions)
+    const window = fakeWindow()
+    let n = 0
+    const create = (target = window): ElectronTabView =>
+      host.createView(
+        { id: `tab_stage${++n}`, containerId: 'default' } as Tab,
+        noEvents,
+        target
+      ) as ElectronTabView
+    return { host, window, create }
+  }
+
+  it('puts a hidden page the agent drives on a stage: a window never shown, unfocusable, with the page shown in it at the box a page of the window has', () => {
+    const { window, create } = setup()
+    const shown = create()
+    shown.setBounds(box)
+    shown.setVisible(true)
+    const view = create()
+    view.setAgentDriven(true)
+    const stage = staged()
+    expect(stage).toBeDefined()
+    expect(stage!.options).toMatchObject({ show: false, focusable: false, skipTaskbar: true })
+    expect(stage!.contentSize).toEqual([box.width, box.height])
+    expect(stage!.children).toEqual([view.view])
+    // Shown to the engine on the stage, at the sibling's size; hidden to the core, out of the
+    // user's window.
+    expect(engine(view)).toEqual({
+      visible: true,
+      bounds: { x: 0, y: 0, width: 1000, height: 740 }
+    })
+    expect(view.isVisible()).toBe(false)
+    expect(window.win.children).toEqual([shown.view])
+    // No word again is nothing again.
+    view.setAgentDriven(true)
+    expect(stages).toHaveLength(1)
+  })
+
+  it('sizes the stage to the window’s content when no page of the window was laid out, and grows it for a larger page', () => {
+    const { window, create } = setup()
+    window.win.contentSize = [1280, 820]
+    const view = create()
+    view.setAgentDriven(true)
+    expect(staged()!.contentSize).toEqual([1280, 820])
+    expect(engine(view).bounds).toEqual({ x: 0, y: 0, width: 1280, height: 820 })
+    // A second driven page with a box of its own shares the stage, which grows to hold it.
+    const wide = create()
+    wide.setBounds({ x: 0, y: 0, width: 1600, height: 500 })
+    wide.setVisible(true)
+    wide.setVisible(false)
+    wide.setAgentDriven(true)
+    expect(stages).toHaveLength(1)
+    expect(staged()!.children).toEqual([view.view, wide.view])
+    expect(staged()!.contentSize).toEqual([1600, 820])
+  })
+
+  it('never stages a page in front, and an active page hidden by a tab switch goes onto the stage at its own last box, back in front when shown again', () => {
+    const { window, create } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setVisible(true)
+    view.setAgentDriven(true)
+    expect(stages).toHaveLength(0)
+    expect(engine(view)).toEqual({ visible: true, bounds: box })
+    // The user switches tabs: hidden by the layout, the page moves onto the stage.
+    view.setVisible(false)
+    expect(window.win.children).toEqual([])
+    expect(staged()!.children).toEqual([view.view])
+    expect(engine(view)).toEqual({
+      visible: true,
+      bounds: { x: 0, y: 0, width: 1000, height: 740 }
+    })
+    expect(view.isVisible()).toBe(false)
+    // Back in front: it leaves the stage for the window, at its box, and the empty stage goes.
+    view.setBounds(box)
+    view.setVisible(true)
+    expect(window.win.children).toEqual([view.view])
+    expect(engine(view)).toEqual({ visible: true, bounds: box })
+    expect(staged()!.children).toEqual([])
+    expect(staged()!.destroyed).toBe(true)
+    // Hidden again: a new stage, for the agent still drives it.
+    view.setVisible(false)
+    expect(stages).toHaveLength(2)
+    expect(staged()!.children).toEqual([view.view])
+  })
+
+  it('takes the page off the stage when the agent lets go, hidden as a page no agent drives, and a later hide leaves it alone', () => {
+    const { window, create } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setVisible(true)
+    view.setVisible(false)
+    view.setAgentDriven(true)
+    expect(staged()!.children).toEqual([view.view])
+    view.setAgentDriven(false)
+    expect(staged()!.children).toEqual([])
+    expect(staged()!.destroyed).toBe(true)
+    expect(engine(view)).toEqual({ visible: false, bounds: box })
+    expect(window.win.children).toEqual([])
+    view.setVisible(true)
+    view.setVisible(false)
+    expect(stages).toHaveLength(1)
+    expect(engine(view).visible).toBe(false)
+  })
+
+  it('leaves a page parked under a chrome cover where it is, and stages it once the cover lifts without the layout showing it', () => {
+    const { window, create } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setVisible(true)
+    window.zen.contentHidden = true
+    view.setVisible(false)
+    expect(view.parkedCorner()).toBe(0)
+    view.setAgentDriven(true)
+    expect(stages).toHaveLength(0)
+    expect(window.win.children).toEqual([view.view])
+    window.zen.contentHidden = false
+    view.coverLifted()
+    expect(view.parkedCorner()).toBeNull()
+    expect(staged()!.children).toEqual([view.view])
+    expect(window.win.children).toEqual([])
+  })
+
+  it('keeps a staged page painting while the user’s window is minimised, and shows it in the window hidden until the window returns', () => {
+    const { window, create } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setAgentDriven(true)
+    view.applyWindowVisible(false)
+    expect(engine(view).visible).toBe(true)
+    expect(staged()!.children).toEqual([view.view])
+    // Activated while the window is away: in the window, down to Chromium until it returns.
+    view.setVisible(true)
+    expect(window.win.children).toEqual([view.view])
+    expect(engine(view)).toEqual({ visible: false, bounds: box })
+    view.applyWindowVisible(true)
+    expect(engine(view)).toEqual({ visible: true, bounds: box })
+  })
+
+  it('leaves the stage for the window when brought to the front, asked for the keyboard, detached or destroyed – and when its page went', () => {
+    const { host, window, create } = setup()
+    const glanced = create()
+    glanced.setAgentDriven(true)
+    glanced.bringToFront()
+    expect(window.win.children).toEqual([glanced.view])
+    expect(engine(glanced).visible).toBe(false)
+    expect(staged()!.destroyed).toBe(true)
+    const focused = create()
+    focused.setAgentDriven(true)
+    focused.focus()
+    expect(window.win.children).toEqual([glanced.view, focused.view])
+    // Moved to another window (`TabManager.claim`): off the stage with the detach, on the new
+    // window's stage once attached hidden there.
+    const moved = create()
+    moved.setAgentDriven(true)
+    moved.detach()
+    expect(staged()!.children).toEqual([])
+    const other = fakeWindow()
+    moved.attachTo(other)
+    expect(staged()!.children).toEqual([moved.view])
+    expect(other.win.children).toEqual([])
+    moved.destroy()
+    expect(staged()!.children).toEqual([])
+    // A page that closes itself: the host forgets it, and the stage keeps no dead view.
+    const gone = create()
+    gone.setAgentDriven(true)
+    expect(staged()!.children).toEqual([gone.view])
+    host.forget(gone.webContentsId)
+    expect(staged()!.children).toEqual([])
+    expect(staged()!.destroyed).toBe(true)
   })
 })
 

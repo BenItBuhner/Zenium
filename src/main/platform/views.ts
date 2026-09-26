@@ -1,4 +1,5 @@
 import {
+  BaseWindow,
   ClipboardItem,
   WebContentsView,
   app,
@@ -398,6 +399,15 @@ export class ElectronTabView implements TabView {
    * the hand-back in the `focus` handler stays as the backstop for that case.
    */
   private inWindow = false
+  /**
+   * An agent works this page while the layout hides it (`setAgentDriven`). Hidden, the view
+   * stands shown on the owner's stage instead – a window that is never shown
+   * (`ElectronTabViewHost.stageFor`) – so the page has a layout viewport and paints frames for
+   * the agent's snapshots and captures: out of the user's window it has no pixel on their screen
+   * and no keyboard of theirs to take. `staged` is the stage it stands on, null off it.
+   */
+  private agentDriven = false
+  private staged: BaseWindow | null = null
   private navigationHint: ViewNavigationHint | null = null
   /**
    * The main-frame certificate the current navigation was refused over (`certificate-error`),
@@ -1344,6 +1354,7 @@ export class ElectronTabView implements TabView {
         ? win.isMinimized() || !win.isVisible()
         : false
     if (this.visible) this.enterWindow(win)
+    else this.enterStage()
     this.refreshHangWatch()
   }
 
@@ -1351,6 +1362,7 @@ export class ElectronTabView implements TabView {
     // A view parked under this window's cover leaves it hidden: the engine's view must not be
     // a shown one when another window takes it in (`enterWindow` from `focus`, `bringToFront`).
     this.coverLifted()
+    this.leaveStage()
     const win = this.win
     if (win && this.inWindow) win.contentView.removeChildView(this.view)
     this.inWindow = false
@@ -1363,12 +1375,55 @@ export class ElectronTabView implements TabView {
   /** Into the window's `contentView` (on top), once; a view already there is left where it is. */
   private enterWindow(win: BrowserWindow): void {
     if (this.inWindow) return
+    this.leaveStage()
     win.contentView.addChildView(this.view)
     this.inWindow = true
   }
 
+  /**
+   * Onto the owner's stage, shown at the box the layout would give the page in front (its own
+   * last one, else the box a page of the same window stands in, else the window's content): a
+   * hidden view an agent drives, in a live window, not parked under a cover – parking keeps it
+   * painting already, and `coverLifted` brings it here when the cover goes. Out of the user's
+   * window first: a view is one `contentView`'s at a time.
+   */
+  private enterStage(): void {
+    if (!this.agentDriven || this.staged || this.visible || this.parked !== null) return
+    const win = this.win
+    if (!win) return
+    const box = this.bounds ?? this.owner.pageAreaOf(win)
+    if (this.inWindow) {
+      win.contentView.removeChildView(this.view)
+      this.inWindow = false
+    }
+    this.staged = this.owner.stageFor(this, box)
+    this.view.setBounds({ x: 0, y: 0, width: box.width, height: box.height })
+    this.view.setVisible(true)
+  }
+
+  /**
+   * Off the stage, hidden and in no window; `enterWindow` puts it back before the user. Also
+   * the owner's word that the page went (`forget`), so the stage does not keep a dead view.
+   */
+  leaveStage(): void {
+    const stage = this.staged
+    if (!stage) return
+    this.staged = null
+    this.view.setVisible(false)
+    if (!stage.isDestroyed()) stage.contentView.removeChildView(this.view)
+    this.owner.stageLeft(this)
+    if (this.bounds) this.view.setBounds(this.bounds)
+  }
+
+  /** The box the layout last gave the view, for the stage's sizing of a page never laid out. */
+  laidOutBox(): Rect | null {
+    return this.bounds
+  }
+
   setBounds(rect: Rect): void {
     this.bounds = rect
+    // A staged view keeps the stage's box and takes this one as it leaves (`leaveStage`).
+    if (this.staged) return
     // A parked view takes its new box parked: the layout that shows it again sets the box first
     // and `setVisible(true)` puts the view in it.
     this.view.setBounds(this.parked === null ? rect : this.parkedBox(rect, this.parked))
@@ -1425,6 +1480,7 @@ export class ElectronTabView implements TabView {
     } else {
       if (this.parked !== null) this.unpark()
       this.view.setVisible(false)
+      this.enterStage()
     }
     if (flipped) {
       this.refreshHangWatch()
@@ -1451,7 +1507,10 @@ export class ElectronTabView implements TabView {
     const concealed = !visible
     if (this.windowConcealed === concealed) return
     this.windowConcealed = concealed
-    if (concealed) {
+    if (this.staged) {
+      // On the stage the view is in no window of the user's: it paints on for the agent while
+      // theirs is away, and the flag stands current for its return before them (`setVisible`).
+    } else if (concealed) {
       // Down to Chromium, parked or not: a parked view's box goes back to its own so nothing of
       // it is left a pixel on screen behind the hidden window.
       if (this.parked !== null && this.bounds) this.view.setBounds(this.bounds)
@@ -1590,6 +1649,7 @@ export class ElectronTabView implements TabView {
     if (this.parked === null) return
     this.unpark()
     this.view.setVisible(false)
+    this.enterStage()
   }
 
   isVisible(): boolean {
@@ -1604,6 +1664,7 @@ export class ElectronTabView implements TabView {
     // glanced at or made fullscreen before it was ever shown) joins there.
     const win = this.win
     if (!win) return
+    this.leaveStage()
     win.contentView.addChildView(this.view)
     this.inWindow = true
   }
@@ -2368,6 +2429,17 @@ export class ElectronTabView implements TabView {
   }
 
   /**
+   * The agent's word on driving this page while it is hidden (`TabView.setAgentDriven`): on,
+   * a hidden view goes onto the stage now and each time the layout hides it; off, it leaves the
+   * stage and stays plainly hidden, as a page no agent drives.
+   */
+  setAgentDriven(driven: boolean): void {
+    this.agentDriven = driven
+    if (driven) this.enterStage()
+    else this.leaveStage()
+  }
+
+  /**
    * Full-page and region captures go through the DevTools protocol (`captureBeyondViewport`
    * paints what is scrolled out of view); the viewport uses the cheaper `capturePage`. When the
    * debugger cannot be attached (DevTools already open), the paint fails, or the session is an
@@ -2390,7 +2462,9 @@ export class ElectronTabView implements TabView {
     const mimeType = format === 'png' ? 'image/png' : 'image/jpeg'
     let fallback: AgentCapture['fallback']
     if (options.mode !== 'viewport') {
-      if (!hasForeignDebuggerOwner(wc.id)) {
+      // A staged page's picture is its viewport: `captureBeyondViewport` in a window never
+      // shown does not answer, and a call left hanging keeps its device-metrics override on.
+      if (!this.staged && !hasForeignDebuggerOwner(wc.id)) {
         try {
           return await this.captureWithDevtools(options, mimeType, this.fullPageCut())
         } catch {
@@ -2949,6 +3023,15 @@ export class ElectronTabViewHost implements TabViewHost {
   private readonly visibilityListeners = new Set<(view: ElectronTabView) => void>()
   /** The window corners the views parked under a chrome cover hold (`claimParkingCorner`). */
   private readonly parkingCorners = new Map<ElectronTabView, number>()
+  /**
+   * The stage the hidden pages agents drive stand on (`ElectronTabView.enterStage`): one window
+   * for all of them, never shown, not focusable and off the taskbar – a window of its own has no
+   * pixel on the user's screen and none of their keyboard to hand a page – made for the first
+   * such page and destroyed with the last (`stageLeft`), so no window is left standing when
+   * the user closes theirs (`window-all-closed`). Sized to the largest page on it.
+   */
+  private stage: BaseWindow | null = null
+  private readonly stagedViews = new Set<ElectronTabView>()
   /** Per window, the page or chrome that last lost the keyboard – a hidden page gives it back there. */
   private readonly lastKeyboard = new WeakMap<BrowserWindow, WebContents>()
   private readonly keyboardWatched = new WeakSet<BrowserWindow>()
@@ -3222,6 +3305,56 @@ export class ElectronTabViewHost implements TabViewHost {
     this.tabIds.delete(webContentsId)
     if (tabId !== undefined && this.byTabId.get(tabId) === view) this.byTabId.delete(tabId)
     if (view) this.parkingCorners.delete(view)
+    view?.leaveStage()
+  }
+
+  /** The stage `view` goes onto, with room for `box` (`ElectronTabView.enterStage`). */
+  stageFor(view: ElectronTabView, box: Rect): BaseWindow {
+    let stage = this.stage
+    if (!stage || stage.isDestroyed()) {
+      stage = new BaseWindow({
+        show: false,
+        focusable: false,
+        skipTaskbar: true,
+        frame: false,
+        enableLargerThanScreen: true,
+        hiddenInMissionControl: true,
+        width: box.width,
+        height: box.height
+      })
+      stage.excludedFromShownWindowsMenu = true
+      this.stage = stage
+    } else {
+      const [width, height] = stage.getContentSize()
+      if (box.width > width || box.height > height)
+        stage.setContentSize(Math.max(width, box.width), Math.max(height, box.height))
+    }
+    this.stagedViews.add(view)
+    stage.contentView.addChildView(view.view)
+    return stage
+  }
+
+  /** `view` left the stage (`ElectronTabView.leaveStage`, or its page went): the last one takes the stage down. */
+  stageLeft(view: ElectronTabView): void {
+    this.stagedViews.delete(view)
+    if (this.stagedViews.size > 0) return
+    const stage = this.stage
+    this.stage = null
+    if (stage && !stage.isDestroyed()) stage.destroy()
+  }
+
+  /**
+   * The box a page of `win` stands in when shown, for a view the layout never placed (a tab
+   * opened in the background): the one a placed page of the window has, else the window's whole
+   * content – so the staged page's viewport is the one it would have in front.
+   */
+  pageAreaOf(win: BrowserWindow): Rect {
+    for (const other of this.byWebContentsId.values()) {
+      const box = other.windowOf() === win ? other.laidOutBox() : null
+      if (box && box.width > 0 && box.height > 0) return box
+    }
+    const [width, height] = win.getContentSize()
+    return { x: 0, y: 0, width: width || 1280, height: height || 800 }
   }
 
   /**
