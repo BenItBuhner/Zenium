@@ -481,7 +481,7 @@ const DESKTOP_APP_MENU = [
   'Reader View',
   'Save and Share',
   'Save and Share > Save Page As',
-  'Save and Share > Web Capture…',
+  'Save and Share > Screenshot…',
   'Save and Share > Print…',
   '-',
   'Settings',
@@ -520,7 +520,7 @@ const DESKTOP_APP_MENU = [
 const DESKTOP_APP_MENU_TOP = DESKTOP_APP_MENU.filter((l) => !l.includes(' > '))
 
 /**
- * The tablet's More Tools keeps the two captures (its chrome has no Web Capture… overlay), in
+ * The tablet's More Tools keeps the two captures (its chrome has no Screenshot… overlay), in
  * their own group before the resources and the developer's rows.
  */
 const TABLET_CAPTURES = [
@@ -531,7 +531,7 @@ const TABLET_CAPTURES = [
 
 const DESKTOP_ONLY = [
   'Search Tabs…',
-  'Web Capture…',
+  'Screenshot…',
   'Help > Keyboard Shortcuts',
   'More Tools > Compact Mode',
   'More Tools > Split View',
@@ -777,7 +777,7 @@ describe('the app menu', () => {
   it('folds Chrome’s Save and Share into a submenu closing the page’s group, before the app’s separator: the saves, then the shares (shortcuts-menus-120)', () => {
     // A host that shares and pins shortcuts, with a page up and the install surface mounted,
     // syncing with another device: every row of the group stands – Save Page As…, Create
-    // Shortcut…, Manage Apps (shortcuts-menus-138), Web Capture…, Print…, Share…, Send to Your
+    // Shortcut…, Manage Apps (shortcuts-menus-138), Screenshot…, Print…, Share…, Send to Your
     // Devices – and no Cast row.
     const h = pageHarness({ ...DESKTOP, share: true, pinShortcuts: true }, { shortcuts: true })
     h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: true })
@@ -801,7 +801,7 @@ describe('the app menu', () => {
       'Save Page As',
       'Create Shortcut…',
       'Manage Apps',
-      'Web Capture…',
+      'Screenshot…',
       'Print…',
       'Share…',
       'Send to Your Devices'
@@ -812,7 +812,7 @@ describe('the app menu', () => {
     expect(item(item(group, 'Save Page As').submenu!, 'Webpage, Complete…').action).toBe(
       'page.savePage'
     )
-    expect(item(group, 'Web Capture…').action).toBe('capture.start')
+    expect(item(group, 'Screenshot…').action).toBe('capture.start')
     expect(item(group, 'Print…')).toMatchObject({
       action: 'page.printPreview',
       accelerator: 'Ctrl+P'
@@ -837,7 +837,7 @@ describe('the app menu', () => {
       'Save Page As > Webpage, Complete…',
       'Save Page As > Webpage, HTML Only…',
       'Save Page As > Webpage, Single File…',
-      'Web Capture…',
+      'Screenshot…',
       'Print…'
     ])
   })
@@ -941,7 +941,7 @@ describe('the app menu', () => {
     const h = harness({ ...DESKTOP, pinShortcuts: true }, { shortcuts: true })
     appMenu(h)
     let group = item(h.shown(), 'Save and Share').submenu!
-    expect(topLabels(group)).toEqual(['Save Page As', 'Manage Apps', 'Web Capture…', 'Print…'])
+    expect(topLabels(group)).toEqual(['Save Page As', 'Manage Apps', 'Screenshot…', 'Print…'])
     const open = vi.spyOn(h.browser.pages, 'open')
     item(group, 'Manage Apps').click?.()
     expect(open).toHaveBeenCalledWith('settings', 'apps', h.win)
@@ -1157,20 +1157,20 @@ describe('the app menu', () => {
     })
   })
 
-  it('folds the desktop’s Take Screenshot and Capture Full Page into Web Capture… (the #396 review’s ruling 3); the tablet keeps its two rows', () => {
+  it('folds the desktop’s Take Screenshot and Capture Full Page into Screenshot… (the #396 review’s ruling 3); the tablet keeps its two rows', () => {
     const desktop = harness(DESKTOP)
     const desktopMenu = appMenu(desktop)
     const everywhere = allItems(desktop.shown()).map((i) => i.label)
     expect(everywhere).not.toContain('Take Screenshot')
     expect(everywhere).not.toContain('Capture Full Page')
-    expect(desktopMenu).toContain('Save and Share > Web Capture…')
+    expect(desktopMenu).toContain('Save and Share > Screenshot…')
     // More Tools: two rows and a separator fewer than the row had – ten of its own (the
     // desktop's Task Manager among them, W5-8; Duplicate Window with the window rows, W5-13),
     // the four dock rows after them, two separators.
     const moreTools = item(desktop.shown(), 'More Tools').submenu!
     expect(moreTools.filter((i) => i.type !== 'separator')).toHaveLength(14)
     expect(separators(moreTools)).toBe(2)
-    // The tablet's chrome has no Web Capture… overlay, so its More Tools keeps the two captures
+    // The tablet's chrome has no Screenshot… overlay, so its More Tools keeps the two captures
     // in their own group before the resources.
     const tablet = harness(DESKTOP, 'tablet')
     const tabletMenu = appMenu(tablet)
@@ -1178,7 +1178,7 @@ describe('the app menu', () => {
     expect(tabletMenu.indexOf('More Tools > Capture Full Page')).toBe(
       tabletMenu.indexOf('More Tools > Take Screenshot') + 1
     )
-    expect(tabletMenu).not.toContain('Save and Share > Web Capture…')
+    expect(tabletMenu).not.toContain('Save and Share > Screenshot…')
     const tabletMore = item(tablet.shown(), 'More Tools').submenu!
     expect(separators(tabletMore)).toBe(3)
     // The rows keep their actions where they stand, so the palette and the Zen preset's chord
@@ -1256,7 +1256,7 @@ describe('the app menu', () => {
     h.browser.tabs.closeTab(closed.id, false, h.win)
     appMenu(h)
     const everywhere = allItems(h.shown()).map((i) => i.label)
-    // The flat menu's two captures are the desktop's one Web Capture… row now (the #396
+    // The flat menu's two captures are the desktop's one Screenshot… row now (the #396
     // review's ruling 3): the overlay takes the visible area and the full page both, so
     // nothing the two rows did is lost, and More Tools is two rows and a separator shorter.
     const foldedIntoWebCapture = new Set(['Take Screenshot', 'Capture Full Page'])
@@ -1269,7 +1269,7 @@ describe('the app menu', () => {
     }
     for (const label of before)
       expect(everywhere, label).toContain(
-        foldedIntoWebCapture.has(label) ? 'Web Capture…' : (renamed[label] ?? label)
+        foldedIntoWebCapture.has(label) ? 'Screenshot…' : (renamed[label] ?? label)
       )
     for (const label of foldedIntoWebCapture) expect(everywhere).not.toContain(label)
     expect(topLabels(h.shown()).filter((l) => l !== '-')).toHaveLength(20)
@@ -1303,7 +1303,7 @@ describe('the app menu', () => {
         label !== 'More Tools > Task Manager' &&
         label !== 'Bookmarks > Show Bookmarks Bar' &&
         label !== 'Bookmarks > Tab Folders' &&
-        label !== 'Save and Share > Web Capture…'
+        label !== 'Save and Share > Screenshot…'
     )
     tabletChrome.splice(tabletChrome.lastIndexOf('Bookmarks > -'), 1)
     tabletChrome.splice(tabletChrome.indexOf('More Tools > Resources'), 0, ...TABLET_CAPTURES)
@@ -2697,7 +2697,7 @@ describe('the page context menu', () => {
       'Bookmark Page',
       'Save Page As…',
       'Print…',
-      'Web Capture…',
+      'Screenshot…',
       'Enter Reader View',
       '-',
       'Boosts',
@@ -2765,14 +2765,14 @@ describe('the page context menu', () => {
     expect(page.menu(pageParams())[0]).toBe('Back')
   })
 
-  it('says capture once on the desktop – one Web Capture… row with its chord, where the menu said it three times (the #396 review’s ruling 3, the lead on #414); a touch host keeps its two one-shot rows', () => {
+  it('says capture once on the desktop – one Screenshot… row with its chord, where the menu said it three times (the #396 review’s ruling 3, the lead on #414); a touch host keeps its two one-shot rows', () => {
     const h = pageHarness()
     const menu = h.menu(pageParams())
     // One row, between Print… and Reader View, where the three stood.
-    expect(menu.filter((l) => /capture|screenshot/i.test(l))).toEqual(['Web Capture…'])
-    expect(menu.indexOf('Web Capture…')).toBe(menu.indexOf('Print…') + 1)
-    expect(menu[menu.indexOf('Web Capture…') + 1]).toBe('Enter Reader View')
-    const row = item(h.items(), 'Web Capture…')
+    expect(menu.filter((l) => /capture|screenshot/i.test(l))).toEqual(['Screenshot…'])
+    expect(menu.indexOf('Screenshot…')).toBe(menu.indexOf('Print…') + 1)
+    expect(menu[menu.indexOf('Screenshot…') + 1]).toBe('Enter Reader View')
+    const row = item(h.items(), 'Screenshot…')
     // Edge's row runs the overlay – the visible area, the full page and an area select are its
     // toolbar's – and wears the Chrome preset's chord (Edge's Web capture chord).
     expect(row.action).toBe('capture.start')
@@ -2785,12 +2785,12 @@ describe('the page context menu', () => {
     // The Zen preset gives Ctrl+Shift+S to Firefox's Take Screenshot: the row stands, unchorded.
     h.browser.handleCommand(h.win, 'settings.update', { shortcutPreset: 'zen' })
     h.menu(pageParams())
-    expect(item(h.items(), 'Web Capture…').accelerator).toBeUndefined()
+    expect(item(h.items(), 'Screenshot…').accelerator).toBeUndefined()
     // A tablet's page menu has no overlay to open: Take Screenshot and Capture Full Page stay,
     // in the same seat, running their one-shot actions.
     const tablet = pageHarness(DESKTOP, { formFactor: 'tablet' })
     const tabletMenu = tablet.menu(pageParams())
-    expect(tabletMenu).not.toContain('Web Capture…')
+    expect(tabletMenu).not.toContain('Screenshot…')
     expect(tabletMenu).not.toContain('Capture Page…')
     expect(tabletMenu.indexOf('Take Screenshot')).toBe(tabletMenu.indexOf('Print…') + 1)
     expect(tabletMenu.indexOf('Capture Full Page')).toBe(tabletMenu.indexOf('Take Screenshot') + 1)
@@ -2799,7 +2799,7 @@ describe('the page context menu', () => {
     const phone = pageHarness(ANDROID, { formFactor: 'phone' })
     const phoneMenu = phone.menu(pageParams())
     expect(phoneMenu).toContain('Take Screenshot')
-    expect(phoneMenu).not.toContain('Web Capture…')
+    expect(phoneMenu).not.toContain('Screenshot…')
   })
 
   it('leaves Print, View Page Source and Inspect to hosts that have them', () => {
@@ -5091,7 +5091,7 @@ describe('Send to your devices (ID-27)', () => {
     expect(menu.indexOf('Save and Share > Send to Work laptop')).toBe(
       menu.indexOf('Save and Share > Print…') + 1
     )
-    expect(menu.indexOf('Save and Share > Web Capture…')).toBe(
+    expect(menu.indexOf('Save and Share > Screenshot…')).toBe(
       menu.indexOf('Save and Share > Save Page As') + 1
     )
     expect(menu[menu.indexOf('Save and Share > Send to Work laptop') + 1]).toBe('-')

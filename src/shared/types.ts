@@ -6602,7 +6602,7 @@ export interface Events {
   'screenshot.openLong': { tabId: string }
   /**
    * Web capture asked for its overlay over `tabId`'s page (Ctrl+Shift+S in the Chrome preset,
-   * the app menu's "Web Capture…", the palette): the desktop chrome dims the page's frame over
+   * the app menu's "Screenshot…", the palette): the desktop chrome dims the page's frame over
    * its stand-in and takes the user's region, visible area or full page (`shared/capture.ts`).
    */
   'capture.start': { tabId: string }

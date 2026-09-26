@@ -190,7 +190,7 @@ describe('the dimmed page (capture-02)', () => {
     const dialog = overlay(el)!
     expect(dialog.getAttribute('role')).toBe('dialog')
     expect(dialog.getAttribute('aria-modal')).toBe('true')
-    expect(dialog.getAttribute('aria-label')).toBe('Web capture')
+    expect(dialog.getAttribute('aria-label')).toBe('Screenshot')
     expect(dialog.dataset.capture).toBe('selecting')
     expect(dialog.dataset.selecting).toBe('true')
     expect(el.querySelector('.zen-capture-scrim')).not.toBeNull()
@@ -443,7 +443,7 @@ describe('the result card (capture-21)', () => {
     expect(card.getAttribute('role')).toBe('dialog')
     expect(card.getAttribute('aria-modal')).toBe('true')
     expect(card.tabIndex).toBe(-1)
-    expect(card.querySelector('#zen-capture-title')?.textContent).toBe('Web capture')
+    expect(card.querySelector('#zen-capture-title')?.textContent).toBe('Screenshot')
     expect(card.querySelector('#zen-capture-description')?.textContent).toBe('400 × 300 pixels')
     const img = card.querySelector<HTMLImageElement>('img')!
     expect(img.getAttribute('src')).toBe(RESULT.dataUrl)

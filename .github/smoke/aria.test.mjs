@@ -308,7 +308,7 @@ describe('the checked-in baselines (.github/smoke/aria)', () => {
     // The Web capture overlay: the modal dialog with its toolbar – the hint that the page's
     // geometry is known, the two whole-page captures and Cancel (capture-01, capture-16).
     const capture = readFileSync(join(ariaDir, ariaBaselineName('web-capture')), 'utf8')
-    expect(capture).toMatch(/^- dialog "Web capture"/)
+    expect(capture).toMatch(/^- dialog "Screenshot"/)
     expect(capture).toMatch(/- toolbar "Capture":/)
     expect(capture).toMatch(/Drag to select an area/)
     expect(capture).toMatch(/- button "Visible area"/)

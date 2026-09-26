@@ -61,7 +61,7 @@ const EMPTY: Rect = { x: 0, y: 0, width: 0, height: 0 }
  * The desktop's Web capture (Edge's, over services' capture engine: `shared/capture.ts`) in the
  * frame dialog host `TabDialogs` mounts. Up while `uiStore.capture` names a tab
  * (`openCapture`, on the core's `capture.start`: Ctrl+Shift+S in the Chrome preset, the app
- * menu's Web Capture… row, the page menu's Capture Page…, the palette); down again the moment
+ * menu's Screenshot… row, the page menu's Screenshot… row, the palette); down again the moment
  * the flag clears. One opening is one `CaptureOverlay` (`seq`), so a later ask starts clean.
  */
 export function CaptureLayer(): JSX.Element | null {
@@ -359,7 +359,7 @@ function CaptureOverlay({
       ref={ref}
       role="dialog"
       aria-modal="true"
-      aria-label="Web capture"
+      aria-label="Screenshot"
       aria-describedby={selecting ? HINT_ID : undefined}
       tabIndex={-1}
       className="zen-capture zen-v2"
@@ -562,7 +562,7 @@ function ResultCard({
     >
       <V2TitleBlock
         id={TITLE_ID}
-        title="Web capture"
+        title="Screenshot"
         description={`${sizeText(result)} pixels`}
         descriptionId={DESCRIPTION_ID}
       />

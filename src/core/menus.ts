@@ -1413,14 +1413,14 @@ export class Menus {
     ): void => this.browser.actions.run(action, { sourceTabId: tab.id, win })
     const readerOpen = reader.isReaderUrl(tab.url)
     // The captures, as the app menu has them (the #396 review's ruling 3, extended to this menu
-    // by the lead on #414): on the desktop one Web Capture… row – Edge's, whose overlay offers
+    // by the lead on #414): on the desktop one Screenshot… row – Edge's, whose overlay offers
     // the visible area, the full page and an area select, so a menu that said capture three
     // times (Take Screenshot, Capture Full Page, Capture Page…) says it once, with the chord the
     // key table gives `capture.start` (Ctrl+Shift+S in the Chrome preset) after the label. A
     // touch host has no overlay and keeps the two one-shot rows.
     const captures: Template =
       win.formFactor === 'desktop'
-        ? [{ label: 'Web Capture…', action: 'capture.start', click: () => run('capture.start') }]
+        ? [{ label: 'Screenshot…', action: 'capture.start', click: () => run('capture.start') }]
         : [
             {
               label: 'Take Screenshot',
@@ -3488,7 +3488,7 @@ export class Menus {
    * every layout, in two orders. The sidebar layouts (desktop and tablet) take Firefox's groups
    * (design language v2 §6 "Menus"): the tabs and windows; the library – bookmarks, history,
    * downloads, passwords, add-ons; the page's actions, closing with Chrome's Save and share –
-   * Save Page As…, Create Shortcut…, Web Capture…, Print…, Share…, Send to Your Devices – as
+   * Save Page As…, Create Shortcut…, Screenshot…, Print…, Share…, Send to Your Devices – as
    * the submenu Chrome folds it into (shortcuts-menus-120; Firefox keeps save and print in the
    * flat list, and a flat group here spent rows the menu has not got); the app's – Settings,
    * More Tools, Help, Quit, Firefox's order and §6's ("settings, tools, help, quit") – about
@@ -3846,7 +3846,7 @@ export class Menus {
     // Edge's "Web capture" row of its page group (Print, Web capture, Share): the desktop's
     // overlay over the dimmed page; the tablet's menu keeps the two captures in More Tools.
     const webCapture = desktop({
-      label: 'Web Capture…',
+      label: 'Screenshot…',
       action: 'capture.start',
       enabled: Boolean(active),
       click: () =>
@@ -4101,7 +4101,7 @@ export class Menus {
         ...pageControls,
         // Chrome's Save and share (shortcuts-menus-120) closes the page group as its last row,
         // folded into a submenu as Chrome folds it (the #396 review's ruling 1): the saves first
-        // – Save Page As…, the install row (Create Shortcut…, or Install <app>…), Web Capture…
+        // – Save Page As…, the install row (Create Shortcut…, or Install <app>…), Screenshot…
         // between the save and the print where Edge's menu keeps it, Print… – then the shares,
         // Share… and Send to Your Devices. No Cast row: Zenium has no cast target. Manage Apps
         // rides under the install row as Edge's Apps pairs them (shortcuts-menus-138). Folded,
@@ -4133,7 +4133,7 @@ export class Menus {
           // Fullscreen rides the zoom submenu where there is one (Firefox's zoom row); a host
           // whose zoom is the sheet keeps it here with the other window toggles.
           // The two captures are the tablet's: on the desktop they fold into Save and Share's
-          // Web Capture… (the #396 review's ruling 3), whose overlay takes the visible area and
+          // Screenshot… (the #396 review's ruling 3), whose overlay takes the visible area and
           // the full page both; the desktop's page context menu folds its three the same way
           // (`pageGroup`), the touch hosts' keeps the two one-shot rows.
           submenu: tidySeparators([

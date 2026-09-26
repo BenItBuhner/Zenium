@@ -1,4 +1,4 @@
-- dialog "Web capture":
+- dialog "Screenshot":
   - paragraph: Drag over the page to select an area, or take the visible area or the full page from the toolbar. Escape cancels.
   - toolbar "Capture":
     - text: Drag to select an area
