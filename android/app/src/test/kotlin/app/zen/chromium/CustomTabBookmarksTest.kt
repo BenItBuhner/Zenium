@@ -35,6 +35,20 @@ class CustomTabBookmarksTest {
     }
 
     @Test
+    fun theStarReadsTheStoreBeforeTheInbox() {
+        // Stored: the tap opens the editor in Zenium. Pending: the tap withdraws the filing. Neither: nothing yet.
+        val bookmarked = CustomTabBookmarks.bookmarkedUrls(state)
+        val filed = CustomTabBookmarks.Entry("https://new.example/page", "New", 10L)
+        val pending = CustomTabBookmarks.withEntry(emptyList(), filed)
+        assertEquals(CustomTabMenu.Star.Stored, CustomTabBookmarks.starOf("https://example.com/", bookmarked, pending))
+        assertEquals(CustomTabMenu.Star.Pending, CustomTabBookmarks.starOf(filed.url, bookmarked, pending))
+        assertEquals(CustomTabMenu.Star.None, CustomTabBookmarks.starOf("https://other.example/", bookmarked, pending))
+        // A page in both documents is the browser's: the store wins, as the tap's own order does.
+        val both = CustomTabBookmarks.withEntry(pending, CustomTabBookmarks.Entry("https://example.com/", "Example", 11L))
+        assertEquals(CustomTabMenu.Star.Stored, CustomTabBookmarks.starOf("https://example.com/", bookmarked, both))
+    }
+
+    @Test
     fun aFiledEntryCountsAsBookmarkedAndASecondTapWithdrawsIt() {
         val entry = CustomTabBookmarks.Entry("https://new.example/page", "New", 10L)
         val pending = CustomTabBookmarks.withEntry(emptyList(), entry)

@@ -61,9 +61,10 @@ import kotlin.math.abs
  *  - the rows: the caller's two, Share, Copy Link, Find in Page, Add to Home Screen, Desktop Site
  *    (a check row), Open in Zenium;
  *  - the star: a tap files the page in the tab's inbox document (`bookmarks-inbox.json`; the
- *    browser's core owns the bookmarks) and the star fills, reading Edit Bookmark; a second tap
- *    withdraws it; a page the browser already holds as a bookmark (seeded in the profile) opens
- *    with the star filled from the core's `state.json`, and its tap opens the page in Zenium;
+ *    browser's core owns the bookmarks) and the star fills, reading Remove Bookmark – the name of
+ *    what the next tap does, which withdraws it; a page the browser already holds as a bookmark
+ *    (seeded in the profile) opens with the star filled from the core's `state.json`, reading
+ *    Edit Bookmark, and its tap opens the page in Zenium;
  *  - Desktop Site: the user agent changes to the desktop one and back, the row reads checked;
  *  - Page Info: the v2 prompt sheet with the host and the Connection row (a loopback page reads
  *    Local site, as the browser's sheet does);
@@ -163,7 +164,8 @@ class CustomTabMenuDemo : DemoHarness("customtabs-demo-state.json", "customtabs-
         waitForPath(STORY_PATH)
         SystemClock.sleep(800)
 
-        // 4. The star: a tap files the page in the tab's inbox and fills the star; a second tap withdraws it.
+        // 4. The star: a tap files the page in the tab's inbox and fills the star, which then names the
+        //    withdrawal its next tap is (Remove Bookmark, not the browser's Edit Bookmark); the second tap withdraws it.
         openMenu()
         assertTrue(
             "the star under a finger filed the page in the inbox document",
@@ -172,12 +174,13 @@ class CustomTabMenuDemo : DemoHarness("customtabs-demo-state.json", "customtabs-
         note("star: inbox after the tap = ${inboxUrls()}")
         SystemClock.sleep(1_500)
         openMenu()
-        assertTrue("the star reads Edit Bookmark once the page is filed", findNode { it == EDIT_BOOKMARK_LABEL } != null)
+        assertTrue("the star reads Remove Bookmark once the page is filed (its tap withdraws the filing)", findNode { it == REMOVE_BOOKMARK_LABEL } != null)
+        assertTrue("a filing is not the browser's bookmark: no Edit Bookmark on a pending page", findNode { it == EDIT_BOOKMARK_LABEL } == null)
         shot("05-star-filled-light")
         beat()
         assertTrue(
             "a second tap on the star withdrew the filing",
-            touchTapLabelExpecting(EDIT_BOOKMARK_LABEL, "the inbox no longer holds the page", timeoutMs = 8_000) { !inboxUrls().contains(storyUrl()) }
+            touchTapLabelExpecting(REMOVE_BOOKMARK_LABEL, "the inbox no longer holds the page", timeoutMs = 8_000) { !inboxUrls().contains(storyUrl()) }
         )
         note("star: inbox after the second tap = ${inboxUrls()}")
         SystemClock.sleep(1_500)
@@ -503,15 +506,16 @@ class CustomTabMenuDemo : DemoHarness("customtabs-demo-state.json", "customtabs-
 
     // --- the menu's reads --------------------------------------------------------------------------
 
-    /** The icon row as the sheet shows it: the five, less the caller's disabled two. */
+    /** The icon row as the sheet shows it: the five, less the caller's disabled two (the star under any of its three names). */
     private fun readIconRow(where: String, bookmark: Boolean, download: Boolean) {
-        val present = listOf(FORWARD_LABEL, BOOKMARK_LABEL, EDIT_BOOKMARK_LABEL, DOWNLOAD_LABEL, INFO_LABEL, RELOAD_LABEL, STOP_LABEL)
+        val present = listOf(FORWARD_LABEL, BOOKMARK_LABEL, REMOVE_BOOKMARK_LABEL, EDIT_BOOKMARK_LABEL, DOWNLOAD_LABEL, INFO_LABEL, RELOAD_LABEL, STOP_LABEL)
             .filter { findNode { text -> text == it } != null }
         note("icon row on $where: $present")
         assertTrue("Forward is in the icon row on $where", FORWARD_LABEL in present)
         assertTrue("Page Info is in the icon row on $where", INFO_LABEL in present)
         assertTrue("Reload (or Stop) is in the icon row on $where", RELOAD_LABEL in present || STOP_LABEL in present)
-        assertEquals("the star is ${if (bookmark) "in" else "out of"} the icon row on $where", bookmark, BOOKMARK_LABEL in present || EDIT_BOOKMARK_LABEL in present)
+        val star = BOOKMARK_LABEL in present || REMOVE_BOOKMARK_LABEL in present || EDIT_BOOKMARK_LABEL in present
+        assertEquals("the star is ${if (bookmark) "in" else "out of"} the icon row on $where", bookmark, star)
         assertEquals("Download Page is ${if (download) "in" else "out of"} the icon row on $where", download, DOWNLOAD_LABEL in present)
     }
 
@@ -887,6 +891,9 @@ class CustomTabMenuDemo : DemoHarness("customtabs-demo-state.json", "customtabs-
         private const val OPEN_IN_ZENIUM_LABEL = "Open in Zenium"
         private const val FORWARD_LABEL = "Forward"
         private const val BOOKMARK_LABEL = "Bookmark"
+        /** The star of a page filed in the inbox: its tap withdraws the filing, so that is its name. */
+        private const val REMOVE_BOOKMARK_LABEL = "Remove Bookmark"
+        /** The star of a page the browser holds: its tap opens the editor in Zenium. */
         private const val EDIT_BOOKMARK_LABEL = "Edit Bookmark"
         private const val DOWNLOAD_LABEL = "Download Page"
         private const val INFO_LABEL = "Page Info"

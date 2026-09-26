@@ -12,7 +12,8 @@ import org.json.JSONObject
  * URL, and so is this – and FILES a tap: an inbox document of its own, [INBOX] under `files/zen/`,
  * one entry per page (`url`, `title`, `at`), for the browser to take into its bookmarks through
  * `browser.bookmarks.create` when it next runs. A pending entry counts as bookmarked (the star
- * fills at the tap); a second tap on a pending entry withdraws it. Nothing here writes the model.
+ * fills at the tap) and reads `Remove Bookmark`, since a second tap on it withdraws the filing; a
+ * page the browser holds reads `Edit Bookmark` ([starOf]). Nothing here writes the model.
  * Pure and JVM-tested; `Storage` does the reading and writing.
  */
 object CustomTabBookmarks {
@@ -52,8 +53,18 @@ object CustomTabBookmarks {
         return out
     }
 
+    /**
+     * The star's state for `url`: the browser's store first (that tap opens the editor in Zenium,
+     * whatever the inbox holds), then a pending filing (that tap withdraws it), else none.
+     */
+    fun starOf(url: String, bookmarked: Set<String>, pending: List<Entry>): CustomTabMenu.Star = when {
+        url in bookmarked -> CustomTabMenu.Star.Stored
+        pending.any { it.url == url } -> CustomTabMenu.Star.Pending
+        else -> CustomTabMenu.Star.None
+    }
+
     fun isBookmarked(url: String, bookmarked: Set<String>, pending: List<Entry>): Boolean =
-        url in bookmarked || pending.any { it.url == url }
+        starOf(url, bookmarked, pending) != CustomTabMenu.Star.None
 
     /** The inbox with `entry` filed (once per URL, the newest filing kept, the oldest past [INBOX_CAP] dropped). */
     fun withEntry(pending: List<Entry>, entry: Entry): List<Entry> {

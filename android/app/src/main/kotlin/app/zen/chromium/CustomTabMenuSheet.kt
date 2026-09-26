@@ -12,6 +12,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.accessibility.AccessibilityManager
 import android.widget.CheckBox
+import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -150,14 +151,17 @@ class CustomTabMenuSheet(
         return row
     }
 
-    private fun iconButton(button: CustomTabMenu.IconButton, onClick: () -> Unit): View = ImageView(context).apply {
+    /**
+     * One button of the icon row: an [ImageButton], as the toolbar's are ([CustomTabToolbar]), so
+     * TalkBack reads it with the button role; its name from [nameOf], a 20 dp glyph in the 44 dp box.
+     */
+    private fun iconButton(button: CustomTabMenu.IconButton, onClick: () -> Unit): View = ImageButton(context).apply {
         setImageResource(glyphOf(button))
         ImageViewCompat.setImageTintList(this, ColorStateList.valueOf(ink))
+        scaleType = ImageView.ScaleType.FIT_CENTER
         setPadding(dp(12), dp(12), dp(12), dp(12))
         background = ripple(round = true)
         contentDescription = nameOf(button)
-        isClickable = true
-        isFocusable = true
         isEnabled = button.enabled
         // §9.30: a disabled control stands at .4 of its ink.
         if (!button.enabled) alpha = DISABLED_ALPHA
@@ -259,10 +263,20 @@ class CustomTabMenuSheet(
         CustomTabMenu.Item.OpenInZenium -> R.drawable.ic_cct_open_in
     }
 
-    /** The icon row's names, the phone row's (TB-08): the star's by its state, Reload's by the page's, read once. */
+    /**
+     * The icon row's names, the phone row's (TB-08): the star's by its state – `Bookmark`, `Remove
+     * Bookmark` for a filing its tap withdraws, `Edit Bookmark` for a page the browser holds
+     * ([CustomTabMenu.Star]) – Reload's by the page's, read once.
+     */
     private fun nameOf(button: CustomTabMenu.IconButton): String = when (button.icon) {
         CustomTabMenu.Icon.Forward -> context.getString(R.string.cct_forward)
-        CustomTabMenu.Icon.Bookmark -> context.getString(if (button.filled) R.string.cct_edit_bookmark else R.string.cct_bookmark)
+        CustomTabMenu.Icon.Bookmark -> context.getString(
+            when {
+                button.pending -> R.string.cct_remove_bookmark
+                button.filled -> R.string.cct_edit_bookmark
+                else -> R.string.cct_bookmark
+            }
+        )
         CustomTabMenu.Icon.Download -> context.getString(R.string.cct_download_page)
         CustomTabMenu.Icon.Info -> context.getString(R.string.cct_page_info)
         CustomTabMenu.Icon.Reload -> context.getString(if (button.stop) R.string.cct_stop else R.string.cct_reload)

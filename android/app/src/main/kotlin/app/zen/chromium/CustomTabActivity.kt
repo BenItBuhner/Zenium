@@ -463,13 +463,15 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
         // The page's state is read once, as the menu opens (§9.13): the row does not flip under a finger.
         val state = CustomTabMenu.PageState(
             canGoForward = page?.canGoForward() == true,
-            bookmarked = CustomTabBookmarks.isBookmarked(currentUrl.ifEmpty { config.url }, bookmarkedUrls, pendingBookmarks),
+            bookmark = CustomTabBookmarks.starOf(currentUrl.ifEmpty { config.url }, bookmarkedUrls, pendingBookmarks),
             loading = pageLoading,
             desktopSite = host.desktopSite
         )
+        // Add to Home Screen is on the sheet only where the launcher pins shortcuts, as Chrome's is.
+        val pins = ShortcutManagerCompat.isRequestPinShortcutSupported(this)
         CustomTabMenuSheet(
             this, config.scheme.dark,
-            CustomTabMenu.groups(titles, config.share, host.desktopSite), ::onMenuPick,
+            CustomTabMenu.groups(titles, config.share, host.desktopSite, addToHomeScreen = pins), ::onMenuPick,
             CustomTabMenu.iconRow(state, config.bookmarksButton, config.downloadButton), ::onIconPick
         ).show()
     }
@@ -502,7 +504,8 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
     /**
      * The star: a page the browser holds as a bookmark reads `Edit Bookmark` and opens in Zenium,
      * whose bar has the editor a custom tab has not; any other page is filed in the inbox for the
-     * browser to take into its bookmarks (a second tap withdraws the filing). Nothing here writes
+     * browser to take into its bookmarks, and while the filing is pending the star reads `Remove
+     * Bookmark` – the second tap withdraws it, which is what the name says. Nothing here writes
      * the core's model ([CustomTabBookmarks]).
      */
     private fun toggleBookmark() {
@@ -606,7 +609,8 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
      * The v2 prompt sheet asks its name first (§9.22's form sheet: the field prefilled with the
      * page's title, selected; Cancel, Add), then the browser's own pin path's tile (the name's
      * first letter on the toolbar's colour, `Shortcuts`' letter tile) and launch intent are
-     * requested of the launcher, which confirms the pin its own way.
+     * requested of the launcher, which confirms the pin its own way. The row is on the sheet only
+     * where the launcher pins ([onMenu]); the check here is the guard behind the hidden row.
      */
     private fun addToHomeScreen() {
         if (!ShortcutManagerCompat.isRequestPinShortcutSupported(this)) return

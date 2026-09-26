@@ -25,28 +25,43 @@ object CustomTabMenu {
     enum class Icon { Forward, Bookmark, Download, Info, Reload }
 
     /**
-     * One button of the icon row. [filled] is the star's bookmarked state; [stop] is Reload read as
-     * Stop while the page loads (read once at open, as the phone's row does).
+     * The star's state for the page: in no store; FILED in the tab's inbox and not yet the browser's
+     * (the next tap withdraws the filing); or STORED, held by the browser's bookmarks (the tap opens
+     * the editor in Zenium). The name reads what the tap does: `Bookmark`, `Remove Bookmark`,
+     * `Edit Bookmark`.
      */
-    data class IconButton(val icon: Icon, val enabled: Boolean = true, val filled: Boolean = false, val stop: Boolean = false)
+    enum class Star { None, Pending, Stored }
+
+    /**
+     * One button of the icon row. [filled] is the star drawn filled (a pending or a stored bookmark);
+     * [pending] is the star of a filing the tap withdraws, named so; [stop] is Reload read as Stop
+     * while the page loads (read once at open, as the phone's row does).
+     */
+    data class IconButton(
+        val icon: Icon,
+        val enabled: Boolean = true,
+        val filled: Boolean = false,
+        val stop: Boolean = false,
+        val pending: Boolean = false
+    )
 
     /** What the page is doing when the menu opens, read once. */
     data class PageState(
         val canGoForward: Boolean = false,
-        val bookmarked: Boolean = false,
+        val bookmark: Star = Star.None,
         val loading: Boolean = false,
         val desktopSite: Boolean = false
     )
 
     /**
      * The icon row: Forward (enabled only with a forward entry), Bookmark (filled when the page is
-     * bookmarked; absent when the caller sent `EXTRA_DISABLE_BOOKMARKS_BUTTON`), Download (absent
-     * under `EXTRA_DISABLE_DOWNLOAD_BUTTON`), Info, Reload or Stop.
+     * a pending or a stored bookmark, [Star]; absent when the caller sent `EXTRA_DISABLE_BOOKMARKS_BUTTON`),
+     * Download (absent under `EXTRA_DISABLE_DOWNLOAD_BUTTON`), Info, Reload or Stop.
      */
     fun iconRow(state: PageState, bookmarks: Boolean, download: Boolean): List<IconButton> {
         val row = ArrayList<IconButton>(5)
         row.add(IconButton(Icon.Forward, enabled = state.canGoForward))
-        if (bookmarks) row.add(IconButton(Icon.Bookmark, filled = state.bookmarked))
+        if (bookmarks) row.add(IconButton(Icon.Bookmark, filled = state.bookmark != Star.None, pending = state.bookmark == Star.Pending))
         if (download) row.add(IconButton(Icon.Download))
         row.add(IconButton(Icon.Info))
         row.add(IconButton(Icon.Reload, stop = state.loading))
@@ -55,9 +70,11 @@ object CustomTabMenu {
 
     /**
      * `callerTitles` in intent order (blank ones are skipped, at most [CustomTabConfig.MAX_MENU_ITEMS]
-     * kept); [desktopSite] is the check row's state.
+     * kept); [desktopSite] is the check row's state; [addToHomeScreen] is whether the launcher pins
+     * shortcuts (`ShortcutManagerCompat.isRequestPinShortcutSupported`) – without it the row is out,
+     * as Chrome's is, rather than a row whose tap does nothing.
      */
-    fun groups(callerTitles: List<String>, share: Boolean, desktopSite: Boolean = false): List<List<Item>> {
+    fun groups(callerTitles: List<String>, share: Boolean, desktopSite: Boolean = false, addToHomeScreen: Boolean = true): List<List<Item>> {
         val groups = ArrayList<List<Item>>()
         val caller = callerTitles.withIndex()
             .filter { it.value.isNotBlank() }
@@ -68,7 +85,7 @@ object CustomTabMenu {
         if (share) page.add(Item.Share)
         page.add(Item.CopyLink)
         page.add(Item.FindInPage)
-        page.add(Item.AddToHomeScreen)
+        if (addToHomeScreen) page.add(Item.AddToHomeScreen)
         page.add(Item.DesktopSite(desktopSite))
         groups.add(page)
         groups.add(listOf(Item.OpenInZenium))

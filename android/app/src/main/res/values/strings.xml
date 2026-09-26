@@ -57,6 +57,7 @@
     <string name="cct_forward">Forward</string>
     <string name="cct_bookmark">Bookmark</string>
     <string name="cct_edit_bookmark">Edit Bookmark</string>
+    <string name="cct_remove_bookmark">Remove Bookmark</string>
     <string name="cct_download_page">Download Page</string>
     <string name="cct_page_info">Page Info</string>
     <string name="cct_stop">Stop</string>

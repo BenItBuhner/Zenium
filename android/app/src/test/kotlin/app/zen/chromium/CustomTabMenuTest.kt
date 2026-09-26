@@ -83,10 +83,45 @@ class CustomTabMenuTest {
 
     @Test
     fun theStarFillsOnABookmarkedPage() {
-        val plain = CustomTabMenu.iconRow(CustomTabMenu.PageState(bookmarked = false), bookmarks = true, download = true)
-        val filled = CustomTabMenu.iconRow(CustomTabMenu.PageState(bookmarked = true), bookmarks = true, download = true)
-        assertFalse(plain.first { it.icon == CustomTabMenu.Icon.Bookmark }.filled)
-        assertTrue(filled.first { it.icon == CustomTabMenu.Icon.Bookmark }.filled)
+        val plain = star(CustomTabMenu.Star.None)
+        val stored = star(CustomTabMenu.Star.Stored)
+        assertFalse(plain.filled)
+        assertTrue(stored.filled)
+    }
+
+    @Test
+    fun theStarNamesWhatItsTapDoes() {
+        // A filing in the inbox is what the next tap withdraws, so it is not the browser's `Edit Bookmark`:
+        // the pending star is filled and marked pending (the sheet reads it `Remove Bookmark`); the stored
+        // star is filled and not (its tap opens the editor in Zenium); an empty star is neither.
+        val none = star(CustomTabMenu.Star.None)
+        val pending = star(CustomTabMenu.Star.Pending)
+        val stored = star(CustomTabMenu.Star.Stored)
+        assertFalse(none.filled)
+        assertFalse(none.pending)
+        assertTrue(pending.filled)
+        assertTrue(pending.pending)
+        assertTrue(stored.filled)
+        assertFalse(stored.pending)
+    }
+
+    private fun star(state: CustomTabMenu.Star): CustomTabMenu.IconButton =
+        CustomTabMenu.iconRow(CustomTabMenu.PageState(bookmark = state), bookmarks = true, download = true)
+            .first { it.icon == CustomTabMenu.Icon.Bookmark }
+
+    @Test
+    fun addToHomeScreenLeavesTheMenuWhereTheLauncherCannotPin() {
+        // As Chrome's row does: out of the sheet, not a row whose tap does nothing.
+        val page = CustomTabMenu.groups(emptyList(), share = true, addToHomeScreen = false).first()
+        assertEquals(
+            listOf(
+                CustomTabMenu.Item.Share, CustomTabMenu.Item.CopyLink, CustomTabMenu.Item.FindInPage,
+                CustomTabMenu.Item.DesktopSite(checked = false)
+            ),
+            page
+        )
+        // The default keeps the row, as every tab on a launcher that pins has it.
+        assertTrue(CustomTabMenu.groups(emptyList(), share = true).first().contains(CustomTabMenu.Item.AddToHomeScreen))
     }
 
     @Test
