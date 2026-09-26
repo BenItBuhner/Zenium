@@ -13,6 +13,7 @@ import {
   type LoadURLOptions,
   type Session,
   type WebContents,
+  type WebFrameMain,
   type WebPreferences
 } from 'electron'
 import { join } from 'node:path'
@@ -97,6 +98,7 @@ import type {
   InputModifier,
   InsertedCssOrigin,
   KeyEventInput,
+  NavigationCommitDetails,
   NavigationIntent,
   PageFlags,
   PageHostMessage,
@@ -410,6 +412,13 @@ export class ElectronTabView implements TabView {
    */
   private navigatingUrl: string | null = null
   /**
+   * The tab's history as the main-frame navigation under way found it, and whether the page's
+   * own document started the navigation (`did-start-navigation`'s `initiator` a frame of this
+   * view): read at the commit to tell the core whether the document replaced the one before it
+   * (`NavigationCommitDetails`, history-23). Null between navigations.
+   */
+  private commitBaseline: { length: number; index: number; byPage: boolean } | null = null
+  /**
    * When the task manager's End process told this view its renderer is about to be crashed on
    * the user's word (`ElectronTaskHost.end` → `noteEndedByUser`): the `render-process-gone` that
    * follows is reported as `ended`, not as the engine's `crashed`. A mark older than
@@ -588,7 +597,7 @@ export class ElectronTabView implements TabView {
     wc.on('did-stop-loading', () => ev.onStopLoading())
     wc.on('did-navigate', (_e, url) => {
       this.navigatingUrl = null
-      ev.onNavigated(url, false)
+      ev.onNavigated(url, false, this.commitDetails(wc))
       this.fontsAfterNavigation()
     })
     wc.on('did-navigate-in-page', (_e, url, isMainFrame) => {
@@ -687,6 +696,11 @@ export class ElectronTabView implements TabView {
       // The page is unloading (its `beforeunload` let it): nothing is left to replay.
       if (details.isSameDocument) return
       this.navigatingUrl = details.url
+      this.commitBaseline = {
+        length: wc.navigationHistory.length(),
+        index: wc.navigationHistory.getActiveIndex(),
+        byPage: this.startedByThisPage(wc, details.initiator ?? null)
+      }
       this.leaveApproved = false
       this.hostNavigation = null
       this.pageIntent = null
@@ -755,6 +769,35 @@ export class ElectronTabView implements TabView {
           })
       }
     })
+  }
+
+  /**
+   * Whether `initiator` (`did-start-navigation`'s) is a frame of this view's own page: the
+   * page navigated itself. Null is the browser's navigation (a typed address, back / forward, a
+   * reload); a frame of another view is an opener's (`window.open`'s first load).
+   */
+  private startedByThisPage(wc: WebContents, initiator: WebFrameMain | null): boolean {
+    if (!initiator || wc.isDestroyed()) return false
+    return wc.mainFrame.framesInSubtree.some(
+      (f) => f.processId === initiator.processId && f.routingId === initiator.routingId
+    )
+  }
+
+  /**
+   * How the document that just committed stands to the one before it, measured against the
+   * baseline `did-start-navigation` took: the entry list neither longer nor moved along is
+   * Chromium's `did_replace_entry` (a new document adds an entry after the current one; back /
+   * forward move along it). Nothing when no start was seen.
+   */
+  private commitDetails(wc: WebContents): NavigationCommitDetails | undefined {
+    const base = this.commitBaseline
+    this.commitBaseline = null
+    if (!base || wc.isDestroyed()) return undefined
+    const history = wc.navigationHistory
+    return {
+      replacedEntry: history.length() === base.length && history.getActiveIndex() === base.index,
+      initiatedByPage: base.byPage
+    }
   }
 
   /** A message from the page script (routed here by the platform's IPC handler). */

@@ -374,6 +374,26 @@ export interface LoadDetails {
   certificate?: CertificateDetails | null
 }
 
+/**
+ * How a committed main-frame document stands to the one before it in the tab (`TabViewEvents.
+ * onNavigated`). Both facts together are Chrome's client redirect (`PAGE_TRANSITION_CLIENT_
+ * REDIRECT` with `did_replace_entry`), which history folds into the landing's redirect chain.
+ */
+export interface NavigationCommitDetails {
+  /**
+   * The document took the previous document's place in the tab's history instead of adding an
+   * entry (Chromium's `did_replace_entry`: `location.replace()`, a meta refresh or `Refresh:`
+   * header of a second or less, a script's navigation before the page's load event finished).
+   */
+  replacedEntry: boolean
+  /**
+   * The page's own document started the navigation (a script, a meta refresh: a frame of this
+   * tab's page), not the browser (a typed address, a bookmark, back / forward, a reload from the
+   * toolbar) and not another page (an opener's `window.open`).
+   */
+  initiatedByPage: boolean
+}
+
 export interface PageContextParams {
   /**
    * Click position in the view's coordinates (DIP), as the host's `context-menu` event gives it;
@@ -614,8 +634,13 @@ export interface TabViewEvents {
    * then the landing alone.
    */
   onRedirected?(fromUrl: string, toUrl: string): void
-  /** Main-frame navigation committed (`inPage` for pushState / hash changes). */
-  onNavigated(url: string, inPage: boolean): void
+  /**
+   * Main-frame navigation committed (`inPage` for pushState / hash changes). `details` says how
+   * the document stands to the one before it (history-23: a client redirect that replaced its
+   * page folds the page into the landing's chain); hosts that cannot tell leave it out, and the
+   * landing is then a visit of its own.
+   */
+  onNavigated(url: string, inPage: boolean, details?: NavigationCommitDetails): void
   /**
    * The page is about to navigate its main frame to `url` on its own – a link, a script, a form
    * submission (not a load the browser asked for, and not a server redirect, which hosts report
