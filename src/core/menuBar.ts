@@ -13,6 +13,8 @@ import { BOOKMARKS_BAR_ID } from '../shared/bookmarks'
 import { HELP_URL, ISSUES_URL } from '../shared/links'
 import { displayUrl } from '../shared/url'
 import { clipLabel } from './menus'
+import { isPrivateFolder } from './model'
+import { permissionSite } from './permissions'
 
 type Template = MenuItemTemplate[]
 
@@ -113,13 +115,14 @@ export function runFromMenuBar(browser: Browser, action: ShortcutAction): void {
 }
 
 /**
- * The macOS menu bar: Chrome's eight menus (Zenium, File, Edit, View, History, Bookmarks,
- * Window, Help) with Zenium's actions in Chrome's order, plus Zenium's own features (Spaces,
- * split view, compact mode) where they belong. Items name their `action`, so the chord shown
- * after each label comes from the active key table and the click runs the same code as the
- * key. System entries (About, Services, Hide, Quit, the editing commands, Zoom and Bring All
- * to Front) are the host's roles. Rebuilt when what it shows changed; `click`s look the front
- * window up when they run, so a menu built while one window was in front works from another.
+ * The macOS menu bar: Chrome's nine menus (Zenium, File, Edit, View, History, Bookmarks, Tab,
+ * Window, Help – Chrome's Profiles menu has no counterpart) with Zenium's actions in Chrome's
+ * order, plus Zenium's own features (Spaces, split view, compact mode) where they belong. Items
+ * name their `action`, so the chord shown after each label comes from the active key table and
+ * the click runs the same code as the key. System entries (Services, Hide, Quit, the editing
+ * commands, Zoom and Bring All to Front) are the host's roles. Rebuilt when what it shows
+ * changed; `click`s look the front window up when they run, so a menu built while one window
+ * was in front works from another.
  */
 export function applicationMenu(browser: Browser): Template {
   const { state, tabs } = browser
@@ -133,6 +136,12 @@ export function applicationMenu(browser: Browser): Template {
       const target = frontWindow(browser) ?? (open ? browser.ensureWindow() : null)
       if (target) fn(target)
     }
+  /** Run something on the front window's active tab, both looked up when the row is picked. */
+  const withActiveTab = (fn: (tab: Tab, win: ZenWindow) => void): (() => void) =>
+    withWindow((w) => {
+      const tab = tabs.activeTabFor(w)
+      if (tab) fn(tab, w)
+    })
   /** A Settings section: the Settings page, as a tab or its overlay (`PageService.open`). */
   const settings = (section: string): (() => void) =>
     withWindow((w) => void browser.pages.open('settings', section, w), true)
@@ -143,7 +152,12 @@ export function applicationMenu(browser: Browser): Template {
   const zenium: MenuItemTemplate = {
     label: 'Zenium',
     submenu: [
-      { label: 'About Zenium', role: 'about' },
+      // Chrome's About Google Chrome opens its About page (`chrome://settings/help`), not the
+      // system's About panel: this row opens Zenium's – Settings › About, the version, the
+      // update row and the legal pages – as the ⋯ menu's Help › About Zenium does
+      // (shortcuts-menus-123), in a window opened for it when none is up. The `about` role it
+      // had drew Electron's generic panel (the icon, the name and the version) instead.
+      { label: 'About Zenium', click: settings('about') },
       { type: 'separator' },
       { label: 'Settings…', action: 'settings.open' },
       { label: 'Delete Browsing Data…', action: 'privacy.clearBrowsingData' },
@@ -342,6 +356,8 @@ export function applicationMenu(browser: Browser): Template {
   }
 
   const local = Boolean(win?.localSpace)
+  const tab = tabMenu(browser, win, active, local, withActiveTab)
+
   // The private window's app menu row (profiles-25), here while a private window is up: the
   // window operations' group, Firefox's counted verb; the front window closes last.
   const count = browser.allWindows().filter((w) => w.isPrivate).length
@@ -354,6 +370,8 @@ export function applicationMenu(browser: Browser): Template {
           }
         ]
       : []
+  // Chrome's Window menu (`BuildWindowMenu`): the window's own rows and the app's – no tab
+  // rows, which are the Tab menu's.
   const window: MenuItemTemplate = {
     label: 'Window',
     role: 'window',
@@ -361,10 +379,6 @@ export function applicationMenu(browser: Browser): Template {
       { label: 'Minimize', action: 'window.minimize', enabled: Boolean(win) },
       { label: 'Zoom', role: 'zoom' },
       ...closePrivateWindows,
-      { type: 'separator' },
-      { label: 'Select Next Tab', action: 'tab.next', enabled: Boolean(active) },
-      { label: 'Select Previous Tab', action: 'tab.prev', enabled: Boolean(active) },
-      { label: 'Search Tabs…', action: 'tab.search', enabled: Boolean(win) },
       { type: 'separator' },
       // The group about this window, in the order More Tools has the pair (one order in both
       // menus, the #451 lead check's): Chrome's Window › Name Window… – the window's own name
@@ -392,9 +406,12 @@ export function applicationMenu(browser: Browser): Template {
   }
 
   // The app menu's Help submenu (`Menus.showAppMenu`) in the one order, less About Zenium, which
-  // is the application menu's (the host's role, as Chrome's on macOS): this build's group – its
-  // release notes – over the hairline, then the help (shortcuts-menus-152). The two surfaces
-  // read the same, so the eye that learned one finds the other.
+  // is the application menu's (where Chrome keeps About on macOS): this build's group – its
+  // release notes – over the hairline, then the help (shortcuts-menus-152, -162). The two
+  // surfaces read the same, so the eye that learned one finds the other. The `help` role gives
+  // the menu macOS's Search field. Chrome's Report Unsafe Site is Google's Safe Browsing report
+  // form, which Zenium has no path to (services PS-01), so there is no such row; Chrome's Help
+  // chords (⌥⇧⌘I, ⇧⌘/) name no action of the key table, so the rows show none.
   const help: MenuItemTemplate = {
     label: 'Help',
     role: 'help',
@@ -407,7 +424,126 @@ export function applicationMenu(browser: Browser): Template {
     ]
   }
 
-  return [zenium, file, edit, view, history, bookmarks, window, help]
+  return [zenium, file, edit, view, history, bookmarks, tab, window, help]
+}
+
+/**
+ * Chrome's Tab menu (`main_menu_builder.mm`'s `BuildTabMenu`; shortcuts-menus-160), between
+ * Bookmarks and Window as Chrome seats it (its Profiles menu, which stands before it there,
+ * has no counterpart): New Tab to the Right, Select Next Tab, Select Previous Tab, Duplicate
+ * Tab, Mute Site, Pin Tab, Group Tab, Close Other Tabs, Close Tabs to the Right, Move Tab to
+ * New Window, Search Tabs, in Chrome's order and without Chrome's separators (its menu is one
+ * group). Zenium's strip is vertical, so the two rows Chrome words by direction read as Chrome
+ * words them for a vertical strip – "New Tab Below" and "Close Tabs Below", the twins its nib
+ * keeps hidden for that case (`IDS_TAB_CXMENU_NEWTABBELOW`, `IDS_TAB_CXMENU_CLOSETABSBELOW`) –
+ * and Chrome's Group Tab is Zenium's folder rows in the tab context menu's own words (its Move
+ * Tab ▸ folder rows, context-menus-91: "Add Tab to New Folder" while the space has no folder,
+ * else "Move to Folder ▸" – a new folder first, then the space's folders, the tab's own checked
+ * – with "Remove from Folder" beside it). Every row runs the command the tab's context menu
+ * runs (`Menus.showTabContextMenu`), on the front window's active tab: the rows with a chord
+ * name their `action`, so the key table's binding shows after the label and the pick runs the
+ * key's code; the rest run the tab service's command directly. Greyed with no tab to act on,
+ * and where the context menu greys (nothing to close, a page without a site to mute, a pinned
+ * or Essentials tab that no folder takes, a local space that has none) – a menu bar greys
+ * rather than hides (§9.30) – with the toggles reading their state: Mute Site / Unmute Site,
+ * Pin Tab / Unpin Tab. Chrome's Add Tab to New Split stays the View menu's Split View submenu's.
+ */
+function tabMenu(
+  browser: Browser,
+  win: ZenWindow | null,
+  active: Tab | undefined,
+  local: boolean,
+  withActiveTab: (fn: (tab: Tab, win: ZenWindow) => void) => () => void
+): MenuItemTemplate {
+  const { state, tabs } = browser
+  const m = state.model
+  const has = Boolean(active)
+  // Mute Site writes the site's `sound` setting: a page without a site (`zen://`, `about:blank`)
+  // has none to write, and the row greys – the command's own precondition (`Tabs.toggleMuteSite`).
+  const site = Boolean(active && permissionSite(active.url))
+  const pinned = Boolean(active && (active.pinned || active.essential))
+  // The space's folders the tab could move to, the context menu's rule: a regular tab's row
+  // names no private folder (private browsing leaks nothing outside its mode), a private tab's
+  // – on a host that keeps private browsing in tabs – every folder of its space.
+  const folders =
+    active && win
+      ? Object.values(m.folders).filter(
+          (f) =>
+            f.spaceId === (active.spaceId ?? win.activeSpaceId) &&
+            (tabs.isPrivate(active) || !isPrivateFolder(m, f))
+        )
+      : []
+  const canFolder = has && !local && !pinned
+  const newFolder = withActiveTab((t, w) => browser.newFolderWithTab(w.activeSpace().id, t.id, w))
+  const folderRows: Template = [
+    folders.length === 0
+      ? { label: 'Add Tab to New Folder', enabled: canFolder, click: newFolder }
+      : {
+          label: 'Move to Folder',
+          enabled: canFolder,
+          submenu: [
+            { label: 'New Folder…', click: newFolder },
+            { type: 'separator' },
+            ...folders.map(
+              (f): MenuItemTemplate => ({
+                label: `${f.icon} ${f.name}`,
+                type: 'checkbox',
+                checked: active!.folderId === f.id,
+                click: withActiveTab((t) =>
+                  tabs.moveToFolder(t.id, t.folderId === f.id ? null : f.id)
+                )
+              })
+            )
+          ]
+        },
+    {
+      label: 'Remove from Folder',
+      enabled: Boolean(active?.folderId),
+      click: withActiveTab((t) => tabs.moveToFolder(t.id, null))
+    }
+  ]
+  const closeScope = (which: 'others' | 'below'): boolean =>
+    Boolean(active && win) && tabs.closeScope(active!.id, which, win!).length > 0
+  return {
+    label: 'Tab',
+    submenu: [
+      {
+        label: 'New Tab Below',
+        enabled: has && !active!.essential,
+        click: withActiveTab((t, w) => browser.newTabAfter(t.id, w))
+      },
+      { label: 'Select Next Tab', action: 'tab.next', enabled: has },
+      { label: 'Select Previous Tab', action: 'tab.prev', enabled: has },
+      { label: 'Duplicate Tab', action: 'tab.duplicate', enabled: has },
+      {
+        label: active && tabs.siteMuted(active.url) ? 'Unmute Site' : 'Mute Site',
+        enabled: site,
+        click: withActiveTab((t) => tabs.toggleMuteSite(t.id))
+      },
+      { label: pinned ? 'Unpin Tab' : 'Pin Tab', action: 'tab.togglePin', enabled: has },
+      ...folderRows,
+      {
+        label: 'Close Other Tabs',
+        enabled: closeScope('others'),
+        click: withActiveTab((t, w) => tabs.closeOthers(t.id, w))
+      },
+      {
+        label: 'Close Tabs Below',
+        enabled: closeScope('below'),
+        click: withActiveTab((t, w) => tabs.closeBelow(t.id, w))
+      },
+      ...(state.capabilities.windows
+        ? [
+            {
+              label: 'Move Tab to New Window',
+              enabled: has,
+              click: withActiveTab((t, w) => void tabs.moveTabToNewWindow(t.id, null, w))
+            }
+          ]
+        : []),
+      { label: 'Search Tabs…', action: 'tab.search', enabled: Boolean(win) }
+    ]
+  }
 }
 
 /** "Recently Closed": newest first, ten at most; the newest is what the reopen chord brings back. */
