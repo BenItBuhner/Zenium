@@ -160,6 +160,29 @@ describe('the mnemonic letters', () => {
     ])
     for (const label of ['Pin', 'Unpin', 'Customise Toolbar…', 'Addresses'])
       expect(tableEntry(label)?.source).toBe('zenium')
+    // Help ▸'s last row, IDS_REPORT_UNSAFE_SITE "Report an &unsafe site...": Chrome's u (the U
+    // of Unsafe in Title Case), unique beside Report an Issue…'s R (IDS_FEEDBACK "&Report an
+    // issue...") and the rule's first letters for About, What's New, Zenium Help and Keyboard
+    // Shortcuts – the app menu being the renderer's, the markers reach no popup, and the table
+    // states the letter for the day the row stands in a native menu.
+    expect(tableEntry('Report an Unsafe Site…')).toEqual({ letter: 'u', source: 'chrome' })
+    expect(
+      marked([
+        'About Zenium',
+        "What's New",
+        'Zenium Help',
+        'Keyboard Shortcuts',
+        'Report an Issue…',
+        'Report an Unsafe Site…'
+      ])
+    ).toEqual([
+      '&About Zenium',
+      "&What's New",
+      '&Zenium Help',
+      '&Keyboard Shortcuts',
+      '&Report an Issue…',
+      'Report an &Unsafe Site…'
+    ])
   })
 
   it('are unique within a level, case-insensitively, and a row whose every letter is taken goes without', () => {

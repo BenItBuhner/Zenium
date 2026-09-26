@@ -108,6 +108,8 @@ export const CHROME_MNEMONICS: ReadonlyMap<string, string> = new Map<string, str
   ['Help', 'e'],
   ['Settings', 'g'],
   ['Report an Issue…', 'R'],
+  // IDS_REPORT_UNSAFE_SITE "Report an &unsafe site..." (Help ▸'s last row, W8-1).
+  ['Report an Unsafe Site…', 'u'],
   ['Delete Browsing Data…', 'D'],
   ['Manage Search Engines…', 'M'],
   ['Paste and Go', 's'],

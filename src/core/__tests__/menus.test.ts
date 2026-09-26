@@ -31,6 +31,7 @@ import {
   selectionUrl
 } from '../menus'
 import { HELP_URL, ISSUES_URL } from '../menuBar'
+import { unsafeSiteReportUrl } from '../unsafeSiteReport'
 import { releaseNotesUrl } from '../../shared/links'
 import { serialiseMenu } from '../rendererMenus'
 import {
@@ -1012,7 +1013,7 @@ describe('the app menu', () => {
     )
   })
 
-  it("Help is Chrome's Help submenu in Chrome's order (shortcuts-menus-152): About Zenium opens the About page, What's New the release notes, Zenium Help and Report an Issue… their pages", () => {
+  it("Help is Chrome's Help submenu in Chrome's order (shortcuts-menus-152): About Zenium opens the About page, What's New the release notes, Zenium Help the help page in a new tab (Chrome's help centre), Report an Issue… the issues page outside", () => {
     const opened: string[] = []
     const h = harness(DESKTOP)
     h.browser.platform.shell.openExternal = (url: string): Promise<void> => {
@@ -1021,6 +1022,8 @@ describe('the app menu', () => {
     }
     appMenu(h)
     const help = deepItem(h.shown(), 'Help').submenu ?? []
+    // Over no page (the harness's window holds none) Report an Unsafe Site… has nothing to
+    // report and is left out; see the row's own tests below.
     expect(topLabels(help)).toEqual([
       'About Zenium',
       "What's New",
@@ -1029,9 +1032,16 @@ describe('the app menu', () => {
       'Keyboard Shortcuts',
       'Report an Issue…'
     ])
+    const before = h.browser.tabs.activeTabFor(h.win)
     deepItem(h.shown(), 'Zenium Help').click?.()
+    // Chrome's H&elp center opens `kChromeHelpViaMenuURL` in a tab of the browser (`ShowHelp`):
+    // the help page is a new tab in front, not the system browser's.
+    const helpTab = h.browser.tabs.activeTabFor(h.win)!
+    expect(helpTab.url).toBe(HELP_URL)
+    expect(helpTab.id).not.toBe(before?.id)
+    expect(opened).toEqual([])
     deepItem(h.shown(), 'Report an Issue…').click?.()
-    expect(opened).toEqual([HELP_URL, ISSUES_URL])
+    expect(opened).toEqual([ISSUES_URL])
     // About is a row that acts now – the About page (Settings › About: the version, the
     // update row, the legal pages), not a disabled version line; the version is the page's.
     const about = deepItem(h.shown(), 'About Zenium')
@@ -1043,6 +1053,99 @@ describe('the app menu', () => {
     const phone = harness(ANDROID, 'phone')
     expect(appMenu(phone)).toContain('About Zenium 1.2.3')
     expect(appMenu(phone)).not.toContain("What's New")
+  })
+
+  describe("Chrome's Report an Unsafe Site… (shortcuts-menus-123, W8-1)", () => {
+    const helpRows = (h: Harness): string[] => {
+      appMenu(h)
+      return topLabels(deepItem(h.shown(), 'Help').submenu ?? [])
+    }
+    const reportRow = 'Report an Unsafe Site…'
+
+    it("closes Help ▸ after Report an Issue…, in Chrome's seat, over an http(s) page, and opens Safe Browsing's public report form with the page's address in a new tab in front, a child of the page, in its container", () => {
+      const opened: string[] = []
+      const h = pageHarness(DESKTOP)
+      h.browser.platform.shell.openExternal = (url: string): Promise<void> => {
+        opened.push(url)
+        return Promise.resolve()
+      }
+      const page = h.browser.tabs.activeTabFor(h.win)!
+      expect(page.url).toBe(PAGE_URL)
+      expect(helpRows(h)).toEqual([
+        'About Zenium',
+        "What's New",
+        '-',
+        'Zenium Help',
+        'Keyboard Shortcuts',
+        'Report an Issue…',
+        reportRow
+      ])
+      const row = deepItem(h.shown(), reportRow)
+      expect(row.enabled).not.toBe(false)
+      row.click?.()
+      const report = h.browser.tabs.activeTabFor(h.win)!
+      expect(report.id).not.toBe(page.id)
+      expect(report.url).toBe(
+        `https://safebrowsing.google.com/safebrowsing/report_phish/?url=${encodeURIComponent(PAGE_URL)}`
+      )
+      expect(report.url).toBe(unsafeSiteReportUrl(PAGE_URL))
+      expect(report.openerTabId).toBe(page.id)
+      expect(report.containerId).toBe(page.containerId)
+      // The form is a page of the browser's, as Chrome's help centre is – not the system browser's.
+      expect(opened).toEqual([])
+      // Zenium Help from the same page: the help page a child of the page too.
+      h.browser.tabs.activateTab(page.id, h.win)
+      appMenu(h)
+      deepItem(h.shown(), 'Zenium Help').click?.()
+      const help = h.browser.tabs.activeTabFor(h.win)!
+      expect(help.url).toBe(HELP_URL)
+      expect(help.openerTabId).toBe(page.id)
+      expect(opened).toEqual([])
+    })
+
+    it("is left out, not greyed, over a page without an address the form can take: Zenium's pages, a file, about:blank", () => {
+      const h = harness(DESKTOP)
+      for (const url of ['zen://settings/look', 'file:///home/user/report.html', 'about:blank']) {
+        h.browser.tabs.createTab({ url, active: true }, h.win)
+        expect(h.browser.tabs.activeTabFor(h.win)?.url).toBe(url)
+        const rows = helpRows(h)
+        expect(rows, url).not.toContain(reportRow)
+        expect(rows[rows.length - 1], url).toBe('Report an Issue…')
+      }
+      // Back over an http page the row returns.
+      h.browser.tabs.createTab({ url: 'http://example.org/', active: true }, h.win)
+      expect(helpRows(h)).toContain(reportRow)
+    })
+
+    it('shows with Safe Browsing off – the form is public and needs no key – and from a private page opens the form in a private tab', () => {
+      const h = pageHarness(DESKTOP)
+      h.browser.updateSettings(
+        { privacy: { ...h.browser.state.settings.privacy, safeBrowsingEnabled: false } },
+        h.win
+      )
+      expect(h.browser.state.settings.privacy.safeBrowsingEnabled).toBe(false)
+      expect(helpRows(h)).toContain(reportRow)
+      const privatePage = h.browser.tabs.createTab(
+        { url: 'https://example.com/p', active: true, containerId: PRIVATE_CONTAINER_ID },
+        h.win
+      )
+      appMenu(h)
+      deepItem(h.shown(), reportRow).click?.()
+      const report = h.browser.tabs.activeTabFor(h.win)!
+      expect(report.url).toBe(unsafeSiteReportUrl('https://example.com/p'))
+      expect(report.containerId).toBe(PRIVATE_CONTAINER_ID)
+      expect(report.openerTabId).toBe(privatePage.id)
+    })
+
+    it("is a row of the sidebar layouts' Help ▸ alone: the tablet has it over a page, the phone's flat list has no Help submenu to hold it (Chrome's phone menu has no such row)", () => {
+      const tablet = pageHarness(ANDROID, { formFactor: 'tablet' })
+      expect(helpRows(tablet)).toContain(reportRow)
+      const phone = harness(ANDROID, 'phone')
+      phone.browser.tabs.createTab({ url: PAGE_URL, active: true }, phone.win)
+      appMenu(phone)
+      expect(allItems(phone.shown()).map((i) => i.label)).not.toContain(reportRow)
+      expect(item(phone.shown(), 'Help').submenu).toBeUndefined()
+    })
   })
 
   it("What's New opens the running version's release notes: the zen://whats-new page tab where the host has it, else the version's release on GitHub in a tab", () => {
@@ -1521,7 +1624,8 @@ describe('the app menu', () => {
       'More Tools',
       'Zenium Help',
       "What's New",
-      'Report an Issue…'
+      'Report an Issue…',
+      'Report an Unsafe Site…'
     ])
       expect(everywhere).not.toContain(label)
     expect(item(h.shown(), 'Help').submenu).toBeUndefined()

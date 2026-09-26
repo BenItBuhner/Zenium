@@ -94,6 +94,7 @@ import {
   splitViewSubmenu
 } from './menuBar'
 import { isSendableUrl } from './sync/sendTab'
+import { unsafeSiteReportUrl } from './unsafeSiteReport'
 import {
   folderTabs,
   isPrivateFolder,
@@ -4255,28 +4256,38 @@ export class Menus {
       }))
     )
     const about: MenuItemTemplate = { label: `About Zenium ${state.version}`, enabled: false }
+    // A help page opens in a new tab in front, a child of the page the menu was opened over –
+    // back returns there (the renderer's `rootBackAction`), as Chrome's help centre opens in a
+    // tab of the browser (`ShowHelp`, `IDC_HELP_PAGE_VIA_MENU`) and its phone's help activity
+    // returns to the tab – in the tab's own container, so a private page's help stays private.
+    // One shape for the phone's Help row, the desktop's Zenium Help and Report an Unsafe Site…
+    // rows (the macOS menu bar's Help menu is `menuBar.ts`'s, W8-4's seam).
+    const openHelpPage = (url: string): void =>
+      void tabs.createTab(
+        { url, active: true, openerTabId: active?.id, containerId: active?.containerId },
+        win
+      )
     // Chrome's "Help & feedback", the phone menu's last row (TB-07): one flat row where the
     // sidebar layouts fold a Help submenu (a phone's list folds nothing in). Its pick opens the
     // help page (`HELP_URL`, the one address the desktop's Zenium Help row and Settings › About's
-    // Get help open) in a new tab in front, a child of the page the menu was opened over – back
-    // returns there (the renderer's `rootBackAction`), as Chrome's help activity returns to the
-    // tab – in the tab's own container, so a private page's help stays private. The feedback
-    // half is Settings › About's Report an issue row, and no `zen://help` page exists to open
-    // instead. The desktop opens the same address outside (`shell.openExternal`); the phone IS
-    // the browser.
+    // Get help open). The feedback half is Settings › About's Report an issue row, and no
+    // `zen://help` page exists to open instead.
     const help: MenuItemTemplate = {
       label: 'Help',
-      click: () =>
-        tabs.createTab(
-          {
-            url: HELP_URL,
-            active: true,
-            openerTabId: active?.id,
-            containerId: active?.containerId
-          },
-          win
-        )
+      click: () => openHelpPage(HELP_URL)
     }
+    // Chrome's "Report an unsafe site…" (`IDC_REPORT_UNSAFE_SITE`, the Help submenu's last row;
+    // shortcuts-menus-123): Google Safe Browsing's public report form with the page's address
+    // in its query (`unsafeSiteReportUrl`), opened as a help page is. The form is public and
+    // needs no key, so the row shows whether or not Safe Browsing is on (Chrome's own hides with
+    // Safe Browsing off and in Incognito, its dialog being a feedback form); a page without an
+    // address the form can take – `zen://`, `file:`, `about:blank` – has no row rather than a
+    // greyed one (Chrome gates nothing on the scheme: its dialog lets the address be typed).
+    const unsafeSiteReport = unsafeSiteReportUrl(active?.url)
+    const reportUnsafeSite: Template =
+      unsafeSiteReport === null
+        ? []
+        : [{ label: 'Report an Unsafe Site…', click: () => openHelpPage(unsafeSiteReport) }]
     // An Android app is left, not quit: the system owns its lifetime – on a tablet as on a
     // phone. Hosts with windows of their own (the desktop, at any layout) quit.
     const quit = when(caps.windows, {
@@ -4495,24 +4506,24 @@ export class Menus {
         },
         {
           label: 'Help',
-          // Chrome's Help submenu in Chrome's order (shortcuts-menus-152): About, What's New,
-          // the help centre, Report an Issue… – with Zenium's Keyboard Shortcuts beside its
-          // help row. Two groups behind one hairline: this build (its About page, its release
-          // notes), then the help. The legal pages are About's rows, not Help's (Chrome's Help
-          // has none).
+          // Chrome's Help submenu in Chrome's order (shortcuts-menus-152, -123): About, What's
+          // New, the help centre, Report an Issue…, Report an Unsafe Site… – with Zenium's
+          // Keyboard Shortcuts beside its help row. Two groups behind one hairline: this build
+          // (its About page, its release notes), then the help. Zenium Help opens the help page
+          // in a new tab as Chrome's help centre does (`openHelpPage`); Report an Issue… is the
+          // GitHub issues page in the system browser. The legal pages are About's rows, not
+          // Help's (Chrome's Help has none).
           submenu: [
             aboutPage,
             whatsNew,
             separator,
-            {
-              label: 'Zenium Help',
-              click: () => this.browser.platform.shell.openExternal(HELP_URL)
-            },
+            { label: 'Zenium Help', click: () => openHelpPage(HELP_URL) },
             keyboardShortcuts,
             {
               label: 'Report an Issue…',
               click: () => this.browser.platform.shell.openExternal(ISSUES_URL)
-            }
+            },
+            ...reportUnsafeSite
           ]
         },
         ...quit
