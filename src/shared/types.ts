@@ -1763,6 +1763,30 @@ export interface Bookmark {
 
 export type BookmarkNodeType = 'url' | 'folder'
 
+/**
+ * One page saved for later (Chrome's reading list, bookmarks-33; W6-1). Kept in the profile's
+ * state as `readingList` (`BrowserState.readingList`, `shared/readingList.ts` for the pure
+ * helpers, `core/readingList.ts` for the writes), one entry per URL: re-adding a page marks it
+ * unread and brings it to the top. Local to the profile until the services slice replicates it
+ * as one `reading-list-entry` record per entry (`internal/desktop-parity/reading-list-interface.md`).
+ */
+export interface ReadingListEntry {
+  /** `rl_<uuid>`, stable across renames and read/unread flips; the sync record's key. */
+  id: string
+  /** The page's address as it was added; the dedupe key (exact string, as `chrome.readingList`). */
+  url: string
+  /** The page's title at the time it was added (the URL's host when the page had none). */
+  title: string
+  /** The page's favicon (a data URL or an address) when the tab had one. */
+  favicon?: string
+  /** When the page was added, or added again (an add of a page already in the list refreshes it). */
+  addedAt: number
+  /** When the entry was last marked read; absent while it is unread. */
+  readAt?: number
+  /** The last write to the entry of any kind (the record's last-writer clock). */
+  updatedAt: number
+}
+
 /** When the bookmarks bar shows above the content frame (Edge's "Show favorites bar"). */
 export type BookmarksBarMode = 'always' | 'newtab' | 'never'
 
@@ -4050,6 +4074,12 @@ export interface UIState {
   downloadsProgress: DownloadsProgress
   /** Every bookmark node (roots included), ordered parent-first, then by index. */
   bookmarks: BookmarkNode[]
+  /**
+   * The reading list (W6-1, bookmarks-33), unread first and newest first within each half
+   * (`sortReadingList`): the `zen://reading-list` page's rows and the bookmarks bar control's
+   * unread count (`unreadReadingCount`), at most `READING_LIST_CAP` entries.
+   */
+  readingList: ReadingListEntry[]
   /** The new tab page's shortcuts on this device, in grid order (Settings and the phone's page). */
   newTabShortcuts: NewTabShortcut[]
   /** Hosts removed from the new tab page's most-visited tiles on this device (the phone filters). */
