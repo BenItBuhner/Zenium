@@ -92,6 +92,8 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
         private set
     private var displayScript: ScriptHandler? = null
     private var taskIcon: Bitmap? = null
+    /** The page's `Notification` (PWA-02): the window's own script and bridge, the app's own channel group. */
+    private lateinit var notifications: WebAppNotifications
     /** The launch's splash (PWA-06): the platform's window held to the page's first frame, dressed as the app's. */
     private lateinit var startupSplash: StartupSplash
     private lateinit var splash: WebAppSplash
@@ -131,6 +133,7 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
             visibility = View.GONE
         }
         host = CustomTabHost(this, this, pageContainer, fullscreenLayer, scheme.dark, pageDialogs = true)
+        notifications = WebAppNotifications(this, record)
         toolbar = CustomTabToolbar(this, toolbarConfig(url), this, CustomTabToolbar.Mode.WEB_APP)
         toolbar.visibility = View.GONE
         statusStrip = View(this).apply { setBackgroundColor(scheme.toolbar) }
@@ -300,6 +303,7 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
         view.layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         view.visibility = View.VISIBLE
         installDisplayScript(view)
+        notifications.attach(view)
         // The splash waits for this view's first painted document (a fresh view after a crash
         // under a splash still up takes the wait over). Until then the view wears the app's
         // ground instead of WebView's white: the platform draws this window's first frame before
@@ -489,13 +493,23 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
 
     // --- lifecycle -----------------------------------------------------------------------------------
 
-    // The tile tapped while the app runs (`singleTop` in its own document task) delivers the
-    // launch intent to `onNewIntent`, and the window comes forward as it stands: Chrome's
-    // `CustomTabIntentHandler.onNewIntent` does not navigate either unless the intent forces it
-    // ("the purpose of the intent was to bring the webapp to the foreground").
+    /**
+     * The tile tapped while the app runs (`singleTop` in its own document task) delivers the
+     * launch intent here, and the window comes forward as it stands: Chrome's
+     * `CustomTabIntentHandler.onNewIntent` does not navigate either unless the intent forces it
+     * ("the purpose of the intent was to bring the webapp to the foreground"). A notification's
+     * tap arrives the same way (its pending intent is the launch intent with the card's extras)
+     * and becomes the page's `click`. The activity's own intent stays the launch's: the task is
+     * still the one the tile made ([WebAppLauncherActivity]'s task URI is in its data).
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (::notifications.isInitialized) notifications.onOpenIntent(intent)
+    }
 
     override fun onDestroy() {
         displayScript?.remove()
+        if (::notifications.isInitialized) notifications.destroy()
         if (::startupSplash.isInitialized) startupSplash.cancel()
         if (::host.isInitialized) host.destroy()
         super.onDestroy()
