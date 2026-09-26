@@ -429,3 +429,53 @@ describe('zen://newtab: the toast carries Undo alone; the restore is the menu’
     }
   })
 })
+
+describe('zen://newtab: the field under a finger is a hand-off control (NTP-35)', () => {
+  const input = (): HTMLInputElement =>
+    document.getElementById('zen-search-input') as HTMLInputElement
+  const form = (): HTMLFormElement => document.getElementById('zen-search') as HTMLFormElement
+
+  /** `matchMedia` answering the pointer query as `coarse` says; the rest as happy-dom does. */
+  function withPointer<T>(coarse: boolean, fn: () => T): T {
+    const real = window.matchMedia.bind(window)
+    const spy = vi.spyOn(window, 'matchMedia').mockImplementation((query: string) =>
+      query === '(pointer: coarse)'
+        ? ({
+            matches: coarse,
+            media: query,
+            onchange: null,
+            addEventListener: () => undefined,
+            removeEventListener: () => undefined,
+            addListener: () => undefined,
+            removeListener: () => undefined,
+            dispatchEvent: () => false
+          } as unknown as MediaQueryList)
+        : real(query)
+    )
+    try {
+      return fn()
+    } finally {
+      spy.mockRestore()
+    }
+  }
+
+  it("a coarse pointer (the tablet's served page): the field raises no keyboard of its own, and the tap still hands off to the omnibox with nothing typed", () => {
+    withPointer(true, () => {
+      const h = mount(state())
+      expect(input().inputMode).toBe('none')
+      expect(input().readOnly).toBe(false)
+      expect(document.activeElement).not.toBe(input())
+      form().dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      expect(h.sent.at(-1)).toEqual({ type: 'search', text: '' })
+    })
+  })
+
+  it('a fine pointer (the desktop): the field is as it was – a live input whose first character hands off', () => {
+    withPointer(false, () => {
+      const h = mount(state())
+      expect(input().inputMode).toBe('')
+      input().dispatchEvent(new KeyboardEvent('keydown', { key: 'z', bubbles: true }))
+      expect(h.sent.at(-1)).toEqual({ type: 'search', text: 'z' })
+    })
+  })
+})
