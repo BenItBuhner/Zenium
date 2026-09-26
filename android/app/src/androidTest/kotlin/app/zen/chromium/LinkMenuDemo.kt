@@ -81,16 +81,21 @@ class LinkMenuDemo : GroupsDemoBase("link-menu", "link-menu-demo") {
         val rowsA = rows("A", HOME, "light")
         lightRows = rowsA
         if (rowsA.isNotEmpty()) makesGroup("A", HOME, "light")
-        dark()
-        activate(GAMMA, "$ORIGIN/gamma.html")
-        still("page-dark")
-        val rowsB = rows("B", GAMMA, "dark")
-        if (rowsB.isNotEmpty()) {
-            check("B: the dark sheet's rows are the light sheet's, byte for byte", rowsB == rowsA, "dark $rowsB, light $rowsA")
-            makesGroup("B", GAMMA, "dark")
+        // The device's night mode back off whether act B ran through or threw: the nightly runs
+        // the next driver on this boot (the siblings' finally).
+        try {
+            dark()
+            activate(GAMMA, "$ORIGIN/gamma.html")
+            still("page-dark")
+            val rowsB = rows("B", GAMMA, "dark")
+            if (rowsB.isNotEmpty()) {
+                check("B: the dark sheet's rows are the light sheet's, byte for byte", rowsB == rowsA, "dark $rowsB, light $rowsA")
+                makesGroup("B", GAMMA, "dark")
+            }
+            still("end")
+        } finally {
+            light()
         }
-        still("end")
-        light()
         tail()
     }
 
@@ -223,6 +228,7 @@ class LinkMenuDemo : GroupsDemoBase("link-menu", "link-menu-demo") {
     /**
      * The device's scheme as it was found: the nightly sweep runs its drivers back to back on one
      * boot, and its reset between two puts the app's data back but not the device's night mode.
+     * Run from [demo]'s finally, so that a dark act that threw leaves the device light too.
      */
     private fun light() {
         shellCommand("cmd uimode night no")

@@ -137,14 +137,14 @@ abstract class DemoHarness(
      * Seed, launch, warm up, hand over to the recorder, run the sequence. Fails once the
      * recording is done when a touch a step injected did not take ([touchFault]). The stills
      * are flushed whether the sequence ran through or threw, so a failed run keeps the
-     * evidence it took on the way ([awaitShots]). With `holdEvents` (the default) the
-     * accessibility events of a current WebView are held open for the whole of it
-     * ([holdEventsOpen]) and released after the recording.
+     * evidence it took on the way ([awaitShots]). The accessibility events of a current WebView
+     * are held open for the whole of it ([holdEventsOpen]) and released after the recording.
      *
-     * A PERF driver passes `holdEvents = false`, because the hold changes what it measures: the
-     * hold's service asks for every event type, and Chromium from 124 on reads a service with the
-     * whole mask as a complex-interaction one (`AccessibilityState`, the
-     * `isComplexUserInteractionServiceEnabled` flip in the runs' logcat) and moves the WebView
+     * A PERF driver – one whose findings are frame statistics or traces compared across passes –
+     * does not call this: it calls [runPerfDemo]. THE RULE, in one place: the hold changes what a
+     * perf driver measures. The hold's service asks for every event type, and Chromium from 124
+     * on reads a service with the whole mask as a complex-interaction one (`AccessibilityState`,
+     * the `isComplexUserInteractionServiceEnabled` flip in the runs' logcat) and moves the WebView
      * from `kAXModeBasic` with no events – the state it holds under UiAutomation alone, which
      * `getEnabledAccessibilityServiceList` does not list – to `kAXModeComplete` (at 145 with
      * inline text boxes and the extended properties, at 124 with the screen reader's and the HTML
@@ -153,20 +153,47 @@ abstract class DemoHarness(
      * trace). Every perf baseline – PERF-5's, the services' (#458, #469, #472), W6-0's (#480) –
      * was taken on the API 35 image (124) under Basic with no events (on API 34's 113 the WebView
      * sent everything anyway, so there the hold adds only a consumer process), and a perf reading
-     * compared across passes must stay there. A perf driver therefore runs the way every driver
-     * ran before the hold: UiAutomation alone, its tree reads as they were.
+     * compared across passes must stay there – on the `api35` and `webview` shards (the snapshot
+     * WebView a current Chromium) above all, but on every shard the same, so that one driver's
+     * reading means one thing wherever it runs. A perf driver therefore runs the way every driver
+     * ran before the hold: UiAutomation alone, its tree reads as they were. The choice is the
+     * driver's kind, not the shard's: a perf driver that also asserts on the tree (the functional
+     * checks after its profile) stays a perf driver.
+     *
+     * The other driver that does not call this is one whose acts DETACH UiAutomation for a
+     * mouse's hover ([withoutAccessibility]; the desktop windowing demo): a WebView hands a hover
+     * to accessibility exploration while any accessibility service is enabled, and the hold's own
+     * service is one – it calls [runMouseDemo]. Those two are the only ways a driver runs without
+     * the hold, each named for its reason; there is no opt-out to pass.
      */
-    protected fun runDemo(holdEvents: Boolean = true) {
-        if (!holdEvents) {
-            runSequence()
-            return
-        }
+    protected fun runDemo() {
         holdEventsOpen()
         try {
             runSequence()
         } finally {
             releaseEvents()
         }
+    }
+
+    /**
+     * [runDemo] for a PERF driver: the sequence under UiAutomation alone, no events hold – see the
+     * rule at [runDemo]. A driver measuring frames or traces (`PerfCapture`, `measureFrames`, the
+     * jank gate's scenes) calls this; the one other way without the hold is [runMouseDemo].
+     */
+    protected fun runPerfDemo() {
+        runSequence()
+    }
+
+    /**
+     * [runDemo] for a driver that detaches UiAutomation for a MOUSE's hover ([withoutAccessibility],
+     * [Mouse]): the sequence under UiAutomation alone, no events hold, because the hold's service
+     * ([holdEventsOpen]) is an enabled accessibility service too and stays enabled across the
+     * disconnect – with one enabled, a WebView takes a hover as accessibility exploration and Blink
+     * never sees a mousemove (`WebContentsAccessibilityImpl.onHoverEvent`). The one other way
+     * without the hold is [runPerfDemo]; see the rule at [runDemo].
+     */
+    protected fun runMouseDemo() {
+        runSequence()
     }
 
     private fun runSequence() {
@@ -1292,9 +1319,9 @@ abstract class DemoHarness(
      * windows (`Instrumentation.sendPointerSync` / `sendKeySync`: the shell that started the run
      * holds INJECT_EVENTS, the target is the app's uid, and a point outside the app's window is
      * refused) and [shot] copies the window's own pixels ([windowShot]). The reconnect brings
-     * the tree and the accessibility state back. A driver using this runs [runDemo] with
-     * `holdEvents = false`: the hold's own service ([holdEventsOpen]) is an enabled one too, and
-     * it stays enabled across the disconnect.
+     * the tree and the accessibility state back. A driver using this runs [runMouseDemo], not
+     * [runDemo]: the hold's own service ([holdEventsOpen]) is an enabled one too, and it stays
+     * enabled across the disconnect.
      */
     protected fun <T> withoutAccessibility(block: () -> T): T {
         val disconnect = hidden("disconnect")
