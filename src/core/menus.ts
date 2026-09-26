@@ -18,7 +18,6 @@ import { touchLayout } from '../shared/formFactor'
 import {
   BLANK_URL,
   NEW_TAB_URL,
-  displayHost,
   displayUrl,
   getDomain,
   getHost,
@@ -197,6 +196,16 @@ const SPELLCHECK_MENU_LANGUAGES_MAX = 8
 const REMOTE_TABS_MENU_MAX = 10
 /** The name a device with none reads under; the engine fills one in, a seeded list may not. */
 const UNNAMED_DEVICE = 'Another device'
+
+/**
+ * The page's bookmark toggle in one pair of words (§9.1): the app menu's row and the star's
+ * context menu read it – the page is their subject; the tab's row keeps "Bookmark Tab", its
+ * subject being the tab. The lead's ruling on the star's pair (design review of #511, F1 / Q5)
+ * changes this one line.
+ */
+export function bookmarkPageLabel(bookmarked: boolean): string {
+  return bookmarked ? 'Remove Bookmark' : 'Bookmark This Page'
+}
 
 /**
  * Context menus. Zen (Firefox) uses native-styled menus everywhere; the core builds the templates
@@ -758,7 +767,7 @@ export class Menus {
     // alone: the touch hosts' link menus are pinned whole by the lead's ruling after #492
     // (`savedGroups.test.ts`), and the phone has no list to read the page from yet.
     if (win.formFactor === 'desktop' && navigable) {
-      transfer.push(this.readingListLinkItem(url, linkText))
+      transfer.push(this.readingListLinkItem(url, linkText, win))
     }
     return [open, transfer]
   }
@@ -1523,17 +1532,20 @@ export class Menus {
   /**
    * The star's menu (a right-click or the Menu key on the pill's star; Chrome M89's star menu
    * had these two): the bookmark row beside the reading list's – Add to Reading List, or Remove
-   * from Reading List once the page is in it – and the way to the list. Keys: `row.bookmark`,
+   * from Reading List once the page is in it – and the way to the list. The bookmark row is the
+   * app menu's (`bookmarkPageLabel`, the same toggle): the star is the page's control, so its
+   * menu says what the app menu says of the page (§9.1, one vocabulary); the star's own click
+   * keeps the bubble that names and files the bookmark. Keys: `row.bookmark`,
    * `row.readingListAdd` / `row.readingListRemove`, `row.readingListShow`.
    */
   starItems(tab: Tab, win: ZenWindow): Template {
     return [
       {
-        label: tab.bookmarked ? 'Edit Bookmark…' : 'Bookmark This Tab',
+        label: bookmarkPageLabel(tab.bookmarked),
         key: 'row.bookmark',
         action: 'bookmark.add',
         enabled: this.browser.bookmarkable(tab.url),
-        click: () => this.browser.starTab(tab.id, win)
+        click: () => this.browser.toggleBookmark(tab.id, win)
       },
       this.readingListTabItem(tab, win),
       { type: 'separator' },
@@ -1554,7 +1566,7 @@ export class Menus {
       ? {
           label: 'Remove Tab from Reading List',
           key: 'row.readingListRemove',
-          click: () => this.browser.removeTabFromReadingList(tab.id)
+          click: () => this.browser.removeTabFromReadingList(tab.id, win)
         }
       : {
           label: 'Add Tab to Reading List',
@@ -1576,17 +1588,16 @@ export class Menus {
   /**
    * The link menu's "Add Link to Reading List" (context-menus-98; Safari's row – Chrome's link
    * menu has none, its reading list takes tabs alone): the link's address under its text, or
-   * its host when the link has no text. Greyed for a link the list does not hold.
-   * Key: `row.readingListAddLink`.
+   * its host when the link has no text, through the browser's one add path, so it toasts as the
+   * tab's add does. Greyed for a link the list does not hold. Key: `row.readingListAddLink`.
    */
-  readingListLinkItem(url: string, text: string): MenuItemTemplate {
-    const { readingList } = this.browser
+  readingListLinkItem(url: string, text: string, win: ZenWindow): MenuItemTemplate {
     return {
       label: 'Add Link to Reading List',
       key: 'row.readingListAddLink',
-      enabled: readingList.canAdd(url),
+      enabled: this.browser.readingList.canAdd(url),
       click: () => {
-        readingList.add(url, text.trim() || displayHost(url) || url)
+        this.browser.addLinkToReadingList(url, text, win)
       }
     }
   }
@@ -3565,7 +3576,7 @@ export class Menus {
         // The phone's bookmark entry is the icon row's star (TB-16), with Chrome's star flow;
         // the sidebar layouts keep the toggle here, whose star bubble names and files it.
         ...sidebar({
-          label: active?.bookmarked ? 'Remove Bookmark' : 'Bookmark This Page',
+          label: bookmarkPageLabel(Boolean(active?.bookmarked)),
           action: 'bookmark.add',
           enabled: Boolean(active && !active.url.startsWith('zen://')),
           click: () => active && this.browser.toggleBookmark(active.id, win)

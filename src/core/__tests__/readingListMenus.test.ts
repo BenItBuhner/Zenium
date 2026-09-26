@@ -51,6 +51,8 @@ interface Fixture {
   /** The last template handed to the host's menu popup. */
   shown: () => MenuItemTemplate[]
   copied: string[]
+  /** Every toast the window was sent, in order. */
+  toasts: () => string[]
   /** A loaded web page tab, active. */
   open: (url: string, title?: string) => string
   /** The star's menu for the tab (a right-click on the pill's star). */
@@ -63,6 +65,7 @@ interface Fixture {
 function fixture(formFactor: FormFactor = 'desktop'): Fixture {
   let last: MenuItemTemplate[] = []
   const copied: string[] = []
+  const sent: { name: string; payload: unknown }[] = []
   const menus: MenuHost = {
     popup: (items) => {
       last = items
@@ -82,7 +85,9 @@ function fixture(formFactor: FormFactor = 'desktop'): Fixture {
           isMaximized: () => false,
           isFocused: () => true,
           isVisible: () => true,
-          send: () => undefined
+          send: (name: string, payload: unknown) => {
+            sent.push({ name, payload })
+          }
         })
     },
     views: stub<TabViewHost>({
@@ -133,6 +138,8 @@ function fixture(formFactor: FormFactor = 'desktop'): Fixture {
     win,
     shown: () => last,
     copied,
+    toasts: () =>
+      sent.filter((s) => s.name === 'toast').map((s) => (s.payload as { message: string }).message),
     open,
     starMenu: async (tabId) => {
       await browser.menus.showChromeContextMenu(chrome(tabId), win)
@@ -201,7 +208,7 @@ describe('the star’s menu', () => {
     const tab = f.open(URL, 'Long Read')
     const menu = await f.starMenu(tab)
     expect(labels(menu)).toEqual([
-      'Bookmark This Tab',
+      'Bookmark This Page',
       'Add Tab to Reading List',
       '-',
       'Show Reading List'
@@ -212,7 +219,7 @@ describe('the star’s menu', () => {
       undefined,
       'row.readingListShow'
     ])
-    expect(item(menu, 'Bookmark This Tab').action).toBe('bookmark.add')
+    expect(item(menu, 'Bookmark This Page').action).toBe('bookmark.add')
     item(menu, 'Add Tab to Reading List').click!()
     const [entry] = f.browser.readingList.list()
     expect(entry).toMatchObject({ url: URL, title: 'Long Read' })
@@ -220,14 +227,14 @@ describe('the star’s menu', () => {
     expect(f.browser.state.snapshot(f.win).readingList).toHaveLength(1)
   })
 
-  it('flips to Remove Tab from Reading List once the page is in it, and Edit Bookmark… once starred', async () => {
+  it('flips to Remove Tab from Reading List once the page is in it, and Remove Bookmark once starred', async () => {
     const f = fixture()
     const tab = f.open(URL)
     f.browser.readingList.add(URL, 'Long Read')
     f.browser.bookmarks.create({ title: 'Long Read', url: URL })
     const menu = await f.starMenu(tab)
     expect(labels(menu)).toEqual([
-      'Edit Bookmark…',
+      'Remove Bookmark',
       'Remove Tab from Reading List',
       '-',
       'Show Reading List'
@@ -235,6 +242,21 @@ describe('the star’s menu', () => {
     expect(item(menu, 'Remove Tab from Reading List').key).toBe('row.readingListRemove')
     item(menu, 'Remove Tab from Reading List').click!()
     expect(f.browser.readingList.list()).toEqual([])
+    // The bookmark row is the app menu's toggle: Remove Bookmark takes the bookmark away.
+    item(menu, 'Remove Bookmark').click!()
+    expect(f.browser.bookmarks.has(URL)).toBe(false)
+  })
+
+  it('reads the bookmark row in the app menu’s words: one pair for the page across both menus', async () => {
+    const f = fixture()
+    const tab = f.open(URL, 'Long Read')
+    const appRow = (): string =>
+      labels(item(f.appMenu(), 'Bookmarks').submenu!).find((l) => /Bookmark/.test(l))!
+    expect(labels(await f.starMenu(tab))[0]).toBe(appRow())
+    item(await f.starMenu(tab), 'Bookmark This Page').click!()
+    expect(f.browser.bookmarks.has(URL)).toBe(true)
+    expect(labels(await f.starMenu(tab))[0]).toBe('Remove Bookmark')
+    expect(appRow()).toBe('Remove Bookmark')
   })
 
   it('greys the add for a page the list does not hold, and opens the page from Show Reading List', async () => {
@@ -321,6 +343,49 @@ describe('the link menu', () => {
         'Add Link to Reading List'
       )
     }
+  })
+})
+
+describe('one feedback rule for one action', () => {
+  it('toasts "Added to reading list" from every add – the star’s, the tab’s, the link’s, the app menu’s, the command', async () => {
+    const f = fixture()
+    const tab = f.open(URL, 'Long Read')
+    item(await f.starMenu(tab), 'Add Tab to Reading List').click!()
+    expect(f.toasts()).toEqual(['Added to reading list'])
+    // The link row's add is the same act from where the list cannot be seen: the same word.
+    item(f.linkMenu(tab, 'https://other.test/x', 'Other'), 'Add Link to Reading List').click!()
+    expect(f.toasts()).toEqual(['Added to reading list', 'Added to reading list'])
+    // A re-add of a listed page (marked unread again) reports the same; a link the list does
+    // not hold reports nothing – there was nothing done.
+    item(f.tabMenu(tab), 'Remove Tab from Reading List').click!()
+    item(f.tabMenu(tab), 'Add Tab to Reading List').click!()
+    f.browser.handleCommand(f.win, 'readingList.add', { tabId: null })
+    expect(f.browser.addLinkToReadingList('file:///tmp/a.html', 'a', f.win)).toBeNull()
+    expect(f.toasts().filter((t) => t === 'Added to reading list')).toHaveLength(4)
+    expect(f.browser.readingList.list()).toHaveLength(2)
+  })
+
+  it('toasts "Removed from reading list" from the menus’ Remove rows, and nothing from the page’s own rows', async () => {
+    const f = fixture()
+    const tab = f.open(URL, 'Long Read')
+    f.browser.readingList.add(URL, 'Long Read')
+    item(await f.starMenu(tab), 'Remove Tab from Reading List').click!()
+    expect(f.toasts()).toEqual(['Removed from reading list'])
+    // Nothing to remove: no toast – the row is not offered, and the command reports false.
+    expect(f.browser.handleCommand(f.win, 'readingList.removeTab', { tabId: tab })).toBe(false)
+    expect(f.toasts()).toHaveLength(1)
+    f.browser.readingList.add(URL, 'Long Read')
+    const reading = item(item(f.appMenu(), 'Bookmarks').submenu!, 'Reading List').submenu!
+    item(reading, 'Remove Tab from Reading List').click!()
+    expect(f.toasts()).toEqual(['Removed from reading list', 'Removed from reading list'])
+    // The page's row menu and its Delete key remove a row the user watches leave: no toast.
+    const entry = f.browser.readingList.add(URL, 'Long Read')!
+    f.browser.handleCommand(f.win, 'readingList.contextMenu', { id: entry.id })
+    item(f.shown(), 'Remove').click!()
+    const again = f.browser.readingList.add(URL, 'Long Read')!
+    f.browser.handleCommand(f.win, 'readingList.remove', { id: again.id })
+    expect(f.browser.readingList.list()).toEqual([])
+    expect(f.toasts()).toHaveLength(2)
   })
 })
 

@@ -1913,19 +1913,50 @@ export class Browser {
   ): ReadingListEntry | null {
     const tab = this.tabs.tab(tabId)
     if (!tab || !this.readingList.canAdd(tab.url)) return null
-    const entry = this.readingList.add(
+    return this.saveToReadingList(
       tab.url,
       tab.customTitle ?? tab.title,
-      bookmarkFaviconOf(tab, this.tabs.isPrivate(tab))
+      bookmarkFaviconOf(tab, this.tabs.isPrivate(tab)),
+      win
     )
+  }
+
+  /**
+   * Save a link for later (the page menu's Add Link to Reading List): the link's address under
+   * its text, or its host when the link has none; no favicon – the page was never loaded, so
+   * the list's row resolves one from the favicon cache by address, as a closed page's row does.
+   * Null for a link the list does not hold (a file, a mail link).
+   */
+  addLinkToReadingList(url: string, text: string, win: ZenWindow): ReadingListEntry | null {
+    if (!this.readingList.canAdd(url)) return null
+    return this.saveToReadingList(url, text.trim() || displayHost(url) || url, null, win)
+  }
+
+  /**
+   * Every save goes through here: the entry, then the one toast – the user cannot see the list
+   * from a menu, so each add says what it did the same way, whichever menu it came from.
+   */
+  private saveToReadingList(
+    url: string,
+    title: string,
+    favicon: string | null,
+    win: ZenWindow
+  ): ReadingListEntry | null {
+    const entry = this.readingList.add(url, title, favicon)
     if (entry) this.toast('Added to reading list', 'info', win)
     return entry
   }
 
-  /** The tab's page out of the list (the star menu's Remove from Reading List). */
-  removeTabFromReadingList(tabId: string): boolean {
+  /**
+   * The tab's page out of the list (the Remove Tab from Reading List row of the star's, the
+   * tab's and the app menu's): the toast is the add's other half, since from a menu the user
+   * cannot see the entry go. The page's own rows say nothing – the row leaves in view.
+   */
+  removeTabFromReadingList(tabId: string, win: ZenWindow = this.tabs.windowFor(tabId)): boolean {
     const tab = this.tabs.tab(tabId)
-    return tab ? this.readingList.removeUrl(tab.url) : false
+    const removed = tab ? this.readingList.removeUrl(tab.url) : false
+    if (removed) this.toast('Removed from reading list', 'info', win)
+    return removed
   }
 
   /**
@@ -3602,7 +3633,7 @@ export class Browser {
         const id = tabId ?? tabs.activeTabFor(win)?.id
         return id ? this.addTabToReadingList(id, win) : null
       },
-      'readingList.removeTab': ({ tabId }) => this.removeTabFromReadingList(tabId),
+      'readingList.removeTab': ({ tabId }, win) => this.removeTabFromReadingList(tabId, win),
       'readingList.remove': ({ id }) => this.readingList.remove(id),
       'readingList.setRead': ({ id, read }) => this.readingList.setRead(id, read),
       'readingList.markAllRead': () => this.readingList.markAllRead(),
