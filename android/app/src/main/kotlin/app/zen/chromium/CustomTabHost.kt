@@ -71,6 +71,23 @@ class CustomTabHost(
     override val themeScrim: Int = ContextCompat.getColor(activity, if (themeDark) R.color.v2_scrim_dark else R.color.v2_scrim_light)
     override val popupsAsTabs = false
 
+    /**
+     * Desktop site (CCT-03), the menu's check row: a state of this tab alone, with no core to
+     * remember it per site. The rules mirror it so every navigation keeps the shape the user
+     * chose (a page switches its user agent by the rules on each load, `switchDesktopModeFor`),
+     * and the page script lays the document out at the desktop width from the same word.
+     */
+    var desktopSite = false
+        set(value) {
+            field = value
+            pageRules = PageRules(value, emptyMap(), false, emptyMap(), 1.0, emptyMap(), 1.0, false)
+            pageRulesJson = JSONObject().put("desktop", JSONObject().put("default", value))
+        }
+    override var pageRules: PageRules = PageRules.NONE
+        private set
+    override var pageRulesJson: JSONObject = JSONObject()
+        private set
+
     /** Set by the activity once its views exist: back gestures read the page's history through it. */
     lateinit var back: PredictiveBack
 

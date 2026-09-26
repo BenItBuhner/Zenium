@@ -36,6 +36,10 @@ class CustomTabConfig(
     val menuItems: List<MenuItem>,
     /** Whether the menu offers the system share sheet (`EXTRA_SHARE_STATE`). */
     val share: Boolean,
+    /** The icon row's star, unless the caller sent `EXTRA_DISABLE_BOOKMARKS_BUTTON`. */
+    val bookmarksButton: Boolean = true,
+    /** The icon row's Download, unless the caller sent `EXTRA_DISABLE_DOWNLOAD_BUTTON`. */
+    val downloadButton: Boolean = true,
     /** The caller's exit animations (`EXTRA_EXIT_ANIMATION_BUNDLE`), an `ActivityOptions` bundle. */
     val exitAnimation: Bundle?,
     /** The caller's own layout for the bottom toolbar (`EXTRA_REMOTEVIEWS`), when it sent one. */
@@ -115,6 +119,8 @@ class CustomTabConfig(
                 actionButton = actionBundle ?: placement.top?.let { items[it] },
                 menuItems = menuItems(extras),
                 share = shareState != CustomTabsIntent.SHARE_STATE_OFF && (shareState == CustomTabsIntent.SHARE_STATE_ON || legacyShare),
+                bookmarksButton = !extras.getBoolean(CustomTabsIntent.EXTRA_DISABLE_BOOKMARKS_BUTTON, false),
+                downloadButton = !extras.getBoolean(CustomTabsIntent.EXTRA_DISABLE_DOWNLOAD_BUTTON, false),
                 exitAnimation = extras.getBundle(CustomTabsIntent.EXTRA_EXIT_ANIMATION_BUNDLE),
                 remoteViews = remoteViews(extras),
                 bottomButtons = placement.bottom.map { items[it] },

@@ -33,12 +33,19 @@ public class CustomTabCallerActivity extends Activity {
     public static final String EXTRA_LAUNCH = "app.zen.chromium.demo.LAUNCH";
     /** The browser's package for the fallback intent (the debug build's applicationId by default). */
     public static final String EXTRA_BROWSER = "app.zen.chromium.demo.BROWSER";
+    /**
+     * A {@link Bundle}: the {@code ActivityOptions} the custom tab is started with – what
+     * {@code CustomTabsIntent.launchUrl} passes as {@code startAnimationBundle} for a caller that
+     * set {@code setStartAnimations} (CCT-08). None: a plain {@code startActivity}.
+     */
+    public static final String EXTRA_LAUNCH_OPTIONS = "app.zen.chromium.demo.LAUNCH_OPTIONS";
 
     private static final int BRAND = 0xFF2E5BFF;
     private static final String STORY_URL = "https://en.wikipedia.org/wiki/Damping";
     private static final String DEFAULT_BROWSER = "io.github.benitbuhner.zenium.debug";
 
     private Intent launch;
+    private Bundle launchOptions;
     private String browser = DEFAULT_BROWSER;
     private TextView status;
     private int opened = 0;
@@ -69,7 +76,11 @@ public class CustomTabCallerActivity extends Activity {
         Intent next = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
             ? intent.getParcelableExtra(EXTRA_LAUNCH, Intent.class)
             : intent.getParcelableExtra(EXTRA_LAUNCH);
-        if (next != null) launch = next;
+        if (next != null) {
+            launch = next;
+            // The options belong to the launch they came with: a later launch without any starts plainly.
+            launchOptions = intent.getBundleExtra(EXTRA_LAUNCH_OPTIONS);
+        }
         String pkg = intent.getStringExtra(EXTRA_BROWSER);
         if (pkg != null) browser = pkg;
     }
@@ -78,7 +89,11 @@ public class CustomTabCallerActivity extends Activity {
         Intent intent = launch != null ? new Intent(launch) : fallback();
         opened++;
         status.setText("Opening the story in a custom tab…");
-        startActivity(intent);
+        if (launchOptions != null) {
+            startActivity(intent, launchOptions);
+        } else {
+            startActivity(intent);
+        }
     }
 
     /** A custom tab intent built from the raw extras, as an app without the androidx library would. */
