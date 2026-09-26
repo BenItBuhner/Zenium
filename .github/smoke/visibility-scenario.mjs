@@ -50,7 +50,7 @@ import { parkedInCorner, viewInBox } from './views.mjs'
 export const VISIBILITY_SCENARIO = 'visibility'
 
 /** The Web capture overlay (components/capture/CaptureOverlay.tsx): the chrome cover used. */
-const CAPTURE_OVERLAY = '[role="dialog"][aria-label="Web capture"]'
+const CAPTURE_OVERLAY = '[role="dialog"][aria-label="Screenshot"]'
 
 /**
  * Installed once in a page: its `visibilityState` and every `visibilitychange` since, stamped.

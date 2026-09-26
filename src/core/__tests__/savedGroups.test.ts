@@ -604,10 +604,13 @@ describe('the link menu’s group item (TAB-15)', () => {
     expect(Object.keys(m.folders)).toHaveLength(folders)
   })
 
-  it('lists the phone’s rows in the lead’s order – Chrome 152’s within Zenium’s groups: New Tab · New Tab in Group · Private Tab · Glance · Container | Copy Link Address · Copy Link Text · Save Link As… · Share Link… | Boosts', () => {
+  it('lists the phone’s rows in the lead’s order – Chrome 152’s within Zenium’s groups: New Tab · New Tab in Group · Private Tab · Glance · Container | Copy Link Address · Copy Link Text · Save Link As… · Add Link to Reading List · Share Link… | Boosts', () => {
     // The design gate's ruling on #492's (b): Chrome for Android 152 seats "Open in new tab"
     // before "Open in new tab in group" and "Download link" after the two copies; the phone
-    // follows it and keeps Zenium's three groups with their hairlines. Pinned whole.
+    // follows it and keeps Zenium's three groups with their hairlines. Pinned whole. Add Link
+    // to Reading List (HB-20, W6-D1) stands before Share Link… – the design gate on #551 keeps
+    // the hand-off out of the app the group's last row (#492's rule), as Chrome 152 keeps Read
+    // later before Share link; the desktop's row closes its group after the share instead.
     const h = harness('phone')
     const loose = h.open('https://loose.test/')
     h.browser.menus.showPageContextMenu(loose, { ...linkParams(url), linkText: 'Linked' }, h.win)
@@ -621,6 +624,7 @@ describe('the link menu’s group item (TAB-15)', () => {
       'Copy Link Address',
       'Copy Link Text',
       'Save Link As…',
+      'Add Link to Reading List',
       'Share Link…',
       '-',
       'Boosts',
@@ -640,6 +644,7 @@ describe('the link menu’s group item (TAB-15)', () => {
       '-',
       'Copy Link Address',
       'Save Link As…',
+      'Add Link to Reading List',
       'Share Link…',
       '-',
       'Boosts',
@@ -647,7 +652,7 @@ describe('the link menu’s group item (TAB-15)', () => {
     ])
   })
 
-  it('lists the tablet’s rows in the lead’s order too – one link menu on both touch hosts: New Tab · New Tab in Group · Private Tab · Glance · Split View · Container | Copy Link Address · Copy Link Text · Save Link As… · Share Link… | Boosts', () => {
+  it('lists the tablet’s rows in the lead’s order too – one link menu on both touch hosts: New Tab · New Tab in Group · Private Tab · Glance · Split View · Container | Copy Link Address · Copy Link Text · Save Link As… · Add Link to Reading List · Share Link… | Boosts', () => {
     // The design lead's ruling after #492: the tablet's link menu takes the phone's ruled order,
     // the hairlines kept. Split View is the tablet's own row (the phone draws no panes) and
     // keeps its seat between Glance and Container. Pinned whole.
@@ -665,6 +670,7 @@ describe('the link menu’s group item (TAB-15)', () => {
       'Copy Link Address',
       'Copy Link Text',
       'Save Link As…',
+      'Add Link to Reading List',
       'Share Link…',
       '-',
       'Boosts',
@@ -684,6 +690,7 @@ describe('the link menu’s group item (TAB-15)', () => {
       '-',
       'Copy Link Address',
       'Save Link As…',
+      'Add Link to Reading List',
       'Share Link…',
       '-',
       'Boosts',
@@ -724,8 +731,8 @@ describe('the link menu’s group item (TAB-15)', () => {
       'Save Link As…',
       'Copy Link Address',
       'Share Link…',
-      // The reading list's row (W6-1) closes the desktop's transfer group; the touch hosts'
-      // menus are pinned whole above.
+      // The reading list's row (W6-1) closes the desktop's transfer group after the share; the
+      // touch hosts, pinned whole above, seat it before Share Link… (the design gate on #551).
       'Add Link to Reading List',
       '-',
       'Boosts',

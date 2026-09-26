@@ -25,6 +25,7 @@ import {
 } from '../pageDebugger'
 import { HANG_MISSES, HANG_PING_MS, HANG_PROBE_TIMEOUT_MS } from '../hangMonitor'
 import { PAINT_STATE_SCRIPT } from '../firstPaint'
+import { IMAGE_THUMBNAIL_WORLD_ID, PRIVATE_WORLD_CHANNELS } from '../../../shared/privateWorld'
 import { DevtoolsQuitHoldNotice } from '../devtoolsQuitHoldNotice'
 import type { QuitHoldPanel } from '../../../shared/quitHoldPanel'
 import {
@@ -91,6 +92,10 @@ vi.mock('electron', async () => {
     readonly commands: Array<{ method: string; params: Record<string, unknown> | undefined }> = []
     /** How many agents (attachments) have seen `Page.setFontFamilies`: Chromium allows one per agent. */
     private fontFamiliesSet = false
+    /** Answers for the commands a test needs answered (`Page.getResourceTree`…); `{}` otherwise. */
+    respond:
+      | ((method: string, params?: Record<string, unknown>) => Record<string, unknown> | undefined)
+      | null = null
     isAttached(): boolean {
       return this.attached
     }
@@ -116,7 +121,7 @@ vi.mock('electron', async () => {
         if (this.fontFamiliesSet) throw new Error('Font families can only be set once')
         this.fontFamiliesSet = true
       }
-      return {}
+      return this.respond?.(method, params) ?? {}
     }
   }
   /**
@@ -241,10 +246,12 @@ vi.mock('electron', async () => {
       /** The frame's identity, which `did-start-navigation`'s `initiator` is matched against. */
       processId: this.id,
       routingId: 1,
-      /** The page's frame tree: the main frame alone. */
+      /** The page's frame tree: the main frame, then every sub-frame a test gave the page. */
       get framesInSubtree(): Array<{ processId: number; routingId: number }> {
-        return [this]
+        return [this, ...this.subFrames]
       },
+      /** Sub-frames of the page (`frameById` finds them by `frameTreeNodeId`); none unless a test adds one. */
+      subFrames: [] as Array<{ processId: number; routingId: number }>,
       scripts: [] as string[],
       executeJavaScript: (code: string): Promise<unknown> => {
         if (code === PAINT_STATE_SCRIPT) {
@@ -2503,6 +2510,9 @@ describe('page fonts (CT-25)', () => {
     taken: boolean
     log: string[]
     commands: Array<{ method: string; params: Record<string, unknown> | undefined }>
+    respond:
+      | ((method: string, params?: Record<string, unknown>) => Record<string, unknown> | undefined)
+      | null
   }
   const FONTS: PageFontSettings = {
     standard: 'Georgia',
@@ -2694,6 +2704,145 @@ describe('page fonts (CT-25)', () => {
     wc.emit('did-navigate', {}, 'https://c.example/')
     await settle()
     expect(dbg.log).toHaveLength(8)
+  })
+
+  /** `Page.getResourceTree` and `getResourceContent` answered for one image, as the renderer would. */
+  const imageAnswers =
+    (url: string) =>
+    (method: string): Record<string, unknown> | undefined => {
+      if (method === 'Page.getResourceTree')
+        return {
+          frameTree: {
+            frame: { id: 'F1' },
+            resources: [{ url, type: 'Image', mimeType: 'image/png', contentSize: 3 }]
+          }
+        }
+      if (method === 'Page.getResourceContent') return { content: 'AAAA', base64Encoded: true }
+      return undefined
+    }
+  const PIC = 'https://a.example/pic.png'
+
+  it('reads an image’s renderer copy (CT-32) over a session of its own: Page on for the read, off again, the session let go', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    const { view, dbg } = page(host, 'tab_fonts_image_own')
+    dbg.respond = imageAnswers(PIC)
+    await expect(view.readImageResource(PIC, 20_000_000)).resolves.toEqual({
+      base64: 'AAAA',
+      mimeType: 'image/png'
+    })
+    expect(dbg.log).toEqual([
+      'attach',
+      'Page.enable',
+      'Page.getResourceTree',
+      'Page.getResourceContent',
+      'Page.disable',
+      'detach'
+    ])
+    expect(dbg.attached).toBe(false)
+  })
+
+  it('never disables Page on a session that stood before the read: the fonts set on it survive a renderer swap', async () => {
+    const { nativeTheme } = await import('electron')
+    const theme = nativeTheme as unknown as { shouldUseDarkColors: boolean }
+    theme.shouldUseDarkColors = true
+    try {
+      const host = new ElectronTabViewHost(sessions)
+      const { view, dbg } = page(host, 'tab_fonts_image_held')
+      const wc = view.webContents as unknown as EventEmitter & { pid: number }
+      // The dark theme for sites holds the session; the fonts go on it and are the agent's state.
+      view.setDarkening(true)
+      await settle()
+      host.applyFonts(FONTS)
+      await settle()
+      expect(dbg.log).toEqual([
+        'attach',
+        'Emulation.setAutoDarkModeOverride',
+        'Page.setFontFamilies',
+        'Page.setFontSizes'
+      ])
+      dbg.respond = imageAnswers(PIC)
+      await expect(view.readImageResource(PIC, 20_000_000)).resolves.toEqual({
+        base64: 'AAAA',
+        mimeType: 'image/png'
+      })
+      // Page enabled for the read and left so – Blink's `Page.disable` clears the agent's whole
+      // state, the fonts with it – and the session stays the hold's.
+      expect(dbg.log.slice(4)).toEqual([
+        'Page.enable',
+        'Page.getResourceTree',
+        'Page.getResourceContent'
+      ])
+      expect(dbg.attached).toBe(true)
+      // A swap with the session attached: the agent's `Restore()` carries the fonts, nothing is re-sent.
+      wc.pid = 2000
+      wc.emit('did-navigate', {}, 'https://b.example/')
+      await settle()
+      expect(dbg.log).toHaveLength(7)
+      expect(dbg.log).not.toContain('Page.disable')
+      view.setDarkening(false)
+      await settle()
+      expect(dbg.attached).toBe(false)
+    } finally {
+      theme.shouldUseDarkColors = false
+    }
+  })
+
+  it('keeps Page on when a hold took the read’s own session over while it ran', async () => {
+    const { nativeTheme } = await import('electron')
+    const theme = nativeTheme as unknown as { shouldUseDarkColors: boolean }
+    theme.shouldUseDarkColors = true
+    try {
+      const host = new ElectronTabViewHost(sessions)
+      const { view, dbg } = page(host, 'tab_fonts_image_joined')
+      const answers = imageAnswers(PIC)
+      dbg.respond = (method) => {
+        // The dark theme for sites comes on under the read: its hold joins the read's session.
+        if (method === 'Page.getResourceTree') view.setDarkening(true)
+        return answers(method)
+      }
+      await expect(view.readImageResource(PIC, 20_000_000)).resolves.toEqual({
+        base64: 'AAAA',
+        mimeType: 'image/png'
+      })
+      await settle()
+      // The session is the hold's now: `Page` stays as the read left it and nothing detaches.
+      expect(dbg.log[0]).toBe('attach')
+      expect(dbg.log).toContain('Emulation.setAutoDarkModeOverride')
+      expect(dbg.log).not.toContain('Page.disable')
+      expect(dbg.log).not.toContain('detach')
+      expect(dbg.attached).toBe(true)
+      view.setDarkening(false)
+      await settle()
+      expect(dbg.attached).toBe(false)
+    } finally {
+      theme.shouldUseDarkColors = false
+    }
+  })
+
+  it('joins the session the resource governor holds for the read, never disabling Page on it nor letting it go (nothing of the view’s stood on it)', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    const { view, dbg } = page(host, 'tab_fonts_image_governed')
+    // The governor's session stands on the page (its clamp is the session's), attached by the
+    // governor alone: the view holds nothing on it, and the read must not take it for its own.
+    dbg.attached = true
+    dbg.respond = imageAnswers(PIC)
+    await expect(view.readImageResource(PIC, 20_000_000)).resolves.toEqual({
+      base64: 'AAAA',
+      mimeType: 'image/png'
+    })
+    // Neither attached nor detached by the read, and no `Page.disable`: the agent's state on the
+    // governor's session (the fonts CT-25 may have set there) is not the read's to clear. What
+    // the read leaves is `Page` enabled for that session's life – event traffic alone.
+    expect(dbg.log).toEqual(['Page.enable', 'Page.getResourceTree', 'Page.getResourceContent'])
+    expect(dbg.attached).toBe(true)
+    // A second read joins the same way.
+    await view.readImageResource(PIC, 20_000_000)
+    expect(dbg.log.slice(3)).toEqual([
+      'Page.enable',
+      'Page.getResourceTree',
+      'Page.getResourceContent'
+    ])
+    expect(dbg.attached).toBe(true)
   })
 
   it('shares the session the resource governor holds, and recycles it for a second family change', async () => {
@@ -4022,5 +4171,81 @@ describe('pageViewportFrom', () => {
     expect(pageViewportFrom({ ...raw, vw: 0 }, 1)).toBeNull()
     expect(pageViewportFrom({ sx: 0, sy: 0 }, 1)).toBeNull()
     expect(pageViewportFrom({ ...raw, sy: 'a' }, 1)).toBeNull()
+  })
+})
+
+describe('ElectronTabView.executeJavaScriptInPrivateWorld (CT-32, the world the thumbnail runs in)', () => {
+  interface WorldWc {
+    scripts: string[]
+    isolatedScripts: Array<{ worldId: number; code: string }>
+    mainFrame: {
+      scripts: string[]
+      framesInSubtree: Array<{ processId: number; routingId: number }>
+      subFrames: Array<{ processId: number; routingId: number }>
+    }
+  }
+  const page = (host: ElectronTabViewHost, id: string): { view: ElectronTabView; wc: WorldWc } => {
+    const view = host.createView(
+      { id, containerId: 'default' } as Tab,
+      noEvents,
+      detachedWindow
+    ) as ElectronTabView
+    return { view, wc: view.webContents as unknown as WorldWc }
+  }
+
+  it('runs a top-frame script through webContents.executeJavaScriptInIsolatedWorld in the thumbnail world – 1 << 28, never the main world, never the preload’s 999', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    const { view, wc } = page(host, 'tab_world')
+    await view.executeJavaScriptInPrivateWorld('(async () => 1)()')
+    expect(wc.isolatedScripts).toEqual([{ worldId: 1 << 28, code: '(async () => 1)()' }])
+    expect(wc.isolatedScripts[0]!.worldId).toBe(IMAGE_THUMBNAIL_WORLD_ID)
+    expect(wc.isolatedScripts[0]!.worldId).not.toBe(999)
+    expect(wc.scripts).toEqual([])
+    expect(wc.mainFrame.scripts).toEqual([])
+  })
+
+  it('runs a sub-frame script through the frame’s own preload (the relay, the same world id) and settles with the frame’s answer – the main world untouched', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    const { view, wc } = page(host, 'tab_world_frame')
+    const sent: Array<{ channel: string; payload: unknown }> = []
+    const child = {
+      parent: wc.mainFrame,
+      frameTreeNodeId: 7,
+      detached: false,
+      processId: 3,
+      routingId: 9,
+      url: 'https://frame.example/',
+      isDestroyed: () => false,
+      send: (channel: string, payload: unknown) => void sent.push({ channel, payload }),
+      executeJavaScript: () => Promise.reject(new Error('the main world was reached'))
+    }
+    wc.mainFrame.subFrames.push(child)
+    expect(wc.mainFrame.framesInSubtree).toEqual([wc.mainFrame, child])
+    const done = view.executeJavaScriptInPrivateWorld('(async () => 2)()', 7)
+    expect(sent).toEqual([
+      {
+        channel: PRIVATE_WORLD_CHANNELS.execute,
+        payload: { token: 1, worldId: IMAGE_THUMBNAIL_WORLD_ID, code: '(async () => 2)()' }
+      }
+    ])
+    host.privateWorld.answer(child as unknown as Electron.WebFrameMain, {
+      token: 1,
+      result: { ok: true }
+    })
+    await expect(done).resolves.toEqual({ ok: true })
+    expect(wc.isolatedScripts).toEqual([])
+    expect(wc.scripts).toEqual([])
+    expect(wc.mainFrame.scripts).toEqual([])
+  })
+
+  it('rejects for a frame the page no longer has, running nothing anywhere', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    const { view, wc } = page(host, 'tab_world_gone')
+    expect(wc.mainFrame.framesInSubtree).toEqual([wc.mainFrame])
+    await expect(view.executeJavaScriptInPrivateWorld('1', 7)).rejects.toThrow(
+      'Frame 7 is no longer part of the page'
+    )
+    expect(wc.isolatedScripts).toEqual([])
+    expect(wc.scripts).toEqual([])
   })
 })

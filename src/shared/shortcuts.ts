@@ -1008,7 +1008,7 @@ const DEFS: Def[] = [
     id: 'key_webCapture',
     action: 'capture.start',
     group: 'pageOperations',
-    label: 'Web Capture',
+    label: 'Screenshot…',
     // The desktop's overlay; the touch shells' Ctrl+Shift+S takes their screenshot instead
     // (`capture.start` falls through to `page.screenshot` there), so their listings leave the
     // row out rather than name a surface the chord does not open.

@@ -269,7 +269,7 @@ export function NavRow({
   // The pins (Settings › Look and Feel › Customise toolbar, settings-36): the desktop's
   // alone – the phone and the tablet keep their own bars (`pinsFor`). A control folded away is
   // not drawn and not measured: Forward leaves the fixed set, a chip leaves the pill's tier, the
-  // hub's button folds as the width tier folds it, with the menu's "Now Playing…" row and the
+  // hub's button folds as the width tier folds it, with the menu's "Media Controls…" row and the
   // dot on ⋯ standing in the same way. The lit Reader View exit on a `zen://reader` tab is the
   // document's own control (§10.1), never a pin's.
   const { formFactor } = useViewport()
@@ -288,7 +288,7 @@ export function NavRow({
   // The hub's toolbar button is tiered by the row's width, as the pill's chips are (§9.29,
   // `mediaHubButtonFits`): at the 240 sidebar it is unmounted – never hidden with an opacity or
   // a `visibility` that would keep its box laid out – and the hub folds into the app menu's
-  // "Now Playing…" row; it returns where the pill, with the button's own slot back in the row,
+  // "Media Controls…" row; it returns where the pill, with the button's own slot back in the row,
   // still holds the box the star returned at (126 / 110: the 302 sidebar with the always-there
   // buttons), so the pill reads the same on either side of the return. The buttons it makes
   // room against are the ones always in the row (back, forward, reload, ⋯), the puzzle piece
@@ -973,7 +973,7 @@ export function NavRow({
       {/*
         The "⋯" carries the media hub's accent dot while something plays and the hub's toolbar
         button has folded (design language v2 §9.29: at the 240 sidebar the hub folds into the
-        menu's "Now Playing…" row, and the dot on the menu button is Firefox's badge saying so;
+        menu's "Media Controls…" row, and the dot on the menu button is Firefox's badge saying so;
         with the button up, the button wears the dot and ⋯ says nothing twice) – and the same
         dot while an update is downloaded and waiting (shortcuts-menus-101: Chrome's dot on
         its ⋮ for its "Update Google Chrome" row; the menu opens on "Update Zenium"), which

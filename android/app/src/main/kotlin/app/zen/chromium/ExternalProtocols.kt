@@ -162,7 +162,8 @@ class ExternalProtocols(private val host: PageHost) {
      * What runs for a link nothing on the device opens, decided from what the request carried –
      * the order the browser window's core runs (`noHandler`): the `intent://`'s
      * `S.browser_fallback_url` loaded in the tab; else the store listing of the package it names
-     * (`market://details?id=`, as Chrome opens it); else a word. Pure, so the order is tested.
+     * (`market://details?id=`, as Chrome opens it), when the package is one the core would name
+     * ([PACKAGE]); else a word. Pure, so the order and the check are tested.
      */
     sealed class Fallback {
         data class LoadInTab(val url: String) : Fallback()
@@ -170,9 +171,18 @@ class ExternalProtocols(private val host: PageHost) {
         object Toast : Fallback()
 
         companion object {
+            /**
+             * A package name the store URI may carry: the token the core's `intentPackage`
+             * (`src/shared/externalProtocols.ts`) reads out of an `intent://` with
+             * `/[;#]package=([a-zA-Z0-9_.]+)(?=[;#]|$)/` – anything else there is no package to
+             * the core, so it is none here. `Intent.parseUri` hands the `;package=…;` token over
+             * raw, and `Uri.encode` is a stub on the JVM, so the plan checks rather than encodes.
+             */
+            val PACKAGE = Regex("[a-zA-Z0-9_.]+")
+
             fun of(fallbackUrl: String?, pkg: String?): Fallback = when {
                 fallbackUrl != null -> LoadInTab(fallbackUrl)
-                pkg != null -> StoreListing("market://details?id=$pkg")
+                pkg != null && PACKAGE.matches(pkg) -> StoreListing("market://details?id=$pkg")
                 else -> Toast
             }
         }

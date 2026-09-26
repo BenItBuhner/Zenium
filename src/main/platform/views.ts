@@ -80,6 +80,10 @@ import { defer } from '../../core/platform'
 import { standinScale } from '../../shared/pageStandin'
 import { clientSide, imageDimensions, type PageViewport } from '../../shared/capture'
 import { hasForeignDebuggerOwner, recycleDebugger } from './pageDebugger'
+import { imagePostLoadOptions, imageResourceFrames, type ResourceFrameTree } from './imagePost'
+import type { ImagePost, ImageResource } from '../../shared/imageUpload'
+import { IMAGE_THUMBNAIL_WORLD_ID } from '../../shared/privateWorld'
+import { PrivateWorldRelay } from './privateWorld'
 import { HangMonitor } from './hangMonitor'
 import { SiteCertificates } from './siteCertificates'
 import { awaitFirstPaint, hasPainted } from './firstPaint'
@@ -939,6 +943,88 @@ export class ElectronTabView implements TabView {
   }
 
   /**
+   * The image-search upload (CT-32): `loadURL` with the baked body as raw post data and its
+   * content type as the request's header (`imagePostLoadOptions`) – Chrome's
+   * `CoreTabHelper::PostContentToURL` navigates the same way, `UploadRawData` and a
+   * content-type header on a browser-initiated POST. The same hold and replay as a load.
+   */
+  postURL(url: string, post: ImagePost): void {
+    this.navigationHint = {}
+    this.recordHostNavigation(false, () => this.postURL(url, post))
+    const options = imagePostLoadOptions(post)
+    this.owner.startupHold.run(() => {
+      if (this.wc.isDestroyed()) return
+      void this.wc.loadURL(url, options).catch(() => undefined)
+    })
+  }
+
+  /**
+   * The encoded bytes of an image the page loaded, from the renderer: the DevTools protocol's
+   * `Page.getResourceContent` reads the frame's resource – the response the page's own request
+   * got, its cookies and referrer already spent – so a cross-origin image whose host sends no
+   * CORS header, which no script in the page may read, uploads all the same (Chrome reads its
+   * renderer's decoded bitmap; this is the nearest the API offers). The main frame's tree
+   * first, then each child frame the tree lists (a same-process sub-frame's image). `'too-large'`
+   * when the listing puts the image above the cap (nothing is transferred); null when the image
+   * is in no frame's resource tree (evicted, or never an element's), or when the page's session
+   * is an extension's (`pageDebugger.ts`: not ours to enable domains on).
+   *
+   * `Page` is enabled for the read (`getResourceContent` needs it). It is disabled after only on
+   * a session the read attached for itself and still holds alone at the end – one that dies with
+   * its detach a moment later. A session that stood before the read (the dark theme hold's, the
+   * governor's, a fonts change in flight) or that a hold took over during it keeps `Page` as the
+   * read leaves it: Blink's `InspectorPageAgent::disable()` clears the whole of the agent's state,
+   * and the fonts CT-25 set on a long-lived session (`sendFonts`) live there – the agent's
+   * `Restore()` re-applies them in a new renderer after a cross-site swap from that state alone,
+   * which `fontsAfterNavigation` trusts when it finds the session attached across the swap.
+   */
+  async readImageResource(
+    url: string,
+    maxBytes: number
+  ): Promise<ImageResource | 'too-large' | null> {
+    const wc = this.wc
+    if (wc.isDestroyed() || hasForeignDebuggerOwner(wc.id)) return null
+    // Whether `withDebugger` attaches for this read (nothing held the session before it).
+    const ownSession = this.cdpPending === 0 && !wc.debugger.isAttached()
+    try {
+      return await this.withDebugger(async (dbg) => {
+        await dbg.sendCommand('Page.enable')
+        try {
+          const tree = (await dbg.sendCommand('Page.getResourceTree')) as {
+            frameTree: ResourceFrameTree
+          }
+          const listed = imageResourceFrames(tree.frameTree, url)
+          if (listed.some((l) => l.contentSize !== null && l.contentSize > maxBytes))
+            return 'too-large'
+          // The main frame last as a guess when no listing names the image (the agent also
+          // looks the address up in the memory cache).
+          const candidates: Array<{ frameId: string; mimeType: string }> = [...listed]
+          if (!candidates.some((c) => c.frameId === tree.frameTree.frame.id))
+            candidates.push({ frameId: tree.frameTree.frame.id, mimeType: '' })
+          for (const { frameId, mimeType } of candidates) {
+            const content = (await dbg
+              .sendCommand('Page.getResourceContent', { frameId, url })
+              .catch(() => null)) as { content: string; base64Encoded: boolean } | null
+            if (!content || !content.base64Encoded || !content.content) continue
+            // Base64 grows the bytes by a third: the cap on the bytes themselves.
+            if (content.content.length * 0.75 > maxBytes) return 'too-large'
+            return { base64: content.content, mimeType }
+          }
+          return null
+        } finally {
+          // The read's own session, nobody else on it: `Page` off again before the detach. A
+          // hold that joined meanwhile (`cdpPending` above the read's one) keeps the session,
+          // and with it whatever `Page` state was set on it.
+          if (ownSession && this.cdpPending === 1)
+            await dbg.sendCommand('Page.disable').catch(() => undefined)
+        }
+      })
+    } catch {
+      return null
+    }
+  }
+
+  /**
    * `certificate-error` refused the main frame's certificate for `url`: kept for the failure
    * Chromium reports next, so the core can render the interstitial with it.
    */
@@ -1198,6 +1284,25 @@ export class ElectronTabView implements TabView {
       return frame.executeJavaScript(code, true)
     }
     return this.wc.executeJavaScript(code, true)
+  }
+
+  /**
+   * The browser's private world (`shared/privateWorld.ts`, `IMAGE_THUMBNAIL_WORLD_ID`): the
+   * page's built-ins are out of the script's reach and the script out of the page's, while the
+   * document, its origin and its cookies are the page's. The top frame through Electron's
+   * `webContents.executeJavaScriptInIsolatedWorld`; a sub-frame through its own preload
+   * (`PrivateWorldRelay`, the frame's `webFrame.executeJavaScriptInIsolatedWorld` with the same
+   * id), since Electron 44's `WebFrameMain` evaluates in the main world only. Never the main
+   * world: a frame that is gone rejects.
+   */
+  executeJavaScriptInPrivateWorld(code: string, frameId?: number): Promise<unknown> {
+    if (frameId) {
+      const frame = frameById(this.wc, frameId)
+      if (!frame || frame.detached)
+        return Promise.reject(new Error(`Frame ${frameId} is no longer part of the page`))
+      return this.owner.privateWorld.execute(frame, code)
+    }
+    return this.wc.executeJavaScriptInIsolatedWorld(IMAGE_THUMBNAIL_WORLD_ID, [{ code }], true)
   }
 
   insertCSS(css: string, origin: InsertedCssOrigin = 'user'): Promise<string> {
@@ -2962,6 +3067,11 @@ export class ElectronTabViewHost implements TabViewHost {
   startupHold = new StartupHold()
   /** The certificates the sessions verified, by host, for the site-information card (`certificate`). */
   readonly certificates = new SiteCertificates()
+  /**
+   * The sub-frame way into the browser's private world (`executeJavaScriptInPrivateWorld`);
+   * the platform feeds it the frames' answers (`PRIVATE_WORLD_CHANNELS.answer`).
+   */
+  readonly privateWorld = new PrivateWorldRelay()
   /**
    * The chord bound to `app.quit` as the key table has it now, for a toolbox's quit-chord relay
    * (`devtoolsKeys.ts`); the platform supplies it once the core is up (`ElectronPlatform.start`).

@@ -47,6 +47,7 @@ import { resolveDownloadSettings } from '../shared/downloads'
 import { PermissionService } from './permissions'
 import { PermissionPromptService } from './permissionPrompts'
 import { PrivacyService } from './privacy'
+import { resetSettings } from './settingsReset'
 import { PopupBlocker } from './popups'
 import { ExternalLaunches } from './external'
 import { SecurityPromptService } from './security'
@@ -2681,6 +2682,7 @@ export class Browser {
     this.inactiveTabs.stop()
     this.background.stop()
     this.translate.stop()
+    this.mediaSession.dispose()
     this.passwords.shutdown()
     // The pages on screen have scrolled since their stacks were last read.
     this.tabs.rememberAllNavigation()
@@ -3593,6 +3595,9 @@ export class Browser {
       'tasks.end': ({ pid }) => this.tasks.end(pid),
 
       'settings.update': (patch, win) => this.updateSettings(patch, win),
+      'settings.reset': async (_, win) => {
+        await resetSettings(this, win)
+      },
       'shortcuts.update': ({ id, binding }) => {
         state.setShortcutOverride(id, binding)
         this.syncShortcuts()
@@ -3858,6 +3863,7 @@ export class Browser {
       'capture.copy': ({ dataUrl }) => this.capture.copy(dataUrl),
       'capture.save': ({ dataUrl, fileName, tabId }, win) =>
         this.capture.save(dataUrl, win, { fileName, tabId }),
+      'capture.share': ({ dataUrl, tabId }, win) => this.capture.share(dataUrl, win, { tabId }),
       'page.print': ({ tabId }, win) => this.actions.run('page.print', { sourceTabId: tabId, win }),
       'page.printPreview': ({ tabId }, win) =>
         this.actions.run('page.printPreview', { sourceTabId: tabId, win }),

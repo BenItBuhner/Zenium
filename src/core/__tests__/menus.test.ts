@@ -14,6 +14,7 @@ import { PRIVATE_CONTAINER_ID } from '../../shared/types'
 import { searchCommands, type CommandContext } from '../../shared/commands'
 import { resolveDownloadSettings } from '../../shared/downloads'
 import { buildSearchUrl } from '../../shared/search'
+import type { ImagePost, ImagePostField } from '../../shared/imageUpload'
 import { Browser } from '../browser'
 import type { MenuItemTemplate } from '../platform'
 import type { ZenWindow } from '../window'
@@ -130,7 +131,7 @@ const DESKTOP_APP_MENU = [
   'Reader View',
   'Save and Share',
   'Save and Share > Save Page As',
-  'Save and Share > Web Capture…',
+  'Save and Share > Screenshot…',
   'Save and Share > Print…',
   '-',
   'Settings',
@@ -169,7 +170,7 @@ const DESKTOP_APP_MENU = [
 const DESKTOP_APP_MENU_TOP = DESKTOP_APP_MENU.filter((l) => !l.includes(' > '))
 
 /**
- * The tablet's More Tools keeps the two captures (its chrome has no Web Capture… overlay), in
+ * The tablet's More Tools keeps the two captures (its chrome has no Screenshot… overlay), in
  * their own group before the resources and the developer's rows.
  */
 const TABLET_CAPTURES = [
@@ -180,7 +181,7 @@ const TABLET_CAPTURES = [
 
 const DESKTOP_ONLY = [
   'Search Tabs…',
-  'Web Capture…',
+  'Screenshot…',
   'Help > Keyboard Shortcuts',
   'More Tools > Compact Mode',
   'More Tools > Split View',
@@ -200,7 +201,7 @@ describe('the app menu', () => {
     expect(top.slice(top.lastIndexOf('-') + 1)).toEqual(['Settings', 'More Tools', 'Help', 'Quit'])
   })
 
-  it('stands on an 800 px window: about eighteen top-level rows and three separators, four with the Now Playing… row (§6)', () => {
+  it('stands on an 800 px window: about eighteen top-level rows and three separators, four with the Media Controls… row (§6)', () => {
     const rows = (h: Harness): string[] => topLabels(h.shown()).filter((l) => l !== '-')
     // The DESKTOP harness has no translate host and no speech engine: Firefox's eighteen, with
     // Chrome's Delete Browsing Data… row in the library group and Save and Share closing the
@@ -218,7 +219,7 @@ describe('the app menu', () => {
     expect(rows(full)).toHaveLength(20)
     expect(separators(full.shown())).toBe(3)
     for (const row of rows(full)) expect(row).toMatch(/^[A-Z]/)
-    // With the media hub folded the Now Playing… row and its separator lead: twenty-one rows
+    // With the media hub folded the Media Controls… row and its separator lead: twenty-one rows
     // and four separators (701 px), which still stand on an 800 px window under the bar's 74.
     full.browser.state.media = [
       { tabId: full.tabId, playing: true, title: 'Nocturne', session: true }
@@ -288,7 +289,7 @@ describe('the app menu', () => {
       expect(appMenu(phone)).not.toContain('Update Zenium')
     })
 
-    it('is a twenty-first row only while the update waits: 21 rows / 4 separators (701 px); the Now Playing… row folded too, 22 / 5 (741 px) and the Update row first', () => {
+    it('is a twenty-first row only while the update waits: 21 rows / 4 separators (701 px); the Media Controls… row folded too, 22 / 5 (741 px) and the Update row first', () => {
       const rows = (h: Harness): string[] => topLabels(h.shown()).filter((l) => l !== '-')
       const full = pageHarness({ ...DESKTOP, readAloud: true }, { translate: true, speech: true })
       appMenu(full)
@@ -309,7 +310,7 @@ describe('the app menu', () => {
       expect(topLabels(full.shown()).slice(0, 5)).toEqual([
         'Update Zenium',
         '-',
-        'Now Playing…',
+        'Media Controls…',
         '-',
         'New Tab'
       ])
@@ -419,7 +420,7 @@ describe('the app menu', () => {
   it('folds Chrome’s Save and Share into a submenu closing the page’s group, before the app’s separator: the saves, then the shares (shortcuts-menus-120)', () => {
     // A host that shares and pins shortcuts, with a page up and the install surface mounted,
     // syncing with another device: every row of the group stands – Save Page As…, Create
-    // Shortcut…, Manage Apps (shortcuts-menus-138), Web Capture…, Print…, Share…, Send to Your
+    // Shortcut…, Manage Apps (shortcuts-menus-138), Screenshot…, Print…, Share…, Send to Your
     // Devices – and no Cast row.
     const h = pageHarness({ ...DESKTOP, share: true, pinShortcuts: true }, { shortcuts: true })
     h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: true })
@@ -443,7 +444,7 @@ describe('the app menu', () => {
       'Save Page As',
       'Create Shortcut…',
       'Manage Apps',
-      'Web Capture…',
+      'Screenshot…',
       'Print…',
       'Share…',
       'Send to Your Devices'
@@ -454,7 +455,7 @@ describe('the app menu', () => {
     expect(item(item(group, 'Save Page As').submenu!, 'Webpage, Complete…').action).toBe(
       'page.savePage'
     )
-    expect(item(group, 'Web Capture…').action).toBe('capture.start')
+    expect(item(group, 'Screenshot…').action).toBe('capture.start')
     expect(item(group, 'Print…')).toMatchObject({
       action: 'page.printPreview',
       accelerator: 'Ctrl+P'
@@ -479,7 +480,7 @@ describe('the app menu', () => {
       'Save Page As > Webpage, Complete…',
       'Save Page As > Webpage, HTML Only…',
       'Save Page As > Webpage, Single File…',
-      'Web Capture…',
+      'Screenshot…',
       'Print…'
     ])
   })
@@ -583,7 +584,7 @@ describe('the app menu', () => {
     const h = harness({ ...DESKTOP, pinShortcuts: true }, { shortcuts: true })
     appMenu(h)
     let group = item(h.shown(), 'Save and Share').submenu!
-    expect(topLabels(group)).toEqual(['Save Page As', 'Manage Apps', 'Web Capture…', 'Print…'])
+    expect(topLabels(group)).toEqual(['Save Page As', 'Manage Apps', 'Screenshot…', 'Print…'])
     const open = vi.spyOn(h.browser.pages, 'open')
     item(group, 'Manage Apps').click?.()
     expect(open).toHaveBeenCalledWith('settings', 'apps', h.win)
@@ -799,20 +800,20 @@ describe('the app menu', () => {
     })
   })
 
-  it('folds the desktop’s Take Screenshot and Capture Full Page into Web Capture… (the #396 review’s ruling 3); the tablet keeps its two rows', () => {
+  it('folds the desktop’s Take Screenshot and Capture Full Page into Screenshot… (the #396 review’s ruling 3); the tablet keeps its two rows', () => {
     const desktop = harness(DESKTOP)
     const desktopMenu = appMenu(desktop)
     const everywhere = allItems(desktop.shown()).map((i) => i.label)
     expect(everywhere).not.toContain('Take Screenshot')
     expect(everywhere).not.toContain('Capture Full Page')
-    expect(desktopMenu).toContain('Save and Share > Web Capture…')
+    expect(desktopMenu).toContain('Save and Share > Screenshot…')
     // More Tools: two rows and a separator fewer than the row had – ten of its own (the
     // desktop's Task Manager among them, W5-8; Duplicate Window with the window rows, W5-13),
     // the four dock rows after them, two separators.
     const moreTools = item(desktop.shown(), 'More Tools').submenu!
     expect(moreTools.filter((i) => i.type !== 'separator')).toHaveLength(14)
     expect(separators(moreTools)).toBe(2)
-    // The tablet's chrome has no Web Capture… overlay, so its More Tools keeps the two captures
+    // The tablet's chrome has no Screenshot… overlay, so its More Tools keeps the two captures
     // in their own group before the resources.
     const tablet = harness(DESKTOP, 'tablet')
     const tabletMenu = appMenu(tablet)
@@ -820,7 +821,7 @@ describe('the app menu', () => {
     expect(tabletMenu.indexOf('More Tools > Capture Full Page')).toBe(
       tabletMenu.indexOf('More Tools > Take Screenshot') + 1
     )
-    expect(tabletMenu).not.toContain('Save and Share > Web Capture…')
+    expect(tabletMenu).not.toContain('Save and Share > Screenshot…')
     const tabletMore = item(tablet.shown(), 'More Tools').submenu!
     expect(separators(tabletMore)).toBe(3)
     // The rows keep their actions where they stand, so the palette and the Zen preset's chord
@@ -898,7 +899,7 @@ describe('the app menu', () => {
     h.browser.tabs.closeTab(closed.id, false, h.win)
     appMenu(h)
     const everywhere = allItems(h.shown()).map((i) => i.label)
-    // The flat menu's two captures are the desktop's one Web Capture… row now (the #396
+    // The flat menu's two captures are the desktop's one Screenshot… row now (the #396
     // review's ruling 3): the overlay takes the visible area and the full page both, so
     // nothing the two rows did is lost, and More Tools is two rows and a separator shorter.
     const foldedIntoWebCapture = new Set(['Take Screenshot', 'Capture Full Page'])
@@ -911,7 +912,7 @@ describe('the app menu', () => {
     }
     for (const label of before)
       expect(everywhere, label).toContain(
-        foldedIntoWebCapture.has(label) ? 'Web Capture…' : (renamed[label] ?? label)
+        foldedIntoWebCapture.has(label) ? 'Screenshot…' : (renamed[label] ?? label)
       )
     for (const label of foldedIntoWebCapture) expect(everywhere).not.toContain(label)
     expect(topLabels(h.shown()).filter((l) => l !== '-')).toHaveLength(20)
@@ -945,7 +946,7 @@ describe('the app menu', () => {
         label !== 'More Tools > Task Manager' &&
         label !== 'Bookmarks > Show Bookmarks Bar' &&
         label !== 'Bookmarks > Tab Folders' &&
-        label !== 'Save and Share > Web Capture…'
+        label !== 'Save and Share > Screenshot…'
     )
     tabletChrome.splice(tabletChrome.lastIndexOf('Bookmarks > -'), 1)
     tabletChrome.splice(tabletChrome.indexOf('More Tools > Resources'), 0, ...TABLET_CAPTURES)
@@ -1044,7 +1045,7 @@ describe('the app menu', () => {
     expect(tablet.browser.tabs.activeTabFor(tablet.win)?.url).toBe('zen://whats-new')
   })
 
-  describe('the Now Playing… row (design language v2 §9.29: the hub folded into the menu)', () => {
+  describe('the Media Controls… row (design language v2 §9.29: the hub folded into the menu)', () => {
     /** A media entry for `tabId`, the OS controls' session by default. */
     const media = (tabId: string, over: Partial<MediaState> = {}): MediaState => ({
       tabId,
@@ -1055,7 +1056,7 @@ describe('the app menu', () => {
       session: true,
       ...over
     })
-    const ROW = 'Now Playing…'
+    const ROW = 'Media Controls…'
 
     it('heads the desktop menu while a session is live and the hub button has folded, and is gone otherwise', () => {
       const h = pageHarness(DESKTOP)
@@ -1090,9 +1091,19 @@ describe('the app menu', () => {
       expect(appMenuFolded(h)[0]).toBe(ROW)
     })
 
-    it('stays while the media has paused (the hub keeps its card), keeping its name', () => {
+    it('stays while the media has paused (the hub keeps its card for Chrome’s hour), keeping its name – the button’s own, "Media Controls…", never "Now Playing…" (the #552 ruling)', () => {
       const h = pageHarness(DESKTOP)
       h.browser.state.media = [media(h.tabId, { playing: false, session: false })]
+      const [row] = appMenuFolded(h)
+      expect(row).toBe(ROW)
+      expect(row).toBe('Media Controls…')
+      // The ended track is a paused one: the same row, the same name.
+      h.browser.state.media = [
+        media(h.tabId, {
+          playing: false,
+          position: { duration: 240, position: 240, playbackRate: 1 }
+        })
+      ]
       expect(appMenuFolded(h)[0]).toBe(ROW)
     })
 
@@ -1198,7 +1209,7 @@ describe('the app menu', () => {
       expect(go).toHaveBeenCalledWith(h.tabId)
     })
 
-    it('stands under the Now Playing… row when both have folded: the hub first, then Forward, then the tabs', () => {
+    it('stands under the Media Controls… row when both have folded: the hub first, then Forward, then the tabs', () => {
       const h = pageHarness(DESKTOP)
       h.browser.state.settings.toolbarPins = { forward: false }
       h.browser.state.media = [
@@ -1211,7 +1222,13 @@ describe('the app menu', () => {
           session: true
         }
       ]
-      expect(appMenuFolded(h).slice(0, 5)).toEqual(['Now Playing…', '-', 'Forward', '-', 'New Tab'])
+      expect(appMenuFolded(h).slice(0, 5)).toEqual([
+        'Media Controls…',
+        '-',
+        'Forward',
+        '-',
+        'New Tab'
+      ])
     })
 
     it('is the desktop’s alone: the tablet and the phone keep their bars whatever the field says', () => {
@@ -1412,6 +1429,9 @@ describe('the app menu', () => {
       'Bookmarks > -',
       'Bookmarks > Import Bookmarks…',
       'Bookmarks > Export Bookmarks…',
+      // The phone's reading list (HB-20): the list as a library row after Bookmarks, the page's
+      // verb among the saves after Share… (before Add to Home Screen where the host has it).
+      'Reading List',
       'History',
       'Downloads',
       'Passwords',
@@ -1422,6 +1442,7 @@ describe('the app menu', () => {
       'Find in Page…',
       'Reader View',
       'Share…',
+      'Add to Reading List',
       'Print…',
       'Take Screenshot',
       'Capture Full Page',
@@ -1702,14 +1723,14 @@ describe('the app menu', () => {
       expect(appMenu(h)).toEqual(DESKTOP_APP_MENU)
     })
 
-    it('keeps the Now Playing… row at the head with the media hub folded: four separators, the window group under it', () => {
+    it('keeps the Media Controls… row at the head with the media hub folded: four separators, the window group under it', () => {
       const h = pageHarness(DESKTOP)
       const priv = h.browser.openWindow('private', h.win)!
       const theirs = h.browser.tabs.createTab({ url: 'https://video.example.org/watch' }, priv)
       h.browser.state.media = [
         { tabId: theirs.id, playing: true, title: 'Nocturne', session: true }
       ]
-      expect(appMenuFolded(h, priv).slice(0, 3)).toEqual(['Now Playing…', '-', 'New Tab'])
+      expect(appMenuFolded(h, priv).slice(0, 3)).toEqual(['Media Controls…', '-', 'New Tab'])
       expect(separators(h.shown())).toBe(4)
     })
 
@@ -2227,7 +2248,7 @@ describe('the page context menu', () => {
       'Bookmark Page',
       'Save Page As…',
       'Print…',
-      'Web Capture…',
+      'Screenshot…',
       'Enter Reader View',
       '-',
       'Boosts',
@@ -2295,14 +2316,14 @@ describe('the page context menu', () => {
     expect(page.menu(pageParams())[0]).toBe('Back')
   })
 
-  it('says capture once on the desktop – one Web Capture… row with its chord, where the menu said it three times (the #396 review’s ruling 3, the lead on #414); a touch host keeps its two one-shot rows', () => {
+  it('says capture once on the desktop – one Screenshot… row with its chord, where the menu said it three times (the #396 review’s ruling 3, the lead on #414); a touch host keeps its two one-shot rows', () => {
     const h = pageHarness()
     const menu = h.menu(pageParams())
     // One row, between Print… and Reader View, where the three stood.
-    expect(menu.filter((l) => /capture|screenshot/i.test(l))).toEqual(['Web Capture…'])
-    expect(menu.indexOf('Web Capture…')).toBe(menu.indexOf('Print…') + 1)
-    expect(menu[menu.indexOf('Web Capture…') + 1]).toBe('Enter Reader View')
-    const row = item(h.items(), 'Web Capture…')
+    expect(menu.filter((l) => /capture|screenshot/i.test(l))).toEqual(['Screenshot…'])
+    expect(menu.indexOf('Screenshot…')).toBe(menu.indexOf('Print…') + 1)
+    expect(menu[menu.indexOf('Screenshot…') + 1]).toBe('Enter Reader View')
+    const row = item(h.items(), 'Screenshot…')
     // Edge's row runs the overlay – the visible area, the full page and an area select are its
     // toolbar's – and wears the Chrome preset's chord (Edge's Web capture chord).
     expect(row.action).toBe('capture.start')
@@ -2315,12 +2336,12 @@ describe('the page context menu', () => {
     // The Zen preset gives Ctrl+Shift+S to Firefox's Take Screenshot: the row stands, unchorded.
     h.browser.handleCommand(h.win, 'settings.update', { shortcutPreset: 'zen' })
     h.menu(pageParams())
-    expect(item(h.items(), 'Web Capture…').accelerator).toBeUndefined()
+    expect(item(h.items(), 'Screenshot…').accelerator).toBeUndefined()
     // A tablet's page menu has no overlay to open: Take Screenshot and Capture Full Page stay,
     // in the same seat, running their one-shot actions.
     const tablet = pageHarness(DESKTOP, { formFactor: 'tablet' })
     const tabletMenu = tablet.menu(pageParams())
-    expect(tabletMenu).not.toContain('Web Capture…')
+    expect(tabletMenu).not.toContain('Screenshot…')
     expect(tabletMenu).not.toContain('Capture Page…')
     expect(tabletMenu.indexOf('Take Screenshot')).toBe(tabletMenu.indexOf('Print…') + 1)
     expect(tabletMenu.indexOf('Capture Full Page')).toBe(tabletMenu.indexOf('Take Screenshot') + 1)
@@ -2329,7 +2350,7 @@ describe('the page context menu', () => {
     const phone = pageHarness(ANDROID, { formFactor: 'phone' })
     const phoneMenu = phone.menu(pageParams())
     expect(phoneMenu).toContain('Take Screenshot')
-    expect(phoneMenu).not.toContain('Web Capture…')
+    expect(phoneMenu).not.toContain('Screenshot…')
   })
 
   it('leaves Print, View Page Source and Inspect to hosts that have them', () => {
@@ -2634,51 +2655,395 @@ describe('the page context menu', () => {
       expect(hasRow(imageMenu(h, IMAGE))).toBe(false)
     })
 
+    /** The page script's answer: a 2×1 JPEG thumbnail of a 1600×800 image, within the Lens bounds. */
+    const THUMB = {
+      base64: '/9j/2wBDAAM=',
+      contentType: 'image/jpeg',
+      width: 1000,
+      height: 500,
+      originalWidth: 1600,
+      originalHeight: 800
+    }
+    const FETCHED = { ok: true, thumbnail: THUMB }
+    const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+    const openedBeside = (h: ReturnType<typeof pageHarness>): Tab | undefined => {
+      const tabIds = h.win.activeSpace().tabIds
+      return h.browser.tabs.tab(tabIds[tabIds.indexOf(h.tabId) + 1] ?? '')
+    }
+    /** The `postURL` the opened tab's view received, parsed. */
+    const posted = (h: ReturnType<typeof pageHarness>): { url: string; post: ImagePost } | null => {
+      const call = h.viewCalls.find((c) => c.startsWith('postURL('))
+      if (!call) return null
+      const [url, post] = JSON.parse(`[${call.slice('postURL('.length, -1)}]`) as [
+        string,
+        ImagePost
+      ]
+      return { url, post }
+    }
+    const field = (post: ImagePost, name: string): ImagePostField | undefined =>
+      post.fields.find((f) => f.name === name)
+
     it.each([
       ['a data: image', 'data:image/png;base64,iVBORw0KGgo='],
-      ['a blob: image', 'blob:https://example.com/1d2c3b4a'],
+      ['a blob: image', 'blob:https://example.com/1d2c3b4a']
+    ])(
+      'has the row for %s with an engine that takes the bytes (Google Lens): the bytes are what travels',
+      (_name, src) => {
+        const h = pageHarness()
+        expect(imageMenu(h, src)).toContain('Search Image with Google Lens')
+        h.browser.handleCommand(h.win, 'settings.update', { searchEngineId: 'bing' })
+        expect(imageMenu(h, src)).toContain('Search Image with Bing')
+      }
+    )
+
+    it.each([
+      ['a data: image', 'data:image/png;base64,iVBORw0KGgo='],
+      ['a blob: image', 'blob:https://example.com/1d2c3b4a']
+    ])('has no row for %s with an engine that takes the address alone (Yandex)', (_name, src) => {
+      const h = pageHarness()
+      h.browser.handleCommand(h.win, 'settings.update', {
+        searchEngines: [YANDEX],
+        searchEngineId: YANDEX.id
+      })
+      expect(hasRow(imageMenu(h, src))).toBe(false)
+      expect(hasRow(imageMenu(h, IMAGE))).toBe(true)
+    })
+
+    it.each([
       ['a file', 'file:///home/me/a.png'],
       ['an extension resource', 'chrome-extension://abcdef/icon.png'],
       ['a blank source', '']
     ])('has no row for %s', (_name, src) => {
       const h = pageHarness()
-      // A blank source is no image at all; the others are images no engine can fetch.
+      // A blank source is no image at all; the others no page can read back nor engine fetch.
       const menu = h.menu(pageParams({ mediaType: 'image', srcURL: src }))
       expect(menu.some((label) => label.startsWith('Search Image with'))).toBe(false)
     })
 
-    it('opens the engine’s lookup of the address in a tab beside this one, in front, with this tab as the opener', () => {
-      const h = pageHarness()
+    it('uploads the bytes to Google Lens: the page’s script reads the thumbnail, a tab beside this one and in front POSTs Chrome’s multipart fields, this tab its opener', async () => {
+      const h = pageHarness(DESKTOP, { pageScript: () => FETCHED })
       imageMenu(h, IMAGE)
       h.click('Search Image with Google Lens')
-      const tabIds = h.win.activeSpace().tabIds
-      const opened = h.browser.tabs.tab(tabIds[tabIds.indexOf(h.tabId) + 1] ?? '')
+      await settle()
+      // The script ran in the browser's private world of the clicked frame (the desktop; the
+      // page's own built-ins never see it), on the clicked image, with the page's cookies.
+      const script = h.viewCalls.find((c) => c.startsWith('executeJavaScriptInPrivateWorld('))!
+      expect(script).toContain(JSON.stringify(IMAGE))
+      expect(script).toContain("read('include')")
+      // The engine's own bounds: Google's is Chrome's Lens path (1000 px, 300 × 300, JPEG 40).
+      expect(script).toContain('const maxSide = 1000, minArea = 90000, quality = 0.4, maxBytes =')
+      expect(h.viewCalls.some((c) => c.startsWith('executeJavaScript('))).toBe(false)
+      const opened = openedBeside(h)
+      expect(opened?.url).toBe('https://lens.google.com/v3/upload')
+      expect(opened?.openerTabId).toBe(h.tabId)
+      expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(opened?.id)
+      const { url, post } = posted(h)!
+      expect(url).toBe('https://lens.google.com/v3/upload')
+      expect(post.encoding).toBe('multipart')
+      expect(post.fields.map((f) => f.name)).toEqual([
+        'encoded_image',
+        'image_url',
+        'sbisrc',
+        'original_width',
+        'original_height',
+        'processed_image_dimensions'
+      ])
+      // The file part with no filename, as Chrome's (net::AddMultipartValueForUpload).
+      expect(field(post, 'encoded_image')).toEqual({
+        name: 'encoded_image',
+        file: { base64: THUMB.base64, contentType: 'image/jpeg' }
+      })
+      expect(field(post, 'image_url')).toEqual({ name: 'image_url', value: IMAGE })
+      expect(field(post, 'sbisrc')).toEqual({ name: 'sbisrc', value: 'Zenium 1.2.3 Linux' })
+      expect(field(post, 'original_width')).toEqual({ name: 'original_width', value: '1600' })
+      expect(field(post, 'original_height')).toEqual({ name: 'original_height', value: '800' })
+      expect(field(post, 'processed_image_dimensions')).toEqual({
+        name: 'processed_image_dimensions',
+        value: '1000,500'
+      })
+      // The POST is the tab's first load; nothing loads the address by GET beside it.
+      expect(h.viewCalls.filter((c) => c.startsWith('loadURL('))).toEqual([])
+    })
+
+    it('uploads a data: image with no image_url field (Chrome sends no address for one), the thumbnail alone', async () => {
+      const h = pageHarness(DESKTOP, { pageScript: () => FETCHED })
+      imageMenu(h, 'data:image/png;base64,iVBORw0KGgo=')
+      h.click('Search Image with Google Lens')
+      await settle()
+      const { post } = posted(h)!
+      expect(field(post, 'image_url')).toBeUndefined()
+      expect(field(post, 'encoded_image')).toBeDefined()
+      expect(openedBeside(h)?.url).toBe('https://lens.google.com/v3/upload')
+    })
+
+    it('uploads to Bing urlencoded: imageBin carries the thumbnail base64', async () => {
+      const h = pageHarness(DESKTOP, { pageScript: () => FETCHED })
+      h.browser.handleCommand(h.win, 'settings.update', { searchEngineId: 'bing' })
+      imageMenu(h, IMAGE)
+      h.click('Search Image with Bing')
+      await settle()
+      const { url, post } = posted(h)!
+      expect(url).toBe(
+        'https://www.bing.com/images/detail/search?iss=sbiupload&FORM=CHROMI#enterInsights'
+      )
+      expect(post).toEqual({
+        encoding: 'urlencoded',
+        fields: [{ name: 'imageBin', value: THUMB.base64 }]
+      })
+      // Bing's bounds are Chrome's for any engine but Google's: 600 px on the longest side.
+      const script = h.viewCalls.find((c) => c.startsWith('executeJavaScriptInPrivateWorld('))!
+      expect(script).toContain('const maxSide = 600, minArea = 90000, quality = 0.4, maxBytes =')
+    })
+
+    it('runs the script in the clicked frame (an image in a sub-frame reads with that frame’s cookies)', async () => {
+      const h = pageHarness(DESKTOP, { pageScript: () => FETCHED })
+      h.menu(pageParams({ mediaType: 'image', srcURL: IMAGE, frameId: 7 }))
+      h.click('Search Image with Google Lens')
+      await settle()
+      expect(h.viewCalls.find((c) => c.startsWith('executeJavaScriptInPrivateWorld('))).toMatch(
+        /^executeJavaScriptInPrivateWorld\(7:/
+      )
+    })
+
+    it('takes the address route, silently, for an http(s) image above the cap (a refusal is owed only where nothing else can be done): no POST, no toast', async () => {
+      const h = pageHarness(DESKTOP, { pageScript: () => ({ ok: false, reason: 'too-large' }) })
+      imageMenu(h, IMAGE)
+      h.click('Search Image with Google Lens')
+      await settle()
+      const opened = openedBeside(h)
       expect(opened?.url).toBe(
         `https://lens.google.com/uploadbyurl?url=${encodeURIComponent(IMAGE)}`
       )
       expect(opened?.openerTabId).toBe(h.tabId)
-      expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(opened?.id)
-      h.browser.handleCommand(h.win, 'settings.update', { searchEngineId: 'bing' })
-      h.browser.tabs.activateTab(h.tabId, h.win)
-      imageMenu(h, IMAGE)
-      h.click('Search Image with Bing')
-      const ids = h.win.activeSpace().tabIds
-      expect(h.browser.tabs.tab(ids[ids.indexOf(h.tabId) + 1] ?? '')?.url).toBe(
-        `https://www.bing.com/images/search?view=detailv2&iss=sbi&q=imgurl:${encodeURIComponent(IMAGE)}`
-      )
+      expect(posted(h)).toBeNull()
+      expect(h.toasts).toEqual([])
     })
 
-    it('reaches the phone’s image sheet through the same template: after Copy Image Address, before Share Image…', () => {
-      const h = pageHarness(ANDROID, { formFactor: 'phone' })
+    it('refuses a data: image above the cap with a toast (no address to fall back to), opening nothing', async () => {
+      const h = pageHarness(DESKTOP, { pageScript: () => ({ ok: false, reason: 'too-large' }) })
+      imageMenu(h, 'data:image/png;base64,iVBORw0KGgo=')
+      const before = h.win.activeSpace().tabIds.length
+      h.click('Search Image with Google Lens')
+      await settle()
+      // A limit, not a failure: the info kind, sentence case, no trailing period (§9.1).
+      expect(h.toasts).toEqual([{ message: 'This image is too large to search', kind: 'info' }])
+      expect(h.win.activeSpace().tabIds.length).toBe(before)
+      expect(posted(h)).toBeNull()
+    })
+
+    it('reads the renderer’s bytes through the host first (a cross-origin image without CORS: the page’s fetch would fail and evict them) and hands them to the page’s canvas as a data: address', async () => {
+      const held = { base64: 'iVBORw0KGgo=', mimeType: 'image/png' }
+      const h = pageHarness(DESKTOP, {
+        pageScript: (code) =>
+          code.includes(`"data:image/png;base64,${held.base64}"`)
+            ? FETCHED
+            : { ok: false, reason: 'fetch-failed' },
+        view: { readImageResource: () => Promise.resolve(held) }
+      })
+      imageMenu(h, IMAGE)
+      h.click('Search Image with Google Lens')
+      await settle()
+      expect(openedBeside(h)?.url).toBe('https://lens.google.com/v3/upload')
+      expect(field(posted(h)!.post, 'encoded_image')).toMatchObject({
+        file: { base64: THUMB.base64 }
+      })
+      // The host's copy is read before any fetch from the page, and the page fetched nothing else.
+      const scripts = h.viewCalls.filter((c) => c.startsWith('executeJavaScriptInPrivateWorld('))
+      expect(scripts).toHaveLength(1)
+      expect(scripts[0]).toContain(`"data:image/png;base64,${held.base64}"`)
+      // The copy is decoded in the script (base64 → Blob), no fetch of the data: address: a page
+      // CSP without `data:` in `connect-src` has no say, and the page's report-uri hears nothing.
+      expect(scripts[0]).toContain('atob(')
+      expect(scripts[0]).not.toContain('fetch("data:')
+    })
+
+    it('asks the page to fetch the address when the host holds no copy (evicted, or a host without the read)', async () => {
+      const h = pageHarness(DESKTOP, {
+        pageScript: (code) => (code.includes(JSON.stringify(IMAGE)) ? FETCHED : null),
+        view: { readImageResource: () => Promise.resolve(null) }
+      })
+      imageMenu(h, IMAGE)
+      h.click('Search Image with Google Lens')
+      await settle()
+      expect(openedBeside(h)?.url).toBe('https://lens.google.com/v3/upload')
+      expect(field(posted(h)!.post, 'encoded_image')).toMatchObject({
+        file: { base64: THUMB.base64 }
+      })
+    })
+
+    it('runs every thumbnail script in the browser’s private world where the host has one – the host’s copy handed over as a data: address and the page’s own fetch alike – and never in the page’s main world', async () => {
+      const held = { base64: 'iVBORw0KGgo=', mimeType: 'image/png' }
+      const worlds: Array<{ frameId: number | undefined; code: string }> = []
+      const privateWorld = (code: string, frameId?: number): Promise<unknown> => {
+        worlds.push({ frameId, code })
+        return Promise.resolve(
+          code.includes(`"data:image/png;base64,${held.base64}"`) ||
+            code.includes(JSON.stringify(IMAGE))
+            ? FETCHED
+            : { ok: false, reason: 'fetch-failed' }
+        )
+      }
+      // The host holds the image: the script gets the copy, in the private world.
+      const h = pageHarness(DESKTOP, {
+        pageScript: () => {
+          throw new Error('the main world was reached')
+        },
+        view: {
+          readImageResource: () => Promise.resolve(held),
+          executeJavaScriptInPrivateWorld: privateWorld
+        }
+      })
+      imageMenu(h, IMAGE)
+      h.click('Search Image with Google Lens')
+      await settle()
+      expect(openedBeside(h)?.url).toBe('https://lens.google.com/v3/upload')
+      expect(field(posted(h)!.post, 'encoded_image')).toMatchObject({
+        file: { base64: THUMB.base64 }
+      })
+      expect(worlds).toHaveLength(1)
+      expect(worlds[0]!.code).toContain(`"data:image/png;base64,${held.base64}"`)
+      expect(h.viewCalls.some((c) => c.startsWith('executeJavaScript('))).toBe(false)
+      // The host holds nothing: the page's own fetch of the address, in the private world too.
+      worlds.length = 0
+      const h2 = pageHarness(DESKTOP, {
+        pageScript: () => {
+          throw new Error('the main world was reached')
+        },
+        view: {
+          readImageResource: () => Promise.resolve(null),
+          executeJavaScriptInPrivateWorld: privateWorld
+        }
+      })
+      imageMenu(h2, IMAGE)
+      h2.click('Search Image with Google Lens')
+      await settle()
+      expect(openedBeside(h2)?.url).toBe('https://lens.google.com/v3/upload')
+      expect(worlds).toHaveLength(1)
+      expect(worlds[0]!.code).toContain(JSON.stringify(IMAGE))
+      expect(worlds[0]!.code).toContain('OffscreenCanvas')
+      expect(h2.viewCalls.some((c) => c.startsWith('executeJavaScript('))).toBe(false)
+    })
+
+    it('carries the clicked frame into the private world (a sub-frame’s image runs in that frame’s world) and reads a data: image there too', async () => {
+      const worlds: Array<{ frameId: number | undefined; code: string }> = []
+      const h = pageHarness(DESKTOP, {
+        view: {
+          executeJavaScriptInPrivateWorld: (code: string, frameId?: number) => {
+            worlds.push({ frameId, code })
+            return Promise.resolve(FETCHED)
+          }
+        }
+      })
+      h.menu(pageParams({ mediaType: 'image', srcURL: IMAGE, frameId: 7 }))
+      h.click('Search Image with Google Lens')
+      await settle()
+      expect(worlds.map((w) => w.frameId)).toEqual([7])
+      expect(posted(h)).not.toBeNull()
+      h.menu(pageParams({ mediaType: 'image', srcURL: 'data:image/png;base64,iVBORw0KGgo=' }))
+      h.click('Search Image with Google Lens')
+      await settle()
+      expect(worlds).toHaveLength(2)
+      expect(worlds[1]!.frameId).toBeUndefined()
+      expect(worlds[1]!.code).toContain('"data:image/png;base64,iVBORw0KGgo="')
+      expect(h.viewCalls.some((c) => c.startsWith('executeJavaScript('))).toBe(false)
+    })
+
+    it('runs the script through executeJavaScript on a host without a private world (the phone’s WebView evaluates in the main world only)', async () => {
+      const h = pageHarness(ANDROID, { formFactor: 'phone', pageScript: () => FETCHED })
+      imageMenu(h, IMAGE)
+      h.click('Search Image with Google Lens')
+      await settle()
+      expect(h.viewCalls.filter((c) => c.startsWith('executeJavaScript('))).toHaveLength(1)
+      expect(posted(h)).not.toBeNull()
+    })
+
+    it('takes the address route for an http(s) image the host lists above the cap, fetching nothing from the page and toasting nothing', async () => {
+      const h = pageHarness(DESKTOP, {
+        pageScript: () => FETCHED,
+        view: { readImageResource: () => Promise.resolve('too-large' as const) }
+      })
+      imageMenu(h, IMAGE)
+      h.click('Search Image with Google Lens')
+      await settle()
+      expect(openedBeside(h)?.url).toBe(
+        `https://lens.google.com/uploadbyurl?url=${encodeURIComponent(IMAGE)}`
+      )
+      expect(h.toasts).toEqual([])
+      expect(posted(h)).toBeNull()
+      // The listing refused it before any transfer: the page's script never ran.
+      expect(h.viewCalls.some((c) => /^executeJavaScript(InPrivateWorld)?\(/.test(c))).toBe(false)
+    })
+
+    it('falls back to the address form for an http(s) image no path could read (today’s row), with no POST', async () => {
+      const h = pageHarness(DESKTOP, {
+        pageScript: () => ({ ok: false, reason: 'fetch-failed' }),
+        view: { readImageResource: () => Promise.resolve(null) }
+      })
+      imageMenu(h, IMAGE)
+      h.click('Search Image with Google Lens')
+      await settle()
+      const opened = openedBeside(h)
+      expect(opened?.url).toBe(
+        `https://lens.google.com/uploadbyurl?url=${encodeURIComponent(IMAGE)}`
+      )
+      expect(opened?.openerTabId).toBe(h.tabId)
+      expect(posted(h)).toBeNull()
+      expect(h.viewCalls).toContain(`loadURL(${JSON.stringify(opened?.url)})`)
+    })
+
+    it('says so for a data: image no path could read: no address to fall back to, a toast, no tab', async () => {
+      const h = pageHarness(DESKTOP, { pageScript: () => ({ ok: false, reason: 'decode-failed' }) })
+      imageMenu(h, 'data:image/png;base64,iVBORw0KGgo=')
+      const before = h.win.activeSpace().tabIds.length
+      h.click('Search Image with Google Lens')
+      await settle()
+      // A failure: the error kind; the product's refusals are uncontracted and stated of the thing
+      // ("This page cannot be shared"), the pair reading as a pair (§9.1, §9.33).
+      expect(h.toasts).toEqual([{ message: 'This image cannot be read', kind: 'error' }])
+      expect(h.win.activeSpace().tabIds.length).toBe(before)
+      // The host's read is for an http(s) image's response; a data: image has none.
+      expect(h.viewCalls.some((c) => c.startsWith('readImageResource('))).toBe(false)
+    })
+
+    it('opens the address form for an engine with a template alone (Yandex), as before', () => {
+      const h = pageHarness()
+      h.browser.handleCommand(h.win, 'settings.update', {
+        searchEngines: [YANDEX],
+        searchEngineId: YANDEX.id
+      })
+      imageMenu(h, IMAGE)
+      h.click('Search Image with Yandex')
+      const opened = openedBeside(h)
+      expect(opened?.url).toBe(
+        `https://yandex.com/images/search?rpt=imageview&url=${encodeURIComponent(IMAGE)}`
+      )
+      expect(opened?.openerTabId).toBe(h.tabId)
+      expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(opened?.id)
+      expect(h.viewCalls.some((c) => /^executeJavaScript(InPrivateWorld)?\(/.test(c))).toBe(false)
+    })
+
+    it('reaches the phone’s image sheet through the same template: after Copy Image Address, before Share Image…, the data: image included', async () => {
+      const h = pageHarness(ANDROID, { formFactor: 'phone', pageScript: () => FETCHED })
       const menu = imageMenu(h, IMAGE)
       expect(menu.indexOf('Search Image with Google Lens')).toBe(
         menu.indexOf('Copy Image Address') + 1
       )
       expect(menu.indexOf('Share Image…')).toBe(menu.indexOf('Search Image with Google Lens') + 1)
-      expect(imageMenu(h, 'data:image/gif;base64,R0lGOD')).not.toContain(
-        'Search Image with Google Lens'
+      const data = imageMenu(h, 'data:image/gif;base64,R0lGOD')
+      expect(data.indexOf('Search Image with Google Lens')).toBe(
+        data.indexOf('Copy Image Address') + 1
       )
+      // The phone's pick goes the same way: the script, the POST tab beside the page.
+      h.click('Search Image with Google Lens')
+      await settle()
+      expect(posted(h)?.url).toBe('https://lens.google.com/v3/upload')
+      expect(field(posted(h)!.post, 'sbisrc')).toEqual({
+        name: 'sbisrc',
+        value: 'Zenium 1.2.3 Android'
+      })
+      expect(field(posted(h)!.post, 'image_url')).toBeUndefined()
       // Bing as the engine: its own product, in the same seat.
+      h.browser.tabs.activateTab(h.tabId, h.win)
       h.browser.handleCommand(h.win, 'settings.update', { searchEngineId: 'bing' })
       const bing = imageMenu(h, IMAGE)
       expect(bing.indexOf('Search Image with Bing')).toBe(bing.indexOf('Copy Image Address') + 1)
@@ -4748,7 +5113,7 @@ describe('Send to your devices (ID-27)', () => {
     expect(menu.indexOf('Save and Share > Send to Work laptop')).toBe(
       menu.indexOf('Save and Share > Print…') + 1
     )
-    expect(menu.indexOf('Save and Share > Web Capture…')).toBe(
+    expect(menu.indexOf('Save and Share > Screenshot…')).toBe(
       menu.indexOf('Save and Share > Save Page As') + 1
     )
     expect(menu[menu.indexOf('Save and Share > Send to Work laptop') + 1]).toBe('-')

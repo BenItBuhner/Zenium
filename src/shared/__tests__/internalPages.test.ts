@@ -47,7 +47,8 @@ describe('the page registry', () => {
     // Security (the remembered per-site answers and the session's sign-ins) last among them; then
     // the browser-wide group past the first hairline: Sync, then Import beside it as Chrome keeps
     // its "Import bookmarks and settings" (ID-23), Accessibility, Keyboard Shortcuts, Default
-    // Browser (the desktop platforms alone), Updates; About past the second.
+    // Browser (the desktop platforms alone), Updates, Reset Settings (Chrome's foot of the list,
+    // the desktop and tablet shells'; settings-70); About past the second.
     expect(SETTINGS_SECTIONS.map((s) => s.id)).toEqual([
       'look',
       'compact',
@@ -74,8 +75,24 @@ describe('the page registry', () => {
       'shortcuts',
       'default-browser',
       'updates',
+      'reset',
       'about'
     ])
+  })
+
+  it('keeps Reset Settings to the desktop and tablet shells, right before About (settings-70)', () => {
+    const reset = SETTINGS_SECTIONS.find((s) => s.id === 'reset')!
+    expect(reset).toMatchObject({ label: 'Reset Settings', layouts: ['desktop', 'tablet'] })
+    expect(reset.requires).toBeUndefined()
+    expect(reset.platforms).toBeUndefined()
+    for (const layout of ['desktop', 'tablet'] as const) {
+      const ids = availableSections(INTERNAL_PAGES.settings, ALL, layout).map((s) => s.id)
+      expect(ids.indexOf('reset')).toBe(ids.indexOf('about') - 1)
+    }
+    expect(availableSections(INTERNAL_PAGES.settings, ALL, 'phone').map((s) => s.id)).not.toContain(
+      'reset'
+    )
+    expect(matchSections(SETTINGS_SECTIONS, 'restore defaults').map((s) => s.id)).toEqual(['reset'])
   })
 
   it('keeps section ids URL safe and unique', () => {
@@ -492,7 +509,7 @@ describe('the landing list', () => {
     expect(runs[0][0]).toBe('look')
     expect(runs[0]).not.toContain('sync')
     expect(runs[0]).not.toContain('accessibility')
-    expect(runs[1]).toEqual(['sync', 'import', 'accessibility', 'shortcuts', 'updates'])
+    expect(runs[1]).toEqual(['sync', 'import', 'accessibility', 'shortcuts', 'updates', 'reset'])
     expect(runs[2]).toEqual(['about'])
   })
 

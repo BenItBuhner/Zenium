@@ -7,6 +7,25 @@ import type { ToolResult } from './protocol'
  */
 export const FOREGROUND_LEASE_MS = 20_000
 
+/**
+ * A connected session quiet this long is a GHOST to the other agents: its groups may be adopted
+ * as an orphan's. A client that drops without a DELETE – a killed shim, an editor's HTTP session
+ * lost on restart – keeps its record "connected" until the idle park half an hour on, and until
+ * then its groups were refused to everyone ("belongs to an agent which is still connected"),
+ * the user's permission or not. Two minutes is longer than any tool call takes, so a working
+ * agent is never mistaken for a ghost; `force: true` covers the rest.
+ */
+export const GHOST_IDLE_MS = 2 * 60 * 1000
+
+/** A quiet spell, as listings and notices say it: "40 s", "3 min", "2 h". */
+export function describeIdle(ms: number): string {
+  const s = Math.round(ms / 1000)
+  if (s < 90) return `${s} s`
+  const min = Math.round(s / 60)
+  if (min < 90) return `${min} min`
+  return `${Math.round(min / 60)} h`
+}
+
 export function textError(message: string): ToolResult {
   return { content: [{ type: 'text', text: `Error: ${message}` }], isError: true }
 }

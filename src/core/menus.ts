@@ -9,7 +9,23 @@ import {
   type PageContextParams,
   type TabView
 } from './platform'
-import { buildSearchUrl, imageSearchFor } from '../shared/search'
+import {
+  buildSearchUrl,
+  imageSearchByAddress,
+  imageSearchFor,
+  type ImageSearchByUpload
+} from '../shared/search'
+import {
+  IMAGE_UPLOAD_MAX_BYTES,
+  expandImagePost,
+  imageFetchScript,
+  imageResourceDataUrl,
+  imageSearchSource,
+  parseImageFetchResult,
+  type ImageFetchResult,
+  type ImagePost,
+  type ImageThumbnail
+} from '../shared/imageUpload'
 import { copyConfirmation } from '../shared/clipboard'
 import { internalPageOf } from '../shared/internalPages'
 import { bindingFor, formatChord, toAccelerator } from '../shared/shortcuts'
@@ -36,6 +52,7 @@ import {
   type Folder,
   type MenuAnchor,
   type MenuHeader,
+  type ImageThumbnailBounds,
   type MenuItemDescriptor,
   type NavigationDirection,
   type NavigationSnapshotEntry,
@@ -787,19 +804,22 @@ export class Menus {
       })
     }
     if (save && touchLayout(win.formFactor)) transfer.push(save)
+    // The reading list's row (W6-1) joins the transfer group on every layout since HB-20
+    // (W6-D1): the phone reads the list from its panel, the tablet from its page; the touch
+    // hosts' link menus stay one menu (the lead's ruling after #492, `savedGroups.test.ts`).
+    // Its seat differs by host: the desktop's row closes the group after the share, where the
+    // link leaves the page for a list of the browser's; the touch hosts seat it BEFORE Share
+    // Link… (the design gate on #551 – the hand-off out of the app stays the group's last row,
+    // #492's rule, as Chrome for Android 152 keeps Read later before Share link).
+    const reading = navigable ? this.readingListLinkItem(url, linkText, win) : undefined
+    if (reading && touchLayout(win.formFactor)) transfer.push(reading)
     if (caps.share && navigable) {
       transfer.push({
         label: 'Share Link…',
         click: () => void this.browser.share({ url, tabId: tab.id }, win)
       })
     }
-    // The reading list's row (W6-1) closes the desktop's transfer group – after the copies and
-    // the share, where the link leaves the page for a list of the browser's. The desktop's
-    // alone: the touch hosts' link menus are pinned whole by the lead's ruling after #492
-    // (`savedGroups.test.ts`), and the phone has no list to read the page from yet.
-    if (win.formFactor === 'desktop' && navigable) {
-      transfer.push(this.readingListLinkItem(url, linkText, win))
-    }
+    if (reading && !touchLayout(win.formFactor)) transfer.push(reading)
     return [open, transfer]
   }
 
@@ -881,23 +901,19 @@ export class Menus {
         click: () => this.browser.copyText(src, 'Link copied', win)
       },
       // Chrome's "Search image with …" (CT-32): the default engine's reverse image search, in a
-      // tab beside this one and in front, as the menu's text search opens. An address only an
-      // engine can fetch – a `data:` or `blob:` image gets no row (`imageSearchFor`).
+      // tab beside this one and in front, as the menu's text search opens. An engine that takes
+      // the bytes (`post`) gets them – a `data:` or `blob:` image included – as Chrome uploads
+      // its thumbnail; an engine with a template alone gets the address, so only an http(s)
+      // image has its row (`imageSearchFor`).
       ...(search
         ? [
             {
               label: `Search Image with ${search.engine}`,
-              click: () =>
-                tabs.createTab(
-                  {
-                    url: search.url,
-                    active: true,
-                    afterTabId: tab.id,
-                    containerId: tab.containerId,
-                    openerTabId: tab.id
-                  },
-                  win
-                )
+              click: () => {
+                if (search.kind === 'upload')
+                  void this.searchImageByUpload(tab, view, params, search, win)
+                else this.openImageSearch(tab, search.url, win)
+              }
             }
           ]
         : []),
@@ -1432,14 +1448,14 @@ export class Menus {
     ): void => this.browser.actions.run(action, { sourceTabId: tab.id, win })
     const readerOpen = reader.isReaderUrl(tab.url)
     // The captures, as the app menu has them (the #396 review's ruling 3, extended to this menu
-    // by the lead on #414): on the desktop one Web Capture… row – Edge's, whose overlay offers
+    // by the lead on #414): on the desktop one Screenshot… row – Edge's, whose overlay offers
     // the visible area, the full page and an area select, so a menu that said capture three
     // times (Take Screenshot, Capture Full Page, Capture Page…) says it once, with the chord the
     // key table gives `capture.start` (Ctrl+Shift+S in the Chrome preset) after the label. A
     // touch host has no overlay and keeps the two one-shot rows.
     const captures: Template =
       win.formFactor === 'desktop'
-        ? [{ label: 'Web Capture…', action: 'capture.start', click: () => run('capture.start') }]
+        ? [{ label: 'Screenshot…', action: 'capture.start', click: () => run('capture.start') }]
         : [
             {
               label: 'Take Screenshot',
@@ -1876,6 +1892,126 @@ export class Menus {
     )
     if (parent.splitGroupId) tabs.addToSplit(parent.splitGroupId, tab.id)
     else tabs.createSplit([parent.id, tab.id], 'vertical', win)
+  }
+
+  /** The image search's tab: beside the page and in front, as the menu's text search opens. */
+  private openImageSearch(tab: Tab, url: string, win: ZenWindow, post?: ImagePost): void {
+    this.browser.tabs.createTab(
+      {
+        url,
+        active: true,
+        afterTabId: tab.id,
+        containerId: tab.containerId,
+        openerTabId: tab.id,
+        ...(post ? { post } : {})
+      },
+      win
+    )
+  }
+
+  /**
+   * "Search Image with <engine>" for an engine that takes the bytes (CT-32, Chrome's
+   * `image_url_post_params`): the image is read where it can be read – the bytes the host's
+   * renderer holds (`readImageResource`, the desktop's DevTools resource read), else the page's
+   * own script fetches it with the page's cookies and referrer, or reads a `data:`/`blob:`
+   * image in place – and downscaled in the page to the engine's thumbnail bounds
+   * (`imageThumbnail`, Chrome's numbers for the engine's path: `post.thumbnail`); then the
+   * engine's params expand to the body's fields and a new tab beside the page POSTs them
+   * (`createTab`'s `post`). An image above the cap, or one no path could read, falls back to
+   * the address form for an http(s) address (today's row, silently) and is refused with a
+   * toast otherwise – a `data:`/`blob:` image has no address to take. The bytes leave the
+   * device to the engine the user chose – as Chrome's row sends them – and the address
+   * travels only for an http(s) image.
+   */
+  private async searchImageByUpload(
+    tab: Tab,
+    view: TabView,
+    params: PageContextParams,
+    search: ImageSearchByUpload,
+    win: ZenWindow
+  ): Promise<void> {
+    const { state, platform } = this.browser
+    const src = params.srcURL
+    const thumbnail = await this.imageThumbnail(view, src, search.post.thumbnail, params.frameId)
+    if (!thumbnail || thumbnail === 'too-large') {
+      // A refusal is owed only where nothing else can be done: an http(s) image over the cap
+      // or unread takes the address route; a `data:`/`blob:` image has none to take.
+      const address = imageSearchByAddress(state.defaultSearchEngine(), src)
+      if (address) this.openImageSearch(tab, address.url, win)
+      else if (thumbnail === 'too-large')
+        this.browser.toast('This image is too large to search', 'info', win)
+      else this.browser.toast('This image cannot be read', 'error', win)
+      return
+    }
+    const post = expandImagePost(search.post, {
+      thumbnail,
+      imageUrl: search.imageUrl,
+      source: imageSearchSource(state.version, platform.info.os)
+    })
+    this.openImageSearch(tab, search.post.url, win, post)
+  }
+
+  /**
+   * The image's thumbnail, read where the image can be read. For an http(s) image the host's
+   * copy first (`readImageResource`, the desktop's DevTools read of the bytes the renderer
+   * holds: the page's own response, no second request, a cross-origin image without CORS
+   * headers included), handed to the page's script as a `data:` address for the canvas; the
+   * host's copy comes before any fetch from the page because a refused cross-origin fetch
+   * evicts it. Then the page's own fetch of the address (`imageFetchScript`, run in the
+   * clicked frame: the page's cookies and referrer; a `data:`/`blob:` image read in place),
+   * downscaled within the engine's `bounds`. `'too-large'` past the cap, null when neither
+   * could read it.
+   */
+  private async imageThumbnail(
+    view: TabView,
+    src: string,
+    bounds: ImageThumbnailBounds,
+    frameId?: number
+  ): Promise<ImageThumbnail | 'too-large' | null> {
+    if (view.readImageResource && /^https?:\/\//i.test(src)) {
+      const held = await Promise.resolve()
+        .then(() => view.readImageResource!(src, IMAGE_UPLOAD_MAX_BYTES))
+        .catch(() => null)
+      if (held === 'too-large') return 'too-large'
+      if (held) {
+        const result = await this.runImageFetchScript(
+          view,
+          imageResourceDataUrl(held),
+          bounds,
+          frameId
+        )
+        if (result?.ok) return result.thumbnail
+        if (result?.reason === 'too-large') return 'too-large'
+      }
+    }
+    const result = await this.runImageFetchScript(view, src, bounds, frameId)
+    if (result?.ok) return result.thumbnail
+    if (result?.reason === 'too-large') return 'too-large'
+    return null
+  }
+
+  /**
+   * The thumbnail script, in the clicked frame: in the browser's private world where the host
+   * has one (`executeJavaScriptInPrivateWorld`, the desktop – the page's patched built-ins
+   * cannot pick the bytes the search uploads), else the page's main world (the phone). The
+   * answer is checked, never trusted raw.
+   */
+  private async runImageFetchScript(
+    view: TabView,
+    src: string,
+    bounds: ImageThumbnailBounds,
+    frameId?: number
+  ): Promise<ImageFetchResult | null> {
+    const code = imageFetchScript(src, bounds)
+    const frame = frameId || undefined
+    const raw = await Promise.resolve()
+      .then(() =>
+        view.executeJavaScriptInPrivateWorld
+          ? view.executeJavaScriptInPrivateWorld(code, frame)
+          : view.executeJavaScript(code, frame)
+      )
+      .catch(() => null)
+    return parseImageFetchResult(raw)
   }
 
   private async copyImage(
@@ -3538,11 +3674,11 @@ export class Menus {
    * every layout, in two orders. The sidebar layouts (desktop and tablet) take Firefox's groups
    * (design language v2 §6 "Menus"): the tabs and windows; the library – bookmarks, history,
    * downloads, passwords, add-ons; the page's actions, closing with Chrome's Save and share –
-   * Save Page As…, Create Shortcut…, Web Capture…, Print…, Share…, Send to Your Devices – as
+   * Save Page As…, Create Shortcut…, Screenshot…, Print…, Share…, Send to Your Devices – as
    * the submenu Chrome folds it into (shortcuts-menus-120; Firefox keeps save and print in the
    * flat list, and a flat group here spent rows the menu has not got); the app's – Settings,
    * More Tools, Help, Quit, Firefox's order and §6's ("settings, tools, help, quit") – about
-   * eighteen rows and three separators (§6's ceiling; a fourth under the "Now Playing…" row
+   * eighteen rows and three separators (§6's ceiling; a fourth under the "Media Controls…" row
    * while the media hub's button has folded), so the menu stands on an 800 px window without
    * scrolling (§6: a menu is exempt from §9.20's 60% cap and takes the room to the window's
    * bottom margin). What Firefox's count leaves out is not lost but moves into a submenu:
@@ -3556,7 +3692,7 @@ export class Menus {
    * that only act on a window (Chrome's phone menu has none of them either). An item the host
    * cannot do is left out of either rather than greyed (`caps`). `mediaHubFolded` is the
    * chrome's word that the media hub's toolbar button is off the row (§9.29): the menu then
-   * heads with the "Now Playing…" row in its stead.
+   * heads with the "Media Controls…" row in its stead.
    */
   showAppMenu(
     win: ZenWindow,
@@ -3694,7 +3830,8 @@ export class Menus {
         ...desktop({ label: 'Show Bookmarks Bar', submenu: this.bookmarksBarSubmenu(win) }),
         // Chrome's Reading list ▸ (sidepanel-54, W6-1), seated after Show Bookmarks as Chrome's
         // Bookmarks and lists ▸ seats it: the tab's add (or its remove) and the list itself.
-        // The sidebar layouts' (the page is theirs); the phone has no form of the list yet.
+        // The sidebar layouts' (the page is theirs); the phone's flat list carries the two as
+        // rows of its own (`readingListShow`, `readingListVerb`; HB-20).
         ...sidebar({
           label: 'Reading List',
           submenu: [
@@ -3747,6 +3884,24 @@ export class Menus {
       action: 'downloads.open',
       click: () => this.browser.pages.open('downloads', undefined, win)
     }
+    // The phone's reading list (HB-20, W6-D1), on the desktop's shared model: the list itself
+    // as a library row – the noun, as the phone's History and Downloads rows are, where the
+    // sidebar layouts fold Show Reading List into Bookmarks ▸ Reading List ▸ – and the page's
+    // verb, Add to Reading List or Remove from Reading List (`readingListLabel(…, 'page')`, the
+    // star's words: the phone's bookmark control is the icon row's star, so the verb stands
+    // among the page's saves, before Add to Home Screen). The two alternatives of the verb
+    // never stand together and share one key for the user's order (`homeScreenItems`' rule);
+    // the row is greyed, not gone, for a page the list does not hold (`zen://`, a blank tab),
+    // so the menu keeps its shape (§9.17).
+    const readingListShow = phone
+      ? [{ ...this.showReadingListItem(win), label: 'Reading List' }]
+      : []
+    const readingListVerb = when(
+      phone,
+      active
+        ? { ...this.readingListTabItem(active, win, 'page'), key: 'row.readingList' }
+        : { label: readingListLabel(false, 'page'), key: 'row.readingList', enabled: false }
+    )
     const passwords = when(caps.passwords, {
       label: 'Passwords',
       click: () => this.browser.emit('overlay.open', { kind: 'passwords' }, win)
@@ -3896,7 +4051,7 @@ export class Menus {
     // Edge's "Web capture" row of its page group (Print, Web capture, Share): the desktop's
     // overlay over the dimmed page; the tablet's menu keeps the two captures in More Tools.
     const webCapture = desktop({
-      label: 'Web Capture…',
+      label: 'Screenshot…',
       action: 'capture.start',
       enabled: Boolean(active),
       click: () =>
@@ -4042,6 +4197,7 @@ export class Menus {
         ...keyed('row.newPrivateWindow', ...newPrivateWindow),
         ...hairline(),
         ...keyed('row.bookmarks', bookmarks),
+        ...keyed('row.readingListShow', ...readingListShow),
         ...keyed('row.history', showHistory('History')),
         ...keyed('row.downloads', downloads),
         ...keyed('row.passwords', ...passwords),
@@ -4059,6 +4215,7 @@ export class Menus {
         ...keyed('row.translate', ...translate),
         ...keyed('row.share', ...share),
         ...keyed('row.sendToDevices', ...sendToDevices),
+        ...keyed('row.readingList', ...readingListVerb),
         ...keyed('row.homeScreen', ...homeScreen),
         ...keyed('row.print', ...print),
         ...keyed('row.screenshot', screenshot),
@@ -4108,7 +4265,7 @@ export class Menus {
         // folded (design language v2 §9.29: the sidebar's width tier folds it at 240, and this
         // row is where it goes; with the button up, the button is the hub). The phone has its
         // own chip and sheet (§9.33).
-        ...when(Boolean(options.mediaHubFolded), ...this.nowPlayingRow(win)),
+        ...when(Boolean(options.mediaHubFolded), ...this.mediaControlsRow(win)),
         // Forward folded off the desktop's bar (Look and Feel › Customise toolbar, settings-36)
         // heads the menu the same way: the row is where the button went.
         ...desktop(...this.foldedForwardRow(win, active)),
@@ -4151,7 +4308,7 @@ export class Menus {
         ...pageControls,
         // Chrome's Save and share (shortcuts-menus-120) closes the page group as its last row,
         // folded into a submenu as Chrome folds it (the #396 review's ruling 1): the saves first
-        // – Save Page As…, the install row (Create Shortcut…, or Install <app>…), Web Capture…
+        // – Save Page As…, the install row (Create Shortcut…, or Install <app>…), Screenshot…
         // between the save and the print where Edge's menu keeps it, Print… – then the shares,
         // Share… and Send to Your Devices. No Cast row: Zenium has no cast target. Manage Apps
         // rides under the install row as Edge's Apps pairs them (shortcuts-menus-138). Folded,
@@ -4183,7 +4340,7 @@ export class Menus {
           // Fullscreen rides the zoom submenu where there is one (Firefox's zoom row); a host
           // whose zoom is the sheet keeps it here with the other window toggles.
           // The two captures are the tablet's: on the desktop they fold into Save and Share's
-          // Web Capture… (the #396 review's ruling 3), whose overlay takes the visible area and
+          // Screenshot… (the #396 review's ruling 3), whose overlay takes the visible area and
           // the full page both; the desktop's page context menu folds its three the same way
           // (`pageGroup`), the touch hosts' keeps the two one-shot rows.
           submenu: tidySeparators([
@@ -4288,11 +4445,15 @@ export class Menus {
   }
 
   /**
-   * The "Now Playing…" row at the head of the desktop app menu (design language v2 §9.29,
+   * The "Media Controls…" row at the head of the desktop app menu (design language v2 §9.29,
    * §9.32): the media hub's toolbar button is tiered by the sidebar's width like the pill's
-   * chips, and where it has folded (the 240 sidebar) the menu carries the window's live media
+   * chips, and where it has folded (the 240 sidebar) the menu carries the window's media
    * instead – Firefox's badge on its menu button, with the row at the menu's top saying what
-   * the badge is about. The row is its name alone – no picture, no title: the app menu is
+   * the badge is about. The row bears the button's own name, "Media Controls…", not "Now
+   * Playing…": a paused or ended session lingers in the hub for Chrome's hour (W7-5, the #552
+   * ruling), and a row called Now Playing would lie through it – one object, one name, standing
+   * or folded; the accent dot on ⋯ marks playing alone, so through the paused hour the row
+   * stands without it. The row is its name alone – no picture, no title: the app menu is
    * renderer-drawn on every desktop, and §9.29's rule for a renderer-drawn menu is all or
    * nothing per menu, a submenu counting as its own – Firefox's app menu has no icons, and a
    * glyph column reserved only while a session plays would move every label between one
@@ -4309,7 +4470,7 @@ export class Menus {
    * (`shared/mediaHub.ts`'s order – the session first, then what plays – decides that there is
    * a card, not what the row shows), and the row is that hub's, not another window's.
    */
-  private nowPlayingRow(win: ZenWindow): Template {
+  private mediaControlsRow(win: ZenWindow): Template {
     const { state, tabs } = this.browser
     const entries = orderMediaEntries(
       (state.media ?? []).filter((m) => {
@@ -4320,7 +4481,7 @@ export class Menus {
     if (entries.length === 0) return []
     return [
       {
-        label: 'Now Playing…',
+        label: 'Media Controls…',
         click: () => this.browser.emit('mediahub.open', undefined, win)
       },
       { type: 'separator' }
@@ -4334,7 +4495,7 @@ export class Menus {
    * language v2 §9.30), so the menu keeps its shape from one opening to the next. Nothing
    * while the button is pinned – the bar is Forward then, and §9.13's rule is one home per
    * control. The other pinnable controls' rows (Bookmark This Page, Reader View, Translate
-   * Page…, Now Playing…) are in the menu already; only Forward had none.
+   * Page…, Media Controls…) are in the menu already; only Forward had none.
    */
   private foldedForwardRow(win: ZenWindow, active: Tab | undefined): Template {
     if (win.formFactor !== 'desktop') return []

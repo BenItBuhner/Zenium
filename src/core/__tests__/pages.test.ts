@@ -1431,6 +1431,39 @@ describe('the page tabs follow the window’s class (the class-change seam, W6-S
     expect(activeTab(downloads.f)?.id).toBe(downloads.site.id)
   })
 
+  it('hands a tablet’s zen://reading-list tab to the phone’s Reading list panel the same way (HB-20)', () => {
+    const { f, site, tabId } = tabletWith('reading-list')
+    const before = overlays(f).length
+    report(f, 'phone')
+    expect(f.browser.tabs.tab(tabId)).toBeUndefined()
+    expect(spaceUrls(f).some((u) => u.startsWith('zen://reading-list'))).toBe(false)
+    expect(activeTab(f)?.id).toBe(site.id)
+    expect(overlays(f).slice(before)).toEqual([
+      { kind: 'reading-list', folderId: undefined, reveal: true }
+    ])
+    expect(f.browser.session.summaries()).toEqual([])
+    // On the phone the ask is the panel, never a tab: the menu row's action and a typed address alike.
+    expect(f.browser.pages.opensPageAsTab('reading-list', f.win)).toBe(false)
+    expect(f.browser.pages.open('reading-list', null, f.win)).toBeNull()
+    expect(overlays(f).pop()).toEqual({
+      kind: 'reading-list',
+      section: undefined,
+      folderId: undefined
+    })
+    f.browser.actions.run('readingList.open', { sourceTabId: site.id, win: f.win })
+    expect(overlays(f).pop()).toEqual({
+      kind: 'reading-list',
+      section: undefined,
+      folderId: undefined
+    })
+    expect(spaceUrls(f).some((u) => u.startsWith('zen://reading-list'))).toBe(false)
+    // Widened back to the tablet class, the page is a tab again, as the desktop's is.
+    report(f, 'tablet')
+    expect(f.browser.pages.opensPageAsTab('reading-list', f.win)).toBe(true)
+    const again = f.browser.handleCommand(f.win, 'page.open', { id: 'reading-list' }) as string
+    expect(f.browser.tabs.tab(again)?.url).toBe('zen://reading-list')
+  })
+
   it('closes a page tab in the background without opening its sheet; the active one alone opens', () => {
     const { f, tabId: downloads } = tabletWith('downloads')
     const history = f.browser.handleCommand(f.win, 'page.open', { id: 'history' }) as string

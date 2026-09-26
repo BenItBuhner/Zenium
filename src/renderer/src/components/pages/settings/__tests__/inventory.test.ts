@@ -808,6 +808,8 @@ describe('the desktop Settings tab carries every row of the overlay panes it rep
       'Keyboard Shortcuts',
       'Default Browser',
       'Updates',
+      // settings-70: Chrome's "Reset settings" at the foot of its list (W7-6).
+      'Reset Settings',
       'About'
     ])
     // Accessibility was the overlay's `pageControls` category (false on Electron); the speech

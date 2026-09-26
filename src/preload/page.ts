@@ -46,6 +46,8 @@ import { installFormsScript } from '../shared/formsScript'
 import type { FormsCommand } from '../shared/forms'
 import { USER_SCRIPTS_CHANNELS } from '../shared/userScripts'
 import { installUserScripts } from './userScripts'
+import { PRIVATE_WORLD_CHANNELS } from '../shared/privateWorld'
+import { installPrivateWorld } from './privateWorld'
 import { completeChromeObject } from '../shared/chromeObject'
 import { installContentGuards } from '../shared/contentGuards'
 import { installNewTabPage } from '../shared/newTabPageScript'
@@ -135,6 +137,17 @@ installUserScripts({
   executeInIsolatedWorld: (worldId, code) =>
     webFrame.executeJavaScriptInIsolatedWorld(worldId, [{ code }]),
   setIsolatedWorldInfo: (worldId, info) => webFrame.setIsolatedWorldInfo(worldId, info)
+})
+// The browser's private world in THIS frame (`shared/privateWorld.ts`): the image-search
+// thumbnail script for an image in a sub-frame runs here, through the frame's own isolated-world
+// call, never in the page's main world. Every frame installs it; the top frame is reached by
+// `webContents.executeJavaScriptInIsolatedWorld` directly.
+installPrivateWorld({
+  onExecute: (listener) =>
+    ipcRenderer.on(PRIVATE_WORLD_CHANNELS.execute, (_event, raw) => listener(raw)),
+  executeInIsolatedWorld: (worldId, code) =>
+    webFrame.executeJavaScriptInIsolatedWorld(worldId, [{ code }]),
+  answer: (answer) => ipcRenderer.send(PRIVATE_WORLD_CHANNELS.answer, answer)
 })
 
 const send = (message: PageScriptMessage | PageMessage): void =>

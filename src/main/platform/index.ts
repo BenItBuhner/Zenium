@@ -25,6 +25,7 @@ import type {
 import { isNewTabUrl } from '../../shared/url'
 import { contentSettingId } from '../../shared/contentSettings'
 import { SCREEN_CAPTURE_INTENT_CHANNEL } from '../../shared/screenCapture'
+import { PRIVATE_WORLD_CHANNELS } from '../../shared/privateWorld'
 import {
   NOTIFICATION_PERMISSION_CHANNEL,
   NOTIFICATION_REQUEST_CHANNEL,
@@ -32,6 +33,7 @@ import {
 } from '../../shared/notifications'
 import { Browser } from '../../core/browser'
 import { macTitleBarDoubleClickAction } from '../../core/captionDoubleClick'
+import { MEDIA_HUB_INACTIVE_MS } from '../../core/mediaSession'
 import { isStorageAccessPermission, permissionSite } from '../../core/permissions'
 import type {
   AppHost,
@@ -39,6 +41,7 @@ import type {
   ConfirmOptions,
   DialogHost,
   LanguagesHost,
+  MediaHubHost,
   NetHost,
   PageFontsHost,
   PageMessage,
@@ -66,7 +69,7 @@ import { SessionManager, buildUserAgent, systemLocales } from './sessions'
 import { acceptLanguageList } from '../../shared/languages'
 import { installFaviconProtocol, installZenProtocol } from './protocol'
 import { chromiumLicencesResponder } from './licences'
-import { ElectronDownloads } from './downloads'
+import { ElectronDownloads, downloadDir } from './downloads'
 import { ElectronDownloadsShell } from './downloadsShell'
 import { ElectronMenus } from './menus'
 import { ElectronTabViewHost, copyImageFromUrl } from './views'
@@ -263,6 +266,8 @@ export class ElectronPlatform implements Platform {
   readonly agentSkills: SkillInstaller
   /** Linux: Zenium as an MPRIS player on the session bus (MW-18). */
   readonly mediaSession?: ElectronMpris
+  /** The media hub's linger for a paused session: Chrome's 60 minutes, or a drive's `ZEN_MEDIA_LINGER_MS`. */
+  readonly mediaHub: MediaHubHost = { inactiveAfterMs: mediaHubLingerMs() }
   /** Read aloud's voices and utterances over the hidden `speechSynthesis` page (CT-12 / CT-13). */
   readonly speech: ElectronSpeechHost = new ElectronSpeechHost(sharedSpeechEngine())
   readonly newTabBackground: ElectronNewTabBackground
@@ -345,11 +350,9 @@ export class ElectronPlatform implements Platform {
       markEndedByUser: (id) => this.views.noteEndedByUser(id)
     })
     this.screenCapture = new ElectronScreenCapture(this.views, () => this.browser.screenCapture)
-    this.shareSheet = new ElectronShareSheet(
-      () =>
-        resolveDownloadSettings(this.browser.state.settings).directory ?? app.getPath('downloads'),
-      (win) => browserWindowOf(win)
-    )
+    // The hub's Save writes where every other save goes (`downloadDir`: the configured folder,
+    // else the platform's Downloads – made, not $HOME, where Electron lands without an XDG dir).
+    this.shareSheet = new ElectronShareSheet(downloadDir, (win) => browserWindowOf(win))
     if (process.platform === 'linux') this.mediaSession = new ElectronMpris(() => this.browser)
     // The core's Safe Browsing service exists once the browser does (`start`); no request runs before.
     this.privacy = new ElectronPrivacy(
@@ -941,6 +944,13 @@ export class ElectronPlatform implements Platform {
     ipcMain.on('zen:page', (event, message: PageMessage) => {
       this.views.viewForWebContents(event.sender)?.dispatchPageMessage(message)
     })
+    // A page frame's answer to a script the host ran in the browser's private world of that
+    // frame (`shared/privateWorld.ts`: the image-search thumbnail in a sub-frame). Only a tab
+    // page's frame is heard, and the relay takes the answer from the frame it asked alone.
+    ipcMain.on(PRIVATE_WORLD_CHANNELS.answer, (event, raw: unknown) => {
+      if (!this.views.viewForWebContents(event.sender)) return
+      this.views.privateWorld.answer(event.senderFrame, raw)
+    })
     // A page's `alert` / `confirm` / `prompt`: the renderer blocks on `sendSync` until
     // `returnValue` is set, which happens once the chrome's dialog is answered. Every path must
     // set it, or the page would hang.
@@ -1041,6 +1051,18 @@ export class ElectronPlatform implements Platform {
       }
     })
   }
+}
+
+/**
+ * Test hook: `ZEN_MEDIA_LINGER_MS=3000` shortens the media hub's linger for a paused session
+ * (`MEDIA_HUB_INACTIVE_MS`, Chrome's 60 minutes) so a drive can watch it run out within its
+ * budget. Unset in normal runs; anything but a positive whole number of milliseconds is ignored.
+ */
+function mediaHubLingerMs(): number {
+  const override = process.env['ZEN_MEDIA_LINGER_MS']
+  if (!override) return MEDIA_HUB_INACTIVE_MS
+  const ms = Number(override)
+  return Number.isInteger(ms) && ms > 0 ? ms : MEDIA_HUB_INACTIVE_MS
 }
 
 /**

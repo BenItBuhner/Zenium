@@ -743,7 +743,7 @@ function Popover({ menu }: { menu: MenuDescriptor }): JSX.Element {
   // The button keeps its pressed fill and says what it has open while the menu stands (§9.20);
   // at rest it is the toolbar's own again. Held through the shared count, since the media hub's
   // popover hangs from the same "⋯" while its toolbar button has folded (§9.29) and opens from
-  // this menu's "Now Playing…" row as the menu leaves: the button stays expanded while either
+  // this menu's "Media Controls…" row as the menu leaves: the button stays expanded while either
   // stands, and the menu's leave takes nothing off it that the hub still holds.
   useLayoutEffect(() => (button ? holdExpanded(button) : undefined), [button])
 

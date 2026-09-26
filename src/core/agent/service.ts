@@ -9,6 +9,7 @@ import type {
   Tab
 } from '../../shared/types'
 import { emptyAgentServerStatus, emptyAgentSkillStatus } from '../../shared/defaults'
+import { isBlankTabUrl } from '../../shared/url'
 import type { Browser } from '../browser'
 import {
   createFolder,
@@ -52,7 +53,15 @@ import {
   agentInstructions,
   type ToolContext
 } from './tools'
-import { FOREGROUND_LEASE_MS, randomToken, sleep, textError, titleOf } from './util'
+import {
+  describeIdle,
+  FOREGROUND_LEASE_MS,
+  GHOST_IDLE_MS,
+  randomToken,
+  sleep,
+  textError,
+  titleOf
+} from './util'
 
 export { FOREGROUND_LEASE_MS, titleOf }
 
@@ -78,6 +87,9 @@ const SESSION_IDLE_MS = 30 * 60 * 1000
 const SESSIONLESS_IDLE_MS = 10 * 60 * 1000
 /** A parked session nobody came back for is deleted after this long. */
 const PARKED_TTL_MS = 24 * 60 * 60 * 1000
+/** What a foreground call that had to stay in the background for want of the screen is told. */
+const TAKE_SCREEN_HINT =
+  'zen_mode {"mode":"foreground","takeScreen":true} lets your actions bring your tabs in front (only if the user wants that); zen_mode {"mode":"background"} works off screen without this note.'
 /** Client identities remembered for resumed sessions (name and version by token, agent and address). */
 const KNOWN_CLIENTS_MAX = 50
 /** `Mcp-Session-Id` as the spec has it: visible ASCII, and a length nothing legitimate exceeds. */
@@ -108,6 +120,13 @@ export interface AgentSession extends McpSession {
   version: string
   color: string
   mode: AgentMode
+  /**
+   * The agent asked for the screen (`zen_mode {mode: "foreground", takeScreen: true}`): its
+   * foreground actions may bring its tab in front of the user – switching the user's space and
+   * active tab. Without it (and without the user's foreground default, see `mayTakeScreen`), a
+   * foreground action runs in front only on a tab the user is already looking at.
+   */
+  takeScreen: boolean
   transport: 'http' | 'stdio'
   connectedAt: number
   lastActiveAt: number
@@ -157,12 +176,18 @@ interface Memo {
   groups: Map<string, string>
 }
 
+/**
+ * Why a foreground call ran in the background: another agent holds the screen lease, or the tab
+ * is not what the user is looking at and the session has not taken the screen.
+ */
+export type DegradeCause = 'lease' | 'screen'
+
 /** Per tool call, reset when the call starts (calls of one session never overlap). */
 interface CallState {
   /** Lines the result carries above the tool's own text (the foreground degrade, for one). */
   notes: string[]
-  /** Foreground mode was asked for but another agent holds the screen: acted in background. */
-  degraded: boolean
+  /** Foreground mode was asked for but the call acted in the background, and why. */
+  degraded: DegradeCause | null
 }
 
 /** A group whose owner session is gone: kept for another session to adopt, never auto-closed. */
@@ -548,6 +573,7 @@ export class AgentService implements SessionStore, McpHandlers {
       version: '',
       color: this.pickColor(),
       mode: this.settings.defaultMode,
+      takeScreen: false,
       transport: init.transport,
       connectedAt: now,
       lastActiveAt: now,
@@ -903,7 +929,7 @@ export class AgentService implements SessionStore, McpHandlers {
   }
 
   private beginCall(s: AgentSession): CallState {
-    const state: CallState = { notes: [], degraded: false }
+    const state: CallState = { notes: [], degraded: null }
     this.callStates.set(s.id, state)
     return state
   }
@@ -914,7 +940,19 @@ export class AgentService implements SessionStore, McpHandlers {
 
   /** Whether the running call had to act in the background although the agent is in foreground mode. */
   degraded(s: AgentSession): boolean {
-    return this.callStates.get(s.id)?.degraded ?? false
+    return this.degradedBecause(s) !== null
+  }
+
+  /** Why the running call acted in the background in foreground mode, or null when it did not. */
+  degradedBecause(s: AgentSession): DegradeCause | null {
+    return this.callStates.get(s.id)?.degraded ?? null
+  }
+
+  /** The call runs in the background although the agent is in foreground mode; the result says why. */
+  private degrade(s: AgentSession, cause: DegradeCause, note: string): void {
+    const state = this.callState(s)
+    if (!state.notes.includes(note)) state.notes.push(note)
+    state.degraded = cause
   }
 
   /** Queued notices and the call's notes go above the tool's own text, then the queue drains. */
@@ -1340,7 +1378,7 @@ export class AgentService implements SessionStore, McpHandlers {
       case 'you':
         return 'yours'
       case 'agent':
-        return `owned by ${JSON.stringify(o.session.name)}`
+        return `owned by ${JSON.stringify(o.session.name)}${this.ghostLabel(o.session)}`
       case 'orphaned':
         return o.was ? `orphaned, was ${JSON.stringify(o.was)}` : 'orphaned'
       default:
@@ -1474,24 +1512,80 @@ export class AgentService implements SessionStore, McpHandlers {
     throw new RpcError(-32002, `Unknown group "${wanted}" – it may have been removed. ${yours()}`)
   }
 
+  /** ", quiet 5 min – adoptable" after a ghost's name in listings; empty for a working agent. */
+  ghostLabel(o: AgentSession): string {
+    return this.isGhost(o) ? `, quiet ${describeIdle(this.idleFor(o))} – adoptable` : ''
+  }
+
+  /** How long the session has been quiet, in ms. */
+  idleFor(s: AgentSession): number {
+    return Math.max(0, Date.now() - s.lastActiveAt)
+  }
+
   /**
-   * The orphaned group an agent wants to adopt: by id, unique id prefix or name among the groups
-   * without a live owner. Every other kind of group is refused with the reason.
+   * A connected session quiet past `GHOST_IDLE_MS`: to the other agents as good as gone – its
+   * client most likely dropped without a DELETE – so its groups may be adopted.
    */
-  resolveOrphan(s: AgentSession, ref: unknown): Folder {
+  isGhost(s: AgentSession): boolean {
+    return !s.parked && this.idleFor(s) >= GHOST_IDLE_MS
+  }
+
+  /**
+   * The orphaned groups a session of the same client name left behind (`zen_session end`
+   * without closeTabs, a restart, an expired session) – what `adopt` without a groupId takes
+   * back. The name is the best identity a client has across sessions; an agent that renamed
+   * itself finds its groups under the new name.
+   */
+  ownOrphans(s: AgentSession): Folder[] {
+    return this.agentGroups().filter(
+      (g) => this.isOrphan(g.id) && this.orphanWas(g.id)?.toLowerCase() === s.name.toLowerCase()
+    )
+  }
+
+  /**
+   * The group an agent wants to adopt: by id, unique id prefix or name. An orphaned group (no
+   * live owner) is anyone's to take. A connected session's group is refused – unless that
+   * session is a ghost (`isGhost`), or the adopter passes `force: true`, asserting the user
+   * asked for the takeover; then the former owner is named in the answer, for `takeOver` to
+   * tell it. Every other kind of group is refused with the reason.
+   */
+  resolveOrphan(
+    s: AgentSession,
+    ref: unknown,
+    opts: { force?: boolean } = {}
+  ): { folder: Folder; from: AgentSession | null } {
     const m = this.browser.state.model
     const orphans = this.agentGroups().filter((g) => this.isOrphan(g.id))
-    const list = (): string =>
-      orphans.length
-        ? `Orphaned groups: ${orphans.map((g) => `${g.id} ${JSON.stringify(g.name)}${this.orphanWas(g.id) ? ` (was ${JSON.stringify(this.orphanWas(g.id))}'s)` : ''}`).join(', ')}.`
-        : 'There are no orphaned groups right now (zen_groups {"action":"list","scope":"all"} shows every agent group).'
+    const ghosts = this.agentGroups().filter((g) => {
+      const o = this.groupOwner(g.id)
+      return o && o.id !== s.id && this.isGhost(o)
+    })
+    const list = (): string => {
+      const parts: string[] = []
+      if (orphans.length)
+        parts.push(
+          `Orphaned groups: ${orphans.map((g) => `${g.id} ${JSON.stringify(g.name)}${this.orphanWas(g.id) ? ` (was ${JSON.stringify(this.orphanWas(g.id))}'s)` : ''}`).join(', ')}.`
+        )
+      if (ghosts.length)
+        parts.push(
+          `Groups of agents quiet for over ${Math.round(GHOST_IDLE_MS / 60_000)} min (adoptable too): ${ghosts.map((g) => `${g.id} ${JSON.stringify(g.name)} (${JSON.stringify(this.groupOwner(g.id)!.name)}, idle ${describeIdle(this.idleFor(this.groupOwner(g.id)!))})`).join(', ')}.`
+        )
+      if (!parts.length)
+        parts.push(
+          'There are no orphaned groups right now (zen_groups {"action":"list","scope":"all"} shows every agent group).'
+        )
+      return parts.join(' ')
+    }
     if (typeof ref !== 'string' || !ref.trim())
-      throw new RpcError(-32602, `adopt needs groupId: the orphaned group to take over. ${list()}`)
+      throw new RpcError(
+        -32602,
+        `adopt needs groupId: the group to take over${this.ownOrphans(s).length ? '' : ' (no orphaned group was left by a session named like yours, so there is nothing to take back without one)'}. ${list()}`
+      )
     const wanted = ref.trim()
     const matches = (f: Folder): boolean =>
       f.id === wanted || f.id.startsWith(wanted) || f.name.toLowerCase() === wanted.toLowerCase()
     const found = orphans.filter(matches)
-    if (found.length === 1) return found[0]
+    if (found.length === 1) return { folder: found[0], from: null }
     if (found.length > 1)
       throw new RpcError(
         -32602,
@@ -1505,15 +1599,38 @@ export class AgentService implements SessionStore, McpHandlers {
         -32602,
         `Group ${folder.id} ${JSON.stringify(folder.name)} is already yours.`
       )
-    if (o)
+    if (o) {
+      if (opts.force || this.isGhost(o)) return { folder, from: o }
       throw new RpcError(
         UNAUTHORIZED,
-        `Group ${folder.id} ${JSON.stringify(folder.name)} belongs to agent ${JSON.stringify(o.name)}, which is still connected – only orphaned groups can be adopted. ${list()}`
+        `Group ${folder.id} ${JSON.stringify(folder.name)} belongs to agent ${JSON.stringify(o.name)}, which is still connected and was active ${describeIdle(this.idleFor(o))} ago – only orphaned groups, and groups of agents quiet for over ${Math.round(GHOST_IDLE_MS / 60_000)} min, can be adopted. If the user asked you to take it over anyway, pass force: true (the other agent is told). ${list()}`
       )
+    }
     throw new RpcError(
       UNAUTHORIZED,
       `Group ${folder.id} ${JSON.stringify(folder.name)} is the user's folder, not an orphaned agent group – only groups whose agent is gone can be adopted. ${list()}`
     )
+  }
+
+  /**
+   * Take a group from a connected session – a ghost's, or with the user's permission (`force`):
+   * the former owner loses the group and its tabs' page state, is told in its next result, and
+   * the adopter's mark goes on the group (`adopt`). Returns the former owner's name.
+   */
+  takeOver(s: AgentSession, from: AgentSession, folder: Folder, forced: boolean): string {
+    for (const t of folderTabs(this.browser.state.model, folder.id)) this.detach(from, t.id)
+    from.groupIds.delete(folder.id)
+    if (from.homeGroupId === folder.id) from.homeGroupId = null
+    this.memos.get(from.id)?.groups.delete(folder.id)
+    const n = folderTabs(this.browser.state.model, folder.id).length
+    from.notices.push(
+      `Notice: agent ${JSON.stringify(s.name)} took over your group ${folder.id} ${JSON.stringify(folder.name)} with its ${n} tab${n === 1 ? '' : 's'} (${forced ? 'the user asked for it' : `you had been quiet for ${describeIdle(this.idleFor(from))}`}). It is not yours any more: do not act on its tabs.`
+    )
+    this.log(
+      `group ${folder.id} taken over by ${s.id} (${s.name}) from ${from.id} (${from.name}, ${forced ? 'forced' : 'ghost'})`
+    )
+    this.adopt(s, folder)
+    return from.name
   }
 
   /**
@@ -1677,14 +1794,77 @@ export class AgentService implements SessionStore, McpHandlers {
     if (s.mode !== 'foreground') return false
     const holder = this.leaseHolder(win)
     if (holder && holder.id !== s.id) {
-      const state = this.callState(s)
-      const note = `foreground: another agent, ${JSON.stringify(holder.name)}, holds the screen – acted in background`
-      if (!state.notes.includes(note)) state.notes.push(note)
-      state.degraded = true
+      this.degrade(
+        s,
+        'lease',
+        `foreground: another agent, ${JSON.stringify(holder.name)}, holds the screen – acted in background`
+      )
       return false
     }
     this.leases.set(win.id, { sessionId: s.id, at: this.clock() })
     return true
+  }
+
+  /**
+   * Whether the session may bring a tab in front of the user – change the user's space and
+   * active tab: it asked for the screen (`zen_mode` with `takeScreen: true`), or the user set
+   * foreground as the default in Settings, which hands agents the screen by default.
+   */
+  mayTakeScreen(s: AgentSession): boolean {
+    return s.takeScreen || this.settings.defaultMode === 'foreground'
+  }
+
+  /** Whether the tab is what the user sees in the window: its space shown, it selected there. */
+  isShown(tab: Tab, win: ZenWindow): boolean {
+    const space = win.activeSpace()
+    return (
+      win.activeSpaceId === (tab.spaceId ?? win.activeSpaceId) &&
+      win.selectedTabIn(space) === tab.id
+    )
+  }
+
+  /**
+   * Foreground mode's promise – the tab in front of the user before the action – kept only
+   * when the session may use the screen: the user is already looking at the tab, or the agent
+   * took the screen (`mayTakeScreen`). Foreground used to bring the tab in front by itself,
+   * switching the user from the space they were in to the Agents space and making the agent's
+   * tab the active one, with no word from the user; now that takes the explicit opt-in, and
+   * without it the call runs in the background and the result says so (`degraded`, cause
+   * `screen`) – as it does while another agent holds the screen lease (cause `lease`). Returns
+   * whether the tab is in front now.
+   */
+  private bringInFront(s: AgentSession, tab: Tab, win: ZenWindow): boolean {
+    if (s.mode !== 'foreground') return false
+    const shown = this.isShown(tab, win)
+    if (!shown && !this.mayTakeScreen(s)) {
+      this.degrade(
+        s,
+        'screen',
+        `foreground: tab ${tab.id} is not what the user is looking at and you have not taken the screen – acted in background. ${TAKE_SCREEN_HINT}`
+      )
+      return false
+    }
+    if (!this.foreground(s, win)) return false
+    if (!shown) this.browser.tabs.activateTab(tab.id, win)
+    return true
+  }
+
+  /**
+   * Whether a tab the session is about to open goes in front of the user: foreground mode with
+   * the screen (`mayTakeScreen`) and the lease. Otherwise it opens in the background and the
+   * result says so.
+   */
+  openInFront(s: AgentSession, win: ZenWindow = this.agentWindow()): boolean {
+    if (s.mode !== 'foreground') return false
+    if (!this.mayTakeScreen(s)) {
+      this.degrade(
+        s,
+        'screen',
+        `foreground: your new tab opened in the background – you have not taken the screen. ${TAKE_SCREEN_HINT}`
+      )
+      return false
+    }
+    return this.foreground(s, win)
   }
 
   // ---------------------------------------------------------------------------
@@ -1771,8 +1951,8 @@ export class AgentService implements SessionStore, McpHandlers {
 
   /**
    * Get the tab's live page ready for an action: load it if it was unloaded, wake it if the
-   * governor froze it and, in foreground mode with the screen lease, bring it in front of the
-   * user.
+   * governor froze it and, in foreground mode with the screen (`bringInFront`), bring it in
+   * front of the user.
    */
   async prepare(
     s: AgentSession,
@@ -1783,19 +1963,13 @@ export class AgentService implements SessionStore, McpHandlers {
     const tab = tabs.tab(tabId)
     if (!tab) throw new RpcError(-32002, `Tab ${tabId} is gone`)
     const win = tabs.windowFor(tabId)
-    const activate = opts.activate === false ? false : this.foreground(s, win)
-    if (activate) {
-      const space = win.activeSpace()
-      const shown =
-        win.activeSpaceId === (tab.spaceId ?? win.activeSpaceId) &&
-        win.selectedTabIn(space) === tabId
-      if (!shown) tabs.activateTab(tabId, win)
-    }
+    if (opts.activate !== false) this.bringInFront(s, tab, win)
     let view = tabs.view(tabId)
     if (!view) {
       view = tabs.ensureLoaded(tabId, win)
       if (!view) throw new RpcError(-32002, `Tab ${tabId} could not be loaded`)
-      await this.waitForLoad(tabId, 15_000, { expectNavigation: true })
+      // A blank tab has nothing to navigate to: waiting for a navigation to start would only cost the grace.
+      await this.waitForLoad(tabId, 15_000, { expectNavigation: hasPageToLoad(tab.url) })
     }
     if (tab.frozen) await this.browser.governor.thaw(tabId, true)
     view.setBackgroundThrottling?.(false)
@@ -1805,9 +1979,11 @@ export class AgentService implements SessionStore, McpHandlers {
   /**
    * Wait until the tab's main frame finished loading (or the timeout passed). With
    * `expectNavigation` a navigation was just requested: hosts report its start asynchronously –
-   * Android's WebView on a slow device well after the 120 ms below – so an idle tab whose URL has
-   * not changed yet is given a moment to begin before it counts as loaded, or the caller would
-   * snapshot the previous page.
+   * Android's WebView on a slow device well after the 120 ms below – so an idle tab that shows no
+   * sign of it yet is given a moment to begin before it counts as loaded, or the caller would
+   * snapshot the previous page. The grace ends at the first sign: `loading` seen on, the tab's
+   * URL moved, or the view committed another document (a tab created with its URL never changes
+   * it, so the view's own URL is what tells a fresh view's load from an idle tab).
    */
   async waitForLoad(
     tabId: string,
@@ -1816,15 +1992,17 @@ export class AgentService implements SessionStore, McpHandlers {
   ): Promise<boolean> {
     const started = Date.now()
     const before = this.browser.tabs.tab(tabId)?.url
-    const graceUntil = opts.expectNavigation ? started + NAVIGATION_START_GRACE_MS : started
+    const viewBefore = this.browser.tabs.view(tabId)?.getURL() ?? ''
+    let graceUntil = opts.expectNavigation ? started + NAVIGATION_START_GRACE_MS : started
     // Navigation starts asynchronously: give `loading` a moment to flip on before we look at it.
     await sleep(120)
     for (;;) {
       const tab = this.browser.tabs.tab(tabId)
       const view = this.browser.tabs.view(tabId)
       if (!tab || !view || view.isDestroyed()) return false
+      if (tab.loading || tab.url !== before || view.getURL() !== viewBefore) graceUntil = started
       if (!tab.loading) {
-        if (Date.now() < graceUntil && tab.url === before) {
+        if (Date.now() < graceUntil) {
           await sleep(50)
           continue
         }
@@ -1949,6 +2127,11 @@ function splitQuery(uri: string): [string, URLSearchParams] {
   const q = uri.indexOf('?')
   if (q === -1) return [uri, new URLSearchParams()]
   return [uri.slice(0, q), new URLSearchParams(uri.slice(q + 1))]
+}
+
+/** A page a fresh view has to load, as opposed to a blank tab (`zen://blank`, `about:blank`, no URL). */
+function hasPageToLoad(url: string | undefined): boolean {
+  return Boolean(url) && !isBlankTabUrl(url) && url !== 'about:blank'
 }
 
 function isTruthy(v: string | null): boolean {

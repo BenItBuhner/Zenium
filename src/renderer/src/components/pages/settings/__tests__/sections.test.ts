@@ -709,7 +709,10 @@ describe('the section model', () => {
       blockingState({ capabilities: { ...ANDROID, requestBlocking: false } })
     )
     expect(without.groups.filter((g) => g.id.startsWith('tracking-'))).toEqual([])
+    // W7-6's hub cards lead (a group the desktop and tablet shells draw; the fixture has no
+    // layout, so it stays here too).
     expect(without.groups.map((g) => g.id)).toEqual([
+      'privacy-hub',
       'safety-check',
       'safety-check-results',
       'safety-check-actions',
@@ -2031,8 +2034,9 @@ describe('the section model', () => {
     )
     // The whole category in Chrome's order – #135's, #156's and #115's groups (each program's
     // own order and content is its own test); the remembered per-site answers are Security's
-    // since #62 (no `permissions` group here).
+    // since #62 (no `permissions` group here). W7-6's hub cards lead the category (settings-12).
     expect(privacy.groups.map((g) => g.id)).toEqual([
+      'privacy-hub',
       'safety-check',
       'safety-check-results',
       'safety-check-actions',
@@ -6669,5 +6673,190 @@ describe('SET-36 / NTP-30: the Home group of Look and Feel on a phone', () => {
     })
     const free = homeGroup(withHomepage({ mode: 'url', url: 'https://news.example/' }))
     expect(free.rows[0].controlled).toBeUndefined()
+  })
+})
+
+/* ---- W7-6: the Privacy and security hub cards, Reset settings ---- */
+
+describe('the Privacy and security hub (W7-6, settings-12)', () => {
+  /** The privacy category with a context that records which group a card asks the page for. */
+  function hub(s: UIState = state()): { privacy: Model; revealed: string[] } {
+    const revealed: string[] = []
+    const def = PAGE.sections.find((x) => x.id === 'privacy')!
+    const privacy = buildSection(def, {
+      ...context(s).ctx,
+      reveal: (groupId) => revealed.push(groupId)
+    })
+    return { privacy, revealed }
+  }
+
+  it('leads the category with Chrome’s cards in Chrome’s order, each a §10.4 action row with a glyph and one line – the four landings with a chevron, the dialog card with §9.1’s ellipsis and none', () => {
+    const { privacy } = hub()
+    const cards = privacy.groups[0]
+    expect(cards).toMatchObject({
+      id: 'privacy-hub',
+      heading: null,
+      layouts: ['desktop', 'tablet']
+    })
+    // The first card follows the dialog it opens by name (the #553 lead check's F1: one name
+    // for one thing today; the family's rename to "Delete browsing data" is its own slice), the
+    // third names its landing, Safe Browsing, since the nav has a Security category (F3 / Q4).
+    expect(cards.rows.map((r) => [r.id, r.label])).toEqual([
+      ['hub-clear-data', 'Clear browsing data…'],
+      ['hub-cookies', 'Third-party cookies'],
+      ['hub-security', 'Safe Browsing'],
+      ['hub-site-settings', 'Site settings'],
+      ['hub-safety-check', 'Safety check']
+    ])
+    for (const card of cards.rows) {
+      if (card.kind !== 'action') throw new Error(`${card.id} is not an action row`)
+      // A chevron says the card moves the page to its landing (Q5); a dialog is said by the
+      // ellipsis, and the row's `aria-haspopup` (rows.tsx) – no chevron (F1).
+      expect(card.leaves).toBe(card.id === 'hub-clear-data' ? undefined : 'chevron')
+      expect(card.button).toBeUndefined()
+      expect(glyphClass(card.leading)).toBe('zen-settings-glyph')
+      expect(card.description).toBeTruthy()
+    }
+    expect(cards.rows.map((r) => r.description)).toEqual([
+      'Delete history, cookies, cache and more',
+      // The default setting, on a host with private tabs (the fixture's capabilities).
+      'Third-party cookies are blocked in private tabs',
+      'Safe Browsing (protection from dangerous sites) and other security settings',
+      'What sites may use and show (location, camera, pop-ups and more)',
+      // "Data breaches" is what the check does: Password Checkup's HIBP range lookup (Q8).
+      'Zenium can help keep you safe from data breaches, bad extensions and more'
+    ])
+  })
+
+  it('lands each card on its program’s first group – present under the cards – and opens the PS-13 dialog from Clear browsing data…', () => {
+    const { privacy, revealed } = hub()
+    const groupIds = privacy.groups.map((g) => g.id)
+    const targets = ['site-data', 'safe-browsing', 'sites-permissions', 'safety-check']
+    for (const target of targets) expect(groupIds.indexOf(target)).toBeGreaterThan(0)
+    // Each program's first group: the card lands at the program's head, not in its middle.
+    expect(groupIds.indexOf('safe-browsing')).toBeLessThan(groupIds.indexOf('safe-browsing-feeds'))
+    expect(groupIds.indexOf('safety-check')).toBeLessThan(groupIds.indexOf('safety-check-results'))
+    expect(groupIds.indexOf('sites-permissions')).toBeLessThan(groupIds.indexOf('sites-own'))
+
+    const cards = privacy.groups[0].rows
+    for (const id of ['hub-cookies', 'hub-security', 'hub-site-settings', 'hub-safety-check']) {
+      const card = row(privacy, id)
+      if (card.kind !== 'action') throw new Error('not an action row')
+      expect(card.form).toBeUndefined()
+      card.onPress?.()
+    }
+    expect(revealed).toEqual(targets)
+
+    const clear = cards[0]
+    if (clear.kind !== 'action') throw new Error('not an action row')
+    // The same sheet as the Clear browsing data row's (`clear-data-open`), no landing.
+    expect(clear.form?.title).toBe('Clear browsing data')
+    expect(clear.onPress).toBeUndefined()
+    const existing = row(privacy, 'clear-data-open')
+    if (existing.kind !== 'action') throw new Error('not an action row')
+    expect(existing.form).toBe(clear.form)
+    // Nothing of the section went: the programs' groups stand under the cards as before.
+    expect(groupIds.slice(1)).toEqual(
+      section('privacy')
+        .groups.map((g) => g.id)
+        .slice(1)
+    )
+    expect(groupIds.slice(1)).toContain('clear-data')
+  })
+
+  it('keeps the cards to the desktop and tablet shells: the phone’s Privacy page is as it was', () => {
+    const { privacy } = hub()
+    expect(onLayout(privacy.groups, 'phone').map((g) => g.id)).not.toContain('privacy-hub')
+    expect(onLayout(privacy.groups, 'phone')[0].id).toBe('safety-check')
+    expect(onLayout(privacy.groups, 'desktop')[0].id).toBe('privacy-hub')
+    expect(onLayout(privacy.groups, 'tablet')[0].id).toBe('privacy-hub')
+    // A phone in landscape draws the two panes (`formFactor: 'phone'` still): no cards there either.
+    expect(onLayout(privacy.groups, 'phone').length).toBe(privacy.groups.length - 1)
+  })
+
+  it('reads the Third-party cookies card’s line from the site-data default and the private choice', () => {
+    const line = (s: UIState): string | undefined => row(hub(s).privacy, 'hub-cookies').description
+    expect(line(state({ siteData: { ...emptySiteDataStatus(), default: 'allow' } }))).toBe(
+      'Third-party cookies are allowed'
+    )
+    expect(line(state({ siteData: { ...emptySiteDataStatus(), default: 'block-all' } }))).toBe(
+      'All cookies are blocked'
+    )
+    expect(
+      line(state({}, { privacy: { ...DEFAULT_SETTINGS.privacy, thirdPartyCookies: 'block' } }))
+    ).toBe('Third-party cookies are blocked')
+    // A host with windows (the desktop) says private windows.
+    expect(line(state({ capabilities: { ...ANDROID, windows: true } }))).toBe(
+      'Third-party cookies are blocked in private windows'
+    )
+  })
+
+  it('is found by the search as rows, beside every row under the cards', () => {
+    const { privacy } = hub()
+    const ids = (q: string): string[] => searchRows([privacy], q).map((h) => h.row.id)
+    expect(ids('safety check')).toEqual(
+      expect.arrayContaining(['hub-safety-check', 'safety-check-now'])
+    )
+    expect(ids('site settings')).toContain('hub-site-settings')
+    expect(ids('third-party cookies')).toContain('hub-cookies')
+    // The dialog card is found by its own name and by Chrome's (its line's "Delete"), and a
+    // card's hit reads the category alone as its caption: the cards' group has no heading.
+    expect(ids('clear browsing data')).toContain('hub-clear-data')
+    const hit = searchRows([privacy], 'delete browsing data').find(
+      (h) => h.row.id === 'hub-clear-data'
+    )
+    expect(hit?.caption).toBe('Privacy and Security')
+  })
+})
+
+describe('Reset settings (W7-6, settings-70)', () => {
+  it('is one row at the foot of the list, before About, on the desktop and tablet shells alone – under the title with no sub-heading (F2)', () => {
+    for (const layout of ['desktop', 'tablet'] as const) {
+      const ids = availableSections(PAGE, ANDROID, layout).map((s) => s.id)
+      expect(ids.indexOf('reset')).toBe(ids.indexOf('about') - 1)
+    }
+    expect(phoneSections().map((m) => m.section.id)).not.toContain('reset')
+    const reset = section('reset')
+    // Both panes one form (the #553 lead check's F2 / Q3): the row stands under the category's
+    // 22 title as the hub's cards do; the category's name is the nav's and the title's.
+    expect(reset.groups.map((g) => [g.id, g.heading])).toEqual([['reset', null]])
+    expect(reset.groups[0].rows.map((r) => r.id)).toEqual(['reset-settings'])
+  })
+
+  it('is "Restore settings to their original defaults", whose §9.23 confirmation carries Chrome’s copy and runs settings.reset', () => {
+    const reset = section('reset')
+    const restore = row(reset, 'reset-settings')
+    if (restore.kind !== 'action') throw new Error('not an action row')
+    expect(restore.label).toBe('Restore settings to their original defaults')
+    // Label alone, as Chrome's row is: the sentence that says what resets is the confirmation's.
+    expect(restore.description).toBeUndefined()
+    // A destructive bulk act on the house's chassis: the desktop's trailing button, the danger
+    // ink, the confirmation before anything runs.
+    expect(restore.button).toBe('Reset…')
+    expect(restore.destructive).toBe(true)
+    expect(restore.confirm).toEqual({
+      title: 'Reset settings?',
+      description:
+        'This will reset your startup page, home page, new tab page, search engine, pinned tabs, and site permissions. It will also disable all extensions and clear temporary data like cookies. Your bookmarks, history, and saved passwords will not be cleared.',
+      action: 'Reset settings'
+    })
+    expect(invoke).not.toHaveBeenCalled()
+    restore.onPress?.()
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(invoke).toHaveBeenCalledWith('settings.reset', undefined)
+  })
+
+  it('is found by the search from any category, by Chrome’s words and the row’s own', () => {
+    const models = buildSections(availableSections(PAGE, ANDROID, 'desktop'), context().ctx)
+    const ids = (q: string): string[] => searchRows(models, q).map((h) => h.row.id)
+    expect(ids('restore defaults')).toEqual(['reset-settings'])
+    expect(ids('reset settings')).toContain('reset-settings')
+    expect(ids('factory')).toContain('reset-settings')
+    // The two clauses the round added to the sentence find the row too.
+    expect(ids('home page')).toContain('reset-settings')
+    expect(ids('site permissions')).toContain('reset-settings')
+    // Without a heading the hit's caption is the category alone.
+    const hit = searchRows(models, 'restore defaults')[0]
+    expect(hit.caption).toBe('Reset Settings')
   })
 })

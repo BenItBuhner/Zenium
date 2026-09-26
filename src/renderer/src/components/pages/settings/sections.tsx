@@ -135,6 +135,7 @@ import { VaultPassphraseForm } from '../../autofill/PassphraseForm'
 import { ContainerIcon } from '../../ContainerIcon'
 import { openMagicStackCustomize } from '../../newtab/magicStackCustomize'
 import {
+  CLEAR_BROWSING_DATA_FORM,
   clearDataGroups,
   safetyCheckGroups,
   siteSettingsGroups
@@ -193,6 +194,7 @@ import {
   type SettingsRow
 } from './model'
 import { syncGroups } from './sync'
+import { PRIVACY_HUB_CARDS, PRIVACY_HUB_LINES, thirdPartyCookiesLine } from './privacyHub'
 import {
   httpsOnlyGroups,
   preloadGroups,
@@ -236,6 +238,14 @@ export interface SectionContext {
   set(patch: Partial<Settings>): void
   /** Move the page to another category (About › Check for updates lands on Updates). */
   navigate(section: string): void
+  /**
+   * Bring one of the shown section's groups on screen, its heading at the column's top (the
+   * Privacy and security hub's cards, W7-6): the page takes the group as the address's landing
+   * (`zen://settings/privacy?group=<id>`, the `?row=` deep link's twin, `SettingsPage`) and
+   * scrolls it up before the paint, padding the column's end for a group near the section's
+   * end as it does for a deep link. Left out where no page stands behind the rows (a test).
+   */
+  reveal?(groupId: string): void
   /** The navigation bar's editor sheet (Look and Feel › Navigation bar). */
   openBarEditor(): void
   /** Leave for `tabId` and open the Boost editor on it (Boosts › Boost the site you came from). */
@@ -331,6 +341,7 @@ const BUILDERS: Readonly<Record<string, Builder>> = {
   shortcuts: shortcutsSection,
   'default-browser': defaultBrowserSection,
   updates: updatesSection,
+  reset: resetSection,
   about: aboutSection
 }
 
@@ -2707,7 +2718,56 @@ function resourcesSection({ state, set }: SectionContext): RowGroup[] {
 // ---------------------------------------------------------------------------
 
 /**
- * Groups in Chrome's Privacy and security order – Safety check, Safe Browsing, Tracking
+ * The hub at the top of the section (settings-12; Chrome's card list, `privacyHub.ts`): one
+ * §10.4 action row per card in Chrome's order – Clear browsing data…, Third-party cookies,
+ * Safe Browsing, Site settings, Safety check – the leading glyph, the title, one line under it.
+ * A card brings its program's first group on screen (`ctx.reveal`, the section's `?group=`
+ * landing) and trails the chevron that says so (Q5 of the #553 lead check: the four landings
+ * keep it); Clear browsing data… opens the PS-13 dialog the Clear browsing data row opens, with
+ * §9.1's ellipsis on its name and no chevron (F1). No heading: the cards stand under the
+ * section's title as Chrome's do. The desktop and tablet shells' (`layouts`): the phone's
+ * Privacy page keeps its plain list.
+ */
+function privacyHubGroups(ctx: SectionContext): RowGroup[] {
+  const { state, reveal } = ctx
+  const cookies = thirdPartyCookiesLine(
+    state.siteData.default,
+    state.settings.privacy.thirdPartyCookies,
+    state.capabilities.windows
+  )
+  const lines: Record<string, string> = {
+    'hub-clear-data': PRIVACY_HUB_LINES.clearData,
+    'hub-cookies': cookies,
+    'hub-security': PRIVACY_HUB_LINES.security,
+    'hub-site-settings': PRIVACY_HUB_LINES.siteSettings,
+    'hub-safety-check': PRIVACY_HUB_LINES.safetyCheck
+  }
+  return [
+    {
+      id: 'privacy-hub',
+      heading: null,
+      layouts: ['desktop', 'tablet'],
+      rows: PRIVACY_HUB_CARDS.map((card): SettingsRow => {
+        const Glyph = card.glyph
+        const group = card.group
+        return {
+          kind: 'action',
+          id: card.id,
+          label: card.label,
+          description: lines[card.id],
+          leading: <Glyph className="zen-settings-glyph" aria-hidden="true" />,
+          ...(group === null
+            ? { form: CLEAR_BROWSING_DATA_FORM }
+            : { leaves: 'chevron', onPress: () => reveal?.(group) })
+        }
+      })
+    }
+  ]
+}
+
+/**
+ * Groups in Chrome's Privacy and security order – the hub's cards (`privacyHubGroups`), then
+ * Safety check, Safe Browsing, Tracking
  * prevention, Clear browsing data, Cookies and site data, Site settings, HTTPS-only, Secure
  * DNS, Privacy signals – each program's groups self-contained: the site-controls program's
  * (`siteControls/settingsRows`) at the safety-check, clear-browsing-data and site-settings
@@ -2721,6 +2781,7 @@ function resourcesSection({ state, set }: SectionContext): RowGroup[] {
 function privacySection(ctx: SectionContext): RowGroup[] {
   const { state, set } = ctx
   return [
+    ...privacyHubGroups(ctx),
     ...safetyCheckGroups(ctx),
     ...safeBrowsingGroups(state, set),
     ...trackingGroups(ctx),
@@ -5131,6 +5192,75 @@ function updatesSection({ state, set }: SectionContext): RowGroup[] {
     }
   ]
   return groups
+}
+
+// ---------------------------------------------------------------------------
+// Reset Settings
+// ---------------------------------------------------------------------------
+
+/**
+ * Chrome's Reset settings dialog (settings-70): the confirmation the row opens, Chrome's
+ * sentence word for word – its serial commas kept, as a verbatim line keeps its own punctuation
+ * (the #553 lead check) – with two clauses of the house's in Chrome's register: the home page
+ * (Chrome's resetter puts it back and its sentence does not say so) and the site permissions
+ * (the root's ruling on #553: Chrome's `ResetContentSettings`, ours through the call Clear
+ * browsing data's "Site settings" makes).
+ */
+export const RESET_SETTINGS_COPY = {
+  row: 'Restore settings to their original defaults',
+  title: 'Reset settings?',
+  body: 'This will reset your startup page, home page, new tab page, search engine, pinned tabs, and site permissions. It will also disable all extensions and clear temporary data like cookies. Your bookmarks, history, and saved passwords will not be cleared.',
+  action: 'Reset settings'
+} as const
+
+/**
+ * Reset Settings (settings-70; Chrome's `chrome://settings/reset`, the foot of its list): the
+ * one row, "Restore settings to their original defaults", label alone as Chrome's is – the
+ * sentence that says what resets is the confirmation's, read before anything runs, not a
+ * description that repeats it under the label – whose §9.23 confirmation carries Chrome's
+ * sentence: Cancel and "Reset settings" in the danger ink, no primary, Enter from the held
+ * container inert (§9.22): a bulk act that disables the extensions and clears the cookies –
+ * and whose act is the core's `settings.reset` (`core/settingsReset.ts`), which does what the
+ * sentence says and nothing else, then says "Settings reset" in one toast. The group carries
+ * no heading: the row stands under the category's 22 title as the Privacy and security hub's
+ * cards do – both panes one form (the #553 lead check's F2 / Q3) – the category's name being
+ * the nav's and the title's. The desktop trails its 32 px "Reset…" button on the 40 px control
+ * row (§10.5), the tablet's portrait page presses the row. The category is the desktop and
+ * tablet shells' (`internalPages.ts`).
+ */
+function resetSection(): RowGroup[] {
+  return [
+    {
+      id: 'reset',
+      heading: null,
+      rows: [
+        {
+          kind: 'action',
+          id: 'reset-settings',
+          label: RESET_SETTINGS_COPY.row,
+          keywords: [
+            'reset',
+            'restore',
+            'defaults',
+            'original',
+            'factory',
+            'home page',
+            'site permissions',
+            'extensions',
+            'cookies'
+          ],
+          button: 'Reset…',
+          destructive: true,
+          confirm: {
+            title: RESET_SETTINGS_COPY.title,
+            description: RESET_SETTINGS_COPY.body,
+            action: RESET_SETTINGS_COPY.action
+          },
+          onPress: () => run('settings.reset', undefined)
+        }
+      ]
+    }
+  ]
 }
 
 // ---------------------------------------------------------------------------

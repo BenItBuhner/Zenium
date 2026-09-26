@@ -29,14 +29,14 @@ Zenium is the user's own browser. The user browses in it while you work, and oth
 
 - Address everything by id. Tab ids look like `tab_3f9a...`, group ids like `folder_...`. Copy them from a listing. Never send a list position (1, 2, 3): positions shift whenever anyone opens or closes a tab, and the server refuses them.
 - Only touch what you created. Do not close, move, navigate, click or type in a tab that is not in one of your groups.
-- Other agents exist. They have their own groups. Their tabs are refused to you even with `allowForeign`. Do not rename, close or adopt a group that another live agent owns.
+- Other agents exist. They have their own groups. Their tabs are refused to you even with `allowForeign`. Do not rename, close or adopt a group that another working agent owns. An agent quiet for over 2 minutes counts as gone (its client most likely dropped) - listings mark its groups `quiet 2 min - adoptable`; a working agent's group is taken only with `force: true`, and only because the user asked you to (that agent is told).
 - `allowForeign: true` is for the user's own tabs, only when the user explicitly asked you to work on their page ("read this tab", "fill the form I have open"). Never use it to grab a free tab for yourself. It never makes the tab yours. The user's Essentials and pinned tabs are never closed, moved or grouped.
-- Foreground is a lease. In foreground mode your tab is shown to the user before each action. If another agent holds the screen, your call runs in the background and the result says so - accept it, do not fight for the screen. When others are present, prefer `zen_mode {"mode":"background"}`.
+- Foreground needs the screen. Foreground mode acts in front of the user on a tab they are looking at. Bringing your tab in front first - which switches the user's space and active tab - takes `zen_mode {"mode":"foreground","takeScreen":true}`, and you pass that only when the user wants your work on screen (or the user set foreground as the default in Settings, which grants it). Without it, an action on a tab the user is not looking at runs in the background and the result says so. The screen is also a lease: if another agent holds it, your call runs in the background and the result says so - accept it, do not fight for the screen. When others are present, prefer `zen_mode {"mode":"background"}`.
 - Notices. When the user or another agent closes or moves one of your tabs, the next result starts with a line like `Notice: tab tab_... "Title" was closed by the user.` Read it, re-list your tabs, and adapt. Never assume a tab still exists after a notice; never retry the same call blindly.
 - Unexpected results (wrong page, missing element, unknown tab): `browser_tabs list`, then `browser_snapshot` on the tab you meant. Do not guess ids and do not open a second copy of a page you already have.
 - Every error message names what would have worked (valid actions, open tabs, how to get a ref). Follow it.
 - Clean up. When the task is done, `zen_session {"action":"end","closeTabs":true}` - unless the user wants to keep the results on screen, then end without `closeTabs` (your groups stay as orphaned folders the user can read). Ending keeps your connection: the next call simply starts a fresh session, no reconnect needed.
-- Long tasks and reconnects. If your connection drops, your group is not destroyed: it becomes orphaned. After reconnecting, `zen_groups {"action":"list","scope":"all"}`, find your old group (`[orphaned, was "<name>"]`), then `zen_groups {"action":"adopt","groupId":"folder_..."}` and re-list its tabs. Do not open the pages again. A session idle for half an hour is parked, not lost: its groups become orphaned meanwhile and are yours again on your next call (the result says so). A result opening with `Notice: your connection was resumed` means the browser restarted or your session had expired; your old groups are orphaned - adopt them.
+- Long tasks and reconnects. If your connection drops, your group is not destroyed: it becomes orphaned. After reconnecting, `zen_status` lists the orphaned groups a session with your name left; `zen_groups {"action":"adopt"}` (no `groupId`) takes them all back, `{"action":"adopt","groupId":"folder_..."}` one of them (`zen_groups {"action":"list","scope":"all"}` shows every group with `[orphaned, was "<name>"]`). Re-list the tabs; do not open the pages again. A session idle for half an hour is parked, not lost: its groups become orphaned meanwhile and are yours again on your next call (the result says so). A result opening with `Notice: your connection was resumed` means the browser restarted or your session had expired; your old groups are orphaned - adopt them.
 - One call at a time. Your calls are serialised per session; sending several in parallel gains nothing.
 
 ## Reading vs acting
@@ -82,7 +82,7 @@ Your tab groups (Zenium tab folders).
 - `{"action":"create","name":"<task>"}` - a new group in the shared Agents space; returns `groupId`. `"space":"own"` creates a private space named after you; `"space":"<spaceId>"` (id or name) uses an existing space: the Agents space or a space an agent made needs nothing, the user's spaces need `allowForeign: true`.
 - `{"action":"rename","groupId":"folder_...","name":"..."}`
 - `{"action":"close","groupId":"folder_..."}` - closes every tab in it and removes the folder. Own groups only.
-- `{"action":"adopt","groupId":"folder_..."}` - take over an orphaned group (its owner session is gone) after a reconnect.
+- `{"action":"adopt","groupId":"folder_..."}` - take over an orphaned group (its owner session is gone) after a reconnect, or the group of an agent quiet for over 2 minutes. `{"action":"adopt"}` without `groupId` takes back every orphaned group a session with your name left. `"force":true` takes a working agent's group - only when the user asked you to; that agent is told.
 - Example: `zen_groups {"action":"create","name":"Price check"}`
 - Pitfall: a group is addressed by `groupId`, never by name. Two agents may use the same name.
 
@@ -91,16 +91,17 @@ Your tab groups (Zenium tab folders).
 Zenium spaces (workspaces).
 
 - `{"action":"list"}`, `{"action":"create","name":"...","icon":"..."}`.
-- `{"action":"switch","spaceId":"..."}` changes what the user sees; it needs foreground mode and the screen lease, and is refused in background mode or while another agent holds the screen (active within 20 s).
+- `{"action":"switch","spaceId":"..."}` changes what the user sees; it needs foreground mode with the screen taken (`zen_mode {"mode":"foreground","takeScreen":true}`) and the screen lease, and is refused in background mode, without the screen, or while another agent holds it (active within 20 s).
 - Example: `zen_spaces {"action":"list"}`
 - Pitfall: you rarely need this. Your groups already keep your tabs apart from the user's. Do not switch the user's space to look at your own tabs; snapshots work on background tabs.
 
 ### zen_mode
 
-- `{"mode":"foreground"}` - your tab is brought in front of the user before each action; your cursor shows what you do; input is real (pop-ups and downloads open).
+- `{"mode":"foreground"}` - your actions happen in front of the user on a tab they are looking at; your cursor shows what you do; input is real (pop-ups and downloads open). A tab the user is not looking at is acted on in the background, and the result says so.
+- `{"mode":"foreground","takeScreen":true}` - as above, and your tab is brought in front before each action (the user's space and active tab change). Pass it only when the user wants your work on screen.
 - `{"mode":"background"}` - you work without changing what the user sees; input is synthetic.
 - Example: `zen_mode {"mode":"background"}`
-- Pitfall: a result that says `input: synthetic` in foreground mode means the page was not on screen; wait a moment and retry once, or stay in background.
+- Pitfall: a result that says `input: synthetic` in foreground mode names the reason - the screen not taken, another agent holding it, or the page not yet on screen or painted; in the last case wait a moment and retry once, otherwise stay in background.
 
 ### zen_history
 
@@ -218,7 +219,7 @@ Wait until `text` appears, `textGone` disappears, a CSS `selector` matches, or f
 An image of the tab: the viewport by default, `"fullPage":true` for the whole scrollable page, `"target":"e12"` (or a CSS selector) for one element; `"type":"png"` or `"jpeg"`.
 
 - Example: `browser_take_screenshot {"tabId":"tab_3f9a...","fullPage":true}`
-- Pitfalls: never zoom, hide or restyle the page to fake a full-page or element capture; the options exist. Use `browser_snapshot` to find elements, screenshots only to look.
+- Pitfalls: never zoom, hide or restyle the page to fake a full-page or element capture; the options exist. Use `browser_snapshot` to find elements, screenshots only to look. `The page could not be captured` names the reason (the tab off screen in background mode, the screen not taken or held by another agent, the first frame not painted yet); follow it - a retry after a moment, or the readers `browser_snapshot` / `browser_read_page` - instead of switching modes blindly.
 
 ### browser_read_page
 

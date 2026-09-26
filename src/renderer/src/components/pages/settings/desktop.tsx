@@ -61,7 +61,8 @@ export function DesktopSettings({
   sections,
   current,
   pointer,
-  formFactor
+  formFactor,
+  land
 }: {
   state: UIState
   tab: Tab
@@ -73,6 +74,8 @@ export function DesktopSettings({
   pointer: boolean
   /** The chrome's layout (a phone in landscape reaches the two panes inside the phone shell). */
   formFactor: FormFactor
+  /** Land a section on one of its groups (`SectionContext.reveal`; the page's `?group=`). */
+  land: (section: string, groupId: string) => void
 }): JSX.Element {
   const shown = current ?? sections[0] ?? null
   const sectionId = shown?.id ?? null
@@ -111,6 +114,9 @@ export function DesktopSettings({
   // Customise fonts' draft: a phone in landscape draws the ± rows through these panes, and
   // their steps coalesce into one commit per quiet sequence, flushed when the category changes.
   const fontsDraft = useFontsDraft(state.settings.fonts, settingsUpdate, sectionId)
+  // The search: a query while it is not empty. A section change (the nav, back, forward)
+  // starts the new category without it.
+  const [query, setQuery] = useState('')
   const ctx: SectionContext = {
     state,
     tab,
@@ -118,6 +124,16 @@ export function DesktopSettings({
     formFactor,
     set: settingsUpdate,
     navigate: (section) => run('page.navigate', { tabId: tab.id, section, replace: true }),
+    // A card pressed among the search's hits lands on the category whole: the search clears
+    // first, so the group is in the column to scroll to. A hit under "Other categories" names
+    // the card's own category (every category is built while a search is on).
+    reveal: (groupId) => {
+      const owner =
+        models.find((m) => m.groups.some((g) => g.id === groupId))?.section.id ?? sectionId
+      if (!owner) return
+      setQuery('')
+      land(owner, groupId)
+    },
     openBarEditor: () => void openBarEditor(tab.id),
     boost: (tabId) => {
       run('tab.activate', { tabId })
@@ -133,9 +149,6 @@ export function DesktopSettings({
     fontsDraft
   }
 
-  // The search: a query while it is not empty. A section change (the nav, back, forward)
-  // starts the new category without it.
-  const [query, setQuery] = useState('')
   const [querySection, setQuerySection] = useState(sectionId)
   if (querySection !== sectionId) {
     setQuerySection(sectionId)

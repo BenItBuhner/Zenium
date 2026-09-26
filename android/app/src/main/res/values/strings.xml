@@ -36,6 +36,8 @@
     <string name="cct_close">Close</string>
     <string name="cct_menu">Menu</string>
     <string name="cct_minimize">Minimize</string>
+    <!-- The toolbar's Share button (CCT-17): its accessible name, a control's word like Close and Menu; the menu's row keeps its ellipsis. -->
+    <string name="cct_share_button">Share</string>
     <string name="cct_minimized_card">Minimized page: %1$s</string>
     <string name="cct_secure">Connection is secure</string>
     <string name="cct_not_secure">Connection is not secure</string>

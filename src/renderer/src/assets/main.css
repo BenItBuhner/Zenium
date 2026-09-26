@@ -256,6 +256,10 @@
      on a mouse, 12 on a phone through the phone block's `--v2-row`, which this calc reads. */
   --v2-row-pad: calc((var(--v2-row) - var(--v2-line-body-box)) / 2);
   --v2-control: 32px;
+  /* §9.11's compact floor for a button: a footer of four verbs in a 400 dialog (the screenshot
+     card's Close · Copy · Share · Save) takes it in place of the primitive's 96, which four of
+     would stand 408 in the form's 366 column; footers of three or fewer keep 96. */
+  --v2-button-compact-min: 80px;
   --v2-checkbox: 16px;
   --v2-nav-item: 34px;
   --v2-menu-row: calc(var(--v2-line-body-box) + 11px);
@@ -2473,6 +2477,15 @@
     position: absolute;
     inset: 0;
     background: var(--v2-scrim-modal);
+  }
+  /*
+   * Over the content frame the scrim is clipped to the frame's radius (§9.5): the frame is a
+   * rounded card on the window's background, and a square dim over it filled the four corners
+   * the frame leaves clear (pr-543 Q4). The phone's host is the whole shell, on a sheet
+   * (`data-sheet`), and its scrim keeps its square edges.
+   */
+  .zen-frame-dialogs:not([data-sheet]) .zen-frame-scrim {
+    border-radius: var(--zen-content-radius);
   }
   /*
    * The way out on a mouse (lib/portals.tsx, `useLeavingPanels`): the host keeps a closed
@@ -7320,8 +7333,9 @@
    * Web capture (`capture/CaptureOverlay.tsx`, Edge's Web capture over services' capture
    * engine). The overlay fills the frame dialog host's slot, so it is the content frame's box:
    * the page's picture stands in under it (`CoverImage`), and the overlay draws the frame's
-   * one §9.5 dim itself (`--v2-scrim-modal`, the host's colour, the host asked to draw none:
-   * `ownScrim`) because the marquee is a hole in it – an even-odd `clip-path` polygon – through
+   * one §9.5 dim itself – the host's own scrim, `.zen-frame-scrim` above (its colour, its
+   * corners the frame's), the host asked to draw none (`ownScrim`) – because the marquee is a
+   * hole in it – an even-odd `clip-path` polygon – through
    * which the selected part of the page shows undimmed. The marquee's 2 px accent outline sits
    * outside its box, on the dimmed part, so the hole is exactly what the engine gets; its size
    * label is a 13 px pill (`--v2-panel`, the hairline, the control radius) at the marquee's
@@ -7335,7 +7349,7 @@
    * state the page is in, `.zen-capture-hint`), then a 1 × 20 hairline at 8 / 8 (the 8 gap on
    * both sides), the two §9.3 32 px action buttons with 16 glyphs (`.zen-capture-mode`,
    * unlayered below) and the 28 icon close 8 after them; it hangs from the page's top edge at
-   * its centre, on whole pixels. A stage is
+   * the frame's centre, on whole pixels. A stage is
    * the page's own box laid over the overlay for what centres on the page (the cards) or sits
    * at its bottom edge (the toast): it takes no pointer of its own.
    */
@@ -7344,11 +7358,6 @@
     inset: 0;
     outline: none;
     user-select: none;
-  }
-  .zen-capture-scrim {
-    position: absolute;
-    inset: 0;
-    background: var(--v2-scrim-modal);
   }
   /*
    * Over the scrim, transparent, placed by the overlay (`left`/`top`/`width`/`height` inline):
@@ -7379,8 +7388,9 @@
     pointer-events: none;
   }
   /*
-   * Placed by the overlay (`left`/`top` inline, §9.16): centred on the page's frame from its
-   * measured width and rounded to a whole window pixel, so the hairline and the separator each
+   * Placed by the overlay (`left`/`top` inline, §9.16): centred on the page's frame – the one
+   * axis the cards and the toast centre on – from its measured width and rounded to a whole
+   * window pixel, so the hairline and the separator each
    * hold one column. Not a `translate: -50%` – from a width the font makes fractional it would
    * rest the box on a fraction and smear both over two – and not `transform`, which the pop's
    * keyframes own; the pop scales about the placed box and leaves it where it was.
@@ -7484,10 +7494,15 @@
   }
   /*
    * The stage passes the pointer through; the toast's one action takes it back – the action
-   * alone, so the toast's words never stand between a drag and the page under them.
+   * alone, so the toast's words never stand between a drag and the page under them. The action
+   * is §9.33's trailing secondary (§9.11): the 10 % control fill the shared message button
+   * wears, with the label in the full ink rather than the button's accent – the accent is the
+   * phone's toast action (#47), a chip on a card that shows one line and leaves; here the
+   * action stands beside a primary on the card above it.
    */
   .zen-capture-toast .zen-message-button {
     pointer-events: auto;
+    color: var(--v2-control-text);
   }
   @media (prefers-reduced-motion: reduce) {
     .zen-capture-toast {
@@ -7511,6 +7526,20 @@
   background: var(--v2-fill);
   transform: none;
 }
+/*
+ * The result card's four verbs (Close, Copy, Share, Save; the same modifier-beside-the-primitive
+ * pose): at the primitive's 96 floor they would stand 408 across the 400 form's 366 column, so
+ * they take §9.11's compact floor – `--v2-button-compact-min`, 80: four one-word labels, the
+ * hugging footer at 32 with the 8 gaps – 344 in the column. Unlayered because the primitive's
+ * own 96 is: a layered 80 would lose to it. Share is lit while the hub's popover hangs from it
+ * (`aria-expanded`, §9.20: an opener shows its surface is up), in the primitive's pressed fill.
+ */
+.zen-v2-button.zen-capture-verb {
+  min-width: var(--v2-button-compact-min);
+}
+.zen-v2-button.zen-capture-verb[aria-expanded='true'] {
+  background: var(--v2-fill-hover);
+}
 
 @layer components {
   /*
@@ -7520,11 +7549,13 @@
    * button's), so the body carries the popover's own 16 above the first player (§9.20's
    * padding; 16 under the last one as well), one player per tab, parted by air alone – 28 from
    * one's transport to the next one's artwork, no line – each at the 16 gutter with 12 between
-   * its parts:
+   * its lines and the family's 16 after the leading picture (§9.33's identity row, the phone's
+   * 56 tile "16 to the text"; the #552 round's N2, from 12):
    * the now-playing line – the artwork as the players' one 56 tile (`.zen-media-art`, the phone
    * sheet's rule below: the card radius on the card fill, the card hairline and the §9.3 glyph
-   * when there is no picture) beside the title at 15/600 and the
-   * artist · site line at 13 at 69%, the pair a button to the tab with the row's press fill,
+   * when there is no picture) 16 before the title at 15/600 and the
+   * artist · site line at 13 at 69%, the pair a button to the tab with the row's press fill
+   * (its box 8 out into that 16, so the ink sits at the 16 and the fill 8 from the tile),
    * picture-in-picture trailing as a §9.3 icon button – then §10.4's slider row for the position
    * (the zoom row's track and thumb, `.zen-zoom-slider`, the times at its ends in `tabular-nums`
    * (§4) so 0:09 → 0:10 moves nothing), then the transport – previous, back, play / pause, on,
@@ -7554,7 +7585,7 @@
   .zen-mhub-now {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 16px;
   }
   /* The title pair is the way to the tab: a button the text's size, its press fill 4 out. */
   .zen-mhub-text {
@@ -12206,7 +12237,9 @@
   overscroll-behavior: contain;
   /* The find field's padding above and below its control (`.zen-settings-find` reads these): the
      column's top for anything scrolled into view is the field's bottom edge – its whole box,
-     16 + the control + 8 – so a landed group's heading shows under the field, and the two
+     16 + the control + 8 – so a landed group lands flush under the pinned field's §9.7 hairline,
+     its title's box against the line and its own margin scrolled beneath (the #553 lead check's
+     N1: the landing changes, not the air – the section's 32 stays its layout gap); the field's
      rules cannot drift apart. */
   --zen-settings-find-pad-top: 16px;
   --zen-settings-find-pad-bottom: 8px;

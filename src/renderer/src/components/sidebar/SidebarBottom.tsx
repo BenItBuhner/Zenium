@@ -42,10 +42,15 @@ export function SidebarBottom({ state, compact, isDark, pose = 'regular' }: Prop
   const local = isLocalWindow(state)
   const privatePose = pose === 'private'
   // Zen 1.21.11: every playing tab gets its own media control – of the pose's mode, on a host
-  // that keeps private browsing in tabs.
+  // that keeps private browsing in tabs. The playing set alone (design language v2 §9.29, the
+  // #552 ruling): a session that paused or ended is the media hub's to tell – its toolbar
+  // button and popover, where it lingers Chrome's hour with Play – and this card, a second
+  // control for the same session, would tell the one state twice; the card's retirement into
+  // the hub is the follow-up slice.
   const mixed = privateInTabs(state)
   const media = state.media
     .filter((m) => {
+      if (!m.playing) return false
       const tab = state.tabs[m.tabId]
       return tab !== undefined && (!mixed || isPrivateTab(tab) === privatePose)
     })

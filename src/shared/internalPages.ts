@@ -438,6 +438,15 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
     requires: 'updates'
   },
   {
+    // Chrome's "Reset settings" at the foot of its list (settings-70): the one row that restores
+    // the settings to their defaults. The desktop and tablet shells' – the phone's Settings has
+    // no tail of Advanced categories to end with it (W7-6).
+    id: 'reset',
+    label: 'Reset Settings',
+    keywords: ['reset', 'restore', 'defaults', 'original', 'factory'],
+    layouts: ['desktop', 'tablet']
+  },
+  {
     id: 'about',
     label: 'About',
     keywords: [
@@ -527,6 +536,10 @@ export const INTERNAL_PAGES: Readonly<Record<InternalPageId, InternalPageDefinit
     glyph: 'book-open',
     pill: { showStar: false },
     splittable: false,
+    // The phone's panel (HB-20, `PhoneReadingListPanel`): a `page.open` on a layout the page is
+    // no tab in opens it, and a tablet's tab narrowed into the phone class is handed to it
+    // (`reconcileLayout`, W6-S1's seam), as History's and the manager's are.
+    overlay: 'reading-list',
     layouts: TAB_LAYOUTS,
     sections: []
   },

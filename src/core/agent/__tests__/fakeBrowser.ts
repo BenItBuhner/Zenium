@@ -175,6 +175,7 @@ export function fakeBrowser(
       },
       hasPainted: async () => true,
       isVisible: () => win.activeSpace().activeTabId === tab.id,
+      getURL: () => tab.url,
       isDestroyed: () => !model.tabs[tab.id],
       canGoBack: () => false,
       canGoForward: () => false,
