@@ -1542,7 +1542,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * upsell dialog is closed when it comes up; a consent interstitial makes the check `n/m`.
      * `play` starts the video before the wait ([playVideo]): for a control drawn only on a playing
      * page – Speak Subtitles' button waits for the player's caption fetch, which the paused page
-     * the WebView lands on never makes (round 18 §7: `where.video: paused` on both lanes).
+     * the WebView lands on never makes (round 18 §7: `where.video: paused` on both lanes). A page
+     * YouTube will not play for the runner ([YT_PLAYABILITY]: a `playabilityStatus` other than
+     * `OK`, or a bot check's wording – round 20's BEFORE read `video unstarted, src: false` after
+     * the tap and the page's own `playVideo()` on both lanes) is `n/m` when `play` was asked and
+     * nothing started; the reading goes to `extra.playability` on every row.
      */
     private fun youtube(row: Row, entry: JSONObject, expr: String, label: String, desktopSite: Boolean = false, settleMs: Long = 45_000, play: Boolean = false): Grade {
         val tab = createTab(YOUTUBE_URL)
@@ -1562,17 +1566,23 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             if (found.optBoolean("pass")) true else null
         }
         val where = json(tabEval(view, YT_WHERE))
+        val playability = runCatching { json(tabEval(view, YT_PLAYABILITY)) }.getOrDefault(JSONObject())
         val extra = JSONObject().put("page", found).put("where", where).put("upsellsClosed", upsells).put("desktopSite", desktopSite).put("tab", tab)
-            .put("waitedMs", SystemClock.uptimeMillis() - started).put("console", JSONArray(consoleOf(view).takeLast(15)))
+            .put("waitedMs", SystemClock.uptimeMillis() - started).put("console", JSONArray(consoleOf(view).takeLast(15))).put("playability", playability)
         played?.let { extra.put("play", it) }
         if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
         val url = where.optString("url")
         val host = runCatching { android.net.Uri.parse(url).host ?: "" }.getOrDefault("")
+        // A page YouTube would not play for the runner (its bot check, a sign-in wall, an
+        // unplayable response): a control that waits for playback has nothing to wait for.
+        val gated = play && played?.optString("by") == "none" &&
+            (playability.optBoolean("bot") || playability.optString("status").let { it.isNotEmpty() && it != "OK" })
         return when {
             host.contains("consent") || url.contains("consent.youtube") -> Grade("n/m", "$label: YouTube served its consent interstitial instead of the watch page ($url)", extra)
             !(host == "youtube.com" || host.endsWith(".youtube.com")) -> Grade("n/m", "$label: the tab landed on ${host.ifEmpty { "nowhere" }}, not a watch page (network)", extra)
             found.optBoolean("pass") -> Grade("P", "$label${if (desktopSite) " (desktop site)" else ""}: ${found.toString().take(220)} on $host", extra)
-            else -> Grade("F", "$label${if (desktopSite) " (desktop site)" else ""}: ${found.toString().take(220)} on $host after ${(SystemClock.uptimeMillis() - started) / 1000} s (title ${JSONObject.quote(where.optString("title").take(40))}, video ${where.optString("video")})", extra)
+            gated -> Grade("n/m", "$label${if (desktopSite) " (desktop site)" else ""}: YouTube's playability gate on the runner (${playability.optString("status").ifEmpty { "no status" }}${playability.optString("reason").takeIf { it.isNotEmpty() }?.let { ": \"$it\"" } ?: ""}${if (playability.optBoolean("bot")) ", a bot check" else ""}) – the video never started (${played?.optString("by")}), the control waits for playback (not measurable here)", extra)
+            else -> Grade("F", "$label${if (desktopSite) " (desktop site)" else ""}: ${found.toString().take(220)} on $host after ${(SystemClock.uptimeMillis() - started) / 1000} s (title ${JSONObject.quote(where.optString("title").take(40))}, video ${where.optString("video")}${playability.optString("status").takeIf { it.isNotEmpty() }?.let { ", playability $it" } ?: ""})", extra)
         }
     }
 
@@ -7168,7 +7178,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("fonalplhodhnenmokepaijoemaednpjm", "Directo - Travel Deals - Save on Hotels", "directo", core = ::directo),
         Row("mjgcgnfikekladnkhnimljcalfibijha", "DocHub - Sign PDF from Gmail", "dochub", core = pdfTool("DocHub", Regex("dce-file-viewer-import-btn|dochub", RegexOption.IGNORE_CASE), missing = "F")),
         Row("cmfijaapnnkcglahdngmjnhkfnkihkbg", "Affirm: Buy Now, Pay Later", "affirm", core = accountGate("Affirm", Regex("affirm\\.com", RegexOption.IGNORE_CASE), gate = "an Affirm account and a merchant's checkout (its content script offers pay-over-time on the merchant sites its service lists; its popup shows the extension's state alone)")),
-        Row("bhchdcejhohfmigjafbampogmaanbfkg", "User-Agent Switcher and Manager", "user-agent-switcher-manager", core = popupFlow("User-Agent Switcher and Manager", "echo-headers?uasm", listOf("/^set this user-agent string as the browser/i", "/^refresh the current page$/i"), UASM_HEADER_ECHO, settleMs = 30_000, probe = UASM_TYPE_UA to UASM_POPUP_STATE)),
+        // Its Apply (all tabs) is an `input[type=button]` whose title runs to 61 characters: the
+        // label rule reads its value instead (round 19 asked for the title and never reached it).
+        Row("bhchdcejhohfmigjafbampogmaanbfkg", "User-Agent Switcher and Manager", "user-agent-switcher-manager", core = popupFlow("User-Agent Switcher and Manager", "echo-headers?uasm", listOf("/^apply \\(all tabs\\)$/i", "/^refresh( the current page| tab)$/i"), UASM_HEADER_ECHO, settleMs = 30_000, probe = UASM_TYPE_UA to UASM_POPUP_STATE)),
         Row("gnblbpbepfbfmoobegdogkglpbhcjofh", "Beyond 20", "beyond-20", core = liveMarker("Beyond 20", "https://www.dndbeyond.com/monsters/16907-goblin", injectedAny("beyond20"), settleMs = 45_000, desktop = true, mirrors = listOf("https://www.dndbeyond.com/spells/2103-fire-bolt"))),
         Row("omebobahbkampglebglkoagddjnjbhle", "Gimp online - image editor and paint tool", "gimp-online", core = popupOpens("Gimp online", "/^full screen$/i", Regex("offidocs\\.com", RegexOption.IGNORE_CASE))),
         Row("bhiichidigehdgphoambhjbekalahgha", "Font Finder", "font-finder", core = ::fontFinder),
@@ -7584,13 +7596,19 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * sites' selectors (booking.com's `property-card`s and price rows, hotels.com's, expedia's)
      * and mounts its offer (`.directo-cta-button`, `.directo-offer-*`, `.directo-logo`) once its
      * worker's ask to `engine.getdirecto.com` comes back with a deal. [liveMarker] on a
-     * booking.com hotel page (the desktop site; a second hotel as the mirror); a served page
-     * without the offer whose worker console shows the engine refusing the runner (a 4xx/5xx, a
-     * failed fetch) is `n/m` on that line, the rest is the marker's own grade.
+     * booking.com hotel page (the desktop site; a second hotel as the mirror), DATED: the offer
+     * compares the site's price for a stay, and an undated page shows "Select dates" and no
+     * price (round 19's `n: 0` on both lanes), so the URL carries a two-night stay three weeks
+     * from the device's day (`checkin`/`checkout`, two adults, one room) and the dates go in
+     * `extra.dates`; a served page without the offer whose worker console shows the engine
+     * refusing the runner (a 4xx/5xx, a failed fetch) is `n/m` on that line, the rest is the
+     * marker's own grade.
      */
     private fun directo(row: Row, entry: JSONObject): Grade {
-        val grade = liveMarker("Directo", "https://www.booking.com/hotel/us/the-plaza.html", injectedAny("directo"), settleMs = 45_000, desktop = true, mirrors = listOf("https://www.booking.com/hotel/gb/the-savoy.html"))(row, entry)
-        val extra = grade.extra ?: JSONObject()
+        val checkin = java.time.LocalDate.now().plusDays(21)
+        val stay = "checkin=$checkin&checkout=${checkin.plusDays(2)}&group_adults=2&no_rooms=1&group_children=0&selected_currency=USD"
+        val grade = liveMarker("Directo", "https://www.booking.com/hotel/us/the-plaza.html?$stay", injectedAny("directo"), settleMs = 45_000, desktop = true, mirrors = listOf("https://www.booking.com/hotel/gb/the-savoy.html?$stay"))(row, entry)
+        val extra = (grade.extra ?: JSONObject()).put("dates", stay)
         val worker = backgroundView(row.id)?.let { consoleOf(it).takeLast(20) } ?: emptyList()
         extra.put("workerConsole", JSONArray(worker))
         if (grade.verdict != "F") return Grade(grade.verdict, grade.note, extra)
@@ -11295,6 +11313,18 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         /** Where the watch-page check ended: the address, the title, the document's state, the video's ([YT_VIDEO_WORD]) and its clock. */
         private const val YT_WHERE =
             "(function(){var v=document.querySelector('#movie_player video, video');return JSON.stringify({url: location.href, title: document.title, readyState: document.readyState, video: $YT_VIDEO_WORD(v), t: v ? Math.round(v.currentTime * 10) / 10 : null})})()"
+        /**
+         * The watch page's playability gate: the player response's `playabilityStatus` (`OK`, or
+         * `LOGIN_REQUIRED` / `ERROR` / `UNPLAYABLE` with its reason – "Sign in to confirm you're
+         * not a bot" on a runner's address), the player's drawn error screen and whether either
+         * reads as a bot check. A gated page never starts its video (`src: false`): a control
+         * that waits for playback is not measurable on it.
+         */
+        private const val YT_PLAYABILITY =
+            "(function(){var p=null;try{p=(window.ytInitialPlayerResponse||{}).playabilityStatus||null}catch(e){}var r=p&&p.errorScreen&&p.errorScreen.playerErrorMessageRenderer;var sub=function(o){return o?(o.simpleText||(o.runs||[]).map(function(x){return x.text}).join('')):''};" +
+                "var reason=p?(p.reason||sub(r&&r.reason)||''):'';var err=document.querySelector('.ytp-error, #error-screen, .ytp-error-content-wrap');var errText=err&&err.offsetWidth>0?(err.textContent||'').replace(/\\s+/g,' ').trim().slice(0,160):'';" +
+                "var bot=/confirm (that )?you.?re not a bot|sign in to confirm|unusual traffic|not a robot/i.test(reason+' '+errText+' '+sub(r&&r.subreason));" +
+                "return JSON.stringify({status:p?p.status:null,reason:reason.slice(0,120),error:errText,bot:bot})})()"
         /** The watch page's video present (`pass`), with its state, clock, readiness and whether it has a source. */
         private const val YT_VIDEO_STATE =
             "(function(){var v=document.querySelector('#movie_player video, video');return JSON.stringify({pass: !!v, state: $YT_VIDEO_WORD(v), t: v ? Math.round(v.currentTime * 10) / 10 : null, ready: v ? v.readyState : null, src: !!(v && (v.currentSrc || v.src))})})()"
@@ -11384,12 +11414,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * role=button, labelled inputs, then the innermost text container; through open shadow
          * roots): its label and centre, or the document's text when nothing matched. A table
          * cell is a control too (Allow CORS's toggle is a `td` with the title "Toggle ON|OFF";
-         * round 13 missed it).
+         * round 13 missed it). A control's label is the first of its aria-label, title, value
+         * and text that is under 60 characters: a title that runs on (User-Agent Switcher and
+         * Manager's Apply, whose title is 61 characters – rounds 18-19 never reached it) gives
+         * way to the control's own value or text instead of hiding the control.
          */
         private const val CLICK_LABEL =
             "(function(){var re=__RE__;var visible=function(n){var r=n.getBoundingClientRect();return r.width>10&&r.height>10};" +
-                "var label=function(e){return ((e.getAttribute&&(e.getAttribute('aria-label')||e.getAttribute('title')))||e.value||e.textContent||'').replace(/\\s+/g,' ').trim()};var cands=[];" +
-                "var walk=function(root){var all=root.querySelectorAll('button, a, [role=button], input[type=button], input[type=submit], label, div, span, li, p, td');for(var i=0;i<all.length;i++){var e=all[i];var l=label(e);if(l.length>0&&l.length<60&&re.test(l)&&visible(e))cands.push(e);if(e.shadowRoot)walk(e.shadowRoot)}};" +
+                "var label=function(e){var c=[e.getAttribute&&e.getAttribute('aria-label'),e.getAttribute&&e.getAttribute('title'),e.value,e.textContent];for(var i=0;i<c.length;i++){var s=String(c[i]||'').replace(/\\s+/g,' ').trim();if(s.length>0&&s.length<60)return s}return ''};var cands=[];" +
+                "var walk=function(root){var all=root.querySelectorAll('button, a, [role=button], input[type=button], input[type=submit], label, div, span, li, p, td');for(var i=0;i<all.length;i++){var e=all[i];var l=label(e);if(l.length>0&&re.test(l)&&visible(e))cands.push(e);if(e.shadowRoot)walk(e.shadowRoot)}};" +
                 "if(document.body)walk(document.body);var leaves=cands.filter(function(e){return !cands.some(function(o){return o!==e&&e.contains(o)})});" +
                 "var hit=cands.find(function(e){return /^(BUTTON|A|INPUT)$/.test(e.tagName)||e.getAttribute('role')==='button'})||leaves[0]||null;" +
                 "if(!hit)return JSON.stringify({clicked:false,text:document.body?document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,100):''});var r=hit.getBoundingClientRect();try{hit.click()}catch(e){}" +
