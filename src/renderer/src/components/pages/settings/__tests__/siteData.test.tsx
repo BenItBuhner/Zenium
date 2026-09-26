@@ -47,9 +47,9 @@ function status(over: Partial<SiteDataStatus> = {}): SiteDataStatus {
 
 /**
  * The slice of the state the builder reads: the policy, the host's windows, the privacy settings,
- * and the extensions' holds over them – none here, and none from the host today: the cookie rows
- * are wired to `privacy.thirdPartyCookies` but the key is stored-only, no mark until the service
- * applies it (F3; `sections.test.ts` pins both the absence and the wiring).
+ * and the extensions' holds over them – none here: an extension holding
+ * `privacy.thirdPartyCookies` marks both cookie rows as one run at the value the service applies
+ * (`sections.test.ts`, the §10.5 rows); these tests are the user's own rows.
  */
 function state(siteData: SiteDataStatus, windows = false): UIState {
   return {
