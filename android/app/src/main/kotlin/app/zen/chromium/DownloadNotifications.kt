@@ -1,8 +1,6 @@
 package app.zen.chromium
 
 import android.Manifest
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -21,11 +19,12 @@ import java.util.Locale
  * a progress bar and Pause / Resume / Cancel actions (the actions go back through the core, which
  * owns the state), a "Download failed" card, and a "Download complete" card that opens the file.
  * The action buttons broadcast to a receiver registered for the life of the activity; a
- * transfer only runs while the process does, so nothing is lost when it goes.
+ * transfer only runs while the process does, so nothing is lost when it goes. The cards ride the
+ * registry's two download channels ([Notifications.DOWNLOADS] for progress and failure,
+ * [Notifications.COMPLETED_DOWNLOADS] for the file), Chrome's pair.
  */
 class DownloadNotifications(private val context: Context, private val onAction: (id: String, op: String) -> Unit) {
     private val manager = NotificationManagerCompat.from(context)
-    private var channelsReady = false
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context, intent: Intent) {
@@ -44,13 +43,13 @@ class DownloadNotifications(private val context: Context, private val onAction: 
      * the file name nor the site, only that Zenium is downloading and how far it got.
      */
     fun progress(id: String, filename: String, received: Long, total: Long, paused: Boolean, private: Boolean = false) {
-        ensureChannels()
+        val channel = Notifications.ensure(context, Notifications.DOWNLOADS)
         val text = when {
             paused -> "Paused · ${formatBytes(received)}${if (total > 0) " of ${formatBytes(total)}" else ""}"
             total > 0 -> "${formatBytes(received)} of ${formatBytes(total)}"
             else -> formatBytes(received)
         }
-        val builder = NotificationCompat.Builder(context, CHANNEL_PROGRESS)
+        val builder = NotificationCompat.Builder(context, channel)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle(if (private) PRIVATE_TITLE else filename)
             .setContentText(text)
@@ -71,8 +70,8 @@ class DownloadNotifications(private val context: Context, private val onAction: 
     }
 
     fun failed(id: String, filename: String, reason: String, private: Boolean = false) {
-        ensureChannels()
-        val builder = NotificationCompat.Builder(context, CHANNEL_PROGRESS)
+        val channel = Notifications.ensure(context, Notifications.DOWNLOADS)
+        val builder = NotificationCompat.Builder(context, channel)
             .setSmallIcon(android.R.drawable.stat_notify_error)
             .setContentTitle(if (private) "$PRIVATE_TITLE failed" else "Download failed")
             .setContentText(if (private) describe(reason) else "$filename · ${describe(reason)}")
@@ -84,9 +83,9 @@ class DownloadNotifications(private val context: Context, private val onAction: 
     }
 
     fun completed(id: String, filename: String, mimeType: String, uri: Uri?, private: Boolean = false) {
-        ensureChannels()
+        val channel = Notifications.ensure(context, Notifications.COMPLETED_DOWNLOADS)
         manager.cancel(TAG_PROGRESS, id.hashCode())
-        val builder = NotificationCompat.Builder(context, CHANNEL_DONE)
+        val builder = NotificationCompat.Builder(context, channel)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setContentTitle(if (private) "$PRIVATE_TITLE complete" else "Download complete")
             .setContentText(if (private) "Tap to open the file" else filename)
@@ -133,30 +132,11 @@ class DownloadNotifications(private val context: Context, private val onAction: 
         return PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     }
 
-    private fun ensureChannels() {
-        if (channelsReady) return
-        channelsReady = true
-        val system = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        system.createNotificationChannel(
-            NotificationChannel(CHANNEL_PROGRESS, "Downloads", NotificationManager.IMPORTANCE_LOW).apply {
-                description = "Progress of files Zenium is downloading"
-                setShowBadge(false)
-            }
-        )
-        system.createNotificationChannel(
-            NotificationChannel(CHANNEL_DONE, "Completed downloads", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                description = "A file Zenium downloaded is ready"
-            }
-        )
-    }
-
     companion object {
         const val ACTION = "app.zen.chromium.DOWNLOAD_ACTION"
         const val EXTRA_ID = "id"
         const val EXTRA_OP = "op"
         const val EXTRA_SHOW_DOWNLOADS = "zenium.showDownloads"
-        const val CHANNEL_PROGRESS = "zenium.downloads"
-        const val CHANNEL_DONE = "zenium.downloads.complete"
         private const val TAG_PROGRESS = "zenium.download"
         private const val TAG_DONE = "zenium.download.done"
         /** What a private transfer's card says instead of the file name. */

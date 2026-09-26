@@ -145,10 +145,6 @@ class CaptureLedger(private val confirmWindowMs: Long = CONFIRM_WINDOW_MS) {
     companion object {
         /** How long a grant stands unconfirmed by the page's report before the card comes down. */
         const val CONFIRM_WINDOW_MS = 15_000L
-        /** Chrome's channel for it is "Media capture"; the name says what the user sees the card about. */
-        const val CHANNEL_ID = "zenium.capture"
-        const val CHANNEL_NAME = "Camera and microphone"
-        const val CHANNEL_DESCRIPTION = "Shows while a site is using your camera or microphone"
         const val PRIVATE_SUBJECT = "A private tab"
 
         /** What `use` is called on the card: Chrome's words, the camera first. */
@@ -165,7 +161,7 @@ class CaptureLedger(private val confirmWindowMs: Long = CONFIRM_WINDOW_MS) {
                 tabId = tabId,
                 title = "$subject is using your ${useLabel(use)}",
                 use = use,
-                channelId = CHANNEL_ID,
+                channelId = Notifications.CAPTURE.id,
                 visibility = if (private) NotificationCompat.VISIBILITY_SECRET else NotificationCompat.VISIBILITY_PUBLIC,
                 ongoing = true,
                 silent = true,

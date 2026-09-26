@@ -424,10 +424,10 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
             expect("the card is Close all private tabs, counting one tab", cardTitle(card) == PrivateSession.TITLE && cardText(card) == "1 private tab is open")
             expect("the card is secret: nothing of it on the lock screen", card?.notification?.visibility == Notification.VISIBILITY_SECRET)
             expect("the card is ongoing and this device's alone", cardOngoing(card) && (card?.notification?.flags ?: 0) and Notification.FLAG_LOCAL_ONLY != 0)
-            expect("the card is on the private channel", card?.notification?.channelId == PrivateSession.CHANNEL_ID)
-            val channel = notifications.getNotificationChannel(PrivateSession.CHANNEL_ID)
+            expect("the card is on the private channel", card?.notification?.channelId == Notifications.PRIVATE.id)
+            val channel = notifications.getNotificationChannel(Notifications.PRIVATE.id)
             finding("  channel: id ${channel?.id} name '${channel?.name}' importance ${channel?.importance} badge ${channel?.canShowBadge()}")
-            expect("the channel is named and low-importance", channel != null && channel.name?.toString() == PrivateSession.CHANNEL_NAME && channel.importance == NotificationManager.IMPORTANCE_LOW)
+            expect("the channel is named and low-importance", channel != null && channel.name?.toString() == Notifications.PRIVATE.name && channel.importance == Notifications.PRIVATE.importance)
             expect("the card's press is wired", card?.notification?.contentIntent != null)
 
             coreInvoke("tab.newPrivate", json("url" to "$siteOrigin/notes.html").toString())

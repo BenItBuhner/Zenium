@@ -612,7 +612,7 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
         val card1 = awaitCard(8_000)
         expect(
             "the session's card is posted with the first private tab, on the zenium.private channel",
-            card1 != null && card1.notification.channelId == PrivateSession.CHANNEL_ID
+            card1 != null && card1.notification.channelId == Notifications.PRIVATE.id
         )
         expect(
             "the card reads Close all private tabs, ongoing, with a press to act on and no buttons",
@@ -1246,8 +1246,8 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
      * rule under test; the card's own looks are not, so its glyph is the platform's.
      */
     private fun postStandInCard() {
-        PrivateSession.ensureChannel(app)
-        val card = NotificationCompat.Builder(app, PrivateSession.CHANNEL_ID)
+        val channel = Notifications.ensure(app, Notifications.PRIVATE)
+        val card = NotificationCompat.Builder(app, channel)
             .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
             .setContentTitle(PrivateSession.TITLE)
             .setContentText("1 private tab is open")
