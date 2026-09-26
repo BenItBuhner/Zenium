@@ -37,6 +37,7 @@ import { TitleThrottle } from '../../shared/windowTitle'
 import { privateIconPath, privateWindowIcon, windowIcon } from './appIcon'
 import { EdgeTracker, edgeState, type EdgeZone } from './edgeReveal'
 import { privateAppDetails } from './privateTaskbar'
+import { StartupHold } from './startupHold'
 import { placeWindow, planFramedWindow, type DisplayArea } from './windowPlacement'
 import { showWhenReady } from './windowShow'
 import { NO_WINDOW_SWITCHES, windowLaunchState, type WindowSwitches } from '../cli'
@@ -127,7 +128,8 @@ export class ElectronWindow implements WindowHost {
       add: () => undefined,
       remove: () => undefined
     },
-    switches: WindowSwitches = NO_WINDOW_SWITCHES
+    switches: WindowSwitches = NO_WINDOW_SWITCHES,
+    startupHold: StartupHold = new StartupHold()
   ) {
     const launch = windowLaunchState(switches, init)
     this.kiosk = launch.kiosk
@@ -390,11 +392,17 @@ export class ElectronWindow implements WindowHost {
     win.on('page-title-updated', (event) => event.preventDefault())
     wc.on('did-finish-load', () => zen.onChromeReady())
 
-    if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-      void win.loadURL(process.env['ELECTRON_RENDERER_URL'])
-    } else {
-      void win.loadFile(join(__dirname, '../renderer/index.html'))
-    }
+    // The chrome's document waits for the extension layer's first publish like the pages' do
+    // (`startupHold.ts`): what the user types into it is the suggestions fetch's one source, and
+    // its rows read the layer (the private New Tab's cookie line, the controlled Settings rows).
+    startupHold.run(() => {
+      if (win.isDestroyed()) return
+      if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+        void win.loadURL(process.env['ELECTRON_RENDERER_URL'])
+      } else {
+        void win.loadFile(join(__dirname, '../renderer/index.html'))
+      }
+    })
   }
 
   get alive(): boolean {
@@ -737,6 +745,12 @@ export class ElectronWindow implements WindowHost {
 export class ElectronWindowFactory implements WindowHostFactory {
   private readonly byWebContentsId = new Map<number, ZenWindow>()
   private browser!: Browser
+  /**
+   * The hold on the run's first documents until the extension layer's first publish
+   * (`startupHold.ts`), for every chrome document it creates; the platform's one hold, shared
+   * with the tab views (`ElectronPlatform.start`).
+   */
+  startupHold = new StartupHold()
 
   /** `switches`: the run's `--kiosk` / `--start-maximized`, for every window it creates. */
   constructor(private readonly switches: WindowSwitches = NO_WINDOW_SWITCHES) {}
@@ -755,7 +769,8 @@ export class ElectronWindowFactory implements WindowHostFactory {
         add: (id) => this.byWebContentsId.set(id, win),
         remove: (id) => this.byWebContentsId.delete(id)
       },
-      this.switches
+      this.switches,
+      this.startupHold
     )
     const id = host.win.webContents.id
     this.byWebContentsId.set(id, win)

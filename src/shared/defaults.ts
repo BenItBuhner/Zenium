@@ -22,7 +22,7 @@ import { DEFAULT_UPDATE_SETTINGS } from './updates'
 import { DEFAULT_PROMO_STATE } from './defaultBrowser'
 import { DEFAULT_BLOCKING_SETTINGS } from './blocking'
 import { DEFAULT_PAGE_CONTROLS } from './pageControls'
-import { DEFAULT_PRIVACY_SETTINGS } from './privacy'
+import { DEFAULT_PRELOAD_PAGES, DEFAULT_PRIVACY_SETTINGS } from './privacy'
 import { DEFAULT_SPELLCHECK } from './spellcheck'
 import { DEFAULT_READER_PREFERENCES } from './reader'
 import { DEFAULT_READ_ALOUD_SETTINGS } from './readAloud'
@@ -215,7 +215,8 @@ export function emptyResourceSnapshot(): ResourceSnapshot {
     queuedLoads: 0,
     pressure: [],
     recentActions: [],
-    restartRequired: false
+    restartRequired: false,
+    pendingSwitches: []
   }
 }
 
@@ -299,6 +300,7 @@ export const DEFAULT_SETTINGS: Settings = {
   bookmarksBar: 'newtab',
   shortcutPreset: 'chrome',
   privacy: structuredClone(DEFAULT_PRIVACY_SETTINGS),
+  preloadPages: DEFAULT_PRELOAD_PAGES,
   newTab: structuredClone(DEFAULT_NEW_TAB_SETTINGS),
   gestureHintDone: false,
   fullscreenHintDone: false,

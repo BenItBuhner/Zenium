@@ -2,6 +2,7 @@ import type { Settings, UIState } from '@shared/types'
 import {
   HTTPS_ONLY_LABELS,
   HTTPS_ONLY_PERMISSION,
+  PRELOAD_PAGES_LABELS,
   SECURE_DNS_CUSTOM,
   type HttpsOnlyMode,
   type PrivacySettings,
@@ -390,6 +391,48 @@ export function secureDnsGroups(state: UIState, set: Set): RowGroup[] {
     })
   }
   return [{ id: 'secure-dns', heading: text.heading, description: text.description, rows }]
+}
+
+// ---------------------------------------------------------------------------
+// Preload pages (PS-43)
+// ---------------------------------------------------------------------------
+
+/**
+ * Chrome's "Preload pages" as a value row (a menulist on the desktop, a sheet of the options on
+ * the phone – §9.13) with the two levels both hosts can honour: Standard preloading and No
+ * preloading. Chrome's Extended needs its prediction service, which neither host has, so a
+ * profile or a peer holding `extended` reads – and shows – as Standard, and choosing Standard
+ * writes `standard`. Writes `Settings.preloadPages`, its own synced key; the desktop folded its
+ * Resources "Block prerendering" switch into No preloading (`shared/privacy.ts`). No relaunch
+ * notice: the level acts the moment it changes on both hosts – the desktop's request engine
+ * refuses every speculative request live (the prerender's own first fetch among them), the
+ * phone's WebViews take `SPECULATIVE_LOADING_DISABLED` – and no startup switch waits behind it.
+ */
+export function preloadGroups(state: UIState, set: Set): RowGroup[] {
+  const level = state.settings.preloadPages === 'none' ? 'none' : 'standard'
+  return [
+    {
+      id: 'preload',
+      heading: 'Preload pages',
+      description:
+        'Zenium can load pages you’re likely to open next before you open them, so they appear faster.',
+      rows: [
+        choice({
+          id: 'preload-pages',
+          label: 'Preload pages',
+          description: PRELOAD_PAGES_LABELS[level].description,
+          keywords: ['preload', 'prefetch', 'prerender', 'speculation', 'network prediction'],
+          value: level,
+          options: (['standard', 'none'] as const).map((value) => ({
+            value,
+            label: PRELOAD_PAGES_LABELS[value].label,
+            description: PRELOAD_PAGES_LABELS[value].description
+          })),
+          onChange: (preloadPages) => set({ preloadPages })
+        })
+      ]
+    }
+  ]
 }
 
 // ---------------------------------------------------------------------------

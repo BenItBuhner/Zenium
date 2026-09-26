@@ -7,7 +7,10 @@ import {
 } from '../../../core/extensions/api/privacy'
 import type { ListenerOptions, WebRequestDetails } from '../blocking'
 import type { WebRequestEvent, WebRequestListener } from '../webRequest'
+import { ExtensionControls } from '../extensionApi/controls'
 import { PRIVACY_REGISTRANT, PrivacyApi, type PrivacyPage } from '../extensionApi/privacy'
+import type { ExtensionControl } from '../../../shared/types'
+import { EXTENSION_SETTING_KEYS } from '../../../shared/extensionSettings'
 import type { ApiContext, ApiHost } from '../extensionApi/types'
 import type { WebRequestListenerHost } from '../extensionApi/webRequest'
 
@@ -97,6 +100,8 @@ interface World {
   privateWindows: number
   offerToSave: boolean
   persisted: Map<string, Record<string, ScopedValues>>
+  /** What the host published into `State.setExtensionControls`, last first. */
+  controls: Array<Record<string, ExtensionControl>>
   ctx(extensionId: string): ApiContext
 }
 
@@ -112,15 +117,23 @@ function world(options: { attach?: boolean } = {}): World {
     privateWindows: 0,
     offerToSave: true,
     persisted,
+    controls: [],
     ctx: (extensionId) => ({ extensionId }) as unknown as ApiContext
   }
   const host = {
+    controls: new ExtensionControls({
+      setExtensionControls: (controls) => {
+        state.controls.unshift(controls)
+      }
+    }),
     grants: (extensionId: string) => ({
       permissions: extensionId === NO_PERMISSION ? ['storage'] : ['privacy'],
       origins: []
     }),
     loaded: (extensionId: string) =>
-      state.loaded.has(extensionId) ? { id: extensionId } : undefined,
+      state.loaded.has(extensionId)
+        ? { id: extensionId, extension: { name: `Extension ${extensionId.slice(0, 1)}` } }
+        : undefined,
     allLoaded: () => [...state.loaded].map((id) => ({ id })),
     partitionsOf: (extensionId: string) =>
       state.privateAllowed.has(extensionId) ? ['default', 'private'] : ['default'],
@@ -438,5 +451,64 @@ describe('PrivacyApi enforcement', () => {
         partition: 'private'
       })
     ).toEqual([undefined])
+  })
+})
+
+describe('PrivacyApi and the services (the layer the readers take, services pass 10)', () => {
+  it('publishes the seven settings the services read, whole, with the holder and its value, and drops each as it is let go', () => {
+    const w = world()
+    expect(w.controls).toEqual([])
+    set(w, OLD, 'services', 'passwordSavingEnabled', { value: false })
+    expect(w.controls[0]).toEqual({
+      [EXTENSION_SETTING_KEYS.passwordSaving]: {
+        extensionId: OLD,
+        name: 'Extension a',
+        value: false
+      }
+    })
+    set(w, OLD, 'services', 'autofillAddressEnabled', { value: false })
+    set(w, OLD, 'services', 'autofillCreditCardEnabled', { value: false })
+    set(w, OLD, 'services', 'safeBrowsingEnabled', { value: false })
+    set(w, OLD, 'websites', 'thirdPartyCookiesAllowed', { value: false })
+    set(w, OLD, 'services', 'searchSuggestEnabled', { value: false })
+    set(w, OLD, 'network', 'networkPredictionEnabled', { value: false })
+    expect(Object.keys(w.controls[0]).sort()).toEqual(Object.values(EXTENSION_SETTING_KEYS).sort())
+    // A newer install takes a key with its own value; clearing hands it back to the older holder.
+    set(w, NEW, 'services', 'safeBrowsingEnabled', { value: true })
+    expect(w.controls[0][EXTENSION_SETTING_KEYS.safeBrowsing]).toEqual({
+      extensionId: NEW,
+      name: 'Extension b',
+      value: true
+    })
+    clear(w, NEW, 'services', 'safeBrowsingEnabled')
+    expect(w.controls[0][EXTENSION_SETTING_KEYS.safeBrowsing]).toMatchObject({
+      extensionId: OLD,
+      value: false
+    })
+    // Cleared by its holder: the key goes, the others stay; disabled: everything goes.
+    clear(w, OLD, 'services', 'passwordSavingEnabled')
+    expect(w.controls[0][EXTENSION_SETTING_KEYS.passwordSaving]).toBeUndefined()
+    expect(Object.keys(w.controls[0])).toHaveLength(6)
+    w.api.unload(OLD)
+    expect(w.controls[0]).toEqual({})
+  })
+
+  it('publishes nothing for a setting no service reads, nor for a private-window-only value', () => {
+    const w = world()
+    set(w, OLD, 'network', 'webRTCIPHandlingPolicy', { value: 'disable_non_proxied_udp' })
+    set(w, OLD, 'websites', 'hyperlinkAuditingEnabled', { value: false })
+    expect(w.controls).toEqual([])
+    w.privateAllowed.add(OLD)
+    w.api.privateAccessChanged()
+    set(w, OLD, 'services', 'passwordSavingEnabled', {
+      value: false,
+      scope: 'incognito_persistent'
+    })
+    expect(w.controls).toEqual([])
+    // The regular scope reaches the services (Chrome's regular pref is the one the services read).
+    set(w, OLD, 'services', 'passwordSavingEnabled', { value: false, scope: 'regular' })
+    expect(w.controls[0]).toMatchObject({
+      [EXTENSION_SETTING_KEYS.passwordSaving]: { extensionId: OLD, value: false }
+    })
   })
 })

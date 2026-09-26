@@ -15,8 +15,10 @@ import type { UpdateSettings, UpdateStatus } from './updates'
 import type { ToolbarPins } from './toolbarPins'
 import type { BlockingSettings, BlockingStatus } from './blocking'
 import type {
+  PreloadPagesLevel,
   PrivacySettings,
   PrivacyStatus,
+  PrivateThirdPartyCookieStatus,
   ProtectionCheck,
   ThirdPartyCookiePrivateMode
 } from './privacy'
@@ -2696,10 +2698,12 @@ export interface NewTabPageState {
   /**
    * A private window's page only: the "Block third-party cookies" switch (Chrome's Incognito
    * new-tab toggle), `PrivacyStatus.privateThirdPartyCookies` – `blocked` is its position,
-   * `locked` that Settings blocks them in every window, so it is on and disabled. Absent on a
-   * regular page; inert for anything else that reads the state.
+   * `locked` that it is disabled: on under Settings' block in every window, and at either pole
+   * under the extension holding `chrome.privacy`'s `thirdPartyCookiesAllowed`
+   * (`lockedByExtension`, its name – empty when it has none – so the locked line names it).
+   * Absent on a regular page; inert for anything else that reads the state.
    */
-  privateThirdPartyCookies?: { blocked: boolean; locked: boolean }
+  privateThirdPartyCookies?: PrivateThirdPartyCookieStatus
 }
 
 /**
@@ -2977,6 +2981,12 @@ export interface Settings {
   shortcutPreset: ShortcutPreset
   /** Safe Browsing, HTTPS-only, secure DNS, cookies, GPC / DNT (Settings → Privacy and security). */
   privacy: PrivacySettings
+  /**
+   * Chrome's "Preload pages" (PS-43): `standard` (default) lets the speculative loads pages ask
+   * for go out, `none` refuses them (`shared/privacy.ts`). Its own synced key, as Chrome's pref;
+   * a profile from before it reads `standard` (`sanitizePreloadPages`).
+   */
+  preloadPages: PreloadPagesLevel
   /**
    * The new tab page, both platforms' (`shared/newTab.ts`): whether it opens (desktop), its
    * layout preset and sections, what its grid shows, what it paints behind. The user's shortcuts
@@ -3424,7 +3434,12 @@ export interface ResourceProcessProfile {
   disableSpareRenderer: boolean
   /** Do not keep previous documents alive in the back/forward cache. */
   disableBackForwardCache: boolean
-  /** Do not let pages prerender other pages in hidden renderers. */
+  /**
+   * Folded into `Settings.preloadPages` (PS-43: `none` refuses every speculative request in the
+   * request engine, the prerender's own first fetch among them – no `Prerender2` switch at
+   * startup on either account). Nothing reads it any more; it stays in the persisted shape
+   * because sync's composite `resources` group and a peer on an older build carry it.
+   */
   disablePrerender: boolean
   /** Raster worker threads per renderer (0 = default). */
   rasterThreads: number
@@ -3575,8 +3590,18 @@ export interface ResourceSnapshot {
   queuedLoads: number
   pressure: ResourceKind[]
   recentActions: GovernorAction[]
-  /** Startup switches derived from the current settings differ from the ones this process runs with. */
+  /**
+   * The process profile's startup switches derived from the current settings differ from the
+   * ones this process runs with (Resources › Process profile's relaunch notice).
+   */
   restartRequired: boolean
+  /**
+   * The switches that differ, by name (`pendingStartupSwitches`: `js-flags`,
+   * `disable-features`, `gpu` for hardware acceleration…), for a notice or a log that names what
+   * the relaunch is for. Empty while none does – always on a host without startup switches (the
+   * phone).
+   */
+  pendingSwitches: string[]
 }
 
 // ---------------------------------------------------------------------------

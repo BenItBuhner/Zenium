@@ -7,6 +7,7 @@ import type {
   Tab
 } from '../../shared/types'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../../shared/types'
+import { EXTENSION_SETTING_KEYS } from '../../shared/extensionSettings'
 import { BLANK_URL, errorPageUrl, NEW_TAB_URL, SETTINGS_URL } from '../../shared/url'
 import { CRASH_ERROR_CODE } from '../../shared/zenPages'
 import { DEFAULT_NEW_TAB_SETTINGS } from '../../shared/newTab'
@@ -532,6 +533,84 @@ describe('NewTabService: state for the page', () => {
       )
       // Still absent from the regular page, whatever the modes.
       expect(f.browser.newTab.stateFor(regularId)).not.toHaveProperty('privateThirdPartyCookies')
+    })
+
+    it('build(): an extension holding chrome.privacy’s thirdPartyCookiesAllowed (services pass 10) locks the switch on the live page at either pole and names itself; the user’s mode stands; Disable unlocks', async () => {
+      const f = fixture()
+      const { tab, view } = privatePage(f)
+      expect(f.browser.state.settings.privacy.thirdPartyCookies).toBe('block-private')
+      await settle()
+      const before = view.pushes.length
+      // The layer arrives (the extension host's publish): the effective policy blocks everywhere.
+      f.browser.state.setExtensionControls({
+        [EXTENSION_SETTING_KEYS.thirdPartyCookies]: {
+          extensionId: 'cjpalhdlnbpafiamejdnhcphjbkeiagm',
+          name: 'Cookie Shield Probe',
+          value: false
+        }
+      })
+      expect(f.browser.newTab.stateFor(tab.id)!.privateThirdPartyCookies).toEqual({
+        blocked: true,
+        locked: true,
+        lockedByExtension: 'Cookie Shield Probe'
+      })
+      // The commit re-pushed the live page with the lock and the holder's name.
+      await settle()
+      expect(view.pushes.length).toBeGreaterThan(before)
+      expect(view.pushes.at(-1)!.privateThirdPartyCookies).toEqual({
+        blocked: true,
+        locked: true,
+        lockedByExtension: 'Cookie Shield Probe'
+      })
+      // The same position, lock and name the chrome gets (`PrivacyStatus.privateThirdPartyCookies`).
+      expect(f.browser.protection.status().privateThirdPartyCookies).toEqual({
+        blocked: true,
+        locked: true,
+        lockedByExtension: 'Cookie Shield Probe'
+      })
+      // The user's own values were never written.
+      expect(f.browser.state.settings.privacy.thirdPartyCookies).toBe('block-private')
+
+      // A hold at `true` (allow everywhere) locks the switch OFF and names the holder – a tap
+      // would write a private override the layer above does not read and spring back (the
+      // independent review's Required 1).
+      f.browser.state.setExtensionControls({
+        [EXTENSION_SETTING_KEYS.thirdPartyCookies]: {
+          extensionId: 'x',
+          name: 'Opener',
+          value: true
+        }
+      })
+      expect(f.browser.newTab.stateFor(tab.id)!.privateThirdPartyCookies).toEqual({
+        blocked: false,
+        locked: true,
+        lockedByExtension: 'Opener'
+      })
+      expect(f.browser.protection.status().privateThirdPartyCookies).toEqual({
+        blocked: false,
+        locked: true,
+        lockedByExtension: 'Opener'
+      })
+      // The page's flip while locked is not taken: the document refuses the tap, and the core's
+      // state is what the layer says even when a write lands.
+      f.browser.newTab.handleAction(tab.id, {
+        type: 'set-private-third-party-cookies',
+        blocked: true
+      })
+      expect(f.browser.newTab.stateFor(tab.id)!.privateThirdPartyCookies).toEqual({
+        blocked: false,
+        locked: true,
+        lockedByExtension: 'Opener'
+      })
+      // The user's private override the write left is read again only when the layer goes.
+      expect(f.browser.state.settings.privacy.thirdPartyCookiesPrivate).toBe('block')
+
+      // The layer withdrawn (Disable, uninstall): the user's state is back, no name.
+      f.browser.state.setExtensionControls({})
+      expect(f.browser.newTab.stateFor(tab.id)!.privateThirdPartyCookies).toEqual({
+        blocked: true,
+        locked: false
+      })
     })
 
     it('handleAction: on writes block, off writes allow, never default, private pages only', () => {

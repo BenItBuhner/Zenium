@@ -339,14 +339,42 @@ export const PRIVATE_EXPLAINER = {
 /**
  * The private page's "Block third-party cookies" row (Chrome's Incognito switch), bound to
  * `privacy.thirdPartyCookiesPrivate` – private windows only, regular browsing never changes.
- * Sentence case (§9.1). The locked description stands while Settings > Privacy and Security
- * blocks third-party cookies in every window, when the switch is on and disabled.
+ * Sentence case (§9.1). The locked description stands while Settings › Privacy and Security
+ * blocks third-party cookies in every window, when the switch is on and disabled – the pane by
+ * its actual name behind the language's path glyph (the lead's ruling on #522).
  */
 export const PRIVATE_COOKIES = {
   label: 'Block third-party cookies',
   description: 'Blocks third-party cookies in private windows',
-  lockedDescription: 'Blocked in every window by Settings > Privacy and Security'
+  lockedDescription: 'Blocked in every window by Settings › Privacy and Security'
 } as const
+
+/**
+ * The locked line while an extension holds `chrome.privacy.websites.thirdPartyCookiesAllowed`
+ * (services pass 10), at either pole – "Blocked" under `false`, "Allowed" under `true`, when the
+ * switch is off and locked since a tap would spring back – the holder named, as Settings'
+ * controlled rows name theirs; "an extension" only where the name is not to hand. The desktop
+ * document's own words – "window", no full stop – around the lead's sentence for the phone's page.
+ */
+export function privateCookiesLockedByExtension(blocked: boolean, name: string): string {
+  const verb = blocked ? 'Blocked' : 'Allowed'
+  const holder = name.trim()
+  return holder
+    ? `${verb} in every window by the extension ${holder}`
+    : `${verb} in every window by an extension`
+}
+
+/** The row's description for a state: the switch's own line, or why the switch is locked. */
+export function privateCookiesDescription(cookies: {
+  blocked: boolean
+  locked: boolean
+  lockedByExtension?: string
+}): string {
+  if (!cookies.locked) return PRIVATE_COOKIES.description
+  return cookies.lockedByExtension === undefined
+    ? PRIVATE_COOKIES.lockedDescription
+    : privateCookiesLockedByExtension(cookies.blocked, cookies.lockedByExtension)
+}
 
 /** The `zen://newtab` document. Everything dynamic is added by the page script. */
 export function newTabPageHtml(): string {

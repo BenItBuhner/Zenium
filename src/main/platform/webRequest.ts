@@ -100,13 +100,17 @@ export interface RequestHandler {
 
 /**
  * Orders of the browser's own handlers: Safe Browsing refuses what it knows before any rule is
- * consulted, the rule engine decides, the privacy handler (third-party cookies, GPC / DNT) and
- * the header rewrites then edit what goes out.
+ * consulted, the per-site content rules act, the preload handler refuses the speculative loads
+ * under "No preloading" (a header stage: it needs `Sec-Purpose`; before the rule engine, so an
+ * extension's rules never see a prefetch the user's level refused), the rule engine decides, the
+ * privacy handler (third-party cookies, GPC / DNT) and the header rewrites then edit what goes
+ * out.
  */
 export const HANDLER_ORDER = {
   safeBrowsing: 50,
   lookalike: 60,
   contentRules: 70,
+  preload: 80,
   ruleEngine: 100,
   privacy: 150,
   headerRewrite: 200

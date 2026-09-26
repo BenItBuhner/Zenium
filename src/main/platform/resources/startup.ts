@@ -17,7 +17,9 @@ let applied: StartupProfile | null = null
 /**
  * Read the persisted resource settings and put the derived Chromium / V8 switches on the command
  * line, together with the platform's baseline (`BASELINE_DISABLED_FEATURES`, `baselineSwitches`).
- * Must run before `app.whenReady()` resolves – Chromium reads them while starting up.
+ * Must run before `app.whenReady()` resolves – Chromium reads them while starting up. The
+ * resource settings alone: Preload pages (PS-43) has no startup switch, its `none` is the
+ * request engine's live refusal.
  */
 export function applyResourceSwitches(userDataDir: string): StartupProfile {
   const settings = readPersistedResourceSettings(userDataDir)
