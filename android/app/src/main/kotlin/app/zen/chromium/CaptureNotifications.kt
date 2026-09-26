@@ -1,7 +1,6 @@
 package app.zen.chromium
 
 import android.app.Notification
-import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
@@ -121,7 +120,7 @@ class CaptureNotifications(private val host: Host) {
         }
         // With the app's notifications off the shade shows nothing, but the service still holds
         // the capture up behind other apps: the start is the point, the card its face.
-        ensureChannel(context)
+        Notifications.ensure(context, Notifications.CAPTURE)
         CaptureService.foreground(context, build(first), CaptureService.typeOf(ledger.use()), ::started)
         for (card in rest) {
             tagged += card.tabId
@@ -167,19 +166,6 @@ class CaptureNotifications(private val host: Host) {
     companion object {
         const val ACTION_OPEN = "app.zen.chromium.CAPTURE_OPEN"
         const val EXTRA_TAB = "tabId"
-
-        fun ensureChannel(context: Context) {
-            val system = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            if (system.getNotificationChannel(CaptureLedger.CHANNEL_ID) != null) return
-            system.createNotificationChannel(
-                NotificationChannel(CaptureLedger.CHANNEL_ID, CaptureLedger.CHANNEL_NAME, NotificationManager.IMPORTANCE_LOW).apply {
-                    description = CaptureLedger.CHANNEL_DESCRIPTION
-                    setShowBadge(false)
-                    enableVibration(false)
-                    setSound(null, null)
-                }
-            )
-        }
 
         private fun openIntent(context: Context, tabId: String): PendingIntent {
             val intent = Intent(context, MainActivity::class.java)
