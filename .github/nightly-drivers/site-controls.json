@@ -5,5 +5,5 @@
   "shard": "phone-c",
   "mirrors": "android-site-controls-demo.yml",
   "dir": "site-controls-demo",
-  "estimate": 4
+  "estimate": 5
 }
