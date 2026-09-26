@@ -16,10 +16,12 @@ import {
   type TourFeature,
   type TourStep
 } from '@renderer/lib/onboarding'
+import { tourAsksSearchChoice } from '@renderer/lib/searchChoice'
 import { activeTab } from '@renderer/lib/selectors'
 import { cn } from '@renderer/lib/utils'
 import { Button } from '../ui/button'
 import { PhoneOnboarding } from './PhoneOnboarding'
+import { SearchChoiceActions, SearchChoiceStep } from './SearchChoice'
 
 const FEATURES: Record<TourFeature, { icon: typeof Layers; title: string; text: string }> = {
   spaces: {
@@ -98,7 +100,11 @@ function DesktopOnboarding({
   /** The `ImportSource.id` picked on the import step; null is "Not now". */
   const [importFrom, setImportFrom] = useState<string | null>(null)
   const [scheme, setScheme] = useState<ColorScheme>('system')
-  const [engine, setEngine] = useState('google')
+  // In the EEA the search step is the choice screen (W6-2): nothing picked in advance, the
+  // step's own "Set as default" / "Skip for now" in the footer, and the core told at once.
+  // Elsewhere the step keeps its three tiles with the shipped default picked.
+  const choice = tourAsksSearchChoice(state)
+  const [engine, setEngine] = useState<string | null>(choice ? null : 'google')
   const [picked, setPicked] = useState<string[]>([])
   const [presetIndex, setPresetIndex] = useState(0)
   const [setupSync, setSetupSync] = useState(false)
@@ -112,12 +118,41 @@ function DesktopOnboarding({
     [presetIndex, dark]
   )
 
+  const choiceStep = choice && step === 'search'
+  const next = (): void => setStep(steps[Math.min(steps.length - 1, index + 1)])
+  const skipChoice = (): void => {
+    run('searchChoice.skip', undefined)
+    next()
+  }
+  const chooseEngine = (): void => {
+    if (engine === null) return
+    run('searchChoice.choose', { engineId: engine })
+    next()
+  }
+  // Escape on the choice step is "Skip for now", wherever the keyboard is.
+  useEffect(() => {
+    if (!choiceStep) return
+    const onKey = (event: globalThis.KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      skipChoice()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the handler reads the step's terms at the time
+  }, [choiceStep, index])
+
   const finish = (): void => {
     run('space.update', {
       spaceId: state.activeSpaceId,
       patch: { theme: THEME_PRESETS[presetIndex].theme }
     })
-    run('onboarding.complete', { searchEngineId: engine, colorScheme: scheme, essentials: picked })
+    run('onboarding.complete', {
+      // The choice step told the core its pick already (or skipped, keeping the default).
+      searchEngineId: engine ?? state.settings.searchEngineId,
+      colorScheme: scheme,
+      essentials: picked
+    })
     const wantsSync = sync && setupSync
     if (importFrom) {
       // Settings with the import dialog up on the picked browser; on Sync when both were asked
@@ -214,7 +249,11 @@ function DesktopOnboarding({
           </div>
         )}
 
-        {step === 'search' && (
+        {choiceStep && (
+          <SearchChoiceStep seed={state.searchChoice.seed} picked={engine} onPick={setEngine} />
+        )}
+
+        {step === 'search' && !choice && (
           <div className="flex flex-col gap-4">
             <h2 className="text-xl font-semibold">Pick a search engine</h2>
             <div className="grid grid-cols-3 gap-2">
@@ -434,18 +473,24 @@ function DesktopOnboarding({
           >
             Back
           </Button>
-          <div className="flex items-center gap-2">
-            {index > 0 && index < steps.length - 1 && (
-              <Button variant="ghost" onClick={finish}>
-                Skip tour
-              </Button>
-            )}
-            {index < steps.length - 1 ? (
-              <Button onClick={() => setStep(steps[index + 1])}>Continue</Button>
-            ) : (
-              <Button onClick={finish}>Start browsing</Button>
-            )}
-          </div>
+          {choiceStep ? (
+            // The choice step's own verbs (W6-2): no Skip tour past it, no Continue without a
+            // pick – Set as default goes on, Skip for now goes on with nothing recorded.
+            <SearchChoiceActions picked={engine} onSkip={skipChoice} onChoose={chooseEngine} />
+          ) : (
+            <div className="flex items-center gap-2">
+              {index > 0 && index < steps.length - 1 && (
+                <Button variant="ghost" onClick={finish}>
+                  Skip tour
+                </Button>
+              )}
+              {index < steps.length - 1 ? (
+                <Button onClick={() => setStep(steps[index + 1])}>Continue</Button>
+              ) : (
+                <Button onClick={finish}>Start browsing</Button>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

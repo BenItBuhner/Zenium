@@ -10233,6 +10233,124 @@
 }
 
 /*
+ * The EEA's search-engine choice screen (W6-2; `overlays/SearchChoice.tsx`), in the first-run
+ * tour's chassis on the window surface, so in the window family's inks as the phone's first run
+ * is (§9.29): a radio group of two-line rows (§9.2: 20 + 20 + 12 = 52 on `--v2-row-two-line`,
+ * padding 6 12 at the card radius, the rows 4 apart so each reads as one tile), the engine's
+ * icon at 24 in a 32 box, the name on the body line at the button weight, the engine's own line
+ * at 13 in the deemphasised ink, and the plain radio's mark (§9.14, `.zen-v2-radio`'s geometry:
+ * 16, a hairline at 45 %, checked an accent ring round a 6 px dot) at the trailing edge, centred
+ * on the row since the row is one tile and not a list line. The picked row takes
+ * `--v2-selected` (§9.6) and keeps it under the pointer; the others take the hover fill. No
+ * border (§0): the fill says which row is picked, the mark says it twice. The list scrolls in
+ * its own box past six rows, so the footer's verbs stay seated whatever the list's length.
+ */
+.zen-search-choice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: calc(6 * var(--v2-row-two-line) + 5 * 4px);
+  overflow-y: auto;
+  /* Room for the focus ring on the first and last rows (§9.20). */
+  padding: var(--v2-ring-room);
+  margin: calc(-1 * var(--v2-ring-room));
+}
+.zen-search-choice-row {
+  display: flex;
+  width: 100%;
+  min-height: var(--v2-row-two-line);
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  border-radius: var(--v2-radius-card);
+  color: inherit;
+  text-align: left;
+  transition: background 120ms var(--zen-ease);
+}
+@media (hover: hover) {
+  .zen-search-choice-row:hover {
+    background: var(--zen-element-bg);
+  }
+}
+.zen-search-choice-row:active {
+  background: var(--zen-element-bg-active);
+}
+.zen-search-choice-row[aria-checked='true'],
+.zen-search-choice-row[aria-checked='true']:hover {
+  background: var(--v2-selected);
+}
+.zen-search-choice-icon {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+}
+.zen-search-choice-icon > img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+.zen-search-choice-letter {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--v2-radius-inner);
+  background: var(--zen-element-bg);
+  font-size: var(--v2-font-small);
+  font-weight: var(--v2-weight-heading);
+  line-height: 1;
+}
+.zen-search-choice-text {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+}
+.zen-search-choice-name {
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-button);
+  line-height: var(--v2-line-body);
+}
+.zen-search-choice-tagline {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--zen-muted);
+  font-size: var(--v2-font-small);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-small);
+}
+.zen-search-choice-mark {
+  display: inline-flex;
+  width: var(--v2-checkbox);
+  height: var(--v2-checkbox);
+  flex-shrink: 0;
+  border: 1px solid rgb(var(--zen-fg-rgb) / 0.45);
+  border-radius: 50%;
+  transition:
+    border-color 120ms var(--zen-ease),
+    background 120ms var(--zen-ease),
+    box-shadow 120ms var(--zen-ease);
+}
+.zen-search-choice-row[aria-checked='true'] > .zen-search-choice-mark {
+  border-color: var(--zen-accent);
+  background: var(--zen-on-accent);
+  box-shadow: inset 0 0 0 calc((var(--v2-checkbox) - 2px - 6px) / 2) var(--zen-accent);
+}
+/* The row keeps its ring under the generic suppressor, as every v2 control does (§9.6). */
+.zen-search-choice-row:focus-visible,
+:root[data-pointer='coarse'] .zen-search-choice-row:focus-visible,
+.zen-search-choice-row[data-keyboard-focus]:focus,
+:root[data-pointer='coarse'] .zen-search-choice-row[data-keyboard-focus]:focus {
+  outline: 2px solid var(--zen-accent);
+  outline-offset: var(--v2-ring-offset);
+}
+
+/*
  * The shared checkbox (§9.34, §6; #93 owns the rule, the values are the ones the extensions
  * surfaces drew it with): 16 on a mouse, 20 on a phone, radius 2, the accent fill with an
  * on-accent check when on, the hover fill on a mouse while off only – the hover rule at 0,3,0

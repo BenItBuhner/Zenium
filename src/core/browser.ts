@@ -3931,13 +3931,16 @@ export class Browser {
         else this.openNewTab(win)
       },
 
-      'searchChoice.choose': ({ engineId }) => this.chooseSearchEngine(engineId),
-      'searchChoice.skip': () => {
+      'searchChoice.choose': ({ engineId }, win) => {
+        if (this.chooseSearchEngine(engineId)) this.afterSearchChoice(win)
+      },
+      'searchChoice.skip': (_, win) => {
         // Nothing is written: the screen waits for the next run (Chrome's choice screen comes
         // back until it is answered). Settings' ask, if one was pending, is answered by the skip.
         state.searchChoiceSession.skipped = true
         state.searchChoiceSession.askAgain = false
         state.commitVolatile()
+        this.afterSearchChoice(win)
       },
       'searchChoice.askAgain': () => {
         state.searchChoiceSession.askAgain = true
@@ -3958,10 +3961,10 @@ export class Browser {
    * not shipped: it is copied into the user's list first (`source: 'custom'`), so the id
    * resolves on every device the profile syncs to and Settings › Search lists it under Added.
    */
-  private chooseSearchEngine(engineId: string): void {
+  private chooseSearchEngine(engineId: string): boolean {
     const state = this.state
     const engine = searchChoiceEngine(engineId)
-    if (!engine || !isSearchChoiceEngine(engineId)) return
+    if (!engine || !isSearchChoiceEngine(engineId)) return false
     if (!state.searchEngines.some((e) => e.id === engineId)) {
       state.settings.searchEngines = [
         ...(state.settings.searchEngines ?? []),
@@ -3978,6 +3981,20 @@ export class Browser {
     state.searchChoiceSession.askAgain = false
     state.searchChoiceSession.skipped = false
     state.commit()
+    return true
+  }
+
+  /**
+   * The screen standing on its own – after the tour, over the first run's new tab – goes with
+   * the answer; the tab under it is announced again as the tour's end announces its
+   * (`onboarding.complete`), so the URL bar the screen held back comes up. Inside the tour the
+   * tour's own end does this; over a Settings page there is no fresh tab to announce.
+   */
+  private afterSearchChoice(win: ZenWindow): void {
+    if (!this.state.settings.onboardingDone) return
+    const active = this.tabs.activeTabFor(win)
+    if (active && isEmptyTabUrl(active.url) && !this.extensions.newTabUrl())
+      this.state.afterBroadcast(() => this.revealFreshTab(active, win))
   }
 
   updateSettings(patch: Partial<Settings>, win: ZenWindow): void {
