@@ -3890,6 +3890,25 @@
     display: none;
   }
   /*
+   * The strip's INDICATOR (MOT-05, `SpaceStrip`): the current chip's accent tint is one pill
+   * under the chips that glides from the chip that was current to the one that is, on
+   * `SPRING_SNAPPY`, by a transform alone (`translate3d` and `scaleX` from the old chip's box;
+   * the ends stay round under the scale, the radius' x divided by the frame's
+   * `--zen-strip-indicator-scale`); the chips draw their own fills over it – the current one
+   * none, the others the element fill – as 120 ms state changes (v2 §11.4), so the tint reads
+   * as leaving one chip for the other. The chips are positioned to paint over the indicator.
+   * Under reduced motion the indicator jumps (`SpaceStrip`, §11.3) and the fills cut with the
+   * sheet's closing rule.
+   */
+  .zen-overview-strip-indicator {
+    border-radius: calc(18px / var(--zen-strip-indicator-scale, 1)) / 18px;
+    background: rgb(var(--zen-accent-rgb) / 0.16);
+    transform-origin: left center;
+  }
+  .zen-overview-strip-chip {
+    transition: background-color 120ms var(--zen-ease);
+  }
+  /*
    * The overview's panes (TAB-02, TAB-03): a pane switch is a cross-fade – the one coming up
    * fades in over 120 ms while a still of the one leaving fades out over the same slot for the
    * same 120 ms (`PaneSlot`, on the Web Animations API) – a state change in place (v2 §11.4:

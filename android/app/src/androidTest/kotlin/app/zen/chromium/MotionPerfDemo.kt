@@ -102,9 +102,30 @@ import kotlin.math.roundToInt
  *  the glide's first frame, the glide, and whether the frame outlived the exits or left under
  *  them – see [leaveNumbers].
  *
+ * THE SPACE SWITCH in the open overview (MOT-05, v2 §11.4 / §11.6: a tap on a strip chip blends
+ * the window's theme over 240 ms while a still of the grid that left fades over 120 ms and the
+ * next Space's grid comes up in a slot of its own and slides in over 250 ms from the side the
+ * Space stands on in the strip, its indicator gliding on the snappy spring), the `space-switch`
+ * group, on thirty tabs in each of two Spaces – the seeded Space with the `-30` set's extra
+ * tabs, and a second Space made off the record ([SWITCH_SPACE_NAME], under a warm gradient
+ * against the seeded cool one, so the blend has somewhere to go) with [SWITCH_TABS] tabs created
+ * unloaded – see [spaceSwitchScenes]:
+ *
+ *  - `space-switch-30-forward`: the tap on the second Space's chip; the incoming grid mounts
+ *    fresh under #480's window (its in-view cards built in the swap's commit, the rest in idle
+ *    time during the slide), the still fades, the slide runs from the trailing edge, the theme
+ *    blends, the indicator glides – one scene of [SWITCH_SETTLE_MS] after the tap.
+ *  - `space-switch-30-back`: the seeded Space's chip; the mirror, from the leading edge.
+ *
+ *  The swap's commit is where a long task would be made (the incoming grid's render with its
+ *  window's cards, the still's clone of the outgoing grid, the FLIP set's baseline read of the
+ *  new grid): RULING 5 reads the scenes' long tasks by CPU. One look at the DOM after each scene
+ *  ([switchState]) says what stands at rest: the cells and the placeholders left in the grid,
+ *  the slot's animations, the stills, the indicator's place and the surface's colour.
+ *
  * The groups are picked by the `scenes` argument (`DEMO_SCENES`: `all`, or a comma list of
- * `tab-swipe`, `overview`, `overview-group`, `overview-group-leave`), so a branch profiling one
- * motion pays for its scenes alone.
+ * `tab-swipe`, `overview`, `overview-group`, `overview-group-leave`, `space-switch`), so a
+ * branch profiling one motion pays for its scenes alone.
  *
  * The scenes are measured BEFORE the recorder rolls (screenrecord composes a second copy of
  * every frame on the emulator's software GPU); the recorded part is the media: the slow swipe,
@@ -130,7 +151,7 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
     private val theme = InstrumentationRegistry.getArguments().getString("theme").let {
         if (it == "dark") "dark" else "light"
     }
-    /** The scene groups this run measures (`scenes`: `all` or a comma list of `tab-swipe`, `overview`, `overview-group`, `overview-group-leave`). */
+    /** The scene groups this run measures (`scenes`: `all` or a comma list of `tab-swipe`, `overview`, `overview-group`, `overview-group-leave`, `space-switch`). */
     private val groups: Set<String> = InstrumentationRegistry.getArguments().getString("scenes").let { arg ->
         if (arg.isNullOrBlank() || arg == "all") GROUPS else arg.split(',').map { it.trim() }.filter { it in GROUPS }.toSet()
     }
@@ -316,6 +337,23 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
                 SystemClock.sleep(CLOSE_REST_MS)
             }
         }
+        if ("space-switch" in groups && switchSpaceId.isNotEmpty()) {
+            // The switch there and back, at rest before and after each: the stills are the rest
+            // states (the motion's frames are the traced scenes' and the host screencast's).
+            coreInvoke("space.activate", "{\"spaceId\":\"$MAIN_SPACE\"}")
+            activate(START_TAB)
+            settle()
+            if (openOverview()) {
+                shot("space-switch-rest")
+                tapChip(switchSpaceId, "space-switch (recorded)")
+                SystemClock.sleep(SWITCH_SETTLE_MS)
+                shot("space-switched")
+                tapChip(MAIN_SPACE, "space-switch (recorded, back)")
+                SystemClock.sleep(SWITCH_SETTLE_MS)
+                shot("space-switched-back")
+                closeOverview()
+            }
+        }
     }
 
     // --- the overview ------------------------------------------------------------------------------
@@ -329,12 +367,14 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
      * its groups are made and gone within its scenes).
      * The thirty are the six plus [EXTRA_TABS] created unloaded (`load: false`: a card each in the
      * grid, no page behind it, no picture in it), so the second set is the grid's size and nothing
-     * else; the back scenes run on the six alone.
+     * else; the back scenes run on the six alone. The Space switch (`space-switch`) runs last, on
+     * the thirty and a second Space of thirty made for it ([spaceSwitchScenes]).
      */
     private fun measureOverview() {
         val pull = "overview" in groups
         val fold = "overview-group" in groups
         val leave = "overview-group-leave" in groups
+        val switch = "space-switch" in groups
         if (pull) finding("overview: navigation ${if (gestural) "gestural (the back scenes run)" else "three-button (the back scenes are skipped)"}")
         activate(START_TAB)
         settle()
@@ -354,7 +394,144 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         settle()
         if (pull) overviewScenes("-30", back = false)
         if (fold) groupScenes("-30")
+        if (switch) spaceSwitchScenes()
     }
+
+    // --- the Space switch --------------------------------------------------------------------------
+
+    /** The second Space the switch scenes made ([spaceSwitchScenes]); "" until it is, or when it could not be. */
+    private var switchSpaceId = ""
+
+    /**
+     * The Space switch's scenes in the open overview (MOT-05; PR #497): a second Space made off
+     * the record – [SWITCH_SPACE_NAME] under [SWITCH_THEME], [SWITCH_TABS] tabs created unloaded
+     * in it (`spaceId`, `load: false`: a card each, as the `-30` set's) – beside the seeded one,
+     * which holds the thirty by now; `space.create` switches the window to the new Space, so the
+     * seeded one is activated again before the overview opens (off the record, by the fling). Then:
+     *
+     *  - `space-switch-30-forward`: a tap on the new Space's chip in the strip, and
+     *    [SWITCH_SETTLE_MS] for the blend, the still's fade, the slide, the indicator's spring and
+     *    the incoming grid's idle fill of its cards beyond the window – at the emulator's frame rate.
+     *  - `space-switch-30-back`: a tap on the seeded Space's chip (read again: the strip may have
+     *    scrolled), the same window.
+     *
+     * Each scene is sampled by function, for the swap's commit. The active Space is read before and
+     * after each tap (a tap the system drops switches nothing, and the scene's name would then say
+     * what its tap did not); [switchState] describes the DOM at rest after each. The overview is
+     * closed by the pick afterwards; the made Space stays for the recorded pass ([demo]).
+     */
+    private fun spaceSwitchScenes() {
+        val homeId = coreInvoke(
+            "space.create",
+            "{\"name\":${JSONObject.quote(SWITCH_SPACE_NAME)},\"icon\":\"\uD83C\uDFE0\",\"containerId\":\"default\",\"theme\":$SWITCH_THEME}"
+        ).trim('"')
+        if (homeId.isEmpty()) {
+            finding("space-switch: space.create made no Space; the switch scenes are skipped")
+            return
+        }
+        var made = 0
+        for (i in 1..SWITCH_TABS) {
+            val id = coreInvoke(
+                "tab.create",
+                "{\"url\":${JSONObject.quote("$ORIGIN/article?home=$i")},\"spaceId\":${JSONObject.quote(homeId)},\"active\":false,\"load\":false}"
+            )
+            if (id.isNotEmpty()) made++
+        }
+        // `space.create` switched the window to the new Space: the forward scene leaves from the seeded one.
+        coreInvoke("space.activate", "{\"spaceId\":\"$MAIN_SPACE\"}")
+        activate(START_TAB)
+        settle()
+        val state = coreState()
+        finding(
+            "space-switch: the $SWITCH_SPACE_NAME Space $homeId made off the record with $made tabs created unloaded; " +
+                "${tabsIn(state, MAIN_SPACE)} tabs in the seeded Space, ${tabsIn(state, homeId)} in it; active Space ${state.optString("activeSpaceId")}"
+        )
+        if (made != SWITCH_TABS) {
+            finding("space-switch: not every tab was made; the switch scenes are skipped")
+            return
+        }
+        switchSpaceId = homeId
+        if (!openOverview()) {
+            finding("space-switch: the overview did not open; the switch scenes are skipped")
+            return
+        }
+        val mainChip = chipRect(MAIN_SPACE)
+        val homeChip = chipRect(homeId)
+        finding("space-switch-30: ${cardsInGrid()} cards in the grid; ${switchState()}; the chips at $mainChip (seeded) and $homeChip ($SWITCH_SPACE_NAME)")
+        if (mainChip == null || homeChip == null) {
+            finding("space-switch: a chip is missing from the strip; the switch scenes are skipped")
+            closeOverview()
+            return
+        }
+        scene("space-switch-30-forward", JankBudget.Kind.OPEN, profile = true) {
+            Finger().tap(homeChip.exactCenterX(), homeChip.exactCenterY())
+            SystemClock.sleep(SWITCH_SETTLE_MS)
+        }
+        val afterForward = activeSpaceId()
+        finding("space-switch-30-forward: active Space $afterForward (${if (afterForward == homeId) "switched" else "NOT SWITCHED – the tap did not take"}); ${cardsInGrid()} cards in the grid; ${switchState()}")
+        SystemClock.sleep(SWITCH_REST_MS)
+        val backChip = chipRect(MAIN_SPACE) ?: mainChip
+        scene("space-switch-30-back", JankBudget.Kind.OPEN, profile = true) {
+            Finger().tap(backChip.exactCenterX(), backChip.exactCenterY())
+            SystemClock.sleep(SWITCH_SETTLE_MS)
+        }
+        val afterBack = activeSpaceId()
+        finding("space-switch-30-back: active Space $afterBack (${if (afterBack == MAIN_SPACE) "switched back" else "NOT SWITCHED – the tap did not take"}); ${cardsInGrid()} cards in the grid; ${switchState()}")
+        SystemClock.sleep(SWITCH_REST_MS)
+        closeOverview()
+    }
+
+    /** A tap on the Space `spaceId`'s chip in the strip, off the record; a finding when there is none. */
+    private fun tapChip(spaceId: String, name: String) {
+        val chip = chipRect(spaceId)
+        if (chip == null) {
+            finding("$name: no chip for $spaceId in the strip; nothing tapped")
+            return
+        }
+        Finger().tap(chip.exactCenterX(), chip.exactCenterY())
+    }
+
+    /**
+     * The on-screen box of the Space `spaceId`'s chip in the overview's strip, null when there is
+     * none. The chip is found by its `data-space-id`; a strip without the attribute (a build before
+     * the Space switch's motion, the baseline of its ruling-5 comparison) has its chips as the
+     * strip's buttons in the Spaces' order, so the Space's position in the core's `spaces` finds
+     * it there – the same scene reads either head.
+     */
+    private fun chipRect(spaceId: String): android.graphics.Rect? {
+        val byId = domRect(".zen-overview .zen-overview-strip [data-space-id=${JSONObject.quote(spaceId)}]")
+        if (byId != null) return byId
+        val spaces = coreState().optJSONArray("spaces") ?: return null
+        val position = (0 until spaces.length()).firstOrNull { spaces.optJSONObject(it)?.optString("id") == spaceId } ?: return null
+        return domRect(".zen-overview .zen-overview-strip > button:nth-of-type(${position + 1})")
+    }
+
+    private fun activeSpaceId(): String = coreState().optString("activeSpaceId")
+
+    /** The tabs of the Space `spaceId` in the core's state (`tabs` is a record by id). */
+    private fun tabsIn(state: JSONObject, spaceId: String): Int {
+        val tabs = state.optJSONObject("tabs") ?: return -1
+        var n = 0
+        for (key in tabs.keys()) if (tabs.optJSONObject(key)?.optString("spaceId") == spaceId) n++
+        return n
+    }
+
+    /**
+     * The Space slot at rest, as the DOM has it: `60 cells, 0 placeholders, the slot at rest, 0
+     * still(s) up, indicator at 12 px, --zen-bg 246 241 236` – the cells and the placeholders
+     * left in the grid (a placeholder at rest is a card the idle fill never built), the slot's
+     * running animations (the slide, when it is still going), the stills over it, the indicator's
+     * left edge (the chip it rests on) and the surface's blended colour.
+     */
+    private fun switchState(): String = jsString(
+        "(function(){var s=document.querySelector('.zen-overview-space');if(!s)return 'no Space slot';" +
+            "var cells=s.querySelectorAll('[data-cell]').length,ph=s.querySelectorAll('.zen-overview-card-placeholder').length;" +
+            "var groups=[].map.call(s.querySelectorAll('.zen-group'),function(g){return g.querySelectorAll('[data-tab-id]').length+(g.hasAttribute('data-dissolving')?' dissolving':'')});" +
+            "var anims=s.getAnimations().map(function(a){return a.id+':'+a.playState}).join(' ');" +
+            "var stills=document.querySelectorAll('[data-testid=\"pane-still\"]').length;var ind=document.querySelector('.zen-overview-strip-indicator');" +
+            "return cells+' cells, '+ph+' placeholders, '+groups.length+' group cell(s)'+(groups.length?' holding '+groups.join(', '):'')+', '+(anims?'slot animations '+anims:'the slot at rest')+', '+stills+' still(s) up, indicator at '+" +
+            "(ind?Math.round(ind.getBoundingClientRect().left)+' px':'none')+', --zen-bg '+getComputedStyle(document.documentElement).getPropertyValue('--zen-bg').trim()})()"
+    )
 
     // --- the group fold ----------------------------------------------------------------------------
 
@@ -1774,9 +1951,26 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         private const val PROFILE_WAIT_MS = 4_000L
 
         /** The scene groups a run can measure (`scenes`). */
-        private val GROUPS = setOf("tab-swipe", "overview", "overview-group", "overview-group-leave")
+        private val GROUPS = setOf("tab-swipe", "overview", "overview-group", "overview-group-leave", "space-switch")
         /** The groups measured in the open overview ([measureOverview]). */
-        private val OVERVIEW_GROUPS = setOf("overview", "overview-group", "overview-group-leave")
+        private val OVERVIEW_GROUPS = setOf("overview", "overview-group", "overview-group-leave", "space-switch")
+        /** The seeded Space (perf-motion-demo-state.json), which the `-30` set fills to thirty. */
+        private const val MAIN_SPACE = "space_main"
+        /** The second Space the switch scenes make off the record, and the tabs created unloaded in it: thirty, as the seeded Space holds by then. */
+        private const val SWITCH_SPACE_NAME = "Home"
+        private const val SWITCH_TABS = 30
+        /** Its theme: a warm gradient (the Sunset preset's colours) against the seeded Space's cool one, so the 240 ms blend has somewhere to go. */
+        private const val SWITCH_THEME =
+            "{\"type\":\"gradient\",\"colors\":[{\"c\":[255,122,89],\"x\":0.3,\"y\":0.3,\"isPrimary\":true},{\"c\":[255,200,87],\"x\":0.7,\"y\":0.7}]," +
+                "\"opacity\":0.6,\"texture\":0,\"algorithm\":\"floating\",\"monochrome\":false,\"rotation\":135}"
+        /**
+         * The switch scene's window after the chip's tap: the slide (250 ms), the blend (240), the
+         * still's fade (120), the indicator's spring (~300) and the incoming grid's idle fill of the
+         * cards beyond its window – one step a frame, which the emulator's frame rate stretches.
+         */
+        private const val SWITCH_SETTLE_MS = 2_500L
+        /** A rest between the two switches, so the back's tap begins a scene of its own. */
+        private const val SWITCH_REST_MS = 1_500L
         /** The seeded group the fold scenes fold and unfold (`folder_docs`: the two Docs tabs, at the head of the grid). */
         private const val GROUP_NAME = "Docs"
         /** The group the leave scenes make off the record and see out; second in the grid, after Docs. */

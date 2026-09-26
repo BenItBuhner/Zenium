@@ -14,7 +14,10 @@ name: Android motion perf
 # is closed (the frame's way out against its cards' exits – one exit fading in place while the
 # cells glide up once, v2 §11.4's ruling 3; the group made and gone within its scenes) with the
 # dissolve when its last card is dragged out (the frame shrinking where the card stood, the
-# grid scrolled, every cell below waiting for it – §11.4's dissolve, placed right since #380), each
+# grid scrolled, every cell below waiting for it – §11.4's dissolve, placed right since #380) and
+# the Space switch in the open overview on thirty tabs in each of two Spaces (the still of the
+# grid that left fading while the next Space's grid slides in from the strip's side and the theme
+# blends – MOT-05; both directions), each
 # group picked by the `scenes` input (`DEMO_SCENES`; a run without the input – an audit
 # branch's temporary push trigger, when one is on – runs every group). The shared workflow
 # renders the record into the job summary and the
@@ -43,7 +46,7 @@ on:
       scenes:
         description: >-
           The scene groups the driver measures: all, or a comma list of tab-swipe, overview,
-          overview-group, overview-group-leave
+          overview-group, overview-group-leave, space-switch
         type: string
         default: all
       functional-drivers:
