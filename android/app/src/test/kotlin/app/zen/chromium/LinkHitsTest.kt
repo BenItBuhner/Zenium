@@ -52,4 +52,18 @@ class LinkHitsTest {
         assertEquals("", LinkHits.href(HitTestResult.PHONE_TYPE, null, null))
         assertEquals("", LinkHits.href(HitTestResult.SRC_ANCHOR_TYPE, "", ""))
     }
+
+    @Test
+    fun theServedNewTabPageKeepsItsHoldsAndNoOtherDocumentDoes() {
+        // NTP-35: the tiles' hold menu is the page's own; the renderer is given the gesture.
+        assertTrue(LinkHits.holdIsThePages("zen://newtab"))
+        assertTrue(LinkHits.holdIsThePages("zen://newtab/"))
+        assertTrue(LinkHits.holdIsThePages("zen://newtab?private=1"))
+        // Every other document's links are the link menu's, the blank page's and a site's alike.
+        assertFalse(LinkHits.holdIsThePages(null))
+        assertFalse(LinkHits.holdIsThePages(""))
+        assertFalse(LinkHits.holdIsThePages("zen://blank"))
+        assertFalse(LinkHits.holdIsThePages("zen://newtabs"))
+        assertFalse(LinkHits.holdIsThePages("https://newtab.example/zen://newtab"))
+    }
 }

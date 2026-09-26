@@ -269,6 +269,38 @@ describe("the boot's first tab on the phone (no new tab page capability)", () =>
 })
 
 /*
+ * NTP-35: the tablet class (`boot.environment.largeScreen`, Kotlin's `ScreenClass.large` –
+ * sw600dp, the class Chrome for Android gates its layouts on) has the new tab page capability,
+ * so its new tab is the served `zen://newtab` document and its boot's first tab is that page.
+ * The phone's capability table is the one above, byte for byte: `newTabPage` false, its start
+ * path untouched.
+ */
+describe("the tablet's new tab page capability (NTP-35)", () => {
+  const inputs = { sdkInt: 34, extensions: false, isolatedWorlds: true }
+
+  it('is on for the tablet class alone; the phone – and a boot payload that says nothing – keep it off', () => {
+    expect(androidCapabilities({ ...inputs, largeScreen: true }).newTabPage).toBe(true)
+    expect(androidCapabilities({ ...inputs, largeScreen: false }).newTabPage).toBe(false)
+    expect(androidCapabilities(inputs).newTabPage).toBe(false)
+  })
+
+  it("changes nothing else: the tablet's table is the phone's with that one flag flipped", () => {
+    const tablet = androidCapabilities({ ...inputs, largeScreen: true })
+    expect(tablet).toEqual({ ...androidCapabilities(inputs), newTabPage: true })
+  })
+
+  it("a tablet's fresh profile boots with one served new tab page tab, placed like any page, so its arm waits for it", () => {
+    const { browser } = phone(phoneCapabilities({ newTabPage: true }))
+    browser.state.settings.onboardingDone = true
+    browser.start()
+    const win = only(browser)
+    expect(Object.values(browser.state.model.tabs).map((t) => t.url)).toEqual([NEW_TAB_URL])
+    expect(bootNeedsPlacement(browser, win, false)).toBe(true)
+    expect(healRestoredBlankTab(browser, win, false)).toBe(false)
+  })
+})
+
+/*
  * The heal (W6-HF2, hole 1): every phone profile made on v0.4.71–v0.4.76 restores with #490's
  * `zen://blank` tab as the space's only tab – the phone's new tab page where the space was empty
  * before #490. `healRestoredBlankTab` closes that tab once, right after `browser.start()` and
