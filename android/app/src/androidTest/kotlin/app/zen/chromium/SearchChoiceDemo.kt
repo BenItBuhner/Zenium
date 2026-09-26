@@ -94,7 +94,7 @@ class SearchChoiceDemo : DemoHarness(stateAsset = null, shotPrefix = "android-w6
         claim(heading, "tour: the search step is the choice screen (heading '$TITLE')")
         claim(tiles.size == 8, "tour: eight tiles of the region's list (${tiles.size}: ${names.joinToString()})")
         claim(tiles.none { it.isChecked }, "tour: nothing picked at open")
-        claim(findNode(SET)?.isEnabled == false, "tour: Set as default off until a pick")
+        claim(findNode { it == SET }?.isEnabled == false, "tour: Set as default off until a pick")
         claim(findByLabel("Continue") == null, "tour: no Continue on the choice step")
         claim(findByLabel(SKIP) != null, "tour: Skip for now offered")
 
@@ -133,7 +133,7 @@ class SearchChoiceDemo : DemoHarness(stateAsset = null, shotPrefix = "android-w6
         SystemClock.sleep(1_000)
         val checked = tileNodes().filter { it.isChecked }.map { label(it) }
         claim(touched && checked == listOf(pickedName), "a real touch picks '$pickedName' (not the shipped '$shippedName'); checked: $checked")
-        claim(findNode(SET)?.isEnabled == true, "Set as default live after the pick")
+        claim(findNode { it == SET }?.isEnabled == true, "Set as default live after the pick")
         shot("07-standalone-picked")
         val set = touchTapLabel(SET)
         val gone = waitForGone(TITLE, 10_000)
