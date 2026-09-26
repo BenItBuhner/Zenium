@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { HostCapabilities, Platform as PlatformOs, Tab } from '../../../shared/types'
 import type { PrivacyFlags, PrivacySettings } from '../../../shared/privacy'
 import { HTTPS_ONLY_PERMISSION, LOOKALIKE_PERMISSION } from '../../../shared/privacy'
+import { ON_DEVICE_SITE_DATA_PERMISSION, cookieVerdict } from '../../../shared/siteData'
 import { BLANK_URL } from '../../../shared/url'
 import { Browser } from '../../browser'
 import { BUILTIN_RULE_SETS } from '../../blocking/rules'
@@ -325,6 +326,40 @@ describe('ProtectionService: the policy the hosts get', () => {
       secureDnsMode: 'automatic',
       secureDnsServers: []
     })
+  })
+
+  it('folds the On-device site data row into the cookie policy the hosts apply', () => {
+    const f = fixture()
+    const last = (): PrivacyFlags => f.applied[f.applied.length - 1]
+    expect(last().siteData).toEqual({ blockAll: false, allow: [], clearOnExit: [], block: [] })
+
+    // A site the row blocks joins the never list: pushed to the hosts at once, its cookies withheld.
+    f.browser.permissions.set(ON_DEVICE_SITE_DATA_PERMISSION, 'https://tracker.example/x', 'deny')
+    expect(last().siteData.block).toEqual(['https://tracker.example'])
+    expect(cookieVerdict(last().siteData, 'https://tracker.example/pixel')).toBe('blocked')
+    expect(cookieVerdict(last().siteData, 'http://tracker.example/pixel')).toBe('default')
+    expect(f.browser.siteData.siteState('https://tracker.example/').state).toBe('block')
+
+    // An allowed site joins the allow list; the row's default Block is the policy's block-all.
+    f.browser.permissions.set(ON_DEVICE_SITE_DATA_PERMISSION, 'https://shop.example', 'allow')
+    f.browser.permissions.chooseDefault(ON_DEVICE_SITE_DATA_PERMISSION, 'deny')
+    expect(last().siteData).toMatchObject({
+      blockAll: true,
+      allow: ['https://shop.example'],
+      block: ['https://tracker.example']
+    })
+    expect(cookieVerdict(last().siteData, 'https://shop.example/cart')).toBe('allowed')
+    expect(cookieVerdict(last().siteData, 'https://other.example/')).toBe('blocked')
+
+    // The Cookies-and-site-data lists keep their own say; a site on both stays blocked.
+    f.browser.siteData.add('allow', '[*.]tracker.example')
+    expect(cookieVerdict(last().siteData, 'https://tracker.example/pixel')).toBe('blocked')
+    expect(cookieVerdict(last().siteData, 'https://cdn.tracker.example/pixel')).toBe('allowed')
+
+    // Reset from the site-information sheet: the policy follows.
+    f.browser.permissions.chooseDefault(ON_DEVICE_SITE_DATA_PERMISSION, 'allow')
+    f.browser.permissions.resetOrigin('https://tracker.example')
+    expect(last().siteData).toMatchObject({ blockAll: false, block: [] })
   })
 })
 

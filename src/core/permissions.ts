@@ -1114,6 +1114,15 @@ export function permissionPromptCopy(
         cancelLabel: 'Block'
       }
     }
+    // Chrome's "This site is trying to download multiple files" (PS-71), asked when a page
+    // starts another download without a click of the user's behind it.
+    case 'automatic-downloads':
+      return {
+        message: `Allow ${site} to download multiple files?`,
+        detail: `The page started another download on its own. ${remembered}`,
+        okLabel: 'Allow',
+        cancelLabel: 'Block'
+      }
     default: {
       const label = promptLabelFor(permission) ?? `use "${permission}"`
       return {

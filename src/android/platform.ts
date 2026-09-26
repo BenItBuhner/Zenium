@@ -1349,6 +1349,12 @@ export class AndroidPlatform implements Platform {
   private windowHost: AndroidWindowHost | null = null
   private zenWindow: ZenWindow | null = null
   private readonly downloadTokens = new Map<string, string>()
+  /**
+   * Announced transfers the automatic-downloads prompt holds (PS-71), by record id: Kotlin
+   * starts a transfer on `bind`, so a held one is not bound until the core's `resume` brings
+   * Allow (`bind` runs then) – Block comes as `cancel` and refuses the token instead.
+   */
+  private readonly heldDownloads = new Map<string, { token: string; bind: () => void }>()
   private readonly agentTransport: AndroidAgentTransport
   private readonly updateHost: AndroidUpdateHost
   /** `files/zen/extensions` when Kotlin has one; the preview host installs nothing. */
@@ -1536,9 +1542,28 @@ export class AndroidPlatform implements Platform {
       // The downloader retries a network failure itself (Chromium's automatic resume, 2 / 4 / 8 s)
       // and announces each attempt; the core schedules none so nothing is retried twice.
       autoResume: 'host',
-      pause: (id) => bridge.send('download.pause', { id }),
-      resume: (item) => bridge.send('download.resume', describe(item)),
-      cancel: (id) => bridge.send('download.cancel', { id }),
+      // A held transfer (PS-71) is not bound, so Kotlin has nothing to pause: the message is moot.
+      pause: (id) => {
+        if (!this.heldDownloads.has(id)) bridge.send('download.pause', { id })
+      },
+      resume: (item) => {
+        const held = this.heldDownloads.get(item.id)
+        if (held) {
+          this.heldDownloads.delete(item.id)
+          held.bind()
+          return
+        }
+        bridge.send('download.resume', describe(item))
+      },
+      cancel: (id) => {
+        const held = this.heldDownloads.get(id)
+        if (held) {
+          this.heldDownloads.delete(id)
+          bridge.send('download.refuse', { token: held.token })
+          return
+        }
+        bridge.send('download.cancel', { id })
+      },
       retry: (item) => bridge.send('download.retry', describe(item)),
       // The downloader's own notification announces the finished file, so the setting rides along.
       release: (item, options) =>
@@ -1700,6 +1725,10 @@ export class AndroidPlatform implements Platform {
     this.views.pages.reader = (id) => browser.reader.pageHtml(id)
     this.views.pages.image = (id) => browser.sharedImage(id)
     this.views.pages.pdf = (id) => browser.pdf.document(id)
+    // The views ask the core's content-rules service for every navigation's answers (PS-63,
+    // PS-64, PS-59 and the guarded rows): the WebView decides from `permissions.resolve`, an
+    // extension's rule over the user's, not from the pushed document alone.
+    this.views.contentRules = browser.contentRules
     if (this.bootEnvironment) browser.pageControls.setEnvironment(this.bootEnvironment)
   }
 
@@ -1954,23 +1983,34 @@ export class AndroidPlatform implements Platform {
           if (!p.resumes) browser.onDownloadStarted(p.sourceTabId)
           return
         }
-        this.downloadTokens.set(p.token, record.id)
-        // Where the file goes: the system save dialog, the folder from Settings, or the default.
-        const settings = resolveDownloadSettings(browser.state.settings)
-        const destination = settings.askWhereToSave
-          ? { mode: 'ask' }
-          : settings.directory
-            ? { mode: 'folder', folder: settings.directory }
-            : { mode: 'default' }
-        this.bridge.send('download.bind', {
-          token: p.token,
-          id: record.id,
-          destination,
-          private: record.private,
-          // Keep anyway was chosen on this row: the downloader's own chain rule stands down.
-          insecureAccepted: record.insecureAccepted === true
-        })
-        if (!p.resumes) browser.onDownloadStarted(p.sourceTabId)
+        if (record.state === 'cancelled') {
+          // The automatic-downloads rule refused it (PS-71): the announced transfer is dropped
+          // before it starts, no row and nothing announced.
+          this.bridge.send('download.refuse', { token: p.token })
+          return
+        }
+        const bind = (): void => {
+          this.downloadTokens.set(p.token, record.id)
+          // Where the file goes: the system save dialog, the folder from Settings, or the default.
+          const settings = resolveDownloadSettings(browser.state.settings)
+          const destination = settings.askWhereToSave
+            ? { mode: 'ask' }
+            : settings.directory
+              ? { mode: 'folder', folder: settings.directory }
+              : { mode: 'default' }
+          this.bridge.send('download.bind', {
+            token: p.token,
+            id: record.id,
+            destination,
+            private: record.private,
+            // Keep anyway was chosen on this row: the downloader's own chain rule stands down.
+            insecureAccepted: record.insecureAccepted === true
+          })
+          if (!p.resumes) browser.onDownloadStarted(p.sourceTabId)
+        }
+        // Held for the automatic-downloads prompt: bound – started – once the core resumes it.
+        if (record.state === 'paused') this.heldDownloads.set(record.id, { token: p.token, bind })
+        else bind()
         return
       }
       case 'download.progress': {
@@ -2197,12 +2237,14 @@ export class AndroidPlatform implements Platform {
         const tabId = newId('tab')
         const view = this.views.registerAdopted(tabId)
         this.bridge.send('view.bind', { viewId: p.viewId, tabId })
-        const { events } = browser.tabs.adoptView(
+        const { tab, events } = browser.tabs.adoptView(
           view,
           { tabId, parentTabId: p.parentTabId, active: p.active },
           this.window
         )
         view.events = events
+        // The popup lives in its opener's container: its content-rule answers are read there.
+        view.containerId = tab.containerId
         return
       }
     }

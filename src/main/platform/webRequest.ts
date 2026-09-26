@@ -106,6 +106,7 @@ export interface RequestHandler {
 export const HANDLER_ORDER = {
   safeBrowsing: 50,
   lookalike: 60,
+  contentRules: 70,
   ruleEngine: 100,
   privacy: 150,
   headerRewrite: 200
@@ -367,6 +368,11 @@ export class WebRequestMultiplexer {
   /** Requests currently between their first and last phase (for tests and diagnostics). */
   get inFlight(): number {
     return this.requests.size
+  }
+
+  /** The container whose session `ses` is (every session's listeners are installed here). */
+  containerOf(ses: Session): string | undefined {
+    return this.sessions.get(ses)
   }
 
   /** Install the listeners on the session of `containerId` (once per session). */

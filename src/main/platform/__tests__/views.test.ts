@@ -413,6 +413,7 @@ async function guestWebContents(): Promise<Electron.WebContents> {
 const sessionHooks: Array<(ses: object, containerId: string) => void> = []
 const sessions = {
   get: () => ({}),
+  containerOf: () => 'default',
   configure: (hook: (ses: object, containerId: string) => void) => {
     sessionHooks.push(hook)
   }
@@ -629,6 +630,81 @@ describe('the layout’s visibility and the page’s shared session', () => {
     } finally {
       theme.shouldUseDarkColors = false
     }
+  })
+
+  it('switches JavaScript off on the page’s session for a blocked site’s document as its navigation starts, and back on for the next site (PS-64)', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    const asked: Array<[string, string, string | undefined]> = []
+    host.contentRules = {
+      allows: (id, url, details) => {
+        asked.push([id, url, details?.privateContainerId])
+        return !(id === 'javascript' && url.startsWith('https://noscript.example'))
+      },
+      blockedGuards: () => []
+    }
+    const { view, dbg } = make(host, 'tab_scripts')
+    const wc = view.webContents as unknown as EventEmitter
+    const commands = (): Array<{ method: string; params: Record<string, unknown> | undefined }> =>
+      (
+        dbg as unknown as {
+          commands: Array<{ method: string; params: Record<string, unknown> | undefined }>
+        }
+      ).commands
+    // An allowed site: nothing goes on the session (no attach for nothing).
+    wc.emit('did-start-navigation', {
+      url: 'https://fine.example/',
+      isMainFrame: true,
+      isSameDocument: false
+    })
+    await settle()
+    expect(dbg.log).toEqual([])
+    expect(asked).toEqual([['javascript', 'https://fine.example/', undefined]])
+    // A blocked site's document: the switch goes on before the response is read.
+    wc.emit('did-start-navigation', {
+      url: 'https://noscript.example/a',
+      isMainFrame: true,
+      isSameDocument: false
+    })
+    await settle()
+    expect(dbg.log).toEqual(['attach', 'Emulation.setScriptExecutionDisabled'])
+    expect(commands()[0]).toEqual({
+      method: 'Emulation.setScriptExecutionDisabled',
+      params: { value: true }
+    })
+    // A same-document navigation and a frame's are no document of the page's: left alone.
+    wc.emit('did-start-navigation', {
+      url: 'https://noscript.example/a#x',
+      isMainFrame: true,
+      isSameDocument: true
+    })
+    wc.emit('did-start-navigation', {
+      url: 'https://fine.example/frame',
+      isMainFrame: false,
+      isSameDocument: false
+    })
+    await settle()
+    expect(dbg.log).toHaveLength(2)
+    // A redirect hop to an allowed site takes it off, and the hold's session with it.
+    wc.emit('did-redirect-navigation', {
+      url: 'https://fine.example/landing',
+      isMainFrame: true,
+      isSameDocument: false
+    })
+    await settle()
+    expect(dbg.log.slice(2)).toEqual(['Emulation.setScriptExecutionDisabled', 'detach'])
+    expect(commands()[1]).toEqual({
+      method: 'Emulation.setScriptExecutionDisabled',
+      params: { value: false }
+    })
+    expect(dbg.attached).toBe(false)
+    // The chrome's own documents are never asked about.
+    wc.emit('did-start-navigation', {
+      url: 'zen://settings',
+      isMainFrame: true,
+      isSameDocument: false
+    })
+    await settle()
+    expect(asked.map(([, url]) => url)).not.toContain('zen://settings')
   })
 })
 
