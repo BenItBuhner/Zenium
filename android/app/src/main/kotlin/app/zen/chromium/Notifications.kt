@@ -13,17 +13,20 @@ import app.zen.chromium.ext.ExtensionNotifications
  * notify, and beside them the extensions' group (#132) and one group per installed web app
  * (PWA-02). Every poster takes its channel from here: the ids are the ones the posters used
  * before this registry existed and never change (Android keeps the user's per-channel settings
- * by id, so a renamed id would orphan them); the display names and importances follow Chrome's
- * where a Chrome channel matches, in Zenium's voice.
+ * by id, so a renamed id would orphan them) – with the one exception of [SHARING], re-made
+ * under a new id because its importance had to rise and Android never raises an existing
+ * channel's; the display names and importances follow Chrome's where a Chrome channel matches,
+ * in Zenium's voice.
  *
  * Nothing here runs on the boot path. A channel is created at its poster's first use through
  * [ensure], and the first such call in a process registers the whole fixed set – Chrome's
  * startup channels, made once per process on the first post of any notification rather than in
- * the Application or the Activity. On a system that already has a channel under the id,
- * `createNotificationChannel` updates its name, its description and its group (a channel that
- * had none), lowers an importance the user never touched, and leaves everything the user set
- * alone – so an upgrader's channels move under General and take the aligned names with their
- * settings intact.
+ * the Application or the Activity – and deletes the [legacy] ids, as Chrome's
+ * `ChromeChannelDefinitions` deletes its `LEGACY_CHANNEL_IDS`. On a system that already has a
+ * channel under the id, `createNotificationChannel` updates its name, its description and its
+ * group (a channel that had none), lowers an importance the user never touched, and leaves
+ * everything the user set alone – so an upgrader's channels move under General and take the
+ * aligned names with their settings intact.
  *
  * The plain [Channel] and [Group] values are what the JVM tests read (`NotificationsTest`); the
  * system's [NotificationChannel] is built from them in [ensure] alone, and nowhere else in the
@@ -106,14 +109,30 @@ object Notifications {
         "Tells you when a new version of Zenium is available and when it is ready to install", badge = false, quiet = true
     )
 
-    /** Chrome's "Sharing": tabs sent from the user's other devices ([SharingChannel]). Chrome's is high; see [UPDATES]. */
+    /**
+     * Chrome's "Sharing", high as Chrome's: a tab the user sent from another device is something
+     * they asked for a moment ago and are waiting to see, so the card arrives as a heads-up
+     * ([SharingChannel]); a shade-only card would defeat the send. The channel was `zenium.sharing`
+     * at the default importance, and Android never raises an existing channel's importance, so it
+     * is re-made under this id and the old one is deleted on upgrade ([legacy]) – the one channel
+     * whose id changed, at the cost of one reset of the user's setting on it alone.
+     */
     val SHARING = Channel(
-        "zenium.sharing", "Sharing", NotificationManager.IMPORTANCE_DEFAULT, GENERAL,
+        "zenium.sharing.tabs", "Sharing", NotificationManager.IMPORTANCE_HIGH, GENERAL,
         "Tabs sent from your other devices"
     )
 
     /** Every fixed channel, in the order the settings page is meant to read them; all under [GENERAL]. */
     val fixed: List<Channel> = listOf(BROWSER, DOWNLOADS, COMPLETED_DOWNLOADS, PRIVATE, MEDIA, CAPTURE, UPDATES, SHARING)
+
+    /**
+     * Channel ids of earlier versions that are deleted at the registry's first registration in a
+     * process, Chrome's `LEGACY_CHANNEL_IDS` practice for a channel whose meaning changed. An id
+     * here is never given to a channel again: Android un-deletes a deleted id with the settings it
+     * had, which is exactly what the new id exists to leave behind. `zenium.sharing` is the Sharing
+     * channel before it went high ([SHARING]).
+     */
+    val legacy: List<String> = listOf("zenium.sharing")
 
     /** The fixed groups; an installed web app adds its own ([webAppGroup]). */
     val groups: List<Group> = listOf(GENERAL, SITES, EXTENSIONS)
@@ -162,9 +181,9 @@ object Notifications {
 
     /**
      * The channel a poster is about to post on, made if the system has none under its id, and –
-     * once per process, on the first call – the whole fixed set with its group. Synchronized so a
-     * second poster on another thread never posts before the first call has made its channel.
-     * Returns the channel's id for the builder.
+     * once per process, on the first call – the whole fixed set with its group, the [legacy] ids
+     * deleted. Synchronized so a second poster on another thread never posts before the first
+     * call has made its channel. Returns the channel's id for the builder.
      */
     @Synchronized
     fun ensure(context: Context, channel: Channel): String {
@@ -182,6 +201,8 @@ object Notifications {
     private fun registerFixed(system: NotificationManager) {
         if (registered) return
         registered = true
+        // A deleted id is a no-op when the system never had it, so upgraders and fresh installs share the path.
+        for (id in legacy) runCatching { system.deleteNotificationChannel(id) }
         runCatching { system.createNotificationChannelGroup(NotificationChannelGroup(GENERAL.id, GENERAL.name)) }
         for (channel in fixed) runCatching { system.createNotificationChannel(toSystem(channel)) }
     }
