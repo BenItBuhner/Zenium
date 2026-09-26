@@ -97,10 +97,11 @@ describe('BatteryLevel', () => {
 
   it('asks pmset once on macOS, serves the last answer between refreshes, and asks again once the reading is old', async () => {
     // A subprocess answers later, never within the sample that asked.
-    const answer = (stdout: string): void =>
+    const answer = (stdout: string): void => {
       execFile.mockImplementation((_file, _args, _options, cb) =>
         setImmediate(() => cb(null, stdout))
       )
+    }
     answer(PMSET_ON_BATTERY)
     const level = new BatteryLevel('darwin')
     // Nothing read yet: the first sample kicks the subprocess off and reads null.
