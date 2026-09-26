@@ -10253,7 +10253,11 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-height: calc(5 * var(--v2-row-two-line) + 5 * 4px + var(--v2-row-two-line) / 2);
+  /* Five whole rows and half of the sixth (5 × 52 + 5 × 4 + 26), plus the ring room above the
+     first row, which scrolls with the rows and is inside this border-box height. */
+  max-height: calc(
+    var(--v2-ring-room) + 5 * var(--v2-row-two-line) + 5 * 4px + var(--v2-row-two-line) / 2
+  );
   overflow-y: auto;
   /* Room for the focus ring on the first and last rows (§9.20). */
   padding: var(--v2-ring-room);

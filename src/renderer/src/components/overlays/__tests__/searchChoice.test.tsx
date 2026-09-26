@@ -446,7 +446,10 @@ describe('the stylesheet: equal tiles, one-line taglines, the list scrolls with 
     expect(m, `rule "${selector}"`).not.toBeNull()
     const start = m!.index
     const body = css.slice(css.indexOf('{', start) + 1, css.indexOf('}', start))
-    return [...body.matchAll(/([a-z-]+)\s*:\s*([^;]+);/g)].map((x) => [x[1]!, x[2]!.trim()])
+    return [...body.matchAll(/([a-z-]+)\s*:\s*([^;]+);/g)].map((x) => [
+      x[1]!,
+      x[2]!.replace(/\s+/g, ' ').replace(/\( /g, '(').replace(/ \)/g, ')').trim()
+    ])
   }
   const value = (selector: string, property: string): string | undefined =>
     declarations(selector).find(([p]) => p === property)?.[1]
@@ -455,11 +458,13 @@ describe('the stylesheet: equal tiles, one-line taglines, the list scrolls with 
     expect(value('.zen-search-choice-list', 'display')).toBe('flex')
     expect(value('.zen-search-choice-list', 'flex-direction')).toBe('column')
     expect(value('.zen-search-choice-list', 'overflow-y')).toBe('auto')
-    // 5 × 52 + 5 × 4 + 26 = 306: a row cut, never a clean edge on a whole row (at 6 × 52 + 5 × 4
-    // the fold would land on the sixth row's foot and the list would read as complete).
+    // 4 (the ring room above the first row, inside the scroll box) + 5 × 52 + 5 × 4 + 26 = 310: a
+    // row cut through its middle, never a clean edge on a whole row (at 6 × 52 + 5 × 4 the fold
+    // would land on the sixth row's foot and the list would read as complete).
     expect(value('.zen-search-choice-list', 'max-height')).toBe(
-      'calc(5 * var(--v2-row-two-line) + 5 * 4px + var(--v2-row-two-line) / 2)'
+      'calc(var(--v2-ring-room) + 5 * var(--v2-row-two-line) + 5 * 4px + var(--v2-row-two-line) / 2)'
     )
+    expect(value('.zen-search-choice-list', 'padding')).toBe('var(--v2-ring-room)')
     // The bar is the chassis's thin overlay (§9.20); the list sets none of its own.
     expect(css).not.toMatch(/\.zen-search-choice-list::-webkit-scrollbar/)
     expect(value('.zen-search-choice-list', 'scrollbar-width')).toBeUndefined()
