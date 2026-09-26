@@ -1,33 +1,44 @@
 import type { ExtensionControl } from '@shared/types'
+import type { SettingControls } from './settingControls'
 
 /**
- * The settings the extensions hold, for the Settings page's "Controlled by <extension>" rows
- * (`UIState.extensionControls`; on the phone, W6-C6's Fonts page reads the `fonts.*` keys).
- * Each API that keeps a layer of extension values over a user setting publishes the keys it
- * holds under its own name – `fontSettings` today, as on the desktop (`extensionApi/controls.ts`
- * there, the same merge) – and the core's state gets the merge of every API's map, whole, so
- * one API's re-publish never drops another's keys. A publish that changes nothing stops here:
- * the state would otherwise commit a snapshot for it.
+ * The extension runtime's feed into the phone's ONE controls publisher, W6-C6's
+ * `SettingControls` (`settingControls.ts`, #518): the settings the extensions hold, for the
+ * Settings page's "Controlled by <extension>" rows (`UIState.extensionControls`; the phone's
+ * Fonts page reads the `fonts.*` keys). Each API that keeps a layer of extension values over a
+ * user setting publishes the keys it holds under its own name – `fontSettings` and `privacy`
+ * today, as on the desktop (`extensionApi/controls.ts` there) – and `SettingControls` merges
+ * every API's map, whole, into the core's state, so one API's re-publish never drops another's.
+ *
+ * What this gate adds is #525's value compare ahead of the merge: a publish whose keys, holders
+ * and VALUES all stand as the API last published them stops here, a list value compared by its
+ * entries (`sameValue`), so a re-publish of the same startup pages in a fresh array commits no
+ * snapshot – `SettingControls` compares values by `===`, which is the same reading for the
+ * scalars the phone's two APIs hold today and a stricter one for a list (round 21, R21-8: the
+ * merge that lived here in round 20 folded into theirs; the one-line alternative, their
+ * `sameControls` taking `sameValue`, is W6-C6's to take and would make this gate a plain pass).
  */
-export class ExtensionControlsMerge {
-  private readonly byApi = new Map<string, Record<string, ExtensionControl>>()
-  private merged: Record<string, ExtensionControl> = {}
+export class ExtensionControlsGate {
+  private readonly last = new Map<string, Record<string, ExtensionControl>>()
 
-  constructor(private readonly sink: (controls: Record<string, ExtensionControl>) => void) {}
+  constructor(private readonly controls: SettingControls) {}
 
-  /** The map as last published, merged (tests and diagnostics). */
+  /** The map as last published, merged over every API (tests and diagnostics). */
   get current(): Readonly<Record<string, ExtensionControl>> {
-    return this.merged
+    return this.controls.current
   }
 
-  publish(api: string, controls: Record<string, ExtensionControl>): void {
-    if (Object.keys(controls).length === 0) this.byApi.delete(api)
-    else this.byApi.set(api, controls)
-    const merged: Record<string, ExtensionControl> = {}
-    for (const map of this.byApi.values()) Object.assign(merged, map)
-    if (sameControls(this.merged, merged)) return
-    this.merged = merged
-    this.sink(merged)
+  /**
+   * One API's layer, whole (an empty map lets go of everything it held). `true` when the layer
+   * moved and went to the publisher; `false` when it read the same as the API's last publish.
+   */
+  publish(api: string, controls: Record<string, ExtensionControl>): boolean {
+    const before = this.last.get(api) ?? {}
+    if (sameControls(before, controls)) return false
+    if (Object.keys(controls).length === 0) this.last.delete(api)
+    else this.last.set(api, controls)
+    this.controls.publish(api, controls)
+    return true
   }
 }
 
@@ -47,6 +58,7 @@ export function sameControls(
     const own = a[key]
     return (
       other !== undefined &&
+      own !== undefined &&
       other.extensionId === own.extensionId &&
       other.name === own.name &&
       sameValue(other.value, own.value)

@@ -659,6 +659,50 @@ function osScreenshot(file) {
   return { status: 1, stderr: 'unsupported platform' }
 }
 
+/**
+ * The X display's pixels right now, Linux only: one frame of the screen as raw RGB – the grab
+ * osScreenshot encodes as a PNG, undecoded – with `at(x, y)`, the [r, g, b] the screen shows at
+ * device pixel (x, y). For a check of what is on the screen where a page should be (the mcp
+ * scenario's stage hand-off): a page's own capture and its document's word say nothing about
+ * that. Null where there is no such grab (another platform, ffmpeg failing).
+ */
+function screenPixels() {
+  if (!IS_LINUX) return null
+  const { width, height } = linuxDisplaySize()
+  const res = spawnSync(
+    'ffmpeg',
+    [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-f',
+      'x11grab',
+      '-video_size',
+      `${width}x${height}`,
+      '-i',
+      process.env.DISPLAY || ':0',
+      '-frames:v',
+      '1',
+      '-f',
+      'rawvideo',
+      '-pix_fmt',
+      'rgb24',
+      '-'
+    ],
+    { timeout: 30000, maxBuffer: width * height * 3 + 1024 * 1024 }
+  )
+  const raw = res.stdout
+  if (res.status !== 0 || !Buffer.isBuffer(raw) || raw.length < width * height * 3) return null
+  return {
+    width,
+    height,
+    at(x, y) {
+      const i = (Math.round(y) * width + Math.round(x)) * 3
+      return i >= 0 && i + 2 < raw.length ? [raw[i], raw[i + 1], raw[i + 2]] : null
+    }
+  }
+}
+
 /** The screen as it is right now: no bring-to-front, no settle (the app may be gone or stuck). */
 function grabScreen(name) {
   const file = path.join(outDir, `${String(++shotIndex).padStart(2, '0')}-${name}.png`)
@@ -7654,7 +7698,9 @@ async function main() {
           // (--no-sandbox --disable-gpu under Xvfb); soak.json goes next to result.json.
           exe: opts.exe,
           extraArgs: EXTRA_ARGS,
-          outDir
+          outDir,
+          // The stage's hand-off is judged on the screen: its pixels where the tab's view is.
+          screenPixels
         }),
       [DEFAULT_BROWSER_SCENARIO]: () =>
         scenarioDefaultBrowser({

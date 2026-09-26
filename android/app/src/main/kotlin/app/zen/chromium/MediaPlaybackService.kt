@@ -74,8 +74,8 @@ class MediaPlaybackService : Service() {
     }
 
     private fun stub(): Notification {
-        MediaSessions.ensureChannel(this)
-        return NotificationCompat.Builder(this, MediaSessions.CHANNEL_ID)
+        val channel = Notifications.ensure(this, Notifications.MEDIA)
+        return NotificationCompat.Builder(this, channel)
             .setSmallIcon(R.drawable.ic_stat_zenium)
             .setContentTitle(getString(R.string.app_name))
             .setSilent(true)
