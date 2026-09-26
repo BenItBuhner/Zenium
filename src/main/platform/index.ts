@@ -110,6 +110,7 @@ import {
 } from './security'
 import { electronPerformanceHost } from './backgroundWork'
 import { quitChordOf } from './devtoolsKeys'
+import { QUIT_HOLD_COVER_CHANNEL, primeChromeForRelease } from './quitHoldKeys'
 import createBackgroundWorker from './backgroundWorker?nodeWorker'
 import { ElectronBlocking, ElectronBundledLists, bundledListsDirectory } from './blocking'
 import { supportsWindowMaterial } from './appShell'
@@ -856,6 +857,14 @@ export class ElectronPlatform implements Platform {
       const win = this.windows.windowForWebContents(event.sender.id)
       if (!win) throw new Error('Unauthorised sender')
       return browser.handleCommand(win, name, args)
+    })
+    // A window's chrome says its hold-to-quit cover engaged over a hung page: the keyboard is
+    // about to come to the chrome, and one key down of the chord goes into the chrome's widget
+    // first, so the release the hold waits for is heard there (`quitHoldKeys.ts`). The chrome
+    // alone is heard; the key is sent while a hold runs and never otherwise.
+    ipcMain.on(QUIT_HOLD_COVER_CHANNEL, (event) => {
+      if (!this.windows.windowForWebContents(event.sender.id)) return
+      primeChromeForRelease(event.sender, browser.quitHold, browser.state.shortcuts)
     })
     ipcMain.on('zen:page', (event, message: PageMessage) => {
       this.views.viewForWebContents(event.sender)?.dispatchPageMessage(message)

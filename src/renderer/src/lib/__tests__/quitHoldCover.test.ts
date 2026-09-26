@@ -66,3 +66,47 @@ describe('openQuitHoldCover / closeQuitHoldCover', () => {
     expect(overlayCoversContent(uiStore.get())).toBe(false)
   })
 })
+
+/*
+ * The chord's release under the cover (the closing items on #486): the keyboard comes to the
+ * chrome with the hide, and Chromium drops a key up there while the chrome widget's last
+ * browser-handled key down was a consumed shortcut – a short tap quit at 1.5 s with the notice
+ * showing (measured). The host is told the cover engaged and puts one key down of the chord into
+ * the chrome's widget (`main/platform/quitHoldKeys.ts`), before the layout report that moves the
+ * keyboard: once per engagement, never for an open that did not engage.
+ */
+describe('the host is told the cover engaged', () => {
+  it('once per engagement, before the view hides; a second engagement tells it again', async () => {
+    const engaged = vi.fn(() => {
+      // Heard before the cover stands: the layout report that hides the view follows the store.
+      expect(uiStore.get().quitHoldCover).toBe(false)
+    })
+    vi.stubGlobal('window', { zen: { invoke: async () => null, quitHoldCoverEngaged: engaged } })
+
+    await openQuitHoldCover('a')
+    expect(engaged).toHaveBeenCalledTimes(1)
+    expect(uiStore.get().quitHoldCover).toBe(true)
+    closeQuitHoldCover()
+    expect(engaged).toHaveBeenCalledTimes(1)
+
+    await openQuitHoldCover('a')
+    expect(engaged).toHaveBeenCalledTimes(2)
+    closeQuitHoldCover()
+  })
+
+  it('never for an open a close overtook: the cover did not engage, and no key goes into the chrome', async () => {
+    const engaged = vi.fn()
+    vi.stubGlobal('window', { zen: { invoke: async () => null, quitHoldCoverEngaged: engaged } })
+    const opening = openQuitHoldCover('a')
+    closeQuitHoldCover()
+    await opening
+    expect(uiStore.get().quitHoldCover).toBe(false)
+    expect(engaged).not.toHaveBeenCalled()
+  })
+
+  it('a host without the line (Android’s window.zen) engages the cover all the same', async () => {
+    vi.stubGlobal('window', { zen: { invoke: async () => null } })
+    await openQuitHoldCover('a')
+    expect(uiStore.get().quitHoldCover).toBe(true)
+  })
+})
