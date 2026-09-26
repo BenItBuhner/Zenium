@@ -8,6 +8,7 @@ import {
   withUnknownArgsNote
 } from '../service'
 import { AGENT_TOOLS } from '../tools'
+import { GHOST_IDLE_MS } from '../util'
 import { fakeBrowser, textOf } from './fakeBrowser'
 
 /**
@@ -600,7 +601,7 @@ describe('foreground lease', () => {
     expect(fake.win.activations).toContain(b1)
     expect(fake.service.leaseHolder(fake.win)?.id).toBe(B.id)
     expect(textOf(await fake.call(A, 'zen_status'))).toContain('Agent "B" holds the screen')
-    expect(textOf(await fake.call(B, 'zen_status'))).toContain('You hold the screen.')
+    expect(textOf(await fake.call(B, 'zen_status'))).toContain('You hold the screen lease.')
     // A background agent never takes the lease, and switching needs foreground mode.
     A.mode = 'background'
     now += 1
@@ -617,6 +618,290 @@ describe('foreground lease', () => {
     const clicked = textOf(await fake.call(A, 'browser_click', { tabId: a1, target: 'text=Go' }))
     expect(clicked).toContain('input: synthetic – another agent holds the screen')
     expect(fake.input.get(a1)).toEqual([])
+  })
+})
+
+describe('foreground needs the screen', () => {
+  it('without takeScreen a foreground action never switches the user away; with it, it does', async () => {
+    // The user left the default at background: agents get the screen only when they ask.
+    const fake = fakeBrowser({ defaultMode: 'background' })
+    const A = await fake.connect('A')
+    expect(A.mode).toBe('background')
+    const fg = textOf(await fake.call(A, 'zen_mode', { mode: 'foreground' }))
+    expect(fg).toContain('You are now in foreground mode.')
+    expect(fg).toContain('You have not taken the screen')
+    expect(A.takeScreen).toBe(false)
+    // A new tab opens in the background – the user's space and active tab stay – and the result says so.
+    const opened = await fake.call(A, 'browser_tabs', { action: 'new', url: 'https://a.example/1' })
+    const a1 = fake.openedTab(opened)
+    expect(textOf(opened)).toMatch(
+      /^foreground: your new tab opened in the background – you have not taken the screen\. zen_mode \{"mode":"foreground","takeScreen":true\}/
+    )
+    expect(fake.win.activations).not.toContain(a1)
+    expect(fake.win.activeSpaceId).toBe(fake.userSpace.id)
+    expect(fake.service.leaseHolder(fake.win)).toBeNull()
+    // An action on a tab the user is not looking at runs in the background: synthetic input, and it says why.
+    const clicked = textOf(await fake.call(A, 'browser_click', { tabId: a1, target: 'text=Go' }))
+    expect(clicked).toMatch(
+      new RegExp(
+        `^foreground: tab ${a1} is not what the user is looking at and you have not taken the screen – acted in background`
+      )
+    )
+    expect(clicked).toContain(
+      `- Tab: ${a1} (yours; foreground mode, acted in background – the screen was not taken)`
+    )
+    expect(clicked).toContain('input: synthetic – the tab is not what the user is looking at')
+    expect(fake.input.get(a1)).toEqual([])
+    expect(fake.win.activations).not.toContain(a1)
+    expect(fake.service.leaseHolder(fake.win)).toBeNull()
+    // Switching the space the user sees is refused for the same reason.
+    const agentsSpace = fake.model.spaces.find((sp) => sp.name === AGENTS_SPACE_NAME)!
+    const sw = await fake.call(A, 'zen_spaces', { action: 'switch', spaceId: agentsSpace.id })
+    expect(sw.isError).toBe(true)
+    expect(textOf(sw)).toContain('you have not taken it')
+    expect(fake.win.activeSpaceId).toBe(fake.userSpace.id)
+    expect(textOf(await fake.call(A, 'zen_status'))).toContain(
+      'You have not taken the screen: your actions run in front only on a tab the user is already looking at'
+    )
+
+    // The explicit opt-in: the next action brings the tab in front, takes the lease, sends real input.
+    const took = textOf(await fake.call(A, 'zen_mode', { mode: 'foreground', takeScreen: true }))
+    expect(took).toContain(
+      'You took the screen: your actions bring their tab in front of the user.'
+    )
+    expect(A.takeScreen).toBe(true)
+    const real = textOf(await fake.call(A, 'browser_click', { tabId: a1, target: 'text=Go' }))
+    expect(real).not.toContain('acted in background')
+    expect(real).not.toContain('input: synthetic')
+    expect(real).toContain(`- Tab: ${a1} (yours; foreground mode)`)
+    expect(fake.win.activations).toContain(a1)
+    expect(fake.win.activeSpaceId).toBe(agentsSpace.id)
+    expect(fake.service.leaseHolder(fake.win)?.id).toBe(A.id)
+    expect(fake.input.get(a1)?.length).toBe(1)
+    expect(textOf(await fake.call(A, 'zen_status'))).toContain(
+      'You hold the screen lease. You took the screen'
+    )
+
+    // Foreground again without takeScreen drops the grant – but the user is looking at the tab
+    // now, so actions on it still run in front; once the user moves on, they do not.
+    await fake.call(A, 'zen_mode', { mode: 'foreground' })
+    expect(A.takeScreen).toBe(false)
+    const still = textOf(await fake.call(A, 'browser_click', { tabId: a1, target: 'text=Go' }))
+    expect(still).not.toContain('acted in background')
+    expect(fake.input.get(a1)?.length).toBe(2)
+    fake.user.openTab('https://user.example/home')
+    expect(fake.win.activeSpaceId).toBe(fake.userSpace.id)
+    const gone = textOf(await fake.call(A, 'browser_click', { tabId: a1, target: 'text=Go' }))
+    expect(gone).toContain('acted in background – the screen was not taken')
+    expect(fake.input.get(a1)?.length).toBe(2)
+    expect(fake.win.activeSpaceId).toBe(fake.userSpace.id)
+    // Background mode drops the grant too.
+    await fake.call(A, 'zen_mode', { mode: 'foreground', takeScreen: true })
+    expect(A.takeScreen).toBe(true)
+    await fake.call(A, 'zen_mode', { mode: 'background' })
+    expect(A.takeScreen).toBe(false)
+  })
+
+  it("the user's foreground default hands agents the screen without asking", async () => {
+    const fake = fakeBrowser({ defaultMode: 'foreground' })
+    const A = await fake.connect('A')
+    expect(A.takeScreen).toBe(false)
+    expect(fake.service.mayTakeScreen(A)).toBe(true)
+    const a1 = fake.openedTab(
+      await fake.call(A, 'browser_tabs', { action: 'new', url: 'https://a.example/1' })
+    )
+    expect(fake.win.activations).toContain(a1)
+    expect(textOf(await fake.call(A, 'zen_status'))).toContain(
+      'The user set foreground as the default, so your actions bring their tab in front.'
+    )
+    // A foreground default is the user's standing grant: zen_mode foreground keeps it.
+    const fg = textOf(await fake.call(A, 'zen_mode', { mode: 'foreground' }))
+    expect(fg).toContain('The user set foreground as the default')
+    // Flipping the setting takes it back at once.
+    fake.browser.state.settings.agents.defaultMode = 'background'
+    expect(fake.service.mayTakeScreen(A)).toBe(false)
+    fake.user.openTab('https://user.example/home')
+    const later = textOf(await fake.call(A, 'browser_click', { tabId: a1, target: 'text=Go' }))
+    expect(later).toContain('acted in background – the screen was not taken')
+  })
+
+  it('the screenshot error names the real cause instead of "try zen_mode foreground"', async () => {
+    const fake = fakeBrowser({ defaultMode: 'background' })
+    const A = await fake.connect('A')
+    const B = await fake.connect('B')
+    const a1 = fake.openedTab(
+      await fake.call(A, 'browser_tabs', { action: 'new', url: 'https://a.example/1' })
+    )
+    // The fake host captures nothing, so every attempt fails – each with its own reason.
+    const bg = await fake.call(A, 'browser_take_screenshot', { tabId: a1 })
+    expect(bg.isError).toBe(true)
+    expect(textOf(bg)).toContain(
+      `The page could not be captured: tab ${a1} is off screen (you are in background mode)`
+    )
+    expect(textOf(bg)).not.toContain('try zen_mode foreground')
+    await fake.call(A, 'zen_mode', { mode: 'foreground' })
+    const noScreen = await fake.call(A, 'browser_take_screenshot', { tabId: a1 })
+    expect(textOf(noScreen)).toContain(
+      `tab ${a1} is not what the user is looking at and you have not taken the screen`
+    )
+    // B holds the lease: A's foreground call ran in the background for that reason.
+    await fake.call(B, 'zen_mode', { mode: 'foreground', takeScreen: true })
+    fake.openedTab(await fake.call(B, 'browser_tabs', { action: 'new', url: 'https://b.example' }))
+    expect(fake.service.leaseHolder(fake.win)?.id).toBe(B.id)
+    await fake.call(A, 'zen_mode', { mode: 'foreground', takeScreen: true })
+    const leased = await fake.call(A, 'browser_take_screenshot', { tabId: a1 })
+    expect(textOf(leased)).toContain(
+      `tab ${a1} stayed off screen because agent "B" holds the screen`
+    )
+    // In front and painted (the fake paints at once), the failure is the host's, and says so.
+    fake.service.clock = () => Date.now() + FOREGROUND_LEASE_MS + 1
+    const front = await fake.call(A, 'browser_take_screenshot', { tabId: a1 })
+    expect(textOf(front)).toContain(
+      `the browser returned no image for tab ${a1} although it is on screen and painted`
+    )
+    expect(fake.win.activations).toContain(a1)
+  })
+})
+
+describe('ghost sessions', () => {
+  it('a connected agent quiet for two minutes counts as gone: its group is adoptable and it is told', async () => {
+    const fake = fakeBrowser()
+    const A = await fake.connect('A')
+    const B = await fake.connect('B')
+    const a1 = fake.openedTab(
+      await fake.call(A, 'browser_tabs', { action: 'new', url: 'https://a.example/1' })
+    )
+    const home = A.homeGroupId!
+    // Working agents keep their groups: the refusal says how recently the owner acted, and about force.
+    const refused = await fake.call(B, 'zen_groups', { action: 'adopt', groupId: home })
+    expect(refused.isError).toBe(true)
+    expect(textOf(refused)).toMatch(
+      /belongs to agent "A", which is still connected and was active \d+ s ago/
+    )
+    expect(textOf(refused)).toContain('pass force: true (the other agent is told)')
+    expect(textOf(refused)).toContain('There are no orphaned groups right now')
+    // Two minutes of silence make A a ghost: listings say so, and B may take the group.
+    A.lastActiveAt = Date.now() - GHOST_IDLE_MS - 1000
+    expect(fake.service.isGhost(A)).toBe(true)
+    const all = textOf(await fake.call(B, 'zen_groups', { action: 'list', scope: 'all' }))
+    expect(all).toContain(`(${home}) [owned by "A", quiet 2 min – adoptable]`)
+    expect(textOf(await fake.call(B, 'browser_tabs', { action: 'list', scope: 'all' }))).toContain(
+      'owned by "A", quiet 2 min – adoptable'
+    )
+    expect(textOf(await fake.call(B, 'zen_status'))).toContain(
+      '- "A" – foreground, 1 group, quiet 2 min – its groups are adoptable'
+    )
+    const hint = await fake.call(B, 'zen_groups', { action: 'adopt', groupId: 'folder_nope' })
+    expect(textOf(hint)).toContain(
+      `Groups of agents quiet for over 2 min (adoptable too): ${home} "${homeGroupName(A)}" ("A", idle 2 min)`
+    )
+    const adopted = await fake.call(B, 'zen_groups', { action: 'adopt', groupId: home })
+    expect(adopted.isError).toBeUndefined()
+    expect(textOf(adopted)).toContain(
+      `Adopted group ${home} "${homeGroupName(A)}" (was "A"'s, an agent quiet for 2 min; it has been told) with 1 tab; it is your home group now`
+    )
+    expect(B.groupIds.has(home)).toBe(true)
+    expect(A.groupIds.has(home)).toBe(false)
+    expect(A.homeGroupId).toBeNull()
+    expect(fake.service.ownedTabs(B).map((t) => t.id)).toEqual([a1])
+    // A's next result opens with the notice; the tab is B's now.
+    const back = await fake.call(A, 'browser_snapshot', { tabId: a1 })
+    expect(back.isError).toBe(true)
+    expect(textOf(back)).toMatch(
+      new RegExp(
+        `^Notice: agent "B" took over your group ${home} "${homeGroupName(A)}" with its 1 tab \\(you had been quiet for 2 min\\)\\. It is not yours any more: do not act on its tabs\\.`
+      )
+    )
+    expect(textOf(back)).toMatch(/owned by agent "B"/)
+    // A starts over: its next new tab makes a fresh home group.
+    const fresh = fake.openedTab(
+      await fake.call(A, 'browser_tabs', { action: 'new', url: 'https://a.example/2' })
+    )
+    expect(A.homeGroupId).not.toBeNull()
+    expect(A.homeGroupId).not.toBe(home)
+    expect(fake.service.ownedTabs(A).map((t) => t.id)).toEqual([fresh])
+  })
+
+  it("force: true takes a working agent's group on the user's word, and the agent is told", async () => {
+    const fake = fakeBrowser()
+    const A = await fake.connect('A')
+    const B = await fake.connect('B')
+    fake.openedTab(
+      await fake.call(A, 'browser_tabs', { action: 'new', url: 'https://a.example/1' })
+    )
+    const home = A.homeGroupId!
+    const adopted = await fake.call(B, 'zen_groups', {
+      action: 'adopt',
+      groupId: home,
+      force: true
+    })
+    expect(adopted.isError).toBeUndefined()
+    expect(textOf(adopted)).toContain(
+      `Adopted group ${home} "${homeGroupName(A)}" (was "A"'s, taken over with the user's permission; it has been told) with 1 tab`
+    )
+    expect(B.groupIds.has(home)).toBe(true)
+    expect(A.groupIds.has(home)).toBe(false)
+    expect(textOf(await fake.call(A, 'zen_status'))).toMatch(
+      /^Notice: agent "B" took over your group .* \(the user asked for it\)\./
+    )
+    // A parked session owns nothing, so it is never a ghost; nor is B itself to B.
+    expect(fake.service.isGhost(B)).toBe(false)
+  })
+
+  it('adopt without a groupId takes back every orphaned group a session of the same name left', async () => {
+    const fake = fakeBrowser()
+    const A = await fake.connect('A')
+    fake.openedTab(
+      await fake.call(A, 'browser_tabs', { action: 'new', url: 'https://a.example/1' })
+    )
+    const home = A.homeGroupId!
+    const second = fake.createdGroup(
+      await fake.call(A, 'zen_groups', { action: 'create', name: 'Research' })
+    )
+    fake.openedTab(
+      await fake.call(A, 'browser_tabs', {
+        action: 'new',
+        url: 'https://a.example/2',
+        groupId: second
+      })
+    )
+    const O = await fake.connect('Other')
+    fake.openedTab(await fake.call(O, 'browser_tabs', { action: 'new', url: 'https://o.example' }))
+    const oHome = O.homeGroupId!
+    await fake.call(O, 'zen_session', { action: 'end' })
+    // A ends without closeTabs, its client comes back as a new session with the same name.
+    await fake.call(A, 'zen_session', { action: 'end' })
+    const A2 = await fake.connect('A')
+    const status = textOf(await fake.call(A2, 'zen_status'))
+    expect(status).toContain(
+      `Orphaned groups left by a session named "A" – yours from before, most likely: ${home} "${homeGroupName(A)}" (1 tabs), ${second} "Research" (1 tabs). zen_groups {"action":"adopt"} takes them all back`
+    )
+    // A stranger gets the plain error, with the hint that nothing of its own is waiting.
+    const C = await fake.connect('C')
+    const none = await fake.call(C, 'zen_groups', { action: 'adopt' })
+    expect(none.isError).toBe(true)
+    expect(textOf(none)).toContain(
+      'adopt needs groupId: the group to take over (no orphaned group was left by a session named like yours'
+    )
+    expect(textOf(none)).toContain('Orphaned groups:')
+    const taken = await fake.call(A2, 'zen_groups', { action: 'adopt' })
+    expect(taken.isError).toBeUndefined()
+    expect(textOf(taken)).toContain(
+      `Adopted the 2 orphaned groups a session named "A" left: ${home} "${homeGroupName(A)}" (1 tabs), ${second} "Research" (1 tabs).`
+    )
+    expect([...A2.groupIds].sort()).toEqual([home, second].sort())
+    expect(A2.homeGroupId).toBe(home)
+    expect(fake.service.ownedTabs(A2).length).toBe(2)
+    // Other's group was not A's to take; the status line is gone now that nothing is waiting.
+    expect(fake.service.isOrphan(oHome)).toBe(true)
+    expect(A2.groupIds.has(oHome)).toBe(false)
+    expect(textOf(await fake.call(A2, 'zen_status'))).not.toContain(
+      'Orphaned groups left by a session named'
+    )
+    // Without anything of its own left, A2's adopt without groupId is the plain error again.
+    const again = await fake.call(A2, 'zen_groups', { action: 'adopt' })
+    expect(again.isError).toBe(true)
+    expect(textOf(again)).toContain('no orphaned group was left by a session named like yours')
   })
 })
 
