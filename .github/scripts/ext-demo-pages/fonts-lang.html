@@ -1,0 +1,131 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fonts by language</title>
+    <!--
+      The chrome.fontSettings proof's fixture (Android compat round 20). No `lang` on the root
+      and no font-family anywhere but the probes: every plain span inherits the WebView's
+      standard family, so what an extension sets through the bridge is what the readings show.
+      The spans are read by `window.__zenFonts()`: computed font-family and font-size, and the
+      rendered box (a minimum font size shows in the box, not in the computed value).
+    -->
+    <style>
+      body {
+        margin: 24px;
+        background: #fff;
+        color: #111;
+      }
+      h1 {
+        font-size: 20px;
+      }
+      p {
+        margin: 0 0 12px;
+        white-space: nowrap;
+      }
+      .note {
+        color: #667;
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Fonts by language</h1>
+    <p><span id="latin">The quick brown fox jumps over the lazy dog</span></p>
+    <p class="note">
+      Controls, each in a named family of the device's own fonts.xml (the value a page can use):
+    </p>
+    <p>
+      <span id="probe-casual" style="font-family: casual"
+        >The quick brown fox jumps over the lazy dog</span
+      >
+    </p>
+    <p>
+      <span id="probe-serif-monospace" style="font-family: serif-monospace"
+        >The quick brown fox jumps over the lazy dog</span
+      >
+    </p>
+    <p>
+      <span id="probe-sans-serif-smallcaps" style="font-family: sans-serif-smallcaps"
+        >The quick brown fox jumps over the lazy dog</span
+      >
+    </p>
+    <p>
+      <span id="probe-sans-serif-condensed" style="font-family: sans-serif-condensed"
+        >The quick brown fox jumps over the lazy dog</span
+      >
+    </p>
+    <p>
+      <span id="probe-mono" style="font-family: monospace"
+        >The quick brown fox jumps over the lazy dog</span
+      >
+    </p>
+    <p>
+      <span id="probe-serif" style="font-family: serif"
+        >The quick brown fox jumps over the lazy dog</span
+      >
+    </p>
+    <p class="note">Japanese, labelled and unlabelled:</p>
+    <p><span id="ja" lang="ja">吾輩は猫である。名前はまだ無い。</span></p>
+    <p><span id="plain-ja">吾輩は猫である。名前はまだ無い。</span></p>
+    <p class="note">Russian, labelled and unlabelled, and Latin text under a Russian label:</p>
+    <p><span id="ru" lang="ru">Съешь же ещё этих мягких французских булок</span></p>
+    <p><span id="plain-ru">Съешь же ещё этих мягких французских булок</span></p>
+    <p><span id="ru-latin" lang="ru">The quick brown fox jumps over the lazy dog</span></p>
+    <p class="note">MathML, and text asking for the math generic family:</p>
+    <p>
+      <math id="math"
+        ><mrow><mi>x</mi><mo>=</mo><mn>2</mn></mrow></math
+      >
+    </p>
+    <p><span id="math-text" style="font-family: math">x = 2</span></p>
+    <p class="note">Six pixels, and fixed-width text:</p>
+    <p><span id="tiny" style="font-size: 6px">tiny text at six pixels</span></p>
+    <p><code id="fixed">fixed-width code</code></p>
+    <script>
+      window.__zenFonts = function () {
+        var ids = [
+          'latin',
+          'probe-casual',
+          'probe-serif-monospace',
+          'probe-sans-serif-smallcaps',
+          'probe-sans-serif-condensed',
+          'probe-mono',
+          'probe-serif',
+          'ja',
+          'plain-ja',
+          'ru',
+          'plain-ru',
+          'ru-latin',
+          'math',
+          'math-text',
+          'tiny',
+          'fixed'
+        ]
+        var sheet = document.getElementById('zen-ext-fonts')
+        var out = {
+          body: read(document.body),
+          sheet: !!sheet,
+          sheetCss: sheet ? String(sheet.textContent).slice(0, 600) : null,
+          lang: document.documentElement.lang || null
+        }
+        ids.forEach(function (id) {
+          var el = document.getElementById(id)
+          out[id] = el ? read(el) : null
+        })
+        return JSON.stringify(out)
+        function read(el) {
+          var cs = getComputedStyle(el)
+          var r = el.getBoundingClientRect()
+          return {
+            ff: cs.fontFamily,
+            fs: cs.fontSize,
+            w: Math.round(r.width * 100) / 100,
+            h: Math.round(r.height * 100) / 100
+          }
+        }
+      }
+    </script>
+  </body>
+</html>

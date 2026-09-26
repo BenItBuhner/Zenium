@@ -56,7 +56,7 @@ describe('AndroidExtensionRuntime: attaching records', () => {
     // Chrome's renderer does for a `chrome-extension://` stylesheet: the predefined names with
     // the extension's id, the locale spelled as a `_locales` directory is.
     expect(served.cssMessages).toMatchObject({ '@@extension_id': ID, '@@ui_locale': 'en_US' })
-    expect(h.kt.calledWith('ext.background.start')).toEqual([{ id: ID }])
+    expect(h.kt.calledWith('ext.background.start')).toEqual([{ id: ID, reason: 'attach' }])
     expect(h.runtime.configureStats(ID)?.units[0].key).toBe('isolated:https://example.com')
   })
 
@@ -352,13 +352,16 @@ describe('AndroidExtensionRuntime: the background lifecycle', () => {
     backgroundUp(h, 'bg1', ['tabs.onCreated'])
     expect(h.kt.backgrounds.has(ID)).toBe(true)
     h.tick(30_000)
-    expect(h.kt.calledWith('ext.background.stop')).toEqual([{ id: ID }])
+    expect(h.kt.calledWith('ext.background.stop')).toEqual([{ id: ID, reason: 'idle' }])
     h.runtime.onGone(['bg1'])
     expect(h.runtime.background.state(ID)).toBe('stopped')
     // A tab appears: the persisted listener wakes the worker and the event waits for ready.
     h.tabs.t2 = makeTab('t2', 'https://two.example/')
     h.notifyState()
-    expect(h.kt.calledWith('ext.background.start')).toHaveLength(2)
+    expect(h.kt.calledWith('ext.background.start')).toEqual([
+      { id: ID, reason: 'attach' },
+      { id: ID, reason: 'event:tabs.onCreated' }
+    ])
     expect(h.runtime.background.state(ID)).toBe('starting')
     backgroundUp(h, 'bg2', ['tabs.onCreated'])
     const created = events(h, 'bg2', 'tabs.onCreated')
@@ -384,8 +387,38 @@ describe('AndroidExtensionRuntime: the background lifecycle', () => {
     expect(h.runtime.background.state(ID)).toBe('running')
     // 30 s of quiet after the message: now it idles out.
     h.tick(20_000)
-    expect(h.kt.calledWith('ext.background.stop')).toEqual([{ id: ID }])
+    expect(h.kt.calledWith('ext.background.stop')).toEqual([{ id: ID, reason: 'idle' }])
     expect(h.runtime.backgroundStats(ID)).toMatchObject({ starts: 1, idleStops: 1, queued: 0 })
+  })
+
+  it("names the reason of each start and stop to the host, for its log: an inspection's wake, a message, a detach", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    h.tick(30_000)
+    h.runtime.onGone(['bg1'])
+    h.runtime.wakeBackground(ID)
+    expect(h.kt.calledWith('ext.background.start')).toEqual([
+      { id: ID, reason: 'attach' },
+      { id: ID, reason: 'wake' }
+    ])
+    // A wake of a starting or running background asks for nothing.
+    h.runtime.wakeBackground(ID)
+    backgroundUp(h, 'bg2')
+    h.runtime.wakeBackground(ID)
+    expect(h.kt.calledWith('ext.background.start')).toHaveLength(2)
+    h.tick(30_000)
+    h.runtime.onGone(['bg2'])
+    hello(h, 'opt1', 'options', { url: `https://${ID}.ext.zenium.invalid/options.html` })
+    message(h, 'opt1', { t: 'msg', id: 3, target: {}, data: { method: 'config.get' } })
+    expect(h.kt.calledWith('ext.background.start')[2]).toEqual({ id: ID, reason: 'message' })
+    backgroundUp(h, 'bg3')
+    await h.runtime.detach(ID)
+    expect(h.kt.calledWith('ext.background.stop')).toEqual([
+      { id: ID, reason: 'idle' },
+      { id: ID, reason: 'idle' },
+      { id: ID, reason: 'remove' }
+    ])
   })
 
   it('remembers listeners across sessions so the first event of the next start wakes the worker', async () => {
@@ -2076,7 +2109,13 @@ describe('AndroidExtensionRuntime: chrome.offscreen', () => {
     expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)).toBeUndefined()
     // A ready from a frame inside the page is not the page's.
     hello(h, 'off1sub', 'offscreen', { url: `${servedUrl}#frame`, top: false })
-    h.runtime.onMessage({ ep: 'off1sub', tabId: null, top: false, origin: '', message: { t: 'ready' } })
+    h.runtime.onMessage({
+      ep: 'off1sub',
+      tabId: null,
+      top: false,
+      origin: '',
+      message: { t: 'ready' }
+    })
     for (let i = 0; i < 5; i++) await Promise.resolve()
     expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)).toBeUndefined()
     message(h, 'off1', { t: 'ready' })
@@ -3427,6 +3466,58 @@ describe('AndroidExtensionRuntime: the bridge under a message storm', () => {
     expect(h.kt.posted.filter((m) => m === 'ext.send')).toHaveLength(
       h.kt.calledWith('ext.send').length
     )
+  })
+
+  it('takes the reply hop for every message to an endpoint when the host has one, the stamps apart, and posts none of them (compat round 20)', async () => {
+    const h = harness({ hop: true })
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['storage'] })))
+    backgroundUp(h, 'bg1')
+    const before = Date.now()
+    const reply = await call(h, 'bg1', 'storage', 'get', ['local', null])
+    // The reply reached the endpoint (the fake's hop records it in `sent` as the port path would).
+    expect(reply.ok).toBe(true)
+    // Over the hop, with the runtime's two stamps beside the message; nothing over `post`.
+    const hop = h.kt.hopped.find((entry) => entry.ep === 'bg1')
+    expect(hop).toBeDefined()
+    const at = hop?.at as [number, number]
+    expect(at).toHaveLength(2)
+    expect(at[0]).toBeGreaterThanOrEqual(before)
+    expect(at[1]).toBeGreaterThanOrEqual(at[0])
+    expect(h.kt.posted).not.toContain('ext.send')
+    expect(h.kt.calledWith('ext.send')).toHaveLength(0)
+    // An event is a message like any other on the hop – without stamps.
+    h.runtime.onMessage({
+      ep: 'bg1',
+      tabId: null,
+      top: true,
+      origin: `https://${ID}.ext.zenium.invalid`,
+      message: { t: 'listen', event: 'storage.onChanged', on: true }
+    })
+    await call(h, 'bg1', 'storage', 'set', ['local', { k: 1 }])
+    await until(() => h.kt.to('bg1').some((m) => m.t === 'event'))
+    const eventHops = h.kt.hopped.filter((entry) => entry.at === undefined)
+    expect(eventHops.length).toBeGreaterThan(0)
+    expect(h.kt.posted).not.toContain('ext.send')
+  })
+
+  it('goes over the port when the hop refuses a message (deliver false)', async () => {
+    const h = harness({ hop: true })
+    const hop = h.kt.deliver
+    h.kt.deliver = (ep, message, at) => {
+      // A hop that fails once: the runtime's adapter answers false from then on; the message is
+      // not lost.
+      void ep
+      void message
+      void at
+      return false
+    }
+    expect(hop).toBeDefined()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['storage'] })))
+    backgroundUp(h, 'bg1')
+    const reply = await call(h, 'bg1', 'storage', 'get', ['local', null])
+    expect(reply.ok).toBe(true)
+    expect(h.kt.hopped).toHaveLength(0)
+    expect(h.kt.posted).toContain('ext.send')
   })
 })
 

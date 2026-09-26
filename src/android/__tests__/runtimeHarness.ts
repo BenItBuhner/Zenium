@@ -1,5 +1,6 @@
 import type {
   Container,
+  ExtensionControl,
   ExtensionInfo,
   SearchEngine,
   SearchEngineControl,
@@ -7,6 +8,7 @@ import type {
   Tab,
   TabSection
 } from '@shared/types'
+import { DEFAULT_FONT_SETTINGS, type PageFontSettings } from '@shared/fonts'
 import { RuleEngine } from '@core/blocking/engine'
 import { moveTab as moveTabInModel, type Model } from '@core/model'
 import type { Browser } from '@core/browser'
@@ -46,6 +48,10 @@ export class FakeKotlin implements RuntimeBridge {
   readonly calls: Array<{ method: string; args: Record<string, unknown> }> = []
   /** The methods that came one way (`post`), in order; `calls` has them too. */
   readonly posted: string[] = []
+  /** The messages that came over the reply hop (`deliver`), when the fake has one: `[ep, at]` each; `sent` has them too. */
+  readonly hopped: Array<{ ep: string; at: unknown }> = []
+  /** Set by `harness({ hop: true })`: the reply hop, taking every `ext.send` before `post`; absent as the real bridge's is without `__zenExtHop`. */
+  deliver?: (ep: string, message: string, at?: [number, number]) => boolean
   /** Every message the runtime sent to an endpoint, decoded. */
   readonly sent: Sent[] = []
   readonly manifests = new Map<string, Record<string, unknown>>()
@@ -93,6 +99,22 @@ export class FakeKotlin implements RuntimeBridge {
   readonly hosts = new Map<string, string[]>()
   /** When set, the message the fake WebView refuses an override with. */
   failProxy: string | null = null
+  /** The font layer the fake WebViews hold (`ext.fonts.apply`, the whole payload); undefined while none was ever applied. */
+  fontLayer: Record<string, unknown> | undefined = undefined
+  /** How often a layer was applied. */
+  fontApplies = 0
+  /** The privacy layer the fake WebViews hold (`ext.privacy.apply`, the whole payload); undefined while none was ever applied. */
+  privacyLayer: Record<string, unknown> | undefined = undefined
+  /** How often a privacy layer was applied. */
+  privacyApplies = 0
+  /** The fake phone's font configuration (`ext.fonts.list`): `fonts.xml`'s named families with their files' own names. */
+  fontNames: Array<{ id: string; name: string }> = [
+    { id: 'sans-serif', name: 'Roboto' },
+    { id: 'serif', name: 'Noto Serif' },
+    { id: 'monospace', name: 'Droid Sans Mono' },
+    { id: 'casual', name: 'Coming Soon' },
+    { id: 'cursive', name: 'Dancing Script' }
+  ]
   /** The notifications Kotlin shows right now: `<extension id>/<notification id>` → what it was given. */
   readonly notifications = new Map<string, Record<string, unknown>>()
   /** The auth sheets Kotlin holds (`ext.auth.*`), by view id; `closed` ones stay for inspection. */
@@ -282,6 +304,16 @@ export class FakeKotlin implements RuntimeBridge {
         return null
       case 'ext.notifications.allowed':
         return this.notificationsAllowed
+      case 'ext.fonts.apply':
+        this.fontLayer = args
+        this.fontApplies++
+        return null
+      case 'ext.fonts.list':
+        return this.fontNames.map((entry) => ({ ...entry }))
+      case 'ext.privacy.apply':
+        this.privacyLayer = args
+        this.privacyApplies++
+        return null
       case 'ext.hosts':
         this.hosts.set(String(args.id), (args.hosts as string[]) ?? [])
         return undefined
@@ -509,6 +541,12 @@ export interface Harness {
    * the attached extensions' engines and the control of the default.
    */
   search: Array<{ engines: SearchEngine[]; control: SearchEngineControl | null }>
+  /** The user's page fonts (`state.settings.fonts`), mutable: a test changes a row and calls `notifyState`. */
+  fonts: PageFontSettings
+  /** The user's password setting (`state.settings.passwords`): the browser's value of `services.passwordSavingEnabled`. */
+  passwords: { offerToSave: boolean }
+  /** Every map the runtime published to `state.setExtensionControls`, in order (the whole map each time). */
+  controls: Array<Record<string, ExtensionControl>>
   /** Write the debounced JSON documents out now and parse one of them. */
   saved: (name: string) => Record<string, unknown>
 }
@@ -533,9 +571,18 @@ export function harness(
     speech?: boolean
     /** The runtime's `debug` (its default on): off, no reply carries the host trace's stamps. */
     debug?: boolean
+    /** A host with the reply hop (`__zenExtHop`): `deliver` takes every message to an endpoint; `hopped` records them. */
+    hop?: boolean
   } = {}
 ): Harness {
   const kt = new FakeKotlin()
+  if (options.hop) {
+    kt.deliver = (ep, message, at) => {
+      kt.hopped.push({ ep, at })
+      kt.sent.push({ ep, message: JSON.parse(message) as Record<string, unknown> })
+      return true
+    }
+  }
   const speech = options.speech === false ? undefined : new FakeSpeech()
   const readAloud: Harness['readAloud'] = { status: 'idle', pauses: 0 }
   kt.isolatedWorlds = options.isolatedWorlds ?? true
@@ -577,6 +624,9 @@ export function harness(
   } as unknown as ZenWindow
   const pdfDocuments = new Map<string, string>()
   const search: Harness['search'] = []
+  const fonts: PageFontSettings = { ...DEFAULT_FONT_SETTINGS }
+  const passwords = { offerToSave: true }
+  const controls: Harness['controls'] = []
   const browser = {
     platform: { io, speech },
     readAloud: {
@@ -589,6 +639,7 @@ export function harness(
     },
     state: {
       model: { containers },
+      settings: { fonts, passwords },
       subscribe: (fn: () => void) => {
         listeners.push(fn)
         return () => undefined
@@ -596,6 +647,9 @@ export function harness(
       commitVolatile: () => undefined,
       setExtensionSearch: (engines: SearchEngine[], control: SearchEngineControl | null) => {
         search.push({ engines, control })
+      },
+      setExtensionControls: (map: Record<string, ExtensionControl>) => {
+        controls.push(map)
       }
     },
     toast: (message: string) => {
@@ -668,7 +722,11 @@ export function harness(
   const blockingFlushes = { count: 0 }
   ;(
     browser as unknown as {
-      blocking: { engine: RuleEngine; store: { whenSettled: () => Promise<void> } }
+      blocking: {
+        engine: RuleEngine
+        store: { whenSettled: () => Promise<void> }
+        reconcileOwners: () => string[]
+      }
     }
   ).blocking = {
     engine,
@@ -676,7 +734,9 @@ export function harness(
       whenSettled: async () => {
         blockingFlushes.count++
       }
-    }
+    },
+    // `runtime.start()` asks the service to drop stale dNR sets; the fake has none to drop.
+    reconcileOwners: () => []
   }
   const tick = (ms: number): void => {
     clock.now += ms
@@ -710,6 +770,9 @@ export function harness(
     infos,
     pdfDocuments,
     search,
+    fonts,
+    passwords,
+    controls,
     turnScreen: (angle) => {
       screen.angle = angle
       const landscape = angle === 90 || angle === 270

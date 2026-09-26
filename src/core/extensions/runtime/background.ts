@@ -14,11 +14,22 @@ export type BackgroundKind = 'none' | 'persistent' | 'event' | 'worker'
 
 export type BackgroundState = 'stopped' | 'starting' | 'running'
 
+/**
+ * Why a start is asked of the host: the extension attached (`attach`), an inspection woke it
+ * (`wake`), a message or port arrived (`message`), an event it listens for was raised
+ * (`event:<chrome.ns.event>`), or work waited when its page vanished (`restart`). For the host's
+ * log; the policy is the same whatever the reason.
+ */
+export type BackgroundStartReason = 'attach' | 'wake' | 'message' | 'restart' | `event:${string}`
+
+/** Why a stop is asked of the host: the quiet time ran out (`idle`), or the extension goes (`remove`). */
+export type BackgroundStopReason = 'idle' | 'remove'
+
 export interface BackgroundHost {
   /** Load the background page; the host keeps a page that is already running at the same URL. */
-  start(id: string): void
+  start(id: string, reason: BackgroundStartReason): void
   /** Destroy the background page; its endpoints report gone afterwards. */
-  stop(id: string): void
+  stop(id: string, reason: BackgroundStopReason): void
   setTimeout(callback: () => void, ms: number): unknown
   clearTimeout(handle: unknown): void
 }
@@ -115,7 +126,7 @@ export class BackgroundLifecycle {
     entry.queue.length = 0
     if (entry.state !== 'stopped') {
       entry.stopping = true
-      this.host.stop(id)
+      this.host.stop(id, 'remove')
     }
     this.entries.delete(id)
   }
@@ -143,7 +154,7 @@ export class BackgroundLifecycle {
   }
 
   /** Idempotent: a page that is starting or running is left alone. */
-  ensureStarted(id: string): void {
+  ensureStarted(id: string, reason: BackgroundStartReason = 'attach'): void {
     const entry = this.entries.get(id)
     if (!entry || entry.state !== 'stopped') return
     entry.state = 'starting'
@@ -158,7 +169,7 @@ export class BackgroundLifecycle {
       entry.state = 'running'
       this.armIdle(id, entry)
     }, this.startTimeoutMs)
-    this.host.start(id)
+    this.host.start(id, reason)
   }
 
   /** The background page finished loading (its scripts ran and registered their listeners). */
@@ -184,7 +195,8 @@ export class BackgroundLifecycle {
     entry.state = 'stopped'
     const expected = entry.stopping
     entry.stopping = false
-    if (entry.queue.length > 0 || (!expected && entry.kind === 'persistent')) this.ensureStarted(id)
+    if (entry.queue.length > 0 || (!expected && entry.kind === 'persistent'))
+      this.ensureStarted(id, 'restart')
   }
 
   /** Something happened on the background's bridge: it is busy, the idle clock restarts. */
@@ -228,7 +240,7 @@ export class BackgroundLifecycle {
         }
         entry.queue.push(send)
         entry.stats.queued += 1
-        this.ensureStarted(id)
+        this.ensureStarted(id, event === null ? 'message' : `event:${event}`)
         return 'queued'
     }
   }
@@ -254,7 +266,7 @@ export class BackgroundLifecycle {
       entry.state = 'stopped'
       entry.stopping = true
       entry.stats.idleStops += 1
-      this.host.stop(id)
+      this.host.stop(id, 'idle')
     }, this.idleMs)
   }
 

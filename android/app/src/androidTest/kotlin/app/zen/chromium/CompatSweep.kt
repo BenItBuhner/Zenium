@@ -1542,7 +1542,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * upsell dialog is closed when it comes up; a consent interstitial makes the check `n/m`.
      * `play` starts the video before the wait ([playVideo]): for a control drawn only on a playing
      * page – Speak Subtitles' button waits for the player's caption fetch, which the paused page
-     * the WebView lands on never makes (round 18 §7: `where.video: paused` on both lanes).
+     * the WebView lands on never makes (round 18 §7: `where.video: paused` on both lanes). A page
+     * YouTube will not play for the runner ([YT_PLAYABILITY]: a `playabilityStatus` other than
+     * `OK`, or a bot check's wording – round 20's BEFORE read `video unstarted, src: false` after
+     * the tap and the page's own `playVideo()` on both lanes) is `n/m` when `play` was asked and
+     * nothing started; the reading goes to `extra.playability` on every row.
      */
     private fun youtube(row: Row, entry: JSONObject, expr: String, label: String, desktopSite: Boolean = false, settleMs: Long = 45_000, play: Boolean = false): Grade {
         val tab = createTab(YOUTUBE_URL)
@@ -1562,17 +1566,23 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             if (found.optBoolean("pass")) true else null
         }
         val where = json(tabEval(view, YT_WHERE))
+        val playability = runCatching { json(tabEval(view, YT_PLAYABILITY)) }.getOrDefault(JSONObject())
         val extra = JSONObject().put("page", found).put("where", where).put("upsellsClosed", upsells).put("desktopSite", desktopSite).put("tab", tab)
-            .put("waitedMs", SystemClock.uptimeMillis() - started).put("console", JSONArray(consoleOf(view).takeLast(15)))
+            .put("waitedMs", SystemClock.uptimeMillis() - started).put("console", JSONArray(consoleOf(view).takeLast(15))).put("playability", playability)
         played?.let { extra.put("play", it) }
         if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
         val url = where.optString("url")
         val host = runCatching { android.net.Uri.parse(url).host ?: "" }.getOrDefault("")
+        // A page YouTube would not play for the runner (its bot check, a sign-in wall, an
+        // unplayable response): a control that waits for playback has nothing to wait for.
+        val gated = play && played?.optString("by") == "none" &&
+            (playability.optBoolean("bot") || playability.optString("status").let { it.isNotEmpty() && it != "OK" })
         return when {
             host.contains("consent") || url.contains("consent.youtube") -> Grade("n/m", "$label: YouTube served its consent interstitial instead of the watch page ($url)", extra)
             !(host == "youtube.com" || host.endsWith(".youtube.com")) -> Grade("n/m", "$label: the tab landed on ${host.ifEmpty { "nowhere" }}, not a watch page (network)", extra)
             found.optBoolean("pass") -> Grade("P", "$label${if (desktopSite) " (desktop site)" else ""}: ${found.toString().take(220)} on $host", extra)
-            else -> Grade("F", "$label${if (desktopSite) " (desktop site)" else ""}: ${found.toString().take(220)} on $host after ${(SystemClock.uptimeMillis() - started) / 1000} s (title ${JSONObject.quote(where.optString("title").take(40))}, video ${where.optString("video")})", extra)
+            gated -> Grade("n/m", "$label${if (desktopSite) " (desktop site)" else ""}: YouTube's playability gate on the runner (${playability.optString("status").ifEmpty { "no status" }}${playability.optString("reason").takeIf { it.isNotEmpty() }?.let { ": \"$it\"" } ?: ""}${if (playability.optBoolean("bot")) ", a bot check" else ""}) – the video never started (${played?.optString("by")}), the control waits for playback (not measurable here)", extra)
+            else -> Grade("F", "$label${if (desktopSite) " (desktop site)" else ""}: ${found.toString().take(220)} on $host after ${(SystemClock.uptimeMillis() - started) / 1000} s (title ${JSONObject.quote(where.optString("title").take(40))}, video ${where.optString("video")}${playability.optString("status").takeIf { it.isNotEmpty() }?.let { ", playability $it" } ?: ""})", extra)
         }
     }
 
@@ -3540,9 +3550,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * `window.open` with one that answers a stub window (the fixture logs `fake`) and its content
      * script shows its toast (`#pb-toast-main`) for the refused pop-up: either is the pass. The
      * fixture's `null` alone is the WebView's own refusal, not the extension's (PARTIAL when the
-     * extension's script is in the page but showed nothing); a window opened is F.
+     * extension's script is in the page but showed nothing); a window opened is F. Popup Blocker
+     * Pro (compat round 20) is read the same way: its MAIN-world script answers a dummy window
+     * and its content script toasts `#popup-blocker-pro-jq-toast`.
      */
-    private fun popupBlocker(row: Row, entry: JSONObject): Grade {
+    private fun popupBlocker(label: String): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
         val (tab, view) = fixture("popups.html?blocker", factor, 3_000)
@@ -3560,11 +3572,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         snap("${entry.optString("slug")}-blocked")
         val fake = result.optString("result") == "fake"
         val toast = result.optBoolean("toast")
-        return when {
-            opened.isNotEmpty() && !fake && !toast -> Grade("F", "Poper Blocker: the tap opened ${opened.first().value.take(60)} in a new tab; nothing of the extension's refused it: ${result.toString().take(160)}", extra)
-            fake || toast -> Grade("P", "Poper Blocker: the pop-up was refused by the extension (window.open answered ${result.optString("result")}, toast ${toast}): ${result.toString().take(160)}", extra)
-            result.optBoolean("scriptInPage") -> Grade("PARTIAL", "Poper Blocker: its page script is in the page but the refusal was the WebView's own (window.open answered ${result.optString("result")}, no toast): ${result.toString().take(160)}", extra)
-            else -> Grade("F", "Poper Blocker: nothing of the extension's reached the page (window.open answered ${result.optString("result")}): ${result.toString().take(160)}", extra)
+        when {
+            opened.isNotEmpty() && !fake && !toast -> Grade("F", "$label: the tap opened ${opened.first().value.take(60)} in a new tab; nothing of the extension's refused it: ${result.toString().take(160)}", extra)
+            fake || toast -> Grade("P", "$label: the pop-up was refused by the extension (window.open answered ${result.optString("result")}, toast ${toast}): ${result.toString().take(160)}", extra)
+            result.optBoolean("scriptInPage") -> Grade("PARTIAL", "$label: its page script is in the page but the refusal was the WebView's own (window.open answered ${result.optString("result")}, no toast): ${result.toString().take(160)}", extra)
+            else -> Grade("F", "$label: nothing of the extension's reached the page (window.open answered ${result.optString("result")}): ${result.toString().take(160)}", extra)
         }
     }
 
@@ -3958,9 +3970,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * Chrome); that button is tapped (a gesture) and the chrome's prompt accepted, then the
      * popup lists the two cookies, then one cookie's own delete control is pressed and the
      * fixture's `document.cookie` drops to one: the pass, as the desktop's round 6 graded it.
-     * Listed but not deleted is `PARTIAL`.
+     * Listed but not deleted is `PARTIAL`. EditThisCookie (compat round 20) takes the same
+     * reading with its host access granted at install (no permission ask; its jQuery-UI
+     * accordion lists the cookies with a trash control per row).
      */
-    private fun cookieEditor(row: Row, entry: JSONObject): Grade {
+    private fun cookieEditor(label: String): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
         val (_, view) = fixture("cookies.html?editor", factor, 2_000)
@@ -4006,13 +4020,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         runCatching { coreCall("extension.closePopup", "null") }
         val wanted = (before.optJSONArray("names")?.length() ?: 0) - 1
         val gone = wanted >= 1 && (after.optJSONArray("names")?.length() ?: 9) == wanted
-        return Grade(
+        Grade(
             when {
                 gone -> "P"
                 listed.optBoolean("pass") -> "PARTIAL"
                 else -> "F"
             },
-            "Cookie-Editor: fixture cookies ${before.optJSONArray("names")} -> ${after.optJSONArray("names") ?: "unread"}; popup ${if (popup == null) "did not render" else "lists ${listed.optInt("fixtureCookies")} of the fixture's cookies (${listed.optString("text").take(100)})"}; permission ${extra.optJSONObject("prompt")?.optString("how")?.ifEmpty { null } ?: extra.optJSONObject("prompt")?.optString("prompt") ?: "not asked"}",
+            "$label: fixture cookies ${before.optJSONArray("names")} -> ${after.optJSONArray("names") ?: "unread"}; popup ${if (popup == null) "did not render" else "lists ${listed.optInt("fixtureCookies")} of the fixture's cookies (${listed.optString("text").take(100)})"}; permission ${extra.optJSONObject("prompt")?.optString("how")?.ifEmpty { null } ?: extra.optJSONObject("prompt")?.optString("prompt") ?: "not asked"}",
             extra
         )
     }
@@ -6460,7 +6474,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("lpcaedmchfhocbbapmcbpinfpgnhiddi", "Google Keep Chrome Extension", "google-keep", core = accountGate("Google Keep", Regex("keep\\.google|accounts\\.google", RegexOption.IGNORE_CASE), page = "index.html")),
         Row("gmbmikajjgmnabiglmofipeabaddhgne", "Save to Google Drive", "save-to-google-drive", core = accountGate("Save to Google Drive", Regex("accounts\\.google|drive\\.google", RegexOption.IGNORE_CASE), gate = "a Google account signed into the browser (identity.getAuthToken)", gateLog = Regex("getAuthToken|signed-in browser account|launchWebAuthFlow", RegexOption.IGNORE_CASE))),
         Row("fkepacicchenbjecpbpbclokcabebhah", "iCloud Bookmarks", "icloud-bookmarks", feasible = false, core = notOnThePhone("nativeMessaging to iCloud for Windows: a Windows-only host (n/a on the phone, as on every other platform); the popup shows Apple's Windows notice")),
-        Row("pejdijmoenmkgeppbflobdenhhabjlaj", "iCloud Passwords", "icloud-passwords", feasible = false, core = notOnThePhone("nativeMessaging to iCloud for Windows: a Windows-only host (n/a on the phone, as on every other platform); the popup shows Apple's Windows notice")),
+        // Round 20 (the ADDENDUM's `chrome.privacy` proof): the `n/a` stands; the three services
+        // settings its background sets at start are read back and off the published controls.
+        Row("pejdijmoenmkgeppbflobdenhhabjlaj", "iCloud Passwords", "icloud-passwords", feasible = false, core = privacyHolder(notOnThePhone("nativeMessaging to iCloud for Windows: a Windows-only host (n/a on the phone, as on every other platform); the popup shows Apple's Windows notice"), ICLOUD_PRIVACY_SETTINGS)),
         Row("kdpelmjpfafjppnhbloffcjpeomlnpah", "WPS PDF", "wps-pdf", core = pdfTool("WPS PDF", Regex("wps"), missing = "F")),
         Row("ogdlpmhglpejoiomcodnpjnfgcpmgale", "Custom Cursor for Chrome", "custom-cursor", core = ::customCursor),
         Row("lmjnegcaeklhafolokijcfjliaokphfk", "Video DownloadHelper", "video-downloadhelper", core = ::videoDownloadHelper),
@@ -6537,7 +6553,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("nikfmfgobenbhmocjaaboihbeocackld", "Enable local file links", "local-file-links", core = ::localFileLinks),
         Row("glghokcicpikglmflbbelbgeafpijkkf", "Signer.Digital Digital Signature, PKI", "signer-digital", core = serviceBacked("Signer.Digital", "signing needs its Signer.Digital host (a desktop companion) over native messaging; its installer dialog opens on Chrome's missing-host disconnect", native = true)),
         Row("pioclpoplcdbaefihamjohnefbikjilc", "Evernote Web Clipper", "evernote-web-clipper", core = accountGate("Evernote Web Clipper", Regex("evernote", RegexOption.IGNORE_CASE), gate = "an Evernote account (its sign-in at accounts.evernote.com)")),
-        Row("bkkbcggnhapdmkeljlodobbkopceiche", "Pop up blocker for Chrome - Poper Blocker", "poper-blocker", core = ::popupBlocker),
+        Row("bkkbcggnhapdmkeljlodobbkopceiche", "Pop up blocker for Chrome - Poper Blocker", "poper-blocker", core = popupBlocker("Poper Blocker")),
         Row("ohahllgiabjaoigichmmfljhkcfikeof", "AdBlocker Ultimate", "adblocker-ultimate", core = ::adBlocker),
         Row("akcocjjpkmlniicdeemdceeajlmoabhg", "Free VPN Proxy - 1VPN", "1vpn", core = vpn("1VPN", pac = true, connectSelector = "#proxyToggle")),
         Row("adbacgifemdbhdkfppmeilbgppmhaobf", "RoPro - Enhance Your Roblox Experience", "ropro", core = ::ropro),
@@ -6577,7 +6593,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // Google Scholar PDF Reader, RoPro) are the rows above, graded again on this round's
         // reading and fixes.
         Row("oijdcdmnjjgnnhgljmhkjlablaejfeeb", "The QR Code Generator", "qr-code-generator", core = popupMarker("The QR Code Generator", "(function(){var best=null,bw=0;var all=document.querySelectorAll('svg, canvas, img');for(var i=0;i<all.length;i++){var b=all[i].getBoundingClientRect();if(b.width*b.height>bw){bw=b.width*b.height;best=all[i]}}var r=best?best.getBoundingClientRect():{width:0,height:0};var paths=best&&best.tagName.toLowerCase()==='svg'?best.querySelectorAll('path, rect').length:-1;return JSON.stringify({pass:r.width>60&&r.height>60&&(paths<0||paths>4),via:best?best.tagName.toLowerCase():'none',w:Math.round(r.width),h:Math.round(r.height),paths:paths,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,80)})})()")),
-        Row("hlkenndednhfkekhgcdicdfddnkalmdm", "Cookie-Editor", "cookie-editor", core = ::cookieEditor),
+        Row("hlkenndednhfkekhgcdicdfddnkalmdm", "Cookie-Editor", "cookie-editor", core = cookieEditor("Cookie-Editor")),
         Row("imdndkajeppdomiimjkcbhkafeeooghd", "Browsing Protection by WithSecure", "withsecure-browsing-protection", core = serviceBacked("Browsing Protection by WithSecure", "its site verdicts come from the WithSecure security application (app.withsecure_chrome_https, a desktop companion) over native messaging; without it the action opens its \"Security application not found\" page, as Chrome shows it", native = true)),
         Row("gojbdfnpnhogfdgjbigejoaolejmgdhk", "OneNote Web Clipper", "onenote-web-clipper", core = ::oneNoteWebClipper),
         Row("hfapbcheiepjppjbnkphkmegjlipojba", "Klarna", "klarna", core = accountGate("Klarna", Regex("klarna", RegexOption.IGNORE_CASE), injects = "iframe[src*='hfapbcheiepjppjbnkphkmegjlipojba'], iframe[src*='klapp'], [id*='klarna'], [class*='klarna']", gate = "a Klarna account (its drawer opens at \"Sign in\")", site = "https://www.hm.com/")),
@@ -7104,7 +7120,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         ),
         Row("ndgimibanhlabgdgjcpbbndiehljcpfh", "SelectorsHub", "selectorshub", core = ownPage("SelectorsHub", "side-panel/side-shub-panel.html", SELECTORSHUB_PANEL)),
         Row("oejgccbfbmkkpaidnkphaiaecficdnfn", "Toggl Track", "toggl-track", core = accountGate("Toggl Track", Regex("toggl\\.com", RegexOption.IGNORE_CASE), gate = "a Toggl account (its popup signs in at toggl.com; its timer posts to its service)")),
-        Row("caclkomlalccbpcdllchkeecicepbmbm", "Advanced Font Settings", "advanced-font-settings", core = ::fontSettingsPage),
+        Row("caclkomlalccbpcdllchkeecicepbmbm", "Advanced Font Settings", "advanced-font-settings", core = ::fontSettingsProof),
         Row("ldmmifpegigmeammaeckplhnjbbpccmm", "Save.to", "save-to", core = accountGate("Save.to", Regex("notion\\.so|save\\.to", RegexOption.IGNORE_CASE), injects = "iframe[src*='popup/index.html'], iframe[src*='restricted_popup'], iframe[src*='ldmmifpegigmeammaeckplhnjbbpccmm']", gate = "a Notion login (its clipper frame reads notion.so's session)")),
         Row("jdopnakmnlnccgpfpmjmdjjohmcdgabp", "Screen Recorder", "screen-recorder-3", core = recorderPage("Screen Recorder", Regex("/pages/popup/popup\\.html"), "/capture|record|screen|camera|microphone|stop capturing/i")),
         Row("jiaopdjbehhjgokpphdfgmapkobbnmjp", "Youtube-shorts block", "youtube-shorts-block", core = shortsRedirect("Youtube-shorts block", "https://www.youtube.com/shorts/zV4uBH9S1KI")),
@@ -7162,7 +7178,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("fonalplhodhnenmokepaijoemaednpjm", "Directo - Travel Deals - Save on Hotels", "directo", core = ::directo),
         Row("mjgcgnfikekladnkhnimljcalfibijha", "DocHub - Sign PDF from Gmail", "dochub", core = pdfTool("DocHub", Regex("dce-file-viewer-import-btn|dochub", RegexOption.IGNORE_CASE), missing = "F")),
         Row("cmfijaapnnkcglahdngmjnhkfnkihkbg", "Affirm: Buy Now, Pay Later", "affirm", core = accountGate("Affirm", Regex("affirm\\.com", RegexOption.IGNORE_CASE), gate = "an Affirm account and a merchant's checkout (its content script offers pay-over-time on the merchant sites its service lists; its popup shows the extension's state alone)")),
-        Row("bhchdcejhohfmigjafbampogmaanbfkg", "User-Agent Switcher and Manager", "user-agent-switcher-manager", core = popupFlow("User-Agent Switcher and Manager", "echo-headers?uasm", listOf("/^set this user-agent string as the browser/i", "/^refresh the current page$/i"), UASM_HEADER_ECHO, settleMs = 30_000, probe = UASM_TYPE_UA to UASM_POPUP_STATE)),
+        // Its Apply (all tabs) is an `input[type=button]` whose title runs to 61 characters: the
+        // label rule reads its value instead (round 19 asked for the title and never reached it).
+        Row("bhchdcejhohfmigjafbampogmaanbfkg", "User-Agent Switcher and Manager", "user-agent-switcher-manager", core = popupFlow("User-Agent Switcher and Manager", "echo-headers?uasm", listOf("/^apply \\(all tabs\\)$/i", "/^refresh( the current page| tab)$/i"), UASM_HEADER_ECHO, settleMs = 30_000, probe = UASM_TYPE_UA to UASM_POPUP_STATE)),
         Row("gnblbpbepfbfmoobegdogkglpbhcjofh", "Beyond 20", "beyond-20", core = liveMarker("Beyond 20", "https://www.dndbeyond.com/monsters/16907-goblin", injectedAny("beyond20"), settleMs = 45_000, desktop = true, mirrors = listOf("https://www.dndbeyond.com/spells/2103-fire-bolt"))),
         Row("omebobahbkampglebglkoagddjnjbhle", "Gimp online - image editor and paint tool", "gimp-online", core = popupOpens("Gimp online", "/^full screen$/i", Regex("offidocs\\.com", RegexOption.IGNORE_CASE))),
         Row("bhiichidigehdgphoambhjbekalahgha", "Font Finder", "font-finder", core = ::fontFinder),
@@ -7200,13 +7218,210 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("kaibcgikagnkfgjnibflebpldakfhfih", "CS2 Trader - Steam Trading Enhancer", "cs2-trader", core = liveMarker("CS2 Trader", "https://steamcommunity.com/market/listings/730/AK-47%20%7C%20Redline%20%28Field-Tested%29", injectedAny("realMoneySite|copy_profile_perma_link|copy_trade_link|show_offer_history"), settleMs = 45_000, desktop = true, mirrors = listOf("https://steamcommunity.com/id/gaben"))),
         Row("blgcbajigpdfohpgcmbbfnphcgifjopc", "ExpressKeys: Password Manager", "expresskeys", core = accountGate("ExpressKeys", Regex("expressvpn\\.com|expresskeys", RegexOption.IGNORE_CASE), gate = "an ExpressVPN Keys account (its popup, a Flutter app, signs in; its vault syncs through ExpressVPN's service and its desktop app is reached over native messaging)")),
         Row("didegimhafipceonhjepacocaffmoppf", "Passbolt - Open source password manager", "passbolt", core = accountGate("Passbolt", Regex("passbolt\\.com", RegexOption.IGNORE_CASE), gate = "a Passbolt server and the account's key (its quick access signs in with the user's passphrase against a self-hosted or cloud Passbolt instance; a fresh install offers its setup)")),
+        // --- compat round 20 (ranks 481-510 by installs; `.github/scripts/ext-compat/next30-round17.json`) ---
+        // Each core rule read off the unpacked bundle: My Doodle's content script swaps google.com's
+        // logo for its text (`doodleText: "MyDoodle"`, `powerSwitchStatus: "ON"` written at its first
+        // run); Diccionario RAE's one `contexts: ["all"]` item opens `dle.rae.es/srv/search` from
+        // `onClicked` (`windows.create`, a tab here) – read in the image long-press menu as Save
+        // Image As PNG's is; EditThisCookie's popup lists the tab's cookies with a trash control per
+        // cookie (host access `<all_urls>`, no permission ask); Yahoo Homepage is a new-tab override
+        // (`ui/homepage.html`) framing yahoo.com in a sandboxed iframe; SAML-tracer's action opens
+        // its `TraceWindow.html` as a window (a tab here), and that page's own `webRequest`
+        // listeners list what the browser loads next; J2TEAM Security's `anti-fb-phishing`
+        // content script has the worker send a page with a Facebook-shaped login form off
+        // facebook.com to its `blocked.html` (`realtime: true` by default); Popup Blocker Pro's
+        // MAIN-world script (`scripting.registerContentScripts`) answers a dummy window for a
+        // refused `window.open` and its content script toasts `#popup-blocker-pro-jq-toast`;
+        // anonymoX sets a `pac_script` from its `.toggle-button-area`; High Contrast's `#toggle`
+        // writes `enabled` to storage.local and its content script puts `hc="a3"` (invert) on
+        // `<html>` (disabled by default); Ready X (the Starknet wallet, Argent X's successor)
+        // injects `window.starknet_argentX`; Youtube Playback Speed Control draws its
+        // `.PlayBackRatePanelYPSC` over any site's video (`enableAllVideosButton: true`).
+        Row("acnonhmkejidodnppipkffhfjbfiogha", "My Doodle", "my-doodle", core = liveMarker("My Doodle", "https://www.google.com/", MY_DOODLE, settleMs = 30_000, desktop = true)),
+        Row("jcocgejjjlnfddlhpbecfapicaajdibb", "Bark for Chrome", "bark", core = serviceBacked("Bark for Chrome", "its content scripts on Gemini and Canva report the child's AI chats to the parent's Bark account (`identity.getProfileUserInfo`, urls.bark.us); no popup, no options – the worker is its whole reachable surface")),
+        Row("cimiefiiaegbelhefglklhhakcgmhkai", "Plasma Integration", "plasma-integration", core = serviceBacked("Plasma Integration", "its every feature (media controls, KDE Connect, downloads in the Plasma shell, tabs in KRunner) is the KDE Plasma desktop's host over native messaging (`org.kde.plasma.browser_integration`); the phone has no Plasma", native = true)),
+        Row("dlnejlppicbjfcfcedcflplfjajinajd", "Bonjourr · Minimalist New Tab Page", "bonjourr", core = newTabOverride("Bonjourr")),
+        Row("gejdeepcjkfbepfkcfdgiodgoglakiii", "Diccionario RAE en un clic 2022", "diccionario-rae", core = menuItemOpens("Diccionario RAE", "gallery.html?rae", ".grid img", Regex("Diccionario RAE", RegexOption.IGNORE_CASE), Regex("dle\\.rae\\.es/srv/search", RegexOption.IGNORE_CASE))),
+        Row("kogfdlbehkaeoafmgaecphlnhohpabig", "Google Meet Breakout by Robert Hudek", "meet-breakout", core = actionPage("Google Meet Breakout", Regex("popup\\.html", RegexOption.IGNORE_CASE), MEET_BREAKOUT_PANEL, fixtures = listOf("page-a.html?breakout"))),
+        Row("ojfebgpkimhlhcblbalbfjblapadhbol", "EditThisCookie (V3)", "editthiscookie", core = cookieEditor("EditThisCookie")),
+        Row("lijhjhlnfifgoabbihoobnfapogkcjgk", "Scrible Extension", "scrible", account = true, core = popupLogin("Scrible")),
+        Row("jdanfkhnfpagoijgfmklhgakdicpnfil", "Yahoo Homepage", "yahoo-homepage", core = newTabOverride("Yahoo Homepage")),
+        Row("injdgfhiepghpnihhgmkejcjnoohaibm", "Shopify Scraper & Parser - Shopify Spy", "shopify-spy", account = true, core = popupLogin("Shopify Spy")),
+        Row("oilholdcmnjkebdhokhaamalceecjbip", "Maps Scraper by Presto", "maps-scraper-presto", account = true, core = popupLogin("Maps Scraper by Presto")),
+        Row("mpdajninpobndbfcldcmbpnnbhibjmch", "SAML-tracer", "saml-tracer", core = ::samlTracer),
+        Row("dlaajbpfmppphhflganljdalclmcockl", "TickerIQ Crypto Price Ticker", "tickeriq", core = popupMarker("TickerIQ", TICKERIQ_PRICES, settleMs = 30_000, notMeasurable = Regex("network error|failed to fetch|offline|try again", RegexOption.IGNORE_CASE), gate = "Binance's public ticker API")),
+        Row("khhnfdoljialnlomkdkphhdhngfppabl", "Speed Test for Chrome - WiFi speedtest", "speed-test", core = popupMarker("Speed Test for Chrome", SPEEDTEST_APP, settleMs = 25_000)),
+        Row("nbllaikcjebbpdemmekhnciekkjodlla", "SkrivaText", "skrivatext", account = true, core = popupLogin("SkrivaText")),
+        Row("hmlcjjclebjnfohgmgikjfnbmfkigocc", "J2TEAM Security", "j2team-security", core = warningPage("J2TEAM Security", "$BASE/fb-phish.html", Regex("blocked\\.html", RegexOption.IGNORE_CASE))),
+        Row("gngocbkfmikdgphklgmmehbjjlfgdemm", "SwagButton", "swagbutton", account = true, core = popupLogin("SwagButton")),
+        Row("njcickgebhnpgmoodjdgohkclfplejli", "RoValra - Roblox Improved", "rovalra", core = liveMarker("RoValra", "https://www.roblox.com/games/920587237", injectedAny("rovalra"))),
+        Row("kiodaajmphnkcajieajajinghpejdjai", "Popup Blocker Pro", "popup-blocker-pro", core = popupBlocker("Popup Blocker Pro")),
+        Row("jpfpebmajhhopeonhlcgidhclcccjcik", "Speed Dial 2 New tab", "speed-dial-2", core = newTabOverride("Speed Dial 2")),
+        Row("icpklikeghomkemdellmmkoifgfbakio", "anonymoX", "anonymox", core = vpn("anonymoX", pac = true, connectSelector = ".toggle-button-area")),
+        Row("bmhcbmnbenmcecpmpepghooflbehcack", "Liner: ChatGPT AI Copilot for Web&YouTube&PDF", "liner", core = accountGate("Liner", Regex("liner\\.com", RegexOption.IGNORE_CASE), injects = "[class*=\"liner\"], [id*=\"liner\"], [class*=\"LINER\"]", gate = "a Liner account (its highlights and Copilot sync through app.liner.com)")),
+        Row("djcfdncoelnlbldjfhinnjlhdjlikmph", "High Contrast", "high-contrast", core = popupSwitch("High Contrast", "page-a.html?hc", "#toggle", HIGH_CONTRAST_APPLIED, settleMs = 20_000)),
+        Row("fefnkplkicihcoenmljhbihhaaagjhpp", "Mino: Automatic Coupons & Cash Back", "mino", core = contentAttached("Mino", "its coupon dialog runs at a merchant's checkout (codes from api.gomino.com over the shop's cart; the action click asks the page's script for that dialog); no merchant checkout is reachable to the runner", verdict = "n/m")),
+        Row("hdannnflhlmdablckfkjpleikpphncik", "Youtube Playback Speed Control", "youtube-playback-speed-control", core = domMarker("Youtube Playback Speed Control's panel on the clip", "video.html?ypsc", YPSC_PANEL, settleMs = 25_000)),
+        // The five largest bundles last (PocketTube 11.0 MB, Read AI 7.9, Ready X 7.7, Infinity New Tab Pro 5.1, Save All Resources 5.0), as round 19 ordered its own.
+        Row("kdmnjgijlmjgmimahnillepgcgeemffb", "PocketTube: Youtube Subscription Manager", "pockettube", core = attachedGate("PocketTube", "https://www.youtube.com/feed/subscriptions", "a YouTube account (its groups hang off the signed-in subscriptions feed)")),
+        Row("aiamjjeggglngiggkmmbnpnpeejjejaf", "Read AI", "read-ai", account = true, core = popupLogin("Read AI")),
+        Row("dlcobpjiigpikoobohmabehhmhfoodbb", "Ready X", "ready-x", core = domMarker("Ready X's Starknet provider injected into the page world", "wallet.html?readyx", READY_PROVIDER, settleMs = 30_000)),
+        Row("nnnkddnnlpamobajfibfdgfnbcnkgngh", "Infinity New Tab (Pro)", "infinity-new-tab-pro", core = newTabOverride("Infinity New Tab (Pro)")),
+        Row("abpdnfjocnmdomablahdcfnoggeeiedb", "Save All Resources", "save-all-resources", feasible = false, core = notOnThePhone("Save All Resources: its saver is a DevTools panel (`devtools_page`) reading the inspected page's resources through `chrome.devtools`; the phone has no DevTools panel to host it (WebView limit); its popup is the panel's instruction sheet")),
         // Round 15's proof row (5.11), the #448 exemption read on both WebViews: not a store
         // extension but two fixtures of the sweep's own, sideloaded as a file manager hands
         // Zenium a package. Run alone by id (the trigger's `[proof]` lanes); a full sweep reads it
         // after the store rows in table order (its rule stands only while its row runs: the
         // row's cleanup disables the blocker as it does any row's extension).
-        Row(PROOF_BLOCKER_ID, PROOF_BLOCKER_NAME, "proof-own-pages-exempt", fixture = PROOF_BLOCKER_FILES, core = ::ownPagesExempt)
+        Row(PROOF_BLOCKER_ID, PROOF_BLOCKER_NAME, "proof-own-pages-exempt", fixture = PROOF_BLOCKER_FILES, core = ::ownPagesExempt),
+        // Round 20's two `chrome.fontSettings` proof rows beside Advanced Font Settings' (the
+        // bridge's proof at rank 433): fixtures of the sweep's own with the `fontSettings`
+        // permission and a probe page – A the sizes, `clearFont` and the reverts, B two
+        // extensions' precedence (its core enables A again, so A's row comes first). The ids are
+        // [fixtureId]'s of the names, not the desktop's #500 probes' (those were unpacked
+        // fixtures of the desktop worker's, never in the repository).
+        Row(FONTS_PROBE_A_ID, FONTS_PROBE_A_NAME, "proof-fonts-probe-a", fixture = FONTS_PROBE_A_FILES, core = ::fontsProbeSizes),
+        Row(FONTS_PROBE_B_ID, FONTS_PROBE_B_NAME, "proof-fonts-probe-b", fixture = FONTS_PROBE_B_FILES, core = ::fontsProbePrecedence),
+        // Round 20's `chrome.privacy` proof (the coordinator's ADDENDUM item 2d): a fixture of the
+        // sweep's own with the `privacy` permission and a probe page – the sets read back, the
+        // controls core publishes, `navigator.doNotTrack`, the `DNT` header and the `Referer`
+        // drop on a document request, a disable and an enable, the clears. iCloud Passwords' row
+        // (the desktop's thirty, above) reads the three services values its background takes.
+        Row(PRIVACY_PROBE_ID, PRIVACY_PROBE_NAME, "proof-privacy-probe", fixture = PRIVACY_PROBE_FILES, core = ::privacyProbe),
+        // Round 20's seam reading with W6-C6's Fonts page (#518, on main since the round's
+        // merge): probe A's fixture under another name, the phone's Customise fonts rows held at
+        // its values, the "Controlled by" row's press opening the probe's details, its Enabled
+        // switch dropping the layer. A `[lane]` row (the trigger's SWEEP_ONLY names it).
+        Row(FONTS_PAGE_PROBE_ID, FONTS_PAGE_PROBE_NAME, "proof-fonts-page-probe", fixture = FONTS_PAGE_PROBE_FILES, core = ::fontsPageSeam)
     )
+
+    // --- the core checks of compat round 20 (ranks 481-510 by installs) --------------------------
+
+    /**
+     * A `contextMenus` item whose `onClicked` opens a page (Diccionario RAE's one `contexts:
+     * ["all"]` item, `windows.create` on `dle.rae.es/srv/search?w=<the selection>`, a tab here):
+     * Save Image As PNG's steps ([saveImageAsPng]) for any row – a real long press on the
+     * fixture's element at `selector` brings the phone's menu sheet up, the extension's item
+     * (`item`, over the sheet's labels) is waited for where it has settled and tapped, and a new
+     * tab whose address matches `opens` within the wait is the pass. No sheet after the press is
+     * the driver's (`F`, named); the sheet without the item is `F` (the registration or the menu
+     * surface, ours); the item tapped with nothing following is `F` with the worker's console.
+     * The image menu is the surface (an `all` item is offered on every context), so the
+     * selection is empty and the title's `%s` reads as nothing – as Chrome's image menu shows it.
+     */
+    private fun menuItemOpens(label: String, page: String, selector: String, item: Regex, opens: Regex): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture(page, factor, 2_500)
+        val since = StepEvidence(row)
+        val before = tabUrls().keys
+        val centre = json(tabEval(view, ELEMENT_CENTRE.replace("%SELECTOR%", selector)))
+        val point = screenPoint(view, centre)
+        extra.put("element", centre)
+        var sheet: List<String> = emptyList()
+        var found: android.graphics.Rect? = null
+        if (point != null && onScreen("$label: the long press")) {
+            Finger().apply {
+                down(point.first, point.second)
+                hold(900)
+                up()
+            }
+            poll(scaled(8_000, factor), 400) {
+                sheet = sheetsPresented()
+                found = findByLabel { item.containsMatchIn(it) }
+                if (found != null) true else null
+            }
+            if (found != null) {
+                val screenHeight = app.resources.displayMetrics.heightPixels
+                var last: android.graphics.Rect? = null
+                val settled = poll(scaled(5_000, factor), 250) {
+                    val now = findByLabel { item.containsMatchIn(it) } ?: return@poll null
+                    val steady = now.height() > 8 && now.bottom <= screenHeight && now == last
+                    last = now
+                    if (steady) now else null
+                }
+                extra.put("itemSettled", settled != null).put("itemFirstRead", found?.toShortString())
+                if (settled != null) found = settled
+            }
+        }
+        val menuItem = found
+        extra.put("sheets", JSONArray(sheet)).put("item", menuItem?.toShortString() ?: JSONObject.NULL)
+        SystemClock.sleep(400)
+        snap("${entry.optString("slug")}-menu")
+        var opened: Map.Entry<String, String>? = null
+        if (menuItem != null) {
+            tap(menuItem.exactCenterX(), menuItem.exactCenterY())
+            opened = poll(scaled(30_000, factor), 500) {
+                tabUrls().entries.firstOrNull { it.key !in before && opens.containsMatchIn(it.value) }
+            }
+        } else if (sheet.isNotEmpty() || sheetsPresented().isNotEmpty()) {
+            key(KeyEvent.KEYCODE_BACK)
+            SystemClock.sleep(600)
+        }
+        extra.put("opened", opened?.value?.take(120) ?: JSONObject.NULL).put("tabsAfter", JSONArray(tabUrls().values.map { it.take(80) }))
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(10))) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-core")
+        when {
+            opened != null -> Grade("P", "$label: its item in the long-press menu, tapped, opened ${opened.value.take(80)} as a tab", extra)
+            menuItem != null -> Grade("F", "$label: its item was in the menu and tapped, no ${opens.pattern} tab followed within ${scaled(30_000, factor) / 1000} s (tabs ${tabUrls().values.joinToString().take(100)})", extra)
+            point == null -> Grade("F", "$label: the fixture's `$selector` has no on-screen centre (driver): ${centre.toString().take(80)}", extra)
+            sheet.isEmpty() -> Grade("F", "$label: the long press opened no menu sheet (driver: the press was not read as a long press)", extra)
+            else -> Grade("F", "$label: the menu is up without its item (sheets ${sheet.joinToString().take(80)})", extra)
+        }
+    }
+
+    /**
+     * SAML-tracer: its action click opens `src/TraceWindow.html` as a window (`windows.create`,
+     * `type: "popup"` – a tab here) whose own script registers `webRequest.onBeforeRequest` /
+     * `onBeforeSendHeaders` / `onHeadersReceived` listeners and lists every request the browser
+     * makes in `#request-list`. The fixture settles, the action is clicked, the trace page is
+     * waited for and its toolbar (Clear, Pause, Autoscroll, …) read; then a second fixture is
+     * opened and the list polled for its address: listed is `P` (the page-registered
+     * `webRequest` listeners heard the navigation), the toolbar drawn with nothing listed within
+     * the wait is `PARTIAL` (the window is there, the events from an extension page are not),
+     * no trace page within the wait is `F`.
+     */
+    private fun samlTracer(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        fixture("page-a.html?saml", factor, 1_000)
+        SystemClock.sleep(scaled(1_500, factor))
+        val before = tabUrls().keys
+        val since = StepEvidence(row)
+        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        val page = Regex("TraceWindow\\.html", RegexOption.IGNORE_CASE)
+        val opened = poll(scaled(30_000, factor), 700) { openedPage(before, row, page) }
+        var toolbar = JSONObject()
+        var listed = JSONObject()
+        if (opened != null) {
+            val view = waitForView(opened.key)
+            showTab(opened.key)
+            toolbar = pollExpr(view, SAML_TRACER_TOOLBAR, scaled(20_000, factor))
+            val second = fixture("page-b.html?saml-trace", factor, 1_500)
+            showTab(opened.key)
+            listed = pollExpr(view, SAML_TRACER_LISTED, scaled(25_000, factor))
+            listed.put("console", JSONArray(consoleOf(view).takeLast(10)))
+            extra.put("secondTab", tabUrls()[second.first] ?: "")
+            if (!toolbar.optBoolean("pass")) extra.put("blankTab", blankPageEvidence(view, row, 0L))
+        } else {
+            popupView()?.let { extra.put("popupInstead", json(tabEval(it, DEEP_TEXT)).optString("text").take(160)) }
+            extra.put("tabs", JSONArray(tabUrls().values.toList()))
+        }
+        extra.put("toolbar", toolbar).put("listed", listed)
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(800)
+        snap("${entry.optString("slug")}-trace-window")
+        runCatching { coreCall("extension.closePopup", "null") }
+        return when {
+            opened == null -> Grade("F", "SAML-tracer: the action click opened no TraceWindow.html within ${scaled(30_000, factor) / 1000} s", extra)
+            listed.optBoolean("pass") -> Grade("P", "SAML-tracer: its trace window opened as a tab and listed the next page's request through its page-registered webRequest listeners: ${listed.toString().take(200)}", extra)
+            toolbar.optBoolean("pass") -> Grade("PARTIAL", "SAML-tracer: its trace window opened as a tab with its toolbar (${toolbar.optString("buttons").take(80)}) but listed nothing of the next page's load within ${scaled(25_000, factor) / 1000} s: ${listed.toString().take(160)}", extra)
+            else -> Grade("F", "SAML-tracer: ${extensionPath(opened.value).take(50)} opened but drew no toolbar: ${toolbar.toString().take(200)}", extra)
+        }
+    }
 
     // --- the core checks of compat round 19 (ranks 451-480 by installs) --------------------------
 
@@ -7386,13 +7601,19 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * sites' selectors (booking.com's `property-card`s and price rows, hotels.com's, expedia's)
      * and mounts its offer (`.directo-cta-button`, `.directo-offer-*`, `.directo-logo`) once its
      * worker's ask to `engine.getdirecto.com` comes back with a deal. [liveMarker] on a
-     * booking.com hotel page (the desktop site; a second hotel as the mirror); a served page
-     * without the offer whose worker console shows the engine refusing the runner (a 4xx/5xx, a
-     * failed fetch) is `n/m` on that line, the rest is the marker's own grade.
+     * booking.com hotel page (the desktop site; a second hotel as the mirror), DATED: the offer
+     * compares the site's price for a stay, and an undated page shows "Select dates" and no
+     * price (round 19's `n: 0` on both lanes), so the URL carries a two-night stay three weeks
+     * from the device's day (`checkin`/`checkout`, two adults, one room) and the dates go in
+     * `extra.dates`; a served page without the offer whose worker console shows the engine
+     * refusing the runner (a 4xx/5xx, a failed fetch) is `n/m` on that line, the rest is the
+     * marker's own grade.
      */
     private fun directo(row: Row, entry: JSONObject): Grade {
-        val grade = liveMarker("Directo", "https://www.booking.com/hotel/us/the-plaza.html", injectedAny("directo"), settleMs = 45_000, desktop = true, mirrors = listOf("https://www.booking.com/hotel/gb/the-savoy.html"))(row, entry)
-        val extra = grade.extra ?: JSONObject()
+        val checkin = java.time.LocalDate.now().plusDays(21)
+        val stay = "checkin=$checkin&checkout=${checkin.plusDays(2)}&group_adults=2&no_rooms=1&group_children=0&selected_currency=USD"
+        val grade = liveMarker("Directo", "https://www.booking.com/hotel/us/the-plaza.html?$stay", injectedAny("directo"), settleMs = 45_000, desktop = true, mirrors = listOf("https://www.booking.com/hotel/gb/the-savoy.html?$stay"))(row, entry)
+        val extra = (grade.extra ?: JSONObject()).put("dates", stay)
         val worker = backgroundView(row.id)?.let { consoleOf(it).takeLast(20) } ?: emptyList()
         extra.put("workerConsole", JSONArray(worker))
         if (grade.verdict != "F") return Grade(grade.verdict, grade.note, extra)
@@ -7567,32 +7788,676 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     }
 
     /**
-     * Advanced Font Settings: an `options_page` alone (no popup, no scripts) that lists the
-     * writing scripts and, per script, the standard, serif, sans-serif and fixed fonts and their
-     * sizes, all read from and written to `chrome.fontSettings`. The page rendering its script
-     * list and its font selects is the runtime's part (the API present, its `getFontList` and
-     * `getFont` answered); the WebView has no per-script font preferences to set, so the
-     * runtime answers its reads empty and `not_controllable`, and the row is `n/a` on the page
-     * rendered (WebView limit, named). A page without its controls within the wait is `F` with
-     * the blank-page evidence.
+     * Advanced Font Settings – the `chrome.fontSettings` bridge's proof (compat round 20). The
+     * extension is an `options_page` alone (no popup, no scripts) that lists the writing scripts
+     * and, per script, the standard, serif, sans-serif and fixed fonts and the three sizes, all
+     * read from and written to `chrome.fontSettings`. The fixture `fonts-lang.html` is opened
+     * first and read as the baseline (`r0`): no `lang` on its root and no font-family anywhere
+     * but its control spans, so every plain span shows the WebView's standard family. The
+     * options page is opened in a tab and its standard list awaited filled from `getFontList`
+     * (the device's fonts.xml named families; `casual` – Coming Soon on the AOSP images – is
+     * picked, a fallback list behind it), and the four events counted on the page. Then, through
+     * the page's own controls (the script list and the standard list's `change`, the size
+     * slider's handler, the Apply button): the default script's standard face to the picked
+     * family and the default size to 24 px; the Japanese script's standard face to `serif` and
+     * the Cyrillic's to `monospace`; `math` to `serif` through the API (the page has no math
+     * picker). The open fixture tab is read (`r1`), a fresh fixture tab (`r2`); everything is
+     * then cleared through the page's per-script reset and the API's clears, and the open tab
+     * read again (`r3`). `P` needs: the list filled; the body in the picked family at 24 px, the
+     * plain span's text as wide as the control span styled with the picked family and not as
+     * wide as the monospace control (the face is on the glyphs, not only in the computed value);
+     * the `lang="ja"` span in `serif` while the unlabelled Japanese span keeps the standard
+     * family (divergence i of the `:lang()` approximation); the `lang="ru"` spans in
+     * `monospace` – the one carrying Latin text too, as wide as the monospace control
+     * (divergence ii); the MathML element in `serif` while the span asking for `font-family:
+     * math` is not (divergence iii); the fresh tab reading as the open one; the readings back
+     * to the baseline after the clears; `onFontChanged` seen three times or more and
+     * `onDefaultFontSizeChanged` once; `getFont` for Japanese answering `serif` controlled by
+     * this extension. `PARTIAL` is the standard face and size applied with a later reading off
+     * (each named); `F` is an empty list or the standard face never applied, with the blank-page
+     * evidence where the page drew nothing.
      */
-    private fun fontSettingsPage(row: Row, entry: JSONObject): Grade {
+    private fun fontSettingsProof(row: Row, entry: JSONObject): Grade {
         val factor = speedFactor(entry)
+        val slug = entry.optString("slug")
         val extra = JSONObject()
-        val tab = createTab("chrome-extension://${row.id}/options.html")
-        val view = waitForView(tab)
-        val found = pollExpr(view, FONT_SETTINGS_PAGE, scaled(30_000, factor))
-        found.put("console", JSONArray(consoleOf(view).takeLast(10)))
-        extra.put("page", found).put("url", (tabUrls()[tab] ?: "").take(160))
-        if (!found.optBoolean("pass")) extra.put("blankTab", blankPageEvidence(view, row, 0L))
+        val (fixture1, fixtureView) = fixture("fonts-lang.html", factor, 1_500)
+        val r0 = fontReadings(fixtureView)
+        extra.put("r0", r0)
+        val options = createTab("chrome-extension://${row.id}/options.html")
+        val optionsView = waitForView(options)
+        val list = pollExpr(optionsView, FONT_SETTINGS_LIST, scaled(30_000, factor))
+        list.put("console", JSONArray(consoleOf(optionsView).takeLast(8)))
+        extra.put("list", list).put("url", (tabUrls()[options] ?: "").take(160))
+        if (!list.optBoolean("pass")) {
+            extra.put("blankTab", blankPageEvidence(optionsView, row, 0L))
+            SystemClock.sleep(800)
+            snap("$slug-fonts-list")
+            closeTab(options)
+            closeTab(fixture1)
+            showTab(fixtureTab)
+            return Grade("F", "Advanced Font Settings: its standard font list is not filled from getFontList within ${scaled(30_000, factor) / 1000} s: ${list.toString().take(220)}", extra)
+        }
+        val picked = list.optString("picked")
+        tabEval(optionsView, FONT_EVENTS_ARM)
         SystemClock.sleep(800)
-        snap("${entry.optString("slug")}-font-settings")
-        return if (found.optBoolean("pass")) {
-            Grade("n/a", "Advanced Font Settings: its options page renders its script list and font selects (${found.optInt("selects")} selects, ${found.optInt("scriptOptions")} scripts listed, `chrome.fontSettings` with ${found.optInt("apiKeys")} members), but the WebView has no per-script font preferences for `chrome.fontSettings` to set (the runtime answers its reads empty and not_controllable): WebView limit", extra)
-        } else {
-            Grade("F", "Advanced Font Settings: its options page shows no script list or font selects within ${scaled(30_000, factor) / 1000} s: ${found.toString().take(200)}", extra)
+        snap("$slug-fonts-list")
+        // Step 1: the default script's standard face and the default size, through the page's controls.
+        extra.put("applyStandard", json(tabEval(optionsView, fontApplyScript(mapOf("Zyyy" to picked), size = 24))))
+        showTab(fixture1)
+        val standard = pollFonts(fixtureView, scaled(15_000, factor)) { familyOf(it, "body") == picked && sizeOf(it, "body") == "24px" }
+        extra.put("r1standard", standard)
+        snap("$slug-fonts-standard")
+        // Step 2: the Japanese and Cyrillic scripts' standard faces through the page, math through the API.
+        showTab(options)
+        extra.put("applyScripts", json(tabEval(optionsView, fontApplyScript(mapOf("Jpan" to "serif", "Cyrl" to "monospace")))))
+        extra.put("math", probe(optionsView, FONT_MATH_SET, "__zenMath", scaled(10_000, factor)))
+        val get = probe(optionsView, FONT_GET, "__zenGet", scaled(10_000, factor))
+        extra.put("get", get)
+        showTab(fixture1)
+        val r1 = pollFonts(fixtureView, scaled(15_000, factor)) { familyOf(it, "ja") == "serif" && familyOf(it, "ru") == "monospace" && familyOf(it, "math") == "serif" }
+        extra.put("r1", r1)
+        snap("$slug-fonts-scripts")
+        val (fixture2, view2) = fixture("fonts-lang.html", factor, 1_500)
+        val r2 = fontReadings(view2)
+        extra.put("r2", r2)
+        snap("$slug-fonts-new-tab")
+        closeTab(fixture2)
+        // The revert: the page's per-script reset (four clearFont each) and the API's clears.
+        showTab(options)
+        extra.put("clear", tabEval(optionsView, FONT_CLEAR_ALL))
+        showTab(fixture1)
+        val r3 = pollFonts(fixtureView, scaled(15_000, factor)) { sameFonts(it, r0) }
+        extra.put("r3", r3)
+        snap("$slug-fonts-reverted")
+        val events = json(tabEval(optionsView, "JSON.stringify(window.__zenEv||null)"))
+        extra.put("events", events).put("optionsConsole", JSONArray(consoleOf(optionsView).takeLast(8)))
+        closeTab(options)
+        closeTab(fixture1)
+        showTab(fixtureTab)
+        val standardOn = familyOf(r1, "body") == picked && sizeOf(r1, "body") == "24px"
+        val control = "probe-$picked"
+        val glyphs = if (r1.optJSONObject(control) != null) near(widthOf(r1, "latin"), widthOf(r1, control)) && !near(widthOf(r1, "latin"), widthOf(r1, "probe-mono")) else null
+        val jaOn = familyOf(r1, "ja") == "serif" && familyOf(r1, "plain-ja") == picked
+        val ruOn = familyOf(r1, "ru") == "monospace" && familyOf(r1, "ru-latin") == "monospace" && near(widthOf(r1, "ru-latin"), widthOf(r1, "probe-mono"))
+        val mathOn = familyOf(r1, "math") == "serif" && familyOf(r1, "math-text") == "math"
+        val newTabSame = sameFonts(r1, r2)
+        val reverted = sameFonts(r3, r0)
+        val eventsOk = events.optInt("font") >= 3 && events.optInt("size") >= 1
+        val jpan = get.optJSONObject("jpan")
+        val getOk = jpan != null && jpan.optString("fontId") == "serif" && jpan.optString("levelOfControl") == "controlled_by_this_extension"
+        val note = "list ${list.optInt("fontOptions")} fonts (${list.optJSONArray("names")?.join(", ")?.replace("\"", "") ?: ""}), picked `$picked`; " +
+            "body ${familyOf(r0, "body")} ${sizeOf(r0, "body")} → ${familyOf(r1, "body")} ${sizeOf(r1, "body")}" +
+            (glyphs?.let { "; glyphs ${if (it) "on the picked face" else "NOT on the picked face"} (latin ${widthOf(r1, "latin")} px, the $picked control ${widthOf(r1, control)} px, the monospace control ${widthOf(r1, "probe-mono")} px)" } ?: "; no width control for `$picked`") +
+            "; lang=ja ${familyOf(r1, "ja")}, unlabelled Japanese ${familyOf(r1, "plain-ja")}; lang=ru ${familyOf(r1, "ru")}, Latin text under lang=ru ${familyOf(r1, "ru-latin")} (${widthOf(r1, "ru-latin")} px against the monospace control's ${widthOf(r1, "probe-mono")} px); " +
+            "MathML ${familyOf(r1, "math")}, font-family: math ${familyOf(r1, "math-text")}; a new tab ${if (newTabSame) "reads the same" else "reads differently"}; after the clears ${if (reverted) "back to the baseline" else "NOT back: body ${familyOf(r3, "body")} ${sizeOf(r3, "body")}, ja ${familyOf(r3, "ja")}, ru ${familyOf(r3, "ru")}, math ${familyOf(r3, "math")}"}; " +
+            "events font ${events.optInt("font")} size ${events.optInt("size")}; getFont Jpan ${jpan?.toString() ?: "no answer"}"
+        val off = listOfNotNull(
+            if (glyphs == false) "the glyphs" else null,
+            if (!jaOn) "the Japanese label" else null,
+            if (!ruOn) "the Cyrillic label" else null,
+            if (!mathOn) "math" else null,
+            if (!newTabSame) "the new tab" else null,
+            if (!reverted) "the revert" else null,
+            if (!eventsOk) "the events" else null,
+            if (!getOk) "getFont" else null
+        )
+        return when {
+            !standardOn -> Grade("F", "Advanced Font Settings: the standard face and size set through its page never reached the fixture: $note", extra)
+            off.isEmpty() -> Grade("P", "Advanced Font Settings: $note", extra)
+            else -> Grade("PARTIAL", "Advanced Font Settings: the standard face and size applied; off: ${off.joinToString(", ")}: $note", extra)
         }
     }
+
+    /** `window.__zenFonts()` of the fonts fixture: the computed family, size and box per span, and the injected sheet. */
+    private fun fontReadings(view: WebView): JSONObject =
+        json(tabEval(view, "typeof window.__zenFonts==='function'?window.__zenFonts():JSON.stringify({error:'no __zenFonts on the page'})"))
+
+    /** The readings polled until `ready` holds, for up to `timeoutMs`; the last reading either way. */
+    private fun pollFonts(view: WebView, timeoutMs: Long, ready: (JSONObject) -> Boolean): JSONObject {
+        var last = JSONObject()
+        poll(timeoutMs, 600) {
+            last = fontReadings(view)
+            if (ready(last)) true else null
+        }
+        return last
+    }
+
+    /** The first family of a span's computed `font-family` in a reading, unquoted and lower-cased; empty when absent. */
+    private fun familyOf(reading: JSONObject?, id: String): String =
+        reading?.optJSONObject(id)?.optString("ff")?.substringBefore(',')?.trim()?.trim('"', '\'')?.lowercase() ?: ""
+
+    private fun sizeOf(reading: JSONObject?, id: String): String = reading?.optJSONObject(id)?.optString("fs") ?: ""
+
+    private fun widthOf(reading: JSONObject?, id: String): Double = reading?.optJSONObject(id)?.optDouble("w") ?: Double.NaN
+
+    private fun near(a: Double, b: Double, tolerance: Double = 1.0): Boolean = !a.isNaN() && !b.isNaN() && Math.abs(a - b) < tolerance
+
+    /** Whether two readings agree on every graded span's computed family and size. */
+    private fun sameFonts(a: JSONObject?, b: JSONObject?): Boolean =
+        a != null && b != null && FONT_SPANS.all { familyOf(a, it) == familyOf(b, it) && sizeOf(a, it) == sizeOf(b, it) }
+
+    /**
+     * On Advanced Font Settings' options page: `sets` (script code → font id) through its script
+     * list and standard font list (their `change` events reach its handlers as a user's picks
+     * do), an optional default size through its slider handler, then its Apply button, which
+     * commits the pending changes as `chrome.fontSettings.setFont` / `setDefaultFontSize`.
+     */
+    private fun fontApplyScript(sets: Map<String, String>, size: Int? = null): String =
+        "(function(){var sets=${JSONObject(sets)};var out={};var s=document.getElementById('scriptList');var l=document.getElementById('standardFontList');" +
+            "for(var sc in sets){s.value=sc;s.dispatchEvent(new Event('change'));l.value=sets[sc];l.dispatchEvent(new Event('change'));out[sc]={script:s.value,font:l.value}}" +
+            (size?.let { "advancedFonts.handleFontSizeSliderChange('defaultFontSize','$it');" } ?: "") +
+            "var b=document.getElementById('apply-settings');out.disabled=b.disabled;b.click();return JSON.stringify(out)})()"
+
+    /** A step's answer in a probe's `steps` array ([FONTS_PROBE_SET] and friends), by name; null when the step is not there. */
+    private fun stepOf(probe: JSONObject, name: String): JSONObject? {
+        val steps = probe.optJSONArray("steps") ?: return null
+        for (i in 0 until steps.length()) {
+            val step = steps.optJSONObject(i) ?: continue
+            if (step.optString("name") == name) return step
+        }
+        return null
+    }
+
+    /**
+     * Fonts probe A – the sizes, `clearFont` and the reverts (the round's second proof row, a
+     * fixture of the sweep's own with the `fontSettings` permission and a probe page). From its
+     * page: `setDefaultFontSize` 20, `setMinimumFontSize` 12, `setDefaultFixedFontSize` 18 and
+     * the standard face to `monospace`, each read back with its level of control. The fixture
+     * read after (`r1`): the body at 20 px in `monospace`, the `<code>` at 18 px (the fixed
+     * default size, through the monospace quirk), the six-pixel span's box grown to the minimum
+     * (the computed value keeps the specified size; the box shows the rendered one), a fresh
+     * tab the same (`r2`). Then the four clears, each read back as `controllable_by_this_extension`
+     * with the browser's own value, and the open tab back to the baseline (`r3`). The four
+     * events counted on the page (armed at its load). `P` on all of it; `PARTIAL` with the
+     * sizes and face applied and a later reading off; `F` when they never reached the fixture.
+     */
+    private fun fontsProbeSizes(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val slug = entry.optString("slug")
+        val extra = JSONObject()
+        val (fixture1, fixtureView) = fixture("fonts-lang.html", factor, 1_500)
+        val r0 = fontReadings(fixtureView)
+        extra.put("r0", r0)
+        val page = createTab("chrome-extension://${row.id}/probe.html")
+        val pageView = waitForView(page)
+        val ready = poll(scaled(15_000, factor), 400) { if (tabEval(pageView, "String(!!(window.__zenEv&&typeof chrome!=='undefined'&&chrome.fontSettings))") == "true") true else null }
+        extra.put("pageReady", ready == true)
+        val set = probe(pageView, FONTS_PROBE_A_SET, "__zenA", scaled(15_000, factor))
+        extra.put("set", set)
+        showTab(fixture1)
+        val r1 = pollFonts(fixtureView, scaled(15_000, factor)) { familyOf(it, "body") == "monospace" && sizeOf(it, "body") == "20px" && sizeOf(it, "fixed") == "18px" }
+        extra.put("r1", r1)
+        snap("$slug-sizes")
+        val (fixture2, view2) = fixture("fonts-lang.html", factor, 1_500)
+        val r2 = fontReadings(view2)
+        extra.put("r2", r2)
+        closeTab(fixture2)
+        showTab(page)
+        val clear = probe(pageView, FONTS_PROBE_A_CLEAR, "__zenAClear", scaled(15_000, factor))
+        extra.put("clear", clear)
+        showTab(fixture1)
+        val r3 = pollFonts(fixtureView, scaled(15_000, factor)) { sameFonts(it, r0) && near(widthOf(it, "tiny"), widthOf(r0, "tiny")) }
+        extra.put("r3", r3)
+        snap("$slug-cleared")
+        val events = json(tabEval(pageView, "JSON.stringify(window.__zenEv||null)"))
+        extra.put("events", events).put("pageConsole", JSONArray(consoleOf(pageView).takeLast(8)))
+        closeTab(page)
+        closeTab(fixture1)
+        showTab(fixtureTab)
+        val sizesOn = familyOf(r1, "body") == "monospace" && sizeOf(r1, "body") == "20px" && sizeOf(r1, "fixed") == "18px"
+        val minimumOn = widthOf(r1, "tiny") > widthOf(r0, "tiny") * 1.5
+        val sizeRead = stepOf(set, "getDefaultFontSize")?.optJSONObject("r")
+        val levelsOn = sizeRead != null && sizeRead.optInt("pixelSize") == 20 && sizeRead.optString("levelOfControl") == "controlled_by_this_extension" &&
+            stepOf(set, "getMinimumFontSize")?.optJSONObject("r")?.optInt("pixelSize") == 12 &&
+            stepOf(set, "getDefaultFixedFontSize")?.optJSONObject("r")?.optInt("pixelSize") == 18 &&
+            stepOf(set, "getFont")?.optJSONObject("r")?.optString("fontId") == "monospace"
+        val newTabSame = sameFonts(r1, r2) && near(widthOf(r1, "tiny"), widthOf(r2, "tiny"))
+        val clearedLevel = stepOf(clear, "getDefaultFontSize")?.optJSONObject("r")?.optString("levelOfControl")
+        val reverted = sameFonts(r3, r0) && near(widthOf(r3, "tiny"), widthOf(r0, "tiny")) && clearedLevel == "controllable_by_this_extension"
+        val eventsOk = events.optInt("font") >= 1 && events.optInt("size") >= 1 && events.optInt("fixed") >= 1 && events.optInt("min") >= 1
+        val note = "body ${familyOf(r0, "body")} ${sizeOf(r0, "body")} → ${familyOf(r1, "body")} ${sizeOf(r1, "body")}; code ${sizeOf(r0, "fixed")} → ${sizeOf(r1, "fixed")}; " +
+            "the six-pixel span ${widthOf(r0, "tiny")} → ${widthOf(r1, "tiny")} px wide (${if (minimumOn) "the minimum applied" else "the minimum NOT applied"}); " +
+            "read back: default size ${sizeRead?.toString() ?: "no answer"}, minimum ${stepOf(set, "getMinimumFontSize")?.optJSONObject("r")?.optInt("pixelSize")}, fixed ${stepOf(set, "getDefaultFixedFontSize")?.optJSONObject("r")?.optInt("pixelSize")}, standard ${stepOf(set, "getFont")?.optJSONObject("r")?.optString("fontId")}; " +
+            "a new tab ${if (newTabSame) "reads the same" else "reads differently"}; after the clears ${if (reverted) "back to the baseline, the level $clearedLevel" else "NOT back: body ${familyOf(r3, "body")} ${sizeOf(r3, "body")}, code ${sizeOf(r3, "fixed")}, the six-pixel span ${widthOf(r3, "tiny")} px, the level $clearedLevel"}; " +
+            "events font ${events.optInt("font")} size ${events.optInt("size")} fixed ${events.optInt("fixed")} min ${events.optInt("min")}"
+        val off = listOfNotNull(
+            if (!minimumOn) "the minimum size" else null,
+            if (!levelsOn) "the reads' levels" else null,
+            if (!newTabSame) "the new tab" else null,
+            if (!reverted) "the revert" else null,
+            if (!eventsOk) "the events" else null
+        )
+        return when {
+            !sizesOn -> Grade("F", "fonts probe A: the sizes and the standard face never reached the fixture: $note", extra)
+            off.isEmpty() -> Grade("P", "fonts probe A: $note", extra)
+            else -> Grade("PARTIAL", "fonts probe A: the sizes and the face applied; off: ${off.joinToString(", ")}: $note", extra)
+        }
+    }
+
+    /**
+     * The seam with W6-C6's Fonts page (#518; round 20's `[lane]` reading on the merged head):
+     * the phone's Settings › Look and Feel › Customise fonts rows under the probe's layer. The
+     * page is read at the user's values first (the baseline); the probe – probe A's fixture under
+     * another name – sets the default size 20, the minimum 12, the fixed 18 and the standard face
+     * `monospace` from its page; the Fonts page then shows the held rows at those values (the
+     * slider's thumb `aria-disabled`, the family row's description the face) with one
+     * "Controlled by <name>" row after the run; that row's press opens Settings › Extensions
+     * with the probe's details – its Enabled switch – which, pressed, disables the probe: the
+     * layer drops, the fixture reads its baseline fonts again and the Fonts page its user's
+     * rows with no indicator. The probe is enabled again and cleared at the end, as every row's
+     * extension is disabled by the row's cleanup. `P` on all of it; `PARTIAL` with the held rows
+     * shown and a later step off (named); `F` when the page never showed the rows held (the seam
+     * not reached); `n/m` when the Settings page did not open on this lane.
+     */
+    private fun fontsPageSeam(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val slug = entry.optString("slug")
+        val extra = JSONObject()
+        val name = row.name
+        val (fixture1, fixtureView) = fixture("fonts-lang.html", factor, 1_500)
+        val r0 = fontReadings(fixtureView)
+        extra.put("r0", r0)
+        // 1. The Fonts page at the user's values.
+        if (!openSettingsSection(LOOK_SECTION, scaled(12_000, factor))) {
+            return Grade("n/m", "fonts page seam: Settings › Look and Feel never opened on this lane (section '${settingsSection()}')", extra)
+        }
+        val user = pollFontsPage(scaled(10_000, factor)) { it.optBoolean("present") }
+        extra.put("pageUser", user)
+        snap("$slug-page-user")
+        leaveSettingsTab()
+        // 2. The probe's layer from its page.
+        val page = createTab("chrome-extension://${row.id}/probe.html")
+        val pageView = waitForView(page)
+        val ready = poll(scaled(15_000, factor), 400) { if (tabEval(pageView, "String(!!(window.__zenEv&&typeof chrome!=='undefined'&&chrome.fontSettings))") == "true") true else null }
+        extra.put("pageReady", ready == true)
+        val set = probe(pageView, FONTS_PROBE_A_SET, "__zenA", scaled(15_000, factor))
+        extra.put("set", set)
+        showTab(fixture1)
+        val r1 = pollFonts(fixtureView, scaled(15_000, factor)) { familyOf(it, "body") == "monospace" && sizeOf(it, "body") == "20px" }
+        extra.put("r1", r1)
+        // 3. The Fonts page held.
+        val opened = openSettingsSection(LOOK_SECTION, scaled(12_000, factor))
+        val held = pollFontsPage(scaled(10_000, factor)) { it.optBoolean("present") && (it.optJSONArray("held")?.length() ?: 0) > 0 }
+        extra.put("pageHeld", held).put("heldOpened", opened)
+        snap("$slug-page-held")
+        val indicators = held.optJSONArray("held") ?: JSONArray()
+        val indicatorTexts = (0 until indicators.length()).map { indicators.getJSONObject(it).optString("text") }
+        val heldOk = indicators.length() > 0 && indicatorTexts.any { it.contains(name) } &&
+            held.optString("size").contains("20") && held.optString("minimum").contains("12") &&
+            held.optString("standard").lowercase().let { it.contains("monospace") || it.contains("droid sans mono") } &&
+            held.optString("sizeThumb") == "true"
+        // 4. The indicator's press: Settings › Extensions with the probe's details (its switch).
+        val switchRow = "extension:${row.id}:enabled"
+        val detailsUp = { chromeJsString("(function(){var e=document.querySelector('[data-row=\"$switchRow\"]');return e?String(e.getAttribute('aria-checked')):''})()").orEmpty().isNotEmpty() }
+        var manageOk = false
+        if (indicators.length() > 0) {
+            manageOk = touchSettingsRowExpecting("Controlled by", "the probe's details are up", scaled(10_000, factor), detailsUp) ||
+                detailsUp() ||
+                (clickSettingsRow("Controlled by") && awaitTrue(scaled(10_000, factor), detailsUp))
+        }
+        extra.put("manage", JSONObject().put("section", settingsSection() ?: "").put("switchChecked", chromeJsString("(function(){var e=document.querySelector('[data-row=\"$switchRow\"]');return e?String(e.getAttribute('aria-checked')):''})()") ?: ""))
+        snap("$slug-page-manage")
+        // 5. The switch off: the probe disabled, the layer dropped.
+        val disabled = { extensions().firstOrNull { it.getString("id") == row.id }?.optBoolean("enabled", true) == false }
+        var switchOk = false
+        if (manageOk) {
+            switchOk = touchSettingsRowExpecting("Enabled", "the probe is disabled", scaled(10_000, factor), disabled) ||
+                disabled() ||
+                (clickSettingsRow("Enabled") && awaitTrue(scaled(10_000, factor), disabled))
+        }
+        extra.put("switchOff", switchOk)
+        val r2 = if (switchOk) pollFonts(fixtureView, scaled(15_000, factor)) { sameFonts(it, r0) && near(widthOf(it, "tiny"), widthOf(r0, "tiny")) } else fontReadings(fixtureView)
+        extra.put("r2", r2)
+        val fixtureBack = sameFonts(r2, r0) && near(widthOf(r2, "tiny"), widthOf(r0, "tiny"))
+        // 6. The Fonts page released: the user's rows, no indicator.
+        back()
+        SystemClock.sleep(scaled(1_000, factor))
+        leaveSettingsTab()
+        val reopened = openSettingsSection(LOOK_SECTION, scaled(12_000, factor))
+        val released = pollFontsPage(scaled(10_000, factor)) { it.optBoolean("present") && (it.optJSONArray("held")?.length() ?: 0) == 0 }
+        extra.put("pageReleased", released).put("releasedOpened", reopened)
+        snap("$slug-page-released")
+        val pageBack = released.optBoolean("present") && (released.optJSONArray("held")?.length() ?: 0) == 0 &&
+            released.optString("size") == user.optString("size") && released.optString("standard") == user.optString("standard") &&
+            released.optString("sizeThumb") != "true"
+        leaveSettingsTab()
+        // The probe enabled again and cleared; the row's cleanup disables it as every row's.
+        coreCall("extension.setEnabled", JSONObject().put("id", row.id).put("enabled", true).toString())
+        SystemClock.sleep(scaled(1_500, factor))
+        showTab(page)
+        val clear = runCatching { probe(pageView, FONTS_PROBE_A_CLEAR, "__zenAClear", scaled(15_000, factor)) }.getOrElse { JSONObject().put("error", it.toString()) }
+        extra.put("clear", clear)
+        closeTab(page)
+        closeTab(fixture1)
+        showTab(fixtureTab)
+        val note = "the page at the user's values: size '${user.optString("size")}', minimum '${user.optString("minimum")}', standard '${user.optString("standard")}', indicators ${user.optJSONArray("held")?.length() ?: 0}; " +
+            "held: size '${held.optString("size")}' (thumb aria-disabled ${held.optString("sizeThumb")}), minimum '${held.optString("minimum")}', standard '${held.optString("standard")}', " +
+            "indicators ${indicators.length()} [${indicatorTexts.joinToString(" | ") { it.take(90) }}]; " +
+            "the indicator's press ${if (manageOk) "opened the probe's details (section '${extra.optJSONObject("manage")?.optString("section")}', switch ${extra.optJSONObject("manage")?.optString("switchChecked")})" else "did not open the details (section '${extra.optJSONObject("manage")?.optString("section")}')"}; " +
+            "the switch ${if (switchOk) "disabled the probe" else "did not disable the probe"}; the fixture ${if (fixtureBack) "back to its baseline (body ${familyOf(r2, "body")} ${sizeOf(r2, "body")})" else "NOT back (body ${familyOf(r2, "body")} ${sizeOf(r2, "body")})"}; " +
+            "the page released: size '${released.optString("size")}', standard '${released.optString("standard")}', indicators ${released.optJSONArray("held")?.length() ?: 0}"
+        val off = listOfNotNull(
+            if (!manageOk) "the indicator's press" else null,
+            if (!switchOk) "the switch" else null,
+            if (!fixtureBack) "the fixture's revert" else null,
+            if (!pageBack) "the page's release" else null
+        )
+        return when {
+            !heldOk -> Grade("F", "fonts page seam: the phone's Fonts page never showed the rows held at the probe's values: $note", extra)
+            off.isEmpty() -> Grade("P", "fonts page seam: $note", extra)
+            else -> Grade("PARTIAL", "fonts page seam: the rows held as published; off: ${off.joinToString(", ")}: $note", extra)
+        }
+    }
+
+    /** The phone's Customise fonts rows as the chrome draws them: the sliders' values, the size thumb's `aria-disabled`, the standard row's text, the "Controlled by" rows. */
+    private fun fontsPageRows(): JSONObject = json(
+        chromeJsString(
+            "(function(){var q=function(s){return document.querySelector(s)};var txt=function(e){return e?(e.textContent||'').trim().replace(/\\s+/g,' '):''};" +
+                "var val=function(id){return txt(q('[data-row=\"'+id+'\"] .zen-settings-slider-value'))};" +
+                "var thumb=function(id){var t=q('[data-row=\"'+id+'\"] [role=\"slider\"]');return t?String(t.getAttribute('aria-disabled')):''};" +
+                "var held=Array.prototype.map.call(document.querySelectorAll('[data-row*=\"-controlled\"]'),function(e){return {row:e.getAttribute('data-row'),text:txt(e)}});" +
+                "var p=q('.zen-settings-phone');return JSON.stringify({present:!!q('[data-row=\"fonts-size-phone\"]'),size:val('fonts-size-phone'),sizeThumb:thumb('fonts-size-phone'),minimum:val('fonts-minimum-size-phone'),standard:txt(q('[data-row=\"fonts-standard-phone\"]')),held:held,section:p?String(p.dataset.section||''):''})})()"
+        ) ?: "{}"
+    )
+
+    /** [fontsPageRows] polled until `ready` holds, for up to `timeoutMs`; the last reading either way. */
+    private fun pollFontsPage(timeoutMs: Long, ready: (JSONObject) -> Boolean): JSONObject {
+        var last = JSONObject()
+        poll(timeoutMs, 500) {
+            last = fontsPageRows()
+            if (ready(last)) true else null
+        }
+        return last
+    }
+
+    /**
+     * Fonts probe B – two extensions' precedence (the round's third proof row; needs probe A's
+     * row before it in the table, its fixture installed). A is enabled again and, from its
+     * page, sets the standard face to `monospace`; B, installed after A and so ahead of it in
+     * Chrome's install-order precedence, sets it to `casual` (or the first of its fallbacks
+     * `getFontList` carries). The fixture shows B's face; A's `getFont` answers B's face as
+     * `controlled_by_other_extensions`, B's its own as `controlled_by_this_extension`. B's
+     * `clearFont` lets A's `monospace` surface (A's level `controlled_by_this_extension`; B's
+     * reading is recorded – the shared model answers `controlled_by_other_extensions` where
+     * Chrome, which weighs the caller's precedence, answers `controllable_by_this_extension`);
+     * A's `clearFont` returns the fixture to the baseline. A is disabled again at the end as
+     * every row's extension is. `P` on all of it; `PARTIAL` with B's face applied and a later
+     * reading off; `F` when B's face never reached the fixture; `n/m` when A is not installed.
+     */
+    private fun fontsProbePrecedence(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val slug = entry.optString("slug")
+        val extra = JSONObject()
+        if (extensions().none { it.getString("id") == FONTS_PROBE_A_ID }) return Grade("n/m", "fonts probe B: fonts probe A is not installed (its row runs first in the table)", extra)
+        coreCall("extension.setEnabled", JSONObject().put("id", FONTS_PROBE_A_ID).put("enabled", true).toString())
+        val aEnabled = poll(scaled(20_000, factor), 400) { extensions().firstOrNull { it.getString("id") == FONTS_PROBE_A_ID }?.takeIf { it.getBoolean("enabled") } } != null
+        extra.put("aEnabled", aEnabled)
+        val (fixture1, fixtureView) = fixture("fonts-lang.html", factor, 1_500)
+        val r0 = fontReadings(fixtureView)
+        extra.put("r0", r0)
+        val aPage = createTab("chrome-extension://$FONTS_PROBE_A_ID/probe.html")
+        val aView = waitForView(aPage)
+        poll(scaled(15_000, factor), 400) { if (tabEval(aView, "String(!!(window.__zenEv&&typeof chrome!=='undefined'&&chrome.fontSettings))") == "true") true else null }
+        val aSet = probe(aView, fontsProbeSet("monospace"), "__zenSet", scaled(15_000, factor))
+        extra.put("aSet", aSet)
+        val bPage = createTab("chrome-extension://${row.id}/probe.html")
+        val bView = waitForView(bPage)
+        poll(scaled(15_000, factor), 400) { if (tabEval(bView, "String(!!(window.__zenEv&&typeof chrome!=='undefined'&&chrome.fontSettings))") == "true") true else null }
+        val bSet = probe(bView, FONTS_PROBE_B_SET, "__zenSet", scaled(15_000, factor))
+        extra.put("bSet", bSet)
+        val picked = bSet.optString("picked")
+        showTab(fixture1)
+        val r1 = pollFonts(fixtureView, scaled(15_000, factor)) { familyOf(it, "body") == picked }
+        extra.put("r1", r1)
+        snap("$slug-b-wins")
+        showTab(aPage)
+        val aUnder = probe(aView, FONTS_PROBE_GET, "__zenGet", scaled(10_000, factor))
+        extra.put("aUnderB", aUnder)
+        showTab(bPage)
+        val bClear = probe(bView, FONTS_PROBE_CLEAR, "__zenClear", scaled(15_000, factor))
+        extra.put("bClear", bClear)
+        showTab(fixture1)
+        val r2 = pollFonts(fixtureView, scaled(15_000, factor)) { familyOf(it, "body") == "monospace" }
+        extra.put("r2", r2)
+        snap("$slug-a-surfaces")
+        showTab(aPage)
+        val aAfter = probe(aView, FONTS_PROBE_GET, "__zenGet", scaled(10_000, factor))
+        extra.put("aAfterBClear", aAfter)
+        val aClear = probe(aView, FONTS_PROBE_CLEAR, "__zenClear", scaled(15_000, factor))
+        extra.put("aClear", aClear)
+        showTab(fixture1)
+        val r3 = pollFonts(fixtureView, scaled(15_000, factor)) { sameFonts(it, r0) }
+        extra.put("r3", r3)
+        snap("$slug-cleared")
+        extra.put("aEvents", json(tabEval(aView, "JSON.stringify(window.__zenEv||null)")))
+        extra.put("bEvents", json(tabEval(bView, "JSON.stringify(window.__zenEv||null)")))
+        closeTab(bPage)
+        closeTab(aPage)
+        closeTab(fixture1)
+        runCatching { coreCall("extension.setEnabled", JSONObject().put("id", FONTS_PROBE_A_ID).put("enabled", false).toString()) }
+        val aOff = poll(scaled(20_000, factor), 400) { extensions().firstOrNull { it.getString("id") == FONTS_PROBE_A_ID }?.takeIf { !it.getBoolean("enabled") } } != null
+        extra.put("aDisabledAgain", aOff)
+        showTab(fixtureTab)
+        val bWins = picked.isNotEmpty() && familyOf(r1, "body") == picked
+        val aRead = stepOf(aUnder, "getFont")?.optJSONObject("r")
+        val bRead = stepOf(bSet, "getFont")?.optJSONObject("r")
+        val levelsOn = aRead != null && aRead.optString("fontId") == picked && aRead.optString("levelOfControl") == "controlled_by_other_extensions" &&
+            bRead != null && bRead.optString("fontId") == picked && bRead.optString("levelOfControl") == "controlled_by_this_extension"
+        val aSurfaces = familyOf(r2, "body") == "monospace"
+        val aAfterRead = stepOf(aAfter, "getFont")?.optJSONObject("r")
+        val aControlsAfter = aAfterRead != null && aAfterRead.optString("fontId") == "monospace" && aAfterRead.optString("levelOfControl") == "controlled_by_this_extension"
+        val reverted = sameFonts(r3, r0)
+        val bAfterClear = stepOf(bClear, "getFont")?.optJSONObject("r")
+        val note = "A set monospace (${stepOf(aSet, "getFont")?.optJSONObject("r")?.toString() ?: "no read"}); B picked `$picked` (${bRead?.toString() ?: "no read"}); " +
+            "body ${familyOf(r0, "body")} → ${familyOf(r1, "body")} with both set; A under B: ${aRead?.toString() ?: "no read"}; " +
+            "B cleared: body ${familyOf(r2, "body")} (B reads ${bAfterClear?.toString() ?: "no read"}; A reads ${aAfterRead?.toString() ?: "no read"}); " +
+            "A cleared: ${if (reverted) "back to the baseline" else "NOT back: body ${familyOf(r3, "body")} ${sizeOf(r3, "body")}"}; A disabled again ${aOff}; " +
+            "events A ${extra.optJSONObject("aEvents")?.optInt("font")} B ${extra.optJSONObject("bEvents")?.optInt("font")}"
+        val off = listOfNotNull(
+            if (!levelsOn) "the levels with both set" else null,
+            if (!aSurfaces) "A's face surfacing after B's clear" else null,
+            if (!aControlsAfter) "A's level after B's clear" else null,
+            if (!reverted) "the revert" else null
+        )
+        return when {
+            !aEnabled -> Grade("n/m", "fonts probe B: fonts probe A did not enable again: $note", extra)
+            !bWins -> Grade("F", "fonts probe B: the later-installed extension's face never reached the fixture: $note", extra)
+            off.isEmpty() -> Grade("P", "fonts probe B: $note", extra)
+            else -> Grade("PARTIAL", "fonts probe B: the later-installed extension's face applied; off: ${off.joinToString(", ")}: $note", extra)
+        }
+    }
+
+    /**
+     * The `chrome.privacy` probe (round 20's proof of the coordinator's ADDENDUM item 2d; a
+     * fixture of the sweep's own with the `privacy` permission and a probe page). The baseline
+     * first (`r0`): a same-origin navigation of an echo tab (`/echo-headers`, the request headers
+     * the server received on `window.__headers`) carries a `Referer` and no `DNT`, and
+     * `navigator.doNotTrack` is null. From the probe page: the password prompt off, Do Not Track
+     * on, referrers and hyperlink auditing off, each read back as `controlled_by_this_extension`
+     * (`webRTCIPHandlingPolicy` and the third-party cookies setting read as the browser answers
+     * them). Then the controls core publishes (`UIState.extensionControls`: the desktop's keys
+     * `passwords.offerToSave` and `privacy.dnt` naming the probe), `navigator.doNotTrack` `'1'` in
+     * the open echo document (the layer's script run in it) and in a fresh tab (registered at
+     * document start), and the echo navigation repeated until the request the server received
+     * carries `DNT: 1` and no `Referer` (`r1`: the runtime's rule set reaches the Kotlin engine
+     * through the blocking index, a rebuild behind it). A disable takes the layer and the rules
+     * away (`r2`, the map without the probe) and an enable brings the store's values back (`r3`,
+     * the reads `controlled_by_this_extension` again). The clears, each read back
+     * (`controllable_by_this_extension`, the browser's value), the echo back to the baseline
+     * (`r4`), the map empty of the probe; the `onChange` counters read on both probe pages. `P`
+     * on all of it; `PARTIAL` with the sets stored and read back and a later reading off; `F`
+     * when the sets never took (the stub's `not_controllable`, an error).
+     */
+    private fun privacyProbe(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val slug = entry.optString("slug")
+        val extra = JSONObject()
+        val (echoTab, echoView) = fixture("echo-headers?p=0", factor, 1_000)
+        val r0 = echoReading(echoView, factor, 1)
+        extra.put("r0", r0)
+        val page = createTab("chrome-extension://${row.id}/probe.html")
+        val pageView = waitForView(page)
+        val ready = poll(scaled(15_000, factor), 400) { if (tabEval(pageView, PRIVACY_PAGE_READY) == "true") true else null }
+        extra.put("pageReady", ready == true)
+        val set = probe(pageView, PRIVACY_PROBE_SET, "__zenP", scaled(15_000, factor))
+        extra.put("set", set)
+        val published = poll(scaled(15_000, factor), 400) { publishedControls().takeIf { c -> c.optJSONObject("privacy.dnt")?.optString("extensionId") == row.id && c.optJSONObject("passwords.offerToSave")?.optString("extensionId") == row.id } } ?: publishedControls()
+        extra.put("published", published)
+        val events1 = poll(scaled(5_000, factor), 300) { json(tabEval(pageView, "JSON.stringify(window.__zenEv||null)")).takeIf { it.optInt("dnt") >= 1 && it.optInt("passwords") >= 1 } }
+            ?: json(tabEval(pageView, "JSON.stringify(window.__zenEv||null)"))
+        extra.put("events", events1).put("pageConsole", JSONArray(consoleOf(pageView).takeLast(8)))
+        showTab(echoTab)
+        val openDnt = poll(scaled(10_000, factor), 300) { tabEval(echoView, "String(navigator.doNotTrack)").takeIf { it == "1" } } ?: tabEval(echoView, "String(navigator.doNotTrack)")
+        extra.put("openDocumentDoNotTrack", openDnt)
+        val r1 = echoUntil(echoView, factor, 2, scaled(20_000, factor)) { dntOf(it) == "1" && refererOf(it) == null }
+        extra.put("r1", r1)
+        snap("$slug-dnt")
+        val (fresh, freshView) = fixture("echo-headers?p=fresh", factor, 800)
+        val freshDnt = tabEval(freshView, "String(navigator.doNotTrack)")
+        extra.put("freshTabDoNotTrack", freshDnt)
+        closeTab(fresh)
+        closeTab(page)
+        coreCall("extension.setEnabled", JSONObject().put("id", row.id).put("enabled", false).toString())
+        val off = poll(scaled(20_000, factor), 400) { extensions().firstOrNull { it.getString("id") == row.id }?.takeIf { !it.getBoolean("enabled") } } != null
+        val goneFromMap = poll(scaled(10_000, factor), 400) { publishedControls().takeIf { !it.has("privacy.dnt") && !it.has("passwords.offerToSave") } } != null
+        showTab(echoTab)
+        val r2 = echoUntil(echoView, factor, 20, scaled(20_000, factor)) { dntOf(it) == null && refererOf(it) != null }
+        extra.put("disabled", off).put("goneFromMapWhenDisabled", goneFromMap).put("r2", r2)
+        coreCall("extension.setEnabled", JSONObject().put("id", row.id).put("enabled", true).toString())
+        val on = poll(scaled(20_000, factor), 400) { extensions().firstOrNull { it.getString("id") == row.id }?.takeIf { it.getBoolean("enabled") } } != null
+        val backInMap = poll(scaled(15_000, factor), 400) { publishedControls().takeIf { it.optJSONObject("privacy.dnt")?.optString("extensionId") == row.id } } != null
+        val r3 = echoUntil(echoView, factor, 40, scaled(20_000, factor)) { dntOf(it) == "1" && refererOf(it) == null }
+        extra.put("enabledAgain", on).put("backInMapWhenEnabled", backInMap).put("r3", r3)
+        val page2 = createTab("chrome-extension://${row.id}/probe.html")
+        val page2View = waitForView(page2)
+        poll(scaled(15_000, factor), 400) { if (tabEval(page2View, PRIVACY_PAGE_READY) == "true") true else null }
+        val kept = probe(page2View, PRIVACY_PROBE_KEPT, "__zenPKept", scaled(10_000, factor))
+        extra.put("keptAfterEnable", kept)
+        val clear = probe(page2View, PRIVACY_PROBE_CLEAR, "__zenPClear", scaled(15_000, factor))
+        extra.put("clear", clear)
+        val events2 = poll(scaled(5_000, factor), 300) { json(tabEval(page2View, "JSON.stringify(window.__zenEv||null)")).takeIf { it.optInt("dnt") >= 1 } }
+            ?: json(tabEval(page2View, "JSON.stringify(window.__zenEv||null)"))
+        extra.put("eventsAfterClears", events2)
+        showTab(echoTab)
+        val r4 = echoUntil(echoView, factor, 60, scaled(20_000, factor)) { dntOf(it) == null && refererOf(it) != null }
+        extra.put("r4", r4)
+        val clearedFromMap = poll(scaled(10_000, factor), 400) { publishedControls().takeIf { !it.has("privacy.dnt") && !it.has("passwords.offerToSave") } } != null
+        extra.put("clearedFromMap", clearedFromMap)
+        snap("$slug-cleared")
+        closeTab(page2)
+        closeTab(echoTab)
+        showTab(fixtureTab)
+        val wanted = mapOf("services.passwordSavingEnabled" to false, "websites.doNotTrackEnabled" to true, "websites.referrersEnabled" to false, "websites.hyperlinkAuditingEnabled" to false)
+        fun readOf(probe: JSONObject, path: String): JSONObject? = stepOf(probe, "get $path")?.optJSONObject("r")
+        fun held(probe: JSONObject): Boolean = wanted.all { (path, value) -> readOf(probe, path)?.let { it.optString("levelOfControl") == "controlled_by_this_extension" && it.has("value") && it.optBoolean("value", !value) == value } == true }
+        val setsTook = wanted.keys.all { path -> stepOf(set, "set $path")?.let { it.isNull("err") && !it.has("threw") } == true } && held(set)
+        val baselineOk = dntOf(r0) == null && refererOf(r0) != null
+        val publishedOk = published.optJSONObject("privacy.dnt")?.let { it.optString("extensionId") == row.id && it.optBoolean("value", false) } == true &&
+            published.optJSONObject("passwords.offerToSave")?.let { it.optString("extensionId") == row.id && !it.optBoolean("value", true) } == true
+        val headerOk = dntOf(r1) == "1" && refererOf(r1) == null
+        val navigatorOk = openDnt == "1" && freshDnt == "1"
+        val disableOk = off && goneFromMap && dntOf(r2) == null && refererOf(r2) != null
+        val enableOk = on && backInMap && dntOf(r3) == "1" && refererOf(r3) == null && held(kept)
+        val clearsOk = wanted.keys.all { path -> readOf(clear, path)?.optString("levelOfControl") == "controllable_by_this_extension" } && dntOf(r4) == null && refererOf(r4) != null && clearedFromMap
+        val eventsOk = events1.optInt("dnt") >= 1 && events1.optInt("passwords") >= 1 && events1.optInt("referrers") >= 1 && events1.optInt("pings") >= 1 && events2.optInt("dnt") >= 1
+        val webRtc = readOf(set, "network.webRTCIPHandlingPolicy")
+        val note = "baseline: Referer ${if (refererOf(r0) != null) "present" else "MISSING"}, DNT ${dntOf(r0) ?: "absent"}, navigator.doNotTrack ${r0.optString("navigatorDoNotTrack")}; " +
+            "sets: " + wanted.keys.joinToString(", ") { path -> "${path.substringAfter('.')} → ${readOf(set, path)?.toString() ?: stepOf(set, "set $path")?.toString() ?: "no answer"}" } + "; " +
+            "webRTCIPHandlingPolicy reads ${webRtc?.toString() ?: "no answer"} (stored and published only: WebView has no policy API); " +
+            "published: privacy.dnt ${published.optJSONObject("privacy.dnt")?.toString() ?: "absent"}, passwords.offerToSave ${published.optJSONObject("passwords.offerToSave")?.toString() ?: "absent"}; " +
+            "navigator.doNotTrack in the open document $openDnt, in a fresh tab $freshDnt; " +
+            "a document request then carries DNT ${dntOf(r1) ?: "absent"} and Referer ${refererOf(r1)?.let { "present" } ?: "absent"} (p=${r1.optInt("p")}); " +
+            "disabled: DNT ${dntOf(r2) ?: "absent"}, Referer ${refererOf(r2)?.let { "present" } ?: "absent"}, the map ${if (goneFromMap) "without the probe" else "STILL naming it"}; " +
+            "enabled again: DNT ${dntOf(r3) ?: "absent"}, Referer ${refererOf(r3)?.let { "present" } ?: "absent"}, the map ${if (backInMap) "naming it again" else "NOT naming it"}, the values ${if (held(kept)) "kept" else "NOT kept: ${kept.toString().take(300)}"}; " +
+            "cleared: levels ${wanted.keys.joinToString("/") { readOf(clear, it)?.optString("levelOfControl") ?: "none" }}, DNT ${dntOf(r4) ?: "absent"}, Referer ${refererOf(r4)?.let { "present" } ?: "absent"}, the map ${if (clearedFromMap) "empty of the probe" else "STILL naming it"}; " +
+            "events passwords ${events1.optInt("passwords")} dnt ${events1.optInt("dnt")} referrers ${events1.optInt("referrers")} pings ${events1.optInt("pings")}, after the clears dnt ${events2.optInt("dnt")}"
+        val off2 = listOfNotNull(
+            if (!baselineOk) "the baseline (no Referer on a same-origin navigation, or a DNT already there)" else null,
+            if (!publishedOk) "the published controls" else null,
+            if (!headerOk) "the DNT header and the Referer drop" else null,
+            if (!navigatorOk) "navigator.doNotTrack" else null,
+            if (!disableOk) "the disable" else null,
+            if (!enableOk) "the enable" else null,
+            if (!clearsOk) "the clears" else null,
+            if (!eventsOk) "the events" else null
+        )
+        return when {
+            !setsTook -> Grade("F", "privacy probe: the sets never took: $note", extra)
+            off2.isEmpty() -> Grade("P", "privacy probe: $note", extra)
+            else -> Grade("PARTIAL", "privacy probe: the sets stored and read back; off: ${off2.joinToString(", ")}: $note", extra)
+        }
+    }
+
+    /**
+     * A row whose extension takes `chrome.privacy` settings by itself when its background starts
+     * (iCloud Passwords' `ExtensionSettings`: `services.passwordSavingEnabled`,
+     * `autofillCreditCardEnabled` and `autofillAddressEnabled` set `false` while its
+     * `allowExtensionToControlAutoFillSettings` default stands; it throws `Cannot control …`
+     * on a `not_controllable` read, so a stub's answer keeps the sets from ever being asked). The
+     * inner grade's verdict stands – the row's core is the inner's – and the ADDENDUM's proof is
+     * added to the note: each setting as the background reads it back (its level and value) and
+     * as core publishes it (`UIState.extensionControls` under the desktop's key, naming the row).
+     */
+    private fun privacyHolder(inner: (Row, JSONObject) -> Grade, settings: List<Pair<String, String>>): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val grade = inner(row, entry)
+        val extra = grade.extra ?: JSONObject()
+        val bg = awakeBackground(row.id, factor)
+        val slot = "__zenHolder"
+        val reads = if (bg != null) probe(bg, privacyProbeSteps(slot, privacyGets(settings.map { it.first })), slot, scaled(10_000, factor)) else JSONObject().put("error", "no background view")
+        extra.put("privacyReads", reads)
+        val published = poll(scaled(10_000, factor), 400) { publishedControls().takeIf { c -> settings.all { (_, key) -> c.optJSONObject(key)?.optString("extensionId") == row.id } } } ?: publishedControls()
+        val mine = JSONObject()
+        for ((_, key) in settings) published.optJSONObject(key)?.let { mine.put(key, it) }
+        extra.put("privacyPublished", mine)
+        fun readOf(path: String): JSONObject? = stepOf(reads, "get $path")?.optJSONObject("r")
+        val held = settings.count { (path, key) ->
+            readOf(path)?.let { it.optString("levelOfControl") == "controlled_by_this_extension" && it.has("value") && !it.optBoolean("value", true) } == true &&
+                mine.optJSONObject(key)?.let { it.optString("extensionId") == row.id && !it.optBoolean("value", true) } == true
+        }
+        val note = "chrome.privacy: $held/${settings.size} settings held false and published (" +
+            settings.joinToString("; ") { (path, key) -> "$path reads ${readOf(path)?.toString() ?: stepOf(reads, "get $path")?.toString() ?: reads.optString("error", "no answer")}, published as $key ${mine.optJSONObject(key)?.let { "${it.opt("value")} by ${it.optString("name")}" } ?: "absent"}" } + ")"
+        Grade(grade.verdict, "${grade.note}; $note", extra)
+    }
+
+    /** The controls map core publishes (`UIState.extensionControls`): the setting's key → `{extensionId, name, value}`. */
+    private fun publishedControls(): JSONObject = coreSnapshot().optJSONObject("extensionControls") ?: JSONObject()
+
+    /**
+     * A same-origin navigation of the echo tab to `/echo-headers?p=<n>` (so the request carries
+     * a `Referer`, the page it left), then the request headers the server received (their names
+     * lower-cased) and `navigator.doNotTrack` in the new document; an error after 15 s.
+     */
+    private fun echoReading(view: TabWebView, factor: Double, n: Int): JSONObject {
+        tabEval(view, "(function(){location.assign('$BASE/echo-headers?p=$n');return 'asked'})()")
+        return poll(scaled(15_000, factor), 300) {
+            val r = tabEval(
+                view,
+                "(function(){if(location.search!=='?p=$n'||document.readyState!=='complete'||!window.__headers)return null;var h=window.__headers,o={};for(var k in h){o[k.toLowerCase()]=h[k]}" +
+                    "return JSON.stringify({p:$n,dnt:o['dnt']===undefined?null:o['dnt'],referer:o['referer']===undefined?null:o['referer'],navigatorDoNotTrack:navigator.doNotTrack===undefined?'undefined':navigator.doNotTrack,headers:Object.keys(o).length})})()"
+            )
+            if (r == "null") null else json(r)
+        } ?: JSONObject().put("p", n).put("error", "no reading within ${scaled(15_000, factor) / 1000} s")
+    }
+
+    /** [echoReading] repeated (`p` counting up from `from`) until `until` holds or `timeoutMs` pass; the last reading. */
+    private fun echoUntil(view: TabWebView, factor: Double, from: Int, timeoutMs: Long, until: (JSONObject) -> Boolean): JSONObject {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        var n = from
+        var last = echoReading(view, factor, n)
+        while (!until(last) && SystemClock.elapsedRealtime() < deadline) {
+            SystemClock.sleep(scaled(700, factor))
+            last = echoReading(view, factor, ++n)
+        }
+        return last
+    }
+
+    /** The `DNT` header the server received in an [echoReading], or null without one. */
+    private fun dntOf(reading: JSONObject): String? = if (reading.isNull("dnt")) null else reading.optString("dnt")
+
+    /** The `Referer` header the server received in an [echoReading], or null without one. */
+    private fun refererOf(reading: JSONObject): String? = if (reading.isNull("referer")) null else reading.optString("referer")
 
     /**
      * Search by Image: its action opens its popup – the engine list ("All search engines",
@@ -10337,6 +11202,66 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "setTimeout(function(){if(!p.done){if(p.ownImage==='pending')p.ownImage='timeout';if(p.webFetch==='pending')p.webFetch='timeout';if(p.webImage==='pending')p.webImage='timeout';if(p.webImageNamed==='pending')p.webImageNamed='timeout';settle()}},15000)})();\n",
             "own.svg" to "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><rect width=\"64\" height=\"64\" fill=\"#3a6\"/><circle cx=\"32\" cy=\"32\" r=\"18\" fill=\"#fff\"/></svg>"
         )
+
+        /**
+         * The `chrome.fontSettings` probes ([fontsProbeSizes], [fontsProbePrecedence]): an
+         * extension with the `fontSettings` permission and one page (`probe.html`, its
+         * `options_ui` in a tab) that arms the four events' counters at load
+         * (`window.__zenEv`, the shape [FONT_EVENTS_ARM] makes); the calls themselves come from
+         * the driver. Two of them, alike but for the name, so the second is installed after the
+         * first and ahead of it in the install-order precedence.
+         */
+        private const val FONTS_PROBE_A_NAME = "Zenium compat proof: fonts probe A"
+        private val FONTS_PROBE_A_ID = fixtureId(FONTS_PROBE_A_NAME)
+        private const val FONTS_PROBE_B_NAME = "Zenium compat proof: fonts probe B"
+        private val FONTS_PROBE_B_ID = fixtureId(FONTS_PROBE_B_NAME)
+        private fun fontsProbeFiles(name: String): Map<String, String> = mapOf(
+            "manifest.json" to """{"manifest_version":3,"name":"$name","version":"1.0","description":"A fixture of the Zenium compat sweep: a page with the fontSettings permission, driven by the sweep.","permissions":["fontSettings"],"options_ui":{"page":"probe.html","open_in_tab":true}}""",
+            "probe.html" to
+                "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>$name</title><script src=\"probe.js\"></script></head>" +
+                "<body style=\"font:16px system-ui,sans-serif;margin:24px\"><h1 style=\"font-size:20px\">$name</h1><p id=\"status\">A page with the fontSettings permission; the sweep drives the calls.</p></body></html>",
+            "probe.js" to
+                "(function(){var e=window.__zenEv={font:0,size:0,fixed:0,min:0,last:null};var f=chrome.fontSettings;if(!f){document.addEventListener('DOMContentLoaded',function(){document.getElementById('status').textContent='chrome.fontSettings is missing'});return}" +
+                "f.onFontChanged.addListener(function(d){e.font++;e.last=d||null});f.onDefaultFontSizeChanged.addListener(function(){e.size++});f.onDefaultFixedFontSizeChanged.addListener(function(){e.fixed++});f.onMinimumFontSizeChanged.addListener(function(){e.min++})})();\n"
+        )
+        private val FONTS_PROBE_A_FILES = fontsProbeFiles(FONTS_PROBE_A_NAME)
+        private val FONTS_PROBE_B_FILES = fontsProbeFiles(FONTS_PROBE_B_NAME)
+
+        /** The Fonts page seam's probe ([fontsPageSeam]): probe A's fixture under its own name; its id comes out as `eicpojjdecdlodehmlcdjigijfepnedb`. */
+        private const val FONTS_PAGE_PROBE_NAME = "Zenium compat proof: fonts page probe"
+        private val FONTS_PAGE_PROBE_ID = fixtureId(FONTS_PAGE_PROBE_NAME)
+        private val FONTS_PAGE_PROBE_FILES = fontsProbeFiles(FONTS_PAGE_PROBE_NAME)
+
+        /**
+         * The `chrome.privacy` probe ([privacyProbe]; round 20's proof of the coordinator's
+         * ADDENDUM item 2d): an extension with the `privacy` permission and one page
+         * (`probe.html`, its `options_ui` in a tab) that arms `onChange` counters at load for the
+         * four settings the driver sets (`window.__zenEv`); the calls themselves come from the
+         * driver ([PRIVACY_PROBE_SET], [PRIVACY_PROBE_CLEAR]). Its id comes out as
+         * `pkjmmekkikdhpoegdhnbnoopodjfmdck` (the trigger's lists name it).
+         */
+        private const val PRIVACY_PROBE_NAME = "Zenium compat proof: privacy probe"
+        private val PRIVACY_PROBE_ID = fixtureId(PRIVACY_PROBE_NAME)
+        private val PRIVACY_PROBE_FILES: Map<String, String> = mapOf(
+            "manifest.json" to """{"manifest_version":3,"name":"$PRIVACY_PROBE_NAME","version":"1.0","description":"A fixture of the Zenium compat sweep: a page with the privacy permission, driven by the sweep.","permissions":["privacy"],"options_ui":{"page":"probe.html","open_in_tab":true}}""",
+            "probe.html" to
+                "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>$PRIVACY_PROBE_NAME</title><script src=\"probe.js\"></script></head>" +
+                "<body style=\"font:16px system-ui,sans-serif;margin:24px\"><h1 style=\"font-size:20px\">$PRIVACY_PROBE_NAME</h1><p id=\"status\">A page with the privacy permission; the sweep drives the calls.</p></body></html>",
+            "probe.js" to
+                "(function(){var e=window.__zenEv={passwords:0,dnt:0,referrers:0,pings:0,last:null};var v=chrome.privacy;if(!v||!v.services||!v.websites){document.addEventListener('DOMContentLoaded',function(){document.getElementById('status').textContent='chrome.privacy is missing'});return}" +
+                "v.services.passwordSavingEnabled.onChange.addListener(function(d){e.passwords++;e.last=d||null});v.websites.doNotTrackEnabled.onChange.addListener(function(d){e.dnt++;e.last=d||null});" +
+                "v.websites.referrersEnabled.onChange.addListener(function(){e.referrers++});v.websites.hyperlinkAuditingEnabled.onChange.addListener(function(){e.pings++})})();\n"
+        )
+
+        /** The privacy probe page's readiness: its counters armed and `chrome.privacy` there. */
+        private const val PRIVACY_PAGE_READY = "String(!!(window.__zenEv&&typeof chrome!=='undefined'&&chrome.privacy&&chrome.privacy.websites))"
+
+        /** iCloud Passwords' three `chrome.privacy` settings ([privacyHolder]): the setting's path → the key core publishes it under (the desktop's keys). */
+        private val ICLOUD_PRIVACY_SETTINGS = listOf(
+            "services.passwordSavingEnabled" to "passwords.offerToSave",
+            "services.autofillCreditCardEnabled" to "autofill.cards",
+            "services.autofillAddressEnabled" to "autofill.addresses"
+        )
         private const val YOUTUBE_URL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
         private const val INSTALL_TIMEOUT_MS = 240_000L
         /** uBlock Origin (MV2) on Edge Add-ons: the heaviest row, run last by default. */
@@ -10534,6 +11459,18 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         /** Where the watch-page check ended: the address, the title, the document's state, the video's ([YT_VIDEO_WORD]) and its clock. */
         private const val YT_WHERE =
             "(function(){var v=document.querySelector('#movie_player video, video');return JSON.stringify({url: location.href, title: document.title, readyState: document.readyState, video: $YT_VIDEO_WORD(v), t: v ? Math.round(v.currentTime * 10) / 10 : null})})()"
+        /**
+         * The watch page's playability gate: the player response's `playabilityStatus` (`OK`, or
+         * `LOGIN_REQUIRED` / `ERROR` / `UNPLAYABLE` with its reason – "Sign in to confirm you're
+         * not a bot" on a runner's address), the player's drawn error screen and whether either
+         * reads as a bot check. A gated page never starts its video (`src: false`): a control
+         * that waits for playback is not measurable on it.
+         */
+        private const val YT_PLAYABILITY =
+            "(function(){var p=null;try{p=(window.ytInitialPlayerResponse||{}).playabilityStatus||null}catch(e){}var r=p&&p.errorScreen&&p.errorScreen.playerErrorMessageRenderer;var sub=function(o){return o?(o.simpleText||(o.runs||[]).map(function(x){return x.text}).join('')):''};" +
+                "var reason=p?(p.reason||sub(r&&r.reason)||''):'';var err=document.querySelector('.ytp-error, #error-screen, .ytp-error-content-wrap');var errText=err&&err.offsetWidth>0?(err.textContent||'').replace(/\\s+/g,' ').trim().slice(0,160):'';" +
+                "var bot=/confirm (that )?you.?re not a bot|sign in to confirm|unusual traffic|not a robot/i.test(reason+' '+errText+' '+sub(r&&r.subreason));" +
+                "return JSON.stringify({status:p?p.status:null,reason:reason.slice(0,120),error:errText,bot:bot})})()"
         /** The watch page's video present (`pass`), with its state, clock, readiness and whether it has a source. */
         private const val YT_VIDEO_STATE =
             "(function(){var v=document.querySelector('#movie_player video, video');return JSON.stringify({pass: !!v, state: $YT_VIDEO_WORD(v), t: v ? Math.round(v.currentTime * 10) / 10 : null, ready: v ? v.readyState : null, src: !!(v && (v.currentSrc || v.src))})})()"
@@ -10623,12 +11560,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * role=button, labelled inputs, then the innermost text container; through open shadow
          * roots): its label and centre, or the document's text when nothing matched. A table
          * cell is a control too (Allow CORS's toggle is a `td` with the title "Toggle ON|OFF";
-         * round 13 missed it).
+         * round 13 missed it). A control's label is the first of its aria-label, title, value
+         * and text that is under 60 characters: a title that runs on (User-Agent Switcher and
+         * Manager's Apply, whose title is 61 characters – rounds 18-19 never reached it) gives
+         * way to the control's own value or text instead of hiding the control.
          */
         private const val CLICK_LABEL =
             "(function(){var re=__RE__;var visible=function(n){var r=n.getBoundingClientRect();return r.width>10&&r.height>10};" +
-                "var label=function(e){return ((e.getAttribute&&(e.getAttribute('aria-label')||e.getAttribute('title')))||e.value||e.textContent||'').replace(/\\s+/g,' ').trim()};var cands=[];" +
-                "var walk=function(root){var all=root.querySelectorAll('button, a, [role=button], input[type=button], input[type=submit], label, div, span, li, p, td');for(var i=0;i<all.length;i++){var e=all[i];var l=label(e);if(l.length>0&&l.length<60&&re.test(l)&&visible(e))cands.push(e);if(e.shadowRoot)walk(e.shadowRoot)}};" +
+                "var label=function(e){var c=[e.getAttribute&&e.getAttribute('aria-label'),e.getAttribute&&e.getAttribute('title'),e.value,e.textContent];for(var i=0;i<c.length;i++){var s=String(c[i]||'').replace(/\\s+/g,' ').trim();if(s.length>0&&s.length<60)return s}return ''};var cands=[];" +
+                "var walk=function(root){var all=root.querySelectorAll('button, a, [role=button], input[type=button], input[type=submit], label, div, span, li, p, td');for(var i=0;i<all.length;i++){var e=all[i];var l=label(e);if(l.length>0&&re.test(l)&&visible(e))cands.push(e);if(e.shadowRoot)walk(e.shadowRoot)}};" +
                 "if(document.body)walk(document.body);var leaves=cands.filter(function(e){return !cands.some(function(o){return o!==e&&e.contains(o)})});" +
                 "var hit=cands.find(function(e){return /^(BUTTON|A|INPUT)$/.test(e.tagName)||e.getAttribute('role')==='button'})||leaves[0]||null;" +
                 "if(!hit)return JSON.stringify({clicked:false,text:document.body?document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,100):''});var r=hit.getBoundingClientRect();try{hit.click()}catch(e){}" +
@@ -10918,9 +11858,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * tag, id or class matches `__PATTERN__` (a regex source, case-insensitive), the ones drawn
          * counted apart; `pass` when there is at least one.
          */
-        /** The pop-up fixture after the tap: what `window.open` answered (`window`, `fake`, `null`), Poper Blocker's toast, its page script's `window.open` replacement. */
+        /** The pop-up fixture after the tap: what `window.open` answered (`window`, `fake`, `null`), the blocker's toast (Poper Blocker's `#pb-toast-main`, Popup Blocker Pro's `#popup-blocker-pro-jq-toast`), its page script's `window.open` replacement. */
         private const val POPUP_BLOCK_REPORT =
-            "(function(){var r=window.__popupResult||'';var toast=document.getElementById('pb-toast-main')||document.querySelector('[id^=\"pb-toast\"], [class*=\"pb-toast\"], iframe[src*=\"bkkbcggnhapdmkeljlodobbkopceiche\"]');" +
+            "(function(){var r=window.__popupResult||'';var toast=document.getElementById('pb-toast-main')||document.getElementById('popup-blocker-pro-jq-toast')||document.querySelector('[id^=\"pb-toast\"], [class*=\"pb-toast\"], iframe[src*=\"bkkbcggnhapdmkeljlodobbkopceiche\"]');" +
                 "var src=String(window.open);var native=/\\[native code\\]/.test(src);var orig=typeof window.originalOpenFunction;" +
                 "return JSON.stringify({pass:r==='fake'||!!toast,result:r,toast:!!toast,toastTag:toast?(toast.tagName+' '+(toast.id||'')).trim():'',scriptInPage:!native||orig==='function',openIsNative:native,log:(window.__popupLog||[]).slice(-3)})})()"
         /**
@@ -11635,13 +12575,150 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "return JSON.stringify({pass:es.length>0,entries:es.length,names:names.slice(0,5),mode:document.body?document.body.getAttribute('data-mode'):null,intro:!!intro&&getComputedStyle(intro).display!=='none',text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,160)})})()"
 
         /**
-         * Advanced Font Settings' options page: its script list (`#scriptList`) and the four font
-         * selects (`#standardFontList` and the serif, sans-serif, fixed lists) rendered, the
-         * `chrome.fontSettings` namespace's members counted from the page.
+         * Advanced Font Settings' options page with its standard font list filled from
+         * `getFontList` (the first option is its own "(Use default)"): the option ids and names,
+         * the script list's size, the `chrome.fontSettings` members counted; the family the proof
+         * picks – `casual` where the list has it, else the first of the fallbacks (they mirror the
+         * fixture's control spans), else the first listed.
          */
-        private const val FONT_SETTINGS_PAGE =
-            "(function(){var s=document.getElementById('scriptList');var std=document.getElementById('standardFontList');var selects=document.querySelectorAll('select').length;var api=(typeof chrome!=='undefined'&&chrome.fontSettings)?Object.keys(chrome.fontSettings).length:0;" +
-                "return JSON.stringify({pass:!!s&&!!std&&selects>=3,scriptList:!!s,standardFontList:!!std,selects:selects,scriptOptions:s?s.options.length:0,fontOptions:std?std.options.length:0,apiKeys:api,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,160)})})()"
+        private const val FONT_SETTINGS_LIST =
+            "(function(){var s=document.getElementById('scriptList');var std=document.getElementById('standardFontList');var api=(typeof chrome!=='undefined'&&chrome.fontSettings)?Object.keys(chrome.fontSettings).length:0;" +
+                "var ids=std?Array.prototype.slice.call(std.options).map(function(o){return o.value}).filter(function(v){return v!==''}):[];var names=std?Array.prototype.slice.call(std.options).map(function(o){return o.text}).slice(0,12):[];" +
+                "var picks=['casual','serif-monospace','sans-serif-smallcaps','sans-serif-condensed'];var picked=picks.filter(function(p){return ids.indexOf(p)>=0})[0]||ids[0]||'';" +
+                "return JSON.stringify({pass:!!s&&!!std&&ids.length>0,scriptOptions:s?s.options.length:0,fontOptions:ids.length,ids:ids.slice(0,40),names:names,picked:picked,apiKeys:api,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,120)})})()"
+
+        /** The four `chrome.fontSettings` events counted on an extension page, on `window.__zenEv`. */
+        private const val FONT_EVENTS_ARM =
+            "(function(){var e=window.__zenEv={font:0,size:0,fixed:0,min:0,last:null};var f=chrome.fontSettings;f.onFontChanged.addListener(function(d){e.font++;e.last=d||null});f.onDefaultFontSizeChanged.addListener(function(){e.size++});" +
+                "f.onDefaultFixedFontSizeChanged.addListener(function(){e.fixed++});f.onMinimumFontSizeChanged.addListener(function(){e.min++});return 'armed'})()"
+
+        /** `math` to `serif` through the API (Advanced Font Settings has no math picker), read back. Lands on `window.__zenMath`. */
+        private const val FONT_MATH_SET =
+            "(function(){var p=window.__zenMath={done:false,error:null,math:null};try{chrome.fontSettings.setFont({genericFamily:'math',fontId:'serif'},function(){p.error=chrome.runtime.lastError?String(chrome.runtime.lastError.message):null;" +
+                "chrome.fontSettings.getFont({genericFamily:'math'},function(d){p.math=d||null;p.done=true})})}catch(e){p.error='threw: '+String(e&&e.message||e);p.done=true}return 'asked'})()"
+
+        /** `getFont` for the Japanese and Cyrillic standard faces and the common one, and the default size. Lands on `window.__zenGet`. */
+        private const val FONT_GET =
+            "(function(){var p=window.__zenGet={done:false};var f=chrome.fontSettings;f.getFont({script:'Jpan',genericFamily:'standard'},function(a){p.jpan=a||null;f.getFont({script:'Cyrl',genericFamily:'standard'},function(b){p.cyrl=b||null;" +
+                "f.getFont({genericFamily:'standard'},function(c){p.standard=c||null;f.getDefaultFontSize({},function(d){p.size=d||null;p.done=true})})})});return 'asked'})()"
+
+        /** The revert on Advanced Font Settings' page: its per-script reset (four `clearFont` each) for the three scripts set, the size's clear and math's. */
+        private const val FONT_CLEAR_ALL =
+            "(function(){['Zyyy','Jpan','Cyrl'].forEach(function(s){advancedFonts.clearSettingsForScript(s)});chrome.fontSettings.clearDefaultFontSize();chrome.fontSettings.clearFont({genericFamily:'math'});return 'cleared'})()"
+
+        /** The fixture's spans two readings are compared on ([sameFonts]): computed family and size each. */
+        private val FONT_SPANS = listOf("body", "latin", "ja", "plain-ja", "ru", "plain-ru", "ru-latin", "math", "math-text", "tiny", "fixed")
+
+        /**
+         * The probe pages' step runner: `calls` (name → the call's code with `cb` its callback)
+         * run one after another, each step's answer and `lastError` kept on `steps`, the events
+         * counted so far beside them; lands on `window.<slot>`. `p` is the slot object, `f` the
+         * `chrome.fontSettings` namespace, for the calls' code.
+         */
+        private fun fontsProbeSteps(slot: String, calls: List<Pair<String, String>>): String = probeSteps(slot, "chrome.fontSettings", calls)
+
+        /** [fontsProbeSteps]'s runner over any namespace expression: `f` is `namespace` in the calls' code. */
+        private fun probeSteps(slot: String, namespace: String, calls: List<Pair<String, String>>): String {
+            val chain = calls.joinToString("") { (name, code) -> ".then(function(){return step('$name',function(cb){$code})})" }
+            return "(function(){var p=window.$slot={done:false,steps:[],error:null};var f=$namespace;" +
+                "function step(name,fn){return new Promise(function(res){try{fn(function(r){p.steps.push({name:name,r:r===undefined?null:r,err:chrome.runtime.lastError?String(chrome.runtime.lastError.message):null});res()})}catch(e){p.steps.push({name:name,threw:String(e&&e.message||e)});res()}})}" +
+                "Promise.resolve()$chain.then(function(){p.events=window.__zenEv||null;p.done=true},function(e){p.error=String(e&&e.message||e);p.done=true});return 'asked'})()"
+        }
+
+        /** Fonts probe A's sets: the three sizes and the standard face to `monospace`, each read back. */
+        private val FONTS_PROBE_A_SET = fontsProbeSteps(
+            "__zenA",
+            listOf(
+                "setDefaultFontSize" to "f.setDefaultFontSize({pixelSize:20},cb)",
+                "setMinimumFontSize" to "f.setMinimumFontSize({pixelSize:12},cb)",
+                "setDefaultFixedFontSize" to "f.setDefaultFixedFontSize({pixelSize:18},cb)",
+                "setFont" to "f.setFont({genericFamily:'standard',fontId:'monospace'},cb)",
+                "getDefaultFontSize" to "f.getDefaultFontSize({},cb)",
+                "getMinimumFontSize" to "f.getMinimumFontSize({},cb)",
+                "getDefaultFixedFontSize" to "f.getDefaultFixedFontSize({},cb)",
+                "getFont" to "f.getFont({genericFamily:'standard'},cb)"
+            )
+        )
+
+        /** Fonts probe A's clears, each read back (the browser's own value, `controllable_by_this_extension`). */
+        private val FONTS_PROBE_A_CLEAR = fontsProbeSteps(
+            "__zenAClear",
+            listOf(
+                "clearDefaultFontSize" to "f.clearDefaultFontSize({},cb)",
+                "clearMinimumFontSize" to "f.clearMinimumFontSize({},cb)",
+                "clearDefaultFixedFontSize" to "f.clearDefaultFixedFontSize({},cb)",
+                "clearFont" to "f.clearFont({genericFamily:'standard'},cb)",
+                "getDefaultFontSize" to "f.getDefaultFontSize({},cb)",
+                "getMinimumFontSize" to "f.getMinimumFontSize({},cb)",
+                "getDefaultFixedFontSize" to "f.getDefaultFixedFontSize({},cb)",
+                "getFont" to "f.getFont({genericFamily:'standard'},cb)"
+            )
+        )
+
+        /** A probe page's standard face set to `fontId` and read back. */
+        private fun fontsProbeSet(fontId: String): String = fontsProbeSteps(
+            "__zenSet",
+            listOf(
+                "setFont" to "f.setFont({genericFamily:'standard',fontId:'$fontId'},cb)",
+                "getFont" to "f.getFont({genericFamily:'standard'},cb)"
+            )
+        )
+
+        /** Fonts probe B's set: the family picked off `getFontList` (`casual` first, `serif-monospace`, `cursive`, `sans-serif-smallcaps` behind it), set and read back. */
+        private val FONTS_PROBE_B_SET = fontsProbeSteps(
+            "__zenSet",
+            listOf(
+                "getFontList" to "f.getFontList(function(list){var ids=(list||[]).map(function(x){return x.fontId});var picks=['casual','serif-monospace','cursive','sans-serif-smallcaps'];p.picked=picks.filter(function(x){return ids.indexOf(x)>=0})[0]||'';p.fonts=ids.length;cb(ids.slice(0,12))})",
+                "setFont" to "f.setFont({genericFamily:'standard',fontId:p.picked},cb)",
+                "getFont" to "f.getFont({genericFamily:'standard'},cb)"
+            )
+        )
+
+        /** A probe page's standard face read. */
+        private val FONTS_PROBE_GET = fontsProbeSteps("__zenGet", listOf("getFont" to "f.getFont({genericFamily:'standard'},cb)"))
+
+        /** A probe page's standard face cleared and read back. */
+        private val FONTS_PROBE_CLEAR = fontsProbeSteps(
+            "__zenClear",
+            listOf(
+                "clearFont" to "f.clearFont({genericFamily:'standard'},cb)",
+                "getFont" to "f.getFont({genericFamily:'standard'},cb)"
+            )
+        )
+
+        /** [probeSteps] over `chrome.privacy`: a step reads `f.websites.doNotTrackEnabled.set({value:true},cb)`. */
+        private fun privacyProbeSteps(slot: String, calls: List<Pair<String, String>>): String = probeSteps(slot, "chrome.privacy", calls)
+
+        /** A `chrome.privacy` setting read per path (`services.passwordSavingEnabled`), the step named `get <path>`. */
+        private fun privacyGets(paths: List<String>): List<Pair<String, String>> = paths.map { "get $it" to "f.$it.get({},cb)" }
+
+        /** The four settings the privacy probe sets ([PRIVACY_PROBE_SET]) and clears ([PRIVACY_PROBE_CLEAR]). */
+        private val PRIVACY_PROBE_PATHS = listOf("services.passwordSavingEnabled", "websites.doNotTrackEnabled", "websites.referrersEnabled", "websites.hyperlinkAuditingEnabled")
+
+        /**
+         * The privacy probe's sets – the password prompt off, Do Not Track on, referrers and
+         * hyperlink auditing off – each read back; `webRTCIPHandlingPolicy` and the third-party
+         * cookies setting read as the browser answers them (stored and published only, the
+         * WebView has no policy API for the first).
+         */
+        private val PRIVACY_PROBE_SET = privacyProbeSteps(
+            "__zenP",
+            listOf(
+                "set services.passwordSavingEnabled" to "f.services.passwordSavingEnabled.set({value:false},cb)",
+                "set websites.doNotTrackEnabled" to "f.websites.doNotTrackEnabled.set({value:true},cb)",
+                "set websites.referrersEnabled" to "f.websites.referrersEnabled.set({value:false},cb)",
+                "set websites.hyperlinkAuditingEnabled" to "f.websites.hyperlinkAuditingEnabled.set({value:false},cb)"
+            ) + privacyGets(PRIVACY_PROBE_PATHS + listOf("network.webRTCIPHandlingPolicy", "websites.thirdPartyCookiesAllowed"))
+        )
+
+        /** The privacy probe's clears, each read back (the browser's own value, `controllable_by_this_extension`). */
+        private val PRIVACY_PROBE_CLEAR = privacyProbeSteps(
+            "__zenPClear",
+            PRIVACY_PROBE_PATHS.map { "clear $it" to "f.$it.clear({},cb)" } + privacyGets(PRIVACY_PROBE_PATHS)
+        )
+
+        /** The three set values read again from a fresh probe page after a disable and an enable. */
+        private val PRIVACY_PROBE_KEPT = privacyProbeSteps("__zenPKept", privacyGets(PRIVACY_PROBE_PATHS))
 
         /**
          * Search by Image's image-pick mode on the page: its `src/select/script.js` (run through
@@ -11673,14 +12750,96 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * and the mounted selectors in each, and adds each root's rendered text – its shown element
          * children's `innerText`, `style`/`script`/`template`/`link` and `display:none` children
          * left out, as a stylesheet's text is not the page's. `shadowRoots` is the count found.
+         * A remote frame laid out over 100x100 CSS px (`frames`: Yahoo Homepage's new tab is a
+         * sandboxed iframe of yahoo.com and nothing else, compat round 20) is the page's content
+         * too – its document is another origin's and cannot be read from here.
          */
         private const val NEW_TAB_RENDERED =
             "(function(){var b=document.body;var IMG='img, canvas, .background, [class*=\"background\"]';var MOUNT='.site-items .items-card, .items-card, .site-items a, .search-box input, .search-box form, #app > *, #root > *, main > *';" +
                 "var roots=[document],hosts=0;for(var i=0;i<roots.length&&hosts<100;i++){var all=roots[i].querySelectorAll('*');for(var j=0;j<all.length;j++){if(all[j].shadowRoot){roots.push(all[j].shadowRoot);hosts++}}}" +
-                "var text=b?b.innerText:'',imagery=0,mounted=0;for(var k=0;k<roots.length;k++){var r=roots[k];imagery+=r.querySelectorAll(IMG).length;mounted+=r.querySelectorAll(MOUNT).length;" +
+                "var text=b?b.innerText:'',imagery=0,mounted=0,frames=0;for(var k=0;k<roots.length;k++){var r=roots[k];imagery+=r.querySelectorAll(IMG).length;mounted+=r.querySelectorAll(MOUNT).length;frames+=Array.prototype.filter.call(r.querySelectorAll('iframe[src]'),function(f){var fr=f.getBoundingClientRect();return /^https?:/.test(f.src)&&fr.width>100&&fr.height>100}).length;" +
                 "if(k>0){var cs=r.children;for(var c=0;c<cs.length;c++){var e=cs[c],t=e.tagName;if(t==='STYLE'||t==='SCRIPT'||t==='TEMPLATE'||t==='LINK'||getComputedStyle(e).display==='none')continue;text+=' '+(e.innerText||'')}}}" +
                 "text=text.replace(/\\s+/g,' ').trim();var shown=!!b&&!b.classList.contains('hide-opacity');" +
-                "return JSON.stringify({pass:text.length>20||imagery>0||(mounted>0&&shown),textLength:text.length,imagery:imagery,mounted:mounted,shadowRoots:hosts,shown:shown,bodyClass:b?b.className.slice(0,60):null,text:text.slice(0,120),url:location.href})})()"
+                "return JSON.stringify({pass:text.length>20||imagery>0||frames>0||(mounted>0&&shown),textLength:text.length,imagery:imagery,frames:frames,mounted:mounted,shadowRoots:hosts,shown:shown,bodyClass:b?b.className.slice(0,60):null,text:text.slice(0,120),url:location.href})})()"
+
+        // --- compat round 20 (ranks 481-510) ---
+
+        /**
+         * My Doodle on google.com: its content script swaps the logo (`#hplogo` / `#lga` /
+         * `#logo`) for its doodle – the text "MyDoodle" its first run writes to storage, or its
+         * clock (`#myDoodleClock`); the logo image gone from the page is read with it.
+         */
+        private const val MY_DOODLE =
+            "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ');var clock=document.getElementById('myDoodleClock');var doodle=/MyDoodle/.test(t);var logo=document.querySelector('#hplogo, img[alt=\"Google\"]');" +
+                "var visible=logo?(function(r){return r.width>0&&r.height>0})(logo.getBoundingClientRect()):false;" +
+                "return JSON.stringify({pass:doodle||!!clock,doodleText:doodle,clock:!!clock,logo:!!logo,logoVisible:visible,title:document.title.slice(0,40),text:t.slice(0,120)})})()"
+
+        /**
+         * Google Meet Breakout's control panel (`popup.html`, opened by `windows.create` from the
+         * action click): its toolbar controls (`#popup-help`, `#popup-refresh`, `#popup-resize`,
+         * `#popup-retile`) drawn with text in the page.
+         */
+        private const val MEET_BREAKOUT_PANEL =
+            "(function(){var ids=['popup-help','popup-refresh','popup-resize','popup-retile','popup-minimize','gmbr-help'];var found=ids.filter(function(i){return !!document.getElementById(i)});var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:found.length>=2&&t.length>10,controls:found,text:t.slice(0,160)})})()"
+
+        /**
+         * TickerIQ's popup: coins listed with prices – at least two ticker symbols (BTC, ETH, …)
+         * and a number with a decimal point in the text (its React root `#root` mounted).
+         */
+        private const val TICKERIQ_PRICES =
+            "(function(){var root=document.getElementById('root');var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var symbols=(t.match(/\\b(BTC|ETH|SOL|BNB|XRP|DOGE|ADA|USDT|LTC|DOT|AVAX|LINK)\\b/g)||[]).filter(function(s,i,a){return a.indexOf(s)===i});var prices=(t.match(/\\$?\\d[\\d,]*\\.\\d+/g)||[]).length;" +
+                "return JSON.stringify({pass:symbols.length>=2&&prices>=2,symbols:symbols.slice(0,8),prices:prices,mounted:!!root&&root.children.length>0,text:t.slice(0,160)})})()"
+
+        /**
+         * Speed Test for Chrome's popup (an OpenSpeedtest build): its `#OpenSpeedtest` SVG app
+         * laid out with a size and its start control (`#startButtonDesk` / `.startButton`)
+         * present; `#loading_app` no longer covering it.
+         */
+        private const val SPEEDTEST_APP =
+            "(function(){var app=document.getElementById('OpenSpeedtest');var r=app?app.getBoundingClientRect():{width:0,height:0};var start=document.querySelector('#startButtonDesk, #startButton, .startButton');var loading=document.getElementById('loading_app');var ls=loading?getComputedStyle(loading):null;var covering=!!ls&&ls.display!=='none'&&ls.visibility!=='hidden'&&parseFloat(ls.opacity||'1')>0.5;" +
+                "return JSON.stringify({pass:!!app&&r.width>200&&r.height>150&&!!start,app:!!app,size:Math.round(r.width)+'x'+Math.round(r.height),start:!!start,loadingShown:covering,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,100)})})()"
+
+        /**
+         * Ready X's Starknet provider in the page world: `window.starknet_argentX` (its id stays
+         * Argent X's; its `name` "Ready…") or `window.starknet_ready`, with `request` / `enable`
+         * functions; the Wallet Standard announcement (`__wallet.announced`) read alongside.
+         */
+        private const val READY_PROVIDER =
+            "JSON.stringify((function(){var p=window.starknet_argentX||window.starknet_ready||window.starknet||null;var announced=window.__wallet?window.__wallet.announced:null;var keys=Object.keys(window).filter(function(k){return /^starknet/i.test(k)});" +
+                "return {pass:!!p&&(typeof p.request==='function'||typeof p.enable==='function'),provider:p?String(p.id||''):null,name:p?String(p.name||''):null,version:p?String(p.version||''):null,request:typeof (p&&p.request),enable:typeof (p&&p.enable),keys:keys.slice(0,6),announced:announced}})())"
+
+        /**
+         * High Contrast applied to the fixture: `<html hc="a3">` (mode `a`ll, scheme 3 = invert)
+         * set by its content script on the storage change, and the SVG filter its stylesheet
+         * puts on the root (`filter: url(#hc_extension_invert)`) computed; `hcx` alongside.
+         */
+        private const val HIGH_CONTRAST_APPLIED =
+            "(function(){var h=document.documentElement;var hc=h.getAttribute('hc');var filter=getComputedStyle(h).filter;var sheet=!!document.getElementById('hc_style')||!!document.querySelector('style[id*=\"hc_\"], #hc_extension_svg_filters');" +
+                "return JSON.stringify({pass:!!hc&&hc!=='a0'&&/url\\(/.test(filter),hc:hc,hcx:h.getAttribute('hcx'),filter:String(filter).slice(0,60),sheet:sheet})})()"
+
+        /**
+         * Youtube Playback Speed Control's panel over the fixture's clip
+         * (`.PlayBackRatePanelYPSC` with its `.btnYPSC` buttons); its faster button clicked once
+         * while the rate is 1, the video's `playbackRate` above 1 the pass.
+         */
+        private const val YPSC_PANEL =
+            "(function(){var p=document.querySelector('.PlayBackRatePanelYPSC, .PlayBackRatePanelYPSCFullScreen');var v=document.querySelector('video');var buttons=document.querySelectorAll('.btnYPSC');var faster=document.querySelector('.btnYPSC-right, .btnYPSC[class*=\"right\"], .btnYPSC[class*=\"faster\"], .btnYPSC[class*=\"plus\"]');" +
+                "if(p&&v&&faster&&v.playbackRate===1){try{faster.click()}catch(e){}}var rate=v?v.playbackRate:null;" +
+                "return JSON.stringify({pass:!!p&&!!v&&rate!==null&&rate>1,panel:!!p,video:!!v,buttons:buttons.length,faster:!!faster,rate:rate,panelText:p?(p.innerText||'').replace(/\\s+/g,' ').trim().slice(0,40):null})})()"
+
+        /**
+         * SAML-tracer's trace window: its toolbar buttons (`#button-clear`, `#button-pause`,
+         * `#button-autoscroll`, `#button-export-list`, …) and its `#request-list` laid out.
+         */
+        private const val SAML_TRACER_TOOLBAR =
+            "(function(){var ids=['button-clear','button-pause','button-autoscroll','button-hide-resources','button-export-list','button-import-list'];var found=ids.filter(function(i){return !!document.getElementById(i)});var list=document.getElementById('request-list');" +
+                "return JSON.stringify({pass:found.length>=3&&!!list,buttons:found.join(' '),list:!!list,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,120)})})()"
+
+        /** SAML-tracer's `#request-list` after the second fixture's load: a row naming `page-b.html` (its rows' text and title attributes). */
+        private const val SAML_TRACER_LISTED =
+            "(function(){var list=document.getElementById('request-list');var rows=list?list.querySelectorAll('tr, li, div, .request'):[];var texts=[];for(var i=0;i<rows.length;i++){var e=rows[i];var t=((e.innerText||'')+' '+(e.getAttribute('title')||'')).replace(/\\s+/g,' ').trim();if(t)texts.push(t)}var all=texts.join(' | ');" +
+                "return JSON.stringify({pass:/page-b\\.html/.test(all),rows:rows.length,requests:(all.match(/https?:\\/\\/[^\\s|]+/g)||[]).slice(0,4),text:all.slice(0,160)})})()"
 
         // --- compat round 19 (ranks 451-480) ---
 

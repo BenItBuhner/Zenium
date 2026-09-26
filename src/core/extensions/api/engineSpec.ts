@@ -16,6 +16,7 @@
  * (`NAMESPACE_PERMISSIONS`), by manifest version, and content scripts only get the handful
  * Chrome exposes there (`CONTENT_SCRIPT_NAMESPACES`).
  */
+import { CONSTANTS as FONT_SETTINGS_CONSTANTS } from './fontSettings'
 import { API_SPEC, type ApiSpec, type MethodSpec, type NamespaceSpec, type ParamSpec } from './spec'
 import { EXTRA_INFO_SPECS } from './webRequest'
 
@@ -530,6 +531,10 @@ export const ENGINE_SPEC: ApiSpec = {
       }
     }
   },
+  // Routed to the phone's `extensionFontSettings.ts`: a per-extension layer over the user's page
+  // fonts with Chrome's precedence (`core/extensions/api/fontSettings.ts` has the shape), set on
+  // every tab WebView's `WebSettings` and, for what those have no setter for, as a document-start
+  // `:lang()` stylesheet.
   fontSettings: {
     methods: {
       getFontList: routed(),
@@ -537,27 +542,22 @@ export const ENGINE_SPEC: ApiSpec = {
       setFont: routed(object('details')),
       clearFont: routed(object('details')),
       getDefaultFontSize: routed(object('details', true)),
-      setDefaultFontSize: routed(object('details'))
+      setDefaultFontSize: routed(object('details')),
+      clearDefaultFontSize: routed(object('details', true)),
+      getDefaultFixedFontSize: routed(object('details', true)),
+      setDefaultFixedFontSize: routed(object('details')),
+      clearDefaultFixedFontSize: routed(object('details', true)),
+      getMinimumFontSize: routed(object('details', true)),
+      setMinimumFontSize: routed(object('details')),
+      clearMinimumFontSize: routed(object('details', true))
     },
-    events: {},
-    constants: {
-      ScriptCode: {},
-      GenericFamily: {
-        STANDARD: 'standard',
-        SANSSERIF: 'sansserif',
-        SERIF: 'serif',
-        FIXED: 'fixed',
-        CURSIVE: 'cursive',
-        FANTASY: 'fantasy',
-        MATH: 'math'
-      },
-      LevelOfControl: {
-        NOT_CONTROLLABLE: 'not_controllable',
-        CONTROLLED_BY_OTHER_EXTENSIONS: 'controlled_by_other_extensions',
-        CONTROLLABLE_BY_THIS_EXTENSION: 'controllable_by_this_extension',
-        CONTROLLED_BY_THIS_EXTENSION: 'controlled_by_this_extension'
-      }
-    }
+    events: {
+      onFontChanged: {},
+      onDefaultFontSizeChanged: {},
+      onDefaultFixedFontSizeChanged: {},
+      onMinimumFontSizeChanged: {}
+    },
+    constants: FONT_SETTINGS_CONSTANTS
   },
   search: {
     methods: { query: routed(object('queryInfo')) },
@@ -589,7 +589,10 @@ export const ENGINE_SPEC: ApiSpec = {
     },
     events: {}
   },
-  privacy: { methods: {}, events: {} },
+  // `privacy` is not listed: its `types.ChromeSetting`s are the layer's shapes (`spec.ts`
+  // `settings`), which the shim builds and routes to the host as `privacy.<method>(category,
+  // name, details)`; the phone's host answers them (`android/extensionPrivacy.ts`) as the
+  // desktop's does.
   omnibox: {
     methods: { setDefaultSuggestion: stub(object('suggestion')) },
     events: {
@@ -752,9 +755,6 @@ export const CONTENT_SCRIPT_NAMESPACES: ReadonlySet<string> = new Set([
 export const ENGINE_NOOPS: ReadonlySet<string> = new Set([
   'runtime.setUninstallURL',
   'tabs.setZoomSettings',
-  'fontSettings.setFont',
-  'fontSettings.clearFont',
-  'fontSettings.setDefaultFontSize',
   'extension.setUpdateUrlData',
   'webRequest.handlerBehaviorChanged',
   // No omnibox keyword on the phone; the setter is a start-up call (Raindrop.io, OneTab,
@@ -766,12 +766,10 @@ export const ENGINE_NOOPS: ReadonlySet<string> = new Set([
 
 /**
  * What unimplemented getters resolve with instead of rejecting, for callers that cannot cope
- * with an error (an empty font list keeps Dark Reader's settings page rendering). JSON values.
+ * with an error (an empty download search keeps a download manager's page rendering; the font
+ * list sat here until the phone's `fontSettings` host answered it). JSON values.
  */
 export const ENGINE_STUB_RESULTS: Readonly<Record<string, unknown>> = {
-  'fontSettings.getFontList': [],
-  'fontSettings.getFont': { fontId: '', levelOfControl: 'not_controllable' },
-  'fontSettings.getDefaultFontSize': { pixelSize: 16, levelOfControl: 'not_controllable' },
   'downloads.search': [],
   'sessions.getRecentlyClosed': [],
   'sessions.getDevices': [],
@@ -811,9 +809,9 @@ function mergeNamespace(
   const eventStyle = over?.eventStyle ?? base?.eventStyle
   // The `types.ChromeSetting` and `ContentSetting` members (`proxy.settings`,
   // `contentSettings.cookies`) are the layer's shapes, built by the shim and routed to the host
-  // like methods; they travel with a namespace the engine table leaves alone. A namespace the
-  // engine lists answers its settings itself (`engine.ts` defines `privacy`'s on the context
-  // side), and the shim would replace them with routed ones the host has no answer for.
+  // like methods; they travel with a namespace the engine table leaves alone (`privacy`,
+  // `proxy`, `contentSettings`). A namespace the engine lists answers its settings itself, and
+  // the shim would replace them with routed ones the host has no answer for.
   const settings = over ? undefined : base?.settings
   const ownSettings = over ? undefined : base?.ownSettings
   const contentSettings = over ? undefined : base?.contentSettings

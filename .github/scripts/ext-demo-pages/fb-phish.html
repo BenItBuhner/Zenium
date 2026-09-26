@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Log in to Facebook</title>
+    <style>
+      body { font: 16px system-ui, sans-serif; margin: 0; background: #f0f2f5; color: #1c1e21; }
+      main { max-width: 400px; margin: 48px auto; background: #fff; border-radius: 8px; padding: 24px; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); }
+      h1 { color: #1877f2; font-size: 40px; margin: 0 0 16px; }
+      input { display: block; width: 100%; box-sizing: border-box; font-size: 17px; padding: 14px 16px; margin: 0 0 12px; border: 1px solid #dddfe2; border-radius: 6px; }
+      label#loginbutton { display: block; background: #1877f2; color: #fff; text-align: center; font-weight: 700; font-size: 20px; padding: 12px; border-radius: 6px; }
+      p.note { font-size: 13px; color: #606770; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>facebook</h1>
+      <!--
+        A fixture shaped like Facebook's login form on a host that is not facebook.com: the
+        pattern anti-phishing content scripts look for (J2TEAM Security's `anti-fb-phishing`
+        script reads `#login_form` with `input#email`, `input#pass` and `label#loginbutton`
+        under a password field and has its worker send the tab to its `blocked.html`). No
+        request leaves this page; the form posts nowhere.
+      -->
+      <form id="login_form" action="#" method="post" onsubmit="return false">
+        <input id="email" name="email" type="text" placeholder="Email address or phone number" autocomplete="off" />
+        <input id="pass" name="pass" type="password" placeholder="Password" autocomplete="off" />
+        <label id="loginbutton" for="login">Log in</label>
+        <input id="login" type="submit" value="Log in" hidden />
+      </form>
+      <p class="note">Zenium extension fixture (compat round 20): a phishing-shaped page served from the runner, nothing of Facebook's.</p>
+    </main>
+  </body>
+</html>

@@ -1,21 +1,31 @@
 import { describe, expect, it } from 'vitest'
-import { BackgroundLifecycle, backgroundKindOf, type BackgroundHost } from '../background'
+import {
+  BackgroundLifecycle,
+  backgroundKindOf,
+  type BackgroundHost,
+  type BackgroundStartReason,
+  type BackgroundStopReason
+} from '../background'
 import { parseRuntimeManifest, type RuntimeManifest } from '../manifest'
 
 /** Manual timers: `advance(ms)` fires what is due, in order. */
 class FakeHost implements BackgroundHost {
   started: string[] = []
   stopped: string[] = []
+  /** The reasons given with each start and stop, in order (`start:<reason>` / `stop:<reason>`). */
+  reasons: string[] = []
   private now = 0
   private seq = 0
   private timers = new Map<number, { at: number; callback: () => void }>()
 
-  start(id: string): void {
+  start(id: string, reason: BackgroundStartReason): void {
     this.started.push(id)
+    this.reasons.push(`start:${reason}`)
   }
 
-  stop(id: string): void {
+  stop(id: string, reason: BackgroundStopReason): void {
     this.stopped.push(id)
+    this.reasons.push(`stop:${reason}`)
   }
 
   setTimeout(callback: () => void, ms: number): unknown {
@@ -174,6 +184,39 @@ describe('BackgroundLifecycle', () => {
     expect(life.has(ID)).toBe(false)
     expect(life.deliver(ID, null, () => undefined)).toBe('dropped')
     expect(host.pendingTimers()).toBe(0)
+  })
+
+  it('names the reason of every start and stop it asks of the host', () => {
+    const host = new FakeHost()
+    const life = new BackgroundLifecycle(host, { idleMs: 1_000 })
+    life.configure(ID, 'worker', ['alarms.onAlarm'])
+    life.ensureStarted(ID)
+    life.onReady(ID)
+    host.advance(1_000)
+    life.onGone(ID)
+    life.deliver(ID, 'alarms.onAlarm', () => undefined)
+    life.onReady(ID)
+    host.advance(1_000)
+    life.onGone(ID)
+    life.deliver(ID, null, () => undefined)
+    // A crash while starting with the message still queued: the restart names itself.
+    life.onGone(ID)
+    life.onReady(ID)
+    life.remove(ID)
+    expect(host.reasons).toEqual([
+      'start:attach',
+      'stop:idle',
+      'start:event:alarms.onAlarm',
+      'stop:idle',
+      'start:message',
+      'start:restart',
+      'stop:remove'
+    ])
+    const inspected = new FakeHost()
+    const other = new BackgroundLifecycle(inspected)
+    other.configure(ID, 'worker')
+    other.ensureStarted(ID, 'wake')
+    expect(inspected.reasons).toEqual(['start:wake'])
   })
 
   it('reconfiguring to a persistent kind cancels the idle clock', () => {

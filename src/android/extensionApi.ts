@@ -1,5 +1,5 @@
 import type { BookmarkTreeNode } from '@shared/bookmarks'
-import type { ExtensionAction, Tab } from '@shared/types'
+import type { ExtensionAction, ExtensionControl, Tab } from '@shared/types'
 import type { Browser } from '@core/browser'
 import type { MenuItemTemplate, PageContextParams } from '@core/platform'
 import type { ZenWindow } from '@core/window'
@@ -13,7 +13,9 @@ import {
 import { NATIVE_HOST_NOT_FOUND, type EngineContextKind } from '@core/extensions/api/engine'
 import type { PersistedMenuItem } from '@core/extensions/api/contextMenus'
 import { parseCssColor, type CssRgba } from '@core/extensions/api/cssColor'
+import type { FontName, FontValues } from '@core/extensions/api/fontSettings'
 import type { ScopedValues } from '@core/extensions/api/privacy'
+import type { RuleSet } from '@core/blocking/rules'
 import type { ProxyConfig } from '@core/extensions/api/proxy'
 import type { LocaleMessages } from '@core/extensions/api/i18n'
 import { globToRegExp, matchesAnyPattern } from '@core/extensions/api/matchPattern'
@@ -80,6 +82,17 @@ import type { RequestUpdateCheckAnswer } from './extensionHost'
 import type { PersistedGrants } from './extensionRuntime'
 import type { AndroidIdentity } from './extensionIdentity'
 import { AndroidNotifications, type ShownNotification } from './extensionNotifications'
+import {
+  AndroidFontSettings,
+  FONT_SETTINGS_PERMISSION,
+  type WebViewFontLayer
+} from './extensionFontSettings'
+import {
+  AndroidPrivacy,
+  PRIVACY_PERMISSION,
+  type PrivacyPrimeRecord,
+  type WebViewPrivacyLayer
+} from './extensionPrivacy'
 import { AndroidProxy } from './extensionProxy'
 import { AndroidSidePanel } from './extensionSidePanel'
 import { answerSystemDisplay, type PhoneScreen } from './extensionSystemDisplay'
@@ -217,6 +230,24 @@ export interface ApiHost {
   /** `chrome.proxy.settings`: an extension's values by scope, kept across sessions (`extensionProxy.ts`). */
   proxyValues(id: string): unknown
   setProxyValues(id: string, values: ScopedValues): void
+  /** `chrome.fontSettings`: an extension's font values, kept across sessions (`extensionFontSettings.ts`). */
+  fontSettingsValues(id: string): unknown
+  setFontSettingsValues(id: string, values: FontValues): void
+  /** The extensions' font layer to every tab WebView's `WebSettings` and the `:lang()` stylesheet (`ext.fonts.apply`); null drops it. */
+  applyFontLayer(layer: WebViewFontLayer | null): Promise<void>
+  /** The installed families (`ext.fonts.list`): `fonts.xml`'s named families, the font files' `name` tables for the display names. */
+  listFonts(): Promise<FontName[]>
+  /** The settings the extensions hold, per API, merged into the core's `state.setExtensionControls`. */
+  publishControls(api: string, controls: Record<string, ExtensionControl>): void
+  /** `chrome.privacy`: an extension's values by setting key and scope, kept across sessions (`extensionPrivacy.ts`). */
+  privacyValues(id: string): unknown
+  setPrivacyValues(id: string, values: Record<string, ScopedValues>): void
+  /** The container ids of the regular (non-private) partitions, the scope of the privacy layer's request rules. */
+  regularPartitions(): readonly string[]
+  /** The privacy layer's request rule sets to the blocking engine; false while the engine is not up yet. */
+  applyPrivacyRules(sets: { set: RuleSet[]; remove: string[] }): boolean
+  /** `navigator.doNotTrack` at document start on every tab WebView (`ext.privacy.apply`). */
+  applyPrivacyLayer(layer: WebViewPrivacyLayer): Promise<void>
   /** Apply the resolved configuration to the process's WebViews through `ProxyController` (`system` clears it). */
   applyProxy(config: ProxyConfig): Promise<void>
   /** Whether a private tab is open (Chrome's `incognito_session_only` scope needs one). */
@@ -502,6 +533,10 @@ export class ExtensionApi {
   readonly sidePanel: AndroidSidePanel
   /** `chrome.proxy.settings` over the WebView's proxy override (`extensionProxy.ts`). */
   readonly proxy: AndroidProxy
+  /** `chrome.fontSettings` over every tab WebView's `WebSettings` (`extensionFontSettings.ts`). */
+  readonly fontSettings: AndroidFontSettings
+  /** `chrome.privacy`: the extensions' layer over the browser settings, published to the services (`extensionPrivacy.ts`). */
+  readonly privacy: AndroidPrivacy
   readonly browsingData: AndroidBrowsingData
   readonly activeTab: ActiveTabGrants
   readonly cookies: AndroidCookies
@@ -554,6 +589,37 @@ export class ExtensionApi {
       persistedValues: (id) => host.proxyValues(id),
       persistValues: (id, values) => host.setProxyValues(id, values),
       apply: (config) => host.applyProxy(config),
+      emit: (id, ns, name, args) => host.emit(id, ns, name, args),
+      warn: (message) => console.warn(`[zen] ${message}`)
+    })
+    this.fontSettings = new AndroidFontSettings({
+      attached: (id) => host.attached(id),
+      allAttached: () => host.allAttached(),
+      holdsPermission: (ext) => this.holdsPermission(ext, FONT_SETTINGS_PERMISSION),
+      persistedValues: (id) => host.fontSettingsValues(id),
+      persistValues: (id, values) => host.setFontSettingsValues(id, values),
+      userFonts: () => host.browser.state.settings.fonts,
+      subscribe: (listener) => host.browser.state.subscribe(listener),
+      apply: (layer) => host.applyFontLayer(layer),
+      listFonts: () => host.listFonts(),
+      publish: (controls) => host.publishControls('fontSettings', controls),
+      emit: (id, ns, name, args) => host.emit(id, ns, name, args),
+      warn: (message) => console.warn(`[zen] ${message}`)
+    })
+    this.fontSettings.attach()
+    this.privacy = new AndroidPrivacy({
+      attached: (id) => host.attached(id),
+      allAttached: () => host.allAttached(),
+      holdsPermission: (ext) => this.holdsPermission(ext, PRIVACY_PERMISSION),
+      allowedInPrivate: (id) => host.attached(id)?.record.allowPrivate === true,
+      privateTabOpen: () => host.privateTabOpen(),
+      persistedValues: (id) => host.privacyValues(id),
+      persistValues: (id, values) => host.setPrivacyValues(id, values),
+      offerToSavePasswords: () => host.browser.state.settings.passwords.offerToSave,
+      regularPartitions: () => host.regularPartitions(),
+      applyRequestRules: (sets) => host.applyPrivacyRules(sets),
+      applyDocumentStart: (layer) => host.applyPrivacyLayer(layer),
+      publish: (controls) => host.publishControls('privacy', controls),
       emit: (id, ns, name, args) => host.emit(id, ns, name, args),
       warn: (message) => console.warn(`[zen] ${message}`)
     })
@@ -613,11 +679,27 @@ export class ExtensionApi {
     )
   }
 
+  /**
+   * The boot-time rebuild of what the services read before any extension attaches – inside the
+   * `Browser` constructor, ahead of the startup windows' first tab WebView: the enabled records'
+   * persisted `chrome.privacy` values resolve and publish (`extensionPrivacy.ts`).
+   */
+  prime(records: readonly PrivacyPrimeRecord[]): void {
+    this.privacy.prime(records)
+  }
+
+  /** The user allowed an extension in private tabs, or withdrew that: the private tabs' values re-resolve. */
+  privateAccessChanged(): void {
+    this.privacy.privateAccessChanged()
+  }
+
   /** The extension attached: what this layer restores before its background runs. */
   load(ext: AttachedExtension): void {
     this.contextMenus.load(ext)
     this.sidePanel.load(ext)
     this.proxy.load(ext)
+    this.fontSettings.load(ext)
+    this.privacy.load(ext)
     this.loadGrants(ext)
   }
 
@@ -661,6 +743,8 @@ export class ExtensionApi {
     this.contextMenus.forget(id)
     this.sidePanel.forget(id)
     this.proxy.unload(id)
+    this.fontSettings.unload(id)
+    this.privacy.unload(id)
     this.activeTab.forget(id)
     this.grantedHosts.delete(id)
     this.grantedApis.delete(id)
@@ -883,6 +967,14 @@ export class ExtensionApi {
       case 'proxy':
         // `proxy.settings`, a ChromeSetting over the WebView's proxy override (`extensionProxy.ts`).
         return this.proxy.call(ext, method, args)
+      case 'fontSettings':
+        // A per-extension layer over the user's page fonts, on every tab WebView's `WebSettings`
+        // and as the `:lang()` stylesheet (`extensionFontSettings.ts`); Chrome's error without the permission.
+        return this.fontSettings.call(ext, method, args)
+      case 'privacy':
+        // The ChromeSettings of `chrome.privacy` (`extensionPrivacy.ts`): the values kept per
+        // extension, resolved by install order, published to the services; Chrome's error without the permission.
+        return this.privacy.call(ext, method, args)
       case 'browsingData':
         // Site data and the cache through the engine's clearing, history and downloads through
         // the models (`extensionBrowsingData.ts`); Chrome's error without the permission.
