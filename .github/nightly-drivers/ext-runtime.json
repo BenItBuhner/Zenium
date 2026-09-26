@@ -1,0 +1,14 @@
+{
+  "id": "ext-runtime",
+  "order": 18,
+  "class": "ExtensionDemo",
+  "shard": "phone-a",
+  "mirrors": "android-ext-runtime-demo.yml:record",
+  "dir": "ext-demo",
+  "script": ".github/scripts/android-ext-runtime-demo.sh",
+  "out": "artifacts/android-ext-runtime-demo",
+  "setup": ["ext-crx"],
+  "timeout": 1500,
+  "estimate": 13,
+  "note": "The strict job (the image's WebView). The workflow's AOSP job is SOFT_FAIL=1 and never red, so it is not the nightly's signal. Runs the engine probe, the scroll budget and ExtensionDemo, last on the shard: its own device prep repeats the settle."
+}

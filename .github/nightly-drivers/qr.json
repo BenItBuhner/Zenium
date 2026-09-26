@@ -1,0 +1,13 @@
+{
+  "id": "qr",
+  "order": 51,
+  "class": "QrDemo",
+  "shard": "phone-c",
+  "mirrors": "android-qr-demo.yml",
+  "dir": "qr-demo",
+  "env": {
+    "DEMO_REVOKE": "android.permission.CAMERA"
+  },
+  "estimate": 3,
+  "note": "CAMERA revoked before the driver (the shared script does it after the install), granted back after."
+}

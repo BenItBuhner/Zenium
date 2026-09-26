@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-// The nightly all-drivers sweep's reader of `.github/nightly-drivers.json` (the manifest: every
-// instrumentation driver, its shard and the environment its own workflow gives it), in four modes
-// for android-nightly-drivers.yml and android-nightly-drivers.sh:
+// The nightly all-drivers sweep's reader of `.github/nightly-drivers/` (the manifest, one
+// directory: `shards.json` the shards, one `<id>.json` per instrumentation driver with its shard
+// and the environment its own workflow gives it, `skip.json` the classes and workflows left out
+// with their reasons), in six modes for android-nightly-drivers.yml and
+// android-nightly-drivers.sh:
 //
 //   node android-nightly-drivers.mjs matrix [--shard all|<shard>]
 //     The shards to run as a job matrix (`{"include":[...]}`, one row per shard with the recipe's
@@ -27,9 +29,10 @@
 //
 //   node android-nightly-drivers.mjs check
 //     The manifest against the sources: every concrete *Demo class under androidTest is a driver
-//     or a skip with a reason, every driver's class exists, ids unique, shards known, handshake
-//     directories as the classes declare them. Exits 1 with the problems listed.
-//     (android-nightly-drivers.test.mjs runs the same through vitest.)
+//     or a skip with a reason, every driver's class exists, ids unique and each driver's file
+//     named after its id, shards known, handshake directories as the classes declare them.
+//     Exits 1 with the problems listed. (android-nightly-drivers.test.mjs runs the same through
+//     vitest.)
 //
 //   node android-nightly-drivers.mjs estimate
 //     The shard plan with the per-driver estimates summed, as Markdown (for a pull request body).
@@ -39,7 +42,10 @@ import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 export const REPO_ROOT = resolve(here, '..', '..')
-export const MANIFEST_PATH = join(REPO_ROOT, '.github', 'nightly-drivers.json')
+export const MANIFEST_DIR = join(REPO_ROOT, '.github', 'nightly-drivers')
+/** The manifest directory's two files that are not drivers. */
+export const SHARDS_FILE = 'shards.json'
+export const SKIP_FILE = 'skip.json'
 export const DRIVER_SOURCES = join(
   REPO_ROOT,
   'android',
@@ -58,13 +64,56 @@ export const DEFAULT_TIMEOUT_S = 720
 /** The package prefix of every driver class. */
 const PACKAGE = 'app.zen.chromium'
 
-/** @typedef {{ id: string, class?: string, classes?: string[], shard: string, mirrors: string, dir?: string, script?: string, out?: string, env?: Record<string, string>, setup?: string[], needs?: string[], timeout?: number, estimate: number, note?: string }} Driver */
+/** @typedef {{ id: string, order?: number, class?: string, classes?: string[], shard: string, mirrors: string, dir?: string, script?: string, out?: string, env?: Record<string, string>, setup?: string[], needs?: string[], timeout?: number, estimate: number, note?: string }} Driver */
 /** @typedef {{ title: string, 'api-level': string, target: string, profile: string, image: string, webview: string, 'emulator-gpu': string, 'emulator-options': string, display: string, 'timeout-minutes': number, 'budget-minutes': number, setup?: string[], cache?: { path: string, key: string }, env?: Record<string, string>, note?: string }} Shard */
 /** @typedef {{ shards: Record<string, Shard>, drivers: Driver[], skip: { class?: string, workflow?: string, reason: string, absent?: boolean }[] }} Manifest */
 
-/** @returns {Manifest} */
-export function readManifest(path = MANIFEST_PATH) {
-  return JSON.parse(readFileSync(path, 'utf8'))
+/** The driver files of a manifest directory (every `.json` but the shards' and the skips'), sorted. */
+export function driverFiles(dir = MANIFEST_DIR) {
+  return readdirSync(dir)
+    .filter((name) => name.endsWith('.json') && name !== SHARDS_FILE && name !== SKIP_FILE)
+    .sort()
+}
+
+/**
+ * The run order of drivers: `order` ascending, ties by id, a driver without an `order` after
+ * every driver with one (by id) - a new driver needs no number to run last on its shard.
+ */
+export function byRunOrder(a, b) {
+  const rank = (d) => (typeof d.order === 'number' ? d.order : Infinity)
+  if (rank(a) !== rank(b)) return rank(a) < rank(b) ? -1 : 1
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+}
+
+/**
+ * The manifest as one object (`{ $comment, shards, drivers, skip }`, what `.github/nightly-
+ * drivers.json` held before it was split): the directory's `shards.json`, its `<id>.json` driver
+ * files in run order and `skip.json`. A driver file not named after its id is a malformed
+ * manifest and throws. A path to a single JSON file is read as that object as it is.
+ *
+ * @returns {Manifest}
+ */
+export function readManifest(path = MANIFEST_DIR) {
+  if (!statSync(path).isDirectory()) return JSON.parse(readFileSync(path, 'utf8'))
+  const read = (name) => JSON.parse(readFileSync(join(path, name), 'utf8'))
+  const shardsFile = read(SHARDS_FILE)
+  if (!shardsFile.shards || typeof shardsFile.shards !== 'object')
+    throw new Error(`${SHARDS_FILE}: no 'shards' object`)
+  const skipFile = read(SKIP_FILE)
+  if (!Array.isArray(skipFile.skip)) throw new Error(`${SKIP_FILE}: no 'skip' array`)
+  const drivers = driverFiles(path).map((name) => {
+    const driver = read(name)
+    if (`${driver.id}.json` !== name)
+      throw new Error(`${name}: the driver file is not named after its id '${driver.id}'`)
+    return driver
+  })
+  drivers.sort(byRunOrder)
+  return {
+    ...(shardsFile.$comment !== undefined ? { $comment: shardsFile.$comment } : {}),
+    shards: shardsFile.shards,
+    drivers,
+    skip: skipFile.skip
+  }
 }
 
 /** The *Demo classes a driver entry covers. */
@@ -235,6 +284,8 @@ export function checkManifest(manifest, sources = sourceDriverClasses()) {
     ids.add(driver.id)
     if (!/^[a-z0-9][a-z0-9-]*$/.test(driver.id))
       problems.push(`driver id '${driver.id}' is not a lowercase kebab-case name`)
+    if (driver.order !== undefined && !(Number.isInteger(driver.order) && driver.order > 0))
+      problems.push(`${driver.id}: order ${JSON.stringify(driver.order)} is not a positive integer`)
     if (!manifest.shards[driver.shard])
       problems.push(`${driver.id}: unknown shard '${driver.shard}'`)
     const classes = classesOf(driver)
@@ -596,7 +647,14 @@ function parseArgs(argv) {
 function main() {
   const [mode, ...rest] = process.argv.slice(2)
   const args = parseArgs(rest)
-  const manifest = readManifest()
+  let manifest
+  try {
+    manifest = readManifest()
+  } catch (error) {
+    console.error(`${relative(REPO_ROOT, MANIFEST_DIR)}: ${error.message}`)
+    process.exitCode = 1
+    return
+  }
   switch (mode) {
     case 'matrix':
       console.log(JSON.stringify(matrix(manifest, args.shard || 'all')))

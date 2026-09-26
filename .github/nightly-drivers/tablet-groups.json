@@ -1,0 +1,9 @@
+{
+  "id": "tablet-groups",
+  "order": 113,
+  "class": "TabletGroupsDemo",
+  "shard": "tablet",
+  "mirrors": "android-tab-groups-demo.yml:tablet",
+  "dir": "tablet-groups-demo",
+  "estimate": 2.5
+}

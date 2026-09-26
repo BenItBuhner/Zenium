@@ -1,0 +1,9 @@
+{
+  "id": "sync",
+  "order": 81,
+  "class": "SyncDemo",
+  "shard": "phone-e",
+  "mirrors": "android-sync-demo.yml",
+  "dir": "sync-demo",
+  "estimate": 5
+}

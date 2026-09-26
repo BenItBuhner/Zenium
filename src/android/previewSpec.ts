@@ -322,11 +322,14 @@ export type PreviewState =
        * The active page's link menu for a link to `url`, raised on its own the way a hold on the
        * link raises it: the phone sheet's header over the items (PUI-18) – the link's `text` as
        * the title over its address, or "Phone number" / "Email address" over a `tel:` or
-       * `mailto:` link's bare number or address, with the contact items (PUI-22).
+       * `mailto:` link's bare number or address, with the contact items (PUI-22). With `image`,
+       * the hold is on an image at `url` instead (`image=<url>`): the image sheet (CT-32's
+       * Search Image row among its items).
        */
       kind: 'link'
       url: string
       text?: string
+      image?: boolean
     }
   | {
       kind: 'overlay'
@@ -854,6 +857,8 @@ export function parsePreviewSpec(spec: string): PreviewState {
     if (text) state.text = text
     return state
   }
+  const image = params.get('image')
+  if (image) return { kind: 'link', url: image, image: true }
   const overlay = params.get('overlay')
   if (overlay !== null && (PREVIEW_OVERLAYS as readonly string[]).includes(overlay)) {
     const state: Extract<PreviewState, { kind: 'overlay' }> = {

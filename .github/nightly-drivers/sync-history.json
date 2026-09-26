@@ -1,0 +1,11 @@
+{
+  "id": "sync-history",
+  "order": 83,
+  "class": "SyncHistoryDemo",
+  "shard": "phone-e",
+  "mirrors": "android-sync-history-demo.yml",
+  "dir": "sync-history-demo",
+  "script": ".github/scripts/android-sync-history-demo.sh",
+  "timeout": 900,
+  "estimate": 5.5
+}

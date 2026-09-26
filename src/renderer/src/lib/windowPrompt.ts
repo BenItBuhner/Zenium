@@ -19,6 +19,12 @@ export interface WindowPromptText {
   verb: string
   /** Whether the "Confirm before closing multiple tabs" checkbox belongs. */
   tabsWarning: boolean
+  /**
+   * Which setting the prompt's checkbox governs, when it has one: the tabs warning's
+   * (`warnOnCloseWindow`), or the caret-browsing confirm's own "Don't ask again"
+   * (`caretBrowsingConfirm`, CT-34). Null when the prompt asks nothing to remember.
+   */
+  remember: 'warnOnCloseWindow' | 'caretBrowsingConfirm' | null
 }
 
 /**
@@ -45,7 +51,21 @@ export function windowPromptText(prompt: WindowPrompt): WindowPromptText {
       title: 'Open all bookmarks?',
       description: `You are about to open ${prompt.count} tabs.`,
       verb: 'Open all',
-      tabsWarning: false
+      tabsWarning: false,
+      remember: null
+    }
+  }
+  // Chrome's one-time F7 dialog (CT-34), its description in Chrome's words: what caret browsing
+  // is, and that the same key turns it off again. The checkbox is the dialog's own "Don't ask
+  // again" (`Settings.caretBrowsingConfirm`), the verb Chrome's "Turn on".
+  if (prompt.kind === 'caret-browsing') {
+    return {
+      title: 'Turn on caret browsing?',
+      description:
+        "Caret browsing lets you move through a page's text with the arrow keys and select it with Shift. F7 turns it on and off.",
+      verb: 'Turn on',
+      tabsWarning: false,
+      remember: 'caretBrowsingConfirm'
     }
   }
   const quit = prompt.kind === 'quit'
@@ -61,7 +81,8 @@ export function windowPromptText(prompt: WindowPrompt): WindowPromptText {
       title: quit ? 'Quit Zenium?' : `Close ${tabs}?`,
       description: downloads ? `${tabsSentence} ${downloadsSentence(downloads)}` : tabsSentence,
       verb: quit ? 'Quit' : 'Close tabs',
-      tabsWarning
+      tabsWarning,
+      remember: 'warnOnCloseWindow'
     }
   }
   // The downloads alone: a window whose close quits (the last one, off macOS) says so.
@@ -70,6 +91,7 @@ export function windowPromptText(prompt: WindowPrompt): WindowPromptText {
     title: quitting ? 'Quit Zenium?' : 'Close private window?',
     description: downloads ? downloadsSentence(downloads) : '',
     verb: quitting ? 'Quit' : 'Close window',
-    tabsWarning
+    tabsWarning,
+    remember: null
   }
 }

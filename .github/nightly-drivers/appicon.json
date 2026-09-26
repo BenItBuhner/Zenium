@@ -1,0 +1,13 @@
+{
+  "id": "appicon",
+  "order": 24,
+  "class": "AppIconDemo",
+  "shard": "phone-a",
+  "mirrors": "android-appicon-demo.yml",
+  "dir": "appicon-demo",
+  "env": {
+    "DEMO_THEME": "light"
+  },
+  "estimate": 1.5,
+  "note": "The workflow runs light and dark; the nightly runs light. On phone-a since the accessibility pass 2's group actions scene grew a11y-chrome to 15 (phone-b 68 of 68 with it here; 66.5 without, phone-a 66.5 with it)."
+}

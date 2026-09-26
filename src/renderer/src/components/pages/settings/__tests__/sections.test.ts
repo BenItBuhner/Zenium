@@ -149,6 +149,7 @@ const ANDROID: HostCapabilities = {
   readAloud: false,
   pageLanguages: false,
   genericFontFamilies: false,
+  caretBrowsing: false,
   placementAnswered: true
 }
 

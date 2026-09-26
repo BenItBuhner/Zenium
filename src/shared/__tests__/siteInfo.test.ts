@@ -313,6 +313,8 @@ describe('formatting', () => {
     )
     expect(permissionLabel('fileSystem')).toBe('Write to files you picked')
     expect(permissionLabel('fileSystem:read')).toBe('View folders you picked')
+    // The answer "Turn off for this site" stores (MW-28) reads as its Site settings row does.
+    expect(permissionLabel('auto-picture-in-picture')).toBe('Automatic picture-in-picture')
   })
 
   it("names a stored answer the map does not carry by its catalogue row's label, never the raw id (#523 review)", () => {

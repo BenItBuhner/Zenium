@@ -1,0 +1,13 @@
+{
+  "id": "menu-sheet",
+  "order": 41,
+  "class": "MenuSheetDemo",
+  "shard": "phone-c",
+  "mirrors": "android-menu-sheet-demo.yml",
+  "dir": "menu-demo",
+  "env": {
+    "DEMO_THEME": "light"
+  },
+  "estimate": 2,
+  "note": "The workflow runs light and dark; the nightly runs light."
+}

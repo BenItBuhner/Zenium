@@ -16,7 +16,7 @@ name: Android page-class seam demo
 # the run while the PR was open; the branch-scoped push trigger is gone from the final head).
 # The build, the emulator and its caches live in android-emulator-demo.yml; this file picks the
 # driver, the profile and the display. The nightly sweep runs the driver on its tablet shard
-# (.github/nightly-drivers.json, `page-class-seam`).
+# (.github/nightly-drivers/page-class-seam.json).
 on:
   workflow_dispatch:
 

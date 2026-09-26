@@ -1,0 +1,12 @@
+{
+  "id": "relaunch-race",
+  "order": 15,
+  "class": "RelaunchDemo",
+  "shard": "phone-a",
+  "mirrors": "android-relaunch-demo.yml",
+  "dir": "media-demo",
+  "env": {
+    "DEMO_ARGS": "-e assert true"
+  },
+  "estimate": 5
+}

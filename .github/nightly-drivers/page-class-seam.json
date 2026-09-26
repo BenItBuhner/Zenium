@@ -1,0 +1,10 @@
+{
+  "id": "page-class-seam",
+  "order": 114,
+  "class": "PageClassSeamDemo",
+  "shard": "tablet",
+  "mirrors": "android-page-class-seam-demo.yml",
+  "dir": "page-class-seam-demo",
+  "estimate": 3,
+  "note": "The class-change seam of the page tabs (W6-S1, #499): the tablet's zen://history tab handed to the phone's History panel at wm size 1280x590 and back, five scenes in each scheme. The driver sets the dark scheme itself (the core's setting and the system's night mode), so DEMO_THEME is not read. The estimate is the dispatch run's measure: 125 s of instrumentation on this recipe."
+}

@@ -311,6 +311,9 @@ export class Actions {
       case 'page.pip':
         if (target) void this.browser.mediaSession.togglePictureInPicture(target.id, win)
         return
+      case 'page.caretBrowsing':
+        void this.browser.caretBrowsing.toggle(win)
+        return
       case 'page.screenshot':
         if (target) void this.screenshot(target.id, win)
         return
