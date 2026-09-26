@@ -1,0 +1,115 @@
+name: Android tablet new tab page demo
+
+# Records the TABLET's new tab page (NTP-35: the served `zen://newtab` document – the desktop's,
+# its tiles, each tile's hold menu – in the tablet's tab, where the phone keeps its chrome-drawn
+# page over `zen://blank`) on a hardware-accelerated emulator of the pixel_tablet profile laid out
+# at 1280 x 800 dp at one px per dp (`wm size 1280x800`, `wm density 160`, as the tablet layout
+# demo), and uploads the video, the stills and the driver's findings. The scenes: the COLD START
+# of a fresh profile past its first run, the activity's marks read off the process (`ready`,
+# `frame` / `reportFullyDrawn` from MainActivity.onCreate) with the served page as the window's
+# first tab, placed and loaded before READY, and its empty state ("Sites you visit often will
+# appear here") in light and dark; eight loopback sites visited off camera and a new tab from the
+# sidebar's row under a finger – the served page with the most visited tiles, in the page's DOM
+# and in the accessibility tree; a REAL HOLD on a tile raising the tablet's anchored menu with the
+# touch template's five rows (Open in New Tab · Open in Private Tab · Copy Link · a separator ·
+# Remove), Open in Private Tab opening the site in a private tab in front; the hold again and
+# Copy Link putting the tile's URL on the clipboard; the dark scheme in place, the page and the
+# menu in dark, Remove taking the tile off the page through the core's command down the same
+# bridge. The driver judges every step from the core's state, the chrome's DOM and the served
+# page's own DOM and fails the run when a claim does not hold; see TabletNewTabDemo.kt. On a
+# build whose host has no new tab page (main's tree before NTP-35) the same driver records the
+# cold start and the sidebar's New Tab row opening the URL bar bound to no tab (no tab is made):
+# the boot path's 'before'. The fresh tab's reveal on the tablet is the desktop's – the URL bar
+# in new-tab mode over the served page, the live view hidden under its cover until a back – and
+# the driver reads it as a claim and puts the bar away before it reads the tree or holds a tile.
+#
+# The engine, as the tablet private mode demo: Open in Private Tab runs on a WebView profile of
+# its own, which needs WebViewFeature.MULTI_PROFILE, and the API 34 images' WebView 113 does not
+# have it, so the demo runs on an AOSP image with a Chromium snapshot SystemWebView.apk swapped
+# in (android-webview-swap.sh), under swiftshader_indirect. Dispatch-only, like the other demos:
+# it takes about a quarter of an hour and says nothing about a change being correct. The build,
+# the emulator and the Gradle cache live in android-emulator-demo.yml; this file picks the
+# driver, the profile, the display and the engine. The nightly sweep runs the same driver on its
+# `tablet-webview` shard (.github/nightly-drivers/tablet-newtab.json).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-tablet-newtab-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Tablet new tab page demo (Chromium snapshot WebView on an AOSP image)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # A tablet AVD: the driver's claims are about the served page a 600 dp+ short side gets.
+      profile: pixel_tablet
+      api-level: '34'
+      target: default
+      emulator-gpu: swiftshader_indirect
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.TabletNewTabDemo
+        DEMO_DIR=tablet-newtab-demo
+        DEMO_OUT=artifacts/android-tablet-newtab-demo
+        DEMO_VIDEO=android-tablet-newtab-demo.mp4
+        DEMO_DISPLAY=1280x800@160
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+      # The plain `Android` snapshot is armeabi-v7a only and its libwebviewchromium.so cannot be
+      # dlopen'ed on an x86_64 emulator; `AndroidDesktop_x64` ships the same com.android.webview
+      # (minSdk 29) with x86_64 and x86 native code.
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      artifact-name: android-tablet-newtab-demo
+      artifact-path: artifacts/android-tablet-newtab-demo/
+      timeout-minutes: 60
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Tablet new tab page demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      profile: pixel_tablet
+      api-level: '34'
+      target: default
+      emulator-gpu: swiftshader_indirect
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.TabletNewTabDemo
+        DEMO_DIR=tablet-newtab-demo
+        DEMO_OUT=artifacts/android-tablet-newtab-demo
+        DEMO_VIDEO=android-tablet-newtab-demo.mp4
+        DEMO_DISPLAY=1280x800@160
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      artifact-name: android-tablet-newtab-demo-second-boot
+      artifact-path: artifacts/android-tablet-newtab-demo/
+      timeout-minutes: 60

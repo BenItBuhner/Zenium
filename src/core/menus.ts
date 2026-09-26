@@ -562,6 +562,13 @@ export class Menus {
             {
               label: 'Open in Private Tab',
               click: () => tabs.newPrivateTab(tile.url, win)
+            },
+            // Chrome's third row on the tile's hold menu (NTP-35), the phone's own hold menu's
+            // third (`showTopSiteContextMenu`): a touch host has no address to drag off the tile.
+            // The desktop template is unchanged.
+            {
+              label: 'Copy Link',
+              click: () => this.browser.platform.clipboard.writeText(tile.url)
             }
           ]
         : [])

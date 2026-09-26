@@ -3568,7 +3568,13 @@ describe("the served new tab page's tile menu (GN-11's row per host shape)", () 
 
   it('a tablet – private browsing in tabs, no windows – gains Open in Private Tab second: the site opens in the window’s private container, in front; Open in New Tab stays the background open', () => {
     const h = pageHarness(ANDROID, { formFactor: 'tablet' })
-    expect(tileMenu(h)).toEqual(['Open in New Tab', 'Open in Private Tab', '-', 'Remove'])
+    expect(tileMenu(h)).toEqual([
+      'Open in New Tab',
+      'Open in Private Tab',
+      'Copy Link',
+      '-',
+      'Remove'
+    ])
     const before = Object.keys(h.browser.state.model.tabs).length
     h.click('Open in Private Tab')
     const opened = Object.values(h.browser.state.model.tabs).find((t) => t.url === TILE.url)
@@ -3584,10 +3590,22 @@ describe("the served new tab page's tile menu (GN-11's row per host shape)", () 
     expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(opened?.id)
   })
 
-  it('the phone, should the served page reach it, carries the same row; without private tabs, or with windows to open a private one in, the row stays out – not greyed', () => {
+  it("a touch host's third row is Copy Link (NTP-35, the phone's hold menu's third): the tile's address goes to the clipboard, and no tab opens", () => {
+    const h = pageHarness(ANDROID, { formFactor: 'tablet' })
+    let copied = ''
+    h.browser.platform.clipboard.writeText = (text: string) => void (copied = text)
+    tileMenu(h)
+    const before = Object.keys(h.browser.state.model.tabs).length
+    h.click('Copy Link')
+    expect(copied).toBe(TILE.url)
+    expect(Object.keys(h.browser.state.model.tabs).length).toBe(before)
+  })
+
+  it('the phone, should the served page reach it, carries the same rows; without private tabs, or with windows to open a private one in, the rows stay out – not greyed', () => {
     expect(tileMenu(pageHarness(ANDROID, { formFactor: 'phone' }))).toEqual([
       'Open in New Tab',
       'Open in Private Tab',
+      'Copy Link',
       '-',
       'Remove'
     ])

@@ -18,6 +18,19 @@ object LinkHits {
     fun opensLinkMenu(type: Int): Boolean = type in LINK_TYPES
 
     /**
+     * A document whose holds are its own: the served new tab page (`zen://newtab`, NTP-35). Its
+     * tiles are anchors, but their hold menu is the page's – its `contextmenu` handler asks the
+     * core for the tile menu (`newTabPageScript.ts`), as on the desktop – so the long-press is
+     * left to the renderer instead of the link menu: the embedder is offered the gesture first,
+     * and a handled one never reaches the page (`GestureListenerManagerImpl.filterTapOrPressEvent`).
+     */
+    fun holdIsThePages(document: String?): Boolean =
+        document != null && (document == NEW_TAB_URL || document.startsWith("$NEW_TAB_URL/") || document.startsWith("$NEW_TAB_URL?"))
+
+    /** The served new tab page, as the core spells it (`NEW_TAB_URL` in `shared/url.ts`). */
+    private const val NEW_TAB_URL = "zen://newtab"
+
+    /**
      * The address the menu opens on: the anchor's href when the WebView gave one, else the
      * result's extra under the scheme its type names (a bare extra of a page link is the href
      * itself). Empty when neither says.
