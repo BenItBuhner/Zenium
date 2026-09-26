@@ -1309,7 +1309,7 @@ describe('Reset settings (zen://settings/reset; W7-6, settings-70)', () => {
       'Reset settings?'
     )
     expect(document.getElementById(prompt.getAttribute('aria-describedby')!)?.textContent).toBe(
-      'This will reset your startup page, new tab page, search engine, and pinned tabs. It will also disable all extensions and clear temporary data like cookies. Your bookmarks, history, and saved passwords will not be cleared.'
+      'This will reset your startup page, home page, new tab page, search engine, pinned tabs, and site permissions. It will also disable all extensions and clear temporary data like cookies. Your bookmarks, history, and saved passwords will not be cleared.'
     )
     let [cancel, verb] = [...prompt.querySelectorAll<HTMLButtonElement>('button')]
     expect(cancel!.textContent).toBe('Cancel')

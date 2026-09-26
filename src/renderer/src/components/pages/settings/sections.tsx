@@ -5197,12 +5197,19 @@ function updatesSection({ state, set }: SectionContext): RowGroup[] {
 // Reset Settings
 // ---------------------------------------------------------------------------
 
-/** Chrome's Reset settings dialog, word for word (settings-70): the confirmation the row opens. */
+/**
+ * Chrome's Reset settings dialog (settings-70): the confirmation the row opens, Chrome's
+ * sentence word for word – its serial commas kept, as a verbatim line keeps its own punctuation
+ * (the #553 lead check) – with two clauses of the house's in Chrome's register: the home page
+ * (Chrome's resetter puts it back and its sentence does not say so) and the site permissions
+ * (the root's ruling on #553: Chrome's `ResetContentSettings`, ours through the call Clear
+ * browsing data's "Site settings" makes).
+ */
 export const RESET_SETTINGS_COPY = {
   heading: 'Reset settings',
   row: 'Restore settings to their original defaults',
   title: 'Reset settings?',
-  body: 'This will reset your startup page, new tab page, search engine, and pinned tabs. It will also disable all extensions and clear temporary data like cookies. Your bookmarks, history, and saved passwords will not be cleared.',
+  body: 'This will reset your startup page, home page, new tab page, search engine, pinned tabs, and site permissions. It will also disable all extensions and clear temporary data like cookies. Your bookmarks, history, and saved passwords will not be cleared.',
   action: 'Reset settings'
 } as const
 
@@ -5211,12 +5218,12 @@ export const RESET_SETTINGS_COPY = {
  * one row, "Restore settings to their original defaults", label alone as Chrome's is – the
  * sentence that says what resets is the confirmation's, read before anything runs, not a
  * description that repeats it under the label – whose §9.23 confirmation carries Chrome's
- * sentence: Cancel and "Reset settings" in the danger ink, no primary, Enter inert (§9.22): a
- * bulk act that disables the extensions and clears the cookies – and whose act is the core's
- * `settings.reset` (`core/settingsReset.ts`), which does what the sentence says and nothing
- * else. The desktop trails its 32 px "Reset…" button on the 40 px control row (§10.5), the
- * tablet's portrait page presses the row. The category is the desktop and tablet shells'
- * (`internalPages.ts`).
+ * sentence: Cancel and "Reset settings" in the danger ink, no primary, Enter from the held
+ * container inert (§9.22): a bulk act that disables the extensions and clears the cookies –
+ * and whose act is the core's `settings.reset` (`core/settingsReset.ts`), which does what the
+ * sentence says and nothing else, then says "Settings reset" in one toast. The desktop trails
+ * its 32 px "Reset…" button on the 40 px control row (§10.5), the tablet's portrait page
+ * presses the row. The category is the desktop and tablet shells' (`internalPages.ts`).
  */
 function resetSection(): RowGroup[] {
   return [
@@ -5234,6 +5241,8 @@ function resetSection(): RowGroup[] {
             'defaults',
             'original',
             'factory',
+            'home page',
+            'site permissions',
             'extensions',
             'cookies'
           ],

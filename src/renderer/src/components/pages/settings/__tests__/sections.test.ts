@@ -6827,7 +6827,7 @@ describe('Reset settings (W7-6, settings-70)', () => {
     expect(restore.confirm).toEqual({
       title: 'Reset settings?',
       description:
-        'This will reset your startup page, new tab page, search engine, and pinned tabs. It will also disable all extensions and clear temporary data like cookies. Your bookmarks, history, and saved passwords will not be cleared.',
+        'This will reset your startup page, home page, new tab page, search engine, pinned tabs, and site permissions. It will also disable all extensions and clear temporary data like cookies. Your bookmarks, history, and saved passwords will not be cleared.',
       action: 'Reset settings'
     })
     expect(invoke).not.toHaveBeenCalled()
