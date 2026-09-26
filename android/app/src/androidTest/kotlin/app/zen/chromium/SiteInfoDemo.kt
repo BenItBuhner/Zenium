@@ -335,6 +335,8 @@ class SiteInfoDemo {
             touchFault("the touch on '$BACKGROUND_VIDEO_LABEL' did not write allow for $SITE_ORIGIN (reads ${backgroundVideoDecision()})")
         } else if (!awaitLabel("$BACKGROUND_VIDEO_LABEL, $BACKGROUND_VIDEO_ALLOW_LINE", 6_000)) {
             touchFault("allow was written but the row does not read the Allow line; names ${namesFor(BACKGROUND_VIDEO_LABEL)}")
+        } else {
+            Log.i(TAG, "background-video for $SITE_ORIGIN after the touch: allow; the row reads the Allow line")
         }
         SystemClock.sleep(800)
         shot("01c-background-video-on")
@@ -349,6 +351,8 @@ class SiteInfoDemo {
             touchFault("the second touch on '$BACKGROUND_VIDEO_LABEL' did not forget the site's answer (reads ${backgroundVideoDecision()})")
         } else if (!awaitLabel("$BACKGROUND_VIDEO_LABEL, $BACKGROUND_VIDEO_BLOCK_LINE", 6_000)) {
             touchFault("the answer was forgotten but the row does not stay reading the Block line; names ${namesFor(BACKGROUND_VIDEO_LABEL)}")
+        } else {
+            Log.i(TAG, "background-video for $SITE_ORIGIN after the second touch: none; the row stays, reading the Block line")
         }
         SystemClock.sleep(800)
         shot("01d-background-video-forgotten")
