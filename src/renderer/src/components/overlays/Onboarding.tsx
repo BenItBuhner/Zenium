@@ -249,9 +249,7 @@ function DesktopOnboarding({
           </div>
         )}
 
-        {choiceStep && (
-          <SearchChoiceStep seed={state.searchChoice.seed} picked={engine} onPick={setEngine} />
-        )}
+        {choiceStep && <SearchChoiceStep state={state} picked={engine} onPick={setEngine} />}
 
         {step === 'search' && !choice && (
           <div className="flex flex-col gap-4">

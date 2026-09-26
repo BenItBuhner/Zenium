@@ -56,66 +56,251 @@ export const DEFAULT_SEARCH_ENGINES: SearchEngine[] = [
   }
 ]
 
-/**
- * Qwant's icon, carried inline: the 32 px PNG its home page links as its icon (`<link rel="icon"
- * sizes="32x32">`, 970 bytes; sha256 eab887d6…), since every stable icon address on
- * `www.qwant.com` (`/favicon.ico`, the touch icon) answers with
- * `Cross-Origin-Resource-Policy: same-origin` and the chrome's `<img>` – another origin's – is
- * refused it (`ERR_BLOCKED_BY_RESPONSE`), while the build asset that lacks the header is named
- * by a hash that changes with each deploy. The same picture the live address would show; no
- * request is made for it (`shared/favicons.ts` `faviconSrc` hands a `data:` icon back as it is),
- * and it stands under the settings' cap on an inline icon (`MAX_FAVICON`).
+// ---------------------------------------------------------------------------
+// The EEA's search-engine choice screen: Chrome's per-country lists (W6-2; DMA Art. 6(3))
+// ---------------------------------------------------------------------------
+
+/*
+ * Chromium's public search-engine data is the source of the choice screen's lists and of every
+ * engine it offers beyond the shipped ones – the DEPS repository
+ * `chromium.googlesource.com/external/search_engines_data` at `effde84e` (data version 214),
+ * checked out as `third_party/search_engines_data/resources/`:
+ *
+ * - `definitions/regional_settings.json` `elements.<CC>.search_engines`: the engines each EEA
+ *   country's screen offers (eight per country in this version; the order there is the
+ *   table's order, never the order shown – the screen shuffles with its run's seed), and
+ *   `aggregation.map_aliases`: the territories that take a member state's list;
+ * - `components/regional_capabilities/eea_countries_ids.h` `kEeaChoiceCountriesIds`: the
+ *   countries the screen is owed in – the thirty EEA states and seventeen territories;
+ * - `definitions/prepopulated_engines.json`: each engine's name, `search_url`, `suggest_url`
+ *   and `favicon_url`. Chromium's template words become the core's: `{searchTerms}` is `%s`,
+ *   `{inputEncoding}` is `UTF-8`, `{google:pathWildcard}` is nothing. Chrome's own attribution
+ *   (the `regulatory_extensions`' `client=cs-chrome`, `source=csChrome`, `fr=crmas`,
+ *   `PC=U316&FORM=CHROMN`, `addon=opensearch`) is not carried: it marks a search as Chrome's.
+ *   Bing's and Ecosia's `{language}` suggest parameter is not carried either; the shipped
+ *   templates stand for the shipped engines.
+ *
+ * Templates are verified by their documented shape (`shared/__tests__/searchChoiceEngines.test.ts`
+ * renders a query into each and reads the address back), not by a request from wherever the
+ * build runs: an engine that answers a data-centre address with a 429 or a captcha is not a
+ * broken engine. Chrome bundles its engines' icons and marketing lines from a repository that
+ * is not public (`search_engines_data_internal`, `enable_builtin_search_provider_assets` is
+ * `is_internal_chrome_branded`); the renderer bundles the icons by engine id from each engine's
+ * documented `favicon_url` (`renderer/lib/searchEngineIcons.ts`), so the screen asks no engine
+ * for anything before the user has chosen. `favicon` here is that documented address – the
+ * reference a synced list carries, never the picture.
  */
-const QWANT_ICON =
-  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAACXBIWXMAAAsTAAALEwEAmpwYAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAANfSURBVHgBxZdbSBRRGMf/ZzQRLFvX3YLSrVxrE2qNtLJ7Tz0UlJlJht0sootYmdVjGUaUFOEFpUQrtIdQqocySstblBZu4TVdqchcwcuuq4nb5kxzTrkZ3kbbbX+wzP/M/jnfd85855wZgt/4+WmiQRAtAKvhWF5xIDeamxtu0YYLC67WXBYIrohSBcfjKw4yVO7lDaOxs4TMVS/cRyBkwwm4cvxGFy+54qaoZ8EJ8ALx5QAhGA7C1dV1PEsgBwdyJj5uPIuXwxJQKhWIiAiHu7v7mD5aA+dhR3x9fLA9LBTHjh2BWu0HjWYBpk6bCpPJBLO5Z5jf7jMwwA+gvb0DXV1G1jabzegRA48UnELmqTUCJkDIiuUIDNTC31/N2t1ix7oqHQqLimCxfLf5PD09UV76HNolY9e45Efg4zMbGelpOB4bA+3iRaiurhVH2o7goCAcPLAfoVu3oLf3G+rq6pnfYrFgirgKKirfjNmvpBmgwe/m3GHXlpav2BW1h10HiTsRi5iYo0wnXryErOzbkIqkGogVR02DU5JTUv8KTrl2PRmGtjamz5w+ZfPaJQHaWXjYNqb7+/uRl39/RN+jxwXs6ubmhl2RkZDKuAkEBATYdE1N7ai+hvoPNr1u7RrYLYEF8/1t2mq1juobfAQUmWw67JaA1frDpgWBH9Un8PwQn/SVPW4CBoPBppUzZo7qU6n+vEp8aWmB3RIoKS1ja5oyR+XLNpiRCF4WZNMviktgtwToVpqTm8s0rfDInRHDPHSlrF+3lunWVgMKCp5AKpL2gZTUDDQ2NjF95PAhdsgMQmfkQsI5KBUKDAzwSLiQOGyfGAvJZ4GHhwfiTh7H3j1R4DgOrysq0dfXJ27FS1kStJ2UdBW6d+8xESZ8GMnlXgjUahG2bSs2b96Ee3n5yMzMgl7fzP6nh1X4ju2Ijz8rqb8JJzAIHfXDB/msMGmdmEzdbP3T+8XFpYg+eEhSP5N+H6BBo3bvRVn5SxZUNWSFVOl0kvuZ9AwMJSRkBdasWgmFwhuNTXo8fVYouRDtksC/QB8BD+dhpgmUwkkQ4C1HBD4VzoIjaS5GY1e9zFtJxGw24D8iEJLwUd+Qzr6OTV0dxTK58jMhRAZClOItNzgCQjrFX6UYfP8n/a/P85/0pB9LQ2JScwAAAABJRU5ErkJggg=='
+
+/** Yahoo's country editions: one template shape, the country's host (Chromium's `yahoo_<cc>`). */
+function yahoo(id: string, host: string, name = 'Yahoo Search'): SearchEngine {
+  return {
+    id,
+    name,
+    searchUrl: `https://${host}/search?ei=UTF-8&p=%s`,
+    suggestUrl: `https://${host}/sugg/chrome?output=fxjson&command=%s`,
+    keyword: '@yahoo',
+    glyph: 'Y',
+    favicon: `https://${host}/favicon.ico`
+  }
+}
 
 /**
- * The static set the EEA's search-engine choice screen (W6-2; DMA Art. 6(3), Chrome's
- * `chrome://search-engine-choice`) offers on top of the shipped engines: general web search
- * engines with a presence in the EEA that Zenium does not ship for everyone. Each entry's
- * search, suggest and icon addresses were verified by a real request before it joined; an
- * engine none of whose endpoints answered from here (Brave Search, Yahoo, Startpage at the time
- * of writing) is left out rather than offered blind. Not in `DEFAULT_SEARCH_ENGINES`: the engine
- * the screen sets as the default is copied into the user's list (`settings.searchEngines`) by
- * the core, so the id resolves on every device the profile syncs to, and it stands under
- * Added in Settings › Search as an engine the user chose.
+ * The engines the choice screen offers that Zenium does not ship for everyone, as Chromium's
+ * `prepopulated_engines.json` defines them (the key there is the id here). Not in
+ * `DEFAULT_SEARCH_ENGINES`: the one the screen sets as the default is copied into the user's
+ * list (`settings.searchEngines`) by the core, so the id resolves on every device the profile
+ * syncs to, and it stands under Added in Settings › Search as an engine the user chose.
  */
-export const EEA_SEARCH_ENGINES: SearchEngine[] = [
+export const SEARCH_CHOICE_EXTRA_ENGINES: readonly SearchEngine[] = [
+  {
+    id: 'brave',
+    name: 'Brave',
+    searchUrl: 'https://search.brave.com/search?q=%s',
+    suggestUrl: 'https://search.brave.com/api/suggest?q=%s&rich=true&rich_verticals=true',
+    keyword: '@brave',
+    glyph: 'B',
+    favicon: 'https://cdn.search.brave.com/serp/favicon.ico'
+  },
+  {
+    id: 'privacywall',
+    name: 'PrivacyWall',
+    searchUrl: 'https://www.privacywall.org/search/secure/?q=%s',
+    suggestUrl: 'https://search.privacywall.org/suggest.php?q=%s',
+    keyword: '@privacywall',
+    glyph: 'P',
+    favicon: 'https://www.privacywall.org/images/favicon_32x32.ico'
+  },
   {
     id: 'qwant',
     name: 'Qwant',
     searchUrl: 'https://www.qwant.com/?q=%s',
-    suggestUrl: 'https://api.qwant.com/v3/suggest/?q=%s&client=opensearch',
+    suggestUrl: 'https://api.qwant.com/api/suggest/?q=%s',
     keyword: '@qwant',
     glyph: 'Q',
-    favicon: QWANT_ICON
-  }
+    favicon: 'https://www.qwant.com/favicon.ico'
+  },
+  {
+    id: 'seznam',
+    name: 'Seznam.cz',
+    searchUrl: 'https://search.seznam.cz/?q=%s',
+    suggestUrl: 'https://suggest.seznam.cz/fulltext_ff?phrase=%s',
+    keyword: '@seznam',
+    glyph: 'S',
+    favicon: 'https://search.seznam.cz/favicon.ico'
+  },
+  {
+    id: 'startpage',
+    name: 'Startpage',
+    searchUrl: 'https://www.startpage.com/sp/search?q=%s',
+    suggestUrl: 'https://www.startpage.com/osuggestions?q=%s',
+    keyword: '@startpage',
+    glyph: 'S',
+    favicon: 'https://www.startpage.com/favicon.ico'
+  },
+  {
+    id: 'yep',
+    name: 'Yep',
+    searchUrl: 'https://yep.com/web?q=%s',
+    suggestUrl: 'https://api.yep.com/ac/?query=%s&os=true',
+    keyword: '@yep',
+    glyph: 'Y',
+    favicon: 'https://cdn.yep.com/static/meta/favicon.ico'
+  },
+  yahoo('yahoo_at', 'at.search.yahoo.com'),
+  yahoo('yahoo_de', 'de.search.yahoo.com'),
+  yahoo('yahoo_dk', 'dk.search.yahoo.com'),
+  yahoo('yahoo_emea', 'emea.search.yahoo.com'),
+  yahoo('yahoo_es', 'es.search.yahoo.com', 'Yahoo Búsquedas'),
+  yahoo('yahoo_fi', 'fi.search.yahoo.com'),
+  yahoo('yahoo_fr', 'fr.search.yahoo.com', 'Yahoo Recherche'),
+  yahoo('yahoo_it', 'it.search.yahoo.com', 'Ricerca di Yahoo'),
+  yahoo('yahoo_nl', 'nl.search.yahoo.com'),
+  yahoo('yahoo_se', 'se.search.yahoo.com'),
+  yahoo('yahoo_uk', 'uk.search.yahoo.com')
 ]
 
 /**
- * The choice screen's eligible engines, in the registry's order (the screen shuffles them with
- * its session seed, `core/searchChoice.ts`): every shipped general web search engine and the
- * EEA set, each with one line of the engine's own words (its home page's or OpenSearch
- * description's line, not Zenium's). Wikipedia is shipped but not eligible: an encyclopedia's
- * search is not a web search engine, and the screen is about the default for web searches. No
- * entry is favoured; the order here is not the order shown.
+ * The choice screen's engines per EEA country, ISO 3166-1 alpha-2 → engine ids: Chromium's
+ * `regional_settings.json` `elements.<CC>.search_engines` at `effde84e`, `&`-references
+ * resolved to ids, in the table's order. Every id is a shipped engine's or one of
+ * `SEARCH_CHOICE_EXTRA_ENGINES`; Wikipedia ships but is on no list (an encyclopedia's search is
+ * not a web search engine, and neither Chrome's table nor this one names it).
  */
-export const SEARCH_CHOICE_ENGINES: ReadonlyArray<{ id: string; tagline: string }> = [
-  {
-    id: 'google',
-    tagline: "Search the world's information, including webpages, images, videos and more."
-  },
-  { id: 'duckduckgo', tagline: 'Protection. Privacy. Peace of mind.' },
-  { id: 'ecosia', tagline: 'The search engine that plants trees.' },
-  { id: 'bing', tagline: 'A smart search engine for the forever curious.' },
-  { id: 'qwant', tagline: "The search engine that doesn't know anything about you." }
-]
+export const EEA_SEARCH_CHOICE: Readonly<Record<string, readonly string[]>> = {
+  AT: ['google', 'brave', 'duckduckgo', 'ecosia', 'bing', 'yahoo_at', 'qwant', 'privacywall'],
+  BE: ['google', 'brave', 'duckduckgo', 'ecosia', 'bing', 'qwant', 'privacywall', 'yahoo_emea'],
+  BG: ['google', 'brave', 'duckduckgo', 'bing', 'yep', 'ecosia', 'qwant', 'yahoo_emea'],
+  HR: ['google', 'brave', 'duckduckgo', 'bing', 'ecosia', 'yep', 'privacywall', 'yahoo_emea'],
+  CY: ['google', 'brave', 'duckduckgo', 'bing', 'ecosia', 'qwant', 'yahoo_emea', 'privacywall'],
+  CZ: ['google', 'seznam', 'brave', 'duckduckgo', 'bing', 'ecosia', 'privacywall', 'yahoo_emea'],
+  DK: ['google', 'brave', 'duckduckgo', 'bing', 'ecosia', 'qwant', 'yahoo_dk', 'privacywall'],
+  EE: ['google', 'brave', 'duckduckgo', 'bing', 'ecosia', 'privacywall', 'qwant', 'yahoo_emea'],
+  FI: ['google', 'brave', 'duckduckgo', 'bing', 'ecosia', 'qwant', 'privacywall', 'yahoo_fi'],
+  FR: ['google', 'brave', 'ecosia', 'qwant', 'duckduckgo', 'bing', 'yahoo_fr', 'privacywall'],
+  DE: ['google', 'duckduckgo', 'brave', 'ecosia', 'bing', 'startpage', 'yahoo_de', 'qwant'],
+  GR: ['google', 'brave', 'duckduckgo', 'bing', 'yahoo_emea', 'ecosia', 'qwant', 'yep'],
+  HU: ['google', 'brave', 'bing', 'duckduckgo', 'ecosia', 'yep', 'qwant', 'yahoo_emea'],
+  IS: ['google', 'duckduckgo', 'brave', 'bing', 'ecosia', 'privacywall', 'qwant', 'yahoo_emea'],
+  IE: ['google', 'duckduckgo', 'brave', 'bing', 'yahoo_uk', 'ecosia', 'privacywall', 'qwant'],
+  IT: ['google', 'brave', 'bing', 'duckduckgo', 'ecosia', 'yahoo_it', 'qwant', 'privacywall'],
+  LV: ['google', 'brave', 'duckduckgo', 'bing', 'ecosia', 'privacywall', 'qwant', 'yahoo_emea'],
+  LI: ['google', 'duckduckgo', 'brave', 'bing', 'ecosia', 'startpage', 'qwant', 'privacywall'],
+  LT: ['google', 'brave', 'duckduckgo', 'bing', 'ecosia', 'qwant', 'yahoo_emea', 'yep'],
+  LU: ['google', 'brave', 'duckduckgo', 'bing', 'ecosia', 'qwant', 'yahoo_emea', 'privacywall'],
+  MT: ['google', 'brave', 'bing', 'duckduckgo', 'ecosia', 'privacywall', 'yahoo_emea', 'qwant'],
+  NL: ['google', 'duckduckgo', 'brave', 'bing', 'ecosia', 'privacywall', 'yahoo_nl', 'qwant'],
+  NO: ['google', 'duckduckgo', 'brave', 'bing', 'ecosia', 'yahoo_emea', 'privacywall', 'qwant'],
+  PL: ['google', 'brave', 'duckduckgo', 'bing', 'ecosia', 'yahoo_emea', 'privacywall', 'qwant'],
+  PT: ['google', 'brave', 'bing', 'duckduckgo', 'ecosia', 'yep', 'qwant', 'yahoo_emea'],
+  RO: ['google', 'brave', 'duckduckgo', 'bing', 'yahoo_emea', 'ecosia', 'yep', 'qwant'],
+  SK: ['google', 'brave', 'duckduckgo', 'bing', 'seznam', 'ecosia', 'privacywall', 'yahoo_emea'],
+  SI: ['google', 'brave', 'duckduckgo', 'bing', 'ecosia', 'yep', 'qwant', 'yahoo_emea'],
+  ES: ['google', 'brave', 'duckduckgo', 'bing', 'ecosia', 'yahoo_es', 'privacywall', 'qwant'],
+  SE: ['google', 'duckduckgo', 'brave', 'bing', 'ecosia', 'yahoo_se', 'qwant', 'privacywall']
+}
 
-/** The engine `id` names among the shipped and EEA engines, or null. */
+/**
+ * The territories Chrome owes the screen in (`kEeaChoiceCountriesIds`) that take a member
+ * state's list (`regional_settings.json` `aggregation.map_aliases`): Åland's is Finland's, the
+ * French overseas departments' and collectivities' France's, Ceuta, Melilla and the Canaries'
+ * Spain's, Svalbard's Norway's, the Vatican's Italy's.
+ */
+export const SEARCH_CHOICE_ALIASES: Readonly<Record<string, string>> = {
+  AX: 'FI',
+  BL: 'FR',
+  EA: 'ES',
+  GF: 'FR',
+  GP: 'FR',
+  IC: 'ES',
+  MF: 'FR',
+  MQ: 'FR',
+  NC: 'FR',
+  PF: 'FR',
+  PM: 'FR',
+  RE: 'FR',
+  SJ: 'NO',
+  TF: 'FR',
+  VA: 'IT',
+  WF: 'FR',
+  YT: 'FR'
+}
+
+/**
+ * The list for a screen asked for from Settings where the table has no list (outside the EEA,
+ * or the OS did not say): the shipped web search engines, the encyclopedia aside. Chrome shows
+ * no screen there; this is Zenium's own row's list, no engine's country in it.
+ */
+export const SEARCH_CHOICE_FALLBACK: readonly string[] = ['google', 'duckduckgo', 'ecosia', 'bing']
+
+/**
+ * The table's country for `region`, or null when the table has none: a member state's own
+ * code, a territory's through its alias (`SEARCH_CHOICE_ALIASES`).
+ */
+export function searchChoiceCountry(region: string | null | undefined): string | null {
+  if (!region) return null
+  const country = SEARCH_CHOICE_ALIASES[region] ?? region
+  return country in EEA_SEARCH_CHOICE ? country : null
+}
+
+/**
+ * The engine ids the screen offers for `region`, in the table's order: the region's country's
+ * list, else the fallback. The screen shuffles them with its run's seed (`core/searchChoice.ts`).
+ */
+export function searchChoiceEngineIds(region: string | null | undefined): readonly string[] {
+  const country = searchChoiceCountry(region)
+  return country ? EEA_SEARCH_CHOICE[country]! : SEARCH_CHOICE_FALLBACK
+}
+
+/**
+ * Each tile's second line, in the engine's own words where the engine states one line
+ * (its OpenSearch description's `<Description>`, or its home page's title or description),
+ * never Zenium's. Chrome shows each engine's marketing snippet the same way and, for an engine
+ * without one, "You can use <name> to search the web." – its neutral fallback line
+ * (`search_engine_choice_strings.grdp`); `searchChoiceTagline` says that for an engine not
+ * named here. Yahoo's editions share Yahoo's line.
+ */
+const SEARCH_CHOICE_TAGLINES: Readonly<Record<string, string>> = {
+  google: "Search the world's information, including webpages, images, videos and more.",
+  duckduckgo: 'Protection. Privacy. Peace of mind.',
+  ecosia: 'The search engine that plants trees.',
+  bing: 'A smart search engine for the forever curious.',
+  brave: 'Private, independent, open.',
+  privacywall: 'The search engine that protects your privacy.',
+  qwant: 'The search engine that values you as a user, not as a product.',
+  yahoo: 'Get the best of the web with Yahoo.'
+}
+
+/** The line under the engine's name on its tile: its own, or Chrome's neutral one. */
+export function searchChoiceTagline(engine: Pick<SearchEngine, 'id' | 'name'>): string {
+  const key = engine.id.startsWith('yahoo_') ? 'yahoo' : engine.id
+  return SEARCH_CHOICE_TAGLINES[key] ?? `You can use ${engine.name} to search the web.`
+}
+
+/** The engine `id` names among the shipped engines and the choice screen's, or null. */
 export function searchChoiceEngine(id: string): SearchEngine | null {
   return (
     DEFAULT_SEARCH_ENGINES.find((e) => e.id === id) ??
-    EEA_SEARCH_ENGINES.find((e) => e.id === id) ??
+    SEARCH_CHOICE_EXTRA_ENGINES.find((e) => e.id === id) ??
     null
   )
 }

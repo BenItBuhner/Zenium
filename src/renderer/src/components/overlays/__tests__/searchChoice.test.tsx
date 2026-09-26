@@ -179,14 +179,28 @@ describe('the tour’s search step in the EEA', () => {
     expect(q('h2')?.textContent).toBe('Choose your search engine')
     const group = q<HTMLElement>('[role="radiogroup"]')!
     expect(group.getAttribute('aria-labelledby')).toBe(q('h2')!.id)
-    // The run's order, from the state's seed – each tile the engine's name and its own line.
-    const expected = shuffledSearchChoiceTiles(SEED)
+    // Germany's list (Chrome's table) in the run's order, from the state's seed – each tile the
+    // engine's name, its own line and the icon bundled with the chrome (no request to the
+    // engine before the choice; never a picture inlined into the script).
+    const expected = shuffledSearchChoiceTiles('DE', SEED)
     expect(rows().map((r) => r.dataset.engine)).toEqual(expected.map((t) => t.engine.id))
-    expect(rows()).toHaveLength(5)
+    expect(rows()).toHaveLength(8)
+    expect(
+      rows()
+        .map((r) => r.dataset.engine)
+        .sort()
+    ).toEqual(
+      ['google', 'duckduckgo', 'brave', 'ecosia', 'bing', 'startpage', 'yahoo_de', 'qwant'].sort()
+    )
     rows().forEach((r, i) => {
       expect(r.getAttribute('aria-checked')).toBe('false')
       expect(r.querySelector('.zen-search-choice-name')?.textContent).toBe(expected[i]!.engine.name)
       expect(r.querySelector('.zen-search-choice-tagline')?.textContent).toBe(expected[i]!.tagline)
+      const icon = r.querySelector<HTMLImageElement>('.zen-search-choice-icon > img')
+      expect(icon, expected[i]!.engine.id).not.toBeNull()
+      expect(icon!.getAttribute('src')).toMatch(/search-engines\/[a-z]+\.png/)
+      expect(icon!.getAttribute('src')).not.toMatch(/^(https?:|data:)/)
+      expect(r.querySelector('.zen-search-choice-letter')).toBeNull()
     })
     // Nothing chosen for the user: the primary waits; the plain verb is the small one.
     expect(setDefault().disabled).toBe(true)

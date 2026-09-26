@@ -140,7 +140,13 @@ import {
   withDefaultSearchEngineActive
 } from '../shared/search'
 import { SearchEngineService } from './searchEngines'
-import { isSearchChoiceEngine, normalizeRegion, searchChoiceRecord } from './searchChoice'
+import {
+  isSearchChoiceEngine,
+  normalizeRegion,
+  searchChoiceListRegion,
+  searchChoiceRecord,
+  searchChoiceShownFor
+} from './searchChoice'
 import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
 import { copyConfirmation } from '../shared/clipboard'
 import { IMAGE_URL_PREFIX } from '../shared/zenPages'
@@ -3955,16 +3961,22 @@ export class Browser {
   }
 
   /**
-   * The choice screen's "Set as default" (W6-2): the picked engine – one of the screen's, or
-   * nothing happens – becomes the default (active, as `updateSettings` makes a default), and the
-   * device's record is written, so the screen is not owed again. An engine of the EEA set is
-   * not shipped: it is copied into the user's list first (`source: 'custom'`), so the id
-   * resolves on every device the profile syncs to and Settings › Search lists it under Added.
+   * The choice screen's "Set as default" (W6-2): the picked engine – one of the list shown for
+   * the region (`searchChoiceListRegion`), or nothing happens – becomes the default (active, as
+   * `updateSettings` makes a default), and the device's record is written – for the region the
+   * list was shown for (`searchChoiceShownFor`) – so the screen is not owed again. An engine of
+   * the screen's that is not shipped is copied into the user's list
+   * first, the registry's entry as it is (`id`, `name`, `searchUrl`, `suggestUrl`, `keyword`,
+   * `glyph`, `favicon` – the engine's documented icon address, a reference and never the
+   * picture) with `source: 'custom'`: the id resolves on every device the profile syncs to,
+   * the phone draws its icon from the address as it draws any added engine's, and Settings ›
+   * Search lists it under Added.
    */
   private chooseSearchEngine(engineId: string): boolean {
     const state = this.state
     const engine = searchChoiceEngine(engineId)
-    if (!engine || !isSearchChoiceEngine(engineId)) return false
+    const region = searchChoiceListRegion(state.searchChoiceRegion, state.settings.searchChoice)
+    if (!engine || !isSearchChoiceEngine(engineId, region)) return false
     if (!state.searchEngines.some((e) => e.id === engineId)) {
       state.settings.searchEngines = [
         ...(state.settings.searchEngines ?? []),
@@ -3977,7 +3989,11 @@ export class Browser {
         state.settings.searchEngines,
         engineId
       )
-    state.settings.searchChoice = searchChoiceRecord(engineId, state.searchChoiceRegion, Date.now())
+    state.settings.searchChoice = searchChoiceRecord(
+      engineId,
+      searchChoiceShownFor(state.searchChoiceRegion, state.settings.searchChoice),
+      Date.now()
+    )
     state.searchChoiceSession.askAgain = false
     state.searchChoiceSession.skipped = false
     state.commit()

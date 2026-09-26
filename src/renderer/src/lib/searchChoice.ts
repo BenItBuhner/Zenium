@@ -1,4 +1,5 @@
 import type { UIState } from '@shared/types'
+import { searchChoiceListRegion } from '@core/searchChoice'
 
 /**
  * The EEA's search-engine choice screen (W6-2; DMA Art. 6(3)) on the desktop and tablet
@@ -35,4 +36,15 @@ export function searchChoiceCovers(
  */
 export function tourAsksSearchChoice(state: Pick<UIState, 'searchChoice'>): boolean {
   return state.searchChoice?.required === true
+}
+
+/**
+ * The region whose list the screen draws (`shuffledSearchChoiceTiles`): the core's resolution
+ * over the host's region and the device's record (`searchChoiceListRegion`), so the list shown
+ * is the list `searchChoice.choose` accepts a pick from.
+ */
+export function searchChoiceListRegionOf(
+  state: Pick<UIState, 'settings' | 'searchChoice'>
+): string | null {
+  return searchChoiceListRegion(state.searchChoice?.region, state.settings.searchChoice)
 }

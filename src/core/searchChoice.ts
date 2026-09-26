@@ -10,49 +10,35 @@
  * not run as a startup hook: the core's boot sequence is untouched.
  */
 import type { SearchChoiceRecord, SearchChoiceState, SearchEngine } from '../shared/types'
-import { SEARCH_CHOICE_ENGINES, searchChoiceEngine } from '../shared/search'
+import {
+  EEA_SEARCH_CHOICE,
+  SEARCH_CHOICE_ALIASES,
+  searchChoiceCountry,
+  searchChoiceEngine,
+  searchChoiceEngineIds,
+  searchChoiceTagline
+} from '../shared/search'
 
 /**
- * The European Economic Area: the EU's twenty-seven and the three EFTA states in the Area
- * (Iceland, Liechtenstein, Norway). ISO 3166-1 alpha-2, as `app.getLocaleCountryCode()` reports
- * the OS region. Territories with their own codes (Åland, the French overseas departments,
- * Svalbard) are not listed; Chrome's set is the lead's to compare.
+ * Where the screen is owed: the European Economic Area as Chrome's choice screen has it
+ * (`components/regional_capabilities/eea_countries_ids.h` `kEeaChoiceCountriesIds`) – the EU's
+ * twenty-seven, the three EFTA states in the Area (Iceland, Liechtenstein, Norway) and the
+ * seventeen territories with codes of their own that take a member state's list (Åland, the
+ * French overseas departments and collectivities, Ceuta, Melilla and the Canaries, Svalbard,
+ * the Vatican; `SEARCH_CHOICE_ALIASES`). ISO 3166-1 alpha-2, as `app.getLocaleCountryCode()`
+ * reports the OS region.
  */
 export const EEA_REGIONS: ReadonlySet<string> = new Set([
-  'AT',
-  'BE',
-  'BG',
-  'HR',
-  'CY',
-  'CZ',
-  'DK',
-  'EE',
-  'FI',
-  'FR',
-  'DE',
-  'GR',
-  'HU',
-  'IE',
-  'IT',
-  'LV',
-  'LT',
-  'LU',
-  'MT',
-  'NL',
-  'PL',
-  'PT',
-  'RO',
-  'SK',
-  'SI',
-  'ES',
-  'SE',
-  'IS',
-  'LI',
-  'NO'
+  ...Object.keys(EEA_SEARCH_CHOICE),
+  ...Object.keys(SEARCH_CHOICE_ALIASES)
 ])
 
-/** The eligible list's revision, written into each record. */
-export const SEARCH_CHOICE_VERSION = 1
+/**
+ * The eligible lists' revision, written into each record: 2 since the lists became Chrome's
+ * per-country tables (a version-1 record – the first list – stands; the screen is not owed
+ * again for a new list).
+ */
+export const SEARCH_CHOICE_VERSION = 2
 
 /** A region as a two-letter upper-case code, or null for anything else (`''`, junk, absent). */
 export function normalizeRegion(raw: unknown): string | null {
@@ -114,29 +100,63 @@ export interface SearchChoiceTile {
 }
 
 /**
- * The eligible engines in the registry's order (`SEARCH_CHOICE_ENGINES`): the shipped web
- * search engines and the EEA set, each with its line. An id the registry no longer resolves is
- * left out rather than drawn without an engine behind it.
+ * The region whose list the screen shows: the host's region when the table has a list for it
+ * (a member state's, a territory's through its alias); else – Settings' "Choose your search
+ * engine again" from outside the EEA, or after a move – the region the device's record was
+ * made for, when the table has that one; else null, and the list is the fallback
+ * (`searchChoiceEngineIds`). One resolution for the core's `choose` and the chrome's list, so
+ * the tile picked is always one the core accepts.
  */
-export function searchChoiceTiles(): SearchChoiceTile[] {
+export function searchChoiceListRegion(
+  region: string | null | undefined,
+  record: Pick<SearchChoiceRecord, 'region'> | null | undefined
+): string | null {
+  return searchChoiceCountry(region) ?? searchChoiceCountry(record?.region) ?? null
+}
+
+/**
+ * The region `choose` records the screen as shown for: the host's when the table has its list
+ * (a territory's own code, not its alias's); else the record's, when the table has that one –
+ * the device moved, and keeps the list it was given, as Chrome keeps the country at install;
+ * else the host's as it is (the fallback list was shown).
+ */
+export function searchChoiceShownFor(
+  region: string | null,
+  record: Pick<SearchChoiceRecord, 'region'> | null | undefined
+): string | null {
+  if (searchChoiceCountry(region)) return region
+  if (record && searchChoiceCountry(record.region)) return record.region
+  return region
+}
+
+/**
+ * The tiles for `region` in the table's order (`EEA_SEARCH_CHOICE`; the fallback list for a
+ * region the table has no list for), each engine with its line. An id the registry does not
+ * resolve is left out rather than drawn without an engine behind it.
+ */
+export function searchChoiceTiles(region: string | null | undefined): SearchChoiceTile[] {
   const tiles: SearchChoiceTile[] = []
-  for (const { id, tagline } of SEARCH_CHOICE_ENGINES) {
+  for (const id of searchChoiceEngineIds(region)) {
     const engine = searchChoiceEngine(id)
-    if (engine) tiles.push({ engine, tagline })
+    if (engine) tiles.push({ engine, tagline: searchChoiceTagline(engine) })
   }
   return tiles
 }
 
-/** The tiles in the session's order: the registry's list shuffled with `seed` (stable for one seed). */
-export function shuffledSearchChoiceTiles(seed: number): SearchChoiceTile[] {
-  return seededShuffle(searchChoiceTiles(), seed)
+/**
+ * The tiles in the run's order: the region's list shuffled with `seed` (stable for one seed),
+ * as Chrome shuffles each country's whole list with a seed it keeps.
+ */
+export function shuffledSearchChoiceTiles(
+  region: string | null | undefined,
+  seed: number
+): SearchChoiceTile[] {
+  return seededShuffle(searchChoiceTiles(region), seed)
 }
 
-/** Whether `engineId` is one the screen may set as the default. */
-export function isSearchChoiceEngine(engineId: string): boolean {
-  return (
-    SEARCH_CHOICE_ENGINES.some((e) => e.id === engineId) && searchChoiceEngine(engineId) !== null
-  )
+/** Whether `engineId` is one the screen for `region` may set as the default. */
+export function isSearchChoiceEngine(engineId: string, region: string | null | undefined): boolean {
+  return searchChoiceEngineIds(region).includes(engineId) && searchChoiceEngine(engineId) !== null
 }
 
 /** A seed for the run's order: 32 bits from `random` (Math.random by default). */

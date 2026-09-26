@@ -4,8 +4,9 @@ import type { SearchEngine, UIState } from '@shared/types'
 import { resolveTheme } from '@shared/theme'
 import { shuffledSearchChoiceTiles, type SearchChoiceTile } from '@core/searchChoice'
 import { run } from '@renderer/lib/api'
-import { useFaviconSrc } from '@renderer/lib/favicons'
 import { KEEPS_KEYBOARD_ATTR } from '@renderer/lib/panes'
+import { searchChoiceListRegionOf } from '@renderer/lib/searchChoice'
+import { bundledSearchEngineIcon } from '@renderer/lib/searchEngineIcons'
 import { Button } from '../ui/button'
 
 /*
@@ -22,20 +23,17 @@ export const SEARCH_CHOICE_TITLE = 'Choose your search engine'
 export const SEARCH_CHOICE_DESCRIPTION =
   'Searches from the address bar go to the engine you pick. The list is in a random order and nothing is chosen for you. You can change this any time in Settings › Search.'
 
-/** The engine's icon at 24 in its 32 box: the favicon, or the letter the address bar shows for it. */
+/**
+ * The engine's icon at 24 in its 32 box: the picture bundled with the chrome for it
+ * (`bundledSearchEngineIcon`; nothing is asked of the engine before the user has chosen), or
+ * the letter the address bar shows for it.
+ */
 function EngineIcon({ engine }: { engine: SearchEngine }): JSX.Element {
-  const [broken, setBroken] = useState(false)
-  const favicon = useFaviconSrc(engine.favicon)
+  const icon = bundledSearchEngineIcon(engine.id)
   return (
     <span className="zen-search-choice-icon" aria-hidden="true">
-      {favicon && !broken ? (
-        <img
-          src={favicon}
-          alt=""
-          referrerPolicy="no-referrer"
-          draggable={false}
-          onError={() => setBroken(true)}
-        />
+      {icon ? (
+        <img src={icon} alt="" draggable={false} />
       ) : (
         <span className="zen-search-choice-letter">{engine.glyph}</span>
       )}
@@ -135,20 +133,24 @@ export function SearchChoiceList({
 
 /**
  * The step's content: the title block and the list, for the tour's search step and the
- * standalone screen alike. `seed` is the run's (`UIState.searchChoice.seed`): the order holds
- * while the app is open, and holds between the tour's step and the screen after it.
+ * standalone screen alike. The list is the region's (`searchChoiceListRegionOf`: the host's
+ * region's, a territory's through its alias, the record's after a move, else the fallback);
+ * the order is the run's (`UIState.searchChoice.seed`): it holds while the app is open, and
+ * holds between the tour's step and the screen after it.
  */
 export function SearchChoiceStep({
-  seed,
+  state,
   picked,
   onPick
 }: {
-  seed: number
+  state: Pick<UIState, 'settings' | 'searchChoice'>
   picked: string | null
   onPick(engineId: string): void
 }): JSX.Element {
   const titleId = useId()
-  const tiles = useMemo(() => shuffledSearchChoiceTiles(seed), [seed])
+  const region = searchChoiceListRegionOf(state)
+  const seed = state.searchChoice.seed
+  const tiles = useMemo(() => shuffledSearchChoiceTiles(region, seed), [region, seed])
   return (
     <div className="flex flex-col gap-4" data-testid="search-choice">
       <div className="flex flex-col gap-2">
@@ -237,7 +239,7 @@ export function SearchChoiceScreen({ state }: { state: UIState }): JSX.Element {
         className="zen-panel zen-animate-pop relative w-[640px] max-w-[calc(100%-32px)] p-8 outline-none"
         {...{ [KEEPS_KEYBOARD_ATTR]: '' }}
       >
-        <SearchChoiceStep seed={state.searchChoice.seed} picked={picked} onPick={setPicked} />
+        <SearchChoiceStep state={state} picked={picked} onPick={setPicked} />
         <div className="mt-8 flex items-center justify-end">
           <SearchChoiceActions picked={picked} onSkip={skip} onChoose={choose} />
         </div>
