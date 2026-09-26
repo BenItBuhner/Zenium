@@ -44,7 +44,11 @@ export function hiddenAtThisWidth(
   return hidden.includes(control)
 }
 
-/** The controls folded away, in the bar's order – what the Settings row counts. */
+/**
+ * The controls folded away, in the bar's order – Home among them at rest, since it is folded by
+ * default (`toolbarDefaultPinned`). The Settings row counts departures from the default bar
+ * instead (`toolbarDepartures`), a shown Home included.
+ */
 export function foldedControls(pins: UIState['settings']['toolbarPins']): ToolbarControl[] {
   return TOOLBAR_CONTROLS.filter((control) => !toolbarPinned(pins, control))
 }

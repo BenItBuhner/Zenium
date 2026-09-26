@@ -18,6 +18,7 @@ import {
   CameraOff,
   Copy,
   File,
+  House,
   Info,
   Languages,
   Leaf,
@@ -110,7 +111,8 @@ import {
 /**
  * Back, forward, reload, the puzzle piece and the menu: in the row at every width, never folded
  * by the tier. Forward alone can leave it by a setting (Look and Feel › Customise toolbar,
- * `fixedButtons` below), and the puzzle piece stands only while there are extensions.
+ * `fixedButtons` below), Home joins it by one (Appearance › Show home button, off by default),
+ * and the puzzle piece stands only while there are extensions.
  */
 const FIXED_BUTTONS = 5
 
@@ -275,6 +277,9 @@ export function NavRow({
   const { formFactor } = useViewport()
   const pins = pinsFor(state, formFactor)
   const forwardUp = toolbarPinned(pins, 'forward')
+  // Home is the one control folded by default (settings-32; Chrome's `show_home_button`): shown,
+  // it joins the fixed set after Reload, as Chrome's `HomeButton` sits before the location bar.
+  const homeUp = toolbarPinned(pins, 'home')
   const readerPinned = toolbarPinned(pins, 'reader')
   const translatePinned = toolbarPinned(pins, 'translate')
   const starPinned = toolbarPinned(pins, 'star')
@@ -297,8 +302,8 @@ export function NavRow({
   const downloadsUp = downloadButtonVisible(state, downloadsUiState)
   const puzzleUp = actionable(state.extensions).length > 0
   // Forward folded by its pin leaves the fixed set (the hub's tier and the extensions' overflow
-  // count the buttons actually in the row); a trailing control joins it.
-  const fixedButtons = FIXED_BUTTONS - (forwardUp ? 0 : 1) + (trailing ? 1 : 0)
+  // count the buttons actually in the row); Home shown by its pin and a trailing control join it.
+  const fixedButtons = FIXED_BUTTONS - (forwardUp ? 0 : 1) + (homeUp ? 1 : 0) + (trailing ? 1 : 0)
   const hubUp =
     mediaPinned &&
     mediaHubVisible(state) &&
@@ -520,6 +525,32 @@ export function NavRow({
           <RotateCw className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
         )}
       </button>
+      {homeUp && (
+        /*
+          Chrome's Home button (settings-32; `HomeButton`, seated after Reload and before the
+          location bar), shown by Appearance's "Show home button" – the `home` pin – and running
+          `nav.home`, the one Home with Alt+Home and the menu bar's row: the home page set under
+          Appearance (a page of the user's or the new tab page). Chrome's names: the accessible
+          name "Home", the tooltip "Open the home page" – each carrying the chord, as the row's
+          names and tooltips do (a11y-26). Right-clicked it is one of the pinned
+          controls (`data-zen-menu="toolbar"` with its control, W8-1's pinned-button menu –
+          Unpin, Customise Toolbar…; before that menu lands the mark reads as no target and the
+          bar's own menu shows, as on Back). Desktop layout alone, as the pins are.
+        */
+        <button
+          type="button"
+          className="zen-toolbar-button"
+          aria-label={hint('Home', state, 'nav.home')}
+          data-tooltip={hint('Open the home page', state, 'nav.home')}
+          data-zen-home-button
+          data-zen-menu="toolbar"
+          data-zen-menu-control="home"
+          disabled={!tab}
+          onClick={() => run('nav.home', undefined)}
+        >
+          <House className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
+        </button>
+      )}
       {!compact && (
         /*
           The pill is a group, not a button: the address and each chip inside it are buttons of

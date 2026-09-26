@@ -43,7 +43,8 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 const { buildSection } = await import('../sections')
 const { findRow } = await import('../model')
 const { DialogStack } = await import('../dialogs')
-const { DOWNLOADS_UNCHECKED, HIDDEN_AT_THIS_WIDTH } = await import('../CustomizeToolbarForm')
+const { DOWNLOADS_UNCHECKED, HIDDEN_AT_THIS_WIDTH, HOME_UNCHECKED } =
+  await import('../CustomizeToolbarForm')
 
 type Ctx = Parameters<typeof buildSection>[1]
 type Row = NonNullable<ReturnType<typeof findRow>>
@@ -183,22 +184,25 @@ describe('Look and Feel › the toolbar rows (settings-36)', () => {
     const appearance = groups.find((g) => g.id === 'appearance')!
     const ids = appearance.rows.map((r) => r.id)
     const layout = ids.indexOf('toolbar-layout')
-    // The default bar: the switch and the dialog's row; Reset has nothing to undo and is not drawn.
-    expect(ids.slice(layout, layout + 4)).toEqual([
+    // The default bar: the two switches (Home's off, so its page rows are not drawn – W8-3) and
+    // the dialog's row; Reset has nothing to undo and is not drawn.
+    expect(ids.slice(layout, layout + 5)).toEqual([
       'toolbar-layout',
       'show-forward-button',
+      'show-home-button',
       'customize-toolbar',
       'tabs-right'
     ])
-    for (const id of ['show-forward-button', 'customize-toolbar']) {
+    for (const id of ['show-forward-button', 'show-home-button', 'customize-toolbar']) {
       expect(row(groups, id).layouts).toEqual(['desktop'])
     }
     // With a control folded, Reset takes the row after the dialog's.
     const folded = look(state({ toolbarPins: { star: false } })).groups
     const foldedIds = folded.find((g) => g.id === 'appearance')!.rows.map((r) => r.id)
-    expect(foldedIds.slice(layout, layout + 5)).toEqual([
+    expect(foldedIds.slice(layout, layout + 6)).toEqual([
       'toolbar-layout',
       'show-forward-button',
+      'show-home-button',
       'customize-toolbar',
       'toolbar-reset',
       'tabs-right'
@@ -206,9 +210,32 @@ describe('Look and Feel › the toolbar rows (settings-36)', () => {
     expect(row(folded, 'toolbar-reset').layouts).toEqual(['desktop'])
     for (const formFactor of ['phone', 'tablet'] as const) {
       const other = look(state({ toolbarPins: { star: false } }), formFactor).groups
-      for (const id of ['show-forward-button', 'customize-toolbar', 'toolbar-reset'])
+      for (const id of [
+        'show-forward-button',
+        'show-home-button',
+        'customize-toolbar',
+        'toolbar-reset'
+      ])
         expect(findRow(other, id), `${id} on the ${formFactor}`).toBeNull()
     }
+  })
+
+  it('a shown Home is a departure from the default bar too: the Reset row counts it and puts it back (W8-3)', () => {
+    const shown = look(state({ toolbarPins: { home: true } }))
+    const reset = row(shown.groups, 'toolbar-reset')
+    expect(reset).toMatchObject({
+      kind: 'action',
+      description: '1 control differs from the default bar.',
+      button: 'Reset to default'
+    })
+    if (reset.kind !== 'action') throw new Error('not an action')
+    reset.onPress?.()
+    expect(shown.patches).toEqual([{ toolbarPins: {}, downloads: { alwaysShowButton: false } }])
+    // A folded Forward beside a shown Home: two departures.
+    const both = look(state({ toolbarPins: { forward: false, home: true } }))
+    expect(row(both.groups, 'toolbar-reset').description).toBe(
+      '2 controls differ from the default bar.'
+    )
   })
 
   it('"Show forward button" is Forward’s pin: checked while the key is absent, writing the fold and the un-fold', () => {
@@ -301,6 +328,7 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
     const rows = controlRows(h)
     expect(rows.map((r) => r.dataset.row)).toEqual([
       'toolbar-control:forward',
+      'toolbar-control:home',
       'toolbar-control:reader',
       'toolbar-control:translate',
       'toolbar-control:star',
@@ -309,6 +337,7 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
     ])
     expect(rows.map((r) => r.querySelector('.zen-settings-label')?.textContent)).toEqual([
       'Forward',
+      'Home',
       'Reader View',
       'Translate',
       'Bookmark this page',
@@ -357,22 +386,24 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
     expect(source).not.toMatch(/zen-v2-check-row|<label\b|<input\b|function ControlRow/)
   })
 
-  it('checked is in the bar: the default bar has every box checked but Downloads, whose key is the downloads block’s', () => {
+  it('checked is in the bar: the default bar has every box checked but Home (Chrome ships it hidden) and Downloads, whose key is the downloads block’s', () => {
     const { h } = openDialog(state())
     for (const control of ['forward', 'reader', 'translate', 'star', 'media'])
       expect(box(h, control).checked, control).toBe(true)
+    expect(box(h, 'home').checked).toBe(false)
     expect(box(h, 'downloads').checked).toBe(false)
     act(() => root?.unmount())
     host?.remove()
     const folded = openDialog(
       state({
-        toolbarPins: { reader: false, media: false },
+        toolbarPins: { reader: false, media: false, home: true },
         downloads: { ...DEFAULT_SETTINGS.downloads, alwaysShowButton: true }
       })
     )
     expect(box(folded.h, 'reader').checked).toBe(false)
     expect(box(folded.h, 'media').checked).toBe(false)
     expect(box(folded.h, 'forward').checked).toBe(true)
+    expect(box(folded.h, 'home').checked).toBe(true)
     expect(box(folded.h, 'downloads').checked).toBe(true)
   })
 
@@ -384,6 +415,10 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
     expect(patches.at(-1)).toEqual({ toolbarPins: {} })
     act(() => box(h, 'downloads').click())
     expect(patches.at(-1)).toEqual({ downloads: { alwaysShowButton: true } })
+    // Home's row is Appearance's "Show home button" by another name: checking it writes the
+    // departure from its hidden default, `home: true` (W8-3).
+    act(() => box(h, 'home').click())
+    expect(patches.at(-1)).toEqual({ toolbarPins: { star: false, home: true } })
   })
 
   it('every row keeps its lines across its two states, so a toggle never moves the rows under the pointer (§9.2)', () => {
@@ -394,11 +429,12 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
           r.querySelector('.zen-settings-description')?.textContent ?? null
         ])
       )
-    // The default bar: Downloads unchecked, the others checked.
+    // The default bar: Home and Downloads unchecked, the others checked.
     const rest = openDialog(state())
     const atRest = lines(rest.h)
     expect(atRest).toEqual({
       forward: null,
+      home: HOME_UNCHECKED,
       reader: 'Shows on pages with an article.',
       translate: null,
       star: null,
@@ -410,7 +446,14 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
     // Every box the other way: the same lines, row for row.
     const flipped = openDialog(
       state({
-        toolbarPins: { forward: false, reader: false, translate: false, star: false, media: false },
+        toolbarPins: {
+          forward: false,
+          home: true,
+          reader: false,
+          translate: false,
+          star: false,
+          media: false
+        },
         downloads: { ...DEFAULT_SETTINGS.downloads, alwaysShowButton: true }
       })
     )

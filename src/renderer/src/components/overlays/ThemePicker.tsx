@@ -12,6 +12,7 @@ import {
 } from '@shared/theme'
 import { run } from '@renderer/lib/api'
 import { isDarkScheme } from '@renderer/lib/selectors'
+import { resetSpaceTheme } from '@renderer/lib/theme'
 import { cn, debounce } from '@renderer/lib/utils'
 import { Label } from '../ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
@@ -53,6 +54,13 @@ export function ThemePicker({ state, spaceId }: { state: UIState; spaceId: strin
   const update = (next: SpaceTheme | null): void => {
     setTheme(next)
     apply(next)
+  }
+  // "Reset theme" is the Settings theme row's "Reset to default" (settings-30): the one reset,
+  // `lib/theme.ts`, at once – an edit still in the debounce is dropped rather than applied over it.
+  const reset = (): void => {
+    apply.cancel()
+    setTheme(null)
+    resetSpaceTheme(space.id)
   }
   const patch = (p: Partial<SpaceTheme>): void => update({ ...(theme ?? defaultTheme()), ...p })
 
@@ -188,7 +196,7 @@ export function ThemePicker({ state, spaceId }: { state: UIState; spaceId: strin
           </div>
         </div>
         <div className="flex justify-end">
-          <Button variant="secondary" size="sm" onClick={() => update(null)}>
+          <Button variant="secondary" size="sm" onClick={reset}>
             Reset theme
           </Button>
         </div>

@@ -1,5 +1,13 @@
 import type { JSX, ReactNode } from 'react'
-import { ArrowRight, BookOpenText, Download, Languages, SquarePlay, Star } from 'lucide-react'
+import {
+  ArrowRight,
+  BookOpenText,
+  Download,
+  House,
+  Languages,
+  SquarePlay,
+  Star
+} from 'lucide-react'
 import { resolveDownloadSettings } from '@shared/downloads'
 import { toolbarPinned, withToolbarPin, type ToolbarControl } from '@shared/toolbarPins'
 import type { Settings, UIState } from '@shared/types'
@@ -14,10 +22,14 @@ import { RowView, type RowContext } from './rows'
  * Customize): the body of the 400 form dialog the row opens (`FormSheet.body: 'list'` – the
  * title block over a list, the footer form under it, design language v2 §9.20). The lead's
  * spec (§10.5): §6's desktop checkbox form, one 32 row per optional control in the bar's own
- * order – Forward, then the pill's chips left to right, then the media hub and the downloads
- * button – each row leading with the control's 16 glyph after the box; checked = in the bar,
- * unchecked = folded into the app menu, whose row for the control is what runs it then. The
- * address pill, Back, Reload and the ⋯ menu are the bar, not its options, and have no row.
+ * order – Forward and Home, then the pill's chips left to right, then the media hub and the
+ * downloads button – each row leading with the control's 16 glyph after the box; checked = in
+ * the bar, unchecked = folded into the app menu, whose row for the control is what runs it
+ * then. Home (settings-32; Chrome's `show_home_button`, the Appearance page's "Show home
+ * button" switch by another name – one setting, `toolbarPins.home`) is the one control off by
+ * default and the one with no menu row: unchecked there is simply no Home button, as Chrome's
+ * leaves the toolbar, and its row's line says so. The address pill, Back, Reload and the ⋯
+ * menu are the bar, not its options, and have no row.
  * No preview: the bar over the dialog is the preview and every change applies as it is made.
  * A control the window's width has tiered away (§9.29, `toolbarTiering`) stays checked and
  * says "Hidden at this width." as its 13/69 % description, never disabled; a control the page
@@ -72,6 +84,7 @@ export function CustomizeToolbarForm({
   })
   const rows: SwitchRow[] = [
     controlRow('forward', 'Forward', <ArrowRight />),
+    controlRow('home', 'Home', <House />, HOME_UNCHECKED),
     controlRow('reader', 'Reader View', <BookOpenText />, 'Shows on pages with an article.'),
     controlRow('translate', 'Translate', <Languages />),
     controlRow('star', 'Bookmark this page', <Star />),
@@ -113,6 +126,13 @@ export const HIDDEN_AT_THIS_WIDTH = 'Hidden at this width.'
  * says so whether the box is checked or not, so the row keeps its 52 across a toggle.
  */
 export const DOWNLOADS_UNCHECKED = 'Unchecked, shows once a download starts.'
+
+/**
+ * The Home row's line in both states: unchecked, Home is in no menu (Alt+Home and the menu
+ * bar's Home keep it reachable), and the line says where the button goes – the Appearance
+ * page's Home page rows set it – whether the box is checked or not, for the same 52.
+ */
+export const HOME_UNCHECKED = 'Opens the home page set under Appearance.'
 
 /**
  * A check row toggles in place and asks the page for no sheet; the rows' context has nothing to

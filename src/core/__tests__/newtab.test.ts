@@ -1787,7 +1787,11 @@ describe('NewTabService: the homepage (SET-36 / NTP-30)', () => {
     // An extension's homepage (chrome_settings_overrides) holds the destination over the user's.
     f.browser.handleCommand(win, 'settings.update', { homepage: { mode: 'newtab', url: '' } })
     f.browser.state.setExtensionControls({
-      homepage: { extensionId: 'a'.repeat(32), name: 'Bing Homepage', value: 'https://www.bing.com/' }
+      homepage: {
+        extensionId: 'a'.repeat(32),
+        name: 'Bing Homepage',
+        value: 'https://www.bing.com/'
+      }
     })
     f.browser.handleCommand(win, 'nav.home', undefined)
     expect(lastLoad(f)).toBe('https://www.bing.com/')

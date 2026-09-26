@@ -411,10 +411,33 @@ export const THEME_PRESETS: Array<{ name: string; theme: SpaceTheme }> = [
  * else "Custom" – a preset the editor changed, or colours of the user's own.
  */
 export function themeName(theme: SpaceTheme | null): string {
-  if (!theme || theme.colors.length === 0) return 'Default'
+  if (!theme || isDefaultLook(theme)) return 'Default'
   if (theme.fromImage === true) return 'From image'
   const preset = THEME_PRESETS.find((p) => sameTheme(p.theme, theme))
   return preset ? preset.name : 'Custom'
+}
+
+/** Whether a space has the base look – no theme, or one with no colours (what `resolveTheme` paints as the base). */
+export function isDefaultLook(theme: SpaceTheme | null): boolean {
+  return !theme || theme.colors.length === 0
+}
+
+/**
+ * The resolved theme with the OS accent in the theme's own (settings-116; Chrome's
+ * `follows_system_colors`, whose `kColorAccent` is the OS accent): `--zen-accent` takes it, and
+ * with it the controls' accent the tokens mix from it (`--v2-accent`: the primary button, the
+ * on switch, the focus ring, the selection). The default look alone – a themed space keeps the
+ * accent its colours give it, as Chrome's follow yields to an installed theme – and only where
+ * the host read an accent (`UIState.systemAccent`; Windows and macOS) and the switch is on.
+ */
+export function withSystemAccent(
+  resolved: ResolvedTheme,
+  theme: SpaceTheme | null,
+  accent: string | null
+): ResolvedTheme {
+  if (!accent || !isDefaultLook(theme)) return resolved
+  const rgb = hexToRgb(accent)
+  return rgb ? { ...resolved, accent: rgb } : resolved
 }
 
 function sameTheme(a: SpaceTheme, b: SpaceTheme): boolean {

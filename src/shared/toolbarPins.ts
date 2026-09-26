@@ -87,9 +87,17 @@ export function withToolbarPin(
   return next
 }
 
-/** Whether any control departs from the default bar: what "Reset to default" has to undo. */
-export function toolbarCustomized(pins: ToolbarPins | undefined): boolean {
-  return TOOLBAR_CONTROLS.some(
+/**
+ * The controls that depart from the default bar, in the bar's order – a folded Forward, a shown
+ * Home: what the Settings row counts and "Reset to default" has to undo.
+ */
+export function toolbarDepartures(pins: ToolbarPins | undefined): ToolbarControl[] {
+  return TOOLBAR_CONTROLS.filter(
     (control) => toolbarPinned(pins, control) !== toolbarDefaultPinned(control)
   )
+}
+
+/** Whether any control departs from the default bar: what "Reset to default" has to undo. */
+export function toolbarCustomized(pins: ToolbarPins | undefined): boolean {
+  return toolbarDepartures(pins).length > 0
 }

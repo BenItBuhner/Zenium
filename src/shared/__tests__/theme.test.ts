@@ -15,6 +15,7 @@ import {
   hexToRgb,
   hslToRgb,
   isDarkColor,
+  isDefaultLook,
   makeTheme,
   mix,
   panelBase,
@@ -28,7 +29,8 @@ import {
   toMonochrome,
   unfollowedTheme,
   wantsLightInk,
-  wheelToColor
+  wheelToColor,
+  withSystemAccent
 } from '../theme'
 import type { SpaceTheme } from '../types'
 
@@ -306,5 +308,39 @@ describe('themeName (settings-30: the Appearance theme row)', () => {
     expect(themeName(makeTheme('#c82828'))).toBe('Custom')
     expect(themeName(PRIVATE_THEME)).toBe('Custom')
     expect(themeName({ ...ocean, fromImage: true })).toBe('From image')
+  })
+
+  it('isDefaultLook: no theme, or one with no colours, is the base look', () => {
+    expect(isDefaultLook(null)).toBe(true)
+    expect(isDefaultLook({ ...makeTheme('#9d7cff'), colors: [] })).toBe(true)
+    expect(isDefaultLook(makeTheme('#9d7cff'))).toBe(false)
+    expect(isDefaultLook(THEME_PRESETS[0].theme)).toBe(false)
+  })
+})
+
+describe('withSystemAccent (settings-116: "Use system accent colour")', () => {
+  const light = resolveTheme(null, false)
+  const dark = resolveTheme(null, true)
+
+  it('puts the OS accent in the default look’s accent, light and dark alike, and touches nothing else', () => {
+    const lit = withSystemAccent(light, null, '#0078d4')
+    expect(lit.accent).toEqual([0, 120, 212])
+    expect({ ...lit, accent: light.accent }).toEqual(light)
+    const dimmed = withSystemAccent(dark, null, '#0078D4')
+    expect(dimmed.accent).toEqual([0, 120, 212])
+    expect({ ...dimmed, accent: dark.accent }).toEqual(dark)
+    // A theme with no colours is the base look too.
+    expect(
+      withSystemAccent(light, { ...makeTheme('#9d7cff'), colors: [] }, '#0078d4').accent
+    ).toEqual([0, 120, 212])
+  })
+
+  it('yields to a themed space, to no accent read, and to an accent it cannot parse', () => {
+    const ocean = THEME_PRESETS[1].theme
+    const themed = resolveTheme(ocean, false)
+    expect(withSystemAccent(themed, ocean, '#0078d4')).toBe(themed)
+    expect(withSystemAccent(light, null, null)).toBe(light)
+    expect(withSystemAccent(light, null, '')).toBe(light)
+    expect(withSystemAccent(light, null, 'not-a-colour')).toBe(light)
   })
 })

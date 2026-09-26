@@ -276,5 +276,55 @@ describe('the desktop toolbar’s pins (settings-36)', () => {
     expect(forwardButton()).not.toBeNull()
     expect(q('[data-bm-star]')).not.toBeNull()
     expect(q('[data-zen-media-hub-button]')).not.toBeNull()
+    // Home is a desktop pin too: the tablet's bar never draws it, shown or not.
+    expect(homeButton()).toBeNull()
+  })
+})
+
+const homeButton = (): HTMLButtonElement | null => q<HTMLButtonElement>('[data-zen-home-button]')
+
+describe('the Home button (settings-32; Chrome’s HomeButton under "Show home button")', () => {
+  it('is folded by default – no button with no pins recorded, as Chrome ships its toolbar', () => {
+    render(<NavRow state={state(page)} tab={page} compact={false} />)
+    expect(homeButton()).toBeNull()
+    render(<NavRow state={state(page, { toolbarPins: {} })} tab={page} compact={false} />)
+    expect(homeButton()).toBeNull()
+  })
+
+  it('shown by its pin it seats after Reload and before the address pill, as Chrome’s does, named Home with its chord and Chrome’s tooltip, and a click runs nav.home', () => {
+    render(
+      <NavRow state={state(page, { toolbarPins: { home: true } })} tab={page} compact={false} />
+    )
+    const home = homeButton()
+    expect(home).not.toBeNull()
+    expect(home!.className).toBe('zen-toolbar-button')
+    expect(nameOf(home!)).toBe('Home (Alt+Home)')
+    expect(home!.dataset.tooltip).toBe('Open the home page (Alt+Home)')
+    // The seat: Back, Forward, Reload, Home, then the pill.
+    const row = q('[data-zen-nav-row]')!
+    const children = [...row.children]
+    const at = children.indexOf(home!)
+    const before = children
+      .slice(0, at)
+      .filter((c): c is HTMLButtonElement => c.tagName === 'BUTTON')
+    expect(before.map((b) => nameOf(b).split(' (')[0])).toEqual(['Back', 'Forward', 'Reload'])
+    expect(
+      children[at + 1]?.querySelector('[data-zen-url-pill]') ?? children[at + 1]
+    ).not.toBeNull()
+    // Right-clicked it is a pinned control (W8-1's menu: Unpin, Customise Toolbar…).
+    expect(home!.dataset.zenMenu).toBe('toolbar')
+    expect(home!.dataset.zenMenuControl).toBe('home')
+    act(() => home!.click())
+    expect(run).toHaveBeenCalledWith('nav.home', undefined)
+    // The compact rail follows the same pin.
+    render(<NavRow state={state(page, { toolbarPins: { home: true } })} tab={page} compact />)
+    expect(homeButton()).not.toBeNull()
+  })
+
+  it('rests disabled without a tab, as Reload does', () => {
+    render(
+      <NavRow state={state(page, { toolbarPins: { home: true } })} tab={null} compact={false} />
+    )
+    expect(homeButton()!.disabled).toBe(true)
   })
 })
