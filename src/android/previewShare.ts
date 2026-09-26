@@ -4,9 +4,10 @@ import type { PreviewShareKind } from './previewSpec'
 /*
  * The browser's own share panel staged for the preview host (`share=<kind>` in a preview state,
  * and the stand-in host's `app.share` below Android 14): the request `Share.kt` would send for
- * the active page, a selection's text or an image, with a row of stand-in apps in place of the
- * device's – drawn launcher icons as `data:` URLs, the shapes adaptive icons come in – so the
- * panel is looked at with no emulator involved.
+ * the active page, a selection's text or an image – or for a page's `navigator.share` of a link,
+ * text, or the two (`page-*`) – with a row of stand-in apps in place of the device's – drawn
+ * launcher icons as `data:` URLs, the shapes adaptive icons come in – so the panel is looked at
+ * with no emulator involved.
  */
 
 /** A stand-in launcher icon: a coloured disc with the app's initial, at the row's 40. */
@@ -78,16 +79,33 @@ function highlightLink(url: string): string {
   return `${url}#:~:text=The%20quick%20brown%20fox,a%20selection%20shares.`
 }
 
+/**
+ * What a page hands `navigator.share` in the preview's page shares (`share=page-*`): a link with
+ * its title (Chrome's `LINK_PAGE_NOT_VISIBLE`), text alone (`TEXT`), or text with a link
+ * (`LINK_AND_TEXT`) – the shapes a page's call takes to the panel below Android 14 (SH-03),
+ * each shared as the page handed it over rather than as the page. The link is the host's own
+ * stand-in article's (`PREVIEW_SAMPLE_ORIGIN`, `preview.ts`), so a still over that page reads
+ * as the page sharing itself.
+ */
+const PREVIEW_PAGE_SHARE = {
+  title: 'How the tides work',
+  text: 'Worth a read: the moon does most of it, the sun the rest.',
+  url: 'https://sample.example/how-the-tides-work'
+} as const
+
 let seq = 0
 
 /**
  * The request for a share of `kind` from `tab` (the page, its favicon and its id; none when no
  * tab is open), as the host builds it (`Share.kt`): a page's share carries its title, link and
  * favicon; a selection's its text and the link to its highlight, no title and no favicon; an
- * image the picture alone.
+ * image the picture alone. A page's `navigator.share` (`page-*`, `source: 'page'`) carries what
+ * the page handed over – `text` making it the host's `text` kind, as `Share.shareText` sorts it –
+ * with the tab's favicon beside it, which the panel draws for a link and not for text. The
+ * `gathering` pose sends no request – that is the pose (`previewStates.ts`).
  */
 export function previewShareRequest(
-  kind: PreviewShareKind,
+  kind: Exclude<PreviewShareKind, 'gathering'>,
   tab: Tab | null,
   isPrivate: boolean
 ): SharePanelRequest {
@@ -95,7 +113,21 @@ export function previewShareRequest(
     id: `preview-share-${++seq}`,
     tabId: tab?.id ?? null,
     private: isPrivate,
+    source: 'menu' as const,
     targets: [...PREVIEW_SHARE_TARGETS]
+  }
+  if (kind === 'page-link' || kind === 'page-text' || kind === 'page-text-link') {
+    const text = kind === 'page-link' ? null : PREVIEW_PAGE_SHARE.text
+    return {
+      ...base,
+      source: 'page',
+      kind: text === null ? 'link' : 'text',
+      title: kind === 'page-text' ? null : PREVIEW_PAGE_SHARE.title,
+      url: kind === 'page-text' ? null : PREVIEW_PAGE_SHARE.url,
+      text,
+      favicon: tab?.favicon ?? null,
+      image: null
+    }
   }
   if (kind === 'image') {
     return {
@@ -127,5 +159,30 @@ export function previewShareRequest(
     text: null,
     favicon: tab?.favicon ?? null,
     image: null
+  }
+}
+
+/** What a page's `navigator.share` promise hears: the share taken, or `AbortError`. */
+export type PreviewShareOutcome = 'shared' | 'aborted'
+
+/**
+ * What a page's awaited share hears for the panel's action (`share.panelAction`), as the Kotlin
+ * host answers it (`Share.awaitedPanelAnswer`, after Chrome's hub and a Web Share's
+ * `TargetChosenCallback`): `shared` for an app that took the share (`started`), for one of the
+ * browser's own chips, for QR code and Copy image; `aborted` for a dismissal or an app that would
+ * not start; nothing for More, whose word is the system sheet's.
+ */
+export function awaitedPanelAnswer(kind: string, started = true): PreviewShareOutcome | null {
+  switch (kind) {
+    case 'target':
+      return started ? 'shared' : 'aborted'
+    case 'chip':
+    case 'qr':
+    case 'copyImage':
+      return 'shared'
+    case 'more':
+      return null
+    default:
+      return 'aborted'
   }
 }

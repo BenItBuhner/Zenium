@@ -40,6 +40,7 @@ import { awaitingShow, coverStore, markCoverDrop } from './cover'
 import { pageCovered, pageOffScreen, pageViewStore, type Hold } from './pageView'
 import { crossReaderView } from './readerTransition'
 import { activeTab } from './selectors'
+import { SHARE_SEAM_GUARD_MS, shareSeamStep, type ShareSeam } from './shareSeam'
 import { createStore } from './store'
 import { rememberThumbnail, thumbnailOf } from './thumbnails'
 
@@ -479,6 +480,11 @@ export interface UiState {
   externalProtocol: ExternalProtocolRequest | null
   /** The host's own share panel (Android below 14, SH-03) is up for a share (`components/share/SharePanelSheet.tsx`). */
   sharePanel: SharePanelRequest | null
+  /**
+   * The menu-to-panel seam (§9.38): the app menu holds its sheet for the panel's request
+   * (`gathering`), then draws the panel in it (`hosting`); null otherwise (`lib/shareSeam.ts`).
+   */
+  shareSeam: ShareSeam | null
   /** Voice search: the listening sheet is up, for the search it will load (`lib/voiceSearch.ts`). */
   voice: VoicePrompt | null
   /** QR scanning: the scan sheet is up, for the payload it will load (`lib/qrScan.ts`). */
@@ -672,6 +678,7 @@ export const uiStore = createStore<UiState>(
     siteInfoOpen: false,
     externalProtocol: null,
     sharePanel: null,
+    shareSeam: null,
     voice: null,
     qrScan: null,
     barEditorOpen: false,
@@ -1775,6 +1782,7 @@ export function prepareMenu(activeTabId: string | null): void {
 export function closeMenu(notifyHost = true, { keepKeyboard = false } = {}): void {
   const menu = uiStore.get().menu
   if (!menu) return
+  releaseShareSeam()
   uiStore.set({ menu: null })
   if (localMenus.delete(menu.id)) {
     // Nothing to tell the host about a menu it never knew.
@@ -1957,6 +1965,24 @@ export function cancelExternalProtocol(requestId: string): void {
  */
 export async function openSharePanel(request: SharePanelRequest): Promise<void> {
   performance.mark('share.panel')
+  const state = uiStore.get()
+  const step = shareSeamStep(state.shareSeam, {
+    type: 'panel',
+    request,
+    menuId: state.menu?.id ?? null
+  })
+  if (step.effect === 'host') {
+    // §9.38's hand-off: the menu that asked for the share still stands, the page covered under
+    // it already; its chassis takes the request (`MenuSheet.tsx` draws the panel in it).
+    performance.mark('share.panel.set')
+    uiStore.set({ sharePanel: request, shareSeam: step.seam, drawerOpen: false })
+    return
+  }
+  // A menu still waiting for a request that is not its own leaves as a pick would have had it.
+  if (state.shareSeam) {
+    uiStore.set({ shareSeam: null })
+    closeMenu(false)
+  }
   await captureActiveTab(request.tabId)
   run('focus.chrome', undefined)
   performance.mark('share.panel.set')
@@ -1965,16 +1991,56 @@ export async function openSharePanel(request: SharePanelRequest): Promise<void> 
 }
 
 /**
- * The panel's answer – an app, More, a chip the host carries out, or the dismissal that is every
- * other way out (a drag, the scrim, back, a chip the chrome ran itself): one answer per request,
- * the sheet taken down with it.
+ * The panel's answer – an app, More, a chip the host carries out or the chrome ran itself, or
+ * the dismissal that is every other way out (a drag, the scrim, back): one answer per request,
+ * the sheet taken down with it – the menu's sheet, when that is the chassis the panel is in.
  */
 export function answerSharePanel(id: string, action: Omit<SharePanelAction, 'id'>): void {
   if (uiStore.get().sharePanel?.id !== id) return
-  uiStore.set({ sharePanel: null })
+  const step = shareSeamStep(uiStore.get().shareSeam, { type: 'answered', panelId: id })
+  uiStore.set({ sharePanel: null, shareSeam: step.seam })
   run('share.panelAction', { id, ...action })
+  if (step.effect === 'closeMenu') {
+    closeMenu(false)
+    return
+  }
   invalidateSnapshot()
   returnFocusToPage()
+}
+
+/**
+ * The app menu's Share row was picked on a host whose panel stands in for the system sheet
+ * (`handsOverToSharePanel`): the menu stands, its rows inert, while the host gathers the panel's
+ * row; the request that comes back takes the menu's chassis (`openSharePanel`). The pick itself
+ * runs at once – the host gathers before the menu is let go (§9.38) – and a guard lets the menu
+ * leave should no request come (`SHARE_SEAM_GUARD_MS`).
+ */
+export function beginShareSeam(menuId: string, itemId: string): void {
+  const menu = uiStore.get().menu
+  if (!menu || menu.id !== menuId || uiStore.get().shareSeam) return
+  uiStore.set({ shareSeam: { phase: 'gathering', menuId, itemId } })
+  run('menu.click', { menuId, itemId })
+  window.setTimeout(() => {
+    const step = shareSeamStep(uiStore.get().shareSeam, { type: 'guard', menuId })
+    if (step.effect !== 'dismissMenu') return
+    uiStore.set({ shareSeam: null })
+    closeMenu(false)
+  }, SHARE_SEAM_GUARD_MS)
+}
+
+/**
+ * The menu's sheet goes (a drag, back, the scrim, the host hiding it) with the seam in it: a
+ * panel it was hosting is dismissed with it – the host releases the share – and a request it
+ * was still waiting for will rise on its own (`openSharePanel` finds no menu).
+ */
+function releaseShareSeam(): void {
+  const { shareSeam, sharePanel } = uiStore.get()
+  if (!shareSeam) return
+  uiStore.set({ shareSeam: null })
+  if (shareSeam.phase === 'hosting' && sharePanel?.id === shareSeam.panelId) {
+    uiStore.set({ sharePanel: null })
+    run('share.panelAction', { id: sharePanel.id, kind: 'dismiss' })
+  }
 }
 
 // ---------------------------------------------------------------------------

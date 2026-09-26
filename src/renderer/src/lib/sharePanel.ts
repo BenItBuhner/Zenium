@@ -28,19 +28,32 @@ export interface SharePanelChip {
  * private tab's panel draws every chip, QR code with them: private governs what is recorded
  * (`SharePanelRequest.private`, the host's history), not what is shown – the link already stands
  * on the preview, and a code is the link drawn, not a record of it.
+ *
+ * A page's `navigator.share` (`source: 'page'`) shares what the page handed over, not the page:
+ * its chips are the payload's – Copy link for a link alone, Copy text for text alone, Copy for
+ * the two together (the text, then the link on its own line, as the share itself goes out –
+ * Chrome's `LINK_AND_TEXT` Copy), QR code whenever there is a link – and never Long screenshot
+ * or Print, which picture and print the page (Chrome's are `LINK_PAGE_VISIBLE`'s, the menu's
+ * share of the page itself; its hub keeps Long screenshot for a `TEXT` share, which here reads
+ * as the selection's rule and not a page payload's – the gate's (b)).
  */
 export function sharePanelChips(request: SharePanelRequest): SharePanelChip[] {
   if (request.kind === 'image') return [{ kind: 'copy', label: 'Copy image', icon: Copy }]
-  const chips: SharePanelChip[] = [
-    { kind: 'copy', label: request.kind === 'text' ? 'Copy text' : 'Copy link', icon: Copy }
-  ]
-  if (request.kind === 'link' && request.url)
+  const fromPage = request.source === 'page'
+  const chips: SharePanelChip[] = [{ kind: 'copy', label: copyLabel(request), icon: Copy }]
+  if (request.url && (request.kind === 'link' || fromPage))
     chips.push({ kind: 'qr', label: 'QR code', icon: QrCode })
-  if (request.tabId) {
+  if (request.tabId && !fromPage) {
     chips.push({ kind: 'screenshot', label: 'Long screenshot', icon: Scan })
     if (request.kind === 'link') chips.push({ kind: 'print', label: 'Print', icon: Printer })
   }
   return chips
+}
+
+/** The Copy chip's word: what it copies (Chrome's hub: Copy link, Copy text, Copy for the two together). */
+function copyLabel(request: SharePanelRequest): string {
+  if (request.kind !== 'text') return 'Copy link'
+  return request.source === 'page' && request.url && request.text ? 'Copy' : 'Copy text'
 }
 
 /** The row's last cell: the system sheet, for every app the row has no room for. */
@@ -78,12 +91,20 @@ export function sharePanelPreview(request: SharePanelRequest): { title: string; 
   return { title, detail }
 }
 
-/** What Copy puts on the clipboard, and what the confirmation says where the chrome is the one to. */
+/**
+ * What Copy puts on the clipboard, and what the confirmation says where the chrome is the one
+ * to. A page's share of text and a link together copies the message as it is shared – the text,
+ * then the link on its own line (`Share.messageBody`) – as Chrome's Copy does for the pair.
+ */
 export function sharePanelCopy(
   request: SharePanelRequest
 ): { text: string; confirmation: string } | null {
   if (request.kind === 'text') {
-    return request.text ? { text: request.text, confirmation: 'Text copied' } : null
+    if (!request.text) return null
+    if (request.source === 'page' && request.url && request.url !== request.text) {
+      return { text: `${request.text}\n${request.url}`, confirmation: 'Copied' }
+    }
+    return { text: request.text, confirmation: 'Text copied' }
   }
   return request.url ? { text: request.url, confirmation: 'Link copied' } : null
 }

@@ -4863,6 +4863,41 @@
     font-size: var(--v2-font-small);
     line-height: var(--v2-line-small);
   }
+  /*
+   * The menu-to-panel seam (§9.38's hand-off; `MenuSheet.tsx`, `lib/shareSeam.ts`): the app
+   * menu's sheet becomes the share panel's – one chassis. The panel's rows and preview rise over
+   * §11's 250 ms as the menu's rows and title, drawn once more in absolute layers over them, fade
+   * out over §11's 120 ms; the chassis measures its new detents from the panel's rows alone (the
+   * layers take no height of their own) and re-detents on its spring. The rows' layer fills the
+   * body while the sheet is still the menu's height, clipped to it and inert, its rows shifted
+   * by the offset the list was scrolled to when Share was tapped (the chassis starts new
+   * content at its top) and re-running none of their own entrances; the title's layer sits where
+   * the centred title stood. Reduced motion is the cut: the global rule at the foot removes both
+   * fades, and the sheet draws no outgoing layer at all.
+   */
+  .zen-share-seam {
+    position: relative;
+    min-height: 100%;
+  }
+  .zen-share-seam-out {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+    animation: zen-fade-out 120ms var(--zen-ease) forwards;
+  }
+  .zen-share-seam-out[data-title] {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 46px;
+  }
+  .zen-share-seam > .zen-share-seam-out > .zen-share-seam-scrolled > * {
+    animation: none;
+  }
+  .zen-share-seam-in {
+    animation: zen-fade 250ms var(--zen-ease) both;
+  }
   /* A row under a finger that is dragging the sheet is not being pressed. */
   .zen-sheet[data-dragging='true'] .zen-sheet-item:active {
     background: transparent;

@@ -15,6 +15,7 @@ import {
   type SharePanelChip
 } from '@renderer/lib/sharePanel'
 import { answerSharePanel, openLongScreenshot, uiStore } from '@renderer/lib/ui'
+import { cn } from '@renderer/lib/utils'
 import { RowFavicon } from '../phone/PhoneList'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 
@@ -31,12 +32,19 @@ import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
  * the request's id until the sheet answers (`answerSharePanel`); every way out that picks
  * nothing is the dismissal. Mounted once, above whichever shell is up; the leave outlives the
  * request (`SheetPresence`, v2 draft §11.1).
+ *
+ * A share the app menu started arrives while the menu still stands (`lib/shareSeam.ts`,
+ * §9.38's hand-off): the menu's sheet draws the panel then – its chassis becoming the panel's,
+ * one sheet, no bare page between – with the same preview and rows (`SharePanelPreview`,
+ * `SharePanelContent`); this layer stands aside for it. A page's `navigator.share` and a share
+ * whose menu has gone rise here on their own.
  */
 export function SharePanelLayer(): JSX.Element | null {
   const request = uiStore.use((s) => s.sharePanel)
+  const hosted = uiStore.use((s) => s.shareSeam?.phase === 'hosting')
   return (
     <SheetPresence>
-      {request ? <SharePanelSheet key={request.id} request={request} /> : null}
+      {request && !hosted ? <SharePanelSheet key={request.id} request={request} /> : null}
     </SheetPresence>
   )
 }
@@ -44,8 +52,6 @@ export function SharePanelLayer(): JSX.Element | null {
 function SharePanelSheet({ request }: { request: SharePanelRequest }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
   const titleId = useId()
-  const preview = sharePanelPreview(request)
-  const chips = sharePanelChips(request)
 
   // The system back gesture pulls the sheet down like a drag; commit or the back button slides
   // it away, which lets the share go (`onDismissed`).
@@ -58,11 +64,46 @@ function SharePanelSheet({ request }: { request: SharePanelRequest }): JSX.Eleme
   useEscapeUnlessLeaving(() => sheet.current?.dismiss(), useSheetLeave()?.leaving)
 
   // The sheet leaves first, then the pick runs: the other app, the system sheet or a chip's own
-  // surface comes up over the page, not over a sheet on its way out. The page view itself comes
-  // back later still, once the sheet has unmounted and the host has drawn the page again
-  // (`lib/pageView.ts`): the one pick that copies the page waits for that (`afterPageShown`).
+  // surface comes up over the page, not over a sheet on its way out.
   const pick = (then: () => void): void => sheet.current?.dismiss(then)
   const release = (): void => answerSharePanel(request.id, { kind: 'dismiss' })
+
+  return (
+    <BottomSheet
+      ref={sheet}
+      onDismissed={release}
+      contentKey={request.id}
+      handleLabel="Dismiss"
+      labelledBy={titleId}
+      className="zen-share-panel"
+      header={<SharePanelPreview request={request} titleId={titleId} />}
+    >
+      <SharePanelContent request={request} pick={pick} />
+    </BottomSheet>
+  )
+}
+
+/**
+ * The panel's rows – Zenium's own chips, a hairline, the apps with More at the end – as the
+ * panel's own sheet draws them and as the app menu's sheet draws them once it hosts the panel
+ * (`MenuSheet.tsx`). `pick` is the chassis's leave with the action after it: the other app, the
+ * system sheet or a chip's own surface comes up over the page, not over a sheet on its way out.
+ * The page view itself comes back later still, once the sheet has unmounted and the host has
+ * drawn the page again (`lib/pageView.ts`): the one pick that copies the page waits for that
+ * (`afterPageShown`). A chip the chrome runs itself (Copy, Long screenshot, Print) is reported
+ * as `chip`, so a page's awaited share hears `shared` for it as Chrome's does on a first-party
+ * tap; the chips the host carries out (QR, Copy image) go by their own kinds.
+ */
+export function SharePanelContent({
+  request,
+  pick
+}: {
+  request: SharePanelRequest
+  pick: (then: () => void) => void
+}): JSX.Element {
+  const chips = sharePanelChips(request)
+  const ran = (chip: SharePanelChip): void =>
+    answerSharePanel(request.id, { kind: 'chip', chip: chip.kind })
 
   const onChip = (chip: SharePanelChip): void => {
     switch (chip.kind) {
@@ -72,7 +113,7 @@ function SharePanelSheet({ request }: { request: SharePanelRequest }): JSX.Eleme
           return
         }
         pick(() => {
-          release()
+          ran(chip)
           const copy = sharePanelCopy(request)
           if (copy) run('clipboard.writeText', copy)
         })
@@ -80,14 +121,14 @@ function SharePanelSheet({ request }: { request: SharePanelRequest }): JSX.Eleme
       case 'screenshot': {
         const tabId = request.tabId
         pick(() => {
-          release()
+          ran(chip)
           if (tabId) afterPageShown(tabId, () => openLongScreenshot(tabId))
         })
         return
       }
       case 'print':
         pick(() => {
-          release()
+          ran(chip)
           if (request.tabId) run('page.print', { tabId: request.tabId })
         })
         return
@@ -98,22 +139,7 @@ function SharePanelSheet({ request }: { request: SharePanelRequest }): JSX.Eleme
   }
 
   return (
-    <BottomSheet
-      ref={sheet}
-      onDismissed={release}
-      contentKey={request.id}
-      handleLabel="Dismiss"
-      labelledBy={titleId}
-      className="zen-share-panel"
-      header={
-        <Preview
-          request={request}
-          title={preview.title}
-          detail={preview.detail}
-          titleId={titleId}
-        />
-      }
-    >
+    <>
       <div className="zen-share-panel-row" data-row="chips">
         {chips.map((chip) => (
           <button
@@ -155,7 +181,7 @@ function SharePanelSheet({ request }: { request: SharePanelRequest }): JSX.Eleme
           <span className="zen-share-panel-caption">{SHARE_PANEL_MORE.label}</span>
         </button>
       </div>
-    </BottomSheet>
+    </>
   )
 }
 
@@ -165,22 +191,26 @@ function SharePanelSheet({ request }: { request: SharePanelRequest }): JSX.Eleme
  * 15/600 over the link 13 in the deemphasised ink, one line each; for an image the picture itself
  * at 40 in the favicon's place; for a selection the selected text leads, on two lines at most,
  * the page's link under it without the highlight's `#:~:text=` fragment (`displayedLink`), and no
- * favicon – the text is its own picture (Chrome's hub: the text, then the link; §9.38). The first
- * line names the sheet.
+ * favicon – the text is its own picture (Chrome's hub: the text, then the link; §9.38). A page's
+ * share of text and a link reads the same way, its text first (Chrome's `LINK_AND_TEXT`
+ * preview); a page's link alone reads as the page's. The first line names the sheet. `className`
+ * is the menu's sheet's, for the preview's rise as it takes the menu's header (`MenuSheet.tsx`).
  */
-function Preview({
+export function SharePanelPreview({
   request,
-  title,
-  detail,
-  titleId
+  titleId,
+  className
 }: {
   request: SharePanelRequest
-  title: string
-  detail: string
   titleId: string
+  className?: string
 }): JSX.Element {
+  const { title, detail } = sharePanelPreview(request)
   return (
-    <div className="zen-menu-link-header zen-share-panel-preview" data-kind={request.kind}>
+    <div
+      className={cn('zen-menu-link-header zen-share-panel-preview', className)}
+      data-kind={request.kind}
+    >
       {request.image ? (
         <img src={request.image} alt="" className="zen-menu-link-thumbnail" draggable={false} />
       ) : request.kind === 'text' ? null : (
