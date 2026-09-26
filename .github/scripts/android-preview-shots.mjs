@@ -56,7 +56,8 @@
 //                      sheet; the state is reached at the script's end, so the still shows it)
 //                      or `qr=<script>` (QR scanning started, the stand-in camera playing
 //                      `scanning`, `torch`, `starting`, `denied`, `denied-permanently`, … into
-//                      the scan sheet, a drawn still in the window where a device's preview is).
+//                      the scan sheet, a drawn still in the window where a device's preview is)
+//                      or `qrcode=<variant>` (the QR code sheet: `link`, `too-long`, `saved`).
 //                      A comma inside a state is written `%2C`. `&pressed=<selector>;<selector>`
 //                      (the script's own key, not the page's) draws the elements those
 //                      selectors match in their pressed state for the still – `:active` forced

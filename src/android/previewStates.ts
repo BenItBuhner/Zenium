@@ -92,6 +92,7 @@ import {
 } from '@shared/blocking'
 import { syncSetupStore } from '@renderer/lib/syncSetup'
 import { cancelVoiceSearch, startVoiceSearch } from '@renderer/lib/voiceSearch'
+import { downloadQrCode, showQrCode } from '@renderer/lib/qrCode'
 import { cancelQrScan, startQrScan } from '@renderer/lib/qrScan'
 import type { HostGlobal } from './boot'
 import {
@@ -144,7 +145,7 @@ import {
   type PreviewWebAppSurface
 } from './previewSpec'
 import { holdPreviewScreenshots, resetPreviewScreenshots } from './previewScreenshots'
-import { previewShareRequest } from './previewShare'
+import { PREVIEW_QR_LINK, previewQrCode, previewShareRequest } from './previewShare'
 import { hideUnresponsivePrompt, showUnresponsivePrompt } from './previewUnresponsive'
 import { EMPTY_MEDIA_REPORT, type MediaReport } from '@shared/mediaSession'
 
@@ -174,6 +175,11 @@ const SETTLE_TIMEOUT_MS = 4000
 const VOICE_EVENT_MARGIN_MS = 250
 /** Past a QR script's last event: the still's image decoding into the window, the torch's fill. */
 const QR_EVENT_MARGIN_MS = 250
+/** `qrcode=too-long`: a link this many characters past Chrome's 2331 (the query alone is over the limit). */
+const QR_TOO_LONG_LENGTH = 2331
+/** `qrcode=saved`: the sheet's rise before Download is taken, then the toast's own entrance before the still. */
+const QR_SHEET_RISE_MS = 600
+const QR_TOAST_SETTLE_MS = 700
 
 /**
  * Chrome states selectable from outside the preview host (`npm run dev:android`), so screenshots
@@ -229,7 +235,8 @@ const QR_EVENT_MARGIN_MS = 250
  * playing that script into the listening sheet: `listening`, `listening-rest`, `partial`,
  * `no-match`, `denied`, …; see `previewVoiceScript`), `qr=<script>` (QR scanning started, the
  * stand-in camera playing that script into the scan sheet: `scanning`, `torch`, `text`,
- * `denied`, …; see `previewQrScript`), `overview` (the tab overview open over the active
+ * `denied`, …; see `previewQrScript`), `qrcode=<variant>` (the QR code sheet up for the
+ * preview's link: `link`, `too-long`, or `saved` – Download taken, the toast up), `overview` (the tab overview open over the active
  * page, its cards with whatever pictures the stand-in host has of the tabs; `then=` presses
  * its header and cards once it is up: `tap:More;tap:Select Tabs` enters the select-tabs mode,
  * `tap:<card's label>` picks a card in it, `press:<card title>` opens a card's hold sheet,
@@ -1442,6 +1449,35 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
       whenStore(() => uiStore.get().qrScan !== null, spec, played + QR_EVENT_MARGIN_MS)
     } else {
       whenStore(() => uiStore.get().toasts.length > 0, spec)
+    }
+  } else if (target.kind === 'qrcode') {
+    // The share sheet's "QR code" as the host answers it (`qr.code`): the code sheet goes up with
+    // the preview's link, or with the too-long error for a link past Chrome's limit. `saved` then
+    // takes Download – the sheet leaves and the stand-in host's "Saved to Downloads" toast comes
+    // a beat later, as the Kotlin host's would after the write – so a still catches the toast.
+    const url =
+      target.variant === 'too-long'
+        ? `${PREVIEW_QR_LINK}?ref=${'x'.repeat(QR_TOO_LONG_LENGTH)}`
+        : PREVIEW_QR_LINK
+    void showQrCode(previewQrCode(url, tab?.id ?? null))
+    if (target.variant === 'saved') {
+      // Once the sheet is up (and has risen), Download: the sheet leaves and the toast follows.
+      const press = (): void => {
+        window.setTimeout(() => {
+          downloadQrCode()
+          whenStore(() => uiStore.get().toasts.length > 0, spec, QR_TOAST_SETTLE_MS)
+        }, QR_SHEET_RISE_MS)
+      }
+      if (uiStore.get().qrCode !== null) press()
+      else {
+        const unsubscribe = uiStore.subscribe(() => {
+          if (uiStore.get().qrCode === null) return
+          unsubscribe()
+          press()
+        })
+      }
+    } else {
+      whenStore(() => uiStore.get().qrCode !== null, spec, QR_EVENT_MARGIN_MS)
     }
   } else if (target.kind === 'popups' && tab) {
     seedPopups(browser, tab, target)
