@@ -10316,9 +10316,14 @@
   line-height: var(--v2-line-body);
 }
 .zen-search-choice-tagline {
+  /* The engine's own line, whole: a long one wraps to a second line and the row grows past its
+     52 (the two-line row's minimum), rather than being cut with an ellipsis – the description
+     is what the screen shows the engine by. Two lines is the ceiling. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   color: var(--zen-muted);
   font-size: var(--v2-font-small);
   font-weight: var(--v2-weight-body);

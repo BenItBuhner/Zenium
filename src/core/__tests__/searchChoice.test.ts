@@ -107,7 +107,9 @@ describe('the eligible list', () => {
     for (const id of ['wikipedia', 'brave', 'yahoo', 'startpage']) expect(ids).not.toContain(id)
     for (const tile of searchChoiceTiles()) {
       expect(tile.tagline.length).toBeGreaterThan(0)
-      expect(tile.engine.favicon).toMatch(/^https:\/\//)
+      // Every tile has its icon: a site's address, or the picture carried inline (Qwant's, whose
+      // site refuses another origin's `<img>` its icon – `shared/search.ts` `QWANT_ICON`).
+      expect(tile.engine.favicon).toMatch(/^(https:\/\/|data:image\/png;base64,)/)
     }
   })
 

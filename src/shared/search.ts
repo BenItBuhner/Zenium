@@ -57,6 +57,19 @@ export const DEFAULT_SEARCH_ENGINES: SearchEngine[] = [
 ]
 
 /**
+ * Qwant's icon, carried inline: the 32 px PNG its home page links as its icon (`<link rel="icon"
+ * sizes="32x32">`, 970 bytes; sha256 eab887d6…), since every stable icon address on
+ * `www.qwant.com` (`/favicon.ico`, the touch icon) answers with
+ * `Cross-Origin-Resource-Policy: same-origin` and the chrome's `<img>` – another origin's – is
+ * refused it (`ERR_BLOCKED_BY_RESPONSE`), while the build asset that lacks the header is named
+ * by a hash that changes with each deploy. The same picture the live address would show; no
+ * request is made for it (`shared/favicons.ts` `faviconSrc` hands a `data:` icon back as it is),
+ * and it stands under the settings' cap on an inline icon (`MAX_FAVICON`).
+ */
+const QWANT_ICON =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAACXBIWXMAAAsTAAALEwEAmpwYAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAANfSURBVHgBxZdbSBRRGMf/ZzQRLFvX3YLSrVxrE2qNtLJ7Tz0UlJlJht0sootYmdVjGUaUFOEFpUQrtIdQqocySstblBZu4TVdqchcwcuuq4nb5kxzTrkZ3kbbbX+wzP/M/jnfd85855wZgt/4+WmiQRAtAKvhWF5xIDeamxtu0YYLC67WXBYIrohSBcfjKw4yVO7lDaOxs4TMVS/cRyBkwwm4cvxGFy+54qaoZ8EJ8ALx5QAhGA7C1dV1PEsgBwdyJj5uPIuXwxJQKhWIiAiHu7v7mD5aA+dhR3x9fLA9LBTHjh2BWu0HjWYBpk6bCpPJBLO5Z5jf7jMwwA+gvb0DXV1G1jabzegRA48UnELmqTUCJkDIiuUIDNTC31/N2t1ix7oqHQqLimCxfLf5PD09UV76HNolY9e45Efg4zMbGelpOB4bA+3iRaiurhVH2o7goCAcPLAfoVu3oLf3G+rq6pnfYrFgirgKKirfjNmvpBmgwe/m3GHXlpav2BW1h10HiTsRi5iYo0wnXryErOzbkIqkGogVR02DU5JTUv8KTrl2PRmGtjamz5w+ZfPaJQHaWXjYNqb7+/uRl39/RN+jxwXs6ubmhl2RkZDKuAkEBATYdE1N7ai+hvoPNr1u7RrYLYEF8/1t2mq1juobfAQUmWw67JaA1frDpgWBH9Un8PwQn/SVPW4CBoPBppUzZo7qU6n+vEp8aWmB3RIoKS1ja5oyR+XLNpiRCF4WZNMviktgtwToVpqTm8s0rfDInRHDPHSlrF+3lunWVgMKCp5AKpL2gZTUDDQ2NjF95PAhdsgMQmfkQsI5KBUKDAzwSLiQOGyfGAvJZ4GHhwfiTh7H3j1R4DgOrysq0dfXJ27FS1kStJ2UdBW6d+8xESZ8GMnlXgjUahG2bSs2b96Ee3n5yMzMgl7fzP6nh1X4ju2Ijz8rqb8JJzAIHfXDB/msMGmdmEzdbP3T+8XFpYg+eEhSP5N+H6BBo3bvRVn5SxZUNWSFVOl0kvuZ9AwMJSRkBdasWgmFwhuNTXo8fVYouRDtksC/QB8BD+dhpgmUwkkQ4C1HBD4VzoIjaS5GY1e9zFtJxGw24D8iEJLwUd+Qzr6OTV0dxTK58jMhRAZClOItNzgCQjrFX6UYfP8n/a/P85/0pB9LQ2JScwAAAABJRU5ErkJggg=='
+
+/**
  * The static set the EEA's search-engine choice screen (W6-2; DMA Art. 6(3), Chrome's
  * `chrome://search-engine-choice`) offers on top of the shipped engines: general web search
  * engines with a presence in the EEA that Zenium does not ship for everyone. Each entry's
@@ -75,7 +88,7 @@ export const EEA_SEARCH_ENGINES: SearchEngine[] = [
     suggestUrl: 'https://api.qwant.com/v3/suggest/?q=%s&client=opensearch',
     keyword: '@qwant',
     glyph: 'Q',
-    favicon: 'https://www.qwant.com/favicon.ico'
+    favicon: QWANT_ICON
   }
 ]
 

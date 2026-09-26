@@ -5,6 +5,7 @@ import { resolveTheme } from '@shared/theme'
 import { shuffledSearchChoiceTiles, type SearchChoiceTile } from '@core/searchChoice'
 import { run } from '@renderer/lib/api'
 import { useFaviconSrc } from '@renderer/lib/favicons'
+import { KEEPS_KEYBOARD_ATTR } from '@renderer/lib/panes'
 import { Button } from '../ui/button'
 
 /*
@@ -202,7 +203,10 @@ export function SearchChoiceScreen({ state }: { state: UIState }): JSX.Element {
   const theme = state.spaces.find((s) => s.id === state.activeSpaceId)?.theme ?? null
   const background = useMemo(() => resolveTheme(theme, dark).background, [theme, dark])
   // The screen takes the keyboard as it comes up, and Escape is "Skip for now" wherever the
-  // keyboard is while it stands.
+  // keyboard is while it stands. The panel carries `KEEPS_KEYBOARD_ATTR`: the New Tab's view
+  // taking the keyboard as it loads under the screen (`focus.page`) does not blur the panel –
+  // the chrome's keyboard is asked back instead (lib/panes.ts `pageTookKeyboard`), as for the
+  // open URL bar, whose case this is: the page beneath lies covered and cannot be pressed.
   useEffect(() => {
     panel.current?.focus()
     const onKey = (event: globalThis.KeyboardEvent): void => {
@@ -231,6 +235,7 @@ export function SearchChoiceScreen({ state }: { state: UIState }): JSX.Element {
         aria-modal="true"
         aria-label={SEARCH_CHOICE_TITLE}
         className="zen-panel zen-animate-pop relative w-[640px] max-w-[calc(100%-32px)] p-8 outline-none"
+        {...{ [KEEPS_KEYBOARD_ATTR]: '' }}
       >
         <SearchChoiceStep seed={state.searchChoice.seed} picked={picked} onPick={setPicked} />
         <div className="mt-8 flex items-center justify-end">

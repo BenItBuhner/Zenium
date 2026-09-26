@@ -24,8 +24,9 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 
 const { Onboarding } = await import('../Onboarding')
 const { SearchChoiceScreen } = await import('../SearchChoice')
-const { browserStore, onboardingUp, openNewTabPageUrlbar, uiStore } =
+const { browserStore, firstRunCovers, onboardingUp, openNewTabPageUrlbar, uiStore } =
   await import('@renderer/lib/ui')
+const { viewportStore } = await import('@renderer/lib/formFactor')
 const { onboardingCovers } = await import('@renderer/lib/onboarding')
 const { searchChoiceCovers, tourAsksSearchChoice } = await import('@renderer/lib/searchChoice')
 
@@ -341,6 +342,26 @@ describe('the screen on its own', () => {
     openNewTabPageUrlbar('t1', undefined, false)
     await settle()
     expect(uiStore.get().urlbar).toMatchObject({ open: true, tabId: 't1' })
+  })
+
+  it('stands as the tour does for the page views: hidden under both (`firstRunCovers`), never on the phone', () => {
+    // The tour, then the screen after it, then neither: the same terms the layout report reads
+    // to hide the views under the opaque panel (`useLayoutReporter` `contentHidden`).
+    expect(firstRunCovers(profile(false, EEA))).toBe(true)
+    expect(firstRunCovers(profile(false, ELSEWHERE))).toBe(true)
+    expect(firstRunCovers(profile(true, EEA))).toBe(true)
+    expect(firstRunCovers(profile(true, ANSWERED))).toBe(false)
+    expect(firstRunCovers(profile(true, ELSEWHERE))).toBe(false)
+    expect(firstRunCovers(profile(true, EEA, { kind: 'private' }))).toBe(false)
+    // The phone's tour is its shell's own flow, laid out with its pages; it reads none of this.
+    const before = viewportStore.get()
+    viewportStore.set({ ...before, formFactor: 'phone' })
+    try {
+      expect(firstRunCovers(profile(false, EEA))).toBe(false)
+      expect(firstRunCovers(profile(true, EEA))).toBe(false)
+    } finally {
+      viewportStore.set(before)
+    }
   })
 })
 
