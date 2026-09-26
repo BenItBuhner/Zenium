@@ -183,7 +183,7 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
         chromeJs("window.__dexRun=${JSONObject.quote(runMark)}")
         // Alpha in front: the page the wheel, the right click and the keys work on.
         coreInvoke("tab.activate", JSONObject().put("tabId", ALPHA).toString())
-        awaitUntil(5_000) { activeTabId() == ALPHA }
+        awaitUntil(PAGE_SWAP_MS) { activeTabId() == ALPHA && pageCenter(ALPHA) != null }
         awaitLoaded(ALPHA, ALPHA_URL)
         // Pay for the popover menu's first layout off camera (the emulator lays it out slowly the first time).
         touch(domRect(MENU_BUTTON), "the toolbar's menu button")
@@ -293,6 +293,41 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
         calibrated = false
         calibrate(ADDRESS_PILL, PILL_LABEL, prefix = true)
         still("freeform-tablet-back")
+        steppedShrinkStills()
+    }
+
+    /**
+     * The drag's eight widths one at a time, each held until the chrome has laid out at it and
+     * the display has shown that frame, with a still of each: what the tablet chrome looks like
+     * as it compresses (1025 to 650) and where the phone chrome takes over (575 and 500) – the
+     * frames-resize strip. The recipe's emulator draws a frame in seconds (its software GL), so
+     * the recording of the measured drag shows the window manager's crop of the last presented
+     * buffer at every step and the relaid chrome seconds after the drag ends (run 3: 4.4 s); the
+     * chrome's own frame probe is the measured drag's word on the frames, this pass the display's.
+     * Not measured; the window ends back at the tablet pose.
+     */
+    private fun steppedShrinkStills() {
+        readWindow()
+        val from = Rect(window)
+        val dpr = jsNumber("window.devicePixelRatio")
+        for (step in 1..RESIZE_STEPS) {
+            val t = step.toFloat() / RESIZE_STEPS
+            val r = Rect(lerp(from.left, PHONE_BOUNDS.left, t), lerp(from.top, PHONE_BOUNDS.top, t), lerp(from.right, PHONE_BOUNDS.right, t), lerp(from.bottom, PHONE_BOUNDS.bottom, t))
+            shellCommand("am task resize $taskId ${r.left} ${r.top} ${r.right} ${r.bottom}")
+            val width = r.width()
+            val relaid = awaitUntil(STEP_SETTLE_MS) { abs(jsNumber("window.innerWidth") * dpr - width) <= 1.0 }
+            // The chrome's frame, then the display's: the emulator presents it a few frames later.
+            SystemClock.sleep(2_000)
+            finding("  held at $width px: chrome viewport ${jsNumber("window.innerWidth").roundToInt()} CSS px (laid out at the width $relaid), form factor ${jsText(FORM_FACTOR)}")
+            still("resize-step-$width")
+        }
+        shellCommand("am task resize $taskId ${TABLET_BOUNDS.left} ${TABLET_BOUNDS.top} ${TABLET_BOUNDS.right} ${TABLET_BOUNDS.bottom}")
+        awaitUntil(STEP_SETTLE_MS) { jsText(FORM_FACTOR) == "tablet" && abs(jsNumber("window.innerWidth") * dpr - TABLET_BOUNDS.width()) <= 1.0 }
+        awaitLoaded(ALPHA, ALPHA_URL)
+        readWindow()
+        calibrated = false
+        calibrate(ADDRESS_PILL, PILL_LABEL, prefix = true)
+        SystemClock.sleep(1_000)
     }
 
     /**
@@ -426,7 +461,7 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
         val on = awaitUntil(6_000) { accessibilityEnabled() }
         finding("  UiAutomation back: accessibility enabled again $on; ${accessibilityState("the reconnect")}")
         coreInvoke("tab.activate", JSONObject().put("tabId", ALPHA).toString())
-        awaitUntil(5_000) { activeTabId() == ALPHA }
+        awaitUntil(PAGE_SWAP_MS) { activeTabId() == ALPHA && pageCenter(ALPHA) != null }
     }
 
     /**
@@ -562,11 +597,15 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
             "data-hover '${jsText(DATA_HOVER)}', Gamma ${backgroundOf(row(GAMMA))}"
         )
         // Cursor shapes: the hand over the page's link, the beam in the URL field. Alpha (the
-        // page with the link) back in front first: the finger put Delta there.
+        // page with the link) back in front first: the finger put Delta there. The swap waits on
+        // the chrome's frames, and the recipe's emulator draws them slowly under this window
+        // (run 3: six seconds from the activation to the page view shown, past a 5 s wait).
         coreInvoke("tab.activate", JSONObject().put("tabId", ALPHA).toString())
-        awaitUntil(5_000) { activeTabId() == ALPHA && pageCenter(ALPHA) != null }
+        val shown = awaitUntil(PAGE_SWAP_MS) { activeTabId() == ALPHA && pageCenter(ALPHA) != null }
         SystemClock.sleep(400)
-        val link = linkOnScreen(ALPHA)
+        var link = linkOnScreen(ALPHA)
+        if (link == null && awaitUntil(PAGE_SWAP_MS) { linkOnScreen(ALPHA) != null }) link = linkOnScreen(ALPHA)
+        if (!shown || link == null) finding("  (Alpha's page after the activation: shown within ${PAGE_SWAP_MS / 1000} s $shown, its link on screen ${link != null})")
         if (link != null) {
             mouse.moveTo(link.x, link.y, 300)
             SystemClock.sleep(500)
@@ -791,7 +830,7 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
             }
         }
         coreInvoke("tab.activate", JSONObject().put("tabId", ALPHA).toString())
-        awaitUntil(5_000) { activeTabId() == ALPHA }
+        awaitUntil(PAGE_SWAP_MS) { activeTabId() == ALPHA && pageCenter(ALPHA) != null }
     }
 
     // --- 4. the wheel ----------------------------------------------------------------------------
@@ -939,7 +978,7 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
         key(KeyEvent.KEYCODE_TAB, ctrl = true)
         check("Ctrl+Tab moves to the next tab", awaitUntil(6_000) { activeTabId() != before && activeTabId() != null }, "$before -> ${activeTabId()}")
         coreInvoke("tab.activate", JSONObject().put("tabId", ALPHA).toString())
-        awaitUntil(5_000) { activeTabId() == ALPHA }
+        awaitUntil(PAGE_SWAP_MS) { activeTabId() == ALPHA && pageCenter(ALPHA) != null }
     }
 
     // --- 6. density ------------------------------------------------------------------------------
@@ -1204,6 +1243,10 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
         /** Eight steps of 75 px: the seventh (575 wide) is the first under the threshold. */
         private const val RESIZE_STEPS = 8
         private const val RESIZE_STEP_MS = 260L
+        /** A tab activation's page swap on the recipe's emulator: its frames run to seconds under this window. */
+        private const val PAGE_SWAP_MS = 15_000L
+        /** A held width's relayout on the same emulator, for the stepped stills (unmeasured). */
+        private const val STEP_SETTLE_MS = 10_000L
 
         private const val CHROME_ROOT = "[data-testid=\"chrome-root\"]"
         private const val SIDEBAR = ".zen-tablet-sidebar"

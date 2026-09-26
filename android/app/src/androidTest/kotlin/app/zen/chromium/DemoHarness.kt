@@ -1303,6 +1303,9 @@ abstract class DemoHarness(
             return block()
         }
         awaitShots()
+        // The reconnect registers UiAutomation with its stock service info: the flags [runDemo]
+        // set (the interactive windows for [findInWindows], the unimportant views) go back on after.
+        val serviceInfo = ui.serviceInfo
         disconnect.invoke(ui)
         accessibilityDetached = true
         try {
@@ -1314,6 +1317,7 @@ abstract class DemoHarness(
             } else {
                 connect.invoke(ui, uiAutomationFlags)
             }
+            ui.serviceInfo = serviceInfo
         }
     }
 
