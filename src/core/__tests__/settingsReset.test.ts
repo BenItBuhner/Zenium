@@ -27,9 +27,10 @@ import type { ZenWindow } from '../window'
  * Settings › Reset settings › "Restore settings to their original defaults" (W7-6, settings-70):
  * the plan is the sentence's eight clauses read off the state, and the run does what the
  * sentence says through the services that own each setting – startup pages, home page, new tab
- * page, search engine (and the EEA's choice screen owed again), pinned tabs, site permissions,
- * extensions, cookies and cache – says so in one toast, and does nothing to the bookmarks, the
- * history, the passwords or the site defaults chosen in Settings.
+ * page, search engine (and the EEA's choice screen owed again), pinned tabs, site permissions
+ * (the per-site answers, the device grants and the per-type defaults – the whole of Chrome's
+ * `ResetContentSettings`), extensions, cookies and cache – says so in one toast, and does
+ * nothing to the bookmarks, the history or the passwords.
  */
 
 describe('planSettingsReset', () => {
@@ -295,10 +296,17 @@ describe('settings.reset', () => {
     // The pinned tab is a regular tab again, open still; the Essential stays an Essential.
     expect(browser.tabs.tab(pinned)).toMatchObject({ pinned: false })
     expect(browser.tabs.tab(essential)).toMatchObject({ essential: true })
-    // Every site's remembered answers go (Chrome's `ResetContentSettings`, the #553 ruling); the
-    // default chosen in Settings › Site settings stays – the one difference from Chrome's.
+    // Every site's remembered answers go, and the default chosen in Settings › Site settings
+    // with them – the whole of Chrome's `ResetContentSettings`, exceptions and defaults both (the
+    // root's ruling on #553): the service answers as a fresh one does, its stored default gone
+    // (`defaultFor`: none set) and the catalogue's back in force (`effectiveDefault`).
+    const fresh = setup('us').browser.permissions
     expect(browser.permissions.rules()).toEqual([])
-    expect(browser.permissions.defaultFor('notifications')).toBe('deny')
+    expect(browser.permissions.defaultFor('notifications')).toBe(fresh.defaultFor('notifications'))
+    expect(browser.permissions.effectiveDefault('notifications')).toBe(
+      fresh.effectiveDefault('notifications')
+    )
+    expect(browser.permissions.effectiveDefault('notifications')).not.toBe('deny')
     // Every enabled extension disabled, the disabled one not asked about; none removed.
     expect(extensions.calls).toEqual([
       ['reader', false],
@@ -321,12 +329,15 @@ describe('settings.reset', () => {
       { message: SETTINGS_RESET_TOAST, kind: 'info' }
     ])
     expect(SETTINGS_RESET_TOAST).toBe('Settings reset')
-    // The defaults are on disk.
+    // The defaults are on disk – the settings', and the permission store with no decision left
+    // in it, the per-type default included.
     await browser.state.flush()
+    browser.permissions.flushSync()
     const persisted = JSON.parse(io.files['state.json']).settings
     expect(persisted.startup).toEqual(DEFAULT_SETTINGS.startup)
     expect(persisted.homepage).toEqual(DEFAULT_HOMEPAGE)
     expect(persisted.searchEngineId).toBe('google')
+    expect(JSON.parse(io.files['permissions.json']).decisions).toEqual({})
     // No choice screen is owed outside the EEA.
     expect(browser.state.snapshot(win).searchChoice.required).toBe(false)
   })

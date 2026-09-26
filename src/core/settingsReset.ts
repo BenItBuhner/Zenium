@@ -18,11 +18,11 @@
  *   Settings page the reset was asked from (`searchChoiceSession.skipped`);
  * - the pinned tabs → regular tabs (`TabManager.togglePin`); Zen's Essentials are not Chrome's
  *   pinned tabs and stay;
- * - the site permissions → every per-site decision and every device grant goes
- *   (`PermissionService.resetSites`, the call Clear browsing data's "Site settings" makes;
- *   Chrome's `ResetContentSettings`, the root's ruling on #553). The defaults chosen in
- *   Settings › Site settings stay – Chrome's resetter puts those back too; ours keeps them,
- *   the one difference, named in the W7-6 report;
+ * - the site permissions → every per-site decision, every device grant and the per-type
+ *   defaults chosen in Settings › Site settings go (`PermissionService.reset`, the whole of
+ *   Chrome's `ResetContentSettings` – its exceptions and its defaults both; the root's ruling
+ *   on #553). Clear browsing data's "Site settings" kind clears the exceptions alone
+ *   (`resetSites`), as Chrome's does; the reset is the wider act;
  * - the extensions → disabled, every enabled one (`ExtensionHost.setEnabled`), installed still;
  * - the temporary data → cookies, site data and the cache of every container
  *   (`PrivacyService.clearBrowsingData('all', ['cookies', 'cache'])`, Chrome's
@@ -76,7 +76,10 @@ export type SettingsResetStep =
     }
   /** The pinned tabs (not the Essentials) that become regular tabs. */
   | { kind: 'unpin'; tabIds: string[] }
-  /** The sites whose remembered permission answers go (the defaults stay). */
+  /**
+   * Every per-site decision, every device grant and the per-type defaults go; `origins` lists
+   * the sites that held an answer – the plan's evidence of what stood, not the run's bound.
+   */
   | { kind: 'sitePermissions'; origins: string[] }
   /** The enabled extensions that are disabled. */
   | { kind: 'disableExtensions'; ids: string[] }
@@ -173,7 +176,7 @@ export async function resetSettings(
         for (const tabId of step.tabIds) browser.tabs.togglePin(tabId)
         break
       case 'sitePermissions':
-        browser.permissions.resetSites()
+        browser.permissions.reset()
         break
       case 'disableExtensions':
         for (const id of step.ids) await browser.extensions.setEnabled(id, false, win)

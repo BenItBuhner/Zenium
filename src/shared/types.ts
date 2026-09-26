@@ -5334,10 +5334,11 @@ export interface Commands {
    * sentence names and nothing else – the startup pages, the home page and the new tab page back
    * to their defaults, the default search engine back to the shipped one (the EEA's choice record
    * cleared with it, so the choice screen asks again at the next run, as Chrome's does), every
-   * pinned tab unpinned, every site's remembered permission answers cleared (Chrome's
-   * `ResetContentSettings`; the Settings › Site settings defaults stay), every extension disabled,
-   * cookies, site data and the cache cleared (`core/settingsReset.ts`). Bookmarks, history and
-   * saved passwords are not touched. The chrome says "Settings reset" (§9.33) when it is done.
+   * pinned tab unpinned, every site's remembered permission answers, device grants and the
+   * per-type defaults chosen in Settings › Site settings cleared (the whole of Chrome's
+   * `ResetContentSettings`), every extension disabled, cookies, site data and the cache cleared
+   * (`core/settingsReset.ts`). Bookmarks, history and saved passwords are not touched. The
+   * chrome says "Settings reset" (§9.33) when it is done.
    */
   'settings.reset': { args: void; result: void }
   'shortcuts.update': { args: { id: string; binding: KeyBinding | null }; result: void }
