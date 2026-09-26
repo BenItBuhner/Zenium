@@ -75,7 +75,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      */
     val storage = Storage(activity, Storage.hostLease) { Log.w(STORAGE_TAG, it) }
     /** The file-backed handoffs to the chrome: the big boot documents and the big fetched bodies (`BootHandoff.kt`). */
-    val handoff = BootHandoff(storage, File(activity.cacheDir, BootHandoff.SPILL_DIR))
+    override val handoff = BootHandoff(storage, File(activity.cacheDir, BootHandoff.SPILL_DIR))
     /** The process's request engine, built from the rule sets the core persists, before any tab exists. */
     override val blocking = Blocking.shared(activity)
     /** The process's privacy host: the policy the core pushes, the Safe Browsing tables it writes. */
