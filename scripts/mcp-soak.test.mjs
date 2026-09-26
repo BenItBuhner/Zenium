@@ -333,7 +333,7 @@ describe('Verdict', () => {
     const v = new Verdict({ secrets: ['s3cret-token', ''] })
     expect(v.hard('a', true)).toBe(true)
     expect(v.hard('a', false, 'Bearer s3cret-token was refused')).toBe(false)
-    expect(v.soft('b (until B)', false, 'no image')).toBe(false)
+    expect(v.soft('b (until E)', false, 'still connected')).toBe(false)
     v.skip('c', 'hard', 'nothing to adopt')
     v.skip('c', 'hard', 'nothing to adopt')
     v.bump('adopted')
@@ -388,7 +388,7 @@ describe('Latencies and the table', () => {
     })
     const v = new Verdict()
     v.hard('initialize', true)
-    v.soft(SOFT_CHECKS.backgroundScreenshot, false, 'no image')
+    v.soft(SOFT_CHECKS.dropForceAdopt, false, 'still connected')
     v.sessions = 1
     v.calls = 4
     const table = formatTable(
@@ -412,7 +412,7 @@ describe('Latencies and the table', () => {
       })
     )
     expect(table).toContain('HARD  initialize')
-    expect(table).toContain(`SOFT  ${SOFT_CHECKS.backgroundScreenshot}`)
+    expect(table).toContain(`SOFT  ${SOFT_CHECKS.dropForceAdopt}`)
     expect(table).toContain('http  zen_status')
     expect(table).toContain('stdio  browser_snapshot')
     expect(table).toContain('server: sessions 1 live (0 parked), 3 created, 2 ended')
@@ -420,7 +420,7 @@ describe('Latencies and the table', () => {
     expect(table).toContain('slowest: zen_status p95 2 ms')
     expect(table).not.toContain('server after the restart')
     expect(table).toMatch(
-      /1 sessions, 4 calls, 0 hard failure\(s\), 1 soft failure\(s\) \(background-screenshot \(until B\) ×1\) in \d+\.\d s – PASS$/
+      /1 sessions, 4 calls, 0 hard failure\(s\), 1 soft failure\(s\) \(drop-force-adopt \(until E\) ×1\) in \d+\.\d s – PASS$/
     )
     expect(summarizeDiagnostics(null)).toBe('no diagnostics read')
   })
@@ -942,8 +942,8 @@ describe('soakSession', () => {
     expect(s.checks['zen_session end']).toMatchObject({ pass: 1 })
     expect(s.checks['zen_session end closeTabs']).toMatchObject({ pass: 3 })
     expect(s.checks.delete).toMatchObject({ pass: 2 })
-    for (const name of Object.values(SOFT_CHECKS).slice(0, 3))
-      expect(s.checks[name]).toMatchObject({ kind: 'soft', pass: 2, fail: 0 })
+    for (const name of ['background-snapshot', 'background-screenshot', 'foreground-screenshot'])
+      expect(s.checks[name]).toMatchObject({ kind: 'hard', pass: 2, fail: 0 })
     expect(fake.groups.size).toBe(0)
     expect(fake.sessions.size).toBe(0)
     const latency = ctx.latencies.summary().http
@@ -952,7 +952,7 @@ describe('soakSession', () => {
     expect(fake.tabs.size).toBe(0)
   })
 
-  it("reports PR-A's background limits as soft failures and falls back to CSS selectors", async () => {
+  it('fails hard on a server that cannot see a hidden page (pre-B) and falls back to CSS selectors', async () => {
     fake = await new FakeZenium({ screenshots: 'hidden-error', hiddenSnapshot: true }).start()
     const ctx = context(fake)
     const client = new HttpClient({
@@ -962,16 +962,18 @@ describe('soakSession', () => {
     })
     await soakSession(client, ctx, { index: 0, leg: 'http' })
     const v = ctx.verdict
-    expect(v.hardFailures).toBe(0)
-    expect(v.softFailures).toBe(2)
+    expect(v.hardFailures).toBe(2)
+    expect(v.softFailures).toBe(0)
     const s = v.summary()
-    expect(s.ok).toBe(true)
-    expect(s.checks[SOFT_CHECKS.backgroundSnapshot]).toMatchObject({ fail: 1 })
-    expect(s.checks[SOFT_CHECKS.backgroundSnapshot].samples[0]).toContain('viewport 0×0')
-    expect(s.checks[SOFT_CHECKS.backgroundScreenshot]).toMatchObject({ fail: 1 })
-    expect(s.checks[SOFT_CHECKS.foregroundScreenshot]).toMatchObject({ pass: 1, fail: 0 })
+    expect(s.ok).toBe(false)
+    expect(s.checks['background-snapshot']).toMatchObject({ kind: 'hard', fail: 1 })
+    expect(s.checks['background-snapshot'].samples[0]).toContain('viewport 0×0')
+    expect(s.checks['background-screenshot']).toMatchObject({ kind: 'hard', fail: 1 })
+    expect(s.checks['foreground-screenshot']).toMatchObject({ kind: 'hard', pass: 1, fail: 0 })
+    // The rest of the session goes on past the failed checks.
     expect(v.counters).toEqual({ formViaSelector: 1 })
     expect(s.checks.browser_type).toMatchObject({ pass: 1 })
+    expect(s.checks.delete).toMatchObject({ pass: 1 })
   })
 
   it('records a transport failure under the check it was at and aborts the session', async () => {
@@ -997,7 +999,7 @@ describe('soakSession', () => {
     expect(fake.sessions.size).toBe(0) // the client still DELETEd
   })
 
-  it('skips the form on a custom fixture without refs', async () => {
+  it('skips the form on a custom fixture without refs – the empty snapshot is the one hard failure', async () => {
     fake = await new FakeZenium({ hiddenSnapshot: true }).start()
     const ctx = context(fake, {
       fixture: {
@@ -1014,7 +1016,8 @@ describe('soakSession', () => {
     })
     await soakSession(client, ctx, { index: 0, leg: 'http' })
     const s = ctx.verdict.summary()
-    expect(ctx.verdict.hardFailures).toBe(0)
+    expect(ctx.verdict.hardFailures).toBe(1)
+    expect(s.checks['background-snapshot']).toMatchObject({ kind: 'hard', fail: 1 })
     expect(s.checks.browser_type).toMatchObject({ pass: 0, skipped: 1 })
     expect(s.checks.browser_click.skipReasons[0]).toMatch(/custom fixture/)
   })
@@ -1102,7 +1105,7 @@ describe('the legs', () => {
 
 describe('main', () => {
   it('runs the http leg and the drop leg against a server named by --url/--token and writes soak.json', async () => {
-    fake = await new FakeZenium({ screenshots: 'hidden-error' }).start()
+    fake = await new FakeZenium().start()
     const out = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-soak-out-'))
     const stdout = vi.spyOn(console, 'log').mockImplementation(() => undefined)
     const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
@@ -1124,7 +1127,7 @@ describe('main', () => {
       expect(summary.ok).toBe(true)
       expect(summary.counts.sessions).toBe(4)
       expect(summary.counts.hardFailures).toBe(0)
-      expect(summary.counts.softFailures).toBe(5) // 4 background screenshots + the force adopt
+      expect(summary.counts.softFailures).toBe(1) // the force adopt (soft until E)
       expect(summary.options).toMatchObject({
         sessions: 4,
         concurrency: 2,
@@ -1140,7 +1143,7 @@ describe('main', () => {
       expect(printed).not.toContain(TOKEN)
       expect(stderr.mock.calls.map((c) => String(c[0])).join('')).not.toContain(TOKEN)
 
-      // --strict: the soft failures fail the run.
+      // --strict: the soft failure (the drop leg's force adopt) fails the run.
       expect(
         await main([
           '--url',
@@ -1149,11 +1152,42 @@ describe('main', () => {
           TOKEN,
           '--sessions=1',
           '--rounds=1',
+          '--drop',
           '--strict',
           '--out',
           out
         ])
       ).toBe(1)
+    } finally {
+      stdout.mockRestore()
+      stderr.mockRestore()
+      fs.rmSync(out, { recursive: true, force: true })
+    }
+  })
+
+  it('exits 1 on a server whose background screenshots fail – hard since B', async () => {
+    fake = await new FakeZenium({ screenshots: 'hidden-error' }).start()
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-soak-out-'))
+    const stdout = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    try {
+      const code = await main([
+        '--url',
+        fake.url,
+        '--token',
+        TOKEN,
+        '--sessions=2',
+        '--rounds=1',
+        '--out',
+        out
+      ])
+      expect(code).toBe(1)
+      const summary = JSON.parse(fs.readFileSync(path.join(out, 'soak.json'), 'utf8'))
+      expect(summary.ok).toBe(false)
+      expect(summary.counts.hardFailures).toBe(2)
+      expect(summary.checks['background-screenshot']).toMatchObject({ kind: 'hard', fail: 2 })
+      expect(summary.checks['foreground-screenshot']).toMatchObject({ kind: 'hard', pass: 2 })
+      expect(stdout.mock.calls.map((c) => c.join(' ')).join('\n')).toContain('– FAIL')
     } finally {
       stdout.mockRestore()
       stderr.mockRestore()

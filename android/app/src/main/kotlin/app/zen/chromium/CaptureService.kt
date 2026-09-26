@@ -120,8 +120,8 @@ class CaptureService : Service() {
     }
 
     private fun stub(): Notification {
-        CaptureNotifications.ensureChannel(this)
-        return NotificationCompat.Builder(this, CaptureLedger.CHANNEL_ID)
+        val channel = Notifications.ensure(this, Notifications.CAPTURE)
+        return NotificationCompat.Builder(this, channel)
             .setSmallIcon(R.drawable.ic_stat_zenium)
             .setColor(ContextCompat.getColor(this, R.color.zen_accent))
             .setContentTitle(getString(R.string.app_name))

@@ -45,19 +45,28 @@ export function Departures({
 }): JSX.Element | null {
   const items = departStore.use((s) => s.items)
   useLayoutEffect(() => {
-    // The New Tab card's exit is the grid's to release (a query, not a close, takes it off).
+    // The New Tab card's exit is the grid's to release when a query takes it off; when it leaves
+    // `with` the close that empties the pane (TAB-34) it is the close's, as a card's exit is:
+    // released in the commit the tabs it leaves with are gone.
     const gone = items.filter((item) =>
       item.kind === 'tab'
         ? !state.tabs[item.tab.id]
-        : item.kind === 'group' && !state.folders[item.folder.id]
+        : item.kind === 'group'
+          ? !state.folders[item.folder.id]
+          : item.with !== undefined && item.with.every((id) => !state.tabs[id])
     )
     if (gone.length > 0) releaseDepartures(gone.map((item) => item.key))
   })
   if (items.length === 0) return null
-  // The New Tab card has no page to ask.
+  // The New Tab card has no page to ask of its own; leaving with a close, it waits on the pages
+  // that close asks.
   const asked = (item: Departure): boolean => {
-    if (item.kind === 'new-tab') return false
-    const ids = item.kind === 'tab' ? [item.tab.id] : item.tabs.map((t) => t.id)
+    const ids =
+      item.kind === 'new-tab'
+        ? (item.with ?? [])
+        : item.kind === 'tab'
+          ? [item.tab.id]
+          : item.tabs.map((t) => t.id)
     return ids.some((id) => state.closingTabIds.includes(id))
   }
   return (

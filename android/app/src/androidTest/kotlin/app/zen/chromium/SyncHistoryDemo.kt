@@ -424,7 +424,7 @@ class SyncHistoryDemo : SyncDemoBase("sync-demo-state.json", "services-sync-hist
      * (`<thisDevice>.inbox.<sendId>.zenpage`), Sync now with a finger on Settings › Sync, and the
      * claims – the document consumed (gone from the tree), NO tab opened by the sync itself, the
      * card on the shade under the Sharing channel (`dumpsys notification`, the app's package and
-     * `zenium.sharing` and the title in one record).
+     * the channel's id (`Notifications.SHARING.id`) and the title in one record).
      */
     private fun inboxArrives(sendId: String, url: String, title: String): Arrival {
         val myId = syncStatus().getString("deviceId")
@@ -548,10 +548,10 @@ class SyncHistoryDemo : SyncDemoBase("sync-demo-state.json", "services-sync-hist
         val settingsUp = awaitSettled({ ui.rootInActiveWindow?.packageName?.toString() == SETTINGS_APP }, 10_000)
         note("  the system's notification settings ${if (settingsUp) "are up" else "did NOT come up (top: ${ui.rootInActiveWindow?.packageName})"}")
         SystemClock.sleep(2_000)
-        val sharing = awaitSettled({ findInWindows(SETTINGS_APP) { it == SharingChannel.NAME } != null }, 8_000)
+        val sharing = awaitSettled({ findInWindows(SETTINGS_APP) { it == Notifications.SHARING.name } != null }, 8_000)
         val sites = findInWindows(SETTINGS_APP) { it == SITES_GROUP } != null
         val site = findInWindows(SETTINGS_APP) { it == DEMO_SITE } != null
-        if (!sharing) revealInSettings(SharingChannel.NAME)
+        if (!sharing) revealInSettings(Notifications.SHARING.name)
         snap("notification-settings")
         note("  channels on the page: Sharing ${if (sharing) "listed" else "NOT listed"}; the '$SITES_GROUP' group ${if (sites) "listed" else "not seen"}; the page's site '$DEMO_SITE' ${if (site) "listed" else "not seen"}")
         if (!sharing) {
@@ -655,7 +655,7 @@ class SyncHistoryDemo : SyncDemoBase("sync-demo-state.json", "services-sync-hist
                 "setTimeout(function(){try{n.close()}catch(e){}},2500);return 'asked'}catch(e){return 'threw '+e}})()"
         )
         val shown = awaitSettled({ pageJs("window.__siteNote||''") == "\"shown\"" }, 8_000)
-        val channel = awaitSettled({ shell("dumpsys notification --noredact 2>/dev/null").contains("${SitesChannels.PREFIX}$DEMO_ORIGIN;") }, 6_000)
+        val channel = awaitSettled({ shell("dumpsys notification --noredact 2>/dev/null").contains(Notifications.sitePrefix(DEMO_ORIGIN)) }, 6_000)
         note("warm-up: the demo page posted a notification (${if (shown) "shown" else "no onshow: ${pageJs("window.__siteNote||''")}"}); its site channel ${if (channel) "exists" else "was NOT made"}")
         // The page's card is closed by the page; whatever is left on the shade goes, so the Sharing card is the shade's only one later.
         SystemClock.sleep(3_000)
@@ -801,8 +801,8 @@ class SyncHistoryDemo : SyncDemoBase("sync-demo-state.json", "services-sync-hist
         private const val COLD_URL = "https://example.com/from-the-laptop-later"
         private const val COLD_TITLE = "Sync roadmap"
         private const val PRIVATE_CONTAINER = "private"
-        private const val SHARING_CHANNEL = SharingChannel.ID
-        private const val SITES_GROUP = SitesChannels.GROUP_NAME
+        private val SHARING_CHANNEL = Notifications.SHARING.id
+        private val SITES_GROUP = Notifications.SITES.name
         private const val SYSTEM_UI = "com.android.systemui"
         private const val SETTINGS_APP = "com.android.settings"
         // The chrome's words (`SYNC_COPY` in lib/syncSetup.ts, the menu template in core/menus.ts, SendTabSheet.tsx).
