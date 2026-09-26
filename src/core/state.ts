@@ -176,6 +176,11 @@ import {
 import type { ZenWindow } from './window'
 
 const BOOKMARKS_BAR_MODES: ReadonlyArray<Settings['bookmarksBar']> = ['always', 'newtab', 'never']
+const ENERGY_SAVER_MODES: ReadonlyArray<Settings['energySaver']> = [
+  'off',
+  'low-battery',
+  'on-battery'
+]
 
 /** A synced window as remembered between sessions (blank / private windows are never restored). */
 export interface PersistedWindow {
@@ -803,6 +808,11 @@ export class BrowserState {
       data.version >= 6 ? data.settings?.sidebarExpandOnHover !== false : true
     if (!BOOKMARKS_BAR_MODES.includes(this.settings.bookmarksBar)) {
       this.settings.bookmarksBar = DEFAULT_SETTINGS.bookmarksBar
+    }
+    // Energy Saver's mode (W8-2): a profile from before the key reads the default; a value that
+    // is none of the three (a hand-edited profile) reads it too, as the bookmarks bar's does.
+    if (!ENERGY_SAVER_MODES.includes(this.settings.energySaver)) {
+      this.settings.energySaver = DEFAULT_SETTINGS.energySaver
     }
     this.settings.toolbarLayout = sanitizeToolbarLayout(
       data.settings?.toolbarLayout,

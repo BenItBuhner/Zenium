@@ -666,3 +666,33 @@ describe('settings.menuOrder on load', () => {
     expect(state(fakeIo(io.writes.at(-1) ?? '{}')).settings.menuOrder).toEqual([])
   })
 })
+
+// ---------------------------------------------------------------------------
+// Energy Saver's mode (W8-2, settings-26; Chrome's local-state battery_saver_mode.state)
+// ---------------------------------------------------------------------------
+
+describe('Settings.energySaver (W8-2)', () => {
+  const stored = (value: unknown): BrowserState => {
+    const settings = structuredClone(DEFAULT_SETTINGS) as unknown as Record<string, unknown>
+    if (value === undefined) delete settings.energySaver
+    else settings.energySaver = value
+    return state(
+      fakeIo(legacyProfile(6, { settings: settings as unknown as Persisted['settings'] }))
+    )
+  }
+
+  it('ships as on-battery – the budgets shrank on battery before the mode had a name – and a profile from before the key reads it', () => {
+    expect(DEFAULT_SETTINGS.energySaver).toBe('on-battery')
+    expect(state(fakeIo()).settings.energySaver).toBe('on-battery')
+    expect(stored(undefined).settings.energySaver).toBe('on-battery')
+  })
+
+  it('keeps a stored mode, and reads anything that is none of the three as the default', () => {
+    expect(stored('off').settings.energySaver).toBe('off')
+    expect(stored('low-battery').settings.energySaver).toBe('low-battery')
+    expect(stored('on-battery').settings.energySaver).toBe('on-battery')
+    for (const bad of ['always', 20, true, null, { mode: 'off' }]) {
+      expect(stored(bad).settings.energySaver, JSON.stringify(bad)).toBe('on-battery')
+    }
+  })
+})
