@@ -33,6 +33,13 @@ on:
         options:
           - '34'
           - '35'
+      profile:
+        description: Hardware profile of the AVD (pixel_6 is the phone's; pixel_tablet for a change on the tablet's boot path, the served new tab page's chassis)
+        type: choice
+        default: pixel_6
+        options:
+          - pixel_6
+          - pixel_tablet
       runs:
         description: Blocks (each installs, settles and measures one arm, then the other; the order alternates block to block); N = runs × starts pairs
         required: false
@@ -48,6 +55,13 @@ on:
         required: false
         type: number
         default: 150
+  # TEMPORARY, on cursor/android-tablet-newtab-page-9271 alone (removed in a `.github`-only commit
+  # once the run is read): #563's gate – the tablet's served new tab page with mitigation (1), READY
+  # not waiting for the served page's placement – on the pixel_tablet chassis, the base pinned to
+  # the main this head contains (aea763e73, v0.5.6), where a dispatch is refused to the agent's
+  # token. The push path takes the tablet's values below; a dispatch's are the inputs', unchanged.
+  push:
+    branches: [cursor/android-tablet-newtab-page-9271]
 
 permissions:
   contents: read
@@ -63,10 +77,13 @@ jobs:
     with:
       script: .github/scripts/android-cold-start-pair.sh
       api-level: ${{ inputs.api-level || '34' }}
+      # The chassis: the phone's unless the caller asks for the tablet's (a change the tablet's
+      # boot pays and the phone's does not – its served new tab page).
+      profile: ${{ github.event_name == 'push' && 'pixel_tablet' || inputs.profile || 'pixel_6' }}
       # The base APK: the base ref in a worktree, its web build, then assembleDebug -PskipWeb as the
       # head's own step ran it. The labels are the two commits, for the table.
       script-env: |
-        P0_BASE_REF=${{ inputs.base-ref || 'main' }}
+        P0_BASE_REF=${{ github.event_name == 'push' && 'aea763e7310f2ca8daa6e5b27e6e52b0278bbddb' || inputs.base-ref || 'main' }}
         P0_BASE_APK=artifacts/cold-start-base/app-base.apk
         P0_RUNS=${{ inputs.runs || 15 }}
         P0_STARTS=${{ inputs.starts || 2 }}
