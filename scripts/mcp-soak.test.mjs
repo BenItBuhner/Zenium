@@ -13,6 +13,7 @@ import {
   FIXTURE,
   HttpClient,
   Latencies,
+  PICTURE_CHECKS,
   SOFT_CHECKS,
   SoakError,
   Verdict,
@@ -333,7 +334,7 @@ describe('Verdict', () => {
     const v = new Verdict({ secrets: ['s3cret-token', ''] })
     expect(v.hard('a', true)).toBe(true)
     expect(v.hard('a', false, 'Bearer s3cret-token was refused')).toBe(false)
-    expect(v.soft('b (until B)', false, 'no image')).toBe(false)
+    expect(v.soft('b (until E)', false, 'still connected')).toBe(false)
     v.skip('c', 'hard', 'nothing to adopt')
     v.skip('c', 'hard', 'nothing to adopt')
     v.bump('adopted')
@@ -388,7 +389,7 @@ describe('Latencies and the table', () => {
     })
     const v = new Verdict()
     v.hard('initialize', true)
-    v.soft(SOFT_CHECKS.backgroundScreenshot, false, 'no image')
+    v.soft(SOFT_CHECKS.dropForceAdopt, false, 'still connected')
     v.sessions = 1
     v.calls = 4
     const table = formatTable(
@@ -412,7 +413,7 @@ describe('Latencies and the table', () => {
       })
     )
     expect(table).toContain('HARD  initialize')
-    expect(table).toContain(`SOFT  ${SOFT_CHECKS.backgroundScreenshot}`)
+    expect(table).toContain(`SOFT  ${SOFT_CHECKS.dropForceAdopt}`)
     expect(table).toContain('http  zen_status')
     expect(table).toContain('stdio  browser_snapshot')
     expect(table).toContain('server: sessions 1 live (0 parked), 3 created, 2 ended')
@@ -420,7 +421,7 @@ describe('Latencies and the table', () => {
     expect(table).toContain('slowest: zen_status p95 2 ms')
     expect(table).not.toContain('server after the restart')
     expect(table).toMatch(
-      /1 sessions, 4 calls, 0 hard failure\(s\), 1 soft failure\(s\) \(background-screenshot \(until B\) ×1\) in \d+\.\d s – PASS$/
+      /1 sessions, 4 calls, 0 hard failure\(s\), 1 soft failure\(s\) \(drop-force-adopt \(until E\) ×1\) in \d+\.\d s – PASS$/
     )
     expect(summarizeDiagnostics(null)).toBe('no diagnostics read')
   })
@@ -480,17 +481,19 @@ const RESUMED =
 class FakeZenium {
   /**
    * `screenshots`: 'image' (always an image), 'hidden-error' (an error while the session is in
-   * background mode, as PR-A does), 'error' (always). `hiddenSnapshot`: a 0×0 viewport and no
-   * refs in background mode (PR-A). `forceAdopt`: adopt with force: true takes a live agent's
-   * group (PR-E). `resurrect`: unknown ids with the token are resumed (PR-A); false 404s them.
+   * background mode, as before PR B), 'error' (always). `hiddenSnapshot`: a 0×0 viewport and no
+   * refs in background mode (before PR B). `bareSnapshot`: a viewport and a heading but no form
+   * (a custom fixture's page). `forceAdopt`: adopt with force: true takes a live agent's group
+   * (PR-E). `resurrect`: unknown ids with the token are resumed (PR-A); false 404s them.
    */
   constructor({
     screenshots = 'image',
     hiddenSnapshot = false,
+    bareSnapshot = false,
     forceAdopt = false,
     resurrect = true
   } = {}) {
-    this.options = { screenshots, hiddenSnapshot, forceAdopt, resurrect }
+    this.options = { screenshots, hiddenSnapshot, bareSnapshot, forceAdopt, resurrect }
     this.sessions = new Map()
     this.groups = new Map()
     this.tabs = new Map()
@@ -694,13 +697,15 @@ class FakeZenium {
     const hidden = this.options.hiddenSnapshot && s.mode === 'background'
     const tree = hidden
       ? '(nothing visible yet)'
-      : [
-          '- main [ref=e1]',
-          '  - heading "Soak fixture" [level=1] [ref=e2]',
-          '  - textbox "Name" [ref=e3]',
-          '  - combobox "Kind" [value=one] [ref=e4]',
-          '  - button "Go" [ref=e5]'
-        ].join('\n')
+      : this.options.bareSnapshot
+        ? ['- main [ref=e1]', '  - heading "Soak fixture" [level=1] [ref=e2]'].join('\n')
+        : [
+            '- main [ref=e1]',
+            '  - heading "Soak fixture" [level=1] [ref=e2]',
+            '  - textbox "Name" [ref=e3]',
+            '  - combobox "Kind" [value=one] [ref=e4]',
+            '  - button "Go" [ref=e5]'
+          ].join('\n')
     return [
       `Snapshot of tab ${tabId}`,
       `- Page URL: ${tab.url}`,
@@ -942,8 +947,8 @@ describe('soakSession', () => {
     expect(s.checks['zen_session end']).toMatchObject({ pass: 1 })
     expect(s.checks['zen_session end closeTabs']).toMatchObject({ pass: 3 })
     expect(s.checks.delete).toMatchObject({ pass: 2 })
-    for (const name of Object.values(SOFT_CHECKS).slice(0, 3))
-      expect(s.checks[name]).toMatchObject({ kind: 'soft', pass: 2, fail: 0 })
+    for (const name of Object.values(PICTURE_CHECKS))
+      expect(s.checks[name]).toMatchObject({ kind: 'hard', pass: 2, fail: 0 })
     expect(fake.groups.size).toBe(0)
     expect(fake.sessions.size).toBe(0)
     const latency = ctx.latencies.summary().http
@@ -952,7 +957,7 @@ describe('soakSession', () => {
     expect(fake.tabs.size).toBe(0)
   })
 
-  it("reports PR-A's background limits as soft failures and falls back to CSS selectors", async () => {
+  it('fails hard on a hidden page without refs or picture, and still finishes the session over CSS selectors', async () => {
     fake = await new FakeZenium({ screenshots: 'hidden-error', hiddenSnapshot: true }).start()
     const ctx = context(fake)
     const client = new HttpClient({
@@ -962,16 +967,17 @@ describe('soakSession', () => {
     })
     await soakSession(client, ctx, { index: 0, leg: 'http' })
     const v = ctx.verdict
-    expect(v.hardFailures).toBe(0)
-    expect(v.softFailures).toBe(2)
+    expect(v.hardFailures).toBe(2)
+    expect(v.softFailures).toBe(0)
     const s = v.summary()
-    expect(s.ok).toBe(true)
-    expect(s.checks[SOFT_CHECKS.backgroundSnapshot]).toMatchObject({ fail: 1 })
-    expect(s.checks[SOFT_CHECKS.backgroundSnapshot].samples[0]).toContain('viewport 0×0')
-    expect(s.checks[SOFT_CHECKS.backgroundScreenshot]).toMatchObject({ fail: 1 })
-    expect(s.checks[SOFT_CHECKS.foregroundScreenshot]).toMatchObject({ pass: 1, fail: 0 })
+    expect(s.ok).toBe(false)
+    expect(s.checks[PICTURE_CHECKS.backgroundSnapshot]).toMatchObject({ kind: 'hard', fail: 1 })
+    expect(s.checks[PICTURE_CHECKS.backgroundSnapshot].samples[0]).toContain('viewport 0×0')
+    expect(s.checks[PICTURE_CHECKS.backgroundScreenshot]).toMatchObject({ kind: 'hard', fail: 1 })
+    expect(s.checks[PICTURE_CHECKS.foregroundScreenshot]).toMatchObject({ pass: 1, fail: 0 })
     expect(v.counters).toEqual({ formViaSelector: 1 })
     expect(s.checks.browser_type).toMatchObject({ pass: 1 })
+    expect(s.checks.delete).toMatchObject({ pass: 1 })
   })
 
   it('records a transport failure under the check it was at and aborts the session', async () => {
@@ -998,7 +1004,7 @@ describe('soakSession', () => {
   })
 
   it('skips the form on a custom fixture without refs', async () => {
-    fake = await new FakeZenium({ hiddenSnapshot: true }).start()
+    fake = await new FakeZenium({ bareSnapshot: true }).start()
     const ctx = context(fake, {
       fixture: {
         url: 'http://mine/',
@@ -1015,6 +1021,7 @@ describe('soakSession', () => {
     await soakSession(client, ctx, { index: 0, leg: 'http' })
     const s = ctx.verdict.summary()
     expect(ctx.verdict.hardFailures).toBe(0)
+    expect(s.checks[PICTURE_CHECKS.backgroundSnapshot]).toMatchObject({ pass: 1, fail: 0 })
     expect(s.checks.browser_type).toMatchObject({ pass: 0, skipped: 1 })
     expect(s.checks.browser_click.skipReasons[0]).toMatch(/custom fixture/)
   })
@@ -1102,7 +1109,7 @@ describe('the legs', () => {
 
 describe('main', () => {
   it('runs the http leg and the drop leg against a server named by --url/--token and writes soak.json', async () => {
-    fake = await new FakeZenium({ screenshots: 'hidden-error' }).start()
+    fake = await new FakeZenium().start()
     const out = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-soak-out-'))
     const stdout = vi.spyOn(console, 'log').mockImplementation(() => undefined)
     const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
@@ -1124,7 +1131,9 @@ describe('main', () => {
       expect(summary.ok).toBe(true)
       expect(summary.counts.sessions).toBe(4)
       expect(summary.counts.hardFailures).toBe(0)
-      expect(summary.counts.softFailures).toBe(5) // 4 background screenshots + the force adopt
+      expect(summary.counts.softFailures).toBe(1) // the force adopt, soft until E
+      for (const name of Object.values(PICTURE_CHECKS))
+        expect(summary.checks[name]).toMatchObject({ kind: 'hard', pass: 4, fail: 0 })
       expect(summary.options).toMatchObject({
         sessions: 4,
         concurrency: 2,
@@ -1149,11 +1158,36 @@ describe('main', () => {
           TOKEN,
           '--sessions=1',
           '--rounds=1',
+          '--drop',
           '--strict',
           '--out',
           out
         ])
       ).toBe(1)
+
+      // A hidden page without a picture fails the run, strict or not.
+      await fake.stop()
+      fake = await new FakeZenium({ screenshots: 'hidden-error' }).start()
+      expect(
+        await main([
+          '--url',
+          fake.url,
+          '--token',
+          TOKEN,
+          '--sessions=2',
+          '--rounds=1',
+          '--out',
+          out
+        ])
+      ).toBe(1)
+      const failed = JSON.parse(fs.readFileSync(path.join(out, 'soak.json'), 'utf8'))
+      expect(failed.ok).toBe(false)
+      expect(failed.counts).toMatchObject({ sessions: 2, hardFailures: 2, softFailures: 0 })
+      expect(failed.checks[PICTURE_CHECKS.backgroundScreenshot]).toMatchObject({
+        kind: 'hard',
+        fail: 2
+      })
+      expect(stdout.mock.calls.map((c) => c.join(' ')).join('\n')).toContain('– FAIL')
     } finally {
       stdout.mockRestore()
       stderr.mockRestore()

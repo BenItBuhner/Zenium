@@ -48,8 +48,8 @@ describe('judgeStep', () => {
     v.sessions += 2
     v.calls += 9
     v.hard('zen_status', true)
-    v.soft(SOFT_CHECKS.backgroundScreenshot, false, 'no image part in the result')
-    v.soft(SOFT_CHECKS.backgroundScreenshot, false, 'no image part in the result')
+    v.soft(SOFT_CHECKS.dropForceAdopt, false, 'still connected after the drop')
+    v.soft(SOFT_CHECKS.dropForceAdopt, false, 'still connected after the drop')
     const { detail, error } = judgeStep(v, before)
     expect(error).toBeNull()
     expect(detail).toEqual({
@@ -61,9 +61,9 @@ describe('judgeStep', () => {
         hard: [],
         soft: [
           {
-            name: SOFT_CHECKS.backgroundScreenshot,
+            name: SOFT_CHECKS.dropForceAdopt,
             failures: 2,
-            sample: 'no image part in the result'
+            sample: 'still connected after the drop'
           }
         ]
       }

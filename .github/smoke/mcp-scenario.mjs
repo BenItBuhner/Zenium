@@ -35,9 +35,10 @@
 //     quit
 //
 // A step FAILS on a hard check that failed during it (the checks scripts/mcp-soak.mjs names:
-// a tool error, a session lost, no resurrection, a DELETE not 204 …); the soft checks – the
-// ones named with the PR they wait on, `background-screenshot (until B)` and their kin – are
-// counted in the step's detail and never fail it, so CI stays green until those PRs land. The
+// a tool error, a session lost, no resurrection, a DELETE not 204, a page's snapshot without
+// refs or its screenshot missing …); the soft checks – the ones named with the PR they wait on,
+// `drop-force-adopt (until E)` – are counted in the step's detail and never fail it, so CI
+// stays green until that PR lands. The
 // whole verdict (counts, client latency per tool and leg, the server's diagnostics) is written
 // to <out>/<label>/soak.json next to result.json and printed as the soak's table into the log.
 import fs from 'node:fs'
