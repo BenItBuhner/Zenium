@@ -164,6 +164,16 @@ export interface ValueRow extends RowBase {
   onChange(value: string): void
   /** The picker sheet's description: what the desktop row explained beside its menulist. */
   sheetDescription?: string
+  /**
+   * On the two-pane layout the row is §9.14's plain radio list rather than a menulist: the
+   * text block – the label, the description – then one radio row per option under it across
+   * the row's content width (the §9.13 picker's rows: the 16 circle, the label, the option's
+   * description under it), as Chrome's Performance page lists Memory Saver's tiers and Energy
+   * Saver's two conditions under their toggles (W8-2). For 2–4 options that fit on one screen
+   * and whose descriptions ARE the choice (§9.14; more become a menulist). The phone keeps its
+   * value row and picker sheet, which the same options fill.
+   */
+  radios?: boolean
 }
 
 /** A boolean: the whole row toggles the trailing 36 × 20 switch (§10.4). */

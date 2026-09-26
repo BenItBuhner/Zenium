@@ -12431,6 +12431,24 @@
   max-width: none;
 }
 /*
+ * The radio-form value row (`ValueRow.radios`, `rows.tsx`'s `RadioListRow`; §9.14, §10.5): the
+ * stacked row's column with the picker's radio rows (`RadioOption`) under the text block, each
+ * its own `.zen-v2-row` – 44 on `--v2-row`, 64 with the option's description – whose 16 gutter
+ * indents the circle under the label, as Chrome's `cr-row continuation` indents its radios under
+ * their toggle; the options touch, the row's own fill stays off (`data-static`). The block's 4
+ * stands between the text and the first option. A disabled group's options keep the dependent
+ * row's one .4 (`.zen-settings-row-disabled` on the row, not compounded here) and take no press
+ * or fill.
+ */
+.zen-settings-radios > .zen-settings-radio-row:disabled {
+  cursor: default;
+  opacity: 1;
+}
+.zen-settings-radios > .zen-settings-radio-row:disabled:hover,
+.zen-settings-radios > .zen-settings-radio-row:disabled:active {
+  background: transparent;
+}
+/*
  * A slider row (§10.4, `rows.tsx`'s `SliderControl`): the zoom sheet's slider (`.zen-zoom-slider`,
  * its ring in the page's tone here as the Default zoom row's) with the value as 13/69 % text in
  * `tabular-nums`. On a phone the block is the row's text – the label with the value on its

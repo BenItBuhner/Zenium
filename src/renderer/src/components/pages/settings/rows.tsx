@@ -1,4 +1,10 @@
-import type { FocusEvent, JSX, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
+import type {
+  FocusEvent,
+  JSX,
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+  ReactNode
+} from 'react'
 import { Fragment, useCallback, useEffect, useId, useRef, useState } from 'react'
 import { ChevronRight, Ellipsis, ExternalLink, Loader2, Minus, Plus } from 'lucide-react'
 import { anchorOf, type Anchor } from '@renderer/lib/anchor'
@@ -28,7 +34,7 @@ import {
   type SwitchRow,
   type ValueRow
 } from './model'
-import { ValidationMessage } from './blocks'
+import { RadioOption, ValidationMessage } from './blocks'
 import { attachLineCount } from './lineCount'
 import { useSheetDismiss, type SheetDismiss } from './sheetContext'
 
@@ -531,6 +537,7 @@ function DesktopRowView({
 }): JSX.Element {
   switch (row.kind) {
     case 'value':
+      if (row.radios) return <RadioListRow row={row} caption={caption} />
       return <MenulistRow row={row} caption={caption} />
     case 'switch':
       return <CheckRow row={row} caption={caption} />
@@ -666,6 +673,87 @@ function MenulistRow({ row, caption }: { row: ValueRow; caption?: string }): JSX
         className="zen-settings-menulist"
       />
     </ControlRow>
+  )
+}
+
+/**
+ * A value row in the radio form (`ValueRow.radios`; §9.14, §10.5): the text block – the label,
+ * the description – then under it a `radiogroup` of the picker's radio rows (`RadioOption`)
+ * across the row's content width, named by the row's label (`aria-labelledby`), as Chrome's
+ * Performance page seats Memory Saver's tiers under its toggle. The keyboard is a native
+ * group's: the checked option is the group's one tab stop (roving `tabIndex`; the first option
+ * where none is checked) and the arrow keys move the choice to the next or previous option,
+ * wrapping, and the focus with it. The row is a column as the stacked field row is
+ * (`.zen-settings-stacked-row`, its block's 4 between the text and the list), `data-static`
+ * since the options are the targets, and disabled as a dependent row at .4 with its options
+ * taking no press (§10.4).
+ */
+function RadioListRow({ row, caption }: { row: ValueRow; caption?: string }): JSX.Element {
+  const labelId = `${useId()}-label`
+  const group = useRef<HTMLDivElement>(null)
+  const checkedAt = Math.max(
+    0,
+    row.options.findIndex((option) => option.value === row.value)
+  )
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (row.disabled) return
+    const step =
+      e.key === 'ArrowDown' || e.key === 'ArrowRight'
+        ? 1
+        : e.key === 'ArrowUp' || e.key === 'ArrowLeft'
+          ? -1
+          : 0
+    if (step === 0 || row.options.length === 0) return
+    e.preventDefault()
+    const at = (checkedAt + step + row.options.length) % row.options.length
+    const next = row.options[at]
+    if (!next) return
+    if (next.value !== row.value) row.onChange(next.value)
+    group.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[at]?.focus()
+  }
+  return (
+    <div
+      data-row={row.id}
+      data-static=""
+      data-tone={row.tone}
+      className={cn(
+        'zen-settings-row zen-settings-stacked-row zen-settings-radios-row zen-v2-row',
+        row.disabled && 'zen-settings-row-disabled'
+      )}
+    >
+      <div className="zen-settings-field-block">
+        <RowText
+          label={row.label}
+          labelId={labelId}
+          description={row.sheetDescription ?? row.description}
+          caption={caption}
+        />
+        <div
+          ref={group}
+          role="radiogroup"
+          aria-labelledby={labelId}
+          aria-disabled={row.disabled || undefined}
+          className="zen-settings-radio-list zen-settings-radios"
+          onKeyDown={onKeyDown}
+        >
+          {row.options.map((option, index) => (
+            <RadioOption
+              key={option.value}
+              label={option.label}
+              description={option.description}
+              leading={option.leading}
+              font={option.font}
+              checked={option.value === row.value}
+              tabIndex={index === checkedAt ? 0 : -1}
+              disabled={row.disabled}
+              onSelect={() => {
+                if (option.value !== row.value) row.onChange(option.value)
+              }}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
   )
 }
 
