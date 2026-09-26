@@ -467,6 +467,10 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
    * once an extension is gone for good (a disable or a reload keeps its stored state).
    */
   registryChanged(event: RegistryEvent): void {
+    // The registry is what names the extension holding Settings › On startup: an install, an
+    // update (its `startupPages` rewritten), an uninstall (the record gone after the unload) or
+    // an enable/disable may have changed the answer.
+    this.startupPages.refresh()
     switch (event.type) {
       case 'installed':
       case 'updated':
@@ -707,7 +711,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.sidePanel.load(loaded)
     this.omnibox.load(loaded)
     this.searchProvider.load(loaded)
-    this.startupPages.load(loaded)
+    this.startupPages.refresh()
     // After the permissions: the state exists only for extensions holding the permission.
     this.declarativeNetRequest.load(loaded)
     this.privacy.load(ext.id)
@@ -753,7 +757,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.identity.unload(ext.id)
     this.omnibox.unload(ext.id)
     this.searchProvider.unload(ext.id)
-    this.startupPages.unload(ext.id)
+    this.startupPages.refresh()
     this.tts.unload(ext.id)
     this.declarativeNetRequest.unload(ext.id)
     this.webRequest.unload(ext.id)

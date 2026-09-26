@@ -65,12 +65,13 @@ import {
   newRecord,
   newTabOverrideUrl,
   setNewTabOverride,
+  startupOverrideOf,
   withManifest,
   type ExtensionRecord,
   type ExtensionRegistry
 } from '../../core/extensions/registry'
 import { STORE_UPDATE_URLS, isExtensionId, type StoreId } from '../../core/extensions/store'
-import { resolveStartupOverride, type StartupOverride } from '../../core/startup'
+import type { StartupOverride } from '../../core/startup'
 import {
   NO_PREVIOUS_BEGIN_INSTALL_ERROR,
   USER_CANCELLED_ERROR,
@@ -424,7 +425,7 @@ export class ExtensionService implements ExtensionHost {
         // Electron derives the id itself (from `manifest.key` or the path); trust what it says.
         if (ext.id !== record.id) this.rekey(record, ext.id)
         this.backfillNewTabPage(record, ext.manifest)
-        this.backfillStartupPages(record, ext.manifest)
+        this.syncStartupPages(record, ext.manifest)
         if (!this.loadedById.has(ext.id)) this.loadedById.set(ext.id, ext)
         for (const listener of this.loadedListeners) listener(ext, ses)
       } catch (error) {
@@ -567,13 +568,16 @@ export class ExtensionService implements ExtensionHost {
   }
 
   /**
-   * Records written before `startupPages` existed learn theirs from the manifest Electron
-   * loaded, so the next boot – which reads the registry before any extension loads – can follow
-   * an enabled extension's `chrome_settings_overrides.startup_pages` (`startupPagesOverride`).
+   * The record's `startupPages` as the manifest Electron loaded declares them: records written
+   * before the field existed learn theirs, and an unpacked folder whose manifest changed on disk
+   * between boots is brought up to date, so the registry – what the boot reads before any
+   * extension loads, and what the Settings page's indicator shows (`startupPagesOverride`) –
+   * speaks for the extension as it runs.
    */
-  private backfillStartupPages(record: ExtensionRecord, manifest: unknown): void {
-    if (record.startupPages !== undefined) return
-    record.startupPages = manifestFields(manifest).startupPages
+  private syncStartupPages(record: ExtensionRecord, manifest: unknown): void {
+    const pages = manifestFields(manifest).startupPages
+    if (record.startupPages !== undefined && sameStartupPages(record.startupPages, pages)) return
+    record.startupPages = pages
     this.persist()
   }
 
@@ -1093,25 +1097,12 @@ export class ExtensionService implements ExtensionHost {
    * The enabled extension whose `chrome_settings_overrides.startup_pages` the boot follows
    * (`ExtensionHost.startupPagesOverride`): from the registry alone, as Chrome reads the
    * preference from `ExtensionPrefs` before the extensions load – the boot opens its windows
-   * first (`Browser.start`) – the newest-installed of several (`resolveStartupOverride`). The
-   * Settings page's indicator comes from the loaded extensions instead (`StartupPagesApi`), and
-   * agrees with this once they have loaded.
+   * first (`Browser.start`) – the newest-installed of several (`startupOverrideOf`). The Settings
+   * page's indicator (`StartupPagesApi`) reads the same registry through this, so the two name
+   * one extension.
    */
   startupPagesOverride(): StartupOverride | null {
-    return resolveStartupOverride(
-      this.registry.extensions.flatMap((record) =>
-        record.enabled && record.startupPages && record.startupPages.length > 0
-          ? [
-              {
-                extensionId: record.id,
-                name: record.name,
-                pages: record.startupPages,
-                installedAt: record.installedAt
-              }
-            ]
-          : []
-      )
-    )
+    return startupOverrideOf(this.registry.extensions)
   }
 
   /**
@@ -1857,6 +1848,10 @@ function publishedExtension(ext: Extension, folded: readonly string[]): Extensio
 
 function sameStrings(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((value, i) => value === b[i])
+}
+
+function sameStartupPages(a: string[] | null, b: string[] | null): boolean {
+  return a === null || b === null ? a === b : sameStrings(a, b)
 }
 
 /**

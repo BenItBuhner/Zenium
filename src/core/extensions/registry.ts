@@ -9,7 +9,7 @@
 import type { CrxPublisher } from './crx'
 import { isMatchPattern } from './manifest'
 import type { StoreId } from './store'
-import { sanitizeStartupPages } from '../startup'
+import { resolveStartupOverride, sanitizeStartupPages, type StartupOverride } from '../startup'
 
 export type ExtensionSource = StoreId | 'crx' | 'zip' | 'unpacked'
 
@@ -184,6 +184,31 @@ function startupPagesOf(manifest: LooseManifest): string[] | null {
   if (!Array.isArray(raw)) return null
   const pages = sanitizeStartupPages(raw)
   return pages.length > 0 ? pages : null
+}
+
+/**
+ * The enabled extension whose `chrome_settings_overrides.startup_pages` holds Settings › On
+ * startup, from the registry alone: the newest-installed of several (`resolveStartupOverride`),
+ * a tie to the first record. The one source both halves of the override read – the boot, which
+ * opens its windows before any extension loads (`ExtensionHost.startupPagesOverride`), and the
+ * Settings page's indicator once they have (`StartupPagesApi`) – so the two never name
+ * different extensions, whatever order the extensions loaded or reloaded in.
+ */
+export function startupOverrideOf(records: readonly ExtensionRecord[]): StartupOverride | null {
+  return resolveStartupOverride(
+    records.flatMap((record) =>
+      record.enabled && record.startupPages && record.startupPages.length > 0
+        ? [
+            {
+              extensionId: record.id,
+              name: record.name,
+              pages: record.startupPages,
+              installedAt: record.installedAt
+            }
+          ]
+        : []
+    )
+  )
 }
 
 /** The URL new tabs open with while `record` holds the override, or null when it cannot. */
