@@ -3691,6 +3691,7 @@ export class Browser {
         void this.newTab.updateShortcut(id, title, url),
       'newtab.removeShortcut': ({ id }) => void this.newTab.removeShortcut(id),
       'newtab.reorderShortcuts': ({ ids }) => this.newTab.reorderShortcuts(ids),
+      'newtab.setModuleHidden': ({ id, hidden }) => this.newTab.setModuleHidden(id, hidden),
       'newtab.pickBackgroundImage': (_a, win) => this.newTab.pickBackgroundImage(win),
       'newtab.clearBackgroundImage': () => this.newTab.clearBackgroundImage(),
       'newtab.resetBackground': () => this.newTab.resetBackground(),

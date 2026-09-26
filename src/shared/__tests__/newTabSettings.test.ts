@@ -19,9 +19,11 @@ import {
   presetAvailable,
   removeSite,
   sanitizeHiddenHosts,
+  sanitizeHiddenModules,
   sanitizeNewTabDevice,
   sanitizeNewTabSettings,
   sanitizeNewTabShortcuts,
+  setModuleHidden,
   setNewTabBackground,
   setNewTabSection,
   setNewTabShortcutsMode,
@@ -313,8 +315,36 @@ describe('device-local sets', () => {
       })
     ).toEqual({
       shortcuts: [{ id: 'a', url: 'https://a.example/', title: 'A' }],
-      hiddenHosts: ['b.example']
+      hiddenHosts: ['b.example'],
+      hiddenModules: []
     })
+  })
+
+  it('sanitises the hidden Magic Stack modules to known ids in stack order, once each', () => {
+    expect(sanitizeHiddenModules(['bookmarks', 'continue', 'bookmarks', 'price', 7, null])).toEqual(
+      ['continue', 'bookmarks']
+    )
+    expect(sanitizeHiddenModules(undefined)).toEqual([])
+    expect(sanitizeHiddenModules('continue')).toEqual([])
+    expect(
+      sanitizeNewTabDevice({
+        shortcuts: [],
+        hiddenHosts: [],
+        hiddenModules: ['default-browser', 'x']
+      })
+    ).toEqual({ shortcuts: [], hiddenHosts: [], hiddenModules: ['default-browser'] })
+  })
+
+  it('hides and shows a Magic Stack module; a repeat changes nothing', () => {
+    let d = setModuleHidden(device(), 'downloads', true)
+    expect(d.hiddenModules).toEqual(['downloads'])
+    expect(setModuleHidden(d, 'downloads', true)).toBe(d)
+    d = setModuleHidden(d, 'continue', true)
+    expect(d.hiddenModules).toEqual(['continue', 'downloads'])
+    d = setModuleHidden(d, 'downloads', false)
+    expect(d.hiddenModules).toEqual(['continue'])
+    expect(setModuleHidden(d, 'downloads', false)).toBe(d)
+    expect(setModuleHidden(d, 'continue', false)).toEqual(device())
   })
 
   it('siteHost lower-cases and drops www.', () => {
@@ -523,13 +553,18 @@ describe('migrateNewTabDevice', () => {
       shortcuts: [{ id: 'a', url: 'https://a.example/', title: 'A' }],
       hiddenHosts: ['a.example']
     }
-    expect(migrateNewTabDevice({ newTabDevice: v5 })).toEqual(v5)
+    // A v5 document from before the Magic Stack has no hidden modules: none are hidden.
+    expect(migrateNewTabDevice({ newTabDevice: v5 })).toEqual({ ...v5, hiddenModules: [] })
+    expect(migrateNewTabDevice({ newTabDevice: { ...v5, hiddenModules: ['continue'] } })).toEqual({
+      ...v5,
+      hiddenModules: ['continue']
+    })
     expect(
       migrateNewTabDevice({
         newTabShortcuts: v5.shortcuts,
         newTabHiddenHosts: ['WWW.A.example', 'a.example']
       })
-    ).toEqual(v5)
+    ).toEqual({ ...v5, hiddenModules: [] })
     expect(migrateNewTabDevice({})).toEqual(emptyNewTabDevice())
   })
 
