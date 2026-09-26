@@ -433,7 +433,7 @@ describe('the result card (capture-21)', () => {
     return el
   }
 
-  it('is a §9.20 dialog at 400 over the page, titled with the picture’s size, the picture on it, and Close, Copy, Save (the primary) in its footer; the keyboard lands on it', async () => {
+  it('is a §9.20 dialog at 400 over the page, titled with the picture’s size, the picture on it, and Close, Copy, Share, Save (the primary) in its footer; the keyboard lands on it', async () => {
     const el = await captured()
     const card = el.querySelector<HTMLElement>('[data-capture-result]')!
     expect(card.dataset.captureResult).toBe('ok')
@@ -458,8 +458,14 @@ describe('the result card (capture-21)', () => {
     const buttons = [...card.querySelectorAll<HTMLButtonElement>('button')].map(
       (b) => b.textContent
     )
-    expect(buttons).toEqual(['Close', 'Copy', 'Save'])
+    expect(buttons).toEqual(['Close', 'Copy', 'Share', 'Save'])
     expect(card.querySelector('[data-capture-save]')?.hasAttribute('data-primary')).toBe(true)
+    // Share opens the share hub's popover on itself (§9.20: a popover hangs from its opener).
+    const share = card.querySelector<HTMLButtonElement>('[data-capture-share]')!
+    expect(share.hasAttribute('data-share-anchor')).toBe(true)
+    expect(share.getAttribute('aria-haspopup')).toBe('dialog')
+    // Four verbs hug at 80 in the 400 form's column (§9.11), not the primitive's 96.
+    expect(card.querySelector('.zen-capture-card-footer')?.contains(share)).toBe(true)
     expect(document.activeElement).toBe(card)
     // No fallback: nothing said of the visible area.
     expect(card.textContent).not.toContain('Visible area captured')
@@ -615,6 +621,44 @@ describe('the result card (capture-21)', () => {
     expect(el.querySelector('[data-capture-toast]')?.textContent).toBe('Couldn’t save the picture')
   })
 
+  it('Share hands the picture to the share hub for this tab; the card stays up under the popover and says nothing itself', async () => {
+    vi.mocked(cmd).mockImplementation(async (name: string) =>
+      name === 'capture.share' ? true : null
+    )
+    const el = await captured()
+    click(el.querySelector('[data-capture-share]'))
+    await settle()
+    expect(cmd).toHaveBeenCalledWith('capture.share', { dataUrl: RESULT.dataUrl, tabId: 't1' })
+    expect(cmd).not.toHaveBeenCalledWith('capture.copy', expect.anything())
+    // The hub's popover is the answer; no toast of the card's own.
+    expect(el.querySelector('[data-capture-toast]')).toBeNull()
+    expect(el.querySelector('[data-capture-result]')).not.toBeNull()
+    expect(uiStore.get().capture).not.toBeNull()
+  })
+
+  it('a window with no share hub (an app window’s chrome) copies the picture instead and says so', async () => {
+    vi.mocked(cmd).mockImplementation(async (name: string) =>
+      name === 'capture.share' ? false : name === 'capture.copy' ? true : null
+    )
+    const el = await captured()
+    click(el.querySelector('[data-capture-share]'))
+    await settle()
+    expect(cmd).toHaveBeenCalledWith('capture.copy', { dataUrl: RESULT.dataUrl })
+    const toast = el.querySelector<HTMLElement>('[data-capture-toast]')!
+    expect(toast.textContent).toBe('Nothing to share with here, so the picture was copied')
+    expect(toast.dataset.kind).toBe('info')
+  })
+
+  it('a share that neither hub nor clipboard would take is an error toast', async () => {
+    vi.mocked(cmd).mockImplementation(async () => false)
+    const el = await captured()
+    click(el.querySelector('[data-capture-share]'))
+    await settle()
+    const toast = el.querySelector<HTMLElement>('[data-capture-toast]')!
+    expect(toast.textContent).toBe('Couldn’t share the picture')
+    expect(toast.dataset.kind).toBe('error')
+  })
+
   it('the visible-area fallback is named on the card, in the warn ink', async () => {
     const el = await captured({ ...RESULT, fallback: 'viewport' })
     const card = el.querySelector<HTMLElement>('[data-capture-result]')!
@@ -758,11 +802,21 @@ describe('Escape closes cleanly from every phase (capture-16)', () => {
     closedCleanly(el)
   })
 
-  it('mid-drag', () => {
+  it('mid-drag: the first Escape lets the drag go and keeps the dimmed page (§9.5 one hop), the second closes', () => {
     const el = open()
     const dialog = overlay(el)!
     pointer(dialog, 'pointerdown', 100, 200)
     pointer(dialog, 'pointermove', 300, 400)
+    expect(el.querySelector('[data-capture-marquee]')).not.toBeNull()
+    keydown(dialog, 'Escape')
+    expect(uiStore.get().capture).not.toBeNull()
+    expect(dialog.dataset.capture).toBe('selecting')
+    expect(el.querySelector('[data-capture-marquee]')).toBeNull()
+    expect(el.querySelector('[data-capture-toolbar]')).not.toBeNull()
+    // The release that follows a let-go drag captures nothing.
+    pointer(dialog, 'pointerup', 300, 400)
+    expect(invoke).not.toHaveBeenCalled()
+    expect(dialog.dataset.capture).toBe('selecting')
     keydown(dialog, 'Escape')
     closedCleanly(el)
     expect(invoke).not.toHaveBeenCalled()

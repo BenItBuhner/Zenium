@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import type { HostCapabilities, Platform as PlatformOs, Tab } from '../../shared/types'
+import type {
+  HostCapabilities,
+  Platform as PlatformOs,
+  SharePayload,
+  Tab
+} from '../../shared/types'
 import { Browser } from '../browser'
 import type { ZenWindow } from '../window'
 import type {
@@ -8,12 +13,14 @@ import type {
   ClipboardHost,
   DownloadHost,
   Platform,
+  ShellHost,
   StoreIO,
   TabView,
   TabViewHost,
   WindowHost
 } from '../platform'
 import { CAPTURE_MAX_HEIGHT, CAPTURE_TOO_LARGE, type PageViewport } from '../../shared/capture'
+import { base64Size } from '../capture'
 import { base64Encode } from '../extensions/bytes'
 
 function memoryIo(): StoreIO {
@@ -72,6 +79,8 @@ interface Fixture {
   saved: Array<{ name: string; mimeType: string; data: string }>
   /** Every `TabView.screenshot` call (Take Screenshot's path). */
   screenshots: string[]
+  /** Every payload handed to the OS's own sheet (`shell.share`, Android). */
+  shared: SharePayload[]
 }
 
 function fixture(
@@ -87,12 +96,17 @@ function fixture(
     clipboard?: boolean
     /** What `saveFile` answers: the path written, or null for a failure. */
     savePath?: string | null
+    /** The chrome has a share sheet (the desktop's hub, MW-21) and the window's chrome has it up. */
+    shareSheet?: boolean
+    /** The OS has a share sheet of its own (Android's). */
+    osShare?: boolean
   } = {}
 ): Fixture {
   const captures: AgentCaptureOptions[] = []
   const copied: string[] = []
   const saved: Fixture['saved'] = []
   const screenshots: string[] = []
+  const shared: SharePayload[] = []
   const viewport = opts.viewport === undefined ? PLAIN : opts.viewport
   const paint =
     opts.capture ??
@@ -116,7 +130,9 @@ function fixture(
       windows: true,
       updates: false,
       agents: false,
-      pageTabs: false
+      pageTabs: false,
+      share: opts.osShare === true,
+      shareSheet: opts.shareSheet === true
     }),
     io: memoryIo(),
     windows: {
@@ -171,7 +187,15 @@ function fixture(
         return opts.clipboard ?? true
       }
     }),
-    shell: stub(),
+    shell: stub<ShellHost>(
+      opts.osShare
+        ? {
+            share: async (payload: SharePayload) => {
+              shared.push(payload)
+            }
+          }
+        : {}
+    ),
     net: stub(),
     downloads: stub<DownloadHost>({
       currentDirectory: () => '/home/u/Downloads',
@@ -193,7 +217,10 @@ function fixture(
   browser.start()
   // A fixed clock for the name rule.
   browser.capture.now = () => new Date(2026, 8, 23, 14, 5, 9)
-  return { browser, win: browser.focusedWindow(), captures, copied, saved, screenshots }
+  const win = browser.focusedWindow()
+  // The chrome's share popover registers itself on the window as it mounts (`ui.surface`).
+  if (opts.shareSheet) win.surfaces.add('share')
+  return { browser, win, captures, copied, saved, screenshots, shared }
 }
 
 function openSite(f: Fixture, url = 'https://example.test/page'): Tab {
@@ -463,7 +490,11 @@ describe('capture.save', () => {
       filename: 'Screenshot 2026-09-23 at 14.05.09.png',
       mimeType: 'image/png',
       containerId: tab.containerId,
-      url: 'file:///home/u/Downloads/Screenshot 2026-09-23 at 14.05.09.png'
+      url: 'file:///home/u/Downloads/Screenshot 2026-09-23 at 14.05.09.png',
+      // The picture's bytes (33 here: the PNG header the fixture paints), so the bubble and the
+      // Downloads page do not read the file as empty (BUG-031, capture-22).
+      totalBytes: 33,
+      receivedBytes: 33
     })
   })
 
@@ -497,6 +528,95 @@ describe('capture.save', () => {
     await expect(command(failing, 'capture.save', { dataUrl: png })).resolves.toBeNull()
     expect(failing.saved).toHaveLength(1)
     expect(failing.browser.downloads.items).toEqual([])
+  })
+})
+
+describe('capture.share', () => {
+  const PNG = `data:image/png;base64,${pngHeader(4, 4)}`
+
+  it('offers the picture to the window’s share sheet as one file under the screenshot name rule, the tab’s title beside it', async () => {
+    const f = fixture({ shareSheet: true })
+    const tab = openSite(f)
+    tab.title = 'Example Page'
+    await expect(command(f, 'capture.share', { dataUrl: PNG, tabId: tab.id })).resolves.toBe(true)
+    const [request] = f.browser.shares.listFor(f.win)
+    expect(request).toMatchObject({
+      tabId: tab.id,
+      windowId: f.win.id,
+      origin: null,
+      title: 'Example Page',
+      text: '',
+      url: '',
+      files: [{ name: 'Screenshot 2026-09-23 at 14.05.09.png', type: 'image/png', size: 33 }],
+      imageUrl: null
+    })
+    // The sheet's Save writes the file it was given, bytes and all, and the OS sheet is not
+    // asked on a desktop.
+    expect(f.shared).toEqual([])
+  })
+
+  it('a share without a tab, or of a tab that is gone, is titled by the file', async () => {
+    const f = fixture({ shareSheet: true })
+    await expect(command(f, 'capture.share', { dataUrl: PNG })).resolves.toBe(true)
+    await expect(command(f, 'capture.share', { dataUrl: PNG, tabId: 'gone' })).resolves.toBe(true)
+    expect(f.browser.shares.listFor(f.win).map((r) => [r.title, r.tabId])).toEqual([
+      ['Screenshot 2026-09-23 at 14.05.09.png', null],
+      ['Screenshot 2026-09-23 at 14.05.09.png', 'gone']
+    ])
+  })
+
+  it('hands the picture to the OS’s own sheet where the host has one, bytes included', async () => {
+    const f = fixture({ osShare: true })
+    const tab = openSite(f)
+    tab.title = 'Example Page'
+    await expect(command(f, 'capture.share', { dataUrl: PNG, tabId: tab.id })).resolves.toBe(true)
+    expect(f.shared).toEqual([
+      {
+        title: 'Example Page',
+        tabId: tab.id,
+        files: [
+          {
+            name: 'Screenshot 2026-09-23 at 14.05.09.png',
+            type: 'image/png',
+            size: 33,
+            data: pngHeader(4, 4)
+          }
+        ]
+      }
+    ])
+    expect(f.browser.shares.listFor(f.win)).toEqual([])
+  })
+
+  it('answers false – and shares nothing – where the window has no sheet up and the OS none, and for anything but an image', async () => {
+    const bare = fixture()
+    await expect(command(bare, 'capture.share', { dataUrl: PNG })).resolves.toBe(false)
+    expect(bare.browser.shares.listFor(bare.win)).toEqual([])
+    expect(bare.shared).toEqual([])
+    // The chrome can show a sheet but this window's has none up yet (an app window's chrome).
+    const unmounted = fixture({ shareSheet: true })
+    unmounted.win.surfaces.delete('share')
+    await expect(command(unmounted, 'capture.share', { dataUrl: PNG })).resolves.toBe(false)
+    const f = fixture({ shareSheet: true })
+    await expect(
+      command(f, 'capture.share', { dataUrl: 'https://example.test/a.png' })
+    ).resolves.toBe(false)
+    await expect(
+      command(f, 'capture.share', { dataUrl: 'data:text/html;base64,PGh0bWw+' })
+    ).resolves.toBe(false)
+    expect(f.browser.shares.listFor(f.win)).toEqual([])
+  })
+})
+
+describe('base64Size', () => {
+  it('is the decoded length, read off the text’s length and padding', () => {
+    expect(base64Size('')).toBe(0)
+    expect(base64Size('QQ==')).toBe(1)
+    expect(base64Size('QUI=')).toBe(2)
+    expect(base64Size('QUJD')).toBe(3)
+    expect(base64Size('QUJDRA==')).toBe(4)
+    expect(base64Size(pngHeader(4, 4))).toBe(33)
+    // Line breaks a host may leave in the text are not bytes.
+    expect(base64Size('QUJD\nRA==\n')).toBe(4)
   })
 })
 

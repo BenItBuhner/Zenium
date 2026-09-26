@@ -13,7 +13,7 @@ vi.mock('@renderer/lib/api', () => ({
 import { run } from '@renderer/lib/api'
 import { closeAllPopovers } from '@renderer/lib/portals'
 import { qrSymbol } from '@renderer/lib/qr'
-import { sharePreview, shareTargets } from '@renderer/lib/share'
+import { sharePreview, sharedImage, shareTargets } from '@renderer/lib/share'
 import { uiStore } from '@renderer/lib/ui'
 import { ShareLayer } from '../SharePopover'
 
@@ -120,6 +120,32 @@ describe('shareTargets', () => {
       label: 'More…'
     })
   })
+
+  it('a share of one picture and nothing else (a capture’s) offers Copy image and Save file, and no Email with nothing to mail', () => {
+    const picture = { name: 'Screenshot 2026-09-26 at 14.05.09.png', type: 'image/png', size: 2048 }
+    const capture: ShareRequest = { ...REQUEST, origin: null, url: '', text: '', files: [picture] }
+    expect(sharedImage(capture)).toBe(picture)
+    expect(shareTargets(capture).map((t) => [t.answer, t.label])).toEqual([
+      ['copy', 'Copy image'],
+      ['save', 'Save file']
+    ])
+    expect(shareTargets({ ...capture, system: true }).map((t) => t.answer)).toEqual([
+      'copy',
+      'save',
+      'system'
+    ])
+    // Words beside the picture, two files, or a file that is not a picture: the copy is of the
+    // words and Email is back.
+    expect(sharedImage({ ...capture, url: 'https://x/' })).toBeNull()
+    expect(sharedImage({ ...capture, text: 'hi' })).toBeNull()
+    expect(sharedImage({ ...capture, files: [picture, picture] })).toBeNull()
+    expect(sharedImage({ ...capture, files: [{ ...picture, type: 'application/pdf' }] })).toBeNull()
+    expect(shareTargets({ ...capture, text: 'hi' }).map((t) => t.label)).toEqual([
+      'Copy text',
+      'Email',
+      'Save file'
+    ])
+  })
 })
 
 describe('sharePreview', () => {
@@ -205,6 +231,45 @@ describe('ShareLayer as the share surface', () => {
     expect(panel.querySelector('.zen-v2-title-block-description')).toBeNull()
     expect(panel.querySelector('[data-share-qr]')).toBeNull()
     expect(panel.querySelector('.zen-share-preview-detail')!.textContent).toBe('Read this')
+  })
+
+  it('a capture’s share of the picture alone is titled "Share", names the file, and hangs from the control that asked for it (data-share-anchor) ahead of the pill', async () => {
+    // The address pill and, over the page, the capture card's Share button.
+    const pill = document.createElement('div')
+    pill.className = 'zen-pill'
+    pill.getBoundingClientRect = () =>
+      ({ left: 300, top: 8, width: 600, height: 32, right: 900, bottom: 40 }) as DOMRect
+    const share = document.createElement('button')
+    share.setAttribute('data-share-anchor', '')
+    // Under the window's 60 % cap there is room below the button (happy-dom's 1024 × 768).
+    share.getBoundingClientRect = () =>
+      ({ left: 200, top: 300, width: 80, height: 32, right: 280, bottom: 332 }) as DOMRect
+    document.body.append(pill, share)
+    try {
+      const picture = { name: 'Screenshot 2026-09-26 at 14.05.09.png', type: 'image/png', size: 3 }
+      render(
+        <ShareLayer
+          state={stateWith([
+            { ...REQUEST, origin: null, title: 'Example', text: '', url: '', files: [picture] }
+          ])}
+        />
+      )
+      await settle()
+      const panel = popover()!
+      expect(panel.querySelector('h2')!.textContent).toBe('Share')
+      expect(panel.querySelector('.zen-v2-title-block-description')).toBeNull()
+      expect(panel.querySelector('[data-share-qr]')).toBeNull()
+      expect(panel.textContent).toContain(picture.name)
+      expect(
+        [...panel.querySelectorAll('[data-share-target] .zen-v2-label')].map((b) => b.textContent)
+      ).toEqual(['Copy image', 'Save file'])
+      // Under the Share button's bottom edge, start-aligned with it – not under the pill.
+      expect(panel.style.top).toBe('332px')
+      expect(panel.style.left).toBe('200px')
+    } finally {
+      pill.remove()
+      share.remove()
+    }
   })
 
   it('a row answers the request once; Escape dismisses it', async () => {

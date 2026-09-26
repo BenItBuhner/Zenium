@@ -24,6 +24,16 @@ import { V2TitleBlock } from '../extensions/v2'
 
 /** The address pill the popover hangs from (Chrome's share bubble hangs from the omnibox). */
 const PILL = '.zen-pill'
+/**
+ * A control that asked for the share and wants the popover on itself (§9.20: a popover hangs
+ * from what opened it) – the capture card's Share, over the dimmed page – ahead of the pill.
+ */
+const ANCHOR = '[data-share-anchor]'
+
+/** The control the popover hangs from: one that asked for it, else the pill; null with neither. */
+function anchorElement(): HTMLElement | null {
+  return document.querySelector<HTMLElement>(ANCHOR) ?? document.querySelector<HTMLElement>(PILL)
+}
 /** A list of targets without trailing controls (§9.20). */
 const WIDTH = POPOVER_WIDTH.list
 /** The QR's tile: 160 border-box under §6's card edge. */
@@ -49,21 +59,25 @@ export function ShareLayer({ state }: { state: UIState }): JSX.Element | null {
 
 /**
  * The popover (§9.20) 320 wide with its top border on the pill's bottom edge, start-aligned with
- * the pill, placed by `placePopover` (flip, slide, shrink, 8 inside the window); radius 8, the
- * panel shadow, no scrim (§9.5), through the chrome layer (`ChromePortal`). A title block
+ * the pill – or on the control that asked for the share where one marks itself the anchor
+ * (`data-share-anchor`: the capture card's Share, the popover hanging from the button over the
+ * dimmed page) – placed by `placePopover` (flip, slide, shrink, 8 inside the window); radius 8,
+ * the panel shadow, no scrim (§9.5), through the chrome layer (`ChromePortal`). A title block
  * (§9.23) – "Share" with the sharing site as its description for a page's `navigator.share`,
- * "Share this page" for the menu's – stays put while the body scrolls under it (§9.7). The body:
- * what is shared (its title and link or text, and the files' count and size), the link's QR
- * code on a white tile (the symbol keeps black on white in either scheme, as a scanner and
- * Chrome's QR bubble want; the tile's border and radius are the card's; every module a whole
- * number of pixels, the tile's white taking the remainder around the quiet zone), then the targets as
- * shared rows with a leading 16 glyph – Copy link (or Copy text), Email, Save when the share
- * carries files or an image, and "More…" for the OS's own sheet where there is one (macOS). A
- * row answers the request (`share.respond`) and the popover leaves with it; Escape, a press
- * anywhere else, a resize and another popover opening dismiss it, which a page hears as
- * `AbortError`. Focus moves to the first row and Tab wraps (§9.22). The popover overhangs the
- * content frame, so the page's view gives way to its picture while it is up (`useFloatingChrome`)
- * and the popover holds its first paint until the picture is in place.
+ * "Share this page" for the menu's, "Share" for a share of files alone (a capture's) – stays
+ * put while the body scrolls under it (§9.7). The body: what is shared (its title and link or
+ * text, and the files' count and size), the link's QR code on a white tile (the symbol keeps
+ * black on white in either scheme, as a scanner and Chrome's QR bubble want; the tile's border
+ * and radius are the card's; every module a whole number of pixels, the tile's white taking the
+ * remainder around the quiet zone), then the targets as shared rows with a leading 16 glyph –
+ * Copy link (or Copy text; Copy image for one picture and nothing else), Email where there is a
+ * link or text to mail, Save when the share carries files or an image, and "More…" for the OS's
+ * own sheet where there is one (macOS). A row answers the request (`share.respond`) and the
+ * popover leaves with it; Escape, a press anywhere else, a resize and another popover opening
+ * dismiss it, which a page hears as `AbortError`. Focus moves to the first row and Tab wraps
+ * (§9.22). The popover overhangs the content frame, so the page's view gives way to its picture
+ * while it is up (`useFloatingChrome`) and the popover holds its first paint until the picture
+ * is in place.
  */
 function SharePopover({
   request,
@@ -75,8 +89,8 @@ function SharePopover({
   const panelRef = useRef<HTMLDivElement>(null)
   // The body's scroll, read inline: the body mounts after the first paint is released.
   const [scrolled, setScrolled] = useState(false)
-  const pill = usePillRect(state)
-  const box = place(pill)
+  const anchor = useAnchorRect(state)
+  const box = place(anchor)
   const ready = useFloatingChrome()
 
   // The answer goes once: the request leaves the state with it and this unmounts.
@@ -91,7 +105,7 @@ function SharePopover({
   )
   const dismiss = useCallback(() => answer('dismiss'), [answer])
   usePopover(panelRef, { onClose: dismiss, active: ready })
-  useLightDismiss(panelRef, dismiss, { anchor: () => document.querySelector(PILL) })
+  useLightDismiss(panelRef, dismiss, { anchor: anchorElement })
 
   const preview = sharePreview(request)
   const qr = useMemo(() => qrSymbol(request.url), [request.url])
@@ -113,7 +127,7 @@ function SharePopover({
       >
         <V2TitleBlock
           id="zen-share-title"
-          title={request.origin ? 'Share' : 'Share this page'}
+          title={request.origin || filesAlone(request) ? 'Share' : 'Share this page'}
           description={request.origin ? `${request.origin} wants to share` : undefined}
           scrolled={scrolled}
         />
@@ -181,23 +195,23 @@ function SharePopover({
 }
 
 /**
- * The viewport rect of the address pill, measured after layout, again on every state push (the
- * pill's chips come and go with the page) and when it or the window resizes; null while no pill
- * is on screen.
+ * The viewport rect of the anchor – a control marked `data-share-anchor`, else the address pill
+ * – measured after layout, again on every state push (the pill's chips come and go with the
+ * page) and when it or the window resizes; null while neither is on screen.
  */
-function usePillRect(state: UIState): Rect | null {
+function useAnchorRect(state: UIState): Rect | null {
   const [rect, setRect] = useState<Rect | null>(null)
   useLayoutEffect(() => {
-    const pill = document.querySelector<HTMLElement>(PILL)
+    const anchor = anchorElement()
     const measure = (): void => {
-      const next = pill ? toRect(pill.getBoundingClientRect()) : null
+      const next = anchor ? toRect(anchor.getBoundingClientRect()) : null
       setRect((prev) => (sameRect(prev, next) ? prev : next))
     }
     measure()
-    if (!pill) return
+    if (!anchor) return
     window.addEventListener('resize', measure)
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure)
-    observer?.observe(pill)
+    observer?.observe(anchor)
     return () => {
       window.removeEventListener('resize', measure)
       observer?.disconnect()
@@ -211,14 +225,19 @@ function sameRect(a: Rect | null, b: Rect | null): boolean {
   return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
 }
 
+/** A share of files and nothing else – a capture's picture – is not "this page". */
+function filesAlone(request: Pick<ShareRequest, 'files' | 'url' | 'text'>): boolean {
+  return request.files.length > 0 && !request.url && !request.text
+}
+
 /**
- * Where the popover goes: hanging from the pill's bottom edge, start-aligned with it (the pill
- * is its own bar); with no pill on screen (an app window's chrome), in the window's top
- * trailing corner like the star bubble.
+ * Where the popover goes: hanging from the anchor's bottom edge, start-aligned with it (the
+ * pill is its own bar; a control that asked for the share stands for one); with neither on
+ * screen (an app window's chrome), in the window's top trailing corner like the star bubble.
  */
-function place(pill: Rect | null): PopoverBox {
+function place(anchor: Rect | null): PopoverBox {
   const viewport = viewportSize()
-  const rect: Rect = pill ?? {
+  const rect: Rect = anchor ?? {
     x: viewport.width - POPOVER_MARGIN - 28,
     y: 28,
     width: 28,

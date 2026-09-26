@@ -5830,6 +5830,14 @@ export interface Commands {
     args: { dataUrl: string; fileName?: string; tabId?: string }
     result: { path: string } | null
   }
+  /**
+   * Offer a captured picture to the browser's share hub (`ShareService`: the Share… menu's
+   * sheet on the desktop, the OS's own sheet where the host has one) as a PNG file under the
+   * screenshot name rule, with the tab's title as the message beside it; `tabId` names the
+   * page it was taken from. True once a sheet has the picture, false where the window has none
+   * to offer it to.
+   */
+  'capture.share': { args: { dataUrl: string; tabId?: string }; result: boolean }
   /** Print through the system dialog (Ctrl+Shift+P; Ctrl+P too on a host without the preview). */
   'page.print': { args: { tabId: string }; result: void }
   /**

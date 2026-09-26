@@ -98,10 +98,13 @@ export function CaptureLayer(): JSX.Element | null {
  * engine's debugger paint waits for a frame a hidden view does not give of itself.
  *
  * Keyboard (§9.22): focus lands on the overlay's container; Tab reaches the toolbar's buttons,
- * then the card's, wrapping; Escape closes from any phase at once – the picture is let go, the
- * live page comes back and the focus returns to what asked for the capture (the ⋯ button) or
- * to the page (capture-16: no half state). A scrim press with a card up is Close too. The
- * overlay is the tab's: another tab in front, or the tab gone, takes it down.
+ * then the card's, wrapping; Escape goes one hop back (§9.5) – a drag in progress is let go
+ * and the toolbar stays; from the toolbar, a paint in flight or a card the overlay closes: the
+ * picture is let go, the live page comes back and the focus returns to what asked for the
+ * capture (the ⋯ button) or to the page (capture-16: no half state). The share popover over
+ * the card takes its own Escape first, as the topmost surface does. A scrim press with a card
+ * up is Close too. The overlay is the tab's: another tab in front, or the tab gone, takes it
+ * down.
  */
 function CaptureOverlay({
   capture,
@@ -117,7 +120,7 @@ function CaptureOverlay({
   const labelRef = useRef<HTMLDivElement>(null)
   const [phase, dispatch] = useReducer(captureReducer, SELECTING)
   const [toast, setToast] = useState<Toast | null>(null)
-  const [busy, setBusy] = useState<'copy' | 'save' | null>(null)
+  const [busy, setBusy] = useState<Busy>(null)
   const gone = useRef(false)
 
   // The overlay's own box in window coordinates, for the page's frame and the pointer to be
@@ -346,6 +349,25 @@ function CaptureOverlay({
       if (!gone.current) setBusy(null)
     }
   }
+  // Share hands the picture to the share hub (`capture.share`): its popover hangs from the
+  // card's Share button (`data-share-anchor`) with Copy image, Save file and the OS's own sheet
+  // where there is one. A window with no hub to offer it to copies the picture instead – what
+  // share means on a desktop without a target – and the toast says which it was.
+  const share = async (result: PageCaptureResult): Promise<void> => {
+    if (busy) return
+    setBusy('share')
+    try {
+      const shared = await cmd('capture.share', { dataUrl: result.dataUrl, tabId })
+      if (shared) return
+      const copied = await cmd('capture.copy', { dataUrl: result.dataUrl })
+      if (copied) say('Nothing to share with here, so the picture was copied')
+      else say('Couldn’t share the picture', { error: true })
+    } catch {
+      say('Couldn’t share the picture', { error: true })
+    } finally {
+      if (!gone.current) setBusy(null)
+    }
+  }
 
   const frameStyle = {
     left: frame.x,
@@ -452,6 +474,7 @@ function CaptureOverlay({
             busy={busy}
             onClose={() => dispatch({ type: 'close' })}
             onCopy={() => void copy(phase.result)}
+            onShare={() => void share(phase.result)}
             onSave={() => void save(phase.result)}
           />
         </div>
@@ -499,6 +522,9 @@ function CaptureOverlay({
   )
 }
 
+/** The card's verb whose round trip is out; one at a time, its button on the §9.30 spinner. */
+type Busy = 'copy' | 'share' | 'save' | null
+
 /**
  * What a toast says (§9.33): its one line of words, the error ink, and at most one action at
  * its trailing edge in the shared message card's `data-action` form – the save toast's "Show in
@@ -517,15 +543,18 @@ interface Toast {
  * – a title block (§9.23) with the picture's size in its own pixels as the description, the
  * picture scaled to fit (never up) on an inner box, a status row when the engine could paint
  * only the visible area (§9.33's anatomy in the warn ink: the user asked for more than they
- * got), then the §9.11 footer: Close, Copy, and Save as the primary. Copy and Save keep the
- * card up and say what they did on a §9.33 toast 8 px inside the page's bottom edge ("Copied";
- * "Saved to Downloads" – the folder's own name where the user moved it – with Show in folder,
- * the engine's reveal of the file, as its one action on the 5 s clock); the host's downloads
- * bubble shows the file as it would any finished download. Focus lands on the card's
- * container – a `role="dialog"` at `tabIndex`
- * −1, §9.22's form for a container that holds the keyboard, which the chassis paints no ring
- * around (the whole-card ring the `zen-v2-*` rule would give a group) – and Tab reaches Close,
- * Copy, Save.
+ * got), then the §9.11 footer: Close, Copy, Share, and Save as the primary – four verbs that
+ * hug at 80 rather than the primitive's 96, which four of would stand 408 in the form's 366
+ * column. Copy and Save keep the card up and say what they did on a §9.33 toast 8 px inside the
+ * page's bottom edge ("Copied"; "Saved to Downloads" – the folder's own name where the user
+ * moved it – with Show in folder, the engine's reveal of the file, as its one action on the 5 s
+ * clock); the host's downloads bubble shows the file as it would any finished download. Share
+ * opens the share hub's popover on the button itself (Edge's Share on a capture reaches its
+ * sheet): Copy image, Save file – into Downloads and the bubble too – and the OS's own sheet
+ * where there is one; the card stays up under it. Focus lands on the card's container – a
+ * `role="dialog"` at `tabIndex` −1, §9.22's form for a container that holds the keyboard, which
+ * the chassis paints no ring around (the whole-card ring the `zen-v2-*` rule would give a
+ * group) – and Tab reaches Close, Copy, Share, Save.
  */
 function ResultCard({
   ref,
@@ -534,14 +563,16 @@ function ResultCard({
   busy,
   onClose,
   onCopy,
+  onShare,
   onSave
 }: {
   ref: Ref<HTMLDivElement>
   result: PageCaptureResult
   frame: Rect
-  busy: 'copy' | 'save' | null
+  busy: Busy
   onClose: () => void
   onCopy: () => void
+  onShare: () => void
   onSave: () => void
 }): JSX.Element {
   const picture = fitPicture(result, {
@@ -587,12 +618,21 @@ function ResultCard({
           <TriangleAlert className="zen-v2-row-trail" aria-hidden />
         </V2Row>
       )}
-      <div className="flex justify-end gap-2 px-4 pb-4 pt-4">
+      <div className="zen-capture-card-footer flex justify-end gap-2 px-4 pb-4 pt-4">
         <V2Button onClick={onClose} data-capture-close>
           Close
         </V2Button>
         <V2Button busy={busy === 'copy'} onClick={onCopy} data-capture-copy>
           Copy
+        </V2Button>
+        <V2Button
+          busy={busy === 'share'}
+          onClick={onShare}
+          data-capture-share
+          data-share-anchor
+          aria-haspopup="dialog"
+        >
+          Share
         </V2Button>
         <V2Button variant="primary" busy={busy === 'save'} onClick={onSave} data-capture-save>
           Save

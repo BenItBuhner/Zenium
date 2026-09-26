@@ -7310,6 +7310,14 @@
     pointer-events: auto;
   }
   /*
+   * The result card's footer holds four verbs (Close, Copy, Share, Save): at the primitive's 96
+   * floor they would stand 408 across the 400 form's 366 column, so here they hug at 80 – four
+   * one-word labels, §9.11's hugging footer at 32 with the 8 gaps – 344 in the column.
+   */
+  .zen-capture-card-footer > .zen-v2-button {
+    min-width: 80px;
+  }
+  /*
    * The result card's picture: centred in the card's 16 gutter on an inner box (§2: the inner
    * radius, the hairline, the fill behind a picture that is not the box's shape), sized by
    * `fitPicture` – the picture at its own CSS size at most, scaled down to the card's column
