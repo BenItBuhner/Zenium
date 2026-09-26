@@ -709,7 +709,10 @@ describe('the section model', () => {
       blockingState({ capabilities: { ...ANDROID, requestBlocking: false } })
     )
     expect(without.groups.filter((g) => g.id.startsWith('tracking-'))).toEqual([])
+    // W7-6's hub cards lead (a group the desktop and tablet shells draw; the fixture has no
+    // layout, so it stays here too).
     expect(without.groups.map((g) => g.id)).toEqual([
+      'privacy-hub',
       'safety-check',
       'safety-check-results',
       'safety-check-actions',
@@ -2031,8 +2034,9 @@ describe('the section model', () => {
     )
     // The whole category in Chrome's order – #135's, #156's and #115's groups (each program's
     // own order and content is its own test); the remembered per-site answers are Security's
-    // since #62 (no `permissions` group here).
+    // since #62 (no `permissions` group here). W7-6's hub cards lead the category (settings-12).
     expect(privacy.groups.map((g) => g.id)).toEqual([
+      'privacy-hub',
       'safety-check',
       'safety-check-results',
       'safety-check-actions',

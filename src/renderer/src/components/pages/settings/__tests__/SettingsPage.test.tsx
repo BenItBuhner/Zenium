@@ -360,6 +360,8 @@ describe('the two-pane Settings tab (§10.5)', () => {
       'Keyboard Shortcuts',
       'Default Browser',
       'Updates',
+      // settings-70: Chrome's "Reset settings" at the foot of its list (W7-6).
+      'Reset Settings',
       '|',
       'About'
     ])
