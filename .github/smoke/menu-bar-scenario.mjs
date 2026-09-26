@@ -433,5 +433,11 @@ export async function scenarioMenuBar(h) {
       await page.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => undefined)
       return { row, section }
     })
+
+    // The session ends the way every scenario's does: the quit chord, the "Quit Zenium?" question
+    // the open tabs earn answered, the process's exit 0 read. Without this the harness's
+    // `forceClose` met that question and killed the app after its 8 s race, so the macOS legs'
+    // exit column read SIGKILL though every step had passed (W7-4's runs).
+    await s.step('quit', async () => s.quitGracefully())
   })
 }
