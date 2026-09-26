@@ -2381,7 +2381,16 @@ export class Menus {
    * The tab strip's menu (tabs-35): the New Tab row's and the empty space below the rows share
    * it. Chrome's strip rows first – New tab, Reopen closed tab, Bookmark all tabs…, and on the
    * desktop Name window… (context-menus-108) – then Zenium's own: the space's folders and
-   * spaces, Clear Unpinned Tabs.
+   * spaces, Clear Unpinned Tabs; last the window's own rows, as Chrome's frame menu
+   * (`SystemMenuModelBuilder`) ends: Task manager after a separator, then the window's Close.
+   * The window rows are a windowed host's alone (`capabilities.windows`): the phone has one
+   * window, no task manager window and no Close for it, so its sheet ends at Clear Unpinned
+   * Tabs. On Windows, Chrome's strip shows the OS's system menu with Chrome's rows inside it, so
+   * the frameless window's system items lead in the OS's words – Restore, Minimize, Maximize –
+   * and the OS's Close ends the menu; Move and Size stay out, Electron having no way into the
+   * OS's keyboard move and size modes (no `SC_MOVE` / `SC_SIZE`). Linux's "Use system title bar
+   * and borders" stays out too: the browser window is frameless by design, the toggle would
+   * have nothing to switch.
    */
   showNewTabContextMenu(win: ZenWindow, anchor?: MenuAnchor): void {
     const { tabs, state } = this.browser
@@ -2397,8 +2406,37 @@ export class Menus {
             }
           ]
         : []
+    const windowed = state.capabilities.windows
+    const windowsOs = this.browser.platform.info.os === 'win32'
+    const maximized = win.host.isMaximized()
+    const systemItems: Template =
+      windowed && windowsOs
+        ? [
+            { label: 'Restore', enabled: maximized, click: () => win.host.unmaximize() },
+            { label: 'Minimize', action: 'window.minimize', click: () => win.host.minimize() },
+            { label: 'Maximize', enabled: !maximized, click: () => win.host.maximize() },
+            { type: 'separator' }
+          ]
+        : []
+    const windowRows: Template = windowed
+      ? [
+          { type: 'separator' },
+          {
+            label: 'Task Manager',
+            action: 'tasks.open',
+            click: () => this.browser.actions.run('tasks.open', { sourceTabId: null, win })
+          },
+          { type: 'separator' },
+          {
+            label: windowsOs ? 'Close' : 'Close Window',
+            action: 'window.close',
+            click: () => void this.browser.requestWindowClose(win)
+          }
+        ]
+      : []
     this.popup(
       [
+        ...systemItems,
         { label: 'New Tab', action: 'tab.new', click: () => this.browser.openNewTab(win) },
         {
           label: 'New Tab in Container',
@@ -2444,7 +2482,8 @@ export class Menus {
           ...(space.id === win.activeSpaceId ? { action: 'space.closeUnpinned' as const } : {}),
           enabled: space.tabIds.some((id) => !state.model.tabs[id]?.pinned),
           click: () => tabs.closeUnpinned(space.id, win)
-        }
+        },
+        ...windowRows
       ],
       win,
       'newtab',

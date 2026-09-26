@@ -5009,7 +5009,7 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
     })
   })
 
-  it("the strip's menu is Chrome's rows first – Name Window… among them on the desktop (context-menus-108) – then Zenium's own", () => {
+  it("the strip's menu is Chrome's rows first – Name Window… among them on the desktop (context-menus-108) – then Zenium's own, then the window's: Task Manager and Close Window as Chrome's frame menu ends", () => {
     const h = pageHarness()
     h.browser.handleCommand(h.win, 'newtab.contextMenu', {})
     expect(topLabels(h.shown())).toEqual([
@@ -5023,18 +5023,73 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       'New Live Folder…',
       'New Space…',
       '-',
-      'Clear Unpinned Tabs'
+      'Clear Unpinned Tabs',
+      '-',
+      'Task Manager',
+      '-',
+      'Close Window'
     ])
     expect(item(h, 'Reopen Closed Tab').action).toBe('tab.reopenClosed')
     expect(item(h, 'Bookmark All Tabs…').action).toBe('bookmark.allTabs')
     expect(item(h, 'Name Window…').action).toBe('window.name')
+    expect(item(h, 'Task Manager').action).toBe('tasks.open')
+    expect(item(h, 'Close Window').action).toBe('window.close')
     h.sent.length = 0
     item(h, 'Name Window…').click!()
     expect(h.sent).toEqual(['windowName.open'])
+    // Task Manager is the desktop's task manager window (W5-18), one per profile.
+    const before = h.browser.allWindows().length
+    item(h, 'Task Manager').click!()
+    const tasks = h.browser.allWindows().find((w) => w !== h.win)
+    expect(h.browser.allWindows()).toHaveLength(before + 1)
+    expect(tasks?.chrome).toBe('page')
+    // Close Window closes this window, through the browser's close (the unsaved-work checks).
+    const closing = vi.spyOn(h.browser, 'requestWindowClose').mockResolvedValue(undefined as never)
+    item(h, 'Close Window').click!()
+    expect(closing).toHaveBeenCalledWith(h.win)
     // A tablet's one window has no title bar to name: the row is the desktop's.
     const tablet = pageHarness(DESKTOP, { formFactor: 'tablet' })
     tablet.browser.handleCommand(tablet.win, 'newtab.contextMenu', {})
     expect(topLabels(tablet.shown())).not.toContain('Name Window…')
+    // The window rows are a windowed host's alone: the phone has one window, no task manager
+    // window and no Close for it – its sheet ends at Clear Unpinned Tabs.
+    const phone = pageHarness(ANDROID, { formFactor: 'phone' })
+    phone.browser.handleCommand(phone.win, 'newtab.contextMenu', {})
+    expect(topLabels(phone.shown()).at(-1)).toBe('Clear Unpinned Tabs')
+    expect(topLabels(phone.shown())).not.toContain('Task Manager')
+    expect(topLabels(phone.shown())).not.toContain('Close Window')
+  })
+
+  it("on Windows the frameless window's system items lead in the OS's words – Restore, Minimize, Maximize – and the OS's Close ends it, as Chrome's strip shows the system menu with Chrome's rows inside (context-menus-108)", () => {
+    const h = pageHarness(DESKTOP, { os: 'win32' })
+    h.browser.handleCommand(h.win, 'newtab.contextMenu', {})
+    const menu = topLabels(h.shown())
+    expect(menu.slice(0, 5)).toEqual(['Restore', 'Minimize', 'Maximize', '-', 'New Tab'])
+    expect(menu.slice(-5)).toEqual(['Clear Unpinned Tabs', '-', 'Task Manager', '-', 'Close'])
+    expect(menu).not.toContain('Close Window')
+    // Move and Size stay out: Electron has no way into the OS's keyboard move and size modes.
+    expect(menu).not.toContain('Move')
+    expect(menu).not.toContain('Size')
+    // The OS's greying: a normal window has nothing to restore; a maximized one nothing to maximize.
+    expect(enabled(h, 'Restore')).toBe(false)
+    expect(enabled(h, 'Maximize')).toBe(true)
+    item(h, 'Maximize').click!()
+    expect(h.windowCalls).toEqual(['maximize'])
+    h.browser.handleCommand(h.win, 'newtab.contextMenu', {})
+    expect(enabled(h, 'Restore')).toBe(true)
+    expect(enabled(h, 'Maximize')).toBe(false)
+    item(h, 'Restore').click!()
+    item(h, 'Minimize').click!()
+    expect(h.windowCalls).toEqual(['maximize', 'unmaximize', 'minimize'])
+    expect(item(h, 'Minimize').action).toBe('window.minimize')
+    expect(item(h, 'Close').action).toBe('window.close')
+    // The other desktops have no system menu to mirror: no system items, Close Window in words.
+    for (const os of ['linux', 'darwin'] as const) {
+      const other = pageHarness(DESKTOP, { os })
+      other.browser.handleCommand(other.win, 'newtab.contextMenu', {})
+      expect(topLabels(other.shown())[0]).toBe('New Tab')
+      expect(topLabels(other.shown()).at(-1)).toBe('Close Window')
+    }
   })
 
   it('greys Reopen Closed Tab while nothing was closed and brings the newest closed tab back', () => {

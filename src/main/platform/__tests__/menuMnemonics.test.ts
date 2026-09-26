@@ -338,6 +338,11 @@ const OPENINGS: Opening[] = [
   },
   { name: 'strip: the empty area', open: (h) => h.browser.menus.showNewTabContextMenu(h.win) },
   {
+    name: 'strip: the empty area on Windows, the system items leading',
+    options: { os: 'win32' },
+    open: (h) => h.browser.menus.showNewTabContextMenu(h.win)
+  },
+  {
     name: 'split: a pane header',
     open: (h) => {
       const b = secondTab(h)

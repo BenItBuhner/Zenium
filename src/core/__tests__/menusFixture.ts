@@ -184,6 +184,8 @@ export interface Harness {
   viewCalls: string[]
   /** Every read of the chrome document a right-click asked the host for (`options.chromeDocument`). */
   documentReads: string[]
+  /** The window host's `minimize` / `maximize` / `unmaximize` calls, in order. */
+  windowCalls: string[]
   /** What the host's clipboard says on `readText`. */
   clipboardText: { value: string }
   /** Every `tel:` / `mailto:` hand-off the shell was asked for, as `target url`. */
@@ -198,6 +200,8 @@ export interface Harness {
 
 export interface HarnessOptions {
   formFactor?: FormFactor
+  /** The OS the host reports (`Platform.info.os`); absent, Linux for a windowed host, Android otherwise. */
+  os?: PlatformOs
   /** The host has an OS emoji picker (Windows, macOS). */
   emojiPanel?: boolean
   /** The host's window is fullscreen. */
@@ -231,6 +235,8 @@ export interface HarnessOptions {
     hit?: { target: string; tabId: string | null } | null
     focused?: Rect | null
   }
+  /** The window starts maximized (`WindowHost.isMaximized`); its `maximize` / `unmaximize` flip it. */
+  maximized?: boolean
 }
 
 /** The languages the fake spellchecker was last told to check in. */
@@ -250,6 +256,7 @@ export function harness(
   let count = 0
   const viewCalls: string[] = []
   const documentReads: string[] = []
+  const windowCalls: string[] = []
   const clipboardText = { value: '' }
   const sent: string[] = []
   const focused: string[] = []
@@ -304,8 +311,12 @@ export function harness(
         }
       }
     )
+  let maximized = Boolean(opts.maximized)
   const platform: Platform = {
-    info: { os: capabilities.windows ? ('linux' as PlatformOs) : 'android', version: '1.2.3' },
+    info: {
+      os: opts.os ?? (capabilities.windows ? ('linux' as PlatformOs) : 'android'),
+      version: '1.2.3'
+    },
     capabilities,
     io: memoryIo({ ...opts.files }),
     windows: {
@@ -315,7 +326,16 @@ export function harness(
           contentSize: () => ({ width: 1280, height: 800 }),
           normalBounds: () => null,
           isFullScreen: () => Boolean(opts.fullScreen),
-          isMaximized: () => false,
+          isMaximized: () => maximized,
+          maximize: () => {
+            maximized = true
+            windowCalls.push('maximize')
+          },
+          unmaximize: () => {
+            maximized = false
+            windowCalls.push('unmaximize')
+          },
+          minimize: () => void windowCalls.push('minimize'),
           isFocused: () => true,
           isVisible: () => true,
           send: (name) => void sent.push(name),
@@ -387,6 +407,7 @@ export function harness(
     where: () => lastOptions,
     viewCalls,
     documentReads,
+    windowCalls,
     clipboardText,
     sent,
     focused,
