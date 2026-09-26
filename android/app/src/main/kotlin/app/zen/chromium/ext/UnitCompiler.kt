@@ -169,6 +169,38 @@ class UnitCompiler(
     @Synchronized
     fun cachedSources(id: String): Int = cache[id]?.sources?.values?.count { it === MISSING || (it as SoftReference<*>).get() != null } ?: 0
 
+    /**
+     * What the compiler holds for an extension, for instrumentation: its compiled scripts'
+     * characters and the bytes ART keeps them in (a script with a character over U+00FF is two
+     * bytes a character, else one – the string's own compact form), how many of them are 16-bit,
+     * and the source texts still soft-held, their characters and bytes the same way.
+     */
+    @Synchronized
+    fun memoryOf(id: String): JSONObject {
+        val entry = cache[id] ?: return JSONObject().put("units", 0)
+        var unitChars = 0L
+        var unitBytes = 0L
+        var wideUnits = 0
+        for (unit in entry.units.values) {
+            val wide = unit.script.any { it > '\u00FF' }
+            if (wide) wideUnits++
+            unitChars += unit.script.length
+            unitBytes += unit.script.length.toLong() * (if (wide) 2 else 1)
+        }
+        var sources = 0
+        var sourceChars = 0L
+        var sourceBytes = 0L
+        for (held in entry.sources.values) {
+            val text = (held as? SoftReference<*>)?.get() as? String ?: continue
+            sources++
+            sourceChars += text.length
+            sourceBytes += text.length.toLong() * (if (text.any { it > '\u00FF' }) 2 else 1)
+        }
+        return JSONObject()
+            .put("units", entry.units.size).put("unitChars", unitChars).put("unitBytes", unitBytes).put("wideUnits", wideUnits)
+            .put("sources", sources).put("sourceChars", sourceChars).put("sourceBytes", sourceBytes)
+    }
+
     /** What the GC may do at any time: let go of every source text held for the extension. */
     @VisibleForTesting
     @Synchronized

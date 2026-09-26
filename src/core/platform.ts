@@ -101,6 +101,7 @@ import type { VoiceStartOutcome } from '../shared/voice'
 import type { SpellcheckDictionaryStatus } from '../shared/spellcheck'
 import type { GeoPosition, GeolocationErrorCode, WifiAccessPoint } from '../shared/geolocation'
 import type { ShareFile, ShareOutcome } from '../shared/share'
+import type { ImagePost, ImageResource } from '../shared/imageUpload'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import type { AgentHttpRequest, AgentHttpResponse } from './agent/http'
@@ -973,6 +974,38 @@ export interface TabView {
    */
   screenshot(fileName: string, options?: ScreenshotOptions): Promise<string | null>
   copyImageAt(x: number, y: number): Promise<boolean>
+  /**
+   * Navigate the view by POST (CT-32's image upload, Chrome's `image_url_post_params`): the
+   * body's fields and their encoding (`shared/imageUpload.ts`), which the host bakes as its
+   * navigation takes them – the desktop's `loadURL` with post data and a content-type header
+   * (multipart with a boundary, or urlencoded), the phone's `WebView.postUrl` for an urlencoded
+   * body and a self-submitting form document for a multipart one. A host without it gets no
+   * upload: the row searches by address.
+   */
+  postURL?(url: string, post: ImagePost): void
+  /**
+   * The encoded bytes of an image the page loaded, as the renderer holds them – the response
+   * the page's own request got, its cookies and referrer already spent – for the image-search
+   * upload (the desktop's DevTools resource read). Read BEFORE the page's script is asked to
+   * fetch the image: a cross-origin image whose host sends no CORS header is one no script in
+   * the page may read, and the refused fetch evicts the renderer's copy. `'too-large'` when the
+   * renderer lists the image above `maxBytes` (nothing is transferred); null when the host
+   * cannot read it – the image is in no frame's resource tree, or the page's session is another
+   * client's. Hosts without it leave the read to the page's script.
+   */
+  readImageResource?(url: string, maxBytes: number): Promise<ImageResource | 'too-large' | null>
+  /**
+   * Run `code` (one expression, awaited) in `frameId` – the top frame when omitted – in a
+   * world of the browser's own where no page script and no extension has run
+   * (`shared/privateWorld.ts`): the built-ins the code reaches – `fetch`, `Response`, `Blob`,
+   * `createImageBitmap`, `OffscreenCanvas`, `btoa` – are the world's, not the page's patched
+   * ones, while the document, its origin, its cookies and its CSP are the page's. The
+   * image-search thumbnail (`imageFetchScript`) runs here wherever a host has it – the desktop's
+   * isolated world; a host without one (the phone's WebView evaluates in the main world only)
+   * leaves it out and the core runs the script through `executeJavaScript`. Rejects for a frame
+   * that is gone.
+   */
+  executeJavaScriptInPrivateWorld?(code: string, frameId?: number): Promise<unknown>
   replaceMisspelling(word: string): void
   addWordToDictionary(word: string): void
 
