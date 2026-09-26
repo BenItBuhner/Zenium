@@ -1,11 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import type { WebPreferences } from 'electron'
-import type { Tab } from '../../../shared/types'
+import type { Rect, Tab } from '../../../shared/types'
 import type {
   AgentInputEvent,
   NavigationCommitDetails,
-  Rect,
   TabViewEvents,
   WindowHost,
   WindowOpenTicket
