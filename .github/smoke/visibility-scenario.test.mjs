@@ -3,6 +3,7 @@ import {
   flipVerdict,
   fullCoverBounds,
   loggedPage,
+  occlusionJudged,
   occlusionTracked,
   partialCoverBounds,
   steadyVerdict,
@@ -71,6 +72,25 @@ describe('occlusionTracked', () => {
     expect(occlusionTracked('win32')).toBe(true)
     expect(occlusionTracked('darwin')).toBe(true)
     expect(occlusionTracked('linux')).toBe(false)
+  })
+})
+
+describe('occlusionJudged', () => {
+  it('judges the full cover where the OS tracks occlusion and the bare window read hidden', () => {
+    expect(occlusionJudged('win32', 'hidden')).toBe(true)
+    expect(occlusionJudged('darwin', 'hidden')).toBe(true)
+  })
+  it('records, not judges, a display that reported no occlusion to the bare window either', () => {
+    expect(occlusionJudged('darwin', 'visible')).toBe(false)
+    expect(occlusionJudged('win32', 'visible')).toBe(false)
+  })
+  it('leaves the OS’s rule to stand when the native reading is unknown', () => {
+    expect(occlusionJudged('win32', null)).toBe(true)
+    expect(occlusionJudged('darwin', null)).toBe(true)
+  })
+  it('never judges X11, whatever Xvfb told the bare window', () => {
+    expect(occlusionJudged('linux', 'hidden')).toBe(false)
+    expect(occlusionJudged('linux', null)).toBe(false)
   })
 })
 

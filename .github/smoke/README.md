@@ -248,11 +248,18 @@ report that a page never reads `hidden` on Xvfb was this pin, not the platform.)
 | `hide`                | `hide()`: the window not visible, `hidden`, one event, the view hidden to Chromium                                                                                                                                                                                                                                                                                        | the page, the view                              |
 | `show`                | `show()`: `visible`, one event, the view back in its box                                                                                                                                                                                                                                                                                                                  | the page, the view                              |
 | `blur-partial-cover`  | a window of the harness's own over the top-left quarter of the main window, focused (the main window blurs): `visible`, no event; the cover closed: the same                                                                                                                                                                                                              | the page                                        |
-| `blur-full-cover`     | a window over the whole of the main window and a margin beyond: Windows and macOS – `hidden`, one event (Chromium's native occlusion tracking; gates), `visible` again with one event once the cover closes; Linux – recorded (the X server's word: Xvfb reports the window fully obscured and the page reads `hidden`, a compositing desktop does not), the events exactly the flips that happened | the OS's occlusion tracking through the page    |
+| `blur-full-cover`     | a window over the whole of the main window and a margin beyond: Windows and macOS, where this display reported occlusion to the bare window of `native-forwarding` (its `cover-full` row `hidden`) – `hidden`, one event (Chromium's native occlusion tracking; gates), `visible` again with one event once the cover closes; elsewhere recorded – Linux (the X server's word: Xvfb reports the window fully obscured and the page reads `hidden`, a compositing desktop does not) and the macOS arm64 runner, whose virtual display reports no occlusion to any window (the page stays `visible`) – the events exactly the flips that happened | the OS's occlusion tracking through the page    |
 | `parked-under-cover`  | the Web capture overlay (`capture.start`) parks the page's view (shown, one pixel in a window corner; W6-F5) and the page reads `visible`; `hide()` takes the parked view down for real (hidden, its box its own) and the page reads `hidden`; `show()` parks it again and the page reads `visible`; the overlay stays up throughout; Escape closes it and the view is back in its box | the page, the view                              |
 
+The screenshots of a window minimised or under a cover are taken as the screen stands
+(`s.shotAsIs`): `s.shot` brings the app's window to the front first, and `show()` un-minimises a
+window on Windows and macOS – the first run's `minimize` step had its view back up before it was
+checked, on all four legs.
+
 What no runner confirms: a real desktop's minimise on Linux (Xvfb has no window manager, so the
-hide / show pair stands in), and a compositing Linux desktop's occlusion (none, as Chrome's).
+hide / show pair stands in), a compositing Linux desktop's occlusion (none, as Chrome's), and
+occlusion on an Apple-silicon Mac (the arm64 runner's display reports none; macOS x64 confirms
+the OS's tracking).
 
 ## Teardown
 

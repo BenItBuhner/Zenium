@@ -18,11 +18,14 @@
 //                        is not hidden).
 //   blur-full-cover      a window over the whole of it: `hidden` where the OS tracks occlusion
 //                        natively (Windows, macOS – Chromium's own trackers, nothing of the app's)
-//                        and `visible` again when the cover closes; on Linux recorded, not judged
-//                        (Chrome does no occlusion tracking on X11 beyond what the X server says:
-//                        Xvfb reports a fully obscured window and the page reads `hidden`, a
-//                        compositing desktop does not); on every leg the count of events is
-//                        exactly the flips that happened.
+//                        and this machine reports it (the bare window of `native-forwarding`
+//                        read `hidden` under its own full cover), `visible` again when the cover
+//                        closes; elsewhere recorded, not judged – on Linux Chrome does no
+//                        occlusion tracking on X11 beyond what the X server says (Xvfb reports a
+//                        fully obscured window and the page reads `hidden`, a compositing desktop
+//                        does not), and the macOS arm64 runner's virtual display reports no
+//                        occlusion to any window; on every leg the count of events is exactly
+//                        the flips that happened.
 //   parked-under-cover   the Web capture overlay over the page parks its view (W6-F5: shown, one
 //                        pixel in a window corner, the page `visible`); the window hidden takes
 //                        the parked view down for real (hidden, its box its own) and the page
@@ -87,6 +90,19 @@ export function loggedPage(name, color) {
 /** Whether Chromium tracks a window's occlusion by other windows natively on `platform`. */
 export function occlusionTracked(platform) {
   return platform === 'win32' || platform === 'darwin'
+}
+
+/**
+ * Whether the full-cover step is judged on this leg: Chromium tracks occlusion natively on this
+ * OS, and this machine reported it to the bare window of the `native-forwarding` step – its
+ * `cover-full` row read `nativeCoverFull`, `hidden` where the OS told the window it was covered.
+ * A display that reports none to any window (the macOS arm64 runner's virtual display: the bare
+ * window's page stayed `visible` under a full cover, 2026-09-26) is recorded, not judged. An
+ * unknown native reading (`null`, the probe unavailable) leaves the OS's own rule to stand.
+ */
+export function occlusionJudged(platform, nativeCoverFull) {
+  if (!occlusionTracked(platform)) return false
+  return nativeCoverFull !== 'visible'
 }
 
 /** The box a window covering the whole of `bounds` takes: `inflate` DIP beyond it on every side. */
@@ -163,6 +179,8 @@ export async function scenarioVisibility(h) {
   return runScenario(VISIBILITY_SCENARIO, userData, {}, async (s, out) => {
     out.platform = platform
     out.occlusionTracked = tracked
+    /** What the bare window's page read under a full cover (`native-forwarding`): the machine's word. */
+    let nativeCoverFull = null
     const invoke = (name, args) =>
       s.chrome.evaluate(({ name, args }) => window.zen.invoke(name, args), { name, args })
     let tab = null
@@ -442,6 +460,7 @@ export async function scenarioVisibility(h) {
               : name
           const window = await nativeMove(action, coverBox)
           const after = await readUntilNative(nativeRead, expected, 3000, waitFor, delay)
+          if (name === 'cover-full') nativeCoverFull = after ? after.state : null
           rows.push({
             ...tableRow(name, before, after),
             chromeReads: expected,
@@ -506,7 +525,10 @@ export async function scenarioVisibility(h) {
       }
       minimised = true
       const after = await readUntil('hidden', 8000, 'the page hidden with its window minimised')
-      await s.shot('02-minimised')
+      // The screen as it is: `s.shot` would bring the window to the front first, and `show()`
+      // un-minimises it on Windows and macOS – the view came back up before it was checked
+      // (Desktop smoke run 36239781382, all four legs).
+      await s.shotAsIs('02-minimised')
       fail(flipVerdict(before, after, 'hidden'), { window: state.window, view: state.view })
       const f = await facts()
       if (f.view?.visible !== false) {
@@ -600,7 +622,7 @@ export async function scenarioVisibility(h) {
       ).catch(() => null)
       await delay(1500)
       const under = await read()
-      await s.shot('05-partial-cover')
+      await s.shotAsIs('05-partial-cover')
       fail(steadyVerdict(before, under, 'visible'), { cover: shown, blurred })
       await uncover('partial')
       const after = await frontAndVisible('the page visible with the partial cover gone')
@@ -616,21 +638,29 @@ export async function scenarioVisibility(h) {
 
     await s.step('blur-full-cover', async () => {
       // A window over the whole of the main window: where Chromium tracks occlusion natively
-      // (Windows, macOS) the page reads `hidden` and `visible` again once the cover is gone – one
-      // event each way. On Linux the reading is recorded (the X server's word: Xvfb reports the
-      // window fully obscured, a compositing desktop does not), and the count of events has to be
-      // exactly the flips that happened either way.
+      // (Windows, macOS) and this machine reports it – the bare window of `native-forwarding`
+      // read `hidden` under its full cover – the page reads `hidden` and `visible` again once the
+      // cover is gone, one event each way. Elsewhere the reading is recorded: on Linux the X
+      // server's word (Xvfb reports the window fully obscured, a compositing desktop does not);
+      // on a display that reports no occlusion to any window (the macOS arm64 runner) the page
+      // stays `visible`. On every leg the count of events is exactly the flips that happened.
+      const judged = occlusionJudged(platform, nativeCoverFull)
+      if (tracked && !judged) {
+        log(
+          `${VISIBILITY_SCENARIO}: this display reported no occlusion to the bare window either (native cover-full read ${nativeCoverFull}): the full cover is recorded, not judged`
+        )
+      }
       const before = await read()
       const { window } = await facts()
       const shown = await cover('full', fullCoverBounds(window.bounds))
       const under = await readUntil(
         'hidden',
-        tracked ? 8000 : 4000,
+        judged ? 8000 : 4000,
         'the page hidden under the full cover'
       )
-      await s.shot('06-full-cover')
+      await s.shotAsIs('06-full-cover')
       const wentHidden = under?.state === 'hidden'
-      if (tracked) fail(flipVerdict(before, under, 'hidden'), { cover: shown })
+      if (judged) fail(flipVerdict(before, under, 'hidden'), { cover: shown })
       else if (wentHidden) fail(flipVerdict(before, under, 'hidden'), { cover: shown })
       else fail(steadyVerdict(before, under, 'visible'), { cover: shown })
       await uncover('full')
@@ -641,7 +671,9 @@ export async function scenarioVisibility(h) {
       )
       return {
         ...tableRow('blur-full-cover', before, under),
-        judged: tracked,
+        judged,
+        occlusionTracked: tracked,
+        nativeCoverFull,
         cover: shown,
         afterUncover: tableRow('uncover-full', under, after),
         reading: after

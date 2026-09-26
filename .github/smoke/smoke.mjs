@@ -1577,6 +1577,16 @@ class Session {
     return shot(`${this.scenario}-${name}`, this)
   }
 
+  /**
+   * The screen as it stands, nothing done to the app first: no bring-to-front – which shows a
+   * hidden window, restores a minimised one (`show()` un-minimises on Windows and macOS) and puts
+   * the app's window over a cover a step put up, the very states such a step is photographing –
+   * and no settle.
+   */
+  shotAsIs(name) {
+    return grabScreen(`${this.scenario}-${name}`).file
+  }
+
   /** The main window's chrome webContents id (the page the sidebar, URL bar and dialogs live in). */
   chromeWebContentsId(windowId = this.mainWindowId) {
     return this.app.evaluate(({ BrowserWindow }, wid) => {
