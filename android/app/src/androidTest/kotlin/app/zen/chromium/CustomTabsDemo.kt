@@ -422,7 +422,8 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
      * own: the grip strip over the title, the title over the sentence, the sentence over the
      * address, the address over the pair, Not now leading and Open trailing on one row, each at
      * the chassis's 40 dp. Open under a finger starts the dialer – the top window leaves the app –
-     * and a back returns to the tab (the tab's own task brought forward if it does not). A second
+     * and the system back returns to the tab ([returnFromApp]: up to three, then the shell stops
+     * the dialer to uncover the tab's task). A second
      * touch on the link asks again – nothing was remembered – and a touch on the scrim dismisses
      * that ask: the request is refused, no app comes up and the tab stays on its page. On a
      * device with no app answering to `tel:` the scene is skipped with a word in the log (the CI
@@ -498,12 +499,7 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         claim("$name: Open under a finger hands the address to the dialer (top ${topPackage()})", opened)
         if (opened) {
             SystemClock.sleep(1_500)
-            back()
-            if (!waitForWindow(app.packageName, 6_000)) {
-                Log.w(tag, "$name: a back did not return the tab from the dialer; bringing its task forward")
-                bringCustomTabForward()
-                waitForWindow(app.packageName, 8_000)
-            }
+            returnFromApp(dialerPackage)
         }
         val backOnPage = awaitTrue(8_000) { customTab() != null }
         claim("$name: the tab is back in front after the dialer (top ${topPackage()})", backOnPage)
@@ -532,18 +528,24 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         if (!scrimGone) touchFault("the touch on the scrim did not send the confirmation away in 6 s")
     }
 
-    /** The custom tab's own task – the app's, so `AppTask.moveToFront` is allowed it – brought forward over another app's window. */
-    private fun bringCustomTabForward() {
-        val tab = customTab(Stage.PAUSED, Stage.STOPPED, Stage.RESUMED) ?: run {
-            Log.w(tag, "no custom tab to bring forward")
-            return
+    /**
+     * Back to the tab from the app a link opened: the system back, up to three times – the
+     * Google dialer takes one for the dialpad it opened on the number and one more for its
+     * screen (run 1 sent one and waited) – and, with the app still in front, the shell stops it
+     * (`am force-stop`) so the task under it is in front again: the CALLER's task, which the
+     * custom tab lands in, so `AppTask.moveToFront` is not open to the tab (the app's own tasks
+     * do not list it; the picture-in-picture restore's move is the browser window's, whose task
+     * is the app's).
+     */
+    private fun returnFromApp(packageName: String) {
+        for (attempt in 1..3) {
+            back()
+            if (waitForWindow(app.packageName, 3_000)) return
+            Log.w(tag, "back $attempt did not return the tab from $packageName")
         }
-        val manager = app.getSystemService(ActivityManager::class.java)
-        val task = manager.appTasks.firstOrNull { it.taskInfo.taskId == tab.taskId } ?: run {
-            Log.w(tag, "the tab's task ${tab.taskId} is not among the app's ${manager.appTasks.size} tasks")
-            return
-        }
-        runCatching { task.moveToFront() }.onFailure { Log.w(tag, "moveToFront failed: $it") }
+        Log.w(tag, "stopping $packageName from the shell to uncover the tab's task")
+        shellCommand("am force-stop $packageName")
+        waitForWindow(app.packageName, 8_000)
     }
 
     /** Plant the tel: link over the page and return where it is on screen. */
