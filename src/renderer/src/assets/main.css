@@ -12206,12 +12206,16 @@
   overscroll-behavior: contain;
   /* The find field's padding above and below its control (`.zen-settings-find` reads these): the
      column's top for anything scrolled into view is the field's bottom edge – its whole box,
-     16 + the control + 8 – so a landed group's heading shows under the field, and the two
-     rules cannot drift apart. */
+     16 + the control + 8 – plus the section's air, so a landed group stands with 32 of air
+     under the pinned field's §9.7 hairline as a section's title does under the field, not cut
+     against it (the #553 lead check's Q1: the air is the section's, and a heading flush under
+     the field reads as pinned to it); the field's rules cannot drift apart. */
   --zen-settings-find-pad-top: 16px;
   --zen-settings-find-pad-bottom: 8px;
+  --zen-settings-landing-air: 32px;
   scroll-padding-top: calc(
-    var(--v2-control) + var(--zen-settings-find-pad-top) + var(--zen-settings-find-pad-bottom)
+    var(--v2-control) + var(--zen-settings-find-pad-top) + var(--zen-settings-find-pad-bottom) +
+      var(--zen-settings-landing-air)
   );
 }
 /*

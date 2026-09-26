@@ -2719,12 +2719,14 @@ function resourcesSection({ state, set }: SectionContext): RowGroup[] {
 
 /**
  * The hub at the top of the section (settings-12; Chrome's card list, `privacyHub.ts`): one
- * §10.4 action row per card in Chrome's order – Delete browsing data, Third-party cookies,
- * Security, Site settings, Safety check – the leading glyph, the title, one line under it, the
- * trailing chevron. A card brings its program's first group on screen (`ctx.reveal`, the
- * section's `?group=` landing); Delete browsing data opens the PS-13 dialog the Clear browsing
- * data row opens. No heading: the cards stand under the section's title as Chrome's do. The
- * desktop and tablet shells' (`layouts`): the phone's Privacy page keeps its plain list.
+ * §10.4 action row per card in Chrome's order – Clear browsing data…, Third-party cookies,
+ * Safe Browsing, Site settings, Safety check – the leading glyph, the title, one line under it.
+ * A card brings its program's first group on screen (`ctx.reveal`, the section's `?group=`
+ * landing) and trails the chevron that says so (Q5 of the #553 lead check: the four landings
+ * keep it); Clear browsing data… opens the PS-13 dialog the Clear browsing data row opens, with
+ * §9.1's ellipsis on its name and no chevron (F1). No heading: the cards stand under the
+ * section's title as Chrome's do. The desktop and tablet shells' (`layouts`): the phone's
+ * Privacy page keeps its plain list.
  */
 function privacyHubGroups(ctx: SectionContext): RowGroup[] {
   const { state, reveal } = ctx
@@ -2754,10 +2756,9 @@ function privacyHubGroups(ctx: SectionContext): RowGroup[] {
           label: card.label,
           description: lines[card.id],
           leading: <Glyph className="zen-settings-glyph" aria-hidden="true" />,
-          leaves: 'chevron',
           ...(group === null
             ? { form: CLEAR_BROWSING_DATA_FORM }
-            : { onPress: () => reveal?.(group) })
+            : { leaves: 'chevron', onPress: () => reveal?.(group) })
         }
       })
     }
@@ -5206,7 +5207,6 @@ function updatesSection({ state, set }: SectionContext): RowGroup[] {
  * browsing data's "Site settings" makes).
  */
 export const RESET_SETTINGS_COPY = {
-  heading: 'Reset settings',
   row: 'Restore settings to their original defaults',
   title: 'Reset settings?',
   body: 'This will reset your startup page, home page, new tab page, search engine, pinned tabs, and site permissions. It will also disable all extensions and clear temporary data like cookies. Your bookmarks, history, and saved passwords will not be cleared.',
@@ -5221,15 +5221,18 @@ export const RESET_SETTINGS_COPY = {
  * sentence: Cancel and "Reset settings" in the danger ink, no primary, Enter from the held
  * container inert (§9.22): a bulk act that disables the extensions and clears the cookies –
  * and whose act is the core's `settings.reset` (`core/settingsReset.ts`), which does what the
- * sentence says and nothing else, then says "Settings reset" in one toast. The desktop trails
- * its 32 px "Reset…" button on the 40 px control row (§10.5), the tablet's portrait page
- * presses the row. The category is the desktop and tablet shells' (`internalPages.ts`).
+ * sentence says and nothing else, then says "Settings reset" in one toast. The group carries
+ * no heading: the row stands under the category's 22 title as the Privacy and security hub's
+ * cards do – both panes one form (the #553 lead check's F2 / Q3) – the category's name being
+ * the nav's and the title's. The desktop trails its 32 px "Reset…" button on the 40 px control
+ * row (§10.5), the tablet's portrait page presses the row. The category is the desktop and
+ * tablet shells' (`internalPages.ts`).
  */
 function resetSection(): RowGroup[] {
   return [
     {
       id: 'reset',
-      heading: RESET_SETTINGS_COPY.heading,
+      heading: null,
       rows: [
         {
           kind: 'action',

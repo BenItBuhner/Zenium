@@ -1,26 +1,34 @@
 import { describe, expect, it } from 'vitest'
+import { Cookie, ListChecks, ShieldHalf, SlidersHorizontal, Trash2 } from 'lucide-react'
 import { PRIVACY_HUB_CARDS, PRIVACY_HUB_LINES, thirdPartyCookiesLine } from '../privacyHub'
 
 /*
  * The Privacy and security hub's card list (W7-6, settings-12): Chrome's cards in Chrome's
- * order, each naming the group it lands on – or the dialog it opens – and the Third-party
- * cookies card's line reading the setting.
+ * order, each naming the group it lands on – or the dialog it opens – with its glyph, and the
+ * Third-party cookies card's line reading the setting. The #553 round's names: the dialog card
+ * follows its dialog's name today with §9.1's ellipsis (F1), the third card its landing, Safe
+ * Browsing (F3 / Q4), Safety check draws Lucide's list-checks (F3), and the "data breaches" in
+ * its line stands because the check reads a breach list (Q8).
  */
 
 describe('the Privacy and security hub cards', () => {
   it('are Chrome’s, in Chrome’s order, without Privacy Guide and Ad privacy (no page, no engine)', () => {
     expect(PRIVACY_HUB_CARDS.map((c) => c.label)).toEqual([
-      'Delete browsing data',
+      'Clear browsing data…',
       'Third-party cookies',
-      'Security',
+      'Safe Browsing',
       'Site settings',
       'Safety check'
     ])
     expect(PRIVACY_HUB_CARDS.map((c) => c.label)).not.toContain('Privacy Guide')
     expect(PRIVACY_HUB_CARDS.map((c) => c.label)).not.toContain('Ad privacy')
+    // The one name that opens a dialog carries the ellipsis; the landings do not.
+    expect(PRIVACY_HUB_CARDS.filter((c) => c.label.endsWith('…')).map((c) => c.id)).toEqual([
+      'hub-clear-data'
+    ])
   })
 
-  it('name the group each lands on, the Delete browsing data card its dialog instead', () => {
+  it('name the group each lands on, the Clear browsing data… card its dialog instead, each with its glyph', () => {
     expect(PRIVACY_HUB_CARDS.map((c) => [c.id, c.group])).toEqual([
       ['hub-clear-data', null],
       ['hub-cookies', 'site-data'],
@@ -32,7 +40,15 @@ describe('the Privacy and security hub cards', () => {
     const ids = PRIVACY_HUB_CARDS.map((c) => c.id)
     expect(new Set(ids).size).toBe(ids.length)
     expect(ids.every((id) => id.startsWith('hub-'))).toBe(true)
-    for (const card of PRIVACY_HUB_CARDS) expect(typeof card.glyph).not.toBe('undefined')
+    // Safe Browsing keeps its shield; Safety check is a check over a list (the nav's Security
+    // category keeps shield-check, `glyphs.ts`).
+    expect(PRIVACY_HUB_CARDS.map((c) => c.glyph)).toEqual([
+      Trash2,
+      Cookie,
+      ShieldHalf,
+      SlidersHorizontal,
+      ListChecks
+    ])
   })
 
   it('have one line each, Chrome’s in the house’s words (no Oxford comma)', () => {
@@ -41,6 +57,9 @@ describe('the Privacy and security hub cards', () => {
       expect(line.endsWith('.')).toBe(false)
     }
     expect(PRIVACY_HUB_LINES.clearData).toBe('Delete history, cookies, cache and more')
+    // Q8: the line keeps "data breaches" because the check compares against one – Password
+    // Checkup's Have I Been Pwned range lookup (`core/credentials/checkup.ts`), whose count the
+    // Safety check's Passwords row reads (`core/privacy.ts`).
     expect(PRIVACY_HUB_LINES.safetyCheck).toBe(
       'Zenium can help keep you safe from data breaches, bad extensions and more'
     )

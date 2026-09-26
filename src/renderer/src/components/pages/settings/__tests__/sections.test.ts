@@ -6690,7 +6690,7 @@ describe('the Privacy and security hub (W7-6, settings-12)', () => {
     return { privacy, revealed }
   }
 
-  it('leads the category with Chrome’s cards in Chrome’s order, each a §10.4 action row with a glyph, one line and a chevron', () => {
+  it('leads the category with Chrome’s cards in Chrome’s order, each a §10.4 action row with a glyph and one line – the four landings with a chevron, the dialog card with §9.1’s ellipsis and none', () => {
     const { privacy } = hub()
     const cards = privacy.groups[0]
     expect(cards).toMatchObject({
@@ -6698,16 +6698,21 @@ describe('the Privacy and security hub (W7-6, settings-12)', () => {
       heading: null,
       layouts: ['desktop', 'tablet']
     })
+    // The first card follows the dialog it opens by name (the #553 lead check's F1: one name
+    // for one thing today; the family's rename to "Delete browsing data" is its own slice), the
+    // third names its landing, Safe Browsing, since the nav has a Security category (F3 / Q4).
     expect(cards.rows.map((r) => [r.id, r.label])).toEqual([
-      ['hub-clear-data', 'Delete browsing data'],
+      ['hub-clear-data', 'Clear browsing data…'],
       ['hub-cookies', 'Third-party cookies'],
-      ['hub-security', 'Security'],
+      ['hub-security', 'Safe Browsing'],
       ['hub-site-settings', 'Site settings'],
       ['hub-safety-check', 'Safety check']
     ])
     for (const card of cards.rows) {
       if (card.kind !== 'action') throw new Error(`${card.id} is not an action row`)
-      expect(card.leaves).toBe('chevron')
+      // A chevron says the card moves the page to its landing (Q5); a dialog is said by the
+      // ellipsis, and the row's `aria-haspopup` (rows.tsx) – no chevron (F1).
+      expect(card.leaves).toBe(card.id === 'hub-clear-data' ? undefined : 'chevron')
       expect(card.button).toBeUndefined()
       expect(glyphClass(card.leading)).toBe('zen-settings-glyph')
       expect(card.description).toBeTruthy()
@@ -6718,11 +6723,12 @@ describe('the Privacy and security hub (W7-6, settings-12)', () => {
       'Third-party cookies are blocked in private tabs',
       'Safe Browsing (protection from dangerous sites) and other security settings',
       'What sites may use and show (location, camera, pop-ups and more)',
+      // "Data breaches" is what the check does: Password Checkup's HIBP range lookup (Q8).
       'Zenium can help keep you safe from data breaches, bad extensions and more'
     ])
   })
 
-  it('lands each card on its program’s first group – present under the cards – and opens the PS-13 dialog from Delete browsing data', () => {
+  it('lands each card on its program’s first group – present under the cards – and opens the PS-13 dialog from Clear browsing data…', () => {
     const { privacy, revealed } = hub()
     const groupIds = privacy.groups.map((g) => g.id)
     const targets = ['site-data', 'safe-browsing', 'sites-permissions', 'safety-check']
@@ -6793,7 +6799,9 @@ describe('the Privacy and security hub (W7-6, settings-12)', () => {
     )
     expect(ids('site settings')).toContain('hub-site-settings')
     expect(ids('third-party cookies')).toContain('hub-cookies')
-    // A card's hit reads the category alone as its caption: the cards' group has no heading.
+    // The dialog card is found by its own name and by Chrome's (its line's "Delete"), and a
+    // card's hit reads the category alone as its caption: the cards' group has no heading.
+    expect(ids('clear browsing data')).toContain('hub-clear-data')
     const hit = searchRows([privacy], 'delete browsing data').find(
       (h) => h.row.id === 'hub-clear-data'
     )
@@ -6802,14 +6810,16 @@ describe('the Privacy and security hub (W7-6, settings-12)', () => {
 })
 
 describe('Reset settings (W7-6, settings-70)', () => {
-  it('is one row at the foot of the list, before About, on the desktop and tablet shells alone', () => {
+  it('is one row at the foot of the list, before About, on the desktop and tablet shells alone – under the title with no sub-heading (F2)', () => {
     for (const layout of ['desktop', 'tablet'] as const) {
       const ids = availableSections(PAGE, ANDROID, layout).map((s) => s.id)
       expect(ids.indexOf('reset')).toBe(ids.indexOf('about') - 1)
     }
     expect(phoneSections().map((m) => m.section.id)).not.toContain('reset')
     const reset = section('reset')
-    expect(reset.groups.map((g) => [g.id, g.heading])).toEqual([['reset', 'Reset settings']])
+    // Both panes one form (the #553 lead check's F2 / Q3): the row stands under the category's
+    // 22 title as the hub's cards do; the category's name is the nav's and the title's.
+    expect(reset.groups.map((g) => [g.id, g.heading])).toEqual([['reset', null]])
     expect(reset.groups[0].rows.map((r) => r.id)).toEqual(['reset-settings'])
   })
 
@@ -6842,5 +6852,11 @@ describe('Reset settings (W7-6, settings-70)', () => {
     expect(ids('restore defaults')).toEqual(['reset-settings'])
     expect(ids('reset settings')).toContain('reset-settings')
     expect(ids('factory')).toContain('reset-settings')
+    // The two clauses the round added to the sentence find the row too.
+    expect(ids('home page')).toContain('reset-settings')
+    expect(ids('site permissions')).toContain('reset-settings')
+    // Without a heading the hit's caption is the category alone.
+    const hit = searchRows(models, 'restore defaults')[0]
+    expect(hit.caption).toBe('Reset Settings')
   })
 })
