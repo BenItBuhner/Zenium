@@ -217,6 +217,35 @@ android {
             // The JDK's HttpURLConnection silently drops `Origin` (a "restricted" header) unless told
             // otherwise; Android's OkHttp-backed one sends it. The CORS proxy tests check the rewrite.
             it.systemProperty("sun.net.http.allowRestrictedHeaders", "true")
+            // The source-reading tests (ExternalProtocolsNoHandlerTest, CustomTabOpenInAppPromptTest,
+            // CustomTabPermissionPromptTest, ExtensionPromptFallbackTest, PermissionPromptSheetTest,
+            // WebAppDisclosureTest, ScreenClassTest, LockVeilTest, PrivateBrowsingTest, BackupRulesTest,
+            // LocalDocumentsTest, ExternalProtocolsTest) read these off the repository as TEXT – the
+            // core's and the chrome's TypeScript, this module's Kotlin, manifest and resources – none of
+            // which is on the task's classpath in a form that changes with them (a KDoc, a manifest
+            // attribute, a resource value). Undeclared, a change to one of them reused the cached pass
+            // (`org.gradle.caching`, and CI restores main's Gradle home): services' #576 rewrote the
+            // shared `intentPackage` and the pin that reads it stayed green from the cache. Named here,
+            // the tests run when what they read changes. Grep `src/test/kotlin` for `File(root, "` and
+            // `"src/main/` when adding a source-reading test, and add what it reads.
+            it.inputs.files(
+                webRoot.resolve("src/shared/externalProtocols.ts"),
+                webRoot.resolve("src/core/externalProtocols.ts"),
+                webRoot.resolve("src/shared/url.ts"),
+                webRoot.resolve("src/shared/formFactor.ts"),
+                webRoot.resolve("src/android/extensionHost.ts"),
+                webRoot.resolve("src/renderer/src/assets/extensions.css"),
+                webRoot.resolve("src/renderer/src/components/protocol/ExternalProtocolSheet.tsx"),
+                webRoot.resolve("src/renderer/src/components/extensions/ExtensionIcon.tsx"),
+                webRoot.resolve("src/renderer/src/lib/extensions/warningGlyph.ts"),
+                projectDir.resolve("src/main/AndroidManifest.xml")
+            ).withPathSensitivity(PathSensitivity.RELATIVE)
+            it.inputs.dir(projectDir.resolve("src/main/kotlin")).withPathSensitivity(PathSensitivity.RELATIVE)
+            it.inputs.dir(projectDir.resolve("src/main/shortcuts")).withPathSensitivity(PathSensitivity.RELATIVE)
+            it.inputs.dir(projectDir.resolve("src/main/res/drawable")).withPathSensitivity(PathSensitivity.RELATIVE)
+            it.inputs.dir(projectDir.resolve("src/main/res/mipmap-anydpi-v26")).withPathSensitivity(PathSensitivity.RELATIVE)
+            it.inputs.dir(projectDir.resolve("src/main/res/values-night")).withPathSensitivity(PathSensitivity.RELATIVE)
+            it.inputs.dir(projectDir.resolve("src/main/res/xml")).withPathSensitivity(PathSensitivity.RELATIVE)
             // V2TokensPinTest reads the chrome's stylesheet, the sheet chassis (its motion module,
             // its bottom inset) and this module's value and anim resources off the repository, not
             // the classpath (the R class does not change with a colour's value), so they are the
