@@ -1315,8 +1315,10 @@ export class ElectronTabView implements TabView {
       // before (`setBounds`), as the popup surface is placed: added, then shown.
       const win = this.win
       if (win) this.enterWindow(win)
-      if (this.parked !== null) this.unpark()
+      const parked = this.parked !== null
+      if (parked) this.unpark()
       this.view.setVisible(true)
+      if (parked) this.pointerBack()
     } else if (this.coverable()) {
       this.park()
     } else {
@@ -1366,17 +1368,65 @@ export class ElectronTabView implements TabView {
     }
   }
 
+  /**
+   * The pointer's moves are told where hiding would have told them. Aura synthesizes a mouse
+   * move to whatever lies under the pointer when a view under it is hidden or shown, and none
+   * when one is moved: parked by a bounds change alone, the view leaves the chrome under the
+   * pointer with the pointer's last position over the chrome itself – wherever it last moved
+   * over a strip or a bar – and its hover state stays there, so a bubble opening under that
+   * spot counted as hovered and never closed (the zoom bubble waits under the pointer). The
+   * chrome hears a move at the pointer's place as the view goes (`park`), and when the view
+   * comes back under the pointer the chrome hears the pointer leave and the page hears where it
+   * stands (`pointerBack`), as aura's exit and move would say. Nothing while a chrome mouse
+   * button is down (a tab row's drag is a cover): aura's synthesized moves wait for the release
+   * too, and the chrome holds the pointer's capture through the drag anyway.
+   */
   private park(): void {
     const rect = this.bounds
     if (!rect) return
     if (this.parked === null) this.parked = this.owner.claimParkingCorner(this)
+    const pointer = this.pointerOver(rect)
     this.view.setBounds(this.parkedBox(rect, this.parked))
+    if (pointer) {
+      this.host?.win.webContents.sendInputEvent({ type: 'mouseMove', x: pointer.x, y: pointer.y })
+    }
   }
 
   private unpark(): void {
     this.parked = null
     this.owner.releaseParkingCorner(this)
     if (this.bounds) this.view.setBounds(this.bounds)
+  }
+
+  /** The view is back in its box from parking, shown: the pointer over it is the page's again. */
+  private pointerBack(): void {
+    const rect = this.bounds
+    const host = this.host
+    if (!rect || !host) return
+    const pointer = this.pointerOver(rect)
+    if (!pointer) return
+    host.win.webContents.sendInputEvent({ type: 'mouseLeave', x: pointer.x, y: pointer.y })
+    this.wc.sendInputEvent({ type: 'mouseMove', x: pointer.x - rect.x, y: pointer.y - rect.y })
+  }
+
+  /**
+   * Where the pointer stands over the view's box `rect`, in DIP from the window content's
+   * top-left corner (the chrome page's own coordinates); null with the pointer elsewhere, a
+   * chrome mouse button down, or no window to measure against.
+   */
+  private pointerOver(rect: Rect): { x: number; y: number } | null {
+    const host = this.host
+    if (!host || host.pointerButtonHeld()) return null
+    try {
+      const cursor = screen.getCursorScreenPoint()
+      const content = host.win.getContentBounds()
+      const x = cursor.x - content.x
+      const y = cursor.y - content.y
+      const over = x >= rect.x && y >= rect.y && x < rect.x + rect.width && y < rect.y + rect.height
+      return over ? { x, y } : null
+    } catch {
+      return null
+    }
   }
 
   /** Whether the engine's view stands parked under a chrome cover, and in which corner. */

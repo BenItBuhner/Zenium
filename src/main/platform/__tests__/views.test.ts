@@ -43,7 +43,9 @@ const constructed: Array<Record<string, unknown>> = []
  * Which page has the keyboard. `takeKeyboard` moves it the way Chromium does: the holder gets
  * `blur`, the taker `focus`.
  */
-const { keyboard, takeKeyboard } = vi.hoisted(() => {
+const { keyboard, takeKeyboard, cursor } = vi.hoisted(() => {
+  /** Where the OS pointer stands on the screen (`screen.getCursorScreenPoint`); a test moves it. */
+  const cursor = { x: -100, y: -100 }
   const keyboard = { current: null as { emit(event: string): unknown } | null }
   const takeKeyboard = (taker: { emit(event: string): unknown }): void => {
     const previous = keyboard.current
@@ -52,7 +54,7 @@ const { keyboard, takeKeyboard } = vi.hoisted(() => {
     previous?.emit('blur')
     taker.emit('focus')
   }
-  return { keyboard, takeKeyboard }
+  return { keyboard, takeKeyboard, cursor }
 })
 
 vi.mock('electron', async () => {
@@ -307,20 +309,28 @@ vi.mock('electron', async () => {
   const nativeTheme = Object.assign(new EventEmitter().setMaxListeners(0), {
     shouldUseDarkColors: false
   })
-  /** One plain display: a full-page paint's cut is the CSS-pixel one. */
-  const screen = { getAllDisplays: () => [{ scaleFactor: 1 }] }
+  /** One plain display: a full-page paint's cut is the CSS-pixel one. The pointer is `cursor`'s. */
+  const screen = {
+    getAllDisplays: () => [{ scaleFactor: 1 }],
+    getCursorScreenPoint: () => ({ ...cursor })
+  }
   return { WebContentsView: FakeWebContentsView, nativeTheme, screen }
 })
 
 /** A window's chrome page: the keyboard's home when no page on screen has it. */
 class FakeChrome extends EventEmitter {
   focusCalls = 0
+  /** The pointer events the host tells the chrome page of (`sendInputEvent`). */
+  readonly inputEvents: Array<Record<string, unknown>> = []
   isDestroyed(): boolean {
     return false
   }
   focus(): void {
     this.focusCalls++
     takeKeyboard(this)
+  }
+  sendInputEvent(event: Record<string, unknown>): void {
+    this.inputEvents.push(event)
   }
 }
 
@@ -357,23 +367,37 @@ class FakeBrowserWindow extends EventEmitter {
   getContentSize(): [number, number] {
     return this.contentSize
   }
+  /** The content's place on the screen: at (100, 60), for the pointer's screen point to map. */
+  getContentBounds(): { x: number; y: number; width: number; height: number } {
+    return { x: 100, y: 60, width: this.contentSize[0], height: this.contentSize[1] }
+  }
 }
 
 /**
- * A window host as the view sees it: its `BrowserWindow`, its chrome page, and its core window's
- * word on whether chrome UI covers the content (`ZenWindow.contentHidden`, off to begin with).
+ * A window host as the view sees it: its `BrowserWindow`, its chrome page, its core window's
+ * word on whether chrome UI covers the content (`ZenWindow.contentHidden`, off to begin with),
+ * and whether a mouse button is down on the chrome (`buttonHeld`, up to begin with).
  */
 function fakeWindow(): WindowHost & {
   win: FakeBrowserWindow
   chrome: FakeChrome
   zen: { contentHidden: boolean }
+  buttonHeld: boolean
 } {
   const chrome = new FakeChrome()
   const win = new FakeBrowserWindow(chrome)
-  return { win, chrome, zen: { contentHidden: false } } as unknown as WindowHost & {
+  const host = {
+    win,
+    chrome,
+    zen: { contentHidden: false },
+    buttonHeld: false,
+    pointerButtonHeld: (): boolean => host.buttonHeld
+  }
+  return host as unknown as WindowHost & {
     win: FakeBrowserWindow
     chrome: FakeChrome
     zen: { contentHidden: boolean }
+    buttonHeld: boolean
   }
 }
 
@@ -1162,6 +1186,9 @@ describe('a hidden tab page and the window', () => {
     create: (window?: ReturnType<typeof fakeWindow>) => ElectronTabView
   } => {
     keyboard.current = null
+    // The pointer off every window, unless a test puts it somewhere.
+    cursor.x = -100
+    cursor.y = -100
     const host = new ElectronTabViewHost(sessions)
     const window = fakeWindow()
     let n = 0
@@ -1438,6 +1465,65 @@ describe('a hidden tab page and the window', () => {
     window.zen.contentHidden = false
     view.setVisible(false)
     expect(engine(view)).toEqual({ visible: false, bounds: box })
+  })
+
+  /**
+   * Aura tells whatever lies under the pointer of a view hidden or shown under it with a
+   * synthesized mouse move, and says nothing of a view moved: the host says it instead. The fake
+   * window's content sits at (100, 60) on the screen; the box is 800×560 at (0, 40) in it.
+   */
+  it('tells the chrome where the pointer is when the view under it is parked, and hands the pointer back to the page when it returns', () => {
+    const { window, create } = setup()
+    const view = create()
+    const page = view.webContents as unknown as { widgetEvents: Array<Record<string, unknown>> }
+    view.setBounds(box)
+    view.setVisible(true)
+    // The pointer over the page, at (300, 200) of the window's content – (300, 160) of the box.
+    cursor.x = 400
+    cursor.y = 260
+    window.zen.contentHidden = true
+    view.setVisible(false)
+    expect(engine(view).bounds).toEqual(parkedAt(box))
+    // The chrome, under the pointer now: a move at the pointer's place, in its own coordinates.
+    expect(window.chrome.inputEvents).toEqual([{ type: 'mouseMove', x: 300, y: 200 }])
+    expect(page.widgetEvents).toEqual([])
+    // The cover lifts: the view is back under the pointer – the chrome hears the pointer leave,
+    // the page hears where it stands, in the page's own coordinates.
+    window.zen.contentHidden = false
+    view.setVisible(true)
+    expect(window.chrome.inputEvents).toEqual([
+      { type: 'mouseMove', x: 300, y: 200 },
+      { type: 'mouseLeave', x: 300, y: 200 }
+    ])
+    expect(page.widgetEvents).toEqual([{ type: 'mouseMove', x: 300, y: 160 }])
+  })
+
+  it('says nothing of the pointer when it is off the page’s box, or a chrome mouse button is down (a tab drag is a cover)', () => {
+    const { window, create } = setup()
+    const view = create()
+    const page = view.webContents as unknown as { widgetEvents: Array<Record<string, unknown>> }
+    view.setBounds(box)
+    view.setVisible(true)
+    // Over the chrome's strip above the box (the box starts 40 down): nothing to say.
+    cursor.x = 400
+    cursor.y = 80
+    window.zen.contentHidden = true
+    view.setVisible(false)
+    window.zen.contentHidden = false
+    view.setVisible(true)
+    expect(window.chrome.inputEvents).toEqual([])
+    expect(page.widgetEvents).toEqual([])
+    // Over the page, but a tab row is being dragged (the button down, the chrome holding the
+    // pointer's capture): the moves would have no button in them, so none are sent.
+    cursor.y = 260
+    window.buttonHeld = true
+    window.zen.contentHidden = true
+    view.setVisible(false)
+    expect(engine(view).bounds).toEqual(parkedAt(box))
+    window.zen.contentHidden = false
+    view.setVisible(true)
+    expect(window.chrome.inputEvents).toEqual([])
+    expect(page.widgetEvents).toEqual([])
   })
 
   it('is quiet for a view whose window is gone', () => {

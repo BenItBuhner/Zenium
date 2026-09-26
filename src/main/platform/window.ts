@@ -116,6 +116,8 @@ export class ElectronWindow implements WindowHost {
   private captionColors: CaptionColors
   private popup: WebContentsView | null = null
   private popupIdleTimer: ReturnType<typeof setTimeout> | null = null
+  /** A mouse button is down on the chrome (`input-event`): a press held, a tab row's drag. */
+  private buttonHeld = false
 
   constructor(
     private readonly browser: Browser,
@@ -340,6 +342,16 @@ export class ElectronWindow implements WindowHost {
       }
       if (browser.keys.handle(key, null, zen)) event.preventDefault()
     })
+    // The chrome's mouse buttons, for the parked views' synthesized pointer moves
+    // (`ElectronTabView.park`): none while one is down. A move's modifiers carry the state too,
+    // so a press or release the observer missed rights itself at the next move.
+    wc.on('input-event', (_event, input) => {
+      if (input.type === 'mouseDown') this.buttonHeld = true
+      else if (input.type === 'mouseUp') this.buttonHeld = false
+      else if (input.type === 'mouseMove') {
+        this.buttonHeld = (input.modifiers ?? []).some((m) => m.endsWith('buttondown'))
+      }
+    })
     // The chrome's own toolbox (the Browser Console, `openChromeDevTools`): its keys raise no
     // `before-input-event` either, so the quit chord typed there is relayed from the frontend's
     // console into the table as a chrome key, as a page's toolbox relays it (`devtoolsKeys.ts`).
@@ -417,6 +429,11 @@ export class ElectronWindow implements WindowHost {
     return devtoolsQuitHoldNotice.route(this.win, state, (hold: QuitHoldState) =>
       this.browser.quitHold.panelFor(this.zen, hold)
     )
+  }
+
+  /** Whether a mouse button is down on the chrome page (`ElectronTabView.park`'s pointer moves wait). */
+  pointerButtonHeld(): boolean {
+    return this.buttonHeld
   }
 
   focusChrome(): void {
