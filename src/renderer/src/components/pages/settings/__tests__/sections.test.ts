@@ -6000,12 +6000,13 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(history.checked).toBe(true)
     history.onChange(false)
     expect(invoke).toHaveBeenCalledWith('sync.setScope', { history: false })
-    // The reading list is on by default too, as the bookmarks (services pass 11, ID-48), and
-    // its row says what travels: the pages and their read state (a page's icon stays home).
+    // The reading list is on by default too, as the bookmarks (services pass 11, ID-48); its
+    // row is the label and the switch alone, as Bookmarks' and History's (the lead's rule: a
+    // hint carries a fact the name cannot, never a restatement).
     const readingList = row(model, 'sync-scope:readingList')
     if (readingList.kind !== 'switch') throw new Error('not a switch')
     expect(readingList.checked).toBe(true)
-    expect(readingList.description).toBe('Pages saved for later and whether you have read them.')
+    expect(readingList.description).toBeUndefined()
     readingList.onChange(false)
     expect(invoke).toHaveBeenCalledWith('sync.setScope', { readingList: false })
     // The same group, same order, once connected.

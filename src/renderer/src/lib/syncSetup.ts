@@ -94,13 +94,10 @@ export const SYNC_SCOPES: ReadonlyArray<{ key: keyof SyncScope; label: string; h
     label: 'Passwords',
     hint: 'Saved passwords and passkey records, encrypted with your sync passphrase.'
   },
-  // The reading list's row (services pass 11, the `reading-list-entry` record): the pages and
-  // their read state travel, a page's icon stays with the device that saved it.
-  {
-    key: 'readingList',
-    label: 'Reading list',
-    hint: 'Pages saved for later and whether you have read them.'
-  },
+  // The reading list's row (services pass 11, the `reading-list-entry` record). No hint: a hint
+  // here carries a fact the name cannot (a behaviour, a protection, a scope), never a
+  // restatement – "Reading list" stands on its name as Bookmarks and History do (the lead's rule).
+  { key: 'readingList', label: 'Reading list' },
   { key: 'settings', label: 'Settings' },
   { key: 'spaces', label: 'Spaces', hint: 'Names, icons, themes and order.' },
   { key: 'folders', label: 'Folders' },
