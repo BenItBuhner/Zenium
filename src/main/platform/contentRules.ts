@@ -10,18 +10,20 @@
  *   from a site set to download PDFs gets `Content-Disposition: attachment` at `onHeadersReceived`,
  *   which turns Chromium's viewer navigation into a download the downloads service takes
  *   (Chrome's "Download PDFs").
- * - The page-world guards (sensors, third-party sign-in, payment handlers): the page preload
- *   asks {@link CONTENT_GUARDS_CHANNEL} synchronously at document start which of them the top
- *   document's site is refused and installs `installContentGuards` in the main world.
+ * - The page-world guards (sensors, third-party sign-in, payment handlers): the page preload's
+ *   one document-start ask carries which of them the top document's site is refused (the
+ *   `guards` field of `documentStart.ts`'s answer, provided by {@link attachContentGuards}) and
+ *   the preload installs `installContentGuards` in the main world.
  *
  * JavaScript (PS-64) is the view's own: `TabView` in `views.ts` switches script execution off
  * through the debugger's `Emulation.setScriptExecutionDisabled` as a navigation starts.
  */
-import { ipcMain, type IpcMainEvent, type Session } from 'electron'
+import type { IpcMainEvent, Session } from 'electron'
 import type { PermissionRequestDetails } from '../../core/permissions'
-import { CONTENT_GUARDS_CHANNEL } from '../../shared/contentGuards'
+import type { ContentGuardId } from '../../shared/contentGuards'
 import type { ContentRuleId } from '../../shared/contentRules'
 import { PRIVATE_CONTAINER_ID } from '../../shared/types'
+import { registerDocumentStartProvider } from './documentStart'
 import {
   HANDLER_ORDER,
   applyResponseHeaderOps,
@@ -31,10 +33,10 @@ import {
   type RequestHandler
 } from './webRequest'
 
-/** The core's answers (`ContentRulesService`), as the handler and the preload's IPC need them. */
+/** The core's answers (`ContentRulesService`), as the handler and the document-start provider need them. */
 export interface ContentRulesLookup {
   allows(id: ContentRuleId | 'pdf', url: string, details?: PermissionRequestDetails): boolean
-  blockedGuards(url: string, details?: PermissionRequestDetails): ContentRuleId[]
+  blockedGuards(url: string, details?: PermissionRequestDetails): ContentGuardId[]
 }
 
 /** The request's container, as the core reads a private container's own answers by it. */
@@ -84,18 +86,16 @@ export function isPdfResponse(headers: Record<string, string[]>): boolean {
 }
 
 /**
- * The page preload's document-start question: which guarded rows the top document's site is
- * refused. Answered from the sender's page (the tab's `WebContents`, whose URL is the top
- * document's, for a frame too – Chrome keys these settings by the embedding site), with the
- * private container's own answers where the page is a private window's.
+ * The `guards` field of the page preload's document-start answer: which guarded rows the top
+ * document's site is refused. Answered from the sender's page (the tab's `WebContents`, whose
+ * URL is the top document's, for a frame too – Chrome keys these settings by the embedding
+ * site), with the private container's own answers where the page is a private window's.
  */
 export function attachContentGuards(
   rules: ContentRulesLookup,
   containerOf: (ses: Session) => string | undefined
 ): void {
-  ipcMain.on(CONTENT_GUARDS_CHANNEL, (event: IpcMainEvent) => {
-    event.returnValue = guardsForSender(rules, event, containerOf)
-  })
+  registerDocumentStartProvider('guards', (event) => guardsForSender(rules, event, containerOf))
 }
 
 /** The sender's answer: its top document's site, in its container (the session's). */
@@ -103,7 +103,7 @@ export function guardsForSender(
   rules: ContentRulesLookup,
   event: Pick<IpcMainEvent, 'sender'>,
   containerOf: (ses: Session) => string | undefined
-): ContentRuleId[] {
+): ContentGuardId[] {
   try {
     const wc = event.sender
     if (!wc || wc.isDestroyed()) return []

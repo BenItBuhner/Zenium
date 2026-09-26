@@ -1576,19 +1576,21 @@ export function onboardingUp(): boolean {
 
 /**
  * The first-run tour or the EEA's search-engine choice screen (W6-2, `searchChoiceCovers`)
- * stands over this window's whole chrome (`onboardingCovers`; not the phone, whose tour is its
- * shell's own flow). What `onboardingUp` reads of the state, and one of the terms of the layout
- * report's `contentHidden` (`useLayoutReporter`): the pages' views composite ABOVE the chrome,
- * so a page left showing under the tour stands over it – the New Tab's view over the tour's
- * panel, since the window has had a tab from creation (#490) and the bar that used to open under
- * the tour, and hid the page under its cover, waits for the tour's end (#347). Nothing is
- * captured for these: the panel is opaque over the window, there is no picture to wait for, and
- * the views hide at once (`decideHidden`, nothing to wait for).
+ * stands over this window's whole chrome (`onboardingCovers`; not the phone's tour, which is
+ * its shell's own flow over a first run that has no page to hide – the phone's choice screen
+ * standing on its own after the tour (OMN-26, `PhoneSearchChoiceScreen`) counts, since it may
+ * stand over a live page). What `onboardingUp` reads of the state, and one of the terms of the
+ * layout report's `contentHidden` (`useLayoutReporter`): the pages' views composite ABOVE the
+ * chrome, so a page left showing under the tour stands over it – the New Tab's view over the
+ * tour's panel, since the window has had a tab from creation (#490) and the bar that used to
+ * open under the tour, and hid the page under its cover, waits for the tour's end (#347).
+ * Nothing is captured for these: the panel is opaque over the window, there is no picture to
+ * wait for, and the views hide at once (`decideHidden`, nothing to wait for).
  */
 export function firstRunCovers(
   state: Pick<UIState, 'settings' | 'window' | 'searchChoice'>
 ): boolean {
-  return !isPhone() && (onboardingCovers(state) || searchChoiceCovers(state))
+  return (!isPhone() && onboardingCovers(state)) || searchChoiceCovers(state)
 }
 
 export async function openUrlbar(

@@ -365,6 +365,14 @@ export interface BootInfo {
   readAloud?: boolean
   /** `Build.MODEL`: what sync calls this device until the user renames it (absent in old hosts). */
   deviceModel?: string
+  /**
+   * The device's country (`DeviceRegion.kt`: the network's, then the SIM's, then the locale's;
+   * a debuggable build's `debug.zenium.region` first), ISO 3166-1 alpha-2 upper case, or null
+   * when the device names none: `PlatformInfo.region`, what the EEA's search-engine choice
+   * screen is gated on (OMN-26; `core/searchChoice.ts`). Absent in old hosts – never in the EEA.
+   * The preview host takes `?region=DE`.
+   */
+  region?: string | null
   /** Persisted JSON documents by name (state.json, history.json, …), the ones small enough to inline. */
   files: Record<string, string>
   /**
@@ -1409,7 +1417,14 @@ export class AndroidPlatform implements Platform {
     boot: BootInfo,
     io: AndroidStoreIO = new AndroidStoreIO(bridge, boot.files, boot.deferred)
   ) {
-    this.info = { os: boot.os ?? 'android', version: boot.version, locales: chromeLocales() }
+    this.info = {
+      os: boot.os ?? 'android',
+      version: boot.version,
+      locales: chromeLocales(),
+      // The host's region as it stands (`normalizeRegion` in the core makes it two upper-case
+      // letters or null); an old host's payload has none, and the choice screen is never owed.
+      region: boot.region ?? null
+    }
     this.extensionsRoot = boot.extensionsRoot || null
     this.capabilities = {
       ...androidCapabilities({

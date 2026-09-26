@@ -3586,7 +3586,7 @@ describe('what a row does', () => {
       ])
     })
 
-    it('"Choose your search engine again" (W6-2) stands in the EEA or over a record, on the desktop and tablet, and asks the core for the screen', () => {
+    it('"Choose your search engine again" (W6-2) stands in the EEA or over a record, on every layout, and asks the core for the screen', () => {
       const eea = { region: 'DE', eea: true, required: false, seed: 1 }
       const elsewhere = { region: 'US', eea: false, required: false, seed: 1 }
       const record = { engineId: 'duckduckgo', region: 'DE', madeAt: 1, version: 1 }
@@ -3600,15 +3600,17 @@ describe('what a row does', () => {
       if (again.kind !== 'action') throw new Error('not an action')
       expect(again).toMatchObject({
         label: 'Choose your search engine again',
-        button: 'Choose…',
-        layouts: ['desktop', 'tablet']
+        button: 'Choose…'
       })
+      // The phone draws the screen too (OMN-26): the row is not kept from any layout.
+      expect(again.layouts).toBeUndefined()
       expect(again.description).toMatch(/random order/)
       expect(inEea.groups[0]!.rows.map((r) => r.id)).toEqual(
         expect.arrayContaining(['search-engine', 'search-choice-again'])
       )
       again.onPress?.()
       expect(invoke).toHaveBeenCalledWith('searchChoice.askAgain', undefined)
+      expect(findRow(onLayout(inEea.groups, 'phone'), 'search-choice-again')).not.toBeNull()
 
       // A device that left the EEA keeps the row while its record stands.
       const recorded = buildSection(def, {

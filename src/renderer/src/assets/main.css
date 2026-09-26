@@ -819,12 +819,16 @@
  */
 .zen-firstrun-radio:focus-visible,
 .zen-firstrun-tile:focus-visible,
+.zen-firstrun-choice:focus-visible,
 :root[data-pointer='coarse'] .zen-firstrun-radio:focus-visible,
 :root[data-pointer='coarse'] .zen-firstrun-tile:focus-visible,
+:root[data-pointer='coarse'] .zen-firstrun-choice:focus-visible,
 .zen-firstrun-radio[data-keyboard-focus]:focus,
 .zen-firstrun-tile[data-keyboard-focus]:focus,
+.zen-firstrun-choice[data-keyboard-focus]:focus,
 :root[data-pointer='coarse'] .zen-firstrun-radio[data-keyboard-focus]:focus,
-:root[data-pointer='coarse'] .zen-firstrun-tile[data-keyboard-focus]:focus {
+:root[data-pointer='coarse'] .zen-firstrun-tile[data-keyboard-focus]:focus,
+:root[data-pointer='coarse'] .zen-firstrun-choice[data-keyboard-focus]:focus {
   outline: 2px solid var(--v2-control-accent);
   outline-offset: -2px;
 }
@@ -6541,6 +6545,119 @@
   .zen-firstrun-tile[aria-checked='true'] .zen-firstrun-tile-image {
     outline: 2px solid var(--v2-control-accent);
     outline-offset: 2px;
+  }
+  /*
+   * The EEA's search-engine choice screen on the phone (W6-2 / OMN-26; `PhoneSearchChoiceStep`
+   * in overlays/PhoneOnboarding.tsx, for the tour's search step and the standalone
+   * `PhoneSearchChoiceScreen`): §9.39's one panel in its phone seat, and where §9.39 and the
+   * tour's chassis meet §9.39 wins for the tiles and the scroller. Every tile equal, at the
+   * PHONE's density (§9.34: one primitive, two densities by pointer – §9.39's 52 on 56 is the
+   * mouse's; the tablet's list draws 64 on 68 under the coarse pointer already): the two-line
+   * row token, `--v2-row-two-line` (64 on the phone: 20 + 20 + 24), on a 68 pitch at radius 8
+   * with 12 inside and the tiles 4 apart, inset to the tour's 16 gutter – 84 on 88 where a
+   * line wraps (below) – the engine's own mark at 24 in a 32 box on its own ground (content,
+   * exempt from the token rule
+   * as favicons are, §9.29), the name 15/500 over the engine's own line at 13 in the
+   * deemphasised ink, the tour's radio mark (20 on the phone) trailing and centred since the row
+   * is one tile, the picked row in the window's accent at .12 (never `--v2-selected`, the page
+   * family's), the press in the control fill. No border: the fill says which row is picked,
+   * the mark says it twice. The phone's text column is 270 (412 − the gutters, the tile's 12,
+   * the mark's box, the radio and the gaps) where the desktop panel's is 480, so a line chosen
+   * to fit the panel at 13 may not fit here (Qwant's and Bing's on the DE list): rather than a
+   * cut or an ellipsis – a lone cut on one engine is the distinction §9.39 forbids – the line
+   * wraps, and the list is a grid whose rows share the tallest row's height (`grid-auto-rows:
+   * 1fr`), so every tile stays the same height whatever its engine's line.
+   * The list scrolls in its own box (`.zen-firstrun-choices-box`, round the grid) under the
+   * chassis's bar (§9.20: on a finger's chrome the WebView's own thin overlay bar, no rule of
+   * the list's own) when the step measures that not every tile fits the column:
+   * `phoneSearchChoiceListHeight` sets the box's `max-height` so as many tiles as fit show whole
+   * and the next is cut at half its height – the row cut is the pull's affordance (§9.13) – and
+   * where every tile fits whole nothing scrolls. The box, not the grid, takes the cap: a grid
+   * with a definite height would divide it among its `1fr` rows and squeeze them to the floor,
+   * the wrapped lines spilling over the tiles below. The ring room round the first and last
+   * tiles is the box's padding, inside it (the desktop list's padding-and-negative-margin).
+   */
+  .zen-firstrun-choices-box {
+    overflow-y: auto;
+    padding: var(--v2-ring-room);
+    margin-inline: calc(16px - var(--v2-ring-room));
+    overscroll-behavior: contain;
+  }
+  .zen-firstrun-choices {
+    display: grid;
+    grid-auto-rows: 1fr;
+    gap: 4px;
+  }
+  .zen-firstrun-choice {
+    display: flex;
+    width: 100%;
+    min-height: var(--v2-row-two-line);
+    flex-shrink: 0;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    border-radius: var(--v2-radius-card);
+    color: inherit;
+    text-align: left;
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-firstrun-choice:active {
+    background: var(--v2-control-fill);
+  }
+  .zen-firstrun-choice[aria-checked='true'] {
+    background: rgb(var(--zen-accent-rgb) / 0.12);
+  }
+  .zen-firstrun-choice > .zen-firstrun-radio-mark {
+    align-self: center;
+    margin-top: 0;
+  }
+  /* Checked: the tour's radio's mark (above), the picked tile carrying the state (§9.14). */
+  .zen-firstrun-choice[aria-checked='true'] > .zen-firstrun-radio-mark {
+    border-color: var(--v2-control-accent);
+    background: var(--zen-on-accent);
+    box-shadow: inset 0 0 0 calc((var(--v2-checkbox) - 6px) / 2 - 1px) var(--v2-control-accent);
+  }
+  .zen-firstrun-choice-mark {
+    display: inline-flex;
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+  }
+  .zen-firstrun-choice-mark > img {
+    width: 24px;
+    height: 24px;
+    object-fit: contain;
+  }
+  .zen-firstrun-choice-letter {
+    display: inline-flex;
+    width: 24px;
+    height: 24px;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--v2-radius-inner);
+    background: var(--v2-control-fill);
+    font-size: var(--v2-font-small);
+    font-weight: var(--v2-weight-heading);
+    line-height: 1;
+  }
+  .zen-firstrun-choice-text {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+  }
+  .zen-firstrun-choice-name {
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-button);
+    line-height: var(--v2-line-body);
+  }
+  .zen-firstrun-choice-line {
+    color: var(--v2-control-text-deemphasized);
+    font-size: var(--v2-font-small);
+    font-weight: var(--v2-weight-body);
+    line-height: var(--v2-line-small);
   }
 }
 
