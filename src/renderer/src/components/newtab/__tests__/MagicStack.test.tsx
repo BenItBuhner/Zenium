@@ -80,6 +80,17 @@ class Frames {
   get scheduled(): boolean {
     return this.queue.size > 0
   }
+
+  /**
+   * Drop whatever a test left queued and start the clock over: a test that failed mid-spring
+   * leaves its frames here, and run into the next test they would fail it too (a cascade of
+   * three for one, measured on the pitch test's mutants).
+   */
+  reset(): void {
+    this.queue.clear()
+    this.now = 0
+    this.seq = 0
+  }
 }
 
 const frames = new Frames()
@@ -254,7 +265,10 @@ async function openMenu(
  * write the pager makes is recorded. A card is 0 wide, so the pitch is the 8 gap alone and the
  * third card's snap position is 16, the fourth's 24.
  */
-function scroller(strip: HTMLElement, at = 0): { writes: number[]; readonly offset: number } {
+function scroller(
+  strip: HTMLElement,
+  at = 0
+): { writes: number[]; readonly offset: number; move(to: number): void } {
   const writes: number[] = []
   let offset = at
   Object.defineProperty(strip, 'scrollLeft', {
@@ -269,9 +283,51 @@ function scroller(strip: HTMLElement, at = 0): { writes: number[]; readonly offs
     writes,
     get offset() {
       return offset
+    },
+    /** The engine's own move of the offset (a re-snap at a layout change): no write of the pager's. */
+    move(to: number) {
+      offset = to
     }
   }
 }
+
+/** The content frame's box at rest, for a strip laid out under it (`layOut`). */
+const FRAME = { width: 400, height: 800 }
+
+/**
+ * A strip laid out, for the tracker to measure: every card 100 wide at 100 times its place in
+ * the content, painted at that less `offset()` – the strip's offset – and every other box
+ * empty. With `recede()` set, the content frame stands receded (§11.1): the frame paints at the
+ * scale about its origin, and so does every card in it. Returns the way to put the prototype back.
+ */
+function layOut(
+  offset: () => number,
+  recede: () => { scale: number; origin: { x: number; y: number } } | null = () => null
+): () => void {
+  const rectOf = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'getBoundingClientRect')
+  const box = (x: number, y: number, width: number, height: number): DOMRect =>
+    ({ x, y, top: y, left: x, right: x + width, bottom: y + height, width, height }) as DOMRect
+  Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', {
+    configurable: true,
+    value(this: HTMLElement): DOMRect {
+      const r = recede()
+      const s = r?.scale ?? 1
+      const dx = r ? (1 - s) * r.origin.x : 0
+      const dy = r ? (1 - s) * r.origin.y : 0
+      if (this.classList.contains('zen-content-frame'))
+        return box(dx, dy, FRAME.width * s, FRAME.height * s)
+      if (!this.classList.contains('zen-mstack-card')) return box(0, 0, 0, 0)
+      const index = Array.prototype.indexOf.call(this.parentElement!.children, this)
+      return box(dx + s * (index * 100 - offset()), dy, 100 * s, 0)
+    }
+  })
+  return () => {
+    if (rectOf) Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', rectOf)
+    else delete (HTMLElement.prototype as unknown as Record<string, unknown>).getBoundingClientRect
+  }
+}
+
+const transforms = (): string[] => cards().map((c) => c.style.transform)
 
 const snapOf = (strip: HTMLElement): string => strip.style.getPropertyValue('scroll-snap-type')
 
@@ -324,7 +380,7 @@ afterEach(() => {
   pageViewStore.set({ phases: new Map(), lastApplied: null })
   act(() => viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop', coarse: false }))
   vi.unstubAllGlobals()
-  frames.now = 0
+  frames.reset()
   for (const [name, descriptor] of sizes) {
     if (descriptor) Object.defineProperty(HTMLElement.prototype, name, descriptor)
     else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[name]
@@ -780,6 +836,151 @@ describe('the Magic Stack on the page (NTP-16)', () => {
       if (rectOf) Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', rectOf)
       else
         delete (HTMLElement.prototype as unknown as Record<string, unknown>).getBoundingClientRect
+    }
+  })
+
+  it('the cards are measured in layout space: the content frame receded under the sheet (§11.1) between the baseline and a switch’s act paints every card moved, and none of that glides – the card before the gone one stands, the two after it glide by the pitch alone', () => {
+    // The frame at rest for the baseline; then the sheet up and the frame receded – scale .97
+    // about its centre – so every card paints 6 to the right less 3 % of its place. The layout
+    // box run back through the frame's transform is where the card was; the painted box is not.
+    let recede: { scale: number; origin: { x: number; y: number } } | null = null
+    const restore = layOut(
+      () => 0,
+      () => recede
+    )
+    try {
+      const page = (s: UIState): ReactElement => <div className="zen-content-frame">{stack(s)}</div>
+      render(page(state()))
+      expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'default-browser'])
+      const frame = q('.zen-content-frame')!
+      frame.style.transform = 'matrix(0.97, 0, 0, 0.97, 0, 0)'
+      frame.style.transformOrigin = '200px 400px'
+      recede = { scale: 0.97, origin: { x: 200, y: 400 } }
+      // The switch turns Downloads off from under the sheet: the fade, and nothing else moves –
+      // as painted every card has (by the recede), as laid out none has.
+      render(page(state({ newTabHiddenModules: ['downloads'] })))
+      const leaving = q('.zen-mstack-card[data-cell="downloads"]')!
+      expect(leaving.dataset.leaving).toBe('true')
+      expect(transforms()).toEqual(['', '', '', ''])
+      expect(frames.scheduled).toBe(false)
+      // The fade's end: the two after the gone card glide by its pitch, the one before it stands.
+      act(() => {
+        leaving.dispatchEvent(new AnimationEvent('animationend', { bubbles: true }))
+      })
+      expect(cardIds()).toEqual(['continue', 'bookmarks', 'default-browser'])
+      expect(transforms()).toEqual(['', 'translate(100px, 0px)', 'translate(100px, 0px)'])
+      rest()
+      expect(transforms()).toEqual(['', '', ''])
+    } finally {
+      restore()
+    }
+  })
+
+  it('a card brought back ahead of the one in view (W6-4b’s finding 4), under an engine that keeps its snapped card through the layout change: the offset moves by a pitch under the commit, the card in view stands still – no transform ever written on it – and the strip pages back to the arrival on the spring', () => {
+    let scroll: ReturnType<typeof scroller> | null = null
+    const restore = layOut(() => scroll?.offset ?? 0)
+    try {
+      render(stack(state({ newTabHiddenModules: ['continue'] })))
+      expect(cardIds()).toEqual(['downloads', 'bookmarks', 'default-browser'])
+      const strip = q<HTMLUListElement>('.zen-mstack-strip')!
+      scroll = scroller(strip)
+      Object.defineProperty(strip, 'scrollWidth', {
+        configurable: true,
+        get: () => strip.children.length * 100
+      })
+      Object.defineProperty(strip, 'clientWidth', { configurable: true, get: () => 100 })
+      // The switch brings Continue back ahead of the Downloads card in view. The engine keeps
+      // Downloads snapped: as the commit is laid out the offset stands a pitch to the right, by
+      // no write of the pager's (WebView in run 3 – the card kept, the offset 328).
+      scroll.move(100)
+      render(stack(state({ newTabHiddenModules: [] })))
+      expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'default-browser'])
+      expect(q('.zen-mstack-card[data-cell="continue"]')!.dataset.arriving).toBe('true')
+      const inView = q('.zen-mstack-card[data-cell="downloads"]')!
+      // Nothing glides: the baseline followed the offset, and the card in view is where it was.
+      expect(transforms()).toEqual(['', '', '', ''])
+      // The paging back is under way, the snap off for it, nothing written yet.
+      expect(snapOf(strip)).toBe('none')
+      expect(frames.scheduled).toBe(true)
+      expect(scroll.writes).toEqual([])
+      let before = { snap: '', offset: -1 }
+      for (let i = 0; i < 200 && snapOf(strip) === 'none'; i++) {
+        before = { snap: snapOf(strip), offset: scroll.offset }
+        act(() => frames.run(1))
+        // Frame by frame to the first card, the card in view carried by the offset alone.
+        expect(inView.style.transform).toBe('')
+      }
+      expect(scroll.writes.length).toBeGreaterThan(3)
+      expect(scroll.writes[0]).toBeLessThan(100)
+      expect(scroll.offset).toBe(0)
+      expect(snapOf(strip)).toBe('')
+      expect(before).toEqual({ snap: 'none', offset: 0 })
+      expect(frames.scheduled).toBe(false)
+      expect(transforms()).toEqual(['', '', '', ''])
+      act(() => {
+        strip.dispatchEvent(new Event('scroll'))
+      })
+      expect(q('.zen-mstack-dots')!.textContent).toBe('Page 1 of 4')
+      // The fade's end is one more commit, at the new offset: nothing moved, nothing glides.
+      act(() => {
+        q('.zen-mstack-card[data-cell="continue"]')!.dispatchEvent(
+          new AnimationEvent('animationend', { bubbles: true })
+        )
+      })
+      expect(q('[data-arriving]')).toBeNull()
+      expect(transforms()).toEqual(['', '', '', ''])
+      expect(frames.scheduled).toBe(false)
+    } finally {
+      restore()
+    }
+  })
+
+  it('a card brought back ahead of the one in view, under an engine that leaves the offset where it was: the card in view is drawn where it was and glides a pitch to its slot – never a jump – as the arrival fades in at the head; nothing pages, the offset being the arrival’s snap position already', () => {
+    let scroll: ReturnType<typeof scroller> | null = null
+    const restore = layOut(() => scroll?.offset ?? 0)
+    try {
+      render(stack(state({ newTabHiddenModules: ['continue'] })))
+      const strip = q<HTMLUListElement>('.zen-mstack-strip')!
+      scroll = scroller(strip)
+      Object.defineProperty(strip, 'scrollWidth', {
+        configurable: true,
+        get: () => strip.children.length * 100
+      })
+      Object.defineProperty(strip, 'clientWidth', { configurable: true, get: () => 100 })
+      render(stack(state({ newTabHiddenModules: [] })))
+      expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'default-browser'])
+      const inView = q('.zen-mstack-card[data-cell="downloads"]')!
+      // Drawn where they were, a pitch to the left of their new slots; the arrival at the head.
+      expect(transforms()).toEqual([
+        '',
+        'translate(-100px, 0px)',
+        'translate(-100px, 0px)',
+        'translate(-100px, 0px)'
+      ])
+      expect(scroll.writes).toEqual([])
+      expect(snapOf(strip)).toBe('none')
+      expect(frames.scheduled).toBe(true)
+      act(() => frames.run(2))
+      const x = Number.parseFloat(inView.style.transform.slice('translate('.length))
+      expect(x).toBeGreaterThan(-100)
+      expect(x).toBeLessThan(0)
+      let before = { snap: '', transform: '?' }
+      for (let i = 0; i < 200 && snapOf(strip) === 'none'; i++) {
+        before = { snap: snapOf(strip), transform: inView.style.transform }
+        act(() => frames.run(1))
+      }
+      expect(snapOf(strip)).toBe('')
+      expect(before).toEqual({ snap: 'none', transform: '' })
+      expect(transforms()).toEqual(['', '', '', ''])
+      expect(frames.scheduled).toBe(false)
+      expect(scroll.writes).toEqual([])
+      expect(scroll.offset).toBe(0)
+      act(() => {
+        strip.dispatchEvent(new Event('scroll'))
+      })
+      expect(q('.zen-mstack-dots')!.textContent).toBe('Page 1 of 4')
+    } finally {
+      restore()
     }
   })
 
