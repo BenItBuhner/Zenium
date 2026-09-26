@@ -117,8 +117,9 @@ export function buildCard(
       return items.length > 0 ? { id, items } : null
     }
     case 'default-browser': {
+      if (!sources.canRequestDefault) return null
       const { isDefault, prompt } = sources.defaultBrowser
-      return sources.canRequestDefault && isDefault === false && prompt === null ? { id } : null
+      return isDefault === false && prompt === null ? { id } : null
     }
   }
 }

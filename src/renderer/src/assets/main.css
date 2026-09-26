@@ -8072,6 +8072,215 @@
     background: var(--v2-urlbar);
   }
   /*
+   * The Magic Stack (NTP-16, components/newtab/MagicStack.tsx): a strip of module cards under
+   * the tiles, one card a page (`scroll-snap-type: x mandatory`), the next one peeking 16 past
+   * the 8 gap. The strip comes in on the tiles' fade once the last tile is in (8 × 20 ms), and
+   * waits, as the tiles do, while the page is not painted or the grow surface is over it.
+   */
+  :root[data-form-factor='phone'] .zen-mstack {
+    animation: zen-fade 120ms var(--zen-ease) 160ms both;
+  }
+  :root[data-form-factor='phone'] .zen-ntp[data-hidden] .zen-mstack,
+  :root[data-form-factor='phone'] .zen-ntp[data-grow='growing'] .zen-mstack {
+    animation-play-state: paused;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    :root[data-form-factor='phone'] .zen-mstack {
+      animation: zen-fade 120ms var(--zen-ease) both !important;
+    }
+    :root[data-form-factor='phone'] .zen-ntp[data-hidden] .zen-mstack,
+    :root[data-form-factor='phone'] .zen-ntp[data-grow='growing'] .zen-mstack {
+      animation-play-state: paused !important;
+    }
+  }
+  :root[data-form-factor='phone'] .zen-mstack-strip {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    /* The gutter's 4 either side, so a card's hairline is not clipped by the strip's box. */
+    margin: 0 -4px;
+    padding: 0 4px;
+    scroll-snap-type: x mandatory;
+    scroll-padding: 0 4px;
+    scrollbar-width: none;
+    overscroll-behavior-x: contain;
+  }
+  :root[data-form-factor='phone'] .zen-mstack-strip::-webkit-scrollbar {
+    display: none;
+  }
+  /*
+   * A card: a page surface on the window (§9.29) – the card fill under a hairline at the card
+   * radius, no shadow (§3), 16 inside (`--v2-card-padding`); the cards of a strip share the
+   * tallest one's height, each with its action pinned to its foot. A leaving card (Hide This)
+   * fades over 120 ms with a touch of §11.4's departure scale; the FLIP tracker glides the rest.
+   */
+  :root[data-form-factor='phone'] .zen-mstack-card {
+    display: flex;
+    flex: 0 0 calc(100% - 24px);
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+    padding: var(--v2-card-padding);
+    border-radius: var(--v2-radius-card);
+    corner-shape: var(--zen-corner);
+    background: var(--v2-card);
+    color: var(--v2-text);
+    outline: 1px solid var(--v2-card-border);
+    outline-offset: -1px;
+    scroll-snap-align: start;
+    scroll-snap-stop: always;
+    transition: flex-basis 120ms var(--zen-ease);
+  }
+  /*
+   * A lone card has nothing to peek: it takes the strip's whole width, growing into it over the
+   * 120 ms the tracker's glide takes when the card beside it has gone (the global rule at the
+   * sheet's foot removes the transition under reduced motion: the width is simply there).
+   */
+  :root[data-form-factor='phone'] .zen-mstack-card:only-child {
+    flex-basis: 100%;
+  }
+  :root[data-form-factor='phone'] .zen-mstack-card[data-leaving] {
+    animation: zen-mstack-leave 120ms var(--zen-ease) forwards;
+    pointer-events: none;
+  }
+  @keyframes zen-mstack-leave {
+    to {
+      opacity: 0;
+      transform: scale(0.96);
+    }
+  }
+  /*
+   * The title row: the module's 20 glyph, its name as a 15/600 sub-heading, and the ⋮ – the
+   * shared 44 icon button (§9.3) – trailing, its box let into the padding by 12 on the right
+   * and 10 above so the glyph sits on the title's line with the name's 16 inset kept.
+   */
+  :root[data-form-factor='phone'] .zen-mstack-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    height: 24px;
+  }
+  :root[data-form-factor='phone'] .zen-mstack-glyph {
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    flex-shrink: 0;
+    stroke-width: var(--v2-icon-stroke);
+    color: var(--v2-text-deemphasized);
+  }
+  :root[data-form-factor='phone'] .zen-mstack-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-heading);
+    line-height: var(--v2-line-body);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  :root[data-form-factor='phone'] .zen-mstack-more {
+    margin: -10px -12px -10px 0;
+  }
+  /* The content rows: the shared row's beat (§9.2, §9.34) drawn edge to edge inside the card. */
+  :root[data-form-factor='phone'] .zen-mstack-list {
+    display: flex;
+    flex-direction: column;
+  }
+  :root[data-form-factor='phone'] .zen-mstack-row {
+    display: flex;
+    min-height: 44px;
+    align-items: center;
+    gap: 12px;
+    text-align: left;
+    color: var(--v2-text);
+  }
+  :root[data-form-factor='phone'] .zen-mstack-row-glyph {
+    display: flex;
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    color: var(--v2-text-deemphasized);
+  }
+  :root[data-form-factor='phone'] .zen-mstack-row-glyph > svg {
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    stroke-width: var(--v2-icon-stroke);
+  }
+  :root[data-form-factor='phone'] .zen-mstack-favicon {
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    border-radius: 4px;
+    object-fit: contain;
+  }
+  :root[data-form-factor='phone'] .zen-mstack-row-text {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+  }
+  :root[data-form-factor='phone'] .zen-mstack-row-title {
+    overflow: hidden;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  :root[data-form-factor='phone'] .zen-mstack-row-detail {
+    overflow: hidden;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    color: var(--v2-text-deemphasized);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  /* A card with a sentence for content (the default-browser reminder): 15/400 in the page ink. */
+  :root[data-form-factor='phone'] .zen-mstack-text {
+    margin: 0;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+    color: var(--v2-text-deemphasized);
+  }
+  /* The action row at the card's foot: hugging buttons, 8 apart, leading (§9.11's in-row form). */
+  :root[data-form-factor='phone'] .zen-mstack-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: auto;
+    padding-top: 4px;
+  }
+  /*
+   * The page dots under the strip, in the window's ink: 6 px discs 8 apart, the current page at
+   * full ink and the rest at 30 %, each inside a 24 touch box; a dot is a tab of the strip.
+   */
+  :root[data-form-factor='phone'] .zen-mstack-dots {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    padding-top: 8px;
+  }
+  :root[data-form-factor='phone'] .zen-mstack-dot {
+    display: flex;
+    width: 24px;
+    height: 24px;
+    align-items: center;
+    justify-content: center;
+    margin: -6px 0;
+    border-radius: 12px;
+  }
+  :root[data-form-factor='phone'] .zen-mstack-dot > span {
+    display: block;
+    width: 6px;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--v2-control-text);
+    opacity: 0.3;
+    transition: opacity 120ms var(--zen-ease);
+  }
+  :root[data-form-factor='phone'] .zen-mstack-dot[aria-selected='true'] > span {
+    opacity: 1;
+  }
+  /*
    * The surface a new tab grows in (MOT-03): the window's colour, clipped per frame to the
    * rectangle on its way from the button to the frame, and from seven tenths of the way faded on
    * the same progress, so the page beneath comes through as it arrives (v2 §11, rule 4). Both are
@@ -8486,6 +8695,26 @@
       transform: none !important;
     }
   }
+}
+
+/*
+ * The Magic Stack's uses of the shared primitives (components/newtab/MagicStack.tsx), unlayered
+ * as the omnibox chips' are: the unlayered `.zen-v2-button` and `.zen-v2-row` rules of this
+ * sheet beat anything in the layers, and only a more specific unlayered rule beats them. The
+ * action is §9.11's in-row form (88 min, 12 inside); a content row is the shared row drawn
+ * inside the card's padding – its own 16 gutters given up for 8 either side of the card's text
+ * edge, so its press fill reads as the row's, not the card's.
+ */
+.zen-v2-button.zen-mstack-action {
+  min-width: 88px;
+  padding: 0 12px;
+}
+.zen-v2-row.zen-mstack-row {
+  width: auto;
+  min-height: 44px;
+  margin: 0 -8px;
+  padding: 4px 8px;
+  border-radius: var(--v2-radius-inner);
 }
 
 /*
