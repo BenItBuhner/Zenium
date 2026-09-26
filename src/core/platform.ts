@@ -1537,6 +1537,12 @@ export interface ShellHost {
    * system's alone (the desktop).
    */
   sharePanelAction?(action: SharePanelAction): Promise<void>
+  /**
+   * The QR code sheet's Download (SH-06; the host sent `qr.code` for the share sheet's "QR code"):
+   * keep the link's code as a picture in Downloads and say so. Absent on hosts whose share sheet
+   * has no QR code option (the desktop).
+   */
+  downloadQrCode?(url: string): Promise<void>
   /** The OS screen for which links open in this app (`capabilities.appLinkSettings`). */
   openAppLinkSettings?(): void
   /**

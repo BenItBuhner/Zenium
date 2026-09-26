@@ -76,6 +76,7 @@ import { toggleTabSearch } from '@renderer/lib/tabSearch'
 import { openTranslateSelection } from '@renderer/lib/translate'
 import { browserStore } from '@renderer/lib/ui'
 import { voiceEvent } from '@renderer/lib/voiceSearch'
+import { showQrCode } from '@renderer/lib/qrCode'
 import { qrEvent } from '@renderer/lib/qrScan'
 import {
   closeExtensionPopup,
@@ -458,6 +459,7 @@ export function useMainEvents(): void {
       onEvent('externalProtocol.cancel', ({ requestId }) => cancelExternalProtocol(requestId)),
       onEvent('voice.event', (event) => voiceEvent(event)),
       onEvent('qr.event', (event) => qrEvent(event)),
+      onEvent('qr.code', (request) => void showQrCode(request)),
       onEvent('share.panel', (request) => void openSharePanel(request)),
       // Zenium's Long screenshot in Android 14's share sheet (SH-02): the host relays the tap once
       // the sheet has closed, and the editor opens over the page as the panel's chip opens it.

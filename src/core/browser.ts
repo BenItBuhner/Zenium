@@ -3285,6 +3285,7 @@ export class Browser {
       // The host's own share panel (Android below 14, SH-03): the chrome's answer goes straight
       // to the host holding the share; nothing on a host without the panel.
       'share.panelAction': (action) => void platform.shell.sharePanelAction?.(action),
+      'qr.download': ({ url }) => void platform.shell.downloadQrCode?.(url),
       'app.openAppLinkSettings': (_a, win) => this.openAppLinkSettings(win),
       'app.openNotificationSettings': (_a, win) => this.openNotificationSettings(win),
       // Voice search: the host listens (`VoiceHost`); the chrome's sheet acts on the `voice.event`s.
