@@ -402,7 +402,7 @@ describe('errorPageHtml', () => {
     const html = errorPageHtml(parseZenUrl(REFUSED)!)
     expect(html).toContain('<html class="zen-error-document">')
     expect(html).toContain(`<script>${ERROR_PAGE_ATTRIBUTES_SCRIPT}</script><style>`)
-    expect(html).toContain('<body class="zen-error-page">')
+    expect(html).toContain('<body class="zen-error-page" data-surface="page">')
     expect(html).toContain('<p class="zen-error-code">ERR_CONNECTION_REFUSED</p>')
     expect(html).toContain(
       '<button type="button" id="zen-error-reload" class="zen-v2-button zen-interstitial-action" onclick='
@@ -543,7 +543,7 @@ describe('errorPageHtml', () => {
     it('is the v2 error surface with a title block in status ink and the actions under it', () => {
       for (const html of [safeBrowsing, httpsOnly]) {
         expect(html).toContain('<html class="zen-error-document">')
-        expect(html).toContain('<body class="zen-error-page">')
+        expect(html).toContain('<body class="zen-error-page" data-surface="page">')
         expect(html).toContain('<script>' + ERROR_PAGE_ATTRIBUTES_SCRIPT + '</script>')
         expect(html).toContain(
           '<style>' + errorPageStyle() + '\n' + errorPageAccentStyle(null) + '</style>'

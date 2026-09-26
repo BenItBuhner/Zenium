@@ -712,6 +712,8 @@ export function inPlaceErrorPageScript(url: URL, scheme: ColorScheme = 'system')
 /**
  * `zen://error?code=…&description=…&url=…`: Chrome's error page, in the tab, for the failed URL.
  * `scheme` is the app's colour scheme, which the page's root takes (`errorPageAttributesScript`).
+ * The body is a `data-surface="page"` root (design language v2 §9.29): the document is a page
+ * inside the tab, so its controls draw in the page family's ink and fill, never the window's.
  */
 export function errorPageHtml(url: URL, scheme: ColorScheme = 'system'): string {
   const code = Number(url.searchParams.get('code') ?? 0)
@@ -748,7 +750,7 @@ export function errorPageHtml(url: URL, scheme: ColorScheme = 'system'): string 
       : ''
   const name = content.code ? `\n  <p class="zen-error-code">${escapeHtml(content.code)}</p>` : ''
   return `<!doctype html><html class="zen-error-document"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(content.site || 'Problem loading page')}</title><script>${errorPageAttributesScript(scheme)}</script><style>${errorDocumentStyle(accent)}</style></head>
-<body class="zen-error-page"><main>
+<body class="zen-error-page" data-surface="page"><main>
   <h1>${escapeHtml(content.title)}</h1>
   <p>${emphasiseSite(content.reason, content.site)}</p>${name}${controls}
 </main><script>${RELOADING_SCRIPT}</script></body></html>`
@@ -954,7 +956,7 @@ function warningPageHtml(
     </div>`
     : ''
   return `<!doctype html><html class="zen-error-document"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(page.name)}</title><script>${errorPageAttributesScript(scheme)}</script><style>${errorDocumentStyle(accent)}</style></head>
-<body class="zen-error-page"><main${data}>
+<body class="zen-error-page" data-surface="page"><main${data}>
   <div class="zen-interstitial-title" data-tone="${page.tone}">
     ${glyph(page.glyph)}
     <div>
