@@ -5,6 +5,7 @@ import {
   dayKeyOf,
   groupByDay,
   HistoryService,
+  type HistoryVisitsEvent,
   type ImportedVisit,
   isHttpsUpgrade,
   isRecordableUrl,
@@ -1418,7 +1419,7 @@ describe('HistoryService', () => {
       it('dates the landing a millisecond after a page it replaced within the same one, so the moved visit never meets its own tombstone', () => {
         const h = new HistoryService(fakeIo(), now)
         h.visit(GATE, 'Gate', null, { transition: 'typed', tabId: 't1' })
-        const events: Array<{ type: string }> = []
+        const events: HistoryVisitsEvent[] = []
         h.onVisits((e) => events.push(e))
         h.visit(HOME, 'Home', null, { tabId: 't1', clientRedirectFrom: GATE })
         expect(all(h)).toEqual([
@@ -1435,9 +1436,8 @@ describe('HistoryService', () => {
           source: 'sync'
         })
         for (const e of events) {
-          if (e.type === 'removed') peer.deleteByKeys((e as { keys: [] }).keys)
-          if (e.type === 'added')
-            peer.importVisits((e as { visits: ImportedVisit[] }).visits, { source: 'sync' })
+          if (e.type === 'removed') peer.deleteByKeys(e.keys)
+          if (e.type === 'added') peer.importVisits(e.visits, { source: 'sync' })
         }
         vi.restoreAllMocks()
         expect(peer.visits({ limit: 10 }).map((v) => v.url)).toEqual([HOME])
