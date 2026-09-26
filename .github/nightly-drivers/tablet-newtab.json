@@ -1,0 +1,11 @@
+{
+  "id": "tablet-newtab",
+  "order": 117,
+  "class": "TabletNewTabDemo",
+  "shard": "tablet-webview",
+  "mirrors": "android-tablet-newtab-demo.yml",
+  "dir": "tablet-newtab-demo",
+  "timeout": 1200,
+  "estimate": 8,
+  "note": "The tablet's served new tab page (NTP-35): the cold start's marks, the tiles, a tile's real hold and its five rows, Open in Private Tab (multi-profile WebView), Copy Link, Remove; the same driver on a host without the new tab page records the boot alone."
+}
