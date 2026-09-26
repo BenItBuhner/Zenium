@@ -16,6 +16,7 @@ import {
   LockOpen,
   MapPin,
   Mic,
+  MonitorPlay,
   Music2,
   Puzzle,
   Settings,
@@ -51,6 +52,7 @@ import {
   type ExtensionPageChrome
 } from '@renderer/lib/extensions/pages'
 import { useViewport } from '@renderer/lib/formFactor'
+import { mediaOf } from '@renderer/lib/media'
 import { LevelMotion, paintLevels, type LevelState } from '@renderer/lib/motion/levels'
 import { openSettings as openSettingsPage } from '@renderer/lib/pages'
 import { privateLockStore } from '@renderer/lib/privateLock'
@@ -78,7 +80,15 @@ import {
   siteInfoStore,
   stepBackSiteInfo
 } from '@renderer/lib/siteInfo'
-import { showsSoundRow, soundChoice } from '@renderer/lib/siteInfoCopy'
+import {
+  BACKGROUND_VIDEO_LINE,
+  defaultInForce,
+  type PermissionDefaults,
+  showsBackgroundVideoRow,
+  showsSoundRow,
+  switchOn,
+  switchWrite
+} from '@renderer/lib/siteInfoCopy'
 import { browserStore, overlayAvailable, pushToast, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { useConfirmKeyboard } from '../dialogs/confirmKeyboard'
@@ -486,6 +496,25 @@ function usePaneRegistry(): {
 // Phone: a sheet on the chassis
 // ---------------------------------------------------------------------------
 
+/**
+ * The hold of a switch row of the sheet (§10.4): a row `earned` by the tab's state or a stored
+ * answer is kept for the life of the sheet once earned – a press that forgets the only stored
+ * reason for it (Sound's on on a quiet tab, Background video's off on a page without video)
+ * must not take the row away under the finger that did it (Chrome's page info keeps a row
+ * through its reset until the bubble closes). The hold is the ORIGIN's, not the tab's: the sheet
+ * stays up through a same-tab navigation, and a page of another origin under it has to earn the
+ * row itself – the hold drops the moment the origin under the sheet changes, and is not parked
+ * for the origin left behind. The origin the hold names after this render is `origin` while it
+ * earns or keeps the row, none once another origin is under the sheet; stored from the render
+ * that decides it (React's "adjusting state while rendering"), the same value twice no store.
+ */
+function useHeldRow(earned: boolean, origin: string): boolean {
+  const [held, setHeld] = useState<string | null>(null)
+  const next = earned || held === origin ? origin : null
+  if (next !== held) setHeld(next)
+  return next !== null
+}
+
 function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
   const trackRef = useRef<HTMLDivElement>(null)
@@ -603,7 +632,7 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
 
   const site = describeSite(tab.url)
   const security = securityOf(tab, info, site)
-  const actions = useActions(tab, site)
+  const actions = useActions(tab, site, state.permissionDefaults)
   // A page of an extension (v2 §10.1 applied to extension pages): the sheet says whose page it
   // is and leads to the extension's details in Settings, in place of the site's rows.
   const extension =
@@ -639,9 +668,23 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
         mediaSheetOpen,
         activeTabId: activeTab(state)?.id ?? null
       })
+  // The sheet's two switch rows, each earned by the tab's state or a stored answer and each held
+  // for the sheet's life on its origin once earned (`useHeldRow`; §10.4): the Sound row (Chrome
+  // Android's page info shows Sound for an audible tab; `showsSoundRow`) – its on is the forget
+  // on a quiet tab under the default's Allow, so it takes the same hold as its neighbour – and
+  // the Background video row (MED-08 / EDGE-32; `showsBackgroundVideoRow`), whose off is the
+  // forget on a page without video. Only a reading OF the site under the sheet can earn either:
+  // the last origin's reading stays up while the new one is read.
+  const media = mediaOf(state, tab.id)
+  const read = info !== null && info.origin === site.origin
+  const sound = useHeldRow(read && showsSoundRow(info.permissions, tab), site.origin)
+  const backgroundVideo = useHeldRow(
+    read && showsBackgroundVideoRow(info.permissions, media, state.platform),
+    site.origin
+  )
   // The chassis measures its detents again when this changes: a level, the reading arriving,
-  // or the pill's rows changing under it.
-  const contentKey = `${tab.id}:${level}:${info ? 'ready' : 'reading'}:${allCookies ? 'all' : 'fold'}:${pillChips.length}:${lockMasking ? 'masked' : ''}`
+  // the pill's rows changing under it, or a switch row arriving.
+  const contentKey = `${tab.id}:${level}:${info ? 'ready' : 'reading'}:${allCookies ? 'all' : 'fold'}:${pillChips.length}:${lockMasking ? 'masked' : ''}:${sound ? 'sound' : ''}:${backgroundVideo ? 'video' : ''}`
 
   return (
     <>
@@ -716,7 +759,6 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
             )}
             {!extension && (
               <SheetMainRows
-                tab={tab}
                 site={site}
                 security={security}
                 info={info}
@@ -725,7 +767,10 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
                 push={push}
                 onSettings={() => actions.openSettings()}
                 onClear={() => push('clear-data')}
-                onSound={(allowed) => void actions.setSound(allowed)}
+                defaults={state.permissionDefaults}
+                sound={sound}
+                backgroundVideo={backgroundVideo}
+                onSwitch={(permission, on) => void actions.setSwitch(permission, on)}
               />
             )}
           </section>
@@ -943,13 +988,19 @@ function PillChipRows({
 }
 
 /**
- * The four rows of the root level – with the Sound switch row after Permissions for a tab that
- * plays or has played sound, or whose site has its own `sound` answer (the one setting "Mute
- * Site" and Settings write too), as Chrome Android's page info shows Sound for an audible tab –
- * and the two actions under a hairline.
+ * The four rows of the root level – with the Sound switch row after Permissions where the sheet
+ * earns it (`sound`, the caller's hold on `showsSoundRow`: a tab that plays or has played sound,
+ * or whose site has its own `sound` answer – the one setting "Mute Site" and Settings write too
+ * – as Chrome Android's page info shows Sound for an audible tab); then, its media neighbour
+ * (§9.29 / §10.4, seated as Site settings seats it after Sound), the Background video switch row
+ * where the sheet earns it (`backgroundVideo`, the caller's hold on `showsBackgroundVideoRow`)
+ * – and the two actions under a hairline. Each switch reads the state in force for this site
+ * (`switchOn`: its own answer, else the default the core carries in `defaults`), and a press
+ * hands the state it asks for to `onSwitch`, which writes the site's rule for it. The
+ * Permissions row's value names what is STORED for the site, as the engine lists it – not the
+ * state in force: a default's answer is nobody's exception.
  */
 function SheetMainRows({
-  tab,
   site,
   security,
   info,
@@ -958,9 +1009,11 @@ function SheetMainRows({
   push,
   onSettings,
   onClear,
-  onSound
+  defaults,
+  sound,
+  backgroundVideo,
+  onSwitch
 }: {
-  tab: Tab
   site: SiteDescription
   security: Security
   info: SiteInfo | null
@@ -969,14 +1022,17 @@ function SheetMainRows({
   push: (id: LevelId) => void
   onSettings: () => void
   onClear: () => void
-  onSound: (allowed: boolean) => void
+  defaults: PermissionDefaults
+  sound: boolean
+  backgroundVideo: boolean
+  onSwitch: (permission: SwitchPermission, on: boolean) => void
 }): JSX.Element {
   const reading = loading && !info
   const cookies = info?.cookies.items ?? []
   const permissions = info?.permissions ?? []
   const hasData = info ? cookies.length > 0 || storesAnything(info) : false
-  const sound = info !== null && showsSoundRow(permissions, tab)
-  const soundAllowed = soundChoice(permissions) !== 'deny'
+  const soundAllowed = switchOn(permissions, 'sound', defaults)
+  const backgroundVideoAllowed = switchOn(permissions, 'background-video', defaults)
   return (
     <div className="flex flex-col pb-2">
       <SheetRow
@@ -1018,7 +1074,14 @@ function SheetMainRows({
             <SoundSwitchRow
               allowed={soundAllowed}
               busy={busy === 'permission:sound'}
-              onChange={onSound}
+              onChange={(on) => onSwitch('sound', on)}
+            />
+          )}
+          {backgroundVideo && (
+            <BackgroundVideoSwitchRow
+              allowed={backgroundVideoAllowed}
+              busy={busy === 'permission:background-video'}
+              onChange={(on) => onSwitch('background-video', on)}
             />
           )}
           <div aria-hidden className="zen-sheet-sep" />
@@ -1053,9 +1116,10 @@ function SheetMainRows({
  * The Sound row as a switch (§10.4: the phone's form of a two-way setting): the chassis row at
  * its base 44 (§9.21: the 20 px switch asks for no more) with the speaker glyph – crossed while
  * the site is muted – "Sound" and the shared `.zen-v2-switch` trailing, the whole row the
- * target; on is the default (Allow), off blocks the
- * site's sound as "Mute Site" does. Busy while the core writes (§9.30): `aria-busy`, a second
- * press does nothing, the switch shows the value the core still holds.
+ * target; its position is the state in force for this site (its own answer, else the default,
+ * Allow from the catalogue), and off blocks the site's sound as "Mute Site" does. Busy while the
+ * core writes (§9.30): `aria-busy`, a second press does nothing, the switch shows the value the
+ * core still holds.
  */
 function SoundSwitchRow({
   allowed,
@@ -1078,6 +1142,56 @@ function SoundSwitchRow({
     >
       <span className="zen-sheet-item-glyph">{allowed ? <Volume2 /> : <VolumeX />}</span>
       <span className="min-w-0 flex-1 truncate">Sound</span>
+      <span className="zen-v2-switch" aria-hidden />
+    </button>
+  )
+}
+
+/**
+ * The Background video row as a switch (MED-08 / EDGE-32; the lead's ruling on services' #523:
+ * a per-site quick toggle belongs among the sheet's permission rows, in the Sound row's form,
+ * nothing on the media notification): the §9.2 two-line chassis row – the catalogue's label,
+ * and under it one line, the same in both states, naming what the switch does for this site
+ * (`BACKGROUND_VIDEO_LINE`: "Keeps playing video in the background"; the state is the switch's
+ * alone, so the line never tells it twice – the lead's ruling on #531) – with the shared
+ * `.zen-v2-switch` trailing, the whole row the target. Its position is the state in force for
+ * this site (its own answer, else the default, Block from the catalogue and Allow where Settings
+ * turned it); on keeps the site's video playing, which the core carries to the host on the media
+ * session before the next background transition. Busy while the core writes (§9.30):
+ * `aria-busy`, a second press does nothing, the switch shows the value the core still holds.
+ */
+function BackgroundVideoSwitchRow({
+  allowed,
+  busy,
+  onChange
+}: {
+  allowed: boolean
+  busy: boolean
+  onChange: (allowed: boolean) => void
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={allowed}
+      aria-busy={busy || undefined}
+      // The row's name is its label and its line, as `SheetRow` composes a two-line row's: the
+      // line says what the switch does here, which the name would otherwise drop; the state is
+      // the switch's (`aria-checked`), read as on or off after the name.
+      aria-label={`Background video, ${BACKGROUND_VIDEO_LINE}`}
+      className="zen-sheet-item zen-sheet-item-two-line"
+      data-permission="background-video"
+      onClick={busy ? undefined : () => onChange(!allowed)}
+    >
+      <span className="zen-sheet-item-glyph">
+        <MonitorPlay />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate">Background video</span>
+        <span className="zen-sheet-item-secondary block text-[13px] leading-[var(--v2-line-small)] [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden">
+          {BACKGROUND_VIDEO_LINE}
+        </span>
+      </span>
       <span className="zen-v2-switch" aria-hidden />
     </button>
   )
@@ -1507,15 +1621,19 @@ function PermissionRows({
 /** Which action is running, for the control that started it to show as busy (§9.30). */
 type Busy = 'cookies' | 'data' | 'siteData' | `permission:${string}` | null
 
+/** The sheet's switch rows, by the catalogue row each writes. */
+type SwitchPermission = 'sound' | 'background-video'
+
 function useActions(
   tab: Tab,
-  site: SiteDescription
+  site: SiteDescription,
+  defaults: PermissionDefaults
 ): {
   busy: Busy
   clearCookies: () => Promise<void>
   clearData: () => Promise<void>
   resetPermission: (permission?: string) => Promise<void>
-  setSound: (allowed: boolean) => Promise<void>
+  setSwitch: (permission: SwitchPermission, on: boolean) => Promise<void>
   setSiteData: (current: SiteInfo['siteData'], choice: SiteDataChoice) => Promise<void>
   openSettings: () => void
 } {
@@ -1556,16 +1674,22 @@ function useActions(
         await cmd('site.resetPermissions', { tabId: tab.id, permission })
         refreshSiteInfo()
       }),
-    // The Sound row: off is a `sound` block for the site (what "Mute Site" writes); on takes the
-    // block away rather than storing an allow, as Chrome clears an exception equal to the default.
-    setSound: (allowed: boolean) =>
-      act('permission:sound', async () => {
-        if (allowed) await cmd('permissions.forget', { origin: site.origin, permission: 'sound' })
+    // A switch row's press (§10.4, the lead's ruling on #531): the site's rule that gives the
+    // state the press asks – `permissions.set` of an allow under a blocking default (what
+    // Settings' exception list writes), of a deny under an allowing one (what "Mute Site" writes
+    // for Sound) – and `permissions.forget` only where the default in force already gives it, as
+    // Chrome clears an exception equal to the default (`switchWrite`). The default is read at the
+    // press, from the state the core carries. The core's write carries a `sound` change onto
+    // the site's tabs and a `background-video` one onto the media session, re-pushed to the host.
+    setSwitch: (permission: SwitchPermission, on: boolean) =>
+      act(`permission:${permission}`, async () => {
+        const write = switchWrite(on, defaultInForce(permission, defaults))
+        if ('forget' in write) await cmd('permissions.forget', { origin: site.origin, permission })
         else
           await cmd('permissions.set', {
             origin: site.origin,
-            permission: 'sound',
-            decision: 'deny'
+            permission,
+            decision: write.decision
           })
         refreshSiteInfo()
       }),

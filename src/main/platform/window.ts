@@ -11,15 +11,24 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { is } from '@electron-toolkit/utils'
 import { quitChordOf, relayDevtoolsQuitChord } from './devtoolsKeys'
+import { devtoolsQuitHoldNotice } from './devtoolsQuitHoldNotice'
 import { focusedDocumentOf } from './focusedDocument'
 import { ElectronShortcuts } from './shortcuts'
-import type { EventName, Events, Rect, WindowChrome } from '../../shared/types'
+import type {
+  EventName,
+  Events,
+  QuitHoldState,
+  Rect,
+  UIState,
+  WindowChrome
+} from '../../shared/types'
 import { CAPTION_HEIGHT, type CaptionColors } from '../../shared/theme'
 import { forcesRail, hasTopToolbar } from '../../shared/toolbarLayout'
 import type { Browser } from '../../core/browser'
 import type { ZenWindow } from '../../core/window'
 import type {
   KeyEventInput,
+  TabView,
   WindowCreateInit,
   WindowHost,
   WindowHostFactory
@@ -28,6 +37,7 @@ import { TitleThrottle } from '../../shared/windowTitle'
 import { privateIconPath, privateWindowIcon, windowIcon } from './appIcon'
 import { EdgeTracker, edgeState, type EdgeZone } from './edgeReveal'
 import { privateAppDetails } from './privateTaskbar'
+import { StartupHold } from './startupHold'
 import { placeWindow, planFramedWindow, type DisplayArea } from './windowPlacement'
 import { showWhenReady } from './windowShow'
 import { NO_WINDOW_SWITCHES, windowLaunchState, type WindowSwitches } from '../cli'
@@ -107,6 +117,8 @@ export class ElectronWindow implements WindowHost {
   private captionColors: CaptionColors
   private popup: WebContentsView | null = null
   private popupIdleTimer: ReturnType<typeof setTimeout> | null = null
+  /** A mouse button is down on the chrome (`input-event`): a press held, a tab row's drag. */
+  private buttonHeld = false
 
   constructor(
     private readonly browser: Browser,
@@ -116,7 +128,8 @@ export class ElectronWindow implements WindowHost {
       add: () => undefined,
       remove: () => undefined
     },
-    switches: WindowSwitches = NO_WINDOW_SWITCHES
+    switches: WindowSwitches = NO_WINDOW_SWITCHES,
+    startupHold: StartupHold = new StartupHold()
   ) {
     const launch = windowLaunchState(switches, init)
     this.kiosk = launch.kiosk
@@ -271,6 +284,15 @@ export class ElectronWindow implements WindowHost {
     win.on('unmaximize', () => zen.onWindowStateChanged())
     win.on('enter-full-screen', () => zen.onWindowStateChanged())
     win.on('leave-full-screen', () => zen.onWindowStateChanged())
+    // A page's `document.visibilityState` follows its window's state as a Chrome tab's does
+    // (W6-F6): minimised or hidden the window's tab views go down to Chromium so their pages read
+    // `hidden`, shown or restored they come back to where the core's layout left them. Blur alone
+    // (the window on screen but not key) is not concealment; occlusion by another app's window is
+    // Chromium's own to track (Windows / macOS; none on X11) and is not touched here.
+    win.on('minimize', () => this.refreshTabViewConcealment())
+    win.on('restore', () => this.refreshTabViewConcealment())
+    win.on('hide', () => this.refreshTabViewConcealment())
+    win.on('show', () => this.refreshTabViewConcealment())
     win.on('focus', () => zen.onFocused())
     // `blur` is the window resigning key status, which on macOS covers the app deactivating too
     // (⌘Tab, Spotlight, a notification clicked: `windowDidResignKey` fires for the key window) –
@@ -331,16 +353,28 @@ export class ElectronWindow implements WindowHost {
       }
       if (browser.keys.handle(key, null, zen)) event.preventDefault()
     })
+    // The chrome's mouse buttons, for the parked views' synthesized pointer moves
+    // (`ElectronTabView.park`): none while one is down. A move's modifiers carry the state too,
+    // so a press or release the observer missed rights itself at the next move.
+    wc.on('input-event', (_event, input) => {
+      if (input.type === 'mouseDown') this.buttonHeld = true
+      else if (input.type === 'mouseUp') this.buttonHeld = false
+      else if (input.type === 'mouseMove') {
+        this.buttonHeld = (input.modifiers ?? []).some((m) => m.endsWith('buttondown'))
+      }
+    })
     // The chrome's own toolbox (the Browser Console, `openChromeDevTools`): its keys raise no
     // `before-input-event` either, so the quit chord typed there is relayed from the frontend's
     // console into the table as a chrome key, as a page's toolbox relays it (`devtoolsKeys.ts`).
+    // It always stands in a window of its own, so a hold armed from it is its to show (§9.23).
     wc.on('devtools-opened', () => {
       const frontend = wc.devToolsWebContents
       if (!frontend || frontend.isDestroyed()) return
       relayDevtoolsQuitChord(
         frontend,
         () => quitChordOf(browser.state.shortcuts),
-        (key) => void browser.keys.handle(key, null, zen)
+        (key) => void browser.keys.handle(key, null, zen),
+        { notice: devtoolsQuitHoldNotice, window: () => win, detached: () => true }
       )
     })
     wc.setWindowOpenHandler(({ url }) => {
@@ -367,11 +401,17 @@ export class ElectronWindow implements WindowHost {
     win.on('page-title-updated', (event) => event.preventDefault())
     wc.on('did-finish-load', () => zen.onChromeReady())
 
-    if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-      void win.loadURL(process.env['ELECTRON_RENDERER_URL'])
-    } else {
-      void win.loadFile(join(__dirname, '../renderer/index.html'))
-    }
+    // The chrome's document waits for the extension layer's first publish like the pages' do
+    // (`startupHold.ts`): what the user types into it is the suggestions fetch's one source, and
+    // its rows read the layer (the private New Tab's cookie line, the controlled Settings rows).
+    startupHold.run(() => {
+      if (win.isDestroyed()) return
+      if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+        void win.loadURL(process.env['ELECTRON_RENDERER_URL'])
+      } else {
+        void win.loadFile(join(__dirname, '../renderer/index.html'))
+      }
+    })
   }
 
   get alive(): boolean {
@@ -384,10 +424,48 @@ export class ElectronWindow implements WindowHost {
 
   send<K extends EventName>(name: K, payload: Events[K]): void {
     if (!this.alive) return
+    // The hold the state carries goes where the keyboard is (§9.23): a detached toolbox the quit
+    // chord is down in draws it in its own document, and the chrome reads no hold meanwhile
+    // (`DevtoolsQuitHoldNotice`); it is taken down there with the hold.
+    if (name === 'state') payload = this.quitHoldRouted(payload as UIState) as Events[K]
+    // A layout applied with no chrome cover on: a view parked under the cover that this layout
+    // did not show again (its tab switched away from meanwhile) is hidden for good
+    // (`ElectronTabView.setVisible` on why a covered page is parked, not hidden).
+    if (name === 'layout.applied' && !(payload as Events['layout.applied']).contentHidden) {
+      for (const view of this.browser.tabs.viewsOwnedBy(this.zen).values()) {
+        if (hasCoverLifted(view)) view.coverLifted()
+      }
+    }
     this.win.webContents.send('zen:event', name, payload)
     // The popup surface mirrors the window's state like the chrome does (the picker lives in it).
     const popup = this.popup?.webContents
     if (popup && !popup.isDestroyed()) popup.send('zen:event', name, payload)
+  }
+
+  private quitHoldRouted(state: UIState): UIState {
+    return devtoolsQuitHoldNotice.route(this.win, state, (hold: QuitHoldState) =>
+      this.browser.quitHold.panelFor(this.zen, hold)
+    )
+  }
+
+  /**
+   * The window was minimised, restored, hidden or shown: every tab view of it is told to go down
+   * to Chromium or come back (W6-F6, `ElectronTabView.applyWindowVisible`) so its page's
+   * `document.visibilityState` follows the window as a Chrome tab's does. Concealed is the window
+   * minimised or not visible; a window merely blurred while on screen is not. Idempotent – the
+   * view ignores a state it already holds.
+   */
+  private refreshTabViewConcealment(): void {
+    if (!this.alive) return
+    const visible = !this.win.isMinimized() && this.win.isVisible()
+    for (const view of this.browser.tabs.viewsOwnedBy(this.zen).values()) {
+      if (hasWindowVisibility(view)) view.applyWindowVisible(visible)
+    }
+  }
+
+  /** Whether a mouse button is down on the chrome page (`ElectronTabView.park`'s pointer moves wait). */
+  pointerButtonHeld(): boolean {
+    return this.buttonHeld
   }
 
   focusChrome(): void {
@@ -428,6 +506,32 @@ export class ElectronWindow implements WindowHost {
     const hit = result as { target?: unknown; tabId?: unknown }
     if (typeof hit.target !== 'string') return null
     return { target: hit.target, tabId: typeof hit.tabId === 'string' ? hit.tabId : null }
+  }
+
+  /**
+   * The chrome document's focused element's box, read from the document itself – where a menu
+   * Shift+F10 or the Menu key asked for hangs (§9.23). Null when the focus is on the document
+   * (body) or the element has no box to speak of.
+   */
+  async focusedRect(): Promise<Rect | null> {
+    if (!this.alive) return null
+    const result: unknown = await this.win.webContents
+      .executeJavaScript(
+        `(() => {
+          const el = document.activeElement;
+          if (!el || el === document.body || el === document.documentElement) return null;
+          const r = el.getBoundingClientRect();
+          if (!(r.width > 0) || !(r.height > 0)) return null;
+          return { x: r.left, y: r.top, width: r.width, height: r.height };
+        })()`,
+        true
+      )
+      .catch(() => null)
+    if (!result || typeof result !== 'object') return null
+    const box = result as Record<keyof Rect, unknown>
+    const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+    if (!finite(box.x) || !finite(box.y) || !finite(box.width) || !finite(box.height)) return null
+    return { x: box.x, y: box.y, width: box.width, height: box.height }
   }
 
   contentSize(): { width: number; height: number } {
@@ -691,6 +795,12 @@ export class ElectronWindow implements WindowHost {
 export class ElectronWindowFactory implements WindowHostFactory {
   private readonly byWebContentsId = new Map<number, ZenWindow>()
   private browser!: Browser
+  /**
+   * The hold on the run's first documents until the extension layer's first publish
+   * (`startupHold.ts`), for every chrome document it creates; the platform's one hold, shared
+   * with the tab views (`ElectronPlatform.start`).
+   */
+  startupHold = new StartupHold()
 
   /** `switches`: the run's `--kiosk` / `--start-maximized`, for every window it creates. */
   constructor(private readonly switches: WindowSwitches = NO_WINDOW_SWITCHES) {}
@@ -709,7 +819,8 @@ export class ElectronWindowFactory implements WindowHostFactory {
         add: (id) => this.byWebContentsId.set(id, win),
         remove: (id) => this.byWebContentsId.delete(id)
       },
-      this.switches
+      this.switches,
+      this.startupHold
     )
     const id = host.win.webContents.id
     this.byWebContentsId.set(id, win)
@@ -721,6 +832,24 @@ export class ElectronWindowFactory implements WindowHostFactory {
     const win = this.byWebContentsId.get(id)
     return win?.alive ? win : undefined
   }
+}
+
+/**
+ * A tab view that parks under a chrome cover (`ElectronTabView.coverLifted`); the core hands
+ * its views out as `TabView`s, and a host of another kind (tests) has no parking to end.
+ */
+function hasCoverLifted(view: TabView): view is TabView & { coverLifted(): void } {
+  return typeof (view as { coverLifted?: unknown }).coverLifted === 'function'
+}
+
+/**
+ * A tab view that follows its window's minimise / hide state (`ElectronTabView.applyWindowVisible`,
+ * W6-F6); a host of another kind (tests) has no engine view to conceal.
+ */
+function hasWindowVisibility(
+  view: TabView
+): view is TabView & { applyWindowVisible(visible: boolean): void } {
+  return typeof (view as { applyWindowVisible?: unknown }).applyWindowVisible === 'function'
 }
 
 /**

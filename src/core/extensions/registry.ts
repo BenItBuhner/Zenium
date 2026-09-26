@@ -9,6 +9,7 @@
 import type { CrxPublisher } from './crx'
 import { isMatchPattern } from './manifest'
 import type { StoreId } from './store'
+import { resolveStartupOverride, sanitizeStartupPages, type StartupOverride } from '../startup'
 
 export type ExtensionSource = StoreId | 'crx' | 'zip' | 'unpacked'
 
@@ -63,6 +64,13 @@ export interface ExtensionRecord {
    */
   newTabOverride: boolean
   /**
+   * `chrome_settings_overrides.startup_pages` as web addresses (`sanitizeStartupPages`); null
+   * when not declared. Kept on the record so the boot – which opens its windows before the
+   * extensions load – can follow an enabled extension's startup pages (`core/startup.ts`).
+   * Records from before the field existed are backfilled from the manifest on load.
+   */
+  startupPages?: string[] | null
+  /**
    * Warning lines an update added over the version the user approved. Chrome keeps such an
    * extension disabled until the user accepts them again; the host clears this on approval.
    */
@@ -113,7 +121,7 @@ export type ManifestFields = Pick<
   | 'optionsPage'
   | 'popup'
   | 'newTabPage'
-> & { updateUrl: string | null }
+> & { updateUrl: string | null; startupPages: string[] | null }
 
 interface LooseManifest {
   manifest_version?: unknown
@@ -127,6 +135,7 @@ interface LooseManifest {
   action?: { default_popup?: unknown } | null
   browser_action?: { default_popup?: unknown } | null
   chrome_url_overrides?: { newtab?: unknown } | null
+  chrome_settings_overrides?: { startup_pages?: unknown } | null
   update_url?: unknown
 }
 
@@ -164,8 +173,42 @@ export function manifestFields(input: unknown): ManifestFields {
     optionsPage: optionsPage ? optionsPage.replace(/^\/+/, '') : null,
     popup: str(action?.default_popup) || null,
     newTabPage: newTabPage || null,
+    startupPages: startupPagesOf(manifest),
     updateUrl: str(manifest.update_url) || null
   }
+}
+
+/** The manifest's `chrome_settings_overrides.startup_pages` as web addresses, or null for none. */
+function startupPagesOf(manifest: LooseManifest): string[] | null {
+  const raw = manifest.chrome_settings_overrides?.startup_pages
+  if (!Array.isArray(raw)) return null
+  const pages = sanitizeStartupPages(raw)
+  return pages.length > 0 ? pages : null
+}
+
+/**
+ * The enabled extension whose `chrome_settings_overrides.startup_pages` holds Settings › On
+ * startup, from the registry alone: the newest-installed of several (`resolveStartupOverride`),
+ * a tie to the first record. The one source both halves of the override read – the boot, which
+ * opens its windows before any extension loads (`ExtensionHost.startupPagesOverride`), and the
+ * Settings page's indicator once they have (`StartupPagesApi`) – so the two never name
+ * different extensions, whatever order the extensions loaded or reloaded in.
+ */
+export function startupOverrideOf(records: readonly ExtensionRecord[]): StartupOverride | null {
+  return resolveStartupOverride(
+    records.flatMap((record) =>
+      record.enabled && record.startupPages && record.startupPages.length > 0
+        ? [
+            {
+              extensionId: record.id,
+              name: record.name,
+              pages: record.startupPages,
+              installedAt: record.installedAt
+            }
+          ]
+        : []
+    )
+  )
 }
 
 /** The URL new tabs open with while `record` holds the override, or null when it cannot. */
@@ -238,6 +281,7 @@ export function newRecord(options: NewRecordOptions): ExtensionRecord {
     popup: fields.popup,
     newTabPage: fields.newTabPage,
     newTabOverride: false,
+    startupPages: fields.startupPages,
     pendingWarnings: null
   }
 }
@@ -373,8 +417,17 @@ function sanitizeRecord(entry: unknown, now: number): ExtensionRecord | null {
     newTabOverride: r.newTabOverride === true,
     pendingWarnings: Array.isArray(r.pendingWarnings) ? strings(r.pendingWarnings) : null
   }
+  // Absent in registries from before the field (backfilled from the manifest on load): the key
+  // is left out rather than written null, so such a record reads as it was persisted.
+  if (r.startupPages !== undefined) record.startupPages = sanitizeStartupPagesField(r.startupPages)
   const staged = sanitizeStaged(r.staged, publisher)
   return staged ? { ...record, staged } : record
+}
+
+function sanitizeStartupPagesField(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null
+  const pages = sanitizeStartupPages(value)
+  return pages.length > 0 ? pages : null
 }
 
 function sanitizeStaged(entry: unknown, publisher: CrxPublisher | null): StagedUpdate | null {
@@ -405,6 +458,7 @@ function sanitizeStaged(entry: unknown, publisher: CrxPublisher | null): StagedU
       optionsPage: str(fields.optionsPage) || null,
       popup: str(fields.popup) || null,
       newTabPage: str(fields.newTabPage) || null,
+      startupPages: sanitizeStartupPagesField(fields.startupPages),
       updateUrl: str(fields.updateUrl) || null
     },
     addedWarnings: strings(s.addedWarnings),

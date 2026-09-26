@@ -13,12 +13,23 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
 import java.io.FileInputStream
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.net.Socket
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * Shows the failed-load fixes on a device so the `android-errors-demo` workflow can record them:
  * a DNS failure (`nonexistent.invalid`), the bug hunt's `localhost:1` (a port Chromium never
  * connects to: `ERR_UNSAFE_PORT`) and a refused connection (`localhost:81`) typed into the URL
- * bar land on the zen://error page (the site, a reason, Reload); the radios off (`svc wifi
+ * bar land on the zen://error page (the site, a reason, Chrome's "Try:" list for the code,
+ * Reload); a typed word that did not resolve (`http://wikipeda/`) offers "Search <engine> for
+ * wikipeda" through the profile's default engine (ERR-05 – DuckDuckGo in the seeded profile,
+ * never a hard-coded one), and a real touch on it loads the engine's results; a TLS handshake
+ * nothing answers (a loopback port that accepts and stays silent: Chromium's 30 s
+ * `kSSLHandshakeTimeout`, `ERR_TIMED_OUT`) and a connection the server resets once the request
+ * is in (`ERR_CONNECTION_RESET`) land on their own copy; the radios off (`svc wifi
  * disable`, `svc data disable`) and a load: the page says the device is offline; the radios back
  * on and its Reload loads the page. Then Take Screenshot, with its Screenshot saved card in the
  * toast's slot (the picture goes to the gallery since #321, no longer to Downloads); a new tab's
@@ -68,6 +79,7 @@ class ErrorPagesDemo : DemoHarness("share-demo-state.json", "errors", "errors-de
         // 1. A host that does not exist: ERR_NAME_NOT_RESOLVED.
         enter("nonexistent.invalid")
         awaitErrorPage("nonexistent.invalid")
+        pageReport("dns failure")
         shot("01-dns-failure")
 
         // 2. The bug hunt's localhost:1 – a port on Chromium's restricted list: ERR_UNSAFE_PORT.
@@ -78,7 +90,41 @@ class ErrorPagesDemo : DemoHarness("share-demo-state.json", "errors", "errors-de
         // 3. A port nothing listens on: ERR_CONNECTION_REFUSED.
         enter("localhost:81")
         awaitErrorPage("localhost:81")
+        pageReport("connection refused")
         shot("03-connection-refused")
+
+        // 3b. A typed word that did not resolve (ERR-05): the page offers the search through the
+        //     profile's default engine – the seeded profile's DuckDuckGo – and a real touch on the
+        //     offer loads the engine's results page.
+        enter("http://$WORD/")
+        awaitErrorPage(WORD)
+        pageReport("typed word")
+        shot("03b-search-offer")
+        searchFromErrorPage()
+        shot("03c-search-results")
+
+        // 3c. A TLS handshake nothing answers: a loopback port that accepts the connection and
+        //     stays silent, so Chromium's 30 s handshake clock runs out (ERR_TIMED_OUT). A plain
+        //     http sink would never fail – Chromium has no response timeout – so the sink is https.
+        // 3d. A connection the server resets once the request is in (ERR_CONNECTION_RESET).
+        val sink = runCatching { SilentServer(SINK_PORT, reset = false).also { it.start() } }
+            .onFailure { Log.w(tag, "no TLS sink on $SINK_PORT: $it") }.getOrNull()
+        val resetter = runCatching { SilentServer(RESET_PORT, reset = true).also { it.start() } }
+            .onFailure { Log.w(tag, "no reset server on $RESET_PORT: $it") }.getOrNull()
+        try {
+            enter("https://127.0.0.1:$SINK_PORT/")
+            awaitErrorPage("127.0.0.1:$SINK_PORT", timeoutMs = 90_000)
+            pageReport("timed out")
+            shot("03d-timed-out")
+
+            enter("http://127.0.0.1:$RESET_PORT/")
+            awaitErrorPage("127.0.0.1:$RESET_PORT")
+            pageReport("reset")
+            shot("03e-reset")
+        } finally {
+            sink?.close()
+            resetter?.close()
+        }
 
         // 4. Radios off, then a load: the page says the device is offline.
         shell("svc wifi disable")
@@ -86,6 +132,7 @@ class ErrorPagesDemo : DemoHarness("share-demo-state.json", "errors", "errors-de
         awaitOffline(true)
         enter("example.org")
         awaitErrorPage("example.org")
+        pageReport("offline")
         shot("04-offline")
 
         // 5. Radios back on; the page's own Reload loads the site.
@@ -265,6 +312,132 @@ class ErrorPagesDemo : DemoHarness("share-demo-state.json", "errors", "errors-de
         instrumentation.runOnMainSync { host.tabs.all().firstOrNull { it.isShown }?.reload() }
     }
 
+    /**
+     * The error page's search action (ERR-05, "Search <engine> for <term>"): a real touch on the
+     * link where the accessibility tree says it is, then the engine's results page. The touch is
+     * the step's act, so a touch that leaves the error page standing is a fault of the run, and
+     * the link's own click then gets to the results.
+     */
+    private fun searchFromErrorPage() {
+        val label = findLabel { it.startsWith(SEARCH_PREFIX) }
+        Log.i(tag, "search action: ${label ?: "none on the page"}")
+        if (label == null) {
+            touchFault("the error page for $WORD offers no '$SEARCH_PREFIX…' action")
+            return
+        }
+        if (label != "$SEARCH_PREFIX $WORD") {
+            touchFault("the search action reads '$label', not '$SEARCH_PREFIX $WORD'")
+        }
+        val touched = touchTapLabel(SEARCH_PREFIX, prefix = true)
+        if (!touched) Log.w(tag, "no bounds on screen to touch for the search action")
+        val left = awaitTrue(6_000) { !pageState().first.startsWith(ERROR_PREFIX) }
+        if (touched && !left) touchFault("the touch on the search action left the error page standing")
+        if (!left) {
+            Log.w(tag, "clicking the search action through the page")
+            pageJs("document.getElementById('zen-error-search').click()")
+        }
+        awaitPage("duckduckgo.com", 40_000)
+        Log.i(tag, "results page: ${pageState().first}")
+        SystemClock.sleep(1_500)
+    }
+
+    /**
+     * What the error page on screen says, on record for the run's log: the code and the name the
+     * page's URL carries, and – read off the document – its heading, its reason, the lines of its
+     * "Try:" list and the labels of its actions (the search action's among them).
+     */
+    private fun pageReport(step: String) {
+        val (url, _) = pageState()
+        val uri = Uri.parse(url)
+        val code = runCatching { uri.getQueryParameter("code") }.getOrNull()
+        val description = runCatching { uri.getQueryParameter("description") }.getOrNull()
+        val read = pageJs(
+            "(function(){var t=function(s){var e=document.querySelector(s);return e?e.textContent.trim():''};" +
+                "var l=Array.prototype.map.call(document.querySelectorAll('.zen-error-suggestions li'),function(e){return e.textContent.trim()});" +
+                "var a=Array.prototype.map.call(document.querySelectorAll('.zen-error-actions > *, #zen-error-reload'),function(e){return e.textContent.trim()});" +
+                "return JSON.stringify({title:t('h1'),reason:t('main > p'),hint:t('.zen-error-hint'),tryLines:l,actions:a})})()"
+        )
+        Log.i(tag, "error page ($step): code=$code $description; $read")
+    }
+
+    /** The first label (text or description) in the active window that `matches`. */
+    private fun findLabel(matches: (String) -> Boolean): String? {
+        val root = ui.rootInActiveWindow ?: return null
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        var visited = 0
+        while (queue.isNotEmpty() && visited < 6_000) {
+            val node = queue.removeFirst()
+            visited++
+            for (label in listOfNotNull(node.text?.toString(), node.contentDescription?.toString())) {
+                if (matches(label)) return label
+            }
+            for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
+        }
+        return null
+    }
+
+    /** Evaluate in the shown tab's WebView (the error page's document); the raw JSON-encoded result, "" when it never answered. */
+    private fun pageJs(code: String): String {
+        var result = ""
+        val latch = CountDownLatch(1)
+        instrumentation.runOnMainSync {
+            val view = host.tabs.all().firstOrNull { it.isShown }
+            if (view == null) {
+                latch.countDown()
+            } else {
+                view.evaluateJavascript(code) { value ->
+                    result = value ?: ""
+                    latch.countDown()
+                }
+            }
+        }
+        latch.await(5, TimeUnit.SECONDS)
+        return result
+    }
+
+    /**
+     * A loopback server that answers nothing: it accepts every connection and, without `reset`,
+     * holds it open in silence – a TLS ClientHello sent to it is never answered, which is how a
+     * page runs into Chromium's handshake timeout (`ERR_TIMED_OUT`); with `reset`, it reads the
+     * first bytes of the request and closes the socket abortively (`SO_LINGER` 0, a RST on the
+     * wire), which the client reads as `ERR_CONNECTION_RESET`.
+     */
+    private class SilentServer(port: Int, private val reset: Boolean) : Thread("silent-server-$port") {
+        private val socket = ServerSocket(port, 16, InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)))
+        private val held = ArrayList<Socket>()
+
+        override fun run() {
+            while (!socket.isClosed) {
+                val client = try {
+                    socket.accept()
+                } catch (_: Exception) {
+                    return
+                }
+                if (!reset) {
+                    synchronized(held) { held += client }
+                    continue
+                }
+                Thread {
+                    runCatching {
+                        client.soTimeout = 10_000
+                        client.getInputStream().read()
+                        client.setSoLinger(true, 0)
+                    }
+                    runCatching { client.close() }
+                }.start()
+            }
+        }
+
+        fun close() {
+            runCatching { socket.close() }
+            synchronized(held) {
+                held.forEach { runCatching { it.close() } }
+                held.clear()
+            }
+        }
+    }
+
     /** Wait for ConnectivityManager to agree the device is offline (or online again). */
     private fun awaitOffline(expected: Boolean, timeoutMs: Long = 25_000) {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
@@ -401,6 +574,8 @@ class ErrorPagesDemo : DemoHarness("share-demo-state.json", "errors", "errors-de
             tag,
             "history.json: ${json.length} chars; nonexistent.invalid=${json.contains("nonexistent.invalid")} " +
                 "localhost:1=${json.contains("localhost:1")} localhost:81=${json.contains("localhost:81")} " +
+                "http://$WORD/=${json.contains("http://$WORD/")} sink=${json.contains("127.0.0.1:$SINK_PORT")} " +
+                "reset=${json.contains("127.0.0.1:$RESET_PORT")} results=${json.contains("duckduckgo.com")} " +
                 "interstitial title=${json.contains(INTERSTITIAL_TITLE)} example.org=${json.contains("example.org")}"
         )
     }
@@ -445,6 +620,14 @@ class ErrorPagesDemo : DemoHarness("share-demo-state.json", "errors", "errors-de
         private const val INTERSTITIAL_TITLE = "Webpage not available"
         /** The screenshot's preview card's title (#321, ScreenshotCard.tsx). */
         private const val SCREENSHOT_CARD_TITLE = "Screenshot saved"
-        private val FAILED_URLS = Regex("nonexistent\\.invalid|localhost:1|localhost:81")
+        /** The typed word that does not resolve: one dotless label, so the page reads it as a search term (ERR-05). */
+        private const val WORD = "wikipeda"
+        /** The search action's label up to the term: the seeded profile's default engine is DuckDuckGo. */
+        private const val SEARCH_PREFIX = "Search DuckDuckGo for"
+        /** Loopback ports for the silent TLS sink and the resetting server (nothing else listens there). */
+        private const val SINK_PORT = 8461
+        private const val RESET_PORT = 8462
+        /** The failed loads' addresses; the word as a host (`wikipeda/`), not as the results page's query or title. */
+        private val FAILED_URLS = Regex("nonexistent\\.invalid|localhost:1|localhost:81|(?<!q=)\\bwikipeda(?:/|$)|127\\.0\\.0\\.1:846")
     }
 }

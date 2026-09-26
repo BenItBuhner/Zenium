@@ -1,0 +1,9 @@
+{
+  "id": "reader-ui",
+  "order": 71,
+  "class": "ReaderUiDemo",
+  "shard": "phone-d",
+  "mirrors": "android-reader-ui-demo.yml",
+  "dir": "reader-ui-demo",
+  "estimate": 5.5
+}

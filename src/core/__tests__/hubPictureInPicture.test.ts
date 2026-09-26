@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { Browser } from '../browser'
+import { AUTO_PIP_SETTING } from '../mediaSession'
+import { PermissionService } from '../permissions'
 import type { Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../platform'
 import { EMPTY_MEDIA_REPORT, type MediaReport } from '../../shared/mediaSession'
 import { PRIVATE_CONTAINER_ID, type HostCapabilities, type Tab } from '../../shared/types'
@@ -49,7 +51,7 @@ interface Fixture {
  * (a host that mirrors the session to the desktop and has no window to put into PiP), `window`
  * is Android's (a host with `enterPictureInPicture`).
  */
-function fixture(host: 'none' | 'mpris' | 'window'): Fixture {
+function fixture(host: 'none' | 'mpris' | 'window', io: StoreIO = memoryIo()): Fixture {
   const sent: Fixture['sent'] = []
   const scripts: string[] = []
   const pipRequests: string[] = []
@@ -65,7 +67,7 @@ function fixture(host: 'none' | 'mpris' | 'window'): Fixture {
   const platform: Platform = {
     info: { os: host === 'window' ? 'android' : 'linux', version: '0.0.0' },
     capabilities,
-    io: memoryIo(),
+    io,
     windows: {
       create: () =>
         stub<WindowHost>({
@@ -302,5 +304,82 @@ describe('page.pip on the desktop', () => {
     await flush()
     expect(pipScripts(f)).toHaveLength(1)
     expect(toasts(f)).toEqual(['No video available for Picture-in-Picture'])
+  })
+})
+
+describe('the toast event and the first automatic entry’s toast (MW-28)', () => {
+  const toastEvents = (f: Fixture): unknown[] =>
+    f.sent.filter((e) => e.name === 'toast').map((e) => e.payload)
+
+  it('carries an action as the command the chrome runs on the pick; a plain toast is sent as it always was', () => {
+    const f = fixture('none')
+    const win = f.browser.focusedWindow()
+    f.browser.toast('Link copied', 'info', win)
+    f.browser.toast('Something failed', 'error')
+    f.browser.toast('Video from video.example opened in a small window', 'info', win, {
+      label: 'Turn off for this site',
+      command: 'media.autoPipOptOut',
+      args: { tabId: 'tab_1' }
+    })
+    const events = toastEvents(f)
+    expect(events).toEqual([
+      { message: 'Link copied', kind: 'info' },
+      { message: 'Something failed', kind: 'error' },
+      {
+        message: 'Video from video.example opened in a small window',
+        kind: 'info',
+        action: {
+          label: 'Turn off for this site',
+          command: 'media.autoPipOptOut',
+          args: { tabId: 'tab_1' }
+        }
+      }
+    ])
+    // Not even an `action: undefined`: a consumer of the plain toast sees the shape it always saw.
+    expect(Object.keys(events[0] as object)).toEqual(['message', 'kind'])
+  })
+
+  it('tells the site’s first automatic entry once, "Turn off for this site" denies the site through the permissions service and brings the video back, and the memory holds across a restart', async () => {
+    const io = memoryIo()
+    const f = fixture('none', io)
+    const { tab, win } = videoTab(f)
+    f.browser.popups.activate(tab.id)
+    // Away to another tab: the video goes into the small window, and the toast says so.
+    f.browser.tabs.createTab({ url: 'https://docs.example/', active: true }, win)
+    await flush()
+    expect(f.browser.mediaSession.autoPictureInPictureTab).toBe(tab.id)
+    expect(toastEvents(f)).toEqual([
+      {
+        message: 'Video from video.example opened in a small window',
+        kind: 'info',
+        action: {
+          label: 'Turn off for this site',
+          command: 'media.autoPipOptOut',
+          args: { tabId: tab.id }
+        }
+      }
+    ])
+    expect(f.browser.permissions.noticed(AUTO_PIP_SETTING, 'https://video.example/watch')).toBe(
+      true
+    )
+    // The pick: the site card's own write, and the video back on its page.
+    await f.browser.handleCommand(win, 'media.autoPipOptOut', { tabId: tab.id })
+    expect(f.browser.permissions.get(AUTO_PIP_SETTING, 'https://video.example/watch')).toBe('deny')
+    expect(f.browser.permissions.check(AUTO_PIP_SETTING, 'https://video.example/watch')).toBe(false)
+    expect(f.scripts.filter((s) => s.includes('exitPictureInPicture'))).toHaveLength(1)
+    expect(f.browser.mediaSession.autoPictureInPictureTab).toBeNull()
+    // Back to the video's tab and away again: the denied site stays on its page, silently.
+    f.browser.tabs.activateTab(tab.id, win)
+    await flush()
+    f.browser.tabs.createTab({ url: 'https://more.example/', active: true }, win)
+    await flush()
+    expect(f.browser.mediaSession.autoPictureInPictureTab).toBeNull()
+    expect(pipScripts(f)).toHaveLength(1)
+    expect(toastEvents(f)).toHaveLength(1)
+    // The restart: the notice and the deny are the permission store's, device-local.
+    f.browser.permissions.flushSync()
+    const again = new PermissionService(io, { show: async () => null, cancel: () => undefined })
+    expect(again.noticed(AUTO_PIP_SETTING, 'https://video.example/watch')).toBe(true)
+    expect(again.check(AUTO_PIP_SETTING, 'https://video.example/watch')).toBe(false)
   })
 })

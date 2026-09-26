@@ -1,0 +1,10 @@
+{
+  "id": "read-aloud-selection",
+  "order": 91,
+  "class": "ReadAloudSelectionDemo",
+  "shard": "phone-f",
+  "mirrors": "android-read-aloud-selection-demo.yml",
+  "dir": "read-aloud-selection-demo",
+  "estimate": 3,
+  "note": "Read aloud from the selection (EDGE-12, W6-8): a real long press on a word of a loopback page, the selection toolbar's Listen behind the overflow under a real touch, the engine handed the selected word first and the sentences after it, the highlight never in the paragraph before, in both schemes; the sentence act is written down as NOT RUN on this WebView (it drops the mode on a scripted selection change). Needs the Google APIs image's speech engine (com.google.android.tts), this shard's. The dispatch run (36175414202) took about two minutes of driver after the boot; the driver puts the device's night mode back at its end."
+}

@@ -67,3 +67,22 @@ export function signalHeaders(flags: PrivacyFlags): Record<string, string> {
   if (flags.dnt) out['DNT'] = '1'
   return out
 }
+
+/**
+ * Whether a request is one of the speculative loads Preload pages governs (PS-43), by the header
+ * Chromium puts on exactly those and no page can forge (`Sec-` prefix): `Sec-Purpose: prefetch`
+ * on `<link rel=prefetch>` and a speculation-rules prefetch, `prefetch;prerender` on the
+ * prefetch a prerender starts with. Measured under Electron 44 (Chromium 152): the link prefetch
+ * reports `resourceType: other`, the speculation-rules ones `mainFrame` – the type alone tells a
+ * prefetch from a beacon or a navigation no better than that, the header does. The legacy
+ * `Purpose: prefetch` is read too, though Chromium no longer sends it. Header names as the
+ * host passes them, in any case.
+ */
+export function isPreloadRequest(headers: Readonly<Record<string, string>>): boolean {
+  for (const [name, value] of Object.entries(headers)) {
+    const lower = name.toLowerCase()
+    if (lower !== 'sec-purpose' && lower !== 'purpose') continue
+    if (value.split(';').some((token) => token.trim().toLowerCase() === 'prefetch')) return true
+  }
+  return false
+}

@@ -130,7 +130,15 @@ function RowDialog({
     case 'form':
       // The one dialog whose place moves its width (§9.20: a form over another dialog is the
       // 320 notice, "place beats content"); the rest keep the form width wherever they stand.
-      return <FormDialog row={row as ActionRow} under={under} stacked={stacked} close={close} />
+      return (
+        <FormDialog
+          row={row as ActionRow}
+          from={request.from}
+          under={under}
+          stacked={stacked}
+          close={close}
+        />
+      )
     case 'item':
       return <ItemDialog row={row as ItemRow} under={under} ctx={ctx} close={close} />
     case 'detail':
@@ -168,6 +176,14 @@ interface DialogProps {
   descriptionTone?: 'warn' | 'danger'
   /** Another dialog is open over this one: it is inert, and Escape is that dialog's. */
   under: boolean
+  /**
+   * Where the focus goes back as the dialog leaves, when that is not the element that held it
+   * as the dialog came: a form an item row's ⋯ opened (`SheetRequest.from`) returns to that
+   * row's ⋯, found as the dialog leaves (a row re-rendered under the dialog is still found; a
+   * row the form's own act removed is not, and the return falls to the opener). `null` falls
+   * to the opener too.
+   */
+  returnFocus?(): HTMLElement | null
   /**
    * This dialog opened over another one in the slot (§9.20 as amended on #409, "place beats
    * content"): it stands at the notice's 320 – `POPOVER_WIDTH.list`, the width the prompt
@@ -225,6 +241,7 @@ function HostedDialog({
   description,
   descriptionTone,
   under,
+  returnFocus,
   stacked,
   onClose,
   children,
@@ -272,9 +289,11 @@ function HostedDialog({
   // page's control, or the lower dialog's for a dialog that opened over one – unless the user
   // has already put it somewhere else outside the dialog host.
   const initialRef = useRef(initial)
+  const returnFocusRef = useRef(returnFocus)
   useLayoutEffect(() => {
     initialRef.current = initial
-  }, [initial])
+    returnFocusRef.current = returnFocus
+  }, [initial, returnFocus])
   useEffect(() => {
     const root = ref.current
     if (!root) return
@@ -282,7 +301,8 @@ function HostedDialog({
     // detail dialog over an item dialog – the item dialog's row, so the return goes one hop down
     // the stack (this dialog to that row, the item dialog in its turn to its own), never past
     // the lower dialog to the page. A prompt over a dialog returns the same way, by the
-    // primitive's own hop (`ConfirmDialog`).
+    // primitive's own hop (`ConfirmDialog`). A dialog that names its own way back
+    // (`returnFocus`: a form an item row's ⋯ opened) goes there, else to the opener.
     const active = document.activeElement
     const opener = active instanceof HTMLElement && !root.contains(active) ? active : null
     const target = initialRef.current?.(root) ?? root.querySelector<HTMLElement>(TABBABLE) ?? root
@@ -293,7 +313,8 @@ function HostedDialog({
       // The stack drops the lower dialog's `inert` in the commit that removes this one, so the
       // control takes the focus at once; a control still under an `inert` as this runs (a cover
       // its host drops on its next render) takes it as that `inert` goes (`returnFocusTo`).
-      if (lost && opener?.isConnected) returnFocusTo(opener)
+      const back = returnFocusRef.current?.() ?? opener
+      if (lost && back?.isConnected) returnFocusTo(back)
     }
   }, [])
   return (
@@ -573,15 +594,19 @@ function rowControl(id: string): HTMLElement | null {
  * body is a list (`FormSheet.body`: the site-data viewer) is the list-bodied dialog – capped at
  * 80% of the frame, the list scrolling under the title block, its claimed footer in §9.20's
  * list-body form. Opened over another dialog (an item's Edit form, #409) it is `stacked`: the
- * 320 notice with its descriptions wrapping, §9.20's "place beats content".
+ * 320 notice with its descriptions wrapping, §9.20's "place beats content". Opened from an
+ * item row's ⋯ (§10.5: a startup page's Edit…; `SheetRequest.from`) the way back is that row's
+ * ⋯, as a prompt's is (`ConfirmRowDialog`), found by its `data-row` as the dialog leaves.
  */
 function FormDialog({
   row,
+  from,
   under,
   stacked,
   close
 }: {
   row: ActionRow
+  from?: string
   under: boolean
   stacked: boolean
   close(): void
@@ -593,6 +618,7 @@ function FormDialog({
       title={form.title}
       description={form.description}
       under={under}
+      returnFocus={from === undefined ? undefined : () => rowControl(from)}
       stacked={stacked}
       onClose={close}
       // A picker's list of options is a list body here: the same dialog, the same footer form.

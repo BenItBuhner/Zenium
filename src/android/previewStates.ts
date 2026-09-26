@@ -44,9 +44,12 @@ import { installBannerShown, presentInstallBanner } from '@renderer/lib/installB
 import { isInternalPageUrl } from '@shared/internalPages'
 import { isEmptyTabUrl } from '@shared/url'
 import { closeCustomize, openCustomize } from '@renderer/lib/newtab'
+import { closeMagicStackCustomize } from '@renderer/components/newtab/magicStackCustomize'
 import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
 import { BLANK_URL, ERROR_URL_PREFIX, EXTENSION_SCHEME, crashPageOptionsOf } from '@shared/url'
 import { DEFAULT_FOLDER_ICON } from '@renderer/lib/groups'
+import { phoneSteps } from '@renderer/lib/onboarding'
+import { tourAsksSearchChoice } from '@renderer/lib/searchChoice'
 import { activeSpace, activeTab, regularOf } from '@renderer/lib/selectors'
 import {
   browserStore,
@@ -116,6 +119,11 @@ import { dismissSiteInfo, openSiteInfo } from '@renderer/lib/siteInfo'
 import type { ReadAloudStatus } from '@shared/readAloud'
 import type { ReaderTranslateState, TranslateStatus, TranslateTabState } from '@shared/translate'
 import { clearAutofill, stageAutofill } from './previewAutofill'
+import {
+  fontControlsFixture,
+  parsePreviewControls,
+  type PreviewControlsVariant
+} from './previewControls'
 import { PREVIEW_DOWNLOAD_EVENT } from './previewDownloads'
 import { PREVIEW_PDF_FILES, previewPdf } from './previewPdf'
 import { PREVIEW_SITE_DATA_EVENT } from './previewSiteData'
@@ -125,6 +133,7 @@ import {
   parsePreviewSteps,
   type PreviewCrashVariant,
   type PreviewDownloadSpec,
+  type PreviewFirstRunStep,
   type PreviewSiteDataSeed,
   type PreviewMediaVariant,
   type PreviewNetworkVariant,
@@ -177,7 +186,7 @@ const QR_EVENT_MARGIN_MS = 250
  * editing), `group=<n>` (the active tab in a group of n members made on the spot, so the group
  * strip is up in the bar band; `then=` steps run once the group has formed), `link=<url>` (the
  * active page's link menu held up for that URL, `text=<label>` the link's text over the address
- * in its header), `overlay=<kind>`
+ * in its header), `image=<url>` (the image sheet held up on an image at that URL), `overlay=<kind>`
  * (history, bookmarks,
  * downloads, addons, …: the chrome overlays a phone still has – Settings is not one, it is
  * `page=settings`; `show=<text>` scrolls the row with that text into view, `expand` rests a
@@ -238,6 +247,10 @@ const QR_EVENT_MARGIN_MS = 250
  * `downloading`, `translating`, `translated` – `&original` with the Show original switch on –
  * or `error`; see `seedReaderTranslate`),
  * `favicon=<url>` (the active tab's icon, which this host cannot read off a cross-origin page),
+ * `controls=<variant>` (Settings › Fonts under an extension's control – `fonts` for Standard
+ * font, Font size and Minimum font size all held with one "Controlled by" row under the run,
+ * `size` or `family` for one row alone; the controlling extension installed for the row's
+ * press; see `previewControls.ts`),
  * `siteinfo` (the site-information sheet up on the active tab once the state is reached: the
  * shield row with its count and the translate row are in it, OMN-02) and `import=failed` (a
  * last import that failed before any kind ran, for Settings › Import's Last import group; see
@@ -277,6 +290,7 @@ function apply(browser: Browser, spec: string): void {
     // are answered as a dismissal, the way a press outside would.
     unseedBlocking()
     unseedExtensions()
+    unseedControls()
     unseedSync()
     unseedImport()
     unseedTranslate()
@@ -294,6 +308,8 @@ function apply(browser: Browser, spec: string): void {
     dismissOverview()
     closeReaderPreferences({ keepFocus: true })
     closeCustomize()
+    // The Magic Stack's Customise sheet a card menu's step opened (NTP-16) goes with the page.
+    closeMagicStackCustomize()
     uiStore.set({
       findOpen: false,
       findTabId: null,
@@ -898,16 +914,16 @@ async function dissolveGroup(): Promise<void> {
  * (`views.ts`: the host's `contextMenu` event with the link's URL, and its text when the hold
  * has one – the phone sheet's header title, PUI-18), at a point in the page's upper third –
  * where a phone's link menu sheet leaves the page showing above it, and a tablet's popover
- * anchors.
+ * anchors. With `image`, the hold is on an image at `url` (the image sheet, CT-32).
  */
-function holdLink(tabId: string, url: string, text?: string): void {
+function holdLink(tabId: string, url: string, text?: string, image = false): void {
   hostGlobal().viewEvent(
     tabId,
     'contextMenu',
     JSON.stringify({
       x: Math.round(window.innerWidth / 2),
       y: Math.round(window.innerHeight / 3),
-      linkURL: url,
+      ...(image ? { mediaType: 'image', srcURL: url } : { linkURL: url }),
       ...(text ? { linkText: text } : {})
     })
   )
@@ -1054,6 +1070,7 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   const blocking = params.get('blocking')
   const blocked = Number(params.get('blocked'))
   const extensions = params.get('extensions')
+  const controls = parsePreviewControls(params.get('controls'))
   const sync = params.get('sync')
   const lastImport = params.get('import')
   const translate = params.get('translate')
@@ -1063,6 +1080,7 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     if (blocking)
       seedBlocking(blocking, Number.isFinite(blocked) && blocked > 0 ? blocked : undefined)
     if (extensions) seedExtensions(extensions)
+    if (controls) seedControls(controls)
     if (sync) seedSync(sync, browser)
     if (lastImport) seedImport(lastImport)
     if (translate) seedTranslate(translate, params.has('bar'))
@@ -1090,10 +1108,18 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
       else if (then.length > 0) setTimeout(() => steps(then, finish), STEP_SETTLE_MS)
       else requestAnimationFrame(() => requestAnimationFrame(() => done(spec)))
     })
+  } else if (target.kind === 'firstrun') {
+    // The phone's first-run tour at one of its steps: the seeded profile (`onboardingDone:
+    // false`) has the tour up at its welcome, and the steps before the one asked for are pressed
+    // through their footer verbs; the steps asked for follow once the tour is there.
+    const taps = state ? firstRunTaps(target.step, state) : []
+    setTimeout(() => steps([...taps, ...(target.then ?? [])], finish), STEP_SETTLE_MS)
   } else if (target.kind === 'page') {
     // The Extensions category is only on a host with the capability: the seed turns it on before
     // the page opens on that section, so the section resolves and its rows are what is waited for.
+    // A controlled Fonts page is held from its first render too, so no row draws free and then held.
     if (extensions) seedExtensions(extensions)
+    if (controls) seedControls(controls)
     settlePage(target, seed, finish)
     run('page.open', { id: target.page, section: target.section ?? null })
   } else if (target.kind === 'extension-page') {
@@ -1135,7 +1161,7 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
         return
       }
       whenMenuUp(finish)
-      holdLink(site.id, target.url, target.text)
+      holdLink(site.id, target.url, target.text, target.image ?? false)
     })
   } else if (target.kind === 'overlay') {
     // A seeded engine state stands before the overlay opens: the History page's From your other
@@ -1850,6 +1876,22 @@ function seedExtensions(variant: string): void {
 function unseedExtensions(): void {
   extensionsSeed?.()
   extensionsSeed = null
+}
+
+/**
+ * Settings › Fonts under an extension's control (`controls=<variant>`; see `previewControls.ts`):
+ * the `extensionControls` map a `chrome.fontSettings` layer would have the host publish, with
+ * the controlling extension installed, held over every state the core pushes while the spec
+ * stands – this host has no extension store and a device none of the bridge yet, so nothing
+ * else puts a "Controlled by" row on the page.
+ */
+function seedControls(variant: PreviewControlsVariant): void {
+  holdFixture('controls', (state) => fontControlsFixture(state, variant, Date.now()))
+}
+
+/** Stop holding the seeded control layer: the user's own fonts stand again. */
+function unseedControls(): void {
+  holdFixture('controls', null)
 }
 
 // ---------------------------------------------------------------------------
@@ -2773,6 +2815,26 @@ function typeInto(input: HTMLInputElement, text: string): void {
   input.dispatchEvent(new Event('input', { bubbles: true }))
 }
 
+/**
+ * The footer taps that take the phone's tour from its welcome to `step`: "Get started" leaves
+ * the welcome, "Continue" each step after it – except the EEA's choice step (OMN-26,
+ * `tourAsksSearchChoice`), which has no Continue and is left behind with "Skip for now", so a
+ * later step is reached without a record being written.
+ */
+export function firstRunTaps(step: PreviewFirstRunStep, state: UIState): PreviewStep[] {
+  const order = phoneSteps({
+    defaultBrowser: state.capabilities.defaultBrowser,
+    isDefault: state.defaultBrowser.isDefault
+  })
+  const index = order.indexOf(step)
+  if (index <= 0) return []
+  const choice = tourAsksSearchChoice(state)
+  return order.slice(0, index).map((left, i) => ({
+    kind: 'tap',
+    text: i === 0 ? 'Get started' : left === 'search' && choice ? 'Skip for now' : 'Continue'
+  }))
+}
+
 /** Take `list` in order, a settle between steps, then `then`. */
 function steps(list: readonly PreviewStep[], then: () => void): void {
   const [step, ...rest] = list
@@ -2817,6 +2879,17 @@ function takeStep(step: PreviewStep): void {
     case 'urlbar': {
       const tab = state ? activeTab(state) : null
       void openUrlbar(tab ? 'edit' : 'new-tab', tab?.id ?? null, { attached: true })
+      return
+    }
+    case 'cards': {
+      // The new tab page's cards strip (NTP-16) at its nth card: the strip's scroll set to the
+      // card's snap position outright – the dots take no tap, and a still wants the snapped
+      // pose, not a swipe in flight. The pitch is read off the cards themselves.
+      const strip = document.querySelector<HTMLElement>('.zen-ntp .zen-mstack-strip')
+      const first = strip?.children[0]
+      const target = strip?.children[step.page - 1]
+      if (!strip || !first || !target) return
+      strip.scrollLeft = target.getBoundingClientRect().left - first.getBoundingClientRect().left
     }
   }
 }

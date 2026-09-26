@@ -7,6 +7,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -20,6 +21,7 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
 import android.view.View
+import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.RemoteViews
@@ -30,10 +32,12 @@ import androidx.browser.customtabs.CustomTabsClient
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.browser.customtabs.CustomTabsServiceConnection
 import androidx.browser.customtabs.CustomTabsSession
+import androidx.browser.customtabs.EngagementSignalsCallback
 import androidx.core.content.ContextCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
+import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
 import org.junit.Assert.assertTrue
@@ -55,7 +59,13 @@ import kotlin.math.abs
  * followed and back stepping within the tab's history, the toolbar hiding on scroll, the menu,
  * one of the caller's items firing (its PendingIntent lands back in the "app" as a toast), Open
  * in Zenium landing in the browser window with the live page, a second, dark-scheme tab, and X
- * closing back to the caller with the caller's exit animation.
+ * closing back to the caller with the caller's exit animation. In each scheme the page asks for
+ * its location and the tab answers on §9.23's native sheet (W6-S11, the #515 gate's follow-up):
+ * its shape measured from the tree, a touch on the scrim refusing the request and remembering
+ * nothing, the page asking again, Allow under a finger granting it. In the light tab a link no
+ * app can open is followed under a finger (W6-D2): nothing is asked, the request is refused and
+ * the deliberate fallback runs – the intent's web address loads in the tab; a second link without
+ * one has its store listing attempted, the toast where the device has no store.
  *
  * Then the depth (CCT-07, CCT-11): a third tab with the caller's BOTTOM TOOLBAR – its own
  * `RemoteViews` (a layout of this APK's, inflated by the provider) with two buttons, one under a
@@ -66,10 +76,18 @@ import kotlin.math.abs
  * `onMinimized`, the platform's Expand bringing the tab back and `onUnminimized` following. A
  * fourth, dark tab does the same with `EXTRA_TOOLBAR_ITEMS` buttons instead of RemoteViews.
  *
+ * Then the toolbar's Share (CCT-17): a caller that set no action button gets Chrome's adaptive
+ * Share button in the slot – light and dark – and a touch on it opens the system share sheet;
+ * `SHARE_STATE_OFF` empties the slot and the menu's row. Through all of it the session's
+ * `EngagementSignalsCallback` (CCT-14) hears the scrolls' direction, the greatest scroll
+ * percentage stepping by fives on a long scroll, and each tab's end with whether the page was
+ * touched.
+ *
  * The session callback's navigation events and the return to the caller are asserted, as are
  * the bottom toolbar's clicks and swipe reaching the caller, the secondary toolbar's update
- * taking, the picture-in-picture entry and exit and their callbacks; the screenshots
- * (`customtabs-*.png`) and the recording are the rest of the evidence.
+ * taking, the picture-in-picture entry and exit and their callbacks, the engagement signals
+ * and the Share slot's occupant; the screenshots (`customtabs-*.png`) and the recording are the
+ * rest of the evidence.
  */
 @RunWith(AndroidJUnit4::class)
 class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "customtabs-demo") {
@@ -79,6 +97,8 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
     private var client: CustomTabsClient? = null
     private var session: CustomTabsSession? = null
     private val events: MutableList<String> = Collections.synchronizedList(ArrayList())
+    /** What the session's `EngagementSignalsCallback` heard (CCT-14): `SCROLL_DOWN`, `SCROLL_UP`, `PERCENT:<n>`, `ENDED:<didUserInteract>`. */
+    private val signals: MutableList<String> = Collections.synchronizedList(ArrayList())
     /** What the caller's bottom toolbar intents carried back: `BOTTOM:<id>`, `ITEM:<id>`, `SWIPE_UP`. */
     private val callerHits: MutableList<String> = Collections.synchronizedList(ArrayList())
     /** `setSecondaryToolbarViews`' answer after the swipe up, null until the caller has sent it. */
@@ -90,9 +110,21 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
      */
     @Volatile private var toastsClearAt = 0L
     private var receiver: BroadcastReceiver? = null
+    /** The loopback page an `intent://` link names as its web fallback (W6-D2): the tab lands on it. */
+    private lateinit var server: DemoServer
 
     @Test
-    fun record() = runDemo()
+    fun record() {
+        server = DemoServer(
+            NO_HANDLER_PORT,
+            mapOf(FALLBACK_PATH to DemoServer.page("The app's web page", "<p>The link's app is not installed, so its web address opened here, in the tab.</p>"))
+        ).also { it.start() }
+        try {
+            runDemo()
+        } finally {
+            server.close()
+        }
+    }
 
     override fun warmUp() {
         connect()
@@ -109,6 +141,8 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         //    lock, the action button and the menu button, sliding up over the caller.
         openCustomTab()
         shot("02-toolbar-light")
+        // CCT-17: the caller sent an action button, so it keeps the slot – no Share button beside it.
+        claim("scene 2: the caller's '$SAVE_LABEL' button holds the toolbar's slot and there is no toolbar Share", findByLabel(SAVE_LABEL) != null && toolbarShareButton() == null)
         beat()
 
         // 3. A link followed inside the tab: the toolbar follows the page (host, title, lock).
@@ -134,12 +168,33 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         beat()
 
         // 5. EXTRA_ENABLE_URLBAR_HIDING: the toolbar leaves as the page scrolls down and returns
-        //    as it scrolls up.
+        //    as it scrolls up. The session's engagement callback hears each scroll's direction
+        //    (CCT-14): `isDirectionUp` false for the finger's drag up (the page toward its bottom), true for the way back.
+        val beforeScroll = signals.size
         scroll(-0.45f)
+        claim("scene 5: the scroll down reached the caller as onVerticalScrollEvent(isDirectionUp=false)", awaitSignal("SCROLL_DOWN", beforeScroll))
         SystemClock.sleep(1_500)
         shot("05-toolbar-hidden")
+        val beforeScrollUp = signals.size
         scroll(0.45f)
+        claim("scene 5: the scroll back up reached the caller as onVerticalScrollEvent(isDirectionUp=true)", awaitSignal("SCROLL_UP", beforeScrollUp))
         SystemClock.sleep(1_500)
+
+        // 5b. The page asks for its location: the custom tab's prompt on §9.23's native sheet, in
+        //     the tab's light scheme – dismissed by a touch on the scrim (the page's `denied`,
+        //     nothing remembered), asked again, and answered Allow under a finger.
+        askPermission("05b-permission-light")
+
+        // 5c. A tel: link under a finger: the custom tab's Open in <App>? confirmation on the same
+        //     sheet – Open under a finger starts the dialer, a second ask dismissed by a touch on
+        //     the scrim is refused and nothing comes up.
+        askOpenInApp("05c-open-in-app-light")
+
+        // 5d. A link no app can open under a finger (W6-D2): no question – the request is refused
+        //     and the deliberate fallback runs: the intent's web address loads in the tab; a
+        //     second link without one has its store listing attempted (the toast where the device
+        //     has no store). Back to the story after, for the scenes that follow.
+        followLinkNoAppCanOpen("05d-no-handler-fallback")
 
         // 6. The menu: the caller's items, Zenium's page actions, Open in Zenium.
         openMenu()
@@ -163,6 +218,7 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
 
         // 8. Open in Zenium: the live page moves into the browser window.
         openMenu()
+        val beforeHandoff = signals.size
         // A finger on the row (the menu sheet's injected touch, the rule in DemoHarness): the
         // browser's own window, with its address pill, must come up on it (the custom tab shares
         // the package, so the window in front does not tell). The other rows go through the tree.
@@ -173,6 +229,8 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
             SystemClock.sleep(6_000)
             shot("08-open-in-zenium")
             Log.i(tag, "browser window shows ${findByLabelPrefix(PILL_LABEL)}")
+            // The tab is gone into the browser: its session's engagement ended, the page touched (the link, the scrolls).
+            claim("scene 8: handing the page to Zenium ended the tab's engagement – onSessionEnded(didUserInteract=true)", awaitSignal("ENDED:true", beforeHandoff))
         } else {
             Log.w(tag, "$OPEN_IN_ZENIUM_LABEL did not hand the page over under a finger")
             dismissSheet()
@@ -184,18 +242,28 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         openCustomTab()
         shot("09-toolbar-dark")
         beat()
+
+        // 9b. The same ask in the dark tab: the sheet in the tab's dark scheme.
+        askPermission("09b-permission-dark")
+
+        // 9c. The same confirmation in the dark tab.
+        askOpenInApp("09c-open-in-app-dark")
+
         openMenu()
         shot("10-menu-dark")
         beat()
         findInPage("10b-find-dark")
 
-        // 10. X closes the tab, with the caller's exit animation, back into the caller.
+        // 10. X closes the tab, with the caller's exit animation, back into the caller; the
+        //     session hears the tab's end with the page touched (the asks' fingers, CCT-14).
+        val beforeClose = signals.size
         clickByLabel(CLOSE_LABEL)
         val returned = waitForWindow(callerPackage, 8_000)
+        claim("scene 10: closing the dark tab ended its engagement – onSessionEnded(didUserInteract=true)", awaitSignal("ENDED:true", beforeClose))
         SystemClock.sleep(1_500)
         shot("11-closed-to-caller")
 
-        Log.i(tag, "session events: $events")
+        Log.i(tag, "session events: $events; engagement signals: $signals")
         assertTrue("the session callback heard the tab show (TAB_SHOWN)", events.contains("TAB_SHOWN"))
         assertTrue("the session callback heard a navigation start", events.contains("NAVIGATION_STARTED"))
         assertTrue("the session callback heard the tab hide (TAB_HIDDEN)", events.contains("TAB_HIDDEN"))
@@ -274,7 +342,459 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         assertTrue("closing the dark custom tab returned to the caller", waitForWindow(callerPackage, 8_000))
         SystemClock.sleep(1_200)
         shot("22-closed-to-caller")
-        Log.i(tag, "caller hits: $callerHits; session events: $events")
+
+        // --- the toolbar's Share (CCT-17) and the greatest scroll percentage (CCT-14) ----------------
+
+        // 23. A caller that set no action button (and said nothing of share): Chrome's adaptive
+        //     Share fills the slot – the bar's own share glyph in the action button's box, named
+        //     Share, between the title and the menu button.
+        showCaller(customTabIntent(dark = false, actionButton = false, shareState = CustomTabsIntent.SHARE_STATE_DEFAULT))
+        openCustomTab()
+        val shareLight = awaitTrue(5_000) { toolbarShareButton() != null }
+        claim("scene 23: with no action button the toolbar's slot holds the Share button, named '$SHARE_BUTTON_LABEL' (light)", shareLight)
+        claim("scene 23: the caller's '$SAVE_LABEL' is not on the toolbar – it sent no button", findByLabel(SAVE_LABEL) == null)
+        Log.i(tag, "toolbar Share button at ${toolbarShareButton()}; close at ${findByLabel(CLOSE_LABEL)}; menu at ${findByLabel(MENU_LABEL)}")
+        shot("23-share-button-light")
+        beat()
+
+        // 24. Share under a finger: the system's share sheet comes up over the tab with the page's
+        //     title and URL (the same intent the menu's row sends); back dismisses it.
+        if (touchTapLabelExpecting(SHARE_BUTTON_LABEL, "the system share sheet is up over the tab", timeoutMs = 10_000) {
+                val top = topPackage()
+                top != null && top != app.packageName && top != callerPackage
+            }
+        ) {
+            Log.i(tag, "share sheet from ${topPackage()}")
+            SystemClock.sleep(1_500)
+            shot("24-share-sheet-light")
+            back()
+            assertTrue("back dismissed the share sheet into the tab", waitForWindow(app.packageName, 6_000))
+            SystemClock.sleep(1_000)
+        } else {
+            Log.w(tag, "the toolbar's Share did not open the share sheet under a finger")
+        }
+
+        // 24b. A long scroll down the story: the greatest scroll percentage the caller hears
+        //      steps by five and only grows (CCT-14); the page's own standing at the rest is the
+        //      step the last signal should have reached.
+        if (customTab() != null) {
+            val beforeLong = signals.size
+            repeat(LONG_SCROLL_DRAGS) {
+                scroll(-0.5f)
+                SystemClock.sleep(400)
+            }
+            SystemClock.sleep(1_200)
+            val standing = pageScrollStep()
+            val heard = signalsSince(beforeLong).filter { it.startsWith("PERCENT:") }.map { it.removePrefix("PERCENT:").toInt() }
+            Log.i(tag, "long scroll: the page stands at $standing %, the caller heard $heard (all signals since: ${signalsSince(beforeLong)})")
+            claim("scene 24b: the greatest scroll percentage reached the caller in steps of five, each above the last ($heard)", heard.isNotEmpty() && heard.all { it > 0 && it % 5 == 0 } && heard == heard.distinct().sorted())
+            // Within two steps: the story's images and formulas keep laying out under the drags,
+            // which moves the page's scrollable range a little between a signal and this reading.
+            claim("scene 24b: the last step heard is where the page stands at the rest (${heard.lastOrNull()} vs $standing)", heard.isNotEmpty() && standing >= 0 && abs(heard.last() - standing) <= 2 * CustomTabEngagement.STEP)
+            val beforeBackUp = signals.size
+            repeat(LONG_SCROLL_DRAGS) {
+                scroll(0.5f)
+                SystemClock.sleep(400)
+            }
+            claim("scene 24b: the way back up reports onVerticalScrollEvent(isDirectionUp=true) and no percentage – the greatest only grows", awaitSignal("SCROLL_UP", beforeBackUp) && signalsSince(beforeBackUp).none { it.startsWith("PERCENT:") })
+            SystemClock.sleep(1_000)
+        }
+        val beforeShareClose = signals.size
+        clickByLabel(CLOSE_LABEL)
+        assertTrue("closing the Share tab returned to the caller", waitForWindow(callerPackage, 8_000))
+        claim("scene 24: the Share tab's end reached the caller with the page touched – onSessionEnded(didUserInteract=true)", awaitSignal("ENDED:true", beforeShareClose))
+        SystemClock.sleep(1_200)
+
+        // 25. The dark tab the same way (SHARE_STATE_ON, no action button): the Share button in
+        //     the dark bar's ink. Nothing touches the page here, so its end says so.
+        showCaller(customTabIntent(dark = true, actionButton = false, shareState = CustomTabsIntent.SHARE_STATE_ON))
+        openCustomTab()
+        claim("scene 25: with no action button the dark toolbar's slot holds the Share button too", awaitTrue(5_000) { toolbarShareButton() != null })
+        shot("25-share-button-dark")
+        beat()
+        val beforeDarkClose = signals.size
+        clickByLabel(CLOSE_LABEL)
+        assertTrue("closing the dark Share tab returned to the caller", waitForWindow(callerPackage, 8_000))
+        claim("scene 25: a tab whose page was never touched ends with onSessionEnded(didUserInteract=false)", awaitSignal("ENDED:false", beforeDarkClose))
+        SystemClock.sleep(1_200)
+
+        // 26. SHARE_STATE_OFF with no action button: the slot stays empty and the menu has no Share row.
+        showCaller(customTabIntent(dark = false, actionButton = false, shareState = CustomTabsIntent.SHARE_STATE_OFF))
+        openCustomTab()
+        claim("scene 26: with SHARE_STATE_OFF the toolbar has no Share button (and no caller's button)", toolbarShareButton() == null && findByLabel(SAVE_LABEL) == null)
+        openMenu()
+        claim("scene 26: with SHARE_STATE_OFF the menu has no '$MENU_SHARE_LABEL' row (Copy Link stays)", findByLabel(MENU_SHARE_LABEL) == null && findByLabel(COPY_LINK_LABEL) != null)
+        shot("26-share-off-menu")
+        beat()
+        dismissSheet()
+        clickByLabel(CLOSE_LABEL)
+        assertTrue("closing the share-off tab returned to the caller", waitForWindow(callerPackage, 8_000))
+        SystemClock.sleep(1_200)
+        shot("27-closed-to-caller")
+
+        Log.i(tag, "caller hits: $callerHits; session events: $events; engagement signals: $signals")
+        assertTrue("the scenes' claims held (${sheetFaults.size} did not): $sheetFaults", sheetFaults.isEmpty())
+    }
+
+    // --- the permission prompt (W6-S11) ----------------------------------------------------------
+
+    /** The scenes' claims (the permission ask's, the Open in <App>? confirmation's, the no-handler fallback's) that did not hold; judged at the end of the run so the recording covers the rest. */
+    private val sheetFaults = ArrayList<String>()
+
+    private fun claim(what: String, holds: Boolean) {
+        Log.i(tag, "${if (holds) "PASS" else "FAIL"} $what")
+        if (!holds) sheetFaults += what
+    }
+
+    /**
+     * The page asks for its location – a "Use my location" button planted over it (the way the
+     * link is) under a finger – and the custom tab answers on §9.23's native sheet in the tab's
+     * scheme: "Allow en.m.wikipedia.org to know your location?" over Block | Allow. Its shape is
+     * read from the tree as #515's scene 6 read the app window's: the grip strip over the title,
+     * the title over the pair, Block leading and Allow trailing on one row, each at the chassis's
+     * 40 dp. A touch on the scrim over the page dismisses it: the page's request is refused (the
+     * geolocation error's `denied`) and nothing is remembered, so the next touch on the button
+     * asks again, and Allow under a finger answers that ask – the page's second promise settles
+     * with something other than `denied` (a fix, or the emulator's unavailable / timeout). The
+     * engine's own gate behind Allow, the app's location runtime permissions, is granted ahead so
+     * the answer is the sheet's alone and no system dialog stands in for it.
+     */
+    private fun askPermission(name: String) {
+        val page = customTab()?.page ?: run {
+            Log.w(tag, "no custom tab page to ask a permission from")
+            claim("a custom tab page to ask from ($name)", false)
+            return
+        }
+        shellCommand("pm grant ${app.packageName} android.permission.ACCESS_FINE_LOCATION")
+        shellCommand("pm grant ${app.packageName} android.permission.ACCESS_COARSE_LOCATION")
+        val host = (evalJs(page, "location.host") ?: "").removePrefix("www.")
+        val question = "Allow $host$PERMISSION_QUESTION_SUFFIX"
+        val button = plantLocateButton(page) ?: run {
+            Log.w(tag, "planting the location button returned nothing")
+            claim("the location button planted on the page ($name)", false)
+            return
+        }
+        val f = Finger()
+        f.tap(button.x, button.y)
+        val title = waitFor(question, 8_000)
+        SystemClock.sleep(1_200)
+        val grip = findByLabel(GRIP_LABEL)
+        val block = findByLabel(BLOCK_LABEL)
+        val allow = findByLabel(ALLOW_LABEL)
+        Log.i(tag, "$name: title '$question' ${if (title != null) "up at $title" else "not up"}; grip $grip; Block $block; Allow $allow; page answers ${geoAnswers(page)}")
+        claim("$name: the custom tab's prompt is the native sheet asking '$question' (the page's host in the question) with the grip strip over it (§9.23)", title != null && grip != null)
+        claim("$name: the grip strip stands over the title and the title over the pair", title != null && grip != null && block != null && grip.bottom <= title.top && title.bottom <= block.top)
+        claim(
+            "$name: §9.11's pair under the question, Block leading and Allow trailing on one row",
+            block != null && allow != null && block.right <= allow.left && abs(block.centerY() - allow.centerY()) < 4 * density
+        )
+        claim(
+            "$name: both peers stand at the chassis's ${CONTROL_DP} dp (Block ${block?.height()} px, Allow ${allow?.height()} px at density $density)",
+            block != null && allow != null && abs(block.height() - CONTROL_DP * density) <= 1.5f && abs(allow.height() - CONTROL_DP * density) <= 1.5f
+        )
+        if (title == null) {
+            touchFault("the touch on the page's '$LOCATE_LABEL' brought no prompt in 8 s (page answers ${geoAnswers(page)})")
+            return
+        }
+        shot(name)
+        beat()
+
+        // A touch on the scrim: the sheet leaves, the request is refused (`denied`), nothing is
+        // remembered – the page asks again on the next touch, so the sheet comes back.
+        val sheetTop = grip?.top ?: title.top
+        val scrim = PointF(width / 2f, (touchable.top + sheetTop) / 2f)
+        Log.i(tag, "$name: touch at ${scrim.x.toInt()},${scrim.y.toInt()} on the scrim over the page")
+        f.tap(scrim.x, scrim.y)
+        val scrimGone = awaitTrue(6_000) { findByLabel(question) == null }
+        val refused = awaitTrue(6_000) { geoAnswers(page) == listOf(DENIED) }
+        Log.i(tag, "$name: after the scrim: sheet ${if (scrimGone) "gone" else "still up"}; the page's answers ${geoAnswers(page)}")
+        claim("$name: a touch on the scrim dismisses the sheet and the page's request is refused ('$DENIED')", scrimGone && refused)
+        if (!scrimGone) touchFault("the touch on the scrim did not send the sheet away in 6 s")
+        f.tap(button.x, button.y)
+        val again = waitFor(question, 8_000) != null
+        claim("$name: the page may ask again after a dismissal – nothing was remembered", again)
+        if (!again) {
+            touchFault("the second touch on '$LOCATE_LABEL' brought no prompt in 8 s (page answers ${geoAnswers(page)})")
+            return
+        }
+        SystemClock.sleep(800)
+
+        // Allow under a finger: this ask is granted; the page's second promise settles with
+        // something other than `denied`.
+        val allowed = touchTapLabelExpecting(ALLOW_LABEL, "the page's second request is answered, not '$DENIED'", timeoutMs = 15_000) {
+            geoAnswers(page).let { it.size == 2 && it[1] != DENIED }
+        }
+        Log.i(tag, "$name: after Allow: the page's answers ${geoAnswers(page)}")
+        claim("$name: Allow under a finger grants the ask (the page's answers ${geoAnswers(page)})", allowed)
+        awaitTrue(4_000) { findByLabel(question) == null }
+        SystemClock.sleep(800)
+    }
+
+    /** What the page's location requests settled with so far, in order (`granted`, `denied`, `unavailable`, `timeout`). */
+    private fun geoAnswers(page: TabWebView): List<String> {
+        val text = evalJs(page, GEO_ANSWERS_JS) ?: return emptyList()
+        val array = runCatching { JSONArray(text) }.getOrNull() ?: return emptyList()
+        return List(array.length()) { array.getString(it) }
+    }
+
+    /** Plant the "Use my location" button over the page and return where it is on screen. */
+    private fun plantLocateButton(page: TabWebView): PointF? {
+        val text = evalJs(page, PLANT_LOCATE_JS) ?: return null
+        val origin = IntArray(2)
+        instrumentation.runOnMainSync { page.getLocationOnScreen(origin) }
+        val point = JSONObject(text)
+        return PointF(origin[0] + point.getDouble("x").toFloat(), origin[1] + point.getDouble("y").toFloat())
+    }
+
+    // --- the Open in <App>? confirmation (W6-S11) --------------------------------------------------
+
+    /**
+     * A `tel:` link planted over the page under a finger: the custom tab holds the navigation and
+     * asks on §9.23's native sheet in the tab's scheme, in the browser window's
+     * `ExternalProtocolSheet` form – "Open in Phone?" (the dialer's label; "Open in another app?"
+     * where the resolver stands in), the sentence "en.m.wikipedia.org wants to open a phone
+     * number" under it, the address decoded on its own line with the full URL as its accessible
+     * name, Not now | Open. Its shape is read from the tree as the permission scene reads its
+     * own: the grip strip over the title, the title over the sentence, the sentence over the
+     * address, the address over the pair, Not now leading and Open trailing on one row, each at
+     * the chassis's 40 dp. Open under a finger starts the dialer – the top window leaves the app –
+     * and the system back returns to the tab ([returnFromApp]: up to three, then the shell stops
+     * the dialer to uncover the tab's task). A second
+     * touch on the link asks again – nothing was remembered – and a touch on the scrim dismisses
+     * that ask: the request is refused, no app comes up and the tab stays on its page. On a
+     * device with no app answering to `tel:` the scene is skipped with a word in the log (the CI
+     * image has its dialer; SheetLeaveDemo's second sheet relies on the same).
+     */
+    private fun askOpenInApp(name: String) {
+        val page = customTab()?.page ?: run {
+            Log.w(tag, "no custom tab page to follow a tel: link from")
+            claim("a custom tab page to follow a link from ($name)", false)
+            return
+        }
+        val probe = Intent(Intent.ACTION_VIEW, Uri.parse(TEL_URL)).addCategory(Intent.CATEGORY_BROWSABLE)
+        val dialer = app.packageManager.resolveActivity(probe, PackageManager.MATCH_DEFAULT_ONLY)
+        if (dialer == null) {
+            Log.w(tag, "$name: no app on this device answers to tel:; the confirmation cannot be asked here")
+            return
+        }
+        val dialerPackage = dialer.activityInfo.packageName
+        val dialerLabel = dialer.takeIf { dialerPackage != "android" }?.loadLabel(app.packageManager)?.toString()?.ifEmpty { null }
+        val title = if (dialerLabel != null) "Open in $dialerLabel?" else "Open in another app?"
+        val host = (evalJs(page, "location.host") ?: "").removePrefix("www.")
+        val sentence = "$host$OPEN_SENTENCE_SUFFIX"
+        val pageUrl = evalJs(page, "location.href")
+        val link = plantTelLink(page) ?: run {
+            Log.w(tag, "planting the tel: link returned nothing")
+            claim("the tel: link planted on the page ($name)", false)
+            return
+        }
+        val f = Finger()
+        f.tap(link.x, link.y)
+        val titleRect = waitFor(title, 8_000)
+        SystemClock.sleep(1_200)
+        val grip = findByLabel(GRIP_LABEL)
+        val sentenceRect = findByLabel(sentence)
+        // The address line's accessible name is the URL the page handed over – the link's `tel:%2B…`
+        // as the engine canonicalised it (its escapes kept, or undone) – while its text reads decoded.
+        val addressNode = findNodeWhere { it.contentDescription?.toString()?.startsWith("tel:") == true }
+        val address = addressNode?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
+        val addressText = addressNode?.text?.toString()
+        val addressName = addressNode?.contentDescription?.toString()
+        val notNow = findByLabel(NOT_NOW_LABEL)
+        val open = findByLabel(OPEN_LABEL)
+        Log.i(tag, "$name: title '$title' ${if (titleRect != null) "up at $titleRect" else "not up"}; grip $grip; sentence '$sentence' $sentenceRect; address $address reading '$addressText' named '$addressName'; Not now $notNow; Open $open; top ${topPackage()}")
+        claim("$name: the custom tab's confirmation is the native sheet titled '$title' with the grip strip over it (§9.23)", titleRect != null && grip != null)
+        claim("$name: the browser sheet's sentence under the title: '$sentence'", sentenceRect != null)
+        claim(
+            "$name: the address on its own line reads the decoded address '$TEL_DISPLAY' (read '$addressText') and carries the full URL as its accessible name (named '$addressName')",
+            addressNode != null && addressText == TEL_DISPLAY && (addressName == TEL_URL || addressName == TEL_DISPLAY)
+        )
+        claim(
+            "$name: the grip strip over the title, the title over the sentence, the sentence over the address, the address over the pair",
+            titleRect != null && grip != null && sentenceRect != null && address != null && notNow != null &&
+                grip.bottom <= titleRect.top && titleRect.bottom <= sentenceRect.top && sentenceRect.bottom <= address.top && address.bottom <= notNow.top
+        )
+        claim(
+            "$name: §9.11's pair under the address, Not now leading and Open trailing on one row",
+            notNow != null && open != null && notNow.right <= open.left && abs(notNow.centerY() - open.centerY()) < 4 * density
+        )
+        claim(
+            "$name: both peers stand at the chassis's ${CONTROL_DP} dp (Not now ${notNow?.height()} px, Open ${open?.height()} px at density $density)",
+            notNow != null && open != null && abs(notNow.height() - CONTROL_DP * density) <= 1.5f && abs(open.height() - CONTROL_DP * density) <= 1.5f
+        )
+        if (titleRect == null) {
+            touchFault("the touch on the page's tel: link brought no confirmation in 8 s (top ${topPackage()})")
+            return
+        }
+        shot(name)
+        beat()
+
+        // Open under a finger: the dialer comes up over the tab, with the number.
+        val opened = touchTapLabelExpecting(OPEN_LABEL, "the dialer ($dialerPackage) comes up", timeoutMs = 10_000) { topPackage() == dialerPackage }
+        Log.i(tag, "$name: after Open: top ${topPackage()}")
+        claim("$name: Open under a finger hands the address to the dialer (top ${topPackage()})", opened)
+        if (opened) {
+            SystemClock.sleep(1_500)
+            returnFromApp(dialerPackage)
+        }
+        val backOnPage = awaitTrue(8_000) { customTab() != null }
+        claim("$name: the tab is back in front after the dialer (top ${topPackage()})", backOnPage)
+        if (!backOnPage) return
+        SystemClock.sleep(1_000)
+
+        // The link again: nothing was remembered, so the confirmation is asked again; a touch on
+        // the scrim refuses it – no app comes up and the tab keeps its page.
+        f.tap(link.x, link.y)
+        val againRect = waitFor(title, 8_000)
+        claim("$name: the tab asks again on the next touch – nothing was remembered", againRect != null)
+        if (againRect == null) {
+            touchFault("the second touch on the tel: link brought no confirmation in 8 s (top ${topPackage()})")
+            return
+        }
+        SystemClock.sleep(800)
+        val sheetTop = findByLabel(GRIP_LABEL)?.top ?: againRect.top
+        val scrim = PointF(width / 2f, (touchable.top + sheetTop) / 2f)
+        Log.i(tag, "$name: touch at ${scrim.x.toInt()},${scrim.y.toInt()} on the scrim over the page")
+        f.tap(scrim.x, scrim.y)
+        val scrimGone = awaitTrue(6_000) { findByLabel(title) == null }
+        SystemClock.sleep(1_500)
+        val stayed = topPackage() == app.packageName && customTab()?.page?.let { evalJs(it, "location.href") } == pageUrl
+        Log.i(tag, "$name: after the scrim: sheet ${if (scrimGone) "gone" else "still up"}; top ${topPackage()}; page ${customTab()?.page?.let { evalJs(it, "location.href") }}")
+        claim("$name: a touch on the scrim dismisses the confirmation: the request is refused, no app comes up and the tab keeps its page", scrimGone && stayed)
+        if (!scrimGone) touchFault("the touch on the scrim did not send the confirmation away in 6 s")
+    }
+
+    /**
+     * Back to the tab from the app a link opened: the system back, up to three times – the
+     * Google dialer takes one for the dialpad it opened on the number and one more for its
+     * screen (run 1 sent one and waited) – and, with the app still in front, the shell stops it
+     * (`am force-stop`) so the task under it is in front again: the CALLER's task, which the
+     * custom tab lands in, so `AppTask.moveToFront` is not open to the tab (the app's own tasks
+     * do not list it; the picture-in-picture restore's move is the browser window's, whose task
+     * is the app's).
+     */
+    private fun returnFromApp(packageName: String) {
+        for (attempt in 1..3) {
+            back()
+            if (waitForWindow(app.packageName, 3_000)) return
+            Log.w(tag, "back $attempt did not return the tab from $packageName")
+        }
+        Log.w(tag, "stopping $packageName from the shell to uncover the tab's task")
+        shellCommand("am force-stop $packageName")
+        waitForWindow(app.packageName, 8_000)
+    }
+
+    /** Plant the tel: link over the page and return where it is on screen. */
+    private fun plantTelLink(page: TabWebView): PointF? {
+        val text = evalJs(page, PLANT_TEL_JS) ?: return null
+        val origin = IntArray(2)
+        instrumentation.runOnMainSync { page.getLocationOnScreen(origin) }
+        val point = JSONObject(text)
+        return PointF(origin[0] + point.getDouble("x").toFloat(), origin[1] + point.getDouble("y").toFloat())
+    }
+
+    // --- a link no app can open (W6-D2) ------------------------------------------------------------
+
+    /**
+     * An `intent://` link no app can open, followed under a finger: the custom tab has no app to
+     * ask about, so it asks nothing and REFUSES the request – nothing started – then runs the
+     * deliberate fallback in the browser window's order (services' ruling on #538's divergence;
+     * `ExternalProtocols.refuseWithFallback`). The first link names a package the device does
+     * not have and carries `S.browser_fallback_url`: that page – this driver's loopback server's –
+     * loads IN THE TAB, read from the page's own `location.href`, with no sheet up and no window
+     * over the app. The second link, planted on that page, names the package and no fallback:
+     * the store listing (`market://details?id=`) is attempted – the store comes up where the
+     * device has one, and where it has none (the CI image) the toast says no app can open the
+     * link (read off the accessibility stream, where the system announces its toasts) – and the
+     * tab keeps its page either way. Then back returns the tab to the story for the scenes that
+     * follow.
+     */
+    private fun followLinkNoAppCanOpen(name: String) {
+        val page = customTab()?.page ?: run {
+            Log.w(tag, "no custom tab page to follow an intent: link from")
+            claim("a custom tab page to follow a link no app can open from ($name)", false)
+            return
+        }
+        val fallbackUrl = "${server.origin}$FALLBACK_PATH"
+        val pageUrl = evalJs(page, "location.href")
+        val withFallback = "intent://fallback/#Intent;scheme=https;package=$ABSENT_PACKAGE;S.browser_fallback_url=${Uri.encode(fallbackUrl)};end"
+        val link = plantLinkAt(page, withFallback, "Open the story in the app", 0.25f) ?: run {
+            Log.w(tag, "planting the intent: link with a web fallback returned nothing")
+            claim("the intent: link with a web fallback planted on the page ($name)", false)
+            return
+        }
+        Log.i(tag, "$name: a finger on the intent: link with a web fallback ($withFallback) on $pageUrl; server ${server.selfCheck()}")
+        val f = Finger()
+        f.tap(link.x, link.y)
+        val landed = awaitTrue(10_000) { customTab()?.page?.let { evalJs(it, PAGE_HREF_STATE_JS) } == "$fallbackUrl:complete" }
+        val sheetUp = findByLabel(OPEN_IN_ANOTHER_APP_LABEL) != null || findByLabel(NOT_NOW_LABEL) != null
+        val top = topPackage()
+        Log.i(tag, "$name: after the touch: page ${customTab()?.page?.let { evalJs(it, PAGE_HREF_STATE_JS) }}; sheet ${if (sheetUp) "up" else "none"}; top $top")
+        claim("$name: the intent's browser_fallback_url loads in the tab – the tab's URL is $fallbackUrl", landed)
+        claim("$name: nothing was asked and nothing else started – no sheet, the tab in front (top $top)", !sheetUp && top == app.packageName)
+        SystemClock.sleep(800)
+        shot(name)
+        beat()
+        if (!landed) {
+            touchFault("the touch on the intent: link with a web fallback did not load the fallback page in 10 s (top ${topPackage()})")
+            return
+        }
+
+        // The second link: the package and no web fallback – its store listing, or the word.
+        val fallbackPage = customTab()?.page ?: return
+        val storeUri = (ExternalProtocols.Fallback.of(null, ABSENT_PACKAGE) as ExternalProtocols.Fallback.StoreListing).uri
+        val store = app.packageManager.resolveActivity(Intent(Intent.ACTION_VIEW, Uri.parse(storeUri)), PackageManager.MATCH_DEFAULT_ONLY)
+            ?.activityInfo?.packageName?.takeIf { it != "android" }
+        val announced = Collections.synchronizedList(ArrayList<String>())
+        ui.setOnAccessibilityEventListener { event ->
+            if (event.eventType == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) announced += event.text.joinToString(" ")
+        }
+        val storeOnly = "intent://store/#Intent;scheme=https;package=$ABSENT_PACKAGE;end"
+        val second = plantLinkAt(fallbackPage, storeOnly, "Get the app", 0.4f) ?: run {
+            ui.setOnAccessibilityEventListener(null)
+            claim("the intent: link without a web fallback planted on the fallback page ($name)", false)
+            return
+        }
+        Log.i(tag, "$name: a finger on the intent: link without a web fallback ($storeOnly); the store for $storeUri: ${store ?: "none on this device"}")
+        f.tap(second.x, second.y)
+        if (store != null) {
+            val cameUp = awaitTrue(8_000) { topPackage() == store }
+            claim("$name: with no web fallback the store listing is attempted – $store comes up (top ${topPackage()})", cameUp)
+            if (cameUp) {
+                SystemClock.sleep(1_200)
+                shot("$name-store")
+                returnFromApp(store)
+            }
+        } else {
+            val worded = awaitTrue(6_000) {
+                synchronized(announced) { announced.any { it.contains(ExternalProtocols.NO_APP_TOAST) } } ||
+                    findInWindows(null) { it == ExternalProtocols.NO_APP_TOAST } != null
+            }
+            SystemClock.sleep(300)
+            shot("$name-toast")
+            claim("$name: with no web fallback and no store on this device the word is the toast '${ExternalProtocols.NO_APP_TOAST}' (announced: ${synchronized(announced) { announced.toList() }})", worded)
+        }
+        ui.setOnAccessibilityEventListener(null)
+        val backOnPage = awaitTrue(8_000) { customTab() != null }
+        val kept = customTab()?.page?.let { evalJs(it, "location.href") } == fallbackUrl
+        val sheetAfter = findByLabel(OPEN_IN_ANOTHER_APP_LABEL) != null || findByLabel(NOT_NOW_LABEL) != null
+        Log.i(tag, "$name: after the second touch: tab in front $backOnPage; page kept $kept; sheet ${if (sheetAfter) "up" else "none"}; top ${topPackage()}")
+        claim("$name: the tab keeps its page and asks nothing (page kept $kept, sheet ${if (sheetAfter) "up" else "none"})", backOnPage && kept && !sheetAfter)
+        beat()
+
+        // Back to the story for the scenes that follow (the fallback page is one step of history).
+        back()
+        waitForPage("wikipedia.org")
+        SystemClock.sleep(1_000)
+    }
+
+    /** Plant a tall link with `href` over the page at `top` of its viewport and return where it is on screen. */
+    private fun plantLinkAt(page: TabWebView, href: String, label: String, top: Float): PointF? {
+        val text = evalJs(page, plantLinkJs(href, label, top)) ?: return null
+        val origin = IntArray(2)
+        instrumentation.runOnMainSync { page.getLocationOnScreen(origin) }
+        val point = JSONObject(text)
+        return PointF(origin[0] + point.getDouble("x").toFloat(), origin[1] + point.getDouble("y").toFloat())
     }
 
     // --- the depth's moves -----------------------------------------------------------------------
@@ -568,6 +1088,59 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         }) ?: error("newSession returned null")
         session = s
         Log.i(tag, "mayLaunchUrl: ${s.mayLaunchUrl(Uri.parse(STORY_URL), null, null)}")
+
+        // CCT-14: the client asks whether the provider signals engagement and sets its callback
+        // on the session (androidx.browser 1.8.0's `EngagementSignalsCallback`), as Chrome's
+        // clients do; both answers are the provider's word and are asserted here.
+        val available = s.isEngagementSignalsApiAvailable(Bundle())
+        Log.i(tag, "isEngagementSignalsApiAvailable: $available")
+        assertTrue("the provider offers the engagement signals API", available)
+        val set = s.setEngagementSignalsCallback(object : EngagementSignalsCallback {
+            override fun onVerticalScrollEvent(isDirectionUp: Boolean, extras: Bundle) {
+                signals.add(if (isDirectionUp) "SCROLL_UP" else "SCROLL_DOWN")
+                Log.i(tag, "engagement: onVerticalScrollEvent(isDirectionUp=$isDirectionUp)")
+            }
+
+            override fun onGreatestScrollPercentageIncreased(percentage: Int, extras: Bundle) {
+                signals.add("PERCENT:$percentage")
+                Log.i(tag, "engagement: onGreatestScrollPercentageIncreased($percentage)")
+            }
+
+            override fun onSessionEnded(didUserInteract: Boolean, extras: Bundle) {
+                signals.add("ENDED:$didUserInteract")
+                Log.i(tag, "engagement: onSessionEnded(didUserInteract=$didUserInteract)")
+            }
+        }, Bundle())
+        assertTrue("setEngagementSignalsCallback took on the session", set)
+    }
+
+    /** The signals heard since `since` entries were in the list (a scene's own). */
+    private fun signalsSince(since: Int): List<String> = synchronized(signals) { signals.drop(since) }
+
+    /** Whether a signal reading `signal` arrives past the first `since` entries within `timeoutMs`. */
+    private fun awaitSignal(signal: String, since: Int, timeoutMs: Long = 5_000): Boolean =
+        awaitTrue(timeoutMs) { signalsSince(since).contains(signal) }
+
+    /**
+     * The toolbar's Share button (CCT-17), if the bar has one: the `ImageButton` named `Share` –
+     * a control's word, which nothing in the page's own tree carries as an image button.
+     */
+    private fun toolbarShareButton(): Rect? = findNodeWhere { node ->
+        node.contentDescription?.toString() == SHARE_BUTTON_LABEL && node.className?.toString() == IMAGE_BUTTON_CLASS
+    }?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
+
+    /**
+     * Chrome's step for where the page stands now – its offset over what it can scroll, rounded
+     * down to a multiple of five ([CustomTabEngagement.percentageStep]) – read off the tab's page
+     * on the main thread; -1 without a page.
+     */
+    private fun pageScrollStep(): Int {
+        var step = -1
+        instrumentation.runOnMainSync {
+            val page = customTabOnMain(Stage.RESUMED)?.page ?: return@runOnMainSync
+            step = CustomTabEngagement.percentageStep(page.scrollY, page.scrollY + page.scrollRemaining())
+        }
+        return step
     }
 
     /**
@@ -656,18 +1229,26 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
      * PendingIntent that hears them all with the clicked id), the dark tab two custom toolbar
      * items instead (`addToolbarItem`: an icon, a description and an intent each, ids other than
      * the top bar's), and both the swipe-up gesture's intent (`setSecondaryToolbarSwipeUpGesture`).
+     *
+     * Without `actionButton`, a caller that set none (CCT-17: the provider's Share takes the
+     * slot unless `shareState` is `SHARE_STATE_OFF`); the menu items stay.
      */
-    private fun customTabIntent(dark: Boolean, depth: Boolean = false): Intent {
+    private fun customTabIntent(
+        dark: Boolean,
+        depth: Boolean = false,
+        actionButton: Boolean = true,
+        shareState: Int = CustomTabsIntent.SHARE_STATE_ON
+    ): Intent {
         val s = session ?: error("no session")
         val save = callerAction(ACTION_SAVE, 1)
         val builder = CustomTabsIntent.Builder(s)
             .setShowTitle(true)
             .setUrlBarHidingEnabled(true)
-            .setShareState(CustomTabsIntent.SHARE_STATE_ON)
-            .setActionButton(bookmarkIcon(), SAVE_LABEL, save, true)
+            .setShareState(shareState)
             .addMenuItem(SAVE_LABEL, save)
             .addMenuItem("Open in Nimbus News", callerAction(ACTION_OPEN_IN_APP, 2))
             .setExitAnimations(app, android.R.anim.fade_in, android.R.anim.slide_out_right)
+        if (actionButton) builder.setActionButton(bookmarkIcon(), SAVE_LABEL, save, true)
         if (depth) {
             if (dark) {
                 @Suppress("DEPRECATION")
@@ -938,11 +1519,130 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         /** SystemUI's picture-in-picture menu control that returns the window to full size. */
         private const val PIP_EXPAND_LABEL = "Expand"
         private const val OPEN_IN_ZENIUM_LABEL = "Open in Zenium"
+        /** The toolbar's Share button (strings.xml cct_share_button, CCT-17) and the menu's row (cct_share). */
+        private const val SHARE_BUTTON_LABEL = "Share"
+        private const val MENU_SHARE_LABEL = "Share…"
+        private const val COPY_LINK_LABEL = "Copy Link"
+        /** The class the toolbar's icon buttons report (CustomTabToolbar.iconButton); the page's tree has no image buttons. */
+        private const val IMAGE_BUTTON_CLASS = "android.widget.ImageButton"
+        /** Half-window drags down the story for the greatest scroll percentage (CCT-14), and back up. */
+        private const val LONG_SCROLL_DRAGS = 4
         private const val FIND_LABEL = "Find in Page"
         private const val FIND_CLOSE_LABEL = "Close find bar"
         private const val FIND_QUERY = "damping"
+        /** The planted button the page asks for its location from. */
+        private const val LOCATE_LABEL = "Use my location"
+        /** strings.xml cct_permission_question_location after its `%1$s`, the page's host. */
+        private const val PERMISSION_QUESTION_SUFFIX = " to know your location?"
+        /** §9.11's pair under the question (`cct_block`, `cct_allow`), and the chassis's grip (`prompt_sheet_dismiss`). */
+        private const val BLOCK_LABEL = "Block"
+        private const val ALLOW_LABEL = "Allow"
+        private const val GRIP_LABEL = "Dismiss"
+        /** The chassis's control height (PromptSheetSpec.CONTROL_DP), the pair's. */
+        private const val CONTROL_DP = PromptSheetSpec.CONTROL_DP
+        /** The geolocation error's PERMISSION_DENIED, as the planted script records it. */
+        private const val DENIED = "denied"
+        /** The planted link's address, its `+` escaped so the sheet's line shows the decode; and as the line reads it. */
+        private const val TEL_URL = "tel:%2B15551234567"
+        private const val TEL_DISPLAY = "tel:+15551234567"
+        /** strings.xml cct_open_wants after its `%1$s` (the page's host), with cct_open_object_tel's words. */
+        private const val OPEN_SENTENCE_SUFFIX = " wants to open a phone number"
+        /** §9.11's pair under the confirmation (`cct_not_now`, `cct_open`). */
+        private const val NOT_NOW_LABEL = "Not now"
+        private const val OPEN_LABEL = "Open"
+        /** strings.xml cct_open_in_another_app: the title a link with an unseen handler is asked under – never up for one with none (W6-D2). */
+        private const val OPEN_IN_ANOTHER_APP_LABEL = "Open in another app?"
+        /** The loopback server the `intent://` link's `S.browser_fallback_url` names (W6-D2), and the page on it. */
+        private const val NO_HANDLER_PORT = 8149
+        private const val FALLBACK_PATH = "/fallback.html"
+        /** A package no device has: the `intent://` links name it, so no app answers and the host's word is `none`. */
+        private const val ABSENT_PACKAGE = "io.github.benitbuhner.zenium.demo.absent"
 
         private const val PAGE_STATE_JS = "location.host + ':' + document.readyState"
+        private const val PAGE_HREF_STATE_JS = "location.href + ':' + document.readyState"
+        private const val GEO_ANSWERS_JS = "JSON.stringify(window.__zeniumGeo || [])"
+
+        /**
+         * One tall button over the page that asks for the location on a click, recording how each
+         * request settled in `window.__zeniumGeo`; its centre in device pixels relative to the
+         * WebView. The request's own timeout bounds the wait for a fix once it is granted (the
+         * time under the prompt does not count against it).
+         */
+        private val PLANT_LOCATE_JS = """
+            (function () {
+              var b = document.createElement('button');
+              b.textContent = 'Use my location';
+              b.style.cssText = 'position:fixed;left:16px;right:16px;top:55%;display:block;padding:22px 18px;border:0;' +
+                'border-radius:14px;background:#2e5bff;color:#fff;z-index:2147483647;' +
+                'font:600 18px/1.3 system-ui,sans-serif;box-shadow:0 2px 10px rgba(0,0,0,.14)';
+              window.__zeniumGeo = [];
+              b.addEventListener('click', function () {
+                navigator.geolocation.getCurrentPosition(
+                  function () { window.__zeniumGeo.push('granted'); },
+                  function (e) {
+                    window.__zeniumGeo.push(e.code === 1 ? 'denied' : e.code === 2 ? 'unavailable' : e.code === 3 ? 'timeout' : 'error:' + e.code);
+                  },
+                  { timeout: 5000, maximumAge: 0 });
+              });
+              document.body.appendChild(b);
+              var vv = window.visualViewport;
+              var scale = (vv ? vv.scale : 1) * (window.devicePixelRatio || 1);
+              var r = b.getBoundingClientRect();
+              return JSON.stringify({
+                x: (r.left + r.width / 2 - (vv ? vv.offsetLeft : 0)) * scale,
+                y: (r.top + r.height / 2 - (vv ? vv.offsetTop : 0)) * scale
+              });
+            })()
+        """.trimIndent()
+
+        /**
+         * One tall `tel:` link over the page, below the location button, for the Open in <App>?
+         * confirmation; its centre in device pixels relative to the WebView.
+         */
+        private val PLANT_TEL_JS = """
+            (function () {
+              var a = document.createElement('a');
+              a.href = '$TEL_URL';
+              a.textContent = 'Call the newsroom';
+              a.style.cssText = 'position:fixed;left:16px;right:16px;top:70%;display:block;padding:22px 18px;text-align:center;' +
+                'border-radius:14px;background:#fff;color:#1d1d2c;text-decoration:none;z-index:2147483647;' +
+                'font:600 18px/1.3 system-ui,sans-serif;box-shadow:0 2px 10px rgba(0,0,0,.14)';
+              document.body.appendChild(a);
+              var vv = window.visualViewport;
+              var scale = (vv ? vv.scale : 1) * (window.devicePixelRatio || 1);
+              var r = a.getBoundingClientRect();
+              return JSON.stringify({
+                x: (r.left + r.width / 2 - (vv ? vv.offsetLeft : 0)) * scale,
+                y: (r.top + r.height / 2 - (vv ? vv.offsetTop : 0)) * scale
+              });
+            })()
+        """.trimIndent()
+
+        /**
+         * One tall link with `href` over the page at `top` of the viewport (the W6-D2 scene's
+         * `intent://` links); its centre in device pixels relative to the WebView.
+         */
+        private fun plantLinkJs(href: String, label: String, top: Float): String {
+            fun js(s: String) = s.replace("\\", "\\\\").replace("'", "\\'")
+            return """
+                (function () {
+                  var a = document.createElement('a');
+                  a.href = '${js(href)}';
+                  a.textContent = '${js(label)}';
+                  a.style.cssText = 'position:fixed;left:16px;right:16px;top:${(top * 100).toInt()}%;display:block;padding:22px 18px;text-align:center;' +
+                    'border-radius:14px;background:#fff;color:#1d1d2c;text-decoration:none;z-index:2147483647;' +
+                    'font:600 18px/1.3 system-ui,sans-serif;box-shadow:0 2px 10px rgba(0,0,0,.14)';
+                  document.body.appendChild(a);
+                  var vv = window.visualViewport;
+                  var scale = (vv ? vv.scale : 1) * (window.devicePixelRatio || 1);
+                  var r = a.getBoundingClientRect();
+                  return JSON.stringify({
+                    x: (r.left + r.width / 2 - (vv ? vv.offsetLeft : 0)) * scale,
+                    y: (r.top + r.height / 2 - (vv ? vv.offsetTop : 0)) * scale
+                  });
+                })()
+            """.trimIndent()
+        }
 
         /** One tall link over the page; its centre in device pixels relative to the WebView. */
         private val PLANT_LINK_JS = """

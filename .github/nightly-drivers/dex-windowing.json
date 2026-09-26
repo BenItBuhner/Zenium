@@ -1,0 +1,16 @@
+{
+  "id": "dex-windowing",
+  "order": 115,
+  "class": "DexWindowingDemo",
+  "shard": "tablet",
+  "mirrors": "android-dex-windowing-demo.yml",
+  "dir": "dex-windowing-demo",
+  "env": {
+    "DEMO_THEME": "light",
+    "DEMO_DISPLAY": "1600x1000@160",
+    "DEMO_INSTRUMENT_FLAGS": "--no-hidden-api-checks"
+  },
+  "timeout": 900,
+  "estimate": 10,
+  "note": "Desktop windowing / Samsung DeX (OS-12) on the tablet image laid out as a 1600 x 1000 desktop: the browser in a freeform window (the driver turns enable_freeform_support and force_resizable_activities on for the run and puts both back after), the live resize across the 600 px threshold with the chrome's frame probe, hover by a mouse then a finger, right-click menus, Ctrl+wheel zoom, Ctrl+T / W / L / Tab, a density change. The hover acts run with UiAutomation disconnected (a hidden method, hence --no-hidden-api-checks) and with no accessibility service held open (runMouseDemo(), the harness's named way without the hold), because a WebView hands a mouse's hover to accessibility exploration while any service is enabled. The workflow's light job measured 8 min (run 36204077567) before the held-width stills joined it; the nightly runs the light scheme."
+}

@@ -6,6 +6,7 @@ import {
   type ShareFile,
   type ShareOutcome
 } from '../shared/share'
+import { copyConfirmation } from '../shared/clipboard'
 import { newId } from '../shared/ids'
 import { displayHost } from '../shared/url'
 import type { Browser } from './browser'
@@ -33,6 +34,21 @@ export function shareClipboardText(request: Pick<ShareRequest, 'title' | 'text' 
   if (request.url) return request.url
   if (request.text) return request.text
   return request.title
+}
+
+/**
+ * The one picture a share carries, when that is all it carries: a single image file with its
+ * bytes and no link or text beside it – a capture's Share, a page's
+ * `navigator.share({ files: [png] })`. The sheet's Copy puts it on the clipboard as an image
+ * then, not the share's words (the chrome's `sharedImage` names the row the same way).
+ */
+export function shareImage(
+  request: Pick<ShareRequest, 'url' | 'text'>,
+  files: readonly ShareFile[]
+): ShareFile | null {
+  if (request.url || request.text || files.length !== 1) return null
+  const [file] = files
+  return file.data !== undefined && /^image\//i.test(file.type) ? file : null
 }
 
 /** A `mailto:` carrying the share (Chrome's "Mail" target on the desktop sheet). */
@@ -144,8 +160,13 @@ export class ShareService {
     return true
   }
 
-  /** The browser's own share (a Share… menu item, the toolbar). */
+  /**
+   * The browser's own share (a Share… menu item, the toolbar; a capture's Share with the
+   * picture as its one file). Files with bytes are the sheet's to copy, save or hand on; a
+   * file the host holds by address only (`uri`) is Android's and never reaches this sheet.
+   */
   open(payload: SharePayload, win: ZenWindow): ShareRequest {
+    const files = (payload.files ?? []).filter((f) => f.data !== undefined)
     return this.add(
       {
         tabId: payload.tabId ?? null,
@@ -154,10 +175,10 @@ export class ShareService {
         title: payload.title ?? '',
         text: payload.text ?? '',
         url: payload.url ?? '',
-        files: [],
+        files: files.map(shareFileInfo),
         imageUrl: payload.imageUrl ?? null
       },
-      [],
+      files,
       null
     )
   }
@@ -192,6 +213,11 @@ export class ShareService {
     try {
       switch (answer) {
         case 'copy': {
+          const image = shareImage(request, entry.files)
+          if (image) {
+            await this.copyImage(image, win)
+            break
+          }
           const text = shareClipboardText(request)
           if (text) this.browser.copyText(text, request.url ? 'Link copied' : 'Copied', win)
           break
@@ -223,19 +249,52 @@ export class ShareService {
     this.finish(entry, outcome)
   }
 
+  /**
+   * A shared picture onto the clipboard as an image (a capture's Share › Copy image): the
+   * image context menu's path on both hosts, with its confirmation – the desktop's toast too,
+   * since the sheet has left by then and nothing else says the copy happened.
+   */
+  private async copyImage(image: ShareFile, win: ZenWindow): Promise<void> {
+    const ok = await this.browser.platform.clipboard.writeImageFromUrl(
+      `data:${image.type};base64,${image.data}`
+    )
+    if (!ok) throw new Error('the picture could not be copied')
+    const toast = copyConfirmation(
+      this.browser.state.platform,
+      this.browser.state.capabilities,
+      'Image copied',
+      'Image copied'
+    )
+    if (toast) this.browser.toast(toast, 'info', win)
+  }
+
+  /**
+   * Shared files into the downloads folder, each listed as a finished download – the bubble
+   * and the Downloads page show where it went, with Show in folder, as they do a capture the
+   * card saved itself (capture-22). The host is handed the files with bytes alone – the same
+   * set the paths are paired with, so a file held by address only (`uri`, Android's) can never
+   * shift a path onto the wrong file – writes them in the order given and answers with their
+   * paths in that order. The toast is the capture card's own for the same act (§9.33, pr-543
+   * F6): the destination named, not the file – "Saved to Downloads", the folder's own name
+   * where the user moved it.
+   */
   private async save(entry: Pending, win: ZenWindow): Promise<void> {
     const { request } = entry
     if (entry.files.length > 0) {
       const host = this.browser.platform.shareSheet
       if (!host) throw new Error('this device cannot save shared files')
-      const paths = await host.saveFiles(entry.files)
-      const n = paths.length
-      if (n > 0)
-        this.browser.toast(
-          n === 1 ? 'File saved to Downloads' : `${n} files saved to Downloads`,
-          'info',
-          win
-        )
+      const written = entry.files.filter((f) => f.data !== undefined)
+      const paths = await host.saveFiles(written)
+      const tab = request.tabId ? this.browser.tabs.tab(request.tabId) : undefined
+      paths.forEach((path, i) => {
+        const file = written[i]
+        this.browser.downloads.addCompleted(path, file?.type ?? '', {
+          containerId: tab?.containerId,
+          private: win.isPrivate,
+          size: file?.size
+        })
+      })
+      if (paths.length > 0) this.browser.toast(savedToast(paths), 'info', win)
       return
     }
     if (request.imageUrl && request.tabId) {
@@ -268,4 +327,21 @@ export class ShareService {
     }
     this.browser.state.commitVolatile()
   }
+}
+
+/**
+ * What the toast says of files the hub saved: the destination, not the file – the folder the
+ * paths landed in by its own name, "Downloads" where the path gives none (§9.33); several files
+ * are counted. The capture card's Save says the same of the same folder (`folderNameOf` in the
+ * renderer's `lib/captureOverlay.ts` reads a path the same way).
+ */
+export function savedToast(paths: readonly string[]): string {
+  const folder = folderNameOf(paths[0] ?? '') || 'Downloads'
+  return paths.length === 1 ? `Saved to ${folder}` : `${paths.length} files saved to ${folder}`
+}
+
+/** The last segment of a file path's parent, in either separator; '' for a bare name. */
+function folderNameOf(path: string): string {
+  const parts = path.split(/[\\/]+/).filter(Boolean)
+  return parts.length > 1 ? parts[parts.length - 2] : ''
 }

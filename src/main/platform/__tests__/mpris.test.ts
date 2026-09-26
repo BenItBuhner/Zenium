@@ -21,6 +21,8 @@ const SESSION: MediaSessionInfo = {
   actions: ['play', 'pause', 'seekto', 'nexttrack'],
   fullscreen: false,
   private: false,
+  backgroundVideo: false,
+  autoPictureInPicture: true,
   source: 'page'
 }
 const TAB = {

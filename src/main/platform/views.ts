@@ -1,5 +1,7 @@
 import {
+  BaseWindow,
   ClipboardItem,
+  View,
   WebContentsView,
   app,
   clipboard,
@@ -13,6 +15,7 @@ import {
   type LoadURLOptions,
   type Session,
   type WebContents,
+  type WebFrameMain,
   type WebPreferences
 } from 'electron'
 import { join } from 'node:path'
@@ -41,6 +44,7 @@ import {
   pageBoundsFromConsoleMessage
 } from './devtoolsFrontend'
 import { relayDevtoolsQuitChord } from './devtoolsKeys'
+import { DevtoolsQuitHoldNotice, devtoolsQuitHoldNotice } from './devtoolsQuitHoldNotice'
 import { isDockedInFrame } from '../../shared/devtoolsDock'
 import { refusedFromDocument } from '../../shared/internalPages'
 import { PAGE_HOST_CHANNEL } from '../../shared/pageScript'
@@ -78,6 +82,10 @@ import { defer } from '../../core/platform'
 import { standinScale } from '../../shared/pageStandin'
 import { clientSide, imageDimensions, type PageViewport } from '../../shared/capture'
 import { hasForeignDebuggerOwner, recycleDebugger } from './pageDebugger'
+import { imagePostLoadOptions, imageResourceFrames, type ResourceFrameTree } from './imagePost'
+import type { ImagePost, ImageResource } from '../../shared/imageUpload'
+import { IMAGE_THUMBNAIL_WORLD_ID } from '../../shared/privateWorld'
+import { PrivateWorldRelay } from './privateWorld'
 import { HangMonitor } from './hangMonitor'
 import { SiteCertificates } from './siteCertificates'
 import { awaitFirstPaint, hasPainted } from './firstPaint'
@@ -96,6 +104,7 @@ import type {
   InputModifier,
   InsertedCssOrigin,
   KeyEventInput,
+  NavigationCommitDetails,
   NavigationIntent,
   PageFlags,
   PageHostMessage,
@@ -108,8 +117,10 @@ import type {
   WindowOpenTicket
 } from '../../core/platform'
 import type { SessionManager } from './sessions'
+import { requestDetails, type ContentRulesLookup } from './contentRules'
 import { downloadDir } from './downloads'
 import { savePageDialogOptions, savePageTarget } from './savePage'
+import { StartupHold } from './startupHold'
 import { uniquePath } from './uniquePath'
 import { frameById, frameIdOf } from './extensionApi/frames'
 import type { ElectronWindow } from './window'
@@ -151,6 +162,20 @@ const SNAPSHOT_MAX_PIXELS = 6_200_000
 const SNAPSHOT_TARGET_PIXELS = 3_700_000
 /** The stand-in's JPEG quality (`snapshot`: the numbers behind it). */
 const SNAPSHOT_JPEG_QUALITY = 90
+
+/**
+ * The window corners a parked view can keep its pixel in (`park`): 0 the window's bottom-right
+ * (the box's top-left pixel inside), 1 bottom-left (the box's top-right pixel), 2 top-right (its
+ * bottom-left), 3 top-left (its bottom-right). Each parked view of a window takes its own, so no
+ * view's pixel sits under another's – a view whose whole inside lies under another view is
+ * OCCLUDED to Chromium, as good as hidden. A fifth parked view shares a corner.
+ *
+ * That pixel is on screen: the layer's rounded-corner mask (`setBorderRadius`) is laid over the
+ * view's clipped rect, not its box, so at any radius the one pixel shows a circle inscribed in it
+ * (measured: about 78% of the page's colour) – no radius hides it, and none is tried. Windows 11
+ * and macOS round the window's own corners over that pixel; a frameless X11 window shows it.
+ */
+const PARK_CORNERS = 4
 
 /** Keys that never count as a gesture in Chromium's user-activation model. */
 const NON_ACTIVATING_KEYS = new Set(['Escape', 'Shift', 'Control', 'Alt', 'Meta', 'AltGr'])
@@ -263,10 +288,11 @@ function fontsKey(fonts: EffectiveFonts): string {
 
 /**
  * The emulation overrides a page view keeps on the page's shared session
- * (`ElectronTabView.setEmulation`): the dark theme for sites' auto dark mode, and the Appearance
- * setting's `prefers-color-scheme` where the engine does not carry it to pages itself.
+ * (`ElectronTabView.setEmulation`): the dark theme for sites' auto dark mode, the Appearance
+ * setting's `prefers-color-scheme` where the engine does not carry it to pages itself, and the
+ * JavaScript site setting's switch (`refreshScripts`).
  */
-type EmulationOverride = 'autoDark' | 'colorScheme'
+type EmulationOverride = 'autoDark' | 'colorScheme' | 'scripts'
 
 /** A DevTools protocol command as the view sends it. */
 interface CdpCommand {
@@ -279,10 +305,23 @@ const AUTO_DARK_MODE_ON: CdpCommand = {
   params: { enabled: true }
 }
 
+/**
+ * The JavaScript site setting's block (PS-64): the browser-side emulation handler takes
+ * `javascript_enabled` out of the page's web preferences, which the renderer reads at every
+ * script's execution – a document that starts under it runs none of its own, as under Chrome's
+ * JAVASCRIPT content setting. One difference, measured on the real build (services pass 10): the
+ * parser still sees scripting as on, so `<noscript>` content stays hidden where Chrome shows it.
+ */
+const SCRIPTS_OFF: CdpCommand = {
+  method: 'Emulation.setScriptExecutionDisabled',
+  params: { value: true }
+}
+
 /** What takes each override off a session that stays. */
 const EMULATION_RELEASE: Record<EmulationOverride, CdpCommand> = {
   autoDark: { method: 'Emulation.setAutoDarkModeOverride', params: {} },
-  colorScheme: { method: 'Emulation.setEmulatedMedia', params: emulatedMediaParams(null) }
+  colorScheme: { method: 'Emulation.setEmulatedMedia', params: emulatedMediaParams(null) },
+  scripts: { method: 'Emulation.setScriptExecutionDisabled', params: { value: false } }
 }
 
 function sameCommand(a: CdpCommand | null, b: CdpCommand | null): boolean {
@@ -365,6 +404,27 @@ export class ElectronTabView implements TabView {
    * the hand-back in the `focus` handler stays as the backstop for that case.
    */
   private inWindow = false
+  /**
+   * An agent works this page while the layout hides it (`setAgentDriven`). Hidden, the view
+   * stands shown on the owner's stage instead – a window that is never shown
+   * (`ElectronTabViewHost.stageFor`) – so the page has a layout viewport and paints frames for
+   * the agent's snapshots and captures: out of the user's window it has no pixel on their screen
+   * and no keyboard of theirs to take. `staged` is the stage it stands on, null off it.
+   */
+  private agentDriven = false
+  private staged: BaseWindow | null = null
+  /**
+   * The engine's view left a window or the stage and is yet to join a window: the next
+   * `enterWindow`/`bringToFront` re-stacks it (`restack`). Chromium 152 (Electron 44) on Linux
+   * puts a `WebContentsView` arriving from another window at the BOTTOM of the new window's
+   * native z-order and never re-sorts it – `NativeViewHostAura::AddedToWidget` stacks the
+   * reparented aura window at the bottom without the `ReorderNativeViews` a first attach gets
+   * (`kNativeViewHostManagesLayers`, on by default there only) – so it sits under the window's
+   * chrome view: the page paints, reads `visible`, and the user sees the chrome's blank page area
+   * in its place (the stage's hand-off on the packaged build: 0 of 4 page-area pixels the page's
+   * colour 2 s after the switch; a tab moved between windows the same, since before the stage).
+   */
+  private arrivesFromElsewhere = false
   private navigationHint: ViewNavigationHint | null = null
   /**
    * The main-frame certificate the current navigation was refused over (`certificate-error`),
@@ -378,6 +438,13 @@ export class ElectronTabView implements TabView {
    * navigations.
    */
   private navigatingUrl: string | null = null
+  /**
+   * The tab's history as the main-frame navigation under way found it, and whether the page's
+   * own document started the navigation (`did-start-navigation`'s `initiator` a frame of this
+   * view): read at the commit to tell the core whether the document replaced the one before it
+   * (`NavigationCommitDetails`, history-23). Null between navigations.
+   */
+  private commitBaseline: { length: number; index: number; byPage: boolean } | null = null
   /**
    * When the task manager's End process told this view its renderer is about to be crashed on
    * the user's word (`ElectronTaskHost.end` → `noteEndedByUser`): the `render-process-gone` that
@@ -413,6 +480,22 @@ export class ElectronTabView implements TabView {
   private devtoolsPageBounds: Rect | null = null
   /** The view's box as the chrome last laid it out (`setBounds`), in DIP; null before the first. */
   private bounds: Rect | null = null
+  /**
+   * The window corner the engine's view stands parked in under a chrome cover rather than hidden
+   * (`park`): shown, at its size, with one pixel still inside the window; null when not parked.
+   * Never set while `visible` is.
+   */
+  private parked: number | null = null
+  /**
+   * The view's window is minimised or hidden (W6-F6): the engine's view is hidden to Chromium
+   * whatever the core's layout says, so the page reads `document.visibilityState` `hidden` as a
+   * Chrome tab does. A view PARKED under a chrome cover (W6-F5) is hidden for real too – parking
+   * keeps a page visible under Zenium's OWN cover, not under a minimised or hidden window. The
+   * core's flag (`visible`, `isVisible`, the `hid`/`shown` accounting) is untouched throughout;
+   * `applyWindowVisible(true)` puts the engine's view back where the core's layout left it when
+   * the window returns (shown, re-parked under a cover still up, or hidden as the flag says).
+   */
+  private windowConcealed = false
   /** The user chose to leave: the next `beforeunload` objection is overruled. */
   private leaveApproved = false
   /** The last navigation this host started, for the "Leave site?" replay. */
@@ -541,7 +624,7 @@ export class ElectronTabView implements TabView {
     wc.on('did-stop-loading', () => ev.onStopLoading())
     wc.on('did-navigate', (_e, url) => {
       this.navigatingUrl = null
-      ev.onNavigated(url, false)
+      ev.onNavigated(url, false, this.commitDetails(wc))
       this.fontsAfterNavigation()
     })
     wc.on('did-navigate-in-page', (_e, url, isMainFrame) => {
@@ -552,6 +635,7 @@ export class ElectronTabView implements TabView {
     wc.on('did-fail-load', (_e, code, description, url, isMainFrame) => {
       if (!isMainFrame || wc.isDestroyed()) return
       this.navigatingUrl = null
+      this.commitBaseline = null
       const refused = this.refusedCertificate
       this.refusedCertificate = null
       // The certificate the failure is about: refused for this site in this navigation.
@@ -640,11 +724,18 @@ export class ElectronTabView implements TabView {
       // The page is unloading (its `beforeunload` let it): nothing is left to replay.
       if (details.isSameDocument) return
       this.navigatingUrl = details.url
+      this.commitBaseline = {
+        length: wc.navigationHistory.length(),
+        index: wc.navigationHistory.getActiveIndex(),
+        byPage: this.startedByThisPage(wc, details.initiator ?? null)
+      }
       this.leaveApproved = false
       this.hostNavigation = null
       this.pageIntent = null
       // A refused certificate belongs to the navigation it happened in (which asks after this).
       this.refusedCertificate = null
+      // The JavaScript site setting for the document on its way, before its response is read.
+      this.refreshScripts(details.url)
     })
     // A server redirect inside the navigation under way (Chromium's `DidRedirectNavigation`):
     // the core keeps the hop and records the chain with the commit (history-23).
@@ -653,6 +744,7 @@ export class ElectronTabView implements TabView {
       const from = this.navigatingUrl
       this.navigatingUrl = details.url
       if (from && from !== details.url) ev.onRedirected?.(from, details.url)
+      this.refreshScripts(details.url)
     })
     wc.on('dom-ready', () => ev.onDomReady())
     // By the time this fires `this.view.webContents` no longer returns the object (Electron drops
@@ -705,6 +797,35 @@ export class ElectronTabView implements TabView {
           })
       }
     })
+  }
+
+  /**
+   * Whether `initiator` (`did-start-navigation`'s) is a frame of this view's own page: the
+   * page navigated itself. Null is the browser's navigation (a typed address, back / forward, a
+   * reload); a frame of another view is an opener's (`window.open`'s first load).
+   */
+  private startedByThisPage(wc: WebContents, initiator: WebFrameMain | null): boolean {
+    if (!initiator || wc.isDestroyed()) return false
+    return wc.mainFrame.framesInSubtree.some(
+      (f) => f.processId === initiator.processId && f.routingId === initiator.routingId
+    )
+  }
+
+  /**
+   * How the document that just committed stands to the one before it, measured against the
+   * baseline `did-start-navigation` took: the entry list neither longer nor moved along is
+   * Chromium's `did_replace_entry` (a new document adds an entry after the current one; back /
+   * forward move along it). Nothing when no start was seen.
+   */
+  private commitDetails(wc: WebContents): NavigationCommitDetails | undefined {
+    const base = this.commitBaseline
+    this.commitBaseline = null
+    if (!base || wc.isDestroyed()) return undefined
+    const history = wc.navigationHistory
+    return {
+      replacedEntry: history.length() === base.length && history.getActiveIndex() === base.index,
+      initiatedByPage: base.byPage
+    }
   }
 
   /** A message from the page script (routed here by the platform's IPC handler). */
@@ -836,7 +957,94 @@ export class ElectronTabView implements TabView {
     // `link` too, so no `typed` claim is made without knowing the source.
     this.navigationHint = {}
     this.recordHostNavigation(false, () => this.loadURL(url))
-    void this.wc.loadURL(url).catch(() => undefined)
+    // The run's first documents wait for the extension layer's first publish (`startupHold.ts`);
+    // the hold is open for the run once it opened, and the page may have gone while it waited.
+    this.owner.startupHold.run(() => {
+      if (this.wc.isDestroyed()) return
+      void this.wc.loadURL(url).catch(() => undefined)
+    })
+  }
+
+  /**
+   * The image-search upload (CT-32): `loadURL` with the baked body as raw post data and its
+   * content type as the request's header (`imagePostLoadOptions`) – Chrome's
+   * `CoreTabHelper::PostContentToURL` navigates the same way, `UploadRawData` and a
+   * content-type header on a browser-initiated POST. The same hold and replay as a load.
+   */
+  postURL(url: string, post: ImagePost): void {
+    this.navigationHint = {}
+    this.recordHostNavigation(false, () => this.postURL(url, post))
+    const options = imagePostLoadOptions(post)
+    this.owner.startupHold.run(() => {
+      if (this.wc.isDestroyed()) return
+      void this.wc.loadURL(url, options).catch(() => undefined)
+    })
+  }
+
+  /**
+   * The encoded bytes of an image the page loaded, from the renderer: the DevTools protocol's
+   * `Page.getResourceContent` reads the frame's resource – the response the page's own request
+   * got, its cookies and referrer already spent – so a cross-origin image whose host sends no
+   * CORS header, which no script in the page may read, uploads all the same (Chrome reads its
+   * renderer's decoded bitmap; this is the nearest the API offers). The main frame's tree
+   * first, then each child frame the tree lists (a same-process sub-frame's image). `'too-large'`
+   * when the listing puts the image above the cap (nothing is transferred); null when the image
+   * is in no frame's resource tree (evicted, or never an element's), or when the page's session
+   * is an extension's (`pageDebugger.ts`: not ours to enable domains on).
+   *
+   * `Page` is enabled for the read (`getResourceContent` needs it). It is disabled after only on
+   * a session the read attached for itself and still holds alone at the end – one that dies with
+   * its detach a moment later. A session that stood before the read (the dark theme hold's, the
+   * governor's, a fonts change in flight) or that a hold took over during it keeps `Page` as the
+   * read leaves it: Blink's `InspectorPageAgent::disable()` clears the whole of the agent's state,
+   * and the fonts CT-25 set on a long-lived session (`sendFonts`) live there – the agent's
+   * `Restore()` re-applies them in a new renderer after a cross-site swap from that state alone,
+   * which `fontsAfterNavigation` trusts when it finds the session attached across the swap.
+   */
+  async readImageResource(
+    url: string,
+    maxBytes: number
+  ): Promise<ImageResource | 'too-large' | null> {
+    const wc = this.wc
+    if (wc.isDestroyed() || hasForeignDebuggerOwner(wc.id)) return null
+    // Whether `withDebugger` attaches for this read (nothing held the session before it).
+    const ownSession = this.cdpPending === 0 && !wc.debugger.isAttached()
+    try {
+      return await this.withDebugger(async (dbg) => {
+        await dbg.sendCommand('Page.enable')
+        try {
+          const tree = (await dbg.sendCommand('Page.getResourceTree')) as {
+            frameTree: ResourceFrameTree
+          }
+          const listed = imageResourceFrames(tree.frameTree, url)
+          if (listed.some((l) => l.contentSize !== null && l.contentSize > maxBytes))
+            return 'too-large'
+          // The main frame last as a guess when no listing names the image (the agent also
+          // looks the address up in the memory cache).
+          const candidates: Array<{ frameId: string; mimeType: string }> = [...listed]
+          if (!candidates.some((c) => c.frameId === tree.frameTree.frame.id))
+            candidates.push({ frameId: tree.frameTree.frame.id, mimeType: '' })
+          for (const { frameId, mimeType } of candidates) {
+            const content = (await dbg
+              .sendCommand('Page.getResourceContent', { frameId, url })
+              .catch(() => null)) as { content: string; base64Encoded: boolean } | null
+            if (!content || !content.base64Encoded || !content.content) continue
+            // Base64 grows the bytes by a third: the cap on the bytes themselves.
+            if (content.content.length * 0.75 > maxBytes) return 'too-large'
+            return { base64: content.content, mimeType }
+          }
+          return null
+        } finally {
+          // The read's own session, nobody else on it: `Page` off again before the detach. A
+          // hold that joined meanwhile (`cdpPending` above the read's one) keeps the session,
+          // and with it whatever `Page` state was set on it.
+          if (ownSession && this.cdpPending === 1)
+            await dbg.sendCommand('Page.disable').catch(() => undefined)
+        }
+      })
+    } catch {
+      return null
+    }
   }
 
   /**
@@ -916,6 +1124,9 @@ export class ElectronTabView implements TabView {
 
   async restoreNavigation(snapshot: NavigationSnapshot): Promise<void> {
     const wc = this.wc
+    if (wc.isDestroyed()) return
+    // A restored tab's first document, held like `loadURL`'s (`startupHold.ts`).
+    await this.owner.startupHold.whenOpen()
     if (wc.isDestroyed()) return
     const entries = snapshot.entries.filter((e) => typeof e.url === 'string' && e.url !== '')
     const index = Math.min(Math.max(snapshot.index, 0), entries.length - 1)
@@ -1098,6 +1309,25 @@ export class ElectronTabView implements TabView {
     return this.wc.executeJavaScript(code, true)
   }
 
+  /**
+   * The browser's private world (`shared/privateWorld.ts`, `IMAGE_THUMBNAIL_WORLD_ID`): the
+   * page's built-ins are out of the script's reach and the script out of the page's, while the
+   * document, its origin and its cookies are the page's. The top frame through Electron's
+   * `webContents.executeJavaScriptInIsolatedWorld`; a sub-frame through its own preload
+   * (`PrivateWorldRelay`, the frame's `webFrame.executeJavaScriptInIsolatedWorld` with the same
+   * id), since Electron 44's `WebFrameMain` evaluates in the main world only. Never the main
+   * world: a frame that is gone rejects.
+   */
+  executeJavaScriptInPrivateWorld(code: string, frameId?: number): Promise<unknown> {
+    if (frameId) {
+      const frame = frameById(this.wc, frameId)
+      if (!frame || frame.detached)
+        return Promise.reject(new Error(`Frame ${frameId} is no longer part of the page`))
+      return this.owner.privateWorld.execute(frame, code)
+    }
+    return this.wc.executeJavaScriptInIsolatedWorld(IMAGE_THUMBNAIL_WORLD_ID, [{ code }], true)
+  }
+
   insertCSS(css: string, origin: InsertedCssOrigin = 'user'): Promise<string> {
     return this.wc.insertCSS(css, { cssOrigin: origin })
   }
@@ -1123,13 +1353,27 @@ export class ElectronTabView implements TabView {
     this.wc.send('zen:zap', on)
   }
 
+  setCaretBrowsingEnabled(enabled: boolean): void {
+    // One call into the renderer's web preferences (Chromium's `caret_browsing_enabled`); a
+    // page that is already there is left alone.
+    if (this.wc.isDestroyed() || this.wc.isCaretBrowsingEnabled() === enabled) return
+    this.wc.setCaretBrowsingEnabled(enabled)
+  }
+
   showHint(hint: PageHint | null): void {
     if (!this.wc.isDestroyed()) this.wc.send('zen:page-hint', hint)
   }
 
-  /** "Hold ⌘Q to quit" over the page, or its way down (`preload/page.ts` listens on `zen:quit-hold`). */
+  /**
+   * "Hold ⌘Q to quit" over the page, or its way down (`preload/page.ts` listens on `zen:quit-hold`).
+   * Not while the chord is down in a detached toolbox: the notice is drawn there, where the
+   * keyboard is (§9.23, `DevtoolsQuitHoldNotice`), and the page behind the toolbox draws none;
+   * the way down still goes, for a panel that stood before the keyboard moved.
+   */
   showQuitHold(panel: QuitHoldPanel | null): void {
-    if (!this.wc.isDestroyed()) this.wc.send(QUIT_HOLD_CHANNEL, panel)
+    if (this.wc.isDestroyed()) return
+    if (panel && this.owner.quitHoldNotice.inToolbox()) return
+    this.wc.send(QUIT_HOLD_CHANNEL, panel)
   }
 
   /** Fresh `NewTabPageState` for a `zen://newtab` page (its preload listens on this channel). */
@@ -1221,28 +1465,108 @@ export class ElectronTabView implements TabView {
     if (!win) return
     this.owner.watchKeyboard(win)
     this.owner.watchFocus(win)
+    // Adopt the new window's own concealed state (W6-F6): a view taken into a window that is
+    // itself minimised or hidden must not paint. The window's later frame events keep it current.
+    this.windowConcealed =
+      typeof win.isMinimized === 'function' && typeof win.isVisible === 'function'
+        ? win.isMinimized() || !win.isVisible()
+        : false
     if (this.visible) this.enterWindow(win)
+    else this.enterStage()
     this.refreshHangWatch()
   }
 
   detach(): void {
+    // A view parked under this window's cover leaves it hidden: the engine's view must not be
+    // a shown one when another window takes it in (`enterWindow` from `focus`, `bringToFront`).
+    this.coverLifted()
+    this.leaveStage()
     const win = this.win
-    if (win && this.inWindow) win.contentView.removeChildView(this.view)
+    if (win && this.inWindow) {
+      win.contentView.removeChildView(this.view)
+      this.arrivesFromElsewhere = true
+    }
     this.inWindow = false
     this.host = null
+    // Off a window, the view is concealed by none; the window it next joins sets this afresh.
+    this.windowConcealed = false
     this.refreshHangWatch()
   }
 
   /** Into the window's `contentView` (on top), once; a view already there is left where it is. */
   private enterWindow(win: BrowserWindow): void {
     if (this.inWindow) return
+    this.leaveStage()
     win.contentView.addChildView(this.view)
     this.inWindow = true
+    this.restack(win)
+  }
+
+  /**
+   * Re-sorts the window's native z-order after a view that stood elsewhere joined it
+   * (`arrivesFromElsewhere`): adding and removing a throwaway `View` runs the views tree's
+   * `ReorderLayers` → `Widget::ReorderNativeViews`, which puts the page's aura window back in
+   * child order (on top of the chrome's). Re-adding the view itself does not – Electron's
+   * `AddChildView` of a child already at its index returns before any reorder – and a layer of
+   * its own (`setBackgroundBlur`) would stay on the view for good. A view's first join, and a
+   * view hidden and shown within its window, are stacked right by Chromium and skip this.
+   */
+  private restack(win: BrowserWindow): void {
+    if (!this.arrivesFromElsewhere) return
+    this.arrivesFromElsewhere = false
+    const nudge = new View()
+    win.contentView.addChildView(nudge)
+    win.contentView.removeChildView(nudge)
+  }
+
+  /**
+   * Onto the owner's stage, shown at the box the layout would give the page in front (its own
+   * last one, else the box a page of the same window stands in, else the window's content): a
+   * hidden view an agent drives, in a live window, not parked under a cover – parking keeps it
+   * painting already, and `coverLifted` brings it here when the cover goes. Out of the user's
+   * window first: a view is one `contentView`'s at a time.
+   */
+  private enterStage(): void {
+    if (!this.agentDriven || this.staged || this.visible || this.parked !== null) return
+    const win = this.win
+    if (!win) return
+    const box = this.bounds ?? this.owner.pageAreaOf(win)
+    if (this.inWindow) {
+      win.contentView.removeChildView(this.view)
+      this.inWindow = false
+    }
+    this.staged = this.owner.stageFor(this, box)
+    this.view.setBounds({ x: 0, y: 0, width: box.width, height: box.height })
+    this.view.setVisible(true)
+  }
+
+  /**
+   * Off the stage, hidden and in no window; `enterWindow` puts it back before the user. Also
+   * the owner's word that the page went (`forget`), so the stage does not keep a dead view.
+   */
+  leaveStage(): void {
+    const stage = this.staged
+    if (!stage) return
+    this.staged = null
+    this.arrivesFromElsewhere = true
+    this.view.setVisible(false)
+    if (!stage.isDestroyed()) stage.contentView.removeChildView(this.view)
+    this.owner.stageLeft(this)
+    if (this.bounds) this.view.setBounds(this.bounds)
+  }
+
+  /** The box the layout last gave the view, for the stage's sizing of a page never laid out. */
+  laidOutBox(): Rect | null {
+    return this.bounds
   }
 
   setBounds(rect: Rect): void {
     this.bounds = rect
-    this.view.setBounds(rect)
+    // A staged view keeps the stage's box and takes this one as it leaves (`leaveStage`).
+    if (this.staged) return
+    // A parked view takes its new box parked: the layout that shows it again sets the box first
+    // and `setVisible(true)` puts the view in it.
+    this.view.setBounds(this.parked === null ? rect : this.parkedBox(rect, this.parked))
   }
 
   setBorderRadius(radius: number): void {
@@ -1253,25 +1577,226 @@ export class ElectronTabView implements TabView {
    * Show or hide the page. Always passed on to the engine's view (a shown page has its visibility
    * re-asserted this way after a thaw); the owner hears of a flip, so the resource governor can
    * put its CPU clamp on a page that went behind and take it off one that came in front.
+   *
+   * A page taken down because chrome UI covers it – the window's `contentHidden` at the time of
+   * the call: the omnibox dropdown, a menu, a sheet or dialog, the first-run tour, a drag – is
+   * parked rather than hidden (`park`). The views composite above the chrome, so the chrome
+   * cannot draw over a page and asks for it to go away instead; but a `WebContentsView` hidden,
+   * detached, sized to nothing or moved wholly off the window is HIDDEN to Chromium (its aura
+   * occlusion tracker), and Chromium starts a page's speculation-rules prefetches only while the
+   * page's `WebContents` is VISIBLE (`PrefetchDocumentManager::CanPrefetchNow`) – a prefetch the
+   * page asked for meanwhile waits in `PrefetchScheduler`'s queue, and nothing re-runs that queue
+   * when the page is shown again: it starts only once the page next changes its candidates, which
+   * for most pages is never. Chrome keeps the page visible under its own popups, and a
+   * speculation rule in a page loaded under Zenium's omnibox dropdown (the address on the command
+   * line, a fresh profile) never prefetched at all. A parked view keeps its size and stays shown
+   * with one corner pixel in a corner of the window (`PARK_CORNERS`: the one pixel of it on
+   * screen), which Chromium counts as VISIBLE: the page keeps painting,
+   * `document.visibilityState` stays `visible`, its prefetches run, and the view comes back with
+   * `setVisible(true)` untouched, as Chrome's pages do from under a popup. The window's host ends
+   * the parking of a view the next uncovered layout leaves out (`coverLifted`: a tab switched
+   * under the cover). The page hidden by a tab switch, a chrome page tab or a move between
+   * windows (no cover on) is hidden as before.
    */
   setVisible(visible: boolean): void {
     const flipped = this.visible !== visible
+    const wasShown = this.visible
     this.visible = visible
     if (visible) {
       // The first showing puts the view into the window, at the box the layout gave it just
       // before (`setBounds`), as the popup surface is placed: added, then shown.
       const win = this.win
       if (win) this.enterWindow(win)
+      const parked = this.parked !== null
+      if (parked) this.unpark()
+      // A window minimised or hidden keeps its pages hidden to Chromium whatever the layout says
+      // (W6-F6): the engine's view stays down until the window returns (`applyWindowVisible`).
+      if (!this.windowConcealed) {
+        this.view.setVisible(true)
+        if (parked) this.pointerBack()
+      }
+    } else if (this.coverable(wasShown)) {
+      this.park()
+    } else {
+      if (this.parked !== null) this.unpark()
+      this.view.setVisible(false)
+      this.enterStage()
     }
-    this.view.setVisible(visible)
     if (flipped) {
       this.refreshHangWatch()
       this.owner.visibilityChanged(this)
     }
   }
 
+  /**
+   * The view's window was minimised or hidden (`false`) or restored / shown (`true`), told by
+   * the window host on the frame's own events (W6-F6). A concealed window's pages read `hidden`
+   * as a Chrome tab's do: the engine's view goes down for real, a view parked under a chrome
+   * cover (W6-F5) included – parking keeps a page visible under Zenium's own popup, not under a
+   * minimised or hidden window. The window back, the engine's view returns to where the core's
+   * layout left it: parked at its corner under a cover still up, shown, or hidden as the core's
+   * flag says. The core's flag (`visible`, `isVisible`, the `hid`/`shown` accounting the governor
+   * and snapshot logic read) is not touched, and no visibility flip is announced – the core's
+   * view of which page is in front does not change when its window is put away and brought back.
+   *
+   * Occlusion by another application's window is Chromium's own to track (Windows and macOS
+   * natively; none on X11, where Chrome itself does not); nothing is synthesised here for it, and
+   * a window merely blurred while on screen is not concealed.
+   */
+  applyWindowVisible(visible: boolean): void {
+    const concealed = !visible
+    if (this.windowConcealed === concealed) return
+    this.windowConcealed = concealed
+    if (this.staged) {
+      // On the stage the view is in no window of the user's: it paints on for the agent while
+      // theirs is away, and the flag stands current for its return before them (`setVisible`).
+    } else if (concealed) {
+      // Down to Chromium, parked or not: a parked view's box goes back to its own so nothing of
+      // it is left a pixel on screen behind the hidden window.
+      if (this.parked !== null && this.bounds) this.view.setBounds(this.bounds)
+      this.view.setVisible(false)
+    } else if (this.parked !== null && this.bounds) {
+      // The window is back with a chrome cover still up: the view is parked again, a pixel in
+      // its corner, so Chromium keeps it visible and its prefetches run (W6-F5).
+      this.view.setBounds(this.parkedBox(this.bounds, this.parked))
+      this.view.setVisible(true)
+    } else {
+      this.view.setVisible(this.visible)
+    }
+    this.refreshHangWatch()
+  }
+
+  /**
+   * Whether a hide asked for now is a chrome cover's: the window's chrome covers the content and
+   * the engine's view is on screen in it (a page never shown, or shown in no window, has nothing
+   * to keep visible). In a window minimised or hidden the engine's view is down whatever the
+   * layout says (W6-F6), so "on screen" is what the core's flag held before this call (`wasShown`)
+   * or the parking already on: a layout re-applied under the cover while the window is away keeps
+   * the parking for the window's return rather than dropping it for a plain hide.
+   */
+  private coverable(wasShown: boolean): boolean {
+    const host = this.host
+    const onScreen = this.windowConcealed
+      ? wasShown || this.parked !== null
+      : this.view.getVisible()
+    return (
+      host !== null &&
+      this.win !== null &&
+      this.inWindow &&
+      this.bounds !== null &&
+      onScreen &&
+      host.zen.contentHidden
+    )
+  }
+
+  /**
+   * The box a parked view stands in: its own size, moved so that only one of its corner pixels
+   * is still inside the window, in the window content's corner `corner` (`PARK_CORNERS`). The
+   * page's box ends short of the window's edge (the frame around it), so it is the window's
+   * corner pixel and not the box's that the view keeps – anything more of the view inside the
+   * window would show beside the frame.
+   */
+  private parkedBox(rect: Rect, corner: number): Rect {
+    const win = this.win
+    const [width, height] = win ? win.getContentSize() : [rect.x + rect.width, rect.y + rect.height]
+    const right = corner % 2 === 0
+    const bottom = corner < 2
+    return {
+      x: right ? width - 1 : -(rect.width - 1),
+      y: bottom ? height - 1 : -(rect.height - 1),
+      width: rect.width,
+      height: rect.height
+    }
+  }
+
+  /**
+   * The pointer's moves are told where hiding would have told them. Aura synthesizes a mouse
+   * move to whatever lies under the pointer when a view under it is hidden or shown, and none
+   * when one is moved: parked by a bounds change alone, the view leaves the chrome under the
+   * pointer with the pointer's last position over the chrome itself – wherever it last moved
+   * over a strip or a bar – and its hover state stays there, so a bubble opening under that
+   * spot counted as hovered and never closed (the zoom bubble waits under the pointer). The
+   * chrome hears a move at the pointer's place as the view goes (`park`), and when the view
+   * comes back under the pointer the chrome hears the pointer leave and the page hears where it
+   * stands (`pointerBack`), as aura's exit and move would say. Nothing while a chrome mouse
+   * button is down (a tab row's drag is a cover): aura's synthesized moves wait for the release
+   * too, and the chrome holds the pointer's capture through the drag anyway.
+   */
+  private park(): void {
+    const rect = this.bounds
+    if (!rect) return
+    if (this.parked === null) this.parked = this.owner.claimParkingCorner(this)
+    const pointer = this.pointerOver(rect)
+    this.view.setBounds(this.parkedBox(rect, this.parked))
+    if (pointer) {
+      this.host?.win.webContents.sendInputEvent({ type: 'mouseMove', x: pointer.x, y: pointer.y })
+    }
+  }
+
+  private unpark(): void {
+    this.parked = null
+    this.owner.releaseParkingCorner(this)
+    if (this.bounds) this.view.setBounds(this.bounds)
+  }
+
+  /** The view is back in its box from parking, shown: the pointer over it is the page's again. */
+  private pointerBack(): void {
+    const rect = this.bounds
+    const host = this.host
+    if (!rect || !host) return
+    const pointer = this.pointerOver(rect)
+    if (!pointer) return
+    host.win.webContents.sendInputEvent({ type: 'mouseLeave', x: pointer.x, y: pointer.y })
+    this.wc.sendInputEvent({ type: 'mouseMove', x: pointer.x - rect.x, y: pointer.y - rect.y })
+  }
+
+  /**
+   * Where the pointer stands over the view's box `rect`, in DIP from the window content's
+   * top-left corner (the chrome page's own coordinates); null with the pointer elsewhere, a
+   * chrome mouse button down, or no window to measure against.
+   */
+  private pointerOver(rect: Rect): { x: number; y: number } | null {
+    const host = this.host
+    if (!host || host.pointerButtonHeld()) return null
+    try {
+      const cursor = screen.getCursorScreenPoint()
+      const content = host.win.getContentBounds()
+      const x = cursor.x - content.x
+      const y = cursor.y - content.y
+      const over = x >= rect.x && y >= rect.y && x < rect.x + rect.width && y < rect.y + rect.height
+      return over ? { x, y } : null
+    } catch {
+      return null
+    }
+  }
+
+  /** Whether the engine's view stands parked under a chrome cover, and in which corner. */
+  parkedCorner(): number | null {
+    return this.parked
+  }
+
+  /** The window the view is parked in, for the owner's handing out of corners. */
+  windowOf(): BrowserWindow | null {
+    return this.win
+  }
+
+  /**
+   * The chrome's cover lifted (a layout applied with `contentHidden` off) without the layout
+   * showing this view: it was switched away from under the cover, and is hidden now the way a
+   * tab switch hides a page. Nothing for a view that is not parked.
+   */
+  coverLifted(): void {
+    if (this.parked === null) return
+    this.unpark()
+    this.view.setVisible(false)
+    this.enterStage()
+  }
+
   isVisible(): boolean {
-    return this.visible && this.view.getVisible()
+    // The core's flag, as W6-F5 left it: a window minimised or hidden takes the engine's view
+    // down (`applyWindowVisible`) without changing which page the core has in front, so the
+    // engine's own visibility is not consulted while the window is concealed (W6-F6).
+    return this.visible && (this.windowConcealed || this.view.getVisible())
   }
 
   bringToFront(): void {
@@ -1279,8 +1804,10 @@ export class ElectronTabView implements TabView {
     // glanced at or made fullscreen before it was ever shown) joins there.
     const win = this.win
     if (!win) return
+    this.leaveStage()
     win.contentView.addChildView(this.view)
     this.inWindow = true
+    this.restack(win)
   }
 
   // --- page operations -----------------------------------------------------------
@@ -1368,8 +1895,14 @@ export class ElectronTabView implements TabView {
     // `before-input-event` on nothing – its delegate is Electron's `InspectableWebContents`,
     // which hands only the keys the frontend left unhandled on, to the menu bar – so the
     // frontend says the chord's key down and the key up after it on its console, and they go to
-    // the key table for this page's window as the page's own keys do (`devtoolsKeys.ts`).
-    relayDevtoolsQuitChord(frontend, this.owner.quitChord, (key) => void this.events?.onKey(key))
+    // the key table for this page's window as the page's own keys do (`devtoolsKeys.ts`). The
+    // held-key notice hears each key first: a hold armed from the toolbox while it stands
+    // undocked is drawn in the toolbox, where the keyboard is (§9.23).
+    relayDevtoolsQuitChord(frontend, this.owner.quitChord, (key) => void this.events?.onKey(key), {
+      notice: this.owner.quitHoldNotice,
+      window: () => this.win,
+      detached: () => this.devtoolsDock === 'undocked'
+    })
     frontend.on('console-message', (event) => {
       const hole = pageBoundsFromConsoleMessage(event.message)
       if (hole) {
@@ -2010,8 +2543,41 @@ export class ElectronTabView implements TabView {
     )
   }
 
+  // --- the JavaScript site setting (PS-64) --------------------------------------------
+
+  /**
+   * JavaScript for the document about to load at `url`: the site setting's block goes on the
+   * page's session as `Emulation.setScriptExecutionDisabled` (`SCRIPTS_OFF`) as the navigation
+   * starts – and again at each redirect hop, for the address the page ends at – and comes off
+   * the same way for a document the setting allows, so a blocked site's answer never outlives
+   * its document. Electron 44 has no per-view switch of its own: a page's web preferences are
+   * fixed at creation, and the emulation override is the one runtime path (the same primitive
+   * as the dark theme for sites). What it does not reach: a page an extension's `chrome.debugger`
+   * or DevTools already holds when the hold attaches keeps its scripts until the next load
+   * (`setEmulation` drops the override then); the preload's isolated world still runs (Blink
+   * lets isolated worlds execute under the block, as Chrome's content scripts do), the page's
+   * own scripts, `javascript:` URLs and `webContents.executeJavaScript` in the main world do
+   * not. Same-document navigations change no document and are left alone.
+   */
+  private refreshScripts(url: string): void {
+    if (this.wc.isDestroyed()) return
+    const blocked = this.owner.scriptsBlocked(url, this.wc.session)
+    this.setEmulation('scripts', blocked ? SCRIPTS_OFF : null)
+  }
+
   setBackgroundThrottling(allowed: boolean): void {
     if (!this.wc.isDestroyed()) this.wc.setBackgroundThrottling(allowed)
+  }
+
+  /**
+   * The agent's word on driving this page while it is hidden (`TabView.setAgentDriven`): on,
+   * a hidden view goes onto the stage now and each time the layout hides it; off, it leaves the
+   * stage and stays plainly hidden, as a page no agent drives.
+   */
+  setAgentDriven(driven: boolean): void {
+    this.agentDriven = driven
+    if (driven) this.enterStage()
+    else this.leaveStage()
   }
 
   /**
@@ -2037,7 +2603,9 @@ export class ElectronTabView implements TabView {
     const mimeType = format === 'png' ? 'image/png' : 'image/jpeg'
     let fallback: AgentCapture['fallback']
     if (options.mode !== 'viewport') {
-      if (!hasForeignDebuggerOwner(wc.id)) {
+      // A staged page's picture is its viewport: `captureBeyondViewport` in a window never
+      // shown does not answer, and a call left hanging keeps its device-metrics override on.
+      if (!this.staged && !hasForeignDebuggerOwner(wc.id)) {
         try {
           return await this.captureWithDevtools(options, mimeType, this.fullPageCut())
         } catch {
@@ -2594,18 +3162,45 @@ export class ElectronTabViewHost implements TabViewHost {
   private readonly tabIds = new Map<number, string>()
   private readonly viewListeners = new Set<(view: ElectronTabView) => void>()
   private readonly visibilityListeners = new Set<(view: ElectronTabView) => void>()
+  /** The window corners the views parked under a chrome cover hold (`claimParkingCorner`). */
+  private readonly parkingCorners = new Map<ElectronTabView, number>()
+  /**
+   * The stage the hidden pages agents drive stand on (`ElectronTabView.enterStage`): one window
+   * for all of them, never shown, not focusable and off the taskbar – a window of its own has no
+   * pixel on the user's screen and none of their keyboard to hand a page – made for the first
+   * such page and destroyed with the last (`stageLeft`), so no window is left standing when
+   * the user closes theirs (`window-all-closed`). Sized to the largest page on it.
+   */
+  private stage: BaseWindow | null = null
+  private readonly stagedViews = new Set<ElectronTabView>()
   /** Per window, the page or chrome that last lost the keyboard – a hidden page gives it back there. */
   private readonly lastKeyboard = new WeakMap<BrowserWindow, WebContents>()
   private readonly keyboardWatched = new WeakSet<BrowserWindow>()
   /** Windows whose focus the pages' hang monitors follow (`watchFocus`). */
   private readonly focusWatched = new WeakSet<BrowserWindow>()
+  /**
+   * The hold on the run's first documents until the extension layer's first publish
+   * (`startupHold.ts`): the pages' first `loadURL` / `restoreNavigation` go through it. Open
+   * unless the platform closes it at start (`ElectronPlatform.start`).
+   */
+  startupHold = new StartupHold()
   /** The certificates the sessions verified, by host, for the site-information card (`certificate`). */
   readonly certificates = new SiteCertificates()
+  /**
+   * The sub-frame way into the browser's private world (`executeJavaScriptInPrivateWorld`);
+   * the platform feeds it the frames' answers (`PRIVATE_WORLD_CHANNELS.answer`).
+   */
+  readonly privateWorld = new PrivateWorldRelay()
   /**
    * The chord bound to `app.quit` as the key table has it now, for a toolbox's quit-chord relay
    * (`devtoolsKeys.ts`); the platform supplies it once the core is up (`ElectronPlatform.start`).
    */
   quitChord: () => KeyBinding | null = () => null
+  /**
+   * The held-key notice over a detached toolbox (`devtoolsKeys.ts`): where the quit chord is
+   * down, for the page's panel to yield to the toolbox's. The process's one, unless a test's.
+   */
+  quitHoldNotice: DevtoolsQuitHoldNotice = devtoolsQuitHoldNotice
 
   constructor(
     private readonly sessions: SessionManager,
@@ -2687,6 +3282,24 @@ export class ElectronTabViewHost implements TabViewHost {
   /** The page fonts every new page view is made with right now (for the tests). */
   static currentFonts(): PageFontSettings {
     return userFontSettings
+  }
+
+  /**
+   * The core's per-site content settings the views enforce themselves (the JavaScript switch,
+   * `ElectronTabView.refreshScripts`); the platform sets it once the core is up. Null: nothing
+   * is blocked (the views made before the core answers, and the tests).
+   */
+  contentRules: ContentRulesLookup | null = null
+
+  /** Whether the JavaScript site setting blocks a document at `url` in `ses`'s container. */
+  scriptsBlocked(url: string, ses: Session): boolean {
+    if (!this.contentRules || !/^(https?|file):/i.test(url)) return false
+    const containerId = this.sessions.containerOf(ses)
+    return !this.contentRules.allows(
+      'javascript',
+      url,
+      containerId ? requestDetails(containerId) : undefined
+    )
   }
 
   /** Follow the window's own chrome for the keyboard, as every tab page in it is followed. */
@@ -2837,6 +3450,81 @@ export class ElectronTabViewHost implements TabViewHost {
     this.byWebContentsId.delete(webContentsId)
     this.tabIds.delete(webContentsId)
     if (tabId !== undefined && this.byTabId.get(tabId) === view) this.byTabId.delete(tabId)
+    if (view) this.parkingCorners.delete(view)
+    view?.leaveStage()
+  }
+
+  /** The stage `view` goes onto, with room for `box` (`ElectronTabView.enterStage`). */
+  stageFor(view: ElectronTabView, box: Rect): BaseWindow {
+    let stage = this.stage
+    if (!stage || stage.isDestroyed()) {
+      stage = new BaseWindow({
+        show: false,
+        focusable: false,
+        skipTaskbar: true,
+        frame: false,
+        enableLargerThanScreen: true,
+        hiddenInMissionControl: true,
+        width: box.width,
+        height: box.height
+      })
+      stage.excludedFromShownWindowsMenu = true
+      this.stage = stage
+    } else {
+      const [width, height] = stage.getContentSize()
+      if (box.width > width || box.height > height)
+        stage.setContentSize(Math.max(width, box.width), Math.max(height, box.height))
+    }
+    this.stagedViews.add(view)
+    stage.contentView.addChildView(view.view)
+    return stage
+  }
+
+  /** `view` left the stage (`ElectronTabView.leaveStage`, or its page went): the last one takes the stage down. */
+  stageLeft(view: ElectronTabView): void {
+    this.stagedViews.delete(view)
+    if (this.stagedViews.size > 0) return
+    const stage = this.stage
+    this.stage = null
+    if (stage && !stage.isDestroyed()) stage.destroy()
+  }
+
+  /**
+   * The box a page of `win` stands in when shown, for a view the layout never placed (a tab
+   * opened in the background): the one a placed page of the window has, else the window's whole
+   * content – so the staged page's viewport is the one it would have in front.
+   */
+  pageAreaOf(win: BrowserWindow): Rect {
+    for (const other of this.byWebContentsId.values()) {
+      const box = other.windowOf() === win ? other.laidOutBox() : null
+      if (box && box.width > 0 && box.height > 0) return box
+    }
+    const [width, height] = win.getContentSize()
+    return { x: 0, y: 0, width: width || 1280, height: height || 800 }
+  }
+
+  /**
+   * The window corner for a view parking under a chrome cover (`ElectronTabView.park`): the
+   * lowest no other view parked in the same window holds, and the last one when all are held. A
+   * view already parked keeps its corner.
+   */
+  claimParkingCorner(view: ElectronTabView): number {
+    const held = this.parkingCorners.get(view)
+    if (held !== undefined) return held
+    const win = view.windowOf()
+    const taken = new Set<number>()
+    for (const [other, at] of this.parkingCorners) {
+      if (other !== view && other.windowOf() === win) taken.add(at)
+    }
+    let free = 0
+    while (free < PARK_CORNERS - 1 && taken.has(free)) free++
+    this.parkingCorners.set(view, free)
+    return free
+  }
+
+  /** The view left its parking corner (`ElectronTabView.unpark`). */
+  releaseParkingCorner(view: ElectronTabView): void {
+    this.parkingCorners.delete(view)
   }
 
   /**

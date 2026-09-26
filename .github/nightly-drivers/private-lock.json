@@ -1,0 +1,10 @@
+{
+  "id": "private-lock",
+  "order": 103,
+  "class": "PrivateLockDemo",
+  "shard": "webview",
+  "mirrors": "android-private-lock-demo.yml",
+  "dir": "private-lock-demo",
+  "timeout": 1200,
+  "estimate": 7
+}

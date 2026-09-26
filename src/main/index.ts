@@ -17,6 +17,7 @@ import {
   describeSwitches,
   droppedSecondInstanceSwitches,
   parseCliSwitches,
+  regionOverride,
   windowSwitchesOf
 } from './cli'
 import type { Browser } from '../core/browser'
@@ -207,7 +208,10 @@ function main(): void {
       holdBackgroundWork: holdBackgroundWorkRequested(process.argv),
       // The drives' stand-in for the macOS hold-to-quit; a normal launch never carries it.
       quitHoldEverywhere: quitHoldEverywhereRequested(process.argv),
-      windowSwitches: windowSwitchesOf(switches, userDataDir)
+      windowSwitches: windowSwitchesOf(switches, userDataDir),
+      // The drives' and testers' region for the search engine choice screen (W6-2); a normal
+      // launch carries none and the OS's region stands.
+      regionOverride: regionOverride(switches, process.env)
     })
     // Launched for an app alone (`zenium --app=<url>`, an installed app's launcher): the app's
     // window comes up by itself, as Chrome's does; the browser windows wait for the first thing

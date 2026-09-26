@@ -38,7 +38,8 @@ object NetErrors {
         "ERR_FILE_NOT_FOUND" to FILE_NOT_FOUND,
         "ERR_TIMED_OUT" to -7,
         "ERR_BLOCKED_BY_CLIENT" to BLOCKED_BY_CLIENT,
-        "ERR_NETWORK_ACCESS_DENIED" to -21,
+        // `net_error_list.h`: -21 is the network changing under the request; access denied is -138.
+        "ERR_NETWORK_CHANGED" to -21,
         "ERR_CONNECTION_CLOSED" to -100,
         "ERR_CONNECTION_RESET" to -101,
         "ERR_CONNECTION_REFUSED" to CONNECTION_REFUSED,
@@ -48,6 +49,7 @@ object NetErrors {
         "ERR_ADDRESS_UNREACHABLE" to -109,
         "ERR_SSL_VERSION_OR_CIPHER_MISMATCH" to -113,
         "ERR_CONNECTION_TIMED_OUT" to CONNECTION_TIMED_OUT,
+        "ERR_NETWORK_ACCESS_DENIED" to -138,
         "ERR_CERT_COMMON_NAME_INVALID" to CERT_COMMON_NAME_INVALID,
         "ERR_CERT_DATE_INVALID" to CERT_DATE_INVALID,
         "ERR_CERT_AUTHORITY_INVALID" to CERT_AUTHORITY_INVALID,

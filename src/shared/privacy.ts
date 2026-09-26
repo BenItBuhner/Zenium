@@ -44,6 +44,54 @@ export type ThirdPartyCookieMode = 'allow' | 'block-private' | 'block'
  */
 export type ThirdPartyCookiePrivateMode = 'default' | 'allow' | 'block'
 
+/**
+ * Chrome's "Preload pages" (PS-43; `prefetch.network_prediction_options`): whether pages the
+ * user is likely to visit are fetched ahead of a navigation.
+ * - `standard` (default): the speculative loads pages ask for – `<link rel=prefetch>`,
+ *   speculation-rules prefetch and prerender – go out.
+ * - `extended`: Chrome's "more pages, including ones you have not visited" level, which needs
+ *   Google's prediction service; neither host has one, so it is `standard` in effect on both
+ *   and neither settings page offers it (kept in the type so a peer's or a profile's value reads
+ *   and syncs as Chrome's own would).
+ * - `none`: nothing is fetched ahead of time. The desktop request engine refuses every request
+ *   Chromium marks as speculative (`Sec-Purpose: prefetch`, and `prefetch;prerender` – the
+ *   fetch every prerender starts with, so no prerender activates either; nothing at startup);
+ *   the phone's WebViews get `SPECULATIVE_LOADING_DISABLED`.
+ * A synced key of its own (`Settings.preloadPages`), as Chrome syncs the pref.
+ */
+export type PreloadPagesLevel = 'standard' | 'extended' | 'none'
+export const PRELOAD_PAGES_LEVELS: readonly PreloadPagesLevel[] = ['standard', 'extended', 'none']
+export const DEFAULT_PRELOAD_PAGES: PreloadPagesLevel = 'standard'
+
+/**
+ * The persisted level, `standard` for anything else. Also the boot migration of a profile from
+ * before the setting existed: the desktop's "Block prerendering" (`resources.process.
+ * disablePrerender`, folded into `none` here) is deliberately not read – it defaulted to `true`
+ * for every profile, so a stored `true` was no choice, and it never touched prefetch (nor, under
+ * Electron, an observable prerender: no prerender activates there with the feature on or off),
+ * so nothing a user experienced changes when the profile reads Chrome's default.
+ */
+export function sanitizePreloadPages(raw: unknown): PreloadPagesLevel {
+  return PRELOAD_PAGES_LEVELS.includes(raw as PreloadPagesLevel)
+    ? (raw as PreloadPagesLevel)
+    : DEFAULT_PRELOAD_PAGES
+}
+
+/** The two levels the settings row offers on both hosts (`extended` reads as `standard`). */
+export const PRELOAD_PAGES_LABELS: Record<
+  Exclude<PreloadPagesLevel, 'extended'>,
+  { label: string; description: string }
+> = {
+  standard: {
+    label: 'Standard preloading',
+    description: 'Preloads some of the pages you’re likely to visit.'
+  },
+  none: {
+    label: 'No preloading',
+    description: 'Pages load only when you open them.'
+  }
+}
+
 export interface PrivacySettings {
   /** Safe Browsing: the open malware and phishing feeds, on by default. */
   safeBrowsingEnabled: boolean
@@ -389,6 +437,13 @@ export interface PrivacyFlags {
   secureDnsMode: SecureDnsMode
   secureDnsServers: string[]
   /**
+   * The effective Preload pages level (PS-43): the user's `Settings.preloadPages`, or `none`
+   * while an extension holds `chrome.privacy.network.networkPredictionEnabled` at `false`. The
+   * desktop's `PreloadHandler` refuses the speculative requests under `none`; the phone maps it
+   * to each WebView's speculative-loading status (`PrivacyFlags.kt`, `TabWebView.applyPrivacy`).
+   */
+  preloadPages: PreloadPagesLevel
+  /**
    * The per-site cookie and site-data policy (`shared/siteData.ts`): Chrome's three lists and
    * the "block all" default. The hosts' header stages withhold `Cookie` / `Set-Cookie` by it
    * (`cookiesWithheld` in `core/protection/policy.ts`); the Kotlin twin is
@@ -422,14 +477,26 @@ export function thirdPartyCookiesBlockedIn(
 }
 
 /**
- * The private contexts' switch as the UI shows it: on when third-party cookies are blocked
- * there, and locked (on, disabled) while the global mode blocks them everywhere, as Chrome
- * locks its incognito toggle.
+ * The private contexts' switch as the UI shows it (Chrome's incognito toggle): `blocked` is its
+ * position, `locked` that it is disabled – on and locked while the global mode blocks
+ * third-party cookies everywhere, as Chrome locks its toggle; at either pole while an extension
+ * holds the cookie setting (`shared/extensionSettings.ts` `privateThirdPartyCookieSwitch`), when
+ * `lockedByExtension` carries the holder's name – empty while the name is not to hand – so the
+ * locked line can name it; absent when the lock is the user's own global block.
  */
-export function privateThirdPartyCookieStatus(policy: ThirdPartyCookiePolicy): {
+export interface PrivateThirdPartyCookieStatus {
   blocked: boolean
   locked: boolean
-} {
+  lockedByExtension?: string
+}
+
+/**
+ * The private contexts' switch under the user's own policy: on when third-party cookies are
+ * blocked there, and locked (on, disabled) while the global mode blocks them everywhere.
+ */
+export function privateThirdPartyCookieStatus(
+  policy: ThirdPartyCookiePolicy
+): PrivateThirdPartyCookieStatus {
   return {
     blocked: thirdPartyCookiesBlockedIn(policy, true),
     locked: policy.thirdPartyCookies === 'block'
@@ -479,11 +546,11 @@ export interface PrivacyStatus {
   /** What the host resolver was last configured with; `supported` is false where the host has none (Android). */
   secureDns: { supported: boolean; mode: SecureDnsMode; servers: string[] }
   /**
-   * Third-party cookies in private windows and private tabs ({@link privateThirdPartyCookieStatus}):
-   * `blocked` is the switch's position, `locked` that the global mode is `block` and the switch
-   * is on and disabled.
+   * Third-party cookies in private windows and private tabs ({@link PrivateThirdPartyCookieStatus}):
+   * `blocked` is the switch's position, `locked` that it is disabled – the global mode is
+   * `block`, or an extension holds the cookie setting at either pole and is named.
    */
-  privateThirdPartyCookies: { blocked: boolean; locked: boolean }
+  privateThirdPartyCookies: PrivateThirdPartyCookieStatus
 }
 
 export function emptySafeBrowsingStatus(): SafeBrowsingStatus {

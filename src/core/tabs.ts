@@ -56,6 +56,7 @@ import {
   crashPageUrl,
   type CrashPageVariant,
   type ErrorPageAccent,
+  type ErrorPageSearch,
   errorPageCertificate,
   errorPageUrl,
   extensionPageOf,
@@ -88,15 +89,23 @@ import {
   CRASH_ERROR_CODE,
   crashCodeName,
   describeNetError,
-  HTTP_FALLBACK_CODES
+  HTTP_FALLBACK_CODES,
+  NAME_NOT_RESOLVED_CODE
 } from '../shared/zenPages'
 import { isCertificateError } from '../shared/siteInfo'
 import type { InterstitialAction } from '../shared/interstitial'
+import type { ImagePost } from '../shared/imageUpload'
 import { closedTabEntry, closedWindowEntry } from './session'
 import { newId } from '../shared/ids'
 import { clampZoom, stepZoom } from '../shared/pageControls'
 import type { FaviconFetcher } from './favicons'
-import { defer, type PageFlags, type TabView, type TabViewEvents } from './platform'
+import {
+  defer,
+  type NavigationCommitDetails,
+  type PageFlags,
+  type TabView,
+  type TabViewEvents
+} from './platform'
 import { permissionSite, safeOrigin } from './permissions'
 import { certificateSiteOf } from './security'
 import { openedWindowKind, planWindowOpen } from './windowOpen'
@@ -191,6 +200,13 @@ export class TabManager {
    * elsewhere, fails or loses its tab drops them.
    */
   private readonly pendingRedirects = new Map<string, { hops: string[]; to: string }>()
+  /**
+   * The address of the document that last committed in each loaded tab, same-document commits
+   * included (history-23): what a client redirect – a commit the page began that replaced its
+   * own history entry – folds into the landing's chain. Not `Tab.url`, which `navigate` writes
+   * as soon as an address is asked for. Goes with the view.
+   */
+  private readonly committedUrls = new Map<string, string>()
   /**
    * Tabs whose crash page `onCrashed` has asked the view for and that has not committed yet. A
    * load already in flight when the renderer went (a restored list's current entry, Android)
@@ -413,14 +429,26 @@ export class TabManager {
     }
     // A page the question page stood in for (a new tab opened on the address, a tab woken on
     // it) is held again on the host without the engine's hold; the desktop's engine holds it.
+    let held = false
     if (url && url !== BLANK_URL) {
-      const held = this.lookalikeHold(tabId, url)
-      if (held !== url) tab.url = held
-      url = held
+      const question = this.lookalikeHold(tabId, url)
+      if (question !== url) {
+        tab.url = question
+        held = true
+      }
+      url = question
     }
-    view.loadURL(url || BLANK_URL)
+    // The tab's first load carries the body `createTab` was given (the image upload), once: a
+    // held address (the lookalike question stands in) and a host without `postURL` load by GET.
+    const post = this.pendingPosts.get(tabId)
+    this.pendingPosts.delete(tabId)
+    if (post && url && !held && view.postURL) view.postURL(url, post)
+    else view.loadURL(url || BLANK_URL)
     return view
   }
+
+  /** Bodies waiting for a tab's first load (`createTab`'s `post`), consumed by `load`. */
+  private readonly pendingPosts = new Map<string, ImagePost>()
 
   /** Replay `snapshot` the next time the tab's page is created (reopened tabs and windows). */
   setPendingNavigation(tabId: string, snapshot: NavigationSnapshot): void {
@@ -528,6 +556,7 @@ export class TabManager {
     }
     if (this.releaseHidden(win)) moved = true
     this.browser.governor.wakeVisible(win)
+    this.browser.mediaSession.onVisibleTabsChanged(win)
     if (moved) this.browser.state.commitVolatile()
   }
 
@@ -556,6 +585,7 @@ export class TabManager {
     if (this.siteMuted(tab.url)) tab.muted = true
     if (tab.muted) view.setMuted(true)
     this.browser.pageControls.onViewCreated(tab, view)
+    this.browser.caretBrowsing.onViewCreated(view)
     this.browser.governor.onViewCreated(tab.id, view)
     win.relayout()
     return view
@@ -636,7 +666,7 @@ export class TabManager {
         update((t) => {
           t.progress = loadProgressAfter(t, progress)
         }, true),
-      onNavigated: (url, inPage) => {
+      onNavigated: (url, inPage, details) => {
         if (!inPage) this.browser.blocking.onNavigated(tabId)
         const v = view()
         this.browser.popups.onNavigated(tabId, inPage)
@@ -664,7 +694,7 @@ export class TabManager {
           // all-clear may not have crossed before the renderer went).
           this.clearCaptureState(tabId)
         }
-        if (v) this.onNavigated(tabId, v, url, inPage)
+        if (v) this.onNavigated(tabId, v, url, inPage, details)
       },
       onWillNavigate: (url) => this.onWillNavigate(tabId, url),
       onTitleUpdated: (title) =>
@@ -776,7 +806,8 @@ export class TabManager {
           description || describeNetError(code, ''),
           url,
           certificateError?.certificate,
-          this.errorPageAccent(tabId)
+          this.errorPageAccent(tabId),
+          this.errorPageSearch(code)
         )
         if (certificateError && v.showErrorPage) this.showInterstitial(tabId, v, url, page)
         else v.loadURL(page)
@@ -1064,6 +1095,18 @@ export class TabManager {
   }
 
   /**
+   * The engine the error page may offer to search with (ERR-05, "Search <engine> for <term>"):
+   * the profile's default – the Settings pick, or the one an extension holds – for a name that
+   * did not resolve, the one failure a typed word ends in; null for every other failure, whose
+   * page offers no search and carries no engine.
+   */
+  errorPageSearch(code: number): ErrorPageSearch | null {
+    if (code !== NAME_NOT_RESOLVED_CODE) return null
+    const engine = this.browser.defaultSearchEngine()
+    return { engine: engine.name, template: engine.searchUrl }
+  }
+
+  /**
    * The title a page has until – or unless – its document reports one: `titleForUrl`'s, except
    * that a page of an installed extension is named after the extension rather than its id (v2
    * §10.1 applied to extension pages), in either form the address takes.
@@ -1111,9 +1154,17 @@ export class TabManager {
     return pending.to === url && pending.hops.length > 0 ? pending.hops : undefined
   }
 
-  private onNavigated(tabId: string, view: TabView, url: string, inPage = false): void {
+  private onNavigated(
+    tabId: string,
+    view: TabView,
+    url: string,
+    inPage = false,
+    details?: NavigationCommitDetails
+  ): void {
     const tab = this.tab(tabId)
     if (!tab) return
+    const previousUrl = this.committedUrls.get(tabId)
+    this.committedUrls.set(tabId, url)
     // The crash page committing is the crash mark, whatever committed between the renderer's
     // end and it (a restored entry's load that got there first cleared the mark: the sad tab
     // – the crashed favicon, Show tabs – reads from the mark, so it is set again here). A
@@ -1141,11 +1192,26 @@ export class TabManager {
     const transition = this.pendingTransition.get(tabId) ?? 'link'
     this.pendingTransition.delete(tabId)
     const redirectedFrom = inPage ? undefined : this.takeRedirects(tabId, url)
+    // The page replaced itself with this document – `location.replace()`, a meta refresh within
+    // a second, a script's navigation before its load event finished: a commit the page began
+    // that took its own history entry's place, Chromium's `did_replace_entry`, which Chrome's
+    // history reads as a client redirect and folds into the landing's chain (history-23). A host
+    // that cannot tell (the phone) leaves `details` out and the page keeps its row; a page that
+    // came back to its own address reads the same as a reload to the host and keeps it too.
+    const clientRedirectFrom =
+      !inPage &&
+      details?.replacedEntry &&
+      details.initiatedByPage &&
+      previousUrl !== undefined &&
+      previousUrl !== url
+        ? previousUrl
+        : undefined
     if (!this.isPrivate(tab))
       this.browser.history.visit(url, tab.title, tab.favicon, {
         transition,
         tabId,
-        ...(redirectedFrom ? { redirectedFrom } : {})
+        ...(redirectedFrom ? { redirectedFrom } : {}),
+        ...(clientRedirectFrom ? { clientRedirectFrom } : {})
       })
     for (const w of this.browser.allWindows())
       if (w.findResult?.tabId === tabId) w.findResult = null
@@ -1485,12 +1551,16 @@ export class TabManager {
       if (frames.size === 0) this.captureReports.delete(tabId)
     }
     this.refreshAlert(tabId)
+    // Automatic picture-in-picture learns of its entry, and of the user closing the small window.
+    const pip = [...(this.captureReports.get(tabId)?.values() ?? [])].some((r) => r.pip)
+    this.browser.mediaSession.onPagePictureInPicture(tabId, pip)
   }
 
   /** Forget every frame's capture report of a tab (its document, renderer or page is gone). */
   private clearCaptureState(tabId: string): void {
     if (!this.captureReports.delete(tabId)) return
     this.refreshAlert(tabId)
+    this.browser.mediaSession.onPagePictureInPicture(tabId, false)
   }
 
   private refreshAlert(tabId: string): void {
@@ -1540,6 +1610,7 @@ export class TabManager {
     this.pendingRedirects.delete(tabId)
     this.crashPagePending.delete(tabId)
     this.browser.popups.onTabGone(tabId)
+    this.browser.downloads.onTabGone(tabId)
     this.browser.security.cancelForTab(tabId)
     this.browser.permissionPrompts.cancelForTab(tabId)
     this.browser.devices.cancelForTab(tabId)
@@ -1652,6 +1723,13 @@ export class TabManager {
       background?: boolean
       /** Opened by another app's intent (see `Tab.fromIntent`). */
       fromIntent?: boolean
+      /**
+       * A body to POST to `url` on the tab's first load (CT-32's image upload: the engine's
+       * fields, `TabView.postURL`); a later load of the tab – a reload, a wake – is a GET of the
+       * address, as Chrome's restore of a POST page is. A host without `postURL` loads the
+       * address alone.
+       */
+      post?: ImagePost
     },
     win: ZenWindow = this.browser.focusedWindow()
   ): Tab {
@@ -1725,6 +1803,7 @@ export class TabManager {
     // Set before the load below so an active tab's single activation load (or a background load)
     // is eligible for the http fallback straight away.
     if (opts.upgradedFrom) this.httpsUpgraded.set(tab.id, `http://${opts.upgradedFrom}`)
+    if (opts.post && tab.url !== BLANK_URL) this.pendingPosts.set(tab.id, opts.post)
     if (opts.active !== false) {
       this.activateTab(tab.id, win)
     } else if (opts.load !== false && tab.url !== BLANK_URL) {
@@ -1819,13 +1898,16 @@ export class TabManager {
     this.views.delete(tabId)
     this.owners.delete(tabId)
     this.httpsUpgraded.delete(tabId)
+    this.pendingPosts.delete(tabId)
     this.pendingTransition.delete(tabId)
     this.splitLinkFlags.delete(tabId)
     this.splitLinkLoads.delete(tabId)
     this.pendingRedirects.delete(tabId)
+    this.committedUrls.delete(tabId)
     this.crashPagePending.delete(tabId)
     this.browser.externalProtocols.cancelForTab(tabId)
     this.browser.popups.onTabGone(tabId)
+    this.browser.downloads.onTabGone(tabId)
     this.browser.security.cancelForTab(tabId)
     this.browser.devices.cancelForTab(tabId)
     this.browser.pageDialogs.cancelForTab(tabId)
@@ -1962,12 +2044,16 @@ export class TabManager {
     let n = 0
     for (const tab of Object.values(m.tabs)) {
       if (tab.id === glance || (tab.spaceId && m.localSpaces[tab.spaceId])) continue
+      if (this.agentsTab(tab)) continue
       if (others.length === 0 || tab.windowId === win.id) n += 1
     }
     return n
   }
 
-  /** How many tabs close when the app quits: every tab of every window (Glance previews aside). */
+  /**
+   * How many tabs close when the app quits: every tab of every window the user sees (Glance
+   * previews and the agents' tabs aside).
+   */
   openTabCount(): number {
     const glances = new Set(
       this.browser
@@ -1975,7 +2061,21 @@ export class TabManager {
         .map((w) => w.glance?.tabId)
         .filter((id): id is string => Boolean(id))
     )
-    return Object.keys(this.model.tabs).filter((id) => !glances.has(id)).length
+    return Object.values(this.model.tabs).filter(
+      (tab) => !glances.has(tab.id) && !this.agentsTab(tab)
+    ).length
+  }
+
+  /**
+   * A tab the user did not open, for the questions before a close ("Close N tabs?"): one in an
+   * agents' space – the shared Agents space, a space an agent made – told apart by the space's
+   * ownership (W7-F3). The count Zen asks with is Firefox's (`browser.tabs.warnOnClose` over the
+   * window's `openTabs`), and Firefox leaves the tab it made itself – Firefox View – out of it
+   * the same way; Chrome asks about downloads and `beforeunload`, never about a tab count. A
+   * `zen://newtab` the boot seeded stands in the user's space and counts as one tab.
+   */
+  private agentsTab(tab: Tab): boolean {
+    return tab.spaceId !== null && this.browser.agents.isAgentSpace(tab.spaceId)
   }
 
   /** Which window a tab belongs to under the current window-sync mode (null = shared). */
@@ -2058,6 +2158,8 @@ export class TabManager {
     }
     this.releaseHidden(win)
     this.browser.governor.wakeVisible(win)
+    // A playing video left behind goes into its small window; one in front again comes back (MW-28).
+    this.browser.mediaSession.onVisibleTabsChanged(win)
     // An offline error page that came back online while hidden reloads on its turn on screen.
     this.browser.connectivity.onTabsShown(this.visibleTabIds(win))
     win.findResult = null
@@ -2077,6 +2179,14 @@ export class TabManager {
     const fromIndex = m.spaces.findIndex((s) => s.id === win.activeSpaceId)
     const toIndex = m.spaces.findIndex((s) => s.id === spaceId)
     if (win.glance) this.closeGlance(win)
+    if (!win.localSpace) {
+      // The user's space the window leaves for an agent's is remembered, for the way back when
+      // the agent's space is left empty (`Browser.leaveEmptyAgentSpace`); on a user's space the
+      // window's own place is the last user space, and nothing is remembered.
+      const agents = this.browser.agents
+      if (!agents.isAgentSpace(spaceId)) win.lastUserSpaceId = null
+      else if (!agents.isAgentSpace(win.activeSpaceId)) win.lastUserSpaceId = win.activeSpaceId
+    }
     win.activeSpaceId = spaceId
     if (!win.localSpace) m.activeSpaceId = spaceId
     if (activateTabId && this.tab(activateTabId)) win.select(space, activateTabId)
@@ -2095,6 +2205,7 @@ export class TabManager {
     }
     this.releaseHidden(win)
     this.browser.governor.wakeVisible(win)
+    this.browser.mediaSession.onVisibleTabsChanged(win)
     win.findResult = null
     this.browser.emit('space.switched', { fromIndex, toIndex }, win)
     this.browser.state.commit()
@@ -3337,6 +3448,7 @@ export class TabManager {
     if (next) this.activateTab(next, source)
     else {
       this.releaseHidden(source)
+      this.browser.mediaSession.onVisibleTabsChanged(source)
       source.relayout()
     }
   }

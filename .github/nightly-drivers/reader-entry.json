@@ -1,0 +1,10 @@
+{
+  "id": "reader-entry",
+  "order": 90,
+  "class": "ReaderEntryDemo",
+  "shard": "phone-f",
+  "mirrors": "android-reader-entry-demo.yml",
+  "dir": "reader-entry-demo",
+  "estimate": 4.5,
+  "note": "The reader entry and the crossing into Reader View (PUI-14, MOT-36; W6-2): the offer on the §9.33 banner stack over an article from the driver's five loopback sites, Show under a finger through the crossing (frame scenes both ways), the offer's clock (about 10 s standing, the timeout a mute), the swipe / X / leaving-the-page memory per site, the page that is no article, the site-information sheet's Reader View row and its crossing, the pill's favicon kept through the reader, the strip and the crossing in dark. The driver waits out one clock (about 11 s). Its workflow's runs measured 162 s (before the clock and the sheet's acts) and 226 s: the longer one, rounded up. On phone-f, the shard with the room."
+}

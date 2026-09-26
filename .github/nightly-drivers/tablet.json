@@ -1,0 +1,12 @@
+{
+  "id": "tablet",
+  "order": 112,
+  "class": "TabletLayoutDemo",
+  "shard": "tablet",
+  "mirrors": "android-tablet-demo.yml",
+  "dir": "tablet-demo",
+  "env": {
+    "DEMO_THEME": "light"
+  },
+  "estimate": 3
+}

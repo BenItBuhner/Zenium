@@ -1,5 +1,6 @@
 import { resolve } from 'path'
 import { defineConfig } from 'electron-vite'
+import { inlineScriptPlugin } from './scripts/inline-script'
 import { licencesPlugin } from './scripts/licences'
 import { singleFilePreloads } from './scripts/single-file-preloads'
 import react from '@vitejs/plugin-react'
@@ -12,6 +13,9 @@ export default defineConfig({
         '@shared': resolve('src/shared')
       }
     },
+    // The scripts the main process runs in documents it does not own (a DevTools toolbox's
+    // held-key notice), bundled here from their entries into strings (`virtual:zenium-*`).
+    plugins: [inlineScriptPlugin()],
     define: {
       // The Apple team id of the signing identity (release builds); it names the keychain access
       // group of Touch ID passkeys. Empty for unsigned builds.

@@ -2,9 +2,12 @@ import { describe, expect, it, vi } from 'vitest'
 import type {
   HostCapabilities,
   Platform as PlatformOs,
+  ShortcutAction,
   SyncDeviceTabs,
   SyncRemoteTab
 } from '../../shared/types'
+import { bindingFor, toAccelerator } from '../../shared/shortcuts'
+import { NEW_TAB_URL } from '../../shared/url'
 import { Browser } from '../browser'
 import type {
   AppHost,
@@ -17,7 +20,7 @@ import type {
   WindowHost
 } from '../platform'
 import type { ZenWindow } from '../window'
-import { menuSignature } from '../menuBar'
+import { HELP_URL, ISSUES_URL, menuSignature } from '../menuBar'
 
 function memoryIo(): StoreIO {
   const files: Record<string, string> = {}
@@ -141,7 +144,7 @@ function item(items: MenuItemTemplate[], label: string): MenuItemTemplate {
 }
 
 describe('the macOS menu bar', () => {
-  it('is handed to the host at start with Chrome’s eight menus', () => {
+  it('is handed to the host at start with Chrome’s menus in Chrome’s order, less Profiles', () => {
     const h = harness()
     expect(h.bars.length).toBe(1)
     expect(last(h).map((m) => m.label)).toEqual([
@@ -151,6 +154,7 @@ describe('the macOS menu bar', () => {
       'View',
       'History',
       'Bookmarks',
+      'Tab',
       'Window',
       'Help'
     ])
@@ -208,9 +212,11 @@ describe('the macOS menu bar', () => {
     const at = labels.indexOf('Name Window…')
     expect(at).toBeGreaterThan(0)
     // The group about this window: its name, then its double (session-19) – the order More
-    // Tools lists the pair in (one order in both menus, the #451 lead check's).
-    expect(labels.slice(at - 2, at + 4)).toEqual([
-      'Search Tabs…',
+    // Tools lists the pair in (one order in both menus, the #451 lead check's) – right after the
+    // window's own rows (Chrome's Window menu carries no tab rows: those are the Tab menu's).
+    expect(labels.slice(0, at + 4)).toEqual([
+      'Minimize',
+      'Zoom',
       '-',
       'Name Window…',
       'Duplicate Window',
@@ -650,16 +656,319 @@ describe('the macOS menu bar', () => {
     expect(overlays[0]!.payload).toEqual({ kind: 'settings', section: 'shortcuts' })
   })
 
-  it("orders Help as the app menu's Help submenu does, less About Zenium, which is the application menu's role: What's New over the hairline, then Zenium Help, Keyboard Shortcuts, Report an Issue…", () => {
+  it("orders Help as the app menu's Help submenu does, less About Zenium, which is the application menu's: What's New over the hairline, then Zenium Help, Keyboard Shortcuts, Report an Issue…; the help role for macOS's Search field; no Report Unsafe Site, Zenium having no Safe Browsing report path (shortcuts-menus-162)", () => {
     const h = harness()
-    expect(submenu(last(h), 'Help').map((i) => (i.type === 'separator' ? '-' : i.label))).toEqual([
+    const help = submenu(last(h), 'Help')
+    expect(help.map((i) => (i.type === 'separator' ? '-' : i.label))).toEqual([
       "What's New",
       '-',
       'Zenium Help',
       'Keyboard Shortcuts',
       'Report an Issue…'
     ])
-    expect(item(submenu(last(h), 'Zenium'), 'About Zenium').role).toBe('about')
+    expect(item(last(h), 'Help').role).toBe('help')
+    // Chrome's Help chords name no action of the key table: no row shows one.
+    for (const row of help) expect(row.accelerator).toBeUndefined()
+    // Every row is a pick: enabled, with a click.
+    for (const row of help.filter((i) => i.type !== 'separator')) {
+      expect(row.enabled).not.toBe(false)
+      expect(row.click).toBeTypeOf('function')
+    }
+    expect(help.map((i) => i.label)).not.toContain('About Zenium')
+  })
+
+  it('Help › Zenium Help and Report an Issue… open their pages in the system browser; What’s New opens this version’s release notes (in a window opened for it with every window closed)', () => {
+    const h = harness()
+    const opened: string[] = []
+    h.browser.platform.shell.openExternal = (url: string) => {
+      opened.push(url)
+    }
+    const help = submenu(last(h), 'Help')
+    item(help, 'Zenium Help').click?.()
+    item(help, 'Report an Issue…').click?.()
+    expect(opened).toEqual([HELP_URL, ISSUES_URL])
+    expect(ISSUES_URL).toMatch(/\/issues/)
+    const whatsNew = vi.spyOn(h.browser.updates, 'openWhatsNew').mockImplementation(() => undefined)
+    item(help, "What's New").click?.()
+    expect(whatsNew).toHaveBeenCalledWith(h.win)
+    h.win.onClosing()
+    h.win.onClosed()
+    expect(h.browser.allWindows()).toHaveLength(0)
+    item(help, "What's New").click?.()
+    expect(h.browser.allWindows()).toHaveLength(1)
+    expect(whatsNew).toHaveBeenLastCalledWith(h.browser.allWindows()[0])
+  })
+
+  it('Zenium › About Zenium is an enabled row opening the About page (Settings › About) through the Settings page’s one route, as the ⋯ menu’s Help › About Zenium does – not the host’s About panel (shortcuts-menus-123)', () => {
+    const h = harness()
+    const row = item(submenu(last(h), 'Zenium'), 'About Zenium')
+    expect(row.role).toBeUndefined()
+    expect(row.enabled).not.toBe(false)
+    h.sent.length = 0
+    row.click?.()
+    const overlays = h.sent.filter((s) => s.name === 'overlay.open')
+    expect(overlays).toHaveLength(1)
+    expect(overlays[0]!.payload).toEqual({ kind: 'settings', section: 'about' })
+    // The bar stands with every window closed: the row opens a window for the page.
+    h.win.onClosing()
+    h.win.onClosed()
+    expect(h.browser.allWindows()).toHaveLength(0)
+    h.sent.length = 0
+    row.click?.()
+    expect(h.browser.allWindows()).toHaveLength(1)
+    expect(h.sent.filter((s) => s.name === 'overlay.open')).toHaveLength(1)
+  })
+
+  describe('the Tab menu is Chrome’s, between Bookmarks and Window (shortcuts-menus-160)', () => {
+    const labels = (items: MenuItemTemplate[]): string[] =>
+      items.map((i) => (i.type === 'separator' ? '-' : (i.label ?? '')))
+    const tabMenu = (h: Harness): MenuItemTemplate[] => submenu(last(h), 'Tab')
+    /** The rows' enabled states by label. */
+    const enabled = (h: Harness): Record<string, boolean> =>
+      Object.fromEntries(tabMenu(h).map((i) => [i.label, i.enabled !== false]))
+
+    it('lists Chrome’s rows in Chrome’s order, the vertical strip’s twins for the two rows Chrome words by direction, and Zenium’s folder rows for Group Tab', () => {
+      const h = harness()
+      expect(labels(tabMenu(h))).toEqual([
+        'New Tab Below',
+        'Select Next Tab',
+        'Select Previous Tab',
+        'Duplicate Tab',
+        'Mute Site',
+        'Pin Tab',
+        'Add Tab to New Folder',
+        'Remove from Folder',
+        'Close Other Tabs',
+        'Close Tabs Below',
+        'Move Tab to New Window',
+        'Search Tabs…'
+      ])
+      // The tab rows left the Window menu for it, as Chrome's Window menu has none.
+      const window = labels(submenu(last(h), 'Window'))
+      for (const row of ['Select Next Tab', 'Select Previous Tab', 'Search Tabs…'])
+        expect(window).not.toContain(row)
+    })
+
+    it('shows each chord row the key table’s binding – never a second truth – and none on the rows without an action', () => {
+      const h = harness()
+      const menu = tabMenu(h)
+      const chords = Object.fromEntries(menu.map((i) => [i.label, i.accelerator]))
+      const table = h.browser.state.shortcuts
+      const expectChord = (label: string, action: ShortcutAction): void => {
+        expect(item(menu, label).action).toBe(action)
+        expect(chords[label]).toBe(toAccelerator(bindingFor(table, action)))
+        expect(chords[label]).toBeTypeOf('string')
+      }
+      expectChord('Select Next Tab', 'tab.next')
+      expectChord('Select Previous Tab', 'tab.prev')
+      expectChord('Duplicate Tab', 'tab.duplicate')
+      expectChord('Pin Tab', 'tab.togglePin')
+      expectChord('Search Tabs…', 'tab.search')
+      // Chrome's chords, in the chrome preset.
+      expect(chords['Select Next Tab']).toBe('Ctrl+Tab')
+      expect(chords['Select Previous Tab']).toBe('Ctrl+Shift+Tab')
+      expect(chords['Duplicate Tab']).toBe('Cmd+Shift+K')
+      expect(chords['Pin Tab']).toBe('Cmd+Ctrl+P')
+      expect(chords['Search Tabs…']).toBe('Cmd+Shift+A')
+      for (const label of [
+        'New Tab Below',
+        'Mute Site',
+        'Add Tab to New Folder',
+        'Remove from Folder',
+        'Close Other Tabs',
+        'Close Tabs Below',
+        'Move Tab to New Window'
+      ]) {
+        expect(item(menu, label).action).toBeUndefined()
+        expect(chords[label]).toBeUndefined()
+      }
+    })
+
+    it('follows the preset: the chords are redrawn from the new table', async () => {
+      const h = harness()
+      await tick()
+      h.browser.handleCommand(h.win, 'settings.update', { shortcutPreset: 'zen' })
+      await tick()
+      const menu = tabMenu(h)
+      const table = h.browser.state.shortcuts
+      for (const [label, action] of [
+        ['Select Next Tab', 'tab.next'],
+        ['Select Previous Tab', 'tab.prev'],
+        ['Duplicate Tab', 'tab.duplicate'],
+        ['Pin Tab', 'tab.togglePin'],
+        ['Search Tabs…', 'tab.search']
+      ] as Array<[string, ShortcutAction]>)
+        expect(item(menu, label).accelerator ?? null).toBe(toAccelerator(bindingFor(table, action)))
+    })
+
+    it('greys with the active tab: a page without a site cannot be muted, one tab leaves nothing to close, a tab in no folder has none to leave; a site tab among others enables them; every row greys with every window closed', () => {
+      vi.useFakeTimers()
+      try {
+        const h = harness()
+        // The fresh window holds no tab (this host's New Tab is the URL bar alone): every row
+        // about a tab greys; Search Tabs… wants a window alone.
+        const none = enabled(h)
+        expect(none['Search Tabs…']).toBe(true)
+        expect(
+          Object.entries(none)
+            .filter(([, on]) => on)
+            .map(([l]) => l)
+        ).toEqual(['Search Tabs…'])
+        // A new tab page: no site to mute, nothing else to close, no folder to leave.
+        h.browser.tabs.createTab({ url: NEW_TAB_URL, active: true }, h.win)
+        vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+        expect(enabled(h)).toEqual({
+          'New Tab Below': true,
+          'Select Next Tab': true,
+          'Select Previous Tab': true,
+          'Duplicate Tab': true,
+          'Mute Site': false,
+          'Pin Tab': true,
+          'Add Tab to New Folder': true,
+          'Remove from Folder': false,
+          'Close Other Tabs': false,
+          'Close Tabs Below': false,
+          'Move Tab to New Window': true,
+          'Search Tabs…': true
+        })
+        const site = h.browser.tabs.createTab({ url: 'https://a.test/', active: true }, h.win)
+        h.browser.tabs.createTab({ url: 'https://b.test/', active: false }, h.win)
+        vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+        expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(site.id)
+        expect(enabled(h)).toMatchObject({
+          'Mute Site': true,
+          'Close Other Tabs': true,
+          'Close Tabs Below': true
+        })
+        for (const w of h.browser.allWindows()) {
+          w.onClosing()
+          w.onClosed()
+        }
+        vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+        expect(h.browser.allWindows()).toHaveLength(0)
+        expect(Object.values(enabled(h)).every((on) => !on)).toBe(true)
+        // The rows stand, greyed: same labels, nothing gone.
+        expect(labels(tabMenu(h))).toHaveLength(12)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('the toggles read their state: Pin Tab / Unpin Tab through the key’s action, Mute Site / Unmute Site through the site’s sound setting, as the tab’s context menu words them', () => {
+      vi.useFakeTimers()
+      try {
+        const h = harness()
+        const tab = h.browser.tabs.createTab({ url: 'https://a.test/', active: true }, h.win)
+        vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+        item(tabMenu(h), 'Pin Tab').click?.()
+        expect(h.browser.tabs.tab(tab.id)?.pinned).toBe(true)
+        vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+        const unpin = item(tabMenu(h), 'Unpin Tab')
+        expect(unpin.action).toBe('tab.togglePin')
+        // A pinned tab is one no folder takes: the folder row greys with it.
+        expect(item(tabMenu(h), 'Add Tab to New Folder').enabled).toBe(false)
+        unpin.click?.()
+        expect(h.browser.tabs.tab(tab.id)?.pinned).toBe(false)
+        vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+        expect(labels(tabMenu(h))).toContain('Pin Tab')
+        expect(item(tabMenu(h), 'Add Tab to New Folder').enabled).toBe(true)
+
+        expect(h.browser.tabs.siteMuted('https://a.test/')).toBe(false)
+        item(tabMenu(h), 'Mute Site').click?.()
+        expect(h.browser.tabs.siteMuted('https://a.test/')).toBe(true)
+        expect(h.browser.tabs.tab(tab.id)?.muted).toBe(true)
+        vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+        item(tabMenu(h), 'Unmute Site').click?.()
+        expect(h.browser.tabs.siteMuted('https://a.test/')).toBe(false)
+        vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+        expect(labels(tabMenu(h))).toContain('Mute Site')
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('Group Tab is the tab context menu’s folder rows: Add Tab to New Folder while the space has none, else Move to Folder ▸ with a new folder first and the space’s folders, the tab’s own checked; Remove from Folder beside it, greyed outside one', () => {
+      vi.useFakeTimers()
+      try {
+        const h = harness()
+        const tab = h.browser.tabs.createTab({ url: 'https://a.test/', active: true }, h.win)
+        const other = h.browser.tabs.createTab({ url: 'https://b.test/', active: false }, h.win)
+        vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+        expect(labels(tabMenu(h))).not.toContain('Move to Folder')
+        // The row makes a folder around the active tab, the context menu's command.
+        item(tabMenu(h), 'Add Tab to New Folder').click?.()
+        const folderId = h.browser.tabs.tab(tab.id)?.folderId
+        expect(folderId).toBeTypeOf('string')
+        vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+        expect(labels(tabMenu(h))).not.toContain('Add Tab to New Folder')
+        const move = item(tabMenu(h), 'Move to Folder')
+        expect(move.enabled).toBe(true)
+        const folder = h.browser.state.model.folders[folderId!]!
+        expect(labels(move.submenu!)).toEqual(['New Folder…', '-', `${folder.icon} ${folder.name}`])
+        expect(move.submenu![2]).toMatchObject({ type: 'checkbox', checked: true })
+        const remove = item(tabMenu(h), 'Remove from Folder')
+        expect(remove.enabled).toBe(true)
+        remove.click?.()
+        expect(h.browser.tabs.tab(tab.id)?.folderId).toBeNull()
+        vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+        expect(item(tabMenu(h), 'Remove from Folder').enabled).toBe(false)
+        expect(item(tabMenu(h), 'Move to Folder').submenu![2]).toMatchObject({ checked: false })
+        // A folder's row moves the active tab into it; the checked one's takes it out again.
+        item(tabMenu(h), 'Move to Folder').submenu![2]!.click?.()
+        expect(h.browser.tabs.tab(tab.id)?.folderId).toBe(folderId)
+        vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+        item(tabMenu(h), 'Move to Folder').submenu![2]!.click?.()
+        expect(h.browser.tabs.tab(tab.id)?.folderId).toBeNull()
+        // The other tab, made active, reads its own state: no folder, the row unchecked.
+        h.browser.tabs.activateTab(other.id, h.win)
+        vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+        expect(item(tabMenu(h), 'Move to Folder').submenu![2]).toMatchObject({ checked: false })
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('runs the tab context menu’s commands on the front window’s active tab: New Tab Below, Duplicate Tab, Close Tabs Below, Close Other Tabs, Move Tab to New Window, Select Next Tab', () => {
+      vi.useFakeTimers()
+      try {
+        const h = harness()
+        const { tabs } = h.browser
+        const first = tabs.createTab({ url: 'https://a.test/', active: true }, h.win)
+        const ids = (): string[] => h.win.activeSpace().tabIds
+        const before = ids()
+        item(tabMenu(h), 'New Tab Below').click?.()
+        expect(ids()).toHaveLength(before.length + 1)
+        expect(ids()[before.indexOf(first.id) + 1]).not.toBe(first.id)
+        const below = ids()[ids().indexOf(first.id) + 1]!
+        tabs.activateTab(first.id, h.win)
+        vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+        item(tabMenu(h), 'Duplicate Tab').click?.()
+        expect(ids()).toHaveLength(before.length + 2)
+        const dup = tabs.activeTabFor(h.win)!
+        expect(dup.id).not.toBe(first.id)
+        expect(dup.url).toBe('https://a.test/')
+        tabs.activateTab(first.id, h.win)
+        vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+        item(tabMenu(h), 'Close Tabs Below').click?.()
+        expect(ids()).not.toContain(below)
+        expect(ids()).not.toContain(dup.id)
+        expect(ids()).toContain(first.id)
+        vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+        item(tabMenu(h), 'Close Other Tabs').click?.()
+        expect(ids()).toEqual([first.id])
+        vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+        // The one tab left: nothing to cycle to, but the rows run – and Move Tab to New Window
+        // opens a second window around it.
+        item(tabMenu(h), 'Select Next Tab').click?.()
+        expect(tabs.activeTabFor(h.win)?.id).toBe(first.id)
+        item(tabMenu(h), 'Move Tab to New Window').click?.()
+        expect(h.browser.allWindows()).toHaveLength(2)
+        const moved = h.browser.allWindows().find((w) => w !== h.win)!
+        expect(tabs.activeTabFor(moved)?.id).toBe(first.id)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
   })
 })
 

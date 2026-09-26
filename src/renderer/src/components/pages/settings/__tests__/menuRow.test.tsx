@@ -110,6 +110,67 @@ describe('the item row’s ⋯ on a mouse (§10.5)', () => {
     expect(destructive.map((i) => [i.label, i.danger])).toEqual([['Clear', true]])
   })
 
+  it('an action that is a form opens it through `openForm` (a startup page’s Edit…) under the desktop’s word for the row, and one with a confirmation its prompt through `confirm`; a caller with no way to open a form falls to the row’s press', () => {
+    const onPress = vi.fn()
+    const remove = vi.fn()
+    const row = languageRow({
+      id: 'startup-page:0',
+      label: 'example.com',
+      menu: 'Options for example.com',
+      sheet: {
+        title: 'example.com',
+        groups: [
+          {
+            id: 'a',
+            heading: null,
+            rows: [
+              {
+                kind: 'action',
+                id: 'startup-page:0:edit',
+                label: 'Edit',
+                button: 'Edit…',
+                form: { title: 'Edit page', render: () => null },
+                onPress
+              },
+              {
+                kind: 'action',
+                id: 'startup-page:0:forget',
+                label: 'Forget',
+                destructive: true,
+                confirm: { title: 'Forget?', action: 'Forget' },
+                onPress
+              },
+              { kind: 'action', id: 'startup-page:0:remove', label: 'Remove', onPress: remove }
+            ]
+          }
+        ]
+      }
+    })
+    const confirm = vi.fn()
+    const openForm = vi.fn()
+    const items = itemMenuItems(row, confirm, openForm)
+    expect(items.map((i) => [i.label, i.danger])).toEqual([
+      ['Edit…', undefined],
+      ['Forget', true],
+      ['Remove', undefined]
+    ])
+    items[0].onSelect()
+    expect(openForm).toHaveBeenCalledTimes(1)
+    expect(openForm.mock.calls[0][0].id).toBe('startup-page:0:edit')
+    expect(confirm).not.toHaveBeenCalled()
+    expect(onPress).not.toHaveBeenCalled()
+    items[1].onSelect()
+    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(confirm.mock.calls[0][0].id).toBe('startup-page:0:forget')
+    expect(openForm).toHaveBeenCalledTimes(1)
+    items[2].onSelect()
+    expect(remove).toHaveBeenCalledTimes(1)
+    // Without `openForm` the form row is the row's press, as it was.
+    itemMenuItems(row, confirm)[0].onSelect()
+    expect(onPress).toHaveBeenCalledTimes(1)
+    expect(openForm).toHaveBeenCalledTimes(1)
+  })
+
   it('stays a static row with the icon button as its one target, a control row on one line', () => {
     const el = render(<RowView row={languageRow()} ctx={ctx} variant="desktop" />)
     const row = rowOf(el, 'languages-preferred:en')

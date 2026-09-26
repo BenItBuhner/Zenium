@@ -405,4 +405,106 @@ describe('FlipTracker', () => {
     )
     flip.dispose()
   })
+
+  it('shift carries the baseline along with a scroller whose offset moved with its content: the card the strip kept snapped stands still, the cards after a departure glide (NTP-16)', () => {
+    // A snapping strip scrolled to its second card: content x 0, 110, 220, 330 at an offset of
+    // 110, so on screen a is at -110, b at 0, c at 110, d at 220.
+    const strip = document.createElement('ul')
+    let offset = 110
+    Object.defineProperty(strip, 'scrollLeft', {
+      configurable: true,
+      get: () => offset,
+      set: (v: number) => {
+        offset = v
+      }
+    })
+    const a = cell('a', -110, 0)
+    const b = cell('b', 0, 0)
+    const c = cell('c', 110, 0)
+    const d = cell('d', 220, 0)
+    const flip = tracker()
+    const cells = new Map<string, HTMLElement>([
+      ['a', a],
+      ['b', b],
+      ['c', c],
+      ['d', d]
+    ])
+    flip.commit(cells, strip, true)
+    expect(flip.layoutRect('b')).toMatchObject({ x: 0 })
+
+    // c leaves, after the card in view: the offset stays and d closes the gap (content 330 to
+    // 220, on screen 220 to 110) – the layout's own movement, and d glides it.
+    cells.delete('c')
+    d.moveTo(110, 0)
+    flip.commit(cells, strip, true)
+    expect(translate(d)).toEqual({ x: 110, y: 0 })
+    expect(b.style.transform).toBe('')
+    settle()
+    expect(d.style.transform).toBe('')
+
+    // a leaves, before the card in view: Chromium keeps b snapped through the layout change, so
+    // the offset falls to 0 with the content (b at content 0, d at 110) and nothing on screen
+    // moved. Read against the new offset alone the baseline would put b a pitch to the right…
+    cells.delete('a')
+    offset = 0
+    expect(flip.layoutRect('b')).toMatchObject({ x: 110 })
+    // …so the owner shifts it by the offset's move before its commit, and nothing glides.
+    flip.shift(-110)
+    expect(flip.layoutRect('b')).toMatchObject({ x: 0 })
+    flip.commit(cells, strip, true)
+    expect(b.style.transform).toBe('')
+    expect(d.style.transform).toBe('')
+    expect(frames).toHaveLength(0)
+    expect(flip.layoutRect('b')).toMatchObject({ x: 0, width: 100 })
+    expect(flip.layoutRect('d')).toMatchObject({ x: 110 })
+    // A shift of nothing is nothing.
+    flip.shift(0)
+    expect(flip.layoutRect('b')).toMatchObject({ x: 0 })
+    flip.dispose()
+  })
+
+  it('a grid hands in its own measure: cells painted under a receded frame between two commits are measured in layout space and nothing glides for the recede, while a cell that did move still does (NTP-16, v2 §11.1)', () => {
+    // The painted box is what `getBoundingClientRect` says; each cell's layout box is kept on
+    // it as the frame would lay it out, and the measure reads that – the way `layoutRectUnder`
+    // runs a painted box back through the frame's transform.
+    const layout = new Map<HTMLElement, { x: number; y: number }>()
+    const measure = (el: HTMLElement): DOMRectReadOnly => {
+      const at = layout.get(el)!
+      return new DOMRect(at.x, at.y, 100, 130)
+    }
+    const flip = new FlipTracker(measure)
+    flip.listen()
+    trackers.push(flip)
+    const a = cell('a', 0, 200)
+    const b = cell('b', 110, 200)
+    layout.set(a, { x: 0, y: 200 })
+    layout.set(b, { x: 110, y: 200 })
+    const cells = new Map<string, HTMLElement>([
+      ['a', a],
+      ['b', b]
+    ])
+    flip.commit(cells, null, true)
+    expect(flip.layoutRect('a')).toMatchObject({ x: 0, y: 200, width: 100, height: 130 })
+
+    // A sheet rises and the frame recedes 3 % about its centre: every painted box moves and
+    // shrinks, no layout box does – and the commit that follows glides nothing.
+    a.moveTo(6, 206)
+    b.moveTo(113, 206)
+    flip.commit(cells, null, true)
+    expect(a.style.transform).toBe('')
+    expect(b.style.transform).toBe('')
+    expect(frames).toHaveLength(0)
+    expect(flip.layoutRect('b')).toMatchObject({ x: 110, y: 200 })
+
+    // a leaves under the sheet still: b's layout box moves to a's slot, and b glides the layout
+    // distance – 110, not the 107 its painted box moved.
+    cells.delete('a')
+    layout.set(b, { x: 0, y: 200 })
+    b.moveTo(6, 206)
+    flip.commit(cells, null, true)
+    expect(translate(b)).toEqual({ x: 110, y: 0 })
+    settle()
+    expect(b.style.transform).toBe('')
+    flip.dispose()
+  })
 })

@@ -17,26 +17,34 @@
  *   the third-party rule; `document.cookie` is out of reach this way, which is why the cookie
  *   jar drops a never-site's cookies as they land: `CookiePolicyEnforcer` in `siteData.ts`).
  *   `navigator.globalPrivacyControl` and `navigator.doNotTrack` come from the page preload,
- *   which asks for the signals over sync IPC at document start.
+ *   which gets the signals in its one document-start ask (the `signals` field of
+ *   `documentStart.ts`'s answer, provided here). Do Not Track has a second
+ *   source beside the user's setting: an extension's `chrome.privacy.websites.doNotTrackEnabled`
+ *   ({@link DoNotTrackSource}, the extension layer's effective value), whose `DNT: 1` header the
+ *   extension layer's own request hook adds; the page's `navigator.doNotTrack` says the same.
+ * - Preload pages (PS-43): {@link PreloadHandler} refuses the speculative loads under
+ *   "No preloading" – the whole of the level's enforcement; no startup switch.
  * - Secure DNS: `app.configureHostResolver`, whenever the mode or the templates change.
  * - The bundled Safe Browsing snapshot (`resources/safebrowsing/<feed>.json`).
  */
-import { app, ipcMain } from 'electron'
+import { app, type WebContents } from 'electron'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { gunzipSync } from 'node:zlib'
 import { BUILTIN_RULE_SETS, type Decision } from '../../core/blocking/rules'
 import type { LookalikeTableName, PrivacyHost } from '../../core/platform'
-import { cookiesWithheld, signalHeaders } from '../../core/protection/policy'
+import { cookiesWithheld, isPreloadRequest, signalHeaders } from '../../core/protection/policy'
 import type { LookalikeVerdict, PrivacyFlags, SafeBrowsingHit } from '../../shared/privacy'
 import type { SiteDataPolicy } from '../../shared/siteData'
-import { PRIVACY_SIGNALS_CHANNEL, type PrivacySignals } from '../../shared/privacySignals'
+import type { PrivacySignals } from '../../shared/privacySignals'
 import type { ElectronBlocking } from './blocking'
+import { registerDocumentStartProvider } from './documentStart'
 import {
   HANDLER_ORDER,
   applyRequestHeaderOps,
   applyResponseHeaderOps,
   type BeforeRequestResult,
+  type BeforeSendHeadersResult,
   type HostRequest,
   type RequestHandler,
   type WebRequestBase
@@ -56,6 +64,16 @@ export interface TabLookup {
 /** The core's Safe Browsing lookup, as the handler needs it. */
 export interface SafeBrowsingLookup {
   lookup(url: string): SafeBrowsingHit | null
+}
+
+/**
+ * The extension layer's Do Not Track value (`chrome.privacy.websites.doNotTrackEnabled`, the
+ * effective value across the extensions holding `privacy`), for the documents of normal windows
+ * and, separately, of private windows (an extension's value reaches those only when the user
+ * allowed it there). The same source the extension layer's request hook sends `DNT: 1` for.
+ */
+export interface DoNotTrackSource {
+  doNotTrack(privateWindow: boolean): boolean
 }
 
 /** The core's lookalike check (`ProtectionService.checkLookalike`), as the handler needs it. */
@@ -123,6 +141,36 @@ export class LookalikeHandler implements RequestHandler {
 }
 
 /**
+ * "No preloading" (PS-43): refuses every request Chromium marks as speculative –
+ * `<link rel=prefetch>`, a speculation-rules prefetch, the prefetch a prerender starts with
+ * (`isPreloadRequest`: the `Sec-Purpose` header, which is why this is a header stage; the
+ * request phase has no headers, and the resource type alone – `other` for the link prefetch,
+ * `mainFrame` for the speculation-rules ones – does not tell them apart from a beacon or a
+ * navigation). DNS prefetch and preconnect never reach the request engine (no HTTP request), and
+ * Electron has no prediction service to switch off. The refusal is the level's whole
+ * enforcement and it is live: a prerender cannot activate without the fetch it starts with, so
+ * nothing is switched off at startup and a change of level needs no relaunch (Blink's
+ * `Prerender2` feature is left as Electron ships it). Under the other levels nothing is refused.
+ * One header scan per request, at the level the core last pushed.
+ */
+export class PreloadHandler implements RequestHandler {
+  readonly id = 'preload'
+  readonly order = HANDLER_ORDER.preload
+
+  constructor(private readonly flags: () => PrivacyFlags | null) {}
+
+  onBeforeSendHeaders(
+    request: HostRequest,
+    headers: Record<string, string>
+  ): BeforeSendHeadersResult | undefined {
+    const flags = this.flags()
+    if (!flags || flags.preloadPages !== 'none') return undefined
+    if (!/^https?:/i.test(request.ctx.url)) return undefined
+    return isPreloadRequest(headers) ? { cancel: true } : undefined
+  }
+}
+
+/**
  * The header stage of the cookie policy: withholds `Cookie` and `Set-Cookie` where the policy
  * says so – a never-site's requests, every request under "block all cookies" but the listed
  * sites', third-party requests under the third-party rule (`cookiesWithheld`) – and adds the
@@ -178,6 +226,8 @@ export interface CookieJarPolicy {
 export class ElectronPrivacy implements PrivacyHost {
   private flags: PrivacyFlags | null = null
   private dnsApplied: string | null = null
+  private extensionSignals: DoNotTrackSource | null = null
+  private isPrivateSender: (sender: WebContents) => boolean = () => false
 
   constructor(
     private readonly tabs: TabLookup,
@@ -222,9 +272,31 @@ export class ElectronPrivacy implements PrivacyHost {
     }
   }
 
-  /** The signals the page preload exposes on `navigator` (both off before the first `apply`). */
-  signals(): PrivacySignals {
-    return { gpc: this.flags?.gpc === true, dnt: this.flags?.dnt === true }
+  /**
+   * The signals the page preload exposes on `navigator` (both off before the first `apply`).
+   * Do Not Track is on when the user's setting is, or when the extensions' effective value for
+   * this kind of window is — the same two sources the wire's `DNT: 1` header has, so the page
+   * and its requests never disagree.
+   */
+  signals(privateWindow = false): PrivacySignals {
+    return {
+      gpc: this.flags?.gpc === true,
+      dnt: this.flags?.dnt === true || this.extensionSignals?.doNotTrack(privateWindow) === true
+    }
+  }
+
+  /**
+   * The extension layer's Do Not Track value joins the user's setting in {@link signals}, and the
+   * preload's document-start ask gets the signals of the sender's kind of window (private or
+   * not). Wired by the platform once the extension API host exists; before that the answers are
+   * the user's alone.
+   */
+  attachExtensionSignals(
+    source: DoNotTrackSource,
+    isPrivateSender: (sender: WebContents) => boolean
+  ): void {
+    this.extensionSignals = source
+    this.isPrivateSender = isPrivateSender
   }
 
   /** The handlers of both request phases, in multiplexer order. */
@@ -232,20 +304,22 @@ export class ElectronPrivacy implements PrivacyHost {
     return [
       new SafeBrowsingHandler(this.safeBrowsing, this.tabs),
       ...(this.lookalikes ? [new LookalikeHandler(this.lookalikes, this.tabs)] : []),
+      new PreloadHandler(() => this.flags),
       new PrivacyRequestHandler(() => this.flags)
     ]
   }
 
   /**
    * Register with the request pipeline: the handlers, the decision observer that reports
-   * main-frame upgrades to their tabs, and the preload's IPC. Once, before any page loads.
+   * main-frame upgrades to their tabs, and the `signals` field of the page preload's
+   * document-start answer. Once, before any page loads.
    */
   attach(blocking: ElectronBlocking): void {
     for (const handler of this.handlers()) blocking.multiplexer.register(handler)
     blocking.onDecision((request, decision) => this.observeDecision(request, decision))
-    ipcMain.on(PRIVACY_SIGNALS_CHANNEL, (event) => {
-      event.returnValue = this.signals()
-    })
+    registerDocumentStartProvider('signals', (event) =>
+      this.signals(this.privateSender(event.sender))
+    )
   }
 
   /**
@@ -258,6 +332,15 @@ export class ElectronPrivacy implements PrivacyHost {
     if (decision.matched?.setId !== BUILTIN_RULE_SETS.httpsOnly) return
     if (request.resourceType !== 'main_frame' || !request.tabId) return
     this.tabs.viewForTab(request.tabId)?.noteUpgraded(request.url, decision.redirectUrl)
+  }
+
+  /** A sender the lookup cannot place (a page window's, a destroyed one) reads as a normal window's. */
+  private privateSender(sender: WebContents): boolean {
+    try {
+      return this.isPrivateSender(sender) === true
+    } catch {
+      return false
+    }
   }
 
   private configureDns(flags: PrivacyFlags): void {

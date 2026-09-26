@@ -1,0 +1,14 @@
+{
+  "id": "ext-store",
+  "order": 35,
+  "class": "ExtensionStoreDemo",
+  "shard": "phone-b",
+  "mirrors": "android-ext-store-demo.yml",
+  "dir": "ext-store-demo",
+  "script": ".github/scripts/android-ext-store-demo.sh",
+  "env": {
+    "SIDELOAD_ZIP": "artifacts/ext/uBlock0.chromium.zip"
+  },
+  "setup": ["ublock-zip"],
+  "estimate": 3
+}

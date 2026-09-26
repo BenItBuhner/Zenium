@@ -1,4 +1,4 @@
-import type { Boost, Container, Settings, Space } from '../../shared/types'
+import type { Boost, Container, ReadingListEntry, Settings, Space } from '../../shared/types'
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
 import { sanitizePhoneBar } from '../../shared/phoneBar'
 import { sanitizeMenuOrder } from '../../shared/menuOrder'
@@ -7,6 +7,7 @@ import { migrateNewTabSettings, sanitizeNewTabSettings } from '../../shared/newT
 import { sanitizeSearchEngines } from '../../shared/search'
 import { sanitizeFontSettings } from '../../shared/fonts'
 import { sanitizeLanguages } from '../../shared/languages'
+import { sanitizeStartupSettings } from '../startup'
 import {
   createTabRecord,
   getSpace,
@@ -26,6 +27,7 @@ import {
   readBookmarkData,
   readCredentialData,
   readFolderAgentMark,
+  readReadingListData,
   readSpaceAgentMark,
   withoutDeviceLocalSettings,
   type ContainerData,
@@ -43,17 +45,23 @@ const ORDER: Record<SyncRecord['type'], number> = {
   folder: 2,
   tab: 3,
   bookmark: 4,
-  settings: 5,
-  'site-data': 5,
-  shortcuts: 6,
-  boost: 7,
-  credential: 8,
-  order: 9
+  'reading-list-entry': 5,
+  settings: 6,
+  'site-data': 6,
+  shortcuts: 7,
+  boost: 8,
+  credential: 9,
+  order: 10
 }
 
 /**
  * Apply records that won the merge to the live browser state. Upserts run before deletes of the
- * same type so moved tabs are never closed by a stale tombstone; ordering records go last.
+ * same type so moved tabs are never closed by a stale tombstone; ordering records go last. The
+ * reading list is the one exception, landed once per batch after the loop with its removals
+ * first: a tombstone and a live record there are never the same entry (`newestByRecord` keeps
+ * one record per id), and an entry a peer removed and saved again under a new id must be gone
+ * before the new one meets the URL dedupe, or it could lose the URL to the very entry its
+ * tombstone takes away.
  */
 export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
   const { state, tabs } = browser
@@ -61,6 +69,8 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
   const sorted = [...winners].sort(
     (a, b) => ORDER[a.type] - ORDER[b.type] || Number(a.deleted) - Number(b.deleted)
   )
+  const readingListLanded: ReadingListEntry[] = []
+  const readingListGone: string[] = []
 
   for (const r of sorted) {
     switch (r.type) {
@@ -230,6 +240,18 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
         if (data) browser.bookmarks.applySynced(r.id, data)
         break
       }
+      case 'reading-list-entry': {
+        // Gathered for one pass over the list after the loop (see above); the record goes
+        // through the apply side's sanitiser, which keeps a web address in the model's normal
+        // form under the record's id and drops a favicon a peer's build may have sent.
+        if (r.deleted) {
+          readingListGone.push(r.id)
+          break
+        }
+        const entry = readReadingListData(r.id, r.data)
+        if (entry) readingListLanded.push(entry)
+        break
+      }
       case 'settings': {
         if (r.deleted || r.id !== SETTINGS_RECORD_ID) break
         // The record carries the keys that won, key by key against this device's own times
@@ -238,11 +260,14 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
         // A peer on an older build still sends the device-local keys (`DEVICE_LOCAL_SETTINGS`):
         // they are this device's own and never land, whatever the record says.
         const data = withoutDeviceLocalSettings(
-          r.data as Partial<Settings> & { newTabPhone?: unknown }
+          r.data as Partial<Settings> & { newTabPhone?: unknown; restoreSession?: unknown }
         )
         // A peer on a 0.3.x build still sends the phone's frozen `newTabPhone` key: it is folded
-        // into `newTab` and never lands on the settings (else every sync would recreate it).
-        const { compactMode, newTabPhone, ...rest } = data
+        // into `newTab` and never lands on the settings (else every sync would recreate it). The
+        // 0.4.x `restoreSession` switch – sent by a peer on a build before `startup`, and by a
+        // 0.4.83 one as the mirror beside it (`collectLocal`) – is folded into `startup` the same
+        // way and never lands either.
+        const { compactMode, newTabPhone, restoreSession, ...rest } = data
         Object.assign(state.settings, rest)
         if (compactMode)
           Object.assign(state.settings.compactMode, compactMode, { sidebarPersistent: false })
@@ -281,6 +306,18 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
         if ('fonts' in rest) state.settings.fonts = sanitizeFontSettings(rest.fonts)
         if ('languages' in rest)
           state.settings.languages = sanitizeLanguages(rest.languages, state.settings.languages)
+        // Settings › On startup: a peer's `startup` is read like a profile's own (a mode this
+        // build does not know reads as the default's, the list as web addresses, capped); a peer
+        // that carries only the old switch – the two keys are one group, so the record carries
+        // what the peer holds of both – sets the mode it stands for, on "Continue where you left
+        // off", off "Open the New Tab page", over this device's own pages: a two-state switch
+        // cannot speak of a list, and a later return to `pages` here finds them.
+        if ('startup' in rest) state.settings.startup = sanitizeStartupSettings(rest.startup)
+        else if (typeof restoreSession === 'boolean')
+          state.settings.startup = {
+            mode: restoreSession ? 'continue' : 'newTab',
+            pages: state.settings.startup.pages
+          }
         break
       }
       case 'site-data': {
@@ -358,6 +395,18 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
       }
     }
   }
+
+  // The reading list, once: the peers' removals, then their entries through the URL dedupe and
+  // the cap (`ReadingListService.applySynced`; the cap bounds READ entries only, the oldest by
+  // `readAt` first – an unread entry is never trimmed). An entry the dedupe or the cap takes out
+  // is no edit of this device's – not because of the engine's `applying` guard (the commit
+  // below broadcasts a macrotask later, `BrowserState.schedule`, when the guard is already
+  // down) but because the engine re-snapshots SYNCHRONOUSLY right after this call (`run()`,
+  // `stamp: null`) and tombstones the vanished record at `now`, and because
+  // `readReadingListData ∘ readingListEntryData` is idempotent: a landed entry re-collects to
+  // the same bytes, so the deferred `onLocalChange` diff finds nothing to stamp.
+  if (readingListGone.length) browser.readingList.removeSynced(readingListGone)
+  if (readingListLanded.length) browser.readingList.applySynced(readingListLanded)
 
   state.repair()
   state.commit()

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { PRIVATE_CONTAINER_ID, type HostCapabilities, type Suggestion } from '../../shared/types'
 import { BOOKMARKS_BAR_ID, OTHER_BOOKMARKS_ID } from '../../shared/bookmarks'
 import { customSearchEngine } from '../../shared/search'
+import { EXTENSION_SETTING_KEYS } from '../../shared/extensionSettings'
 import type { NetHost, StoreIO } from '../platform'
 import type { Browser } from '../browser'
 import { BookmarkService } from '../bookmarks'
@@ -353,6 +354,56 @@ describe('SuggestionService: answers', () => {
     expect(offline.net.requests).toEqual([])
     const priv = setup('private', { online: true })
     await priv.suggestions.suggest('wikipedia', null, priv.win)
+    expect(priv.net.requests).toEqual([])
+  })
+
+  it("reads the switch as an extension holds it (chrome.privacy.services.searchSuggestEnabled) and as the user's again once released", async () => {
+    const { suggestions, win, net, state } = setup('synced', { online: true })
+    const guard = { extensionId: 'guard', name: 'Guard' }
+    net.routes.push({ match: 'client=chrome&q=', body: [] })
+    const remote = (): number => net.requests.filter((u) => u.includes('client=chrome&q=')).length
+
+    // The extension's `false` over the user's `true`: no engine request, the user's setting untouched.
+    state.setExtensionControls({
+      [EXTENSION_SETTING_KEYS.searchSuggestions]: { ...guard, value: false }
+    })
+    expect(suggestions.suggestionsEnabled()).toBe(false)
+    await suggestions.suggest('github', null, win)
+    expect(remote()).toBe(0)
+    expect(net.requests).toEqual([])
+    expect(state.settings.searchSuggestions).toBe(true)
+    // The user's own change while held changes nothing visible.
+    state.settings.searchSuggestions = false
+    state.settings.searchSuggestions = true
+    await suggestions.suggest('github', null, win)
+    expect(remote()).toBe(0)
+
+    // Release: the user's value returns – the next query asks the engine.
+    state.setExtensionControls({})
+    expect(suggestions.suggestionsEnabled()).toBe(true)
+    await suggestions.suggest('github', null, win)
+    expect(remote()).toBe(1)
+
+    // The extension's `true` over the user's `false` (a fresh query: the engine's answers are
+    // cached per query); a hold on another key is not this switch.
+    state.settings.searchSuggestions = false
+    await suggestions.suggest('gitlab', null, win)
+    expect(remote()).toBe(1)
+    state.setExtensionControls({
+      [EXTENSION_SETTING_KEYS.searchSuggestions]: { ...guard, value: true }
+    })
+    await suggestions.suggest('gitlab', null, win)
+    expect(remote()).toBe(2)
+    state.setExtensionControls({
+      [EXTENSION_SETTING_KEYS.passwordSaving]: { ...guard, value: true }
+    })
+    expect(suggestions.suggestionsEnabled()).toBe(false)
+    // Private windows show no engine rows whatever the layer says, as with the user's switch.
+    const priv = setup('private', { online: true })
+    priv.state.setExtensionControls({
+      [EXTENSION_SETTING_KEYS.searchSuggestions]: { ...guard, value: true }
+    })
+    await priv.suggestions.suggest('github', null, priv.win)
     expect(priv.net.requests).toEqual([])
   })
 })

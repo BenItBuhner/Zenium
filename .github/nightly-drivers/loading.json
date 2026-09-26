@@ -1,0 +1,12 @@
+{
+  "id": "loading",
+  "order": 47,
+  "class": "LoadingFeedbackDemo",
+  "shard": "phone-c",
+  "mirrors": "android-loading-demo.yml",
+  "dir": "loading-demo",
+  "env": {
+    "DEMO_THEME": "light"
+  },
+  "estimate": 1.5
+}

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The nightly all-drivers sweep's runner (android-nightly-drivers.yml): every driver of one shard of
-# `.github/nightly-drivers.json`, in sequence on the one emulator boot, each through its own
-# workflow's script (android-gesture-demo.sh with the workflow's environment, or the wrapper the
-# workflow names), the device prepared once (DEMO_PREPARED after the first driver, as
+# `.github/nightly-drivers/` (one `<id>.json` per driver), in sequence on the one emulator boot, each
+# through its own workflow's script (android-gesture-demo.sh with the workflow's environment, or the
+# wrapper the workflow names), the device prepared once (DEMO_PREPARED after the first driver, as
 # android-sheet-touch-audit.sh chains them). A driver that fails does not stop the ones after it;
 # its findings stay. The chain stops only when the emulator itself went away (the shared script's
 # emulator-died marker, or adb without a device), and the drivers left are written down as not run.

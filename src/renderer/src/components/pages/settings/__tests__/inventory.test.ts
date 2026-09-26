@@ -91,6 +91,7 @@ const ELECTRON: HostCapabilities = {
   readAloud: true,
   pageLanguages: true,
   genericFontFamilies: true,
+  caretBrowsing: true,
   placementAnswered: false
 }
 
@@ -218,6 +219,7 @@ function desktopState(): UIState {
     downloads: [],
     downloadsProgress: { active: 0, progress: 0 },
     bookmarks: [],
+    readingList: [],
     newTabShortcuts: [{ id: 'nt1', title: 'Zenium', url: 'https://zenium.example/' }],
     newTabHiddenHosts: [],
     newTabBackground: { image: false, canPick: true, accent: null },
@@ -449,7 +451,9 @@ const INVENTORY: Record<string, readonly string[]> = {
     'Open new tabs',
     'Show separator between pinned and regular tabs',
     'Ctrl+Tab stays within Essentials or regular tabs',
-    'Restore previous session on startup',
+    // W6-3: the "Restore previous session on startup" switch became Settings › On startup's
+    // choice on the windowed hosts (the phone keeps the switch).
+    'When Zenium starts',
     'Restore pages after a crash',
     'Confirm before closing multiple tabs',
     'Tabs across windows',
@@ -501,7 +505,7 @@ const INVENTORY: Record<string, readonly string[]> = {
     'Low-end device mode',
     'No spare renderer process',
     'Drop the back/forward cache',
-    'Block prerendering',
+    // "Block prerendering" folded into Privacy and security's Preload pages (PS-43, services pass 10).
     'Raster threads per page',
     'V8: favour memory over speed'
   ],
@@ -564,6 +568,9 @@ const INVENTORY: Record<string, readonly string[]> = {
     // Cookies and site data's default radio on #322 (the lead's ruling on Q3): the mode is the
     // "Default behaviour" choice there and the private-only switch under it.
     'Only in private windows',
+    // Preload pages (PS-43): Chrome's row, on both hosts, where the Resources pane's "Block
+    // prerendering" switch went.
+    'Preload pages',
     'HTTPS-only mode',
     'intranet.example',
     'Use secure DNS',
@@ -586,7 +593,9 @@ const INVENTORY: Record<string, readonly string[]> = {
     'File editing',
     'Clipboard',
     'Payment handlers',
-    'Insecure content',
+    // Insecure content is the Android host's row alone (services pass 10): Electron fixes
+    // `allowRunningInsecureContent` per WebContents at creation and has no per-site path, so the
+    // desktop is not offered a row nothing acts on (`support.desktop: 'n-a'`).
     'Virtual reality',
     'Window management',
     'Fonts',
@@ -605,6 +614,7 @@ const INVENTORY: Record<string, readonly string[]> = {
     'Cookies for embedded sites',
     'Your device use',
     'Fullscreen',
+    'Automatic picture-in-picture',
     'Pointer lock',
     'Keyboard lock',
     'Speaker selection',
@@ -732,6 +742,7 @@ const HEADINGS: Record<string, readonly string[]> = {
     'Content',
     'Additional permissions',
     'Sites with their own settings',
+    'Preload pages',
     'HTTPS-only mode',
     'Sites allowed over http',
     'Secure DNS',
@@ -797,14 +808,18 @@ describe('the desktop Settings tab carries every row of the overlay panes it rep
       'Keyboard Shortcuts',
       'Default Browser',
       'Updates',
+      // settings-70: Chrome's "Reset settings" at the foot of its list (W7-6).
+      'Reset Settings',
       'About'
     ])
     // Accessibility was the overlay's `pageControls` category (false on Electron); the speech
     // engine (#257, `readAloud`) brings it to the desktop with Read aloud's groups alone – the
     // zoom groups stay the phone's.
+    // Caret browsing's group (CT-34) is the desktop's too: its engine has the switch.
     expect(models.get('accessibility')!.groups.map((g) => g.id)).toEqual([
       'read-aloud',
-      'read-aloud-voices'
+      'read-aloud-voices',
+      'caret-browsing'
     ])
   })
 

@@ -24,7 +24,7 @@ import {
   isOnDisk,
   type DownloadDayGroup
 } from '@renderer/lib/downloadsView'
-import { contextMenuAnchor } from '@renderer/lib/menuKeys'
+import { contextMenuAnchor, controlMenuAnchor } from '@renderer/lib/menuKeys'
 import { cn } from '@renderer/lib/utils'
 import { ClearAllConfirm } from '../../downloads/ClearAllConfirm'
 import {
@@ -356,16 +356,9 @@ function DownloadPageRow({
           action="menu"
           menu
           className={cn(!flagged && 'zen-page-row-reveal')}
-          onClick={(ev) => {
-            // The menu hangs from the button; a keyboard press (Enter and Space report a
-            // `detail` of 0) starts the menu with its first item selected.
-            const box = ev.currentTarget.getBoundingClientRect()
-            e.contextMenu(id, {
-              x: Math.round(box.right),
-              y: Math.round(box.bottom),
-              keyboard: ev.detail === 0
-            })
-          }}
+          // The menu hangs from the button; a keyboard press (Enter and Space report a
+          // `detail` of 0) starts the menu with its first item selected.
+          onClick={(ev) => e.contextMenu(id, controlMenuAnchor(ev))}
         />
       </div>
     </li>

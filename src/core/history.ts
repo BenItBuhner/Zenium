@@ -67,6 +67,21 @@ export interface VisitOptions {
    * landing read `redirect`. Unrecordable addresses and the landing itself are skipped.
    */
   redirectedFrom?: string[]
+  /**
+   * The document the tab showed replaced itself with `url` – a client redirect (history-23):
+   * `location.replace()`, a meta refresh or `Refresh:` header within a second, a script's
+   * navigation before the page's load event finished. Chromium commits such a navigation over
+   * the page's own history entry (`did_replace_entry`); Chrome's history then folds the page
+   * into the landing's chain – its visit loses `CHAIN_END`, the chain it came by is carried on
+   * (`HistoryBackend::AddPage`, `PAGE_TRANSITION_CLIENT_REDIRECT`) – so the list shows the
+   * landing alone. Here the page's most recent visit in the tab (`tabId`, when given) and the
+   * hops it came by are recorded again as hops of this landing, at its time, each keeping its own
+   * transition (the typed credit stays where it was earned); the new navigation earns none of its
+   * own (`IsTypedIncrement` is false under any redirect). A timed refresh, a click, a page whose
+   * entry was not replaced is a visit of its own, as in Chrome. An address that equals `url`, or
+   * has no recorded visit in the tab, folds nothing.
+   */
+  clientRedirectFrom?: string
 }
 
 /** One visit another browser recorded. */
@@ -548,11 +563,37 @@ export class HistoryService {
   visit(url: string, title: string, favicon: string | null, opts: VisitOptions = {}): void {
     if (!isRecordableUrl(url)) return
     const now = this.now()
-    const at = clampVisitTime(opts.at, now)
+    let at = clampVisitTime(opts.at, now)
     // Retention would expire it at once; the aggregate must not count what is not kept.
     if (at < now - RETENTION_MS) return
     const transition = opts.transition ?? 'link'
-    const chain = redirectChain(opts.redirectedFrom, url)
+    // A client redirect (`VisitOptions.clientRedirectFrom`): the page that replaced itself with
+    // this landing, with the hops it came by, moves into the landing's chain. The store cannot
+    // re-flag a visit where it stands – the sync wire knows a visit by `(url, at)` and has no
+    // "changed" entry – so the visits go (a `removed` event) and come back as hops of this
+    // landing (in its `added` event), which a peer replays to the same end.
+    const source =
+      opts.clientRedirectFrom !== undefined && opts.clientRedirectFrom !== url
+        ? this.clientRedirectSource(opts.clientRedirectFrom, opts.tabId)
+        : null
+    const moved = source ? [...this.hopsOf(source), source] : []
+    const movedSet = new Set(moved)
+    // What the moved pages were called before their aggregates are recounted (a page whose only
+    // visit moves is forgotten and made anew): they keep their title and favicon, as Chrome's
+    // `urls` row stays.
+    const movedPages = new Map(
+      moved.map((v) => [v.url, { visit: v, entry: this.entries.get(v.url) }] as const)
+    )
+    const removed = moved.length > 0 ? this.dropVisits((v) => movedSet.has(v)) : []
+    // The landing came after the page it replaced. When the clock cannot tell the two apart, the
+    // landing is dated a millisecond later: a moved visit recorded again under its old `(url, at)`
+    // would be swallowed by its own tombstone on the wire.
+    if (source && at <= source.visitTime) at = source.visitTime + 1
+    const serverHops = redirectChain(opts.redirectedFrom, url) ?? []
+    const chain = redirectChain(
+      source ? [...(source.redirectedFrom ?? []), source.url, ...serverHops] : serverHops,
+      url
+    )
     const added: ImportedVisit[] = []
     // The chain's hops first, at the landing's time (Chrome records every hop of a chain with
     // one timestamp, `history_backend.cc` `AddPage`): the navigation's transition belongs to
@@ -562,28 +603,38 @@ export class HistoryService {
     // credits the https one (`transfer_typed_credit_from_first_to_second_url`); the label moves
     // with the credit, because the label is what a later reader counts typed credit from – this
     // store's recount after a deletion, a peer's import of the chain – and the two must agree.
+    // A member moved in by a client redirect keeps the transition it earned; the navigation the
+    // page began earns none of its own (`IsTypedIncrement` is false under any redirect).
     const members = chain ? [...chain, url] : [url]
+    const carried = new Map(moved.map((v) => [v.url, v.transition] as const))
     const creditedMember =
-      transition === 'typed' && chain && isHttpsUpgrade(members[0], members[1]) ? 1 : 0
-    const memberTransition = (i: number): HistoryTransition =>
-      i === creditedMember ? transition : 'redirect'
+      !source && transition === 'typed' && chain && isHttpsUpgrade(members[0], members[1]) ? 1 : 0
+    const memberTransition = (i: number): HistoryTransition => {
+      const kept = carried.get(members[i])
+      if (kept) return kept
+      if (source) return 'redirect'
+      return i === creditedMember ? transition : 'redirect'
+    }
     if (chain) {
       for (let i = 0; i < chain.length; i += 1) {
         const hop = chain[i]
         const hopTransition = memberTransition(i)
-        // No title of its own: a hop keeps the one its landing gave it (`updateTitle`).
-        this.bumpEntry(hop, '', null, at, hopTransition === 'typed')
+        // No title of its own: a hop keeps the one its landing gave it (`updateTitle`); a page a
+        // client redirect moved in keeps the one it had.
+        const was = movedPages.get(hop)
+        const wasTitle = was?.entry?.title && was.entry.title !== hop ? was.entry.title : ''
+        this.bumpEntry(hop, wasTitle, was?.entry?.favicon ?? null, at, hopTransition === 'typed')
         this.insertVisit({
           id: newId('visit'),
           url: hop,
-          title: hop,
+          title: was?.visit.title ?? hop,
           favicon: null,
           visitTime: at,
           transition: hopTransition,
           redirectSource: true,
           ...(opts.tabId ? { tabId: opts.tabId } : {})
         })
-        added.push(exported(hop, '', at, hopTransition, null, { redirectSource: true }))
+        added.push(exported(hop, wasTitle, at, hopTransition, null, { redirectSource: true }))
       }
     }
     const landingTransition = memberTransition(members.length - 1)
@@ -604,7 +655,24 @@ export class HistoryService {
     this.enforceRetention(now)
     this.persist()
     this.notify('visit')
+    if (removed.length > 0) this.emitVisits(removedKeys(removed))
     this.emitVisits({ type: 'added', visits: added })
+  }
+
+  /**
+   * The visit a client redirect folds into its landing's chain: the most recent visit of `url`
+   * that is a landing itself (not a hop), made in `tabId` when one is given (Chrome links a
+   * navigation to the visit its tab made before it, `VisitTracker::GetLastVisit`).
+   */
+  private clientRedirectSource(url: string, tabId: string | undefined): HistoryVisit | null {
+    if (!isRecordableUrl(url)) return null
+    for (let i = this.visitList.length - 1; i >= 0; i -= 1) {
+      const v = this.visitList[i]
+      if (v.url !== url || v.redirectSource) continue
+      if (tabId !== undefined && v.tabId !== tabId) continue
+      return v
+    }
+    return null
   }
 
   /**
@@ -1241,6 +1309,23 @@ export class HistoryService {
     event: (removed: HistoryVisit[]) => HistoryVisitsEvent,
     always = false
   ): number {
+    const dropped = this.dropVisits(gone)
+    if (dropped.length === 0) {
+      if (always) this.emitVisits(event(dropped))
+      return 0
+    }
+    this.persist()
+    this.notify('delete')
+    this.emitVisits(event(dropped))
+    return dropped.length
+  }
+
+  /**
+   * Take the visits matching `gone` off the list and bring the aggregates of their pages in
+   * line; returns what went. Neither persists nor notifies: the caller does, once, together
+   * with whatever else it changed.
+   */
+  private dropVisits(gone: (v: HistoryVisit) => boolean): HistoryVisit[] {
     const affected = new Set<string>()
     const kept: HistoryVisit[] = []
     const dropped: HistoryVisit[] = []
@@ -1250,11 +1335,7 @@ export class HistoryService {
         dropped.push(v)
       } else kept.push(v)
     }
-    const removed = dropped.length
-    if (removed === 0) {
-      if (always) this.emitVisits(event(dropped))
-      return 0
-    }
+    if (dropped.length === 0) return dropped
     this.visitList = kept
     this.chains = null
     for (const url of affected) {
@@ -1270,10 +1351,7 @@ export class HistoryService {
       entry.firstVisit = remaining[0].visitTime
       entry.typedCount = remaining.filter((v) => v.transition === 'typed').length
     }
-    this.persist()
-    this.notify('delete')
-    this.emitVisits(event(dropped))
-    return removed
+    return dropped
   }
 
   // --- change notification ----------------------------------------------------

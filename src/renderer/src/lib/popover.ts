@@ -9,7 +9,7 @@
  * wears its pressed fill and says what it has open while the popover stands (§9.20) – and given
  * back when it leaves. A count, not a flag: one anchor can carry two surfaces. The sidebar's
  * "⋯" has the app menu and, while the hub's toolbar button has folded (§9.29), the media hub's
- * popover too, which opens from the menu's own "Now Playing…" row as the menu leaves – so the
+ * popover too, which opens from the menu's own "Media Controls…" row as the menu leaves – so the
  * first hold sets the attribute, the last release puts back what the anchor said at rest (the
  * hub button's own `false`, nothing on the "⋯"), and a surface leaving while another still
  * stands changes nothing. One source of truth per anchor: nothing else writes `aria-expanded`

@@ -12,7 +12,7 @@ import { PILL_PADDING, PILL_TOOLS_TIER } from '@renderer/components/urlbar/pillC
  * share – the position carried forward, the times, the detail line and the track handlers are
  * `lib/media.ts`'s, the seek row's state `useMediaSeek`'s, as the phone's media sheet reads
  * them – and the hub's own open state. The players' order is `shared/mediaHub.ts`'s, so the app
- * menu's "Now Playing…" row the core builds where the toolbar button has folded (design
+ * menu's "Media Controls…" row the core builds where the toolbar button has folded (design
  * language v2 §9.29) leads with the same card this hub does.
  */
 
@@ -54,13 +54,14 @@ export function mediaHubVisible(state: UIState): boolean {
 /**
  * The pill the hub's toolbar button must leave standing (design language v2 §9.29): the button
  * is tiered by the row's width exactly as the pill's chips are, never by the active tab – at
- * the 240 sidebar it folds into the app menu's "Now Playing…" row with the accent dot on ⋯ –
- * and a folding button returns where the pill, with the button's own slot back in the row,
- * still holds the box the star and the tools return at: the tier's `PILL_TOOLS_TIER` content
- * box (110, the stylesheet's `@container (width < 110px)`; §9.29's "130 px pill"), 126 in the
- * row's `PILL_PADDING`. Never where the pill first reaches that box without the button: a
- * button returning there took the pill straight back under the tier it had just met (270 gave
- * 125 → 94, and the address gave way to the title) and flipped its reading.
+ * the 240 sidebar it folds into the app menu's "Media Controls…" row, the accent dot on ⋯
+ * while something plays – and a folding button returns where the pill, with the button's own
+ * slot back in the row, still holds the box the star and the tools return at: the tier's
+ * `PILL_TOOLS_TIER` content box (110, the stylesheet's `@container (width < 110px)`; §9.29's
+ * "130 px pill"), 126 in the row's `PILL_PADDING`. Never where the pill first reaches that box
+ * without the button: a button returning there took the pill straight back under the tier it
+ * had just met (270 gave 125 → 94, and the address gave way to the title) and flipped its
+ * reading.
  */
 export const MEDIA_HUB_PILL = PILL_PADDING + PILL_TOOLS_TIER
 
@@ -95,7 +96,9 @@ export function mediaHubButtonFits(rowWidth: number, otherButtons: number): bool
 /**
  * Something plays: the accent dot on the hub's toolbar button, and – while that button has
  * folded (`mediaHubFolded`) – the same dot on the "⋯" menu button, whose menu then carries the
- * "Now Playing…" row (§9.29 – Firefox's badge on its menu button).
+ * "Media Controls…" row (§9.29 – Firefox's badge on its menu button). The dot marks playing
+ * alone, on either button: a session that paused or ended lingers in the hub without it (W7-5;
+ * the #552 ruling), the row standing in the folded menu bare of the dot.
  */
 export function mediaPlaying(state: UIState): boolean {
   return mediaHubEntries(state).some((m) => m.playing)
@@ -120,10 +123,11 @@ export const APP_MENU_BUTTON = '[data-zen-app-menu-button]'
 /**
  * Whether the hub has folded into the app menu, for the row that decides it (the ⋯ button's dot
  * and name): there is media to control and the row has not put the button up. The fold is the
- * toolbar's width tier's to make – at the 240 sidebar the hub "folds into the app menu as a Now
- * playing row with an accent dot on ⋯", and returns as a button where the pill, with the
- * button's slot back, still holds the star's box (§9.29; the 302 sidebar with the always-there
- * buttons) – and the row makes it from its own measured width (`useElementWidth` on the row:
+ * toolbar's width tier's to make – at the 240 sidebar the hub "folds into the app menu as a
+ * 'Media Controls…' row … with an accent dot on ⋯ while a session is live", and returns as a
+ * button where the pill, with the button's slot back, still holds the star's box (§9.29; the
+ * 302 sidebar with the always-there buttons) – and the row makes it from its own measured
+ * width (`useElementWidth` on the row:
  * the ResizeObserver that follows a sidebar drag) with `mediaHubButtonFits`, in the render that
  * mounts or unmounts the
  * button. Read from the same render, the dot moves button ↔ ⋯ in the commit that moves the
@@ -140,9 +144,9 @@ export function mediaHubFoldedAt(state: UIState, hubButtonUp: boolean): boolean 
 /**
  * Whether the hub's toolbar button has folded, read from the document: it is not in the row, or
  * nothing lays its box out (`checkVisibility`). For the moments between renders – the menu
- * request the core builds the "Now Playing…" row for, the anchor the popover hangs from – where
- * the row has committed what it decided (`mediaHubFoldedAt`); the row itself renders from its
- * width, never from this, so the dot, the row and the anchor cannot disagree.
+ * request the core builds the "Media Controls…" row for, the anchor the popover hangs from –
+ * where the row has committed what it decided (`mediaHubFoldedAt`); the row itself renders from
+ * its width, never from this, so the dot, the row and the anchor cannot disagree.
  */
 export function mediaHubFolded(): boolean {
   return !document.querySelector<HTMLElement>(MEDIA_HUB_BUTTON)?.checkVisibility()
@@ -151,7 +155,7 @@ export function mediaHubFolded(): boolean {
 /**
  * The control the hub's popover hangs from and gives the keyboard back to: its toolbar button
  * while that is in the row and laid out, else the "⋯" menu button – the hub folds into the app
- * menu's "Now Playing…" row at the 240 sidebar (design language v2 §9.29), and the row's pick
+ * menu's "Media Controls…" row at the 240 sidebar (design language v2 §9.29), and the row's pick
  * opens the hub from there. Looked up on each use: the row remounts its buttons with the tab and
  * the width. The fold is the toolbar's tier's to make, by unmounting the button or by hiding it
  * from a stylesheet; either way a button without a box is no anchor (`checkVisibility`).
@@ -162,11 +166,18 @@ export function mediaHubAnchor(): HTMLElement | null {
   return document.querySelector<HTMLElement>(APP_MENU_BUTTON)
 }
 
-/** The button's name: what is playing, or that the players are there. */
+/**
+ * The button's name: what is playing – "Media controls, 1 playing" – or, while every session
+ * it lists has paused or ended (the hub's linger, W7-5), the state word joined to the name with
+ * §9.31's " · ": "Media controls · Paused". Never "Paused: <title>" – the title is the
+ * popover's (the #552 ruling). The bare name is for a hub with nothing listed, which the row
+ * does not show; the tests pin all three.
+ */
 export function mediaHubLabel(entries: MediaState[]): string {
   const playing = entries.filter((m) => m.playing).length
-  if (playing === 0) return MEDIA_HUB_NAME
-  return `${MEDIA_HUB_NAME}, ${playing} playing`
+  if (playing > 0) return `${MEDIA_HUB_NAME}, ${playing} playing`
+  if (entries.length > 0) return `${MEDIA_HUB_NAME} · Paused`
+  return MEDIA_HUB_NAME
 }
 
 /**

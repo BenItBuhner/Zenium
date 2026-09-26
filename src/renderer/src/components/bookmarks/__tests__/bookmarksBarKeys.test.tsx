@@ -238,11 +238,17 @@ describe('the bookmarks bar’s keyboard (bookmarks-19, §9.22)', () => {
     expect(panels()).toEqual([])
     expect(uiStore.get().barMenuOpen).toBe(false)
     expect(focused()).toBe(chip('news'))
-    // The roving stop moved with it: the next arrow walks on from there.
+    // The roving stop moved with it: the next arrow walks on from there – over the Reading list
+    // control at the bar's trailing end (W6-1), the strip's last stop – and wraps to the first.
     await key(chip('news'), 'ArrowRight')
+    expect(focused()).toBe(chip('reading-list'))
+    expect(chip('reading-list').getAttribute('aria-label')).toBe('Reading list')
+    await key(chip('reading-list'), 'ArrowRight')
     expect(focused()).toBe(chip('docs'))
 
     await key(chip('docs'), 'ArrowLeft')
+    expect(focused()).toBe(chip('reading-list'))
+    await key(chip('reading-list'), 'ArrowLeft')
     expect(focused()).toBe(chip('news'))
     await key(chip('news'), 'ArrowLeft')
     expect(focused()).toBe(chip('work'))

@@ -112,6 +112,54 @@ describe('the scope proxy of the with-fallback', () => {
     expect(scope.IntersectionObserver).toBe(win.IntersectionObserver)
   })
 
+  it("puts the real window where a UI event's init names the scope as its view (OP Auto Clicker's synthetic click on WebView 113)", () => {
+    const win = fakeWindow()
+    // A WebIDL-shaped constructor: `view` must be the window or the conversion throws.
+    class MouseEvent {
+      readonly type: string
+      readonly view: unknown
+      readonly bubbles: boolean
+      constructor(type: string, init: { view?: unknown; bubbles?: boolean } = {}) {
+        if (init.view !== undefined && init.view !== null && init.view !== win)
+          throw new TypeError(
+            "Failed to construct 'MouseEvent': Failed to convert value to 'Window'."
+          )
+        this.type = type
+        this.view = init.view ?? null
+        this.bubbles = init.bubbles ?? false
+      }
+    }
+    Object.defineProperty(Object.getPrototypeOf(win) as object, 'MouseEvent', {
+      value: MouseEvent,
+      configurable: true
+    })
+    const scope = createScopeProxy(win, collectBuiltins(win))
+    const Ctor = scope.MouseEvent as typeof MouseEvent
+    expect(scope.MouseEvent).toBe(scope.MouseEvent)
+    expect(Ctor.prototype).toBe(MouseEvent.prototype)
+    // The scope proxy as `view` – what `window` is inside the with block.
+    const click = new Ctor('click', { view: scope as unknown as object, bubbles: true })
+    expect(click).toBeInstanceOf(MouseEvent)
+    expect(click).toBeInstanceOf(Ctor)
+    expect(click.view).toBe(win)
+    expect(click.bubbles).toBe(true)
+    // Other views and no view go through untouched; a subclass keeps its own prototype.
+    expect(new Ctor('move').view).toBeNull()
+    const other = { other: true }
+    expect(() => new Ctor('move', { view: other })).toThrow(/convert value to 'Window'/)
+    class Special extends Ctor {
+      special = true
+    }
+    const special = new Special('down', { view: scope as unknown as object })
+    expect(special).toBeInstanceOf(Special)
+    expect(special.view).toBe(win)
+    expect(special.special).toBe(true)
+    // The page replacing the constructor: the wrapper follows the current value.
+    class Other {}
+    Object.defineProperty(win, 'MouseEvent', { value: Other, configurable: true })
+    expect((scope.MouseEvent as { prototype: unknown }).prototype).toBe(Other.prototype)
+  })
+
   it("binds a page's plain-function wrapper over a window operation, as a bare call in a with block needs (Sentry's browserApiErrors)", () => {
     const win = fakeWindow()
     const proto = Object.getPrototypeOf(win) as Any

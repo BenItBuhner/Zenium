@@ -8,6 +8,7 @@ import { onboardingCovers } from '@renderer/lib/onboarding'
 import { usePrivateTabLocked } from '@renderer/lib/privateLock'
 import { usePrivateSurface } from '@renderer/lib/privateSurface'
 import { useReaderEntryMessage } from '@renderer/lib/readerEntryMessage'
+import { searchChoiceCovers } from '@renderer/lib/searchChoice'
 import { activeTab } from '@renderer/lib/selectors'
 import { type UiState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -16,6 +17,7 @@ import { ChromeDropLayer, DragLayer } from '../DragLayer'
 import { MessageLayer } from '../messages/MessageLayer'
 import { ModStyles } from '../ModStyles'
 import { Onboarding } from '../overlays/Onboarding'
+import { SearchChoiceScreen } from '../overlays/SearchChoice'
 import { PhoneStage } from '../phone/PhoneStage'
 import { SpacesDrawer } from '../phone/SpacesDrawer'
 import { useFullscreenReturn } from '../phone/useFullscreenReturn'
@@ -84,6 +86,8 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
   // The profile window's first run (the terms the URL bar waits on too, `onboardingUp`); a
   // popup or app window never reaches this shell.
   const onboarding = onboardingCovers(state)
+  // The EEA's search-engine choice screen on its own (W6-2): after the tour, on the same terms.
+  const searchChoice = !onboarding && searchChoiceCovers(state)
   const htmlFullscreen = state.window.htmlFullscreenTabId !== null
   // The window surfaces are on the private theme (blending to it): a private tab is in view, or
   // the overview shows the private pane (§9.29; MOT-14).
@@ -218,6 +222,7 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
       {ui.drag && <DragLayer state={state} drag={ui.drag} />}
       <ChromeDropLayer />
       {onboarding && <Onboarding state={state} />}
+      {searchChoice && <SearchChoiceScreen state={state} />}
     </div>
   )
 }

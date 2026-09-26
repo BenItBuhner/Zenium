@@ -20,6 +20,7 @@ import {
   PanelLeft,
   Puzzle,
   RefreshCw,
+  RotateCcw,
   Search,
   Settings,
   Shield,
@@ -59,6 +60,7 @@ export const SECTION_GLYPHS: Readonly<Record<string, LucideIcon>> = {
   shortcuts: Keyboard,
   'default-browser': Globe,
   updates: CircleFadingArrowUp,
+  reset: RotateCcw,
   about: Info
 }
 

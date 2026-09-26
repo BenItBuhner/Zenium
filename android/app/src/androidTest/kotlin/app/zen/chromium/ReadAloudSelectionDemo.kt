@@ -133,9 +133,14 @@ class ReadAloudSelectionDemo : DemoHarness("read-aloud-selection-demo-state.json
         beat()
         fromWord("A", "light")
         fromSentence()
-        dark()
-        fromWord("C", "dark")
-        light()
+        // The device's night mode back off whether act C ran through or threw: the nightly runs
+        // the next driver on this boot (the siblings' finally).
+        try {
+            dark()
+            fromWord("C", "dark")
+        } finally {
+            light()
+        }
         finding("\nend: session=${readAloud()}${if (failures == 0) "" else "; $failures FAIL"}")
     }
 
@@ -287,6 +292,7 @@ class ReadAloudSelectionDemo : DemoHarness("read-aloud-selection-demo-state.json
     /**
      * The device's scheme as it was found: the nightly sweep runs its drivers back to back on one
      * boot, and its reset between two puts the app's data back but not the device's night mode.
+     * Run from [demo]'s finally, so that a dark act that threw leaves the device light too.
      */
     private fun light() {
         shell("cmd uimode night no")

@@ -1,4 +1,5 @@
 import { PRIVATE_CONTAINER_ID, type ExtensionControl } from '../../../shared/types'
+import { EXTENSION_SETTING_KEYS } from '../../../shared/extensionSettings'
 import {
   INCOGNITO_ERROR,
   INCOGNITO_SCOPE_ERROR,
@@ -54,32 +55,34 @@ const SEARCH_SUGGEST = settingKey('services', 'searchSuggestEnabled')
 const AUTOFILL_ADDRESSES = settingKey('services', 'autofillAddressEnabled')
 const AUTOFILL_CARDS = settingKey('services', 'autofillCreditCardEnabled')
 const THIRD_PARTY_COOKIES = settingKey('websites', 'thirdPartyCookiesAllowed')
+const NETWORK_PREDICTION = settingKey('network', 'networkPredictionEnabled')
 
 /**
- * The settings a Zenium Settings row says "Controlled by <extension>" for, by the key the row
- * reads (`UIState.extensionControls`, the §10.5 controlled-setting primitive;
- * `extensionControlled(state, key)` in the renderer). A row may say so only when the
- * extension's value is IN EFFECT – Chrome's indicator means the pref reads the extension's
- * value in the service itself – so the table carries the `chrome.privacy` settings whose
- * effect is real in Zenium today: Do Not Track (the `DNT` header in the request pipeline).
- * Published while an extension controls it for normal windows – the Settings rows are the
- * regular profile's, as Chrome's are – with the extension's value, the one the row's disabled
- * control shows.
- *
- * The settings Zenium has a row for but whose service still keeps the user's value (Safe
- * Browsing, third-party cookies, search suggestions, offering to save passwords, the two
- * autofill switches) are remembered and reported to extensions and NOT published: their rows
- * stay wired to the keys `autofill.addresses`, `autofill.cards`, `passwords.offerToSave`,
- * `privacy.safeBrowsingEnabled`, `search.suggestions`, `privacy.thirdPartyCookies`, so each
- * joins this table the day its service applies the extension layer through a host hook (as
- * `Platform.pageFonts.apply` did for fonts) – one line here, nothing in the renderer. The rest
- * stand for no row: Chrome marks nothing for them either (the WebRTC policy, hyperlink
- * auditing, referrers), or Zenium has no setting behind them (network prediction, Google's
- * services, the Privacy Sandbox).
+ * The one table of the `chrome.privacy` settings the extension layer publishes
+ * (`UIState.extensionControls`), by the key the Settings row and the service share
+ * (`shared/extensionSettings.ts`'s `EXTENSION_SETTING_KEYS`): the row that says "Controlled by
+ * <extension>" (`extensionControlled(state, key)`, the §10.5 primitive) and the service that
+ * acts (`layer ?? user`, Chrome's `PrefValueStore` with the extension layer above the user's)
+ * read one value under one name. Published from `recompute` with the normal windows' effective
+ * value – the regular profile's, as Chrome's Settings rows are; a private-window-only value
+ * marks nothing – so the service reads the extension's value over the user's, the row shows it
+ * held, and the user's own returns the moment every holder has cleared, been disabled or
+ * uninstalled (services pass 10, F3). Do Not Track is the eighth pair: the `DNT: 1` header and
+ * `navigator.doNotTrack` read `privacy.doNotTrack` through the protection service, the same key
+ * the Privacy signals row reads. The settings not here stand for no row: Chrome marks nothing
+ * for them either (the WebRTC policy, hyperlink auditing, referrers), or Zenium has no setting
+ * behind them (Google's services, the Privacy Sandbox).
  */
-export const PRIVACY_CONTROL_KEYS: Readonly<Record<string, string>> = {
-  [DO_NOT_TRACK]: 'privacy.dnt'
-}
+export const SERVICE_CONTROL_KEYS: ReadonlyArray<readonly [string, string]> = [
+  [PASSWORD_SAVING, EXTENSION_SETTING_KEYS.passwordSaving],
+  [AUTOFILL_ADDRESSES, EXTENSION_SETTING_KEYS.autofillAddresses],
+  [AUTOFILL_CARDS, EXTENSION_SETTING_KEYS.autofillCards],
+  [SAFE_BROWSING, EXTENSION_SETTING_KEYS.safeBrowsing],
+  [THIRD_PARTY_COOKIES, EXTENSION_SETTING_KEYS.thirdPartyCookies],
+  [SEARCH_SUGGEST, EXTENSION_SETTING_KEYS.searchSuggestions],
+  [NETWORK_PREDICTION, EXTENSION_SETTING_KEYS.preloadPages],
+  [DO_NOT_TRACK, EXTENSION_SETTING_KEYS.doNotTrack]
+]
 
 /**
  * `chrome.privacy` for the browser layer. Every extension holding `privacy` may set every
@@ -95,15 +98,13 @@ export const PRIVACY_CONTROL_KEYS: Readonly<Record<string, string>> = {
  * on adds `DNT: 1` (and an extension holding it off strips the header the user's setting
  * sends), all in the session's request pipeline and only in the sessions the value applies
  * to. The settings Zenium has as its own (Safe Browsing, third-party cookies, search
- * suggestions, offering to save passwords, autofill) answer the user's setting while no
- * extension holds them and follow it as it changes; an extension's value over them is
- * remembered and reported back – the services themselves keep the user's value until each has
- * a hook for the layer, and until then the Settings page does not say "controlled" for them
- * (`PRIVACY_CONTROL_KEYS` carries only the settings in effect; Do Not Track today). The rest
- * stand for Chromium features Electron exposes no switch for
- * (network prediction) or Zenium does not have (the Privacy Sandbox, Google's services): their
- * values are remembered and reported back, so extensions that toggle them at start-up run and
- * see their own value.
+ * suggestions, offering to save passwords, autofill, Preload pages, Do Not Track) answer the
+ * user's setting while no extension holds them and follow it as it changes; an extension's
+ * value over them is published as the extension layer (`SERVICE_CONTROL_KEYS`), which their
+ * services read over the user's own and their Settings rows show held – "Controlled by
+ * <extension>" – until the extension lets go. The rest stand for features Zenium does not have
+ * (the Privacy Sandbox, Google's services): their values are remembered and reported back, so
+ * extensions that toggle them at start-up run and see their own value.
  */
 export class PrivacyApi {
   /** By setting key, then extension id. */
@@ -295,6 +296,9 @@ export class PrivacyApi {
         return settings.autofill.addresses
       case AUTOFILL_CARDS:
         return settings.autofill.cards
+      case NETWORK_PREDICTION:
+        // Chrome's `NetworkPredictionTransformer`: `false` is the "never" level, `true` any other.
+        return settings.preloadPages !== 'none'
       default:
         return spec.browserDefault
     }
@@ -363,15 +367,15 @@ export class PrivacyApi {
   }
 
   /**
-   * The Settings page's controlled rows (`UIState.extensionControls`, through `ApiHost.
-   * controls`): every setting of `PRIVACY_CONTROL_KEYS` an extension controls for normal
-   * windows, with the extension's value – the whole map each time, so a setting let go (a
-   * clear, the extension disabled or uninstalled, an older extension's value surfacing under a
-   * newer one's clear) drops or moves its key on the same resolution.
+   * The layer the services read and the Settings rows show (`SERVICE_CONTROL_KEYS`, through
+   * `ApiHost.controls` into `UIState.extensionControls`): every held key with its holder and
+   * the normal windows' value – the whole map each time, so a setting let go (a clear, the
+   * extension disabled or uninstalled, an older extension's value surfacing under a newer one's
+   * clear) drops or moves its key on the same resolution.
    */
   private publishControls(): void {
     const controls: Record<string, ExtensionControl> = {}
-    for (const [key, controlKey] of Object.entries(PRIVACY_CONTROL_KEYS)) {
+    for (const [key, controlKey] of SERVICE_CONTROL_KEYS) {
       const effective = this.effective.get(effectiveKey(key, false))
       if (!effective || effective.controller === null) continue
       controls[controlKey] = {

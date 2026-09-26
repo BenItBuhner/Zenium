@@ -13,6 +13,7 @@ import type {
 } from './platform'
 import type {
   DevtoolsDock,
+  MagicStackModuleId,
   NewTabDeviceState,
   NewTabHideableSection,
   NewTabPageAction,
@@ -26,7 +27,8 @@ import type {
   Tab,
   TopSite
 } from '../shared/types'
-import { privateThirdPartyCookieStatus, type SafeBrowsingHit } from '../shared/privacy'
+import type { SafeBrowsingHit } from '../shared/privacy'
+import { privateThirdPartyCookieSwitch } from '../shared/extensionSettings'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import { BLANK_URL, NEW_TAB_URL, inputToUrl, isNewTabUrl } from '../shared/url'
 import { makeTheme, resolveTheme, themeCssVariables, unfollowedTheme } from '../shared/theme'
@@ -45,6 +47,7 @@ import {
   removeSite,
   sanitizeNewTabDevice,
   sanitizeNewTabSettings,
+  setModuleHidden,
   setNewTabSection,
   siteHost,
   toggleNewTabModule,
@@ -353,13 +356,15 @@ export class NewTabService {
   }
 
   /**
-   * Where a Home control goes (Settings › Homepage, SET-36 / NTP-30): the user's page, or the
-   * new tab page – the served page where it is on, the blank tab the phone's chrome draws its
-   * page over elsewhere; a "Specific page" homepage with no address yet opens that too. Null
-   * with the homepage off: the Home controls hide and nothing runs.
+   * Where a Home control goes (Settings › Homepage, SET-36 / NTP-30): the user's page – or an
+   * extension's over it while one holds the setting (`chrome_settings_overrides.homepage`,
+   * `BrowserState.effectiveHomepage`) – or the new tab page: the served page where it is on,
+   * the blank tab the phone's chrome draws its page over elsewhere; a "Specific page" homepage
+   * with no address yet opens that too. Null with the homepage off: the Home controls hide and
+   * nothing runs, whatever an extension declares.
    */
   homepageUrl(): string | null {
-    const { homepage } = this.browser.state.settings
+    const homepage = this.browser.state.effectiveHomepage()
     if (homepage.mode === 'off') return null
     if (homepage.mode === 'url' && homepage.url) return homepage.url
     return this.homeUrl() ?? BLANK_URL
@@ -436,12 +441,17 @@ export class NewTabService {
       engineFavicon: engineFieldFavicon(this.browser.state.defaultSearchEngine())
     }
     // The same answer `ProtectionService.status()` gives the chrome (`PrivacyStatus`), read from
-    // the settings it is computed from: a settings commit re-pushes the page, so a global-mode
-    // change in Settings locks or unlocks the switch on a live private page at once.
-    if (isPrivate)
-      state.privateThirdPartyCookies = privateThirdPartyCookieStatus(
+    // what it is computed from – the user's settings under the extension layer (an extension
+    // holding `chrome.privacy`'s `thirdPartyCookiesAllowed` locks the switch at either pole, and
+    // the locked line names it): a settings commit and a change of the layer both re-push the
+    // page, so a global-mode change in Settings or an extension's hold locks or unlocks the
+    // switch on a live private page at once.
+    if (isPrivate) {
+      state.privateThirdPartyCookies = privateThirdPartyCookieSwitch(
+        this.browser.state.extensionLayer,
         this.browser.state.settings.privacy
       )
+    }
     return state
   }
 
@@ -739,6 +749,16 @@ export class NewTabService {
     for (const shortcut of list) if (!next.includes(shortcut)) next.push(shortcut)
     if (next.every((s, i) => s === list[i])) return
     this.updateDevice((d) => ({ ...d, shortcuts: next }))
+  }
+
+  /**
+   * The Magic Stack's "Hide this" and its Customise sheet's switches (NTP-16): one module on or
+   * off in this device's hidden set, never synced (Chrome's `home_modules_*` prefs are per device
+   * too). Nothing is written when the module already stands as asked.
+   */
+  setModuleHidden(id: MagicStackModuleId, hidden: boolean): void {
+    if (this.device.hiddenModules.includes(id) === hidden) return
+    this.updateDevice((d) => setModuleHidden(d, id, hidden))
   }
 
   /**

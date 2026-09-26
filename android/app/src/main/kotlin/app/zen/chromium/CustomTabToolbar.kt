@@ -30,8 +30,9 @@ import androidx.core.widget.ImageViewCompat
  * The custom tab's toolbar, drawn natively in the caller's colour (or Zenium's window colour):
  * the close control, Minimize beside it (the tab into a floating card, CCT-11), the page's title
  * over its host (or the host alone) behind a lock glyph when the connection is secure, the
- * caller's one action button, the menu button, a 2 px progress line along the bottom while the
- * page loads, and a hairline under it all. Geometry per the v2 draft: 56 px bar, 44 px icon
+ * caller's one action button (or, when the caller sent none and did not turn share off, Share:
+ * Chrome's adaptive button, CCT-17), the menu button, a 2 px progress line along the bottom while
+ * the page loads, and a hairline under it all. Geometry per the v2 draft: 56 px bar, 44 px icon
  * buttons with 20 px glyphs at radius 8, 15/600 title over 13/400 host at 69%, weights 400 and
  * 600 only.
  *
@@ -51,6 +52,8 @@ class CustomTabToolbar(
         fun onMenu()
         fun onAction()
         fun onMinimize()
+        /** The slot's Share button (CCT-17): the page to the system share sheet, as the menu's row sends it. */
+        fun onShare() {}
     }
 
     enum class Mode { CUSTOM_TAB, WEB_APP }
@@ -108,6 +111,9 @@ class CustomTabToolbar(
 
         row.addView(titles(), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
+        // The one action slot (CustomTabButtons.topSlot): the caller's button as it sent it; else
+        // Zenium's Share in the same box, one of the bar's own glyphs (CCT-17) – a custom tab's
+        // alone, as Minimize is; the web app's out-of-scope bar keeps Share in its menu.
         val action = config.actionButton
         if (action != null) {
             val button = iconButton(action.description) { listener.onAction() }
@@ -117,6 +123,11 @@ class CustomTabToolbar(
             if (action.tint) ImageViewCompat.setImageTintList(button, ColorStateList.valueOf(ink))
             row.addView(button)
             actionView = button
+        } else if (mode == Mode.CUSTOM_TAB && config.toolbarSlot == CustomTabButtons.Slot.SHARE) {
+            val share = iconButton(context.getString(R.string.cct_share_button)) { listener.onShare() }
+            share.setImageResource(R.drawable.ic_cct_share)
+            ImageViewCompat.setImageTintList(share, ColorStateList.valueOf(ink))
+            row.addView(share)
         }
 
         val menu = iconButton(context.getString(R.string.cct_menu)) { listener.onMenu() }

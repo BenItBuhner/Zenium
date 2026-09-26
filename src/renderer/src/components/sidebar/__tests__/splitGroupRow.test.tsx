@@ -331,10 +331,11 @@ describe('the split group row stylesheet (§9.35)', () => {
     // Zen's `.tabbrowser-tab:not(:hover) .tab-close-button { display: none }`: the tab row's
     // close at rest is opacity 0 in its 24 + 8 slot, which in a segment would hold 32 of the
     // title's room while showing nothing ("Left pa…" at 270 where the title had 88.5).
+    // Gated on the root's live `data-hover`, as every hover rule is (OS-12), not on the media query.
     expect(block).toMatch(
-      /@media \(hover: hover\) \{\s+\.zen-split-row > \.zen-tab:not\(:hover\) \.zen-tab-close \{\s+display: none;/
+      /:where\(:root\[data-hover='hover'\]\) \.zen-split-row > \.zen-tab:not\(:hover\) \.zen-tab-close \{\s+display: none;/
     )
-    // The rows keep their opacity form; a coarse pointer, without hover, keeps its shown close.
+    // The rows keep their opacity form; a pointer without hover keeps its shown close.
     expect(css).toMatch(/\.zen-tab \.zen-tab-close \{\s+opacity: 0;/)
     expect(css).toMatch(/\.zen-tab:hover \.zen-tab-close \{\s+opacity: 1;/)
     expect(css).toMatch(/:root\[data-pointer='coarse'\] \.zen-tab \.zen-tab-close,/)

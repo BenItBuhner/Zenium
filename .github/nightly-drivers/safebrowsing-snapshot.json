@@ -1,0 +1,11 @@
+{
+  "id": "safebrowsing-snapshot",
+  "order": 33,
+  "class": "SafeBrowsingSnapshotDemo",
+  "shard": "phone-b",
+  "mirrors": "(none: dispatch-only driver without a workflow)",
+  "dir": "safebrowsing-snapshot-demo",
+  "timeout": 900,
+  "estimate": 1,
+  "note": "Serves its sites from a loopback server inside the instrumentation; parses the warm feeds (seconds on the debug build)."
+}

@@ -23,6 +23,14 @@ export const MAX_RENDERER_PROCESS_LIMIT = 64
 export const MAX_RENDERER_HEAP_MB = 16384
 export const MAX_RASTER_THREADS = 8
 
+/**
+ * The switches for the resource settings – the process profile's alone. Preload pages (PS-43)
+ * puts nothing here: under `none` the request engine refuses every speculative request live
+ * (`PreloadHandler`; the prerender's own first fetch, `Sec-Purpose: prefetch;prerender`, among
+ * them, so no prerender activates), which is the whole of the level's enforcement and needs no
+ * relaunch – the old "Block prerendering" switch (`process.disablePrerender`) is folded into the
+ * level and not read.
+ */
 export function deriveStartupProfile(settings: ResourceSettings): StartupProfile {
   if (!settings.enabled) return { switches: [], hardwareAcceleration: true }
   const p = settings.process
@@ -46,7 +54,6 @@ export function deriveStartupProfile(settings: ResourceSettings): StartupProfile
   // Electron already disables the spare renderer; listing it keeps the intent explicit.
   if (p.disableSpareRenderer) disabledFeatures.push('SpareRendererForSitePerProcess')
   if (p.disableBackForwardCache) disabledFeatures.push('BackForwardCache')
-  if (p.disablePrerender) disabledFeatures.push('Prerender2')
   if (p.rasterThreads > 0) {
     switches.push({
       name: 'num-raster-threads',
@@ -147,6 +154,25 @@ export function serializeProfile(profile: StartupProfile): string {
 
 export function profilesDiffer(a: StartupProfile, b: StartupProfile): boolean {
   return serializeProfile(a) !== serializeProfile(b)
+}
+
+/**
+ * The startup switches that differ between the profile the settings ask for and the one this
+ * process runs with, by name – `js-flags`, `disable-features`, `renderer-process-limit`…, and
+ * `gpu` for hardware acceleration – for a relaunch notice or a log that names what the relaunch
+ * is for (`ResourceSnapshot.pendingSwitches`). Empty while the profiles agree. A switch present
+ * on one side only counts once; one present on both with another value counts once.
+ */
+export function pendingStartupSwitches(wanted: StartupProfile, running: StartupProfile): string[] {
+  const names = new Set<string>()
+  const byName = (profile: StartupProfile): Map<string, string | undefined> =>
+    new Map(profile.switches.map((sw) => [sw.name, sw.value]))
+  const a = byName(wanted)
+  const b = byName(running)
+  for (const [name, value] of a) if (!b.has(name) || b.get(name) !== value) names.add(name)
+  for (const name of b.keys()) if (!a.has(name)) names.add(name)
+  if (wanted.hardwareAcceleration !== running.hardwareAcceleration) names.add('gpu')
+  return [...names].sort()
 }
 
 /**

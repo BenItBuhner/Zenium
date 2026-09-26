@@ -1,0 +1,9 @@
+{
+  "id": "input-back",
+  "order": 70,
+  "class": "InputBackDemo",
+  "shard": "phone-d",
+  "mirrors": "android-input-back-demo.yml",
+  "dir": "input-back-demo",
+  "estimate": 4
+}

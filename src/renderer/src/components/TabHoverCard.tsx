@@ -2,6 +2,7 @@ import type { JSX } from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { UIState } from '@shared/types'
 import {
+  hostHoverCard,
   hoverCard,
   hoverCardHost,
   hoverCardPreviews,
@@ -70,6 +71,11 @@ export function TabHoverCard({ state }: { state: UIState }): JSX.Element | null 
     el.style.maxHeight = capped
     setBox(placeHoverCard(card.anchor, card.sidebar, viewportSize(), size, card.axis))
   }, [shown, card.anchor, card.sidebar, card.axis, title, host, stateText, preview])
+
+  // This is the card's host: the rows raise no card while none is mounted (the tablet chrome
+  // mounts none, and a mouse there would otherwise capture and hide the page for a card that
+  // never shows; lib/hoverCard.ts).
+  useEffect(() => hostHoverCard(), [])
 
   // The page behind the card is a capture of the active tab; another tab coming to the front
   // (Enter on a focused row, a shortcut) would leave the frame blank under it. A drag (its own

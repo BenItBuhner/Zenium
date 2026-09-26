@@ -13,11 +13,20 @@ import {
   type FramePage,
   type Located
 } from './frames'
+import { summarize } from './diagnostics'
 import { RpcError, UNAUTHORIZED } from './jsonrpc'
 import { pageCall, type PageLocation } from './page'
 import type { JsonSchema, ToolDefinition, ToolResult } from './protocol'
 import type { AgentService, AgentSession } from './service'
-import { FOREGROUND_LEASE_MS, looksLikeStatements, sleep, textError, titleOf } from './util'
+import {
+  describeIdle,
+  FOREGROUND_LEASE_MS,
+  GHOST_IDLE_MS,
+  looksLikeStatements,
+  sleep,
+  textError,
+  titleOf
+} from './util'
 import type { ZenWindow } from '../window'
 
 export { looksLikeStatements }
@@ -286,12 +295,15 @@ interface SnapshotOpts {
 function describeTab(ctx: ToolContext, tab: Tab): string {
   const s = ctx.session
   const owner = ctx.agents.describeOwner(s, tab) ?? "the user's, with allowForeign"
+  const why = ctx.agents.degradedBecause(s)
   const how =
     s.mode === 'background'
       ? 'background mode'
-      : ctx.agents.degraded(s)
+      : why === 'lease'
         ? 'foreground mode, acted in background – another agent holds the screen'
-        : 'foreground mode'
+        : why === 'screen'
+          ? 'foreground mode, acted in background – the screen was not taken'
+          : 'foreground mode'
   return `${tab.id} (${owner}; ${how})`
 }
 
@@ -361,8 +373,24 @@ function cutName(name: string): string {
   return name.length > 60 ? name.slice(0, 59) + '…' : name
 }
 
+/**
+ * The result's text line. A full page or element the host could not paint as asked comes back
+ * as the visible viewport (`AgentCapture.fallback`): a tab worked off the user's screen lays out
+ * where nothing beyond its viewport paints, or DevTools or an extension holds the page's
+ * debugger. That picture must not be called a full page – the line says what it is, why, and
+ * what gets the rest.
+ */
 function describeCapture(kind: string, cap: AgentCapture, tab: Tab): string {
-  return `Screenshot (${kind}, ${cap.width}×${cap.height} px, ${cap.mimeType}) of ${JSON.stringify(tab.title)} – ${tab.url} (tab ${tab.id})`
+  const what = cap.fallback === 'viewport' ? viewportInsteadOf(kind) : kind
+  return `Screenshot (${what}, ${cap.width}×${cap.height} px, ${cap.mimeType}) of ${JSON.stringify(tab.title)} – ${tab.url} (tab ${tab.id})`
+}
+
+function viewportInsteadOf(kind: string): string {
+  const why =
+    "the page could not be painted beyond its visible area (a tab off the user's screen – background mode, or foreground without the screen – or DevTools or an extension holding its debugger)"
+  if (kind === 'full page')
+    return `viewport – not the full page: ${why}; browser_scroll and capture again for the rest`
+  return `${kind}, cut from the visible viewport – ${why}, so any part outside the viewport is missing; browser_scroll {"target":…} brings it into view first`
 }
 
 /** After an action, let a navigation (if one started) finish, else let the page react. */
@@ -465,11 +493,19 @@ export async function routeInput(
       trusted: false,
       note: syntheticInputNote('you are in background mode and the tab is kept off screen')
     }
-  if (ctx.agents.degraded(ctx.session))
+  const why = ctx.agents.degradedBecause(ctx.session)
+  if (why === 'lease')
     return {
       trusted: false,
       note: syntheticInputNote(
         'another agent holds the screen, so this call ran in the background and the tab stayed off screen'
+      )
+    }
+  if (why === 'screen')
+    return {
+      trusted: false,
+      note: syntheticInputNote(
+        'the tab is not what the user is looking at and you have not taken the screen (zen_mode {"mode":"foreground","takeScreen":true}), so this call ran in the background and the tab stayed off screen'
       )
     }
   const notReady = await waitInputReady(ctx, tabId, view)
@@ -643,7 +679,10 @@ function tabLine(ctx: ToolContext, t: Tab, scope: 'own' | 'all'): string {
 /** Who a group belongs to, as listings say it; null for the caller's own. */
 function groupOwnerLabel(ctx: ToolContext, g: Folder): string | null {
   const owner = ctx.agents.groupOwner(g.id)
-  if (owner) return owner.id === ctx.session.id ? 'yours' : `owned by ${JSON.stringify(owner.name)}`
+  if (owner)
+    return owner.id === ctx.session.id
+      ? 'yours'
+      : `owned by ${JSON.stringify(owner.name)}${ctx.agents.ghostLabel(owner)}`
   if (ctx.agents.isOrphan(g.id)) {
     const was = ctx.agents.orphanWas(g.id)
     return was ? `orphaned, was ${JSON.stringify(was)}` : 'orphaned'
@@ -739,10 +778,26 @@ function leaseLine(ctx: ToolContext): string {
     return holder
       ? `Agent ${JSON.stringify(holder.name)} holds the screen; you work in the background.`
       : 'You work in the background; no agent holds the screen.'
-  if (holder?.id === s.id) return 'You hold the screen.'
+  const screen = ctx.agents.mayTakeScreen(s)
+    ? s.takeScreen
+      ? 'You took the screen: your actions bring their tab in front of the user.'
+      : 'The user set foreground as the default, so your actions bring their tab in front.'
+    : 'You have not taken the screen: your actions run in front only on a tab the user is already looking at, otherwise in the background (the result says so) – zen_mode {"mode":"foreground","takeScreen":true} if the user wants your tab in front.'
+  if (holder?.id === s.id) return `You hold the screen lease. ${screen}`
   if (holder)
-    return `Agent ${JSON.stringify(holder.name)} holds the screen: your foreground actions run in the background until it has been quiet for ${LEASE_SECONDS} s.`
-  return 'No agent holds the screen; your first foreground action takes it.'
+    return `Agent ${JSON.stringify(holder.name)} holds the screen: your foreground actions run in the background until it has been quiet for ${LEASE_SECONDS} s. ${screen}`
+  return `No agent holds the screen lease; your first foreground action takes it. ${screen}`
+}
+
+/** Orphaned groups a session of the same client name left, for the status and the notices. */
+function ownOrphansLine(ctx: ToolContext): string[] {
+  const mine = ctx.agents.ownOrphans(ctx.session)
+  if (!mine.length) return []
+  const m = ctx.browser.state.model
+  return [
+    '',
+    `Orphaned groups left by a session named ${JSON.stringify(ctx.session.name)} – yours from before, most likely: ${mine.map((g) => `${g.id} ${JSON.stringify(g.name)} (${folderTabs(m, g.id).length} tabs)`).join(', ')}. zen_groups {"action":"adopt"} takes them all back; with groupId one of them. Do not open their pages again.`
+  ]
 }
 
 // ---------------------------------------------------------------------------
@@ -760,19 +815,20 @@ function statusText(ctx: ToolContext): string {
     '',
     `Your groups (${groups}) and tabs (${own}) – id "title" url [flags]:`,
     listOwnTabs(ctx),
+    ...ownOrphansLine(ctx),
     '',
     `Other agents (${others.length}):`,
     ...(others.length
       ? others.map(
           (a) =>
-            `- ${JSON.stringify(a.name)} – ${a.mode}, ${a.groupIds.length} group${a.groupIds.length === 1 ? '' : 's'}${a.pending ? ', waiting for approval' : ''}`
+            `- ${JSON.stringify(a.name)} – ${a.mode}, ${a.groupIds.length} group${a.groupIds.length === 1 ? '' : 's'}${a.pending ? ', waiting for approval' : ''}${Date.now() - a.lastActiveAt >= GHOST_IDLE_MS ? `, quiet ${describeIdle(Date.now() - a.lastActiveAt)} – its groups are adoptable` : ''}`
         )
       : ['(none)']),
     '',
     'Spaces:',
     listSpaces(ctx),
     '',
-    `Server: ${server.url ?? 'stdio'}${server.running ? '' : ' (not listening)'}. The user's tabs are not listed here: browser_tabs {"action":"list","scope":"all"} shows every tab with its owner.`
+    `Server: ${server.url ?? 'stdio'}${server.running ? '' : ' (not listening)'}; ${summarize(ctx.agents.diagnosticsSnapshot())} (zenium://diagnostics has the JSON). The user's tabs are not listed here: browser_tabs {"action":"list","scope":"all"} shows every tab with its owner.`
   ].join('\n')
 }
 
@@ -850,11 +906,13 @@ const zenSession: AgentTool = {
     const closeTabs = bool(args, 'closeTabs')
     const groups = ctx.agents.groupsOf(s)
     const { groups: n, tabs } = ctx.agents.endSession(s, closeTabs)
-    if (!n) return text('Session ended. You had no groups; nothing was left behind.')
+    const stays =
+      'Your connection stays open: the next call starts a fresh session under the same id (a new home group on first use), so there is nothing to reconnect.'
+    if (!n) return text(`Session ended. You had no groups; nothing was left behind. ${stays}`)
     return text(
       closeTabs
-        ? `Session ended: your ${n} group${n === 1 ? '' : 's'} and ${tabs} tab${tabs === 1 ? '' : 's'} were closed.`
-        : `Session ended: your ${n} group${n === 1 ? '' : 's'} with ${tabs} tab${tabs === 1 ? '' : 's'} stay open as orphaned groups (${groups.map((g) => `${g.id} ${JSON.stringify(g.name)}`).join(', ')}) – a later session can take them back with zen_groups {"action":"adopt","groupId":"…"}, or the user closes them.`
+        ? `Session ended: your ${n} group${n === 1 ? '' : 's'} and ${tabs} tab${tabs === 1 ? '' : 's'} were closed. ${stays}`
+        : `Session ended: your ${n} group${n === 1 ? '' : 's'} with ${tabs} tab${tabs === 1 ? '' : 's'} stay open as orphaned groups (${groups.map((g) => `${g.id} ${JSON.stringify(g.name)}`).join(', ')}) – a later session can take them back with zen_groups {"action":"adopt","groupId":"…"}, or the user closes them. ${stays}`
     )
   }
 }
@@ -888,8 +946,7 @@ const zenGroups: AgentTool = {
   definition: {
     name: 'zen_groups',
     title: 'Your tab groups',
-    description:
-      'Your tab groups (Zen folders): every tab of yours sits in one, and a tab is yours because it does. action "list" (scope "own" = your groups with their tabs; "all" = every agent group with its owner and the user\'s folders); "create" a group (name optional; space: "agents" = the shared Agents space, default; "own" = a new space of your own named after you; a space id opens it in that space – the user\'s spaces only with allowForeign: true) and get its groupId; "rename" {groupId, name}; "close" {groupId} closes every tab in one of your groups and removes it; "adopt" {groupId} takes over an orphaned group (its agent is gone) with all its tabs. Changed: new tool – replaces guessing folders by name; browser_tabs group/ungroup are aliases onto it.',
+    description: `Your tab groups (Zen folders): every tab of yours sits in one, and a tab is yours because it does. action "list" (scope "own" = your groups with their tabs; "all" = every agent group with its owner and the user's folders); "create" a group (name optional; space: "agents" = the shared Agents space, default; "own" = a new space of your own named after you; a space id opens it in that space – the user's spaces only with allowForeign: true) and get its groupId; "rename" {groupId, name}; "close" {groupId} closes every tab in one of your groups and removes it; "adopt" {groupId} takes over an orphaned group (its agent is gone) with all its tabs – also a group of an agent quiet for over ${Math.round(GHOST_IDLE_MS / 60_000)} min (its client dropped, most likely), and with force: true any other agent's group when the user asked you to take it over (that agent is told); adopt without groupId takes back every orphaned group a session with your name left. Changed: new tool – replaces guessing folders by name; browser_tabs group/ungroup are aliases onto it.`,
     inputSchema: schema(
       {
         action: { type: 'string', enum: [...GROUP_ACTIONS] },
@@ -898,7 +955,16 @@ const zenGroups: AgentTool = {
           enum: ['own', 'all'],
           description: 'list: "own" (default) or "all"'
         },
-        groupId: { ...GROUP_ID, description: 'rename / close / adopt: the group' },
+        groupId: {
+          ...GROUP_ID,
+          description:
+            'rename / close / adopt: the group (adopt without it: every orphaned group left by a session with your name)'
+        },
+        force: {
+          type: 'boolean',
+          description:
+            "adopt: take over a connected agent's group because the user asked you to (the agent is told)"
+        },
         name: { type: 'string', description: 'create / rename: the group name' },
         space: {
           type: 'string',
@@ -990,11 +1056,26 @@ const zenGroups: AgentTool = {
         `Closed group ${group.id} ${JSON.stringify(name)} and its ${n} tab${n === 1 ? '' : 's'}.\n\nYour groups:\n${listOwnTabs(ctx)}`
       )
     }
-    const group = ctx.agents.resolveOrphan(s, pick(args, 'groupId'))
-    const was = ctx.agents.adopt(s, group)
+    const ref = pick(args, 'groupId')
+    if (typeof ref !== 'string' || !ref.trim()) {
+      // No group named: every orphaned group a session of this name left is meant.
+      const mine = ctx.agents.ownOrphans(s)
+      if (mine.length) {
+        const taken = mine.map((g) => {
+          ctx.agents.adopt(s, g)
+          return `${g.id} ${JSON.stringify(g.name)} (${groupMembers(ctx, g).length} tabs)`
+        })
+        return text(
+          `Adopted the ${taken.length} orphaned group${taken.length === 1 ? '' : 's'} a session named ${JSON.stringify(s.name)} left: ${taken.join(', ')}. Refs from before are stale: browser_snapshot before acting.\n\nYour groups:\n${listOwnTabs(ctx)}`
+        )
+      }
+    }
+    const force = bool(args, 'force')
+    const { folder: group, from } = ctx.agents.resolveOrphan(s, ref, { force })
+    const was = from ? ctx.agents.takeOver(s, from, group, force) : ctx.agents.adopt(s, group)
     const n = groupMembers(ctx, group).length
     return text(
-      `Adopted group ${group.id} ${JSON.stringify(group.name)}${was ? ` (was ${JSON.stringify(was)}'s)` : ''} with ${n} tab${n === 1 ? '' : 's'}${s.homeGroupId === group.id ? '; it is your home group now' : ''}.\n\nYour groups:\n${listOwnTabs(ctx)}`
+      `Adopted group ${group.id} ${JSON.stringify(group.name)}${was ? ` (was ${JSON.stringify(was)}'s${from ? `, ${force ? "taken over with the user's permission" : `an agent quiet for ${describeIdle(ctx.agents.idleFor(from))}`}; it has been told` : ''})` : ''} with ${n} tab${n === 1 ? '' : 's'}${s.homeGroupId === group.id ? '; it is your home group now' : ''}.\n\nYour groups:\n${listOwnTabs(ctx)}`
     )
   }
 }
@@ -1007,8 +1088,18 @@ const zenMode: AgentTool = {
   definition: {
     name: 'zen_mode',
     title: 'Set your operating mode',
-    description: `foreground: your tab is brought in front of the user before every action and your cursor shows what you do – while you hold the screen: the first foreground action takes a lease on it, and while another agent holds the lease (active within ${LEASE_SECONDS} s) your calls run in the background and say so. background: you work in your own tabs without changing what the user sees; recommended whenever other agents are connected or the user is browsing. Changed: switching to foreground no longer brings a tab in front by itself, and the screen is a lease shared with the other agents.`,
-    inputSchema: schema({ mode: { type: 'string', enum: ['foreground', 'background'] } }, ['mode']),
+    description: `foreground: your actions happen in front of the user – your cursor shows what you do and input is real – on a tab the user is looking at. With takeScreen: true your actions also bring their tab in front first (the user's space and active tab change – only when the user asked for your work on screen); without it a foreground action on a tab the user is not looking at runs in the background and the result says so. The screen is a lease: the first foreground action takes it, and while another agent holds the lease (active within ${LEASE_SECONDS} s) your calls run in the background and say so. background: you work in your own tabs without changing what the user sees; recommended whenever other agents are connected or the user is browsing. Changed: foreground no longer brings your tab in front by itself – pass takeScreen: true for that (a foreground default the user set in Settings counts as taken).`,
+    inputSchema: schema(
+      {
+        mode: { type: 'string', enum: ['foreground', 'background'] },
+        takeScreen: {
+          type: 'boolean',
+          description:
+            'foreground: bring your tab in front of the user before each action (switches the user to its space and tab) – pass true only when the user wants your work on screen'
+        }
+      },
+      ['mode']
+    ),
     annotations: { idempotentHint: true, openWorldHint: false }
   },
   async run(ctx, args) {
@@ -1024,7 +1115,9 @@ const zenMode: AgentTool = {
         -32602,
         `mode must be "foreground" or "background" (got ${JSON.stringify(raw)})`
       )
-    ctx.session.mode = mode
+    const s = ctx.session
+    s.mode = mode
+    s.takeScreen = mode === 'foreground' && bool(args, 'takeScreen')
     return text(`You are now in ${mode} mode. ${leaseLine(ctx)}`)
   }
 }
@@ -1069,7 +1162,12 @@ const zenSpaces: AgentTool = {
       if (ctx.session.mode !== 'foreground')
         throw new RpcError(
           UNAUTHORIZED,
-          'Switching the space the user sees needs the screen: you are in background mode. zen_mode {"mode":"foreground"} first – or leave the user\'s view alone and work in your groups.'
+          'Switching the space the user sees needs the screen: you are in background mode. zen_mode {"mode":"foreground","takeScreen":true} first (only if the user wants that) – or leave the user\'s view alone and work in your groups.'
+        )
+      if (!ctx.agents.mayTakeScreen(ctx.session))
+        throw new RpcError(
+          UNAUTHORIZED,
+          'Switching the space the user sees needs the screen, and you have not taken it: zen_mode {"mode":"foreground","takeScreen":true} first (only if the user wants that) – or leave the user\'s view alone and work in your groups.'
         )
       if (!ctx.agents.foreground(ctx.session, win)) {
         const holder = ctx.agents.leaseHolder(win)
@@ -1224,8 +1322,8 @@ const browserTabs: AgentTool = {
       const url = rawUrl ? resolveUrl(ctx, rawUrl) : undefined
       const groupRef = pick(args, 'groupId')
       const spaceId = str(args, 'spaceId')
-      // The lease decides whether the user sees the new tab (`background: true` never asks).
-      const active = !bool(args, 'background') && ctx.agents.foreground(s, win)
+      // The screen and its lease decide whether the user sees the new tab (`background: true` never asks).
+      const active = !bool(args, 'background') && ctx.agents.openInFront(s, win)
       let tab: Tab
       let where: string
       if (groupRef !== undefined) {
@@ -1261,8 +1359,12 @@ const browserTabs: AgentTool = {
         tab = ctx.agents.openTab(s, group, { url, active }, win)
         where = `in your home group ${JSON.stringify(group.name)} (${group.id})`
       }
+      // A tab created without a view is loaded, and waited for, by prepare; only a tab the host
+      // gave a view at creation (an active one) still has its load to wait for here.
+      const loadedByPrepare = !ctx.browser.tabs.view(tab.id)
       const view = await ctx.agents.prepare(s, tab.id, { activate: active })
-      if (url) await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS, { expectNavigation: true })
+      if (url && !loadedByPrepare)
+        await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS, { expectNavigation: true })
       return pageResult(
         ctx,
         tab,
@@ -1416,7 +1518,7 @@ const browserNavigate: AgentTool = {
     if (pick(args, 'tabId') === undefined && !ctx.agents.ownedTabs(s).length) {
       const win = ctx.agents.agentWindow()
       const group = ctx.agents.homeGroup(s)
-      tab = ctx.agents.openTab(s, group, { active: ctx.agents.foreground(s, win) }, win)
+      tab = ctx.agents.openTab(s, group, { active: ctx.agents.openInFront(s, win) }, win)
       opened = ` Opened tab ${tab.id} in your home group ${JSON.stringify(group.name)} for it – pass tabId: ${JSON.stringify(tab.id)} to page tools.`
     } else tab = targetTab(ctx, args)
     await ctx.agents.prepare(s, tab.id)
@@ -1816,7 +1918,7 @@ const browserTakeScreenshot: AgentTool = {
   definition: {
     name: 'browser_take_screenshot',
     title: 'Screenshot',
-    description: `Take a screenshot and return it as an image. Default: the visible viewport. fullPage: true captures the whole scrollable page in one image; target captures just that element (a ref from browser_snapshot or a CSS selector). Use browser_snapshot to find elements to act on; screenshots are for checking layout and images. ${PAGE_CHANGED}`,
+    description: `Take a screenshot and return it as an image. Default: the visible viewport. fullPage: true captures the whole scrollable page in one image; target captures just that element (a ref from browser_snapshot or a CSS selector). On a tab off the user's screen (background mode, or foreground without the screen taken) fullPage and target return the visible viewport instead – the whole of it, or the element's part of it clipped at its edge – and the result's text line says so; browser_scroll brings what you need into view first. Use browser_snapshot to find elements to act on; screenshots are for checking layout and images. ${PAGE_CHANGED}`,
     inputSchema: pageSchema({
       fullPage: { type: 'boolean', description: 'Capture the entire page, not only the viewport' },
       target: { ...TARGET, description: 'Capture only this element (ref, CSS selector or text=…)' },
@@ -1833,6 +1935,11 @@ const browserTakeScreenshot: AgentTool = {
     let cap: (AgentCapture & { kind: string }) | null = null
     let kind = 'viewport'
     let note = ''
+    // A tab just brought in front has no frame to copy until its renderer painted at the new
+    // size: the switch to foreground used to fail the first screenshot for exactly that, and
+    // succeed once some other action had waited for the paint. Wait for it here, as input does.
+    const inFront = ctx.session.mode === 'foreground' && !ctx.agents.degraded(ctx.session)
+    const notReady = inFront ? await waitInputReady(ctx, tab.id, view) : null
     // The agent's own cursor overlay is UI for the user, not page content: keep it out of the image.
     const overlays = (visible: boolean): Promise<unknown> =>
       ctx.agents
@@ -1852,10 +1959,7 @@ const browserTakeScreenshot: AgentTool = {
     }
     if (!cap) {
       const dataUrl = await view.snapshot()
-      if (!dataUrl)
-        return textError(
-          'The page could not be captured (a hidden tab may have nothing painted yet – try zen_mode foreground)'
-        )
+      if (!dataUrl) return textError(captureFailure(ctx, current, notReady))
       const comma = dataUrl.indexOf(',')
       const mimeType = /^data:([^;]+)/.exec(dataUrl)?.[1] ?? 'image/jpeg'
       return {
@@ -1875,6 +1979,31 @@ const browserTakeScreenshot: AgentTool = {
       ]
     }
   }
+}
+
+/**
+ * Why no image came back, by what the tool knows: the mode, whether the call had to act in the
+ * background and why, and whether the tab came on screen and painted. The old text blamed a
+ * hidden tab and told the agent to "try zen_mode foreground" – also to an agent already in
+ * foreground mode whose tab simply had not painted yet.
+ */
+function captureFailure(ctx: ToolContext, tab: Tab, notReady: NotReady | null): string {
+  const seconds = Math.round(onScreenWaitMs / 1000)
+  const readers = 'browser_snapshot and browser_read_page read the page without a picture.'
+  const why = ctx.agents.degradedBecause(ctx.session)
+  if (ctx.session.mode === 'background')
+    return `The page could not be captured: tab ${tab.id} is off screen (you are in background mode) and no frame of it has been painted yet. Wait a moment and retry; ${readers} If it keeps failing, the tab needs the screen: zen_mode {"mode":"foreground","takeScreen":true} – only if the user wants your tab in front.`
+  if (why === 'lease') {
+    const holder = ctx.agents.leaseHolder(ctx.agents.agentWindow())
+    return `The page could not be captured: tab ${tab.id} stayed off screen because agent ${JSON.stringify(holder?.name ?? 'another agent')} holds the screen, and no frame of it has been painted. Retry once that agent has been quiet for ${LEASE_SECONDS} s; ${readers}`
+  }
+  if (why === 'screen')
+    return `The page could not be captured: tab ${tab.id} is not what the user is looking at and you have not taken the screen, so it stayed off screen with no frame painted. zen_mode {"mode":"foreground","takeScreen":true} brings it in front (only if the user wants that); ${readers}`
+  if (notReady === 'off screen')
+    return `The page could not be captured: tab ${tab.id} did not come on screen within ${seconds} s (the URL bar or another chrome overlay covers the page, or another tab is in front). Retry in a moment; ${readers}`
+  if (notReady === 'unpainted')
+    return `The page could not be captured: tab ${tab.id} came on screen but had not painted its first frame within ${seconds} s. Wait a moment and retry; ${readers}`
+  return `The page could not be captured: the browser returned no image for tab ${tab.id} although it is on screen and painted. Retry; if it keeps failing, ${readers}`
 }
 
 /** Capture what the agent asked for through the host's `capture`, if it has one. */
@@ -2175,13 +2304,13 @@ export function agentInstructions(mode: AgentMode, allowScripts: boolean, others
     '- Address everything by id. Every page tool takes tabId – a tab id from browser_tabs (a unique prefix is enough); there is no current tab, and list positions are refused because they shift whenever another agent or the user opens or closes a tab. Only while you own exactly one tab may you omit tabId.',
     '- Create your group and stay inside it. browser_tabs {"action":"new","url":"…"} makes your home group (in the shared "Agents" space, never in the user\'s spaces) and opens a tab in it – copy the id it returns. zen_groups create makes more groups (space: "own" gives you a space of your own); browser_tabs move moves your tabs between your groups. Call zen_status first: it shows your groups and tabs, the other agents and the spaces.',
     `- Others exist (${company}). Another live agent's tabs cannot be addressed at all. The user's tabs are theirs: act on one only when the user asked you to work on their page, and then pass allowForeign: true (browser_tabs {"action":"list","scope":"all"} shows every tab with its owner). It never makes the tab yours, and the user's Essentials and pinned tabs are never closed, moved or grouped.`,
-    '- Never close, move or navigate what you did not create. A group whose agent is gone is orphaned: adopt it with zen_groups {"action":"adopt","groupId":"…"} if you are continuing that work, otherwise leave it.',
+    `- Never close, move or navigate what you did not create. A group whose agent is gone is orphaned: adopt it with zen_groups {"action":"adopt","groupId":"…"} if you are continuing that work, otherwise leave it. zen_groups {"action":"adopt"} without a groupId takes back every orphaned group a session with your name left (after a reconnect or an end without closeTabs). An agent quiet for over ${Math.round(GHOST_IDLE_MS / 60_000)} min counts as gone; a working agent's group is taken only with force: true, when the user asked you to.`,
     '- Clean up. When you are done, zen_session {"action":"end","closeTabs":true} closes your groups and tabs – unless the user wants the results kept; then end without closeTabs and your groups stay as orphaned groups.',
     '- Expect notices. When the user or another agent closes or moves one of your tabs or groups, a "Notice:" line tops your next result: read it and re-list (browser_tabs list) instead of retrying blindly.',
     '- browser_snapshot returns the page as an accessibility tree whose elements carry [ref=eN] handles; pass the eN as target to browser_click, browser_type, browser_hover, browser_select_option and browser_take_screenshot. target also takes a CSS selector or text=Visible label, and browser_click / browser_hover take x,y viewport coordinates instead. Every action returns a fresh snapshot.',
     '- Navigation: browser_navigate (also changes the URL of a tab of yours via tabId; opens a tab in your home group when you have none), browser_navigate_back, browser_navigate_forward, browser_reload. Tabs: browser_tabs list / new / close / move. Groups: zen_groups list / create / rename / close / adopt (browser_tabs group / ungroup are deprecated aliases).',
     '- browser_read_page is the cheap way to read an article; browser_take_screenshot (viewport, fullPage: true, or target for one element) only when the layout or an image matters.',
-    `- You start in ${mode.toUpperCase()} mode. Foreground: your tab is brought in front of the user before each action, a cursor with your name shows what you do, and clicks, hovers and keys are real input (trusted user gestures: pop-ups and downloads open) – but the screen is a lease: your first foreground action takes it, and while another agent holds it (active within the last ${LEASE_SECONDS} s) your call runs in the background and the result says so. Background: you work in your tabs without changing what the user sees, and input is synthetic – the result says "input: synthetic" whenever that happened, also in foreground when the page could not be brought on screen or had not painted its first frame yet (then wait a moment and retry). Background is the recommended mode whenever other agents are connected or the user is browsing; switch with zen_mode.`,
+    `- You start in ${mode.toUpperCase()} mode. Foreground: your actions happen in front of the user on a tab they are looking at – a cursor with your name shows what you do, and clicks, hovers and keys are real input (trusted user gestures: pop-ups and downloads open). Your tab is brought in front first only when you took the screen – zen_mode {"mode":"foreground","takeScreen":true}, which switches the user's space and active tab, so only when the user wants your work on screen – or the user made foreground the default; otherwise an action on a tab the user is not looking at runs in the background and the result says so. The screen is a lease: your first foreground action takes it, and while another agent holds it (active within the last ${LEASE_SECONDS} s) your call runs in the background and the result says so. Background: you work in your tabs without changing what the user sees, and input is synthetic – the result says "input: synthetic" whenever that happened, also in foreground when the page could not be brought on screen or had not painted its first frame yet (then wait a moment and retry). Background is the recommended mode whenever other agents are connected or the user is browsing; switch with zen_mode.`,
     '- browser_navigate accepts URLs or search words. zen_spaces lists and creates spaces; switching the space the user sees (zen_spaces switch) needs the foreground lease.',
     allowScripts
       ? '- browser_evaluate runs JavaScript in the page (an expression or an arrow function) when nothing else does the job, e.g. to read attributes.'

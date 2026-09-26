@@ -1,0 +1,171 @@
+{
+  "$comment": "The nightly all-drivers sweep (android-nightly-drivers.yml): every instrumentation driver under android/app/src/androidTest/kotlin/app/zen/chromium, the shard (one emulator boot) it runs on and the environment its own workflow gives it, as one directory - this file the shards, one <id>.json per driver, skip.json the classes and workflows left out with their reasons (a driver of its own file so that two branches adding drivers do not collide). android-nightly-drivers.mjs reads the directory as one manifest (the matrix, the plan, the table) and android-nightly-drivers.test.mjs asserts every concrete *Demo class is either a driver here or in skip.json with a reason. Driver fields: id (its directory in the artifact; the file is named after it), order (its place in the shard's run, ascending; ties by id; a driver without one runs last, by id - omit it for a new driver), class / classes (the *Demo classes it covers), shard, mirrors (the workflow file[:job or input] whose environment it takes), dir (DEMO_DIR, the handshake directory), script (a wrapper instead of android-gesture-demo.sh), out (where a script with a fixed output path leaves its findings, moved into the artifact), env (script-env lines), setup (named steps the shard runs before the emulator: see the runner), needs (pin, browser-role, navigation: state the runner sets or puts back), timeout (seconds for the driver, 720 by default), estimate (minutes, for the plan), note. Shard fields: cache (the path a setup step fills by a pin and the key naming that pin, kept between runs through the recipe's actions/cache inputs), setup, env, and each shard names its image (the SDK system image the recipe boots: system-images;android-<api-level>;<target>;x86_64, checked against those two) and its webview (the WebView provider the drivers run on: the image's own package and version, or what the shard's setup installs over it); both are printed in every run's header, the device's own word beside them.",
+  "shards": {
+    "phone-a": {
+      "title": "Phone A: API 34 Google APIs, pixel_6",
+      "api-level": "34",
+      "target": "google_apis",
+      "profile": "pixel_6",
+      "image": "system-images;android-34;google_apis;x86_64",
+      "webview": "com.google.android.webview 113.0.5672.136, the image's",
+      "emulator-gpu": "swangle",
+      "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
+      "display": "720x1600@280",
+      "timeout-minutes": 90,
+      "budget-minutes": 68
+    },
+    "phone-b": {
+      "title": "Phone B: API 34 Google APIs, pixel_6",
+      "api-level": "34",
+      "target": "google_apis",
+      "profile": "pixel_6",
+      "image": "system-images;android-34;google_apis;x86_64",
+      "webview": "com.google.android.webview 113.0.5672.136, the image's",
+      "emulator-gpu": "swangle",
+      "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
+      "display": "720x1600@280",
+      "timeout-minutes": 90,
+      "budget-minutes": 68
+    },
+    "phone-c": {
+      "title": "Phone C: API 34 Google APIs, pixel_6",
+      "api-level": "34",
+      "target": "google_apis",
+      "profile": "pixel_6",
+      "image": "system-images;android-34;google_apis;x86_64",
+      "webview": "com.google.android.webview 113.0.5672.136, the image's",
+      "emulator-gpu": "swangle",
+      "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back emulated -camera-front none -show-kernel",
+      "display": "720x1600@280",
+      "timeout-minutes": 90,
+      "budget-minutes": 68,
+      "note": "-camera-back emulated: the QR scan demo reads the emulated camera."
+    },
+    "phone-d": {
+      "title": "Phone D: API 34 Google APIs, pixel_6",
+      "api-level": "34",
+      "target": "google_apis",
+      "profile": "pixel_6",
+      "image": "system-images;android-34;google_apis;x86_64",
+      "webview": "com.google.android.webview 113.0.5672.136, the image's",
+      "emulator-gpu": "swangle",
+      "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
+      "display": "720x1600@280",
+      "timeout-minutes": 90,
+      "budget-minutes": 68
+    },
+    "phone-e": {
+      "title": "Phone E: API 34 Google APIs, pixel_6",
+      "api-level": "34",
+      "target": "google_apis",
+      "profile": "pixel_6",
+      "image": "system-images;android-34;google_apis;x86_64",
+      "webview": "com.google.android.webview 113.0.5672.136, the image's",
+      "emulator-gpu": "swangle",
+      "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
+      "display": "720x1600@280",
+      "timeout-minutes": 90,
+      "budget-minutes": 68,
+      "note": "The fifth phone shard (#344): the drivers the first four could not hold under about 58 minutes once every estimate was trued up to the minutes the nightly measured. Same recipe as phone-a."
+    },
+    "phone-f": {
+      "title": "Phone F: API 34 Google APIs, pixel_6",
+      "api-level": "34",
+      "target": "google_apis",
+      "profile": "pixel_6",
+      "image": "system-images;android-34;google_apis;x86_64",
+      "webview": "com.google.android.webview 113.0.5672.136, the image's",
+      "emulator-gpu": "swangle",
+      "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
+      "display": "720x1600@280",
+      "timeout-minutes": 90,
+      "budget-minutes": 68,
+      "note": "The sixth phone shard (W6-6, OS-37): the five before it stand at 66 to 68 of their 68 minutes, and the memory-pressure driver's five would fit on none of them. Same recipe as phone-a; the room for what wave 6 adds after it."
+    },
+    "api35": {
+      "title": "Phone, API 35 Google APIs, pixel_6",
+      "api-level": "35",
+      "target": "google_apis",
+      "profile": "pixel_6",
+      "image": "system-images;android-35;google_apis;x86_64",
+      "webview": "com.google.android.webview 124.0.6367.219, the image's",
+      "emulator-gpu": "swangle",
+      "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
+      "display": "720x1600@280",
+      "timeout-minutes": 90,
+      "budget-minutes": 68,
+      "setup": ["ffmpeg", "perfetto-python"]
+    },
+    "api33": {
+      "title": "Phone, API 33 Google APIs, pixel_6",
+      "api-level": "33",
+      "target": "google_apis",
+      "profile": "pixel_6",
+      "image": "system-images;android-33;google_apis;x86_64",
+      "webview": "com.google.android.webview 145.0.7632.218 installed over the image's 109.0.5414.123 (android-webview-google.sh: the APK out of Google's system-images;android-37.0;google_apis;x86_64 r6, the same signer)",
+      "emulator-gpu": "swangle",
+      "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
+      "display": "720x1600@280",
+      "timeout-minutes": 90,
+      "budget-minutes": 68,
+      "setup": ["webview-google"],
+      "cache": {
+        "path": "artifacts/webview-google",
+        "key": "webview-google-com.google.android.webview-145.0.7632.218"
+      },
+      "env": {
+        "WEBVIEW_GOOGLE_DIR": "artifacts/webview-google"
+      },
+      "note": "Android 13, the last version on which the browser's own share panel stands in for the system sheet (SH-03; Share.panelStandsIn): the share demo's panel scenes run here, its system-sheet scenes on phone-b. Same recipe as phone-a otherwise. The image's own WebView 109 keeps no profiles (no private tabs, the share demo's private check N/A – seed 69), so the setup installs a current Google WebView over it; the cache keeps that APK between runs."
+    },
+    "webview": {
+      "title": "AOSP image (-writable-system) with the Chromium snapshot WebView swapped in",
+      "api-level": "34",
+      "target": "default",
+      "profile": "pixel_6",
+      "image": "system-images;android-34;default;x86_64",
+      "webview": "com.android.webview, the Chromium snapshot's SystemWebView swapped in (AndroidDesktop_x64 LAST_CHANGE at run time; the revision in webview-REVISIONS.json)",
+      "emulator-gpu": "swiftshader_indirect",
+      "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back emulated -camera-front none -writable-system",
+      "display": "720x1600@280",
+      "timeout-minutes": 90,
+      "budget-minutes": 68,
+      "setup": ["webview-snapshot"],
+      "env": {
+        "WEBVIEW_APK": "artifacts/webview/SystemWebView.apk"
+      },
+      "note": "swiftshader_indirect as the AOSP jobs ask (android-private-demo.yml: swangle draws a chrome frame every 1.3-3.5 s on this image); -camera-back emulated for the fullscreen demo."
+    },
+    "tablet": {
+      "title": "Tablet: API 34 Google APIs, pixel_tablet at 1280x800@160",
+      "api-level": "34",
+      "target": "google_apis",
+      "profile": "pixel_tablet",
+      "image": "system-images;android-34;google_apis;x86_64",
+      "webview": "com.google.android.webview 113.0.5672.136, the image's",
+      "emulator-gpu": "swangle",
+      "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
+      "display": "1280x800@160",
+      "timeout-minutes": 60,
+      "budget-minutes": 45
+    },
+    "tablet-webview": {
+      "title": "Tablet on the AOSP image (-writable-system) with the Chromium snapshot WebView swapped in, pixel_tablet at 1280x800@160",
+      "api-level": "34",
+      "target": "default",
+      "profile": "pixel_tablet",
+      "image": "system-images;android-34;default;x86_64",
+      "webview": "com.android.webview, the Chromium snapshot's SystemWebView swapped in (AndroidDesktop_x64 LAST_CHANGE at run time; the revision in webview-REVISIONS.json)",
+      "emulator-gpu": "swiftshader_indirect",
+      "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system",
+      "display": "1280x800@160",
+      "timeout-minutes": 60,
+      "budget-minutes": 45,
+      "setup": ["webview-snapshot"],
+      "env": {
+        "WEBVIEW_APK": "artifacts/webview/SystemWebView.apk"
+      },
+      "note": "The tablet layout on the private tabs demos' engine (android-tablet-private-demo.yml): private tabs need WebViewFeature.MULTI_PROFILE, which the Google APIs image's WebView 113 lacks, so the tablet's private mode runs on the AOSP image with the snapshot WebView, under swiftshader_indirect as the webview shard."
+    }
+  }
+}

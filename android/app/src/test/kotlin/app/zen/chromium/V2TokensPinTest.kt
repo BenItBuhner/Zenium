@@ -130,6 +130,90 @@ class V2TokensPinTest {
         assertEquals(row / 2, PromptSheetSpec.ROW_PAD_DP)
     }
 
+    /**
+     * §9.33's card, drawn natively for the installed app's window ([NativeToastCard]): its numbers
+     * are `@shared/toastCard`'s `TOAST_CARD` (the one source the chrome's `.zen-message` and the
+     * page-drawn fullscreen hint already share), the `.zen-message*` rules' and the clocks' –
+     * read from the sources, never retyped.
+     */
+    @Test
+    fun theToastCardSpecIsTheChromesCard() {
+        val toastCard = File(root, "src/shared/toastCard.ts").readText()
+        fun constant(name: String): Int = Regex("""\b$name: (\d+)""").find(toastCard)?.groupValues?.get(1)?.toInt() ?: error("toastCard.ts states no $name")
+        fun exported(name: String): Long = Regex("""export const $name = (\d+)""").find(toastCard)?.groupValues?.get(1)?.toLong() ?: error("toastCard.ts exports no $name")
+        assertEquals(constant("insetPx"), ToastCardSpec.INSET_DP)
+        assertEquals(constant("maxWidthPx"), ToastCardSpec.MAX_WIDTH_DP)
+        assertEquals(constant("rowPx"), ToastCardSpec.ROW_DP)
+        val row = Regex("""calc\(var\(--v2-line-body-box\) \+ (\d+)px\)""").find(css.phone["--v2-row"]!!)!!.groupValues[1].toInt()
+        assertEquals(PromptSheetSpec.BODY_LINE_SP + row, ToastCardSpec.ROW_DP)
+        assertEquals(constant("radiusPx"), ToastCardSpec.RADIUS_DP)
+        assertEquals(css.px("--v2-radius-card"), ToastCardSpec.RADIUS_DP)
+        assertEquals(constant("gutterPx"), ToastCardSpec.GUTTER_DP)
+        assertEquals(constant("padPx"), ToastCardSpec.PAD_DP)
+        assertEquals(constant("gapPx"), ToastCardSpec.GAP_DP)
+        assertEquals(constant("fontPx"), PromptSheetSpec.BODY_SP)
+        assertEquals(constant("linePx"), PromptSheetSpec.BODY_LINE_SP)
+        assertEquals(constant("weight"), PromptSheetSpec.BODY_WEIGHT)
+        assertEquals(exported("TOAST_SHOW_MS"), ToastCardSpec.SHOW_MS)
+        assertEquals(exported("REDUCED_FADE_MS"), ToastCardSpec.FADE_MS)
+        // `--v2-shadow-panel`: the card's elevation is the shadow's offset.
+        assertEquals("0 ${ToastCardSpec.SHADOW_Y_DP}px 6px rgb(0 0 0 / 0.2)", Regex("""shadow: '([^']+)'""").find(toastCard)!!.groupValues[1])
+        // `.zen-message`: the row's padding – 3 above and below, 14 on the text's side, 6 on the control's – its gap and its hairline.
+        val message = css.rule(".zen-message")
+        assertEquals("${ToastCardSpec.PAD_DP}px ${ToastCardSpec.CONTROL_SIDE_DP}px ${ToastCardSpec.PAD_DP}px ${ToastCardSpec.GUTTER_DP}px", declaration(message, "padding"))
+        assertEquals(ToastCardSpec.GAP_DP, px(message, "gap"))
+        assertEquals("${PromptSheetSpec.HAIRLINE_DP}px solid var(--v2-border)", declaration(message, "border"))
+        assertEquals("var(--v2-row)", declaration(message, "min-height"))
+        assertEquals("var(--v2-panel)", declaration(message, "background"))
+        assertEquals("var(--v2-text)", declaration(message, "color"))
+        // The text's inset: `(--v2-row - --v2-line-body-box) / 2 - 4px`, 8 on a phone.
+        assertTrue(message.contains("--zen-message-text-inset: calc((var(--v2-row) - var(--v2-line-body-box)) / 2 - 4px);"))
+        assertEquals((ToastCardSpec.ROW_DP - PromptSheetSpec.BODY_LINE_SP) / 2 - 4, ToastCardSpec.TEXT_INSET_DP)
+        // A card with an action grows to the control plus 8; a toast without one pads 14 on both sides.
+        assertEquals("calc(var(--v2-control) + 8px)", declaration(css.rule(".zen-message[data-action]"), "min-height"))
+        assertEquals(PromptSheetSpec.CONTROL_DP + 8, ToastCardSpec.ACTION_MIN_DP)
+        assertEquals(ToastCardSpec.GUTTER_DP, px(css.rule(".zen-message-toast:not([data-action])"), "padding-right"))
+        // `.zen-message-button`: the control's height and radius, `padding: 0 12px`, the label at the button weight, the fill and the accent; the press scale.
+        val button = css.rule(".zen-message-button")
+        assertEquals("var(--v2-control)", declaration(button, "height"))
+        assertEquals("var(--v2-radius-control)", declaration(button, "border-radius"))
+        assertEquals("0 ${ToastCardSpec.BUTTON_PADDING_DP}px", declaration(button, "padding"))
+        assertEquals("var(--v2-weight-button)", declaration(button, "font-weight"))
+        assertEquals("var(--v2-control-fill)", declaration(button, "background"))
+        assertEquals("var(--v2-control-accent)", declaration(button, "color"))
+        assertEquals("scale(${ToastCardSpec.PRESS_SCALE})", declaration(css.rule(".zen-message-button:active:not(:disabled)"), "transform"))
+        // The clocks the chrome keeps beside the shared one: 5 s with an action (lib/ui.ts), 8 s for an Undo (bookmarkUndo.ts).
+        val ui = File(root, "src/renderer/src/lib/ui.ts").readText()
+        assertEquals(Regex("""export const TOAST_ACTION_DURATION = (\d+)""").find(ui)!!.groupValues[1].toLong(), ToastCardSpec.ACTION_SHOW_MS)
+        val undo = File(root, "src/renderer/src/lib/bookmarkUndo.ts").readText()
+        assertEquals(Regex("""export const BOOKMARK_UNDO_TOAST_MS = (\d+)""").find(undo)!!.groupValues[1].toLong(), ToastCardSpec.LONG_SHOW_MS)
+        // §11: in on SPRING_GENTLE, out on SPRING_SNAPPY (`@shared/spring`).
+        val spring = File(root, "src/shared/spring.ts").readText()
+        fun springOf(name: String): Pair<Float, Float> {
+            val body = Regex("""export const $name: SpringConfig = \{([\s\S]*?)\}""").find(spring)!!.groupValues[1]
+            return Regex("""stiffness: (\d+)""").find(body)!!.groupValues[1].toFloat() to Regex("""damping: (\d+)""").find(body)!!.groupValues[1].toFloat()
+        }
+        assertEquals(springOf("SPRING_GENTLE"), ToastCardSpec.IN_STIFFNESS to ToastCardSpec.IN_DAMPING)
+        assertEquals(springOf("SPRING_SNAPPY"), ToastCardSpec.OUT_STIFFNESS to ToastCardSpec.OUT_DAMPING)
+        // §9.33's swipe: the one release rule every swipe shares (`SWIPE_THRESHOLDS`, lib/gestures/swipe.ts) and
+        // the message card's own slop and rubber band (lib/gestures/dismiss.ts) – the numbers the native card decides on.
+        val swipe = File(root, "src/renderer/src/lib/gestures/swipe.ts").readText()
+        val thresholds = Regex("""export const SWIPE_THRESHOLDS: SwipeThresholds = \{([\s\S]*?)\}""").find(swipe)!!.groupValues[1]
+        fun threshold(name: String): Float = Regex("""\b$name: ([\d.]+)""").find(thresholds)?.groupValues?.get(1)?.toFloat() ?: error("SWIPE_THRESHOLDS states no $name")
+        assertEquals(threshold("flingVelocity"), ToastCardSpec.FLING_VELOCITY)
+        assertEquals(threshold("commitFraction"), ToastCardSpec.COMMIT_FRACTION)
+        assertEquals(threshold("projectionSeconds"), ToastCardSpec.PROJECTION_SECONDS)
+        assertEquals(Regex("""export function rubberBand\(overshoot: number, extent: number, coefficient = ([\d.]+)\)""").find(swipe)!!.groupValues[1].toFloat(), ToastCardSpec.RUBBER_COEFFICIENT)
+        val dismiss = File(root, "src/renderer/src/lib/gestures/dismiss.ts").readText()
+        assertEquals(Regex("""export const DISMISS_SLOP = (\d+)""").find(dismiss)!!.groupValues[1].toInt(), ToastCardSpec.SLOP_DP)
+        assertEquals(Regex("""const RESIST_EXTENT = (\d+)""").find(dismiss)!!.groupValues[1].toInt(), ToastCardSpec.RESIST_DP)
+        // The toast's open ways, `TOAST_DIRS` (ToastCard.tsx): sideways both ways, down.
+        val toastCardTsx = File(root, "src/renderer/src/components/messages/ToastCard.tsx").readText()
+        val dirs = Regex("""const TOAST_DIRS: DismissDirections = \{ x: \[([-\d, ]+)\], y: \[([-\d, ]+)\] \}""").find(toastCardTsx)!!
+        assertEquals(dirs.groupValues[1].split(",").map { it.trim().toInt() }.toSet(), ToastSwipe.TOAST_WAYS.x)
+        assertEquals(dirs.groupValues[2].split(",").map { it.trim().toInt() }.toSet(), ToastSwipe.TOAST_WAYS.y)
+    }
+
     @Test
     fun theSpecNumbersAreTheSheetRules() {
         // §9.9: the grabber (`.zen-sheet-handle`) in its strip (`.zen-sheet-handle-hit`: 44 tall, pulled back 24).
@@ -212,6 +296,54 @@ class V2TokensPinTest {
         }
         val sheet = File(root, "src/renderer/src/lib/motion/sheet.ts").readText()
         assertEquals(PromptSheetSpec.SHEET_TOP_MARGIN_DP, Regex("""export const SHEET_TOP_MARGIN = (\d+)""").find(sheet)!!.groupValues[1].toInt())
+    }
+
+    /**
+     * The detail line ([NativePromptSheet.Content.detail], W6-S11): the address the browser
+     * window's Open in <App>? sheet shows under its description – `ExternalProtocolSheet.tsx`'s
+     * phone address line, `truncate px-4 pb-2 text-[13px] leading-[var(--v2-line-small)]
+     * text-[var(--v2-text-deemphasized)]` with the full URL as its `title` – read from the TSX
+     * and held to the spec: the block's 16 at its sides (`px-4`), its own 8 beneath (`pb-2`), the
+     * small type on the small line at 69 %, one line truncated from the end, the full URL its
+     * accessible name. The chassis draws it from those numbers – the caption's type
+     * ([PromptSheetSpec.SMALL_SP] on [PromptSheetSpec.SMALL_LINE_SP] in the deemphasised ink) on
+     * one line, [PromptSheetSpec.BODY_GAP_DP] under the description, [PromptSheetSpec.DETAIL_BOTTOM_DP]
+     * over the footer – and the numbers are the tokens' (theSpecNumbersAreTheTokens).
+     */
+    @Test
+    fun theDetailLineIsTheBrowserSheetsAddressLine() {
+        val tsx = File(root, "src/renderer/src/components/protocol/ExternalProtocolSheet.tsx").readText()
+        val line = Regex("""\? '([^']*)'\s*\n\s*: '[^']*'\s*\n\s*\}\s*\n\s*title=\{request\.url\}""").find(tsx)?.groupValues?.get(1)
+            ?: error("ExternalProtocolSheet.tsx no longer draws the phone address line with request.url as its title: read the line from where it moved to")
+        val classes = line.split(' ')
+        // Tailwind's spacing scale: n is 4n px.
+        fun spacing(prefix: String): Int = classes.firstOrNull { it.startsWith(prefix) }?.removePrefix(prefix)?.toInt()?.times(4) ?: error("no $prefix in $line")
+        assertEquals("px-4: the block's gutter at the line's sides", PromptSheetSpec.BLOCK_PADDING_DP, spacing("px-"))
+        assertEquals("pb-2: the line's own 8 over the footer's 16", PromptSheetSpec.DETAIL_BOTTOM_DP, spacing("pb-"))
+        assertTrue("one line, truncated from the end", "truncate" in classes)
+        assertEquals("the small type", PromptSheetSpec.SMALL_SP, Regex("""text-\[(\d+)px\]""").find(line)!!.groupValues[1].toInt())
+        assertEquals("on the small line", "leading-[var(--v2-line-small)]", classes.first { it.startsWith("leading-") })
+        assertEquals(css.px("--v2-line-small"), PromptSheetSpec.SMALL_LINE_SP)
+        assertEquals("in the deemphasised ink", "text-[var(--v2-text-deemphasized)]", classes.first { it.startsWith("text-[var") })
+        assertEquals(PromptSheetSpec.DEEMPHASIZED_ALPHA, css.alpha("--v2-text-deemphasized"), 0f)
+        // The chassis: the caption's type on one line, end-truncated, the full text – or the name given – its accessible name.
+        val chassis = File(root, "android/app/src/main/kotlin/app/zen/chromium/NativePromptSheet.kt").readText()
+        val caption = Regex("""private fun caption\(text: CharSequence\): TextView = TextView\(context\)\.apply \{([\s\S]*?)\n    \}""").find(chassis)?.groupValues?.get(1)
+            ?: error("NativePromptSheet.kt has no caption builder")
+        for (read in listOf("setTextColor(ink.textDeemphasized)", "PromptSheetSpec.SMALL_SP.toFloat()", "sp(PromptSheetSpec.SMALL_LINE_SP)"))
+            assertTrue("the caption's type: $read", caption.contains(read))
+        val detail = Regex("""private fun detail\(text: CharSequence\): TextView = caption\(text\)\.apply \{([\s\S]*?)\n    \}""").find(chassis)?.groupValues?.get(1)
+            ?: error("NativePromptSheet.kt has no detail builder on the caption's type")
+        assertTrue("one line", detail.contains("maxLines = 1"))
+        assertTrue("truncated from the end", detail.contains("ellipsize = TextUtils.TruncateAt.END"))
+        assertTrue("the full URL – or the name given – its accessible name", detail.contains("contentDescription = content.detailName ?: text"))
+        // In the pinned block: 16 under the description, its 8 beneath where no body follows.
+        assertTrue(
+            "the detail line stands the body gap under the description",
+            Regex("""if \(detail != null\) block\.addView\(detail\(detail\), [^\n]*\n\s*topMargin = dp\(PromptSheetSpec\.BODY_GAP_DP\)""").containsMatchIn(chassis)
+        )
+        assertTrue("the block keeps the line's 8 over the footer", chassis.contains("if (toBody) pad else if (detail != null) dp(PromptSheetSpec.DETAIL_BOTTOM_DP) else 0"))
+        assertEquals("the web line's 8 over the footer's 16 (`.zen-sheet-footer`'s top)", 8, PromptSheetSpec.DETAIL_BOTTOM_DP)
     }
 
     /**

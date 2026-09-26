@@ -68,6 +68,12 @@ export class SessionManager implements SessionHost {
     return containerId !== PRIVATE_CONTAINER_ID
   }
 
+  /** The container whose session `ses` is (one made here), else undefined (a handful of sessions). */
+  containerOf(ses: Session): string | undefined {
+    for (const [id, each] of this.sessions) if (each === ses) return id
+    return undefined
+  }
+
   get(containerId: string): Session {
     const existing = this.sessions.get(containerId)
     if (existing) return existing

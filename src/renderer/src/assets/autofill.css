@@ -53,10 +53,8 @@
 .zen-v2-button[data-variant='quiet'] {
   background: transparent;
 }
-@media (hover: hover) {
-  .zen-v2-button[data-variant='quiet']:hover:not(:disabled) {
-    background: var(--v2-fill);
-  }
+:where(:root[data-hover='hover']) .zen-v2-button[data-variant='quiet']:hover:not(:disabled) {
+  background: var(--v2-fill);
 }
 /* A secret string (§4): the platform monospace, no ligatures, one colour. */
 .zen-v2-field[data-secret] {
@@ -566,11 +564,9 @@ textarea.zen-v2-field {
     background 120ms var(--zen-ease),
     color 120ms var(--zen-ease);
 }
-@media (hover: hover) {
-  .zen-v2-af-chip:hover {
-    background: var(--v2-control-fill);
-    color: var(--v2-control-text);
-  }
+:where(:root[data-hover='hover']) .zen-v2-af-chip:hover {
+  background: var(--v2-control-fill);
+  color: var(--v2-control-text);
 }
 .zen-v2-af-chip:active,
 .zen-v2-af-chip[aria-expanded='true'] {

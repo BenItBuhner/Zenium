@@ -190,6 +190,14 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     /** The same rules as the core sent them, handed to every page's document-start script. */
     override var pageRulesJson: JSONObject = JSONObject()
         private set
+    /** The core's per-site content settings (images, JavaScript, insecure content, the page guards), mirrored per navigation. */
+    override var contentRules: ContentRules = ContentRules.NONE
+        private set
+    override var contentRulesJson: JSONObject = JSONObject()
+        private set
+    /** True from the core's first push: its rules service has started and answers `resolveRules`. */
+    override var contentRulesResolvable: Boolean = false
+        private set
     /**
      * Rotate-to-fullscreen is the phone's alone (§9.36, Chrome's `device_is_phone`): the screen
      * under Android's tablet line ([ScreenClass.rotateToFullscreen], read live from the same
@@ -783,6 +791,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 "online" to connectivity.online,
                 // What sync calls this device until the user renames it (Chrome names a phone by its model).
                 "deviceModel" to Build.MODEL,
+                // The device's country (network, SIM, then the locale; `DeviceRegion.kt`): what the
+                // EEA's search-engine choice screen is gated on (OMN-26). A debuggable build reads
+                // `debug.zenium.region` first. Null when the device names none.
+                "region" to DeviceRegion.read(activity, BuildConfig.DEBUG),
                 // A screen lock (or biometric) the device can verify the user with: the "Lock
                 // private tabs when you leave Zenium" switch is enabled (`PrivateLock`); the lock
                 // itself is never on at boot (it lives in memory).
@@ -949,6 +961,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             // (`deliverRendererExit`): the crash page's word follows the reply and supersedes it.
             "view.load" -> {
                 val url = args.str("url")
+                // The core's content-settings answer for the destination rides with the load
+                // (`rules`; absent before its rules service started): the view sets the page's
+                // WebSettings and document-start guards from it, not from the pushed document.
+                tab?.presetResolvedRules(url, args.optJSONObject("rules"))
                 tab?.loadUrl(url)
                 reply(null)
                 if (tab != null) {
@@ -1003,8 +1019,18 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 }
             }
             "view.reload" -> {
+                // The reloaded page's answer comes along too (`url`, `rules`): the reload's
+                // document reads what the core resolves now, an extension's rule included.
+                args.strOrNull("url")?.let { tab?.presetResolvedRules(it, args.optJSONObject("rules")) }
                 if (args.bool("ignoreCache")) tab?.clearCache(false)
                 tab?.reload()
+                reply(null)
+            }
+            // The core's answer to a view's `resolveRules` question (TabWebView.onRulesResolved):
+            // `rules` is every row's word for `url`'s site, or null when the core could not tell
+            // (its rules service not started) – the view then reads the pushed document.
+            "view.rulesResolved" -> {
+                tab?.onRulesResolved(args.optInt("token"), args.str("url"), args.optJSONObject("rules"))
                 reply(null)
             }
             "view.stop" -> { tab?.stopLoading(); reply(null) }
@@ -1017,7 +1043,16 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.setZoom" -> { tab?.setZoom(args.num("factor", 1.0)); reply(null) }
             "view.setDesktopMode" -> { tab?.setDesktopMode(args.bool("on")); reply(null) }
             "view.setDarkening" -> { tab?.setDarkening(args.bool("on")); reply(null) }
+            // The image-search upload (CT-32): an urlencoded body through `postUrl`, a multipart
+            // one as the self-submitting form document the core built (`ImagePostNavigation`).
+            "view.post" -> {
+                val url = args.str("url")
+                tab?.presetResolvedRules(url, args.optJSONObject("rules"))
+                tab?.postForImageSearch(url, args.optString("body", null), args.optString("html", null))
+                reply(null)
+            }
             "view.setPageRules" -> { setPageRules(args); reply(null) }
+            "view.setContentRules" -> { setContentRules(args); reply(null) }
             "view.find" -> { tab?.find(args.str("text"), args.bool("forward", true), args.bool("newSession", true)); reply(null) }
             "view.stopFind" -> { tab?.stopFind(); reply(null) }
             "view.eval" -> {
@@ -1957,6 +1992,17 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         pageRulesJson = rules
         pageRules = PageRules.fromJson(rules)
         for (tab in tabs.all()) tab.onPageRulesChanged()
+    }
+
+    /**
+     * The core's per-site content settings changed (or an extension's rules did, the document
+     * unchanged): every open page drops the answers it remembered and re-reads its document's.
+     */
+    private fun setContentRules(rules: JSONObject) {
+        contentRulesJson = rules
+        contentRules = ContentRules.fromJson(rules)
+        contentRulesResolvable = true
+        for (tab in tabs.all()) tab.onContentRulesChanged()
     }
 
     private fun print(tab: TabWebView) {

@@ -1,0 +1,13 @@
+{
+  "id": "share-screenshot",
+  "order": 59,
+  "class": "ShareScreenshotDemo",
+  "shard": "phone-d",
+  "mirrors": "android-share-screenshot-demo.yml",
+  "dir": "share-screenshot-demo",
+  "env": {
+    "DEMO_KEEP": "com.google.android.apps.photos com.google.android.apps.nbu.files"
+  },
+  "estimate": 6,
+  "note": "First on the shard: the device is prepared once per shard by the first driver's environment, and the card's thumbnail opens the picture in the image's Photos or Files app, so its DEMO_KEEP leaves those two enabled for the shard (as its workflow does for its run)."
+}

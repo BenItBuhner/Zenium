@@ -1,0 +1,12 @@
+{
+  "id": "pwa-identity",
+  "class": "PwaIdentityDemo",
+  "shard": "phone-f",
+  "mirrors": "android-pwa-identity-demo.yml:light",
+  "dir": "pwa-identity-demo",
+  "env": {
+    "DEMO_THEME": "light"
+  },
+  "estimate": 3.5,
+  "note": "An installed web app's own identity (PWA-02, W6-9): Sketch Studio installed through the sheet, the shortcut and the core's installed list read back, the tile opening the app's own task with the manifest's short_name and theme_color as its Recents card (the API and dumpsys activity recents, the Recents screen's still), the tile a second time bringing the one task forward, a page notification asked for and shown from inside the app's window (its own question on the native sheet - a scrim touch and a system back each a dismissal that writes nothing, then Allow under a finger - the channel group named for the app in the API and dumpsys notification, the card's sub text, tile and colour, the shade's still, a real tap on the card into the app's task), the system's notification settings listing the app's group, then the browser's own tab on the app's page posting under the app's channel. The workflow runs light and dark; the nightly runs light. The estimate is the author's from the web app window demo's measure (141 to 156 s) plus the shade and the prompt, not yet a nightly's measure. On phone-f, the shard with the room; the driver puts the device's night mode back at its end."
+}

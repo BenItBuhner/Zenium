@@ -1,0 +1,12 @@
+{
+  "id": "settings-tab",
+  "order": 3,
+  "class": "SettingsTabDemo",
+  "shard": "phone-a",
+  "mirrors": "android-settings-tab-demo.yml",
+  "dir": "settings-tab-demo",
+  "env": {
+    "DEMO_THEME": "light"
+  },
+  "estimate": 3.5
+}

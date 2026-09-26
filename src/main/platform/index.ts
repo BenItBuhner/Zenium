@@ -24,8 +24,8 @@ import type {
 } from '../../shared/types'
 import { isNewTabUrl } from '../../shared/url'
 import { contentSettingId } from '../../shared/contentSettings'
-import { DISPLAY_MODE_CHANNEL } from '../../shared/displayMode'
 import { SCREEN_CAPTURE_INTENT_CHANNEL } from '../../shared/screenCapture'
+import { PRIVATE_WORLD_CHANNELS } from '../../shared/privateWorld'
 import {
   NOTIFICATION_PERMISSION_CHANNEL,
   NOTIFICATION_REQUEST_CHANNEL,
@@ -33,6 +33,7 @@ import {
 } from '../../shared/notifications'
 import { Browser } from '../../core/browser'
 import { macTitleBarDoubleClickAction } from '../../core/captionDoubleClick'
+import { MEDIA_HUB_INACTIVE_MS } from '../../core/mediaSession'
 import { isStorageAccessPermission, permissionSite } from '../../core/permissions'
 import type {
   AppHost,
@@ -40,6 +41,7 @@ import type {
   ConfirmOptions,
   DialogHost,
   LanguagesHost,
+  MediaHubHost,
   NetHost,
   PageFontsHost,
   PageMessage,
@@ -54,7 +56,7 @@ import type {
 import type { ZenWindow } from '../../core/window'
 import type { WindowSwitches } from '../cli'
 import { MediaAccessGate, mediaRefusedMessage } from './mediaAccess'
-import { DEFAULT_CONTAINER_ID } from '../../shared/types'
+import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../../shared/types'
 import { resolveDownloadSettings } from '../../shared/downloads'
 import {
   DISMISSED_ANSWER,
@@ -67,7 +69,7 @@ import { SessionManager, buildUserAgent, systemLocales } from './sessions'
 import { acceptLanguageList } from '../../shared/languages'
 import { installFaviconProtocol, installZenProtocol } from './protocol'
 import { chromiumLicencesResponder } from './licences'
-import { ElectronDownloads } from './downloads'
+import { ElectronDownloads, downloadDir } from './downloads'
 import { ElectronDownloadsShell } from './downloadsShell'
 import { ElectronMenus } from './menus'
 import { ElectronTabViewHost, copyImageFromUrl } from './views'
@@ -115,8 +117,11 @@ import createBackgroundWorker from './backgroundWorker?nodeWorker'
 import { ElectronBlocking, ElectronBundledLists, bundledListsDirectory } from './blocking'
 import { supportsWindowMaterial } from './appShell'
 import { ElectronPrivacy } from './privacy'
+import { ContentRulesHandler, attachContentGuards } from './contentRules'
+import { attachDocumentStart, registerDocumentStartProvider } from './documentStart'
 import { ElectronSpellcheck } from './spellcheck'
 import { ElectronScreenCapture } from './screenCapture'
+import { StartupHold, extensionLayerNeedsHold } from './startupHold'
 import { ElectronShareSheet } from './shareSheet'
 import { ElectronGeolocation } from './geolocation'
 import { ElectronImportHost } from './importHost'
@@ -194,6 +199,8 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   pageLanguages: true,
   // Blink on the desktop maps `serif` / `sans-serif` / `monospace` through the web preferences.
   genericFontFamilies: true,
+  // Electron 44's `webContents.setCaretBrowsingEnabled` (`platform/views.ts`), F7's toggle.
+  caretBrowsing: true,
   // DESKTOP FYI (Q1, the observable landing): the page's `WebContentsView` composites above the
   // chrome and the main process places it synchronously, so the chrome's stand-ins leave as
   // they always have; nothing here answers a placement with the view's drawn frame. Were the
@@ -259,6 +266,8 @@ export class ElectronPlatform implements Platform {
   readonly agentSkills: SkillInstaller
   /** Linux: Zenium as an MPRIS player on the session bus (MW-18). */
   readonly mediaSession?: ElectronMpris
+  /** The media hub's linger for a paused session: Chrome's 60 minutes, or a drive's `ZEN_MEDIA_LINGER_MS`. */
+  readonly mediaHub: MediaHubHost = { inactiveAfterMs: mediaHubLingerMs() }
   /** Read aloud's voices and utterances over the hidden `speechSynthesis` page (CT-12 / CT-13). */
   readonly speech: ElectronSpeechHost = new ElectronSpeechHost(sharedSpeechEngine())
   readonly newTabBackground: ElectronNewTabBackground
@@ -289,12 +298,19 @@ export class ElectronPlatform implements Platform {
       quitHoldEverywhere?: boolean
       /** The launch's `--kiosk` / `--start-maximized` (`cli.ts`), for every browser window. */
       windowSwitches?: WindowSwitches
+      /**
+       * `--zen-region` / `ZEN_REGION` (`cli.ts` `regionOverride`): the region reported in the
+       * OS's place, for the EEA's search-engine choice screen (W6-2); a normal launch has none.
+       */
+      regionOverride?: string | null
     } = {}
   ) {
     this.info = {
       os: process.platform as PlatformOs,
       version: app.getVersion(),
-      locales: systemLocales()
+      locales: systemLocales(),
+      // The OS's region as Electron reads it (`''` when it cannot tell), the override first.
+      region: options.regionOverride ?? app.getLocaleCountryCode()
     }
     this.performance = electronPerformanceHost({
       holdBackgroundWork: options.holdBackgroundWork === true,
@@ -334,11 +350,9 @@ export class ElectronPlatform implements Platform {
       markEndedByUser: (id) => this.views.noteEndedByUser(id)
     })
     this.screenCapture = new ElectronScreenCapture(this.views, () => this.browser.screenCapture)
-    this.shareSheet = new ElectronShareSheet(
-      () =>
-        resolveDownloadSettings(this.browser.state.settings).directory ?? app.getPath('downloads'),
-      (win) => browserWindowOf(win)
-    )
+    // The hub's Save writes where every other save goes (`downloadDir`: the configured folder,
+    // else the platform's Downloads – made, not $HOME, where Electron lands without an XDG dir).
+    this.shareSheet = new ElectronShareSheet(downloadDir, (win) => browserWindowOf(win))
     if (process.platform === 'linux') this.mediaSession = new ElectronMpris(() => this.browser)
     // The core's Safe Browsing service exists once the browser does (`start`); no request runs before.
     this.privacy = new ElectronPrivacy(
@@ -648,6 +662,26 @@ export class ElectronPlatform implements Platform {
     // so do the request-side effects of chrome.privacy (pings, Referer, DNT).
     extensionApi.webRequest.attach(this.requestBlocking)
     extensionApi.privacy.attach(this.requestBlocking)
+    // `navigator.doNotTrack` follows the same effective source as the `DNT: 1` header: the
+    // user's setting or an extension's `chrome.privacy.websites.doNotTrackEnabled` (the value
+    // for private windows counts only for a private tab's documents). While the extension
+    // layer's first publish is pending the flags' `dnt` already says sent – the eighth guarded
+    // key's strict pole (`ProtectionService.doNotTrack`), which the header and the signal both
+    // read – so nothing here waits on the publish.
+    this.privacy.attachExtensionSignals(
+      {
+        doNotTrack: (privateWindow) =>
+          extensionApi.privacy.effectiveValue('websites', 'doNotTrackEnabled', privateWindow) ===
+          true
+      },
+      (sender) => {
+        const tabId = this.views.tabIdForWebContents(sender)
+        return (
+          tabId !== undefined &&
+          browser.state.model.tabs[tabId]?.containerId === PRIVATE_CONTAINER_ID
+        )
+      }
+    )
     // chrome.fontSettings' per-script families, cursive/fantasy/math and fixed-width size have
     // no slot in the page fonts setting: they reach the pages through the views' font layer.
     extensionApi.fontSettings.attachPages({
@@ -676,10 +710,26 @@ export class ElectronPlatform implements Platform {
     this.requestBlocking.registerHeaderRewrite(webstoreClientHints, { persistentOnly: true })
     this.requestBlocking.registerHeaderRewrite(edgeStoreUserAgent, { persistentOnly: true })
     // Safe Browsing ahead of the rules, the cookie and signal edits after them; the upgrade
-    // observer and the page preload's signals IPC.
+    // observer and the `signals` field of the page preload's document-start answer.
     this.privacy.attach(this.requestBlocking)
+    // The per-site content settings that act in the request engine (images, PDF download) and
+    // the `guards` field of the page preload's document-start answer (sensors, FedCM, payment
+    // handlers); the core answers both from the permission store.
+    this.requestBlocking.multiplexer.register(new ContentRulesHandler(browser.contentRules))
+    attachContentGuards(browser.contentRules, (ses) =>
+      this.requestBlocking.multiplexer.containerOf(ses)
+    )
+    // The JavaScript switch is each view's own (`Emulation.setScriptExecutionDisabled`).
+    this.views.contentRules = browser.contentRules
     this.downloadsShell = new ElectronDownloadsShell(browser)
     const chromiumLicences = chromiumLicencesResponder()
+    // The run's first documents – the restored pages' and the chrome windows' – wait for the
+    // extension layer's first publish (`startupHold.ts`), the one hold for both funnels. It
+    // closes below, at the default session's extension load, when an enabled extension holds
+    // persisted `chrome.privacy` values; the windows come after (`browser.start`).
+    const startupHold = new StartupHold()
+    this.views.startupHold = startupHold
+    this.windows.startupHold = startupHold
     this.sessions.configure((ses: Session, containerId: string) => {
       installZenProtocol(
         ses,
@@ -706,8 +756,26 @@ export class ElectronPlatform implements Platform {
       )
       if (this.sessions.isPersistent(containerId)) {
         webstore.attach(ses)
+        // The API host listens for `extension-loaded` before the service loads: the load's
+        // event publishes the layer (`extensionApi/privacy.ts` `load`), the promise settles after.
         extensionApi.attachSession(ses, containerId)
-        void (browser.extensions as ExtensionService).attachSession(ses)
+        const loaded = extensionService.attachSession(ses)
+        if (
+          containerId === DEFAULT_CONTAINER_ID &&
+          extensionLayerNeedsHold(extensionService.records(), (id) =>
+            extensionApi.store.privacyValues(id)
+          )
+        ) {
+          // The layer is pending until its first publish lands (`State.setExtensionControls`
+          // ends it) or the load settles – resolved or rejected – whichever comes first: the
+          // core's readers answer the strict pole meanwhile, so a hold the bound lets go of
+          // before the publish fails safe (the root's condition). Registered before the hold's
+          // own `then`, so on the ordinary path the interval ends before the documents go.
+          browser.state.setExtensionLayerPending(true)
+          const settled = (): void => browser.state.setExtensionLayerPending(false)
+          loaded.then(settled, settled)
+          startupHold.until(loaded)
+        }
       }
     })
     this.sessions.get(DEFAULT_CONTAINER_ID)
@@ -876,6 +944,13 @@ export class ElectronPlatform implements Platform {
     ipcMain.on('zen:page', (event, message: PageMessage) => {
       this.views.viewForWebContents(event.sender)?.dispatchPageMessage(message)
     })
+    // A page frame's answer to a script the host ran in the browser's private world of that
+    // frame (`shared/privateWorld.ts`: the image-search thumbnail in a sub-frame). Only a tab
+    // page's frame is heard, and the relay takes the answer from the frame it asked alone.
+    ipcMain.on(PRIVATE_WORLD_CHANNELS.answer, (event, raw: unknown) => {
+      if (!this.views.viewForWebContents(event.sender)) return
+      this.views.privateWorld.answer(event.senderFrame, raw)
+    })
     // A page's `alert` / `confirm` / `prompt`: the renderer blocks on `sendSync` until
     // `returnValue` is set, which happens once the chrome's dialog is answered. Every path must
     // set it, or the page would hang.
@@ -910,12 +985,17 @@ export class ElectronPlatform implements Platform {
       if (!isNewTabUrl(event.senderFrame?.url ?? event.sender.getURL())) return
       browser.newTab.handleAction(tabId, action)
     })
-    // A page's `display-mode` (MW-23), asked synchronously at document start by every frame of a
-    // tab's page; anything else that asks (the chrome, an extension page) is a browser page.
-    ipcMain.on(DISPLAY_MODE_CHANNEL, (event) => {
+    // A page's `display-mode` (MW-23), carried by the one document-start ask every frame of a
+    // tab's page makes; anything else that asks (the chrome, an extension page) is a browser page.
+    registerDocumentStartProvider('displayMode', (event) => {
       const tabId = this.views.tabIdForWebContents(event.sender)
-      event.returnValue = tabId ? browser.displayModeFor(tabId) : 'browser'
+      return tabId ? browser.displayModeFor(tabId) : 'browser'
     })
+    // The page preload's ONE synchronous ask before its first script (`documentStart.ts`): the
+    // privacy signals (`privacy.attach`), the display mode (above), the page-world guards
+    // (`attachContentGuards`) and the extensions' user-script plan (`ExtensionApiHost.install`),
+    // each field from its provider, each provider once per ask, a throw its field's default.
+    attachDocumentStart()
     // A page's `getDisplayMedia` call, announced synchronously by its main-world shim right
     // before the engine sees it (MW-19): whether it asked for audio, which the permission
     // request that follows does not say. Only a tab's page is heard; the answer is immediate,
@@ -971,6 +1051,18 @@ export class ElectronPlatform implements Platform {
       }
     })
   }
+}
+
+/**
+ * Test hook: `ZEN_MEDIA_LINGER_MS=3000` shortens the media hub's linger for a paused session
+ * (`MEDIA_HUB_INACTIVE_MS`, Chrome's 60 minutes) so a drive can watch it run out within its
+ * budget. Unset in normal runs; anything but a positive whole number of milliseconds is ignored.
+ */
+function mediaHubLingerMs(): number {
+  const override = process.env['ZEN_MEDIA_LINGER_MS']
+  if (!override) return MEDIA_HUB_INACTIVE_MS
+  const ms = Number(override)
+  return Number.isInteger(ms) && ms > 0 ? ms : MEDIA_HUB_INACTIVE_MS
 }
 
 /**

@@ -1,8 +1,10 @@
 package app.zen.chromium
 
+import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.app.PictureInPictureParams
 import android.content.ClipData
+import android.content.ContentValues
 import android.content.ClipboardManager
 import android.content.ComponentCallbacks2
 import android.content.Context
@@ -12,11 +14,16 @@ import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Rect
+import android.graphics.drawable.BitmapDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.os.SystemClock
+import android.provider.MediaStore
 import android.util.Rational
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -25,6 +32,9 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.browser.customtabs.CustomTabsCallback
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.core.content.ContextCompat
+import androidx.core.content.pm.ShortcutInfoCompat
+import androidx.core.content.pm.ShortcutManagerCompat
+import androidx.core.graphics.drawable.IconCompat
 import androidx.core.os.BundleCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -32,6 +42,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import org.json.JSONObject
+import java.io.File
 import kotlin.math.abs
 
 /**
@@ -73,6 +84,13 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
     private var scrolledSinceTurn = 0
     private var lastScrollY = 0
     private var currentUrl = ""
+    /** The page is between `startLoading` and its end: the icon row's Reload reads Stop (§9.13). */
+    private var pageLoading = false
+    /** The profile's documents, read for the star and written for the inbox and nothing else ([CustomTabBookmarks]). */
+    private val storage by lazy { Storage(this) }
+    /** The core's bookmarks as last read (`state.json`), and the taps this tab filed for the browser. */
+    private var bookmarkedUrls: Set<String> = emptySet()
+    private var pendingBookmarks: List<CustomTabBookmarks.Entry> = emptyList()
     /** The caller's `PendingIntent` for a swipe up on the bottom toolbar; the caller can set it later. */
     private var swipeUpIntent: PendingIntent? = null
     /** The intent that hears the bottom toolbar's RemoteViews clicks; replaced by the caller's later views. */
@@ -84,6 +102,11 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
     private var minimized = false
     /** While set, [getPackageName] answers with the caller's package (see [closeToCaller]). */
     private var packageForAnimation: String? = null
+    /** The engagement signals (CCT-14), decided from the page's scrolls and touches, sent to the session's callback. */
+    private val engagement = CustomTabEngagement(object : CustomTabEngagement.Listener {
+        override fun onVerticalScroll(isDirectionUp: Boolean) = CustomTabSessions.verticalScroll(config.session, isDirectionUp)
+        override fun onGreatestScrollPercentageIncreased(percentage: Int) = CustomTabSessions.greatestScrollPercentage(config.session, percentage)
+    })
 
     /** The page (a fresh view after a renderer crash, see `TabHost.replaceCrashed`). */
     val page: TabWebView? get() = host.tabs.get(TAB_ID)
@@ -159,11 +182,25 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
         return view
     }
 
+    /**
+     * The page's scrolls feed the engagement signals (its offset over what it can scroll, and
+     * the touches that say which scrolls are the user's) and, when the caller asked, the
+     * toolbar's hiding. The touch listener only listens: the page handles every event itself.
+     */
+    @SuppressLint("ClickableViewAccessibility")
     private fun attachPage(view: TabWebView) {
         view.layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         view.visibility = View.VISIBLE
-        if (config.hideToolbarOnScroll) {
-            view.setOnScrollChangeListener { _, _, y, _, _ -> onPageScrolled(y) }
+        view.setOnScrollChangeListener { v, _, y, _, _ ->
+            engagement.scrolled(y, y + (v as TabWebView).scrollRemaining(), SystemClock.uptimeMillis())
+            if (config.hideToolbarOnScroll) onPageScrolled(y)
+        }
+        view.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> engagement.touchDown()
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> engagement.touchUp(event.eventTime)
+            }
+            false
         }
     }
 
@@ -174,17 +211,23 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
                 val url = payload?.strOrNull("url") ?: return
                 currentUrl = url
                 toolbar.setUrl(url)
+                // A new document (not a pushState or hash change of the one shown): the greatest
+                // scroll percentage starts over for it, as Chrome's does at a committed navigation.
+                if (!payload.optBoolean("inPage", false)) engagement.navigated()
             }
             "title" -> toolbar.setTitle(payload?.strOrNull("title"))
             "startLoading" -> {
+                pageLoading = true
                 showToolbar()
                 CustomTabSessions.navigationEvent(config.session, CustomTabsCallback.NAVIGATION_STARTED)
             }
             "stopLoading" -> {
+                pageLoading = false
                 toolbar.setProgress(100)
                 CustomTabSessions.navigationEvent(config.session, CustomTabsCallback.NAVIGATION_FINISHED)
             }
             "failLoad" -> {
+                pageLoading = false
                 toolbar.setProgress(100)
                 CustomTabSessions.navigationEvent(config.session, CustomTabsCallback.NAVIGATION_FAILED)
             }
@@ -442,12 +485,203 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
 
     override fun onMenu() {
         val titles = config.menuItems.map { it.title }
-        CustomTabMenuSheet(this, config.scheme.dark, CustomTabMenu.groups(titles, config.share), ::onMenuPick).show()
+        // The page's state is read once, as the menu opens (§9.13): the row does not flip under a finger.
+        val state = CustomTabMenu.PageState(
+            canGoForward = page?.canGoForward() == true,
+            bookmark = CustomTabBookmarks.starOf(currentUrl.ifEmpty { config.url }, bookmarkedUrls, pendingBookmarks),
+            loading = pageLoading,
+            desktopSite = host.desktopSite
+        )
+        // Add to Home Screen is on the sheet only where the launcher pins shortcuts, as Chrome's is.
+        val pins = ShortcutManagerCompat.isRequestPinShortcutSupported(this)
+        CustomTabMenuSheet(
+            this, config.scheme.dark,
+            CustomTabMenu.groups(titles, config.share, host.desktopSite, addToHomeScreen = pins), ::onMenuPick,
+            CustomTabMenu.iconRow(state, config.bookmarksButton, config.downloadButton), ::onIconPick
+        ).show()
+    }
+
+    /** The icon row's five (§9.13). */
+    private fun onIconPick(icon: CustomTabMenu.Icon) {
+        when (icon) {
+            CustomTabMenu.Icon.Forward -> page?.goForward()
+            CustomTabMenu.Icon.Bookmark -> toggleBookmark()
+            CustomTabMenu.Icon.Download -> downloadPage()
+            CustomTabMenu.Icon.Info -> showPageInfo()
+            CustomTabMenu.Icon.Reload -> if (pageLoading) page?.stopLoading() else page?.reload()
+        }
+    }
+
+    // --- the star and Download (CCT-03) -------------------------------------------------------------
+
+    /** The core's bookmarks and this tab's inbox, read off the main thread; the star reads them at the next open. */
+    private fun readBookmarks() {
+        storage.execute {
+            val bookmarked = CustomTabBookmarks.bookmarkedUrls(storage.read(CustomTabBookmarks.STATE))
+            val pending = CustomTabBookmarks.entries(storage.read(CustomTabBookmarks.INBOX))
+            runOnUiThread {
+                bookmarkedUrls = bookmarked
+                pendingBookmarks = pending
+            }
+        }
+    }
+
+    /**
+     * The star: a page the browser holds as a bookmark reads `Edit Bookmark` and opens in Zenium,
+     * whose bar has the editor a custom tab has not; any other page is filed in the inbox for the
+     * browser to take into its bookmarks, and while the filing is pending the star reads `Remove
+     * Bookmark` – the second tap withdraws it, which is what the name says. Nothing here writes
+     * the core's model ([CustomTabBookmarks]).
+     */
+    private fun toggleBookmark() {
+        val url = currentUrl.ifEmpty { config.url }
+        if (url in bookmarkedUrls) {
+            openInZenium()
+            return
+        }
+        val filed = pendingBookmarks.any { it.url == url }
+        pendingBookmarks = if (filed) {
+            CustomTabBookmarks.withoutEntry(pendingBookmarks, url)
+        } else {
+            val title = page?.title?.trim()?.ifEmpty { null } ?: Uri.parse(url).host ?: url
+            CustomTabBookmarks.withEntry(pendingBookmarks, CustomTabBookmarks.Entry(url, title, System.currentTimeMillis()))
+        }
+        storage.write(CustomTabBookmarks.INBOX, CustomTabBookmarks.serialize(pendingBookmarks)) { }
+        Toast.makeText(this, if (filed) R.string.cct_bookmark_removed else R.string.cct_bookmarked, Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * Download Page: the page as an MHTML archive in Downloads – the browser's Save Page path
+     * without its core (`Host.savePage`): written to a scratch file, then a MediaStore Downloads
+     * row on Q+; below Q, the app's own Downloads folder (the public one wants a runtime
+     * permission a custom tab does not ask for).
+     */
+    private fun downloadPage() {
+        val current = page ?: return
+        val url = currentUrl.ifEmpty { config.url }
+        val name = SavePageLogic.archiveName(current.title?.trim()?.ifEmpty { null } ?: Uri.parse(url).host ?: "page")
+        val scratch = File(File(cacheDir, "savepage").apply { mkdirs() }, "${System.nanoTime()}.${SavePageLogic.EXTENSION}")
+        current.saveWebArchive(scratch.absolutePath, false) { written ->
+            if (written == null) {
+                scratch.delete()
+                Toast.makeText(this, R.string.cct_download_failed, Toast.LENGTH_SHORT).show()
+                return@saveWebArchive
+            }
+            storage.execute {
+                val saved = runCatching { publishArchive(scratch, name) }.getOrNull()
+                scratch.delete()
+                runOnUiThread {
+                    val text = if (saved != null) getString(R.string.cct_page_saved, saved) else getString(R.string.cct_download_failed)
+                    Toast.makeText(this, text, Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    /** The archive into Downloads; the name the file got, or null when nothing was written. */
+    private fun publishArchive(scratch: File, name: String): String? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, name)
+                put(MediaStore.Downloads.MIME_TYPE, SavePageLogic.MIME_TYPE)
+                put(MediaStore.Downloads.IS_PENDING, 1)
+            }
+            val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return null
+            contentResolver.openOutputStream(uri)?.use { out -> scratch.inputStream().use { it.copyTo(out) } } ?: return null
+            values.clear()
+            values.put(MediaStore.Downloads.IS_PENDING, 0)
+            contentResolver.update(uri, values, null, null)
+            return contentResolver.query(uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst()) c.getString(0) else null
+            } ?: name
+        }
+        val dir = (getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: File(filesDir, "Download")).apply { mkdirs() }
+        val file = File(dir, SavePageLogic.uniqueArchiveName(name) { File(dir, it).exists() })
+        scratch.copyTo(file, overwrite = false)
+        return file.name
+    }
+
+    /**
+     * Page Info, the icon row's (i): the page's host and its connection on the v2 prompt sheet
+     * (§9.23) – the host on one line with the page's favicon (the globe without one), the
+     * browser's site-info sheet's Connection row (secure, local, not secure: [CustomTabPageInfo])
+     * with its sentence under the title, Done. A custom tab has no chrome to draw the browser's
+     * sheet; the connection is what the tab knows from the URL.
+     */
+    private fun showPageInfo() {
+        val url = currentUrl.ifEmpty { config.url }
+        val host = Uri.parse(url).host ?: url
+        val ink = V2Ink(this, config.scheme.dark)
+        val favicon = page?.favicon
+        val (headline, detail, glyph) = when (CustomTabPageInfo.connectionOf(url)) {
+            CustomTabPageInfo.Connection.SECURE -> Triple(R.string.cct_secure, R.string.cct_secure_detail, R.drawable.ic_cct_lock)
+            CustomTabPageInfo.Connection.LOCAL -> Triple(R.string.cct_local_site, R.string.cct_local_site_detail, R.drawable.ic_globe)
+            CustomTabPageInfo.Connection.INSECURE -> Triple(R.string.cct_not_secure, R.string.cct_not_secure_detail, R.drawable.ic_cct_lock_open)
+        }
+        val content = NativePromptSheet.Content(
+            title = host,
+            titleOneLine = true,
+            glyph = if (favicon != null) BitmapDrawable(resources, favicon) else ink.glyph(R.drawable.ic_globe),
+            description = getString(detail),
+            rows = listOf(NativePromptSheet.Row(getString(headline), ink.glyph(glyph, ink.textDeemphasized))),
+            primary = NativePromptSheet.Peer(getString(R.string.cct_done))
+        )
+        NativePromptSheet(this, ink, content) { }.show()
+    }
+
+    /**
+     * Add to Home Screen (CCT-03): the page as a pinned shortcut that opens a tab of the browser.
+     * The v2 prompt sheet asks its name first (§9.22's form sheet: the field prefilled with the
+     * page's title, selected; Cancel, Add), then the browser's own pin path's tile (the name's
+     * first letter on the toolbar's colour, `Shortcuts`' letter tile) and launch intent are
+     * requested of the launcher, which confirms the pin its own way. The row is on the sheet only
+     * where the launcher pins ([onMenu]); the check here is the guard behind the hidden row.
+     */
+    private fun addToHomeScreen() {
+        if (!ShortcutManagerCompat.isRequestPinShortcutSupported(this)) return
+        val url = currentUrl.ifEmpty { config.url }
+        val title = page?.title?.trim()?.ifEmpty { null } ?: Uri.parse(url).host ?: url
+        val ink = V2Ink(this, config.scheme.dark)
+        val content = NativePromptSheet.Content(
+            title = getString(R.string.cct_add_to_home_screen),
+            field = NativePromptSheet.Field(text = title, label = getString(R.string.cct_shortcut_name)),
+            secondary = getString(R.string.cct_cancel),
+            primary = NativePromptSheet.Peer(getString(R.string.cct_add))
+        )
+        NativePromptSheet(this, ink, content) { answer ->
+            if (!answer.accepted) return@NativePromptSheet
+            pinShortcut(url, answer.text?.trim()?.ifEmpty { null } ?: title)
+        }.show()
+    }
+
+    private fun pinShortcut(url: String, name: String) {
+        val tile = Shortcuts.letterTile(this, name, config.scheme.toolbar)
+        val info = ShortcutInfoCompat.Builder(this, Shortcuts.shortcutId(url))
+            .setShortLabel(name.take(Shortcuts.SHORT_LABEL_MAX))
+            .setLongLabel(name)
+            .setIcon(IconCompat.createWithAdaptiveBitmap(tile))
+            .setIntent(Shortcuts.launchIntent(this, url, null))
+            .build()
+        ShortcutManagerCompat.requestPinShortcut(this, info, null)
+    }
+
+    /**
+     * Desktop site (CCT-03), Chrome's check row: the tab's user agent and layout from the next
+     * load on, and the page asked for again at once, as the browser's row does through the core.
+     */
+    private fun setDesktopSite(on: Boolean) {
+        host.desktopSite = on
+        val current = page ?: return
+        current.setDesktopMode(on)
+        current.reload()
     }
 
     override fun onAction() {
         config.actionButton?.let { sendToCaller(it.intent) }
     }
+
+    /** The toolbar's Share (CCT-17): the same sheet, the same title and URL, as the menu's row. */
+    override fun onShare() = share()
 
     private fun onMenuPick(item: CustomTabMenu.Item) {
         when (item) {
@@ -456,6 +690,8 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
             CustomTabMenu.Item.CopyLink -> copyLink(currentUrl.ifEmpty { config.url })
             CustomTabMenu.Item.Reload -> page?.reload()
             CustomTabMenu.Item.FindInPage -> openFind()
+            CustomTabMenu.Item.AddToHomeScreen -> addToHomeScreen()
+            is CustomTabMenu.Item.DesktopSite -> setDesktopSite(!item.checked)
             CustomTabMenu.Item.OpenInZenium -> openInZenium()
         }
     }
@@ -554,6 +790,7 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
         closeFind()
         host.tabs.release(TAB_ID) ?: return
         view.setOnScrollChangeListener(null)
+        view.setOnTouchListener(null)
         val token = TabHandoff.park(view)
         startActivity(
             Intent(Intent.ACTION_VIEW, Uri.parse(url))
@@ -591,6 +828,7 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
     override fun onStart() {
         super.onStart()
         CustomTabSessions.navigationEvent(config.session, CustomTabsCallback.TAB_SHOWN)
+        readBookmarks()
     }
 
     override fun onStop() {
@@ -599,9 +837,13 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
     }
 
     override fun onDestroy() {
+        // The tab is going for good (Close, back out, Open in Zenium, the task swiped away), not
+        // being recreated for a configuration change: the session's engagement ends (CCT-14).
+        if (isFinishing) CustomTabSessions.sessionEnded(config.session, engagement.didUserInteract)
         CustomTabSessions.detach(config.session, this)
         bottomBar.stopSettling()
         host.destroy()
+        storage.close()
         super.onDestroy()
     }
 

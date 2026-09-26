@@ -180,12 +180,15 @@ describe('engineApiSpec', () => {
       'onPrintRequested'
     ])
     // The ChromeSetting and ContentSetting shapes travel with a namespace the engine table
-    // leaves alone (`proxy.settings`, `contentSettings.cookies`); `privacy`'s are the engine's
-    // own (`engine.ts`), so the shim must not replace them; `gcm` stays the layer's inert shape.
+    // leaves alone (`proxy.settings`, `privacy.websites.*`, `contentSettings.cookies`): the shim
+    // builds them and routes their calls to the host (since compat round 20 `privacy`'s too –
+    // the phone's `extensionPrivacy.ts` answers them); `gcm` stays the layer's inert shape.
     expect(spec.proxy.ownSettings).toEqual(['settings'])
     expect(spec.proxy.events.onProxyError).toEqual({})
     expect(spec.proxy.constants?.Mode).toMatchObject({ PAC_SCRIPT: 'pac_script' })
-    expect(spec.privacy.settings).toBeUndefined()
+    expect(spec.privacy.settings?.websites).toContain('doNotTrackEnabled')
+    expect(spec.privacy.settings?.services).toContain('passwordSavingEnabled')
+    expect(spec.privacy.methods).toEqual({})
     expect(spec.contentSettings.contentSettings).toContain('cookies')
     expect(spec.gcm.shape).toBe(true)
     expect(spec.gcm.methods.register.inert).toEqual({ error: 'GCM_DISABLED' })

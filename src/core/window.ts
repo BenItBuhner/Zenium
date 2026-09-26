@@ -52,6 +52,8 @@ export interface WindowInit {
   displayId: number | null
   maximized: boolean
   activeSpaceId: string
+  /** The user space the window left for an agent's (`ZenWindow.lastUserSpaceId`); none by default. */
+  lastUserSpaceId?: string | null
   selection: Record<string, string>
   compact: boolean
   /** The private space of a blank / private window (already registered in the model). */
@@ -91,6 +93,14 @@ export class ZenWindow {
   name: string | null
   host!: WindowHost
   activeSpaceId: string
+  /**
+   * The user's space this window stood on when it moved onto an agent's (`TabManager.switchSpace`
+   * records it; an agent's `bringInFront` is how a window gets there), and the space it goes
+   * back to when that agent's space is left empty at the session's end or at a restore
+   * (`Browser.leaveEmptyAgentSpace`, `ProfileState.ensureValid`). Null while the window stands
+   * on a user's space – where it is IS the last user space. Kept with the session.
+   */
+  lastUserSpaceId: string | null
   /** Per-space selected tab of this window (falls back to the space's last selection). */
   readonly selection = new Map<string, string | null>()
   readonly localSpace: Space | null
@@ -110,6 +120,15 @@ export class ZenWindow {
    */
   formFactor: FormFactor = 'desktop'
   /**
+   * The page tab the class change closed in front (`PageService.reconcileLayout`: a tablet's
+   * page tab narrowed into the phone class became the page's overlay) – the page, the space it
+   * stood in and its slot among that space's regular tabs – for the chrome's hand-back when the
+   * window widens again (`page.open` with `handedBack`): the tab comes back where it was while
+   * that still fits. Null once used, or when nothing was handed over; never set on a host whose
+   * window keeps its class.
+   */
+  handedPage: { pageId: string; spaceId: string; index: number } | null = null
+  /**
    * The surfaces this window's chrome has mounted (`ui.surface`): the install prompt, the screen
    * picker, the share sheet. A page's request for one that is absent is answered at once as a
    * cancel (`surfaceMounted`) rather than held for a chrome that is not there.
@@ -127,6 +146,8 @@ export class ZenWindow {
    */
   stripFocusTabId: string | null = null
   lastFocusedAt = 0
+  /** The host window's focus as of the last state change it reported, for telling a change. */
+  private focused = false
   /** The window-modal question the chrome is showing ("Close N tabs?"), owned by `WindowPrompts`. */
   prompt: WindowPrompt | null = null
   /** The quit chord held in this window ("Hold ⌘Q to Quit"), owned by `QuitHoldService`. */
@@ -168,6 +189,7 @@ export class ZenWindow {
     this.app = init.app ?? null
     this.name = normalizeWindowName(init.name)
     this.activeSpaceId = init.activeSpaceId
+    this.lastUserSpaceId = init.lastUserSpaceId ?? null
     this.localSpace = init.localSpace
     this.compactEnabled = init.compact
     for (const [spaceId, tabId] of Object.entries(init.selection))
@@ -305,6 +327,7 @@ export class ZenWindow {
       displayId: this.savedDisplayId,
       maximized: this.alive ? this.host.isMaximized() : this.initialMaximized,
       activeSpaceId: this.activeSpaceId,
+      lastUserSpaceId: this.lastUserSpaceId,
       selection,
       compact: this.compactEnabled,
       name: this.name
@@ -334,6 +357,12 @@ export class ZenWindow {
   /** Maximised / fullscreen / focus flags changed. */
   onWindowStateChanged(): void {
     if (!this.alive) return
+    const focused = this.host.isFocused()
+    if (focused !== this.focused) {
+      this.focused = focused
+      // The desktop's `focus` / `blur`: automatic picture-in-picture hears the app being left.
+      this.browser.mediaSession.onWindowFocusChanged(this, focused)
+    }
     this.browser.fullscreen.onWindowStateChanged(this)
     this.browser.state.commitVolatile()
   }
@@ -379,21 +408,36 @@ export class ZenWindow {
   /**
    * A right-click in the chrome document that the chrome itself did not handle (its sidebar,
    * tab and bookmark rows show their menus through commands): the URL bar's field and pill and
-   * plain text fields get Chrome's menus for them.
+   * plain text fields get Chrome's menus for them. Asked for by the keyboard (Shift+F10, the
+   * Menu key), the menu hangs from the focused element, whose box the host reads for it.
    */
   onContextMenu(params: Omit<ChromeContextParams, 'target' | 'tabId'>): void {
     if (!this.alive) return
-    const lookup = this.host.menuTargetAt?.(params.x, params.y) ?? Promise.resolve(null)
-    void lookup
-      .catch(() => null)
-      .then((hit) => {
-        if (!this.alive) return
-        const target = CHROME_MENU_TARGETS.find((t): t is ChromeMenuTarget => t === hit?.target)
-        return this.browser.menus.showChromeContextMenu(
-          { ...params, target: target ?? null, tabId: hit?.tabId ?? null },
-          this
-        )
-      })
+    // Both reads go to the document at once; a host without one, or one that fails, reads null.
+    const ask = <T>(read: (() => Promise<T>) | undefined): Promise<T | null> =>
+      read
+        ? Promise.resolve()
+            .then(read)
+            .catch(() => null)
+        : Promise.resolve(null)
+    const { menuTargetAt, focusedRect } = this.host
+    const lookup = ask(menuTargetAt && (() => menuTargetAt.call(this.host, params.x, params.y)))
+    const focused = ask(
+      params.keyboard && focusedRect ? () => focusedRect.call(this.host) : undefined
+    )
+    void Promise.all([lookup, focused]).then(([hit, rect]) => {
+      if (!this.alive) return
+      const target = CHROME_MENU_TARGETS.find((t): t is ChromeMenuTarget => t === hit?.target)
+      return this.browser.menus.showChromeContextMenu(
+        {
+          ...params,
+          ...(rect ? { rect } : {}),
+          target: target ?? null,
+          tabId: hit?.tabId ?? null
+        },
+        this
+      )
+    })
   }
 
   // ---------------------------------------------------------------------------

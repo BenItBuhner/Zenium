@@ -33,7 +33,7 @@ import {
   type TabSample
 } from '../../../core/resources/planner'
 import { appliedStartupProfile } from './startup'
-import { deriveStartupProfile, profilesDiffer } from '../../../core/resources/switches'
+import { deriveStartupProfile, pendingStartupSwitches } from '../../../core/resources/switches'
 
 const BASE_INTERVAL_MS = 5_000
 const PRESSURE_INTERVAL_MS = 2_000
@@ -716,7 +716,7 @@ export class ResourceGovernor implements Governor {
       queuedLoads: this.scheduler.queued,
       pressure: result.pressure,
       recentActions: [...this.actions],
-      restartRequired: this.restartRequired()
+      ...this.pendingStartup()
     }
     state.resources = this.snapshot
     if (changedModel) state.commit()
@@ -747,9 +747,16 @@ export class ResourceGovernor implements Governor {
     this.browser.state.commitVolatile()
   }
 
-  restartRequired(): boolean {
+  /**
+   * What waits for a relaunch: the process profile's startup switches the settings ask for
+   * against the ones this process runs with – `restartRequired` for the Resources notice, and
+   * the differing switches by name (`pendingSwitches`) for whatever wants to say which. A
+   * process that never applied a profile (tests) has nothing pending.
+   */
+  pendingStartup(): Pick<ResourceSnapshot, 'restartRequired' | 'pendingSwitches'> {
     const wanted = deriveStartupProfile(this.settings)
-    return profilesDiffer(wanted, this.startupProfile ?? wanted)
+    const pending = pendingStartupSwitches(wanted, this.startupProfile ?? wanted)
+    return { restartRequired: pending.length > 0, pendingSwitches: pending }
   }
 }
 

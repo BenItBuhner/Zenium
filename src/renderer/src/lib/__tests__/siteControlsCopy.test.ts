@@ -42,6 +42,26 @@ describe('Site settings rows', () => {
     )
   })
 
+  it("reads a value's own line from the catalogue first (MED-08 / EDGE-32), the template serving every row without one", () => {
+    // Background video is not a thing a site asks for, so the template's "without asking" would
+    // read wrong on Allow: the row carries its own line for that value and the one-line block
+    // sentence as its description (the lead's #523 ruling).
+    const video = setting('background-video')
+    expect(video.description).toBe('Sites cannot play video in the background')
+    expect(video.descriptions).toEqual({
+      allow: 'Sites can keep playing video in the background'
+    })
+    expect(defaultDescription(video, 'deny')).toBe('Sites cannot play video in the background')
+    expect(defaultDescription(video, 'allow')).toBe(
+      'Sites can keep playing video in the background'
+    )
+    // A row without the field still reads the built-in's line and the template for the rest.
+    const sound = setting('sound')
+    expect(sound.descriptions).toBeUndefined()
+    expect(defaultDescription(sound, 'allow')).toBe(sound.description)
+    expect(defaultDescription(sound, 'deny')).toBe('Sites cannot use sound')
+  })
+
   it('groups rules by site, sites by host, rows in catalogue order', () => {
     const rules: PermissionRule[] = [
       { origin: 'https://zed.example', permission: 'notifications', decision: 'allow' },

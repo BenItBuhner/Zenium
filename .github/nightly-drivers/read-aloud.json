@@ -1,0 +1,9 @@
+{
+  "id": "read-aloud",
+  "order": 34,
+  "class": "ReadAloudDemo",
+  "shard": "phone-b",
+  "mirrors": "android-read-aloud-demo.yml",
+  "dir": "read-aloud-demo",
+  "estimate": 5
+}

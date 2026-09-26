@@ -2,7 +2,16 @@ import { describe, expect, it } from 'vitest'
 import { buildExtensionBoot } from '../boot'
 import { parseRuntimeManifest, type RuntimeManifest } from '../manifest'
 import type { RegisteredContentScript } from '../plan'
-import { injectsProgrammatically, originRulesFor, planUnits, sameUnits } from '../units'
+import {
+  FOLD_ABOVE_UNITS,
+  FOLD_UNIT_CHARS,
+  foldFilesFor,
+  injectsProgrammatically,
+  mergeAlikeGroups,
+  originRulesFor,
+  planUnits,
+  sameUnits
+} from '../units'
 
 const ID = 'abcdefghijklmnopabcdefghijklmnop'
 
@@ -46,12 +55,14 @@ describe('planUnits', () => {
     const planned = planUnits(boot, manifest, env)
     expect(planned.id).toBe(ID)
     expect(planned.version).toBe('1.2.3')
-    expect(planned.units.map((u) => u.key)).toEqual([
-      'isolated:http://*.youtube.com https://*.youtube.com',
-      'isolated:https://github.com',
-      'main:https://github.com'
+    // Two rule sets in the extension's world: a holder of the bootstrap ahead of them (see below).
+    expect(planned.units.map((u) => [u.key, u.shape])).toEqual([
+      ['isolated:*', 'holder'],
+      ['isolated:http://*.youtube.com https://*.youtube.com', 'thin'],
+      ['isolated:https://github.com', 'thin'],
+      ['main:https://github.com', 'whole']
     ])
-    const youtube = planned.units[0]
+    const youtube = planned.units[1]
     expect(youtube.worldName).toBe(`zenium-ext-${ID}`)
     expect(youtube.isolation).toBe('world')
     expect(youtube.groups.map((g) => g.js)).toEqual([['yt.js'], ['yt2.js']])
@@ -59,7 +70,7 @@ describe('planUnits', () => {
     expect(youtube.config.world).toBe('isolated')
     // The unit's own config carries only its groups, so a page compiles nothing it cannot run.
     expect(youtube.config.extension.groups.map((g) => g.js)).toEqual([['yt.js'], ['yt2.js']])
-    const main = planned.units[2]
+    const main = planned.units[3]
     expect(main.worldName).toBeNull()
     expect(main.isolation).toBe('none')
     expect(main.groups[0].isolation).toBe('none')
@@ -85,12 +96,15 @@ describe('planUnits', () => {
     })
     const boot = buildExtensionBoot(ID, manifest, null, [], 'world')
     const planned = planUnits(boot, manifest, env)
-    expect(planned.units.map((u) => u.key)).toEqual([
-      'isolated:https://*.wikipedia.org',
-      'isolated:https://example.com'
+    // The transport over wikipedia is a unit that runs there (thin: it boots through the
+    // world's holder, which every frame gets), with no groups of its own.
+    expect(planned.units.map((u) => [u.key, u.shape])).toEqual([
+      ['isolated:*', 'holder'],
+      ['isolated:https://*.wikipedia.org', 'thin'],
+      ['isolated:https://example.com', 'thin']
     ])
-    expect(planned.units[0].groups).toEqual([])
-    expect(planned.units[0].config.extension.groups).toEqual([])
+    expect(planned.units[1].groups).toEqual([])
+    expect(planned.units[1].config.extension.groups).toEqual([])
     const without = planUnits(boot, manifest, { ...env, isolatedWorlds: false })
     expect(without.units.map((u) => u.key)).toEqual(['isolated:https://example.com'])
   })
@@ -305,6 +319,252 @@ describe('planUnits', () => {
     expect(sameUnits(null, b)).toBe(false)
     const c = planUnits(boot, manifest, { ...env, uiLanguage: 'de' })
     expect(sameUnits(a, c)).toBe(false)
+  })
+
+  it('merges groups alike in everything but their patterns under the union, and no other', () => {
+    // Grammarly's shape (compat round 19): the same two files listed under an Outlook set and a
+    // classroom set, 2.67 M chars embedded twice; a third entry with the same files at
+    // document_start is another kind, as is one with a different exclude list.
+    const manifest = manifestOf({
+      content_scripts: [
+        {
+          matches: ['https://*.outlook.live.com/*', 'https://*.outlook.office.com/*'],
+          js: ['a.js', 'b.js']
+        },
+        { matches: ['https://*.nearpod.com/*'], js: ['a.js', 'b.js'] },
+        { matches: ['https://*.nearpod.com/*'], js: ['a.js', 'b.js'], run_at: 'document_start' },
+        {
+          matches: ['https://*.overleaf.com/*'],
+          js: ['a.js', 'b.js'],
+          exclude_matches: ['https://*.overleaf.com/learn/*']
+        },
+        { matches: ['https://docs.google.com/*'], css: ['docs.css'] },
+        { matches: ['https://sheets.google.com/*'], css: ['docs.css'] }
+      ]
+    })
+    const boot = buildExtensionBoot(ID, manifest, null, [], 'world')
+    // The boot orders its groups by run_at (the document_start entry first); read by index here.
+    const merged = mergeAlikeGroups(boot.groups).sort((a, b) => a.index - b.index)
+    expect(merged.map((g) => [g.index, g.matches])).toEqual([
+      [
+        0,
+        [
+          'https://*.outlook.live.com/*',
+          'https://*.outlook.office.com/*',
+          'https://*.nearpod.com/*'
+        ]
+      ],
+      [2, ['https://*.nearpod.com/*']],
+      [3, ['https://*.overleaf.com/*']],
+      [4, ['https://docs.google.com/*', 'https://sheets.google.com/*']]
+    ])
+    // The boot record itself is left as the manifest had it.
+    expect(boot.groups.find((g) => g.index === 0)?.matches).toEqual([
+      'https://*.outlook.live.com/*',
+      'https://*.outlook.office.com/*'
+    ])
+    expect(boot.groups).toHaveLength(6)
+    // Planned: the merged group is one unit over the union's origins, its config naming the
+    // merged patterns for the bootstrap's own matcher.
+    const planned = planUnits(boot, manifest, { ...env, isolatedWorlds: false })
+    const pair = planned.units.find((u) => u.groups.some((g) => g.index === 0))
+    expect(pair?.origins).toEqual([
+      'https://*.nearpod.com',
+      'https://*.outlook.live.com',
+      'https://*.outlook.office.com'
+    ])
+    expect(pair?.groups.map((g) => g.index)).toEqual([0])
+    expect(pair?.config.extension.groups.map((g) => g.matches)).toEqual([
+      ['https://*.outlook.live.com/*', 'https://*.outlook.office.com/*', 'https://*.nearpod.com/*']
+    ])
+    expect(planned.units.every((u) => u.shape === 'whole')).toBe(true)
+  })
+
+  it('gives an isolated world with several rule sets one bootstrap: the everywhere unit carries it, the others go thin', () => {
+    const manifest = manifestOf({
+      content_scripts: [
+        { matches: ['<all_urls>'], js: ['all.js'] },
+        { matches: ['https://docs.google.com/*'], js: ['docs.js'] },
+        { matches: ['https://*.overleaf.com/*'], js: ['leaf.js'] },
+        { matches: ['https://docs.google.com/*'], js: ['docs-main.js'], world: 'MAIN' },
+        { matches: ['https://*.overleaf.com/*'], js: ['leaf-main.js'], world: 'MAIN' }
+      ]
+    })
+    const boot = buildExtensionBoot(ID, manifest, null, [], 'world')
+    const planned = planUnits(boot, manifest, env)
+    expect(planned.units.map((u) => [u.key, u.shape])).toEqual([
+      ['isolated:*', 'carrier'],
+      ['isolated:https://*.overleaf.com', 'thin'],
+      ['isolated:https://docs.google.com', 'thin'],
+      // The main world is the page's: whole units, as before.
+      ['main:https://*.overleaf.com', 'whole'],
+      ['main:https://docs.google.com', 'whole']
+    ])
+    // Every unit still carries its own groups alone, under its own rules.
+    expect(planned.units.map((u) => u.groups.map((g) => g.js))).toEqual([
+      [['all.js']],
+      [['leaf.js']],
+      [['docs.js']],
+      [['leaf-main.js']],
+      [['docs-main.js']]
+    ])
+    // Without isolated worlds every unit is whole (the with proxy in the page's main world).
+    const without = planUnits(boot, manifest, { ...env, isolatedWorlds: false })
+    expect(without.units.every((u) => u.shape === 'whole')).toBe(true)
+    // One rule set in the world: whole, no carrier wanted.
+    const one = manifestOf({
+      content_scripts: [{ matches: ['https://docs.google.com/*'], js: ['docs.js'] }]
+    })
+    expect(
+      planUnits(buildExtensionBoot(ID, one, null, [], 'world'), one, env).units.map((u) => u.shape)
+    ).toEqual(['whole'])
+  })
+
+  it('adds a holder over every origin where a world has several rule sets and none everywhere, first in order', () => {
+    const manifest = manifestOf({
+      content_scripts: [
+        { matches: ['https://docs.google.com/*'], js: ['docs.js'] },
+        { matches: ['https://*.overleaf.com/*'], js: ['leaf.js'] }
+      ]
+    })
+    const boot = buildExtensionBoot(ID, manifest, null, [], 'world')
+    const planned = planUnits(boot, manifest, env)
+    expect(planned.units.map((u) => [u.key, u.shape, u.groups.length])).toEqual([
+      ['isolated:*', 'holder', 0],
+      ['isolated:https://*.overleaf.com', 'thin', 1],
+      ['isolated:https://docs.google.com', 'thin', 1]
+    ])
+    const holder = planned.units[0]
+    expect(holder.origins).toEqual(['*'])
+    expect(holder.worldName).toBe(`zenium-ext-${ID}`)
+    expect(holder.config.extension.groups).toEqual([])
+    expect(holder.css).toEqual([])
+    // The scripting transport over the host permissions is a unit that must run in its frames:
+    // over every origin it is the carrier, not a holder.
+    const scripting = manifestOf({
+      permissions: ['scripting'],
+      host_permissions: ['<all_urls>'],
+      content_scripts: [
+        { matches: ['https://docs.google.com/*'], js: ['docs.js'] },
+        { matches: ['https://*.overleaf.com/*'], js: ['leaf.js'] }
+      ]
+    })
+    const withTransport = planUnits(
+      buildExtensionBoot(ID, scripting, null, [], 'world'),
+      scripting,
+      env
+    )
+    expect(withTransport.units.map((u) => [u.key, u.shape])).toEqual([
+      ['isolated:*', 'carrier'],
+      ['isolated:https://*.overleaf.com', 'thin'],
+      ['isolated:https://docs.google.com', 'thin']
+    ])
+    expect(withTransport.units[0].groups).toEqual([])
+  })
+
+  /** Twelve hostname rule sets with a file each: what a uBO Lite fork registers, in small. */
+  const SITES = Array.from({ length: 12 }, (_, i) => `s${String(i).padStart(2, '0')}`)
+  const hostnameSets = (world?: 'MAIN'): Array<Record<string, unknown>> =>
+    SITES.map((s) => ({
+      matches: [`https://${s}.example/*`],
+      js: [`${s}.js`],
+      ...(world ? { world } : {})
+    }))
+  const sized = (
+    chars: number,
+    except: Record<string, number | null> = {}
+  ): Record<string, number> =>
+    Object.fromEntries(
+      SITES.flatMap((s) => {
+        const own = except[`${s}.js`]
+        return own === null ? [] : [[`${s}.js`, own ?? chars]]
+      })
+    )
+
+  it("folds a world's many hostname units by the files' sizes, smallest first under the cap – the groups keep their own patterns (compat round 21)", () => {
+    const manifest = manifestOf({ content_scripts: hostnameSets() })
+    const boot = buildExtensionBoot(ID, manifest, null, [], 'with')
+    const without = { ...env, isolatedWorlds: false }
+    // Without the sizes nothing folds: the runtime asks the host for these files first.
+    expect(planUnits(boot, manifest, without).units).toHaveLength(12)
+    expect(foldFilesFor(boot, manifest, without)).toEqual(SITES.map((s) => `${s}.js`))
+    // 100 K each: five to a bucket under the 512 K cap; equal sizes pack in key order.
+    const planned = planUnits(boot, manifest, { ...without, fileChars: sized(100_000) })
+    expect(
+      planned.units.map((u) => [u.origins.length, u.groups.length, u.shape, u.isolation])
+    ).toEqual([
+      [5, 5, 'whole', 'with'],
+      [5, 5, 'whole', 'with'],
+      [2, 2, 'whole', 'with']
+    ])
+    const first = planned.units[0]
+    expect(first.key).toBe(
+      'isolated:https://s00.example https://s01.example https://s02.example https://s03.example https://s04.example'
+    )
+    expect(first.worldName).toBeNull()
+    // Each group still names its own pattern: the bootstrap runs it only where that matches.
+    expect(first.config.extension.groups.map((g) => g.matches)).toEqual(
+      SITES.slice(0, 5).map((s) => [`https://${s}.example/*`])
+    )
+    expect(first.groups.map((g) => g.js)).toEqual(SITES.slice(0, 5).map((s) => [`${s}.js`]))
+    expect(planned.units[2].origins).toEqual(['https://s10.example', 'https://s11.example'])
+    // The plan is stable: the same sizes make the same units.
+    expect(
+      sameUnits(planned, planUnits(boot, manifest, { ...without, fileChars: sized(100_000) }))
+    ).toBe(true)
+    // Smallest first: the eleven 100 K files pack five, five and one, and the 300 K one joins
+    // the bucket with room rather than opening its own.
+    const uneven = planUnits(boot, manifest, {
+      ...without,
+      fileChars: sized(100_000, { 's00.js': 300_000 })
+    })
+    expect(uneven.units.map((u) => u.origins.length).sort()).toEqual([2, 5, 5])
+    expect(uneven.units.find((u) => u.origins.length === 2)?.origins).toEqual([
+      'https://s00.example',
+      'https://s11.example'
+    ])
+  })
+
+  it('leaves alone a unit over the cap, one the host could not size and a world under the count, and folds the main world only beside isolated worlds', () => {
+    const manifest = manifestOf({ content_scripts: hostnameSets() })
+    const boot = buildExtensionBoot(ID, manifest, null, [], 'with')
+    const without = { ...env, isolatedWorlds: false }
+    // tl;dv's shape (compat round 18): a unit over the cap alone is never folded; nor is one
+    // naming a file the host did not size.
+    const planned = planUnits(boot, manifest, {
+      ...without,
+      fileChars: sized(100_000, { 's00.js': FOLD_UNIT_CHARS + 1, 's01.js': null })
+    })
+    expect(planned.units.map((u) => [u.key.slice(0, 33), u.origins.length])).toEqual([
+      ['isolated:https://s00.example', 1],
+      ['isolated:https://s01.example', 1],
+      ['isolated:https://s02.example http', 5],
+      ['isolated:https://s07.example http', 5]
+    ])
+    // Up to the count nothing is weighed or asked for.
+    const few = manifestOf({ content_scripts: hostnameSets().slice(0, FOLD_ABOVE_UNITS) })
+    const fewBoot = buildExtensionBoot(ID, few, null, [], 'with')
+    expect(foldFilesFor(fewBoot, few, without)).toBeNull()
+    expect(planUnits(fewBoot, few, { ...without, fileChars: sized(100_000) }).units).toHaveLength(
+      FOLD_ABOVE_UNITS
+    )
+    // With isolated worlds the extension's world goes thin (no bootstrap to save) and only the
+    // main world's whole units fold.
+    const both = manifestOf({ content_scripts: [...hostnameSets(), ...hostnameSets('MAIN')] })
+    const bothBoot = buildExtensionBoot(ID, both, null, [], 'world')
+    expect(foldFilesFor(bothBoot, both, env)).toEqual(SITES.map((s) => `${s}.js`))
+    const worlds = planUnits(bothBoot, both, { ...env, fileChars: sized(100_000) })
+    expect(worlds.units.filter((u) => u.world === 'isolated').map((u) => u.shape)).toEqual([
+      'holder',
+      ...Array<string>(12).fill('thin')
+    ])
+    expect(
+      worlds.units.filter((u) => u.world === 'main').map((u) => [u.shape, u.origins.length])
+    ).toEqual([
+      ['whole', 5],
+      ['whole', 5],
+      ['whole', 2]
+    ])
   })
 })
 

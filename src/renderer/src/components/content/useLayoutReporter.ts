@@ -14,6 +14,7 @@ import {
 } from '@renderer/lib/cover'
 import { useViewport } from '@renderer/lib/formFactor'
 import { landingStore, notePlacements } from '@renderer/lib/fullscreenLanding'
+import { phoneOnboardingCovers } from '@renderer/lib/onboarding'
 import {
   glanceRect,
   placementsFor,
@@ -27,7 +28,13 @@ import { pageOffScreen, pageViewStore } from '@renderer/lib/pageView'
 import { usePrivateCoverUp } from '@renderer/lib/privateLock'
 import { readerCrossingHolds, readerCrossingStore } from '@renderer/lib/readerTransition'
 import { activeTab, isEmptySplitPane, visibleTabIds } from '@renderer/lib/selectors'
-import { contentAreaStore, coverBandStore, pageHidden, type UiState } from '@renderer/lib/ui'
+import {
+  contentAreaStore,
+  coverBandStore,
+  firstRunCovers,
+  pageHidden,
+  type UiState
+} from '@renderer/lib/ui'
 
 export interface LayoutInfo {
   /** Viewport rect in window coordinates (null before first measure). */
@@ -165,7 +172,18 @@ export function useLayoutReporter(
   // phone's, where the chrome lies under the pages): from the crossing's start until it asks
   // the destination's view back (`landing`), the page stays off the screen.
   const crossingHolds = readerCrossingStore.use((s) => readerCrossingHolds(s, activeTab(state)?.id))
-  const contentHidden = pageHidden(ui) || lockCover || crossingHolds
+  // Or under the first-run tour or the EEA's search-engine choice screen (W6-2), opaque over
+  // the whole window (`firstRunCovers`): the views composite above the chrome, and the New Tab's
+  // view left showing stood over the tour's panel.
+  // Or under the phone's first-run tour, which `firstRunCovers` leaves out (`PhoneShell` mounts
+  // it on this term): the tour is the whole window, drawn in the chrome, and the pages lie above
+  // the chrome on Android, so a page placed while it stands would cover it – a fresh profile's
+  // first launch from a link, whose tab is active and loaded. Read off the state, not a store the
+  // tour would write in an effect: the first report already says hidden, and no placement goes
+  // out before it.
+  const tourUp = formFactor === 'phone' && phoneOnboardingCovers(state)
+  const contentHidden =
+    pageHidden(ui) || lockCover || crossingHolds || firstRunCovers(state) || tourUp
   // The strips the chrome's message cards cover at the frame's edges (see `coverBandStore`).
   const band = coverBandStore.use()
   // The live page is swapped for its cover, so the hide follows the cover's paint on every host

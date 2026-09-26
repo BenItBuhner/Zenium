@@ -18,13 +18,17 @@
  *  - `save` writes it to the downloads location through the host (`DownloadHost.saveFile`) and
  *    lists it as a completed download, so the bubble and the Downloads page show where it went
  *    – the same rule Take Screenshot follows, under the one screenshot name rule.
+ *  - `share` hands it to the browser's share hub (`ShareService`) as a file, the way Edge's
+ *    Share on a capture reaches its share sheet: Copy image, Save file and the OS's own sheet
+ *    where there is one.
  *
  * The dimmed page behind the overlay is the existing stand-in (`overlay.snapshot`, `TabView.snapshot`).
  */
 import type { Browser } from './browser'
-import type { ZenWindow } from './window'
+import { surfaceMounted, type ZenWindow } from './window'
 import type { AgentCapture, AgentCaptureOptions, TabView } from './platform'
-import type { Rect } from '../shared/types'
+import type { Rect, SharePayload } from '../shared/types'
+import type { ShareFile } from '../shared/share'
 import {
   CaptureTooLargeError,
   captureArea,
@@ -121,9 +125,38 @@ export class CaptureService {
     const tab = options.tabId ? this.browser.tabs.tab(options.tabId) : undefined
     this.browser.downloads.addCompleted(path, image.mimeType, {
       containerId: tab?.containerId,
-      private: win.isPrivate
+      private: win.isPrivate,
+      size: base64Size(image.data)
     })
     return { path }
+  }
+
+  /**
+   * The picture to the browser's share hub as a file named by the screenshot rule, the tab's
+   * title as the message beside it (the sheet's preview; the text a system sheet's Mail gets).
+   * The hub is the window's chrome sheet where it has one, the OS's sheet where the host has
+   * one (`Browser.share`); false where there is neither – a desktop without a sheet up would
+   * only copy a link it does not have, so the caller says what it did instead.
+   */
+  share(dataUrl: string, win: ZenWindow, options: { tabId?: string } = {}): boolean {
+    const image = parseImageDataUrl(dataUrl)
+    if (!image) return false
+    const { capabilities } = this.browser.state
+    const hub =
+      (capabilities.share && typeof this.browser.platform.shell.share === 'function') ||
+      (capabilities.shareSheet && surfaceMounted(win, 'share'))
+    if (!hub) return false
+    const tab = options.tabId ? this.browser.tabs.tab(options.tabId) : undefined
+    const file: ShareFile = {
+      name: screenshotFileName(this.now(), captureExtension(image.mimeType)),
+      type: image.mimeType,
+      size: base64Size(image.data),
+      data: image.data
+    }
+    const payload: SharePayload = { title: tab?.title || file.name, files: [file] }
+    if (options.tabId) payload.tabId = options.tabId
+    void this.browser.share(payload, win)
+    return true
   }
 
   private async viewportOf(view: TabView): Promise<PageViewport | null> {
@@ -165,6 +198,14 @@ function describe(
 
 function round(n: number): number {
   return Number.isFinite(n) && n > 0 ? Math.round(n * 1000) / 1000 : 1
+}
+
+/** The bytes a base64 string decodes to, from its length and padding – no decode. */
+export function base64Size(base64: string): number {
+  const text = base64.replace(/\s+/g, '')
+  if (text.length === 0) return 0
+  const padding = text.endsWith('==') ? 2 : text.endsWith('=') ? 1 : 0
+  return Math.floor((text.length * 3) / 4) - padding
 }
 
 /** The first 64 KB of a base64 picture (a PNG's header is in its first 24 bytes; a JPEG's frame header follows its metadata). */

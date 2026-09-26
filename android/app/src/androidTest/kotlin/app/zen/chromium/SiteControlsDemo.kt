@@ -33,17 +33,34 @@ import java.util.concurrent.TimeUnit
 @RunWith(AndroidJUnit4::class)
 class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-site-controls-android", "site-controls-demo") {
     override val tag = "SiteControlsDemo"
-    private lateinit var server: DemoServer
+    private lateinit var server: PageServer
     private lateinit var notes: File
+    /**
+     * The held navigation's referrer scenes (scene 8): the pages that link out, on a host of
+     * their own, and one destination host per case – the hold is for a site the tab has no
+     * content-settings answer for yet, and the answer is kept per site per tab, so each case
+     * lands on a fresh host. Every destination records what the browser sent it.
+     */
+    private lateinit var referrerSource: DemoServer
+    private val referrerDestinations = HashMap<String, DemoServer>()
+    /** The claims of scene 8 that did not hold; the run fails on them once the recording is done. */
+    private val failures = ArrayList<String>()
 
     @Test
     fun record() {
-        server = DemoServer(readAsset("site-controls-demo-page.html"), PORT).also { it.start() }
+        server = PageServer(readAsset("site-controls-demo-page.html"), PORT).also { it.start() }
+        referrerSource = DemoServer(REFERRER_PORT, referrerSourcePages(), REFERRER_SOURCE_ADDRESS).also { it.start() }
+        for (case in REFERRER_CASES) {
+            referrerDestinations[case.id] = DemoServer(REFERRER_PORT, mapOf(LANDING_PATH to landingPage()), case.destinationAddress).also { it.start() }
+        }
         try {
             runDemo()
         } finally {
             server.close()
+            referrerSource.close()
+            referrerDestinations.values.forEach { it.close() }
         }
+        if (failures.isNotEmpty()) throw AssertionError("${failures.size} claim(s) did not hold:\n" + failures.joinToString("\n"))
     }
 
     override fun warmUp() {
@@ -264,6 +281,22 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
             closeSettingsTab(settingsTab)
         }
 
+        // 8. The held navigation's referrer follows the page's own policy (W6-S9, the #507
+        //    seam's item C): a tap on a link into a site the tab has no content-settings answer
+        //    for is held for the core's answer and re-issued as the view's own load, whose
+        //    Referer the view computes – under the policy the page's document-start script read
+        //    (`<meta name=referrer>`, the anchor's `rel=noreferrer` / `referrerpolicy`) and told
+        //    the view before the tap's navigation reached the hook. Each case lands on a fresh
+        //    host (the answer is kept per site per tab, so a second hop into the same host would
+        //    not be held); the destination echoes `document.referrer` in its title and its server
+        //    records the Referer and the Sec-Fetch-Site the browser sent – `none` is the
+        //    browser-initiated re-issue, the proof the hop was held at all. The WebView lifts the
+        //    load's Referer into the navigation's referrer under its DEFAULT policy
+        //    (AwContents.loadUrl), so a page policy stricter than the default is followed and a
+        //    looser one is clamped to it (the last case records the clamp).
+        note("\n8. the held navigation's referrer under the page's own policy")
+        for (case in REFERRER_CASES) referrerScene(case)
+
         tapMenuButton()
         SystemClock.sleep(SHEET_SETTLE)
         val privateItem = reveal("New Private Tab") != null
@@ -273,6 +306,108 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
         back()
         SystemClock.sleep(1_500)
         note("\ndone")
+    }
+
+    // --- the held navigation's referrer ---------------------------------------------------------
+
+    /**
+     * One case of scene 8: the page under `case`'s policy is loaded by the core (no hold: the
+     * answer rides with the core's own load), its link into the case's fresh host is tapped by a
+     * real finger (the page's own click on it when the finger found nothing), and the landing
+     * page's title, the Referer its server saw and the Sec-Fetch-Site of that request are read
+     * against the case's word.
+     */
+    private fun referrerScene(case: ReferrerCase) {
+        note("  ${case.id}: ${case.description}")
+        val destination = referrerDestinations.getValue(case.id)
+        invoke("tab.navigate", """{"tabId":"tab_demo","input":"$REFERRER_SOURCE_ORIGIN/${case.id}.html"}""")
+        waitForTitle("REFSRC|${case.id}", 15_000)
+        SystemClock.sleep(800)
+        val landed = { pageTitle().startsWith("REF|") }
+        if (!touchTapLabelExpecting(LINK_LABEL, "the destination page echoes document.referrer", timeoutMs = 15_000, took = landed) && !landed()) {
+            note("    the finger did not take; the page's own click on the link")
+            pageJs("document.querySelector('a').click()")
+        }
+        val tab = waitForTitle("REF|", 15_000)
+        val title = tab.getJSONObject("tabs").optJSONObject("tab_demo")?.optString("title").orEmpty()
+        val referer = destination.lastHeader(LANDING_PATH, "Referer")
+        val fetchSite = destination.lastHeader(LANDING_PATH, "Sec-Fetch-Site")
+        note("    landed: ${describeTab(tab)}")
+        note("    the request to ${destination.origin}$LANDING_PATH carried Referer=${referer ?: "(none)"} Sec-Fetch-Site=${fetchSite ?: "(none)"}")
+        expect("${case.id}: the hop was held and re-issued as the view's own load (Sec-Fetch-Site: none)", fetchSite == "none")
+        expect("${case.id}: the Referer sent is ${case.expectedReferer ?: "absent"}", referer == case.expectedReferer)
+        expect("${case.id}: the page echoes document.referrer as ${case.expectedEcho}", title == "REF|${case.expectedEcho}")
+        SystemClock.sleep(600)
+        shot("15-referrer-${case.id}")
+        beat()
+    }
+
+    /** A claim of scene 8, in the notes as PASS or FAIL; a FAIL fails the run once the recording is done. */
+    private fun expect(claim: String, held: Boolean) {
+        note("    $claim: ${if (held) "PASS" else "FAIL"}")
+        if (!held) failures += claim
+    }
+
+    /** Evaluate in the shown tab's WebView (the demo page's document); the raw JSON-encoded result, "" when it never answered. */
+    private fun pageJs(code: String): String {
+        var result = ""
+        val latch = CountDownLatch(1)
+        instrumentation.runOnMainSync {
+            val view = (activity as MainActivity).host.tabs.all().firstOrNull { it.isShown }
+            if (view == null) {
+                latch.countDown()
+            } else {
+                view.evaluateJavascript(code) { value ->
+                    result = value ?: ""
+                    latch.countDown()
+                }
+            }
+        }
+        latch.await(5, TimeUnit.SECONDS)
+        return result
+    }
+
+    /** The pages of scene 8's cases, each linking into its own destination host. */
+    private fun referrerSourcePages(): Map<String, Pair<String, ByteArray>> = REFERRER_CASES.associate { case ->
+        "/${case.id}.html" to (
+            "text/html; charset=utf-8" to (
+                "<!doctype html><html><head><meta charset=utf-8>" +
+                    "<meta name=viewport content=\"width=device-width,initial-scale=1\">${case.head}<title>REFSRC|${case.id}</title>" +
+                    "<style>body{margin:0;font-family:sans-serif;color:#15141a}h1{font-size:28px;padding:40px 24px}" +
+                    "p{padding:0 24px 16px;font-size:20px}a{color:#1b4332;font-size:26px}</style></head>" +
+                    "<body><h1>${case.title}</h1><p>${case.description}</p>" +
+                    "<p><a href=\"http://${case.destinationAddress}:$REFERRER_PORT$LANDING_PATH\"${case.anchorAttributes}>$LINK_LABEL</a></p></body></html>"
+                ).toByteArray()
+            )
+    }
+
+    /** The landing page every case arrives on: it shows `document.referrer` and puts it in its title for the driver. */
+    private fun landingPage(): Pair<String, ByteArray> =
+        "text/html; charset=utf-8" to (
+            "<!doctype html><html><head><meta charset=utf-8>" +
+                "<meta name=viewport content=\"width=device-width,initial-scale=1\"><title>Landing</title>" +
+                "<style>body{margin:0;font-family:sans-serif;color:#15141a}h1{font-size:28px;padding:40px 24px}" +
+                "p{padding:0 24px;font-size:20px;word-break:break-all}</style></head>" +
+                "<body><h1>Landed on another site</h1><p id=r></p>" +
+                "<script>var r=document.referrer||'none';document.title='REF|'+r;" +
+                "document.getElementById('r').textContent='document.referrer: '+r</script></body></html>"
+            ).toByteArray()
+
+    /**
+     * A case of scene 8: how the page spells its policy (`head`, the anchor's attributes), the
+     * host it lands on, and the Referer the held hop must carry – as the request's header and as
+     * the landing page's `document.referrer`.
+     */
+    private class ReferrerCase(
+        val id: String,
+        val title: String,
+        val description: String,
+        val destinationAddress: String,
+        val head: String,
+        val anchorAttributes: String,
+        val expectedReferer: String?,
+    ) {
+        val expectedEcho: String get() = expectedReferer ?: "none"
     }
 
     // --- the Settings tab -----------------------------------------------------------------------
@@ -560,7 +695,7 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
     // --- the page's server ----------------------------------------------------------------------
 
     /** Serves the demo page on the loopback interface, whatever the path. */
-    private class DemoServer(private val page: String, private val port: Int) : Thread("site-controls-demo-server") {
+    private class PageServer(private val page: String, private val port: Int) : Thread("site-controls-demo-server") {
         // Android's InetAddress.getLoopbackAddress() is ::1; a socket bound to it alone refuses
         // the 127.0.0.1 the page's URL names, so bind the IPv4 loopback explicitly.
         private val socket = ServerSocket(port, 16, InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)))
@@ -623,5 +758,68 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
         private const val DEMO_URL = "$ORIGIN/"
         /** A sheet's slide, with the margin the software-rendered emulator needs. */
         private const val SHEET_SETTLE = 2_500L
+
+        /**
+         * Scene 8's servers: the pages that link out on one loopback host, one destination host
+         * per case (any 127.x.y.z is the loopback; a port of its own, since the demo page's server
+         * has [PORT] on 127.0.0.1). Under the default policy the referrer across origins is the
+         * page's origin – `http://127.0.0.5:18125/`.
+         */
+        private const val REFERRER_PORT = 18125
+        private const val REFERRER_SOURCE_ADDRESS = "127.0.0.5"
+        private const val REFERRER_SOURCE_ORIGIN = "http://$REFERRER_SOURCE_ADDRESS:$REFERRER_PORT"
+        private const val LANDING_PATH = "/land.html"
+        /** The link's text, the accessibility tree's word for it. */
+        private const val LINK_LABEL = "Follow the link to another site"
+        private val REFERRER_CASES = listOf(
+            ReferrerCase(
+                id = "meta-no-referrer",
+                title = "Page under <meta name=referrer content=no-referrer>",
+                description = "The document's meta says no referrer: the held hop must carry none.",
+                destinationAddress = "127.0.0.2",
+                head = "<meta name=referrer content=no-referrer>",
+                anchorAttributes = "",
+                expectedReferer = null,
+            ),
+            ReferrerCase(
+                id = "rel-noreferrer",
+                title = "Link with rel=noreferrer",
+                description = "The anchor's rel=noreferrer: the held hop must carry none, whatever the document says.",
+                destinationAddress = "127.0.0.3",
+                head = "",
+                anchorAttributes = " rel=\"noreferrer\"",
+                expectedReferer = null,
+            ),
+            ReferrerCase(
+                id = "anchor-over-meta",
+                title = "Link with referrerpolicy=origin under a no-referrer meta",
+                description = "The anchor's own policy beats the document's: the same meta alone sends none (the first case); " +
+                    "the anchor's referrerpolicy=origin has the held hop carry the page's origin.",
+                destinationAddress = "127.0.0.4",
+                head = "<meta name=referrer content=no-referrer>",
+                anchorAttributes = " referrerpolicy=\"origin\"",
+                expectedReferer = "$REFERRER_SOURCE_ORIGIN/",
+            ),
+            ReferrerCase(
+                id = "default-policy",
+                title = "Page without a policy of its own",
+                description = "No meta, no anchor policy: the default, the page's origin across origins, as before.",
+                destinationAddress = "127.0.0.6",
+                head = "",
+                anchorAttributes = "",
+                expectedReferer = "$REFERRER_SOURCE_ORIGIN/",
+            ),
+            ReferrerCase(
+                id = "unsafe-url-clamped",
+                title = "Link with referrerpolicy=unsafe-url – the WebView's own clamp",
+                description = "A policy looser than Chrome's default asks for the page's full address; the WebView lifts a " +
+                    "loadUrl Referer into the navigation's referrer under its default policy (AwContents.loadUrl), so the " +
+                    "held hop carries the origin – never more than the default's, never more than the page asked.",
+                destinationAddress = "127.0.0.7",
+                head = "",
+                anchorAttributes = " referrerpolicy=\"unsafe-url\"",
+                expectedReferer = "$REFERRER_SOURCE_ORIGIN/",
+            ),
+        )
     }
 }

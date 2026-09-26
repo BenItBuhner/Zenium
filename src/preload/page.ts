@@ -14,12 +14,12 @@ import {
   type PageScriptMessage
 } from '../shared/pageScript'
 import { installInstallPromptShim } from '../shared/installPrompt'
+import { DISPLAY_MODE_EVENT, installDisplayModeShim } from '../shared/displayMode'
 import {
-  DISPLAY_MODE_CHANNEL,
-  DISPLAY_MODE_EVENT,
-  installDisplayModeShim,
-  type DisplayMode
-} from '../shared/displayMode'
+  DOCUMENT_START_CHANNEL,
+  readDocumentStartAnswer,
+  type DocumentStartAnswer
+} from '../shared/documentStart'
 import { installMediaSessionBridge, installMediaSessionShim } from '../shared/mediaSessionShim'
 import {
   SCREEN_CAPTURE_INTENT_CHANNEL,
@@ -40,17 +40,16 @@ import {
   NOTIFICATION_REQUEST_CHANNEL
 } from '../shared/notifications'
 import { installNotificationBridge, installNotificationShim } from './notifications'
-import {
-  PRIVACY_SIGNALS_CHANNEL,
-  installNavigatorSignals,
-  type PrivacySignals
-} from '../shared/privacySignals'
+import { installNavigatorSignals } from '../shared/privacySignals'
 import { installLeaveSite, installPageDialogs } from './pageDialogs'
 import { installFormsScript } from '../shared/formsScript'
 import type { FormsCommand } from '../shared/forms'
 import { USER_SCRIPTS_CHANNELS } from '../shared/userScripts'
 import { installUserScripts } from './userScripts'
+import { PRIVATE_WORLD_CHANNELS } from '../shared/privateWorld'
+import { installPrivateWorld } from './privateWorld'
 import { completeChromeObject } from '../shared/chromeObject'
+import { installContentGuards } from '../shared/contentGuards'
 import { installNewTabPage } from '../shared/newTabPageScript'
 import type { NewTabPageCommand, NewTabPageState } from '../shared/types'
 import { isNewTabUrl } from '../shared/url'
@@ -68,9 +67,13 @@ import { isNewTabUrl } from '../shared/url'
  * Electron's engine creates – Google's sign-in refuses a Chrome that lacks `chrome.app` as an
  * embedded browser (`shared/chromeObject`); the privacy signals – an embedded third party reads
  * `navigator.globalPrivacyControl` too, so the signals the user switched on are defined in the
- * main world of each document, at document start, from a synchronous ask of the main process (a
- * couple of booleans); the dialogs, since Chrome shows an embedded page's dialogs too; and
- * extensions' user scripts (`chrome.userScripts`), from a second synchronous ask.
+ * main world of each document, at document start (a couple of booleans); the dialogs, since
+ * Chrome shows an embedded page's dialogs too; and extensions' user scripts
+ * (`chrome.userScripts`). Everything the frame needs from the main process before its first
+ * script – the signals, its window's display mode, the site's page-world guards and the
+ * user-script plan – comes from ONE synchronous ask (`shared/documentStart`): each hop blocked
+ * the renderer's main thread for ~500 µs at the median and 2.6–4.0 ms at p90 on the real build
+ * (#507's measurement), and there were four.
  */
 try {
   // Serialised into the main world: the function falls back to that world's `globalThis`.
@@ -78,8 +81,20 @@ try {
 } catch (error) {
   console.warn('[zen] window.chrome unavailable:', (error as Error).message)
 }
-const signals = ipcRenderer.sendSync(PRIVACY_SIGNALS_CHANNEL) as PrivacySignals | undefined
-if (signals && (signals.gpc || signals.dnt))
+// The one ask; the four installs below run in the order their four asks ran. Every field has a
+// default (the main side fills it where a provider is missing or threw), so nothing here waits
+// on anything but the one round trip.
+let documentStart: DocumentStartAnswer
+try {
+  documentStart = readDocumentStartAnswer(
+    ipcRenderer.sendSync(DOCUMENT_START_CHANNEL, { url: location.href })
+  )
+} catch (error) {
+  console.warn('[zen] document-start ask failed:', (error as Error).message)
+  documentStart = readDocumentStartAnswer(undefined)
+}
+const { signals } = documentStart
+if (signals.gpc || signals.dnt)
   contextBridge.executeInMainWorld({
     func: installNavigatorSignals,
     args: [signals.gpc, signals.dnt]
@@ -87,17 +102,28 @@ if (signals && (signals.gpc || signals.dnt))
 // `display-mode` (MW-23): Electron's engine answers `browser` in every window; the page's world
 // gets Zenium's answer for its window (standalone in an app window) before its first script.
 try {
-  const displayMode = ipcRenderer.sendSync(DISPLAY_MODE_CHANNEL) as DisplayMode | undefined
   contextBridge.executeInMainWorld({
     func: installDisplayModeShim,
-    args: [displayMode ?? 'browser', DISPLAY_MODE_EVENT]
+    args: [documentStart.displayMode, DISPLAY_MODE_EVENT]
   })
 } catch (error) {
   console.warn('[zen] display-mode shim unavailable:', (error as Error).message)
 }
+// The per-site guards (Motion sensors, Third-party sign-in, Payment handlers): the rows the
+// page's site is refused (an array of up to three names), taken out of the main world of every
+// frame of the document before its first script (`shared/contentGuards`; the Android host does
+// the same from its document-start script).
+try {
+  const blocked = documentStart.guards
+  if (blocked.length > 0)
+    contextBridge.executeInMainWorld({ func: installContentGuards, args: [blocked] })
+} catch (error) {
+  console.warn('[zen] content guards unavailable:', (error as Error).message)
+}
 installPageDialogs()
 installUserScripts({
-  plan: (request) => ipcRenderer.sendSync(USER_SCRIPTS_CHANNELS.plan, request),
+  // The frame's plan came with the document-start answer; `installUserScripts` asks once.
+  plan: () => documentStart.userScripts,
   message: (message) => ipcRenderer.invoke(USER_SCRIPTS_CHANNELS.message, message),
   port: (wire) => ipcRenderer.send(USER_SCRIPTS_CHANNELS.port, wire),
   answer: (answer) => ipcRenderer.send(USER_SCRIPTS_CHANNELS.answer, answer),
@@ -111,6 +137,17 @@ installUserScripts({
   executeInIsolatedWorld: (worldId, code) =>
     webFrame.executeJavaScriptInIsolatedWorld(worldId, [{ code }]),
   setIsolatedWorldInfo: (worldId, info) => webFrame.setIsolatedWorldInfo(worldId, info)
+})
+// The browser's private world in THIS frame (`shared/privateWorld.ts`): the image-search
+// thumbnail script for an image in a sub-frame runs here, through the frame's own isolated-world
+// call, never in the page's main world. Every frame installs it; the top frame is reached by
+// `webContents.executeJavaScriptInIsolatedWorld` directly.
+installPrivateWorld({
+  onExecute: (listener) =>
+    ipcRenderer.on(PRIVATE_WORLD_CHANNELS.execute, (_event, raw) => listener(raw)),
+  executeInIsolatedWorld: (worldId, code) =>
+    webFrame.executeJavaScriptInIsolatedWorld(worldId, [{ code }]),
+  answer: (answer) => ipcRenderer.send(PRIVATE_WORLD_CHANNELS.answer, answer)
 })
 
 const send = (message: PageScriptMessage | PageMessage): void =>

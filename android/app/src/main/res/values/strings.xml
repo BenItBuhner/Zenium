@@ -36,13 +36,37 @@
     <string name="cct_close">Close</string>
     <string name="cct_menu">Menu</string>
     <string name="cct_minimize">Minimize</string>
+    <!-- The toolbar's Share button (CCT-17): its accessible name, a control's word like Close and Menu; the menu's row keeps its ellipsis. -->
+    <string name="cct_share_button">Share</string>
     <string name="cct_minimized_card">Minimized page: %1$s</string>
-    <string name="cct_secure">Secure connection</string>
+    <string name="cct_secure">Connection is secure</string>
+    <string name="cct_not_secure">Connection is not secure</string>
+    <string name="cct_secure_detail">Everything you send to this site is encrypted on the way.</string>
+    <string name="cct_not_secure_detail">Anyone on the way can read what you send to this site. Don’t enter passwords or card details here.</string>
+    <string name="cct_local_site">Local site</string>
+    <string name="cct_local_site_detail">Served from this device; nothing crosses the network.</string>
+    <string name="cct_done">Done</string>
+    <string name="cct_cancel">Cancel</string>
+    <string name="cct_add">Add</string>
+    <string name="cct_shortcut_name">Name</string>
     <string name="cct_share">Share…</string>
     <string name="cct_copy_link">Copy Link</string>
     <string name="cct_reload">Reload</string>
     <string name="cct_find_in_page">Find in Page</string>
+    <string name="cct_add_to_home_screen">Add to Home Screen</string>
+    <string name="cct_desktop_site">Desktop Site</string>
     <string name="cct_open_in_zenium">Open in Zenium</string>
+    <string name="cct_forward">Forward</string>
+    <string name="cct_bookmark">Bookmark</string>
+    <string name="cct_edit_bookmark">Edit Bookmark</string>
+    <string name="cct_remove_bookmark">Remove Bookmark</string>
+    <string name="cct_download_page">Download Page</string>
+    <string name="cct_page_info">Page Info</string>
+    <string name="cct_stop">Stop</string>
+    <string name="cct_bookmarked">Bookmarked</string>
+    <string name="cct_bookmark_removed">Bookmark removed</string>
+    <string name="cct_page_saved">Saved %1$s</string>
+    <string name="cct_download_failed">Couldn’t save the page</string>
     <string name="cct_powered_by">Powered by Zenium</string>
     <string name="cct_link_copied">Link copied</string>
     <string name="cct_find_hint">Find in page</string>
@@ -51,20 +75,47 @@
     <string name="cct_find_previous">Previous match</string>
     <string name="cct_downloading">Downloading %1$s</string>
     <string name="cct_download_insecure">%1$s can’t be downloaded securely</string>
-    <string name="cct_permission_camera">Use your camera</string>
-    <string name="cct_permission_microphone">Use your microphone</string>
-    <string name="cct_permission_media">Use your camera and microphone</string>
-    <string name="cct_permission_location">Know your location</string>
-    <string name="cct_permission_protected_media">Play protected content</string>
-    <string name="cct_permission_message">%1$s wants to:</string>
+    <!-- A custom tab's permission prompt on the native prompt sheet (PermissionPromptSheet, v2 §9.23): the
+         permission family's question naming the site's host, one per permission a page can ask for, with the
+         pair Block | Allow (cct_block, cct_allow) under it. Answered per request; a custom tab remembers nothing. -->
+    <string name="cct_permission_question_camera">Allow %1$s to use your camera?</string>
+    <string name="cct_permission_question_microphone">Allow %1$s to use your microphone?</string>
+    <string name="cct_permission_question_media">Allow %1$s to use your camera and microphone?</string>
+    <string name="cct_permission_question_location">Allow %1$s to know your location?</string>
+    <string name="cct_permission_question_protected_media">Allow %1$s to play protected content?</string>
     <string name="cct_allow">Allow</string>
     <string name="cct_block">Block</string>
+    <!-- A custom tab's Open in <App>? confirmation on the native prompt sheet (CustomTabOpenInAppPrompt, v2 §9.23):
+         the browser window's ExternalProtocolSheet's words. The title with the app's name or without one; the
+         sentence under it – a site's own app offered for a web address (the page loads regardless), or the page
+         wanting to open the object its link's scheme names (one object per scheme the browser sheet names, the
+         others as "a <scheme>: link"); the address on its own line; the pair Not now | Open (cct_not_now, cct_open). -->
     <string name="cct_open_in_app">Open in %1$s?</string>
     <string name="cct_open_in_another_app">Open in another app?</string>
+    <string name="cct_open_link_also_in_app">This link can also open in %1$s</string>
+    <string name="cct_open_link_also_in_an_app">This link can also open in an app</string>
+    <string name="cct_open_wants">%1$s wants to open %2$s</string>
+    <string name="cct_this_page">This page</string>
+    <string name="cct_open_object_mailto">an email address</string>
+    <string name="cct_open_object_tel">a phone number</string>
+    <string name="cct_open_object_sms">a text message</string>
+    <string name="cct_open_object_market">a Play Store listing</string>
+    <string name="cct_open_object_geo">a map location</string>
+    <string name="cct_open_object_app">an app</string>
+    <string name="cct_open_object_other">a %1$s: link</string>
     <string name="cct_open">Open</string>
     <string name="cct_not_now">Not now</string>
     <string name="cct_no_app">No app can open this link</string>
     <string name="cct_find_count">%1$d/%2$d</string>
+
+    <!-- An installed web app's own window (WebAppActivity, PWA-02): a page's Notification ask on the native
+         prompt sheet (PermissionPromptSheet, v2 §9.23) – the permission family's question naming the requester,
+         with the pair Block | Allow (cct_block, cct_allow) under it. -->
+    <string name="webapp_notifications_question">Allow %1$s to show notifications?</string>
+    <!-- PWA-13: the installed app's window says whose it is on the app's first launch (Chrome's "Running in
+         Chrome", IDS_WEBAPK_RUNNING_IN_CHROME's shape) on the §9.33 toast card drawn natively (NativeToastCard,
+         WebAppDisclosure) in the first-time hint's plain form: no action; the product name is app_name. -->
+    <string name="webapp_disclosure">Running in %1$s</string>
 
     <!-- The unresponsive-page prompt (ERR-16) on the native prompt sheet, since the chrome shares the hung renderer. -->
     <string name="unresponsive_description">This page isn’t responding. You can wait for it to respond, or exit the page.</string>

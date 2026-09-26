@@ -5,6 +5,7 @@ import { DownloadBubbleLayer } from './components/downloads/DownloadBubble'
 import { MediaHubLayer } from './components/media/MediaHubPopover'
 import { MenuSheet } from './components/menus/MenuSheet'
 import { NewTabCustomizeLayer } from './components/newtab/CustomizeSheet'
+import { MagicStackCustomizeLayer } from './components/newtab/MagicStack'
 import { NewTabGrowLayer } from './components/newtab/NewTabGrowLayer'
 import { ExternalProtocolLayer } from './components/protocol/ExternalProtocolSheet'
 import { QrScanLayer } from './components/qr/QrScanSheet'
@@ -29,6 +30,7 @@ export function Root(): JSX.Element {
       <App />
       <NewTabGrowLayer />
       <NewTabCustomizeLayer />
+      <MagicStackCustomizeLayer />
       <DefaultBrowserLayer />
       <SiteInfoLayer />
       <TranslateSelectionLayer />

@@ -6,6 +6,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.lang.ref.SoftReference
 import java.security.MessageDigest
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 /**
  * Compiles the content-script units the core plans for one extension (`ext.configure`) into the
@@ -33,9 +35,18 @@ import java.security.MessageDigest
  *  - a file's relative `import()` specifiers are resolved to the file's own served URL as it is
  *    copied in ([RelativeImports]): Chrome resolves them against the content script's own URL,
  *    a unit of ours would resolve them against the page;
- *  - every other extension's cache is untouched, and a new version starts from nothing.
+ *  - every other extension's cache is untouched, and a new version starts from nothing;
+ *  - the runtime that owns the compiler releases everything it holds when it is destroyed
+ *    ([close]): a browser restarted in the same process (a second `MainActivity` over the old
+ *    one) builds a new runtime whose configure compiles the same extensions again while the old
+ *    runtime is still referenced for some seconds – and the old compiler's units and sources
+ *    were the largest part of it (compat round 21b: 66 MB of a 192 MB heap, and the new
+ *    carrier's builder found 25 MB free).
  *
- * Pure string work over an injected reader, so the JVM unit tests cover it.
+ * Pure string work over an injected reader, so the JVM unit tests cover it. One lock guards the
+ * cache ([lock], not the monitor: [close] must not wait on a compile in flight – the main thread
+ * calls it at destroy – so it tries the lock and, when the compile holds it, leaves the release
+ * to the compile, which checks [closed] between units).
  */
 class UnitCompiler(
     /** The most characters one unit may run to; [unitBudgetChars] of this process's heap unless a test says otherwise. */
@@ -49,13 +60,24 @@ class UnitCompiler(
         val origins: List<String>,
         /** The isolated world to inject into, or null for the page's main world. */
         val world: String?,
+        /** How much of the bootstrap the script carries ([ExtensionScripts.SHAPE_WHOLE] and the others). */
+        val shape: String,
         val script: String,
         val hash: String,
         /** Whether the script came from the cache rather than being assembled now. */
         val cached: Boolean,
         /** Why the unit was not assembled, when it was not: its size against the budget. The script is then empty. */
-        val refused: Refused? = null
-    )
+        val refused: Refused? = null,
+        /**
+         * The size the script's builder was made with ([ExtensionScripts.Assembled.presized]);
+         * `script.length` over it means an append grew the builder, which the assembly's count
+         * is written not to allow. Kept with a cached unit, zero for a refused one.
+         */
+        val presized: Int = script.length
+    ) {
+        /** Whether the assembly's builder grew past its size (never, when the count is right). */
+        val grown: Boolean get() = script.length > presized
+    }
 
     /** A unit over the budget: what it would have run to (from the files' sizes), over how many groups, against what. */
     class Refused(val chars: Long, val groups: Int, val budgetChars: Int)
@@ -67,16 +89,34 @@ class UnitCompiler(
     }
 
     private val cache = HashMap<String, ExtensionCache>()
+    private val lock = ReentrantLock()
+
+    /** Set by [close], read between units by a compile in flight; a closed compiler compiles nothing and holds nothing. */
+    @Volatile private var closed = false
+
+    /** Whether [close] was called: no unit compiles after it, and nothing is held. */
+    val isClosed: Boolean get() = closed
 
     /**
-     * Compile `units` (`[{ key, origins, world, config, groups: [{ ext, index, js, isolation }],
-     * css: [{ ext, path }] }]`) for one extension. `read` answers an extension-relative path with
-     * the file's text, or null; `size` with the file's length in bytes without reading it, or
-     * null. A unit is measured from the sizes before any of its files is read: a UTF-8 file has
-     * at most as many characters as bytes, so the sum bounds the script, and a unit over the
-     * budget is [Compiled.refused] with nothing of it allocated.
+     * What [close] let go of, for the runtime's destroy line: the extensions cached, their
+     * compiled units and those units' characters, the source texts still soft-held. [deferred]
+     * when a compile held the lock: the figures are then zero here, and that compile releases
+     * everything at its next unit boundary.
      */
-    @Synchronized
+    class Released(val extensions: Int, val units: Int, val unitChars: Long, val sources: Int, val deferred: Boolean)
+
+    /**
+     * Compile `units` (`[{ key, origins, world, shape, config, groups: [{ ext, index, js,
+     * isolation }], css: [{ ext, path }] }]`) for one extension. `read` answers an
+     * extension-relative path with the file's text, or null; `size` with the file's length in
+     * bytes without reading it, or null. A unit is measured from the sizes before any of its
+     * files is read: a UTF-8 file has at most as many characters as bytes, so the sum bounds the
+     * script, and a unit over the budget is [Compiled.refused] with nothing of it allocated. The
+     * shape (whole when the plan names none) is part of the unit's identity and of its measure:
+     * a thin unit is its sources without the bootstrap. After [close] nothing is compiled: an
+     * empty list, and a compile that was in flight at the close releases the cache and answers
+     * the same (its runtime is gone; the configure that asked drops the answer).
+     */
     fun compile(
         id: String,
         version: String,
@@ -84,7 +124,8 @@ class UnitCompiler(
         debug: Boolean,
         read: (String) -> String?,
         size: (String) -> Long?
-    ): List<Compiled> {
+    ): List<Compiled> = lock.withLock {
+        if (closed) return@withLock emptyList()
         var entry = cache[id]
         if (entry == null || entry.version != version) {
             entry = ExtensionCache(version)
@@ -93,6 +134,12 @@ class UnitCompiler(
         val out = ArrayList<Compiled>(units.length())
         val keysNow = HashSet<String>()
         for (i in 0 until units.length()) {
+            // Closed while this compile ran (the runtime was destroyed): what was compiled so
+            // far goes with the rest, and nothing more is read or assembled.
+            if (closed) {
+                releaseLocked()
+                return@withLock emptyList()
+            }
             val u = units.optJSONObject(i) ?: continue
             val key = u.optString("key")
             keysNow.add(key)
@@ -100,22 +147,23 @@ class UnitCompiler(
                 .toSet().ifEmpty { setOf("*") }.toList()
             // A main-world unit comes with `world: null`, which `optString` would read as "null".
             val world = u.strOrNull("world")?.takeIf { it.isNotEmpty() }
+            val shape = u.optString("shape", ExtensionScripts.SHAPE_WHOLE).ifEmpty { ExtensionScripts.SHAPE_WHOLE }
             val config = u.optString("config", "{}")
             val groupsJson = u.optJSONArray("groups") ?: JSONArray()
             val cssJson = u.optJSONArray("css") ?: JSONArray()
-            val hash = sha256("$config\u0000$groupsJson\u0000$cssJson\u0000$debug\u0000${world ?: ""}")
+            val hash = sha256("$config\u0000$groupsJson\u0000$cssJson\u0000$debug\u0000${world ?: ""}\u0000$shape")
             val previous = entry.units[key]
             if (previous != null && previous.hash == hash) {
-                val kept = Compiled(id, key, origins, world, previous.script, hash, cached = true, refused = previous.refused)
+                val kept = Compiled(id, key, origins, world, shape, previous.script, hash, cached = true, refused = previous.refused, presized = previous.presized)
                 entry.units[key] = kept
                 out.add(kept)
                 continue
             }
-            val estimate = estimateChars(entry, config, groupsJson, cssJson, size)
+            val estimate = estimateChars(entry, config, groupsJson, cssJson, size, shape)
             if (estimate > budgetChars) {
                 // Refused the way a compiled unit is kept: the same plan sent again answers from
                 // the cache, so the extension's console hears of it once per plan.
-                val refused = Compiled(id, key, origins, world, "", hash, cached = false, refused = Refused(estimate, groupsJson.length(), budgetChars))
+                val refused = Compiled(id, key, origins, world, shape, "", hash, cached = false, refused = Refused(estimate, groupsJson.length(), budgetChars), presized = 0)
                 entry.units[key] = refused
                 out.add(refused)
                 continue
@@ -140,46 +188,113 @@ class UnitCompiler(
                 val text = text(entry, path, read) ?: continue
                 css["${c.optString("ext", id)}/${path.trimStart('/')}"] = text
             }
-            val script = ExtensionScripts.documentStart(bootstrap(), config, groups, css, debug)
-            val compiled = Compiled(id, key, origins, world, script, hash, cached = false)
+            val assembled = ExtensionScripts.documentStartSized(bootstrap(), config, groups, css, debug, shape)
+            val compiled = Compiled(id, key, origins, world, shape, assembled.script, hash, cached = false, presized = assembled.presized)
             entry.units[key] = compiled
             out.add(compiled)
         }
+        if (closed) {
+            releaseLocked()
+            return@withLock emptyList()
+        }
         // Units the plan no longer has are not kept around (a registered script that went away).
         entry.units.keys.retainAll(keysNow)
-        return out
+        out
     }
 
     /** The compiled units of one extension as last configured (empty when not configured). */
-    @Synchronized
-    fun unitsOf(id: String): List<Compiled> = cache[id]?.units?.values?.sortedBy { it.key } ?: emptyList()
+    fun unitsOf(id: String): List<Compiled> = lock.withLock { cache[id]?.units?.values?.sortedBy { it.key } ?: emptyList() }
 
     /** Drop everything remembered for an extension (it was detached). */
-    @Synchronized
     fun forget(id: String) {
-        cache.remove(id)
+        lock.withLock { cache.remove(id) }
+    }
+
+    /**
+     * The runtime that owns this compiler is destroyed: let go of every extension's compiled
+     * units and soft-held sources, and compile nothing from now on. Does not wait: when a
+     * compile holds the lock (a configure in flight at destroy) the release is [Released.deferred]
+     * to it – it sees [closed] at its next unit boundary, releases and answers empty – and the
+     * figures here are zero; else the release is done here, with what it came to.
+     */
+    fun close(): Released {
+        closed = true
+        if (!lock.tryLock()) return Released(0, 0, 0L, 0, deferred = true)
+        try {
+            return releaseLocked()
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    /** Under [lock]: every entry emptied and dropped, counted. */
+    private fun releaseLocked(): Released {
+        var units = 0
+        var unitChars = 0L
+        var sources = 0
+        for (entry in cache.values) {
+            units += entry.units.size
+            for (unit in entry.units.values) unitChars += unit.script.length
+            for (held in entry.sources.values) if (held is SoftReference<*> && held.get() != null) sources++
+            entry.units.clear()
+            entry.sources.clear()
+        }
+        val extensions = cache.size
+        cache.clear()
+        return Released(extensions, units, unitChars, sources, deferred = false)
     }
 
     /** The number of source files held for an extension (a text the GC took back no longer counts), for instrumentation. */
-    @Synchronized
-    fun cachedSources(id: String): Int = cache[id]?.sources?.values?.count { it === MISSING || (it as SoftReference<*>).get() != null } ?: 0
+    fun cachedSources(id: String): Int = lock.withLock { cache[id]?.sources?.values?.count { it === MISSING || (it as SoftReference<*>).get() != null } ?: 0 }
+
+    /**
+     * What the compiler holds for an extension, for instrumentation: its compiled scripts'
+     * characters and the bytes ART keeps them in (a script with a character over U+00FF is two
+     * bytes a character, else one – the string's own compact form), how many of them are 16-bit,
+     * and the source texts still soft-held, their characters and bytes the same way.
+     */
+    fun memoryOf(id: String): JSONObject = lock.withLock {
+        val entry = cache[id] ?: return@withLock JSONObject().put("units", 0)
+        var unitChars = 0L
+        var unitBytes = 0L
+        var wideUnits = 0
+        for (unit in entry.units.values) {
+            val wide = unit.script.any { it > '\u00FF' }
+            if (wide) wideUnits++
+            unitChars += unit.script.length
+            unitBytes += unit.script.length.toLong() * (if (wide) 2 else 1)
+        }
+        var sources = 0
+        var sourceChars = 0L
+        var sourceBytes = 0L
+        for (held in entry.sources.values) {
+            val text = (held as? SoftReference<*>)?.get() as? String ?: continue
+            sources++
+            sourceChars += text.length
+            sourceBytes += text.length.toLong() * (if (text.any { it > '\u00FF' }) 2 else 1)
+        }
+        JSONObject()
+            .put("units", entry.units.size).put("unitChars", unitChars).put("unitBytes", unitBytes).put("wideUnits", wideUnits)
+            .put("sources", sources).put("sourceChars", sourceChars).put("sourceBytes", sourceBytes)
+    }
 
     /** What the GC may do at any time: let go of every source text held for the extension. */
     @VisibleForTesting
-    @Synchronized
     fun clearSourcesForTest(id: String) {
-        cache[id]?.sources?.values?.forEach { (it as? SoftReference<*>)?.clear() }
+        lock.withLock { cache[id]?.sources?.values?.forEach { (it as? SoftReference<*>)?.clear() } }
     }
 
     /**
      * What the unit's script would run to, in characters, from what is known without reading a
      * file: the sizes on disk (a file listed in several groups counts once per group, as the
      * script copies it), an inline entry's own length, a source already held in the cache by
-     * its real length, and the fixed parts ([ExtensionScripts.documentStart] sizes its builder
-     * the same way). A file that is not there costs its console stub.
+     * its real length, and room for the fixed parts (the bootstrap by the unit's shape,
+     * [ExtensionScripts.bootstrapChars]). A file that is not there costs its console stub. This
+     * is the refusal's measure, not the builder's: the builder is sized by an exact count of the
+     * text once the files are in hand ([ExtensionScripts.documentStartSized]).
      */
-    private fun estimateChars(entry: ExtensionCache, config: String, groupsJson: JSONArray, cssJson: JSONArray, size: (String) -> Long?): Long {
-        var total = bootstrap().length.toLong() + config.length + 4096
+    private fun estimateChars(entry: ExtensionCache, config: String, groupsJson: JSONArray, cssJson: JSONArray, size: (String) -> Long?, shape: String): Long {
+        var total = ExtensionScripts.bootstrapChars(bootstrap().length, shape).toLong() + config.length + 4096
         for (j in 0 until groupsJson.length()) {
             val g = groupsJson.optJSONObject(j) ?: continue
             val files = g.optJSONArray("js") ?: JSONArray()

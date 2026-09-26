@@ -1,0 +1,44 @@
+name: Android search choice demo
+
+# Records the EEA's search-engine choice screen on the phone (matrix OMN-26; the shared model of
+# #514) on a hardware-accelerated Android emulator, from a cleared profile with the device placed
+# in Germany through the tester's override (`debug.zenium.region DE`): the first run's search step
+# as the choice screen (eight tiles, nothing picked, Set as default off) left with Skip for now,
+# the screen returning on its own at the next launch (Chrome's rule until it is answered), the
+# system back consumed, a real injected touch picking a tile that is not the shipped default and
+# Set as default writing the default engine and the device's record, the launch after with no
+# screen, then `searchChoice.askAgain` (Settings › Search's row) raising it once more. Every claim
+# is a PASS or FAIL line of search-choice-findings.txt in the artifact beside the stills
+# (android-w6-13-search-choice-*.png); a FAIL fails the run once the stills are taken.
+# Dispatch-only, like the other demos: it says nothing about a change being correct beyond what
+# the findings record. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml; this file only picks the driver. One more boot when the emulator
+# itself went away under the driver (adb lost the device), and never when the driver failed.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-search-choice-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Search choice demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-search-choice-demo.sh
+      artifact-name: android-search-choice-demo
+      artifact-path: artifacts/android-search-choice-demo/
+
+  record-again:
+    name: Search choice demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-search-choice-demo.sh
+      artifact-name: android-search-choice-demo-second-boot
+      artifact-path: artifacts/android-search-choice-demo/

@@ -1,0 +1,14 @@
+{
+  "id": "menu-edit",
+  "order": 63,
+  "class": "MenuEditDemo",
+  "shard": "api35",
+  "mirrors": "android-menu-edit-demo.yml",
+  "dir": "menu-edit-demo",
+  "env": {
+    "DEMO_THEME": "light",
+    "DEMO_ARGS": "-e holdBackgroundWork true"
+  },
+  "estimate": 3,
+  "note": "The workflow runs light and dark; the nightly runs light. The startup sweeps held, as the workflow passes, so the list drag's trace reads the reorder alone (RULING 5). On api35 for the room: the driver measured 2:46 / 2:49 on the API 34 image (#483's runs) and every API 34 phone shard stands within 2 of #344's budget; the workflow's dispatch is the API 34 record."
+}

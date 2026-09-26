@@ -1,0 +1,9 @@
+{
+  "id": "history-bookmarks",
+  "order": 53,
+  "class": "HistoryBookmarksDemo",
+  "shard": "phone-c",
+  "mirrors": "android-history-bookmarks-demo.yml",
+  "dir": "history-bookmarks-demo",
+  "estimate": 4
+}

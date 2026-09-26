@@ -1,14 +1,14 @@
 package app.zen.chromium
 
 import android.Manifest
-import android.app.NotificationChannel
-import android.app.NotificationChannelGroup
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -39,6 +39,12 @@ import java.util.concurrent.Executor
  * channel ([SharingChannel], Chrome Android's), never a site's, and never counts against the
  * site's permission; its tap opens the URL (the core's `onHostEvent` path for a notification it
  * never showed itself).
+ *
+ * A page inside an installed web app's scope posts as the app (PWA-02, [WebAppChannels]): under
+ * the app's own channel group, with the app's name as the card's sub text, its tile as the
+ * large icon when the page names no icon and its theme colour as the accent – the same card the
+ * app's own window posts ([WebAppNotifications]), so the shade reads one app whichever window
+ * its page is in. The site's permission and the tap's path (the tab) are the page's as before.
  */
 class WebNotifications(private val host: Host, private val io: Executor) {
     private val context: Context = host.activity.applicationContext
@@ -46,6 +52,7 @@ class WebNotifications(private val host: Host, private val io: Executor) {
     private val main = Handler(Looper.getMainLooper())
     private val channels = SitesChannels(context)
     private val sharing = SharingChannel(context)
+    private val webApps = WebAppChannels(context)
 
     /** A notification up (or being posted), by the core's id. */
     private class Shown(val origin: String, val tag: String, val sharing: Boolean)
@@ -88,12 +95,18 @@ class WebNotifications(private val host: Host, private val io: Executor) {
             return
         }
         val isSharing = isSharing(args)
-        val channelId = if (isSharing) sharing.ensure() else channels.ensure(origin)
-        if (channels.blocked(channelId)) {
-            // The user blocked the site in the system's notification settings: Chrome makes that
-            // the site's permission, so the page reads `denied` from now on rather than posting into
-            // the void. The Sharing channel blocked says nothing about the site: the core hears
-            // `false` and opens the sent tab right away instead.
+        // A page inside an installed app's scope is the app's (PWA-02): its channel, its name.
+        val app = if (isSharing) null else webApps.appFor(args.str("url").ifEmpty { origin })
+        val channelId = when {
+            isSharing -> sharing.ensure()
+            app != null -> webApps.ensure(app)
+            else -> channels.ensure(origin)
+        }
+        if (if (app != null) webApps.blocked(channelId) else channels.blocked(channelId)) {
+            // The user blocked the site (or its app) in the system's notification settings: Chrome
+            // makes that the site's permission, so the page reads `denied` from now on rather than
+            // posting into the void. The Sharing channel blocked says nothing about the site: the
+            // core hears `false` and opens the sent tab right away instead.
             if (!isSharing) host.hostEvent("notification.blocked", json("origin" to origin))
             reply(false)
             return
@@ -109,21 +122,22 @@ class WebNotifications(private val host: Host, private val io: Executor) {
         }
         shown[id] = Shown(origin, tag, isSharing)
         val iconUrl = args.strOrNull("icon")?.takeIf(String::isNotEmpty)
-        val post = { icon: android.graphics.Bitmap? ->
+        val post = { identity: NotificationIdentity ->
             // Closed while the icon was on its way: nothing to post.
             if (!destroyed && shown.containsKey(id)) {
-                val ok = runCatching { manager.notify(notificationTag(id, origin, tag), NOTIFICATION_ID, build(id, channelId, args, icon)) }.isSuccess
+                val ok = runCatching { manager.notify(notificationTag(id, origin, tag), NOTIFICATION_ID, build(id, channelId, args, identity)) }.isSuccess
                 if (!ok) shown.remove(id)
                 reply(ok)
             } else reply(false)
         }
-        if (iconUrl == null) {
-            post(null)
+        if (iconUrl == null && app == null) {
+            post(NotificationIdentity.site(origin, null))
             return
         }
         io.execute {
-            val icon = MediaSessions.fetchBitmap(iconUrl, MAX_ICON_PX)
-            main.post { post(icon) }
+            val icon = iconUrl?.let { MediaSessions.fetchBitmap(it, MAX_ICON_PX) }
+            val identity = if (app != null) NotificationIdentity.app(context, app, icon) else NotificationIdentity.site(origin, icon)
+            main.post { post(identity) }
         }
     }
 
@@ -133,7 +147,7 @@ class WebNotifications(private val host: Host, private val io: Executor) {
         manager.cancel(notificationTag(id, entry.origin, entry.tag), NOTIFICATION_ID)
     }
 
-    /** `notification.forgetOrigin`: the site's permission was withdrawn – its notifications and its channel go (a sent tab's stays: it was never the site's). */
+    /** `notification.forgetOrigin`: the site's permission was withdrawn – its notifications and its channel go, its installed apps' channels with them (a sent tab's stays: it was never the site's). */
     fun forgetOrigin(origin: String) {
         for ((id, entry) in shown.entries.toList()) {
             if (entry.origin != origin || entry.sharing) continue
@@ -141,6 +155,9 @@ class WebNotifications(private val host: Host, private val io: Executor) {
             manager.cancel(notificationTag(id, origin, entry.tag), NOTIFICATION_ID)
         }
         channels.delete(origin)
+        // The apps' channels go, and the answer each app's own window kept with them: the site's question is open again everywhere.
+        for (app in webApps.apps()) if (app.origin == origin) WebAppNotifications.forget(context, app.shortcutId)
+        webApps.deleteForOrigin(origin)
     }
 
     // --- what comes back from the shade -----------------------------------------------------------
@@ -167,31 +184,8 @@ class WebNotifications(private val host: Host, private val io: Executor) {
 
     // --- the card ------------------------------------------------------------------------------------
 
-    private fun build(id: String, channelId: String, args: JSONObject, icon: android.graphics.Bitmap?): android.app.Notification {
-        val origin = args.str("origin")
-        val title = args.str("title")
-        val body = args.str("body")
-        val url = args.str("url")
-        val tag = args.str("tag")
-        val builder = NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(R.drawable.ic_stat_zenium)
-            .setContentTitle(title)
-            .setContentText(body.lineSequence().firstOrNull() ?: "")
-            // Chrome shows the site under the text, as its own line.
-            .setSubText(SitesChannels.displayName(origin))
-            .setAutoCancel(true)
-            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-            .setContentIntent(activityIntent(id, url))
-            .setDeleteIntent(dismissIntent(id))
-            // A replace under a tag is quiet unless the page asked to be heard again (`renotify`).
-            .setOnlyAlertOnce(tag.isNotEmpty() && !args.bool("renotify"))
-        if (args.bool("silent")) builder.setSilent(true)
-        if (icon != null) builder.setLargeIcon(icon)
-        val timestamp = args.num("timestamp").toLong()
-        if (timestamp > 0) builder.setWhen(timestamp).setShowWhen(true)
-        if (body.contains('\n') || body.length > 40) builder.setStyle(NotificationCompat.BigTextStyle().bigText(body))
-        return builder.build()
-    }
+    private fun build(id: String, channelId: String, args: JSONObject, identity: NotificationIdentity): android.app.Notification =
+        webNotificationCard(context, channelId, args, identity, activityIntent(id, args.str("url")), dismissIntent(id))
 
     private fun activityIntent(id: String, url: String): PendingIntent {
         val intent = Intent(context, MainActivity::class.java)
@@ -241,46 +235,86 @@ class WebNotifications(private val host: Host, private val io: Executor) {
 }
 
 /**
+ * Whose card a page's notification is: the site's – its host as the sub text, as Chrome shows
+ * the site under the text – or an installed app's (PWA-02): the app's name as the sub text, its
+ * tile as the large icon when the page names no icon, its theme colour as the accent. The
+ * shade's header itself always says "Zenium": a substitute app name
+ * (`Notification.EXTRA_SUBSTITUTE_APP_NAME`) takes a signature permission, so "Zenium • <app>"
+ * is the platform's ceiling for a pinned shortcut's app.
+ */
+class NotificationIdentity(val subText: String, val largeIcon: Bitmap?, val color: Int?) {
+    companion object {
+        fun site(origin: String, icon: Bitmap?): NotificationIdentity = NotificationIdentity(SitesChannels.displayName(origin), icon, null)
+
+        /** The app's, read off the main thread: the tile and the record the install kept ([WebAppStore]). */
+        fun app(context: Context, app: InstalledWebApp, icon: Bitmap?): NotificationIdentity {
+            val tile = icon ?: runCatching { BitmapFactory.decodeFile(WebAppStore.tileFile(context, app.shortcutId).path) }.getOrNull()
+            val color = WebAppStore.load(context, app.shortcutId)?.themeColor?.let(CustomTabScheme::opaque)
+            return NotificationIdentity(app.name, tile, color)
+        }
+    }
+}
+
+/**
+ * The card a page's notification is on the shade, from the core's `WebNotificationRequest`
+ * (`args`): the title, the body's first line (the whole body expanded past one line or forty
+ * characters), the sub text and large icon of `identity`, the page's time, quiet when the page
+ * said `silent` and on a replace under a tag unless it asked to be heard again (`renotify`).
+ * The browser's tabs and the app's own window post the same card with their own intents.
+ */
+internal fun webNotificationCard(
+    context: Context,
+    channelId: String,
+    args: JSONObject,
+    identity: NotificationIdentity,
+    content: PendingIntent,
+    delete: PendingIntent
+): android.app.Notification {
+    val body = args.str("body")
+    val tag = args.str("tag")
+    val builder = NotificationCompat.Builder(context, channelId)
+        .setSmallIcon(R.drawable.ic_stat_zenium)
+        .setContentTitle(args.str("title"))
+        .setContentText(body.lineSequence().firstOrNull() ?: "")
+        // Chrome shows the site under the text, as its own line; an installed app's page shows the app.
+        .setSubText(identity.subText)
+        .setAutoCancel(true)
+        .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+        .setContentIntent(content)
+        .setDeleteIntent(delete)
+        .setOnlyAlertOnce(tag.isNotEmpty() && !args.bool("renotify"))
+    if (args.bool("silent")) builder.setSilent(true)
+    identity.largeIcon?.let(builder::setLargeIcon)
+    identity.color?.let(builder::setColor)
+    val timestamp = args.num("timestamp").toLong()
+    if (timestamp > 0) builder.setWhen(timestamp).setShowWhen(true)
+    if (body.contains('\n') || body.length > 40) builder.setStyle(NotificationCompat.BigTextStyle().bigText(body))
+    return builder.build()
+}
+
+/**
  * The app's "Sharing" notification channel, Chrome Android's for tabs sent from the user's
- * other devices: one fixed channel of the app's own, beside the sites' group, so the user
- * silences sent tabs without touching any site. Made on first use; blocked here, the core is
- * told `false` and opens the tab right away instead.
+ * other devices: one fixed channel of the app's own ([Notifications.SHARING], under General
+ * beside the sites' group), so the user silences sent tabs without touching any site. Made on
+ * first use through the registry; blocked here, the core is told `false` and opens the tab right
+ * away instead.
  */
 class SharingChannel(private val context: Context) {
-    private val system: NotificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-    private var made = false
-
     /** The channel, made if the app has none yet; its id. */
-    fun ensure(): String {
-        if (made) return ID
-        runCatching {
-            if (system.getNotificationChannel(ID) == null) {
-                system.createNotificationChannel(
-                    NotificationChannel(ID, NAME, NotificationManager.IMPORTANCE_DEFAULT).apply {
-                        description = DESCRIPTION
-                    }
-                )
-            }
-        }
-        made = true
-        return ID
-    }
+    fun ensure(): String = Notifications.ensure(context, Notifications.SHARING)
 
     companion object {
         /** The request's `channel` value (`WebNotificationRequest.channel`). */
         const val KIND = "sharing"
-        const val ID = "zenium.sharing"
-        /** Chrome's channel name. */
-        const val NAME = "Sharing"
-        const val DESCRIPTION = "Tabs sent from your other devices"
     }
 }
 
 /**
  * The sites' notification channels, Chrome Android's way: one per origin, named after the site
- * and grouped under "Sites" in the app's notification settings. A channel's id carries the time
- * it was made ([SitesChannels.ensure]) because Android remembers a deleted channel by id – a site
- * blocked, forgotten and allowed again would come back blocked otherwise, as Chrome found.
+ * and grouped under "Sites" in the app's notification settings ([Notifications.site],
+ * [Notifications.SITES]). A channel's id carries the time it was made because Android remembers
+ * a deleted channel by id – a site blocked, forgotten and allowed again would come back blocked
+ * otherwise, as Chrome found.
  */
 class SitesChannels(private val context: Context) {
     private val system: NotificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -295,16 +329,7 @@ class SitesChannels(private val context: Context) {
             known[origin] = existing
             return existing
         }
-        val id = "$PREFIX$origin;${System.currentTimeMillis()}"
-        runCatching {
-            system.createNotificationChannelGroup(NotificationChannelGroup(GROUP_ID, GROUP_NAME))
-            system.createNotificationChannel(
-                NotificationChannel(id, displayName(origin), NotificationManager.IMPORTANCE_DEFAULT).apply {
-                    description = "Notifications from ${displayName(origin)}"
-                    group = GROUP_ID
-                }
-            )
-        }
+        val id = Notifications.ensure(context, Notifications.site(origin, System.currentTimeMillis()))
         known[origin] = id
         return id
     }
@@ -321,16 +346,11 @@ class SitesChannels(private val context: Context) {
 
     /** The channel id under which `origin`'s notifications live, from the system's list, or null. */
     fun find(origin: String): String? {
-        val prefix = "$PREFIX$origin;"
+        val prefix = Notifications.sitePrefix(origin)
         return runCatching { system.notificationChannels.firstOrNull { it.id.startsWith(prefix) }?.id }.getOrNull()
     }
 
     companion object {
-        const val PREFIX = "zenium.site:"
-        const val GROUP_ID = "zenium.sites"
-        /** Chrome's group for the sites' channels. */
-        const val GROUP_NAME = "Sites"
-
         /** How a site reads on its channel and under its notifications: the host (with a port when it has one), no scheme. */
         fun displayName(origin: String): String {
             val uri = runCatching { URI(origin) }.getOrNull()

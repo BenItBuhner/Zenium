@@ -2,8 +2,11 @@ name: Android errors demo
 
 # Records the failed-load fixes of the phone chrome on a hardware-accelerated Android emulator: a
 # DNS failure, localhost:1 (a port Chromium never connects to) and a refused connection typed into
-# the URL bar landing on the zen://error page, the radios switched off and a load (the offline
-# hint), Reload once they are back on, Take Screenshot
+# the URL bar landing on the zen://error page with Chrome's "Try:" list for the code, a typed word
+# that did not resolve offering "Search <engine> for <word>" through the profile's default engine
+# and a touch on it loading the results (ERR-05), a silent TLS port running into Chromium's
+# handshake timeout and a server resetting the connection (their own copy), the radios switched
+# off and a load (the offline list), Reload once they are back on, Take Screenshot
 # with the file listed under its name in Downloads, a new tab's zero-suggest without the failed
 # loads, and Fullscreen left with back (and not carried through Home and a relaunch). Dispatch-
 # only, like the gesture demo: it takes about ten minutes and says nothing about a change being

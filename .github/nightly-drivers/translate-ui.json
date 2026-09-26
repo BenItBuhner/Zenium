@@ -1,0 +1,13 @@
+{
+  "id": "translate-ui",
+  "order": 56,
+  "class": "TranslateUiDemo",
+  "shard": "phone-c",
+  "mirrors": "android-translate-demo.yml:sequence=ui",
+  "dir": "translate-demo",
+  "script": ".github/scripts/android-translate-demo.sh",
+  "env": {
+    "TRANSLATE_SEQUENCE": "ui"
+  },
+  "estimate": 3
+}

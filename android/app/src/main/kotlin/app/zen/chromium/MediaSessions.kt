@@ -2,8 +2,6 @@ package app.zen.chromium
 
 import android.app.KeyguardManager
 import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.PictureInPictureParams
 import android.app.RemoteAction
@@ -189,6 +187,7 @@ class MediaSessions(private val host: Host, private val io: Executor) {
         }
         if (!info.private) loadArtwork(info)
         publish(info)
+        syncBackgroundVideo(before, info)
         updatePictureInPictureParams()
         // A chrome player's session playing holds audio focus for its speech stream (ReadAloud.kt, the source note's 2.4).
         host.readAloud.onSession(info)
@@ -196,7 +195,7 @@ class MediaSessions(private val host: Host, private val io: Executor) {
 
     /** The controls go: the session ended (its tab closed, its media gone). */
     private fun clear() {
-        val had = current != null
+        val had = current
         current = null
         artwork = null
         artworkUrl = null
@@ -204,8 +203,21 @@ class MediaSessions(private val host: Host, private val io: Executor) {
         manager.cancel(MediaPlaybackService.NOTIFICATION_ID)
         if (session.isActive) session.isActive = false
         session.setPlaybackState(PlaybackStateCompat.Builder().setState(PlaybackStateCompat.STATE_NONE, 0L, 0f).build())
-        if (had) updatePictureInPictureParams()
-        if (had) host.readAloud.onSession(null)
+        syncBackgroundVideo(had, null)
+        if (had != null) updatePictureInPictureParams()
+        if (had != null) host.readAloud.onSession(null)
+    }
+
+    /**
+     * Background video (MED-08 / EDGE-32, [BackgroundVideoRule]): the session tab's view hears
+     * whether its video keeps playing while the app is in the background – the session its own,
+     * playing, a `<video>`, its site's `background-video` setting allow as the core resolved it –
+     * and holds the engine's hide by that word ([TabWebView.keepsVideoInBackground]); the tab a
+     * session left, or a session that ended, hears no, and a hide held for it goes through.
+     */
+    private fun syncBackgroundVideo(before: MediaSessionInfo?, info: MediaSessionInfo?) {
+        if (before != null && before.tabId != info?.tabId) host.tabs.get(before.tabId)?.keepsVideoInBackground = false
+        if (info != null) host.tabs.get(info.tabId)?.keepsVideoInBackground = BackgroundVideoRule.keepsPlaying(info)
     }
 
     /**
@@ -292,9 +304,9 @@ class MediaSessions(private val host: Host, private val io: Executor) {
     }
 
     private fun notificationOf(info: MediaSessionInfo): Notification {
-        ensureChannel(context)
+        val channel = Notifications.ensure(context, Notifications.MEDIA)
         val controls = MediaControls.controls(info)
-        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_stat_zenium)
             .setContentTitle(MediaControls.title(info))
             .setContentText(MediaControls.text(info))
@@ -562,12 +574,18 @@ class MediaSessions(private val host: Host, private val io: Executor) {
     /**
      * Chrome's rule for going into the small window by itself when the user leaves: a video
      * playing fullscreen – by the page's own word ([MediaSessionInfo.fullscreen]) or the
-     * WebView's (the tab's element is in the host's fullscreen layer). Never for a chrome player.
+     * WebView's (the tab's element is in the host's fullscreen layer). Never for a chrome player,
+     * and never for a site whose `auto-picture-in-picture` setting is deny (the core resolves the
+     * session tab's answer onto [MediaSessionInfo.autoPictureInPicture] and pushes the session
+     * again when it changes, so the params follow within the session's next [publish]); the
+     * user's own `media.pip` request ([enterPictureInPicture]) is not the setting's to refuse.
+     * Read by both ways in: Android 12+'s `setAutoEnterEnabled` through [paramsOf] and Android
+     * 8-11's [onUserLeaveHint].
      */
     private fun autoEnter(info: MediaSessionInfo?): Boolean {
         // Never from a private tab (Chrome withholds PiP from Incognito): the window that left for
         // the small video would never stop, and the private tab lock would never arm.
-        if (info == null || info.chrome || info.private) return false
+        if (info == null || info.chrome || info.private || !info.autoPictureInPicture) return false
         return MediaControls.autoEnterPictureInPicture(info) ||
             (info.video && info.playing && host.fullscreenTab?.tabId == info.tabId)
     }
@@ -641,9 +659,6 @@ class MediaSessions(private val host: Host, private val io: Executor) {
 
     companion object {
         private const val TAG = "ZenMedia"
-        /** Chrome's channel for its media notification: "Media playback", silent. */
-        const val CHANNEL_ID = "zenium.media"
-        const val CHANNEL_NAME = "Media playback"
         /** The buttons' broadcasts (the notification's, the picture-in-picture window's). */
         const val ACTION_CONTROL = "app.zen.chromium.MEDIA_CONTROL"
         /** The notification's tap: `MainActivity.handleIntent` hands it to [onOpenIntent]. */
@@ -662,19 +677,6 @@ class MediaSessions(private val host: Host, private val io: Executor) {
         private const val FETCH_TIMEOUT_MS = 10_000
 
         fun customActionId(control: MediaControl): String = "zenium.media.${control.action}"
-
-        fun ensureChannel(context: Context) {
-            val system = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            if (system.getNotificationChannel(CHANNEL_ID) != null) return
-            system.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_LOW).apply {
-                    description = "Controls for audio and video playing in Zenium"
-                    setShowBadge(false)
-                    enableVibration(false)
-                    setSound(null, null)
-                }
-            )
-        }
 
         /** The picture at `url` (`https:`, `http:` or `data:`), decoded to at most [MAX_ART_PX] a side, or null. */
         fun fetchBitmap(url: String, maxPx: Int = MAX_ART_PX): Bitmap? {

@@ -20,7 +20,7 @@ import { dayLabel, daysBetween } from '@renderer/lib/historyGroups'
 import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { presentedHost, useExtensionList } from '@renderer/lib/extensions/pages'
 import { useFaviconSrc } from '@renderer/lib/favicons'
-import { contextMenuAnchor } from '@renderer/lib/menuKeys'
+import { contextMenuAnchor, controlMenuAnchor } from '@renderer/lib/menuKeys'
 import { PAGE_GLYPHS } from '@renderer/lib/pageGlyphs'
 import { hiddenDeviceCount, OTHER_DEVICES_COPY } from '@renderer/lib/otherDevices'
 import { openSettings } from '@renderer/lib/pages'
@@ -824,16 +824,13 @@ function VisitRow({
           title="More actions"
           aria-label={`Actions for ${title}`}
           aria-haspopup="menu"
-          onClick={(e) => {
-            const box = e.currentTarget.getBoundingClientRect()
+          onClick={(e) =>
             run('history.contextMenu', {
               visitId: visit.id,
               url: visit.url,
-              x: Math.round(box.right),
-              y: Math.round(box.bottom),
-              keyboard: e.detail === 0
+              ...controlMenuAnchor(e)
             })
-          }}
+          }
         >
           <EllipsisVertical aria-hidden />
         </button>
@@ -1282,16 +1279,9 @@ function RemoteTabRow({
         title="More actions"
         aria-label={`Actions for ${title}`}
         aria-haspopup="menu"
-        onClick={(e) => {
-          const box = e.currentTarget.getBoundingClientRect()
-          run('history.contextMenu', {
-            visitId: null,
-            url: remote.url,
-            x: Math.round(box.right),
-            y: Math.round(box.bottom),
-            keyboard: e.detail === 0
-          })
-        }}
+        onClick={(e) =>
+          run('history.contextMenu', { visitId: null, url: remote.url, ...controlMenuAnchor(e) })
+        }
       >
         <EllipsisVertical aria-hidden />
       </button>

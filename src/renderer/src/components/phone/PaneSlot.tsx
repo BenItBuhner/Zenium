@@ -88,7 +88,10 @@ let stillSeq = 0
  * `data-strip-item`, lib/drag.ts its lists by `data-tab-scroller` / `data-tab-list` and its
  * targets by `data-drop`, lib/dnd.ts the New Tab row, the Essentials and a space's target – and
  * its hooks to no test; its own entrance fade must not play again over the fade out
- * (`zen-overview-pane`). The pane's content keeps its `data-pane`.
+ * (`zen-overview-pane`), nor the fade the Tabs pane's empty note ran as it took the grid's
+ * place (`data-in-place`, `TabOverview`'s `TabsEmpty`): a copy inserted into the document starts
+ * its CSS animations afresh, and a still that replays a fade in under its own fade out blinks
+ * where §11.4 asks one move (§11.1). The pane's content keeps its `data-pane`.
  */
 const HOOKS = [
   'data-cell',
@@ -103,7 +106,8 @@ const HOOKS = [
   'data-drop',
   'data-essentials',
   'data-space-target',
-  'data-strip-empty'
+  'data-strip-empty',
+  'data-in-place'
 ]
 
 /** The pane's scroller, whose place the still keeps: the overview's grid, or the sidebar's list in view. */
@@ -226,9 +230,11 @@ function Still({
     }
   }, [still, onDone])
   // A still is a picture of the pane under the polarity it left in: its rows read the window's
-  // live tokens, and §11.6's blend cuts the ink at its midpoint – a still outliving the cut (a
-  // slow frame, reduced motion's cut at once) would draw the rows that left in the other pose's
-  // ink. main.css draws no still whose `data-still-theme` is not the root's.
+  // live tokens, and §11.6's blend flips the scheme at its midpoint – under reduced motion too,
+  // where the blend stays and only travel is cut (§11.6 as amended at #497's gate) – so a still
+  // outliving the flip (its 120 ms fade ends where the 240 ms blend turns; a slow frame puts it
+  // past) would draw the rows that left in the other pose's ink. main.css draws no still whose
+  // `data-still-theme` is not the root's.
   return (
     <div
       ref={ref}

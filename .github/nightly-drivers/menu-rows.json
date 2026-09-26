@@ -1,0 +1,9 @@
+{
+  "id": "menu-rows",
+  "class": "MenuRowsDemo",
+  "shard": "phone-f",
+  "mirrors": "android-menu-rows-demo.yml",
+  "dir": "menu-rows-demo",
+  "estimate": 3,
+  "note": "The app menu's and the toolbar's rows of wave 6 round C (TB-07, TB-16, TB-15, GN-11; W6-12): the tab-group drivers' seeded profile with the bar's Home and Bookmark items and a url homepage; the app menu's rows read by name against Chrome 152's main_menu.xml and a real touch on Help opening the help page in a new tab in front, a child of the page; the bar star's two states under a finger; a hold on the bar's Home item landing Settings on the Home group and a touch loading the homepage; a pinned tile's hold menu with Open in Private Tab second exactly where capabilities.privateTabs is on. On this API 34 shard the WebView keeps no profiles, so the private rows are absent by design and the driver says so; the rows' positive case is the dispatch workflow's, on the API 35 image. Light scheme only (the design stills are the preview host's). About three minutes of driver after the boot."
+}

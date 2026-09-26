@@ -5,14 +5,15 @@ import {
   PRIVACY_PERMISSION_ERROR,
   type ScopedValues
 } from '../../../core/extensions/api/privacy'
+import { EXTENSION_SETTING_KEYS } from '../../../shared/extensionSettings'
 import type { ExtensionControl } from '../../../shared/types'
 import type { ListenerOptions, WebRequestDetails } from '../blocking'
 import type { WebRequestEvent, WebRequestListener } from '../webRequest'
 import { ExtensionControls } from '../extensionApi/controls'
 import {
-  PRIVACY_CONTROL_KEYS,
   PRIVACY_REGISTRANT,
   PrivacyApi,
+  SERVICE_CONTROL_KEYS,
   type PrivacyPage
 } from '../extensionApi/privacy'
 import type { ApiContext, ApiHost } from '../extensionApi/types'
@@ -101,6 +102,7 @@ interface UserSettings {
   passwords: { offerToSave: boolean }
   searchSuggestions: boolean
   autofill: { addresses: boolean; cards: boolean }
+  preloadPages: 'standard' | 'extended' | 'none'
 }
 
 interface World {
@@ -136,7 +138,8 @@ function world(options: { attach?: boolean } = {}): World {
       privacy: { safeBrowsingEnabled: true, dnt: false, thirdPartyCookies: 'block-private' },
       passwords: { offerToSave: true },
       searchSuggestions: true,
-      autofill: { addresses: true, cards: true }
+      autofill: { addresses: true, cards: true },
+      preloadPages: 'standard'
     },
     commit: () => {
       for (const listener of listeners) listener()
@@ -155,7 +158,9 @@ function world(options: { attach?: boolean } = {}): World {
       origins: []
     }),
     loaded: (extensionId: string) =>
-      state.loaded.has(extensionId) ? { id: extensionId } : undefined,
+      state.loaded.has(extensionId)
+        ? { id: extensionId, extension: { name: `Extension ${extensionId.slice(0, 1)}` } }
+        : undefined,
     allLoaded: () => [...state.loaded].map((id) => ({ id })),
     partitionsOf: (extensionId: string) =>
       state.privateAllowed.has(extensionId) ? ['default', 'private'] : ['default'],
@@ -301,8 +306,14 @@ describe('PrivacyApi handlers', () => {
     expect(get(w, OLD, 'websites', 'thirdPartyCookiesAllowed')).toMatchObject({ value: true })
     w.settings.privacy.thirdPartyCookies = 'block'
     expect(get(w, OLD, 'websites', 'thirdPartyCookiesAllowed')).toMatchObject({ value: false })
-    // A setting Zenium has nothing behind keeps the spec's default.
+    // Preload pages (PS-43) reads as Chrome's transform does: `false` is the "never" level alone.
     expect(get(w, OLD, 'network', 'networkPredictionEnabled')).toMatchObject({ value: true })
+    w.settings.preloadPages = 'none'
+    expect(get(w, OLD, 'network', 'networkPredictionEnabled')).toMatchObject({ value: false })
+    w.settings.preloadPages = 'extended'
+    expect(get(w, OLD, 'network', 'networkPredictionEnabled')).toMatchObject({ value: true })
+    // A setting Zenium has nothing behind keeps the spec's default.
+    expect(get(w, OLD, 'websites', 'topicsEnabled')).toMatchObject({ value: false })
   })
 
   it("reports the user's own change of a setting through onChange, but not under an extension's value", () => {
@@ -450,29 +461,34 @@ describe('PrivacyApi onChange', () => {
   })
 })
 
-describe('PrivacyApi and the Settings page', () => {
+describe('PrivacyApi and the Settings page (the one publisher the services and the rows read)', () => {
   it("publishes the settings it holds over Zenium's rows, whole, with the extension's value, and drops them as they are let go", () => {
     const w = world()
     expect(w.controls).toEqual([])
     set(w, OLD, 'websites', 'doNotTrackEnabled', { value: true })
     expect(w.controls.at(-1)).toEqual({
-      'privacy.dnt': { extensionId: OLD, name: 'Older Guard', value: true }
+      [EXTENSION_SETTING_KEYS.doNotTrack]: { extensionId: OLD, name: 'Older Guard', value: true }
     })
     // The newer extension's value over the same setting moves the key to it, value and all.
     set(w, NEW, 'websites', 'doNotTrackEnabled', { value: false })
     expect(w.controls.at(-1)).toEqual({
-      'privacy.dnt': { extensionId: NEW, name: 'Newer Guard', value: false }
+      [EXTENSION_SETTING_KEYS.doNotTrack]: { extensionId: NEW, name: 'Newer Guard', value: false }
     })
-    // The same extension moving its own value is a change the row sees.
+    // The same extension moving its own value is a change the row sees; the same value again is not.
     const before = w.controls.length
     set(w, NEW, 'websites', 'doNotTrackEnabled', { value: true })
     expect(w.controls).toHaveLength(before + 1)
-    expect(w.controls.at(-1)!['privacy.dnt']).toMatchObject({ extensionId: NEW, value: true })
+    expect(w.controls.at(-1)![EXTENSION_SETTING_KEYS.doNotTrack]).toMatchObject({
+      extensionId: NEW,
+      value: true
+    })
+    set(w, NEW, 'websites', 'doNotTrackEnabled', { value: true })
+    expect(w.controls).toHaveLength(before + 1)
     // Disabled: its keys go, the older extension's value surfaces on the same publish.
     w.loaded.delete(NEW)
     w.api.unload(NEW)
     expect(w.controls.at(-1)).toEqual({
-      'privacy.dnt': { extensionId: OLD, name: 'Older Guard', value: true }
+      [EXTENSION_SETTING_KEYS.doNotTrack]: { extensionId: OLD, name: 'Older Guard', value: true }
     })
     // Uninstalled: nothing is left.
     w.loaded.delete(OLD)
@@ -480,39 +496,81 @@ describe('PrivacyApi and the Settings page', () => {
     expect(w.controls.at(-1)).toEqual({})
   })
 
-  it("stored-only: no mark until the service applies it – Safe Browsing, third-party cookies, search suggestions, offering to save passwords, the two autofill switches publish no key while their services keep the user's value; Do Not Track, in effect, is the table", () => {
+  it('publishes the eight settings the services read and the rows show – one table, one key each (`EXTENSION_SETTING_KEYS`) – whole, with the holder and its value, and drops each as it is let go', () => {
     const w = world()
-    set(w, OLD, 'services', 'safeBrowsingEnabled', { value: false })
-    set(w, OLD, 'services', 'searchSuggestEnabled', { value: false })
     set(w, OLD, 'services', 'passwordSavingEnabled', { value: false })
+    expect(w.controls.at(-1)).toEqual({
+      [EXTENSION_SETTING_KEYS.passwordSaving]: {
+        extensionId: OLD,
+        name: 'Older Guard',
+        value: false
+      }
+    })
     set(w, OLD, 'services', 'autofillAddressEnabled', { value: false })
     set(w, OLD, 'services', 'autofillCreditCardEnabled', { value: false })
+    set(w, OLD, 'services', 'safeBrowsingEnabled', { value: false })
     set(w, OLD, 'websites', 'thirdPartyCookiesAllowed', { value: false })
-    // Remembered and reported to the extension as its own value...
-    expect(w.api.effectiveValue('services', 'safeBrowsingEnabled', false)).toBe(false)
-    expect(w.api.effectiveValue('services', 'passwordSavingEnabled', false)).toBe(false)
-    expect(w.api.effectiveValue('websites', 'thirdPartyCookiesAllowed', false)).toBe(false)
-    // ...and published to no row: a row says "controlled" only for a value in effect (F3).
-    expect(w.controls).toEqual([])
+    set(w, OLD, 'services', 'searchSuggestEnabled', { value: false })
+    set(w, OLD, 'network', 'networkPredictionEnabled', { value: false })
     set(w, OLD, 'websites', 'doNotTrackEnabled', { value: true })
-    expect(w.controls.at(-1)).toEqual({
-      'privacy.dnt': { extensionId: OLD, name: 'Older Guard', value: true }
+    // Every key of the shared table, Do Not Track's among them – the services act on each
+    // (services pass 10) and each row says "Controlled by" for it (#508's fold).
+    expect(Object.keys(w.controls.at(-1)!).sort()).toEqual(
+      Object.values(EXTENSION_SETTING_KEYS).sort()
+    )
+    expect(SERVICE_CONTROL_KEYS.map(([, key]) => key).sort()).toEqual(
+      Object.values(EXTENSION_SETTING_KEYS).sort()
+    )
+    expect(SERVICE_CONTROL_KEYS).toHaveLength(8)
+    expect(w.controls.at(-1)![EXTENSION_SETTING_KEYS.doNotTrack]).toEqual({
+      extensionId: OLD,
+      name: 'Older Guard',
+      value: true
     })
-    expect(PRIVACY_CONTROL_KEYS).toEqual({ 'websites.doNotTrackEnabled': 'privacy.dnt' })
+    expect(w.controls.at(-1)![EXTENSION_SETTING_KEYS.preloadPages]).toMatchObject({
+      value: false
+    })
+    // A newer install takes a key with its own value; clearing hands it back to the older holder.
+    set(w, NEW, 'services', 'safeBrowsingEnabled', { value: true })
+    expect(w.controls.at(-1)![EXTENSION_SETTING_KEYS.safeBrowsing]).toEqual({
+      extensionId: NEW,
+      name: 'Newer Guard',
+      value: true
+    })
+    clear(w, NEW, 'services', 'safeBrowsingEnabled')
+    expect(w.controls.at(-1)![EXTENSION_SETTING_KEYS.safeBrowsing]).toMatchObject({
+      extensionId: OLD,
+      value: false
+    })
+    // Cleared by its holder: the key goes, the others stay; disabled: everything goes.
+    clear(w, OLD, 'services', 'passwordSavingEnabled')
+    expect(w.controls.at(-1)![EXTENSION_SETTING_KEYS.passwordSaving]).toBeUndefined()
+    expect(Object.keys(w.controls.at(-1)!)).toHaveLength(7)
+    w.api.unload(OLD)
+    expect(w.controls.at(-1)).toEqual({})
   })
 
-  it('publishes nothing for a setting no row shows, nor for a private-window-only value', () => {
+  it('publishes nothing for a setting no service reads and no row shows, nor for a private-window-only value', () => {
     const w = world()
-    set(w, OLD, 'network', 'networkPredictionEnabled', { value: false })
     set(w, OLD, 'websites', 'hyperlinkAuditingEnabled', { value: false })
     set(w, OLD, 'network', 'webRTCIPHandlingPolicy', { value: 'disable_non_proxied_udp' })
+    set(w, OLD, 'websites', 'topicsEnabled', { value: false })
     expect(w.controls).toEqual([])
-    // The Settings rows are the regular profile's: a value for private windows alone marks none.
+    // The Settings rows and the services are the regular profile's: a value for private windows
+    // alone marks none (Chrome's regular pref is the one the services read).
     w.privateAllowed.add(OLD)
     w.api.privateAccessChanged()
     set(w, OLD, 'websites', 'doNotTrackEnabled', { value: true, scope: 'incognito_persistent' })
+    set(w, OLD, 'services', 'passwordSavingEnabled', {
+      value: false,
+      scope: 'incognito_persistent'
+    })
     expect(w.api.effectiveValue('websites', 'doNotTrackEnabled', true)).toBe(true)
     expect(w.controls).toEqual([])
+    set(w, OLD, 'services', 'passwordSavingEnabled', { value: false, scope: 'regular' })
+    expect(w.controls.at(-1)).toMatchObject({
+      [EXTENSION_SETTING_KEYS.passwordSaving]: { extensionId: OLD, value: false }
+    })
   })
 
   it("keeps an extension's value over the user's own, and marks the row even at the user's value", () => {
@@ -520,12 +578,12 @@ describe('PrivacyApi and the Settings page', () => {
     // Chrome marks the row whenever an extension holds the pref, whatever the value.
     set(w, OLD, 'websites', 'doNotTrackEnabled', { value: false })
     expect(w.controls.at(-1)).toEqual({
-      'privacy.dnt': { extensionId: OLD, name: 'Older Guard', value: false }
+      [EXTENSION_SETTING_KEYS.doNotTrack]: { extensionId: OLD, name: 'Older Guard', value: false }
     })
     w.settings.privacy.dnt = true
     w.commit()
     expect(w.api.effectiveValue('websites', 'doNotTrackEnabled', false)).toBe(false)
-    expect(w.controls.at(-1)!['privacy.dnt']).toMatchObject({ value: false })
+    expect(w.controls.at(-1)![EXTENSION_SETTING_KEYS.doNotTrack]).toMatchObject({ value: false })
   })
 })
 

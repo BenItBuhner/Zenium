@@ -6,7 +6,12 @@ import type {
   NewTabShortcutsMode,
   TopSite
 } from './types'
-import { NEW_TAB_ICONS, PRIVATE_COOKIES, newTabIconSvg, type NewTabIcon } from './newTabPage'
+import {
+  NEW_TAB_ICONS,
+  newTabIconSvg,
+  privateCookiesDescription,
+  type NewTabIcon
+} from './newTabPage'
 import { MAX_NEW_TAB_SHORTCUTS } from './newTab'
 import { SPRING_SNAPPY, stepSpring, type SpringState } from './spring'
 import { getHost } from './url'
@@ -680,10 +685,11 @@ class NewTabPage {
 
   /**
    * A private window's page carries the one control Chrome's Incognito page has: the switch for
-   * `privacy.thirdPartyCookiesPrivate`, its position `blocked`, `locked` while Settings blocks
-   * third-party cookies in every window – then it is on and disabled (§9.30) and the description
-   * says where the lock is. A regular page has no row, and neither has a page whose state does
-   * not carry the field.
+   * `privacy.thirdPartyCookiesPrivate`, its position `blocked`, `locked` while Settings – or an
+   * extension holding `chrome.privacy`'s cookie pref off – blocks third-party cookies in every
+   * window: then it is on and disabled (§9.30) and the description says where the lock is,
+   * naming the extension where one holds it. A regular page has no row, and neither has a page
+   * whose state does not carry the field.
    */
   private applyPrivateCookies(): void {
     const cookies = this.privateCookies()
@@ -693,9 +699,7 @@ class NewTabPage {
     this.cookiesSwitch.disabled = cookies.locked
     if (cookies.locked) this.cookiesSwitch.setAttribute('aria-disabled', 'true')
     else this.cookiesSwitch.removeAttribute('aria-disabled')
-    this.cookiesDescription.textContent = cookies.locked
-      ? PRIVATE_COOKIES.lockedDescription
-      : PRIVATE_COOKIES.description
+    this.cookiesDescription.textContent = privateCookiesDescription(cookies)
   }
 
   private privateCookies(): NewTabPageState['privateThirdPartyCookies'] | undefined {

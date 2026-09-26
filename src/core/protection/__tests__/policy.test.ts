@@ -25,6 +25,7 @@ const flags = (overrides: Partial<PrivacyFlags> = {}): PrivacyFlags => ({
   secureDnsMode: 'automatic',
   secureDnsServers: [],
   safeBrowsingBypassed: [],
+  preloadPages: 'standard',
   siteData: DEFAULT_SITE_DATA_POLICY,
   ...overrides
 })

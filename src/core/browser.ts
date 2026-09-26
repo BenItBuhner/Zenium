@@ -15,6 +15,7 @@ import type {
   FolderColor,
   KeyBinding,
   MediaState,
+  ReadingListEntry,
   Rect,
   SearchEngine,
   Settings,
@@ -24,6 +25,7 @@ import type {
   Space,
   Tab,
   TabSection,
+  ToastAction,
   WindowChrome,
   WindowKind,
   WindowPromptDownloads
@@ -37,12 +39,15 @@ import { SessionService } from './session'
 import { InactiveTabsService, sanitizeArchiveDays } from './inactiveTabs'
 import { NewTabService } from './newtab'
 import { BookmarkService } from './bookmarks'
+import { ReadingListService } from './readingList'
 import { BookmarkUndoStack, type BookmarkUndone } from './bookmarkUndo'
 import { DownloadService, isQuarantined } from './downloads'
+import { AUTOMATIC_DOWNLOADS_PERMISSION, DownloadLimiter } from './downloadLimiter'
 import { resolveDownloadSettings } from '../shared/downloads'
 import { PermissionService } from './permissions'
 import { PermissionPromptService } from './permissionPrompts'
 import { PrivacyService } from './privacy'
+import { resetSettings } from './settingsReset'
 import { PopupBlocker } from './popups'
 import { ExternalLaunches } from './external'
 import { SecurityPromptService } from './security'
@@ -71,6 +76,7 @@ import { TranslateService } from './translate/service'
 import { PrintService } from './print'
 import { CaptureService } from './capture'
 import { PdfViewerService } from './pdf'
+import { ContentRulesService } from './contentRules'
 import { PageControls } from './pageControls'
 import { SpellcheckService } from './spellcheck'
 import { LanguagesService } from './languages'
@@ -79,6 +85,7 @@ import { FindMemory } from './find'
 import { FullscreenService } from './fullscreen'
 import { WebAppService } from './webapp'
 import { MediaSessionService } from './mediaSession'
+import { CaretBrowsing } from './caretBrowsing'
 import { ReadAloudService } from './readAloud'
 import { WebNotificationService } from './webNotifications'
 import { ScreenCaptureService } from './screenCapture'
@@ -136,9 +143,17 @@ import {
   isPickableSearchEngine,
   matchKeyword,
   sanitizeSearchEngines,
+  searchChoiceEngine,
   withDefaultSearchEngineActive
 } from '../shared/search'
 import { SearchEngineService } from './searchEngines'
+import {
+  isSearchChoiceEngine,
+  normalizeRegion,
+  searchChoiceListRegion,
+  searchChoiceRecord,
+  searchChoiceShownFor
+} from './searchChoice'
 import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
 import { copyConfirmation } from '../shared/clipboard'
 import { IMAGE_URL_PREFIX } from '../shared/zenPages'
@@ -153,6 +168,7 @@ import { sanitizeNewTabSettings } from '../shared/newTab'
 import { sanitizePhoneBar } from '../shared/phoneBar'
 import { sanitizeMenuOrder } from '../shared/menuOrder'
 import { sanitizeHomepage } from '../shared/homepage'
+import { effectiveStartup, sanitizeStartupSettings, type EffectiveStartup } from './startup'
 import { PRIVATE_THEME, captionColors, editedTheme, resolveTheme, rgbToHex } from '../shared/theme'
 import { newId } from '../shared/ids'
 import { sanitizeAppIcon } from '../shared/appIcon'
@@ -162,7 +178,7 @@ import { displayModeFor, type DisplayMode } from '../shared/displayMode'
 import { sanitizeBlockingSettings } from '../shared/blocking'
 import { isShortcutPreset } from '../shared/shortcuts'
 import { sanitizeDevtoolsDock } from '../shared/devtoolsDock'
-import { sanitizePrivacySettings } from '../shared/privacy'
+import { sanitizePreloadPages, sanitizePrivacySettings } from '../shared/privacy'
 import { sanitizeSpellcheck } from '../shared/spellcheck'
 import { sanitizeReaderPreferences } from '../shared/reader'
 import { sanitizeFontSettings } from '../shared/fonts'
@@ -244,6 +260,8 @@ export class Browser {
   readonly bookmarks: BookmarkService
   /** The user's bookmark edits that can be taken back (bookmarks-31). */
   readonly bookmarkUndo: BookmarkUndoStack
+  /** Pages saved for later (W6-1, Chrome's reading list; `core/readingList.ts`). */
+  readonly readingList: ReadingListService
   readonly downloads: DownloadService
   private readonly downloadListeners = new Set<DownloadChangeListener>()
   readonly permissions: PermissionService
@@ -317,6 +335,8 @@ export class Browser {
   readonly blocking: BlockingService
   /** Safe Browsing, HTTPS-only mode, secure DNS, third-party cookies and the GPC / DNT signals. */
   readonly protection: ProtectionService
+  /** The per-site content settings the hosts enforce at the load path (images, JavaScript, …). */
+  readonly contentRules: ContentRulesService
   /** Offline page translation: detection, offers, the engine and its models. */
   readonly translate: TranslateService
   /** The print preview (`zen://print`) on hosts whose engine has none of its own. */
@@ -342,6 +362,8 @@ export class Browser {
   readonly webApps: WebAppService
   /** The pages' media as the OS controls and the in-app player see it (the Media Session). */
   readonly mediaSession: MediaSessionService
+  /** Caret browsing (F7, CT-34): the profile's one state, told to every page's view. */
+  readonly caretBrowsing: CaretBrowsing
   /** Read aloud: the one session's text, playback and highlight state over the host's speech engine. */
   readonly readAloud: ReadAloudService
   /** Web Notifications of pages on hosts whose engine lacks the API (the page script's polyfill). */
@@ -384,6 +406,11 @@ export class Browser {
   private startupWindowsPending = false
   /** `start({ restoreLastSession: true })`: the last session comes back over the setting. */
   private restoreLastSessionForced = false
+  /**
+   * The startup this launch follows (`startupPlan`), settled once in `start()` so the windows
+   * that open later (`startupWindowsPending`) do what the boot's forgetting of the session did.
+   */
+  private launchStartup: EffectiveStartup | null = null
 
   constructor(readonly platform: Platform) {
     this.state = new BrowserState(
@@ -395,6 +422,9 @@ export class Browser {
     this.state.liveWindows = () => this.allWindows()
     // A profile without a preferred languages list starts from the OS's languages (CT-41).
     this.state.systemLocales = platform.info.locales ?? []
+    // The OS's region, for the EEA's search-engine choice screen (W6-2); a fact the state
+    // carries, read by the chrome at its first render – no startup step of its own.
+    this.state.searchChoiceRegion = normalizeRegion(platform.info.region)
     this.state.load()
     const performance = platform.performance
     this.background = new BackgroundWork({
@@ -427,6 +457,7 @@ export class Browser {
     })
     this.bookmarks = new BookmarkService(this.state)
     this.bookmarkUndo = new BookmarkUndoStack(this.bookmarks)
+    this.readingList = new ReadingListService(this.state)
     this.downloads = new DownloadService(
       platform.io,
       platform.downloads,
@@ -440,7 +471,24 @@ export class Browser {
         settings: () => resolveDownloadSettings(this.state.settings),
         referrerFamiliar: (referrer) => this.history.visitedBeforeToday(referrer),
         onDanger: (item) => this.emitDownload('download.danger', { id: item.id }, item.private),
-        onBegin: (item, init) => this.pdf.onDownloadBegin(item, init)
+        onBegin: (item, init) => this.pdf.onDownloadBegin(item, init),
+        // The `automatic-downloads` row (PS-71) over the tab's page, the pop-up blocker's
+        // activation clock and the permission store (read as transfers start: the services it
+        // names are built below).
+        limiter: new DownloadLimiter({
+          page: (tabId) => {
+            const tab = this.tabs.tab(tabId)
+            if (!tab) return null
+            return tab.containerId === PRIVATE_CONTAINER_ID
+              ? { url: tab.url, privateContainerId: tab.containerId }
+              : { url: tab.url }
+          },
+          activatedAt: (tabId) => this.popups.activation(tabId).lastActivatedAt(),
+          setting: (url, details) =>
+            this.permissions.resolve(AUTOMATIC_DOWNLOADS_PERMISSION, url, details),
+          ask: (url, details) =>
+            this.permissions.decide(AUTOMATIC_DOWNLOADS_PERMISSION, url, details)
+        })
       }
     )
     this.state.downloadsFor = (win) => ({
@@ -467,6 +515,12 @@ export class Browser {
     // A site's mute is its `sound` setting: tabs follow every change of it, from wherever it came.
     this.permissions.subscribe((change) => {
       if (change.permission === 'sound') this.tabs.followSoundSetting(change.origin)
+      // The session carries the site's `background-video` answer to the Android host: a change
+      // reaches it at once, before the next background transition.
+      if (change.permission === 'background-video') this.mediaSession.followBackgroundVideoSetting()
+      // Likewise the site's `auto-picture-in-picture` answer, which Android's auto-enter obeys.
+      if (change.permission === 'auto-picture-in-picture')
+        this.mediaSession.followAutoPictureInPictureSetting()
     })
     this.tabs.migrateMutedHosts()
     this.tabDrag = new TabDragController(this)
@@ -497,6 +551,13 @@ export class Browser {
     this.mods = new ModService(this)
     this.sync = platform.sync ? new SyncEngine(this, platform.sync) : new NoSync(this)
     this.agents = new AgentService(this)
+    // A session's END that emptied its space hands the user's window back (W7-F3): the agent's
+    // `zen_session end` and the record's close (DELETE, Disconnect, the parked limit, shutdown).
+    // A park is not an end – the idle sweep's timer, no action of anyone's; the session may
+    // resume and its space refill – and a window the user stands on never flips under them.
+    this.agents.onSessionReleased = (_session, reason) => {
+      if (reason !== 'park') this.leaveEmptyAgentSpaces()
+    }
     this.updates = new UpdateService(
       this,
       platform.createUpdateHost?.(this) ?? new NoUpdateHost(platform)
@@ -511,6 +572,7 @@ export class Browser {
     this.imports = new ImportService(this)
     this.blocking = new BlockingService(this)
     this.protection = new ProtectionService(this)
+    this.contentRules = new ContentRulesService(this)
     this.translate = new TranslateService(this)
     this.spellcheck = new SpellcheckService(this)
     this.languages = new LanguagesService(this)
@@ -521,6 +583,7 @@ export class Browser {
     this.privacy = new PrivacyService(this)
     this.webApps = new WebAppService(this, platform.io)
     this.mediaSession = new MediaSessionService(this)
+    this.caretBrowsing = new CaretBrowsing(this)
     this.readAloud = new ReadAloudService(this)
     this.webNotifications = new WebNotificationService(this)
     this.searchEngines = new SearchEngineService(this)
@@ -910,6 +973,7 @@ export class Browser {
       displayId: opts.persisted?.displayId ?? opts.displayId ?? null,
       maximized: opts.persisted?.maximized ?? false,
       activeSpaceId,
+      lastUserSpaceId: opts.persisted?.lastUserSpaceId ?? from?.lastUserSpaceId ?? null,
       selection: opts.persisted?.selection ?? {},
       // Toolbar-only popups and app windows have no sidebar or toolbar to hide.
       compact:
@@ -1044,19 +1108,67 @@ export class Browser {
    * the splash would hold to the host's watchdog. Its window comes up with no tab, the chrome's
    * own empty surface in the content area and the first run ending in the omnibox
    * (`onboarding.complete` → `openNewTab`), exactly as before this rule.
+   *
+   * An empty agents' space is never seeded (W7-F3): a window standing on one – left there by a
+   * foreground agent session whose tabs closed – goes back to the user's space first
+   * (`leaveEmptyAgentSpace`), and the fresh tab, when that space has none either, opens there.
    */
   ensureFirstTab(win: ZenWindow): void {
     if (!win.alive || win.chrome !== 'full') return
     if (!this.state.capabilities.newTabPage) return
-    if (this.tabs.activeTabFor(win)) return
-    const space = win.activeSpace()
+    if (this.tabs.activeTabFor(win) || this.hasOwnTab(win)) return
+    if (this.leaveEmptyAgentSpace(win) && (this.tabs.activeTabFor(win) || this.hasOwnTab(win)))
+      return
+    this.openFreshTab(win)
+  }
+
+  /** The window's active space has a tab of its own the window can show. */
+  private hasOwnTab(win: ZenWindow): boolean {
     const m = this.state.model
-    const own = space.tabIds.some((id) => {
+    return win.activeSpace().tabIds.some((id) => {
       const tab = m.tabs[id]
       return tab !== undefined && tabVisibleIn(tab, win.id)
     })
-    if (own) return
-    this.openFreshTab(win)
+  }
+
+  /**
+   * The user's space for a window standing on an agents' one: the last user space it was on
+   * (`ZenWindow.lastUserSpaceId`, recorded when it moved onto the agent's space) while that
+   * exists and is still a user's, else the first space that is not an agent's; null when every
+   * space is an agent's. Local (blank / private window) spaces are never in question.
+   */
+  userSpaceFor(win: ZenWindow): Space | null {
+    const m = this.state.model
+    const user = (s: Space | undefined): s is Space =>
+      s !== undefined && !s.windowId && !this.agents.isAgentSpace(s.id)
+    const last = m.spaces.find((s) => s.id === win.lastUserSpaceId)
+    if (user(last)) return last
+    return m.spaces.find((s) => user(s)) ?? null
+  }
+
+  /**
+   * W7-F3: an empty agent-owned space (`AgentService.isAgentSpace`) never stays the window's
+   * active space – when an agent session's end empties the space it had the user's window on
+   * (`onSessionReleased` with an `end` or `close`; never a `park`, which is no end and may
+   * resume), and when a window is restored onto one (`ensureFirstTab`;
+   * `ProfileState.ensureValid` already moved a remembered window), the window returns to the
+   * last user space it was on (`userSpaceFor`). True when the window moved. Nothing moves while
+   * the browser quits – the agents' `stop` releases every session on the way out, and the
+   * session's windows are being remembered as they stand – or once the host is gone.
+   */
+  leaveEmptyAgentSpace(win: ZenWindow): boolean {
+    if (this.quitting || this.hostGone || !win.alive || win.localSpace) return false
+    const space = win.activeSpace()
+    if (space.tabIds.length > 0 || !this.agents.isAgentSpace(space.id)) return false
+    const home = this.userSpaceFor(win)
+    if (!home || home.id === space.id) return false
+    this.tabs.switchSpace(home.id, win)
+    return true
+  }
+
+  /** Every window standing on an empty agents' space goes back to the user's (`leaveEmptyAgentSpace`). */
+  private leaveEmptyAgentSpaces(): void {
+    for (const win of this.allWindows()) this.leaveEmptyAgentSpace(win)
   }
 
   onWindowClosing(win: ZenWindow): void {
@@ -1422,19 +1534,28 @@ export class Browser {
       // The left pane's link rule follows the splits (a swap, a pane joining or leaving).
       this.tabs.syncSplitLinkFlags()
     })
+    // An extension taking or releasing a privacy setting (`chrome.privacy`) changes the effective
+    // policy without a settings change: the service that pushes a document to the hosts re-reads.
+    // The services that read at the decision (credentials, autofill, suggestions) need no push.
+    this.state.onExtensionControlsChange(() => this.protection.onExtensionControlsChanged())
     // Rule sets load synchronously so the first page is protected.
     this.blocking.start()
     // After the blocking store is attached: HTTPS-only mode's set is persisted like the others.
     this.protection.start()
+    // The load-path content rules reach the host before the first page view is made, so a
+    // restored tab's first navigation already has its site's answers (PS-63, PS-64).
+    this.contentRules.start()
     // A clear on exit the last close left owed runs now, off the boot path.
     this.siteData.start()
     // The pages' languages and fonts reach the host before the first page view is made, so the
     // restored tabs' first requests and layouts carry the settings (CT-41, CT-25).
     this.languages.start()
     this.pageFonts.start()
-    // With "restore previous session" off, the last session's tabs are forgotten at once, whether
-    // or not a window opens now.
-    if (!this.restoreSessionAtStartup()) this.state.forgetSession()
+    // Unless the startup continues where the last session left off, its tabs are forgotten at
+    // once, whether or not a window opens now (the New Tab page, or the startup pages, come up
+    // in the one window kept – Settings › On startup).
+    this.launchStartup = this.startupPlan()
+    if (this.launchStartup.mode !== 'continue') this.state.forgetSession()
     if (options.windows === false) this.startupWindowsPending = true
     else this.openStartupWindows()
     // The host may have come up under another icon (a fresh install with a restored profile,
@@ -1460,16 +1581,18 @@ export class Browser {
   }
 
   /**
-   * The session's browser windows: Zen restores every synced window (and the space each one was
-   * in). With "restore previous session" off one window starts fresh. Either way no window comes
-   * up without a tab (`ensureFirstTab`): a first boot, or a restored window whose space has no
-   * tabs, opens on the new tab page, as Chrome never presents a normal window with none (the
-   * extensions that read `tabs.query({ active: true })[0]` at their first breath count on it).
-   * Returns the windows opened.
+   * The session's browser windows, as Settings › On startup says (`startupPlan`): "Continue
+   * where you left off" restores every synced window (and the space each one was in); the other
+   * two choices keep one window, which starts on the New Tab page or on the startup pages. Either
+   * way no window comes up without a tab (`ensureFirstTab`): a first boot, or a restored window
+   * whose space has no tabs, opens on the new tab page, as Chrome never presents a normal window
+   * with none (the extensions that read `tabs.query({ active: true })[0]` at their first breath
+   * count on it). Returns the windows opened.
    */
   private openStartupWindows(): ZenWindow[] {
     this.startupWindowsPending = false
-    const restoreSession = this.restoreSessionAtStartup()
+    const startup = this.launchStartup ?? this.startupPlan()
+    const restoreSession = startup.mode === 'continue'
     const restore =
       restoreSession && this.state.capabilities.windows
         ? this.state.restoredWindows
@@ -1480,7 +1603,9 @@ export class Browser {
     if (restore.length === 0) opened.push(this.createWindow({ kind: 'synced', empty: true }))
     for (const persisted of restore)
       opened.push(this.createWindow({ kind: 'synced', persisted, empty: true }))
-    if (!restoreSession) {
+    if (startup.mode === 'pages') {
+      this.openStartupPages(opened[0], startup.pages)
+    } else if (!restoreSession) {
       this.openFreshTab(opened[0])
     } else if (this.state.uncleanExit && this.state.platform !== 'android') {
       // The last run crashed (or was killed): its pages are offered, not loaded. Android ends
@@ -1491,9 +1616,37 @@ export class Browser {
     return opened
   }
 
-  /** "Restore previous session", or the launch's `--restore-last-session` over it. */
-  private restoreSessionAtStartup(): boolean {
-    return this.restoreLastSessionForced || this.state.settings.restoreSession
+  /**
+   * `win` comes up on the startup pages ("Open a specific page or set of pages", or an enabled
+   * extension's `startup_pages`): one tab per page in the list's order after any pinned tabs the
+   * profile kept, the first active and loading, the rest loading behind it under the governor's
+   * concurrency, as Chrome's `StartupBrowserCreator` opens them. Each tab is placed after the one
+   * before it, so the order holds whatever the new-tab position setting says.
+   */
+  private openStartupPages(win: ZenWindow, pages: readonly string[]): void {
+    let previous: Tab | null = null
+    for (const url of pages) {
+      previous = this.tabs.createTab(
+        { url, active: previous === null, afterTabId: previous?.id, joinGroup: false },
+        win
+      )
+    }
+  }
+
+  /**
+   * What this launch opens on (`effectiveStartup`): the launch's `--restore-last-session` over
+   * everything, as Chrome's switch overrides the startup setting; else an enabled extension's
+   * `startup_pages` over the user's own choice, when the host lets extensions hold it. A host
+   * without windows (the phone) knows two boots alone, the last session back or one fresh tab:
+   * `pages` reads as `continue` there – the boot a 0.4.x "Restore previous session" on gave it.
+   */
+  startupPlan(): EffectiveStartup {
+    if (this.restoreLastSessionForced) return { mode: 'continue', pages: [], control: null }
+    const windows = this.state.capabilities.windows
+    const override = windows ? (this.extensions.startupPagesOverride?.() ?? null) : null
+    const plan = effectiveStartup(this.state.settings, override)
+    if (plan.mode === 'pages' && !windows) return { mode: 'continue', pages: [], control: null }
+    return plan
   }
 
   // ---------------------------------------------------------------------------
@@ -1510,8 +1663,18 @@ export class Browser {
     win.send(name, payload)
   }
 
-  toast(message: string, kind: 'info' | 'error' = 'info', win?: ZenWindow): void {
-    this.emit('toast', { message, kind }, win)
+  /**
+   * A toast in `win`'s chrome (the focused window's without one); `action`, when given, is its
+   * one trailing action – the command the chrome runs on the pick (§9.33's action clock). A
+   * toast without one is sent as it always was.
+   */
+  toast(
+    message: string,
+    kind: 'info' | 'error' = 'info',
+    win?: ZenWindow,
+    action?: ToastAction
+  ): void {
+    this.emit('toast', action ? { message, kind, action } : { message, kind }, win)
   }
 
   /**
@@ -1889,6 +2052,103 @@ export class Browser {
     this.bookmarks.touch(id)
     // Same path as a typed URL so space routing applies; `background` is the new tab behind.
     this.submitUrlbar(node.url, newTab || background, tabId, background, win)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Reading list (W6-1)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Save the tab's page for later (the star's menu, the tab's menu, the app menu's row, the
+   * command bar's Add to Reading List): the page's title and favicon as the tab has them (no
+   * favicon from a private tab, as a bookmark takes none), with a toast as Bookmark This Page
+   * gives one. A page already in the list is marked unread again and comes to the top. Null
+   * for a tab without a page the list holds (`zen://`, a blank tab).
+   */
+  addTabToReadingList(
+    tabId: string,
+    win: ZenWindow = this.tabs.windowFor(tabId)
+  ): ReadingListEntry | null {
+    const tab = this.tabs.tab(tabId)
+    if (!tab || !this.readingList.canAdd(tab.url)) return null
+    return this.saveToReadingList(
+      tab.url,
+      tab.customTitle ?? tab.title,
+      bookmarkFaviconOf(tab, this.tabs.isPrivate(tab)),
+      win
+    )
+  }
+
+  /**
+   * Save a link for later (the page menu's Add Link to Reading List): the link's address under
+   * its text, or its host when the link has none; no favicon – the page was never loaded, so
+   * the list's row resolves one from the favicon cache by address, as a closed page's row does.
+   * Null for a link the list does not hold (a file, a mail link).
+   */
+  addLinkToReadingList(url: string, text: string, win: ZenWindow): ReadingListEntry | null {
+    if (!this.readingList.canAdd(url)) return null
+    return this.saveToReadingList(url, text.trim() || displayHost(url) || url, null, win)
+  }
+
+  /**
+   * Every save goes through here: the entry, then the one toast – the user cannot see the list
+   * from a menu, so each add says what it did the same way, whichever menu it came from.
+   */
+  private saveToReadingList(
+    url: string,
+    title: string,
+    favicon: string | null,
+    win: ZenWindow
+  ): ReadingListEntry | null {
+    const entry = this.readingList.add(url, title, favicon)
+    if (entry) this.toast('Added to reading list', 'info', win)
+    return entry
+  }
+
+  /**
+   * The tab's page out of the list (the star's Remove from Reading List row, the tab row's and
+   * the app menu's Remove Tab from Reading List): the toast is the add's other half, since from
+   * a menu the user cannot see the entry go. The page's own rows say nothing – the row leaves
+   * in view.
+   */
+  removeTabFromReadingList(tabId: string, win: ZenWindow = this.tabs.windowFor(tabId)): boolean {
+    const tab = this.tabs.tab(tabId)
+    const removed = tab ? this.readingList.removeUrl(tab.url) : false
+    if (removed) this.toast('Removed from reading list', 'info', win)
+    return removed
+  }
+
+  /**
+   * Open an entry's page and mark it read. A tab of this window that already shows the page is
+   * brought forward instead of a second copy (Firefox's `switchToTabHavingURI`); otherwise the
+   * page loads in `tabId` – the window's active tab when null, as a bookmark opens – or, with
+   * `newTab`, in a new tab, behind this one with `background` (§10.1's middle click). The entry
+   * is read the moment it is opened, whether the page shows now or loads behind: Chrome marks
+   * it on the open too.
+   */
+  openReadingEntry(
+    id: string,
+    tabId: string | null,
+    win: ZenWindow,
+    opts: { newTab?: boolean; background?: boolean } = {}
+  ): void {
+    const entry = this.readingList.get(id)
+    if (!entry) return
+    this.readingList.setRead(id, true)
+    const shown = Object.values(this.state.model.tabs).find(
+      (t) => t.url === entry.url && tabVisibleIn(t, win.id) && !this.tabs.isPrivate(t)
+    )
+    if (shown && !opts.background) {
+      this.tabs.activateTab(shown.id, win, { userSwitch: true })
+      return
+    }
+    this.submitUrlbar(
+      entry.url,
+      Boolean(opts.newTab || opts.background),
+      tabId,
+      Boolean(opts.background),
+      win
+    )
   }
 
   /**
@@ -2473,10 +2733,12 @@ export class Browser {
     this.updates.stop()
     this.downloads.shutdown()
     this.protection.stop()
+    this.contentRules.stop()
     this.blocking.stop()
     this.inactiveTabs.stop()
     this.background.stop()
     this.translate.stop()
+    this.mediaSession.dispose()
     this.passwords.shutdown()
     // The pages on screen have scrolled since their stacks were last read.
     this.tabs.rememberAllNavigation()
@@ -3301,6 +3563,7 @@ export class Browser {
       'media.action': ({ tabId, action, seekTime, seekOffset }) =>
         this.mediaSession.act(tabId, action, { seekTime, seekOffset }),
       'media.pictureInPicture': ({ tabId }, win) => this.mediaSession.pictureInPicture(tabId, win),
+      'media.autoPipOptOut': ({ tabId }) => this.mediaSession.optOutAuto(tabId),
 
       'split.create': ({ tabIds, layout }, win) => tabs.createSplit(tabIds, layout, win),
       'split.toggleLayout': ({ layout }, win) => tabs.toggleSplitLayout(layout, win),
@@ -3388,6 +3651,9 @@ export class Browser {
       'tasks.end': ({ pid }) => this.tasks.end(pid),
 
       'settings.update': (patch, win) => this.updateSettings(patch, win),
+      'settings.reset': async (_, win) => {
+        await resetSettings(this, win)
+      },
       'shortcuts.update': ({ id, binding }) => {
         state.setShortcutOverride(id, binding)
         this.syncShortcuts()
@@ -3434,8 +3700,8 @@ export class Browser {
         this.pages.open('history', undefined, win)
       },
 
-      'page.open': ({ id, section, openerTabId, query }, win) =>
-        this.pages.open(id, section, win, openerTabId, { query }),
+      'page.open': ({ id, section, openerTabId, query, handedBack }, win) =>
+        this.pages.open(id, section, win, openerTabId, { query, handedBack }),
       'page.navigate': ({ tabId, section, subpage, replace, query }) =>
         this.pages.navigate(tabId, section, replace ?? false, query, subpage),
 
@@ -3486,6 +3752,7 @@ export class Browser {
         void this.newTab.updateShortcut(id, title, url),
       'newtab.removeShortcut': ({ id }) => void this.newTab.removeShortcut(id),
       'newtab.reorderShortcuts': ({ ids }) => this.newTab.reorderShortcuts(ids),
+      'newtab.setModuleHidden': ({ id, hidden }) => this.newTab.setModuleHidden(id, hidden),
       'newtab.pickBackgroundImage': (_a, win) => this.newTab.pickBackgroundImage(win),
       'newtab.clearBackgroundImage': () => this.newTab.clearBackgroundImage(),
       'newtab.resetBackground': () => this.newTab.resetBackground(),
@@ -3512,14 +3779,8 @@ export class Browser {
       'bookmark.allTabs': (_a, win) => this.bookmarkTabs(win),
       'bookmark.createFromTabs': ({ tabIds, title, parentId, quiet }, win) =>
         this.createBookmarksFromTabs(tabIds, title, parentId, win, quiet ?? false),
-      'bookmark.contextMenu': ({ ids, folderId, x, y, keyboard, surface }, win) =>
-        this.menus.showBookmarkContextMenu(
-          ids,
-          folderId,
-          { x, y, keyboard },
-          win,
-          surface ?? 'manager'
-        ),
+      'bookmark.contextMenu': ({ ids, folderId, surface, ...anchor }, win) =>
+        this.menus.showBookmarkContextMenu(ids, folderId, anchor, win, surface ?? 'manager'),
       'bookmark.menu': ({ x, y }, win) => this.menus.showBookmarksMenu({ x, y }, win),
       'bookmark.toggleBar': (_a, win) => this.toggleBookmarksBar(win),
       'bookmark.cut': ({ ids }) => this.clipBookmarks(ids, 'cut'),
@@ -3527,6 +3788,19 @@ export class Browser {
       'bookmark.paste': ({ folderId, index }) => this.bookmarks.paste(folderId, index),
       'bookmark.import': (_a, win) => this.importBookmarks(win),
       'bookmark.export': (_a, win) => this.exportBookmarks(win),
+
+      'readingList.add': ({ tabId }, win) => {
+        const id = tabId ?? tabs.activeTabFor(win)?.id
+        return id ? this.addTabToReadingList(id, win) : null
+      },
+      'readingList.removeTab': ({ tabId }, win) => this.removeTabFromReadingList(tabId, win),
+      'readingList.remove': ({ id }) => this.readingList.remove(id),
+      'readingList.setRead': ({ id, read }) => this.readingList.setRead(id, read),
+      'readingList.markAllRead': () => this.readingList.markAllRead(),
+      'readingList.open': ({ id, tabId, newTab, background }, win) =>
+        this.openReadingEntry(id, tabId, win, { newTab, background }),
+      'readingList.contextMenu': ({ id, ...anchor }, win) =>
+        this.menus.showReadingListContextMenu(id, anchor, win),
 
       'import.sources': () => this.imports.sources(),
       'import.run': ({ source, kinds }, win) => this.imports.run(source, kinds, win),
@@ -3559,8 +3833,8 @@ export class Browser {
           platform.downloads.startFileDrag?.(item, win)
       },
       'download.openFolder': () => platform.downloads.openDownloadsFolder?.(),
-      'download.contextMenu': ({ id, x, y, keyboard }, win) =>
-        this.menus.showDownloadContextMenu(id, { x, y, keyboard }, win),
+      'download.contextMenu': ({ id, ...anchor }, win) =>
+        this.menus.showDownloadContextMenu(id, anchor, win),
 
       'find.start': ({ tabId, text, forward, newSession }, win) => {
         const view = tabs.view(tabId)
@@ -3645,6 +3919,7 @@ export class Browser {
       'capture.copy': ({ dataUrl }) => this.capture.copy(dataUrl),
       'capture.save': ({ dataUrl, fileName, tabId }, win) =>
         this.capture.save(dataUrl, win, { fileName, tabId }),
+      'capture.share': ({ dataUrl, tabId }, win) => this.capture.share(dataUrl, win, { tabId }),
       'page.print': ({ tabId }, win) => this.actions.run('page.print', { sourceTabId: tabId, win }),
       'page.printPreview': ({ tabId }, win) =>
         this.actions.run('page.printPreview', { sourceTabId: tabId, win }),
@@ -3900,6 +4175,13 @@ export class Browser {
         state.settings.colorScheme = colorScheme
         this.setThemeSource(colorScheme)
         state.settings.onboardingDone = true
+        // The pages the tour held back come in now. Under the tour a window loads nothing on
+        // its own (`onChromeReady`, `onWindowFocused`: the claim waits on this flag), and the
+        // tour's end below opens a tab only where the new tab page is served – on a host
+        // without it (the phone) a restored page tab stayed unloaded, no view to place, until
+        // the next focus. The desktop's boot tab was loaded and claimed at its activation, so
+        // this finds it owned and moves nothing; the crash offer's hold is kept as at boot.
+        if (!this.session.holdsPages()) tabs.claimVisible(win)
         for (const url of essentials) {
           const known = ONBOARDING_ESSENTIALS.find((e) => e.url === url)
           if (!known) continue
@@ -3926,10 +4208,80 @@ export class Browser {
         else this.openNewTab(win)
       },
 
+      'searchChoice.choose': ({ engineId }, win) => {
+        if (this.chooseSearchEngine(engineId)) this.afterSearchChoice(win)
+      },
+      'searchChoice.skip': (_, win) => {
+        // Nothing is written: the screen waits for the next run (Chrome's choice screen comes
+        // back until it is answered). Settings' ask, if one was pending, is answered by the skip.
+        state.searchChoiceSession.skipped = true
+        state.searchChoiceSession.askAgain = false
+        state.commitVolatile()
+        this.afterSearchChoice(win)
+      },
+      'searchChoice.askAgain': () => {
+        state.searchChoiceSession.askAgain = true
+        state.searchChoiceSession.skipped = false
+        state.commitVolatile()
+      },
+
       'defaultBrowser.request': ({ source }) => this.defaultBrowser.request(source),
       'defaultBrowser.dismiss': ({ prompt }) => this.defaultBrowser.dismiss(prompt),
       'defaultBrowser.refresh': () => this.defaultBrowser.refresh()
     }
+  }
+
+  /**
+   * The choice screen's "Set as default" (W6-2): the picked engine – one of the list shown for
+   * the region (`searchChoiceListRegion`), or nothing happens – becomes the default (active, as
+   * `updateSettings` makes a default), and the device's record is written – for the region the
+   * list was shown for (`searchChoiceShownFor`) – so the screen is not owed again. An engine of
+   * the screen's that is not shipped is copied into the user's list
+   * first, the registry's entry as it is (`id`, `name`, `searchUrl`, `suggestUrl`, `keyword`,
+   * `glyph`, `favicon` – the engine's documented icon address, a reference and never the
+   * picture) with `source: 'custom'`: the id resolves on every device the profile syncs to,
+   * the phone draws its icon from the address as it draws any added engine's, and Settings ›
+   * Search lists it under Added.
+   */
+  private chooseSearchEngine(engineId: string): boolean {
+    const state = this.state
+    const engine = searchChoiceEngine(engineId)
+    const region = searchChoiceListRegion(state.searchChoiceRegion, state.settings.searchChoice)
+    if (!engine || !isSearchChoiceEngine(engineId, region)) return false
+    if (!state.searchEngines.some((e) => e.id === engineId)) {
+      state.settings.searchEngines = [
+        ...(state.settings.searchEngines ?? []),
+        { ...engine, source: 'custom' }
+      ]
+    }
+    state.settings.searchEngineId = engineId
+    if (state.settings.searchEngines)
+      state.settings.searchEngines = withDefaultSearchEngineActive(
+        state.settings.searchEngines,
+        engineId
+      )
+    state.settings.searchChoice = searchChoiceRecord(
+      engineId,
+      searchChoiceShownFor(state.searchChoiceRegion, state.settings.searchChoice),
+      Date.now()
+    )
+    state.searchChoiceSession.askAgain = false
+    state.searchChoiceSession.skipped = false
+    state.commit()
+    return true
+  }
+
+  /**
+   * The screen standing on its own – after the tour, over the first run's new tab – goes with
+   * the answer; the tab under it is announced again as the tour's end announces its
+   * (`onboarding.complete`), so the URL bar the screen held back comes up. Inside the tour the
+   * tour's own end does this; over a Settings page there is no fresh tab to announce.
+   */
+  private afterSearchChoice(win: ZenWindow): void {
+    if (!this.state.settings.onboardingDone) return
+    const active = this.tabs.activeTabFor(win)
+    if (active && isEmptyTabUrl(active.url) && !this.extensions.newTabUrl())
+      this.state.afterBroadcast(() => this.revealFreshTab(active, win))
   }
 
   updateSettings(patch: Partial<Settings>, win: ZenWindow): void {
@@ -3948,12 +4300,14 @@ export class Browser {
       updates: JSON.stringify(s.updates),
       blocking: s.blocking,
       privacy: JSON.stringify(s.privacy),
+      preloadPages: s.preloadPages,
       autofill: `${JSON.stringify(s.passwords)}${JSON.stringify(s.autofill)}`,
       spellcheck: JSON.stringify(s.spellcheck),
       reader: JSON.stringify(s.reader),
       readAloud: JSON.stringify(s.readAloud),
       fonts: JSON.stringify(s.fonts),
-      languages: s.languages.join(',')
+      languages: s.languages.join(','),
+      caretBrowsing: s.caretBrowsing === true
     }
     for (const [key, value] of Object.entries(patch)) {
       if (value === undefined) continue
@@ -3995,6 +4349,13 @@ export class Browser {
           ...s.homepage,
           ...(value as Partial<Settings['homepage']>)
         })
+      } else if (key === 'startup' && value && typeof value === 'object') {
+        // A one-key patch (the mode choice) keeps the pages; the pages come back web addresses
+        // alone, each once, capped (`core/startup.ts`) – the list rows' edits included.
+        s.startup = sanitizeStartupSettings({
+          ...s.startup,
+          ...(value as Partial<Settings['startup']>)
+        })
       } else if (key === 'passwords' && value && typeof value === 'object') {
         s.passwords = sanitizePasswordSettings({
           ...s.passwords,
@@ -4031,6 +4392,8 @@ export class Browser {
           ...s.privacy,
           ...(value as Partial<Settings['privacy']>)
         })
+      } else if (key === 'preloadPages') {
+        s.preloadPages = sanitizePreloadPages(value)
       } else if (key === 'spellcheck' && value && typeof value === 'object') {
         s.spellcheck = sanitizeSpellcheck({
           ...s.spellcheck,
@@ -4114,7 +4477,8 @@ export class Browser {
     if (before.updates !== JSON.stringify(s.updates)) this.updates.onSettingsChanged()
     if (before.appIcon !== s.appIcon) this.platform.app.setAppIcon?.(s.appIcon)
     if (before.blocking !== s.blocking) this.blocking.onSettingsChanged()
-    if (before.privacy !== JSON.stringify(s.privacy)) this.protection.onSettingsChanged()
+    if (before.privacy !== JSON.stringify(s.privacy) || before.preloadPages !== s.preloadPages)
+      this.protection.onSettingsChanged()
     if (before.autofill !== `${JSON.stringify(s.passwords)}${JSON.stringify(s.autofill)}`)
       this.autofill.onSettingsChanged()
     if (before.spellcheck !== JSON.stringify(s.spellcheck)) this.spellcheck.onSettingsChanged()
@@ -4122,6 +4486,7 @@ export class Browser {
     if (before.readAloud !== JSON.stringify(s.readAloud)) this.readAloud.onSettingsChanged()
     if (before.fonts !== JSON.stringify(s.fonts)) this.pageFonts.onSettingsChanged()
     if (before.languages !== s.languages.join(',')) this.languages.onSettingsChanged()
+    if (before.caretBrowsing !== (s.caretBrowsing === true)) this.caretBrowsing.onSettingsChanged()
     this.state.commit()
   }
 

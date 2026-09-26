@@ -202,6 +202,30 @@ describe('AndroidStoreIO', () => {
       })
     })
 
+    it('never mirrors the custom tab’s bookmark inbox, whose writer is another activity: the boot copy once, then the disk', async () => {
+      const filed = '{"version":1,"entries":[{"url":"https://a.example/","title":"A","at":1}]}'
+      const { bridge, calls, disk } = fakeBridge({ 'bookmarks-inbox.json': filed })
+      const files = { 'state.json': '{}', 'bookmarks-inbox.json': filed }
+      const io = new AndroidStoreIO(bridge, files)
+      expect(files).toEqual({ 'state.json': '{}' })
+      expect(io.exists('bookmarks-inbox.json')).toBe(true)
+      expect(io.readSync('bookmarks-inbox.json')).toBe(filed)
+      expect(calls).toEqual([])
+      // The custom tab filed another page meanwhile: the next read sees the disk, not a copy.
+      const more = filed.replace(']}', ',{"url":"https://b.example/","title":"B","at":2}]}')
+      disk['bookmarks-inbox.json'] = more
+      expect(io.readSync('bookmarks-inbox.json')).toBe(more)
+      // Emptying it goes through every time, even for the bytes a mirror would call unchanged:
+      // between the two, the custom tab filed again.
+      const empty = '{"version":1,"entries":[]}'
+      await io.write('bookmarks-inbox.json', empty)
+      disk['bookmarks-inbox.json'] = filed
+      await io.write('bookmarks-inbox.json', empty)
+      expect(disk['bookmarks-inbox.json']).toBe(empty)
+      expect(calls.map((c) => c.method)).toEqual(['storage.read', 'storage.write', 'storage.write'])
+      expect(files).toEqual({ 'state.json': '{}' })
+    })
+
     it('never dedups a folder document it does not mirror', async () => {
       const { bridge, calls } = fakeBridge()
       const io = new AndroidStoreIO(bridge, {})

@@ -62,6 +62,7 @@ import type {
 } from '../shared/types'
 import type { AppIconId } from '../shared/appIcon'
 import type { PageViewport } from '../shared/capture'
+import type { ContentRules } from '../shared/contentRules'
 import type { DisplayMode } from '../shared/displayMode'
 import type { PageFontSettings } from '../shared/fonts'
 import type { FormsCommand, FormsEvent } from '../shared/forms'
@@ -100,11 +101,13 @@ import type { VoiceStartOutcome } from '../shared/voice'
 import type { SpellcheckDictionaryStatus } from '../shared/spellcheck'
 import type { GeoPosition, GeolocationErrorCode, WifiAccessPoint } from '../shared/geolocation'
 import type { ShareFile, ShareOutcome } from '../shared/share'
+import type { ImagePost, ImageResource } from '../shared/imageUpload'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import type { AgentHttpRequest, AgentHttpResponse } from './agent/http'
 import type { BackgroundWorkerHandle } from './background/work'
 import type { RuleSet } from './blocking/rules'
+import type { StartupOverride } from './startup'
 
 export interface PlatformInfo {
   os: PlatformOs
@@ -115,6 +118,13 @@ export interface PlatformInfo {
    * start such a profile from English.
    */
   locales?: readonly string[]
+  /**
+   * The OS's region (ISO 3166-1 alpha-2, upper case; Electron's `app.getLocaleCountryCode()`),
+   * null when the OS does not say: what the EEA's search-engine choice screen is gated on
+   * (`core/searchChoice.ts`, W6-2). A host may put a tester's override here (`--zen-region=DE`,
+   * `ZEN_REGION`) in the OS's place. Hosts that leave it out are never in the EEA.
+   */
+  region?: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -365,6 +375,26 @@ export interface LoadDetails {
   certificate?: CertificateDetails | null
 }
 
+/**
+ * How a committed main-frame document stands to the one before it in the tab (`TabViewEvents.
+ * onNavigated`). Both facts together are Chrome's client redirect (`PAGE_TRANSITION_CLIENT_
+ * REDIRECT` with `did_replace_entry`), which history folds into the landing's redirect chain.
+ */
+export interface NavigationCommitDetails {
+  /**
+   * The document took the previous document's place in the tab's history instead of adding an
+   * entry (Chromium's `did_replace_entry`: `location.replace()`, a meta refresh or `Refresh:`
+   * header of a second or less, a script's navigation before the page's load event finished).
+   */
+  replacedEntry: boolean
+  /**
+   * The page's own document started the navigation (a script, a meta refresh: a frame of this
+   * tab's page), not the browser (a typed address, a bookmark, back / forward, a reload from the
+   * toolbar) and not another page (an opener's `window.open`).
+   */
+  initiatedByPage: boolean
+}
+
 export interface PageContextParams {
   /**
    * Click position in the view's coordinates (DIP), as the host's `context-menu` event gives it;
@@ -437,11 +467,17 @@ export interface MediaContextFlags {
 
 /**
  * Chrome elements with a context menu of their own, marked `data-zen-menu` in the renderer: the
- * URL bar's field and pill, the reload button.
+ * URL bar's field and pill, the reload button, the pill's star (its bookmark and reading list
+ * rows, W6-1).
  */
-export type ChromeMenuTarget = 'urlbar' | 'urlpill' | 'reload'
+export type ChromeMenuTarget = 'urlbar' | 'urlpill' | 'reload' | 'star'
 
-export const CHROME_MENU_TARGETS: readonly ChromeMenuTarget[] = ['urlbar', 'urlpill', 'reload']
+export const CHROME_MENU_TARGETS: readonly ChromeMenuTarget[] = [
+  'urlbar',
+  'urlpill',
+  'reload',
+  'star'
+]
 
 /**
  * A right-click inside the chrome document (URL bar, toolbar, overlays): what the host's own
@@ -452,8 +488,13 @@ export interface ChromeContextParams {
   /** Click position in chrome CSS pixels (the caret or the focused element's middle for the keyboard). */
   x: number
   y: number
-  /** Raised by Shift+F10 or the Menu key: the menu opens at `x`,`y` with its first item selected. */
+  /** Raised by Shift+F10 or the Menu key: the menu opens with its first item selected. */
   keyboard?: boolean
+  /**
+   * The focused element's box (chrome CSS pixels, window coordinates) when the keyboard asked,
+   * for a host that hangs the menu from the element rather than at the caret (§9.23).
+   */
+  rect?: Rect
   /** `data-zen-menu` of the innermost marked element under the pointer, or null. */
   target: ChromeMenuTarget | null
   /** Tab the marked element acts on (`data-zen-menu-tab`); null for a new-tab URL bar. */
@@ -599,8 +640,13 @@ export interface TabViewEvents {
    * then the landing alone.
    */
   onRedirected?(fromUrl: string, toUrl: string): void
-  /** Main-frame navigation committed (`inPage` for pushState / hash changes). */
-  onNavigated(url: string, inPage: boolean): void
+  /**
+   * Main-frame navigation committed (`inPage` for pushState / hash changes). `details` says how
+   * the document stands to the one before it (history-23: a client redirect that replaced its
+   * page folds the page into the landing's chain); hosts that cannot tell leave it out, and the
+   * landing is then a visit of its own.
+   */
+  onNavigated(url: string, inPage: boolean, details?: NavigationCommitDetails): void
   /**
    * The page is about to navigate its main frame to `url` on its own – a link, a script, a form
    * submission (not a load the browser asked for, and not a server redirect, which hosts report
@@ -800,6 +846,12 @@ export interface TabView {
   setPopupsAllowed?(allowed: boolean): void
   /** Boost "zap element" picker on/off. */
   setZapMode(on: boolean): void
+  /**
+   * Chromium's caret browsing for this page (CT-34): a text cursor the arrow keys move and Shift
+   * selects with. Electron's `webContents.setCaretBrowsingEnabled`; hosts without the call
+   * (`HostCapabilities.caretBrowsing` off) leave it out and the core never asks.
+   */
+  setCaretBrowsingEnabled?(enabled: boolean): void
   /** Autofill: fill values into the page's form, or reconfigure the forms script. */
   sendFormsCommand?(command: FormsCommand): void
 
@@ -922,6 +974,38 @@ export interface TabView {
    */
   screenshot(fileName: string, options?: ScreenshotOptions): Promise<string | null>
   copyImageAt(x: number, y: number): Promise<boolean>
+  /**
+   * Navigate the view by POST (CT-32's image upload, Chrome's `image_url_post_params`): the
+   * body's fields and their encoding (`shared/imageUpload.ts`), which the host bakes as its
+   * navigation takes them – the desktop's `loadURL` with post data and a content-type header
+   * (multipart with a boundary, or urlencoded), the phone's `WebView.postUrl` for an urlencoded
+   * body and a self-submitting form document for a multipart one. A host without it gets no
+   * upload: the row searches by address.
+   */
+  postURL?(url: string, post: ImagePost): void
+  /**
+   * The encoded bytes of an image the page loaded, as the renderer holds them – the response
+   * the page's own request got, its cookies and referrer already spent – for the image-search
+   * upload (the desktop's DevTools resource read). Read BEFORE the page's script is asked to
+   * fetch the image: a cross-origin image whose host sends no CORS header is one no script in
+   * the page may read, and the refused fetch evicts the renderer's copy. `'too-large'` when the
+   * renderer lists the image above `maxBytes` (nothing is transferred); null when the host
+   * cannot read it – the image is in no frame's resource tree, or the page's session is another
+   * client's. Hosts without it leave the read to the page's script.
+   */
+  readImageResource?(url: string, maxBytes: number): Promise<ImageResource | 'too-large' | null>
+  /**
+   * Run `code` (one expression, awaited) in `frameId` – the top frame when omitted – in a
+   * world of the browser's own where no page script and no extension has run
+   * (`shared/privateWorld.ts`): the built-ins the code reaches – `fetch`, `Response`, `Blob`,
+   * `createImageBitmap`, `OffscreenCanvas`, `btoa` – are the world's, not the page's patched
+   * ones, while the document, its origin, its cookies and its CSP are the page's. The
+   * image-search thumbnail (`imageFetchScript`) runs here wherever a host has it – the desktop's
+   * isolated world; a host without one (the phone's WebView evaluates in the main world only)
+   * leaves it out and the core runs the script through `executeJavaScript`. Rejects for a frame
+   * that is gone.
+   */
+  executeJavaScriptInPrivateWorld?(code: string, frameId?: number): Promise<unknown>
   replaceMisspelling(word: string): void
   addWordToDictionary(word: string): void
 
@@ -951,6 +1035,15 @@ export interface TabView {
   frames?(): AgentFrame[]
   /** Let a hidden page keep running at full speed while an agent drives it. */
   setBackgroundThrottling?(allowed: boolean): void
+  /**
+   * An agent works this page while the layout hides it (`true` from the session's prepare in
+   * background mode, `false` when the session lets the tab go or brings it in front). A host
+   * whose hidden pages have no layout viewport and paint nothing – the desktop's
+   * `WebContentsView` kept out of the window – lays the page out and paints it where the user
+   * cannot see it while this is on, so `snapshot`, `viewport` and `capture` read a real page.
+   * Hosts whose hidden pages lay out anyway (Android's WebView) leave it out.
+   */
+  setAgentDriven?(driven: boolean): void
   /**
    * Screenshot for agents: the viewport, the full page or a region. Hosts without it fall back
    * to `snapshot()` (viewport only).
@@ -993,6 +1086,7 @@ export interface TabView {
 }
 
 export type { PageRules } from '../shared/types'
+export type { ContentRules } from '../shared/contentRules'
 
 export interface TabViewHost {
   /** Create the live page for `tab`, attached to `host`'s window. */
@@ -1006,6 +1100,12 @@ export interface TabViewHost {
   setShortcuts?(bindings: KeyBinding[]): void
   /** Page controls changed – hosts that decide per navigation refresh their copy of the rules. */
   setPageRules?(rules: PageRules): void
+  /**
+   * The per-site content settings enforced at the load path changed (`shared/contentRules`):
+   * hosts whose engine must have its answer before a request leaves (the Android WebView's
+   * `WebSettings`) keep a copy; the desktop asks the core directly and leaves this out.
+   */
+  setContentRules?(rules: ContentRules): void
 }
 
 /**
@@ -1094,6 +1194,12 @@ export interface WindowHost {
    * chrome's own context menus; hosts whose chrome draws its menus itself leave it out.
    */
   menuTargetAt?(x: number, y: number): Promise<{ target: string; tabId: string | null } | null>
+  /**
+   * The box of the chrome document's focused element (chrome CSS pixels, window coordinates),
+   * where a menu the keyboard asked for hangs (§9.23); null when nothing but the document has
+   * the focus. Hosts whose chrome draws its menus itself leave it out.
+   */
+  focusedRect?(): Promise<Rect | null>
   /**
    * Show the popup surface – a second chrome document (`index.html?surface=autofill`) floated
    * above the page views – at `bounds` (window CSS pixels), or take it down with null. It never
@@ -1273,6 +1379,8 @@ export type MenuSource =
   | 'bookmark'
   | 'history'
   | 'download'
+  /** A reading list row's menu (W6-1). */
+  | 'readingList'
   | 'urlbar'
   | 'translate'
 
@@ -1290,6 +1398,13 @@ export interface MenuPopupOptions {
   y?: number
   /** Opened by the keyboard: the first item starts selected so the arrow keys take over at once. */
   keyboard?: boolean
+  /**
+   * The box of the element the menu belongs to (chrome CSS pixels, window coordinates): the
+   * focused element for Shift+F10 and the Menu key, a "⋯" button for its press. A native host
+   * hangs the menu from its bottom-left (§9.23) in preference to `x`,`y`; the phone's sheets
+   * have no position to read.
+   */
+  rect?: Rect
   /**
    * The link's or image's header (PUI-18) for the phone's sheet: the renderer-drawn host carries
    * it to the sheet; hosts with native menus have no header to draw and leave it be.
@@ -1943,6 +2058,13 @@ export interface ExtensionHost {
   setNewTabOverride(id: string, enabled: boolean): void
   /** The page new tabs open with while an enabled extension holds the override, else null. */
   newTabUrl(): string | null
+  /**
+   * An enabled extension's `chrome_settings_overrides.startup_pages` (the newest-installed of
+   * several, `resolveStartupOverride`), read from the registry alone so the boot – which opens
+   * its windows before the extensions load – can follow it; null while none holds the setting.
+   * Hosts without it (the phone) never let an extension set the startup.
+   */
+  startupPagesOverride?(): StartupOverride | null
   /** Chrome's "Allow in Incognito": whether the extension's request rules reach private windows. */
   setAllowPrivate(id: string, allowed: boolean): void
   /** Chrome's "Allow user scripts": whether `chrome.userScripts` works for the extension. */
@@ -2481,6 +2603,24 @@ export interface MediaSessionHost {
   enterPictureInPicture?(session: MediaSessionInfo): Promise<boolean>
 }
 
+/**
+ * The chrome's media hub on a host whose chrome has one (the windowed desktop: the sidebar's
+ * control and its popover, the ⋯ menu's Media Controls… row at narrow widths). The one thing the
+ * core asks of it is Chrome's linger: how long a session whose media paused or ended stays in
+ * the hub, with Play, before the hub lets it go (Chrome's global media controls dismiss an
+ * inactive item after `kAutoDismissTimerInMinutesDefault`, 60 minutes without an interaction;
+ * `MEDIA_HUB_INACTIVE_MS`). A host without one (Android, whose mini player and notification
+ * stay until dismissed or the tab goes) leaves it out, and no session ever lingers or expires.
+ */
+export interface MediaHubHost {
+  /**
+   * The linger (ms): the time without an interaction – a playback, a seek, a control pressed in
+   * the hub – after which a paused or ended session leaves the hub. Production hosts pass
+   * `MEDIA_HUB_INACTIVE_MS`; a drive shortens it through the host's test hook alone.
+   */
+  readonly inactiveAfterMs: number
+}
+
 /** What the read-aloud core asks the speech host to say an utterance with. */
 export interface SpeechUtteranceOptions {
   /** The voice's id (`ReadAloudVoice.id`), or null for the engine's default for `lang`. */
@@ -2830,6 +2970,8 @@ export interface Platform {
   readonly qrScan?: QrScanHost
   /** OS media controls fed by the core (Android); hosts whose engine feeds them itself leave it out. */
   readonly mediaSession?: MediaSessionHost
+  /** The chrome's media hub and its linger for a paused session (desktop); hosts without the hub leave it out. */
+  readonly mediaHub?: MediaHubHost
   /** The speech engine behind read aloud (`capabilities.readAloud`); hosts without one leave it out. */
   readonly speech?: SpeechHost
   /** Web Notifications for pages of a host whose engine lacks the API (Android). */

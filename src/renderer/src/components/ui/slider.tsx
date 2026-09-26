@@ -7,8 +7,11 @@ type SliderProps = React.ComponentPropsWithoutRef<typeof SliderPrimitive.Root>
 /**
  * The accessible slider is Radix's thumb (`role="slider"`, the value in `aria-valuenow`), not
  * the root – a plain box that draws the track – so the name and the spoken value go to the thumb
- * (A11Y-01: an unnamed slider is "slider" and a number to TalkBack). The thumb's 16 box is the
- * design's; a press anywhere on the root's 44 row moves it, which is the finger's target.
+ * (A11Y-01: an unnamed slider is "slider" and a number to TalkBack), and so does the disabled
+ * state: Radix puts `aria-disabled` on the root alone and leaves the thumb only unfocusable, so
+ * a held slider (a setting an extension controls, §10.5) would read as one that still moves.
+ * The thumb's 16 box is the design's; a press anywhere on the root's 44 row moves it, which is
+ * the finger's target.
  *
  * `onValueCommit` receives the value `onValueChange` last reported, and a change is always
  * reported before its commit. Radix (react-slider 1.4.7) commits the value it last *rendered*:
@@ -125,6 +128,7 @@ const Slider = React.forwardRef<React.ElementRef<typeof SliderPrimitive.Root>, S
           aria-label={ariaLabel}
           aria-labelledby={ariaLabelledBy}
           aria-valuetext={ariaValueText}
+          aria-disabled={props.disabled || undefined}
         />
       </SliderPrimitive.Root>
     )

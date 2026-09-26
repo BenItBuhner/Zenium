@@ -278,22 +278,24 @@ note_emulator_death() {
         done
         echo "-- coredumpctl list ($(date +%T))"
         sudo -n coredumpctl list --no-pager 2>&1 | tail -n 5 | cut -c1-240 || true
-        echo "-- journal, systemd-coredump"
-        sudo -n journalctl -t systemd-coredump --no-pager -o short-iso 2>&1 | tail -n 60 | cut -c1-300 || true
+        # The journal's coredump entries by their first line alone (the process, the signal, a
+        # "Resource limits disable core dumping" or a truncation notice): the whole entry's tail
+        # is the last threads' traces of a qemu of dozens, and it cut the crashing thread's –
+        # compat round 18's AFTER 113 death left six idle render threads' traces here and not the
+        # faulting one's, with the core stored. That trace comes from the dump's account below.
+        echo "-- journal, systemd-coredump (each entry's first line)"
+        sudo -n journalctl -t systemd-coredump --no-pager -o short-iso 2>&1 | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T|^-- |^Failed|^No journal' | tail -n 12 | cut -c1-300 || true
         if sudo -n coredumpctl list --no-pager --no-legend 2> /dev/null | grep -q qemu; then
-          # The dump's own account (fast, no gdb; every lane): the signal, the storage, systemd's
-          # stack of the crashing thread – the FIRST trace of the journal entry, which the tail
-          # above cuts for a qemu of dozens of threads (compat round 18's AFTER 113 death left six
-          # idle render threads' traces in this file and not the faulting one's, with the core
-          # stored). The module lines between the message and the traces are dropped from the
-          # excerpt; the file keeps them. The match is the pid the freeze capture recorded, else
-          # the comm.
+          # The dump's own account (fast, no gdb; every lane): the signal, the storage, and
+          # systemd's stack of the crashing thread – the FIRST trace of the journal entry –
+          # whole, however deep (ext-compat-core-excerpt.sh: from the message to the end of the
+          # first thread's block, the module lines dropped, the other threads counted and left to
+          # the file). The match is the pid the freeze capture recorded, else the comm.
           core_match=$(sed -n 's/^== \([0-9][0-9]*\): .*/\1/p' "$out"/host-emulator-frozen-1.txt 2> /dev/null | head -n 1 || true)
           [ -n "$core_match" ] || core_match=qemu-system-x86
           echo "-- coredumpctl info $core_match into host-emulator-core-info.txt"
           sudo -n coredumpctl -1 info "$core_match" --no-pager > "$out/host-emulator-core-info.txt" 2>&1 || true
-          grep -E '^ *(PID|Signal|Timestamp|Executable|Storage|Size on Disk):' "$out/host-emulator-core-info.txt" 2> /dev/null | cut -c1-300 || true
-          sed -n '/Message:/,$p' "$out/host-emulator-core-info.txt" 2> /dev/null | grep -vE '^ *(Found module|Module) ' | head -n 60 | cut -c1-300 || true
+          bash .github/scripts/ext-compat-core-excerpt.sh "$out/host-emulator-core-info.txt" 2>&1 || true
           if [ "${GUEST_SILENCE_S:-0}" -gt 0 ]; then
             # The dump itself, for gdb below (minutes): the single-row lanes alone.
             df -h /tmp 2> /dev/null | tail -n 1 || true

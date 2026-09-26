@@ -1,0 +1,9 @@
+{
+  "id": "pwa",
+  "order": 21,
+  "class": "PwaDemo",
+  "shard": "phone-b",
+  "mirrors": "android-pwa-demo.yml",
+  "dir": "pwa-demo",
+  "estimate": 2
+}

@@ -54,3 +54,31 @@ export function homepageHasPage(homepage: HomepageSettings): boolean {
 export function homepageDisplay(homepage: HomepageSettings): string {
   return homepageHasPage(homepage) ? displayUrl(homepage.url).replace(/\/$/, '') : ''
 }
+
+/**
+ * The page an extension holds over the user's homepage (`chrome_settings_overrides.homepage`,
+ * published under `UIState.extensionControls.homepage` with the page as its value), or null: a
+ * web address alone, and only while the Home button is on – `off` stays the user's, since
+ * Chrome's "Show home button" is no extension's to set (an extension's homepage never draws a
+ * Home button the user has not asked for).
+ */
+export function extensionHomepage(
+  homepage: HomepageSettings,
+  control: { value?: unknown } | null | undefined
+): string | null {
+  if (homepage.mode === 'off' || typeof control?.value !== 'string') return null
+  return homepageAddress(control.value)
+}
+
+/**
+ * The homepage in effect, the way the default engine is read (`defaultSearchEngineOf`): an
+ * extension's page as a "Specific page" homepage while one holds the setting, else the user's
+ * own – the same object, so a caller may tell the two apart.
+ */
+export function defaultHomepageOf(
+  homepage: HomepageSettings,
+  control: { value?: unknown } | null | undefined
+): HomepageSettings {
+  const url = extensionHomepage(homepage, control)
+  return url ? { mode: 'url', url } : homepage
+}

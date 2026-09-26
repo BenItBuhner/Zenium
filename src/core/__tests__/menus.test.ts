@@ -1,11 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import type {
   Folder,
-  FormFactor,
-  HostCapabilities,
   MediaState,
   MenuGlyph,
-  Platform as PlatformOs,
   Settings,
   SharePayload,
   SyncDeviceKind,
@@ -17,27 +14,9 @@ import { PRIVATE_CONTAINER_ID } from '../../shared/types'
 import { searchCommands, type CommandContext } from '../../shared/commands'
 import { resolveDownloadSettings } from '../../shared/downloads'
 import { buildSearchUrl } from '../../shared/search'
+import type { ImagePost, ImagePostField } from '../../shared/imageUpload'
 import { Browser } from '../browser'
-import { closeBootTabs } from './bootTab'
-import type {
-  AppHost,
-  ClipboardHost,
-  DialogHost,
-  MenuHost,
-  MenuItemTemplate,
-  MenuPopupOptions,
-  Platform,
-  ShellHost,
-  ShortcutHost,
-  SpeechHost,
-  SpellcheckHost,
-  StoreIO,
-  TabView,
-  TabViewHost,
-  TranslateHost,
-  TranslateModelStore,
-  WindowHost
-} from '../platform'
+import type { MenuItemTemplate } from '../platform'
 import type { ZenWindow } from '../window'
 import type { ChromeContextParams, PageContextParams } from '../platform'
 import {
@@ -54,343 +33,27 @@ import {
 import { HELP_URL, ISSUES_URL } from '../menuBar'
 import { releaseNotesUrl } from '../../shared/links'
 import { serialiseMenu } from '../rendererMenus'
-
-/**
- * Electron's capabilities, a hand-kept copy of src/main/platform/index.ts: the real object imports
- * Electron, which a core test cannot load. When a capability is added or flipped there, update it
- * here too (the `HostCapabilities` type catches an added one, not a changed value).
- */
-const DESKTOP: HostCapabilities = {
-  windowControls: true,
-  windowControlsOverlay: false,
-  windowMaterial: false,
-  nativeMenus: true,
-  windowDrag: true,
-  devtools: true,
-  compactReveal: true,
-  pictureInPicture: true,
-  viewSource: true,
-  windows: true,
-  extensions: true,
-  resourceGovernor: true,
-  sync: true,
-  print: true,
-  printPreview: true,
-  savePageFormats: true,
-  pdfViewer: false,
-  agents: true,
-  agentSkills: true,
-  updates: true,
-  share: false,
-  sharePanel: false,
-  clipboardChip: false,
-  appLinkSettings: false,
-  pullToRefresh: false,
-  passwords: true,
-  defaultBrowser: false,
-  requestBlocking: true,
-  reducedExtensionIsolation: false,
-  pageControls: false,
-  darkenSites: false,
-  privateTabs: false,
-  inactiveTabs: false,
-  secureDns: false,
-  quitsThroughCore: false,
-  lookalikeHolds: true,
-  newTabPage: true,
-  pageTabs: false,
-  pinShortcuts: false,
-  translate: true,
-  voiceSearch: false,
-  screenCapture: false,
-  shareSheet: false,
-  selectionToolbar: false,
-  popupSurface: true,
-  qrScan: false,
-  readAloud: false,
-  pageLanguages: false,
-  genericFontFamilies: false,
-  placementAnswered: false
-}
-
-/**
- * The Android host on API 34 without an extension install root (the preview host), a hand-kept
- * copy of `androidCapabilities({ sdkInt: 34, extensions: false, isolatedWorlds: false })` in src/android/platform.ts:
- * that module pulls in the WebView bridge and Vite `?raw` imports a core test cannot load. Keep
- * it in step by hand, as above. A device build turns `extensions` on.
- */
-const ANDROID: HostCapabilities = {
-  windowControls: false,
-  windowControlsOverlay: false,
-  windowMaterial: false,
-  nativeMenus: false,
-  windowDrag: false,
-  devtools: false,
-  compactReveal: false,
-  pictureInPicture: false,
-  viewSource: false,
-  windows: false,
-  extensions: false,
-  resourceGovernor: false,
-  sync: false,
-  print: true,
-  printPreview: false,
-  savePageFormats: false,
-  pdfViewer: true,
-  agents: true,
-  agentSkills: false,
-  updates: true,
-  share: true,
-  sharePanel: false,
-  clipboardChip: true,
-  appLinkSettings: true,
-  pullToRefresh: true,
-  passwords: true,
-  defaultBrowser: true,
-  requestBlocking: true,
-  reducedExtensionIsolation: false,
-  pageControls: true,
-  darkenSites: true,
-  privateTabs: true,
-  inactiveTabs: true,
-  secureDns: false,
-  quitsThroughCore: false,
-  lookalikeHolds: false,
-  newTabPage: false,
-  pageTabs: true,
-  // Kotlin's boot info turns this on where the launcher can pin (ShortcutManagerCompat).
-  pinShortcuts: false,
-  translate: true,
-  voiceSearch: false,
-  screenCapture: false,
-  shareSheet: false,
-  selectionToolbar: true,
-  popupSurface: false,
-  qrScan: false,
-  readAloud: false,
-  pageLanguages: false,
-  genericFontFamilies: false,
-  placementAnswered: false
-}
-
-function memoryIo(files: Record<string, string> = {}): StoreIO {
-  return {
-    readSync: (name) => files[name] ?? null,
-    write: async (name, text) => {
-      files[name] = text
-    },
-    writeSync: (name, text) => {
-      files[name] = text
-    }
-  }
-}
-
-/** Anything the browser touches on the host answers with a harmless no-op. */
-function stub<T extends object>(overrides: Partial<T> = {}): T {
-  return new Proxy(overrides as T, {
-    get: (target, key) =>
-      key in target ? Reflect.get(target, key) : key === 'then' ? undefined : () => undefined
-  })
-}
-
-interface Harness {
-  browser: Browser
-  win: ZenWindow
-  /** The last template handed to the host's menu popup. */
-  shown: () => MenuItemTemplate[]
-  /** How many popups the host was asked for. */
-  popups: () => number
-  /** The options of the last popup: where it opened and whether the keyboard asked for it. */
-  where: () => MenuPopupOptions | null
-  /** Every call a tab view received, as `method(args)`. */
-  viewCalls: string[]
-  /** What the host's clipboard says on `readText`. */
-  clipboardText: { value: string }
-  /** Every `tel:` / `mailto:` hand-off the shell was asked for, as `target url`. */
-  linkApps: string[]
-  /** The names of the events sent to the window's chrome, in order. */
-  sent: string[]
-  /** The ids of the windows whose host was asked to come forward (`WindowHost.focus`), in order. */
-  focused: string[]
-  /** Every `apply` the fake spellchecker host received (empty without `options.spellcheck`). */
-  spellcheckApplied: SpellcheckApplied[]
-}
-
-interface HarnessOptions {
-  formFactor?: FormFactor
-  /** The host has an OS emoji picker (Windows, macOS). */
-  emojiPanel?: boolean
-  /** The host's window is fullscreen. */
-  fullScreen?: boolean
-  /** The host runs the translation engine (`translate.available`), with no model on the device. */
-  translate?: boolean
-  /**
-   * The host has a spellchecker of the browser's own with these dictionaries (Electron's session
-   * spellchecker); `systemLanguages` makes it follow the OS's languages instead (macOS).
-   */
-  spellcheck?: { available: string[]; locales?: string[]; systemLanguages?: boolean }
-  /** The host writes launchers for installed web apps (`capabilities.pinShortcuts` set too). */
-  shortcuts?: boolean
-  /** What the host's confirmation dialog answers (absent: the stub's nothing, read as No). */
-  confirm?: boolean
-  /** Documents already in the store when the browser starts (`webapps.json`, …). */
-  files?: Record<string, string>
-  /** The host has a speech engine (`Platform.speech`; `capabilities.readAloud` set too): read aloud's entry points show. */
-  speech?: boolean
-  /**
-   * The host hands `tel:` and `mailto:` links to the device's apps (`ShellHost.openLinkIn`,
-   * Android); absent, the shell has no dialer or mail app to speak of (the desktop).
-   */
-  linkApps?: boolean
-}
-
-/** The languages the fake spellchecker was last told to check in. */
-interface SpellcheckApplied {
-  enabled: boolean
-  languages: string[]
-}
-
-/** A browser on a host with the given capabilities whose menu popup only records the template. */
-function harness(
-  capabilities: HostCapabilities,
-  options: HarnessOptions | FormFactor = {}
-): Harness {
-  const opts: HarnessOptions = typeof options === 'string' ? { formFactor: options } : options
-  let last: MenuItemTemplate[] = []
-  let lastOptions: MenuPopupOptions | null = null
-  let count = 0
-  const viewCalls: string[] = []
-  const clipboardText = { value: '' }
-  const sent: string[] = []
-  const focused: string[] = []
-  const linkApps: string[] = []
-  const spellcheckApplied: SpellcheckApplied[] = []
-  const spellcheckHost = (): SpellcheckHost => {
-    const words = new Set<string>()
-    const spec = opts.spellcheck!
-    return {
-      systemLanguages: Boolean(spec.systemLanguages),
-      locales: spec.locales ?? ['en-US'],
-      availableLanguages: () => [...spec.available],
-      apply: (enabled, languages) =>
-        void spellcheckApplied.push({ enabled, languages: [...languages] }),
-      onDictionaryStatus: () => undefined,
-      listWords: async () => [...words],
-      addWord: async (word) => {
-        if (words.has(word)) return false
-        words.add(word)
-        return true
-      },
-      removeWord: async (word) => words.delete(word)
-    }
-  }
-  const menus: MenuHost = {
-    popup: (items, options) => {
-      last = items
-      lastOptions = options
-      count += 1
-    }
-  }
-  /** A view that records what the menus ask of it. */
-  const recordingView = (): TabView =>
-    new Proxy(
-      {
-        isDestroyed: () => false,
-        isVisible: () => false,
-        getZoom: () => 1,
-        executeJavaScript: (code: string, frameId?: number) => {
-          viewCalls.push(`executeJavaScript(${frameId ?? 0}:${code.replace(/\s+/g, ' ').trim()})`)
-          return Promise.resolve(true)
-        }
-      } as unknown as TabView,
-      {
-        get: (target, key) => {
-          if (key in target) return Reflect.get(target, key)
-          if (key === 'then') return undefined
-          return (...args: unknown[]) => {
-            viewCalls.push(`${String(key)}(${args.map((a) => JSON.stringify(a)).join(',')})`)
-            return undefined
-          }
-        }
-      }
-    )
-  const platform: Platform = {
-    info: { os: capabilities.windows ? ('linux' as PlatformOs) : 'android', version: '1.2.3' },
-    capabilities,
-    io: memoryIo({ ...opts.files }),
-    windows: {
-      create: (win) =>
-        stub<WindowHost>({
-          alive: true,
-          contentSize: () => ({ width: 1280, height: 800 }),
-          normalBounds: () => null,
-          isFullScreen: () => Boolean(opts.fullScreen),
-          isMaximized: () => false,
-          isFocused: () => true,
-          isVisible: () => true,
-          send: (name) => void sent.push(name),
-          focus: () => void focused.push(win.id)
-        })
-    },
-    views: stub<TabViewHost>({ createView: () => recordingView() }),
-    menus,
-    dialogs: stub<DialogHost>(
-      opts.confirm === undefined ? {} : { confirm: () => Promise.resolve(opts.confirm!) }
-    ),
-    clipboard: stub<ClipboardHost>({ readText: () => Promise.resolve(clipboardText.value) }),
-    shell: stub<ShellHost>({
-      openLinkIn: opts.linkApps
-        ? (target, url) => void linkApps.push(`${target} ${url}`)
-        : undefined
-    }),
-    net: stub(),
-    downloads: stub(),
-    sessions: stub(),
-    // Optional members must read as absent, which the catch-all stub would not give.
-    app: stub<AppHost>({ showEmojiPanel: opts.emojiPanel ? () => undefined : undefined }),
-    readabilitySource: () => null,
-    ...(opts.translate
-      ? {
-          translate: stub<TranslateHost>({
-            models: stub<TranslateModelStore>({ list: () => Promise.resolve([]) }),
-            locales: ['en']
-          })
-        }
-      : {}),
-    ...(opts.spellcheck ? { spellcheck: spellcheckHost() } : {}),
-    ...(opts.shortcuts ? { shortcuts: stub<ShortcutHost>() } : {}),
-    ...(opts.speech
-      ? {
-          speech: stub<SpeechHost>({
-            voices: () => Promise.resolve([]),
-            onVoicesChanged: () => undefined,
-            onEvent: () => undefined,
-            speak: () => undefined,
-            stop: () => undefined
-          })
-        }
-      : {})
-  }
-  const browser = new Browser(platform)
-  browser.start()
-  closeBootTabs(browser)
-  const win = browser.allWindows()[0] as ZenWindow
-  if (opts.formFactor)
-    browser.handleCommand(win, 'window.formFactor', { formFactor: opts.formFactor })
-  return {
-    browser,
-    win,
-    shown: () => last,
-    popups: () => count,
-    where: () => lastOptions,
-    viewCalls,
-    clipboardText,
-    sent,
-    focused,
-    linkApps,
-    spellcheckApplied
-  }
-}
+import {
+  ALL_EDITS,
+  ANDROID,
+  DESKTOP,
+  NO_EDITS,
+  PAGE_URL,
+  VIDEO_FLAGS,
+  allItems,
+  chromeParams,
+  deepItem,
+  harness,
+  item,
+  labels,
+  pageHarness,
+  pageParams,
+  separators,
+  topLabels,
+  type Harness,
+  type HarnessOptions,
+  type PageHarness
+} from './menusFixture'
 
 /** Let a click that reads the host's clipboard finish. */
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
@@ -411,17 +74,6 @@ function answerTextFragment(
   const message = JSON.parse(call.slice('postToPage('.length, -1)) as { id: string }
   h.browser.handlePageMessage(h.tabId, { type: 'textFragment', id: message.id, directive })
   return message.id
-}
-
-/** Labels in order, separators as `-`, submenus flattened one level as `Parent > Child`. */
-function labels(items: MenuItemTemplate[]): string[] {
-  return items.flatMap((item) => {
-    if (item.type === 'separator') return ['-']
-    const label = item.label ?? ''
-    return item.submenu
-      ? [label, ...item.submenu.map((sub) => `${label} > ${sub.label ?? '-'}`)]
-      : [label]
-  })
 }
 
 function appMenu(h: Harness): string[] {
@@ -454,6 +106,7 @@ const DESKTOP_APP_MENU = [
   'Bookmarks > -',
   'Bookmarks > Show Bookmarks',
   'Bookmarks > Show Bookmarks Bar',
+  'Bookmarks > Reading List',
   'Bookmarks > -',
   'Bookmarks > Import Bookmarks and Settings…',
   'Bookmarks > Export Bookmarks…',
@@ -478,7 +131,7 @@ const DESKTOP_APP_MENU = [
   'Reader View',
   'Save and Share',
   'Save and Share > Save Page As',
-  'Save and Share > Web Capture…',
+  'Save and Share > Screenshot…',
   'Save and Share > Print…',
   '-',
   'Settings',
@@ -517,7 +170,7 @@ const DESKTOP_APP_MENU = [
 const DESKTOP_APP_MENU_TOP = DESKTOP_APP_MENU.filter((l) => !l.includes(' > '))
 
 /**
- * The tablet's More Tools keeps the two captures (its chrome has no Web Capture… overlay), in
+ * The tablet's More Tools keeps the two captures (its chrome has no Screenshot… overlay), in
  * their own group before the resources and the developer's rows.
  */
 const TABLET_CAPTURES = [
@@ -528,7 +181,7 @@ const TABLET_CAPTURES = [
 
 const DESKTOP_ONLY = [
   'Search Tabs…',
-  'Web Capture…',
+  'Screenshot…',
   'Help > Keyboard Shortcuts',
   'More Tools > Compact Mode',
   'More Tools > Split View',
@@ -537,13 +190,6 @@ const DESKTOP_ONLY = [
   'Zoom > Fullscreen',
   'Quit'
 ]
-
-/** The item labelled `label` anywhere in `items`, submenus included. */
-function deepItem(items: MenuItemTemplate[], label: string): MenuItemTemplate {
-  const found = allItems(items).find((i) => i.label === label)
-  if (!found) throw new Error(`no "${label}" in ${topLabels(items).join(', ')}`)
-  return found
-}
 
 describe('the app menu', () => {
   it("on the desktop has Firefox's groups: the tabs and windows, the library, the page's actions, the app's (§6)", () => {
@@ -555,7 +201,7 @@ describe('the app menu', () => {
     expect(top.slice(top.lastIndexOf('-') + 1)).toEqual(['Settings', 'More Tools', 'Help', 'Quit'])
   })
 
-  it('stands on an 800 px window: about eighteen top-level rows and three separators, four with the Now Playing… row (§6)', () => {
+  it('stands on an 800 px window: about eighteen top-level rows and three separators, four with the Media Controls… row (§6)', () => {
     const rows = (h: Harness): string[] => topLabels(h.shown()).filter((l) => l !== '-')
     // The DESKTOP harness has no translate host and no speech engine: Firefox's eighteen, with
     // Chrome's Delete Browsing Data… row in the library group and Save and Share closing the
@@ -573,7 +219,7 @@ describe('the app menu', () => {
     expect(rows(full)).toHaveLength(20)
     expect(separators(full.shown())).toBe(3)
     for (const row of rows(full)) expect(row).toMatch(/^[A-Z]/)
-    // With the media hub folded the Now Playing… row and its separator lead: twenty-one rows
+    // With the media hub folded the Media Controls… row and its separator lead: twenty-one rows
     // and four separators (701 px), which still stand on an 800 px window under the bar's 74.
     full.browser.state.media = [
       { tabId: full.tabId, playing: true, title: 'Nocturne', session: true }
@@ -643,7 +289,7 @@ describe('the app menu', () => {
       expect(appMenu(phone)).not.toContain('Update Zenium')
     })
 
-    it('is a twenty-first row only while the update waits: 21 rows / 4 separators (701 px); the Now Playing… row folded too, 22 / 5 (741 px) and the Update row first', () => {
+    it('is a twenty-first row only while the update waits: 21 rows / 4 separators (701 px); the Media Controls… row folded too, 22 / 5 (741 px) and the Update row first', () => {
       const rows = (h: Harness): string[] => topLabels(h.shown()).filter((l) => l !== '-')
       const full = pageHarness({ ...DESKTOP, readAloud: true }, { translate: true, speech: true })
       appMenu(full)
@@ -664,7 +310,7 @@ describe('the app menu', () => {
       expect(topLabels(full.shown()).slice(0, 5)).toEqual([
         'Update Zenium',
         '-',
-        'Now Playing…',
+        'Media Controls…',
         '-',
         'New Tab'
       ])
@@ -774,7 +420,7 @@ describe('the app menu', () => {
   it('folds Chrome’s Save and Share into a submenu closing the page’s group, before the app’s separator: the saves, then the shares (shortcuts-menus-120)', () => {
     // A host that shares and pins shortcuts, with a page up and the install surface mounted,
     // syncing with another device: every row of the group stands – Save Page As…, Create
-    // Shortcut…, Manage Apps (shortcuts-menus-138), Web Capture…, Print…, Share…, Send to Your
+    // Shortcut…, Manage Apps (shortcuts-menus-138), Screenshot…, Print…, Share…, Send to Your
     // Devices – and no Cast row.
     const h = pageHarness({ ...DESKTOP, share: true, pinShortcuts: true }, { shortcuts: true })
     h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: true })
@@ -798,7 +444,7 @@ describe('the app menu', () => {
       'Save Page As',
       'Create Shortcut…',
       'Manage Apps',
-      'Web Capture…',
+      'Screenshot…',
       'Print…',
       'Share…',
       'Send to Your Devices'
@@ -809,7 +455,7 @@ describe('the app menu', () => {
     expect(item(item(group, 'Save Page As').submenu!, 'Webpage, Complete…').action).toBe(
       'page.savePage'
     )
-    expect(item(group, 'Web Capture…').action).toBe('capture.start')
+    expect(item(group, 'Screenshot…').action).toBe('capture.start')
     expect(item(group, 'Print…')).toMatchObject({
       action: 'page.printPreview',
       accelerator: 'Ctrl+P'
@@ -834,7 +480,7 @@ describe('the app menu', () => {
       'Save Page As > Webpage, Complete…',
       'Save Page As > Webpage, HTML Only…',
       'Save Page As > Webpage, Single File…',
-      'Web Capture…',
+      'Screenshot…',
       'Print…'
     ])
   })
@@ -938,7 +584,7 @@ describe('the app menu', () => {
     const h = harness({ ...DESKTOP, pinShortcuts: true }, { shortcuts: true })
     appMenu(h)
     let group = item(h.shown(), 'Save and Share').submenu!
-    expect(topLabels(group)).toEqual(['Save Page As', 'Manage Apps', 'Web Capture…', 'Print…'])
+    expect(topLabels(group)).toEqual(['Save Page As', 'Manage Apps', 'Screenshot…', 'Print…'])
     const open = vi.spyOn(h.browser.pages, 'open')
     item(group, 'Manage Apps').click?.()
     expect(open).toHaveBeenCalledWith('settings', 'apps', h.win)
@@ -1154,20 +800,20 @@ describe('the app menu', () => {
     })
   })
 
-  it('folds the desktop’s Take Screenshot and Capture Full Page into Web Capture… (the #396 review’s ruling 3); the tablet keeps its two rows', () => {
+  it('folds the desktop’s Take Screenshot and Capture Full Page into Screenshot… (the #396 review’s ruling 3); the tablet keeps its two rows', () => {
     const desktop = harness(DESKTOP)
     const desktopMenu = appMenu(desktop)
     const everywhere = allItems(desktop.shown()).map((i) => i.label)
     expect(everywhere).not.toContain('Take Screenshot')
     expect(everywhere).not.toContain('Capture Full Page')
-    expect(desktopMenu).toContain('Save and Share > Web Capture…')
+    expect(desktopMenu).toContain('Save and Share > Screenshot…')
     // More Tools: two rows and a separator fewer than the row had – ten of its own (the
     // desktop's Task Manager among them, W5-8; Duplicate Window with the window rows, W5-13),
     // the four dock rows after them, two separators.
     const moreTools = item(desktop.shown(), 'More Tools').submenu!
     expect(moreTools.filter((i) => i.type !== 'separator')).toHaveLength(14)
     expect(separators(moreTools)).toBe(2)
-    // The tablet's chrome has no Web Capture… overlay, so its More Tools keeps the two captures
+    // The tablet's chrome has no Screenshot… overlay, so its More Tools keeps the two captures
     // in their own group before the resources.
     const tablet = harness(DESKTOP, 'tablet')
     const tabletMenu = appMenu(tablet)
@@ -1175,7 +821,7 @@ describe('the app menu', () => {
     expect(tabletMenu.indexOf('More Tools > Capture Full Page')).toBe(
       tabletMenu.indexOf('More Tools > Take Screenshot') + 1
     )
-    expect(tabletMenu).not.toContain('Save and Share > Web Capture…')
+    expect(tabletMenu).not.toContain('Save and Share > Screenshot…')
     const tabletMore = item(tablet.shown(), 'More Tools').submenu!
     expect(separators(tabletMore)).toBe(3)
     // The rows keep their actions where they stand, so the palette and the Zen preset's chord
@@ -1253,7 +899,7 @@ describe('the app menu', () => {
     h.browser.tabs.closeTab(closed.id, false, h.win)
     appMenu(h)
     const everywhere = allItems(h.shown()).map((i) => i.label)
-    // The flat menu's two captures are the desktop's one Web Capture… row now (the #396
+    // The flat menu's two captures are the desktop's one Screenshot… row now (the #396
     // review's ruling 3): the overlay takes the visible area and the full page both, so
     // nothing the two rows did is lost, and More Tools is two rows and a separator shorter.
     const foldedIntoWebCapture = new Set(['Take Screenshot', 'Capture Full Page'])
@@ -1266,7 +912,7 @@ describe('the app menu', () => {
     }
     for (const label of before)
       expect(everywhere, label).toContain(
-        foldedIntoWebCapture.has(label) ? 'Web Capture…' : (renamed[label] ?? label)
+        foldedIntoWebCapture.has(label) ? 'Screenshot…' : (renamed[label] ?? label)
       )
     for (const label of foldedIntoWebCapture) expect(everywhere).not.toContain(label)
     expect(topLabels(h.shown()).filter((l) => l !== '-')).toHaveLength(20)
@@ -1300,7 +946,7 @@ describe('the app menu', () => {
         label !== 'More Tools > Task Manager' &&
         label !== 'Bookmarks > Show Bookmarks Bar' &&
         label !== 'Bookmarks > Tab Folders' &&
-        label !== 'Save and Share > Web Capture…'
+        label !== 'Save and Share > Screenshot…'
     )
     tabletChrome.splice(tabletChrome.lastIndexOf('Bookmarks > -'), 1)
     tabletChrome.splice(tabletChrome.indexOf('More Tools > Resources'), 0, ...TABLET_CAPTURES)
@@ -1399,7 +1045,7 @@ describe('the app menu', () => {
     expect(tablet.browser.tabs.activeTabFor(tablet.win)?.url).toBe('zen://whats-new')
   })
 
-  describe('the Now Playing… row (design language v2 §9.29: the hub folded into the menu)', () => {
+  describe('the Media Controls… row (design language v2 §9.29: the hub folded into the menu)', () => {
     /** A media entry for `tabId`, the OS controls' session by default. */
     const media = (tabId: string, over: Partial<MediaState> = {}): MediaState => ({
       tabId,
@@ -1410,7 +1056,7 @@ describe('the app menu', () => {
       session: true,
       ...over
     })
-    const ROW = 'Now Playing…'
+    const ROW = 'Media Controls…'
 
     it('heads the desktop menu while a session is live and the hub button has folded, and is gone otherwise', () => {
       const h = pageHarness(DESKTOP)
@@ -1445,9 +1091,19 @@ describe('the app menu', () => {
       expect(appMenuFolded(h)[0]).toBe(ROW)
     })
 
-    it('stays while the media has paused (the hub keeps its card), keeping its name', () => {
+    it('stays while the media has paused (the hub keeps its card for Chrome’s hour), keeping its name – the button’s own, "Media Controls…", never "Now Playing…" (the #552 ruling)', () => {
       const h = pageHarness(DESKTOP)
       h.browser.state.media = [media(h.tabId, { playing: false, session: false })]
+      const [row] = appMenuFolded(h)
+      expect(row).toBe(ROW)
+      expect(row).toBe('Media Controls…')
+      // The ended track is a paused one: the same row, the same name.
+      h.browser.state.media = [
+        media(h.tabId, {
+          playing: false,
+          position: { duration: 240, position: 240, playbackRate: 1 }
+        })
+      ]
       expect(appMenuFolded(h)[0]).toBe(ROW)
     })
 
@@ -1553,7 +1209,7 @@ describe('the app menu', () => {
       expect(go).toHaveBeenCalledWith(h.tabId)
     })
 
-    it('stands under the Now Playing… row when both have folded: the hub first, then Forward, then the tabs', () => {
+    it('stands under the Media Controls… row when both have folded: the hub first, then Forward, then the tabs', () => {
       const h = pageHarness(DESKTOP)
       h.browser.state.settings.toolbarPins = { forward: false }
       h.browser.state.media = [
@@ -1566,7 +1222,13 @@ describe('the app menu', () => {
           session: true
         }
       ]
-      expect(appMenuFolded(h).slice(0, 5)).toEqual(['Now Playing…', '-', 'Forward', '-', 'New Tab'])
+      expect(appMenuFolded(h).slice(0, 5)).toEqual([
+        'Media Controls…',
+        '-',
+        'Forward',
+        '-',
+        'New Tab'
+      ])
     })
 
     it('is the desktop’s alone: the tablet and the phone keep their bars whatever the field says', () => {
@@ -1585,7 +1247,9 @@ describe('the app menu', () => {
     expect(appMenu(h)).toContain('Help > Keyboard Shortcuts')
     h.browser.handleCommand(h.win, 'window.formFactor', { formFactor: 'phone' })
     expect(appMenu(h)).not.toContain('Help > Keyboard Shortcuts')
-    expect(appMenu(h)).not.toContain('Help')
+    // The phone's Help is Chrome's flat row (TB-07), not the submenu.
+    expect(appMenu(h)).toContain('Help')
+    expect(item(h.shown(), 'Help').submenu).toBeUndefined()
   })
 
   it('opens Keyboard Shortcuts through page.open: the Settings overlay on its Shortcuts section on the desktop (a tablet with page tabs gets the tab)', () => {
@@ -1720,11 +1384,15 @@ describe('the app menu', () => {
       'Fullscreen',
       'Name Window…',
       'Quit',
-      // Chrome's phone menu is one flat list: the desktop's submenus are not folded into it.
+      // Chrome's phone menu is one flat list: the desktop's submenus are not folded into it –
+      // Help is a row of its own there (TB-07), not the desktop's Help submenu with its children.
       'More Tools',
-      'Help'
+      'Zenium Help',
+      "What's New",
+      'Report an Issue…'
     ])
       expect(everywhere).not.toContain(label)
+    expect(item(h.shown(), 'Help').submenu).toBeUndefined()
     // The host has no windows, extensions, devtools or resource governor.
     for (const label of [
       'New Window',
@@ -1761,6 +1429,9 @@ describe('the app menu', () => {
       'Bookmarks > -',
       'Bookmarks > Import Bookmarks…',
       'Bookmarks > Export Bookmarks…',
+      // The phone's reading list (HB-20): the list as a library row after Bookmarks, the page's
+      // verb among the saves after Share… (before Add to Home Screen where the host has it).
+      'Reading List',
       'History',
       'Downloads',
       'Passwords',
@@ -1771,17 +1442,61 @@ describe('the app menu', () => {
       'Find in Page…',
       'Reader View',
       'Share…',
+      'Add to Reading List',
       'Print…',
       'Take Screenshot',
       'Capture Full Page',
       'Desktop Site',
       '-',
       'Settings',
+      'Help',
       '-',
       'About Zenium 1.2.3',
       '-',
       'Change Menu'
     ])
+  })
+
+  it('on a phone Help is Chrome’s "Help & feedback" row (TB-07): after Settings, no submenu, and it opens the help page in a new tab in front, a child of the page the menu was over, in that page’s container', () => {
+    const h = harness(ANDROID, 'phone')
+    h.browser.handleCommand(h.win, 'urlbar.submit', {
+      input: 'https://example.com/a',
+      newTab: true,
+      background: false
+    })
+    const opener = h.browser.tabs.activeTabFor(h.win)!
+    const items = appMenu(h)
+    expect(items.indexOf('Help')).toBe(items.indexOf('Settings') + 1)
+    expect(items.filter((l) => l === 'Help')).toHaveLength(1)
+    const help = item(h.shown(), 'Help')
+    expect(help.submenu).toBeUndefined()
+    expect(help.key).toBe('row.help')
+    expect(help.enabled).not.toBe(false)
+    help.click?.()
+    const opened = h.browser.tabs.activeTabFor(h.win)!
+    expect(opened.id).not.toBe(opener.id)
+    expect(opened.url).toBe(HELP_URL)
+    // The page the menu was over is not left: a back from the help page's first entry returns
+    // to its opener (the renderer's `rootBackAction`), as Chrome's help returns to the tab.
+    expect(opened.openerTabId).toBe(opener.id)
+    expect(opened.containerId).toBe(opener.containerId)
+    // From a private page the help page is private too – the tab's own container.
+    const privatePage = h.browser.tabs.createTab(
+      { url: 'https://example.com/p', active: true, containerId: PRIVATE_CONTAINER_ID },
+      h.win
+    )
+    appMenu(h)
+    item(h.shown(), 'Help').click?.()
+    const fromPrivate = h.browser.tabs.activeTabFor(h.win)!
+    expect(fromPrivate.url).toBe(HELP_URL)
+    expect(fromPrivate.containerId).toBe(PRIVATE_CONTAINER_ID)
+    expect(fromPrivate.openerTabId).toBe(privatePage.id)
+    // The sidebar layouts keep Chrome desktop's Help submenu: no flat row there.
+    for (const other of [harness(DESKTOP), harness(ANDROID, 'tablet')]) {
+      appMenu(other)
+      expect(item(other.shown(), 'Help').submenu?.length).toBeGreaterThan(0)
+      expect(labels(other.shown()).filter((l) => l === 'Help')).toHaveLength(1)
+    }
   })
 
   describe('the phone menu’s order (Edge’s Change menu, TB-22)', () => {
@@ -2008,14 +1723,14 @@ describe('the app menu', () => {
       expect(appMenu(h)).toEqual(DESKTOP_APP_MENU)
     })
 
-    it('keeps the Now Playing… row at the head with the media hub folded: four separators, the window group under it', () => {
+    it('keeps the Media Controls… row at the head with the media hub folded: four separators, the window group under it', () => {
       const h = pageHarness(DESKTOP)
       const priv = h.browser.openWindow('private', h.win)!
       const theirs = h.browser.tabs.createTab({ url: 'https://video.example.org/watch' }, priv)
       h.browser.state.media = [
         { tabId: theirs.id, playing: true, title: 'Nocturne', session: true }
       ]
-      expect(appMenuFolded(h, priv).slice(0, 3)).toEqual(['Now Playing…', '-', 'New Tab'])
+      expect(appMenuFolded(h, priv).slice(0, 3)).toEqual(['Media Controls…', '-', 'New Tab'])
       expect(separators(h.shown())).toBe(4)
     })
 
@@ -2230,11 +1945,12 @@ describe('the app menu', () => {
     const h = harness(ANDROID, 'phone')
     expect(appMenu(h)).not.toContain('Dark Theme for This Site')
     h.browser.pageControls.update({ darkenSites: true })
-    expect(appMenu(h).slice(-8)).toEqual([
+    expect(appMenu(h).slice(-9)).toEqual([
       'Desktop Site',
       'Dark Theme for This Site',
       '-',
       'Settings',
+      'Help',
       '-',
       'About Zenium 1.2.3',
       '-',
@@ -2249,11 +1965,6 @@ describe('the app menu', () => {
     expect(appMenu(h)).toContain('Help > Keyboard Shortcuts')
   })
 })
-
-/** Every item of a template, submenus included. */
-function allItems(items: MenuItemTemplate[]): MenuItemTemplate[] {
-  return items.flatMap((item) => [item, ...(item.submenu ? allItems(item.submenu) : [])])
-}
 
 describe("the phone menu's icon row", () => {
   /**
@@ -2526,113 +2237,6 @@ describe('URL bar command suggestions', () => {
 // Page context menus
 // ---------------------------------------------------------------------------
 
-const PAGE_URL = 'https://example.com/article'
-
-const NO_EDITS: PageContextParams['editFlags'] = {
-  canUndo: false,
-  canRedo: false,
-  canCut: false,
-  canCopy: false,
-  canPaste: false,
-  canDelete: false,
-  canSelectAll: false
-}
-
-const ALL_EDITS: PageContextParams['editFlags'] = {
-  canUndo: true,
-  canRedo: true,
-  canCut: true,
-  canCopy: true,
-  canPaste: true,
-  canDelete: true,
-  canSelectAll: true
-}
-
-/** A `context-menu` event's parameters for a click on the plain page, overridable per target. */
-function pageParams(overrides: Partial<PageContextParams> = {}): PageContextParams {
-  return {
-    x: 120,
-    y: 240,
-    linkURL: '',
-    srcURL: '',
-    mediaType: 'none',
-    selectionText: '',
-    isEditable: false,
-    misspelledWord: '',
-    dictionarySuggestions: [],
-    pageURL: PAGE_URL,
-    frameURL: '',
-    frameId: 0,
-    editFlags: NO_EDITS,
-    ...overrides
-  }
-}
-
-const VIDEO_FLAGS: NonNullable<PageContextParams['mediaFlags']> = {
-  inError: false,
-  isPaused: true,
-  isMuted: false,
-  hasAudio: true,
-  isLooping: false,
-  isControlsVisible: true,
-  canToggleControls: true,
-  canSave: true,
-  canShowPictureInPicture: true,
-  isShowingPictureInPicture: false,
-  canLoop: true
-}
-
-interface PageHarness extends Harness {
-  tabId: string
-  /** Show the page menu for `params` and return its top-level labels (submenus collapsed). */
-  menu: (params: PageContextParams) => string[]
-  /** The last template's items, top level only. */
-  items: () => MenuItemTemplate[]
-  /** Click the item labelled `label` in the last template. */
-  click: (label: string) => void
-}
-
-/** A desktop browser with one loaded web page tab. */
-function pageHarness(
-  capabilities: HostCapabilities = DESKTOP,
-  options: HarnessOptions = {}
-): PageHarness {
-  const h = harness(capabilities, options)
-  const tab = h.browser.tabs.createTab({ url: PAGE_URL, active: true }, h.win)
-  h.viewCalls.length = 0
-  const items = (): MenuItemTemplate[] => h.shown()
-  const click = (label: string): void => {
-    const item = items().find((i) => i.label === label)
-    if (!item?.click) throw new Error(`no clickable "${label}" in ${topLabels(items()).join(', ')}`)
-    item.click()
-  }
-  return {
-    ...h,
-    tabId: tab.id,
-    menu: (params) => {
-      h.browser.menus.showPageContextMenu(tab.id, params, h.win)
-      return topLabels(h.shown())
-    },
-    items,
-    click
-  }
-}
-
-/** Labels in order, separators as `-`, submenus as their label only. */
-function topLabels(items: MenuItemTemplate[]): string[] {
-  return items.map((item) => (item.type === 'separator' ? '-' : (item.label ?? '')))
-}
-
-function separators(items: MenuItemTemplate[]): number {
-  return items.filter((item) => item.type === 'separator').length
-}
-
-function item(items: MenuItemTemplate[], label: string): MenuItemTemplate {
-  const found = items.find((i) => i.label === label)
-  if (!found) throw new Error(`no "${label}" in ${topLabels(items).join(', ')}`)
-  return found
-}
-
 describe('the page context menu', () => {
   it('on the plain page has Chrome’s groups: navigation, page, developer', () => {
     const h = pageHarness()
@@ -2644,7 +2248,7 @@ describe('the page context menu', () => {
       'Bookmark Page',
       'Save Page As…',
       'Print…',
-      'Web Capture…',
+      'Screenshot…',
       'Enter Reader View',
       '-',
       'Boosts',
@@ -2712,14 +2316,14 @@ describe('the page context menu', () => {
     expect(page.menu(pageParams())[0]).toBe('Back')
   })
 
-  it('says capture once on the desktop – one Web Capture… row with its chord, where the menu said it three times (the #396 review’s ruling 3, the lead on #414); a touch host keeps its two one-shot rows', () => {
+  it('says capture once on the desktop – one Screenshot… row with its chord, where the menu said it three times (the #396 review’s ruling 3, the lead on #414); a touch host keeps its two one-shot rows', () => {
     const h = pageHarness()
     const menu = h.menu(pageParams())
     // One row, between Print… and Reader View, where the three stood.
-    expect(menu.filter((l) => /capture|screenshot/i.test(l))).toEqual(['Web Capture…'])
-    expect(menu.indexOf('Web Capture…')).toBe(menu.indexOf('Print…') + 1)
-    expect(menu[menu.indexOf('Web Capture…') + 1]).toBe('Enter Reader View')
-    const row = item(h.items(), 'Web Capture…')
+    expect(menu.filter((l) => /capture|screenshot/i.test(l))).toEqual(['Screenshot…'])
+    expect(menu.indexOf('Screenshot…')).toBe(menu.indexOf('Print…') + 1)
+    expect(menu[menu.indexOf('Screenshot…') + 1]).toBe('Enter Reader View')
+    const row = item(h.items(), 'Screenshot…')
     // Edge's row runs the overlay – the visible area, the full page and an area select are its
     // toolbar's – and wears the Chrome preset's chord (Edge's Web capture chord).
     expect(row.action).toBe('capture.start')
@@ -2732,12 +2336,12 @@ describe('the page context menu', () => {
     // The Zen preset gives Ctrl+Shift+S to Firefox's Take Screenshot: the row stands, unchorded.
     h.browser.handleCommand(h.win, 'settings.update', { shortcutPreset: 'zen' })
     h.menu(pageParams())
-    expect(item(h.items(), 'Web Capture…').accelerator).toBeUndefined()
+    expect(item(h.items(), 'Screenshot…').accelerator).toBeUndefined()
     // A tablet's page menu has no overlay to open: Take Screenshot and Capture Full Page stay,
     // in the same seat, running their one-shot actions.
     const tablet = pageHarness(DESKTOP, { formFactor: 'tablet' })
     const tabletMenu = tablet.menu(pageParams())
-    expect(tabletMenu).not.toContain('Web Capture…')
+    expect(tabletMenu).not.toContain('Screenshot…')
     expect(tabletMenu).not.toContain('Capture Page…')
     expect(tabletMenu.indexOf('Take Screenshot')).toBe(tabletMenu.indexOf('Print…') + 1)
     expect(tabletMenu.indexOf('Capture Full Page')).toBe(tabletMenu.indexOf('Take Screenshot') + 1)
@@ -2746,7 +2350,7 @@ describe('the page context menu', () => {
     const phone = pageHarness(ANDROID, { formFactor: 'phone' })
     const phoneMenu = phone.menu(pageParams())
     expect(phoneMenu).toContain('Take Screenshot')
-    expect(phoneMenu).not.toContain('Web Capture…')
+    expect(phoneMenu).not.toContain('Screenshot…')
   })
 
   it('leaves Print, View Page Source and Inspect to hosts that have them', () => {
@@ -2820,6 +2424,7 @@ describe('the page context menu', () => {
       'Save Link As…',
       'Copy Link Address',
       'Copy Link Text',
+      'Add Link to Reading List',
       '-',
       'Boosts',
       'Inspect Element'
@@ -2977,12 +2582,482 @@ describe('the page context menu', () => {
       'Save Image As…',
       'Copy Image',
       'Copy Image Address',
+      'Search Image with Google Lens',
       '-',
       'Boosts',
       'Inspect Element'
     ])
     h.click('Save Image As…')
     expect(h.viewCalls).toEqual(['downloadURL("https://example.com/a.png",{"saveAs":true})'])
+  })
+
+  describe('Search Image with <engine> (CT-32)', () => {
+    const IMAGE = 'https://example.com/pics/a b.png?size=large&v=2'
+    const imageMenu = (h: ReturnType<typeof pageHarness>, src: string): string[] =>
+      h.menu(pageParams({ mediaType: 'image', srcURL: src }))
+
+    const hasRow = (menu: string[]): boolean =>
+      menu.some((label) => label.startsWith('Search Image with'))
+    /** An engine of the user's that defines an image search of its own (Chrome's `image_url`). */
+    const YANDEX = {
+      id: 'custom:yandex',
+      name: 'Yandex',
+      searchUrl: 'https://yandex.com/search/?text=%s',
+      suggestUrl: null,
+      keyword: '@yandex',
+      glyph: 'Y',
+      source: 'custom' as const,
+      imageSearch: { name: 'Yandex', url: 'https://yandex.com/images/search?rpt=imageview&url=%s' }
+    }
+
+    it('names Google Lens for Google', () => {
+      expect(imageMenu(pageHarness(), IMAGE)).toContain('Search Image with Google Lens')
+    })
+
+    it('names Bing for Bing', () => {
+      const h = pageHarness()
+      h.browser.handleCommand(h.win, 'settings.update', { searchEngineId: 'bing' })
+      expect(imageMenu(h, IMAGE)).toContain('Search Image with Bing')
+      expect(imageMenu(h, IMAGE)).not.toContain('Search Image with Google Lens')
+    })
+
+    it('names the product of an engine of the user’s that defines an image search', () => {
+      const h = pageHarness()
+      h.browser.handleCommand(h.win, 'settings.update', {
+        searchEngines: [YANDEX],
+        searchEngineId: YANDEX.id
+      })
+      expect(imageMenu(h, IMAGE)).toContain('Search Image with Yandex')
+      h.click('Search Image with Yandex')
+      const tabIds = h.win.activeSpace().tabIds
+      expect(h.browser.tabs.tab(tabIds[tabIds.indexOf(h.tabId) + 1] ?? '')?.url).toBe(
+        `https://yandex.com/images/search?rpt=imageview&url=${encodeURIComponent(IMAGE)}`
+      )
+    })
+
+    it.each(['duckduckgo', 'ecosia', 'wikipedia'])(
+      'has no row for %s, which defines no image search (Chrome shows none either)',
+      (id) => {
+        const h = pageHarness()
+        h.browser.handleCommand(h.win, 'settings.update', { searchEngineId: id })
+        expect(hasRow(imageMenu(h, IMAGE))).toBe(false)
+      }
+    )
+
+    it('has no row for a hand-added engine, which defines none', () => {
+      const h = pageHarness()
+      const id = h.browser.handleCommand(h.win, 'search.addEngine', {
+        name: 'Kagi',
+        url: 'https://kagi.com/search?q=%s'
+      }) as string
+      h.browser.handleCommand(h.win, 'settings.update', { searchEngineId: id })
+      expect(h.browser.state.defaultSearchEngine().id).toBe(id)
+      expect(hasRow(imageMenu(h, IMAGE))).toBe(false)
+    })
+
+    /** The page script's answer: a 2×1 JPEG thumbnail of a 1600×800 image, within the Lens bounds. */
+    const THUMB = {
+      base64: '/9j/2wBDAAM=',
+      contentType: 'image/jpeg',
+      width: 1000,
+      height: 500,
+      originalWidth: 1600,
+      originalHeight: 800
+    }
+    const FETCHED = { ok: true, thumbnail: THUMB }
+    const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+    const openedBeside = (h: ReturnType<typeof pageHarness>): Tab | undefined => {
+      const tabIds = h.win.activeSpace().tabIds
+      return h.browser.tabs.tab(tabIds[tabIds.indexOf(h.tabId) + 1] ?? '')
+    }
+    /** The `postURL` the opened tab's view received, parsed. */
+    const posted = (h: ReturnType<typeof pageHarness>): { url: string; post: ImagePost } | null => {
+      const call = h.viewCalls.find((c) => c.startsWith('postURL('))
+      if (!call) return null
+      const [url, post] = JSON.parse(`[${call.slice('postURL('.length, -1)}]`) as [
+        string,
+        ImagePost
+      ]
+      return { url, post }
+    }
+    const field = (post: ImagePost, name: string): ImagePostField | undefined =>
+      post.fields.find((f) => f.name === name)
+
+    it.each([
+      ['a data: image', 'data:image/png;base64,iVBORw0KGgo='],
+      ['a blob: image', 'blob:https://example.com/1d2c3b4a']
+    ])(
+      'has the row for %s with an engine that takes the bytes (Google Lens): the bytes are what travels',
+      (_name, src) => {
+        const h = pageHarness()
+        expect(imageMenu(h, src)).toContain('Search Image with Google Lens')
+        h.browser.handleCommand(h.win, 'settings.update', { searchEngineId: 'bing' })
+        expect(imageMenu(h, src)).toContain('Search Image with Bing')
+      }
+    )
+
+    it.each([
+      ['a data: image', 'data:image/png;base64,iVBORw0KGgo='],
+      ['a blob: image', 'blob:https://example.com/1d2c3b4a']
+    ])('has no row for %s with an engine that takes the address alone (Yandex)', (_name, src) => {
+      const h = pageHarness()
+      h.browser.handleCommand(h.win, 'settings.update', {
+        searchEngines: [YANDEX],
+        searchEngineId: YANDEX.id
+      })
+      expect(hasRow(imageMenu(h, src))).toBe(false)
+      expect(hasRow(imageMenu(h, IMAGE))).toBe(true)
+    })
+
+    it.each([
+      ['a file', 'file:///home/me/a.png'],
+      ['an extension resource', 'chrome-extension://abcdef/icon.png'],
+      ['a blank source', '']
+    ])('has no row for %s', (_name, src) => {
+      const h = pageHarness()
+      // A blank source is no image at all; the others no page can read back nor engine fetch.
+      const menu = h.menu(pageParams({ mediaType: 'image', srcURL: src }))
+      expect(menu.some((label) => label.startsWith('Search Image with'))).toBe(false)
+    })
+
+    it('uploads the bytes to Google Lens: the page’s script reads the thumbnail, a tab beside this one and in front POSTs Chrome’s multipart fields, this tab its opener', async () => {
+      const h = pageHarness(DESKTOP, { pageScript: () => FETCHED })
+      imageMenu(h, IMAGE)
+      h.click('Search Image with Google Lens')
+      await settle()
+      // The script ran in the browser's private world of the clicked frame (the desktop; the
+      // page's own built-ins never see it), on the clicked image, with the page's cookies.
+      const script = h.viewCalls.find((c) => c.startsWith('executeJavaScriptInPrivateWorld('))!
+      expect(script).toContain(JSON.stringify(IMAGE))
+      expect(script).toContain("read('include')")
+      // The engine's own bounds: Google's is Chrome's Lens path (1000 px, 300 × 300, JPEG 40).
+      expect(script).toContain('const maxSide = 1000, minArea = 90000, quality = 0.4, maxBytes =')
+      expect(h.viewCalls.some((c) => c.startsWith('executeJavaScript('))).toBe(false)
+      const opened = openedBeside(h)
+      expect(opened?.url).toBe('https://lens.google.com/v3/upload')
+      expect(opened?.openerTabId).toBe(h.tabId)
+      expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(opened?.id)
+      const { url, post } = posted(h)!
+      expect(url).toBe('https://lens.google.com/v3/upload')
+      expect(post.encoding).toBe('multipart')
+      expect(post.fields.map((f) => f.name)).toEqual([
+        'encoded_image',
+        'image_url',
+        'sbisrc',
+        'original_width',
+        'original_height',
+        'processed_image_dimensions'
+      ])
+      // The file part with no filename, as Chrome's (net::AddMultipartValueForUpload).
+      expect(field(post, 'encoded_image')).toEqual({
+        name: 'encoded_image',
+        file: { base64: THUMB.base64, contentType: 'image/jpeg' }
+      })
+      expect(field(post, 'image_url')).toEqual({ name: 'image_url', value: IMAGE })
+      expect(field(post, 'sbisrc')).toEqual({ name: 'sbisrc', value: 'Zenium 1.2.3 Linux' })
+      expect(field(post, 'original_width')).toEqual({ name: 'original_width', value: '1600' })
+      expect(field(post, 'original_height')).toEqual({ name: 'original_height', value: '800' })
+      expect(field(post, 'processed_image_dimensions')).toEqual({
+        name: 'processed_image_dimensions',
+        value: '1000,500'
+      })
+      // The POST is the tab's first load; nothing loads the address by GET beside it.
+      expect(h.viewCalls.filter((c) => c.startsWith('loadURL('))).toEqual([])
+    })
+
+    it('uploads a data: image with no image_url field (Chrome sends no address for one), the thumbnail alone', async () => {
+      const h = pageHarness(DESKTOP, { pageScript: () => FETCHED })
+      imageMenu(h, 'data:image/png;base64,iVBORw0KGgo=')
+      h.click('Search Image with Google Lens')
+      await settle()
+      const { post } = posted(h)!
+      expect(field(post, 'image_url')).toBeUndefined()
+      expect(field(post, 'encoded_image')).toBeDefined()
+      expect(openedBeside(h)?.url).toBe('https://lens.google.com/v3/upload')
+    })
+
+    it('uploads to Bing urlencoded: imageBin carries the thumbnail base64', async () => {
+      const h = pageHarness(DESKTOP, { pageScript: () => FETCHED })
+      h.browser.handleCommand(h.win, 'settings.update', { searchEngineId: 'bing' })
+      imageMenu(h, IMAGE)
+      h.click('Search Image with Bing')
+      await settle()
+      const { url, post } = posted(h)!
+      expect(url).toBe(
+        'https://www.bing.com/images/detail/search?iss=sbiupload&FORM=CHROMI#enterInsights'
+      )
+      expect(post).toEqual({
+        encoding: 'urlencoded',
+        fields: [{ name: 'imageBin', value: THUMB.base64 }]
+      })
+      // Bing's bounds are Chrome's for any engine but Google's: 600 px on the longest side.
+      const script = h.viewCalls.find((c) => c.startsWith('executeJavaScriptInPrivateWorld('))!
+      expect(script).toContain('const maxSide = 600, minArea = 90000, quality = 0.4, maxBytes =')
+    })
+
+    it('runs the script in the clicked frame (an image in a sub-frame reads with that frame’s cookies)', async () => {
+      const h = pageHarness(DESKTOP, { pageScript: () => FETCHED })
+      h.menu(pageParams({ mediaType: 'image', srcURL: IMAGE, frameId: 7 }))
+      h.click('Search Image with Google Lens')
+      await settle()
+      expect(h.viewCalls.find((c) => c.startsWith('executeJavaScriptInPrivateWorld('))).toMatch(
+        /^executeJavaScriptInPrivateWorld\(7:/
+      )
+    })
+
+    it('takes the address route, silently, for an http(s) image above the cap (a refusal is owed only where nothing else can be done): no POST, no toast', async () => {
+      const h = pageHarness(DESKTOP, { pageScript: () => ({ ok: false, reason: 'too-large' }) })
+      imageMenu(h, IMAGE)
+      h.click('Search Image with Google Lens')
+      await settle()
+      const opened = openedBeside(h)
+      expect(opened?.url).toBe(
+        `https://lens.google.com/uploadbyurl?url=${encodeURIComponent(IMAGE)}`
+      )
+      expect(opened?.openerTabId).toBe(h.tabId)
+      expect(posted(h)).toBeNull()
+      expect(h.toasts).toEqual([])
+    })
+
+    it('refuses a data: image above the cap with a toast (no address to fall back to), opening nothing', async () => {
+      const h = pageHarness(DESKTOP, { pageScript: () => ({ ok: false, reason: 'too-large' }) })
+      imageMenu(h, 'data:image/png;base64,iVBORw0KGgo=')
+      const before = h.win.activeSpace().tabIds.length
+      h.click('Search Image with Google Lens')
+      await settle()
+      // A limit, not a failure: the info kind, sentence case, no trailing period (§9.1).
+      expect(h.toasts).toEqual([{ message: 'This image is too large to search', kind: 'info' }])
+      expect(h.win.activeSpace().tabIds.length).toBe(before)
+      expect(posted(h)).toBeNull()
+    })
+
+    it('reads the renderer’s bytes through the host first (a cross-origin image without CORS: the page’s fetch would fail and evict them) and hands them to the page’s canvas as a data: address', async () => {
+      const held = { base64: 'iVBORw0KGgo=', mimeType: 'image/png' }
+      const h = pageHarness(DESKTOP, {
+        pageScript: (code) =>
+          code.includes(`"data:image/png;base64,${held.base64}"`)
+            ? FETCHED
+            : { ok: false, reason: 'fetch-failed' },
+        view: { readImageResource: () => Promise.resolve(held) }
+      })
+      imageMenu(h, IMAGE)
+      h.click('Search Image with Google Lens')
+      await settle()
+      expect(openedBeside(h)?.url).toBe('https://lens.google.com/v3/upload')
+      expect(field(posted(h)!.post, 'encoded_image')).toMatchObject({
+        file: { base64: THUMB.base64 }
+      })
+      // The host's copy is read before any fetch from the page, and the page fetched nothing else.
+      const scripts = h.viewCalls.filter((c) => c.startsWith('executeJavaScriptInPrivateWorld('))
+      expect(scripts).toHaveLength(1)
+      expect(scripts[0]).toContain(`"data:image/png;base64,${held.base64}"`)
+      // The copy is decoded in the script (base64 → Blob), no fetch of the data: address: a page
+      // CSP without `data:` in `connect-src` has no say, and the page's report-uri hears nothing.
+      expect(scripts[0]).toContain('atob(')
+      expect(scripts[0]).not.toContain('fetch("data:')
+    })
+
+    it('asks the page to fetch the address when the host holds no copy (evicted, or a host without the read)', async () => {
+      const h = pageHarness(DESKTOP, {
+        pageScript: (code) => (code.includes(JSON.stringify(IMAGE)) ? FETCHED : null),
+        view: { readImageResource: () => Promise.resolve(null) }
+      })
+      imageMenu(h, IMAGE)
+      h.click('Search Image with Google Lens')
+      await settle()
+      expect(openedBeside(h)?.url).toBe('https://lens.google.com/v3/upload')
+      expect(field(posted(h)!.post, 'encoded_image')).toMatchObject({
+        file: { base64: THUMB.base64 }
+      })
+    })
+
+    it('runs every thumbnail script in the browser’s private world where the host has one – the host’s copy handed over as a data: address and the page’s own fetch alike – and never in the page’s main world', async () => {
+      const held = { base64: 'iVBORw0KGgo=', mimeType: 'image/png' }
+      const worlds: Array<{ frameId: number | undefined; code: string }> = []
+      const privateWorld = (code: string, frameId?: number): Promise<unknown> => {
+        worlds.push({ frameId, code })
+        return Promise.resolve(
+          code.includes(`"data:image/png;base64,${held.base64}"`) ||
+            code.includes(JSON.stringify(IMAGE))
+            ? FETCHED
+            : { ok: false, reason: 'fetch-failed' }
+        )
+      }
+      // The host holds the image: the script gets the copy, in the private world.
+      const h = pageHarness(DESKTOP, {
+        pageScript: () => {
+          throw new Error('the main world was reached')
+        },
+        view: {
+          readImageResource: () => Promise.resolve(held),
+          executeJavaScriptInPrivateWorld: privateWorld
+        }
+      })
+      imageMenu(h, IMAGE)
+      h.click('Search Image with Google Lens')
+      await settle()
+      expect(openedBeside(h)?.url).toBe('https://lens.google.com/v3/upload')
+      expect(field(posted(h)!.post, 'encoded_image')).toMatchObject({
+        file: { base64: THUMB.base64 }
+      })
+      expect(worlds).toHaveLength(1)
+      expect(worlds[0]!.code).toContain(`"data:image/png;base64,${held.base64}"`)
+      expect(h.viewCalls.some((c) => c.startsWith('executeJavaScript('))).toBe(false)
+      // The host holds nothing: the page's own fetch of the address, in the private world too.
+      worlds.length = 0
+      const h2 = pageHarness(DESKTOP, {
+        pageScript: () => {
+          throw new Error('the main world was reached')
+        },
+        view: {
+          readImageResource: () => Promise.resolve(null),
+          executeJavaScriptInPrivateWorld: privateWorld
+        }
+      })
+      imageMenu(h2, IMAGE)
+      h2.click('Search Image with Google Lens')
+      await settle()
+      expect(openedBeside(h2)?.url).toBe('https://lens.google.com/v3/upload')
+      expect(worlds).toHaveLength(1)
+      expect(worlds[0]!.code).toContain(JSON.stringify(IMAGE))
+      expect(worlds[0]!.code).toContain('OffscreenCanvas')
+      expect(h2.viewCalls.some((c) => c.startsWith('executeJavaScript('))).toBe(false)
+    })
+
+    it('carries the clicked frame into the private world (a sub-frame’s image runs in that frame’s world) and reads a data: image there too', async () => {
+      const worlds: Array<{ frameId: number | undefined; code: string }> = []
+      const h = pageHarness(DESKTOP, {
+        view: {
+          executeJavaScriptInPrivateWorld: (code: string, frameId?: number) => {
+            worlds.push({ frameId, code })
+            return Promise.resolve(FETCHED)
+          }
+        }
+      })
+      h.menu(pageParams({ mediaType: 'image', srcURL: IMAGE, frameId: 7 }))
+      h.click('Search Image with Google Lens')
+      await settle()
+      expect(worlds.map((w) => w.frameId)).toEqual([7])
+      expect(posted(h)).not.toBeNull()
+      h.menu(pageParams({ mediaType: 'image', srcURL: 'data:image/png;base64,iVBORw0KGgo=' }))
+      h.click('Search Image with Google Lens')
+      await settle()
+      expect(worlds).toHaveLength(2)
+      expect(worlds[1]!.frameId).toBeUndefined()
+      expect(worlds[1]!.code).toContain('"data:image/png;base64,iVBORw0KGgo="')
+      expect(h.viewCalls.some((c) => c.startsWith('executeJavaScript('))).toBe(false)
+    })
+
+    it('runs the script through executeJavaScript on a host without a private world (the phone’s WebView evaluates in the main world only)', async () => {
+      const h = pageHarness(ANDROID, { formFactor: 'phone', pageScript: () => FETCHED })
+      imageMenu(h, IMAGE)
+      h.click('Search Image with Google Lens')
+      await settle()
+      expect(h.viewCalls.filter((c) => c.startsWith('executeJavaScript('))).toHaveLength(1)
+      expect(posted(h)).not.toBeNull()
+    })
+
+    it('takes the address route for an http(s) image the host lists above the cap, fetching nothing from the page and toasting nothing', async () => {
+      const h = pageHarness(DESKTOP, {
+        pageScript: () => FETCHED,
+        view: { readImageResource: () => Promise.resolve('too-large' as const) }
+      })
+      imageMenu(h, IMAGE)
+      h.click('Search Image with Google Lens')
+      await settle()
+      expect(openedBeside(h)?.url).toBe(
+        `https://lens.google.com/uploadbyurl?url=${encodeURIComponent(IMAGE)}`
+      )
+      expect(h.toasts).toEqual([])
+      expect(posted(h)).toBeNull()
+      // The listing refused it before any transfer: the page's script never ran.
+      expect(h.viewCalls.some((c) => /^executeJavaScript(InPrivateWorld)?\(/.test(c))).toBe(false)
+    })
+
+    it('falls back to the address form for an http(s) image no path could read (today’s row), with no POST', async () => {
+      const h = pageHarness(DESKTOP, {
+        pageScript: () => ({ ok: false, reason: 'fetch-failed' }),
+        view: { readImageResource: () => Promise.resolve(null) }
+      })
+      imageMenu(h, IMAGE)
+      h.click('Search Image with Google Lens')
+      await settle()
+      const opened = openedBeside(h)
+      expect(opened?.url).toBe(
+        `https://lens.google.com/uploadbyurl?url=${encodeURIComponent(IMAGE)}`
+      )
+      expect(opened?.openerTabId).toBe(h.tabId)
+      expect(posted(h)).toBeNull()
+      expect(h.viewCalls).toContain(`loadURL(${JSON.stringify(opened?.url)})`)
+    })
+
+    it('says so for a data: image no path could read: no address to fall back to, a toast, no tab', async () => {
+      const h = pageHarness(DESKTOP, { pageScript: () => ({ ok: false, reason: 'decode-failed' }) })
+      imageMenu(h, 'data:image/png;base64,iVBORw0KGgo=')
+      const before = h.win.activeSpace().tabIds.length
+      h.click('Search Image with Google Lens')
+      await settle()
+      // A failure: the error kind; the product's refusals are uncontracted and stated of the thing
+      // ("This page cannot be shared"), the pair reading as a pair (§9.1, §9.33).
+      expect(h.toasts).toEqual([{ message: 'This image cannot be read', kind: 'error' }])
+      expect(h.win.activeSpace().tabIds.length).toBe(before)
+      // The host's read is for an http(s) image's response; a data: image has none.
+      expect(h.viewCalls.some((c) => c.startsWith('readImageResource('))).toBe(false)
+    })
+
+    it('opens the address form for an engine with a template alone (Yandex), as before', () => {
+      const h = pageHarness()
+      h.browser.handleCommand(h.win, 'settings.update', {
+        searchEngines: [YANDEX],
+        searchEngineId: YANDEX.id
+      })
+      imageMenu(h, IMAGE)
+      h.click('Search Image with Yandex')
+      const opened = openedBeside(h)
+      expect(opened?.url).toBe(
+        `https://yandex.com/images/search?rpt=imageview&url=${encodeURIComponent(IMAGE)}`
+      )
+      expect(opened?.openerTabId).toBe(h.tabId)
+      expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(opened?.id)
+      expect(h.viewCalls.some((c) => /^executeJavaScript(InPrivateWorld)?\(/.test(c))).toBe(false)
+    })
+
+    it('reaches the phone’s image sheet through the same template: after Copy Image Address, before Share Image…, the data: image included', async () => {
+      const h = pageHarness(ANDROID, { formFactor: 'phone', pageScript: () => FETCHED })
+      const menu = imageMenu(h, IMAGE)
+      expect(menu.indexOf('Search Image with Google Lens')).toBe(
+        menu.indexOf('Copy Image Address') + 1
+      )
+      expect(menu.indexOf('Share Image…')).toBe(menu.indexOf('Search Image with Google Lens') + 1)
+      const data = imageMenu(h, 'data:image/gif;base64,R0lGOD')
+      expect(data.indexOf('Search Image with Google Lens')).toBe(
+        data.indexOf('Copy Image Address') + 1
+      )
+      // The phone's pick goes the same way: the script, the POST tab beside the page.
+      h.click('Search Image with Google Lens')
+      await settle()
+      expect(posted(h)?.url).toBe('https://lens.google.com/v3/upload')
+      expect(field(posted(h)!.post, 'sbisrc')).toEqual({
+        name: 'sbisrc',
+        value: 'Zenium 1.2.3 Android'
+      })
+      expect(field(posted(h)!.post, 'image_url')).toBeUndefined()
+      // Bing as the engine: its own product, in the same seat.
+      h.browser.tabs.activateTab(h.tabId, h.win)
+      h.browser.handleCommand(h.win, 'settings.update', { searchEngineId: 'bing' })
+      const bing = imageMenu(h, IMAGE)
+      expect(bing.indexOf('Search Image with Bing')).toBe(bing.indexOf('Copy Image Address') + 1)
+      expect(bing.indexOf('Share Image…')).toBe(bing.indexOf('Search Image with Bing') + 1)
+    })
+
+    it('has no row for a DuckDuckGo default on either host', () => {
+      for (const h of [pageHarness(), pageHarness(ANDROID, { formFactor: 'phone' })]) {
+        h.browser.handleCommand(h.win, 'settings.update', { searchEngineId: 'duckduckgo' })
+        const menu = imageMenu(h, IMAGE)
+        expect(hasRow(menu)).toBe(false)
+        expect(menu).toContain('Copy Image Address')
+      }
+    })
   })
 
   it('folds a linked image’s link items into one group to stay within three separators', () => {
@@ -3709,30 +3784,18 @@ describe('the selection toolbar', () => {
 // Chrome context menus (URL bar, reload button, chrome text fields)
 // ---------------------------------------------------------------------------
 
-function chromeParams(overrides: Partial<ChromeContextParams> = {}): ChromeContextParams {
-  return {
-    x: 300,
-    y: 20,
-    target: null,
-    tabId: null,
-    isEditable: false,
-    selectionText: '',
-    editFlags: NO_EDITS,
-    ...overrides
-  }
-}
-
 describe("the phone's new tab tile menu (NTP-06)", () => {
   const tileMenu = (h: PageHarness, url: string, title: string): string[] => {
     h.browser.handleCommand(h.win, 'newtab.tileContextMenu', { url, title, tabId: h.tabId })
     return topLabels(h.shown())
   }
 
-  it('a pinned tile: Open in New Tab, Copy Link, then Edit Shortcut…, Move Left, Move Right, Unpin Shortcut and Remove', () => {
+  it('a pinned tile: Open in New Tab, Open in Private Tab, Copy Link, then Edit Shortcut…, Move Left, Move Right, Unpin Shortcut and Remove', () => {
     const h = pageHarness(ANDROID, { formFactor: 'phone' })
     const id = h.browser.newTab.addShortcut('Docs', 'https://docs.example/')!
     expect(tileMenu(h, 'https://docs.example/', 'Docs')).toEqual([
       'Open in New Tab',
+      'Open in Private Tab',
       'Copy Link',
       '-',
       'Edit Shortcut…',
@@ -3780,6 +3843,7 @@ describe("the phone's new tab tile menu (NTP-06)", () => {
     const h = pageHarness(ANDROID, { formFactor: 'phone' })
     expect(tileMenu(h, 'https://often.example/', 'Often')).toEqual([
       'Open in New Tab',
+      'Open in Private Tab',
       'Copy Link',
       '-',
       'Pin Shortcut',
@@ -3791,6 +3855,97 @@ describe("the phone's new tab tile menu (NTP-06)", () => {
     ])
     h.click('Remove')
     expect(h.browser.state.newTabDevice.hiddenHosts).toContain('often.example')
+  })
+
+  it('offers Open in Private Tab second – Chrome’s "Open in Incognito tab" (GN-11) – only where private browsing is a tab: the site opens in the window’s private container, in front; the rest of the menu is as it was', () => {
+    const h = pageHarness(ANDROID, { formFactor: 'phone' })
+    const menu = tileMenu(h, 'https://often.example/', 'Often')
+    expect(menu.indexOf('Open in Private Tab')).toBe(menu.indexOf('Open in New Tab') + 1)
+    const before = Object.keys(h.browser.state.model.tabs).length
+    h.click('Open in Private Tab')
+    const opened = Object.values(h.browser.state.model.tabs).find(
+      (t) => t.url === 'https://often.example/'
+    )
+    expect(Object.keys(h.browser.state.model.tabs).length).toBe(before + 1)
+    expect(opened?.containerId).toBe(PRIVATE_CONTAINER_ID)
+    expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(opened?.id)
+    // Open in New Tab is still the background open it was.
+    tileMenu(h, 'https://often.example/', 'Often')
+    h.click('Open in New Tab')
+    const plain = Object.values(h.browser.state.model.tabs).filter(
+      (t) => t.url === 'https://often.example/' && t.containerId !== PRIVATE_CONTAINER_ID
+    )
+    expect(plain).toHaveLength(1)
+    expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(opened?.id)
+    // Without the capability (WebView 113 on API 34: no profiles) the row stays out, not
+    // greyed – the menu as it was before the row.
+    const bare = pageHarness({ ...ANDROID, privateTabs: false }, { formFactor: 'phone' })
+    expect(tileMenu(bare, 'https://often.example/', 'Often')).toEqual([
+      'Open in New Tab',
+      'Copy Link',
+      '-',
+      'Pin Shortcut',
+      'Remove'
+    ])
+    // The desktop's tile menu never had one.
+    expect(tileMenu(pageHarness(DESKTOP), 'https://often.example/', 'Often')).not.toContain(
+      'Open in Private Tab'
+    )
+  })
+})
+
+describe("the served new tab page's tile menu (GN-11's row per host shape)", () => {
+  const TILE = { id: 'site:often.example', url: 'https://often.example/', title: 'Often' }
+  const tileMenu = (h: PageHarness): string[] => {
+    h.browser.menus.showNewTabTileMenu(h.tabId, { ...TILE, x: 10, y: 20, keyboard: false }, h.win)
+    return topLabels(h.shown())
+  }
+
+  it("the desktop's menu is as it was – Open in New Tab, Open in New Window, Open in New Private Window, then Remove: its private window is the private open", () => {
+    expect(tileMenu(pageHarness(DESKTOP))).toEqual([
+      'Open in New Tab',
+      'Open in New Window',
+      'Open in New Private Window',
+      '-',
+      'Remove'
+    ])
+  })
+
+  it('a tablet – private browsing in tabs, no windows – gains Open in Private Tab second: the site opens in the window’s private container, in front; Open in New Tab stays the background open', () => {
+    const h = pageHarness(ANDROID, { formFactor: 'tablet' })
+    expect(tileMenu(h)).toEqual(['Open in New Tab', 'Open in Private Tab', '-', 'Remove'])
+    const before = Object.keys(h.browser.state.model.tabs).length
+    h.click('Open in Private Tab')
+    const opened = Object.values(h.browser.state.model.tabs).find((t) => t.url === TILE.url)
+    expect(Object.keys(h.browser.state.model.tabs).length).toBe(before + 1)
+    expect(opened?.containerId).toBe(PRIVATE_CONTAINER_ID)
+    expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(opened?.id)
+    tileMenu(h)
+    h.click('Open in New Tab')
+    const plain = Object.values(h.browser.state.model.tabs).filter(
+      (t) => t.url === TILE.url && t.containerId !== PRIVATE_CONTAINER_ID
+    )
+    expect(plain).toHaveLength(1)
+    expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(opened?.id)
+  })
+
+  it('the phone, should the served page reach it, carries the same row; without private tabs, or with windows to open a private one in, the row stays out – not greyed', () => {
+    expect(tileMenu(pageHarness(ANDROID, { formFactor: 'phone' }))).toEqual([
+      'Open in New Tab',
+      'Open in Private Tab',
+      '-',
+      'Remove'
+    ])
+    expect(
+      tileMenu(pageHarness({ ...ANDROID, privateTabs: false }, { formFactor: 'tablet' }))
+    ).toEqual(['Open in New Tab', '-', 'Remove'])
+    expect(tileMenu(pageHarness({ ...ANDROID, windows: true }, { formFactor: 'tablet' }))).toEqual([
+      'Open in New Tab',
+      'Open in New Window',
+      'Open in New Private Window',
+      '-',
+      'Remove'
+    ])
   })
 })
 
@@ -4818,6 +4973,91 @@ describe('a menu asked for from the keyboard', () => {
     expect(h.where()).toMatchObject({ source: 'tab' })
     expect(h.where()).not.toHaveProperty('x')
   })
+
+  it('the element\'s box rides along with the anchor (§9.23), for a host that hangs the menu from it – the rows, the strip, a page\'s "⋯"', () => {
+    const h = pageHarness()
+    const rect = { x: 12, y: 240, width: 200, height: 28 }
+    h.browser.handleCommand(h.win, 'tab.contextMenu', {
+      tabId: h.tabId,
+      x: 112,
+      y: 254,
+      keyboard: true,
+      rect
+    })
+    expect(h.where()).toMatchObject({ source: 'tab', x: 112, y: 254, keyboard: true, rect })
+    h.browser.handleCommand(h.win, 'newtab.contextMenu', {
+      x: 90,
+      y: 500,
+      keyboard: true,
+      rect: { x: 0, y: 60, width: 240, height: 600 }
+    })
+    expect(h.where()).toMatchObject({
+      source: 'newtab',
+      rect: { x: 0, y: 60, width: 240, height: 600 }
+    })
+    h.browser.readingList.add('https://read.example/long', 'Long read')
+    const entry = h.browser.readingList.list()[0]!
+    h.browser.handleCommand(h.win, 'readingList.contextMenu', {
+      id: entry.id,
+      x: 900,
+      y: 300,
+      keyboard: true,
+      rect: { x: 880, y: 280, width: 20, height: 20 }
+    })
+    expect(h.where()).toMatchObject({
+      source: 'readingList',
+      keyboard: true,
+      rect: { x: 880, y: 280, width: 20, height: 20 }
+    })
+    // Without a box, the point alone – a pointer's menu, or a phone's command.
+    h.browser.handleCommand(h.win, 'readingList.contextMenu', { id: entry.id, x: 900, y: 300 })
+    expect(h.where()).toMatchObject({ x: 900, y: 300 })
+    expect(h.where()).not.toHaveProperty('rect')
+    expect(h.where()).not.toHaveProperty('keyboard')
+  })
+
+  it("a right-click the chrome did not handle reads the document once for its target; the keyboard's reads the focused element's box too, and the box goes to the menu", async () => {
+    const focused = { x: 300, y: 8, width: 600, height: 32 }
+    const h = pageHarness(DESKTOP, {
+      chromeDocument: { hit: { target: 'urlbar', tabId: null }, focused }
+    })
+    const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+    // The pointer's: the element under it is looked up, the focus is nobody's business.
+    h.win.onContextMenu(chromeParams({ x: 420, y: 18, isEditable: true, editFlags: ALL_EDITS }))
+    await settle()
+    expect(h.documentReads).toEqual(['menuTargetAt(420,18)'])
+    expect(h.where()).toMatchObject({ source: 'urlbar' })
+    expect(h.where()).not.toHaveProperty('rect')
+    expect(h.where()).not.toHaveProperty('x')
+    // Shift+F10's: both reads, at once; the menu hangs from the field.
+    h.documentReads.length = 0
+    h.win.onContextMenu(
+      chromeParams({ x: 600, y: 24, keyboard: true, isEditable: true, editFlags: ALL_EDITS })
+    )
+    await settle()
+    expect(h.documentReads).toEqual(['menuTargetAt(600,24)', 'focusedRect()'])
+    expect(h.where()).toMatchObject({
+      source: 'urlbar',
+      x: 600,
+      y: 24,
+      keyboard: true,
+      rect: focused
+    })
+  })
+
+  it('a host that reads nothing from its document – the phone, a fake – still gets the menu, at the point', async () => {
+    const field = { isEditable: true, editFlags: ALL_EDITS }
+    const h = pageHarness(DESKTOP, { chromeDocument: { hit: null, focused: null } })
+    h.win.onContextMenu(chromeParams({ x: 600, y: 24, keyboard: true, ...field }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(h.where()).toMatchObject({ x: 600, y: 24, keyboard: true })
+    expect(h.where()).not.toHaveProperty('rect')
+    // No reader at all (the stub's nothing) is no error either.
+    const bare = pageHarness()
+    bare.win.onContextMenu(chromeParams({ x: 10, y: 10, keyboard: true, ...field }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(bare.where()).toMatchObject({ keyboard: true })
+  })
 })
 
 describe('Send to your devices (ID-27)', () => {
@@ -4873,7 +5113,7 @@ describe('Send to your devices (ID-27)', () => {
     expect(menu.indexOf('Save and Share > Send to Work laptop')).toBe(
       menu.indexOf('Save and Share > Print…') + 1
     )
-    expect(menu.indexOf('Save and Share > Web Capture…')).toBe(
+    expect(menu.indexOf('Save and Share > Screenshot…')).toBe(
       menu.indexOf('Save and Share > Save Page As') + 1
     )
     expect(menu[menu.indexOf('Save and Share > Send to Work laptop') + 1]).toBe('-')
@@ -4992,7 +5232,7 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
   const enabled = (h: Harness, label: string): boolean => item(h, label).enabled !== false
 
   describe("the tab row's menu is Firefox's, in Firefox's groups (§6 Menus: a long context menu regrouped to the app menu's counts)", () => {
-    /** Firefox's skeleton for a regular row: five groups, four separators, twenty rows. */
+    /** Firefox's skeleton for a regular row: five groups, four separators, twenty rows – and Chrome's reading list row (W6-1). */
     const REGULAR_TAB_MENU = [
       'New Tab Below',
       '-',
@@ -5009,6 +5249,7 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       '-',
       'Bookmark Tab',
       'Bookmark All Tabs…',
+      'Add Tab to Reading List',
       'Move Tab',
       'Split with Current Tab',
       'Open in New Container Tab',
@@ -5020,12 +5261,13 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       'Reopen Closed Tab'
     ]
 
-    it('a regular row: twenty rows and four separators, every move under Move Tab and the three scoped closes under Close Multiple Tabs', () => {
+    it('a regular row: twenty-one rows and four separators, every move under Move Tab and the three scoped closes under Close Multiple Tabs', () => {
       const h = pageHarness()
       h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
       const shown = h.shown()
       expect(topLabels(shown)).toEqual(REGULAR_TAB_MENU)
-      expect(topLabels(shown).filter((l) => l !== '-')).toHaveLength(20)
+      // Firefox's twenty and Chrome's Add tab to reading list (W6-1) under the bookmark rows.
+      expect(topLabels(shown).filter((l) => l !== '-')).toHaveLength(21)
       expect(separators(shown)).toBe(4)
       // The state group in Firefox's order – Reload, Mute, Unload, Freeze, Duplicate, Pin: the
       // unload and the freeze are the tab's state, as its mute is, not its place.
@@ -5042,6 +5284,7 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       expect(top.slice(top.indexOf('Bookmark Tab'), top.indexOf('Move Tab') + 1)).toEqual([
         'Bookmark Tab',
         'Bookmark All Tabs…',
+        'Add Tab to Reading List',
         'Move Tab'
       ])
       expect(topLabels(item(h, 'Move Tab').submenu!)).toEqual([
@@ -5131,7 +5374,7 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
     })
   })
 
-  it("the strip's menu is Chrome's rows first – Name Window… among them on the desktop (context-menus-108) – then Zenium's own", () => {
+  it("the strip's menu is Chrome's rows first – Name Window… among them on the desktop (context-menus-108) – then Zenium's own, then the window's: Task Manager and Close Window as Chrome's frame menu ends", () => {
     const h = pageHarness()
     h.browser.handleCommand(h.win, 'newtab.contextMenu', {})
     expect(topLabels(h.shown())).toEqual([
@@ -5145,18 +5388,73 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       'New Live Folder…',
       'New Space…',
       '-',
-      'Clear Unpinned Tabs'
+      'Clear Unpinned Tabs',
+      '-',
+      'Task Manager',
+      '-',
+      'Close Window'
     ])
     expect(item(h, 'Reopen Closed Tab').action).toBe('tab.reopenClosed')
     expect(item(h, 'Bookmark All Tabs…').action).toBe('bookmark.allTabs')
     expect(item(h, 'Name Window…').action).toBe('window.name')
+    expect(item(h, 'Task Manager').action).toBe('tasks.open')
+    expect(item(h, 'Close Window').action).toBe('window.close')
     h.sent.length = 0
     item(h, 'Name Window…').click!()
     expect(h.sent).toEqual(['windowName.open'])
+    // Task Manager is the desktop's task manager window (W5-18), one per profile.
+    const before = h.browser.allWindows().length
+    item(h, 'Task Manager').click!()
+    const tasks = h.browser.allWindows().find((w) => w !== h.win)
+    expect(h.browser.allWindows()).toHaveLength(before + 1)
+    expect(tasks?.chrome).toBe('page')
+    // Close Window closes this window, through the browser's close (the unsaved-work checks).
+    const closing = vi.spyOn(h.browser, 'requestWindowClose').mockResolvedValue(undefined as never)
+    item(h, 'Close Window').click!()
+    expect(closing).toHaveBeenCalledWith(h.win)
     // A tablet's one window has no title bar to name: the row is the desktop's.
     const tablet = pageHarness(DESKTOP, { formFactor: 'tablet' })
     tablet.browser.handleCommand(tablet.win, 'newtab.contextMenu', {})
     expect(topLabels(tablet.shown())).not.toContain('Name Window…')
+    // The window rows are a windowed host's alone: the phone has one window, no task manager
+    // window and no Close for it – its sheet ends at Clear Unpinned Tabs.
+    const phone = pageHarness(ANDROID, { formFactor: 'phone' })
+    phone.browser.handleCommand(phone.win, 'newtab.contextMenu', {})
+    expect(topLabels(phone.shown()).at(-1)).toBe('Clear Unpinned Tabs')
+    expect(topLabels(phone.shown())).not.toContain('Task Manager')
+    expect(topLabels(phone.shown())).not.toContain('Close Window')
+  })
+
+  it("on Windows the frameless window's system items lead in the OS's words – Restore, Minimize, Maximize – and the OS's Close ends it, as Chrome's strip shows the system menu with Chrome's rows inside (context-menus-108)", () => {
+    const h = pageHarness(DESKTOP, { os: 'win32' })
+    h.browser.handleCommand(h.win, 'newtab.contextMenu', {})
+    const menu = topLabels(h.shown())
+    expect(menu.slice(0, 5)).toEqual(['Restore', 'Minimize', 'Maximize', '-', 'New Tab'])
+    expect(menu.slice(-5)).toEqual(['Clear Unpinned Tabs', '-', 'Task Manager', '-', 'Close'])
+    expect(menu).not.toContain('Close Window')
+    // Move and Size stay out: Electron has no way into the OS's keyboard move and size modes.
+    expect(menu).not.toContain('Move')
+    expect(menu).not.toContain('Size')
+    // The OS's greying: a normal window has nothing to restore; a maximized one nothing to maximize.
+    expect(enabled(h, 'Restore')).toBe(false)
+    expect(enabled(h, 'Maximize')).toBe(true)
+    item(h, 'Maximize').click!()
+    expect(h.windowCalls).toEqual(['maximize'])
+    h.browser.handleCommand(h.win, 'newtab.contextMenu', {})
+    expect(enabled(h, 'Restore')).toBe(true)
+    expect(enabled(h, 'Maximize')).toBe(false)
+    item(h, 'Restore').click!()
+    item(h, 'Minimize').click!()
+    expect(h.windowCalls).toEqual(['maximize', 'unmaximize', 'minimize'])
+    expect(item(h, 'Minimize').action).toBe('window.minimize')
+    expect(item(h, 'Close').action).toBe('window.close')
+    // The other desktops have no system menu to mirror: no system items, Close Window in words.
+    for (const os of ['linux', 'darwin'] as const) {
+      const other = pageHarness(DESKTOP, { os })
+      other.browser.handleCommand(other.win, 'newtab.contextMenu', {})
+      expect(topLabels(other.shown())[0]).toBe('New Tab')
+      expect(topLabels(other.shown()).at(-1)).toBe('Close Window')
+    }
   })
 
   it('greys Reopen Closed Tab while nothing was closed and brings the newest closed tab back', () => {

@@ -31,6 +31,8 @@ export function sourceTitle(source: MenuDescriptor['source']): string {
       return 'History'
     case 'download':
       return 'Download'
+    case 'readingList':
+      return 'Reading List'
     case 'urlbar':
       return 'Address'
     case 'translate':

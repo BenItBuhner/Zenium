@@ -31,6 +31,11 @@ import kotlin.math.roundToInt
  * The last document applied is kept in `files/zen/pages/fonts.json` for a process that starts
  * without the core (a custom tab, [CustomTabHost]), so a page there reads like the browser's,
  * the way Chrome's Custom Tabs share Chrome's fonts.
+ *
+ * The three trailing fields are `chrome.fontSettings`' (`ext/ExtensionFontLayer.over`): the
+ * slotless `cursive` and `fantasy` families and a fixed-width size of an extension's own, which
+ * the user's document has no row for and never persists ([toJson] leaves them out) – the
+ * layered document a tab applies carries them, the user's document keeps its defaults.
  */
 data class PageFonts(
     val standard: String?,
@@ -40,10 +45,15 @@ data class PageFonts(
     /** Chrome's "Font size", CSS px (9–72; 16 is medium). */
     val size: Int,
     /** Chrome's "Minimum font size", CSS px (0 is no floor; 6–24). */
-    val minimumSize: Int
+    val minimumSize: Int,
+    /** An extension's cursive / fantasy family (null: the engine's own); the user's document has none. */
+    val cursive: String? = null,
+    val fantasy: String? = null,
+    /** An extension's `default_fixed_font_size` in place of the size's companion (null: derived from [size]). */
+    val fixedSizeOverride: Int? = null
 ) {
-    /** `WebSettings.defaultFixedFontSize`: Chrome's 13 for 16, the ratio kept as the size moves. */
-    val fixedSize: Int get() = fixedSizeFor(size)
+    /** `WebSettings.defaultFixedFontSize`: an extension's own, else Chrome's 13 for 16, the ratio kept as the size moves. */
+    val fixedSize: Int get() = fixedSizeOverride ?: fixedSizeFor(size)
 
     /**
      * `WebSettings.minimumFontSize`, the hard floor Blink applies to every size after zoom: the
@@ -58,6 +68,8 @@ data class PageFonts(
     val serifFamily: String get() = serif ?: DEFAULT_SERIF
     val sansSerifFamily: String get() = sansSerif ?: DEFAULT_SANS_SERIF
     val fixedFamily: String get() = fixed ?: DEFAULT_FIXED
+    val cursiveFamily: String get() = cursive ?: DEFAULT_CURSIVE
+    val fantasyFamily: String get() = fantasy ?: DEFAULT_FANTASY
 
     /**
      * Bring `settings` to this document, and say whether the open document must be asked to
@@ -74,7 +86,7 @@ data class PageFonts(
             settings.serifFontFamily,
             settings.sansSerifFontFamily,
             settings.fixedFontFamily
-        )
+        ) || settings.cursiveFontFamily != cursiveFamily || settings.fantasyFontFamily != fantasyFamily
         val sizesMove = sizesMoveFrom(
             settings.defaultFontSize,
             settings.defaultFixedFontSize,
@@ -85,6 +97,8 @@ data class PageFonts(
         settings.serifFontFamily = serifFamily
         settings.sansSerifFontFamily = sansSerifFamily
         settings.fixedFontFamily = fixedFamily
+        settings.cursiveFontFamily = cursiveFamily
+        settings.fantasyFontFamily = fantasyFamily
         settings.defaultFontSize = size
         settings.defaultFixedFontSize = fixedSize
         settings.minimumFontSize = minimumFontSize
@@ -117,6 +131,9 @@ data class PageFonts(
         const val DEFAULT_SERIF = "serif"
         const val DEFAULT_SANS_SERIF = "sans-serif"
         const val DEFAULT_FIXED = "monospace"
+        /** `WebSettings`' own cursive and fantasy families (the generic names, as its defaults are). */
+        const val DEFAULT_CURSIVE = "cursive"
+        const val DEFAULT_FANTASY = "fantasy"
 
         /** Chrome's slider range for "Font size" and its medium. */
         const val SIZE_MIN = 9

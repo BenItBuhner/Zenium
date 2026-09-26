@@ -1,0 +1,42 @@
+name: Android custom tabs menu demo
+
+# Records the custom tab's menu as Chrome 152 has it (CCT-03) and the caller's start animations
+# (CCT-08) on a hardware-accelerated Android emulator: "Nimbus News" (the instrumentation APK's
+# caller) opens pages the driver serves on the loopback in custom tabs prepared as a real client's
+# are – a session, two caller menu items, a toolbar colour, the caller's start animation, and on
+# two of the tabs the EXTRA_DISABLE_BOOKMARKS_BUTTON / EXTRA_DISABLE_DOWNLOAD_BUTTON extras. The
+# native sheet's icon row (Forward, Bookmark, Download Page, Page Info, Reload) and rows are read
+# with and without the caller's disabled buttons, light and dark; Forward is taken under a finger
+# after a back step; the star files the page in the tab's inbox document and fills, a page the
+# browser already holds as a bookmark opens with the star filled from the core's state and its tap
+# opens the page in Zenium; Desktop Site switches the user agent and back; Page Info and Add to
+# Home Screen come up on the v2 prompt sheet; Download Page lands the archive in Downloads; and the
+# caller's two-second start slide is read from WindowManager's own account of the tab's OPEN
+# transition (the frames after the caller's button the second witness). Dispatch-only, like the
+# custom tabs demo: it takes about ten minutes (the driver a little over three after the boot) and
+# says nothing about a change being correct. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml; this file only picks the driver and the demo it runs.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-customtabs-menu-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Custom tabs menu demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.CustomTabMenuDemo
+        DEMO_DIR=customtabs-menu-demo
+        DEMO_OUT=artifacts/android-customtabs-menu-demo
+        DEMO_VIDEO=android-customtabs-menu-demo.mp4
+      artifact-name: android-customtabs-menu-demo
+      artifact-path: artifacts/android-customtabs-menu-demo/

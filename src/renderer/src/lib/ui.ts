@@ -24,10 +24,12 @@ import type {
   ScreenshotSaved,
   SharePanelAction,
   SharePanelRequest,
+  UIState,
   UrlbarOpenMode,
   WebAppInstallPrompt
 } from '@shared/types'
 import { TOAST_SHOW_MS } from '@shared/toastCard'
+import { isEmptyTabUrl } from '@shared/url'
 import type { Anchor } from './anchor'
 import type { PopoverAlignment } from './portals'
 import { cmd, run } from './api'
@@ -36,6 +38,7 @@ import { devtoolsDockOf } from './contentRadius'
 import { isPhone, viewportStore } from './formFactor'
 import { afterKeyRelease } from './keyRelease'
 import { onboardingCovers } from './onboarding'
+import { searchChoiceCovers } from './searchChoice'
 import { awaitingShow, coverStore, markCoverDrop } from './cover'
 import { pageCovered, pageOffScreen, pageViewStore, type Hold } from './pageView'
 import { crossReaderView } from './readerTransition'
@@ -1161,12 +1164,21 @@ export async function openOverlay(
   activeTabId: string | null,
   spaceId: string | null = null,
   folderId: string | null = null,
-  section: string | null = null
+  section: string | null = null,
+  {
+    handedBack = false
+  }: {
+    /**
+     * The overlay is a page tab's the class change closed, going back to its tab as the window
+     * widens (`useStageContinuity`): the core re-opens it at the slot the tab had.
+     */
+    handedBack?: boolean
+  } = {}
 ): Promise<void> {
   const page = pageForOverlay(kind, folderId, section)
   if (page) {
     // The page's tab, through the core's one route (a Settings section for Shortcuts / Sync).
-    run('page.open', page)
+    run('page.open', handedBack ? { ...page, handedBack } : page)
     return
   }
   await captureActiveTab(activeTabId)
@@ -1553,11 +1565,32 @@ export function closeMediaSheet(): void {
  * used to focus its field once, on mount, and the tour's buttons took the keyboard from it: the
  * bar stood there after the tour with no caret. The tour's last click ends in a new tab whose
  * `newtab.opened` arrives after the state that puts the tour away, and that one opens the bar.
- * The phone's tour is its shell's own flow over its own bar, and is left as it is.
+ * The phone's tour is its shell's own flow over its own bar, and is left as it is. The EEA's
+ * search-engine choice screen standing on its own after the tour (W6-2, `searchChoiceCovers`)
+ * holds the bar the same way; the core announces the fresh tab again once it is answered.
  */
 export function onboardingUp(): boolean {
   const state = browserStore.get().state
-  return state !== null && !isPhone() && onboardingCovers(state)
+  return state !== null && firstRunCovers(state)
+}
+
+/**
+ * The first-run tour or the EEA's search-engine choice screen (W6-2, `searchChoiceCovers`)
+ * stands over this window's whole chrome (`onboardingCovers`; not the phone's tour, which is
+ * its shell's own flow over a first run that has no page to hide – the phone's choice screen
+ * standing on its own after the tour (OMN-26, `PhoneSearchChoiceScreen`) counts, since it may
+ * stand over a live page). What `onboardingUp` reads of the state, and one of the terms of the
+ * layout report's `contentHidden` (`useLayoutReporter`): the pages' views composite ABOVE the
+ * chrome, so a page left showing under the tour stands over it – the New Tab's view over the
+ * tour's panel, since the window has had a tab from creation (#490) and the bar that used to
+ * open under the tour, and hid the page under its cover, waits for the tour's end (#347).
+ * Nothing is captured for these: the panel is opaque over the window, there is no picture to
+ * wait for, and the views hide at once (`decideHidden`, nothing to wait for).
+ */
+export function firstRunCovers(
+  state: Pick<UIState, 'settings' | 'window' | 'searchChoice'>
+): boolean {
+  return (!isPhone() && onboardingCovers(state)) || searchChoiceCovers(state)
 }
 
 export async function openUrlbar(
@@ -1670,6 +1703,53 @@ export function closeUrlbar(opts: UrlbarCloseOptions = {}): void {
   if (!opts.keepKeyboard) returnFocusToPage()
 }
 
+/**
+ * Whether a fresh empty tab comes up here with the new tab page's palette – the core's own test
+ * before it sends `newtab.opened` (`NewTabService.enabled`): the host serves the page and the
+ * setting has it on. Off (the phone, whose chrome draws its own page; the setting off) a fresh
+ * tab gets the bar through `urlbar.toggle` instead, bound to no tab.
+ */
+function newTabPaletteOn(state: UIState): boolean {
+  return state.capabilities.newTabPage && state.settings.newTab.enabled
+}
+
+/**
+ * The bar in new-tab mode bound to a tab – the palette over a fresh New Tab
+ * (`openNewTabPageUrlbar`) – follows the window's active tab. Its cover hides every page view
+ * (`overlayCoversContent`), so a tab made active under it by anything but a press on the chrome
+ * (an extension's `chrome.tabs.create({ active: true })`, a `tab.create` over the bridge, Ctrl+Tab
+ * from the bar, a page's `window.open`) stood behind the palette with no live view on screen
+ * until a key put the bar away. Now, the moment the active tab is not the one the bar is bound
+ * to, the bar closes – without a reason: not a dismissal, so nothing is kept as a draft and the
+ * phone's field morph would not run back; the keyboard goes to the page as after a submit – or,
+ * when the tab now active is itself an empty New Tab whose palette is the one to show (Ctrl+T
+ * over the palette, a tab an extension made without an address), the palette re-binds to it
+ * through `openNewTabPageUrlbar`: the bar stays up over the new tab, and the core's own
+ * `newtab.opened` for that tab – sent after the state that made it active
+ * (`NewTabService.open`) – finds it bound already. The bar over a split's empty pane is the
+ * pane's own field and goes with the pane (`Urlbar.tsx`, `paneLive`); the bar bound to no tab
+ * (`openUrlbar` in new-tab mode) belongs to the window and stays as it is.
+ */
+export function urlbarFollowsActiveTab(): void {
+  const { urlbar } = uiStore.get()
+  if (!urlbar.open || urlbar.mode !== 'new-tab' || !urlbar.tabId || urlbar.pane) return
+  const state = browserStore.get().state
+  if (!state) return
+  const active = activeTab(state)
+  if (active?.id === urlbar.tabId) return
+  if (active && isEmptyTabUrl(active.url) && newTabPaletteOn(state)) {
+    openNewTabPageUrlbar(active.id, undefined, urlbar.attached)
+    return
+  }
+  closeUrlbar()
+}
+
+const urlbarFlags = globalThis as unknown as { __zenUrlbarFollowsWired?: boolean }
+if (!urlbarFlags.__zenUrlbarFollowsWired) {
+  urlbarFlags.__zenUrlbarFollowsWired = true
+  browserStore.subscribe(urlbarFollowsActiveTab)
+}
+
 // ---------------------------------------------------------------------------
 // Find in page
 // ---------------------------------------------------------------------------
@@ -1720,10 +1800,14 @@ export function openZoom(tabId: string): void {
   uiStore.set({ zoomTabId: tabId, findOpen: false, findTabId: null, findRequest: null })
 }
 
-export function closeZoom(): void {
+/**
+ * Put the sheet away. Focus goes back to the page unless the caller keeps it in the chrome
+ * (`keepFocus`: the pill's zoom chip that closed it keeps the keyboard, §9.22).
+ */
+export function closeZoom(opts: { keepFocus?: boolean } = {}): void {
   if (!uiStore.get().zoomTabId) return
   uiStore.set({ zoomTabId: null })
-  returnFocusToPage()
+  if (!opts.keepFocus) returnFocusToPage()
 }
 
 // ---------------------------------------------------------------------------
@@ -1978,9 +2062,13 @@ export async function openSharePanel(request: SharePanelRequest): Promise<void> 
     uiStore.set({ sharePanel: request, shareSeam: step.seam, drawerOpen: false })
     return
   }
-  // A menu still waiting for a request that is not its own leaves as a pick would have had it.
+  // A menu still waiting for a request that is not its own leaves as a pick would have had it. A
+  // panel the menu was hosting goes in the same set as the seam: the host has let that share go
+  // already (a newer share supersedes the older one on its side), and `SharePanelLayer` must not
+  // find the older request standing on its own for the frame the page's cover takes to capture.
   if (state.shareSeam) {
-    uiStore.set({ shareSeam: null })
+    if (state.shareSeam.phase === 'hosting') uiStore.set({ shareSeam: null, sharePanel: null })
+    else uiStore.set({ shareSeam: null })
     closeMenu(false)
   }
   await captureActiveTab(request.tabId)

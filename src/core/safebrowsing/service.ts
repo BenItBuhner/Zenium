@@ -7,6 +7,7 @@ import type {
   SafeBrowsingStatus,
   SafeBrowsingThreat
 } from '../../shared/privacy'
+import { EXTENSION_SETTING_KEYS, effectiveSwitch } from '../../shared/extensionSettings'
 import { SAFE_BROWSING_TABLE_TASK } from '../background/tasks'
 import { hostnameOf } from '../blocking/domain'
 import { apiKeyCheckOf, apiKeyProbeUrl } from '../protection/checks'
@@ -150,8 +151,21 @@ export class SafeBrowsingService {
       })
   }
 
+  /**
+   * The protection switch as it acts: an extension's `chrome.privacy.services.safeBrowsingEnabled`
+   * over the user's `Settings.privacy.safeBrowsingEnabled` while one holds it (`State.extensionLayer`,
+   * Chrome's extension pref layer above the user's), the user's own value otherwise – and on
+   * while the layer's first publish is pending at a cold start (protection on is the strict
+   * pole). Read at every decision – the lookups, the sweep, the status, the flags – so a hold or
+   * its release acts at once; the user's setting is never written by the extension's value.
+   */
   get enabled(): boolean {
-    return this.browser.state.settings.privacy.safeBrowsingEnabled
+    const state = this.browser.state
+    return effectiveSwitch(
+      state.extensionLayer,
+      EXTENSION_SETTING_KEYS.safeBrowsing,
+      state.settings.privacy.safeBrowsingEnabled
+    )
   }
 
   private get apiKey(): string {

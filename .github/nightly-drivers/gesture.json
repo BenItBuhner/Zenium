@@ -1,0 +1,9 @@
+{
+  "id": "gesture",
+  "order": 86,
+  "class": "GestureDemo",
+  "shard": "phone-e",
+  "mirrors": "android-gesture-demo.yml",
+  "dir": "gesture-demo",
+  "estimate": 6.5
+}

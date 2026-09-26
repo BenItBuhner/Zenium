@@ -53,13 +53,15 @@ describe('the prompt as it was', () => {
       title: 'Quit Zenium?',
       description: 'You are about to quit with 3 tabs open.',
       verb: 'Quit',
-      tabsWarning: true
+      tabsWarning: true,
+      remember: 'warnOnCloseWindow'
     })
     expect(windowPromptText(prompt({ kind: 'close-tabs', count: 2 }))).toEqual({
       title: 'Close 2 tabs?',
       description: 'You are about to close this window and its 2 tabs.',
       verb: 'Close tabs',
-      tabsWarning: true
+      tabsWarning: true,
+      remember: 'warnOnCloseWindow'
     })
   })
 })
@@ -74,7 +76,8 @@ describe('with downloads in progress', () => {
       description:
         'You are about to quit with 3 tabs open. 2 downloads are in progress; quitting interrupts them.',
       verb: 'Quit',
-      tabsWarning: true
+      tabsWarning: true,
+      remember: 'warnOnCloseWindow'
     })
     // One paragraph, two sentences: the tabs fact first, the downloads fact after one space.
     expect(text.description.split('. ')).toEqual([
@@ -99,7 +102,8 @@ describe('with downloads in progress', () => {
       title: 'Quit Zenium?',
       description: '1 download is in progress; quitting interrupts it.',
       verb: 'Quit',
-      tabsWarning: false
+      tabsWarning: false,
+      remember: null
     })
     expect(
       windowPromptText(
@@ -114,7 +118,8 @@ describe('with downloads in progress', () => {
       title: 'Close private window?',
       description: '1 download is in progress; closing this window cancels it.',
       verb: 'Close window',
-      tabsWarning: false
+      tabsWarning: false,
+      remember: null
     })
   })
 })
@@ -125,11 +130,29 @@ describe("Open all bookmarks? (bookmarks-41: Chrome's question at `OPEN_ALL_PROM
       title: 'Open all bookmarks?',
       description: 'You are about to open 15 tabs.',
       verb: 'Open all',
-      tabsWarning: false
+      tabsWarning: false,
+      remember: null
     })
     // Not "Are you sure?": the title asks once (§9.23, one description).
     expect(windowPromptText(prompt({ kind: 'open-bookmarks', count: 40 })).description).not.toMatch(
       /sure/i
     )
+  })
+})
+
+describe("Turn on caret browsing? (CT-34: Chrome's one-time F7 dialog)", () => {
+  it("asks in Chrome's words, the verb Turn on, and remembers its own Don't ask again", () => {
+    const text = windowPromptText(prompt({ kind: 'caret-browsing', count: 0 }))
+    expect(text).toEqual({
+      title: 'Turn on caret browsing?',
+      description:
+        "Caret browsing lets you move through a page's text with the arrow keys and select it with Shift. F7 turns it on and off.",
+      verb: 'Turn on',
+      tabsWarning: false,
+      remember: 'caretBrowsingConfirm'
+    })
+    // One description that says what it is and how it goes off again; the title asks once.
+    expect(text.description).toMatch(/F7/)
+    expect(text.description).not.toMatch(/sure/i)
   })
 })

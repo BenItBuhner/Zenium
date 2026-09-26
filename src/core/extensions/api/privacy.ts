@@ -137,6 +137,55 @@ export function privacySetting(category: unknown, name: unknown): PrivacySetting
   return PRIVACY_SETTINGS.find((s) => s.category === category && s.name === name)
 }
 
+/**
+ * The user's Settings the paired `chrome.privacy` settings read while no extension controls
+ * them (`PRIVACY_CONTROL_KEYS`' pairs; the `Settings` document has this shape). Chrome's `get`
+ * answers the user's pref there, not a table's default: iCloud Passwords' `#g(setting, target)`
+ * reads first and returns without `set` when the value already equals its target, so a host
+ * answering the table's `false` for `autofillAddressEnabled` where the user's `autofill.addresses`
+ * is `true` sees the extension hold one of its three settings (round 20's `1/3`, R21-9) while
+ * Chrome sees three. The enum fields are read as Chrome's transformers read the prefs.
+ */
+export interface PrivacyUserSettings {
+  passwords: { offerToSave: boolean }
+  autofill: { addresses: boolean; cards: boolean }
+  privacy: { safeBrowsingEnabled: boolean; thirdPartyCookies: string; dnt: boolean }
+  searchSuggestions: boolean
+  preloadPages: string
+}
+
+const USER_SETTING_READERS: ReadonlyMap<string, (settings: PrivacyUserSettings) => PrivacyValue> =
+  new Map([
+    [settingKey('services', 'passwordSavingEnabled'), (s) => s.passwords.offerToSave],
+    [settingKey('services', 'autofillAddressEnabled'), (s) => s.autofill.addresses],
+    [settingKey('services', 'autofillCreditCardEnabled'), (s) => s.autofill.cards],
+    [settingKey('services', 'safeBrowsingEnabled'), (s) => s.privacy.safeBrowsingEnabled],
+    // Chrome's `CookieControlsModeTransformer`: allowed unless third-party cookies are blocked
+    // everywhere; the block in private windows alone reads allowed for the regular profile.
+    [
+      settingKey('websites', 'thirdPartyCookiesAllowed'),
+      (s) => s.privacy.thirdPartyCookies !== 'block'
+    ],
+    [settingKey('services', 'searchSuggestEnabled'), (s) => s.searchSuggestions],
+    // Chrome's `NetworkPredictionTransformer`: `false` is "never", `true` any preloading level.
+    [settingKey('network', 'networkPredictionEnabled'), (s) => s.preloadPages !== 'none'],
+    [settingKey('websites', 'doNotTrackEnabled'), (s) => s.privacy.dnt]
+  ])
+
+/**
+ * The browser's own value of a setting for `get` and the resolution: the user's Settings value
+ * for the paired settings, the table's `browserDefault` for the rest (the features Zenium does
+ * not have). The regular profile's reading: a private-window `get` under the user's
+ * block-in-private cookie mode answers `true` here where Chrome answers `false`.
+ */
+export function browserValueOf(
+  spec: PrivacySettingSpec,
+  settings: PrivacyUserSettings
+): PrivacyValue {
+  const read = USER_SETTING_READERS.get(settingKey(spec.category, spec.name))
+  return read ? read(settings) : spec.browserDefault
+}
+
 export function isPrivacyScope(value: unknown): value is PrivacyScope {
   return typeof value === 'string' && (PRIVACY_SCOPES as readonly string[]).includes(value)
 }
@@ -382,4 +431,119 @@ export function normalizeScopedValues(spec: PrivacySettingSpec, raw: unknown): S
     if (acceptsValue(spec, value)) out[scope] = value
   }
   return out
+}
+
+/**
+ * An extension's persisted `chrome.privacy` values as a host's store keeps them: by setting key
+ * (`settingKey`), each entry read back through the setting's own normalizer, unknown keys and
+ * unreadable entries dropped.
+ */
+export function normalizeStoredPrivacyValues(raw: unknown): Record<string, ScopedValues> {
+  const out: Record<string, ScopedValues> = {}
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return out
+  const entries = raw as Record<string, unknown>
+  for (const spec of PRIVACY_SETTINGS) {
+    const key = settingKey(spec.category, spec.name)
+    const values = normalizeScopedValues(spec, entries[key])
+    if (hasValues(values)) out[key] = values
+  }
+  return out
+}
+
+// ---------------------------------------------------------------------------------------------
+// The layer the services read: `UIState.extensionControls` under the `'privacy'` source
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The Settings keys the `chrome.privacy` settings shadow, one table for both hosts: the key of
+ * the row that says "Controlled by <extension>" and of the service that acts on the value
+ * (`UIState.extensionControls`, the extension-controlled layer above the user's setting, as
+ * Chrome's `PrefValueStore` orders them). The strings are the Settings rows' keys as the
+ * services name them (`shared/extensionSettings.ts`'s `EXTENSION_SETTING_KEYS`: services pass
+ * 10), plus `privacy.dnt` for Do Not Track. A host publishes the held keys alone, from the
+ * regular (non-private) effective value – the regular profile's, as Chrome's Settings rows are.
+ */
+export const PRIVACY_CONTROL_KEYS: ReadonlyArray<
+  readonly [settingKey: string, controlKey: string]
+> = [
+  [settingKey('services', 'passwordSavingEnabled'), 'passwords.offerToSave'],
+  [settingKey('services', 'autofillAddressEnabled'), 'autofill.addresses'],
+  [settingKey('services', 'autofillCreditCardEnabled'), 'autofill.cards'],
+  [settingKey('services', 'safeBrowsingEnabled'), 'privacy.safeBrowsingEnabled'],
+  [settingKey('websites', 'thirdPartyCookiesAllowed'), 'privacy.thirdPartyCookies'],
+  [settingKey('services', 'searchSuggestEnabled'), 'search.suggestions'],
+  [settingKey('network', 'networkPredictionEnabled'), 'privacy.preloadPages'],
+  [settingKey('websites', 'doNotTrackEnabled'), 'privacy.dnt']
+]
+
+/** One published control: who holds the setting and the value in effect (`ExtensionControl`'s shape). */
+export interface PrivacyControl {
+  extensionId: string
+  /** The extension's name as the Extensions page shows it. */
+  name: string
+  value: PrivacyValue
+}
+
+/**
+ * The controls map a host publishes under the `'privacy'` source: every key of
+ * `PRIVACY_CONTROL_KEYS` whose setting an extension controls for regular tabs, with the holder
+ * and the effective value; nothing for a setting at the browser's own value. `effective` is the
+ * host's resolution per setting key for regular tabs (`effectiveSetting` with `incognito` false).
+ */
+export function privacyControls(
+  effective: (settingKey: string) => EffectiveSetting | undefined,
+  nameOf: (extensionId: string) => string
+): Record<string, PrivacyControl> {
+  const controls: Record<string, PrivacyControl> = {}
+  for (const [key, controlKey] of PRIVACY_CONTROL_KEYS) {
+    const setting = effective(key)
+    if (!setting || setting.controller === null) continue
+    controls[controlKey] = {
+      extensionId: setting.controller,
+      name: nameOf(setting.controller),
+      value: setting.value
+    }
+  }
+  return controls
+}
+
+// ---------------------------------------------------------------------------------------------
+// The request effects: what the `request` settings do to a request once resolved
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * What the resolved `request` settings ask of a request pipeline for one kind of tab (regular or
+ * private): hyperlink auditing off cancels `ping` requests, referrers off drops the `Referer`
+ * header, Do Not Track on adds `DNT: 1`. The desktop applies them in the session's request
+ * pipeline; the phone installs what its engine can carry as rules (`extensionPrivacy.ts`).
+ */
+export interface PrivacyRequestEffects {
+  cancelPings: boolean
+  dropReferer: boolean
+  doNotTrack: boolean
+}
+
+export const NO_REQUEST_EFFECTS: Readonly<PrivacyRequestEffects> = {
+  cancelPings: false,
+  dropReferer: false,
+  doNotTrack: false
+}
+
+/** The effects for one kind of tab from the host's resolution per setting key. */
+export function privacyRequestEffects(
+  effective: (settingKey: string) => EffectiveSetting | undefined
+): PrivacyRequestEffects {
+  return {
+    cancelPings: effective(settingKey('websites', 'hyperlinkAuditingEnabled'))?.value === false,
+    dropReferer: effective(settingKey('websites', 'referrersEnabled'))?.value === false,
+    doNotTrack: effective(settingKey('websites', 'doNotTrackEnabled'))?.value === true
+  }
+}
+
+export function sameRequestEffects(a: PrivacyRequestEffects, b: PrivacyRequestEffects): boolean {
+  return (
+    a.cancelPings === b.cancelPings &&
+    a.dropReferer === b.dropReferer &&
+    a.doNotTrack === b.doNotTrack
+  )
 }

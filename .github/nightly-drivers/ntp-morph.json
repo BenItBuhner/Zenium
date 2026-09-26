@@ -1,0 +1,15 @@
+{
+  "id": "ntp-morph",
+  "order": 84,
+  "classes": ["FakeboxMorphDemo", "FakeboxMorphReducedDemo"],
+  "shard": "phone-e",
+  "mirrors": "android-ntp-morph-demo.yml:space",
+  "script": ".github/scripts/android-ntp-morph-demo.sh",
+  "out": "artifacts/android-ntp-morph-demo",
+  "env": {
+    "MORPH_ACT": "space"
+  },
+  "timeout": 1200,
+  "estimate": 6,
+  "note": "The space act: the morph and the reduced-motion run (the wrapper sets the animator scales to 0 for it and back)."
+}

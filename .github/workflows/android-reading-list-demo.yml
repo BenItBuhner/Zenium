@@ -1,0 +1,58 @@
+name: Android reading list demo
+
+# Records the phone's reading list on desktop's shared model (parity row HB-20, W6-D1; PR #551):
+# the tab-group drivers' seeded profile and loopback pages, every press a real touch, every outcome
+# read off the core's state – the app menu's "Add to Reading List" / "Remove from Reading List" on
+# Home and Gamma with their toasts; the link menu's "Add Link to Reading List" on Alpha's page,
+# seated before "Share Link…" (the design gate on #551), saving the link under its text; the panel
+# from the menu's "Reading List" row (Unread with its count, a row's touch opening the page in the
+# current tab and marking it read, Read; the row's ⋮ menu – Open in New Tab · Mark as Read / Mark as
+# Unread · Copy Link · Remove; "Mark all as read"; a row whose page a tab shows bringing that tab
+# forward); the star sheet's "Reading list" switch on Beta; the empty state. Stills
+# `reading-list-NN-<state>.png` on the light scheme (the design record is the preview host's pairs).
+# The driver writes `reading-list-findings.txt` with an OK or FAIL per claim and fails when any did.
+# Dispatch-only, like the other demos: it takes about four and a half minutes; the nightly sweep runs
+# the same driver on its phone-f shard (.github/nightly-drivers/reading-list.json). The build, the
+# emulator and the Gradle cache live in android-emulator-demo.yml; this file only picks the driver
+# and the demo it runs.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-reading-list-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Reading list demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.ReadingListDemo
+        DEMO_DIR=reading-list-demo
+        DEMO_OUT=artifacts/android-reading-list-demo
+        DEMO_VIDEO=android-reading-list-demo.mp4
+      artifact-name: android-reading-list-demo
+      artifact-path: artifacts/android-reading-list-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Reading list demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.ReadingListDemo
+        DEMO_DIR=reading-list-demo
+        DEMO_OUT=artifacts/android-reading-list-demo
+        DEMO_VIDEO=android-reading-list-demo.mp4
+      artifact-name: android-reading-list-demo-second-boot
+      artifact-path: artifacts/android-reading-list-demo/

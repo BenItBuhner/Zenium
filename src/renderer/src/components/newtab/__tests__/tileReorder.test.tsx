@@ -75,6 +75,9 @@ function stateWith(pins: readonly NewTabShortcut[]): UIState {
     searchEngines: DEFAULT_SEARCH_ENGINES,
     newTabShortcuts: pins,
     newTabHiddenHosts: [],
+    newTabHiddenModules: [],
+    recentlyClosed: [],
+    downloads: [],
     bookmarks: [],
     privacy: emptyPrivacyStatus()
   } as unknown as UIState

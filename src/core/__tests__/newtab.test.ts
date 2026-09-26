@@ -7,6 +7,7 @@ import type {
   Tab
 } from '../../shared/types'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../../shared/types'
+import { EXTENSION_SETTING_KEYS } from '../../shared/extensionSettings'
 import { BLANK_URL, errorPageUrl, NEW_TAB_URL, SETTINGS_URL } from '../../shared/url'
 import { CRASH_ERROR_CODE } from '../../shared/zenPages'
 import { DEFAULT_NEW_TAB_SETTINGS } from '../../shared/newTab'
@@ -534,6 +535,84 @@ describe('NewTabService: state for the page', () => {
       expect(f.browser.newTab.stateFor(regularId)).not.toHaveProperty('privateThirdPartyCookies')
     })
 
+    it('build(): an extension holding chrome.privacy’s thirdPartyCookiesAllowed (services pass 10) locks the switch on the live page at either pole and names itself; the user’s mode stands; Disable unlocks', async () => {
+      const f = fixture()
+      const { tab, view } = privatePage(f)
+      expect(f.browser.state.settings.privacy.thirdPartyCookies).toBe('block-private')
+      await settle()
+      const before = view.pushes.length
+      // The layer arrives (the extension host's publish): the effective policy blocks everywhere.
+      f.browser.state.setExtensionControls({
+        [EXTENSION_SETTING_KEYS.thirdPartyCookies]: {
+          extensionId: 'cjpalhdlnbpafiamejdnhcphjbkeiagm',
+          name: 'Cookie Shield Probe',
+          value: false
+        }
+      })
+      expect(f.browser.newTab.stateFor(tab.id)!.privateThirdPartyCookies).toEqual({
+        blocked: true,
+        locked: true,
+        lockedByExtension: 'Cookie Shield Probe'
+      })
+      // The commit re-pushed the live page with the lock and the holder's name.
+      await settle()
+      expect(view.pushes.length).toBeGreaterThan(before)
+      expect(view.pushes.at(-1)!.privateThirdPartyCookies).toEqual({
+        blocked: true,
+        locked: true,
+        lockedByExtension: 'Cookie Shield Probe'
+      })
+      // The same position, lock and name the chrome gets (`PrivacyStatus.privateThirdPartyCookies`).
+      expect(f.browser.protection.status().privateThirdPartyCookies).toEqual({
+        blocked: true,
+        locked: true,
+        lockedByExtension: 'Cookie Shield Probe'
+      })
+      // The user's own values were never written.
+      expect(f.browser.state.settings.privacy.thirdPartyCookies).toBe('block-private')
+
+      // A hold at `true` (allow everywhere) locks the switch OFF and names the holder – a tap
+      // would write a private override the layer above does not read and spring back (the
+      // independent review's Required 1).
+      f.browser.state.setExtensionControls({
+        [EXTENSION_SETTING_KEYS.thirdPartyCookies]: {
+          extensionId: 'x',
+          name: 'Opener',
+          value: true
+        }
+      })
+      expect(f.browser.newTab.stateFor(tab.id)!.privateThirdPartyCookies).toEqual({
+        blocked: false,
+        locked: true,
+        lockedByExtension: 'Opener'
+      })
+      expect(f.browser.protection.status().privateThirdPartyCookies).toEqual({
+        blocked: false,
+        locked: true,
+        lockedByExtension: 'Opener'
+      })
+      // The page's flip while locked is not taken: the document refuses the tap, and the core's
+      // state is what the layer says even when a write lands.
+      f.browser.newTab.handleAction(tab.id, {
+        type: 'set-private-third-party-cookies',
+        blocked: true
+      })
+      expect(f.browser.newTab.stateFor(tab.id)!.privateThirdPartyCookies).toEqual({
+        blocked: false,
+        locked: true,
+        lockedByExtension: 'Opener'
+      })
+      // The user's private override the write left is read again only when the layer goes.
+      expect(f.browser.state.settings.privacy.thirdPartyCookiesPrivate).toBe('block')
+
+      // The layer withdrawn (Disable, uninstall): the user's state is back, no name.
+      f.browser.state.setExtensionControls({})
+      expect(f.browser.newTab.stateFor(tab.id)!.privateThirdPartyCookies).toEqual({
+        blocked: true,
+        locked: false
+      })
+    })
+
     it('handleAction: on writes block, off writes allow, never default, private pages only', () => {
       const f = fixture()
       const { tab } = privatePage(f)
@@ -837,7 +916,7 @@ describe('NewTabService: my shortcuts and most visited', () => {
     // Removing a pinned site drops the tile and blocks the host.
     svc.pin('https://docs.example/', 'Docs')
     svc.remove('https://docs.example/')
-    expect(device()).toEqual({ shortcuts: [], hiddenHosts: ['docs.example'] })
+    expect(device()).toEqual({ shortcuts: [], hiddenHosts: ['docs.example'], hiddenModules: [] })
     svc.pin('javascript:alert(1)', 'nope')
     expect(device().shortcuts).toEqual([])
   })
@@ -1123,7 +1202,11 @@ describe('NewTabService: my shortcuts and most visited', () => {
       })
       const before = f.browser.state.newTabDevice
       svc.restoreDefaultShortcutsFromPage(tab.id)
-      expect(f.browser.state.newTabDevice).toEqual({ shortcuts: [], hiddenHosts: [] })
+      expect(f.browser.state.newTabDevice).toEqual({
+        shortcuts: [],
+        hiddenHosts: [],
+        hiddenModules: []
+      })
       expect(f.browser.state.settings.newTab.mode).toBe('most-visited')
       expect(svc.stateFor(tab.id)!.topSites.map((s) => s.url)).toEqual(['https://news.example/a'])
       // The page's toast ("Default shortcuts restored", Undo alone) is the command's.
@@ -1184,7 +1267,11 @@ describe('NewTabService: my shortcuts and most visited', () => {
         ...DEFAULT_NEW_TAB_SETTINGS,
         enabled: false
       })
-      expect(f.browser.state.newTabDevice).toEqual({ shortcuts: [], hiddenHosts: [] })
+      expect(f.browser.state.newTabDevice).toEqual({
+        shortcuts: [],
+        hiddenHosts: [],
+        hiddenModules: []
+      })
       expect(f.background.current).toBeNull()
       // No restore snapshot survives a reset.
       expect(svc.undoRestoreDefaultShortcuts()).toBe(false)
@@ -1610,6 +1697,37 @@ describe('NewTabService: the homepage (SET-36 / NTP-30)', () => {
     // The phone's chrome draws its page over the blank tab: that is Home there.
     const phone = fixture({ newTabPage: false })
     expect(phone.browser.newTab.homepageUrl()).toBe(BLANK_URL)
+  })
+
+  it('homepageUrl follows an extension’s homepage while one holds the setting (chrome_settings_overrides.homepage, the `homepage` control), the user’s own back when it lets go, and Off stays Off', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    const bing = {
+      extensionId: 'a'.repeat(32),
+      name: 'Bing Homepage',
+      value: 'https://www.bing.com/'
+    }
+    f.browser.handleCommand(win, 'settings.update', {
+      homepage: { mode: 'url', url: 'https://news.example/' }
+    })
+    f.browser.state.setExtensionControls({ homepage: bing })
+    expect(f.browser.newTab.homepageUrl()).toBe('https://www.bing.com/')
+    expect(f.browser.state.effectiveHomepage()).toEqual({
+      mode: 'url',
+      url: 'https://www.bing.com/'
+    })
+    // The user's own setting waits underneath, untouched.
+    expect(f.browser.state.settings.homepage).toEqual({ mode: 'url', url: 'https://news.example/' })
+    // Over the new tab page too: the extension's page is where Home goes.
+    f.browser.handleCommand(win, 'settings.update', { homepage: { mode: 'newtab', url: '' } })
+    expect(f.browser.newTab.homepageUrl()).toBe('https://www.bing.com/')
+    // Off is the user's: no Home button, nothing runs, whatever the extension declares.
+    f.browser.handleCommand(win, 'settings.update', { homepage: { mode: 'off', url: '' } })
+    expect(f.browser.newTab.homepageUrl()).toBeNull()
+    // The extension gone (disabled, uninstalled): the user's own again.
+    f.browser.handleCommand(win, 'settings.update', { homepage: { mode: 'newtab', url: '' } })
+    f.browser.state.setExtensionControls({})
+    expect(f.browser.newTab.homepageUrl()).toBe(NEW_TAB_URL)
   })
 
   it('tab.home navigates the tab to the homepage and closes the URL bar; nothing runs while Off', () => {

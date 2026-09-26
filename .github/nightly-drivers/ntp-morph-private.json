@@ -1,0 +1,16 @@
+{
+  "id": "ntp-morph-private",
+  "order": 111,
+  "classes": ["FakeboxMorphScrubDemo", "FakeboxMorphScrubReducedDemo"],
+  "shard": "webview",
+  "mirrors": "android-ntp-morph-demo.yml:private",
+  "script": ".github/scripts/android-ntp-morph-demo.sh",
+  "out": "artifacts/android-ntp-morph-demo",
+  "env": {
+    "MORPH_ACT": "private",
+    "WEBVIEW_APK": ""
+  },
+  "timeout": 1200,
+  "estimate": 6,
+  "note": "The private act (the scrub and its reduced-motion run). WEBVIEW_APK is blanked for it: the swap already took on this boot, and the wrapper's first act would otherwise swap again."
+}

@@ -1,0 +1,11 @@
+{
+  "id": "thumbs",
+  "order": 37,
+  "classes": ["ThumbsDemo", "ThumbsRestoreDemo"],
+  "shard": "phone-b",
+  "mirrors": "android-thumbs-demo.yml",
+  "script": ".github/scripts/android-thumbs-demo.sh",
+  "timeout": 900,
+  "estimate": 5,
+  "note": "Two acts on the one boot (cards, then the restore after a process death), under act-1/ and act-2/."
+}

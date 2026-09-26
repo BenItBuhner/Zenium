@@ -193,6 +193,7 @@ function previewFetch(): Plugin {
  *
  *   vite build  -c vite.android.config.ts                 → android/app/src/main/assets/www
  *   vite build  -c vite.android.config.ts --mode page     → android/app/src/main/assets/page.js
+ *   vite build  -c vite.android.config.ts --mode webapp   → android/app/src/main/assets/webapp.js
  *   vite build  -c vite.android.config.ts --mode ext      → android/app/src/main/assets/ext.js
  *   vite build  -c vite.android.config.ts --mode pdf      → android/app/src/main/assets/pdf/
  *   vite        -c vite.android.config.ts                 → dev server with the iframe preview host
@@ -249,7 +250,10 @@ export default defineConfig(({ mode }) => {
       }
     }
   }
-  if (mode === 'page') {
+  if (mode === 'page' || mode === 'webapp') {
+    // The browser's page script, and the installed web app window's cut of it
+    // (`src/android/webAppScript.ts`: the same bridge, `Notification` alone).
+    const webapp = mode === 'webapp'
     return {
       resolve: { alias: aliases },
       define: { 'process.env.NODE_ENV': JSON.stringify('production') },
@@ -258,10 +262,10 @@ export default defineConfig(({ mode }) => {
         emptyOutDir: false,
         minify: true,
         lib: {
-          entry: resolve('src/android/pageScript.ts'),
-          name: 'zenPage',
+          entry: resolve(webapp ? 'src/android/webAppScript.ts' : 'src/android/pageScript.ts'),
+          name: webapp ? 'zenWebApp' : 'zenPage',
           formats: ['iife'],
-          fileName: () => 'page.js'
+          fileName: () => (webapp ? 'webapp.js' : 'page.js')
         }
       }
     }

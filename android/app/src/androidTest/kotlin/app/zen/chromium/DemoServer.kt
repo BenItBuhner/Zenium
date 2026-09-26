@@ -19,7 +19,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * Everything is `Cache-Control: no-store`, so a reload fetches again – except the paths in
  * `cacheable`, which the WebView may keep for an hour, for a demo that shows a page coming back
  * without a request (a history navigation). [hits] counts the requests each path has seen, so a
- * driver can tell a page served from the cache from one fetched again. `address` is the
+ * driver can tell a page served from the cache from one fetched again, and [lastHeader] keeps
+ * the last request's headers per path, for a driver that asserts what the browser sent. `address` is the
  * loopback address to listen on – 127.0.0.1 unless a demo needs several sites, which are told
  * apart by host: any 127.x.y.z is the loopback too, so one server per address on one port gives
  * each site its own host – and `0.0.0.0` listens on every interface, for a demo whose site must
@@ -57,6 +58,8 @@ class DemoServer(
     private val socket = ServerSocket(port, 16, InetAddress.getByAddress(ipv4(address)))
     @Volatile private var closed = false
     private val requests = ConcurrentHashMap<String, AtomicInteger>()
+    /** The request headers (names lower-cased) of the last request each path has seen. */
+    private val lastHeaders = ConcurrentHashMap<String, Map<String, String>>()
     /** Full (non-Range) responses served so far per cut path, and how many responses have died. */
     private val fullResponses = ConcurrentHashMap<String, AtomicInteger>()
     private val deaths = ConcurrentHashMap<String, AtomicInteger>()
@@ -68,6 +71,13 @@ class DemoServer(
 
     /** How many responses to a cut path have died so far. */
     fun deaths(path: String): Int = deaths[path]?.get() ?: 0
+
+    /**
+     * What the last request to `path` carried in its `name` header (matched case-insensitively);
+     * null for a header it did not carry, or a path never requested. For a demo that asserts what
+     * the browser SENT – a `Referer`, a `Sec-Fetch-Site` – rather than what the page saw.
+     */
+    fun lastHeader(path: String, name: String): String? = lastHeaders[path]?.get(name.lowercase())
 
     /** Fetch `/` the way the WebView will and describe the outcome. */
     fun selfCheck(): String = runCatching {
@@ -107,6 +117,7 @@ class DemoServer(
             val line = request.readLine() ?: return
             var range: String? = null
             var contentLength = 0
+            val headers = HashMap<String, String>()
             while (true) {
                 val header = request.readLine()
                 if (header.isNullOrEmpty()) break
@@ -114,6 +125,7 @@ class DemoServer(
                 if (header.startsWith("Content-Length:", ignoreCase = true)) {
                     contentLength = header.substringAfter(':').trim().toIntOrNull() ?: 0
                 }
+                if (header.contains(':')) headers[header.substringBefore(':').trim().lowercase()] = header.substringAfter(':').trim()
             }
             // A body left unread when the socket closes goes back as a reset, which the WebView
             // reports over the response it already has: read it (a form's fields) and drop it.
@@ -126,6 +138,7 @@ class DemoServer(
             }
             val path = line.split(' ').getOrNull(1)?.substringBefore('?') ?: "/"
             requests.getOrPut(path) { AtomicInteger() }.incrementAndGet()
+            lastHeaders[path] = headers
             delays[path]?.let { Thread.sleep(it) }
             val out = it.getOutputStream()
             redirects[path]?.let { location ->

@@ -1,0 +1,13 @@
+{
+  "id": "widget",
+  "order": 5,
+  "class": "WidgetDemo",
+  "shard": "phone-b",
+  "mirrors": "android-widget-demo.yml",
+  "dir": "widget-demo",
+  "env": {
+    "DEMO_THEME": "light"
+  },
+  "estimate": 4,
+  "note": "The Home-screen search widget and the launcher's deep links (WID-01, WID-07, OMN-33; W5-9): the face bound on the driver's AppWidgetHost, a finger on its mic / pill / mask, the cold landings with the browser's task removed and the widget's own PendingIntent replayed, every frame read for the previous tab's page (never painted), the four static shortcuts. The workflow runs light and dark and a profiles leg; the nightly runs light on this image, where the private landing is the toast (no WebView profiles) – the private tab's landing on profiles is the private tabs demo's on the webview shard. The workflow's four jobs measured 168–228 s (run 35947928467); the longest, rounded up. On phone-b, the lightest phone shard once #423's Custom Tabs depth grew phone-d (63 before it, 67 with it)."
+}

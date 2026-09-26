@@ -2,8 +2,9 @@
  * The `display-mode` media feature for pages whose engine cannot tell one window from another
  * (Electron reports `browser` everywhere; Chrome's app windows answer `standalone` and any
  * fullscreen window `fullscreen`, MW-23). The mode is the browser's to know: `displayModeFor`
- * derives it from the window a page lives in, the preload asks for it synchronously at document
- * start and `installDisplayModeShim` runs in the page's own world, wrapping `matchMedia` so the
+ * derives it from the window a page lives in, the preload gets it in its one document-start ask
+ * (the `displayMode` field of `documentStart.ts`'s answer) and `installDisplayModeShim` runs in
+ * the page's own world, wrapping `matchMedia` so the
  * `(display-mode: …)` features of a query answer with Zenium's mode while the engine keeps
  * evaluating everything else in it. Later changes (the window going fullscreen, the page moving
  * to another window) arrive over a DOM event and fire `change` on the lists a page listens to.
@@ -15,9 +16,6 @@ import type { WindowChrome } from './types'
 
 /** The modes Zenium reports (Chrome's `minimal-ui` and `window-controls-overlay` never apply). */
 export type DisplayMode = 'browser' | 'standalone' | 'fullscreen'
-
-/** Synchronous ask of the main process at document start: the page's current mode. */
-export const DISPLAY_MODE_CHANNEL = 'zen:display-mode'
 
 /** DOM event the isolated world dispatches on `document` with the new mode in `detail`. */
 export const DISPLAY_MODE_EVENT = 'zen-display-mode'

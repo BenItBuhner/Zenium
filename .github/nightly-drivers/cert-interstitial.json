@@ -1,0 +1,10 @@
+{
+  "id": "cert-interstitial",
+  "order": 50,
+  "class": "CertInterstitialDemo",
+  "shard": "phone-c",
+  "mirrors": "(none: dispatch-only driver without a workflow)",
+  "dir": "cert-interstitial-demo",
+  "estimate": 2,
+  "note": "Loads the three badssl.com pages over the network."
+}

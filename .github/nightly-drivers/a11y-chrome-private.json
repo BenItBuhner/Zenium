@@ -1,0 +1,14 @@
+{
+  "id": "a11y-chrome-private",
+  "order": 110,
+  "class": "ChromeA11yDemo",
+  "shard": "webview",
+  "mirrors": "android-a11y-chrome-demo.yml:record-private",
+  "dir": "a11y-chrome-demo",
+  "env": {
+    "DEMO_SCENES": "private"
+  },
+  "timeout": 900,
+  "estimate": 4,
+  "note": "The private scene alone, on the multi-profile WebView."
+}

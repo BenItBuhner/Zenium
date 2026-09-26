@@ -351,6 +351,7 @@ function liveContext(page: FakePage, opts: LiveOptions = {}): Live {
       resolveTab: () => t,
       describeOwner: () => 'yours',
       degraded: () => false,
+      degradedBecause: () => null,
       prepare: async () => view,
       evalPage: (v: TabView, code: string) => v.executeJavaScript(code),
       frameState: (_s: unknown, tabId: string) => {
@@ -688,12 +689,35 @@ describe('page results name the tab they acted on', () => {
 
   it('say when the call was degraded to the background by the lease', async () => {
     const live = liveContext(signInPage())
-    ;(live.ctx.agents as unknown as { degraded: () => boolean }).degraded = () => true
+    const agents = live.ctx.agents as unknown as {
+      degraded: () => boolean
+      degradedBecause: () => 'lease' | 'screen' | null
+    }
+    agents.degraded = () => true
+    agents.degradedBecause = () => 'lease'
     const out = textOf(await run('browser_click', live.ctx, { x: 200, y: 230 }))
     expect(out).toContain(
       '- Tab: tab_live (yours; foreground mode, acted in background – another agent holds the screen)'
     )
     expect(out).toContain('input: synthetic – another agent holds the screen')
+    expect(live.input).toEqual([])
+  })
+
+  it('say when the call was degraded because the screen was not taken', async () => {
+    const live = liveContext(signInPage())
+    const agents = live.ctx.agents as unknown as {
+      degraded: () => boolean
+      degradedBecause: () => 'lease' | 'screen' | null
+    }
+    agents.degraded = () => true
+    agents.degradedBecause = () => 'screen'
+    const out = textOf(await run('browser_click', live.ctx, { x: 200, y: 230 }))
+    expect(out).toContain(
+      '- Tab: tab_live (yours; foreground mode, acted in background – the screen was not taken)'
+    )
+    expect(out).toContain(
+      'input: synthetic – the tab is not what the user is looking at and you have not taken the screen (zen_mode {"mode":"foreground","takeScreen":true})'
+    )
     expect(live.input).toEqual([])
   })
 })

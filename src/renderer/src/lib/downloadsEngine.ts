@@ -2,6 +2,7 @@ import type {
   DownloadChangeKind,
   DownloadDeleteFileResult,
   DownloadItem,
+  MenuAnchor,
   UIState
 } from '@shared/types'
 import { needsDangerDecision } from '@shared/downloadsShell'
@@ -60,9 +61,10 @@ export interface DownloadsEngine {
   openFolder(): void
   /**
    * The row's context menu (downloads-11), built by the core from the record's state; at the
-   * pointer, or at `x, y` with `keyboard` when the menu key or Shift+F10 opened it.
+   * pointer, or hung from the row or its "⋯" (`rect`) with `keyboard` when the menu key,
+   * Shift+F10 or Enter opened it.
    */
-  contextMenu(id: string, at?: { x: number; y: number; keyboard?: boolean }): void
+  contextMenu(id: string, at?: MenuAnchor): void
 }
 
 export const downloadsEngine: DownloadsEngine = {

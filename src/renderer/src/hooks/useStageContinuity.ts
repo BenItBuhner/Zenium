@@ -51,10 +51,13 @@ export function reconcileStageFor(formFactor: FormFactor): void {
  * page tab narrowed into the phone class becomes the overlay), so neither shell draws the other's
  * surface. Nothing happens with no overlay up, with one that is an overlay on every layout (a
  * space's editor, the theme picker), or on a host whose window never changes class (the desktop).
+ * The open is marked the hand-back it is (`handedBack`): the core kept the slot the tab had when
+ * it closed it for the narrowing (`ZenWindow.handedPage`), and the tab comes back there while
+ * that still fits – not beside whichever tab is active now, as a page opened by hand does.
  */
 function handOverlayToPageTab(): void {
   const { overlay, overlayFolderId, overlaySection } = uiStore.get()
   if (overlay === 'none' || overlayAvailable(overlay)) return
   closeOverlay()
-  void openOverlay(overlay, null, null, overlayFolderId, overlaySection)
+  void openOverlay(overlay, null, null, overlayFolderId, overlaySection, { handedBack: true })
 }

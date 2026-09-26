@@ -45,6 +45,7 @@ export type InternalPageId =
   | 'settings'
   | 'history'
   | 'bookmarks'
+  | 'reading-list'
   | 'downloads'
   | 'licences'
   | 'whats-new'
@@ -77,7 +78,15 @@ export type InternalPageRender = 'chrome' | 'document'
  * legal pages, `activity` for the task manager); a page tab never fetches a favicon.
  */
 export type InternalPageGlyph =
-  'settings' | 'history' | 'star' | 'download' | 'scale' | 'sparkles' | 'file-text' | 'activity'
+  | 'settings'
+  | 'history'
+  | 'star'
+  | 'download'
+  | 'scale'
+  | 'sparkles'
+  | 'file-text'
+  | 'activity'
+  | 'book-open'
 
 /** One section of an internal page: `zen://<page>/<id>`. */
 export interface InternalPageSection {
@@ -429,6 +438,15 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
     requires: 'updates'
   },
   {
+    // Chrome's "Reset settings" at the foot of its list (settings-70): the one row that restores
+    // the settings to their defaults. The desktop and tablet shells' – the phone's Settings has
+    // no tail of Advanced categories to end with it (W7-6).
+    id: 'reset',
+    label: 'Reset Settings',
+    keywords: ['reset', 'restore', 'defaults', 'original', 'factory'],
+    layouts: ['desktop', 'tablet']
+  },
+  {
     id: 'about',
     label: 'About',
     keywords: [
@@ -500,6 +518,28 @@ export const INTERNAL_PAGES: Readonly<Record<InternalPageId, InternalPageDefinit
     pill: { showStar: false },
     splittable: false,
     overlay: 'bookmarks',
+    layouts: TAB_LAYOUTS,
+    sections: []
+  },
+  /**
+   * The reading list (`zen://reading-list`, W6-1; Chrome's is a side panel, bookmarks-33): the
+   * pages saved for later as one scroll under Unread and Read headings, no sections. A page on
+   * the desktop and the tablet (the lead's #286 ruling keeps the browser's lists as page tabs);
+   * the phone has no form of it yet – with no `overlay`, an ask there is dropped, as the task
+   * manager's is. No star: a page of the browser's own.
+   */
+  'reading-list': {
+    id: 'reading-list',
+    title: 'Reading List',
+    render: 'chrome',
+    singleton: true,
+    glyph: 'book-open',
+    pill: { showStar: false },
+    splittable: false,
+    // The phone's panel (HB-20, `PhoneReadingListPanel`): a `page.open` on a layout the page is
+    // no tab in opens it, and a tablet's tab narrowed into the phone class is handed to it
+    // (`reconcileLayout`, W6-S1's seam), as History's and the manager's are.
+    overlay: 'reading-list',
     layouts: TAB_LAYOUTS,
     sections: []
   },

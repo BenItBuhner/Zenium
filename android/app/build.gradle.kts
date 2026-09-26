@@ -18,6 +18,7 @@ val buildWeb = tasks.register<Exec>("buildWeb") {
     inputs.dir(webRoot.resolve("src"))
     outputs.dir(projectDir.resolve("src/main/assets/www"))
     outputs.file(projectDir.resolve("src/main/assets/page.js"))
+    outputs.file(projectDir.resolve("src/main/assets/webapp.js"))
     outputs.file(projectDir.resolve("src/main/assets/ext.js"))
     outputs.file(projectDir.resolve("src/main/assets/ext-janitor.js"))
     outputs.dir(projectDir.resolve("src/main/assets/pdf"))
@@ -216,6 +217,45 @@ android {
             // The JDK's HttpURLConnection silently drops `Origin` (a "restricted" header) unless told
             // otherwise; Android's OkHttp-backed one sends it. The CORS proxy tests check the rewrite.
             it.systemProperty("sun.net.http.allowRestrictedHeaders", "true")
+            // The source-reading tests (ExternalProtocolsNoHandlerTest, CustomTabOpenInAppPromptTest,
+            // CustomTabPermissionPromptTest, ExtensionPromptFallbackTest, PermissionPromptSheetTest,
+            // WebAppDisclosureTest, ScreenClassTest, LockVeilTest, PrivateBrowsingTest, BackupRulesTest,
+            // LocalDocumentsTest, ExternalProtocolsTest, StartupSplashTest, WebAppSplashTest,
+            // PageDialogsTest, PrivateLockTest, NotificationsTest, SyncPeerTest, IndexDifferentialTest,
+            // BlockingTest) read these off the repository as TEXT – the core's and the chrome's
+            // TypeScript, the sync core's fixture, the bundled filter lists, this module's Kotlin,
+            // manifest and resources – none of which is on the task's classpath in a form that changes
+            // with them (a KDoc, a manifest attribute, a resource value). Undeclared, a change to one of
+            // them reused the cached pass (`org.gradle.caching`, and CI restores main's Gradle home):
+            // services' #576 rewrote the shared `intentPackage` and the pin that reads it stayed green
+            // from the cache. Named here, the tests run when what they read changes. Grep
+            // `src/test/kotlin` for `File(root, "`, `repoFile(`, `"src/main/` and `resources/` when
+            // adding a source-reading test, and add what it reads. (What a test reads off its own
+            // classpath – `src/test/resources`, `src/sharedTest/kotlin` – is an input already.)
+            it.inputs.files(
+                webRoot.resolve("src/shared/externalProtocols.ts"),
+                webRoot.resolve("src/core/externalProtocols.ts"),
+                webRoot.resolve("src/shared/url.ts"),
+                webRoot.resolve("src/shared/formFactor.ts"),
+                webRoot.resolve("src/android/extensionHost.ts"),
+                webRoot.resolve("src/renderer/src/assets/extensions.css"),
+                webRoot.resolve("src/renderer/src/components/protocol/ExternalProtocolSheet.tsx"),
+                webRoot.resolve("src/renderer/src/components/extensions/ExtensionIcon.tsx"),
+                webRoot.resolve("src/renderer/src/lib/extensions/warningGlyph.ts"),
+                // SyncPeerTest: the wire's pin (the core's transport) and the legacy device file it decodes.
+                webRoot.resolve("src/core/sync/transport.ts"),
+                webRoot.resolve("src/core/sync/__tests__/fixtures/legacy-device-file.json"),
+                projectDir.resolve("src/main/AndroidManifest.xml")
+            ).withPathSensitivity(PathSensitivity.RELATIVE)
+            // IndexDifferentialTest and BlockingTest (`bundledSnapshotDir`) index the bundled filter
+            // lists off the repository root – `resources/blocking`, not this module's test resources.
+            it.inputs.dir(webRoot.resolve("resources/blocking")).withPathSensitivity(PathSensitivity.RELATIVE)
+            it.inputs.dir(projectDir.resolve("src/main/kotlin")).withPathSensitivity(PathSensitivity.RELATIVE)
+            it.inputs.dir(projectDir.resolve("src/main/shortcuts")).withPathSensitivity(PathSensitivity.RELATIVE)
+            it.inputs.dir(projectDir.resolve("src/main/res/drawable")).withPathSensitivity(PathSensitivity.RELATIVE)
+            it.inputs.dir(projectDir.resolve("src/main/res/mipmap-anydpi-v26")).withPathSensitivity(PathSensitivity.RELATIVE)
+            it.inputs.dir(projectDir.resolve("src/main/res/values-night")).withPathSensitivity(PathSensitivity.RELATIVE)
+            it.inputs.dir(projectDir.resolve("src/main/res/xml")).withPathSensitivity(PathSensitivity.RELATIVE)
             // V2TokensPinTest reads the chrome's stylesheet, the sheet chassis (its motion module,
             // its bottom inset) and this module's value and anim resources off the repository, not
             // the classpath (the R class does not change with a colour's value), so they are the
@@ -223,10 +263,22 @@ android {
             it.inputs.files(
                 webRoot.resolve("src/renderer/src/assets/main.css"),
                 webRoot.resolve("src/renderer/src/lib/motion/sheet.ts"),
-                webRoot.resolve("src/renderer/src/components/sheet/BottomSheet.tsx")
+                webRoot.resolve("src/renderer/src/components/sheet/BottomSheet.tsx"),
+                // The toast card's pin (ToastCardSpec): the shared card numbers, the chrome's clocks, the springs, the swipe's rule.
+                webRoot.resolve("src/shared/toastCard.ts"),
+                webRoot.resolve("src/shared/spring.ts"),
+                webRoot.resolve("src/renderer/src/lib/ui.ts"),
+                webRoot.resolve("src/renderer/src/lib/bookmarkUndo.ts"),
+                webRoot.resolve("src/renderer/src/lib/gestures/swipe.ts"),
+                webRoot.resolve("src/renderer/src/lib/gestures/dismiss.ts"),
+                webRoot.resolve("src/renderer/src/components/messages/ToastCard.tsx")
             ).withPathSensitivity(PathSensitivity.RELATIVE)
             it.inputs.dir(projectDir.resolve("src/main/res/values")).withPathSensitivity(PathSensitivity.RELATIVE)
             it.inputs.dir(projectDir.resolve("src/main/res/anim")).withPathSensitivity(PathSensitivity.RELATIVE)
+            // NotificationsTest scans every source set for a deleted channel id, and the drivers
+            // (androidTest) are not on the unit tests' classpath: name them as an input so a
+            // driver-only change re-runs the scan instead of a cached pass standing for it.
+            it.inputs.dir(projectDir.resolve("src/androidTest/kotlin")).withPathSensitivity(PathSensitivity.RELATIVE)
         }
     }
 

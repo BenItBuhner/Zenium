@@ -1,13 +1,21 @@
 import { describe, expect, it } from 'vitest'
-import type { SiteInfoSnapshot, SiteSecurity } from '@shared/siteInfo'
+import type { SiteInfoSnapshot, SitePermission, SiteSecurity } from '@shared/siteInfo'
 import { DEFAULT_CONTAINER_ID, type CertificateError, type Tab, type UIState } from '@shared/types'
+import { contentSetting } from '@shared/contentSettings'
 import {
+  BACKGROUND_VIDEO_LINE,
+  backgroundVideoChoice,
   connectionDetail,
   connectionFault,
   connectionHeadline,
   connectionValue,
+  defaultInForce,
+  permissionRows,
   security,
-  summaryLine
+  showsBackgroundVideoRow,
+  summaryLine,
+  switchOn,
+  switchWrite
 } from '../siteInfoCopy'
 
 /*
@@ -193,5 +201,187 @@ describe("the Connection row's fault (W5-2 (c), #382)", () => {
     expect(
       security(null, 'http://plain.example/', { certificateError: error }).certificateError
     ).toBe(undefined)
+  })
+})
+
+/*
+ * The Background video row of the phone sheet (W6-S8; MED-08 / EDGE-32, the lead's ruling on
+ * services' #523): when the sheet earns it, what it reads, and the words under it – all from the
+ * catalogue's `background-video` entry, never a copy of its sentences.
+ */
+describe('the Background video row (W6-S8, #523)', () => {
+  const stored = [{ permission: 'camera', decision: 'allow' as const }]
+  const allowed = [{ permission: 'background-video', decision: 'allow' as const }]
+  const blocked = [{ permission: 'background-video', decision: 'deny' as const }]
+
+  it('is earned on Android by a stored answer or a media session that reports video, in Sound’s shape', () => {
+    expect(showsBackgroundVideoRow(stored, null, 'android')).toBe(false)
+    expect(showsBackgroundVideoRow(stored, { video: false }, 'android')).toBe(false)
+    expect(showsBackgroundVideoRow(stored, { video: undefined }, 'android')).toBe(false)
+    expect(showsBackgroundVideoRow(stored, { video: true }, 'android')).toBe(true)
+    expect(showsBackgroundVideoRow(allowed, null, 'android')).toBe(true)
+    expect(showsBackgroundVideoRow(blocked, undefined, 'android')).toBe(true)
+  })
+
+  it('never shows where the catalogue marks the setting n-a: the desktop, whatever the tab plays or stored', () => {
+    expect(contentSetting('background-video')?.support).toEqual({
+      desktop: 'n-a',
+      android: 'enforced'
+    })
+    for (const platform of ['linux', 'win32', 'darwin'] as const) {
+      expect(showsBackgroundVideoRow(allowed, { video: true }, platform)).toBe(false)
+      expect(showsBackgroundVideoRow(blocked, { video: true }, platform)).toBe(false)
+    }
+  })
+
+  it('reads the stored decision, else the default – Block, Sound’s inverse: only a stored allow is on', () => {
+    expect(backgroundVideoChoice(stored)).toBe('default')
+    expect(backgroundVideoChoice(allowed)).toBe('allow')
+    expect(backgroundVideoChoice(blocked)).toBe('deny')
+    expect(backgroundVideoChoice([]) === 'allow').toBe(false)
+  })
+
+  it('carries one constant line, this site’s, in both states – not the catalogue’s two Settings sentences', () => {
+    // The lead's ruling on #531: the row is a per-site switch row, so its line names what the
+    // switch does for this site and the switch carries the state; the catalogue's sentences are
+    // about sites in general and flip with the switch – Settings › Site settings' words, not
+    // this row's.
+    expect(BACKGROUND_VIDEO_LINE).toBe('Keeps playing video in the background')
+    const setting = contentSetting('background-video')!
+    expect(BACKGROUND_VIDEO_LINE).not.toBe(setting.description)
+    expect(BACKGROUND_VIDEO_LINE).not.toBe(setting.descriptions?.allow)
+    // The catalogue's own words stay where they were.
+    expect(setting.description).toBe('Sites cannot play video in the background')
+    expect(setting.descriptions?.allow).toBe('Sites can keep playing video in the background')
+  })
+
+  it('leaves the desktop popover’s permission rows as they were: no Background video row is added to them', () => {
+    // The desktop's `permissionRows` is pinned: the stored decisions as the engine lists them,
+    // Sound where the tab earns it, and nothing else – the row is the phone sheet's alone.
+    const audible = { audible: true, muted: false } as unknown as Tab
+    const quiet = { audible: false, muted: false } as unknown as Tab
+    expect(permissionRows(stored, quiet)).toEqual([{ permission: 'camera', decision: 'allow' }])
+    expect(permissionRows(stored, audible)).toEqual([
+      { permission: 'camera', decision: 'allow' },
+      { permission: 'sound', decision: 'default' }
+    ])
+    // A stored background-video answer lists as the engine lists it, like any other decision.
+    expect(permissionRows([...stored, ...allowed], quiet)).toEqual([
+      { permission: 'camera', decision: 'allow' },
+      { permission: 'background-video', decision: 'allow' }
+    ])
+  })
+})
+
+/*
+ * The sheet's switch rows read the state in force for the site (W6-S12; the lead's ruling on
+ * #531, §10.4): its own answer, else the default the core carries – and a press writes the site's
+ * rule that gives the other state, a forget only where the default already gives what the press
+ * asks. The table below is the whole rule for both rows: each row × each default × no answer,
+ * a stored allow, a stored deny – what the switch reads and what the press writes.
+ */
+describe('the switch rows’ effective state (W6-S12, §10.4)', () => {
+  const none: SitePermission[] = []
+  const stored = (permission: string, decision: 'allow' | 'deny'): SitePermission[] => [
+    { permission, decision }
+  ]
+
+  it('takes the default in force from the state the core carries, else the catalogue’s built-in', () => {
+    expect(defaultInForce('sound', undefined)).toBe('allow')
+    expect(defaultInForce('background-video', undefined)).toBe('deny')
+    expect(defaultInForce('sound', {})).toBe('allow')
+    expect(defaultInForce('background-video', {})).toBe('deny')
+    expect(defaultInForce('sound', { sound: 'deny' })).toBe('deny')
+    expect(defaultInForce('background-video', { 'background-video': 'allow' })).toBe('allow')
+    // Another row's default says nothing about this one.
+    expect(defaultInForce('sound', { 'background-video': 'allow' })).toBe('allow')
+  })
+
+  const table: Array<{
+    row: 'sound' | 'background-video'
+    fallback: 'allow' | 'deny'
+    answer: 'allow' | 'deny' | null
+    on: boolean
+    press: { decision: 'allow' | 'deny' } | { forget: true }
+  }> = [
+    // Sound: the catalogue's default is Allow; Settings may turn it to Block.
+    { row: 'sound', fallback: 'allow', answer: null, on: true, press: { decision: 'deny' } },
+    { row: 'sound', fallback: 'allow', answer: 'allow', on: true, press: { decision: 'deny' } },
+    { row: 'sound', fallback: 'allow', answer: 'deny', on: false, press: { forget: true } },
+    { row: 'sound', fallback: 'deny', answer: null, on: false, press: { decision: 'allow' } },
+    { row: 'sound', fallback: 'deny', answer: 'allow', on: true, press: { forget: true } },
+    { row: 'sound', fallback: 'deny', answer: 'deny', on: false, press: { decision: 'allow' } },
+    // Background video: the catalogue's default is Block; Settings may turn it to Allow.
+    {
+      row: 'background-video',
+      fallback: 'allow',
+      answer: null,
+      on: true,
+      press: { decision: 'deny' }
+    },
+    {
+      row: 'background-video',
+      fallback: 'allow',
+      answer: 'allow',
+      on: true,
+      press: { decision: 'deny' }
+    },
+    {
+      row: 'background-video',
+      fallback: 'allow',
+      answer: 'deny',
+      on: false,
+      press: { forget: true }
+    },
+    {
+      row: 'background-video',
+      fallback: 'deny',
+      answer: null,
+      on: false,
+      press: { decision: 'allow' }
+    },
+    {
+      row: 'background-video',
+      fallback: 'deny',
+      answer: 'allow',
+      on: true,
+      press: { forget: true }
+    },
+    {
+      row: 'background-video',
+      fallback: 'deny',
+      answer: 'deny',
+      on: false,
+      press: { decision: 'allow' }
+    }
+  ]
+
+  for (const { row, fallback, answer, on, press } of table) {
+    it(`${row} under a default of ${fallback} with ${answer ? `a stored ${answer}` : 'no answer'} reads ${on ? 'on' : 'off'} and a press ${'forget' in press ? 'forgets the answer' : `stores ${press.decision}`}`, () => {
+      const defaults = { [row]: fallback }
+      const permissions = answer ? stored(row, answer) : none
+      expect(switchOn(permissions, row, defaults)).toBe(on)
+      // The press asks for the other state; the write is the site's rule for it.
+      expect(switchWrite(!on, defaultInForce(row, defaults))).toEqual(press)
+    })
+  }
+
+  it('reads the catalogue’s default where the core carries none: Sound on, Background video off', () => {
+    expect(switchOn(none, 'sound', undefined)).toBe(true)
+    expect(switchOn(none, 'background-video', undefined)).toBe(false)
+    expect(switchOn(none, 'sound', {})).toBe(true)
+    expect(switchOn(none, 'background-video', {})).toBe(false)
+  })
+
+  it('stores either answer under a default that asks, since neither state is given by it', () => {
+    expect(switchWrite(true, 'ask')).toEqual({ decision: 'allow' })
+    expect(switchWrite(false, 'ask')).toEqual({ decision: 'deny' })
+  })
+
+  it('reads another row’s stored answer as nothing for this one', () => {
+    expect(
+      switchOn(stored('sound', 'deny'), 'background-video', { 'background-video': 'allow' })
+    ).toBe(true)
+    expect(switchOn(stored('background-video', 'allow'), 'sound', { sound: 'deny' })).toBe(false)
   })
 })

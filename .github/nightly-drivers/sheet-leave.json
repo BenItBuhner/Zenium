@@ -1,0 +1,15 @@
+{
+  "id": "sheet-leave",
+  "order": 93,
+  "class": "SheetLeaveDemo",
+  "shard": "api35",
+  "mirrors": "android-sheet-leave-demo.yml",
+  "dir": "sheet-leave-demo",
+  "script": ".github/scripts/android-sheet-leave-demo.sh",
+  "env": {
+    "DEMO_THEME": "light"
+  },
+  "setup": ["ffmpeg"],
+  "estimate": 3,
+  "note": "The wrapper cuts the recording into frames and reads them (android-sheet-recede-frames.mjs)."
+}

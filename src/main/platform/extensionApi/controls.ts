@@ -49,10 +49,19 @@ function sameControls(
       other.extensionId === a[key].extensionId &&
       other.name === a[key].name &&
       // The value in effect is part of what the row shows: the same extension moving its own
-      // value (a family, a proxy mode, a switch) is a change the row must see.
-      other.value === a[key].value
+      // value (a family, a proxy mode, a switch, a page list) is a change the row must see.
+      sameValue(other.value, a[key].value)
     )
   })
+}
+
+/** The value in effect, a list compared by its entries (an extension's startup pages). */
+function sameValue(a: ExtensionControl['value'], b: ExtensionControl['value']): boolean {
+  if (Array.isArray(a) || Array.isArray(b))
+    return (
+      Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => v === b[i])
+    )
+  return a === b
 }
 
 /**

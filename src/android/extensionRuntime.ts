@@ -1,4 +1,9 @@
-import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID, type ExtensionInfo } from '@shared/types'
+import {
+  DEFAULT_CONTAINER_ID,
+  PRIVATE_CONTAINER_ID,
+  type ExtensionControl,
+  type ExtensionInfo
+} from '@shared/types'
 import { pdfPageDownloadId } from '@shared/pdfPage'
 import { PDF_VIEWER_ORIGIN } from '@shared/pdfViewerProtocol'
 import type { Browser } from '@core/browser'
@@ -27,7 +32,8 @@ import {
   type ExtraInfoSpec,
   type WebRequestEventName
 } from '@core/extensions/api/webRequest'
-import { RESOURCE_TYPES, type ResourceType } from '@core/blocking/rules'
+import { RESOURCE_TYPES, type ResourceType, type RuleSet } from '@core/blocking/rules'
+import type { BlockingService } from '@core/blocking/service'
 import {
   msUntilNext,
   rescheduleAlarm,
@@ -36,6 +42,7 @@ import {
   type Alarm
 } from '@core/extensions/api/alarms'
 import type { PersistedMenuItem } from '@core/extensions/api/contextMenus'
+import type { FontName, FontValues } from '@core/extensions/api/fontSettings'
 import type { ScopedValues } from '@core/extensions/api/privacy'
 import type { ProxyConfig } from '@core/extensions/api/proxy'
 import {
@@ -75,7 +82,13 @@ import { stripJsonComments } from '@core/extensions/manifest'
 import { parseRuntimeManifest } from '@core/extensions/runtime/manifest'
 import { extensionUrl, type RegisteredContentScript } from '@core/extensions/runtime/plan'
 import { MessageRouter, type Endpoint } from '@core/extensions/runtime/router'
-import { planUnits, sameUnits, type ExtensionUnits } from '@core/extensions/runtime/units'
+import {
+  foldFilesFor,
+  planUnits,
+  sameUnits,
+  type ExtensionUnits,
+  type UnitEnvironment
+} from '@core/extensions/runtime/units'
 import {
   ExtensionApi,
   LANGUAGE_SAMPLE_CHARS,
@@ -105,6 +118,10 @@ import { AndroidIdentity, authSheetEvent } from './extensionIdentity'
 import type { ExtensionRuntimeHooks } from './extensionRuntimeHooks'
 import type { ClientInfo } from './extensionServiceWorker'
 import type { AndroidExtensionStoreIo } from './extensionStoreIo'
+import { ExtensionControlsGate } from './extensionControls'
+import { SettingControls } from './settingControls'
+import { EMPTY_WEBVIEW_FONT_LAYER, type WebViewFontLayer } from './extensionFontSettings'
+import type { WebViewPrivacyLayer } from './extensionPrivacy'
 import { webViewProxyOverride } from './extensionProxy'
 import type { KeepAwakeLevel } from '@core/extensions/api/power'
 import { relayServedObservation, type ScriptRequestObservation } from './relaySelection'
@@ -139,19 +156,25 @@ import type { ViewEventPayloads } from './views'
  *                                           → { units: [{ key, chars, cached, refused? }], ms, dropped? }
  *  ext.detach { id }
  *  ext.expect { ids }                       the extensions about to be attached (a restored tab's page on one is held, not 404'd)
- *  ext.background.start / stop { id }, ext.popup.open { id, url, context, title }, ext.popup.close,
+ *  ext.background.start / stop { id, reason }   the lifecycle's reason (attach | wake | message | event:<name> | restart; idle | remove) for the host's log
+ *  ext.popup.open { id, url, context, title }, ext.popup.close,
  *  ext.offscreen.open { id, url } / close { id }   chrome.offscreen's one hidden page per extension
  *  ext.hosts { id, hosts } (optional host permissions granted at runtime)
  *  ext.send { ep, message }, ext.exec {…}, ext.readFile { id, path }, ext.cookies.read / write
  *  ext.i18n.detectLanguage { text }         → { isReliable, languages: [{ language, percentage }] } (the platform's classifier)
  *  ext.observeRequests { on }               every engine decision is reported, not just the rules' matches
+ *  ext.observeRequestHeaders { on }         the headers of every request that goes out are reported (onBeforeSendHeaders / onSendHeaders)
  *  ext.observeResponses { on }              media-element requests are relayed for their response stage (blocking-rule-interface.md §7)
  *  ext.auth.open { viewId, id, url, title } / show { viewId } / close { viewId }   identity.launchWebAuthFlow's sheet
  *  ext.notifications.show { id, notification } / hide { id, notificationId } / forget { id } / allowed
  *  ext.proxy.set { rules, bypass, bypassSimpleHostnames, removeImplicitRules } / clear   chrome.proxy.settings over ProxyController
+ *  ext.fonts.apply { standard, serif, sansSerif, fixed, cursive, fantasy, size, fixedSize, minimumSize, css, script }   chrome.fontSettings' layer over every tab WebView's WebSettings and its :lang() stylesheet
+ *  ext.fonts.list                            [{ id, name }] – fonts.xml's named families with the font files' own names (fontSettings.getFontList)
+ *  ext.privacy.apply { doNotTrack, doNotTrackPrivate, script: { on, off } }   chrome.privacy's navigator.doNotTrack at document start on every tab WebView
  *  view.capture { tabId, mode: 'viewport', format, quality }   tabs.captureVisibleTab
  * Kotlin → runtime (host events): ext.message, ext.gone, ext.popupClosed, ext.request,
- * ext.response, ext.authView { viewId, event, url? }, ext.notification, ext.wake { id }.
+ * ext.requestHeaders, ext.response, ext.authView { viewId, event, url? }, ext.notification,
+ * ext.wake { id }.
  */
 
 /** The bridge calls the runtime makes (`Bridge` satisfies it; tests pass a fake). */
@@ -164,6 +187,14 @@ export interface RuntimeBridge {
    * message; a bridge without `post` gets a `send`.
    */
   post?(method: string, args?: unknown): void
+  /**
+   * The reply's own hop (compat round 20; `ExtReplyHop.kt`, `withReplyHop`): `ext.send` as one
+   * synchronous entry into the host with the endpoint id, the message and the stamps apart, so
+   * the message skips the port's two turns of the app's UI thread on its way to the endpoint's
+   * proxy (round 19 §4: the `back` leg, 97-99.7 % of a storage round trip). True when the host
+   * took it; false when there is no hop or it failed, and the message goes over `post` as before.
+   */
+  deliver?(ep: string, message: string, at?: ReplyStamps): boolean
 }
 
 interface RuntimeEnv {
@@ -221,6 +252,12 @@ export interface ExtMessageEvent {
   origin: string
   message: Record<string, unknown>
 }
+
+/**
+ * A call reply's two wall-clock stamps for the host's trace while `debug` (`ext.send`'s `at`):
+ * `[seen, replied]` – when the runtime saw the call, when it posted the reply (`Date.now()`).
+ */
+export type ReplyStamps = [seen: number, replied: number]
 
 /**
  * The engine's decision on one request of a tab, as Kotlin's `DecisionObserver` reports it
@@ -281,9 +318,35 @@ export interface ExtResponseEvent {
 }
 
 /**
+ * The request-header stage of a request that goes out, as Kotlin's `onSendHeaders` listener
+ * reports it (`ext.requestHeaders`) while `ext.observeRequestHeaders` is on: the headers WebView
+ * is about to send – the page's own and the ones WebView adds ahead of the network stack's (no
+ * `Cookie`, no `Content-Length`) – under the `ext.request` id the same request's decision
+ * carried, so the two pair. The material of `onBeforeSendHeaders` and `onSendHeaders`, which
+ * Chrome fires with the same headers for an observer (the blocking variant, which rewrites them,
+ * WebView cannot honour and the runtime does not offer).
+ */
+export interface ExtRequestHeadersEvent {
+  tabId: string | null
+  /** The `ExtRequestEvent.requestId` of the same request. */
+  requestId: string
+  url: string
+  /** `chrome.declarativeNetRequest.ResourceType` name. */
+  type: string
+  method: string
+  initiator: string | null
+  mainFrame: boolean
+  document: number
+  /** Every header line as WebView holds it (a listener's `extraInfoSpec` decides what it sees). */
+  requestHeaders: Array<{ name: string; value: string }>
+}
+
+/**
  * One `webRequest` listener of one endpoint: the event, its compiled `RequestFilter` and its
- * `extraInfoSpec` – which decides what of a response it sees (`responseHeaders` for the headers,
- * `extraHeaders` besides for the `set-cookie` lines, Chrome's rule since 72).
+ * `extraInfoSpec` – which decides what of a request or response it sees (`requestHeaders` /
+ * `responseHeaders` for the headers, `extraHeaders` besides for the lines Chrome withholds
+ * without it – the `set-cookie` lines of a response, since 72; `cookie`, `referer`,
+ * `accept-language` and `accept-encoding` of a request, since 72 as well).
  */
 interface RequestListener {
   event: WebRequestEventName
@@ -303,7 +366,17 @@ const RESPONSE_STAGE_EVENTS: ReadonlySet<WebRequestEventName> = new Set<WebReque
   'onBeforeRedirect'
 ])
 
-/** One response header line as Chrome's `HttpHeader` carries it here (always with a value). */
+/**
+ * The `webRequest` events of the request-header stage: while any endpoint (or a stopped
+ * background, persisted) holds a listener for one, the Kotlin runtime observes the engine's
+ * `onSendHeaders` seam and reports every outgoing request's headers (`ext.observeRequestHeaders`).
+ */
+const REQUEST_HEADER_EVENTS: ReadonlySet<WebRequestEventName> = new Set<WebRequestEventName>([
+  'onBeforeSendHeaders',
+  'onSendHeaders'
+])
+
+/** One header line as Chrome's `HttpHeader` carries it here (always with a value). */
 interface ResponseHeaderLine {
   name: string
   value: string
@@ -311,9 +384,10 @@ interface ResponseHeaderLine {
 
 /**
  * The `details` a `webRequest` event carries here (the observational subset of Chrome's): the
- * request's fields on every event, the status and headers on the response stage's, the redirect
- * target on `onBeforeRedirect`, the error on `onErrorOccurred`. `responseHeaders` is the full
- * list as received; what each listener sees of it is cut per its spec at delivery
+ * request's fields on every event, the request headers on the request-header stage's, the
+ * status and headers on the response stage's, the redirect target on `onBeforeRedirect`, the
+ * error on `onErrorOccurred`. `requestHeaders` / `responseHeaders` are the full lists as WebView
+ * holds / received them; what each listener sees of them is cut per its spec at delivery
  * (`detailsFor`). `fromCache` is false on the phone (the relay and the page read the origin);
  * `ip` is never known.
  */
@@ -331,27 +405,44 @@ interface RequestDetails {
   fromCache?: boolean
   statusCode?: number
   statusLine?: string
+  requestHeaders?: ResponseHeaderLine[]
   responseHeaders?: ResponseHeaderLine[]
   redirectUrl?: string
 }
 
+/** The request headers Chrome withholds from a listener without `extraHeaders` (since 72). */
+const REQUEST_HEADERS_BEHIND_EXTRA: ReadonlySet<string> = new Set([
+  'cookie',
+  'referer',
+  'accept-language',
+  'accept-encoding'
+])
+
 /**
  * The details as one listener sees them (the desktop's `chromeRequestDetails`, Chrome's rule):
- * `responseHeaders` only when its spec asked for them, and the `set-cookie` lines among them
- * only with `extraHeaders` besides.
+ * `requestHeaders` / `responseHeaders` only when its spec asked for them, and the lines Chrome
+ * keeps behind `extraHeaders` – a response's `set-cookie`, a request's `cookie`, `referer`,
+ * `accept-language` and `accept-encoding` – only with `extraHeaders` besides.
  */
 function detailsFor(details: RequestDetails, spec: readonly ExtraInfoSpec[]): RequestDetails {
-  if (!details.responseHeaders) return details
-  if (!spec.includes('responseHeaders')) {
-    const bare = { ...details }
-    delete bare.responseHeaders
-    return bare
+  if (!details.responseHeaders && !details.requestHeaders) return details
+  const seen = { ...details }
+  const extra = spec.includes('extraHeaders')
+  if (details.responseHeaders) {
+    if (!spec.includes('responseHeaders')) delete seen.responseHeaders
+    else if (!extra)
+      seen.responseHeaders = details.responseHeaders.filter(
+        (h) => h.name.toLowerCase() !== 'set-cookie'
+      )
   }
-  if (spec.includes('extraHeaders')) return details
-  return {
-    ...details,
-    responseHeaders: details.responseHeaders.filter((h) => h.name.toLowerCase() !== 'set-cookie')
+  if (details.requestHeaders) {
+    if (!spec.includes('requestHeaders')) delete seen.requestHeaders
+    else if (!extra)
+      seen.requestHeaders = details.requestHeaders.filter(
+        (h) => !REQUEST_HEADERS_BEHIND_EXTRA.has(h.name.toLowerCase())
+      )
   }
+  return seen
 }
 
 /** The `chrome.declarativeNetRequest.ResourceType` name Kotlin reported, as the `webRequest` type; `other` for one it does not know. */
@@ -410,6 +501,10 @@ interface RuntimeData {
   sidePanelOnActionClick: Record<string, boolean>
   /** id → the `chrome.proxy.settings` values it set, by scope (Chrome's `ExtensionPrefs`; the session-only scope is not kept). */
   proxy: Record<string, ScopedValues>
+  /** id → the `chrome.fontSettings` values it set (Chrome's `ExtensionPrefs` font layer; the user's setting is never written). */
+  fontSettings: Record<string, FontValues>
+  /** id → the `chrome.privacy` values it set, by setting key and scope (Chrome's `ExtensionPrefs`; the session-only scope is not kept). */
+  privacy: Record<string, Record<string, ScopedValues>>
   /**
    * id → the optional permissions `permissions.request` granted (API permissions and host
    * patterns), kept across sessions as Chrome's `ExtensionPrefs` keep the granted set; the
@@ -581,6 +676,8 @@ function emptyData(): RuntimeData {
     contextMenus: {},
     sidePanelOnActionClick: {},
     proxy: {},
+    fontSettings: {},
+    privacy: {},
     grants: {}
   }
 }
@@ -600,6 +697,8 @@ function readData(saved: Partial<RuntimeData> | null): RuntimeData {
   data.contextMenus = saved.contextMenus ?? {}
   data.sidePanelOnActionClick = saved.sidePanelOnActionClick ?? {}
   data.proxy = saved.proxy ?? {}
+  data.fontSettings = saved.fontSettings ?? {}
+  data.privacy = saved.privacy ?? {}
   data.grants = saved.grants ?? {}
   return data
 }
@@ -721,6 +820,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     }
   >()
   private observing = false
+  /** `ext.observeRequestHeaders` as last sent: an `onBeforeSendHeaders` / `onSendHeaders` listener exists somewhere. */
+  private observingRequestHeaders = false
   /** `ext.observeResponses` as last sent: a response-stage `webRequest` listener exists somewhere. */
   private observingResponses = false
   /**
@@ -743,12 +844,20 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
   readonly screen: () => PhoneScreen
   readonly onScreenChange: (listener: () => void) => void
 
+  /**
+   * The settings the extensions hold: W6-C6's `SettingControls` (#518) is the phone's one
+   * publisher into the core's state, this runtime's APIs feed it through the value-aware gate of
+   * `extensionControls.ts` (#525's compare; round 21's fold, R21-8).
+   */
+  private readonly controls: ExtensionControlsGate
+
   constructor(
     private readonly bridge: RuntimeBridge,
     readonly browser: Browser,
     private readonly windowOf: () => ZenWindow,
     options: AndroidExtensionRuntimeOptions = {}
   ) {
+    this.controls = new ExtensionControlsGate(new SettingControls(browser.state))
     this.debug = options.debug ?? true
     this.now = options.now ?? (() => Date.now())
     this.timers = {
@@ -784,13 +893,13 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     this.api = new ExtensionApi(this)
     this.background = new BackgroundLifecycle(
       {
-        start: (id) => {
+        start: (id, reason) => {
           // The page this start replaces (a stop whose gone has not arrived yet) is history: its
           // gone must not be read as the new page's.
           this.backgroundEps.delete(id)
-          this.bridge.send('ext.background.start', { id })
+          this.bridge.send('ext.background.start', { id, reason })
         },
-        stop: (id) => this.bridge.send('ext.background.stop', { id }),
+        stop: (id, reason) => this.bridge.send('ext.background.stop', { id, reason }),
         setTimeout: (fn, ms) => this.timers.setTimeout(fn, ms),
         clearTimeout: (handle) => this.timers.clearTimeout(handle)
       },
@@ -834,6 +943,32 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       if (removed.length > 0)
         console.info(`[zen] declarativeNetRequest: ${removed.length} stale rule set(s) removed`)
     }
+    // The engine is up: the privacy layer's request sets follow what the boot-time rebuild
+    // resolved (a stale set of an extension gone while the app was closed leaves here).
+    this.api.privacy.engineReady()
+  }
+
+  /**
+   * The boot-time rebuild of the extension layer the services read, from the store, before any
+   * tab WebView exists (`AndroidExtensionsWithRuntime`'s constructor calls it inside the `Browser`
+   * constructor, ahead of `openStartupWindows`): the enabled records' persisted `chrome.privacy`
+   * values are published as `extensionControls` at once; each extension's attach re-resolves with
+   * its manifest's permission checked. The order at boot, then: this rebuild → `Browser.start()`
+   * (`blocking.start()`, the startup windows and their first tab WebViews) → `extensions.start()`
+   * (`ext.env`, the store's sweep, each enabled extension's attach and `api.load`).
+   */
+  prime(): void {
+    const records = this.store?.records() ?? []
+    this.api.prime(
+      records
+        .filter((record) => record.enabled && !record.staged)
+        .map((record) => ({
+          id: record.id,
+          name: record.name,
+          installedAt: record.installedAt,
+          allowPrivate: record.allowPrivate === true
+        }))
+    )
   }
 
   private ensureEnv(): Promise<RuntimeEnv> {
@@ -1061,6 +1196,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     // host hands the runtime the record object it mutated in place (`setAllowPrivate`), so a
     // before/after comparison here would see no change; the engine skips an unchanged scope.
     this.dnr.sessionsChanged(record.id)
+    // The same for its `chrome.privacy` values' reach into private tabs.
+    this.api.privateAccessChanged()
   }
 
   /** The extension was uninstalled: its persisted runtime state and `chrome.storage` go too. */
@@ -1075,6 +1212,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     delete this.data.contextMenus[id]
     delete this.data.sidePanelOnActionClick[id]
     delete this.data.proxy[id]
+    delete this.data.fontSettings[id]
+    delete this.data.privacy[id]
     delete this.data.grants[id]
     this.startupFired.delete(id)
     this.save()
@@ -1141,20 +1280,27 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         isolation,
         this.data.grants[id]?.permissions ?? []
       )
-    const plan = (isolatedWorlds: boolean): ExtensionUnits =>
-      planUnits(bootFor(isolatedWorlds ? 'world' : 'with'), ext.manifest, {
+    const plan = async (isolatedWorlds: boolean): Promise<ExtensionUnits> => {
+      const boot = bootFor(isolatedWorlds ? 'world' : 'with')
+      const unitEnv: UnitEnvironment = {
         token: env.token,
         uiLanguage: env.uiLanguage,
         isolatedWorlds,
         userScriptMessaging: this.data.userScriptMessaging[id] === true,
         ...(env.messageLimit ? { messageLimit: env.messageLimit } : {})
-      })
-    let units = plan(env.isolatedWorlds)
+      }
+      // A plan with many hostname units folds them by the files' sizes, which the host has
+      // (`units.ts`, `foldUnits`); the host's refusal leaves the plan unfolded, as before.
+      const files = foldFilesFor(boot, ext.manifest, unitEnv)
+      const fileChars = files ? await this.fileChars(ext, files) : null
+      return planUnits(boot, ext.manifest, fileChars ? { ...unitEnv, fileChars } : unitEnv)
+    }
+    let units = await plan(env.isolatedWorlds)
     if (env.isolatedWorlds && !this.worldsFit(id, units, env.worldSlots)) {
       console.warn(
         `[Zenium] extension ${id}: the tab's ${env.worldSlots} isolated worlds are taken; its content scripts run under the emulation proxy`
       )
-      units = plan(false)
+      units = await plan(false)
     }
     const access = accessKey(ext.record)
     if (sameUnits(ext.units, units) && ext.configuredAccess === access) return
@@ -1181,6 +1327,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         key: unit.key,
         origins: unit.origins,
         world: unit.worldName,
+        shape: unit.shape,
         config: JSON.stringify(unit.config),
         groups: unit.groups,
         css: unit.css
@@ -1199,6 +1346,32 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     ext.units = units
     ext.configuredAccess = access
     ext.configureStats = stats
+  }
+
+  /**
+   * The sizes of the extension's files the planner's fold weighs (`ext.fileSizes`: `{ sizes:
+   * { path: bytes } }` for the files that are there), or null when the host cannot answer – the
+   * plan is then made without them and folds nothing.
+   */
+  private async fileChars(
+    ext: Attached,
+    files: string[]
+  ): Promise<Readonly<Record<string, number>> | null> {
+    try {
+      const answer = await this.bridge.call<{ sizes?: Record<string, number> }>('ext.fileSizes', {
+        id: ext.record.id,
+        path: ext.record.path,
+        files
+      })
+      return answer && typeof answer.sizes === 'object' && answer.sizes !== null
+        ? answer.sizes
+        : null
+    } catch (e) {
+      console.warn(
+        `[Zenium] extension ${ext.record.id}: the host did not size its ${files.length} content-script files (${e instanceof Error ? e.message : String(e)}); its units stay unfolded`
+      )
+      return null
+    }
   }
 
   /**
@@ -1468,6 +1641,87 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     if (Object.keys(values).length === 0) delete this.data.proxy[id]
     else this.data.proxy[id] = values
     this.save()
+  }
+
+  fontSettingsValues(id: string): unknown {
+    return this.data.fontSettings[id] ?? {}
+  }
+
+  setFontSettingsValues(id: string, values: FontValues): void {
+    if (Object.keys(values).length === 0) delete this.data.fontSettings[id]
+    else this.data.fontSettings[id] = values
+    this.save()
+  }
+
+  privacyValues(id: string): unknown {
+    return this.data.privacy[id] ?? {}
+  }
+
+  setPrivacyValues(id: string, values: Record<string, ScopedValues>): void {
+    if (Object.keys(values).length === 0) delete this.data.privacy[id]
+    else this.data.privacy[id] = values
+    this.save()
+  }
+
+  /** Every persistent container: the regular tabs' partitions (`partitionsOf` without the private one). */
+  regularPartitions(): readonly string[] {
+    const partitions = [DEFAULT_CONTAINER_ID]
+    for (const container of this.browser.state.model.containers) {
+      if (container.id === PRIVATE_CONTAINER_ID || partitions.includes(container.id)) continue
+      partitions.push(container.id)
+    }
+    return partitions
+  }
+
+  /**
+   * The privacy layer's request rule sets (`DNT: 1`, the `Referer` drop on documents) into the
+   * blocking engine, which persists them and hands them to Kotlin's engine with every other set.
+   * False before `browser.blocking` exists: the runtime is built inside the `Browser` constructor
+   * and the boot-time rebuild runs there; `start()` applies them once the engine is up.
+   */
+  applyPrivacyRules(sets: { set: RuleSet[]; remove: string[] }): boolean {
+    const blocking = this.browser.blocking as BlockingService | undefined
+    if (!blocking) return false
+    for (const set of sets.set) blocking.engine.setRuleSet(set)
+    for (const id of sets.remove) if (blocking.engine.has(id)) blocking.engine.removeRuleSet(id)
+    return true
+  }
+
+  /** `navigator.doNotTrack` to Kotlin (`ext.privacy.apply`): the document-start script of every tab WebView and the open documents' value. */
+  applyPrivacyLayer(layer: WebViewPrivacyLayer): Promise<void> {
+    return this.bridge.call('ext.privacy.apply', layer)
+  }
+
+  /**
+   * The extensions' font layer to Kotlin (`ext.fonts.apply`): the `WebSettings` values held and
+   * the `:lang()` stylesheet, laid over the user's `PageFonts` on every tab WebView, live and at
+   * creation; the empty layer drops it (the user's setting stands again).
+   */
+  applyFontLayer(layer: WebViewFontLayer | null): Promise<void> {
+    return this.bridge.call('ext.fonts.apply', layer ?? EMPTY_WEBVIEW_FONT_LAYER)
+  }
+
+  /**
+   * The installed families (`ext.fonts.list`): Kotlin's `{ id, name }` per named family of the
+   * system's font configuration – `id` the `fonts.xml` name a page resolves, `name` the font
+   * file's own family name for the display – as Chrome's `FontName`s.
+   */
+  async listFonts(): Promise<FontName[]> {
+    const entries = await this.bridge.call('ext.fonts.list')
+    if (!Array.isArray(entries)) return []
+    const out: FontName[] = []
+    for (const entry of entries) {
+      if (typeof entry !== 'object' || entry === null) continue
+      const { id, name } = entry as { id?: unknown; name?: unknown }
+      if (typeof id !== 'string') continue
+      out.push({ fontId: id, displayName: typeof name === 'string' && name !== '' ? name : id })
+    }
+    return out
+  }
+
+  /** The settings the extensions hold, merged over every publishing API into the core's state (the Settings page's rows). */
+  publishControls(api: string, controls: Record<string, ExtensionControl>): void {
+    this.controls.publish(api, controls)
   }
 
   /** The resolved `chrome.proxy` configuration to Kotlin's `ProxyController`: one override for the process, or none. */
@@ -1926,13 +2180,35 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
    * Frames host several endpoints (one per extension and world) on one transport, so the
    * message carries the endpoint id; the bootstrap routes on it.
    */
-  private sendTo(endpointId: string, message: Record<string, unknown>): void {
-    const args = { ep: endpointId, message: JSON.stringify({ ...message, ep: endpointId }) }
-    // Kotlin answers `ext.send` with nothing (a dead frame comes back as `ext.gone`): one way,
-    // so a port's state broadcast at several messages a second costs the chrome no `resolve`
-    // task per message.
+  private sendTo(endpointId: string, message: Record<string, unknown>, at?: ReplyStamps): void {
+    const args: { ep: string; message: string; at?: ReplyStamps } = {
+      ep: endpointId,
+      message: JSON.stringify({ ...message, ep: endpointId })
+    }
+    if (at) args.at = at
+    // The reply hop first (one UI turn on the way to the endpoint; `RuntimeBridge.deliver`), the
+    // port for a host without it. Kotlin answers `ext.send` with nothing either way (a dead
+    // frame comes back as `ext.gone`): one way, so a port's state broadcast at several messages
+    // a second costs the chrome no `resolve` task per message.
+    if (this.bridge.deliver?.(endpointId, args.message, at)) return
     if (this.bridge.post) this.bridge.post('ext.send', args)
     else this.bridge.send('ext.send', args)
+  }
+
+  /**
+   * The stamps a call's reply carries to the host while `debug` (`ext.send`'s `at`, never the
+   * frame's envelope): the wall-clock moment this runtime saw the call and the moment it posts
+   * the reply, `Date.now()` both – the host reads its own `System.currentTimeMillis()` at the
+   * call's receipt and at the reply's send, and its trace line places the round trip's time in
+   * one of three legs (`hop`: the host's receipt to this runtime's – the `evaluateJavascript`
+   * that carries the call and the renderer's queue ahead of it; `run`: this runtime's own work;
+   * `back`: this post to the host's send – the port's delivery and dispatch on the app's
+   * threads). Compat round 18 read `storage.set` at a median 161 ms through the host and back
+   * against Chrome's ~1-5 ms, and round 19 reads seconds on the AOSP image: the legs say which
+   * queue it is. Nothing while `debug` is off: the call is not stamped and the reply carries no `at`.
+   */
+  private replyStamps(seen: number): ReplyStamps | undefined {
+    return seen > 0 ? [seen, Date.now()] : undefined
   }
 
   /** A bridge message from a content-script frame or an extension page. */
@@ -1956,15 +2232,25 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         const ns = String(message.ns)
         const method = String(message.method)
         const args = Array.isArray(message.args) ? (message.args as unknown[]) : []
+        const seen = this.debug ? Date.now() : 0
         this.call(endpoint, ns, method, args).then(
-          (result) => this.sendTo(ep, { t: 'reply', id: callId, ok: true, result: result ?? null }),
+          (result) =>
+            this.sendTo(
+              ep,
+              { t: 'reply', id: callId, ok: true, result: result ?? null },
+              this.replyStamps(seen)
+            ),
           (error: unknown) =>
-            this.sendTo(ep, {
-              t: 'reply',
-              id: callId,
-              ok: false,
-              error: error instanceof Error ? error.message : String(error)
-            })
+            this.sendTo(
+              ep,
+              {
+                t: 'reply',
+                id: callId,
+                ok: false,
+                error: error instanceof Error ? error.message : String(error)
+              },
+              this.replyStamps(seen)
+            )
         )
         return
       }
@@ -2015,18 +2301,17 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       case 'msg':
       case 'connect': {
         // `runtime.sendMessage` / `connect` to the extension's pages start a stopped worker, as
-        // in Chrome; the message waits until it is ready. Tab-directed and cross-extension
-        // messages, and the background's own, go straight to the router.
+        // in Chrome; the message waits until it is ready. A running worker takes it at once –
+        // through `deliver` all the same, so the message resets its idle clock the way every
+        // event and message dispatched to a worker does in Chrome (SingleFile's options page
+        // opened 28 s into its worker's quiet on the slow lane: the stop landed with the page's
+        // first messages in flight and each came back "The message port closed"). Tab-directed
+        // and cross-extension messages, and the background's own, go straight to the router.
         const target = asRecord(message.target)
         const toPages =
           (target.tabId === undefined || target.tabId === null) &&
           (!target.extensionId || target.extensionId === id)
-        if (
-          toPages &&
-          endpoint.context !== 'background' &&
-          this.background.has(id) &&
-          this.background.state(id) !== 'running'
-        ) {
+        if (toPages && endpoint.context !== 'background' && this.background.has(id)) {
           this.background.deliver(id, null, () => {
             if (this.router.endpoint(ep)) this.router.handle(ep, message)
           })
@@ -2267,7 +2552,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
   wakeBackground(id: string): void {
     const ext = this.attached(id)
     if (!ext || !ext.manifest.background || !this.isEnabled(id)) return
-    this.background.ensureStarted(id)
+    this.background.ensureStarted(id, 'wake')
   }
 
   /** An auth sheet's navigation (the way back ends the flow), load, failure or dismissal. */
@@ -2338,6 +2623,36 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         error: 'net::ERR_BLOCKED_BY_CLIENT',
         fromCache: false
       })
+  }
+
+  /**
+   * The request-header stage of a request that goes out (`ext.requestHeaders`), while an
+   * `onBeforeSendHeaders` / `onSendHeaders` listener exists (`ext.observeRequestHeaders`):
+   * `onBeforeSendHeaders` then `onSendHeaders`, with the same headers – Chrome fires the two in
+   * that order for an observer, and the WebView's headers are read-only, so nothing between them
+   * could change (Speak Subtitles for YouTube's worker reads the player's `/api/timedtext` URL
+   * and its `x-*` headers off the first). The id is the one the request's `onBeforeRequest`
+   * ran under (a redirect target continues under the hop's, as the response stage does); the
+   * headers are cut per listener at delivery (`detailsFor`). Nothing while the switch is off (a
+   * report that landed after the last listener went).
+   */
+  onRequestHeaders(event: ExtRequestHeadersEvent): void {
+    if (!this.observingRequestHeaders) return
+    const tab = event.tabId ?? null
+    const details: RequestDetails = {
+      requestId: this.ledger.chainIdOf(event.requestId),
+      url: event.url,
+      method: event.method,
+      frameId: 0,
+      parentFrameId: -1,
+      tabId: event.tabId ? this.api.tabs.chromeIdFor(event.tabId) : UNKNOWN_TAB_ID,
+      type: resourceTypeNamed(event.type),
+      timeStamp: this.now(),
+      requestHeaders: event.requestHeaders.map((h) => ({ name: h.name, value: h.value }))
+    }
+    if (event.initiator) details.initiator = event.initiator
+    this.emitRequest(tab, 'onBeforeSendHeaders', details)
+    this.emitRequest(tab, 'onSendHeaders', details)
   }
 
   /**
@@ -2748,30 +3063,37 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
    * Kotlin reports every decision (`ext.observeRequests`) while a `webRequest` listener exists in
    * any endpoint – or a stopped worker persisted one: its listener is what wakes it (Chrome's
    * observational events start an MV3 worker), and without the decisions nothing would. By the
-   * same rule it relays media-element requests for their response stage
-   * (`ext.observeResponses`) while one of those listeners is a response-stage one
-   * (`RESPONSE_STAGE_EVENTS`); each switch is sent only when its answer changes, the requests'
-   * first (a relayed request has had its `ext.request`).
+   * same rule it reports the headers of every request that goes out
+   * (`ext.observeRequestHeaders`) while one of those listeners is a request-header one
+   * (`REQUEST_HEADER_EVENTS`), and relays media-element requests for their response stage
+   * (`ext.observeResponses`) while one is a response-stage one (`RESPONSE_STAGE_EVENTS`); each
+   * switch is sent only when its answer changes, the requests' first (a header report and a
+   * relayed request have had their `ext.request`).
    */
   private updateObserving(): void {
     let wanted = false
+    let headers = false
     let responses = false
-    for (const own of this.requestListeners.values()) {
-      if (own.size > 0) wanted = true
-      for (const listener of own.values())
-        if (RESPONSE_STAGE_EVENTS.has(listener.event)) responses = true
+    const count = (event: WebRequestEventName): void => {
+      wanted = true
+      if (REQUEST_HEADER_EVENTS.has(event)) headers = true
+      if (RESPONSE_STAGE_EVENTS.has(event)) responses = true
     }
+    for (const own of this.requestListeners.values())
+      for (const listener of own.values()) count(listener.event)
     for (const id of this.extensions.keys()) {
       for (const key of this.background.persistedListeners(id)) {
         if (!key.startsWith('webRequest.')) continue
-        wanted = true
-        if (RESPONSE_STAGE_EVENTS.has(key.slice('webRequest.'.length) as WebRequestEventName))
-          responses = true
+        count(key.slice('webRequest.'.length) as WebRequestEventName)
       }
     }
     if (wanted !== this.observing) {
       this.observing = wanted
       this.bridge.send('ext.observeRequests', { on: wanted })
+    }
+    if (headers !== this.observingRequestHeaders) {
+      this.observingRequestHeaders = headers
+      this.bridge.send('ext.observeRequestHeaders', { on: headers })
     }
     if (responses !== this.observingResponses) {
       this.observingResponses = responses
@@ -3123,6 +3445,9 @@ export class AndroidExtensionsWithRuntime extends AndroidExtensions {
   ) {
     super(browser, io, { ...options, hooks: runtime })
     runtime.store = this
+    // What the services read of the extensions' `chrome.privacy` values, rebuilt from the store
+    // now, inside the `Browser` constructor, before the startup windows make the first tab WebView.
+    runtime.prime()
   }
 
   override async start(): Promise<void> {

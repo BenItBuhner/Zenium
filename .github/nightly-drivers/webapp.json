@@ -1,0 +1,13 @@
+{
+  "id": "webapp",
+  "order": 76,
+  "class": "WebAppDemo",
+  "shard": "phone-d",
+  "mirrors": "android-webapp-demo.yml:light",
+  "dir": "webapp-demo",
+  "env": {
+    "DEMO_THEME": "light"
+  },
+  "estimate": 3,
+  "note": "An installed web app's own window (PWA-07) and its overflow (PWA-08, W5-15): the install through the sheet, the shortcut read back, the tile, the scope's two sides with the toolbar's frames measured, the overflow, the shortcut through am start -W, the minimal-ui and fullscreen fixtures. The workflow runs light and dark; the nightly runs light. The estimate is the workflow's measure: its light acts took 141 and 156 s of driver time, the dark 150 s. Last on phone-d for the room (65 of 68 before it, 68 with it): phone-e, its first home, filled to 66 when the accessibility pass 2 moved share there, and the runner skips the last driver, not an older one, when a shard runs long."
+}

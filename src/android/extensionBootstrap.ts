@@ -56,7 +56,11 @@ import { createFetchRelay, type FetchRelay } from './extensionFetchRelay'
 import { installExtensionUrlRewrite } from './extensionFrameUrls'
 import { installPdfDocumentType } from './extensionPdfDocument'
 import { installExtensionPolyfills, type PolyfillRealm } from './extensionPolyfills'
-import { installSpeechSynthesis } from './extensionSpeechSynthesis'
+import {
+  installSpeechSynthesis,
+  installSpeechSynthesisLazily,
+  type SpeechLink
+} from './extensionSpeechSynthesis'
 import { installUrlOrigin, scopedUrlClass } from './extensionUrlOrigin'
 import { completeChromeObject } from '@shared/chromeObject'
 
@@ -268,14 +272,16 @@ declare const __zenExtBoot: Boot
    * One endpoint per extension per copy of this script; under the `with` fallback the copy also
    * holds an extension's user-script scope next to its content scope (two units of one main
    * world), and that engine's endpoint is told apart by its context (`u`); the engine behind the
-   * web page's own `chrome.runtime` (`externally_connectable`, below) by its `x`.
+   * web page's own `chrome.runtime` (`externally_connectable`, below) by its `x`; the one behind
+   * the page's Web Speech API under a `world: "MAIN"` script (`speechEngineFor`) by its `s`.
    */
   const endpointIdFor = (
     extId: string,
     context: EngineContextKind = 'content',
-    external = false
+    external = false,
+    mark = ''
   ): string =>
-    `${docId}.${nonce}${context === 'userScript' ? 'u' : external ? 'x' : ''}.${extId.slice(0, 8)}`
+    `${docId}.${nonce}${context === 'userScript' ? 'u' : external ? 'x' : mark}.${extId.slice(0, 8)}`
   const realWindow = window as unknown as Any
   const engineTransport = { post }
 
@@ -377,9 +383,11 @@ declare const __zenExtBoot: Boot
     /** The MV3 worker page's `self`: what its callbacks and listeners get as `this`, as in a worker of Chrome's. */
     receiver?: object,
     /** The engine behind a web page's `chrome.runtime` (`externally_connectable`): its messages and ports go out marked external. */
-    external = false
+    external = false,
+    /** A mark in the endpoint id for an engine beside the extension's content engine of this copy (`s`: the page's Web Speech API). */
+    mark = ''
   ): EmulatedEngine {
-    const endpointId = endpointIdFor(ext.id, context, external)
+    const endpointId = endpointIdFor(ext.id, context, external, mark)
     const engine = createEmulatedEngine(
       {
         id: ext.id,
@@ -418,6 +426,18 @@ declare const __zenExtBoot: Boot
     )
     engines.set(endpointId, engine)
     return engine
+  }
+
+  /** What the Web Speech shim needs of an engine (extensionSpeechSynthesis.ts): the host's `speechSynthesis` namespace over it. */
+  function speechLinkOf(engine: EmulatedEngine): SpeechLink {
+    return {
+      call: (method, args) => engine.call('speechSynthesis', method, args),
+      onEvent: (listener) =>
+        engine.onHostEvent((ns, name, args) => {
+          if (ns === 'speechSynthesis') listener(name, args)
+        }),
+      listen: (event) => engine.post({ t: 'listen', event: `speechSynthesis.${event}`, on: true })
+    }
   }
 
   // --- CSS ---------------------------------------------------------------------------------------
@@ -553,14 +573,7 @@ declare const __zenExtBoot: Boot
     // over the host's speech engine (extensionSpeechSynthesis.ts; Read&Write's speech frame).
     // Not on the MV3 worker page: a service worker's global has none in Chrome.
     if (!(context === 'background' && workerScript))
-      installSpeechSynthesis(pageWindow as unknown as Record<string, unknown>, {
-        call: (method, args) => engine.call('speechSynthesis', method, args),
-        onEvent: (listener) =>
-          engine.onHostEvent((ns, name, args) => {
-            if (ns === 'speechSynthesis') listener(name, args)
-          }),
-        listen: (event) => engine.post({ t: 'listen', event: `speechSynthesis.${event}`, on: true })
-      })
+      installSpeechSynthesis(pageWindow as unknown as Record<string, unknown>, speechLinkOf(engine))
 
     if (context === 'background' && workerScript && workerGlobal) {
       for (const name of ['self', 'globalThis']) {
@@ -936,12 +949,35 @@ declare const __zenExtBoot: Boot
    * A content scope and a user-script scope of one extension are two scopes with two engines
    * (and two endpoints) even when both share this copy of the script.
    */
+  /**
+   * The engine behind the page's Web Speech API under an extension's `world: "MAIN"` scripts
+   * (`none` scopes): one per extension per copy, made on the first touch of `speechSynthesis`
+   * alone (extensionSpeechSynthesis.ts, `installSpeechSynthesisLazily`), its endpoint marked
+   * `s` so it sits beside the extension's content engine of this copy, its root a throwaway –
+   * nothing of the extension's lands on the page's window through it.
+   */
+  const speechEngines = new Map<string, EmulatedEngine>()
+  function speechEngineFor(ext: ExtensionBoot): EmulatedEngine {
+    let engine = speechEngines.get(ext.id)
+    if (!engine) {
+      engine = makeEngine(ext, 'content', frame, {}, false, undefined, false, 's')
+      speechEngines.set(ext.id, engine)
+    }
+    return engine
+  }
+
   function scopeFor(ext: ExtensionBoot, isolation: IsolationMode, unit: UnitContext): Scope {
     const context: EngineContextKind = unit.world === 'user' ? 'userScript' : 'content'
     const key = `${ext.id}/${isolation}/${context}`
     let scope = scopes.get(key)
     if (scope) return scope
     if (isolation === 'none') {
+      // Chrome's documents have the Web Speech API's synthesis and the WebView's do not, so a
+      // `world: "MAIN"` script reading `speechSynthesis` on the page's window died there
+      // (Speak Subtitles' page bundle: `ReferenceError: speechSynthesis is not defined` on
+      // every subtitle). Accessors on the window until something reads one; the first
+      // extension's scope in this copy puts them there, its engine answers.
+      installSpeechSynthesisLazily(realWindow, () => speechLinkOf(speechEngineFor(ext)))
       scope = {
         ext,
         engine: null,
@@ -1006,15 +1042,7 @@ declare const __zenExtBoot: Boot
     // content bundle dies at `speechSynthesis.getVoices()`), so the host's engine answers it
     // here as it does an extension page's; in the world's global or the `with` scope's store,
     // never on the page's window.
-    if (engine && context === 'content')
-      installSpeechSynthesis(root, {
-        call: (method, args) => engine.call('speechSynthesis', method, args),
-        onEvent: (listener) =>
-          engine.onHostEvent((ns, name, args) => {
-            if (ns === 'speechSynthesis') listener(name, args)
-          }),
-        listen: (event) => engine.post({ t: 'listen', event: `speechSynthesis.${event}`, on: true })
-      })
+    if (engine && context === 'content') installSpeechSynthesis(root, speechLinkOf(engine))
     scope = {
       ext,
       engine,

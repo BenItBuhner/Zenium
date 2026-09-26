@@ -28,11 +28,15 @@ import app.zen.chromium.blocking.Decision
 import app.zen.chromium.blocking.DecisionObserver
 import app.zen.chromium.blocking.Domains
 import app.zen.chromium.blocking.HeaderStage
+import app.zen.chromium.blocking.ListenerOptions
 import app.zen.chromium.blocking.ProfileCookieStore
 import app.zen.chromium.blocking.RedirectExecutor
 import app.zen.chromium.blocking.RelayedResponse
 import app.zen.chromium.blocking.Request
 import app.zen.chromium.blocking.ResourceType
+import app.zen.chromium.blocking.WebRequestDetails
+import app.zen.chromium.blocking.WebRequestEvent
+import app.zen.chromium.blocking.WebRequestListener
 import app.zen.chromium.bool
 import app.zen.chromium.json
 import app.zen.chromium.obj
@@ -43,11 +47,14 @@ import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.InputStream
+import java.lang.ref.WeakReference
 import java.security.SecureRandom
 import java.util.Locale
 import java.util.WeakHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicLongArray
 
 /**
  * The Kotlin half of the extension runtime. The browser core (`src/android/extensionRuntime.ts`,
@@ -76,18 +83,21 @@ import java.util.concurrent.atomic.AtomicLong
  *    the core's translator writing `ext:` rule sets into the persisted index the engine
  *    compiles, scoped to the partitions the extension runs in; this class hears the engine's
  *    decisions ([DecisionObserver]) and reports the ones an extension's rule took – and, while
- *    an extension listens for `webRequest`, every one – as `ext.request`, the response stage of
- *    the media requests the engine relays for it while an extension listens for that
- *    (`ext.observeResponses`) as `ext.response`, and substitutes the response of a redirected
- *    subresource ([RedirectExecutor], see [redirect]).
+ *    an extension listens for `webRequest`, every one – as `ext.request`, the headers WebView
+ *    sends with a request that goes out while an extension listens for the request-header
+ *    stage (`ext.observeRequestHeaders`, one observing listener of ours on the engine's
+ *    `onSendHeaders` seam) as `ext.requestHeaders`, the response stage of the media requests
+ *    the engine relays for it while an extension listens for that (`ext.observeResponses`) as
+ *    `ext.response`, and substitutes the response of a redirected subresource
+ *    ([RedirectExecutor], see [redirect]).
  *
  * Protocol (the core → here), keyed by extension id where it applies: `ext.env`, `ext.open`,
  * `ext.configure`, `ext.detach`, `ext.background.start` / `stop`, `ext.popup.open` / `close`,
  * `ext.send`, `ext.exec`, `ext.readFile`, `ext.cookies.get` / `set`, `ext.observeRequests`,
- * `ext.observeResponses`, `ext.proxy.set` / `clear` (`chrome.proxy.settings` over the WebView's
- * proxy override, [ExtensionProxy]).
+ * `ext.observeRequestHeaders`, `ext.observeResponses`, `ext.proxy.set` / `clear`
+ * (`chrome.proxy.settings` over the WebView's proxy override, [ExtensionProxy]).
  * Here → the core (host events): `ext.message`, `ext.gone`, `ext.popupClosed`, `ext.request`,
- * `ext.response`.
+ * `ext.requestHeaders`, `ext.response`.
  */
 class Extensions(private val host: Host) {
     /** Every bridge message carries this; pages never see it (it lives in closures only). */
@@ -110,6 +120,13 @@ class Extensions(private val host: Host) {
     private val compiler = UnitCompiler { bootstrap }
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor { r -> Thread(r, "zen-ext") }
+
+    /**
+     * Set by [destroy] (main thread): nothing is installed or held after it. A configure whose
+     * compile was in flight lands on it and installs nothing; a configure asked after it is
+     * refused – the old core runs on for a moment after its WebView is destroyed.
+     */
+    @Volatile private var destroyed = false
 
     /**
      * One document-start script of one extension, injected into frames whose origin matches
@@ -172,11 +189,31 @@ class Extensions(private val host: Host) {
         val world: Boolean get() = slot != null
     }
 
-    /** Per tab WebView: the janitor's handler and, per extension, the handlers of its units. */
+    /**
+     * Per tab WebView: the janitor's handler, `chrome.fontSettings`' stylesheet's, `chrome.privacy`'s
+     * `navigator.doNotTrack` script's, and, per extension, the handlers of its units.
+     */
     private class ViewHandlers {
         var janitor: ScriptHandler? = null
+        var fonts: ScriptHandler? = null
+        var privacy: ScriptHandler? = null
         val byExtension = HashMap<String, MutableList<ScriptHandler>>()
     }
+
+    /**
+     * `chrome.fontSettings`' layer over the user's page fonts (`ext.fonts.apply`; [ExtensionFontLayer]):
+     * what every tab's `TabWebView.applyFonts` lays over `Host.pageFonts`, [EMPTY][ExtensionFontLayer.EMPTY]
+     * while no extension holds a value. Main thread.
+     */
+    var fontLayer: ExtensionFontLayer = ExtensionFontLayer.EMPTY
+        private set
+
+    /**
+     * `chrome.privacy`'s document-start layer (`ext.privacy.apply`; [ExtensionPrivacyLayer]): whether
+     * `navigator.doNotTrack` reads `'1'` in regular and in private tabs' documents. Main thread.
+     */
+    var privacyLayer: ExtensionPrivacyLayer = ExtensionPrivacyLayer.EMPTY
+        private set
 
     @Volatile private var served: Map<String, Served> = emptyMap()
     /**
@@ -185,6 +222,11 @@ class Extensions(private val host: Host) {
      * when it is not coming (see [HeldPages]).
      */
     private val heldPages = HeldPages<TabWebView>()
+    /**
+     * The extension frame documents each tab's page holds, for [intercept] to tell a frame's
+     * own Referer-less requests from the page's (see [FrameOwnership]); network threads.
+     */
+    private val frames = FrameOwnership<TabWebView>()
     /** Per extension, the units currently installed on every tab (main thread). */
     private val units = LinkedHashMap<String, List<ScriptUnit>>()
     /**
@@ -192,6 +234,23 @@ class Extensions(private val host: Host) {
      * decision of the engine is reported, not only those an extension's rule took.
      */
     @Volatile private var observeRequests = false
+    /**
+     * The request-header stage (`ext.observeRequestHeaders`): while an extension listens for
+     * `webRequest.onBeforeSendHeaders` / `onSendHeaders`, one observing listener of ours on the
+     * engine's `onSendHeaders` seam ([WebRequestEvent.ON_SEND_HEADERS]) reports the headers
+     * WebView is about to send ([onSendHeaders]); none otherwise, since the seam costs every
+     * request a record while anyone listens. Its remover while registered; main thread.
+     */
+    private var requestHeadersListener: (() -> Unit)? = null
+    /**
+     * The `ext.request` payload [onDecision] built last on this intercept thread, for
+     * [onSendHeaders] to pair the header stage with. The engine decides a request and then runs
+     * the listeners of the same request on one thread, one after the other
+     * (`Blocking.evaluate`), so the pairing rides on the thread; the URL is checked besides
+     * ([RequestHeadersReport.build]) – a request the engine never decided (an extension page's
+     * own, off the web) would find the thread's last one, stale.
+     */
+    private val lastDecision = ThreadLocal<JSONObject?>()
     /** `ext.request` ids: one sequence per process, like Chrome's request ids. */
     private val requestIds = AtomicLong(1)
     /** The `identity.launchWebAuthFlow` sheets open right now, by the runtime's view id (`ext.auth.*`). */
@@ -217,8 +276,21 @@ class Extensions(private val host: Host) {
      * [WorkerScriptGate]). WebView's IO threads, in the requests' order.
      */
     private val workerScriptGate = WorkerScriptGate()
-    private val endpoints = HashMap<String, Endpoint>()
+    /**
+     * Written on the main thread (a hello, a document gone, an extension stopped) and read there
+     * and on the JavaBridge thread ([sendFromHop]: the reply hop's `ext.send` looks its endpoint
+     * up where it arrives), so a concurrent map – every read off the main thread is a lookup or a
+     * weakly consistent walk of `val` fields.
+     */
+    private val endpoints = ConcurrentHashMap<String, Endpoint>()
     private val backgrounds = HashMap<String, ExtensionWebView>()
+    /**
+     * How many times each extension's background has been started here since the process came
+     * up (instrumentation): a worker with no view and a start on record has idled out – an MV3
+     * worker stops half a minute after its last traffic, as Chrome's does – where one with no
+     * start never ran.
+     */
+    private val backgroundStarts = HashMap<String, Int>()
     /** `chrome.offscreen`'s hidden page per extension: a background-like view on the URL the extension named. */
     private val offscreens = HashMap<String, ExtensionWebView>()
     private var popup: ExtensionPopup? = null
@@ -280,6 +352,8 @@ class Extensions(private val host: Host) {
      */
     val callStats = HashMap<String, IntArray>()
     private val pendingCalls = HashMap<String, String>()
+    /** While `debug`: the wall clock at each pending call's receipt (`"<ep>:<id>"`), for its reply's legs ([ReplyTiming]). */
+    private val pendingWall = HashMap<String, Long>()
     /** While `debug`: the last few hundred bridge messages, one line each (see [trace]). */
     private val bridgeTrace = ArrayDeque<String>()
     /**
@@ -299,12 +373,13 @@ class Extensions(private val host: Host) {
      * script's or an extension page's `postMessage`, host-bound), `[1]` events the runtime raised
      * into the chrome's core on their behalf (`ext.*`: a message forwarded, a request observed, an
      * endpoint gone – each an `evaluateJavascript` on the chrome WebView), `[2]` messages from the
-     * host to frames (replies, deliveries, events; page-bound). Always on: three increments.
+     * host to frames (replies, deliveries, events; page-bound). Always on: three increments –
+     * `[2]`'s on the JavaBridge thread as well since the reply hop ([sendFromHop]), so atomic.
      */
-    private val bridgeCounters = LongArray(3)
+    private val bridgeCounters = AtomicLongArray(3)
 
     /** A copy of the bridge counters (see [bridgeCounters]): frames to host, host to chrome, host to frames. */
-    fun bridgeCounts(): LongArray = bridgeCounters.copyOf()
+    fun bridgeCounts(): LongArray = LongArray(3) { bridgeCounters.get(it) }
 
     /**
      * The flood guard's counters ([BridgeForward]): messages forwarded to the core, action updates
@@ -314,7 +389,7 @@ class Extensions(private val host: Host) {
 
     /** An `ext.*` event into the chrome's core, counted ([bridgeCounters]). */
     private fun chromeEvent(name: String, payload: Any?) {
-        bridgeCounters[1]++
+        bridgeCounters.incrementAndGet(1)
         host.chrome.hostEvent(name, payload)
     }
 
@@ -339,7 +414,7 @@ class Extensions(private val host: Host) {
                     .append(",\"origin\":").append(JSONObject.quote(origin))
                     .append(",\"message\":").append(text)
                     .append('}')
-                bridgeCounters[1]++
+                bridgeCounters.incrementAndGet(1)
                 host.chrome.hostEventJson("ext.message", event)
             }
 
@@ -420,6 +495,7 @@ class Extensions(private val host: Host) {
                 )
             }
             "ext.open" -> open(args.str("id"), args.str("path"), reply)
+            "ext.fileSizes" -> fileSizes(args, reply)
             "ext.configure" -> configure(args, reply)
             "ext.detach" -> { detachExtension(args.str("id")); reply(null) }
             "ext.expect" -> {
@@ -431,14 +507,15 @@ class Extensions(private val host: Host) {
                 reply(null)
             }
             "ext.observeRequests" -> { observeRequests = args.bool("on"); reply(null) }
+            "ext.observeRequestHeaders" -> { setObserveRequestHeaders(args.bool("on")); reply(null) }
             // The engine's switch (contract 7.1): the process's engine relays media requests for
             // their response stage while it is on; this runtime hears them through [observer].
             // The pages' observer of their own fetch / XHR responses (7.10) follows the same
             // word: every live document is told now, a new one learns it at its hello.
             "ext.observeResponses" -> { setObserveResponses(args.bool("on")); reply(null) }
-            "ext.send" -> { send(args.str("ep"), args.str("message")); reply(null) }
-            "ext.background.start" -> { startBackground(args.str("id")); reply(null) }
-            "ext.background.stop" -> { stopBackground(args.str("id")); reply(null) }
+            "ext.send" -> { send(args.str("ep"), args.str("message"), args.optJSONArray("at")); reply(null) }
+            "ext.background.start" -> { startBackground(args.str("id"), args.str("reason", "unsaid")); reply(null) }
+            "ext.background.stop" -> { stopBackground(args.str("id"), args.str("reason", "unsaid")); reply(null) }
             "ext.popup.open" -> { openPopup(args.str("id"), args.str("url"), args.str("context", "popup"), args.str("title", "")); reply(null) }
             "ext.popup.close" -> { closePopup(); reply(null) }
             "ext.offscreen.open" -> { openOffscreen(args.str("id"), args.str("url")); reply(null) }
@@ -499,6 +576,15 @@ class Extensions(private val host: Host) {
                 setKeepAwake(args.str("id"), args.strOrNull("level"))
                 reply(null)
             }
+            "ext.fonts.apply" -> { setFontLayer(ExtensionFontLayer.fromJson(args)); reply(null) }
+            "ext.privacy.apply" -> { setPrivacyLayer(ExtensionPrivacyLayer.fromJson(args)); reply(null) }
+            "ext.fonts.list" -> {
+                // The configuration files and the font files' `name` tables: file IO, off the main thread.
+                io.execute {
+                    val list = runCatching { FontFiles.list() }.getOrElse { e -> Log.w(TAG, "fonts.list: ${e.message}"); emptyList() }
+                    main.post { reply(JSONArray(list.map { it.toJson() })) }
+                }
+            }
             else -> throw IllegalArgumentException("Unknown method: $method")
         }
     }
@@ -558,6 +644,36 @@ class Extensions(private val host: Host) {
     }
 
     /**
+     * `ext.fileSizes`: `{ id, path, files: [extension-relative path] }` → `{ sizes: { path:
+     * bytes } }` for the files that are there, unread – what the core's planner folds a plan of
+     * many hostname units by (`units.ts`, `foldUnits`; `UnitCompiler` measures a unit the same
+     * way before reading it). File IO, so off the main thread.
+     */
+    private fun fileSizes(args: JSONObject, reply: (Any?) -> Unit) {
+        val id = args.str("id")
+        if (!VALID_ID.matches(id)) {
+            reply(Host.Rejection("'$id' is not an extension id"))
+            return
+        }
+        val dir = recordDir(args.str("path"))
+        if (dir == null) {
+            reply(Host.Rejection("The extension directory is not under the install root"))
+            return
+        }
+        val files = args.arr("files")
+        io.execute {
+            val sizes = JSONObject()
+            for (i in 0 until files.length()) {
+                val path = files.optString(i, "")
+                if (path.isEmpty()) continue
+                val length = fileIn(dir, path)?.takeIf { it.isFile }?.length() ?: continue
+                sizes.put(path, length)
+            }
+            main.post { reply(json("sizes" to sizes)) }
+        }
+    }
+
+    /**
      * `ext.configure { id, name, version, path, allowFileAccess, allowPrivate, units: [{ key,
      * origins, world, config, groups: [{ ext, index, js, isolation }], css: [{ ext, path }] }],
      * served: { webAccessible, backgroundHtml, backgroundUrl, page, late }, debug }` → `{ units:
@@ -578,6 +694,12 @@ class Extensions(private val host: Host) {
         val name = args.str("name").ifEmpty { id }
         val debug = args.bool("debug", true)
         val epoch = attachEpochs.current(id)
+        // The runtime is destroyed (its io executor with it): the old core asking after its
+        // WebView went is told so, instead of an executor's refusal.
+        if (destroyed) {
+            reply(Host.Rejection("The extension runtime is destroyed"))
+            return
+        }
         io.execute {
             val started = System.nanoTime()
             val dir = recordDir(args.str("path"))
@@ -585,6 +707,21 @@ class Extensions(private val host: Host) {
                 main.post { reply(Host.Rejection("The extension directory is not under the install root")) }
                 return@execute
             }
+            // The plan as it arrives, before a file is read: what the compile is about to do
+            // and the heap it does it on (compat round 21 – a 60-unit plan met a heap the
+            // blocking engine's rules had half filled, and only the death told of it), and
+            // whether the runtime destroyed before this one is collected yet (round 21b – a
+            // browser restarted in the same process compiled on top of the old runtime's units).
+            val planned = args.arr("units")
+            val runtime = Runtime.getRuntime()
+            Log.i(
+                TAG,
+                "configure ${id.take(8)} ${args.str("version")}: ${planned.length()} unit(s) planned, " +
+                    "${(0 until planned.length()).sumOf { i -> planned.optJSONObject(i)?.optString("config")?.length ?: 0 }} config chars, " +
+                    "shapes ${(0 until planned.length()).map { i -> planned.optJSONObject(i)?.optString("shape", ExtensionScripts.SHAPE_WHOLE) ?: ExtensionScripts.SHAPE_WHOLE }.groupingBy { it }.eachCount().entries.joinToString(" ") { (shape, n) -> "$n $shape" }}, " +
+                    "heap ${(runtime.totalMemory() - runtime.freeMemory()) shr 20}/${runtime.maxMemory() shr 20} MB, " +
+                    "previous runtime ${previousRuntime()}"
+            )
             val s = args.obj("served")
             val servedNow = Served(
                 id = id,
@@ -615,6 +752,12 @@ class Extensions(private val host: Host) {
                 "ms" to ms
             )
             main.post {
+                // Destroyed while the units compiled: the runtime holds nothing any more, and
+                // the core that asked is gone with its WebView – nothing installed, no answer.
+                if (destroyed) {
+                    Log.i(TAG, "configure of ${id.take(8)} ${servedNow.version} dropped: the runtime was destroyed while its ${compiled.size} unit(s) compiled ($ms ms)")
+                    return@post
+                }
                 // Detached (or reset) while the units compiled: the core has dropped this attach,
                 // and units installed for it now would stay on every tab until the next one.
                 if (!attachEpochs.isCurrent(id, epoch)) {
@@ -648,12 +791,23 @@ class Extensions(private val host: Host) {
                     val refused = unit.refused ?: continue
                     if (!unit.cached) unitRefusedLine(id, name, refused)
                 }
+                // The shapes (`ExtensionScripts.SHAPE_*`) name what the chars are: a world's
+                // bootstrap once in a carrier or a holder, its other rule sets thin. The
+                // builders' pre-size against the chars, and how many grew: the assembly counts
+                // its text exactly so that none does (compat round 21b – one that grew by
+                // doubling at 10.6 million characters was the allocation that took the app down).
+                val assembled = compiled.filter { it.refused == null }
+                val shapes = assembled.groupingBy { it.shape }.eachCount()
                 Log.i(
                     TAG,
                     "configured ${id.take(8)} ${servedNow.version}: ${unitsNow.size} unit(s), " +
                         "${unitsNow.sumOf { it.script.length }} chars (${compiled.count { it.cached }} cached, " +
                         "${compiled.count { it.refused != null }} refused) in $ms ms, " +
-                        "worlds ${unitsNow.mapNotNull { u -> u.world?.let(worldSlots::slot) }.toSet()}"
+                        "builders presized ${assembled.sumOf { it.presized.toLong() }} for ${assembled.sumOf { it.script.length.toLong() }} chars " +
+                        "(${assembled.count { it.grown }} grown), " +
+                        "shapes ${shapes.entries.joinToString(" ") { (shape, n) -> "$n $shape" }}, " +
+                        "worlds ${unitsNow.mapNotNull { u -> u.world?.let(worldSlots::slot) }.toSet()}, " +
+                        "heap ${(runtime.totalMemory() - runtime.freeMemory()) shr 20}/${runtime.maxMemory() shr 20} MB"
                 )
                 reply(stats)
             }
@@ -722,7 +876,7 @@ class Extensions(private val host: Host) {
         served = served - id
         for (held in heldPages.dropped(id)) failHeld(held)
         for (view in handlers.keys.toList()) removeExtension(view, id)
-        stopBackground(id)
+        stopBackground(id, "detach")
         closeOffscreen(id)
         if (popup?.extensionId == id) closePopup()
         // The core dropped these endpoints already; the frames keep running what was injected.
@@ -744,7 +898,7 @@ class Extensions(private val host: Host) {
     private fun reset() {
         attachEpochs.reset()
         closePopup()
-        for (id in backgrounds.keys.toList()) stopBackground(id)
+        for (id in backgrounds.keys.toList()) stopBackground(id, "reset")
         workerScriptGate.reset()
         for (id in units.keys.toList()) {
             for (view in handlers.keys.toList()) removeExtension(view, id)
@@ -752,15 +906,20 @@ class Extensions(private val host: Host) {
         }
         units.clear()
         served = emptyMap()
+        frames.clear()
         endpoints.clear()
         worldSlots.clear()
         configureStats.clear()
         observeRequests = false
+        setObserveRequestHeaders(false)
         // The engine's switch is the runtime's that set it: off with the runtime that goes, when
         // this one still owns the seams (a newer window's may have taken them over).
         if (host.blocking.observer === observer) setObserveResponses(false)
         closeAuthSheets()
         releaseKeepAwake()
+        // The runtime that goes held the layers; the new one lays its own as its extensions attach.
+        setFontLayer(ExtensionFontLayer.EMPTY)
+        setPrivacyLayer(ExtensionPrivacyLayer.EMPTY)
     }
 
     /**
@@ -776,13 +935,56 @@ class Extensions(private val host: Host) {
         for (view in host.tabs.all()) view.setExtObserve(on)
     }
 
-    /** Host → endpoint: the reply proxy of the frame that said hello. A dead frame reports `ext.gone`. */
-    private fun send(ep: String, message: String) {
+    /**
+     * The request-header switch (`ext.observeRequestHeaders`): the runtime turns it on while an
+     * extension holds an `onBeforeSendHeaders` / `onSendHeaders` listener (Speak Subtitles for
+     * YouTube reads the player's `/api/timedtext` URL off one) and off with the last of them.
+     * On, one observing listener of ours joins the engine's `onSendHeaders` seam under the
+     * registrant [REQUEST_HEADERS_REGISTRANT]; off, it leaves. Main thread.
+     */
+    private fun setObserveRequestHeaders(on: Boolean) {
+        if (on == (requestHeadersListener != null)) return
+        if (on) {
+            requestHeadersListener = host.blocking.addListener(
+                WebRequestEvent.ON_SEND_HEADERS,
+                WebRequestListener { details -> onSendHeaders(details); null },
+                ListenerOptions(registrant = REQUEST_HEADERS_REGISTRANT)
+            )
+        } else {
+            requestHeadersListener?.invoke()
+            requestHeadersListener = null
+        }
+    }
+
+    /**
+     * Host → endpoint: the reply proxy of the frame that said hello. A dead frame reports
+     * `ext.gone`. [at] is a call reply's two runtime stamps while `debug` (`ext.send`'s `at`:
+     * when the runtime saw the call, when it posted the reply), for the trace line's legs
+     * ([ReplyTiming]); null for everything else.
+     */
+    private fun send(ep: String, message: String, at: JSONArray? = null) {
         val endpoint = endpoints[ep] ?: return
-        bridgeCounters[2]++
-        if (debug) recordReply(ep, message)
+        bridgeCounters.incrementAndGet(2)
+        if (debug) recordReply(ep, message, at)
         val ok = runCatching { endpoint.proxy.postMessage(message) }.isSuccess
-        if (!ok) gone(listOf(ep))
+        if (!ok) {
+            // The endpoint's bookkeeping is the main thread's; off it (the reply hop) the loss is
+            // handed over.
+            if (Looper.myLooper() === Looper.getMainLooper()) gone(listOf(ep)) else main.post { gone(listOf(ep)) }
+        }
+    }
+
+    /**
+     * `ext.send` off the reply hop ([ExtReplyHop], on the JavaBridge thread): the same [send],
+     * where it arrives – the endpoint looked up in the concurrent map, the counter atomic, the
+     * trace and the call statistics under their locks as ever, and the proxy's `postMessage`
+     * posting its one UI task itself (Chromium's `JsReplyProxy.postMessage` runs on the UI
+     * thread or posts to it). The reply's parse for the trace line (`debug`) runs here too, off
+     * the main thread. Compat round 20: the storage round trip's `back` leg, one UI turn where the
+     * port's path took two.
+     */
+    fun sendFromHop(ep: String, message: String, at: JSONArray?) {
+        send(ep, message, at)
     }
 
     private fun recordProxy(extensionId: String, request: CorsProxy.Request, status: Int) {
@@ -804,17 +1006,32 @@ class Extensions(private val host: Host) {
         }
         synchronized(callStats) {
             callStats.getOrPut(key) { IntArray(3) }[0]++
-            if (message.has("id")) pendingCalls["$ep:${message.opt("id")}"] = key
-            if (pendingCalls.size > 4000) pendingCalls.clear()
+            if (message.has("id")) {
+                val slot = "$ep:${message.opt("id")}"
+                pendingCalls[slot] = key
+                pendingWall[slot] = System.currentTimeMillis()
+            }
+            if (pendingCalls.size > 4000) {
+                pendingCalls.clear()
+                pendingWall.clear()
+            }
         }
     }
 
-    private fun recordReply(ep: String, message: String) {
+    /**
+     * A message to a frame while `debug`: its trace line, and a reply's account in the call
+     * statistics. [at] is the runtime's two stamps for a call reply ([send]); with the wall
+     * clock at the call's receipt ([recordCall]) and now, the trace line places the round
+     * trip's time in its legs ([ReplyTiming.legs]).
+     */
+    private fun recordReply(ep: String, message: String, at: JSONArray? = null) {
         val reply = BridgeEnvelope.read(message) ?: return
-        trace("<", ep, endpoints[ep]?.extensionId ?: "", reply, message.length)
-        if (reply.optString("t") != "reply") return
+        val slot = if (reply.optString("t") == "reply") "$ep:${reply.opt("id")}" else null
+        val legs = if (slot == null) "" else synchronized(callStats) { ReplyTiming.legs(pendingWall.remove(slot), at, System.currentTimeMillis()) }
+        trace("<", ep, endpoints[ep]?.extensionId ?: "", reply, message.length, legs)
+        if (slot == null) return
         synchronized(callStats) {
-            val key = pendingCalls.remove("$ep:${reply.opt("id")}") ?: return
+            val key = pendingCalls.remove(slot) ?: return
             if (!reply.optBoolean("ok", true)) {
                 val counts = callStats.getOrPut(key) { IntArray(3) }
                 // The two outcomes Chrome itself reports through runtime.lastError in normal
@@ -828,13 +1045,16 @@ class Extensions(private val host: Host) {
     /**
      * One line per bridge message while `debug`: direction, extension, endpoint context, message
      * type and the little that tells messages apart (a call's method, a message's `type` field,
-     * a reply's outcome). Instrumentation reads it to see where a handshake stopped.
+     * a reply's outcome), then `id=<n>` on a call and its reply (the sweep's storage round-trip
+     * reading pairs the two by it, `ext-compat-storage-latency.mjs`) and a call reply's legs
+     * ([legs], `hop= run= back=`). Instrumentation reads it to see where a handshake stopped.
      */
-    private fun trace(direction: String, ep: String, ext: String, message: JSONObject, chars: Int = 0) {
+    private fun trace(direction: String, ep: String, ext: String, message: JSONObject, chars: Int = 0, legs: String = "") {
         val context = endpoints[ep]?.context ?: message.str("ctx", "?")
         val t = message.str("t")
         // A big message is an envelope here (its nested values unread): its size stands in for them.
         val size = if (chars >= BridgeEnvelope.BIG_MESSAGE) " chars=$chars" else ""
+        val id = if ((t == "call" || t == "reply") && message.has("id")) " id=${message.opt("id")}" else ""
         val detail = when (t) {
             "call" -> "${message.str("ns")}.${message.str("method")}"
             "msg", "deliver" -> {
@@ -871,7 +1091,7 @@ class Extensions(private val host: Host) {
         }
         synchronized(bridgeTrace) {
             if (bridgeTrace.size >= TRACE_LINES) bridgeTrace.removeFirst()
-            bridgeTrace.addLast("${SystemClock.uptimeMillis()} $direction ${ext.take(8)}/$context $t $detail$size".trimEnd())
+            bridgeTrace.addLast("${SystemClock.uptimeMillis()} $direction ${ext.take(8)}/$context $t $detail$id$legs$size".trimEnd())
         }
     }
 
@@ -1104,9 +1324,75 @@ class Extensions(private val host: Host) {
         // The janitor first: document-start scripts run in registration order, and it has to take
         // the bridge object off the main world's global before any unit or page script looks.
         mine.janitor = runCatching { WebViewCompat.addDocumentStartJavaScript(view, janitor, setOf("*")) }.getOrNull()
+        // `chrome.fontSettings`' stylesheet, for the documents this view will load (its WebSettings
+        // values the view took in `applyFonts` as it was built).
+        if (fontLayer.css.isNotEmpty()) mine.fonts = addFontStylesheet(view, fontLayer)
+        // `chrome.privacy`'s `navigator.doNotTrack`, for the documents this view will load, by its kind of tab.
+        if (privacyLayer.holds(view.isPrivateTab)) mine.privacy = addPrivacyScript(view, privacyLayer)
         handlers[view] = mine
         for ((id, list) in units) served[id]?.let { installExtension(view, it, list) }
     }
+
+    /**
+     * `ext.privacy.apply`: the Do Not Track value the extensions hold moved for regular or private
+     * tabs. Every open tab of a kind whose value moved has the document-start script re-registered
+     * (on) or dropped (off) for its next documents, and its open document's `navigator.doNotTrack`
+     * moved in place with the matching script. The `DNT: 1` header is the blocking engine's rule
+     * set, installed by the core, not this layer's.
+     */
+    private fun setPrivacyLayer(next: ExtensionPrivacyLayer) {
+        val prev = privacyLayer
+        if (next == prev) return
+        privacyLayer = next
+        var applied = 0
+        for (view in host.tabs.all()) {
+            val mine = handlers[view] ?: continue
+            val privateTab = view.isPrivateTab
+            if (next.holds(privateTab) == prev.holds(privateTab)) continue
+            mine.privacy?.let { runCatching { it.remove() } }
+            mine.privacy = if (next.holds(privateTab)) addPrivacyScript(view, next) else null
+            if (view.currentUrl != null) next.scriptFor(privateTab)?.let { view.evaluateJavascript(it, null) }
+            applied++
+        }
+        Log.i(TAG, "privacy: ${next.summary()}; applied to $applied page(s)")
+    }
+
+    private fun addPrivacyScript(view: WebView, layer: ExtensionPrivacyLayer): ScriptHandler? =
+        layer.on.ifEmpty { null }?.let { script ->
+            runCatching { WebViewCompat.addDocumentStartJavaScript(view, script, setOf("*")) }
+                .onFailure { e -> Log.w(TAG, "privacy: the doNotTrack document-start script was refused: ${e.message}") }
+                .getOrNull()
+        }
+
+    /**
+     * `ext.fonts.apply`: the layer every tab lays over the user's page fonts moved. The WebSettings
+     * values go to every tab through `TabWebView.applyFonts` (the open document restyled where a
+     * family alone moved, as the user's own change is handled); the stylesheet – what WebSettings
+     * cannot carry – is re-registered at document start on every view and replaced in place in
+     * every open document (the main frame; a frame takes the new sheet with its next document).
+     */
+    private fun setFontLayer(next: ExtensionFontLayer) {
+        val prev = fontLayer
+        if (next == prev) return
+        fontLayer = next
+        val tabs = host.tabs.all()
+        for (view in tabs) view.applyFonts()
+        if (next.css != prev.css) {
+            for (view in tabs) {
+                val mine = handlers[view] ?: continue
+                mine.fonts?.let { runCatching { it.remove() } }
+                mine.fonts = if (next.css.isEmpty()) null else addFontStylesheet(view, next)
+                // The open document: the sheet replaced, or taken out by the empty layer's script.
+                if (view.currentUrl != null && next.script.isNotEmpty()) view.evaluateJavascript(next.script, null)
+            }
+        }
+        Log.i(TAG, "fontSettings: ${next.summary()}; applied to ${tabs.size} page(s)")
+    }
+
+    private fun addFontStylesheet(view: WebView, layer: ExtensionFontLayer): ScriptHandler? =
+        runCatching { WebViewCompat.addDocumentStartJavaScript(view, layer.script, setOf("*")) }
+            .onFailure { e -> Log.w(TAG, "fontSettings: the stylesheet's document-start script was refused: ${e.message}") }
+            .getOrNull()
 
     /**
      * One extension's handlers on one view: the previous ones go, the current units come. A
@@ -1211,7 +1497,7 @@ class Extensions(private val host: Host) {
             refuseBridgeMessage(proxy, ep, message, text.length)
             return
         }
-        bridgeCounters[0]++
+        bridgeCounters.incrementAndGet(0)
         if (slot != null) {
             val known = endpoints[ep]
             val claimed = if (known != null) known.extensionId else message.str("ext")
@@ -1465,7 +1751,10 @@ class Extensions(private val host: Host) {
     /**
      * Every WebView's `shouldInterceptRequest` (background thread), ahead of the request engine.
      * Tab pages: a top-level navigation to an extension origin gets any file (Chrome lets any
-     * extension page open as a tab), other frames only its web-accessible resources; a fetch of
+     * extension page open as a tab), other frames only its web-accessible resources – and the
+     * extension's own frame in the tab, once such a document is in it, any file again, told by
+     * its Referer, its CORS requests' `Origin`, or the frame document served before where the
+     * frame sends no Referer ([FrameOwnership]); a fetch of
      * an extension page to a permitted host goes through the CORS proxy. Extension WebViews: any
      * file of their own extension, another extension's web-accessible resources only, and the
      * background view's document is the generated background page wherever the
@@ -1485,6 +1774,8 @@ class Extensions(private val host: Host) {
         backgroundDocument: Boolean = false
     ): WebResourceResponse? {
         val url = request.url
+        // The tab's page is going with a main-frame request, and its frames with it.
+        if (tab != null && request.isForMainFrame) frames.forget(tab)
         val hostName = url.host ?: return null
         if (hostName.endsWith(ORIGIN_SUFFIX)) {
             val id = hostName.removeSuffix(ORIGIN_SUFFIX)
@@ -1496,10 +1787,17 @@ class Extensions(private val host: Host) {
             if (tab?.isPrivateTab == true && !ext.allowPrivate) return if (request.isForMainFrame) refusedPage(tab, url.toString()) else notFound()
             val path = (url.path ?: "/").trimStart('/')
             val origin = "https://$hostName/"
+            val referer = request.requestHeaders?.get("Referer")
+            val originHeader = request.requestHeaders?.entries?.firstOrNull { it.key.equals("Origin", ignoreCase = true) }?.value
+            val document = ExtensionScripts.mimeType(path) == "text/html"
+            // The extension's own frame in a web tab is told by its Referer – or, where the
+            // frame's document sends none (`no-referrer`), by its CORS requests' `Origin` and by
+            // the frame document served into the tab before (FrameOwnership).
             val ownPage = tab != null && (
                 request.isForMainFrame ||
-                    request.requestHeaders?.get("Referer")?.startsWith(origin) == true ||
-                    tab.currentUrl?.startsWith(origin) == true
+                    referer?.startsWith(origin) == true ||
+                    tab.currentUrl?.startsWith(origin) == true ||
+                    frames.ownRequest(tab, id, "https://$hostName", referer, originHeader, document)
                 )
             // A foreign page (a web page, or another extension's own view asking for this one's
             // files: `chrome-extension://<other>/...` spelled out in Read&Write's offscreen
@@ -1507,6 +1805,8 @@ class Extensions(private val host: Host) {
             // only, as Chrome serves them; the extension's own pages get any file.
             val foreign = if (extensionPage != null) extensionPage.id != id else !ownPage
             if (foreign && !ext.webAccessible.any { it.matches(path) }) return notFound()
+            // A web-accessible document going into a frame of the tab's page: its own requests follow.
+            if (foreign && tab != null && !request.isForMainFrame && document) frames.framed(tab, id)
             if (backgroundDocument && ext.backgroundHtml != null && "$origin$path" == ext.backgroundUrl) {
                 if (request.isForMainFrame) {
                     workerScriptGate.documentServed(id)
@@ -1540,13 +1840,15 @@ class Extensions(private val host: Host) {
             // graph is told by the document, not the Referer (ExtensionScripts.isPageModuleGraph:
             // a dependency's referrer is the module that imports it). A webpack chunk of the graph
             // is served as the stub that runs it in the content script's scope, unless this is the
-            // stub's own plain request for it (ExtensionScripts.chunkStub).
+            // stub's own plain request for it (ExtensionScripts.chunkStub). A CORS request naming
+            // the extension's own origin is an extension document's (a frame's module script or
+            // font), not a graph of the page's.
             val moduleGraph = tab != null && extensionPage == null && ExtensionScripts.isPageModuleGraph(
                 path,
                 request.isForMainFrame,
                 tab.currentUrl,
                 origin,
-                request.requestHeaders?.keys?.any { it.equals("Origin", ignoreCase = true) } == true,
+                originHeader != null && originHeader != "https://$hostName",
                 isolatedWorlds
             )
             val chunkStubUrl = if (moduleGraph && url.getQueryParameter(ExtensionScripts.PLAIN_QUERY) == null) url.toString() else null
@@ -1619,6 +1921,8 @@ class Extensions(private val host: Host) {
      * new page's first decisions.
      */
     private fun onDecision(tab: BlockingTab, request: Request, decision: Decision, elapsedNanos: Long, cpuNanos: Long) {
+        // A decision not reported leaves nothing for the header stage to pair with.
+        lastDecision.remove()
         val micros = elapsedNanos / 1_000
         val cpuMicros = if (cpuNanos < 0) null else cpuNanos / 1_000
         val action = when (decision.action) {
@@ -1656,7 +1960,25 @@ class Extensions(private val host: Host) {
             "micros" to micros,
             "cpuMicros" to cpuMicros
         )
+        lastDecision.set(payload)
         main.post { chromeEvent("ext.request", payload) }
+    }
+
+    /**
+     * The engine's `onSendHeaders` seam ([requestHeadersListener], on the intercept thread right
+     * after [onDecision] for a request that goes out): the headers WebView is about to send,
+     * reported as `ext.requestHeaders` under the `ext.request` id the same request's decision
+     * carried ([lastDecision]) – the material of the runtime's `onBeforeSendHeaders` and
+     * `onSendHeaders`, which Chrome fires with the same headers for an observer (WebView's
+     * headers are read-only, so no blocking variant is offered). A request whose decision was
+     * not reported (the requests switch off; an extension page's own request, which the engine
+     * never decides) reports nothing.
+     */
+    private fun onSendHeaders(details: WebRequestDetails) {
+        val decided = lastDecision.get()
+        lastDecision.remove()
+        val payload = RequestHeadersReport.build(decided, details.url, details.requestHeaders) ?: return
+        main.post { chromeEvent("ext.requestHeaders", payload) }
     }
 
     /**
@@ -1881,6 +2203,9 @@ class Extensions(private val host: Host) {
     /** The hidden background WebView of an attached extension (instrumentation reads its console). */
     fun backgroundView(id: String): ExtensionWebView? = backgrounds[id]
 
+    /** How many times the extension's background has been started here (instrumentation; see [backgroundStarts]). */
+    fun backgroundStarts(id: String): Int = backgroundStarts[id] ?: 0
+
     /**
      * Ask the runtime to run an extension's stopped background (an MV3 worker idles out half a
      * minute after its last traffic), as Chrome's management page starts an inactive worker when
@@ -1890,6 +2215,28 @@ class Extensions(private val host: Host) {
 
     /** The document-start script units currently installed in every tab, across extensions. */
     fun scriptUnits(): List<ScriptUnit> = units.values.flatten()
+
+    /**
+     * The Java heap the runtime holds for one extension's content-script units, for
+     * instrumentation ([UnitCompiler.memoryOf]: the compiled scripts – the one copy the
+     * compiler's cache and the tabs' [ScriptUnit]s share – and the soft-held sources), with the
+     * units installed on the tabs counted. Main thread.
+     */
+    fun unitMemory(id: String): JSONObject = compiler.memoryOf(id).put("installed", units[id]?.size ?: 0)
+
+    /**
+     * Let the runtime's share of an extension's heap go while the extension stays attached, for
+     * instrumentation: the sweep reads the heap before and after this, then once more after the
+     * disable, so the units' bytes stand against the rules' and the rest's measured rather than
+     * summed. The compiled units and their sources are dropped and no new tab receives them; the
+     * tabs that have them keep them (the WebView holds its copy off this heap); the next
+     * `ext.configure` compiles them again. Main thread; the compiler's lock is brief unless a
+     * compile of the extension's is in flight.
+     */
+    fun releaseUnitsForInstrumentation(id: String) {
+        units.remove(id)
+        compiler.forget(id)
+    }
 
     /**
      * The extensions' rule sets in the engine's current snapshot, for instrumentation: per set,
@@ -1928,19 +2275,26 @@ class Extensions(private val host: Host) {
      * The core's lifecycle policy (`runtime/background.ts`) asks for a start only when it holds
      * no page: whatever runs here under that id is a leftover it cannot see (a start whose stop
      * has not reported gone yet, or an earlier runtime's page), so the page is always fresh.
+     * `reason` is the policy's (`attach`, `wake`, `message`, `event:<name>`, `restart`), for the
+     * log: the `I/ZenExt background start` / `stop` lines are the lifecycle's one trace in a
+     * lane's logcat (an idle stop is otherwise visible only as the refused replies it leaves).
      */
-    private fun startBackground(id: String) {
+    private fun startBackground(id: String, reason: String) {
         val ext = served[id] ?: return
         val url = ext.backgroundUrl ?: return
-        stopBackground(id)
+        if (backgrounds.containsKey(id)) stopBackground(id, "replaced")
         val view = ExtensionWebView(host, this, ext, "background")
         backgrounds[id] = view
+        backgroundStarts[id] = backgroundStarts(id) + 1
         host.attachHidden(view)
         view.loadUrl(url)
+        Log.i(TAG, "background start ${id.take(8)} ${ext.version} on $reason, start #${backgroundStarts(id)}")
     }
 
-    private fun stopBackground(id: String) {
+    /** `reason`: the core's (`idle`, `remove`) or this host's own (`replaced`, `detach`, `reset`, `renderer gone`, `destroy`). */
+    private fun stopBackground(id: String, reason: String) {
         val view = backgrounds.remove(id) ?: return
+        Log.i(TAG, "background stop ${id.take(8)} on $reason")
         // The document's count of refused requests for its own script, once, as it goes: Blink
         // reports a failed sub-resource to the console from the network source, which WebView's
         // onConsoleMessage never sees, so this line is the only count of them in the log.
@@ -2031,7 +2385,7 @@ class Extensions(private val host: Host) {
      */
     fun onRendererGone(view: ExtensionWebView) {
         val id = backgrounds.entries.firstOrNull { it.value === view }?.key
-        if (id != null) stopBackground(id)
+        if (id != null) stopBackground(id, "renderer gone")
         // A dead offscreen page goes the same way; `hasDocument` says false once its endpoint is gone.
         val offscreen = offscreens.entries.firstOrNull { it.value === view }?.key
         if (offscreen != null) closeOffscreen(offscreen)
@@ -2047,27 +2401,90 @@ class Extensions(private val host: Host) {
     fun onBridgeMessageFromPage(view: WebView, data: String?, origin: Uri, isMainFrame: Boolean, proxy: JavaScriptReplyProxy) =
         onBridgeMessage(view, data, origin, isMainFrame, proxy, "page", slot = null)
 
+    /**
+     * The window's runtime goes with the window. Besides its pages, sheets and seams, it lets go
+     * of everything it holds for the tabs – the compiler's compiled units and soft-held sources,
+     * the units installed per extension, the served records, the per-view handlers, the
+     * endpoints, the frames, the held pages, the world slots, the configure stats – so that its
+     * retained size is nothing whatever still refers to it. A browser restarted in the same
+     * process (`MainActivity` started over the old one with `CLEAR_TASK`: the compat sweep's
+     * restart proof, an app link or a shortcut into a running process) builds a new runtime
+     * while the old one is still referenced for some seconds – by the tab WebViews' bridge
+     * listeners ([attach]'s `addWebMessageListener` closures capture it, and a destroyed
+     * WebView's Java object lives until the view tree and the WebView's own cleanup let it go),
+     * by the old core's `@JavascriptInterface` hop while that core runs on for a moment after
+     * its WebView is destroyed, by any lambda still queued on the main handler – and the new
+     * runtime's configure compiled the same extensions on top of the old one's units: on a
+     * 192 MB heap Adblock Ad Blocker Pro's 66 MB twice, and the new carrier's builder found 25 MB
+     * free (compat round 21b, the class's second trigger). The last destroyed runtime is kept
+     * weakly ([lastDestroyed]) so the next one's configure line can say whether it was collected.
+     */
     fun destroy() {
+        destroyed = true
         closePopup()
         closeAuthSheets()
         releaseKeepAwake()
-        for (id in backgrounds.keys.toList()) stopBackground(id)
+        for (id in backgrounds.keys.toList()) stopBackground(id, "destroy")
         for (id in offscreens.keys.toList()) closeOffscreen(id)
         notifications.destroy()
         io.shutdownNow()
         // The engine outlives the window; a runtime that is gone must not be called (a newer
-        // window's runtime may already have taken the seams over). Its switch goes with it.
+        // window's runtime may already have taken the seams over). Its switches go with it.
+        setObserveRequestHeaders(false)
         if (host.blocking.observer === observer) {
             host.blocking.observeResponses = false
             host.blocking.observer = null
         }
         if (host.blocking.redirector === redirector) host.blocking.redirector = null
         if (host.blocking.headerStage === headerStage) host.blocking.headerStage = null
+        // The release. The compiler does not wait on a compile in flight: that compile sees
+        // the close at its next unit and releases (`UnitCompiler.close`).
+        val released = compiler.close()
+        val installedUnits = units.values.sumOf { it.size }
+        val installedChars = units.values.sumOf { list -> list.sumOf { it.script.length.toLong() } }
+        units.clear()
+        served = emptyMap()
+        configureStats.clear()
+        handlers.clear()
+        endpoints.clear()
+        frames.clear()
+        heldPages.expect(emptyList())
+        worldSlots.clear()
+        pendingNotificationEvents.clear()
+        forward.forgetAll()
+        lastDestroyed = WeakReference(this)
+        lastDestroyedAt = SystemClock.uptimeMillis()
+        Log.i(
+            TAG,
+            "destroy: released $installedUnits installed unit(s) of $installedChars chars; compiler " +
+                (if (released.deferred) "releasing in the compile in flight" else "${released.extensions} extension(s), ${released.units} unit(s) of ${released.unitChars} chars, ${released.sources} held source(s)")
+        )
+    }
+
+    /**
+     * The runtime destroyed last in this process against this one, for the configure line:
+     * `none` (the first runtime of the process), `collected` (its weak reference cleared – the GC
+     * found nothing referring to it), or not yet, with the seconds since its destroy (a GC has
+     * not run since, or something still refers to it – its retained size is nothing either way,
+     * [destroy] having released it).
+     */
+    private fun previousRuntime(): String {
+        val ref = lastDestroyed ?: return "none"
+        if (ref.get() == null) return "collected"
+        return "not collected yet (destroyed ${(SystemClock.uptimeMillis() - lastDestroyedAt) / 1000} s ago, released)"
     }
 
     companion object {
         const val TAG = "ZenExt"
         const val BRIDGE = "__zenExtBridge"
+
+        /**
+         * The runtime [destroy]ed last in this process, weakly, and when: the next runtime's
+         * configure line says whether it has been collected (see [previousRuntime]). A weak
+         * reference holds nothing up; a strong one here would be the referrer this round looks for.
+         */
+        @Volatile private var lastDestroyed: WeakReference<Extensions>? = null
+        @Volatile private var lastDestroyedAt = 0L
         /**
          * Isolated worlds a tab view can host at once (one per extension, two for an extension
          * with a `USER_SCRIPT` world). Each costs one listener registration per tab view at
@@ -2077,6 +2494,8 @@ class Extensions(private val host: Host) {
         const val WORLD_SLOTS = 16
         /** Bridge trace lines kept for instrumentation (one line per message, all extensions together). */
         const val TRACE_LINES = 2400
+        /** The registrant of this runtime's own `onSendHeaders` listener on the engine's registry (no extension's id). */
+        const val REQUEST_HEADERS_REGISTRANT = "zenium:webRequest"
         /** Reply errors Chrome raises in normal operation: a message to a tab without a listener, a listener that never answered. */
         val UNANSWERED = setOf(
             "Could not establish connection. Receiving end does not exist.",

@@ -15,6 +15,10 @@ class NetErrorsTest {
         assertEquals(-109, NetErrors.code(WebViewClient.ERROR_HOST_LOOKUP, "net::ERR_ADDRESS_UNREACHABLE", false))
         assertEquals(-102, NetErrors.code(WebViewClient.ERROR_CONNECT, "net::ERR_CONNECTION_REFUSED", false))
         assertEquals(-101, NetErrors.code(WebViewClient.ERROR_CONNECT, "net::ERR_CONNECTION_RESET", false))
+        // Chromium's numbers (`net_error_list.h`): a network change is -21, access denied -138.
+        assertEquals(-21, NetErrors.code(WebViewClient.ERROR_CONNECT, "net::ERR_NETWORK_CHANGED", false))
+        assertEquals(-138, NetErrors.code(WebViewClient.ERROR_UNKNOWN, "net::ERR_NETWORK_ACCESS_DENIED", false))
+        assertEquals("ERR_NETWORK_ACCESS_DENIED", NetErrors.name(-138))
     }
 
     @Test

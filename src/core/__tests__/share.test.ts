@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { ShareService, shareClipboardText, shareMailto } from '../share'
+import { ShareService, shareClipboardText, shareImage, shareMailto } from '../share'
 import type { Browser } from '../browser'
 import type { PageHostMessage, ShareSheetHost } from '../platform'
 import type { ZenWindow } from '../window'
@@ -15,9 +15,13 @@ interface Harness {
   win: ZenWindow
   posted: PageHostMessage[]
   copied: Array<{ text: string; toast: string }>
+  /** Pictures put on the clipboard (`writeImageFromUrl`), as data URLs. */
+  images: string[]
   opened: string[]
   toasts: string[]
   saved: ShareFile[][]
+  /** Finished downloads the sheet listed for saved files (capture-22). */
+  listed: Array<{ path: string; mimeType: string; size?: number; private?: boolean }>
   system: Array<{ url: string; files: number }>
   downloads: string[]
   /** The OS sheet's calls (`shell.share`, Android) and the settlers of their pending answers. */
@@ -26,13 +30,22 @@ interface Harness {
 }
 
 function harness(
-  options: { host?: 'none' | 'files' | 'system'; sheet?: boolean; osSheet?: boolean } = {}
+  options: {
+    host?: 'none' | 'files' | 'system'
+    sheet?: boolean
+    osSheet?: boolean
+    /** The clipboard refuses the picture. */
+    clipboardFails?: boolean
+    platform?: 'desktop' | 'android'
+  } = {}
 ): Harness {
   const posted: PageHostMessage[] = []
   const copied: Harness['copied'] = []
+  const images: string[] = []
   const opened: string[] = []
   const toasts: string[] = []
   const saved: ShareFile[][] = []
+  const listed: Harness['listed'] = []
   const system: Harness['system'] = []
   const downloads: string[] = []
   const shell: SharePayload[] = []
@@ -40,6 +53,7 @@ function harness(
   // The window's chrome has the share sheet up unless a test says otherwise (`ui.surface`).
   const win = {
     id: 'w1',
+    isPrivate: false,
     surfaces: new Set(options.sheet === false ? [] : ['share'])
   } as unknown as ZenWindow
   const tab = { id: 't1', url: 'https://news.example/story', title: 'Story' } as Tab
@@ -50,7 +64,7 @@ function harness(
       : {
           saveFiles: async (files) => {
             saved.push(files)
-            return files.map((f) => `/downloads/${f.name}`)
+            return files.map((f) => `/home/b/Downloads/${f.name}`)
           },
           ...(kind === 'system'
             ? {
@@ -63,6 +77,13 @@ function harness(
   const browser = {
     platform: {
       shareSheet: host,
+      clipboard: {
+        writeImageFromUrl: async (url: string) => {
+          if (options.clipboardFails) return false
+          images.push(url)
+          return true
+        }
+      },
       shell: {
         openExternal: (url: string) => opened.push(url),
         ...(options.osSheet
@@ -79,7 +100,18 @@ function harness(
           : {})
       }
     },
-    state: { commitVolatile: vi.fn(), capabilities: { share: options.osSheet === true } },
+    state: {
+      commitVolatile: vi.fn(),
+      platform: options.platform ?? 'desktop',
+      capabilities: { share: options.osSheet === true, toast: true }
+    },
+    downloads: {
+      addCompleted: (
+        path: string,
+        mimeType: string,
+        fields: { size?: number; private?: boolean } = {}
+      ) => listed.push({ path, mimeType, size: fields.size, private: fields.private })
+    },
     tabs: {
       tab: (id: string) => (id === 't1' ? tab : undefined),
       view: (id: string) =>
@@ -103,9 +135,11 @@ function harness(
     win,
     posted,
     copied,
+    images,
     opened,
     toasts,
     saved,
+    listed,
     system,
     downloads,
     shell,
@@ -181,12 +215,20 @@ describe('ShareService', () => {
 
   it('saves shared files to Downloads and says so; a sheet without files saves the shared image', async () => {
     const h = harness({ host: 'files' })
-    h.service.handleMessage('t1', { ...CALL, files: [FILE, { ...FILE, name: 'b.png' }] })
+    h.service.handleMessage('t1', { ...CALL, files: [FILE, { ...FILE, name: 'b.png', size: 7 }] })
     const [request] = h.service.listFor(h.win)
     expect(request.system).toBe(false)
     await h.service.respond(request.id, 'save')
     expect(h.saved[0].map((f) => f.name)).toEqual(['photo.png', 'b.png'])
+    // The destination named, by the folder's own name (§9.33) – the capture card's words for
+    // the same act – the files counted.
     expect(h.toasts).toEqual(['2 files saved to Downloads'])
+    // Each written file is a finished download with its size, so the bubble lists it with
+    // Show in folder (capture-22) and the Downloads page does not read it as empty (BUG-031).
+    expect(h.listed).toEqual([
+      { path: '/home/b/Downloads/photo.png', mimeType: 'image/png', size: 3, private: false },
+      { path: '/home/b/Downloads/b.png', mimeType: 'image/png', size: 7, private: false }
+    ])
 
     const menu = h.service.open(
       {
@@ -200,6 +242,69 @@ describe('ShareService', () => {
     expect(h.downloads).toEqual(['https://news.example/pic.jpg'])
     // A browser share has no page to settle.
     expect(h.posted.filter((m) => m.type === 'share')).toHaveLength(1)
+  })
+
+  it('hands the host the files with bytes alone, so the paths it answers pair with those files; one file saved is "Saved to" the folder it landed in', async () => {
+    const h = harness({ host: 'files' })
+    // A page's share can carry a file the host holds by address only (Android's `uri`): it has
+    // no bytes to write, and were it handed on, the host's paths would shift onto the wrong
+    // files – the second path listed with the first file's type and size.
+    const byAddress: ShareFile = {
+      name: 'held.png',
+      type: 'image/png',
+      size: 9,
+      uri: 'content://x'
+    }
+    h.service.handleMessage('t1', { ...CALL, files: [byAddress, FILE] })
+    const [request] = h.service.listFor(h.win)
+    await h.service.respond(request.id, 'save')
+    expect(h.saved).toEqual([[FILE]])
+    expect(h.listed).toEqual([
+      { path: '/home/b/Downloads/photo.png', mimeType: 'image/png', size: 3, private: false }
+    ])
+    expect(h.toasts).toEqual(['Saved to Downloads'])
+    // A capture's one picture, into a downloads folder the user moved: the folder's own name.
+    const moved = harness({ host: 'files' })
+    moved.browser.platform.shareSheet!.saveFiles = async (files) =>
+      files.map((f) => `C:\\Users\\b\\Pictures\\Captures\\${f.name}`)
+    const capture = moved.service.open({ tabId: 't1', title: 'Story', files: [FILE] }, moved.win)
+    await moved.service.respond(capture.id, 'save')
+    expect(moved.toasts).toEqual(['Saved to Captures'])
+  })
+
+  it('copies one shared picture as an image, and a share with words beside it as words', async () => {
+    const h = harness({ host: 'files' })
+    // The browser's own share of a picture alone (a capture's Share): Copy is Copy image.
+    const capture = h.service.open(
+      { title: 'Story', tabId: 't1', files: [{ ...FILE, name: 'Screenshot.png' }] },
+      h.win
+    )
+    expect(capture.files).toEqual([{ name: 'Screenshot.png', type: 'image/png', size: 3 }])
+    await h.service.respond(capture.id, 'copy')
+    expect(h.images).toEqual(['data:image/png;base64,AAAA'])
+    expect(h.copied).toEqual([])
+    // The desktop hears the copy happened: the sheet has left and nothing else says so.
+    expect(h.toasts).toEqual(['Image copied'])
+
+    // A page's picture with a link beside it copies the link, as before.
+    h.service.handleMessage('t1', { ...CALL, files: [FILE] })
+    await h.service.respond(h.service.listFor(h.win)[0].id, 'copy')
+    expect(h.copied).toEqual([{ text: 'https://news.example/story', toast: 'Link copied' }])
+    expect(h.images).toHaveLength(1)
+    expect(h.posted.at(-1)).toEqual({ type: 'share', id: 'c1', result: 'shared' })
+  })
+
+  it('reports a picture the clipboard refused; Android 13+ leaves the confirmation to the OS chip', async () => {
+    const h = harness({ host: 'files', clipboardFails: true })
+    const capture = h.service.open({ files: [FILE] }, h.win)
+    await h.service.respond(capture.id, 'copy')
+    expect(h.toasts).toEqual(['Could not share: the picture could not be copied'])
+
+    const phone = harness({ host: 'files', platform: 'android' })
+    ;(phone.browser.state.capabilities as { clipboardChip?: boolean }).clipboardChip = true
+    await phone.service.respond(phone.service.open({ files: [FILE] }, phone.win).id, 'copy')
+    expect(phone.images).toHaveLength(1)
+    expect(phone.toasts).toEqual([])
   })
 
   it('reports a failed target to the user and to the page as a cancelled share', async () => {
@@ -305,5 +410,20 @@ describe('share helpers', () => {
       'mailto:?subject=Hi%20there&body=https%3A%2F%2Fu%2F'
     )
     expect(shareMailto({ title: '', text: '', url: '' })).toBe('mailto:')
+  })
+
+  it('names the one picture a share carries, and nothing else, as the thing to copy', () => {
+    const alone = { url: '', text: '' }
+    expect(shareImage(alone, [FILE])).toBe(FILE)
+    expect(shareImage(alone, [{ ...FILE, type: 'IMAGE/JPEG' }])?.type).toBe('IMAGE/JPEG')
+    // Words beside it, two files, a file without bytes or one that is not a picture: no.
+    expect(shareImage({ url: 'https://u/', text: '' }, [FILE])).toBeNull()
+    expect(shareImage({ url: '', text: 'hi' }, [FILE])).toBeNull()
+    expect(shareImage(alone, [FILE, FILE])).toBeNull()
+    expect(
+      shareImage(alone, [{ name: 'a.png', type: 'image/png', size: 3, uri: 'content://a' }])
+    ).toBeNull()
+    expect(shareImage(alone, [{ ...FILE, name: 'a.pdf', type: 'application/pdf' }])).toBeNull()
+    expect(shareImage(alone, [])).toBeNull()
   })
 })

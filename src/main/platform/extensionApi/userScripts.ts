@@ -455,7 +455,10 @@ export class UserScriptsApi {
   // The plan: what a page frame injects, asked synchronously at document start
   // ---------------------------------------------------------------------------
 
-  /** `USER_SCRIPTS_CHANNELS.plan`: the worlds of every extension in this frame, code resolved. */
+  /**
+   * The `userScripts` field of the page's document-start answer (`platform/documentStart.ts`,
+   * registered by `install()`): the worlds of every extension in this frame, code resolved.
+   */
   plan(
     wc: WebContents,
     frame: WebFrameMain | null | undefined,

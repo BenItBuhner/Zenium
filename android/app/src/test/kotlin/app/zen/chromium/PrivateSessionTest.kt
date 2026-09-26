@@ -11,8 +11,8 @@ class PrivateSessionTest {
     @Test
     fun theCardsIdentityIsChromes() {
         assertEquals("Close all private tabs", PrivateSession.TITLE)
-        assertEquals("zenium.private", PrivateSession.CHANNEL_ID)
-        assertEquals("Private browsing", PrivateSession.CHANNEL_NAME)
+        // The channel itself (id, name, importance, group) is pinned in NotificationsTest.
+        assertEquals("zenium.private", Notifications.PRIVATE.id)
         assertEquals("app.zen.chromium.PRIVATE_CLOSE_ALL", PrivateSession.ACTION_CLOSE_ALL)
     }
 
@@ -25,8 +25,8 @@ class PrivateSessionTest {
     fun theCardIsSecretOngoingAndQuietOnTheLowChannel() {
         val card = PrivateSession.card(2)
         assertEquals(NotificationCompat.VISIBILITY_SECRET, card.visibility)
-        assertEquals(PrivateSession.CHANNEL_ID, card.channelId)
-        assertEquals(NotificationManager.IMPORTANCE_LOW, PrivateSession.CHANNEL_IMPORTANCE)
+        assertEquals(Notifications.PRIVATE.id, card.channelId)
+        assertEquals(NotificationManager.IMPORTANCE_LOW, Notifications.PRIVATE.importance)
         assertTrue(card.ongoing)
         assertTrue(card.silent)
         assertTrue(card.onlyAlertOnce)

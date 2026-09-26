@@ -1,0 +1,12 @@
+{
+  "id": "settings-touch",
+  "order": 26,
+  "class": "SettingsTouchDemo",
+  "shard": "phone-b",
+  "mirrors": "android-settings-touch-demo.yml",
+  "dir": "settings-touch-demo",
+  "env": {
+    "DEMO_THEME": "light"
+  },
+  "estimate": 2.5
+}

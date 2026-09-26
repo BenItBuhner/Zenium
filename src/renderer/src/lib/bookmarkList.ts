@@ -1,5 +1,10 @@
 import type { BookmarkNode, Platform } from '@shared/types'
-import { type BookmarkTree, defaultBookmarkFolderId, isBookmarkRoot } from '@shared/bookmarks'
+import {
+  type BookmarkTree,
+  defaultBookmarkFolderId,
+  isBookmarkRoot,
+  topLevelSelection
+} from '@shared/bookmarks'
 
 /**
  * What the phone bookmarks list shows and where it starts. Pure over the shared `BookmarkTree`.
@@ -67,6 +72,65 @@ export function folderCountLabel(count: number): string {
 /** Ids a delete may touch: roots are undeletable, and a folder covers its subtree already. */
 export function deletableIds(tree: BookmarkTree, ids: readonly string[]): string[] {
   return ids.filter((id) => tree.get(id) && !isBookmarkRoot(id))
+}
+
+/**
+ * What Move to… moves (HB-12 / HB-15, Chrome's `BookmarkFolderPickerMediator`): the picked
+ * nodes that can move at all – never a root, and never a node whose ancestor is picked too
+ * (the ancestor carries it; the core's `bookmark.move` drops such nodes the same way).
+ */
+export function movableIds(tree: BookmarkTree, ids: readonly string[]): string[] {
+  // Roots go first: a picked root stays put and carries nothing out with it.
+  return topLevelSelection(
+    tree,
+    ids.filter((id) => !isBookmarkRoot(id))
+  )
+}
+
+/**
+ * The folder every moved node stands in now, when they all stand in the same one (Chrome's
+ * `mOriginalParentId`: the picker checks it and refuses a move back into it); null for nodes
+ * from different folders, or nothing to move.
+ */
+export function sharedParentId(tree: BookmarkTree, ids: readonly string[]): string | null {
+  let shared: string | null = null
+  for (const id of ids) {
+    const parent = tree.get(id)?.parentId ?? null
+    if (parent === null) return null
+    if (shared === null) shared = parent
+    else if (shared !== parent) return null
+  }
+  return shared
+}
+
+/** A folder Move to… can land in, with how deep under its root the picker indents it. */
+export interface MoveTarget {
+  node: BookmarkNode
+  depth: number
+}
+
+/**
+ * The folders Move to… offers for `ids` (the picker's rows): every folder of the tree in
+ * reading order – the roots as the list shows them (`topLevelRoots`: the platform's own first,
+ * an empty other root left out, as Chrome's picker leaves out a hidden permanent folder), each
+ * followed by its subfolders depth first – except the moved folders and everything under them,
+ * since a folder cannot land inside itself (the core refuses it; Chrome's picker leaves the
+ * moved rows out of its list).
+ */
+export function moveTargets(
+  tree: BookmarkTree,
+  ids: readonly string[],
+  platform: Platform
+): MoveTarget[] {
+  const moving = new Set(movableIds(tree, ids))
+  const out: MoveTarget[] = []
+  const walk = (node: BookmarkNode, depth: number): void => {
+    if (moving.has(node.id)) return
+    out.push({ node, depth })
+    for (const child of tree.children(node.id)) if (child.type === 'folder') walk(child, depth + 1)
+  }
+  for (const root of topLevelRoots(tree, platform)) walk(root, 0)
+  return out
 }
 
 /**

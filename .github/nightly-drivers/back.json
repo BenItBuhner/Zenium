@@ -1,0 +1,13 @@
+{
+  "id": "back",
+  "order": 95,
+  "class": "BackDemo",
+  "shard": "api35",
+  "mirrors": "android-back-demo.yml",
+  "dir": "back-demo",
+  "script": ".github/scripts/android-back-demo.sh",
+  "out": "artifacts/android-back-demo",
+  "needs": ["navigation"],
+  "estimate": 3,
+  "note": "Its own script: gestural navigation for the predictive back; the runner puts three-button navigation back after."
+}

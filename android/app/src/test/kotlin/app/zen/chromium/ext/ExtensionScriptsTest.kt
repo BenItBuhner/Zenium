@@ -101,15 +101,156 @@ class ExtensionScriptsTest {
     fun `assembled script keeps its braces balanced around every embedded text`() {
         // Sources and CSS with unbalanced braces travel as JSON strings, never as raw text.
         val hostile = ExtensionScripts.Group.of(group.extensionId, 2, listOf("var s = '}}}'; // {"), "shadow")
-        val script = ExtensionScripts.documentStart("void 0;", "{}", listOf(group, hostile), mapOf("a/b.css" to "a{{{"), false)
-        val stripped = script.replace(Regex("\"(?:[^\"\\\\]|\\\\.)*\""), "\"\"").replace(Regex("'(?:[^'\\\\]|\\\\.)*'"), "''").replace(Regex("//[^\n]*"), "")
-        var depth = 0
-        for (ch in stripped) {
-            if (ch == '{') depth++
-            if (ch == '}') depth--
-            assertTrue(depth >= 0)
+        for (shape in listOf(ExtensionScripts.SHAPE_WHOLE, ExtensionScripts.SHAPE_CARRIER, ExtensionScripts.SHAPE_HOLDER, ExtensionScripts.SHAPE_THIN)) {
+            val script = ExtensionScripts.documentStart("void 0;", "{}", listOf(group, hostile), mapOf("a/b.css" to "a{{{"), false, shape)
+            val stripped = script.replace(Regex("\"(?:[^\"\\\\]|\\\\.)*\""), "\"\"").replace(Regex("'(?:[^'\\\\]|\\\\.)*'"), "''").replace(Regex("//[^\n]*"), "")
+            var depth = 0
+            for (ch in stripped) {
+                if (ch == '{') depth++
+                if (ch == '}') depth--
+                assertTrue(shape, depth >= 0)
+            }
+            assertEquals(shape, 0, depth)
         }
-        assertEquals(0, depth)
+    }
+
+    @Test
+    fun `a carrier wraps the bootstrap as the world's function of the boot and runs its own, a holder only defines it, a thin unit only calls it`() {
+        // The unit's head (config, CSS, sources) is the same in every shape; the tail is the shape.
+        val head = """(function(){var __zenExtBoot={config:{"kind":"content","token":"t"},debug:false,css:{},sources:{"abcdefghijklmnopabcdefghijklmnop/0":function(window,self,globalThis,chrome,browser,__zenMirror){"""
+        val tail = "\n})();\n//# sourceURL=zenium-ext://content-scripts/boot.js"
+        val config = """{"kind":"content","token":"t"}"""
+        val whole = ExtensionScripts.documentStart("/*bootstrap*/", config, listOf(group), emptyMap(), false)
+        val carrier = ExtensionScripts.documentStart("/*bootstrap*/", config, listOf(group), emptyMap(), false, ExtensionScripts.SHAPE_CARRIER)
+        val holder = ExtensionScripts.documentStart("/*bootstrap*/", config, listOf(group), emptyMap(), false, ExtensionScripts.SHAPE_HOLDER)
+        val thin = ExtensionScripts.documentStart("/*bootstrap*/", config, listOf(group), emptyMap(), false, ExtensionScripts.SHAPE_THIN)
+        for (script in listOf(whole, carrier, holder, thin)) {
+            assertTrue(script.startsWith(head))
+            assertTrue(script.endsWith(tail))
+        }
+        val sources = whole.indexOf("}};\n") + 4
+        assertEquals("/*bootstrap*/", whole.substring(sources, whole.length - tail.length))
+        assertEquals(
+            "var __zenExtCarry=globalThis.__zenExtCarrier=function(__zenExtBoot){\n/*bootstrap*/\n};\n__zenExtCarry(__zenExtBoot);",
+            carrier.substring(sources, carrier.length - tail.length)
+        )
+        assertEquals(
+            "var __zenExtCarry=globalThis.__zenExtCarrier=function(__zenExtBoot){\n/*bootstrap*/\n};\n",
+            holder.substring(sources, holder.length - tail.length)
+        )
+        val thinTail = thin.substring(sources, thin.length - tail.length)
+        assertFalse(thinTail.contains("/*bootstrap*/"))
+        assertTrue(thinTail.startsWith("var __zenExtCarry=globalThis.__zenExtCarrier;if(typeof __zenExtCarry===\"function\")__zenExtCarry(__zenExtBoot);else console.error("))
+        assertTrue(thinTail.contains("a set of its content scripts found no bootstrap in its world"))
+        // The shapes' measure, the one the compiler's budget uses: the bootstrap once or not at
+        // all, and the shape's own room, which covers the shape's fixed text.
+        assertTrue(thinTail.length < ExtensionScripts.bootstrapChars(0, ExtensionScripts.SHAPE_THIN))
+        assertTrue(carrier.length - whole.length < ExtensionScripts.bootstrapChars(0, ExtensionScripts.SHAPE_CARRIER))
+        assertEquals(13 + 512, ExtensionScripts.bootstrapChars(13, ExtensionScripts.SHAPE_WHOLE))
+        assertEquals(13 + 512, ExtensionScripts.bootstrapChars(13, ExtensionScripts.SHAPE_CARRIER))
+        assertEquals(13 + 512, ExtensionScripts.bootstrapChars(13, ExtensionScripts.SHAPE_HOLDER))
+        assertEquals(512, ExtensionScripts.bootstrapChars(13, ExtensionScripts.SHAPE_THIN))
+        // An unknown shape is assembled whole.
+        assertEquals(whole, ExtensionScripts.documentStart("/*bootstrap*/", config, listOf(group), emptyMap(), false, "later"))
+    }
+
+    /**
+     * The builder is sized by an exact count of the text, so no append grows it (a builder that
+     * grows doubles, and the doubling of a 10.6 million character carrier was the 42 MB
+     * allocation that took the app down – compat round 21b). Over the round's plan shape: Adblock
+     * Ad Blocker Pro's second boot, 650 single-source groups of the ruleset scriptlets (16-29 K
+     * characters each, an isolated world's groups, some with top-level declarations for the
+     * mirror, a few with characters over U+00FF so the builder is UTF-16) with the extension's
+     * static groups (one of two files, one of 34, one of 41) and a 165 K bootstrap as a carrier.
+     */
+    @Test
+    fun `the document-start builder is sized by an exact count of the round's plan shape and no append grows it`() {
+        val id = "abcdefghijklmnopabcdefghijklmnop"
+        val random = java.util.Random(21)
+        fun scriptlet(index: Int, chars: Int): String {
+            val sb = StringBuilder(chars + 256)
+            when (index % 5) {
+                0 -> sb.append("var scriptlet$index = 1;\nfunction run$index() { return scriptlet$index }\n")
+                1 -> sb.append("const names$index = ['a', \"b\", `c`]; let count$index = 0;\n")
+                else -> Unit
+            }
+            sb.append("(function(){\n  'use strict';\n  const args = [\"selector \\\"quoted\\\"\", '/path/with/slashes', \"</script>\"];\n")
+            if (index % 97 == 0) sb.append("  const mark = '✓ — é'; // a character over U+00FF\n")
+            while (sb.length < chars) sb.append("  if (args[").append(index % 3).append("] === document.title) { console.log(\"x\", ").append(random.nextInt(1000)).append("); }\n")
+            sb.append("})(); // scriptlet ").append(index)
+            return sb.toString()
+        }
+        val groups = ArrayList<ExtensionScripts.Group>()
+        groups.add(ExtensionScripts.Group.of(id, 0, listOf(scriptlet(1000, 139_000), scriptlet(1001, 900)), "world"))
+        groups.add(ExtensionScripts.Group.of(id, 1, List(34) { scriptlet(2000 + it, 2_000 + random.nextInt(20_000)) }, "world"))
+        groups.add(ExtensionScripts.Group.of(id, 2, List(41) { scriptlet(3000 + it, 2_000 + random.nextInt(14_000)) }, "world"))
+        for (i in 0 until 650) groups.add(ExtensionScripts.Group.of(id, 3 + i, listOf(scriptlet(i, 16_000 + random.nextInt(13_000))), "world"))
+        val bootstrap = StringBuilder(165_000).also { sb -> while (sb.length < 165_000) sb.append("/* bootstrap */ (function(b){ b.config; b.css; b.sources; })(__zenExtBoot);\n") }.toString()
+        val config = """{"kind":"content","token":"t","extension":{"id":"$id","name":"Adblock Ad Blocker Pro","hosts":[${List(200) { "\"https://*.site$it.example/*\"" }.joinToString(",")}]}}"""
+        val assembled = ExtensionScripts.documentStartSized(bootstrap, config, groups, emptyMap(), false, ExtensionScripts.SHAPE_CARRIER)
+        assertTrue("a carrier of the round's size: ${assembled.script.length}", assembled.script.length in 10_000_000..20_000_000)
+        assertTrue("UTF-16, as the round's builder was", assembled.script.any { it > '\u00FF' })
+        assertEquals("the count is the script, exactly", assembled.script.length, assembled.presized)
+        assertFalse(assembled.grown)
+        // The same text through the String form, and the whole shape.
+        assertEquals(assembled.script, ExtensionScripts.documentStart(bootstrap, config, groups, emptyMap(), false, ExtensionScripts.SHAPE_CARRIER))
+        val whole = ExtensionScripts.documentStartSized(bootstrap, config, groups, emptyMap(), true)
+        assertEquals(whole.script.length, whole.presized)
+    }
+
+    @Test
+    fun `every shape's document-start script is exactly its count, and a group's function exactly its own`() {
+        val config = """{"kind":"content","token":"t"}"""
+        val withMode = ExtensionScripts.Group(group.extensionId, 1, group.sources, "with")
+        for (shape in listOf(ExtensionScripts.SHAPE_WHOLE, ExtensionScripts.SHAPE_CARRIER, ExtensionScripts.SHAPE_HOLDER, ExtensionScripts.SHAPE_THIN, "later")) {
+            for (debug in listOf(true, false)) {
+                val assembled = ExtensionScripts.documentStartSized("/*bootstrap*/", config, listOf(group, withMode), emptyMap(), debug, shape)
+                assertEquals("$shape debug=$debug", assembled.script.length, assembled.presized)
+                assertFalse(assembled.grown)
+            }
+        }
+        // No groups, no css: the fixed text alone.
+        val bare = ExtensionScripts.documentStartSized("", "{}", emptyList(), emptyMap(), false)
+        assertEquals(bare.script.length, bare.presized)
+        // A group's count is what its append writes, with and without the with block and the mirror.
+        for (g in listOf(group, withMode, ExtensionScripts.Group.of(group.extensionId, 2, listOf("var a = 1", "function f() {}"), "with"), ExtensionScripts.Group.of(group.extensionId, 3, emptyList(), "shadow"))) {
+            val mirror = ExtensionScripts.mirrorOf(g)
+            val sb = StringBuilder()
+            ExtensionScripts.appendGroupFunction(sb, g, mirror)
+            assertEquals(sb.length, ExtensionScripts.groupFunctionChars(g, mirror))
+            assertEquals(sb.toString(), StringBuilder().also { ExtensionScripts.appendGroupFunction(it, g) }.toString())
+        }
+    }
+
+    @Test
+    fun `the quoted CSS is bounded from above for both org json implementations, and the builder with it never grows`() {
+        // Every class of character the two `JSONObject.quote`s treat differently or escape: the
+        // backslash escapes, `/` (Android's always, the public one's after `<`), the controls, the
+        // U+0080-U+009F and U+2000-U+20FF ranges the public one writes as `\uXXXX`, and plain text
+        // (Latin-1, a wide character, a surrogate pair) that both write as is.
+        val classes = listOf(
+            "plain{color:red}", "quote\"mark", "back\\slash", "slash/es", "close</style>", "tab\tnl\nret\rff\u000Cbs\b",
+            "\u0000nul", "\u001Fus", "\u007Fdel", "\u0080pad", "\u009Fapc", "\u00A0nbsp", "\u2000sp", "\u2028ls", "\u20FFend", "\u2100next",
+            "héllo", "✓", "\uD83D\uDE00emoji", ""
+        )
+        for (text in classes) {
+            assertTrue("'${text.replace("\n", "\\n")}': ${ExtensionScripts.quotedChars(text)} < ${JSONObject.quote(text).length}", ExtensionScripts.quotedChars(text) >= JSONObject.quote(text).length)
+        }
+        val everything = classes.joinToString("")
+        assertTrue(ExtensionScripts.quotedChars(everything) >= JSONObject.quote(everything).length)
+        // Text neither implementation escapes is counted exactly.
+        assertEquals(JSONObject.quote("body{color:red}").length, ExtensionScripts.quotedChars("body{color:red}"))
+        assertEquals(JSONObject.quote("a\"b\\c\td").length, ExtensionScripts.quotedChars("a\"b\\c\td"))
+        val id = group.extensionId
+        val css = linkedMapOf("$id/a.css" to everything, "$id/b\"c.css" to "x{}", "$id/plain.css" to "body{color:red}")
+        val assembled = ExtensionScripts.documentStartSized("/*bootstrap*/", "{}", listOf(group), css, false)
+        assertTrue(assembled.presized >= assembled.script.length)
+        assertFalse(assembled.grown)
+        // The over-count is the quoting bound's alone: the rest of the text is exact.
+        val bound = css.entries.sumOf { (k, t) -> (ExtensionScripts.quotedChars(k) - JSONObject.quote(k).length) + (ExtensionScripts.quotedChars(t) - JSONObject.quote(t).length) }
+        assertEquals(bound, assembled.presized - assembled.script.length)
+        // What the script carries is still every entry, quoted by the implementation at hand.
+        assertTrue(assembled.script.contains(JSONObject.quote("$id/a.css") + ":" + JSONObject.quote(everything)))
     }
 
     @Test

@@ -63,6 +63,25 @@ class PageMessagesTest {
     }
 
     @Test
+    fun theReferrerPolicyWordIsTheMainDocumentsAlone() {
+        // The anchor's word for the navigation its click starts; the document's meta with its origin.
+        assertEquals(
+            PageMessageRoute.ReferrerPolicy(next = "no-referrer", document = null, origin = null),
+            routePageMessage(message("type" to "referrerPolicy", "next" to "no-referrer"), token)
+        )
+        val document = routePageMessage(message("type" to "referrerPolicy", "document" to "same-origin", "origin" to "https://a.example"), token)
+        assertEquals(PageMessageRoute.ReferrerPolicy(next = null, document = "same-origin", origin = "https://a.example"), document)
+        // An unknown token the script read is the empty string: the default policy, still a word.
+        assertEquals(
+            PageMessageRoute.ReferrerPolicy(next = "", document = null, origin = null),
+            routePageMessage(message("type" to "referrerPolicy", "next" to ""), token)
+        )
+        // A frame's anchors and meta govern navigations the view does not hold.
+        assertTrue(document.heardFrom(isMainFrame = true))
+        assertFalse(document.heardFrom(isMainFrame = false))
+    }
+
+    @Test
     fun aFrameIsHeardOnItsOwnFullscreenAlone() {
         // An embed's document (a YouTube iframe) is the one that sees its video go fullscreen,
         // and its size; the main document sees the <iframe>, 0 x 0.

@@ -1,0 +1,9 @@
+{
+  "id": "newtab",
+  "order": 60,
+  "class": "NewTabDemo",
+  "shard": "phone-d",
+  "mirrors": "android-newtab-demo.yml",
+  "dir": "newtab-demo",
+  "estimate": 2
+}

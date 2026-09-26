@@ -44,7 +44,7 @@ on:
         type: number
         default: 2
       timeout-minutes:
-        description: The job's timeout; a block of 2 starts takes about 4 minutes, the build and the boot about 10
+        description: The job's timeout; a block of 2 starts takes about 3 minutes (46 for 15 blocks on the fourth null run), the build and the boot about 10
         required: false
         type: number
         default: 150

@@ -34,6 +34,7 @@ import {
   choice,
   type ActionRow,
   type DetailRow,
+  type FormSheet,
   type ItemRow,
   type RowGroup,
   type SettingsRow
@@ -316,6 +317,17 @@ function notificationsReview(
 // ---------------------------------------------------------------------------
 
 /**
+ * The Clear browsing data sheet (PS-13, `ClearBrowsingDataForm`): the group's row opens it, and
+ * so does the Privacy and security hub's "Delete browsing data" card (W7-6), the one dialog.
+ */
+export const CLEAR_BROWSING_DATA_FORM: FormSheet = {
+  title: 'Clear browsing data',
+  description:
+    'Choose a time range and what to remove. Cookies and site data go from every container.',
+  render: (close) => <ClearBrowsingDataForm close={close} />
+}
+
+/**
  * Clear browsing data as one action row whose sheet is the form (`ClearBrowsingDataForm`, the
  * dialog's state under a finger): the group names what goes, the sheet's title block what to
  * choose.
@@ -339,12 +351,7 @@ export function clearDataGroups({ state }: SectionContext): RowGroup[] {
               : 'History, cookies, cache and more, including the private session',
           keywords: ['history', 'cookies', 'cache', 'site data', 'delete', 'passwords'],
           button: 'Clear…',
-          form: {
-            title: 'Clear browsing data',
-            description:
-              'Choose a time range and what to remove. Cookies and site data go from every container.',
-            render: (close) => <ClearBrowsingDataForm close={close} />
-          }
+          form: CLEAR_BROWSING_DATA_FORM
         }
       ]
     }

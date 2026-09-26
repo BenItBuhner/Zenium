@@ -61,8 +61,13 @@ export function defaultOptions(setting: ContentSetting): MenulistOption<ContentD
   }))
 }
 
-/** What the row says its current default means: the catalogue's line for the built-in, else plain words. */
+/**
+ * What the row says its current default means: the catalogue's own line for the value when it
+ * has one (`descriptions`), else its line for the built-in, else plain words from the template.
+ */
 export function defaultDescription(setting: ContentSetting, value: ContentDefault): string {
+  const own = setting.descriptions?.[value]
+  if (own) return own
   if (value === setting.builtInDefault) return setting.description
   const subject = setting.label.toLowerCase()
   switch (value) {

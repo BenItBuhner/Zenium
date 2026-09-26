@@ -1,6 +1,11 @@
-import type { DeviceGrant, DeviceKind, Tab, UIState } from '@shared/types'
+import type { DeviceGrant, DeviceKind, MediaState, Platform, Tab, UIState } from '@shared/types'
 import { DEFAULT_CONTAINER_ID } from '@shared/types'
-import { builtInDefault } from '@shared/contentSettings'
+import {
+  builtInDefault,
+  contentSetting,
+  type ContentDecision,
+  type ContentDefault
+} from '@shared/contentSettings'
 import {
   certificateErrorDetail,
   certificateFault,
@@ -216,10 +221,103 @@ export function showsSoundRow(permissions: readonly SitePermission[], tab: Tab):
   return permissions.some((p) => p.permission === 'sound') || tab.audible || tab.muted
 }
 
-/** The Sound row's value: the stored decision, else the default (Allow). */
+/**
+ * The site's own `sound` answer as stored, or `default` where it has none. The stored answer,
+ * not the row's position: the Sound switch reads the state in force (`switchOn`).
+ */
 export function soundChoice(permissions: readonly SitePermission[]): PermissionChoice {
   return permissions.find((p) => p.permission === 'sound')?.decision ?? 'default'
 }
+
+/**
+ * The defaults the core carries to the chrome (`UIState.permissionDefaults`: every catalogue
+ * row's default in force, the user's where Settings chose one, else the catalogue's), or none
+ * where a state has yet to carry them.
+ */
+export type PermissionDefaults = Readonly<Record<string, ContentDefault>> | undefined
+
+/**
+ * The default in force for a permission: the core's word where it carries one, else the
+ * catalogue's built-in – the reading Settings › Site settings' rows take (`settingsRows`).
+ */
+export function defaultInForce(permission: string, defaults: PermissionDefaults): ContentDefault {
+  return defaults?.[permission] ?? builtInDefault(permission)
+}
+
+/**
+ * The position of a switch row of the sheet (§10.4, the lead's ruling on #531): the state in
+ * force for this site – its own answer where it has one, else the default in force – and never
+ * the stored answer alone. With Background video's default at Allow and no answer for the site,
+ * the site plays on, and the row reads on; an answer equal to the default reads as the default
+ * does. On is `allow`; anything else (a block, or a default that asks) is off.
+ */
+export function switchOn(
+  permissions: readonly SitePermission[],
+  permission: string,
+  defaults: PermissionDefaults
+): boolean {
+  const stored = permissions.find((p) => p.permission === permission)?.decision
+  return (stored ?? defaultInForce(permission, defaults)) === 'allow'
+}
+
+/** What a press on a switch row writes for the site: its own rule, or its answer forgotten. */
+export type SwitchWrite = { decision: ContentDecision } | { forget: true }
+
+/**
+ * The write a press makes (§10.4): the site's rule that gives the state the press asks – an
+ * `allow` under a blocking default, a `deny` under an allowing one – and a forget only where the
+ * default already gives what the press asks, since an answer equal to the default is redundant
+ * (Chrome clears an exception equal to the default). `on` is the state after the press;
+ * `fallback` the default in force. Under a default that asks, neither state is given, so either
+ * press stores.
+ */
+export function switchWrite(on: boolean, fallback: ContentDefault): SwitchWrite {
+  const decision: ContentDecision = on ? 'allow' : 'deny'
+  return fallback === decision ? { forget: true } : { decision }
+}
+
+/** The catalogue's Background video row (services' #523): Block by default, Android enforced, the desktop `n-a`. */
+const BACKGROUND_VIDEO = contentSetting('background-video')
+
+/**
+ * Whether the phone sheet carries the Background video row (MED-08 / EDGE-32, the lead's ruling
+ * on #523: a site's per-site answer has its home among the sheet's permission rows). Two
+ * conditions: the host honours the setting – the catalogue's `support` for the platform is not
+ * `n-a`, so Android alone today; the desktop has no background transition to gate and never
+ * earns the row, whatever its window's form factor – and, in Sound's `audible || muted` shape,
+ * the site has a stored `background-video` answer or the tab's media session reports video
+ * (`MediaState.video`: a page that plays or has played a video while the tab lives; a chrome
+ * player's session never says video).
+ */
+export function showsBackgroundVideoRow(
+  permissions: readonly SitePermission[],
+  media: Pick<MediaState, 'video'> | null | undefined,
+  platform: Platform
+): boolean {
+  const support = BACKGROUND_VIDEO?.support[platform === 'android' ? 'android' : 'desktop']
+  if (!support || support === 'n-a') return false
+  return permissions.some((p) => p.permission === 'background-video') || media?.video === true
+}
+
+/**
+ * The site's own `background-video` answer as stored, or `default` where it has none. The
+ * stored answer, not the row's position: the Background video switch reads the state in force
+ * (`switchOn`), under a default the catalogue sets to Block and Settings may turn to Allow.
+ */
+export function backgroundVideoChoice(permissions: readonly SitePermission[]): PermissionChoice {
+  return permissions.find((p) => p.permission === 'background-video')?.decision ?? 'default'
+}
+
+/**
+ * The row's second line, one and the same in both states (the lead's ruling on #531): the sheet
+ * is this site's, so the line names what the switch does for it, and the switch alone carries
+ * the state (§10.4's switch rows carry one constant line saying what on does). The catalogue's
+ * two sentences – "Sites can keep playing video in the background" / "Sites cannot play video in
+ * the background" – are Settings › Site settings' and stay there: their subject is sites in
+ * general, and a line that flips with the switch tells the state twice; on a per-site row both
+ * would be wrong.
+ */
+export const BACKGROUND_VIDEO_LINE = 'Keeps playing video in the background'
 
 /**
  * The permission rows of the Permissions level in order: the stored decisions as the engine

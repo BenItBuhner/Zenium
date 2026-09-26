@@ -112,9 +112,10 @@ describe('the chrome focus ring (§1, a11y-10)', () => {
       expect(selector, 'reads the mark without :focus-visible beside it').toMatch(/:focus-visible/)
     }
     // The toolbar glyph's full ink under the keyboard (a11y-10: the ring is not drawn at the
-    // resting 85 %) lists the mark beside `:focus-visible` in its `:is()`.
+    // resting 85 %) lists the mark beside `:focus-visible` in its `:is()`; the hover branch is
+    // the same rule's second selector, gated on the root's live `data-hover` (OS-12).
     expect(css.replace(/\s+/g, ' ')).toContain(
-      ".zen-toolbar-button:is( :hover:not(:disabled), :focus-visible, [data-keyboard-focus]:focus, [aria-expanded='true'], :disabled, [data-disabled] ) > :is(svg:not(.zen-dl-ring), .zen-glyph-swap, .zen-dl-glyph-body) { opacity: 1; }"
+      ".zen-toolbar-button:is( :focus-visible, [data-keyboard-focus]:focus, [aria-expanded='true'], :disabled, [data-disabled] ) > :is(svg:not(.zen-dl-ring), .zen-glyph-swap, .zen-dl-glyph-body), :where(:root[data-hover='hover']) .zen-toolbar-button:hover:not(:disabled) > :is(svg:not(.zen-dl-ring), .zen-glyph-swap, .zen-dl-glyph-body) { opacity: 1; }"
     )
   })
 
@@ -195,6 +196,11 @@ describe('the chrome focus ring (§1, a11y-10)', () => {
       (r) => r.value === 'none' && r.selector.includes("[data-pointer='coarse']")
     )
     expect(suppressor.map((r) => r.selector)).toEqual([
+      // The menu container's exemption (§9.22; v2Tokens.test.ts pins its text, order and
+      // weight): not a suppressor – a container that holds the focus by design draws no ring,
+      // as the dialog root draws none – its `:root[data-pointer='coarse']` form is the weight
+      // of the v2 ring rule's coarse form, which its plain form could not beat on a phone.
+      ".zen-v2-menu:focus-visible, :root[data-pointer='coarse'] .zen-v2-menu:focus-visible, .zen-v2-menu[data-keyboard-focus]:focus, :root[data-pointer='coarse'] .zen-v2-menu[data-keyboard-focus]:focus",
       ":root[data-pointer='coarse']:where(:not([data-input='keyboard'])) button:focus-visible, :root[data-pointer='coarse']:where(:not([data-input='keyboard'])) [role='button']:focus-visible"
     ])
     expect(css).not.toMatch(/:root\[data-pointer='coarse'\] button:focus-visible/)

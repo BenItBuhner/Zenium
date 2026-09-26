@@ -185,6 +185,11 @@ export class ElectronDownloads implements DownloadHost {
   /** Save dialogs still open; a transfer that finishes meanwhile is placed once they close. */
   private readonly pendingDialogs = new Map<string, Promise<void>>()
   /**
+   * Transfers the automatic-downloads prompt holds (PS-71): their placement and announcement,
+   * run when the core's `resume` brings the answer.
+   */
+  private readonly heldPlacements = new Map<string, (place: boolean) => void>()
+  /**
    * URLs whose next transfer asks where to save whatever the setting says: the context menu's
    * "Save Link / Image / Video As…", which always ask in Chrome. Each entry serves one download.
    */
@@ -514,20 +519,42 @@ export class ElectronDownloads implements DownloadHost {
       refuse()
       return Boolean(retried)
     }
+    if (record.state === 'cancelled') {
+      // The automatic-downloads rule refused it (PS-71, a blocked site's download past its free
+      // one): dropped before it writes, no row and nothing announced.
+      this.reserved.delete(candidate)
+      refuse()
+      return true
+    }
     this.live.set(record.id, this.newLive(item, ses))
     this.finalPaths.set(record.id, candidate)
     this.wire(item, record)
 
     if (!retried) {
-      const placed = this.place(
-        item,
-        record,
-        sourceTabId,
-        candidate,
-        started?.request,
-        saveAs
-      ).finally(() => this.pendingDialogs.delete(record.id))
-      this.pendingDialogs.set(record.id, placed)
+      const place = (): void => {
+        const placed = this.place(
+          item,
+          record,
+          sourceTabId,
+          candidate,
+          started?.request,
+          saveAs
+        ).finally(() => this.pendingDialogs.delete(record.id))
+        this.pendingDialogs.set(record.id, placed)
+      }
+      if (record.state === 'paused') {
+        // Held for the automatic-downloads prompt: the core pauses the item; where the file
+        // goes (the save dialog included) and the announcement wait for Allow, which arrives
+        // as the core's `resume`. Block arrives as `cancel`, and the item ends like any other.
+        this.heldPlacements.set(record.id, (placeIt) => {
+          // A small file may have run to its end while held (it wrote to the reserved partial
+          // path): the finished file stays where the engine left it, only the announcement is owed.
+          if (placeIt) place()
+          this.startedHooks.get(containerId)?.(sourceTabId)
+        })
+        return true
+      }
+      place()
     }
     return Boolean(retried)
   }
@@ -807,6 +834,7 @@ export class ElectronDownloads implements DownloadHost {
     if (final) this.reserved.delete(final)
     this.finalPaths.delete(id)
     this.overwriting.delete(id)
+    this.heldPlacements.delete(id)
   }
 
   private takePendingStart(item: ElectronDownloadItem): PendingStart | null {
@@ -958,11 +986,20 @@ export class ElectronDownloads implements DownloadHost {
   }
 
   resume(item: DownloadItem): void {
+    // A transfer the automatic-downloads prompt held was allowed: placed and announced now.
+    const held = this.heldPlacements.get(item.id)
     const live = this.live.get(item.id)
+    if (held) {
+      this.heldPlacements.delete(item.id)
+      held(live !== undefined)
+    }
     if (live) {
       if (live.item.canResume()) live.item.resume()
       return
     }
+    // A held transfer that ended before the answer came has nothing left to resume: the core
+    // replays its end right after this call (`settleHeld`). Only a stopped record continues below.
+    if (item.state !== 'paused' && item.state !== 'interrupted') return
     // After a restart: continue the partial file where it stopped (Chromium sends Range and
     // If-Range from the validators we kept; a server that ignores them makes it start over).
     const partial = item.savePath

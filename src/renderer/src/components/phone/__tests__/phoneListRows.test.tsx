@@ -235,8 +235,9 @@ describe('phone list rows on the shared row primitive (§9.34)', () => {
     )
     const hover = css.indexOf('.zen-v2-row.zen-phone-row[data-disabled]:hover')
     expect(hover).toBeGreaterThan(0)
-    expect(css.lastIndexOf('@media (hover: hover)', hover)).toBeGreaterThan(
-      css.lastIndexOf('}', hover)
+    // Gated on the root's live `data-hover` (a mouse's word, never a tap's sticky hover).
+    expect(css.slice(css.lastIndexOf('\n', hover), hover)).toBe(
+      "\n:where(:root[data-hover='hover']) "
     )
   })
 

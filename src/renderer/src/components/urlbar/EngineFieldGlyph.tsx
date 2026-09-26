@@ -2,8 +2,8 @@ import type { JSX } from 'react'
 import { useState } from 'react'
 import { Search } from 'lucide-react'
 import type { SearchEngine } from '@shared/types'
-import { engineFieldFavicon } from '@shared/search'
 import { useFaviconSrc } from '@renderer/lib/favicons'
+import { searchEngineIconSrc } from '@renderer/lib/searchEngineIcons'
 import { cn } from '@renderer/lib/utils'
 import { TOOLBAR_STROKE } from '../v2/controls'
 
@@ -20,12 +20,24 @@ const loaded = new Set<string>()
  * omnibox, the new tab page's resting field and the morph's double, whichever engine it is, the
  * vendor's default included – where `engineFieldFavicon` gives one; else the slot's own
  * fallback, the one it always showed: the omnibox field's 28 px letter tile (`tile`) or the new
- * tab field's magnifier (`magnifier`). The favicon takes the slot once it has loaded
+ * tab field's magnifier (`magnifier`). An engine of the choice screen's that is not shipped
+ * draws its bundled picture (`searchEngineIconSrc`). The favicon takes the slot once it has loaded
  * – the fallback is painted until then and stays if the image never comes, so the slot is never
  * blank (as a broken favicon leaves Chrome's globe) – arriving on a 120 ms opacity fade in place
  * (§11.4); an address that loaded once this session shows at once. The favicon keeps its own
  * colours: it is content drawn in chrome (§9.29). The desktop pill's empty tab takes it at 16
  * (`size`), the site-information slot's glyph size, with the magnifier at the row stroke.
+ *
+ * A mark, not a control (OMN-38, partial-by-design on the root's ruling of 2026-09-26): in
+ * Chrome for Android 152 a tap on the default search engine's logo does nothing. Chromium tag
+ * 152.0.7977.89, `chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/
+ * status/StatusMediator.java`, `maybeUpdateStatusIconForSearchEngineIcon()`: the model takes the
+ * engine's icon as `STATUS_ICON_RESOURCE` and `null` as its `STATUS_CLICK_LISTENER`. Chrome's
+ * engine for one query is site search – the keyword, the engine's row – which the bar has
+ * (`@keyword`, tab-to-search, Ctrl+K). So the phone field's slot stays a `role="img"` named for
+ * the engine, inside no button and with no handler (`urlbarEngineGlyphInert.test.tsx` pins it);
+ * a tap on it – a picker of the engines was built as #567's Form A and is kept on
+ * `cursor/android-omnibox-engine-glyph-form-a-9271` – takes a ruling first.
  */
 export function EngineFieldGlyph({
   engine,
@@ -42,7 +54,7 @@ export function EngineFieldGlyph({
 }): JSX.Element {
   // The core's cached copy where it holds one (HB-47); the engine's mark is no page's row, so
   // the live address stands where the cache has nothing, as it always did.
-  const favicon = useFaviconSrc(engineFieldFavicon(engine))
+  const favicon = useFaviconSrc(searchEngineIconSrc(engine))
   const [arrived, setArrived] = useState<string | null>(null)
   const [broken, setBroken] = useState<string | null>(null)
   const image = favicon !== null && broken !== favicon

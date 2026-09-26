@@ -74,9 +74,9 @@ export interface RowControl {
   /**
    * The extension's value, in effect over the user's own: the held row shows it in its
    * disabled control, as Chrome's Settings shows the preference's effective value. Absent,
-   * the row keeps to the setting's value.
+   * the row keeps to the setting's value. A list for a setting that is one (startup pages).
    */
-  value?: string | number | boolean
+  value?: string | number | boolean | string[]
   /** Disable the extension: the desktop indicator row's button (§10.5). */
   onDisable(): void
   /**
@@ -412,9 +412,11 @@ export interface ItemRow extends RowBase {
   action?: InlineAction
   /**
    * The row has several actions and nothing to set (a preferred language's Move Up / Move Down
-   * / Remove): on a mouse it is static and trails the 28 px ⋯ named by this label ("Options for
-   * English"), whose menu is the sheet's action rows (`itemMenuItems`, §10.5) – no dialog opens
-   * to hold a list of actions. The phone keeps the item row and its sheet. Not with `action`.
+   * / Remove, a startup page's Edit… / Remove): on a mouse it is static and trails the 28 px ⋯
+   * named by this label ("Options for English"), whose menu is the sheet's action rows
+   * (`itemMenuItems`, §10.5) – no dialog opens to hold a list of actions; an action that is a
+   * form opens its own form dialog from the menu, as it would from the sheet. The phone keeps
+   * the item row and its sheet. Not with `action`.
    */
   menu?: string
 }
@@ -423,22 +425,32 @@ export interface ItemRow extends RowBase {
  * The desktop ⋯ menu of an item row (`ItemRow.menu`, §10.5): the action rows of its sheet, in
  * their order, each an item – disabled where the row is (Move Up on the first row, at .4),
  * in the danger ink where the row is destructive – running the row's press; a row with a
- * `confirm` opens its prompt through `confirm` instead (the desktop rows' `ctx.open`, naming
- * the item row as the way back for the focus: its ⋯ is the control that opened the prompt,
- * §9.5), as the phone's item sheet opens the same row's sheet. Rows of other kinds (a value to
- * set) take the row out of the menu's form; a builder that has them keeps the item's dialog
- * instead.
+ * `confirm` opens its prompt through `confirm` instead, and one with a `form` opens its form
+ * through `openForm` (both the desktop rows' `ctx.open`, naming the item row as the way back
+ * for the focus: its ⋯ is the control that opened the dialog, §9.5), as the phone's item sheet
+ * opens the same row's sheet. An item reads the desktop's word for the row where it has one
+ * (`button`: "Edit…", the ellipsis of a row that opens a dialog, §9.1), else the row's label.
+ * Rows of other kinds (a value to set) take the row out of the menu's form; a builder that has
+ * them keeps the item's dialog instead.
  */
-export function itemMenuItems(row: ItemRow, confirm: (action: ActionRow) => void): RowMenuItem[] {
+export function itemMenuItems(
+  row: ItemRow,
+  confirm: (action: ActionRow) => void,
+  openForm?: (action: ActionRow) => void
+): RowMenuItem[] {
   return allRows(row.sheet.groups).flatMap((r) =>
     r.kind === 'action'
       ? [
           {
             id: r.id,
-            label: r.label,
+            label: r.button ?? r.label,
             disabled: r.disabled,
             danger: r.destructive,
-            onSelect: r.confirm ? () => confirm(r) : () => r.onPress?.()
+            onSelect: r.confirm
+              ? () => confirm(r)
+              : r.form && openForm
+                ? () => openForm(r)
+                : () => r.onPress?.()
           }
         ]
       : []

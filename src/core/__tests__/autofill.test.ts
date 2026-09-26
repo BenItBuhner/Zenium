@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { FormsCommand, FormsEvent } from '../../shared/forms'
-import type { Rect, Tab } from '../../shared/types'
+import type { ExtensionControl, Rect, Tab } from '../../shared/types'
 import { emptyPasswordsDevice } from '../../shared/types'
 import { sanitizeAutofillSettings, sanitizePasswordSettings } from '../../shared/defaults'
+import {
+  EMPTY_EXTENSION_LAYER,
+  EXTENSION_SETTING_KEYS,
+  type ExtensionLayer
+} from '../../shared/extensionSettings'
 import { AutofillService } from '../autofill'
 import type { Browser } from '../browser'
 import { PasswordService } from '../credentials/service'
@@ -157,6 +162,7 @@ function setup(
         autofill: sanitizeAutofillSettings(undefined)
       },
       passwordsDevice: emptyPasswordsDevice(),
+      extensionLayer: EMPTY_EXTENSION_LAYER,
       commit,
       commitVolatile: vi.fn()
     },
@@ -232,6 +238,17 @@ function focusLogin(
       { id: 'f3', kind: 'password', hasValue: false }
     ],
     ...overrides
+  }
+}
+
+/**
+ * The extension host's publish (`State.setExtensionControls`) as the fake state takes it: a
+ * landed layer, nothing pending.
+ */
+function hold(w: World, controls: Record<string, ExtensionControl>): void {
+  ;(w.browser.state as unknown as { extensionLayer: ExtensionLayer }).extensionLayer = {
+    controls,
+    pending: false
   }
 }
 
@@ -658,6 +675,64 @@ describe('AutofillService: saving logins', () => {
     expect(w.passwords.store.count()).toBe(0)
   })
 
+  // chrome.privacy.services.passwordSavingEnabled → Settings.passwords.offerToSave: the layer the
+  // extension host publishes (`UIState.extensionControls`) sits above the user's switch, as
+  // Chrome's `credentials_enable_service` reads the extension's value in the service.
+  it('reads an extension holding passwordSavingEnabled off over the user’s switch, and the user’s value again when it lets go', async () => {
+    const w = setup()
+    await w.passwords.unlock()
+    w.addTab('t1', 'https://example.com/login')
+    const held = {
+      [EXTENSION_SETTING_KEYS.passwordSaving]: {
+        extensionId: 'pejdijmoenmkgeppbflobdenhhabjlaj',
+        name: 'iCloud Passwords',
+        value: false
+      }
+    }
+    hold(w, held)
+    expect(w.autofill.offerToSave()).toBe(false)
+    w.event('t1', loginSubmit())
+    w.autofill.onNavigated('t1')
+    await w.settle()
+    expect(w.autofill.uiState().prompts).toEqual([])
+    // The user's own value is untouched underneath, and stands again on clear / disable.
+    expect(w.browser.state.settings.passwords.offerToSave).toBe(true)
+    hold(w, {})
+    expect(w.autofill.offerToSave()).toBe(true)
+    w.event('t1', loginSubmit())
+    w.autofill.onNavigated('t1')
+    await w.settle()
+    expect(w.autofill.uiState().prompts).toMatchObject([{ kind: 'save-login', username: 'ada' }])
+  })
+
+  it('keeps the extension’s value while the user flips the switch underneath, and marks the row at the user’s value too', async () => {
+    const w = setup()
+    await w.passwords.unlock()
+    w.addTab('t1', 'https://example.com/login')
+    hold(w, {
+      [EXTENSION_SETTING_KEYS.passwordSaving]: { extensionId: 'ext', name: 'Probe', value: false }
+    })
+    // The user's own change while held changes nothing visible: the layer above still answers.
+    w.browser.state.settings.passwords.offerToSave = false
+    w.browser.state.settings.passwords.offerToSave = true
+    expect(w.autofill.offerToSave()).toBe(false)
+    w.event('t1', loginSubmit())
+    w.autofill.onNavigated('t1')
+    await w.settle()
+    expect(w.autofill.uiState().prompts).toEqual([])
+    // An extension holding the setting ON over a user who turned saving off: the prompt is back
+    // while it holds (Chrome's indicator does not care whether the values agree).
+    w.browser.state.settings.passwords.offerToSave = false
+    hold(w, {
+      [EXTENSION_SETTING_KEYS.passwordSaving]: { extensionId: 'ext', name: 'Probe', value: true }
+    })
+    expect(w.autofill.offerToSave()).toBe(true)
+    w.event('t1', loginSubmit())
+    w.autofill.onNavigated('t1')
+    await w.settle()
+    expect(w.autofill.uiState().prompts).toHaveLength(1)
+  })
+
   it('unlocks a locked OS-protected vault silently before deciding, and renders prompts natively until a chrome takes over', async () => {
     const first = setup()
     await first.passwords.unlock()
@@ -793,6 +868,115 @@ describe('AutofillService: addresses and cards from checkouts', () => {
     w.event('t1', { type: 'submit', group: 'address', formId: 'f1', values: addressValues })
     await w.settle()
     expect(w.autofill.uiState().prompts).toEqual([])
+  })
+
+  // chrome.privacy.services.autofillAddressEnabled → Settings.autofill.addresses: the fill and
+  // the save offer read the extension layer over the user's switch (`autofill.profile_enabled`).
+  it('reads an extension holding autofillAddressEnabled off over the user’s switch for the fill and the save offer, and the user’s value again when it lets go', async () => {
+    const w = setup()
+    await w.passwords.unlock()
+    w.autofill.addAddress({
+      country: 'US',
+      name: 'Ada Lovelace',
+      organization: '',
+      streetAddress: '1600 Amphitheatre Pkwy',
+      locality: 'Mountain View',
+      region: 'CA',
+      postalCode: '94043',
+      sortingCode: '',
+      phone: '555',
+      email: ''
+    })
+    w.addTab('t1', 'https://shop.example/checkout')
+    hold(w, {
+      [EXTENSION_SETTING_KEYS.autofillAddresses]: {
+        extensionId: 'ext',
+        name: 'RoboForm',
+        value: false
+      }
+    })
+    expect(w.autofill.addressesEnabled()).toBe(false)
+    w.event('t1', focusLogin({ group: 'address', kind: 'address-line1', fields: [] }))
+    expect(w.autofill.uiState().picker).toBeNull()
+    w.event('t1', {
+      type: 'submit',
+      group: 'address',
+      formId: 'f1',
+      values: { ...addressValues, 'address-line1': '2 Other Street' }
+    })
+    await w.settle()
+    expect(w.autofill.uiState().prompts).toEqual([])
+    // The user's own switch underneath: untouched, and flipping it changes nothing while held.
+    expect(w.browser.state.settings.autofill.addresses).toBe(true)
+    w.browser.state.settings.autofill.addresses = false
+    w.browser.state.settings.autofill.addresses = true
+    expect(w.autofill.addressesEnabled()).toBe(false)
+    // Cleared / disabled: the user's value returns – the picker and the offer are back.
+    hold(w, {})
+    expect(w.autofill.addressesEnabled()).toBe(true)
+    w.event('t1', focusLogin({ group: 'address', kind: 'address-line1', fields: [] }))
+    expect(w.autofill.uiState().picker?.items).toHaveLength(1)
+    w.event('t1', {
+      type: 'submit',
+      group: 'address',
+      formId: 'f1',
+      values: { ...addressValues, 'address-line1': '2 Other Street' }
+    })
+    await w.settle()
+    expect(w.autofill.uiState().prompts).toMatchObject([{ kind: 'save-address' }])
+    // Cards are their own key: an address hold leaves the card switch to the user.
+    expect(w.autofill.cardsEnabled()).toBe(true)
+  })
+
+  // chrome.privacy.services.autofillCreditCardEnabled → Settings.autofill.cards
+  // (`autofill.credit_card_enabled`): the same two decision points, its own key.
+  it('reads an extension holding autofillCreditCardEnabled off over the user’s switch for the fill and the save offer, and the user’s value again when it lets go', async () => {
+    const w = setup()
+    w.reauth.enabled = true
+    await w.passwords.unlock()
+    w.autofill.addCard({
+      number: '4242 4242 4242 4242',
+      expMonth: 3,
+      expYear: 29,
+      name: 'Ada',
+      nickname: ''
+    })
+    w.addTab('t1', 'https://shop.example/pay')
+    const submit = {
+      type: 'submit' as const,
+      group: 'card' as const,
+      formId: 'f1',
+      values: { 'cc-number': '5555 5555 5555 4444', 'cc-exp': '12/39', 'cc-name': 'Ada' }
+    }
+    hold(w, {
+      [EXTENSION_SETTING_KEYS.autofillCards]: { extensionId: 'ext', name: 'Dashlane', value: false }
+    })
+    expect(w.autofill.cardsEnabled()).toBe(false)
+    w.event('t1', focusLogin({ group: 'card', kind: 'cc-number', fields: [] }))
+    expect(w.autofill.uiState().picker).toBeNull()
+    w.event('t1', submit)
+    await w.settle()
+    expect(w.autofill.uiState().prompts).toEqual([])
+    expect(w.browser.state.settings.autofill.cards).toBe(true)
+    w.browser.state.settings.autofill.cards = false
+    w.browser.state.settings.autofill.cards = true
+    expect(w.autofill.cardsEnabled()).toBe(false)
+    // An extension holding cards while the user turned them off: the extension's value wins too.
+    w.browser.state.settings.autofill.cards = false
+    hold(w, {
+      [EXTENSION_SETTING_KEYS.autofillCards]: { extensionId: 'ext', name: 'Dashlane', value: true }
+    })
+    expect(w.autofill.cardsEnabled()).toBe(true)
+    w.event('t1', focusLogin({ group: 'card', kind: 'cc-number', fields: [] }))
+    expect(w.autofill.uiState().picker?.items).toHaveLength(1)
+    w.browser.state.settings.autofill.cards = true
+    hold(w, {})
+    expect(w.autofill.cardsEnabled()).toBe(true)
+    w.event('t1', submit)
+    await w.settle()
+    expect(w.autofill.uiState().prompts).toMatchObject([{ kind: 'save-card' }])
+    // Addresses are their own key: the card hold never touched them.
+    expect(w.autofill.addressesEnabled()).toBe(true)
   })
 
   it('assumes the device country for a form without one', async () => {

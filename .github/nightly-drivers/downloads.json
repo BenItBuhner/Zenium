@@ -1,0 +1,10 @@
+{
+  "id": "downloads",
+  "order": 12,
+  "class": "DownloadsDemo",
+  "shard": "phone-a",
+  "mirrors": "android-downloads-demo.yml",
+  "dir": "downloads-demo",
+  "setup": ["downloads-server"],
+  "estimate": 4
+}

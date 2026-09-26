@@ -1,0 +1,10 @@
+{
+  "id": "share",
+  "order": 19,
+  "class": "ShareDemo",
+  "shard": "phone-e",
+  "mirrors": "android-share-demo.yml",
+  "dir": "share-demo",
+  "estimate": 2.5,
+  "note": "On phone-e since the accessibility pass 2 grew a11y-chrome to 14.5 with #422's widget driver already on phone-b (70 of 68 together): the plain driver that fit phone-e's room (63.5 before it, 66 with it; phone-b 67.5)."
+}

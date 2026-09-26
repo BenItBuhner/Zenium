@@ -63,12 +63,12 @@ export type SheetRequest =
   | { kind: 'options'; rowId: string }
   | { kind: 'field'; rowId: string }
   /**
-   * `from`: the row whose control opened the prompt when that is not the row itself – an item
-   * row's ⋯ picking one of its sheet's confirming actions (§10.5); the focus goes back to that
-   * row's control, the ⋯, as the prompt leaves (§9.5).
+   * `from`: the row whose control opened the prompt or the form when that is not the row itself
+   * – an item row's ⋯ picking one of its sheet's confirming actions or its form (§10.5); the
+   * focus goes back to that row's control, the ⋯, as the dialog leaves (§9.5).
    */
   | { kind: 'confirm'; rowId: string; from?: string }
-  | { kind: 'form'; rowId: string }
+  | { kind: 'form'; rowId: string; from?: string }
   | { kind: 'item'; rowId: string }
   | { kind: 'detail'; rowId: string }
 
@@ -616,9 +616,12 @@ function DesktopRowView({
               <RowMenuButton
                 menu={{
                   label: row.menu,
-                  // A confirming action opens its prompt over the page, the ⋯ its way back.
-                  items: itemMenuItems(row, (action) =>
-                    ctx.open({ kind: 'confirm', rowId: action.id, from: row.id })
+                  // A confirming action opens its prompt over the page, a form its dialog; the
+                  // ⋯ is the way back from either.
+                  items: itemMenuItems(
+                    row,
+                    (action) => ctx.open({ kind: 'confirm', rowId: action.id, from: row.id }),
+                    (action) => ctx.open({ kind: 'form', rowId: action.id, from: row.id })
                   )
                 }}
                 title={row.label}

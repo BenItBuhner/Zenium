@@ -429,19 +429,51 @@ export function errorPageAccentOf(params: URLSearchParams): ErrorPageAccent | nu
 }
 
 /**
+ * The profile's default search engine, as the core hands it to the error page for a name that
+ * did not resolve (ERR-05, "Search <engine> for <term>"): the engine's name for the control's
+ * label and its `%s` template for the address the typed word goes into. Written into the page's
+ * URL beside the accent (`engine` / `search`), since the `zen://` document cannot ask the core
+ * which engine the profile chose; the page names no engine of its own.
+ */
+export interface ErrorPageSearch {
+  engine: string
+  template: string
+}
+
+function setSearch(params: URLSearchParams, search: ErrorPageSearch | null | undefined): void {
+  if (!search) return
+  params.set('engine', search.engine)
+  params.set('search', search.template)
+}
+
+/**
+ * The search engine an error page's URL carries (`setSearch`), or null when it carries none or
+ * not one the page can use: a name, and an http(s) template with the `%s` the term goes into.
+ */
+export function errorPageSearchOf(params: URLSearchParams): ErrorPageSearch | null {
+  const engine = params.get('engine')?.trim() ?? ''
+  const template = params.get('search') ?? ''
+  if (!engine || !/^https?:\/\//i.test(template) || !template.includes('%s')) return null
+  return { engine, template }
+}
+
+/**
  * The `zen://error` page for a failed load of `url`; a certificate failure carries the refused
- * certificate along, so the page can show it and offer to proceed (`errorPageCertificate`).
+ * certificate along, so the page can show it and offer to proceed (`errorPageCertificate`);
+ * a name that did not resolve carries the default search engine (`errorPageSearchOf`).
  */
 export function errorPageUrl(
   code: number,
   description: string,
   url: string,
   certificate?: CertificateDetails | null,
-  accent?: ErrorPageAccent
+  accent?: ErrorPageAccent,
+  search?: ErrorPageSearch | null
 ): string {
   const params = new URLSearchParams({ code: String(code), description, url })
   if (certificate) params.set('certificate', JSON.stringify(certificate))
   setAccent(params, accent)
+  setSearch(params, search)
   return `${ERROR_URL_PREFIX}?${params.toString()}`
 }
 

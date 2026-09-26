@@ -1,0 +1,13 @@
+{
+  "id": "firstrun",
+  "order": 13,
+  "class": "FirstRunDemo",
+  "shard": "phone-a",
+  "mirrors": "android-firstrun-demo.yml",
+  "dir": "firstrun-demo",
+  "script": ".github/scripts/android-firstrun-demo.sh",
+  "out": "artifacts/android-firstrun-demo",
+  "needs": ["browser-role"],
+  "estimate": 3,
+  "note": "The wrapper enables Chrome and hands it the browser role for the choice the demo makes; the runner puts both back after."
+}

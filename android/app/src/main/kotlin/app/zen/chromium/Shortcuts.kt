@@ -142,20 +142,6 @@ class Shortcuts(private val activity: MainActivity, private val io: Executor) {
         return tile
     }
 
-    private fun drawLetter(c: Canvas, canvas: Int, title: String, background: Int) {
-        c.drawColor(background)
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = ShortcutTile.onColor(background)
-            textSize = canvas * ShortcutTile.LETTER_SHARE
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-            textAlign = Paint.Align.CENTER
-        }
-        val metrics = paint.fontMetrics
-        // Centre the glyph box (ascent to descent), not the baseline.
-        val baseline = canvas / 2f - (metrics.ascent + metrics.descent) / 2f
-        c.drawText(ShortcutTile.letterFor(title), canvas / 2f, baseline, paint)
-    }
-
     private fun edgeColor(icon: Bitmap): Int? {
         val w = icon.width
         val h = icon.height
@@ -218,7 +204,29 @@ class Shortcuts(private val activity: MainActivity, private val io: Executor) {
             return record.putInto(open.setClass(context, WebAppLauncherActivity::class.java))
         }
 
-        private const val SHORT_LABEL_MAX = 25
+        /** The tile with no icon: the title's first letter on `background` (a custom tab's Add to Home Screen draws the same). */
+        fun letterTile(context: Context, title: String, background: Int): Bitmap {
+            val canvas = ShortcutTile.canvasPx(context.resources.displayMetrics.density)
+            val tile = Bitmap.createBitmap(canvas, canvas, Bitmap.Config.ARGB_8888)
+            drawLetter(Canvas(tile), canvas, title, background)
+            return tile
+        }
+
+        private fun drawLetter(c: Canvas, canvas: Int, title: String, background: Int) {
+            c.drawColor(background)
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = ShortcutTile.onColor(background)
+                textSize = canvas * ShortcutTile.LETTER_SHARE
+                typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+                textAlign = Paint.Align.CENTER
+            }
+            val metrics = paint.fontMetrics
+            // Centre the glyph box (ascent to descent), not the baseline.
+            val baseline = canvas / 2f - (metrics.ascent + metrics.descent) / 2f
+            c.drawText(ShortcutTile.letterFor(title), canvas / 2f, baseline, paint)
+        }
+
+        const val SHORT_LABEL_MAX = 25
         private const val FETCH_TIMEOUT_MS = 8000
         private const val MAX_ICON_BYTES = 4 * 1024 * 1024
         private const val MAX_ICON_PX = 1024

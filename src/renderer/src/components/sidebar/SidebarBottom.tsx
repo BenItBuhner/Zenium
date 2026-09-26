@@ -42,10 +42,15 @@ export function SidebarBottom({ state, compact, isDark, pose = 'regular' }: Prop
   const local = isLocalWindow(state)
   const privatePose = pose === 'private'
   // Zen 1.21.11: every playing tab gets its own media control – of the pose's mode, on a host
-  // that keeps private browsing in tabs.
+  // that keeps private browsing in tabs. The playing set alone (design language v2 §9.29, the
+  // #552 ruling): a session that paused or ended is the media hub's to tell – its toolbar
+  // button and popover, where it lingers Chrome's hour with Play – and this card, a second
+  // control for the same session, would tell the one state twice; the card's retirement into
+  // the hub is the follow-up slice.
   const mixed = privateInTabs(state)
   const media = state.media
     .filter((m) => {
+      if (!m.playing) return false
       const tab = state.tabs[m.tabId]
       return tab !== undefined && (!mixed || isPrivateTab(tab) === privatePose)
     })
@@ -82,17 +87,21 @@ export function SidebarBottom({ state, compact, isDark, pose = 'regular' }: Prop
               // A polite live region, as the message card is (`ToastCard`): a toast arriving is
               // read without the keyboard moving to it (a11y-02).
               role="status"
+              // The row wraps: a message and an action that share the line render as they always
+              // have (the message grows into the room the action leaves); a message the line
+              // cannot hold beside its action takes the row's width and the action drops under
+              // it, right-aligned – the sentence never wraps a word per line beside a button.
               className={cn(
-                'zen-toast zen-panel flex items-center gap-2 px-2.5 py-1.5 text-[12px]',
+                'zen-toast zen-panel flex flex-wrap items-center gap-2 px-2.5 py-1.5 text-[12px]',
                 t.kind === 'error' && 'text-[var(--zen-danger)]'
               )}
             >
-              <span className="min-w-0 flex-1">{t.message}</span>
+              <span className="min-w-0 flex-auto">{t.message}</span>
               {t.action && (
                 // A v2 secondary button (§6) inside the shipped toast until the toast is redone.
                 <button
                   type="button"
-                  className="zen-v2 zen-v2-button -my-0.5 shrink-0"
+                  className="zen-v2 zen-v2-button -my-0.5 ml-auto shrink-0"
                   onClick={() => pickToastAction(t.id)}
                 >
                   {t.action.label}

@@ -150,6 +150,26 @@ export function SettingsPage({ state, tab }: Props): JSX.Element {
   const site = current?.id === 'privacy' ? (ref?.query?.site ?? null) : null
   const asked = ref?.query?.row
   const row = site ? SITE_ROW : asked && ROW_ID_RE.test(asked) ? asked : null
+  // A section asked for one of its groups outright (`?group=`, the Privacy and security hub's
+  // cards, W7-6): the group itself is the landing, where `?row=` lands on a row's group.
+  const askedGroup = ref?.query?.group
+  const groupId = !row && askedGroup && ROW_ID_RE.test(askedGroup) ? askedGroup : null
+  // A card pressed while its address is already the landing (the user scrolled away and pressed
+  // again) moves the address nowhere, so the press counts here and the landing runs again.
+  const [landings, setLandings] = useState(0)
+  const land = useCallback(
+    (section: string, id: string) => {
+      run('page.navigate', {
+        tabId: tab.id,
+        section,
+        query: { group: id },
+        // The two-pane nav rewrites the entry (§10.5); the phone layout's pages stack.
+        replace: twoPane
+      })
+      setLandings((n) => n + 1)
+    },
+    [tab.id, twoPane]
+  )
   useLayoutEffect(() => {
     const page = root.current
     if (!page) return
@@ -157,18 +177,20 @@ export function SettingsPage({ state, tab }: Props): JSX.Element {
     page.style.removeProperty(LANDING_PAD)
     const group = row
       ? page.querySelector(`[data-row="${row}"]`)?.closest<HTMLElement>('[data-group]')
-      : null
+      : groupId
+        ? page.querySelector<HTMLElement>(`[data-group="${groupId}"]`)
+        : null
     if (!group) return
     const pad = landingPad(group)
     if (pad > 0) page.style.setProperty(LANDING_PAD, `${pad}px`)
     group.scrollIntoView({ block: 'start' })
-  }, [row, tab.url, twoPane])
+  }, [row, groupId, tab.url, twoPane, landings])
   return (
     <div
       ref={root}
       className="zen-settings-page"
       data-layout={twoPane ? 'two-pane' : 'phone'}
-      data-landing={row ? '' : undefined}
+      data-landing={row || groupId ? '' : undefined}
     >
       {twoPane ? (
         <DesktopSettings
@@ -179,6 +201,7 @@ export function SettingsPage({ state, tab }: Props): JSX.Element {
           current={current}
           pointer={hover}
           formFactor={formFactor}
+          land={land}
         />
       ) : (
         <PhoneSettings
@@ -191,6 +214,7 @@ export function SettingsPage({ state, tab }: Props): JSX.Element {
           params={ref?.query ?? NO_QUERY}
           pointer={hover}
           formFactor={formFactor}
+          land={land}
         />
       )}
     </div>
@@ -216,7 +240,8 @@ function PhoneSettings({
   subpage,
   params,
   pointer,
-  formFactor
+  formFactor,
+  land
 }: Props & {
   page: InternalPageDefinition
   sections: InternalPageSection[]
@@ -228,6 +253,8 @@ function PhoneSettings({
   /** The host's primary pointer hovers (a mouse): rows may describe mouse gestures. */
   pointer: boolean
   formFactor: FormFactor
+  /** Land a section on one of its groups (`SectionContext.reveal`; the page's `?group=`). */
+  land: (section: string, groupId: string) => void
 }): JSX.Element {
   const sheets = useSheetStack()
   const [query, setQuery] = useState('')
@@ -278,6 +305,12 @@ function PhoneSettings({
     formFactor,
     set: settingsUpdate,
     navigate: (section) => run('page.navigate', { tabId: tab.id, section }),
+    // The section shown, or – from the landing's search – the section whose group it is.
+    reveal: (groupId) => {
+      const section =
+        current?.id ?? models.find((m) => m.groups.some((g) => g.id === groupId))?.section.id
+      if (section) land(section, groupId)
+    },
     openBarEditor: () => void openBarEditor(tab.id),
     boost: (tabId) => {
       run('tab.activate', { tabId })

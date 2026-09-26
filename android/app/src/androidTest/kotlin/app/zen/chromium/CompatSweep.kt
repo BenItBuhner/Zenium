@@ -230,6 +230,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         results.put("heapAtStartKb", heapKb())
         for ((index, row) in list.withIndex()) {
             mainThread.row = "${index + 1} ${row.name}"
+            // The row in flight, named by id before anything of it runs: the hand-off after an
+            // emulator death reads it off the sweep log when the death was in the first row and
+            // no results.json was ever pulled (`ext-compat-rows-left.mjs`; round 18's AFTER 113
+            // ran the dead row first on both boots for want of it).
+            Log.i(TAG, "ROW-START ${index + 1}/${list.size} ${row.id} ${row.name}")
             if (!chromeAnswers()) {
                 // The chrome's JS is gone for good (a renderer wedged behind a dialog nothing
                 // could press, a heap with no room left): every row behind this one would spend
@@ -277,6 +282,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 entry.put("ms", SystemClock.uptimeMillis() - started)
                 entry.put("pssKbAfter", Debug.getPss())
                 entry.put("heapAfterKb", heapKb())
+                // The split's last reading ([heapSplit]): what the disable took is the rules' and the rest's.
+                entry.optJSONObject("heapSplit")?.let { split ->
+                    split.put("afterKb", entry.optLong("heapAfterKb")).put("rulesAndRestKb", split.optLong("unitsReleasedKb") - entry.optLong("heapAfterKb"))
+                }
                 // Calls the chrome's bridge refused at its queue limit during the row (`JsBridge`): 0 unless
                 // an extension's message storm outran the main thread.
                 entry.put("bridgeRefused", host.chrome.bridge.refused.get() - refusedBefore)
@@ -299,7 +308,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                     "ROW ${row.name}: install=${entry.optJSONObject("install")?.optString("verdict")} ${entry.optString("grade")}; " +
                         "heap enabled ${entry.optLong("heapEnabledKb", -1) / 1024} MB, after ${entry.optLong("heapAfterKb") / 1024} MB, " +
                         "bridge refused ${entry.optInt("bridgeRefused")}; flood guard ${entry.optJSONObject("floodGuard")}" +
-                        (entry.optJSONObject("coreStall")?.let { "; core stall $it" } ?: "")
+                        (entry.optJSONObject("coreStall")?.let { "; core stall $it" } ?: "") +
+                        (entry.optJSONObject("heapSplit")?.let { "; heap split: the runtime's units ${it.optLong("runtimeUnitsKb") / 1024} MB, the rules and the rest ${it.optLong("rulesAndRestKb") / 1024} MB" } ?: "")
                 )
                 rowEntry = null
                 write()
@@ -451,8 +461,38 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         evidence(row, entry)
         // What the extension costs the Java heap while it runs (its units, its rules in the
         // Kotlin engine), against `heapAfterKb` once it is disabled, and the engine's snapshot.
-        entry.put("heapEnabledKb", heapKb())
+        val enabledKb = heapKb()
+        entry.put("heapEnabledKb", enabledKb)
         entry.put("blockingEnabled", runCatching { Blocking.shared(app).stats() }.getOrNull() ?: JSONObject.NULL)
+        if (enabledKb >= heapSplitFromKb) heapSplit(row, entry, enabledKb)
+    }
+
+    /** A row whose live heap with the extension enabled reaches half the process's limit has its heap split ([heapSplit]). */
+    private val heapSplitFromKb: Long = Runtime.getRuntime().maxMemory() / 2048
+
+    /**
+     * Where a heavy extension's Java heap is (round 21's OOM class – Adblock Ad Blocker Pro's
+     * row: 144 MB live with the extension enabled against 34 MB after it, on a 192 MB limit):
+     * the runtime's units against the DNR engine's rules and the rest, MEASURED rather than
+     * summed. The compiler's own count of what it holds first ([Extensions.unitMemory]: the
+     * scripts' characters and the bytes ART keeps them in, the soft-held sources), then the
+     * runtime lets its units go ([Extensions.releaseUnitsForInstrumentation]) and the heap is
+     * read again after a full collection; what is left goes with the row's disable
+     * (`heapAfterKb`, read in the row's `finally`, which completes the split). Only for a row
+     * whose live heap reached [heapSplitFromKb]: the readings cost two more full collections.
+     */
+    private fun heapSplit(row: Row, entry: JSONObject, enabledKb: Long) {
+        var compiler: JSONObject? = null
+        instrumentation.runOnMainSync {
+            compiler = host.extensions.unitMemory(row.id)
+            host.extensions.releaseUnitsForInstrumentation(row.id)
+        }
+        val releasedKb = heapKb()
+        entry.put(
+            "heapSplit",
+            JSONObject().put("enabledKb", enabledKb).put("unitsReleasedKb", releasedKb).put("runtimeUnitsKb", enabledKb - releasedKb).put("compiler", compiler ?: JSONObject.NULL)
+        )
+        Log.i(TAG, "HEAP SPLIT ${row.name}: enabled ${enabledKb / 1024} MB, units released ${releasedKb / 1024} MB (the runtime's units ${(enabledKb - releasedKb) / 1024} MB; compiler $compiler)")
     }
 
     /**
@@ -776,9 +816,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     private fun popup(row: Row, entry: JSONObject, manifest: JSONObject, slug: String) {
         val action = manifest.optJSONObject("action") ?: manifest.optJSONObject("browser_action")
         val declared = action?.optString("default_popup", "")?.ifEmpty { null }
-        val ext = extensions().firstOrNull { it.getString("id") == row.id }
         // The runtime's word on the popup after `action.setPopup` (null: clicks fire onClicked).
-        val runtimePopup = ext?.let { if (it.isNull("popup")) null else it.optString("popup") }
+        fun runtimePopupNow(): String? = extensions().firstOrNull { it.getString("id") == row.id }?.let { if (it.isNull("popup")) null else it.optString("popup") }
+        var runtimePopup = runtimePopupNow()
+        if (declared == null && runtimePopup == null && action != null && manifest.has("background")) {
+            // A popup the worker sets at its start (Search by Image's `action.setPopup(src/action/
+            // index.html)`, its manifest declaring none) lands after the background's `ready` on
+            // a slow lane – round 19's 156 lane read `-` where 113 read P – so the runtime's word
+            // is waited for a moment, scaled, before the action is taken for a popup-less one.
+            runtimePopup = poll(scaled(5_000, speedFactor(entry)), 250) { runtimePopupNow() }
+        }
         if (declared == null && runtimePopup == null) {
             stage(entry, "popup", "-", "no default_popup")
             return
@@ -1106,20 +1153,65 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         )
         var trace: List<String> = emptyList()
         var calls: Map<String, IntArray> = emptyMap()
+        var configure: JSONObject? = null
+        var ruleSets: JSONArray? = null
         instrumentation.runOnMainSync {
             trace = host.extensions.traceSnapshot(row.id)
             calls = host.extensions.callStatsSnapshot().filterKeys { it.startsWith("${row.id} ") }
+            configure = host.extensions.configureStats[row.id]
+            ruleSets = host.extensions.ruleSetStats()
         }
         entry.put("bridgeErrors", JSONArray(trace.filter { it.contains(" reply error=") }.takeLast(20)))
         val table = JSONObject()
         for ((key, counts) in calls.toSortedMap()) table.put(key.substringAfter(' '), JSONArray().put(counts[0]).put(counts[1]).put(counts[2]))
         entry.put("calls", table)
+        // The row's LAST `ext.configure` (the background step read the attach-time one; a
+        // `scripting.registerContentScripts` re-plans after it – Adblock Ad Blocker Pro's 1 unit
+        // at attach, 11 (113) or 91 (156) once its rulesets' scripts are registered): the units
+        // with their keys shortened to the world and the origin count, the chars summed.
+        configure?.let { c -> entry.put("configureAtEnd", configureSummary(c)) }
+        // The engine's sets of this extension in the current snapshot (`ext:<id>:…`): how many,
+        // their rules, the rules the index cannot bucket, the hosts it keys.
+        ruleSets?.let { sets ->
+            val mine = (0 until sets.length()).mapNotNull { sets.optJSONObject(it) }.filter { it.optString("id").startsWith("ext:${row.id}:") }
+            if (mine.isNotEmpty()) {
+                entry.put(
+                    "ruleSetsAtEnd",
+                    JSONObject().put("sets", mine.size).put("rules", mine.sumOf { it.optInt("rules") })
+                        .put("wildcard", mine.sumOf { it.optInt("wildcard") }).put("hosts", mine.sumOf { it.optInt("hosts") })
+                        .put("largest", mine.sortedByDescending { it.optInt("rules") }.take(5).map { "${it.optString("id").substringAfterLast(':')} ${it.optInt("rules")}" })
+                )
+            }
+        }
         backgroundView(row.id)?.let { bg ->
             entry.put("backgroundConsoleAtEnd", JSONArray(consoleOf(bg).takeLast(30)))
             // The background's sender-side flow counters (Trust Wallet's store broadcasts to its
             // popup go this way): what its bursts met at the page, before the Java side.
             entry.put("backgroundFlow", json(tabEval(bg, FLOW_REPORT)))
+            // What the extension registered over its manifest (`scripting.registerContentScripts`),
+            // the plan's other source: the count, the files, the matches by their reach.
+            tabEval(bg, REGISTERED_SCRIPTS_ASK, 5)
+            poll(3_000, 250) { val v = tabEval(bg, "window.__zenRegistered", 5); if (v == "null") null else v }?.let { entry.put("registeredScripts", json(it)) }
         }
+    }
+
+    /** One `ext.configure` outcome (`Extensions.configureStats`) summed: the units, their chars, the cached and refused, each unit as its world and origin count. */
+    private fun configureSummary(c: JSONObject): JSONObject {
+        val units = c.optJSONArray("units") ?: JSONArray()
+        val list = JSONArray()
+        var chars = 0L
+        var cached = 0
+        var refused = 0
+        for (i in 0 until units.length()) {
+            val u = units.optJSONObject(i) ?: continue
+            chars += u.optLong("chars")
+            if (u.optBoolean("cached")) cached++
+            if (!u.isNull("refused")) refused++
+            val key = u.optString("key")
+            val origins = key.substringAfter(':', "").split(' ').count { it.isNotEmpty() }
+            list.put(JSONObject().put("world", key.substringBefore(':')).put("origins", origins).put("chars", u.optLong("chars")))
+        }
+        return JSONObject().put("units", units.length()).put("chars", chars).put("cached", cached).put("refused", refused).put("ms", c.optLong("ms")).put("list", list)
     }
 
     /**
@@ -1499,7 +1591,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     private inner class StepEvidence(private val row: Row) {
         private val consoleFrom = backgroundView(row.id)?.let { consoleOf(it).size } ?: 0
         /** Trace lines start with `uptimeMillis`; the ring drops old lines, so the time, not the index, marks the step's start. */
-        private val startedAt = SystemClock.uptimeMillis()
+        val startedAt = SystemClock.uptimeMillis()
 
         private fun traceLines(): List<String> {
             var list: List<String> = emptyList()
@@ -1528,8 +1620,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * A YouTube watch page: the phone WebView lands on m.youtube.com; `desktopSite` asks for the
      * desktop site instead (extensions whose scripts match `www.youtube.com` alone). The page's
      * upsell dialog is closed when it comes up; a consent interstitial makes the check `n/m`.
+     * `play` starts the video before the wait ([playVideo]): for a control drawn only on a playing
+     * page – Speak Subtitles' button waits for the player's caption fetch, which the paused page
+     * the WebView lands on never makes (round 18 §7: `where.video: paused` on both lanes). A page
+     * YouTube will not play for the runner ([YT_PLAYABILITY]: a `playabilityStatus` other than
+     * `OK`, or a bot check's wording – round 20's BEFORE read `video unstarted, src: false` after
+     * the tap and the page's own `playVideo()` on both lanes) is `n/m` when `play` was asked and
+     * nothing started; the reading goes to `extra.playability` on every row.
      */
-    private fun youtube(row: Row, entry: JSONObject, expr: String, label: String, desktopSite: Boolean = false, settleMs: Long = 45_000): Grade {
+    private fun youtube(row: Row, entry: JSONObject, expr: String, label: String, desktopSite: Boolean = false, settleMs: Long = 45_000, play: Boolean = false): Grade {
         val tab = createTab(YOUTUBE_URL)
         if (desktopSite) {
             coreCall("tab.setDesktopSite", JSONObject().put("tabId", tab).put("on", true).toString())
@@ -1537,6 +1636,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         }
         val view = waitForView(tab)
         var upsells = 0
+        val played = if (play) playVideo(view, label) else null
+        upsells += played?.optInt("upsellsClosed") ?: 0
         var found = JSONObject()
         val started = SystemClock.uptimeMillis()
         poll(settleMs, 1_500) {
@@ -1544,18 +1645,63 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             if (tabEval(view, YT_CLOSE_UPSELL) == "closed") upsells++
             if (found.optBoolean("pass")) true else null
         }
-        val where = json(tabEval(view, "JSON.stringify({url: location.href, title: document.title, readyState: document.readyState, video: (function(v){return v ? (v.paused ? 'paused' : 'playing') : 'none'})(document.querySelector('video'))})"))
+        val where = json(tabEval(view, YT_WHERE))
+        val playability = runCatching { json(tabEval(view, YT_PLAYABILITY)) }.getOrDefault(JSONObject())
         val extra = JSONObject().put("page", found).put("where", where).put("upsellsClosed", upsells).put("desktopSite", desktopSite).put("tab", tab)
-            .put("waitedMs", SystemClock.uptimeMillis() - started).put("console", JSONArray(consoleOf(view).takeLast(15)))
+            .put("waitedMs", SystemClock.uptimeMillis() - started).put("console", JSONArray(consoleOf(view).takeLast(15))).put("playability", playability)
+        played?.let { extra.put("play", it) }
         if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
         val url = where.optString("url")
         val host = runCatching { android.net.Uri.parse(url).host ?: "" }.getOrDefault("")
+        // A page YouTube would not play for the runner (its bot check, a sign-in wall, an
+        // unplayable response): a control that waits for playback has nothing to wait for.
+        val gated = play && played?.optString("by") == "none" &&
+            (playability.optBoolean("bot") || playability.optString("status").let { it.isNotEmpty() && it != "OK" })
         return when {
             host.contains("consent") || url.contains("consent.youtube") -> Grade("n/m", "$label: YouTube served its consent interstitial instead of the watch page ($url)", extra)
             !(host == "youtube.com" || host.endsWith(".youtube.com")) -> Grade("n/m", "$label: the tab landed on ${host.ifEmpty { "nowhere" }}, not a watch page (network)", extra)
             found.optBoolean("pass") -> Grade("P", "$label${if (desktopSite) " (desktop site)" else ""}: ${found.toString().take(220)} on $host", extra)
-            else -> Grade("F", "$label${if (desktopSite) " (desktop site)" else ""}: ${found.toString().take(220)} on $host after ${(SystemClock.uptimeMillis() - started) / 1000} s (title ${JSONObject.quote(where.optString("title").take(40))}, video ${where.optString("video")})", extra)
+            gated -> Grade("n/m", "$label${if (desktopSite) " (desktop site)" else ""}: YouTube's playability gate on the runner (${playability.optString("status").ifEmpty { "no status" }}${playability.optString("reason").takeIf { it.isNotEmpty() }?.let { ": \"$it\"" } ?: ""}${if (playability.optBoolean("bot")) ", a bot check" else ""}) – the video never started (${played?.optString("by")}), the control waits for playback (not measurable here)", extra)
+            else -> Grade("F", "$label${if (desktopSite) " (desktop site)" else ""}: ${found.toString().take(220)} on $host after ${(SystemClock.uptimeMillis() - started) / 1000} s (title ${JSONObject.quote(where.optString("title").take(40))}, video ${where.optString("video")}${playability.optString("status").takeIf { it.isNotEmpty() }?.let { ", playability $it" } ?: ""})", extra)
         }
+    }
+
+    /**
+     * The watch page's video started as a viewer starts it: the player's `<video>` waited for, the
+     * upsell dialog closed when it stands over the player, a tap on the player's large play button
+     * (its centre when the button is not drawn) – the tab's WebView plays media on a gesture alone
+     * (`mediaPlaybackRequiresUserGesture`) – and the state read back; when the tap did not take
+     * (a touch-mode player shows its controls on the first tap), the player is asked from the page
+     * (`playVideo()` on `#movie_player`, then `video.play()`), which the tap's activation lets
+     * through. The reading: `by` (tap, script, already playing, none) with the state before and
+     * after each step.
+     */
+    private fun playVideo(view: TabWebView, label: String): JSONObject {
+        val report = JSONObject()
+        val before = pollExpr(view, YT_VIDEO_STATE, 25_000)
+        report.put("before", before)
+        if (!before.optBoolean("pass")) return report.put("by", "none").put("note", "no video element in the page")
+        if (before.optString("state") == "playing") return report.put("by", "already playing")
+        if (tabEval(view, YT_CLOSE_UPSELL) == "closed") report.put("upsellsClosed", 1)
+        var by = "none"
+        val centre = json(tabEval(view, ELEMENT_CENTRE.replace("%SELECTOR%", ".ytp-large-play-button, #movie_player video, video")))
+        val point = screenPoint(view, centre)
+        if (point != null && onScreen("$label: the play tap")) {
+            tap(point.first, point.second)
+            val afterTap = pollExpr(view, YT_VIDEO_PLAYING, 8_000)
+            report.put("afterTap", afterTap)
+            if (afterTap.optBoolean("pass")) by = "tap"
+        } else {
+            report.put("tap", "no point for the player (${centre.toString().take(80)})")
+        }
+        if (by == "none") {
+            report.put("asked", tabEval(view, YT_PLAY_FROM_PAGE))
+            val afterScript = pollExpr(view, YT_VIDEO_PLAYING, 6_000)
+            report.put("afterScript", afterScript)
+            if (afterScript.optBoolean("pass")) by = "script"
+        }
+        Log.i(TAG, "$label: the video ${if (by == "none") "did not start" else "started by $by"} (${report.optJSONObject("afterScript") ?: report.optJSONObject("afterTap") ?: before})")
+        return report.put("by", by)
     }
 
     /** Enhancer for YouTube matches `www.youtube.com` alone: the mobile site first, then the desktop site of the same tab. */
@@ -1651,7 +1797,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * all and its wallpaper's arrival flips with the boot – its app removes the body's
      * `hide-opacity` once loaded and fills `.site-items` with its icon grid, `.search-box` with
      * its search; a filled root or the body shown with children counts), or for text or imagery
-     * (Momentum's greeting and photograph, daily.dev's feed), within the row's budget.
+     * (Momentum's greeting and photograph, daily.dev's feed), within the row's budget – through
+     * the page's open shadow roots as well as its light DOM (round 19: Infinity's loaded app lives
+     * in Lit shadow roots and takes its light-DOM skeleton away, so the light DOM alone read a
+     * drawn page as empty; [NEW_TAB_RENDERED]).
      */
     private fun momentum(row: Row, entry: JSONObject): Grade {
         val factor = speedFactor(entry)
@@ -1682,7 +1831,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             found.optInt("mounted") > 0 -> "its app's mounted root (${found.optInt("mounted")} elements)"
             else -> "nothing"
         }
-        return Grade(if (found.optBoolean("pass")) "P" else "F", "new tab override: the page read by $by after ${found.optLong("ms")} ms: ${found.toString().take(240)}", extra)
+        val roots = found.optInt("shadowRoots").let { if (it > 0) " through $it open shadow root${if (it == 1) "" else "s"}" else "" }
+        return Grade(if (found.optBoolean("pass")) "P" else "F", "new tab override: the page read by $by$roots after ${found.optLong("ms")} ms: ${found.toString().take(240)}", extra)
     }
 
     /** Stylus: a `.user.css` opens its install page, the style installs, the page it targets turns red. */
@@ -3480,9 +3630,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * `window.open` with one that answers a stub window (the fixture logs `fake`) and its content
      * script shows its toast (`#pb-toast-main`) for the refused pop-up: either is the pass. The
      * fixture's `null` alone is the WebView's own refusal, not the extension's (PARTIAL when the
-     * extension's script is in the page but showed nothing); a window opened is F.
+     * extension's script is in the page but showed nothing); a window opened is F. Popup Blocker
+     * Pro (compat round 20) is read the same way: its MAIN-world script answers a dummy window
+     * and its content script toasts `#popup-blocker-pro-jq-toast`.
      */
-    private fun popupBlocker(row: Row, entry: JSONObject): Grade {
+    private fun popupBlocker(label: String): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
         val (tab, view) = fixture("popups.html?blocker", factor, 3_000)
@@ -3500,11 +3652,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         snap("${entry.optString("slug")}-blocked")
         val fake = result.optString("result") == "fake"
         val toast = result.optBoolean("toast")
-        return when {
-            opened.isNotEmpty() && !fake && !toast -> Grade("F", "Poper Blocker: the tap opened ${opened.first().value.take(60)} in a new tab; nothing of the extension's refused it: ${result.toString().take(160)}", extra)
-            fake || toast -> Grade("P", "Poper Blocker: the pop-up was refused by the extension (window.open answered ${result.optString("result")}, toast ${toast}): ${result.toString().take(160)}", extra)
-            result.optBoolean("scriptInPage") -> Grade("PARTIAL", "Poper Blocker: its page script is in the page but the refusal was the WebView's own (window.open answered ${result.optString("result")}, no toast): ${result.toString().take(160)}", extra)
-            else -> Grade("F", "Poper Blocker: nothing of the extension's reached the page (window.open answered ${result.optString("result")}): ${result.toString().take(160)}", extra)
+        when {
+            opened.isNotEmpty() && !fake && !toast -> Grade("F", "$label: the tap opened ${opened.first().value.take(60)} in a new tab; nothing of the extension's refused it: ${result.toString().take(160)}", extra)
+            fake || toast -> Grade("P", "$label: the pop-up was refused by the extension (window.open answered ${result.optString("result")}, toast ${toast}): ${result.toString().take(160)}", extra)
+            result.optBoolean("scriptInPage") -> Grade("PARTIAL", "$label: its page script is in the page but the refusal was the WebView's own (window.open answered ${result.optString("result")}, no toast): ${result.toString().take(160)}", extra)
+            else -> Grade("F", "$label: nothing of the extension's reached the page (window.open answered ${result.optString("result")}): ${result.toString().take(160)}", extra)
         }
     }
 
@@ -3800,9 +3952,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * A row whose action click opens its own page over the fixture tabs (Session Buddy's
      * `session-buddy.html` listing the open tabs, Instant Data Scraper's `popup.html?tabid=`
      * showing the table fixture's rows): the fixtures open, the action is clicked, the page
-     * matching `page` is waited for and `expr` polled in it.
+     * matching `page` is waited for, its controls labelled `taps` tapped in order when the page
+     * needs a step before the reading (2048's `Classic 2048` in its mode menu, [tapOnPage]), and
+     * `expr` polled in it.
      */
-    private fun actionPage(label: String, page: Regex, expr: String, fixtures: List<String>, settleMs: Long = 30_000): (Row, JSONObject) -> Grade = { row, entry ->
+    private fun actionPage(label: String, page: Regex, expr: String, fixtures: List<String>, settleMs: Long = 30_000, taps: List<String> = emptyList()): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
         for (f in fixtures) fixture(f, factor, 1_000)
@@ -3815,6 +3969,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         if (opened != null) {
             val view = waitForView(opened.key)
             showTab(opened.key)
+            if (taps.isNotEmpty()) extra.put("taps", tapOnPage(view, taps, factor))
             found = pollExpr(view, expr, scaled(settleMs, factor))
             found.put("url", opened.value.take(160)).put("console", JSONArray(consoleOf(view).takeLast(10)))
             if (!found.optBoolean("pass")) extra.put("blankTab", blankPageEvidence(view, row, 0L))
@@ -3832,6 +3987,31 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "$label: ${if (opened == null) "the action click opened no ${page.pattern} page within ${scaled(30_000, factor) / 1000} s" else "${extensionPath(opened.value).take(50)} opened: ${found.toString().take(220)}"}",
             extra
         )
+    }
+
+    /**
+     * Controls of an extension's own page tapped in order: each found by its label (a regex over
+     * aria-label, title, value or text, [FIND_LABEL]) once the page draws it (within 10 s), then
+     * tapped through the view as a finger taps ([tapSettled]); the flow stops at the first one
+     * missing. 2048's mode menu (round 18 §7): its `popup.html` opens on `Classic 2048 Multiplayer
+     * Speedrun Private Lobby` with the board's cells laid out at 0x0 behind the menu until a mode
+     * is picked, so `Classic 2048` is tapped ahead of the grid read. The steps' record.
+     */
+    private fun tapOnPage(view: WebView, words: List<String>, factor: Double): JSONArray {
+        val steps = JSONArray()
+        for (re in words) {
+            val hit = poll(scaled(10_000, factor), 500) {
+                json(tabEval(view, FIND_LABEL.replace("__RE__", re))).takeIf { it.optBoolean("clicked") }
+            }
+            if (hit == null) {
+                steps.put("$re: no such control; the page reads ${JSONObject.quote(json(tabEval(view, DEEP_TEXT)).optString("text").take(120))}")
+                break
+            }
+            val note = tapSettled(view, hit, factor)
+            steps.put("$re: tapped ${hit.optString("tag")} ${JSONObject.quote(hit.optString("label"))} at ${hit.optInt("x")},${hit.optInt("y")}${note?.let { " – $it" } ?: ""}")
+            SystemClock.sleep(scaled(1_500, factor))
+        }
+        return steps
     }
 
     /**
@@ -3870,9 +4050,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * Chrome); that button is tapped (a gesture) and the chrome's prompt accepted, then the
      * popup lists the two cookies, then one cookie's own delete control is pressed and the
      * fixture's `document.cookie` drops to one: the pass, as the desktop's round 6 graded it.
-     * Listed but not deleted is `PARTIAL`.
+     * Listed but not deleted is `PARTIAL`. EditThisCookie (compat round 20) takes the same
+     * reading with its host access granted at install (no permission ask; its jQuery-UI
+     * accordion lists the cookies with a trash control per row).
      */
-    private fun cookieEditor(row: Row, entry: JSONObject): Grade {
+    private fun cookieEditor(label: String): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
         val (_, view) = fixture("cookies.html?editor", factor, 2_000)
@@ -3918,13 +4100,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         runCatching { coreCall("extension.closePopup", "null") }
         val wanted = (before.optJSONArray("names")?.length() ?: 0) - 1
         val gone = wanted >= 1 && (after.optJSONArray("names")?.length() ?: 9) == wanted
-        return Grade(
+        Grade(
             when {
                 gone -> "P"
                 listed.optBoolean("pass") -> "PARTIAL"
                 else -> "F"
             },
-            "Cookie-Editor: fixture cookies ${before.optJSONArray("names")} -> ${after.optJSONArray("names") ?: "unread"}; popup ${if (popup == null) "did not render" else "lists ${listed.optInt("fixtureCookies")} of the fixture's cookies (${listed.optString("text").take(100)})"}; permission ${extra.optJSONObject("prompt")?.optString("how")?.ifEmpty { null } ?: extra.optJSONObject("prompt")?.optString("prompt") ?: "not asked"}",
+            "$label: fixture cookies ${before.optJSONArray("names")} -> ${after.optJSONArray("names") ?: "unread"}; popup ${if (popup == null) "did not render" else "lists ${listed.optInt("fixtureCookies")} of the fixture's cookies (${listed.optString("text").take(100)})"}; permission ${extra.optJSONObject("prompt")?.optString("how")?.ifEmpty { null } ?: extra.optJSONObject("prompt")?.optString("prompt") ?: "not asked"}",
             extra
         )
     }
@@ -6372,7 +6554,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("lpcaedmchfhocbbapmcbpinfpgnhiddi", "Google Keep Chrome Extension", "google-keep", core = accountGate("Google Keep", Regex("keep\\.google|accounts\\.google", RegexOption.IGNORE_CASE), page = "index.html")),
         Row("gmbmikajjgmnabiglmofipeabaddhgne", "Save to Google Drive", "save-to-google-drive", core = accountGate("Save to Google Drive", Regex("accounts\\.google|drive\\.google", RegexOption.IGNORE_CASE), gate = "a Google account signed into the browser (identity.getAuthToken)", gateLog = Regex("getAuthToken|signed-in browser account|launchWebAuthFlow", RegexOption.IGNORE_CASE))),
         Row("fkepacicchenbjecpbpbclokcabebhah", "iCloud Bookmarks", "icloud-bookmarks", feasible = false, core = notOnThePhone("nativeMessaging to iCloud for Windows: a Windows-only host (n/a on the phone, as on every other platform); the popup shows Apple's Windows notice")),
-        Row("pejdijmoenmkgeppbflobdenhhabjlaj", "iCloud Passwords", "icloud-passwords", feasible = false, core = notOnThePhone("nativeMessaging to iCloud for Windows: a Windows-only host (n/a on the phone, as on every other platform); the popup shows Apple's Windows notice")),
+        // Round 20 (the ADDENDUM's `chrome.privacy` proof): the `n/a` stands; the three services
+        // settings its background sets at start are read back and off the published controls.
+        Row("pejdijmoenmkgeppbflobdenhhabjlaj", "iCloud Passwords", "icloud-passwords", feasible = false, core = privacyHolder(notOnThePhone("nativeMessaging to iCloud for Windows: a Windows-only host (n/a on the phone, as on every other platform); the popup shows Apple's Windows notice"), ICLOUD_PRIVACY_SETTINGS)),
         Row("kdpelmjpfafjppnhbloffcjpeomlnpah", "WPS PDF", "wps-pdf", core = pdfTool("WPS PDF", Regex("wps"), missing = "F")),
         Row("ogdlpmhglpejoiomcodnpjnfgcpmgale", "Custom Cursor for Chrome", "custom-cursor", core = ::customCursor),
         Row("lmjnegcaeklhafolokijcfjliaokphfk", "Video DownloadHelper", "video-downloadhelper", core = ::videoDownloadHelper),
@@ -6449,7 +6633,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("nikfmfgobenbhmocjaaboihbeocackld", "Enable local file links", "local-file-links", core = ::localFileLinks),
         Row("glghokcicpikglmflbbelbgeafpijkkf", "Signer.Digital Digital Signature, PKI", "signer-digital", core = serviceBacked("Signer.Digital", "signing needs its Signer.Digital host (a desktop companion) over native messaging; its installer dialog opens on Chrome's missing-host disconnect", native = true)),
         Row("pioclpoplcdbaefihamjohnefbikjilc", "Evernote Web Clipper", "evernote-web-clipper", core = accountGate("Evernote Web Clipper", Regex("evernote", RegexOption.IGNORE_CASE), gate = "an Evernote account (its sign-in at accounts.evernote.com)")),
-        Row("bkkbcggnhapdmkeljlodobbkopceiche", "Pop up blocker for Chrome - Poper Blocker", "poper-blocker", core = ::popupBlocker),
+        Row("bkkbcggnhapdmkeljlodobbkopceiche", "Pop up blocker for Chrome - Poper Blocker", "poper-blocker", core = popupBlocker("Poper Blocker")),
         Row("ohahllgiabjaoigichmmfljhkcfikeof", "AdBlocker Ultimate", "adblocker-ultimate", core = ::adBlocker),
         Row("akcocjjpkmlniicdeemdceeajlmoabhg", "Free VPN Proxy - 1VPN", "1vpn", core = vpn("1VPN", pac = true, connectSelector = "#proxyToggle")),
         Row("adbacgifemdbhdkfppmeilbgppmhaobf", "RoPro - Enhance Your Roblox Experience", "ropro", core = ::ropro),
@@ -6489,7 +6673,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // Google Scholar PDF Reader, RoPro) are the rows above, graded again on this round's
         // reading and fixes.
         Row("oijdcdmnjjgnnhgljmhkjlablaejfeeb", "The QR Code Generator", "qr-code-generator", core = popupMarker("The QR Code Generator", "(function(){var best=null,bw=0;var all=document.querySelectorAll('svg, canvas, img');for(var i=0;i<all.length;i++){var b=all[i].getBoundingClientRect();if(b.width*b.height>bw){bw=b.width*b.height;best=all[i]}}var r=best?best.getBoundingClientRect():{width:0,height:0};var paths=best&&best.tagName.toLowerCase()==='svg'?best.querySelectorAll('path, rect').length:-1;return JSON.stringify({pass:r.width>60&&r.height>60&&(paths<0||paths>4),via:best?best.tagName.toLowerCase():'none',w:Math.round(r.width),h:Math.round(r.height),paths:paths,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,80)})})()")),
-        Row("hlkenndednhfkekhgcdicdfddnkalmdm", "Cookie-Editor", "cookie-editor", core = ::cookieEditor),
+        Row("hlkenndednhfkekhgcdicdfddnkalmdm", "Cookie-Editor", "cookie-editor", core = cookieEditor("Cookie-Editor")),
         Row("imdndkajeppdomiimjkcbhkafeeooghd", "Browsing Protection by WithSecure", "withsecure-browsing-protection", core = serviceBacked("Browsing Protection by WithSecure", "its site verdicts come from the WithSecure security application (app.withsecure_chrome_https, a desktop companion) over native messaging; without it the action opens its \"Security application not found\" page, as Chrome shows it", native = true)),
         Row("gojbdfnpnhogfdgjbigejoaolejmgdhk", "OneNote Web Clipper", "onenote-web-clipper", core = ::oneNoteWebClipper),
         Row("hfapbcheiepjppjbnkphkmegjlipojba", "Klarna", "klarna", core = accountGate("Klarna", Regex("klarna", RegexOption.IGNORE_CASE), injects = "iframe[src*='hfapbcheiepjppjbnkphkmegjlipojba'], iframe[src*='klapp'], [id*='klarna'], [class*='klarna']", gate = "a Klarna account (its drawer opens at \"Sign in\")", site = "https://www.hm.com/")),
@@ -6948,7 +7132,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("cdnapgfjopgaggbmfgbiinmmbdcglnam", "OpenDyslexic for Chrome", "opendyslexic", core = popupSwitch("OpenDyslexic", "page-a.html?opendyslexic", "input.toggle, input[type=checkbox]", OPENDYSLEXIC_APPLIED)),
         Row("ejecpjcajdpbjbmlcojcohgenjngflac", "Email Extract - Email Extractor Tool", "email-extract", core = popupMarker("Email Extract", EMAILS_FOUND, page = "emails.html?extract", settleMs = 25_000)),
         Row("gjjbmfigjpgnehjioicaalopaikcnheo", "Dark Theme - Dark mode for Chrome", "dark-theme", core = popupSwitch("Dark Theme", "styled-light.html?darktheme", "img[src*=\"power-icon\"]", DARK_FILTER_APPLIED)),
-        Row("fjoiihoancoimepbgfcmopaciegpigpa", "Speak Subtitles for YouTube", "speak-subtitles", core = { row, entry -> youtube(row, entry, injectedAny("yss-"), "Speak Subtitles' player control on a watch page", desktopSite = true) }),
+        Row("fjoiihoancoimepbgfcmopaciegpigpa", "Speak Subtitles for YouTube", "speak-subtitles", core = { row, entry -> youtube(row, entry, injectedAny("yss-"), "Speak Subtitles' player control on a watch page", desktopSite = true, play = true) }),
         Row("nkokmeaibnajheohncaamjggkanfbphi", "Save Image As PNG", "save-image-as-png", core = ::saveImageAsPng),
         Row("bldgenmjegcnjebiongilahhcjldgmlm", "Google Docs Quick Create", "docs-quick-create", core = popupOpens("Google Docs Quick Create", "/document/i", Regex("docs\\.google\\.com|accounts\\.google\\.com", RegexOption.IGNORE_CASE))),
         Row("iaigceaehdihlnolehbapjfbbfpnlngg", "Mirroring360 Sender for Chrome", "mirroring360", core = serviceBacked("Mirroring360 Sender", "it streams the screen or a tab to a Mirroring360 receiver found through its native host (`nativeMessaging`), the stream sourced by `desktopCapture` / `tabCapture`, none of which the phone gives", native = true)),
@@ -7002,7 +7186,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("ochhcgamjcnhpaekcckimgofnedofplf", "Zoom Video - UltraWide Fill", "zoom-video", core = ::zoomVideo),
         Row("lfdconleibeikjpklmlahaihpnkpmlch", "Video Downloader - Download M3U8, MP4, HLS", "video-downloader-m3u8", core = mediaPopup("Video Downloader (M3U8)", "hls.html?vdm3u8", "/m3u8|stream|clip|\\bn\\/a\\b/i", probe = true, listener = "onHeadersReceived with responseHeaders and extraHeaders over <all_urls> (a .m3u8 address or an HLS content type; the playlist then fetched and parsed in the worker)")),
         Row("appcnhiefcidclcdjeahgklghghihfok", "Google Meet Attendance List", "meet-attendance-list", core = accountGate("Google Meet Attendance List", Regex("meet\\.google\\.com|accounts\\.google\\.com|meetlist\\.io", RegexOption.IGNORE_CASE), gate = "a Google account in a Meet call (its list reads the call's participants; its scripts match meet.google.com's meeting pages alone)")),
-        Row("ijkmjnaahlnmdjjlbhbjbhlnmadmmlgg", "2048", "2048", core = actionPage("2048", Regex("/popup\\.html"), GRID_2048, listOf("page-a.html?2048"))),
+        Row("ijkmjnaahlnmdjjlbhbjbhlnmadmmlgg", "2048", "2048", core = actionPage("2048", Regex("/popup\\.html"), GRID_2048, listOf("page-a.html?2048"), taps = listOf("/^classic 2048$/i"))),
         Row("mcebeofpilippmndlpcghpmghcljajna", "Lusha", "lusha", core = accountGate("Lusha", Regex("lusha\\.com|linkedin\\.com", RegexOption.IGNORE_CASE), gate = "a Lusha account (its side panel signs in at lusha.com) and a LinkedIn, Salesforce or HubSpot page for its scripts")),
         Row("jjghhkepijgakdammjldcbnjehfkfmha", "Salesforce", "salesforce", core = accountGate("Salesforce", Regex("salesforce\\.com|force\\.com", RegexOption.IGNORE_CASE), gate = "a Salesforce login (its side panel signs in to an org; its scripts run in Gmail and Google Calendar)")),
         Row("mnopmeepcnldaopgndiielmfoblaennk", "Web Paint", "web-paint", core = actionMarker("Web Paint", "page-a.html?webpaint", WEB_PAINT_PANEL)),
@@ -7016,7 +7200,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         ),
         Row("ndgimibanhlabgdgjcpbbndiehljcpfh", "SelectorsHub", "selectorshub", core = ownPage("SelectorsHub", "side-panel/side-shub-panel.html", SELECTORSHUB_PANEL)),
         Row("oejgccbfbmkkpaidnkphaiaecficdnfn", "Toggl Track", "toggl-track", core = accountGate("Toggl Track", Regex("toggl\\.com", RegexOption.IGNORE_CASE), gate = "a Toggl account (its popup signs in at toggl.com; its timer posts to its service)")),
-        Row("caclkomlalccbpcdllchkeecicepbmbm", "Advanced Font Settings", "advanced-font-settings", core = ::fontSettingsPage),
+        Row("caclkomlalccbpcdllchkeecicepbmbm", "Advanced Font Settings", "advanced-font-settings", core = ::fontSettingsProof),
         Row("ldmmifpegigmeammaeckplhnjbbpccmm", "Save.to", "save-to", core = accountGate("Save.to", Regex("notion\\.so|save\\.to", RegexOption.IGNORE_CASE), injects = "iframe[src*='popup/index.html'], iframe[src*='restricted_popup'], iframe[src*='ldmmifpegigmeammaeckplhnjbbpccmm']", gate = "a Notion login (its clipper frame reads notion.so's session)")),
         Row("jdopnakmnlnccgpfpmjmdjjohmcdgabp", "Screen Recorder", "screen-recorder-3", core = recorderPage("Screen Recorder", Regex("/pages/popup/popup\\.html"), "/capture|record|screen|camera|microphone|stop capturing/i")),
         Row("jiaopdjbehhjgokpphdfgmapkobbnmjp", "Youtube-shorts block", "youtube-shorts-block", core = shortsRedirect("Youtube-shorts block", "https://www.youtube.com/shorts/zV4uBH9S1KI")),
@@ -7035,13 +7219,1399 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("lhannfkhjdhmibllojbbdjdbpegidojj", "Screenshot & Screen Video Recorder", "screenshot-screen-video-recorder", core = popupCapture("Screenshot & Screen Video Recorder", "/^visible area$|visible area/i")),
         Row("fnmihdojmnkclgjpcoonokmkhjpjechg", "Smart Sidebar", "smart-sidebar", core = domMarker("Smart Sidebar", "page-a.html?smartsidebar", injectedAny("aifnmjmchg"), settleMs = 30_000)),
         Row("jhidcpailhmpjpbdbhceiaeeggkalgmd", "Ice Dodo", "ice-dodo", core = ::iceDodo),
+        // Compat round 19: ranks 451-480 by installs (`.github/scripts/ext-compat/next30-round16.json`,
+        // compiled by round 10's method for a future desktop release round to reuse), graded with
+        // the phone's feasibility classes as rounds 4-18 graded theirs. An account or a vendor's
+        // service is `n/m` with its gate surface rendered (Connecteur Antidote's corrector in
+        // Druide's desktop application over native messaging, Affirm's pay-over-time behind an
+        // account and a merchant's checkout, ExpressKeys' and Passbolt's vaults behind their
+        // sign-ins, Draftback's playback behind a Google Doc); a WebView limit is `n/a` (Picture
+        // in Picture's window where `document.pictureInPictureEnabled` is false, axe DevTools'
+        // panel with no DevTools to host it). The rest read an effect: the URL bar's search taken
+        // (Planet Search), a PDF sent on or marked (Soda PDF Viewer's tabs.update to its online
+        // viewer, DocHub's "Open in DocHub" button on the fixture PDF), a popup item opening a
+        // site (X-Audacity's and Gimp online's "Full screen" at offidocs.com), a new-tab override
+        // forwarding to its site (MSN New Tab to microsoftstart.com), a side panel rendered as a
+        // tab (CSS Peeper), a content script's hotkey clicking the page (OP Auto Clicker), an
+        // answer drawn in a popup (Perplexity), a content script's mark on a live site (Augmented
+        // Steam on a Steam store page, Netflix Party's party tab on Prime Video, Directo's offer
+        // on a booking.com hotel, Beyond 20's roll buttons on a D&D Beyond monster, CS2 Trader's
+        // marketplace links on a Steam market listing), the action's own effect on the page
+        // (Responsive Viewer's device frames, VideoMirror's flipped clip, Font Finder's picker and
+        // its analysis window, Mute Tab's muted tab), a popup's reading (Plugins' manager, Snake's
+        // canvas), a header rewritten by the popup's apply (User-Agent Switcher and Manager on the
+        // echo page), a playlist address redirected into the extension's player (VideoPlayer
+        // MPD/M3U8) and the ad fixture blocked (Ad Block Ninja). The five largest bundles run
+        // last (Augmented Steam, Plugins, CS2 Trader, ExpressKeys, Passbolt), as rounds 14-18
+        // ordered theirs.
+        Row("kadaohckdkghfaclhjmkmplebcdcnfnp", "Planet Search", "planet-search", core = searchOverride("Planet Search", Regex("planet-search\\.com", RegexOption.IGNORE_CASE), Regex("planet search", RegexOption.IGNORE_CASE))),
+        Row("lmbopdiikkamfphhgcckcjhojnokgfeo", "Connecteur Antidote", "connecteur-antidote", core = serviceBacked("Connecteur Antidote", "its corrector and dictionaries run in Druide's Antidote desktop application, reached from its worker over native messaging (`connectNative` in `background.js`), which the phone has not got", native = true)),
+        Row("achogidmbhmofkmpgamphmlebdhgkdhc", "Soda PDF Viewer: Edit, Convert, Compress PDF", "soda-pdf-viewer", core = ::sodaPdf),
+        Row("jaembmdeobjibglbnnefpalabeohjpnj", "Audio editor online X-Audacity", "x-audacity", core = popupOpens("X-Audacity", "/^full screen$/i", Regex("offidocs\\.com", RegexOption.IGNORE_CASE))),
+        Row("lklfbkdigihjaaeamncibechhgalldgl", "MSN New Tab", "msn-new-tab", core = newTabSendsTo("MSN New Tab", Regex("microsoftstart\\.com|msn\\.com", RegexOption.IGNORE_CASE))),
+        Row("mbnbehikldjhnfehhnaidhjhoofhpehk", "CSS Peeper", "css-peeper", core = ownPage("CSS Peeper", "sidepanel.html", CSS_PEEPER_PANEL)),
+        Row("kpmbpdpbjjadabknommjfphilmecebab", "OP Auto Clicker", "op-auto-clicker", core = ::autoClicker),
+        Row("hlgbcneanomplepojfcnclggenpcoldo", "Perplexity - AI Companion", "perplexity", core = ::perplexity),
+        Row("gmehookibnphigonphocphhcepbijeen", "Picture in Picture - floating video player", "picture-in-picture-2", core = ::pictureInPicture),
+        Row("mmnbenehknklpbendgmgngeaignppnbe", "Netflix Party", "netflix-party", core = liveMarker("Netflix Party", "https://www.primevideo.com/", NETFLIX_PARTY_TAB, settleMs = 45_000, desktop = true, mirrors = listOf("https://www.youtube.com/watch?v=zV4uBH9S1KI"))),
+        Row("inmopeiepgfljkpkidclfgbgbmfcennb", "Responsive Viewer", "responsive-viewer", core = actionMarker("Responsive Viewer", "page-a.html?responsive", RESPONSIVE_VIEWER_SCREENS, settleMs = 40_000)),
+        Row("fonalplhodhnenmokepaijoemaednpjm", "Directo - Travel Deals - Save on Hotels", "directo", core = ::directo),
+        Row("mjgcgnfikekladnkhnimljcalfibijha", "DocHub - Sign PDF from Gmail", "dochub", core = pdfTool("DocHub", Regex("dce-file-viewer-import-btn|dochub", RegexOption.IGNORE_CASE), missing = "F")),
+        Row("cmfijaapnnkcglahdngmjnhkfnkihkbg", "Affirm: Buy Now, Pay Later", "affirm", core = accountGate("Affirm", Regex("affirm\\.com", RegexOption.IGNORE_CASE), gate = "an Affirm account and a merchant's checkout (its content script offers pay-over-time on the merchant sites its service lists; its popup shows the extension's state alone)")),
+        // Its Apply (all tabs) is an `input[type=button]` whose title runs to 61 characters: the
+        // label rule reads its value instead (round 19 asked for the title and never reached it).
+        Row("bhchdcejhohfmigjafbampogmaanbfkg", "User-Agent Switcher and Manager", "user-agent-switcher-manager", core = popupFlow("User-Agent Switcher and Manager", "echo-headers?uasm", listOf("/^apply \\(all tabs\\)$/i", "/^refresh( the current page| tab)$/i"), UASM_HEADER_ECHO, settleMs = 30_000, probe = UASM_TYPE_UA to UASM_POPUP_STATE)),
+        Row("gnblbpbepfbfmoobegdogkglpbhcjofh", "Beyond 20", "beyond-20", core = liveMarker("Beyond 20", "https://www.dndbeyond.com/monsters/16907-goblin", injectedAny("beyond20"), settleMs = 45_000, desktop = true, mirrors = listOf("https://www.dndbeyond.com/spells/2103-fire-bolt"))),
+        Row("omebobahbkampglebglkoagddjnjbhle", "Gimp online - image editor and paint tool", "gimp-online", core = popupOpens("Gimp online", "/^full screen$/i", Regex("offidocs\\.com", RegexOption.IGNORE_CASE))),
+        Row("bhiichidigehdgphoambhjbekalahgha", "Font Finder", "font-finder", core = ::fontFinder),
+        Row("lgknkdljklhkafjfekjjbldfcdnmdpkh", "VideoMirror", "videomirror", core = actionMarker("VideoMirror", "video.html?videomirror", VIDEO_MIRRORED)),
+        Row("blljobffcekcbopmkgfhpcjmbfnelkfg", "Mute Tab", "mute-tab", core = ::muteTab),
+        Row("opmeopcambhfimffbomjgemehjkbbmji", "VideoPlayer MPD/M3U8/IPTV/EPG", "videoplayer-mpd", core = ::mediaPlayerRedirect),
+        Row("ppfadpgpccljindldolejmgkhgaficka", "Ad Block Ninja", "ad-block-ninja", core = ::adBlocker),
+        Row("nnajoiemfpldioamchanognpjmocgkbg", "Draftback", "draftback", core = attachedGate("Draftback", "https://docs.google.com/document/d/1/edit", "a Google account with a Google Doc open (its playback mounts in Docs' toolbar; docs.google.com sends a fresh browser to its sign-in)")),
+        Row("oppflpnigmhkldmdmmbnopidlhahanji", "Snake", "snake", core = popupMarker("Snake", SNAKE_CANVAS, settleMs = 25_000)),
+        // These two rows cost the API 34 Google image's emulator its host side on every boot of
+        // compat round 19 that reached them – four of four across the round's BEFORE and AFTER
+        // runs (qemu-system-x86_64-headless 37.1.11 dead in its software GPU's threads, the guest's
+        // logcat clean every time, the app's memory flat: round 16 §7.0's HOST-SIDE class). axe
+        // DevTools three of three: 5 s after its install in the BEFORE's first boot (SIGSEGV in
+        // tcmalloc's free list under a libvk_swiftshader.so thread), 5 s after its install in the
+        // AFTER's first boot (SIGSEGV in the GL translator's GL_DrawArrays on a gfxstream render
+        // thread), 4 s after its background step in the AFTER's second boot (SIGABRT in tcmalloc's
+        // heap check under a libvk_swiftshader.so free). Augmented Steam one of one: 8 s after its
+        // options page in the BEFORE's second boot while the Steam store page painted (SIGSEGV on a
+        // libvk_swiftshader.so thread). Round 19's trigger kept them for last on that lane so the
+        // other 44 rows read first; the coordinator's ruling on the round's question 3 marks both
+        // `notOnGoogleImage` as Buyhatke's and AdGuard VPN's rows are marked. Read on the AOSP lane
+        // (156), where each read the same in the round's BEFORE and AFTER.
+        Row(
+            "lhdoppojpmngadmnindnejefpokejbdd", "axe DevTools - Web Accessibility Testing", "axe-devtools",
+            notOnGoogleImage = "the emulator's host side (qemu-system-x86_64-headless 37.1.11, gfxstream over SwiftShader on the API 34 Google image) died under this row on every boot of compat round 19 that reached it – three of three: 5 s after its install in the BEFORE run's first boot (SIGSEGV in tcmalloc's SLL_Next under a libvk_swiftshader.so thread, 21:29:23 UTC 2026-09-25), 5 s after its install in the AFTER run's first boot (SIGSEGV in the GL translator's GL_DrawArrays on a gfxstream RenderThread, 01:35:31 UTC 2026-09-26) and 4 s after its background step in the workflow's second boot of the AFTER (SIGABRT in tcmalloc's heap check under a libvk_swiftshader.so free, 01:44:09 UTC) – the guest's logcat clean every time, no chromium crash, no tombstone; the row is read on the AOSP lane (156): P/PARTIAL/-/n/a in both runs (its core notOnThePhone by design)",
+            core = notOnThePhone("axe DevTools: its scans run from its devtools panel (`devtools_page`) over chrome.debugger; the phone has no DevTools panel to host it (WebView limit); its popup is the panel's front door")
+        ),
+        Row(
+            "dnhpnfgdlenaccegplpojghhmaamnnfp", "Augmented Steam", "augmented-steam",
+            notOnGoogleImage = "the emulator's host side (qemu-system-x86_64-headless 37.1.11, gfxstream over SwiftShader on the API 34 Google image) died under this row on the one boot of compat round 19 that reached it – the BEFORE run's second boot, 8 s after its options page while the Steam store page (store.steampowered.com/app/440/) painted through EGL_emulation at 700-1,050 ms frames: SIGSEGV on a libvk_swiftshader.so thread at 21:37:32 UTC 2026-09-25, the guest's logcat clean, the app's memory flat (peak RSS 439 MB, the renderer 397 MB); the row's other three boots on that image died under axe DevTools before reaching it; the row is read on the AOSP lane (156): P/-/P/P in both runs",
+            core = liveMarker("Augmented Steam", "https://store.steampowered.com/app/440/", injectedAny("\\bes_"), settleMs = 45_000, desktop = true, mirrors = listOf("https://steamcommunity.com/id/gaben"))
+        ),
+        Row("mmcblfncjaclajmegihojiekebofjcen", "Plugins", "plugins", core = popupMarker("Plugins", PLUGINS_POPUP, settleMs = 30_000)),
+        Row("kaibcgikagnkfgjnibflebpldakfhfih", "CS2 Trader - Steam Trading Enhancer", "cs2-trader", core = liveMarker("CS2 Trader", "https://steamcommunity.com/market/listings/730/AK-47%20%7C%20Redline%20%28Field-Tested%29", injectedAny("realMoneySite|copy_profile_perma_link|copy_trade_link|show_offer_history"), settleMs = 45_000, desktop = true, mirrors = listOf("https://steamcommunity.com/id/gaben"))),
+        Row("blgcbajigpdfohpgcmbbfnphcgifjopc", "ExpressKeys: Password Manager", "expresskeys", core = accountGate("ExpressKeys", Regex("expressvpn\\.com|expresskeys", RegexOption.IGNORE_CASE), gate = "an ExpressVPN Keys account (its popup, a Flutter app, signs in; its vault syncs through ExpressVPN's service and its desktop app is reached over native messaging)")),
+        Row("didegimhafipceonhjepacocaffmoppf", "Passbolt - Open source password manager", "passbolt", core = accountGate("Passbolt", Regex("passbolt\\.com", RegexOption.IGNORE_CASE), gate = "a Passbolt server and the account's key (its quick access signs in with the user's passphrase against a self-hosted or cloud Passbolt instance; a fresh install offers its setup)")),
+        // --- compat round 20 (ranks 481-510 by installs; `.github/scripts/ext-compat/next30-round17.json`) ---
+        // Each core rule read off the unpacked bundle: My Doodle's content script swaps google.com's
+        // logo for its text (`doodleText: "MyDoodle"`, `powerSwitchStatus: "ON"` written at its first
+        // run); Diccionario RAE's one `contexts: ["all"]` item opens `dle.rae.es/srv/search` from
+        // `onClicked` (`windows.create`, a tab here) – read in the image long-press menu as Save
+        // Image As PNG's is; EditThisCookie's popup lists the tab's cookies with a trash control per
+        // cookie (host access `<all_urls>`, no permission ask); Yahoo Homepage is a new-tab override
+        // (`ui/homepage.html`) framing yahoo.com in a sandboxed iframe; SAML-tracer's action opens
+        // its `TraceWindow.html` as a window (a tab here), and that page's own `webRequest`
+        // listeners list what the browser loads next; J2TEAM Security's `anti-fb-phishing`
+        // content script has the worker send a page with a Facebook-shaped login form off
+        // facebook.com to its `blocked.html` (`realtime: true` by default); Popup Blocker Pro's
+        // MAIN-world script (`scripting.registerContentScripts`) answers a dummy window for a
+        // refused `window.open` and its content script toasts `#popup-blocker-pro-jq-toast`;
+        // anonymoX sets a `pac_script` from its `.toggle-button-area`; High Contrast's `#toggle`
+        // writes `enabled` to storage.local and its content script puts `hc="a3"` (invert) on
+        // `<html>` (disabled by default); Ready X (the Starknet wallet, Argent X's successor)
+        // injects `window.starknet_argentX`; Youtube Playback Speed Control draws its
+        // `.PlayBackRatePanelYPSC` over any site's video (`enableAllVideosButton: true`).
+        Row("acnonhmkejidodnppipkffhfjbfiogha", "My Doodle", "my-doodle", core = liveMarker("My Doodle", "https://www.google.com/", MY_DOODLE, settleMs = 30_000, desktop = true)),
+        Row("jcocgejjjlnfddlhpbecfapicaajdibb", "Bark for Chrome", "bark", core = serviceBacked("Bark for Chrome", "its content scripts on Gemini and Canva report the child's AI chats to the parent's Bark account (`identity.getProfileUserInfo`, urls.bark.us); no popup, no options – the worker is its whole reachable surface")),
+        Row("cimiefiiaegbelhefglklhhakcgmhkai", "Plasma Integration", "plasma-integration", core = serviceBacked("Plasma Integration", "its every feature (media controls, KDE Connect, downloads in the Plasma shell, tabs in KRunner) is the KDE Plasma desktop's host over native messaging (`org.kde.plasma.browser_integration`); the phone has no Plasma", native = true)),
+        Row("dlnejlppicbjfcfcedcflplfjajinajd", "Bonjourr · Minimalist New Tab Page", "bonjourr", core = newTabOverride("Bonjourr")),
+        Row("gejdeepcjkfbepfkcfdgiodgoglakiii", "Diccionario RAE en un clic 2022", "diccionario-rae", core = menuItemOpens("Diccionario RAE", "gallery.html?rae", ".grid img", Regex("Diccionario RAE", RegexOption.IGNORE_CASE), Regex("dle\\.rae\\.es/srv/search", RegexOption.IGNORE_CASE))),
+        Row("kogfdlbehkaeoafmgaecphlnhohpabig", "Google Meet Breakout by Robert Hudek", "meet-breakout", core = actionPage("Google Meet Breakout", Regex("popup\\.html", RegexOption.IGNORE_CASE), MEET_BREAKOUT_PANEL, fixtures = listOf("page-a.html?breakout"))),
+        Row("ojfebgpkimhlhcblbalbfjblapadhbol", "EditThisCookie (V3)", "editthiscookie", core = cookieEditor("EditThisCookie")),
+        Row("lijhjhlnfifgoabbihoobnfapogkcjgk", "Scrible Extension", "scrible", account = true, core = popupLogin("Scrible")),
+        Row("jdanfkhnfpagoijgfmklhgakdicpnfil", "Yahoo Homepage", "yahoo-homepage", core = newTabOverride("Yahoo Homepage")),
+        Row("injdgfhiepghpnihhgmkejcjnoohaibm", "Shopify Scraper & Parser - Shopify Spy", "shopify-spy", account = true, core = popupLogin("Shopify Spy")),
+        Row("oilholdcmnjkebdhokhaamalceecjbip", "Maps Scraper by Presto", "maps-scraper-presto", account = true, core = popupLogin("Maps Scraper by Presto")),
+        Row("mpdajninpobndbfcldcmbpnnbhibjmch", "SAML-tracer", "saml-tracer", core = ::samlTracer),
+        Row("dlaajbpfmppphhflganljdalclmcockl", "TickerIQ Crypto Price Ticker", "tickeriq", core = popupMarker("TickerIQ", TICKERIQ_PRICES, settleMs = 30_000, notMeasurable = Regex("network error|failed to fetch|offline|try again", RegexOption.IGNORE_CASE), gate = "Binance's public ticker API")),
+        Row("khhnfdoljialnlomkdkphhdhngfppabl", "Speed Test for Chrome - WiFi speedtest", "speed-test", core = popupMarker("Speed Test for Chrome", SPEEDTEST_APP, settleMs = 25_000)),
+        Row("nbllaikcjebbpdemmekhnciekkjodlla", "SkrivaText", "skrivatext", account = true, core = popupLogin("SkrivaText")),
+        Row("hmlcjjclebjnfohgmgikjfnbmfkigocc", "J2TEAM Security", "j2team-security", core = warningPage("J2TEAM Security", "$BASE/fb-phish.html", Regex("blocked\\.html", RegexOption.IGNORE_CASE))),
+        Row("gngocbkfmikdgphklgmmehbjjlfgdemm", "SwagButton", "swagbutton", account = true, core = popupLogin("SwagButton")),
+        Row("njcickgebhnpgmoodjdgohkclfplejli", "RoValra - Roblox Improved", "rovalra", core = liveMarker("RoValra", "https://www.roblox.com/games/920587237", injectedAny("rovalra"))),
+        Row("kiodaajmphnkcajieajajinghpejdjai", "Popup Blocker Pro", "popup-blocker-pro", core = popupBlocker("Popup Blocker Pro")),
+        Row("jpfpebmajhhopeonhlcgidhclcccjcik", "Speed Dial 2 New tab", "speed-dial-2", core = newTabOverride("Speed Dial 2")),
+        Row("icpklikeghomkemdellmmkoifgfbakio", "anonymoX", "anonymox", core = vpn("anonymoX", pac = true, connectSelector = ".toggle-button-area")),
+        Row("bmhcbmnbenmcecpmpepghooflbehcack", "Liner: ChatGPT AI Copilot for Web&YouTube&PDF", "liner", core = accountGate("Liner", Regex("liner\\.com", RegexOption.IGNORE_CASE), injects = "[class*=\"liner\"], [id*=\"liner\"], [class*=\"LINER\"]", gate = "a Liner account (its highlights and Copilot sync through app.liner.com)")),
+        Row("djcfdncoelnlbldjfhinnjlhdjlikmph", "High Contrast", "high-contrast", core = popupSwitch("High Contrast", "page-a.html?hc", "#toggle", HIGH_CONTRAST_APPLIED, settleMs = 20_000)),
+        Row("fefnkplkicihcoenmljhbihhaaagjhpp", "Mino: Automatic Coupons & Cash Back", "mino", core = contentAttached("Mino", "its coupon dialog runs at a merchant's checkout (codes from api.gomino.com over the shop's cart; the action click asks the page's script for that dialog); no merchant checkout is reachable to the runner", verdict = "n/m")),
+        Row("hdannnflhlmdablckfkjpleikpphncik", "Youtube Playback Speed Control", "youtube-playback-speed-control", core = domMarker("Youtube Playback Speed Control's panel on the clip", "video.html?ypsc", YPSC_PANEL, settleMs = 25_000)),
+        // The five largest bundles last (PocketTube 11.0 MB, Read AI 7.9, Ready X 7.7, Infinity New Tab Pro 5.1, Save All Resources 5.0), as round 19 ordered its own.
+        Row("kdmnjgijlmjgmimahnillepgcgeemffb", "PocketTube: Youtube Subscription Manager", "pockettube", core = attachedGate("PocketTube", "https://www.youtube.com/feed/subscriptions", "a YouTube account (its groups hang off the signed-in subscriptions feed)")),
+        Row("aiamjjeggglngiggkmmbnpnpeejjejaf", "Read AI", "read-ai", account = true, core = popupLogin("Read AI")),
+        Row("dlcobpjiigpikoobohmabehhmhfoodbb", "Ready X", "ready-x", core = domMarker("Ready X's Starknet provider injected into the page world", "wallet.html?readyx", READY_PROVIDER, settleMs = 30_000)),
+        Row("nnnkddnnlpamobajfibfdgfnbcnkgngh", "Infinity New Tab (Pro)", "infinity-new-tab-pro", core = newTabOverride("Infinity New Tab (Pro)")),
+        Row("abpdnfjocnmdomablahdcfnoggeeiedb", "Save All Resources", "save-all-resources", feasible = false, core = notOnThePhone("Save All Resources: its saver is a DevTools panel (`devtools_page`) reading the inspected page's resources through `chrome.devtools`; the phone has no DevTools panel to host it (WebView limit); its popup is the panel's instruction sheet")),
+        // --- compat round 21 (ranks 511-540 by installs; `.github/scripts/ext-compat/next30-round18.json`) ---
+        // Each core rule read off the unpacked bundle: PureVPN's and ZoogVPN's popups are their
+        // sign-in forms (`ui/popup/login.html`; "Login to your account") ahead of any connect;
+        // Magical's action has no popup – `onClicked` on an http(s) tab tells its content UI to
+        // open the panel (`panel.hasOpenedViaBrowserAction`), whose features sign in through
+        // getmagical.com; Night Eye's content script marks `<html nighteye="dark|filtered|
+        // normal|disabled|passive">` and injects `#nighteyedefaultcss` (a trial that starts on
+        // install); Toby is a new-tab override (`newtab.html`); Adblock for YouTube ships 49
+        // `easylist_rules` all with `initiatorDomains: ["youtube.com"]` (doubleclick,
+        // googlesyndication, …) and a `skip-ad.js` that clicks `.ytp-ad-skip-button`; L.O.C's
+        // whole surface is its worker answering loc.dev / lnmai.com over `externally_connectable`
+        // (no popup, no options, no content script); Trancy's three content scripts draw its
+        // reader and subtitles UI (`trancy-slider`, `trancy-menuitem`) and its AI runs through
+        // trancy.com; Gradient Sentry Node's popup connects a Gradient account
+        // (app.gradient.network); Temp Mail's popup draws the mailbox address into `#email` from
+        // `web2.temp-mail.org/api/v1`; Checker Plus for Google Calendar signs in with `identity`
+        // (its popup `popup.html?source=toolbar`); Chrome Capture's worker records with
+        // `tabCapture.getMediaStreamId` / `desktopCapture.chooseDesktopMedia` and its offscreen
+        // document's `getDisplayMedia` (the WebView has neither); Save as PDF's popup offers
+        // `.convert`, which has its worker POST the tab's address to pdfcrowd.com (the fixture
+        // is the runner's own address, which that service cannot fetch); Extensity's popup lists
+        // `management.getAll` as `<li class="item">` rows under its search box ("No Extensions or
+        // Apps found." when none); Requestly's popup is a React app in `#root`; Zoom for Google
+        // Chrome has no default popup – its `openactiondoubleclick` default has `onClicked` call
+        // `action.setPopup({tabId, popup: "popup.html"})` and `action.openPopup()`, and the popup's
+        // `#plus` / `#minus` drive `tabs.setZoom` on the tab; Bookmark Sidebar's worker sets
+        // `sidePanel.setPanelBehavior({openPanelOnActionClick: true})` (its `html/sidepanel.html`
+        // draws the bookmark tree); Image Downloader's popup lists the tab's pictures from its
+        // `js/common.js` content script; Petra injects `window.aptos` and `window.petra` from
+        // `static/js/inpage.js`; Custom Cursor Trails' content script draws `.jso-cursor-trail-
+        // shape`s into a `.jso-cursor-trail-wrapper` on `mousemove` / `touchmove`; Go Back With
+        // Backspace's content script (`document_start`, all pages) hears `keydown` Backspace
+        // outside an editable, asks its worker over `runtime.sendMessage('')` that it is alive,
+        // and calls `history.back()` (`history.length < 2` returns early); TinEye's one image
+        // menu item ("Search Image on TinEye") opens `tineye.com/search/?…&url=<src>` next to the
+        // tab; Vidyard's action starts a recording (`tabCapture`; its content scripts run on
+        // Gmail, LinkedIn, Salesforce, Eloqua and Gong; its sign-in is auth.vidyard.com);
+        // Docusign's popup `shell.html` signs in to a Docusign account; Adblock Ad Blocker Pro
+        // blocks with `declarativeNetRequest` rulesets and a `webRequest` observer (its
+        // `js/content.js` on every page); Popup Blocker (strict) registers a MAIN-world script
+        // (`data/inject/block/`) that refuses `window.open` and a UI script that toasts
+        // (`data/ui/index.html`), as Popup Blocker Pro's does; Reader View's action runs
+        // Readability in the tab (`scripting.executeScript`, `data/inject/wrapper.js`) and its
+        // worker rewrites the tab to `data/reader/index.html?id=<tab>&url=<page>`
+        // (`tabs.update`, not a new tab); chrome lock's `onInstalled` opens `options.html` (a
+        // password in `#new`, saved to `storage.local.key`) and its `onStartup` closes every tab
+        // and opens `options-1.html` (the lock) while a key is set – the restart leg is the
+        // Chrono-style relaunch the sweep does not do per row; Social Blade's content script on
+        // youtube.com logs `[SB] Extension loaded!` at document start and POSTs the channel id
+        // to socialblade.com/api/tmp/ping on a watch page, and its action opens socialblade.com;
+        // Banrisul's whole surface is `nativeMessaging` to the bank's desktop host.
+        Row("bfidboloedlamgdmenmlbipfnccokknp", "PureVPN Proxy - Best VPN for Chrome", "purevpn", account = true, core = popupLogin("PureVPN")),
+        Row("alncdjedloppbablonallfbkeiknmkdi", "Dark Mode - Night Eye", "night-eye", core = domMarker("Night Eye's dark mode on the light fixture", "styled-light.html?nighteye", NIGHT_EYE_DARK, settleMs = 30_000)),
+        Row("hddnkoipeenegfoeaoibdmnaalmgkpip", "Toby: Tab Management Tool", "toby", core = newTabOverride("Toby")),
+        Row("jpefmbpcbebpjpmelobfakahfdcgcmkl", "Adblock for YouTube", "adblock-for-youtube-easylist", core = youtubeAdRules("Adblock for YouTube", Regex("doubleclick\\.net|googlesyndication\\.com|googleadservices\\.com|google-analytics\\.com|yieldlove|adnxs", RegexOption.IGNORE_CASE))),
+        Row("eojdckfcadamkapabechhbnkleligand", "L.O.C", "loc", core = serviceBacked("L.O.C", "its worker's whole reachable surface is the `externally_connectable` channel loc.dev / lnmai.com's pages open to it (`runtime.onMessageExternal`; Facebook and Messenger host access for their requests); no popup, no options, no content script")),
+        Row("caacbgbklghmpodbdafajbgdnegacfmo", "Gradient Sentry Node", "gradient-sentry-node", account = true, core = popupLogin("Gradient Sentry Node")),
+        Row("inojafojbhdpnehkhhfjalgjjobnhomj", "Temp Mail - Disposable Temporary Email", "temp-mail", core = popupMarker("Temp Mail", TEMP_MAIL_ADDRESS, settleMs = 30_000, notMeasurable = Regex("error|failed|try again|unavailable|offline|something went wrong|network", RegexOption.IGNORE_CASE), gate = "temp-mail.org's mailbox API (web2.temp-mail.org)")),
+        Row("hkhggnncdpfibdhinjiegagmopldibha", "Checker Plus for Google Calendar", "checker-plus-calendar", account = true, core = popupLogin("Checker Plus for Google Calendar")),
+        Row("ggaabchcecdbomdcnbahdfddfikjmphe", "Chrome Capture - Screenshot & GIF", "chrome-capture", core = captureLimit("Chrome Capture", "/record|capture|screenshot|gif|start|full ?page|visible|area/i")),
+        Row("kpdjmbiefanbdgnkcikhllpmjnnllbbc", "Save as PDF", "save-as-pdf", core = popupMarker("Save as PDF", SAVE_AS_PDF_POPUP, settleMs = 30_000, notMeasurable = Regex("error|could not|failed|unable|timed? ?out|not (be )?(reach|fetch|download)|refused|unreachable", RegexOption.IGNORE_CASE), gate = "pdfcrowd.com's conversion service (the fixture is the runner's own address, which the service cannot fetch)")),
+        Row("jjmflmamggggndanpgfnpelongoepncg", "Extensity", "extensity", core = popupMarker("Extensity", EXTENSITY_LIST, settleMs = 25_000)),
+        Row("mdnleldcmiljblolnjhpnblkcekpdkpa", "Requestly", "requestly", core = popupMarker("Requestly", REQUESTLY_POPUP, settleMs = 30_000)),
+        Row("lajondecmobodlejlcjllhojikagldgd", "Zoom for Google Chrome", "zoom-for-google-chrome", core = zoomPopup("Zoom for Google Chrome")),
+        Row("jdbnofccmhefkmjbkkdkfiicjkgofkdh", "Bookmark Sidebar", "bookmark-sidebar", core = panelMarker("Bookmark Sidebar", "page-a.html?bookmarksidebar", BOOKMARK_SIDEBAR_PANEL, settleMs = 30_000)),
+        Row("daeljdgmllhgmbdkpgnaojldjkdgkbjg", "Image Downloader - Save pictures", "image-downloader-save-pictures", core = imageList("Image Downloader - Save pictures")),
+        Row("immngomjofcbflgcckkfddnbpmjokbjh", "ZoogVPN - Free VPN for Chrome & Proxy", "zoogvpn", account = true, core = popupLogin("ZoogVPN")),
+        Row("cpofhfeclnhnhodbcabgcihloffdpgpd", "Custom Cursor Trails", "custom-cursor-trails", core = domMarker("Custom Cursor Trails' shapes after pointer motion", "page-a.html?trails", CURSOR_TRAILS_DRAWN, settleMs = 20_000, prepare = { view -> tabEval(view, POINTER_MOTION) })),
+        Row("eekailopagacbcdloonjhbiecobagjci", "Go Back With Backspace", "go-back-with-backspace", core = backspaceGoesBack("Go Back With Backspace")),
+        Row("haebnnbpedcbhciplfhjjkbafijpncjl", "TinEye Reverse Image Search", "tineye", core = menuItemOpens("TinEye", "gallery.html?tineye", ".grid img", Regex("TinEye", RegexOption.IGNORE_CASE), Regex("tineye\\.com/search", RegexOption.IGNORE_CASE))),
+        Row("blkboeaihdlecgdjjgkcabbacndbjibc", "Docusign eSignature for Chrome", "docusign", account = true, core = popupLogin("Docusign")),
+        Row("aefkmifgmaafnojlojpnekbpbmjiiogg", "Popup Blocker (strict)", "popup-blocker-strict", core = popupBlocker("Popup Blocker (strict)")),
+        Row("ecabifbgmdmgdllomnfinbmaellmclnh", "Reader View", "reader-view", core = readerRewrites("Reader View")),
+        Row("cjmjgijhapgicbhmniemjkjeaedanank", "Set password for your browser ( chrome lock )", "chrome-lock", core = ownPage("chrome lock", "options.html", CHROME_LOCK_FORM, gate = "a relaunch with the key set (its `runtime.onStartup` closes every tab and opens `options-1.html`, the lock screen – the restart leg the sweep does not run per row)")),
+        Row("cfidkbgamfhdgmedldkagjopnbobdmdn", "Social Blade", "social-blade", core = ::socialBlade),
+        Row("mgapcljibnhkigclmbmdhgehflhljbdd", "Banrisul Internet Banking", "banrisul", core = serviceBacked("Banrisul Internet Banking", "its every feature is the bank's desktop host over native messaging (`Bjess2hm_ContentScript.js` on banrisul.com.br relays to it); the phone has no host to install", native = true)),
+        // The five largest bundles last (Adblock Ad Blocker Pro 25.0 MB, Vidyard 21.2, Petra 13.7, Magical 8.4, Trancy 6.0), as rounds 19 and 20 ordered their own.
+        Row("dgjbaljgolmlcmmklmmeafecikidmjpi", "Adblock Ad Blocker Pro", "adblock-ad-blocker-pro", core = ::adBlocker),
+        Row("jiihcciniecimeajcniapbngjjbonjan", "Vidyard - Screen Recorder & Screen Capture", "vidyard", core = accountGate("Vidyard", Regex("vidyard\\.com", RegexOption.IGNORE_CASE), gate = "a Vidyard account (its recorder signs in at auth.vidyard.com; its content scripts run on Gmail, LinkedIn, Salesforce, Eloqua and Gong) and a tab capture the WebView has not")),
+        Row("ejjladinnckdgjemekebdpeokbikhfci", "Petra Aptos Wallet", "petra", core = domMarker("Petra's Aptos provider injected into the page world", "wallet.html?petra", PETRA_PROVIDER, settleMs = 30_000)),
+        Row("iibninhmiggehlcdolcilmhacighjamp", "Magical: Text Expander & Autofill", "magical", core = accountGate("Magical", Regex("getmagical\\.com", RegexOption.IGNORE_CASE), injects = "[id*=\"magical\" i], [class*=\"magical\" i], magical-root, magical-fab", gate = "a Magical account (its panel and templates sign in through getmagical.com)")),
+        Row("mjdbhokoopacimoekfgkcoogikbfgngb", "Trancy - AI Translator & Dual Subtitles", "trancy", core = accountGate("Trancy", Regex("trancy\\.com", RegexOption.IGNORE_CASE), injects = "[class*=\"trancy-\"], [id*=\"trancy\"]", gate = "a Trancy account (its AI translation and dual subtitles run through trancy.com)")),
         // Round 15's proof row (5.11), the #448 exemption read on both WebViews: not a store
         // extension but two fixtures of the sweep's own, sideloaded as a file manager hands
         // Zenium a package. Run alone by id (the trigger's `[proof]` lanes); a full sweep reads it
         // after the store rows in table order (its rule stands only while its row runs: the
         // row's cleanup disables the blocker as it does any row's extension).
-        Row(PROOF_BLOCKER_ID, PROOF_BLOCKER_NAME, "proof-own-pages-exempt", fixture = PROOF_BLOCKER_FILES, core = ::ownPagesExempt)
+        Row(PROOF_BLOCKER_ID, PROOF_BLOCKER_NAME, "proof-own-pages-exempt", fixture = PROOF_BLOCKER_FILES, core = ::ownPagesExempt),
+        // Round 20's two `chrome.fontSettings` proof rows beside Advanced Font Settings' (the
+        // bridge's proof at rank 433): fixtures of the sweep's own with the `fontSettings`
+        // permission and a probe page – A the sizes, `clearFont` and the reverts, B two
+        // extensions' precedence (its core enables A again, so A's row comes first). The ids are
+        // [fixtureId]'s of the names, not the desktop's #500 probes' (those were unpacked
+        // fixtures of the desktop worker's, never in the repository).
+        Row(FONTS_PROBE_A_ID, FONTS_PROBE_A_NAME, "proof-fonts-probe-a", fixture = FONTS_PROBE_A_FILES, core = ::fontsProbeSizes),
+        Row(FONTS_PROBE_B_ID, FONTS_PROBE_B_NAME, "proof-fonts-probe-b", fixture = FONTS_PROBE_B_FILES, core = ::fontsProbePrecedence),
+        // Round 20's `chrome.privacy` proof (the coordinator's ADDENDUM item 2d): a fixture of the
+        // sweep's own with the `privacy` permission and a probe page – the sets read back, the
+        // controls core publishes, `navigator.doNotTrack`, the `DNT` header and the `Referer`
+        // drop on a document request, a disable and an enable, the clears. iCloud Passwords' row
+        // (the desktop's thirty, above) reads the three services values its background takes.
+        Row(PRIVACY_PROBE_ID, PRIVACY_PROBE_NAME, "proof-privacy-probe", fixture = PRIVACY_PROBE_FILES, core = ::privacyProbe),
+        // Round 20's seam reading with W6-C6's Fonts page (#518, on main since the round's
+        // merge): probe A's fixture under another name, the phone's Customise fonts rows held at
+        // its values, the "Controlled by" row's press opening the probe's details, its Enabled
+        // switch dropping the layer. A `[lane]` row (the trigger's SWEEP_ONLY names it).
+        Row(FONTS_PAGE_PROBE_ID, FONTS_PAGE_PROBE_NAME, "proof-fonts-page-probe", fixture = FONTS_PAGE_PROBE_FILES, core = ::fontsPageSeam),
+        // Round 21's storage order probe (R21-12, Zoom Video's lost update): a fixture of the
+        // sweep's own with Zoom Video's two producers – a popup and a content script
+        // read-modify-writing one `chrome.storage.local` key –, four legs (finger taps, script
+        // taps, the order leg across the storage call and `tabs.sendMessage`, a burst a side),
+        // the frames' clocks paired with the host's trace; every stale write attributed to the
+        // runtime (an inversion after receipt, a stale read after an acknowledged set) or to the
+        // extension's own race. A `[lane]` row (the trigger's SWEEP_ONLY names it).
+        Row(ORDER_PROBE_ID, ORDER_PROBE_NAME, "proof-storage-order-probe", fixture = ORDER_PROBE_FILES, core = ::storageOrderProbe)
     )
+
+    // --- the core checks of compat round 21 (ranks 511-540 by installs) --------------------------
+
+    /**
+     * A YouTube-scoped ad ruleset (Adblock for YouTube 2.9: 49 `easylist_rules`, every one
+     * `initiatorDomains: ["youtube.com"]`, so the sweep's own ad fixture on 10.0.2.2 matches
+     * nothing of it): a watch page opens and settles, and the runtime's request decisions made
+     * while it loaded are read for the ad hosts (`hosts`). A `block` decision on one of them is
+     * the pass; the page loading without a request to any of them is `PARTIAL` – the ruleset
+     * enabled in the worker (`DNR_RULESETS_PROBE`) and nothing for it to stop, as the mobile
+     * watch page often serves no ad slot to a fresh profile –; an ad host request answered
+     * `allow` with the ruleset enabled is `F`, the rules not applied. The page not serving the
+     * runner (a consent wall, an empty document) is `n/m` with what it showed.
+     */
+    private fun youtubeAdRules(label: String, hosts: Regex): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val seen = decisions().toHashSet()
+        val tab = createTab(YOUTUBE_URL)
+        val view = waitForView(tab)
+        poll(scaled(45_000, factor), 500) { if (tabEval(view, "String(document.readyState === 'complete')") == "true") true else null }
+        SystemClock.sleep(scaled(15_000, factor))
+        val page = json(tabEval(view, DOM_REPORT))
+        extra.put("page", page)
+        val fresh = decisions().filter { it !in seen }
+        val adLines = fresh.filter { hosts.containsMatchIn(it.substringAfterLast(' ')) }
+        val blocked = adLines.filter { it.startsWith("block") }
+        val allowed = adLines.filter { it.startsWith("allow") }
+        extra.put("decisions", fresh.size).put("adRequests", adLines.size).put("blocked", JSONArray(blocked.take(8))).put("allowed", JSONArray(allowed.take(8)))
+        backgroundView(row.id)?.let { bg ->
+            extra.put("rulesets", probe(bg, DNR_RULESETS_PROBE, "__zenRulesets", scaled(8_000, factor)))
+            extra.put("workerConsole", JSONArray(consoleOf(bg).takeLast(8)))
+        }
+        extra.put("console", JSONArray(consoleOf(view).takeLast(10)))
+        showTab(tab)
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-watch")
+        val enabled = extra.optJSONObject("rulesets")?.optJSONArray("enabled")?.length() ?: 0
+        val text = page.optString("text")
+        when {
+            blocked.isNotEmpty() -> Grade("P", "$label: ${blocked.size} ad request(s) from the watch page blocked by its rules (${allowed.size} allowed; e.g. ${blocked.first().substringAfterLast(' ').take(80)}); $enabled ruleset(s) enabled", extra)
+            CHALLENGE_WORDS.containsMatchIn(text) || text.isEmpty() -> Grade("n/m", "$label: youtube.com did not serve its watch page to the runner (\"${text.take(80)}\", ${page.optInt("els")} elements); nothing for the rules to act on (not measurable here)", extra)
+            allowed.isNotEmpty() && enabled > 0 -> Grade("F", "$label: ${allowed.size} ad request(s) from the watch page were allowed with $enabled ruleset(s) enabled (e.g. ${allowed.first().substringAfterLast(' ').take(80)}); the rules did not apply", extra)
+            enabled > 0 -> Grade("PARTIAL", "$label: the watch page made no request to an ad host in ${fresh.size} decisions (nothing for its $enabled enabled ruleset(s) to stop); the skip-ad script's leg needs an ad slot the page did not serve", extra)
+            else -> Grade("F", "$label: no ruleset enabled in the worker (${extra.optJSONObject("rulesets")?.toString()?.take(160)}) and ${adLines.size} ad request(s) seen", extra)
+        }
+    }
+
+    /**
+     * Zoom for Google Chrome: no default popup – its `onClicked` (the `openactiondoubleclick`
+     * default) sets `popup.html` for the tab and calls `action.openPopup()`; the popup's `#plus`
+     * steps `tabs.setZoom` up on the tab. The fixture opens and its layout width is read; the
+     * action is clicked once (the popup set, recorded), the popup is opened and `#plus` tapped
+     * twice; the page is polled for a narrower layout viewport (the phone's page zoom lays the
+     * page out from the viewport meta, `pageScript.ts`'s controller) and the worker is asked
+     * `tabs.getZoom` for the tab. `P` when the zoom read back is above 1 and the layout
+     * followed; `PARTIAL` when the value changed and the layout did not (or the reverse); `F`
+     * when the popup never came or nothing moved. The zoom is reset with `#minus` taps at the end.
+     */
+    private fun zoomPopup(label: String): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (tab, view) = fixture("page-a.html?zoom", factor, 2_000)
+        val before = json(tabEval(view, ZOOM_LAYOUT))
+        extra.put("before", before)
+        val since = StepEvidence(row)
+        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        SystemClock.sleep(scaled(2_500, factor))
+        extra.put("popupAfterFirstClick", extensionAction(row.id)?.opt("popup"))
+        var popup = popupView()?.takeIf { it.context == "popup" && rendered(it) }
+        if (popup == null) {
+            runCatching { coreCall("extension.closePopup", "null") }
+            SystemClock.sleep(scaled(800, factor))
+            popup = openPopup(row, factor)
+        }
+        val taps = JSONArray()
+        if (popup != null) {
+            SystemClock.sleep(scaled(2_000, factor))
+            extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(160))
+            for (i in 0 until 2) {
+                val centre = json(tabEval(popup, ELEMENT_CENTRE.replace("%SELECTOR%", "#plus")))
+                val point = screenPoint(popup, centre)
+                taps.put(JSONObject().put("centre", centre).put("tapped", point != null))
+                if (point != null) tap(point.first, point.second)
+                SystemClock.sleep(scaled(1_200, factor))
+            }
+            extra.put("popupConsole", JSONArray(consoleOf(popup).takeLast(8)))
+        }
+        extra.put("taps", taps)
+        val after = pollExpr(view, ZOOM_LAYOUT.replace("pass:false", "pass:Math.abs(document.documentElement.clientWidth-${before.optInt("width", 0)})>4"), scaled(12_000, factor))
+        extra.put("after", after)
+        val zoom = backgroundView(row.id)?.let { bg ->
+            probe(bg, "(function(){window.__zenZoomProbe={done:false};try{chrome.tabs.query({active:true,currentWindow:true},function(tabs){var t=tabs&&tabs[0];if(!t){window.__zenZoomProbe={done:true,error:'no active tab'};return}chrome.tabs.getZoom(t.id,function(z){window.__zenZoomProbe={done:true,tabId:t.id,zoom:z,lastError:chrome.runtime.lastError?String(chrome.runtime.lastError.message):null}})})}catch(e){window.__zenZoomProbe={done:true,error:String(e&&e.message||e)}}})()", "__zenZoomProbe", scaled(8_000, factor))
+        } ?: JSONObject().put("error", "no background view")
+        extra.put("getZoom", zoom)
+        since.record(extra, "atEnd")
+        showTab(tab)
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-zoomed")
+        if (popup != null) {
+            for (i in 0 until 2) {
+                val centre = json(tabEval(popup, ELEMENT_CENTRE.replace("%SELECTOR%", "#minus")))
+                screenPoint(popup, centre)?.let { tap(it.first, it.second) }
+                SystemClock.sleep(scaled(800, factor))
+            }
+        }
+        runCatching { coreCall("extension.closePopup", "null") }
+        val value = zoom.optDouble("zoom", 1.0)
+        val laidOut = after.optBoolean("pass")
+        val note = "popup ${if (popup == null) "never rendered (action popup after the first click: ${extra.opt("popupAfterFirstClick")})" else "up (\"${extra.optString("popupText").take(60)}\")"}; tabs.getZoom ${zoom.toString().take(120)}; layout width ${before.optInt("width")} -> ${after.optInt("width")} (viewport \"${after.optString("viewport").take(60)}\")"
+        when {
+            popup == null -> Grade("F", "$label: $note", extra)
+            value > 1.01 && laidOut -> Grade("P", "$label: two #plus taps zoomed the tab to $value and the page laid out narrower: $note", extra)
+            value > 1.01 || laidOut -> Grade("PARTIAL", "$label: ${if (value > 1.01) "tabs.setZoom took ($value) but the page did not lay out again" else "the page laid out again but tabs.getZoom still reads $value"}: $note", extra)
+            else -> Grade("F", "$label: two #plus taps changed nothing: $note", extra)
+        }
+    }
+
+    /**
+     * A row whose action opens the side panel (Bookmark Sidebar's `sidePanel.setPanelBehavior
+     * ({openPanelOnActionClick: true})`, `html/sidepanel.html`) or a popup, and whose core is
+     * what that surface draws: the fixture settles, the action is clicked, the sheet or the
+     * popup is waited for and `expr` polled in it. `F` when no surface rendered or the
+     * expression never passed (the surface's text and console recorded).
+     */
+    private fun panelMarker(label: String, page: String, expr: String, settleMs: Long = 25_000): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        fixture(page, factor, 2_000)
+        val since = StepEvidence(row)
+        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        val surface = poll(scaled(POPUP_TIMEOUT_MS, factor), 400) { popupView()?.takeIf { (it.context == "popup" || it.context == "sidePanel") && rendered(it) } }
+        var found = JSONObject()
+        if (surface != null) {
+            found = pollExpr(surface, expr, scaled(settleMs, factor))
+            found.put("console", JSONArray(consoleOf(surface).takeLast(10)))
+            extra.put("surface", surface.context).put("surfaceText", json(tabEval(surface, DEEP_TEXT)).optString("text").take(200))
+        }
+        extra.put("panel", found)
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-panel")
+        runCatching { coreCall("extension.closePopup", "null") }
+        when {
+            found.optBoolean("pass") -> Grade("P", "$label: its ${extra.optString("surface")} ${found.toString().take(240)}", extra)
+            surface != null -> Grade("F", "$label: its ${extra.optString("surface")} rendered without the reading: ${found.toString().take(240)}", extra)
+            else -> Grade("F", "$label: the action click opened no popup or side panel within ${scaled(POPUP_TIMEOUT_MS, factor) / 1000} s", extra)
+        }
+    }
+
+    /**
+     * Go Back With Backspace: its content script hears `keydown` Backspace on `window` outside
+     * an editable, asks its worker over `runtime.sendMessage('')` that the extension is alive
+     * and calls `history.back()` (`history.length < 2` returns early). Page A opens and
+     * navigates itself to page B (two entries); a Backspace `keydown` dispatched on a focused
+     * `<input>` must leave the tab on B (the editable gate), and one dispatched on the body must
+     * take it back to A within the wait. Both from the page world: the isolated world's listener
+     * sees the same DOM event, as the extension's own `composedPath()[0]` reading assumes.
+     * `P` on both; `PARTIAL` when the body's key went back but the input's did too (the gate
+     * missed); `F` when the body's key left the tab on B (the worker's reply or the listener),
+     * with the worker's console.
+     */
+    private fun backspaceGoesBack(label: String): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (tab, _) = fixture("page-a.html?backspace", factor, 1_500)
+        tabEval(waitForView(tab), "location.assign('$BASE/page-b.html?backspace')")
+        val onB = poll(scaled(15_000, factor), 400) { tabUrls()[tab]?.takeIf { it.contains("page-b.html") } }
+        val view = waitForView(tab)
+        poll(scaled(15_000, factor), 400) { if (tabEval(view, "String(document.readyState === 'complete')") == "true") true else null }
+        SystemClock.sleep(scaled(3_000, factor))
+        extra.put("history", tabEval(view, "String(history.length)")).put("onB", onB != null)
+        val since = StepEvidence(row)
+        // The editable gate first: the key in an input is typing, not navigation.
+        extra.put("inputKey", tabEval(view, BACKSPACE_KEY.replace("__TARGET__", "input")))
+        SystemClock.sleep(scaled(3_000, factor))
+        val stayed = tabUrls()[tab]?.contains("page-b.html") == true
+        extra.put("stayedAfterInputKey", stayed)
+        extra.put("bodyKey", tabEval(view, BACKSPACE_KEY.replace("__TARGET__", "body")))
+        val backOnA = poll(scaled(12_000, factor), 400) { tabUrls()[tab]?.takeIf { it.contains("page-a.html") } }
+        extra.put("urlAtEnd", tabUrls()[tab] ?: "").put("console", JSONArray(consoleOf(view).takeLast(10)))
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        since.record(extra, "atEnd")
+        showTab(tab)
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-back")
+        when {
+            onB == null -> Grade("F", "$label: the fixture never reached page B (${tabUrls()[tab]?.take(80)}); the driver's navigation, not the row's", extra)
+            backOnA != null && stayed -> Grade("P", "$label: Backspace on the body took the tab back to page A (history ${extra.optString("history")}); the same key in an input left it on page B", extra)
+            backOnA != null -> Grade("PARTIAL", "$label: Backspace on the body went back, but the key in an input navigated as well (its editable gate missed)", extra)
+            else -> Grade("F", "$label: Backspace on the body left the tab on ${(tabUrls()[tab] ?: "").take(80)} within ${scaled(12_000, factor) / 1000} s (history ${extra.optString("history")}; the worker's reply to sendMessage('') or the listener)", extra)
+        }
+    }
+
+    /**
+     * Reader View: the action click runs Readability in the tab (`scripting.executeScript`,
+     * `data/inject/wrapper.js`) and the worker rewrites the SAME tab to
+     * `data/reader/index.html?id=<tab>&url=<page>` (`tabs.update`). The article fixture opens,
+     * the action is clicked, the tab's address is polled for the reader page and the article's
+     * title and body are read in it. `P` when the reader page carries the fixture's title and
+     * over 300 characters of its text; `PARTIAL` when the tab was rewritten but the article did
+     * not come through; `F` when the tab stayed on the fixture (the worker's console and any
+     * popup the click opened instead recorded).
+     */
+    private fun readerRewrites(label: String): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (tab, view) = fixture("article.html?reader", factor, 2_500)
+        val since = StepEvidence(row)
+        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        val reader = poll(scaled(30_000, factor), 500) { tabUrls()[tab]?.takeIf { Regex("data/reader/index\\.html", RegexOption.IGNORE_CASE).containsMatchIn(it) } }
+        var article = JSONObject()
+        if (reader != null) {
+            val readerView = waitForView(tab)
+            article = pollExpr(readerView, READER_VIEW_ARTICLE, scaled(25_000, factor))
+            article.put("console", JSONArray(consoleOf(readerView).takeLast(10)))
+        } else {
+            extra.put("fixtureConsole", JSONArray(consoleOf(view).takeLast(10)))
+            popupView()?.let { extra.put("popupInstead", json(tabEval(it, DEEP_TEXT)).optString("text").take(160)) }
+        }
+        extra.put("reader", (reader ?: "").take(200)).put("article", article).put("tabsAtEnd", JSONArray(tabUrls().values.toList()))
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        since.record(extra, "atEnd")
+        showTab(tab)
+        SystemClock.sleep(800)
+        snap("${entry.optString("slug")}-reader")
+        runCatching { coreCall("extension.closePopup", "null") }
+        when {
+            article.optBoolean("pass") -> Grade("P", "$label: the action rewrote the tab to ${extensionPath(reader!!).take(60)} and the reader carries the article (\"${article.optString("title").take(60)}\", ${article.optInt("chars")} characters)", extra)
+            reader != null -> Grade("PARTIAL", "$label: the tab was rewritten to ${extensionPath(reader).take(60)} but the article did not come through: ${article.toString().take(200)}", extra)
+            else -> Grade("F", "$label: the action click left the tab on ${(tabUrls()[tab] ?: "").take(80)} for ${scaled(30_000, factor) / 1000} s (no reader page)", extra)
+        }
+    }
+
+    /**
+     * Social Blade: its youtube.com content script (`document_start`, all frames) draws
+     * nothing – it logs `[SB] Extension loaded!` and, on a watch page, reads the channel link
+     * (`#upload-info .ytd-channel-name a`, the desktop page's) and POSTs the channel id to
+     * socialblade.com/api/tmp/ping; its action opens socialblade.com in a new tab. The watch
+     * page opens as the desktop site (the selector's page), and the marker is read off the
+     * tab's console (the script's line) and the runtime's request decisions (the ping); then
+     * the action is clicked and a tab on socialblade.com is waited for. `P` when the script
+     * showed (its line or its ping) and the action opened its site; `PARTIAL` on one of the
+     * two; `F` on neither; the page not serving the runner is `n/m`.
+     */
+    private fun socialBlade(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val seen = decisions().toHashSet()
+        val tab = createTab(YOUTUBE_URL)
+        coreCall("tab.setDesktopSite", JSONObject().put("tabId", tab).put("on", true).toString())
+        SystemClock.sleep(1_000)
+        val view = waitForView(tab)
+        poll(scaled(45_000, factor), 500) { if (tabEval(view, "String(document.readyState === 'complete')") == "true") true else null }
+        val ping = poll(scaled(30_000, factor), 1_000) {
+            decisions().firstOrNull { it !in seen && it.contains("socialblade.com/api/tmp/ping") }
+        }
+        val console = consoleOf(view)
+        val lines = console.filter { it.contains("[SB]") }
+        val page = json(tabEval(view, DOM_REPORT))
+        extra.put("page", page).put("sbLines", JSONArray(lines.take(6))).put("ping", ping ?: JSONObject.NULL).put("console", JSONArray(console.takeLast(10)))
+        val before = tabUrls().keys
+        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        val opened = poll(scaled(20_000, factor), 500) { tabUrls().entries.firstOrNull { it.key !in before && it.value.contains("socialblade.com") } }
+        extra.put("actionOpened", opened?.value ?: JSONObject.NULL)
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        showTab(tab)
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-watch")
+        runCatching { coreCall("extension.closePopup", "null") }
+        val text = page.optString("text")
+        val script = lines.isNotEmpty() || ping != null
+        return when {
+            !script && (CHALLENGE_WORDS.containsMatchIn(text) || text.isEmpty()) -> Grade("n/m", "Social Blade: youtube.com did not serve its watch page to the runner (\"${text.take(80)}\"); nothing for its script to read (not measurable here)", extra)
+            script && opened != null -> Grade("P", "Social Blade: its script showed on the watch page (${lines.size} `[SB]` line(s); ping ${if (ping != null) "sent" else "not seen"}) and the action opened ${opened.value.take(60)}", extra)
+            script -> Grade("PARTIAL", "Social Blade: its script showed on the watch page (${lines.size} `[SB]` line(s); ping ${if (ping != null) "sent" else "not seen"}) but the action opened no socialblade.com tab within ${scaled(20_000, factor) / 1000} s", extra)
+            opened != null -> Grade("PARTIAL", "Social Blade: the action opened ${opened.value.take(60)} but the watch page showed no line or ping of its script (console ${console.size} lines)", extra)
+            else -> Grade("F", "Social Blade: no `[SB]` line and no ping on the watch page, and the action opened nothing", extra)
+        }
+    }
+
+    /**
+     * The storage order probe (round 21's R21-12; Zoom Video's lost update the measure): the
+     * fixture [ORDER_PROBE_FILES] – Zoom Video's two producers, a popup and a content script,
+     * read-modify-writing one `chrome.storage.local` key – driven through four legs on the
+     * fixture page with the popup open over it. A: six taps BY FINGER on the popup's button, 1.3 s
+     * apart so they fall at different phases of the script's every-second write (Zoom Video's
+     * cadence, and the tap path round 20 saw the loss on). B: six taps by script
+     * (`__zenOrderRun('tap')`), the same write without the finger. C: the order leg, the script's
+     * tick off – twenty times the popup does `set({seq})` and in the SAME task
+     * `tabs.sendMessage(read)`, and the script's `get` answers what it saw: a `seq` behind the one
+     * just set is an inversion across the two paths (the storage call and the message). D: the
+     * burst – forty back-to-back read-modify-writes a side at once. Every call carries its frame's
+     * wall-clock stamps (issue, reply); the host's bridge trace gives each call's receipt and its
+     * reply's `hop/run/back` legs in uptime; the driver reads the wall↔uptime offset once and
+     * [orderAnalysis] pairs them. The store's commit history is the script's `onChanged` log (each
+     * value carries its writer's `set` time): a commit whose old value is not its writer's read is
+     * a STALE WRITE, and it is the runtime's when the host had received the intervening `set`
+     * before the writer's `get` (an inversion after receipt – from receipt on the path is one
+     * FIFO) or when the writer's `get` was issued after that `set` was acknowledged to its frame;
+     * otherwise it is the extension's own race (its `get` ran before the other side's `set` was
+     * acknowledged), which the note counts and names. `F` on any runtime-attributed stale write or
+     * order-leg inversion; `PARTIAL` when a leg did not run in full without one; `P` otherwise with
+     * the counts, the legs' medians and the cross-source receipt skews, recorded not graded.
+     */
+    private fun storageOrderProbe(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val slug = entry.optString("slug")
+        val extra = JSONObject()
+        val offset = System.currentTimeMillis() - SystemClock.uptimeMillis()
+        extra.put("wallMinusUptimeMs", offset)
+        // The trace window opens BEFORE the fixture loads: the content script's first ticks run
+        // between its mount and the popup (one tick on 113, eight on the slower 156 in round 21's
+        // `[lane]` run), and with the window opened after them their frame stamps had no host
+        // lines – the counts disagreed, the by-time pairing shifted every content call one host
+        // line late, and 21 / 27 "inversions after receipt" were that shift. A call issued
+        // before the window is dropped from the analysis ([orderAnalysis]'s `preWindowCalls`).
+        val since = StepEvidence(row)
+        val windowStartWall = since.startedAt + offset
+        extra.put("windowStartWall", windowStartWall)
+        val (_, view) = fixture("page-a.html?order", factor, 2_000)
+        val mounted = poll(scaled(15_000, factor), 400) { if (tabEval(view, ORDER_CS_MOUNTED) == "true") true else null } == true
+        extra.put("contentScriptMounted", mounted)
+        val popup = openPopup(row, factor)
+        if (popup == null || !mounted) {
+            extra.put("page", json(tabEval(view, DOM_REPORT))).put("console", JSONArray(consoleOf(view).takeLast(10)))
+            since.record(extra, "atEnd")
+            snap("$slug-core")
+            runCatching { coreCall("extension.closePopup", "null") }
+            return Grade("F", if (popup == null) "storage order probe: popup did not render in the core check" else "storage order probe: the content script did not mount on the fixture within ${scaled(15_000, factor) / 1000} s", extra)
+        }
+        val tabKnown = poll(scaled(10_000, factor), 300) { tabEval(popup, "String(!!(window.__zenOrderPopup&&window.__zenOrderPopup.tabId!==null))").takeIf { it == "true" } } != null
+        extra.put("popupKnowsTab", tabKnown)
+        fun tapLanded(before: Int): Boolean = poll(scaled(8_000, factor), 100) {
+            tabEval(popup, "String((function(p){var t=p&&p.taps[$before];return !!(t&&t.tSetReply>0)})(window.__zenOrderPopup))").takeIf { it == "true" }
+        } != null
+        // Leg A: the finger.
+        val button = poll(scaled(10_000, factor), 400) { json(tabEval(popup, ELEMENT_CENTRE.replace("%SELECTOR%", "#tap"))).takeIf { it.has("x") } }
+        extra.put("button", button ?: JSONObject.NULL)
+        var touched = 0
+        var touchAttempts = 0
+        if (button != null) {
+            val point = screenPoint(popup, button)
+            if (point != null) {
+                for (i in 1..6) {
+                    val before = tabEval(popup, ORDER_POPUP_TAPS).toIntOrNull() ?: 0
+                    touchAttempts++
+                    tap(point.first, point.second)
+                    if (tapLanded(before)) touched++
+                    SystemClock.sleep(1_300)
+                }
+            }
+        }
+        extra.put("touchedTaps", touched).put("touchAttempts", touchAttempts)
+        // Leg B: the script.
+        var evaluated = 0
+        for (i in 1..6) {
+            val before = tabEval(popup, ORDER_POPUP_TAPS).toIntOrNull() ?: 0
+            if (tabEval(popup, "window.__zenOrderRun('tap')") != "started") continue
+            if (tapLanded(before)) evaluated++
+            SystemClock.sleep(1_300)
+        }
+        extra.put("evaluatedTaps", evaluated)
+        // Leg C: the order leg, the script's tick off.
+        orderCommand(view, """{"cmd":"mode","mode":"off"}""")
+        SystemClock.sleep(400)
+        val orderStarted = tabKnown && tabEval(popup, "window.__zenOrderRun('order',20)") == "started"
+        val orderDone = orderStarted && poll(scaled(45_000, factor), 300) {
+            tabEval(popup, "String(!!(window.__zenOrderPopup&&!window.__zenOrderPopup.busy&&window.__zenOrderPopup.order.length>=20))").takeIf { it == "true" }
+        } != null
+        extra.put("orderLegStarted", orderStarted).put("orderLegDone", orderDone)
+        // Leg D: the burst, both sides at once.
+        orderCommand(view, """{"cmd":"burst","n":40}""")
+        val burstStarted = tabEval(popup, "window.__zenOrderRun('burst',40)") == "started"
+        val burstDone = burstStarted && poll(scaled(70_000, factor), 400) {
+            val popupIdle = tabEval(popup, "String(!!(window.__zenOrderPopup&&!window.__zenOrderPopup.busy&&window.__zenOrderPopup.burst.length>=40))") == "true"
+            val script = json(tabEval(view, ORDER_CS_LOG))
+            val scriptIdle = !script.optBoolean("bursting", true) && (script.optJSONArray("rmw")?.let { a -> (0 until a.length()).count { a.optJSONObject(it)?.optString("tag") == "burst" } } ?: 0) >= 40
+            if (popupIdle && scriptIdle) true else null
+        } != null
+        extra.put("burstLegStarted", burstStarted).put("burstLegDone", burstDone)
+        SystemClock.sleep(scaled(1_500, factor))
+        // The logs: the popup's, the script's (published into its node on request), the worker's, the host's trace.
+        val popupLog = json(tabEval(popup, "JSON.stringify(window.__zenOrderPopup||null)"))
+        orderCommand(view, """{"cmd":"publish"}""")
+        val csLog = json(tabEval(view, ORDER_CS_LOG))
+        val workerLog = backgroundView(row.id)?.let { bg -> runCatching { json(tabEval(bg, "JSON.stringify(window.__zenOrder||null)", 5)) }.getOrNull() } ?: JSONObject().put("error", "no background view")
+        val trace = since.trace()
+        val analysis = orderAnalysis(popupLog, csLog, workerLog, trace, offset, windowStartWall)
+        extra.put("analysis", analysis).put("popupLog", popupLog).put("contentLog", csLog)
+            .put("workerLog", JSONObject().put("changes", workerLog.optJSONArray("changes")?.length() ?: -1).put("msgs", workerLog.optInt("msgs", -1)).put("err", workerLog.opt("err") ?: workerLog.opt("error") ?: JSONObject.NULL))
+            .put("traceLines", trace.size).put("popupConsole", JSONArray(consoleOf(popup).takeLast(8))).put("pageConsole", JSONArray(consoleOf(view).takeLast(8)))
+        since.record(extra, "atEnd")
+        snap("$slug-core")
+        runCatching { coreCall("extension.closePopup", "null") }
+        val runtimeFaults = analysis.optInt("postReceiptInversions") + analysis.optInt("ackedBeforeIssueStale") + analysis.optInt("orderStale")
+        val legsRan = touched >= 6 && evaluated >= 6 && orderDone && burstDone
+        val legs = "touched $touched/6 (attempts $touchAttempts), evaluated $evaluated/6, order ${if (orderDone) "done" else if (orderStarted) "NOT done" else "not started"}, burst ${if (burstDone) "done" else if (burstStarted) "NOT done" else "not started"}"
+        val note = analysis.optString("summary")
+        return when {
+            runtimeFaults > 0 -> Grade("F", "storage order probe: the runtime's order broke ($runtimeFaults runtime-attributed: ${analysis.optInt("postReceiptInversions")} inversion(s) after receipt, ${analysis.optInt("ackedBeforeIssueStale")} stale read(s) after an acknowledged set, ${analysis.optInt("orderStale")} order-leg inversion(s)); legs $legs: $note", extra)
+            !legsRan -> Grade("PARTIAL", "storage order probe: a leg did not run in full ($legs), no runtime-attributed fault in what ran: $note", extra)
+            else -> Grade("P", "storage order probe: no runtime-attributed fault over the four legs ($legs): $note", extra)
+        }
+    }
+
+    /** A command to the order probe's content script through the DOM both worlds share: the JSON on `data-zen-order`, a `zen-order` event to read it. */
+    private fun orderCommand(view: WebView, json: String): String =
+        tabEval(view, "(function(){document.documentElement.setAttribute('data-zen-order',${JSONObject.quote(json)});document.dispatchEvent(new Event('zen-order'));return 'sent'})()")
+
+    /** One storage call as its frame's clock saw it ([orderAnalysis]); the host's receipt and legs once paired with the trace. */
+    private class OrderCall(val context: String, val method: String, val issued: Long, val replied: Long, val tag: String) {
+        var receipt: Long = 0L
+        var hop: Long = -1L
+        var run: Long = -1L
+        var back: Long = -1L
+        var paired: Boolean = false
+    }
+
+    /** One storage call as the host's trace saw it: its receipt in wall ms (uptime + the offset), its reply's legs. */
+    private class HostCall(val context: String, val method: String, val id: String, val receipt: Long) {
+        var replied: Boolean = false
+        var hop: Long = -1L
+        var run: Long = -1L
+        var back: Long = -1L
+        var claimed: Boolean = false
+    }
+
+    /**
+     * The order probe's reading ([storageOrderProbe]): the frames' logs and the host's trace
+     * paired, the store's commit history read for stale writes and each one attributed – the
+     * runtime's or the extension's own race –, the order leg's inversions, the legs' medians per
+     * context, the cross-source receipt skews, the page's events around the finger taps. A frame
+     * call issued before `windowStartWall` (the trace window's start on the wall clock) has no
+     * host line to pair with and is left out, counted in `preWindowCalls`.
+     */
+    private fun orderAnalysis(popupLog: JSONObject, csLog: JSONObject, workerLog: JSONObject, trace: List<String>, offset: Long, windowStartWall: Long = 0L): JSONObject {
+        val out = JSONObject()
+        fun arr(o: JSONObject, key: String): List<JSONObject> = o.optJSONArray(key)?.let { a -> (0 until a.length()).mapNotNull { a.optJSONObject(it) } } ?: emptyList()
+        fun norm(v: Any?): String? = when (v) { null, JSONObject.NULL -> null; is Number -> v.toDouble().toString(); else -> v.toString() }
+        val fields = listOf("scale", "p", "cs", "seq", "popAt", "csAt")
+        fun sameState(a: JSONObject?, b: JSONObject?): Boolean = fields.all { f -> norm(a?.opt(f)) == norm(b?.opt(f)) }
+        fun differing(a: JSONObject?, b: JSONObject?): List<String> = fields.filter { f -> norm(a?.opt(f)) != norm(b?.opt(f)) }
+        fun stats(values: List<Long>): JSONObject {
+            val s = values.sorted()
+            if (s.isEmpty()) return JSONObject().put("n", 0)
+            fun q(p: Double): Long = s[minOf(s.size - 1, maxOf(0, Math.ceil(p * s.size).toInt() - 1))]
+            return JSONObject().put("n", s.size).put("min", s.first()).put("median", q(0.5)).put("p90", q(0.9)).put("max", s.last())
+        }
+        // 1. The frames' calls.
+        val taps = arr(popupLog, "taps")
+        val order = arr(popupLog, "order")
+        val burst = arr(popupLog, "burst")
+        val rmw = arr(csLog, "rmw")
+        val reads = arr(csLog, "reads")
+        val calls = ArrayList<OrderCall>()
+        fun addRmw(context: String, list: List<JSONObject>, tagOf: (JSONObject) -> String) {
+            for (r in list) {
+                val tag = tagOf(r)
+                if (r.optLong("tGet") > 0) calls.add(OrderCall(context, "get", r.optLong("tGet"), r.optLong("tGetReply"), tag))
+                if (r.optLong("tSet") > 0) calls.add(OrderCall(context, "set", r.optLong("tSet"), r.optLong("tSetReply"), tag))
+            }
+        }
+        addRmw("popup", taps) { r -> "tap#${r.optInt("i")}${if (r.optBoolean("touched")) "t" else "s"}" }
+        addRmw("popup", order) { r -> "order#${r.optInt("seq")}" }
+        addRmw("popup", burst) { r -> "burst#${r.optInt("i")}" }
+        addRmw("content", rmw) { r -> "${r.optString("tag")}#${r.optInt("i")}" }
+        for (r in reads) if (r.optLong("t") > 0) calls.add(OrderCall("content", "get", r.optLong("t"), r.optLong("tReply"), "read#${r.opt("seq")}"))
+        // A call the frame issued before the trace window opened (the frames' `Date.now()` and the
+        // host's wall clock are the device's one clock) has no host line: out, and counted.
+        val preWindow = calls.count { it.issued < windowStartWall }
+        if (preWindow > 0) calls.removeAll { it.issued < windowStartWall }
+        out.put("preWindowCalls", preWindow)
+        // 2. The host's lines.
+        val callLine = Regex("""^(\d+) > \S+/(\w+) call storage\.(\w+) id=(\S+)""")
+        val replyLine = Regex("""^(\d+) < \S+/(\w+) reply (ok|error=\S*) id=(\S+)(?: hop=(-?\d+) run=(-?\d+) back=(-?\d+))?""")
+        val hostCalls = ArrayList<HostCall>()
+        var hostReplies = 0
+        var hostErrors = 0
+        for (line in trace) {
+            val call = callLine.find(line)
+            if (call != null) {
+                hostCalls.add(HostCall(call.groupValues[2], call.groupValues[3], call.groupValues[4], call.groupValues[1].toLong() + offset))
+                continue
+            }
+            val reply = replyLine.find(line) ?: continue
+            val context = reply.groupValues[2]
+            val id = reply.groupValues[4]
+            val target = hostCalls.lastOrNull { it.context == context && it.id == id && !it.replied } ?: continue
+            target.replied = true
+            hostReplies++
+            if (reply.groupValues[3] != "ok") hostErrors++
+            if (reply.groupValues[5].isNotEmpty()) {
+                target.hop = reply.groupValues[5].toLong()
+                target.run = reply.groupValues[6].toLong()
+                target.back = reply.groupValues[7].toLong()
+            }
+        }
+        // 3. Pairing per context and method: k-th to k-th when the counts agree (one FIFO a source), else by time.
+        var pairedCount = 0
+        for (context in listOf("popup", "content")) for (method in listOf("get", "set")) {
+            val mine = calls.filter { it.context == context && it.method == method }.sortedBy { it.issued }
+            val theirs = hostCalls.filter { it.context == context && it.method == method }.sortedBy { it.receipt }
+            if (mine.isEmpty() || theirs.isEmpty()) continue
+            if (mine.size == theirs.size) {
+                for (i in mine.indices) pairCall(mine[i], theirs[i])
+            } else {
+                for (h in theirs) {
+                    val f = mine.firstOrNull { !it.paired && it.issued <= h.receipt + 5 } ?: continue
+                    pairCall(f, h)
+                }
+            }
+            pairedCount += mine.count { it.paired }
+        }
+        out.put("frameCalls", calls.size).put("hostCalls", hostCalls.size).put("hostReplies", hostReplies).put("hostErrors", hostErrors).put("paired", pairedCount)
+        // 4. The legs per context.
+        val legs = JSONObject()
+        for (context in listOf("popup", "content")) {
+            val mine = calls.filter { it.context == context && it.paired }
+            val timed = mine.filter { it.hop >= 0 }
+            legs.put(
+                context,
+                JSONObject()
+                    .put("toHost", stats(mine.map { it.receipt - it.issued }))
+                    .put("hop", stats(timed.map { it.hop }))
+                    .put("run", stats(timed.map { it.run }))
+                    .put("back", stats(timed.map { it.back }))
+                    .put("toFrame", stats(timed.filter { it.replied > 0 }.map { it.replied - (it.receipt + it.hop + it.run + it.back) }))
+                    .put("roundTrip", stats(calls.filter { it.context == context && it.replied > 0 }.map { it.replied - it.issued }))
+            )
+        }
+        out.put("legs", legs)
+        out.put("tickRmwSpan", stats(rmw.filter { it.optString("tag") == "tick" && it.optLong("tSetReply") > 0 }.map { it.optLong("tSetReply") - it.optLong("tGet") }))
+        out.put("ticks", csLog.optInt("ticks")).put("tickRmws", rmw.count { it.optString("tag") == "tick" })
+        // 5. The store's commit history: the script's `onChanged` log, each commit's writer (the
+        // side whose `set` stamp appears in the history for the first time – a stamp written BACK
+        // by a stale writer appeared before) and that writer's read.
+        val changes = arr(csLog, "changes")
+        val seenCs = HashSet<String>()
+        val seenPop = HashSet<String>()
+        fun writerOf(c: JSONObject): Pair<String, JSONObject?> {
+            val nv = c.optJSONObject("nv") ?: return "none" to null
+            val csAt = norm(nv.opt("csAt"))
+            val popAt = norm(nv.opt("popAt"))
+            val csWrite = csAt != null && seenCs.add(csAt)
+            val popWrite = popAt != null && seenPop.add(popAt)
+            return when {
+                csWrite && !popWrite -> "content" to rmw.firstOrNull { norm(it.optInt("i")) == norm(nv.opt("cs")) }
+                popWrite && !csWrite -> "popup" to (taps + order + burst).firstOrNull { norm(it.optLong("tSet")) == popAt }
+                csWrite && popWrite -> "both" to null
+                else -> "unknown" to null
+            }
+        }
+        val writers = changes.map { writerOf(it) }
+        var staleWrites = 0
+        var postReceiptInversions = 0
+        var ackedBeforeIssueStale = 0
+        var races = 0
+        var racesGetBeforeSetIssued = 0
+        var racesInFlight = 0
+        var lostScale = 0
+        var lostTouched = 0
+        var lostEvaluated = 0
+        var unattributed = 0
+        var historyGaps = 0
+        val instances = JSONArray()
+        for (j in changes.indices) {
+            val c = changes[j]
+            val (who, rec) = writers[j]
+            val nv = c.optJSONObject("nv") ?: continue
+            val ov = c.optJSONObject("ov")
+            if (j > 0 && !sameState(changes[j - 1].optJSONObject("nv"), ov)) historyGaps++
+            if (rec == null) {
+                if (who != "none") unattributed++
+                continue
+            }
+            val read = rec.optJSONObject("read")
+            if (sameState(read, ov)) continue
+            staleWrites++
+            val lost = differing(read, ov).filter { it != "popAt" && it != "csAt" }
+            // The commit the writer's read reflects: the last one before j whose value it equals (−1 for the empty store).
+            var r = -1
+            for (k in j - 1 downTo 0) if (sameState(changes[k].optJSONObject("nv"), read)) { r = k; break }
+            val wGet = calls.firstOrNull { it.context == who && it.method == "get" && it.issued == rec.optLong("tGet") }
+            var kind = "race"
+            var detail = ""
+            val intervening = JSONArray()
+            for (k in (r + 1) until j) {
+                val (iWho, iRec) = writers[k]
+                if (iRec == null) continue
+                val iSet = calls.firstOrNull { it.context == iWho && it.method == "set" && it.issued == iRec.optLong("tSet") }
+                val iAck = iRec.optLong("tSetReply")
+                val tGet = rec.optLong("tGet")
+                val tGetReply = rec.optLong("tGetReply")
+                intervening.put(JSONObject().put("commit", k).put("writer", iWho).put("tag", iSet?.tag ?: iWho).put("tSet", iRec.optLong("tSet")).put("tSetReply", iAck).put("setReceipt", iSet?.takeIf { it.paired }?.receipt ?: JSONObject.NULL))
+                // The frames' own clocks first: a get answered before the set was even issued is a
+                // race whatever the trace pairing says (the guard against a mis-paired line).
+                val answeredBeforeSetIssued = tGetReply > 0 && tGetReply < iRec.optLong("tSet")
+                if (!answeredBeforeSetIssued && iSet != null && wGet != null && iSet.paired && wGet.paired && iSet.receipt < wGet.receipt) {
+                    kind = "postReceiptInversion"
+                    detail = "the host received ${iSet.tag}'s set at +${iSet.receipt - popupLog.optLong("t0")} ms and ${wGet.tag}'s get ${wGet.receipt - iSet.receipt} ms later, and the get read the value before it"
+                    break
+                }
+                if (iAck > 0 && iAck < tGet) {
+                    kind = "ackedBeforeIssue"
+                    detail = "${iSet?.tag ?: iWho}'s set was acknowledged ${tGet - iAck} ms before ${who}'s get was issued, and the get read the value before it"
+                    break
+                }
+                if (tGet < iRec.optLong("tSet")) racesGetBeforeSetIssued++ else racesInFlight++
+            }
+            when (kind) {
+                "postReceiptInversion" -> postReceiptInversions++
+                "ackedBeforeIssue" -> ackedBeforeIssueStale++
+                else -> races++
+            }
+            if ("scale" in lost && who == "content") {
+                lostScale++
+                val tap = taps.firstOrNull { norm(it.optJSONObject("wrote")?.opt("scale")) == norm(ov?.opt("scale")) && norm(it.optLong("tSet")) == norm(ov?.opt("popAt")) }
+                    ?: taps.firstOrNull { norm(it.optLong("tSet")) == norm(ov?.opt("popAt")) }
+                if (tap?.optBoolean("touched") == true) lostTouched++ else if (tap != null) lostEvaluated++
+            }
+            if (instances.length() < 12) {
+                instances.put(
+                    JSONObject().put("commit", j).put("writer", who).put("tag", rec.optString("tag", "")).put("i", rec.opt("i") ?: rec.opt("seq")).put("kind", kind).put("lost", JSONArray(lost))
+                        .put("read", read ?: JSONObject.NULL).put("replaced", ov ?: JSONObject.NULL).put("reflects", r).put("tGet", rec.optLong("tGet")).put("tGetReply", rec.optLong("tGetReply"))
+                        .put("getReceipt", wGet?.takeIf { it.paired }?.receipt ?: JSONObject.NULL).put("intervening", intervening).put("detail", detail)
+                )
+            }
+        }
+        out.put("commits", changes.size).put("historyGaps", historyGaps).put("unattributedCommits", unattributed)
+            .put("staleWrites", staleWrites).put("postReceiptInversions", postReceiptInversions).put("ackedBeforeIssueStale", ackedBeforeIssueStale)
+            .put("races", races).put("racesGetBeforeSetIssued", racesGetBeforeSetIssued).put("racesInFlight", racesInFlight)
+            .put("lostScale", lostScale).put("lostTouched", lostTouched).put("lostEvaluated", lostEvaluated).put("staleInstances", instances)
+        val finalScale = popupLog.opt("scale")
+        val expectedScale = 1.0 + 0.25 * taps.size
+        out.put("taps", taps.size).put("finalScale", finalScale ?: JSONObject.NULL).put("expectedScaleIfNoneLost", expectedScale)
+        // 6. The order leg.
+        val orderAnswered = order.count { it.optJSONObject("resp") != null }
+        val orderStale = order.count { it.optBoolean("stale", false) }
+        val orderErrors = order.count { !it.isNull("err") }
+        out.put("orderRuns", order.size).put("orderAnswered", orderAnswered).put("orderStale", orderStale).put("orderErrors", orderErrors)
+            .put("orderFirstError", order.firstOrNull { !it.isNull("err") }?.optString("err") ?: JSONObject.NULL)
+            .put("orderStaleInstances", JSONArray(order.filter { it.optBoolean("stale", false) }.take(6).map { it.toString().take(300) }))
+        // 7. Cross-source receipt skew: a later-issued call of the other frame received first (recorded, not graded: two frames' postMessages have no common clock but the wall's).
+        val paired = calls.filter { it.paired }.sortedBy { it.issued }
+        var hostInversions = 0
+        var maxSkew = 0L
+        val skews = JSONArray()
+        for (i in 1 until paired.size) {
+            val a = paired[i - 1]
+            val b = paired[i]
+            if (a.context == b.context || b.issued - a.issued < 2 || b.receipt >= a.receipt) continue
+            hostInversions++
+            val skew = a.receipt - b.receipt
+            if (skew > maxSkew) maxSkew = skew
+            if (skews.length() < 8) skews.put(JSONObject().put("first", a.tag).put("firstIssued", a.issued).put("firstReceipt", a.receipt).put("second", b.tag).put("secondIssued", b.issued).put("secondReceipt", b.receipt).put("skew", skew))
+        }
+        out.put("crossSourceInversions", hostInversions).put("crossSourceMaxSkew", maxSkew).put("crossSourceInstances", skews)
+        // 8. The page's events around the finger taps.
+        val events = arr(csLog, "events")
+        val near = JSONArray()
+        for (t in taps.filter { it.optBoolean("touched") }) {
+            val at = t.optLong("tCall")
+            for (e in events) if (Math.abs(e.optLong("t") - at) <= 300) near.put(JSONObject().put("tap", t.optInt("i")).put("e", e.optString("e")).put("dt", e.optLong("t") - at).put("vis", e.optString("vis")))
+        }
+        out.put("pageEvents", events.size).put("pageEventsNearTouchedTaps", near.length()).put("pageEventsNearTouchedTapsList", near)
+        out.put("workerChanges", workerLog.optJSONArray("changes")?.length() ?: -1)
+        // 9. The summary.
+        fun leg(context: String, name: String): String = legs.optJSONObject(context)?.optJSONObject(name)?.let { s -> if (s.optInt("n") == 0) "-" else "${s.opt("median")}/${s.opt("p90")}/${s.opt("max")}" } ?: "-"
+        out.put(
+            "summary",
+            "commits ${changes.size} (${taps.size} taps, ${order.size} order, ${burst.size} popup bursts; script ${rmw.count { it.optString("tag") == "tick" }} ticks + ${rmw.count { it.optString("tag") == "burst" }} bursts), " +
+                "stale writes $staleWrites: $postReceiptInversions inversion(s) after receipt, $ackedBeforeIssueStale stale after an acknowledged set, $races the extension's own race ($racesGetBeforeSetIssued with the get ahead of the set's issue, $racesInFlight with the set in flight); " +
+                "scale lost $lostScale time(s) (touched $lostTouched, evaluated $lostEvaluated), final scale $finalScale of $expectedScale; " +
+                "order leg $orderAnswered/${order.size} answered, $orderStale stale, $orderErrors error(s); " +
+                "cross-source receipt inversions $hostInversions (max skew $maxSkew ms); " +
+                "legs (median/p90/max ms) popup toHost ${leg("popup", "toHost")} hop ${leg("popup", "hop")} run ${leg("popup", "run")} back ${leg("popup", "back")} toFrame ${leg("popup", "toFrame")} roundTrip ${leg("popup", "roundTrip")}; " +
+                "content toHost ${leg("content", "toHost")} hop ${leg("content", "hop")} run ${leg("content", "run")} back ${leg("content", "back")} toFrame ${leg("content", "toFrame")} roundTrip ${leg("content", "roundTrip")}; " +
+                "tick RMW span ${out.optJSONObject("tickRmwSpan")?.let { s -> "${s.opt("median")}/${s.opt("p90")}/${s.opt("max")}" }}; " +
+                "paired $pairedCount of ${calls.size} frame calls with ${hostCalls.size} host lines ($hostErrors error replies); page events near the finger taps ${near.length()}; history gaps $historyGaps"
+        )
+        return out
+    }
+
+    private fun pairCall(frame: OrderCall, host: HostCall) {
+        frame.receipt = host.receipt
+        frame.hop = host.hop
+        frame.run = host.run
+        frame.back = host.back
+        frame.paired = true
+        host.claimed = true
+    }
+
+    // --- the core checks of compat round 20 (ranks 481-510 by installs) --------------------------
+
+    /**
+     * A `contextMenus` item whose `onClicked` opens a page (Diccionario RAE's one `contexts:
+     * ["all"]` item, `windows.create` on `dle.rae.es/srv/search?w=<the selection>`, a tab here):
+     * Save Image As PNG's steps ([saveImageAsPng]) for any row – a real long press on the
+     * fixture's element at `selector` brings the phone's menu sheet up, the extension's item
+     * (`item`, over the sheet's labels) is waited for where it has settled and tapped, and a new
+     * tab whose address matches `opens` within the wait is the pass. No sheet after the press is
+     * the driver's (`F`, named); the sheet without the item is `F` (the registration or the menu
+     * surface, ours); the item tapped with nothing following is `F` with the worker's console.
+     * The image menu is the surface (an `all` item is offered on every context), so the
+     * selection is empty and the title's `%s` reads as nothing – as Chrome's image menu shows it.
+     */
+    private fun menuItemOpens(label: String, page: String, selector: String, item: Regex, opens: Regex): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture(page, factor, 2_500)
+        val since = StepEvidence(row)
+        val before = tabUrls().keys
+        val centre = json(tabEval(view, ELEMENT_CENTRE.replace("%SELECTOR%", selector)))
+        val point = screenPoint(view, centre)
+        extra.put("element", centre)
+        var sheet: List<String> = emptyList()
+        var found: android.graphics.Rect? = null
+        if (point != null && onScreen("$label: the long press")) {
+            Finger().apply {
+                down(point.first, point.second)
+                hold(900)
+                up()
+            }
+            poll(scaled(8_000, factor), 400) {
+                sheet = sheetsPresented()
+                found = findByLabel { item.containsMatchIn(it) }
+                if (found != null) true else null
+            }
+            if (found != null) {
+                val screenHeight = app.resources.displayMetrics.heightPixels
+                var last: android.graphics.Rect? = null
+                val settled = poll(scaled(5_000, factor), 250) {
+                    val now = findByLabel { item.containsMatchIn(it) } ?: return@poll null
+                    val steady = now.height() > 8 && now.bottom <= screenHeight && now == last
+                    last = now
+                    if (steady) now else null
+                }
+                extra.put("itemSettled", settled != null).put("itemFirstRead", found?.toShortString())
+                if (settled != null) found = settled
+            }
+        }
+        val menuItem = found
+        extra.put("sheets", JSONArray(sheet)).put("item", menuItem?.toShortString() ?: JSONObject.NULL)
+        SystemClock.sleep(400)
+        snap("${entry.optString("slug")}-menu")
+        var opened: Map.Entry<String, String>? = null
+        if (menuItem != null) {
+            tap(menuItem.exactCenterX(), menuItem.exactCenterY())
+            opened = poll(scaled(30_000, factor), 500) {
+                tabUrls().entries.firstOrNull { it.key !in before && opens.containsMatchIn(it.value) }
+            }
+        } else if (sheet.isNotEmpty() || sheetsPresented().isNotEmpty()) {
+            key(KeyEvent.KEYCODE_BACK)
+            SystemClock.sleep(600)
+        }
+        extra.put("opened", opened?.value?.take(120) ?: JSONObject.NULL).put("tabsAfter", JSONArray(tabUrls().values.map { it.take(80) }))
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(10))) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-core")
+        when {
+            opened != null -> Grade("P", "$label: its item in the long-press menu, tapped, opened ${opened.value.take(80)} as a tab", extra)
+            menuItem != null -> Grade("F", "$label: its item was in the menu and tapped, no ${opens.pattern} tab followed within ${scaled(30_000, factor) / 1000} s (tabs ${tabUrls().values.joinToString().take(100)})", extra)
+            point == null -> Grade("F", "$label: the fixture's `$selector` has no on-screen centre (driver): ${centre.toString().take(80)}", extra)
+            sheet.isEmpty() -> Grade("F", "$label: the long press opened no menu sheet (driver: the press was not read as a long press)", extra)
+            else -> Grade("F", "$label: the menu is up without its item (sheets ${sheet.joinToString().take(80)})", extra)
+        }
+    }
+
+    /**
+     * SAML-tracer: its action click opens `src/TraceWindow.html` as a window (`windows.create`,
+     * `type: "popup"` – a tab here) whose own script registers `webRequest.onBeforeRequest` /
+     * `onBeforeSendHeaders` / `onHeadersReceived` listeners and lists every request the browser
+     * makes in `#request-list`. The fixture settles, the action is clicked, the trace page is
+     * waited for and its toolbar (Clear, Pause, Autoscroll, …) read; then a second fixture is
+     * opened and the list polled for its address: listed is `P` (the page-registered
+     * `webRequest` listeners heard the navigation), the toolbar drawn with nothing listed within
+     * the wait is `PARTIAL` (the window is there, the events from an extension page are not),
+     * no trace page within the wait is `F`.
+     */
+    private fun samlTracer(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        fixture("page-a.html?saml", factor, 1_000)
+        SystemClock.sleep(scaled(1_500, factor))
+        val before = tabUrls().keys
+        val since = StepEvidence(row)
+        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        val page = Regex("TraceWindow\\.html", RegexOption.IGNORE_CASE)
+        val opened = poll(scaled(30_000, factor), 700) { openedPage(before, row, page) }
+        var toolbar = JSONObject()
+        var listed = JSONObject()
+        if (opened != null) {
+            val view = waitForView(opened.key)
+            showTab(opened.key)
+            toolbar = pollExpr(view, SAML_TRACER_TOOLBAR, scaled(20_000, factor))
+            val second = fixture("page-b.html?saml-trace", factor, 1_500)
+            showTab(opened.key)
+            listed = pollExpr(view, SAML_TRACER_LISTED, scaled(25_000, factor))
+            listed.put("console", JSONArray(consoleOf(view).takeLast(10)))
+            extra.put("secondTab", tabUrls()[second.first] ?: "")
+            if (!toolbar.optBoolean("pass")) extra.put("blankTab", blankPageEvidence(view, row, 0L))
+        } else {
+            popupView()?.let { extra.put("popupInstead", json(tabEval(it, DEEP_TEXT)).optString("text").take(160)) }
+            extra.put("tabs", JSONArray(tabUrls().values.toList()))
+        }
+        extra.put("toolbar", toolbar).put("listed", listed)
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(800)
+        snap("${entry.optString("slug")}-trace-window")
+        runCatching { coreCall("extension.closePopup", "null") }
+        return when {
+            opened == null -> Grade("F", "SAML-tracer: the action click opened no TraceWindow.html within ${scaled(30_000, factor) / 1000} s", extra)
+            listed.optBoolean("pass") -> Grade("P", "SAML-tracer: its trace window opened as a tab and listed the next page's request through its page-registered webRequest listeners: ${listed.toString().take(200)}", extra)
+            toolbar.optBoolean("pass") -> Grade("PARTIAL", "SAML-tracer: its trace window opened as a tab with its toolbar (${toolbar.optString("buttons").take(80)}) but listed nothing of the next page's load within ${scaled(25_000, factor) / 1000} s: ${listed.toString().take(160)}", extra)
+            else -> Grade("F", "SAML-tracer: ${extensionPath(opened.value).take(50)} opened but drew no toolbar: ${toolbar.toString().take(200)}", extra)
+        }
+    }
+
+    // --- the core checks of compat round 19 (ranks 451-480 by installs) --------------------------
+
+    /**
+     * Soda PDF Viewer: its worker's `webRequest.onHeadersReceived` listener (`<all_urls>`, main
+     * and sub frames, `responseHeaders`) reads an `application/pdf` content type, finds the tab
+     * by `tabs.query` over every tab with an http(s) address, filtered to a `.pdf` path and the
+     * request's `tabId`, and sends it on with `tabs.update(id, {url: "https://tools.sodapdf.com/url?url=<the pdf>&partner=chrome-ext"})`.
+     * The fixture PDF opens in a tab; the tab landing on `tools.sodapdf.com` is the pass (the
+     * viewer page there is Soda's, read for its text alone); a tab left on the PDF is F.
+     */
+    private fun sodaPdf(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val since = StepEvidence(row)
+        val tab = createTab("$BASE/sample.pdf")
+        val landed = poll(scaled(30_000, factor), 500) { tabUrls()[tab]?.takeIf { SODA_PDF_VIEWER.containsMatchIn(it) } }
+        extra.put("landed", landed ?: JSONObject.NULL).put("tabUrl", tabUrls()[tab] ?: JSONObject.NULL)
+        var page = JSONObject()
+        if (landed != null) {
+            runCatching { waitForView(tab) }.getOrNull()?.let { view ->
+                showTab(tab)
+                page = pollExpr(view, DOM_REPORT.replace("return JSON.stringify({text:", "return JSON.stringify({pass:!!document.body&&document.body.innerText.replace(/\\s+/g,' ').trim().length>20,text:"), scaled(20_000, factor))
+                page.put("console", JSONArray(consoleOf(view).takeLast(8)))
+            }
+        }
+        extra.put("viewer", page)
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(10))) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-viewer")
+        return if (landed != null) {
+            Grade("P", "Soda PDF Viewer: sample.pdf sent to its online viewer (${landed.take(100)}) by its onHeadersReceived listener and tabs.update; the viewer page ${if (page.optBoolean("pass")) "drew \"${page.optString("text").take(80)}\"" else "read ${page.toString().take(120)}"}", extra)
+        } else {
+            Grade("F", "Soda PDF Viewer: the tab stayed on ${tabUrls()[tab]?.take(80)} for ${scaled(30_000, factor) / 1000} s (its onHeadersReceived listener, its tabs.query by a .pdf address, or its tabs.update did not send it to tools.sodapdf.com)", extra)
+        }
+    }
+
+    /**
+     * A new-tab override that forwards to a site (MSN New Tab's `iframe_msn.html`: one
+     * `<meta http-equiv="refresh" content="0; url=https://www.microsoftstart.com?pc=U526&ocid=chromentpnews">`):
+     * [momentum]'s opt-in and new tab, then the tab followed off the extension's page to `host`.
+     * The forward landed on the host with a page drawn is the pass; the host's challenge, an
+     * empty page or an error page there is `n/m` (the forward is the extension's, the page the
+     * site's); the extension's page opened and never forwarded, or no extension page at all, is F.
+     */
+    private fun newTabSendsTo(label: String, host: Regex): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        coreCall("extension.setNewTabOverride", JSONObject().put("id", row.id).put("enabled", true).toString())
+        SystemClock.sleep(1_000)
+        val before = tabUrls().keys
+        runCatching { coreCall("tab.new", "null") }.onFailure { coreCall("tab.create", """{"active":true}""") }
+        val opened = poll(scaled(20_000, factor), 500) {
+            tabUrls().entries.firstOrNull { it.key !in before && (extensionPage(it.value, row.id) || host.containsMatchIn(it.value)) }
+        }
+        val record = extensions().firstOrNull { it.getString("id") == row.id }
+        extra.put("record", JSONObject().put("newTabOverride", record?.opt("newTabOverride")).put("newTabPage", record?.opt("newTabPage")))
+        extra.put("opened", opened?.value?.take(160) ?: JSONObject.NULL)
+        val landed = opened?.let { o -> poll(scaled(30_000, factor), 500) { tabUrls()[o.key]?.takeIf { host.containsMatchIn(it) } } }
+        var page = JSONObject()
+        if (opened != null) {
+            extra.put("landed", landed ?: JSONObject.NULL).put("tabUrl", tabUrls()[opened.key] ?: JSONObject.NULL)
+            runCatching { waitForView(opened.key) }.getOrNull()?.let { view ->
+                if (landed != null) {
+                    poll(scaled(30_000, factor), 500) { if (tabEval(view, "String(document.readyState === 'complete')") == "true") true else null }
+                    SystemClock.sleep(scaled(2_000, factor))
+                }
+                page = json(tabEval(view, DOM_REPORT))
+                page.put("error", json(tabEval(view, PAGE_OR_ERROR))).put("console", JSONArray(consoleOf(view).takeLast(8)))
+            }
+        }
+        extra.put("page", page).put("tabsAfter", JSONArray(tabUrls().values.map { it.take(120) }))
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-new-tab")
+        val text = page.optString("text")
+        val errorPage = page.optJSONObject("error")?.optBoolean("errorPage") == true
+        when {
+            opened == null -> Grade("F", "$label: tab.new opened no page of the extension's within ${scaled(20_000, factor) / 1000} s (record newTabOverride=${record?.opt("newTabOverride")}, newTabPage=${record?.opt("newTabPage")}; tabs: ${tabUrls().values.joinToString().take(120)})", extra)
+            landed != null && !errorPage && text.length > 20 && !CHALLENGE_WORDS.containsMatchIn(text) && !NOT_FOUND_WORDS.containsMatchIn(text) ->
+                Grade("P", "$label: the new tab's override forwarded to ${landed.take(80)} and the page drew (\"${text.take(80)}\", ${page.optInt("els")} elements)", extra)
+            landed != null -> Grade("n/m", "$label: the new tab's override forwarded to ${landed.take(80)} (the extension's part) but the site served the runner \"${text.take(80)}\" (${if (errorPage) "an error page" else "${page.optInt("els")} elements"}); nothing more for the extension to do there (not measurable here)", extra)
+            else -> Grade("F", "$label: the new tab opened the extension's page ${extensionPath(opened.value).take(60)} and it did not forward to ${host.pattern} within ${scaled(30_000, factor) / 1000} s (\"${text.take(80)}\")", extra)
+        }
+    }
+
+    /**
+     * OP Auto Clicker (no background; four content scripts on every page at `document_end`):
+     * `AutoClicker.js` keeps the window's last `mousemove` and, on the start hotkey (Alt+F1 by
+     * default, `USER_OPTIONS.keymap` from `storage.sync`, matched on `keydown` by its modifier
+     * keys and `code`), mounts `#AutoClickerIndicator` and clicks that event's target every
+     * 200 ms with a synthetic `MouseEvent("click")` until the stop hotkey (Alt+F2). The fixture
+     * is armed with a click counter and a `mousemove` over its heading ([AUTO_CLICKER_ARM]), the
+     * hotkey sent as a `keydown` on the window ([AUTO_CLICKER_HOTKEY]), and the indicator with
+     * three clicks or more is the pass ([AUTO_CLICKER_STATE]); the stop hotkey follows.
+     */
+    private fun autoClicker(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture("page-a.html?autoclicker", factor, 3_000)
+        val since = StepEvidence(row)
+        extra.put("armed", json(tabEval(view, AUTO_CLICKER_ARM)))
+        SystemClock.sleep(scaled(500, factor))
+        val started = SystemClock.uptimeMillis()
+        extra.put("start", tabEval(view, AUTO_CLICKER_HOTKEY.replace("__CODE__", "F1")).take(80))
+        val state = pollExpr(view, AUTO_CLICKER_STATE, scaled(15_000, factor))
+        state.put("ms", SystemClock.uptimeMillis() - started)
+        extra.put("state", state)
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-clicking")
+        extra.put("stop", tabEval(view, AUTO_CLICKER_HOTKEY.replace("__CODE__", "F2")).take(80))
+        SystemClock.sleep(scaled(1_000, factor))
+        val afterStop = json(tabEval(view, AUTO_CLICKER_STATE))
+        extra.put("afterStop", afterStop).put("console", JSONArray(consoleOf(view).takeLast(8)))
+        if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
+        since.record(extra, "atEnd")
+        return when {
+            state.optBoolean("pass") -> Grade("P", "OP Auto Clicker: Alt+F1 started its clicker on the heading – ${state.optInt("clicks")} clicks (${state.optInt("synthetic")} synthetic) in ${state.optLong("ms")} ms with its indicator mounted; Alt+F2 ${if (afterStop.optBoolean("indicator")) "left the indicator up" else "took the indicator down"} (${afterStop.optInt("clicks")} clicks at the end)", extra)
+            state.optInt("clicks") > 0 -> Grade("PARTIAL", "OP Auto Clicker: Alt+F1 clicked the heading ${state.optInt("clicks")} time(s) within ${scaled(15_000, factor) / 1000} s but ${if (state.optBoolean("indicator")) "fewer than three" else "without its indicator"}: ${state.toString().take(160)}", extra)
+            else -> Grade("F", "OP Auto Clicker: Alt+F1 started no clicks on the fixture within ${scaled(15_000, factor) / 1000} s (its keydown listener on the window, its storage.sync options read, or its interval): ${state.toString().take(200)}", extra)
+        }
+    }
+
+    /**
+     * Perplexity - AI Companion: its popup is its React composer ("Ask anything..."); an ask goes
+     * from the popup to perplexity.ai (`/search?s=e&q=`, the answer streamed into the popup) with
+     * no account for the first asks, and the worker keeps state alone. The composer rendered is
+     * the first reading ([PERPLEXITY_COMPOSER]); one question is typed with the input events a
+     * keyboard sends and submitted with Enter, then the popup's send control ([PERPLEXITY_ASK]);
+     * the answer's word ("Paris") in the popup is the pass ([PERPLEXITY_ANSWER]), text grown by
+     * an answer's length without it `PARTIAL`, a sign-in, a rate limit or the service's error in
+     * its place `n/m`.
+     */
+    private fun perplexity(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        fixture("page-a.html?perplexity", factor, 1_500)
+        val since = StepEvidence(row)
+        val popup = openPopup(row, factor)
+        var composer = JSONObject()
+        var answer = JSONObject()
+        if (popup != null) {
+            composer = pollExpr(popup, PERPLEXITY_COMPOSER, scaled(20_000, factor))
+            extra.put("composer", composer)
+            if (composer.optBoolean("pass")) {
+                extra.put("ask", json(tabEval(popup, PERPLEXITY_ASK)))
+                val started = SystemClock.uptimeMillis()
+                answer = poll(scaled(45_000, factor), 1_000) {
+                    val live = popupView()?.takeIf { it.context == "popup" } ?: return@poll null
+                    json(tabEval(live, PERPLEXITY_ANSWER)).takeIf { it.optBoolean("pass") || it.optBoolean("gate") }
+                } ?: (popupView()?.takeIf { it.context == "popup" }?.let { json(tabEval(it, PERPLEXITY_ANSWER)) } ?: JSONObject())
+                answer.put("ms", SystemClock.uptimeMillis() - started)
+                popupView()?.takeIf { it.context == "popup" }?.let { extra.put("popupConsole", JSONArray(consoleOf(it).takeLast(10))) }
+            } else {
+                extra.put("popupConsole", JSONArray(consoleOf(popup).takeLast(10)))
+            }
+        }
+        extra.put("answer", answer)
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(10))) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-ask")
+        runCatching { coreCall("extension.closePopup", "null") }
+        val gate = answer.optBoolean("gate") || PERPLEXITY_GATE.containsMatchIn(answer.optString("text")) || PERPLEXITY_GATE.containsMatchIn(composer.optString("text"))
+        return when {
+            answer.optBoolean("paris") -> Grade("P", "Perplexity: the popup's composer took the question and answered it in ${answer.optLong("ms")} ms (\"${answer.optString("text").take(120)}\")", extra)
+            answer.optBoolean("grown") && !gate -> Grade("PARTIAL", "Perplexity: the popup's text grew by ${answer.optInt("length") - answer.optInt("base")} characters after the ask in ${answer.optLong("ms")} ms but the answer's word was not read in it: \"${answer.optString("text").take(120)}\"", extra)
+            popup == null -> Grade("F", "Perplexity: popup did not render in the core check", extra)
+            !composer.optBoolean("pass") -> Grade("F", "Perplexity: no composer in its popup within ${scaled(20_000, factor) / 1000} s: ${composer.toString().take(200)}", extra)
+            gate -> Grade("n/m", "Perplexity: the composer rendered and the ask met its service's gate (\"${(answer.optString("text").ifEmpty { composer.optString("text") }).take(120)}\"); the answer needs perplexity.ai to serve the runner (not measurable here)", extra)
+            else -> Grade("F", "Perplexity: the composer took the question (${extra.optJSONObject("ask")?.toString()?.take(80)}) and no answer drew in the popup within ${scaled(45_000, factor) / 1000} s: ${answer.toString().take(200)}", extra)
+        }
+    }
+
+    /**
+     * Directo: its content script (every http(s) page) matches a hotel page by the booking
+     * sites' selectors (booking.com's `property-card`s and price rows, hotels.com's, expedia's)
+     * and mounts its offer (`.directo-cta-button`, `.directo-offer-*`, `.directo-logo`) once its
+     * worker's ask to `engine.getdirecto.com` comes back with a deal. [liveMarker] on a
+     * booking.com hotel page (the desktop site; a second hotel as the mirror), DATED: the offer
+     * compares the site's price for a stay, and an undated page shows "Select dates" and no
+     * price (round 19's `n: 0` on both lanes), so the URL carries a two-night stay three weeks
+     * from the device's day (`checkin`/`checkout`, two adults, one room) and the dates go in
+     * `extra.dates`; a served page without the offer whose worker console shows the engine
+     * refusing the runner (a 4xx/5xx, a failed fetch) is `n/m` on that line, the rest is the
+     * marker's own grade.
+     */
+    private fun directo(row: Row, entry: JSONObject): Grade {
+        val checkin = java.time.LocalDate.now().plusDays(21)
+        val stay = "checkin=$checkin&checkout=${checkin.plusDays(2)}&group_adults=2&no_rooms=1&group_children=0&selected_currency=USD"
+        val grade = liveMarker("Directo", "https://www.booking.com/hotel/us/the-plaza.html?$stay", injectedAny("directo"), settleMs = 45_000, desktop = true, mirrors = listOf("https://www.booking.com/hotel/gb/the-savoy.html?$stay"))(row, entry)
+        val extra = (grade.extra ?: JSONObject()).put("dates", stay)
+        val worker = backgroundView(row.id)?.let { consoleOf(it).takeLast(20) } ?: emptyList()
+        extra.put("workerConsole", JSONArray(worker))
+        if (grade.verdict != "F") return Grade(grade.verdict, grade.note, extra)
+        val refusal = worker.firstOrNull { DIRECTO_ENGINE.containsMatchIn(it) && DIRECTO_REFUSED.containsMatchIn(it) } ?: worker.firstOrNull { DIRECTO_REFUSED.containsMatchIn(it) }
+        return if (refusal != null) {
+            Grade("n/m", "Directo: ${grade.note.take(200)}; its worker's ask to its engine was refused (\"${refusal.take(120)}\"), so no offer was there to mount (not measurable here)", extra)
+        } else {
+            Grade(grade.verdict, grade.note, extra)
+        }
+    }
+
+    /**
+     * Font Finder: its action (no popup) has the worker insert `/data/inject/select.css` and run
+     * `/data/inject/select.js` on the tab – a picker (`div.iffselector`) laid over the element
+     * under the pointer (`mouseover` on the document) that, on a click (a capturing listener,
+     * button 0), keeps the element and sends `analyze`; the worker then opens its window
+     * (`windows.create` on `/data/window/index.html?mode=window&id=…&opener=…`, a tab on the
+     * phone) and the window fills its property rows (`[data-obj=font-family]`, `font-size`,
+     * `color`, `line-height`…) from the element. The picker after the action click is the first
+     * reading ([FONT_FINDER_PICKER]), a `mouseover` and a click on the heading pick it
+     * ([FONT_FINDER_PICK]), and the window opened with its rows filled is the pass
+     * ([FONT_FINDER_WINDOW]); the window with empty rows, or the picker alone, is `PARTIAL`.
+     */
+    private fun fontFinder(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture("page-a.html?fontfinder", factor, 2_000)
+        val since = StepEvidence(row)
+        val before = tabUrls().keys
+        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        val picker = pollExpr(view, FONT_FINDER_PICKER, scaled(20_000, factor))
+        extra.put("picker", picker)
+        var opened: Map.Entry<String, String>? = null
+        var window = JSONObject()
+        if (picker.optBoolean("pass")) {
+            extra.put("pick", json(tabEval(view, FONT_FINDER_PICK)))
+            opened = poll(scaled(20_000, factor), 500) { openedPage(before, row, Regex("/data/window/")) }
+            extra.put("opened", opened?.value?.take(160) ?: JSONObject.NULL)
+            if (opened != null) {
+                val w = waitForView(opened.key)
+                showTab(opened.key)
+                window = pollExpr(w, FONT_FINDER_WINDOW, scaled(20_000, factor))
+                window.put("console", JSONArray(consoleOf(w).takeLast(8)))
+            }
+        }
+        extra.put("window", window).put("console", JSONArray(consoleOf(view).takeLast(8)))
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(10))) }
+        popupView()?.takeIf { it.context == "popup" }?.let { live -> extra.put("popupInstead", json(tabEval(live, DEEP_TEXT)).optString("text").take(200)) }
+        if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-fonts")
+        runCatching { coreCall("extension.closePopup", "null") }
+        return when {
+            window.optBoolean("pass") -> Grade("P", "Font Finder: the action's picker covered the element under the pointer and the click on the heading opened its window ${extensionPath(opened!!.value).take(50)} with the font's properties filled (${window.optInt("filled")} rows: \"${window.optString("sample").take(80)}\")", extra)
+            opened != null -> Grade("PARTIAL", "Font Finder: the picker and the click opened its window ${extensionPath(opened.value).take(50)} but its property rows stayed empty for ${scaled(20_000, factor) / 1000} s: ${window.toString().take(160)}", extra)
+            picker.optBoolean("pass") -> Grade("PARTIAL", "Font Finder: the action mounted its picker (${picker.toString().take(120)}) but the click on the heading opened no analysis window within ${scaled(20_000, factor) / 1000} s (its `analyze` message to the worker, or the worker's windows.create)", extra)
+            else -> Grade("F", "Font Finder: the action click mounted no picker on the page within ${scaled(20_000, factor) / 1000} s (its worker's insertCSS and executeScript of select.js): ${picker.toString().take(160)}", extra)
+        }
+    }
+
+    /**
+     * Mute Tab: its action (no popup) has the worker flip the tab's mute
+     * (`tabs.update(tab.id, {muted: !tab.mutedInfo.muted})`; the badge " M " and the title
+     * "Unmute Tab" follow). The clip fixture's `muted` is read from the core's tab record
+     * ([coreSnapshot]) before and polled after the action click; the flag flipped to true is the
+     * pass. A second click unmutes for the rows after it.
+     */
+    private fun muteTab(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (tab, view) = fixture("video.html?mutetab", factor, 2_500)
+        val since = StepEvidence(row)
+        val mutedOf = { id: String -> coreSnapshot().optJSONObject("tabs")?.optJSONObject(id)?.let { if (it.has("muted")) it.optBoolean("muted") else null } }
+        extra.put("before", mutedOf(tab) ?: JSONObject.NULL)
+        val started = SystemClock.uptimeMillis()
+        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        val muted = poll(scaled(15_000, factor), 500) { if (mutedOf(tab) == true) true else null } == true
+        extra.put("muted", muted).put("ms", SystemClock.uptimeMillis() - started)
+        val action = extensionAction(row.id)
+        extra.put("action", action ?: JSONObject.NULL)
+        extra.put("video", json(tabEval(view, "(function(){var v=document.querySelector('video');return JSON.stringify({video:!!v,muted:v?v.muted:null,paused:v?v.paused:null,volume:v?v.volume:null})})()")))
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(10))) }
+        popupView()?.takeIf { it.context == "popup" }?.let { live -> extra.put("popupInstead", json(tabEval(live, DEEP_TEXT)).optString("text").take(200)) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-muted")
+        runCatching { coreCall("extension.closePopup", "null") }
+        if (muted) {
+            coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+            extra.put("unmuted", poll(scaled(10_000, factor), 500) { if (mutedOf(tab) == false) true else null } == true)
+            runCatching { coreCall("extension.closePopup", "null") }
+        }
+        return if (muted) {
+            Grade("P", "Mute Tab: the action click muted the clip's tab in ${extra.optLong("ms")} ms (tabs.update {muted: true}; badge \"${action?.optString("badgeText")?.trim() ?: ""}\", title \"${action?.optString("title")?.take(40) ?: ""}\")${if (extra.optBoolean("unmuted")) "; the second click unmuted it" else ""}", extra)
+        } else {
+            Grade("F", "Mute Tab: the tab's muted flag stayed ${mutedOf(tab)} for ${scaled(15_000, factor) / 1000} s after the action click (its action.onClicked → tabs.update {muted}; action ${action?.toString()?.take(120)})", extra)
+        }
+    }
+
+    /**
+     * VideoPlayer MPD/M3U8/IPTV/EPG: its worker installs dynamic `declarativeNetRequest` rules
+     * redirecting any `.mpd` or `.m3u8` main-frame address into its own player (a
+     * `regexSubstitution` to `pages/player.html#` and the address; `.m3u` to `iptv/player.html`),
+     * and the player page (`#player`, jwplayer) loads the playlist from its hash. The fixture
+     * playlist (`stream.m3u8`) opens in a tab, the tab landing on the extension's page is the
+     * redirect, the player drawn in `#player` is the pass ([MEDIA_PLAYER_PAGE]); the player page
+     * without a player is `PARTIAL`, the tab left on the playlist is F (as [epubReader] reads
+     * EPUBReader's redirect).
+     */
+    private fun mediaPlayerRedirect(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val since = StepEvidence(row)
+        val tab = createTab("$BASE/stream.m3u8")
+        val landed = poll(scaled(30_000, factor), 500) { tabUrls()[tab]?.takeIf { extensionPage(it, row.id) } }
+        extra.put("landed", landed ?: JSONObject.NULL).put("tabUrl", tabUrls()[tab] ?: JSONObject.NULL)
+        var found = JSONObject()
+        if (landed != null) {
+            val view = waitForView(tab)
+            showTab(tab)
+            found = pollExpr(view, MEDIA_PLAYER_PAGE, scaled(40_000, factor))
+            found.put("console", JSONArray(consoleOf(view).takeLast(10)))
+            if (!found.optBoolean("pass")) extra.put("blankTab", blankPageEvidence(view, row, 0L))
+        }
+        extra.put("player", found)
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(10))) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(800)
+        snap("${entry.optString("slug")}-player")
+        return when {
+            found.optBoolean("pass") -> Grade("P", "VideoPlayer MPD: stream.m3u8 redirected to ${extensionPath(landed!!).take(60)} and its player drew (${found.toString().take(160)})", extra)
+            landed != null -> Grade("PARTIAL", "VideoPlayer MPD: stream.m3u8 redirected to ${extensionPath(landed).take(60)} but no player drew within ${scaled(40_000, factor) / 1000} s: ${found.toString().take(200)}", extra)
+            else -> Grade("F", "VideoPlayer MPD: the tab stayed on ${tabUrls()[tab]?.take(80)} for ${scaled(30_000, factor) / 1000} s (its dynamic declarativeNetRequest redirect to pages/player.html did not fire)", extra)
+        }
+    }
 
     // --- the core checks of compat round 18 (ranks 421-450 by installs) --------------------------
 
@@ -7080,32 +8650,742 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     }
 
     /**
-     * Advanced Font Settings: an `options_page` alone (no popup, no scripts) that lists the
-     * writing scripts and, per script, the standard, serif, sans-serif and fixed fonts and their
-     * sizes, all read from and written to `chrome.fontSettings`. The page rendering its script
-     * list and its font selects is the runtime's part (the API present, its `getFontList` and
-     * `getFont` answered); the WebView has no per-script font preferences to set, so the
-     * runtime answers its reads empty and `not_controllable`, and the row is `n/a` on the page
-     * rendered (WebView limit, named). A page without its controls within the wait is `F` with
-     * the blank-page evidence.
+     * Advanced Font Settings – the `chrome.fontSettings` bridge's proof (compat round 20). The
+     * extension is an `options_page` alone (no popup, no scripts) that lists the writing scripts
+     * and, per script, the standard, serif, sans-serif and fixed fonts and the three sizes, all
+     * read from and written to `chrome.fontSettings`. The fixture `fonts-lang.html` is opened
+     * first and read as the baseline (`r0`): no `lang` on its root and no font-family anywhere
+     * but its control spans, so every plain span shows the WebView's standard family. The
+     * options page is opened in a tab and its standard list awaited filled from `getFontList`
+     * (the device's fonts.xml named families; `casual` – Coming Soon on the AOSP images – is
+     * picked, a fallback list behind it), and the four events counted on the page. Then, through
+     * the page's own controls (the script list and the standard list's `change`, the size
+     * slider's handler, the Apply button): the default script's standard face to the picked
+     * family and the default size to 24 px; the Japanese script's standard face to `serif` and
+     * the Cyrillic's to `monospace`; `math` to `serif` through the API (the page has no math
+     * picker). The open fixture tab is read (`r1`), a fresh fixture tab (`r2`); everything is
+     * then cleared through the page's per-script reset and the API's clears, and the open tab
+     * read again (`r3`). `P` needs: the list filled; the body in the picked family at 24 px, the
+     * plain span's text as wide as the control span styled with the picked family and not as
+     * wide as the monospace control (the face is on the glyphs, not only in the computed value);
+     * the `lang="ja"` span in `serif` while the unlabelled Japanese span keeps the standard
+     * family (divergence i of the `:lang()` approximation); the `lang="ru"` spans in
+     * `monospace` – the one carrying Latin text too, as wide as the monospace control
+     * (divergence ii); the MathML element in `serif` while the span asking for `font-family:
+     * math` is not (divergence iii); the fresh tab reading as the open one; the readings back
+     * to the baseline after the clears; `onFontChanged` seen three times or more and
+     * `onDefaultFontSizeChanged` once; `getFont` for Japanese answering `serif` controlled by
+     * this extension. `PARTIAL` is the standard face and size applied with a later reading off
+     * (each named); `F` is an empty list or the standard face never applied, with the blank-page
+     * evidence where the page drew nothing.
      */
-    private fun fontSettingsPage(row: Row, entry: JSONObject): Grade {
+    private fun fontSettingsProof(row: Row, entry: JSONObject): Grade {
         val factor = speedFactor(entry)
+        val slug = entry.optString("slug")
         val extra = JSONObject()
-        val tab = createTab("chrome-extension://${row.id}/options.html")
-        val view = waitForView(tab)
-        val found = pollExpr(view, FONT_SETTINGS_PAGE, scaled(30_000, factor))
-        found.put("console", JSONArray(consoleOf(view).takeLast(10)))
-        extra.put("page", found).put("url", (tabUrls()[tab] ?: "").take(160))
-        if (!found.optBoolean("pass")) extra.put("blankTab", blankPageEvidence(view, row, 0L))
+        val (fixture1, fixtureView) = fixture("fonts-lang.html", factor, 1_500)
+        val r0 = fontReadings(fixtureView)
+        extra.put("r0", r0)
+        val options = createTab("chrome-extension://${row.id}/options.html")
+        val optionsView = waitForView(options)
+        val list = pollExpr(optionsView, FONT_SETTINGS_LIST, scaled(30_000, factor))
+        list.put("console", JSONArray(consoleOf(optionsView).takeLast(8)))
+        extra.put("list", list).put("url", (tabUrls()[options] ?: "").take(160))
+        if (!list.optBoolean("pass")) {
+            extra.put("blankTab", blankPageEvidence(optionsView, row, 0L))
+            SystemClock.sleep(800)
+            snap("$slug-fonts-list")
+            closeTab(options)
+            closeTab(fixture1)
+            showTab(fixtureTab)
+            return Grade("F", "Advanced Font Settings: its standard font list is not filled from getFontList within ${scaled(30_000, factor) / 1000} s: ${list.toString().take(220)}", extra)
+        }
+        val picked = list.optString("picked")
+        tabEval(optionsView, FONT_EVENTS_ARM)
         SystemClock.sleep(800)
-        snap("${entry.optString("slug")}-font-settings")
-        return if (found.optBoolean("pass")) {
-            Grade("n/a", "Advanced Font Settings: its options page renders its script list and font selects (${found.optInt("selects")} selects, ${found.optInt("scriptOptions")} scripts listed, `chrome.fontSettings` with ${found.optInt("apiKeys")} members), but the WebView has no per-script font preferences for `chrome.fontSettings` to set (the runtime answers its reads empty and not_controllable): WebView limit", extra)
-        } else {
-            Grade("F", "Advanced Font Settings: its options page shows no script list or font selects within ${scaled(30_000, factor) / 1000} s: ${found.toString().take(200)}", extra)
+        snap("$slug-fonts-list")
+        // Step 1: the default script's standard face and the default size, through the page's controls.
+        extra.put("applyStandard", json(tabEval(optionsView, fontApplyScript(mapOf("Zyyy" to picked), size = 24))))
+        showTab(fixture1)
+        val standard = pollFonts(fixtureView, scaled(15_000, factor)) { familyOf(it, "body") == picked && sizeOf(it, "body") == "24px" }
+        extra.put("r1standard", standard)
+        snap("$slug-fonts-standard")
+        // Step 2: the Japanese and Cyrillic scripts' standard faces through the page, math through the API.
+        showTab(options)
+        extra.put("applyScripts", json(tabEval(optionsView, fontApplyScript(mapOf("Jpan" to "serif", "Cyrl" to "monospace")))))
+        extra.put("math", probe(optionsView, FONT_MATH_SET, "__zenMath", scaled(10_000, factor)))
+        val get = probe(optionsView, FONT_GET, "__zenGet", scaled(10_000, factor))
+        extra.put("get", get)
+        showTab(fixture1)
+        val r1 = pollFonts(fixtureView, scaled(15_000, factor)) { familyOf(it, "ja") == "serif" && familyOf(it, "ru") == "monospace" && familyOf(it, "math") == "serif" }
+        extra.put("r1", r1)
+        snap("$slug-fonts-scripts")
+        val (fixture2, view2) = fixture("fonts-lang.html", factor, 1_500)
+        val r2 = fontReadings(view2)
+        extra.put("r2", r2)
+        snap("$slug-fonts-new-tab")
+        closeTab(fixture2)
+        // The revert: the page's per-script reset (four clearFont each) and the API's clears.
+        showTab(options)
+        extra.put("clear", tabEval(optionsView, FONT_CLEAR_ALL))
+        showTab(fixture1)
+        val r3 = pollFonts(fixtureView, scaled(15_000, factor)) { sameFonts(it, r0) }
+        extra.put("r3", r3)
+        snap("$slug-fonts-reverted")
+        val events = json(tabEval(optionsView, "JSON.stringify(window.__zenEv||null)"))
+        extra.put("events", events).put("optionsConsole", JSONArray(consoleOf(optionsView).takeLast(8)))
+        closeTab(options)
+        closeTab(fixture1)
+        showTab(fixtureTab)
+        val standardOn = familyOf(r1, "body") == picked && sizeOf(r1, "body") == "24px"
+        val control = "probe-$picked"
+        val glyphs = if (r1.optJSONObject(control) != null) near(widthOf(r1, "latin"), widthOf(r1, control)) && !near(widthOf(r1, "latin"), widthOf(r1, "probe-mono")) else null
+        val jaOn = familyOf(r1, "ja") == "serif" && familyOf(r1, "plain-ja") == picked
+        val ruOn = familyOf(r1, "ru") == "monospace" && familyOf(r1, "ru-latin") == "monospace" && near(widthOf(r1, "ru-latin"), widthOf(r1, "probe-mono"))
+        val mathOn = familyOf(r1, "math") == "serif" && familyOf(r1, "math-text") == "math"
+        val newTabSame = sameFonts(r1, r2)
+        val reverted = sameFonts(r3, r0)
+        val eventsOk = events.optInt("font") >= 3 && events.optInt("size") >= 1
+        val jpan = get.optJSONObject("jpan")
+        val getOk = jpan != null && jpan.optString("fontId") == "serif" && jpan.optString("levelOfControl") == "controlled_by_this_extension"
+        val note = "list ${list.optInt("fontOptions")} fonts (${list.optJSONArray("names")?.join(", ")?.replace("\"", "") ?: ""}), picked `$picked`; " +
+            "body ${familyOf(r0, "body")} ${sizeOf(r0, "body")} → ${familyOf(r1, "body")} ${sizeOf(r1, "body")}" +
+            (glyphs?.let { "; glyphs ${if (it) "on the picked face" else "NOT on the picked face"} (latin ${widthOf(r1, "latin")} px, the $picked control ${widthOf(r1, control)} px, the monospace control ${widthOf(r1, "probe-mono")} px)" } ?: "; no width control for `$picked`") +
+            "; lang=ja ${familyOf(r1, "ja")}, unlabelled Japanese ${familyOf(r1, "plain-ja")}; lang=ru ${familyOf(r1, "ru")}, Latin text under lang=ru ${familyOf(r1, "ru-latin")} (${widthOf(r1, "ru-latin")} px against the monospace control's ${widthOf(r1, "probe-mono")} px); " +
+            "MathML ${familyOf(r1, "math")}, font-family: math ${familyOf(r1, "math-text")}; a new tab ${if (newTabSame) "reads the same" else "reads differently"}; after the clears ${if (reverted) "back to the baseline" else "NOT back: body ${familyOf(r3, "body")} ${sizeOf(r3, "body")}, ja ${familyOf(r3, "ja")}, ru ${familyOf(r3, "ru")}, math ${familyOf(r3, "math")}"}; " +
+            "events font ${events.optInt("font")} size ${events.optInt("size")}; getFont Jpan ${jpan?.toString() ?: "no answer"}"
+        val off = listOfNotNull(
+            if (glyphs == false) "the glyphs" else null,
+            if (!jaOn) "the Japanese label" else null,
+            if (!ruOn) "the Cyrillic label" else null,
+            if (!mathOn) "math" else null,
+            if (!newTabSame) "the new tab" else null,
+            if (!reverted) "the revert" else null,
+            if (!eventsOk) "the events" else null,
+            if (!getOk) "getFont" else null
+        )
+        return when {
+            !standardOn -> Grade("F", "Advanced Font Settings: the standard face and size set through its page never reached the fixture: $note", extra)
+            off.isEmpty() -> Grade("P", "Advanced Font Settings: $note", extra)
+            else -> Grade("PARTIAL", "Advanced Font Settings: the standard face and size applied; off: ${off.joinToString(", ")}: $note", extra)
         }
     }
+
+    /** `window.__zenFonts()` of the fonts fixture: the computed family, size and box per span, and the injected sheet. */
+    private fun fontReadings(view: WebView): JSONObject =
+        json(tabEval(view, "typeof window.__zenFonts==='function'?window.__zenFonts():JSON.stringify({error:'no __zenFonts on the page'})"))
+
+    /** The readings polled until `ready` holds, for up to `timeoutMs`; the last reading either way. */
+    private fun pollFonts(view: WebView, timeoutMs: Long, ready: (JSONObject) -> Boolean): JSONObject {
+        var last = JSONObject()
+        poll(timeoutMs, 600) {
+            last = fontReadings(view)
+            if (ready(last)) true else null
+        }
+        return last
+    }
+
+    /** The first family of a span's computed `font-family` in a reading, unquoted and lower-cased; empty when absent. */
+    private fun familyOf(reading: JSONObject?, id: String): String =
+        reading?.optJSONObject(id)?.optString("ff")?.substringBefore(',')?.trim()?.trim('"', '\'')?.lowercase() ?: ""
+
+    private fun sizeOf(reading: JSONObject?, id: String): String = reading?.optJSONObject(id)?.optString("fs") ?: ""
+
+    private fun widthOf(reading: JSONObject?, id: String): Double = reading?.optJSONObject(id)?.optDouble("w") ?: Double.NaN
+
+    private fun near(a: Double, b: Double, tolerance: Double = 1.0): Boolean = !a.isNaN() && !b.isNaN() && Math.abs(a - b) < tolerance
+
+    /** Whether two readings agree on every graded span's computed family and size. */
+    private fun sameFonts(a: JSONObject?, b: JSONObject?): Boolean =
+        a != null && b != null && FONT_SPANS.all { familyOf(a, it) == familyOf(b, it) && sizeOf(a, it) == sizeOf(b, it) }
+
+    /**
+     * On Advanced Font Settings' options page: `sets` (script code → font id) through its script
+     * list and standard font list (their `change` events reach its handlers as a user's picks
+     * do), an optional default size through its slider handler, then its Apply button, which
+     * commits the pending changes as `chrome.fontSettings.setFont` / `setDefaultFontSize`.
+     */
+    private fun fontApplyScript(sets: Map<String, String>, size: Int? = null): String =
+        "(function(){var sets=${JSONObject(sets)};var out={};var s=document.getElementById('scriptList');var l=document.getElementById('standardFontList');" +
+            "for(var sc in sets){s.value=sc;s.dispatchEvent(new Event('change'));l.value=sets[sc];l.dispatchEvent(new Event('change'));out[sc]={script:s.value,font:l.value}}" +
+            (size?.let { "advancedFonts.handleFontSizeSliderChange('defaultFontSize','$it');" } ?: "") +
+            "var b=document.getElementById('apply-settings');out.disabled=b.disabled;b.click();return JSON.stringify(out)})()"
+
+    /** A step's answer in a probe's `steps` array ([FONTS_PROBE_SET] and friends), by name; null when the step is not there. */
+    private fun stepOf(probe: JSONObject, name: String): JSONObject? {
+        val steps = probe.optJSONArray("steps") ?: return null
+        for (i in 0 until steps.length()) {
+            val step = steps.optJSONObject(i) ?: continue
+            if (step.optString("name") == name) return step
+        }
+        return null
+    }
+
+    /**
+     * Fonts probe A – the sizes, `clearFont` and the reverts (the round's second proof row, a
+     * fixture of the sweep's own with the `fontSettings` permission and a probe page). From its
+     * page: `setDefaultFontSize` 20, `setMinimumFontSize` 12, `setDefaultFixedFontSize` 18 and
+     * the standard face to the first of [FONTS_PROBE_A_PICKS] `getFontList` carries (Cutive
+     * Mono's `serif-monospace` on the emulator images), each read back with its level of
+     * control. The fixture read after (`r1`): the body at 20 px in the picked face, the
+     * `<code>` at 18 px (the fixed default size, through the monospace quirk), the six-pixel
+     * span's box grown to the minimum (the computed value keeps the specified size; the box
+     * shows the rendered one), a fresh tab the same (`r2`). Then THE `monospace` CASE, read
+     * apart (R21-10): the standard face set to the generic name and the body's size read
+     * against the engine's own mapping – from Chromium 124 (`FontDescription::IsMonospace`
+     * reading the family's `FamilyIsGeneric()` in place of the description's generic slot,
+     * which the initial font never sets to monospace) a standard face NAMED `monospace` is
+     * monospace to `FontBuilder::CheckForGenericFamilyChange`, so keyword-sized text takes
+     * `defaultFixedFontSize`: 18 px where 20 was set on the 156 snapshot, 20 on WebView 113,
+     * and desktop Chrome from 124 the same – the bridge hands `WebSettings` the values asked
+     * (`ExtensionFontLayer.over` → `PageFonts.applyTo`), the mapping is Blink's. Then the four
+     * clears, each read back as `controllable_by_this_extension` with the browser's own value,
+     * and the open tab back to the baseline (`r3`). The four events counted on the page (armed
+     * at its load). `P` on all of it; `PARTIAL` with the sizes and face applied and a later
+     * reading off (the `monospace` case off the engine's mapping among them); `F` when they
+     * never reached the fixture. When no non-generic face is listed the pick falls back to
+     * `monospace` and the size proof reads the engine's mapping itself.
+     */
+    private fun fontsProbeSizes(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val slug = entry.optString("slug")
+        val extra = JSONObject()
+        val major = webViewMajor()
+        val monospaceKeywordSize = if ((major ?: 0) >= MONOSPACE_KEYWORD_SIZE_FROM) "18px" else "20px"
+        extra.put("webViewMajor", major ?: JSONObject.NULL).put("monospaceKeywordSize", monospaceKeywordSize)
+        val (fixture1, fixtureView) = fixture("fonts-lang.html", factor, 1_500)
+        val r0 = fontReadings(fixtureView)
+        extra.put("r0", r0)
+        val page = createTab("chrome-extension://${row.id}/probe.html")
+        val pageView = waitForView(page)
+        val ready = poll(scaled(15_000, factor), 400) { if (tabEval(pageView, FONTS_PAGE_READY) == "true") true else null }
+        extra.put("pageReady", ready == true)
+        val set = probe(pageView, FONTS_PROBE_A_SET, "__zenA", scaled(15_000, factor))
+        extra.put("set", set)
+        val picked = set.optString("picked").ifEmpty { FONTS_PROBE_A_PICKS.last() }
+        val bodySize = if (picked == "monospace") monospaceKeywordSize else "20px"
+        showTab(fixture1)
+        val r1 = pollFonts(fixtureView, scaled(15_000, factor)) { familyOf(it, "body") == picked && sizeOf(it, "body") == bodySize && sizeOf(it, "fixed") == "18px" }
+        extra.put("r1", r1)
+        snap("$slug-sizes")
+        val (fixture2, view2) = fixture("fonts-lang.html", factor, 1_500)
+        val r2 = fontReadings(view2)
+        extra.put("r2", r2)
+        closeTab(fixture2)
+        showTab(page)
+        val rMono = if (picked == "monospace") r1 else {
+            val monoSet = probe(pageView, fontsProbeSet("monospace"), "__zenSet", scaled(15_000, factor))
+            extra.put("monospaceSet", monoSet)
+            showTab(fixture1)
+            pollFonts(fixtureView, scaled(15_000, factor)) { familyOf(it, "body") == "monospace" && sizeOf(it, "body") == monospaceKeywordSize }.also {
+                snap("$slug-monospace")
+                showTab(page)
+            }
+        }
+        extra.put("monospaceCase", JSONObject().put("body", familyOf(rMono, "body")).put("size", sizeOf(rMono, "body")).put("engine", monospaceKeywordSize))
+        val clear = probe(pageView, FONTS_PROBE_A_CLEAR, "__zenAClear", scaled(15_000, factor))
+        extra.put("clear", clear)
+        showTab(fixture1)
+        val r3 = pollFonts(fixtureView, scaled(15_000, factor)) { sameFonts(it, r0) && near(widthOf(it, "tiny"), widthOf(r0, "tiny")) }
+        extra.put("r3", r3)
+        snap("$slug-cleared")
+        val events = json(tabEval(pageView, "JSON.stringify(window.__zenEv||null)"))
+        extra.put("events", events).put("pageConsole", JSONArray(consoleOf(pageView).takeLast(8)))
+        closeTab(page)
+        closeTab(fixture1)
+        showTab(fixtureTab)
+        val sizesOn = familyOf(r1, "body") == picked && sizeOf(r1, "body") == bodySize && sizeOf(r1, "fixed") == "18px"
+        val minimumOn = widthOf(r1, "tiny") > widthOf(r0, "tiny") * 1.5
+        val sizeRead = stepOf(set, "getDefaultFontSize")?.optJSONObject("r")
+        val levelsOn = sizeRead != null && sizeRead.optInt("pixelSize") == 20 && sizeRead.optString("levelOfControl") == "controlled_by_this_extension" &&
+            stepOf(set, "getMinimumFontSize")?.optJSONObject("r")?.optInt("pixelSize") == 12 &&
+            stepOf(set, "getDefaultFixedFontSize")?.optJSONObject("r")?.optInt("pixelSize") == 18 &&
+            stepOf(set, "getFont")?.optJSONObject("r")?.optString("fontId") == picked
+        val newTabSame = sameFonts(r1, r2) && near(widthOf(r1, "tiny"), widthOf(r2, "tiny"))
+        val monospaceAsEngine = familyOf(rMono, "body") == "monospace" && sizeOf(rMono, "body") == monospaceKeywordSize
+        val clearedLevel = stepOf(clear, "getDefaultFontSize")?.optJSONObject("r")?.optString("levelOfControl")
+        val reverted = sameFonts(r3, r0) && near(widthOf(r3, "tiny"), widthOf(r0, "tiny")) && clearedLevel == "controllable_by_this_extension"
+        val eventsOk = events.optInt("font") >= 1 && events.optInt("size") >= 1 && events.optInt("fixed") >= 1 && events.optInt("min") >= 1
+        val note = "body ${familyOf(r0, "body")} ${sizeOf(r0, "body")} → ${familyOf(r1, "body")} ${sizeOf(r1, "body")} (the face picked `$picked` of ${set.optInt("fonts")} listed); code ${sizeOf(r0, "fixed")} → ${sizeOf(r1, "fixed")}; " +
+            "the six-pixel span ${widthOf(r0, "tiny")} → ${widthOf(r1, "tiny")} px wide (${if (minimumOn) "the minimum applied" else "the minimum NOT applied"}); " +
+            "read back: default size ${sizeRead?.toString() ?: "no answer"}, minimum ${stepOf(set, "getMinimumFontSize")?.optJSONObject("r")?.optInt("pixelSize")}, fixed ${stepOf(set, "getDefaultFixedFontSize")?.optJSONObject("r")?.optInt("pixelSize")}, standard ${stepOf(set, "getFont")?.optJSONObject("r")?.optString("fontId")}; " +
+            "a new tab ${if (newTabSame) "reads the same" else "reads differently"}; " +
+            "the `monospace` case: body ${familyOf(rMono, "body")} ${sizeOf(rMono, "body")} where 20 was set – ${if (monospaceAsEngine) "the engine's own mapping" else "NOT the engine's mapping"} (WebView $major: keyword sizes of a standard face named `monospace` ${if ((major ?: 0) >= MONOSPACE_KEYWORD_SIZE_FROM) "off the fixed size 18 since Chromium $MONOSPACE_KEYWORD_SIZE_FROM" else "off the default size 20 before Chromium $MONOSPACE_KEYWORD_SIZE_FROM"}); " +
+            "after the clears ${if (reverted) "back to the baseline, the level $clearedLevel" else "NOT back: body ${familyOf(r3, "body")} ${sizeOf(r3, "body")}, code ${sizeOf(r3, "fixed")}, the six-pixel span ${widthOf(r3, "tiny")} px, the level $clearedLevel"}; " +
+            "events font ${events.optInt("font")} size ${events.optInt("size")} fixed ${events.optInt("fixed")} min ${events.optInt("min")}"
+        val off = listOfNotNull(
+            if (!minimumOn) "the minimum size" else null,
+            if (!levelsOn) "the reads' levels" else null,
+            if (!newTabSame) "the new tab" else null,
+            if (!monospaceAsEngine) "the monospace case" else null,
+            if (!reverted) "the revert" else null,
+            if (!eventsOk) "the events" else null
+        )
+        return when {
+            !sizesOn -> Grade("F", "fonts probe A: the sizes and the standard face never reached the fixture: $note", extra)
+            off.isEmpty() -> Grade("P", "fonts probe A: $note", extra)
+            else -> Grade("PARTIAL", "fonts probe A: the sizes and the face applied; off: ${off.joinToString(", ")}: $note", extra)
+        }
+    }
+
+    /** The WebView's Chromium major (its package's `versionName` up to the first dot); null when unreadable. */
+    private fun webViewMajor(): Int? = WebViewCompat.getCurrentWebViewPackage(app)?.versionName?.substringBefore('.')?.toIntOrNull()
+
+    /**
+     * A fonts probe page ready again after its extension was disabled and enabled (the seam
+     * row): the disable took the document's endpoint away (the runtime's `detach` unregisters
+     * the extension's endpoints, Kotlin's `ext.detach` its contexts), so a call from the open
+     * document never answers – round 20's seam cleanup read "no answer within 15 s". The
+     * document is reloaded (the new one hellos again, the old marked so the poll does not read
+     * it) and, when the tab is gone or stays silent, the page is opened in a new tab. The tab
+     * and its view, ready or not (the caller's probe times out then).
+     */
+    private fun reopenedFontsProbePage(tab: String, view: WebView, extensionId: String, factor: Double): Pair<String, WebView> {
+        runCatching { tabEval(view, "(function(){window.__zenReloading=true;location.reload();return 'reloading'})()") }
+        val reloaded = poll(scaled(8_000, factor), 400) { if (tabEval(view, "String(!window.__zenReloading&&$FONTS_PAGE_READY_EXPR)") == "true") true else null }
+        if (reloaded == true) return tab to view
+        closeTab(tab)
+        val fresh = createTab("chrome-extension://$extensionId/probe.html")
+        val freshView = waitForView(fresh)
+        poll(scaled(15_000, factor), 400) { if (tabEval(freshView, FONTS_PAGE_READY) == "true") true else null }
+        return fresh to freshView
+    }
+
+    /**
+     * The seam with W6-C6's Fonts page (#518; round 20's `[lane]` reading on the merged head):
+     * the phone's Settings › Look and Feel › Customise fonts rows under the probe's layer. The
+     * page is read at the user's values first (the baseline); the probe – probe A's fixture under
+     * another name – sets the default size 20, the minimum 12, the fixed 18 and the standard face
+     * `monospace` from its page; the Fonts page then shows the held rows at those values (the
+     * slider's thumb `aria-disabled`, the family row's description the face) with one
+     * "Controlled by <name>" row after the run; that row's press opens Settings › Extensions
+     * with the probe's details – its Enabled switch – which, pressed, disables the probe: the
+     * layer drops, the fixture reads its baseline fonts again and the Fonts page its user's
+     * rows with no indicator. The probe is enabled again and cleared at the end from its page
+     * reloaded ([reopenedFontsProbePage]: the disable took the open document's endpoint away),
+     * as every row's extension is disabled by the row's cleanup. The face stays `monospace`, the
+     * name the Fonts page labels; its size proof is probe A's ([fontsProbeSizes], R21-10). `P`
+     * on all of it; `PARTIAL` with the held rows shown and a later step off (named); `F` when
+     * the page never showed the rows held (the seam not reached); `n/m` when the Settings page
+     * did not open on this lane.
+     */
+    private fun fontsPageSeam(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val slug = entry.optString("slug")
+        val extra = JSONObject()
+        val name = row.name
+        val (fixture1, fixtureView) = fixture("fonts-lang.html", factor, 1_500)
+        val r0 = fontReadings(fixtureView)
+        extra.put("r0", r0)
+        // 1. The Fonts page at the user's values.
+        if (!openSettingsSection(LOOK_SECTION, scaled(12_000, factor))) {
+            return Grade("n/m", "fonts page seam: Settings › Look and Feel never opened on this lane (section '${settingsSection()}')", extra)
+        }
+        val user = pollFontsPage(scaled(10_000, factor)) { it.optBoolean("present") }
+        extra.put("pageUser", user)
+        snap("$slug-page-user")
+        leaveSettingsTab()
+        // 2. The probe's layer from its page.
+        val page = createTab("chrome-extension://${row.id}/probe.html")
+        val pageView = waitForView(page)
+        val ready = poll(scaled(15_000, factor), 400) { if (tabEval(pageView, FONTS_PAGE_READY) == "true") true else null }
+        extra.put("pageReady", ready == true)
+        val set = probe(pageView, FONTS_PAGE_PROBE_SET, "__zenA", scaled(15_000, factor))
+        extra.put("set", set)
+        showTab(fixture1)
+        // The face alone: the body's size under a standard face named `monospace` is the engine's
+        // mapping (18 px from Chromium 124, 20 before), probe A's reading, not this row's.
+        val r1 = pollFonts(fixtureView, scaled(15_000, factor)) { familyOf(it, "body") == "monospace" }
+        extra.put("r1", r1)
+        // 3. The Fonts page held.
+        val opened = openSettingsSection(LOOK_SECTION, scaled(12_000, factor))
+        val held = pollFontsPage(scaled(10_000, factor)) { it.optBoolean("present") && (it.optJSONArray("held")?.length() ?: 0) > 0 }
+        extra.put("pageHeld", held).put("heldOpened", opened)
+        snap("$slug-page-held")
+        val indicators = held.optJSONArray("held") ?: JSONArray()
+        val indicatorTexts = (0 until indicators.length()).map { indicators.getJSONObject(it).optString("text") }
+        val heldOk = indicators.length() > 0 && indicatorTexts.any { it.contains(name) } &&
+            held.optString("size").contains("20") && held.optString("minimum").contains("12") &&
+            held.optString("standard").lowercase().let { it.contains("monospace") || it.contains("droid sans mono") } &&
+            held.optString("sizeThumb") == "true"
+        // 4. The indicator's press: Settings › Extensions with the probe's details (its switch).
+        val switchRow = "extension:${row.id}:enabled"
+        val detailsUp = { chromeJsString("(function(){var e=document.querySelector('[data-row=\"$switchRow\"]');return e?String(e.getAttribute('aria-checked')):''})()").orEmpty().isNotEmpty() }
+        var manageOk = false
+        if (indicators.length() > 0) {
+            manageOk = touchSettingsRowExpecting("Controlled by", "the probe's details are up", scaled(10_000, factor), detailsUp) ||
+                detailsUp() ||
+                (clickSettingsRow("Controlled by") && awaitTrue(scaled(10_000, factor), detailsUp))
+        }
+        extra.put("manage", JSONObject().put("section", settingsSection() ?: "").put("switchChecked", chromeJsString("(function(){var e=document.querySelector('[data-row=\"$switchRow\"]');return e?String(e.getAttribute('aria-checked')):''})()") ?: ""))
+        snap("$slug-page-manage")
+        // 5. The switch off: the probe disabled, the layer dropped.
+        val disabled = { extensions().firstOrNull { it.getString("id") == row.id }?.optBoolean("enabled", true) == false }
+        var switchOk = false
+        if (manageOk) {
+            switchOk = touchSettingsRowExpecting("Enabled", "the probe is disabled", scaled(10_000, factor), disabled) ||
+                disabled() ||
+                (clickSettingsRow("Enabled") && awaitTrue(scaled(10_000, factor), disabled))
+        }
+        extra.put("switchOff", switchOk)
+        val r2 = if (switchOk) pollFonts(fixtureView, scaled(15_000, factor)) { sameFonts(it, r0) && near(widthOf(it, "tiny"), widthOf(r0, "tiny")) } else fontReadings(fixtureView)
+        extra.put("r2", r2)
+        val fixtureBack = sameFonts(r2, r0) && near(widthOf(r2, "tiny"), widthOf(r0, "tiny"))
+        // 6. The Fonts page released: the user's rows, no indicator.
+        back()
+        SystemClock.sleep(scaled(1_000, factor))
+        leaveSettingsTab()
+        val reopened = openSettingsSection(LOOK_SECTION, scaled(12_000, factor))
+        val released = pollFontsPage(scaled(10_000, factor)) { it.optBoolean("present") && (it.optJSONArray("held")?.length() ?: 0) == 0 }
+        extra.put("pageReleased", released).put("releasedOpened", reopened)
+        snap("$slug-page-released")
+        val pageBack = released.optBoolean("present") && (released.optJSONArray("held")?.length() ?: 0) == 0 &&
+            released.optString("size") == user.optString("size") && released.optString("standard") == user.optString("standard") &&
+            released.optString("sizeThumb") != "true"
+        leaveSettingsTab()
+        // The probe enabled again and cleared from its page reloaded (the disable took the open
+        // document's endpoint away); the row's cleanup disables it as every row's.
+        coreCall("extension.setEnabled", JSONObject().put("id", row.id).put("enabled", true).toString())
+        SystemClock.sleep(scaled(1_500, factor))
+        showTab(page)
+        val (clearTab, clearView) = reopenedFontsProbePage(page, pageView, row.id, factor)
+        extra.put("clearPage", if (clearTab == page) "reloaded" else "reopened")
+        val clear = runCatching { probe(clearView, FONTS_PROBE_A_CLEAR, "__zenAClear", scaled(15_000, factor)) }.getOrElse { JSONObject().put("error", it.toString()) }
+        extra.put("clear", clear)
+        val clearedLevel = stepOf(clear, "getDefaultFontSize")?.optJSONObject("r")?.optString("levelOfControl")
+        val clearOk = clearedLevel == "controllable_by_this_extension"
+        closeTab(clearTab)
+        closeTab(fixture1)
+        showTab(fixtureTab)
+        val note = "the page at the user's values: size '${user.optString("size")}', minimum '${user.optString("minimum")}', standard '${user.optString("standard")}', indicators ${user.optJSONArray("held")?.length() ?: 0}; " +
+            "held: size '${held.optString("size")}' (thumb aria-disabled ${held.optString("sizeThumb")}), minimum '${held.optString("minimum")}', standard '${held.optString("standard")}', " +
+            "indicators ${indicators.length()} [${indicatorTexts.joinToString(" | ") { it.take(90) }}]; " +
+            "the indicator's press ${if (manageOk) "opened the probe's details (section '${extra.optJSONObject("manage")?.optString("section")}', switch ${extra.optJSONObject("manage")?.optString("switchChecked")})" else "did not open the details (section '${extra.optJSONObject("manage")?.optString("section")}')"}; " +
+            "the switch ${if (switchOk) "disabled the probe" else "did not disable the probe"}; the fixture ${if (fixtureBack) "back to its baseline (body ${familyOf(r2, "body")} ${sizeOf(r2, "body")})" else "NOT back (body ${familyOf(r2, "body")} ${sizeOf(r2, "body")})"}; " +
+            "the page released: size '${released.optString("size")}', standard '${released.optString("standard")}', indicators ${released.optJSONArray("held")?.length() ?: 0}; " +
+            "the clear after the re-enable (the page ${extra.optString("clearPage")}): ${if (clearOk) "answered, the level $clearedLevel" else "off – ${clear.optString("error").ifEmpty { "the level $clearedLevel" }}"}"
+        val off = listOfNotNull(
+            if (!manageOk) "the indicator's press" else null,
+            if (!switchOk) "the switch" else null,
+            if (!fixtureBack) "the fixture's revert" else null,
+            if (!pageBack) "the page's release" else null,
+            if (!clearOk) "the clear after the re-enable" else null
+        )
+        return when {
+            !heldOk -> Grade("F", "fonts page seam: the phone's Fonts page never showed the rows held at the probe's values: $note", extra)
+            off.isEmpty() -> Grade("P", "fonts page seam: $note", extra)
+            else -> Grade("PARTIAL", "fonts page seam: the rows held as published; off: ${off.joinToString(", ")}: $note", extra)
+        }
+    }
+
+    /** The phone's Customise fonts rows as the chrome draws them: the sliders' values, the size thumb's `aria-disabled`, the standard row's text, the "Controlled by" rows. */
+    private fun fontsPageRows(): JSONObject = json(
+        chromeJsString(
+            "(function(){var q=function(s){return document.querySelector(s)};var txt=function(e){return e?(e.textContent||'').trim().replace(/\\s+/g,' '):''};" +
+                "var val=function(id){return txt(q('[data-row=\"'+id+'\"] .zen-settings-slider-value'))};" +
+                "var thumb=function(id){var t=q('[data-row=\"'+id+'\"] [role=\"slider\"]');return t?String(t.getAttribute('aria-disabled')):''};" +
+                "var held=Array.prototype.map.call(document.querySelectorAll('[data-row*=\"-controlled\"]'),function(e){return {row:e.getAttribute('data-row'),text:txt(e)}});" +
+                "var p=q('.zen-settings-phone');return JSON.stringify({present:!!q('[data-row=\"fonts-size-phone\"]'),size:val('fonts-size-phone'),sizeThumb:thumb('fonts-size-phone'),minimum:val('fonts-minimum-size-phone'),standard:txt(q('[data-row=\"fonts-standard-phone\"]')),held:held,section:p?String(p.dataset.section||''):''})})()"
+        ) ?: "{}"
+    )
+
+    /** [fontsPageRows] polled until `ready` holds, for up to `timeoutMs`; the last reading either way. */
+    private fun pollFontsPage(timeoutMs: Long, ready: (JSONObject) -> Boolean): JSONObject {
+        var last = JSONObject()
+        poll(timeoutMs, 500) {
+            last = fontsPageRows()
+            if (ready(last)) true else null
+        }
+        return last
+    }
+
+    /**
+     * Fonts probe B – two extensions' precedence (the round's third proof row; needs probe A's
+     * row before it in the table, its fixture installed). A is enabled again and, from its
+     * page, sets the standard face to `monospace`; B, installed after A and so ahead of it in
+     * Chrome's install-order precedence, sets it to `casual` (or the first of its fallbacks
+     * `getFontList` carries). The fixture shows B's face; A's `getFont` answers B's face as
+     * `controlled_by_other_extensions`, B's its own as `controlled_by_this_extension`. B's
+     * `clearFont` lets A's `monospace` surface (A's level `controlled_by_this_extension`; B's
+     * reading is recorded – the shared model answers `controlled_by_other_extensions` where
+     * Chrome, which weighs the caller's precedence, answers `controllable_by_this_extension`);
+     * A's `clearFont` returns the fixture to the baseline. A is disabled again at the end as
+     * every row's extension is. `P` on all of it; `PARTIAL` with B's face applied and a later
+     * reading off; `F` when B's face never reached the fixture; `n/m` when A is not installed.
+     */
+    private fun fontsProbePrecedence(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val slug = entry.optString("slug")
+        val extra = JSONObject()
+        if (extensions().none { it.getString("id") == FONTS_PROBE_A_ID }) return Grade("n/m", "fonts probe B: fonts probe A is not installed (its row runs first in the table)", extra)
+        coreCall("extension.setEnabled", JSONObject().put("id", FONTS_PROBE_A_ID).put("enabled", true).toString())
+        val aEnabled = poll(scaled(20_000, factor), 400) { extensions().firstOrNull { it.getString("id") == FONTS_PROBE_A_ID }?.takeIf { it.getBoolean("enabled") } } != null
+        extra.put("aEnabled", aEnabled)
+        val (fixture1, fixtureView) = fixture("fonts-lang.html", factor, 1_500)
+        val r0 = fontReadings(fixtureView)
+        extra.put("r0", r0)
+        val aPage = createTab("chrome-extension://$FONTS_PROBE_A_ID/probe.html")
+        val aView = waitForView(aPage)
+        poll(scaled(15_000, factor), 400) { if (tabEval(aView, "String(!!(window.__zenEv&&typeof chrome!=='undefined'&&chrome.fontSettings))") == "true") true else null }
+        val aSet = probe(aView, fontsProbeSet("monospace"), "__zenSet", scaled(15_000, factor))
+        extra.put("aSet", aSet)
+        val bPage = createTab("chrome-extension://${row.id}/probe.html")
+        val bView = waitForView(bPage)
+        poll(scaled(15_000, factor), 400) { if (tabEval(bView, "String(!!(window.__zenEv&&typeof chrome!=='undefined'&&chrome.fontSettings))") == "true") true else null }
+        val bSet = probe(bView, FONTS_PROBE_B_SET, "__zenSet", scaled(15_000, factor))
+        extra.put("bSet", bSet)
+        val picked = bSet.optString("picked")
+        showTab(fixture1)
+        val r1 = pollFonts(fixtureView, scaled(15_000, factor)) { familyOf(it, "body") == picked }
+        extra.put("r1", r1)
+        snap("$slug-b-wins")
+        showTab(aPage)
+        val aUnder = probe(aView, FONTS_PROBE_GET, "__zenGet", scaled(10_000, factor))
+        extra.put("aUnderB", aUnder)
+        showTab(bPage)
+        val bClear = probe(bView, FONTS_PROBE_CLEAR, "__zenClear", scaled(15_000, factor))
+        extra.put("bClear", bClear)
+        showTab(fixture1)
+        val r2 = pollFonts(fixtureView, scaled(15_000, factor)) { familyOf(it, "body") == "monospace" }
+        extra.put("r2", r2)
+        snap("$slug-a-surfaces")
+        showTab(aPage)
+        val aAfter = probe(aView, FONTS_PROBE_GET, "__zenGet", scaled(10_000, factor))
+        extra.put("aAfterBClear", aAfter)
+        val aClear = probe(aView, FONTS_PROBE_CLEAR, "__zenClear", scaled(15_000, factor))
+        extra.put("aClear", aClear)
+        showTab(fixture1)
+        val r3 = pollFonts(fixtureView, scaled(15_000, factor)) { sameFonts(it, r0) }
+        extra.put("r3", r3)
+        snap("$slug-cleared")
+        extra.put("aEvents", json(tabEval(aView, "JSON.stringify(window.__zenEv||null)")))
+        extra.put("bEvents", json(tabEval(bView, "JSON.stringify(window.__zenEv||null)")))
+        closeTab(bPage)
+        closeTab(aPage)
+        closeTab(fixture1)
+        runCatching { coreCall("extension.setEnabled", JSONObject().put("id", FONTS_PROBE_A_ID).put("enabled", false).toString()) }
+        val aOff = poll(scaled(20_000, factor), 400) { extensions().firstOrNull { it.getString("id") == FONTS_PROBE_A_ID }?.takeIf { !it.getBoolean("enabled") } } != null
+        extra.put("aDisabledAgain", aOff)
+        showTab(fixtureTab)
+        val bWins = picked.isNotEmpty() && familyOf(r1, "body") == picked
+        val aRead = stepOf(aUnder, "getFont")?.optJSONObject("r")
+        val bRead = stepOf(bSet, "getFont")?.optJSONObject("r")
+        val levelsOn = aRead != null && aRead.optString("fontId") == picked && aRead.optString("levelOfControl") == "controlled_by_other_extensions" &&
+            bRead != null && bRead.optString("fontId") == picked && bRead.optString("levelOfControl") == "controlled_by_this_extension"
+        val aSurfaces = familyOf(r2, "body") == "monospace"
+        val aAfterRead = stepOf(aAfter, "getFont")?.optJSONObject("r")
+        val aControlsAfter = aAfterRead != null && aAfterRead.optString("fontId") == "monospace" && aAfterRead.optString("levelOfControl") == "controlled_by_this_extension"
+        val reverted = sameFonts(r3, r0)
+        val bAfterClear = stepOf(bClear, "getFont")?.optJSONObject("r")
+        val note = "A set monospace (${stepOf(aSet, "getFont")?.optJSONObject("r")?.toString() ?: "no read"}); B picked `$picked` (${bRead?.toString() ?: "no read"}); " +
+            "body ${familyOf(r0, "body")} → ${familyOf(r1, "body")} with both set; A under B: ${aRead?.toString() ?: "no read"}; " +
+            "B cleared: body ${familyOf(r2, "body")} (B reads ${bAfterClear?.toString() ?: "no read"}; A reads ${aAfterRead?.toString() ?: "no read"}); " +
+            "A cleared: ${if (reverted) "back to the baseline" else "NOT back: body ${familyOf(r3, "body")} ${sizeOf(r3, "body")}"}; A disabled again ${aOff}; " +
+            "events A ${extra.optJSONObject("aEvents")?.optInt("font")} B ${extra.optJSONObject("bEvents")?.optInt("font")}"
+        val off = listOfNotNull(
+            if (!levelsOn) "the levels with both set" else null,
+            if (!aSurfaces) "A's face surfacing after B's clear" else null,
+            if (!aControlsAfter) "A's level after B's clear" else null,
+            if (!reverted) "the revert" else null
+        )
+        return when {
+            !aEnabled -> Grade("n/m", "fonts probe B: fonts probe A did not enable again: $note", extra)
+            !bWins -> Grade("F", "fonts probe B: the later-installed extension's face never reached the fixture: $note", extra)
+            off.isEmpty() -> Grade("P", "fonts probe B: $note", extra)
+            else -> Grade("PARTIAL", "fonts probe B: the later-installed extension's face applied; off: ${off.joinToString(", ")}: $note", extra)
+        }
+    }
+
+    /**
+     * The `chrome.privacy` probe (round 20's proof of the coordinator's ADDENDUM item 2d; a
+     * fixture of the sweep's own with the `privacy` permission and a probe page). The baseline
+     * first (`r0`): a same-origin navigation of an echo tab (`/echo-headers`, the request headers
+     * the server received on `window.__headers`) carries a `Referer` and no `DNT`, and
+     * `navigator.doNotTrack` is null. From the probe page: the password prompt off, Do Not Track
+     * on, referrers and hyperlink auditing off, each read back as `controlled_by_this_extension`
+     * (`webRTCIPHandlingPolicy` and the third-party cookies setting read as the browser answers
+     * them). Then the controls core publishes (`UIState.extensionControls`: the desktop's keys
+     * `passwords.offerToSave` and `privacy.dnt` naming the probe), `navigator.doNotTrack` `'1'` in
+     * the open echo document (the layer's script run in it) and in a fresh tab (registered at
+     * document start), and the echo navigation repeated until the request the server received
+     * carries `DNT: 1` and no `Referer` (`r1`: the runtime's rule set reaches the Kotlin engine
+     * through the blocking index, a rebuild behind it). A disable takes the layer and the rules
+     * away (`r2`, the map without the probe) and an enable brings the store's values back (`r3`,
+     * the reads `controlled_by_this_extension` again). The clears, each read back
+     * (`controllable_by_this_extension`, the browser's value), the echo back to the baseline
+     * (`r4`), the map empty of the probe; the `onChange` counters read on both probe pages. `P`
+     * on all of it; `PARTIAL` with the sets stored and read back and a later reading off; `F`
+     * when the sets never took (the stub's `not_controllable`, an error).
+     */
+    private fun privacyProbe(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val slug = entry.optString("slug")
+        val extra = JSONObject()
+        val (echoTab, echoView) = fixture("echo-headers?p=0", factor, 1_000)
+        val r0 = echoReading(echoView, factor, 1)
+        extra.put("r0", r0)
+        val page = createTab("chrome-extension://${row.id}/probe.html")
+        val pageView = waitForView(page)
+        val ready = poll(scaled(15_000, factor), 400) { if (tabEval(pageView, PRIVACY_PAGE_READY) == "true") true else null }
+        extra.put("pageReady", ready == true)
+        val set = probe(pageView, PRIVACY_PROBE_SET, "__zenP", scaled(15_000, factor))
+        extra.put("set", set)
+        val published = poll(scaled(15_000, factor), 400) { publishedControls().takeIf { c -> c.optJSONObject("privacy.dnt")?.optString("extensionId") == row.id && c.optJSONObject("passwords.offerToSave")?.optString("extensionId") == row.id } } ?: publishedControls()
+        extra.put("published", published)
+        val events1 = poll(scaled(5_000, factor), 300) { json(tabEval(pageView, "JSON.stringify(window.__zenEv||null)")).takeIf { it.optInt("dnt") >= 1 && it.optInt("passwords") >= 1 } }
+            ?: json(tabEval(pageView, "JSON.stringify(window.__zenEv||null)"))
+        extra.put("events", events1).put("pageConsole", JSONArray(consoleOf(pageView).takeLast(8)))
+        showTab(echoTab)
+        val openDnt = poll(scaled(10_000, factor), 300) { tabEval(echoView, "String(navigator.doNotTrack)").takeIf { it == "1" } } ?: tabEval(echoView, "String(navigator.doNotTrack)")
+        extra.put("openDocumentDoNotTrack", openDnt)
+        val r1 = echoUntil(echoView, factor, 2, scaled(20_000, factor)) { dntOf(it) == "1" && refererOf(it) == null }
+        extra.put("r1", r1)
+        snap("$slug-dnt")
+        val (fresh, freshView) = fixture("echo-headers?p=fresh", factor, 800)
+        val freshDnt = tabEval(freshView, "String(navigator.doNotTrack)")
+        extra.put("freshTabDoNotTrack", freshDnt)
+        closeTab(fresh)
+        closeTab(page)
+        coreCall("extension.setEnabled", JSONObject().put("id", row.id).put("enabled", false).toString())
+        val off = poll(scaled(20_000, factor), 400) { extensions().firstOrNull { it.getString("id") == row.id }?.takeIf { !it.getBoolean("enabled") } } != null
+        val goneFromMap = poll(scaled(10_000, factor), 400) { publishedControls().takeIf { !it.has("privacy.dnt") && !it.has("passwords.offerToSave") } } != null
+        showTab(echoTab)
+        val r2 = echoUntil(echoView, factor, 20, scaled(20_000, factor)) { dntOf(it) == null && refererOf(it) != null }
+        extra.put("disabled", off).put("goneFromMapWhenDisabled", goneFromMap).put("r2", r2)
+        coreCall("extension.setEnabled", JSONObject().put("id", row.id).put("enabled", true).toString())
+        val on = poll(scaled(20_000, factor), 400) { extensions().firstOrNull { it.getString("id") == row.id }?.takeIf { it.getBoolean("enabled") } } != null
+        val backInMap = poll(scaled(15_000, factor), 400) { publishedControls().takeIf { it.optJSONObject("privacy.dnt")?.optString("extensionId") == row.id } } != null
+        val r3 = echoUntil(echoView, factor, 40, scaled(20_000, factor)) { dntOf(it) == "1" && refererOf(it) == null }
+        extra.put("enabledAgain", on).put("backInMapWhenEnabled", backInMap).put("r3", r3)
+        val page2 = createTab("chrome-extension://${row.id}/probe.html")
+        val page2View = waitForView(page2)
+        poll(scaled(15_000, factor), 400) { if (tabEval(page2View, PRIVACY_PAGE_READY) == "true") true else null }
+        val kept = probe(page2View, PRIVACY_PROBE_KEPT, "__zenPKept", scaled(10_000, factor))
+        extra.put("keptAfterEnable", kept)
+        val clear = probe(page2View, PRIVACY_PROBE_CLEAR, "__zenPClear", scaled(15_000, factor))
+        extra.put("clear", clear)
+        val events2 = poll(scaled(5_000, factor), 300) { json(tabEval(page2View, "JSON.stringify(window.__zenEv||null)")).takeIf { it.optInt("dnt") >= 1 } }
+            ?: json(tabEval(page2View, "JSON.stringify(window.__zenEv||null)"))
+        extra.put("eventsAfterClears", events2)
+        showTab(echoTab)
+        val r4 = echoUntil(echoView, factor, 60, scaled(20_000, factor)) { dntOf(it) == null && refererOf(it) != null }
+        extra.put("r4", r4)
+        val clearedFromMap = poll(scaled(10_000, factor), 400) { publishedControls().takeIf { !it.has("privacy.dnt") && !it.has("passwords.offerToSave") } } != null
+        extra.put("clearedFromMap", clearedFromMap)
+        snap("$slug-cleared")
+        closeTab(page2)
+        closeTab(echoTab)
+        showTab(fixtureTab)
+        val wanted = mapOf("services.passwordSavingEnabled" to false, "websites.doNotTrackEnabled" to true, "websites.referrersEnabled" to false, "websites.hyperlinkAuditingEnabled" to false)
+        fun readOf(probe: JSONObject, path: String): JSONObject? = stepOf(probe, "get $path")?.optJSONObject("r")
+        fun held(probe: JSONObject): Boolean = wanted.all { (path, value) -> readOf(probe, path)?.let { it.optString("levelOfControl") == "controlled_by_this_extension" && it.has("value") && it.optBoolean("value", !value) == value } == true }
+        val setsTook = wanted.keys.all { path -> stepOf(set, "set $path")?.let { it.isNull("err") && !it.has("threw") } == true } && held(set)
+        val baselineOk = dntOf(r0) == null && refererOf(r0) != null
+        val publishedOk = published.optJSONObject("privacy.dnt")?.let { it.optString("extensionId") == row.id && it.optBoolean("value", false) } == true &&
+            published.optJSONObject("passwords.offerToSave")?.let { it.optString("extensionId") == row.id && !it.optBoolean("value", true) } == true
+        val headerOk = dntOf(r1) == "1" && refererOf(r1) == null
+        val navigatorOk = openDnt == "1" && freshDnt == "1"
+        val disableOk = off && goneFromMap && dntOf(r2) == null && refererOf(r2) != null
+        val enableOk = on && backInMap && dntOf(r3) == "1" && refererOf(r3) == null && held(kept)
+        val clearsOk = wanted.keys.all { path -> readOf(clear, path)?.optString("levelOfControl") == "controllable_by_this_extension" } && dntOf(r4) == null && refererOf(r4) != null && clearedFromMap
+        val eventsOk = events1.optInt("dnt") >= 1 && events1.optInt("passwords") >= 1 && events1.optInt("referrers") >= 1 && events1.optInt("pings") >= 1 && events2.optInt("dnt") >= 1
+        val webRtc = readOf(set, "network.webRTCIPHandlingPolicy")
+        val note = "baseline: Referer ${if (refererOf(r0) != null) "present" else "MISSING"}, DNT ${dntOf(r0) ?: "absent"}, navigator.doNotTrack ${r0.optString("navigatorDoNotTrack")}; " +
+            "sets: " + wanted.keys.joinToString(", ") { path -> "${path.substringAfter('.')} → ${readOf(set, path)?.toString() ?: stepOf(set, "set $path")?.toString() ?: "no answer"}" } + "; " +
+            "webRTCIPHandlingPolicy reads ${webRtc?.toString() ?: "no answer"} (stored and published only: WebView has no policy API); " +
+            "published: privacy.dnt ${published.optJSONObject("privacy.dnt")?.toString() ?: "absent"}, passwords.offerToSave ${published.optJSONObject("passwords.offerToSave")?.toString() ?: "absent"}; " +
+            "navigator.doNotTrack in the open document $openDnt, in a fresh tab $freshDnt; " +
+            "a document request then carries DNT ${dntOf(r1) ?: "absent"} and Referer ${refererOf(r1)?.let { "present" } ?: "absent"} (p=${r1.optInt("p")}); " +
+            "disabled: DNT ${dntOf(r2) ?: "absent"}, Referer ${refererOf(r2)?.let { "present" } ?: "absent"}, the map ${if (goneFromMap) "without the probe" else "STILL naming it"}; " +
+            "enabled again: DNT ${dntOf(r3) ?: "absent"}, Referer ${refererOf(r3)?.let { "present" } ?: "absent"}, the map ${if (backInMap) "naming it again" else "NOT naming it"}, the values ${if (held(kept)) "kept" else "NOT kept: ${kept.toString().take(300)}"}; " +
+            "cleared: levels ${wanted.keys.joinToString("/") { readOf(clear, it)?.optString("levelOfControl") ?: "none" }}, DNT ${dntOf(r4) ?: "absent"}, Referer ${refererOf(r4)?.let { "present" } ?: "absent"}, the map ${if (clearedFromMap) "empty of the probe" else "STILL naming it"}; " +
+            "events passwords ${events1.optInt("passwords")} dnt ${events1.optInt("dnt")} referrers ${events1.optInt("referrers")} pings ${events1.optInt("pings")}, after the clears dnt ${events2.optInt("dnt")}"
+        val off2 = listOfNotNull(
+            if (!baselineOk) "the baseline (no Referer on a same-origin navigation, or a DNT already there)" else null,
+            if (!publishedOk) "the published controls" else null,
+            if (!headerOk) "the DNT header and the Referer drop" else null,
+            if (!navigatorOk) "navigator.doNotTrack" else null,
+            if (!disableOk) "the disable" else null,
+            if (!enableOk) "the enable" else null,
+            if (!clearsOk) "the clears" else null,
+            if (!eventsOk) "the events" else null
+        )
+        return when {
+            !setsTook -> Grade("F", "privacy probe: the sets never took: $note", extra)
+            off2.isEmpty() -> Grade("P", "privacy probe: $note", extra)
+            else -> Grade("PARTIAL", "privacy probe: the sets stored and read back; off: ${off2.joinToString(", ")}: $note", extra)
+        }
+    }
+
+    /**
+     * A row whose extension takes `chrome.privacy` settings by itself when its background starts
+     * (iCloud Passwords' `ExtensionSettings`: `services.passwordSavingEnabled`,
+     * `autofillCreditCardEnabled` and `autofillAddressEnabled` set `false` while its
+     * `allowExtensionToControlAutoFillSettings` default stands; it throws `Cannot control …`
+     * on a `not_controllable` read, so a stub's answer keeps the sets from ever being asked). The
+     * inner grade's verdict stands – the row's core is the inner's – and the ADDENDUM's proof is
+     * added to the note: each setting as the background reads it back (its level and value) and
+     * as core publishes it (`UIState.extensionControls` under the desktop's key, naming the row).
+     */
+    private fun privacyHolder(inner: (Row, JSONObject) -> Grade, settings: List<Pair<String, String>>): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val grade = inner(row, entry)
+        val extra = grade.extra ?: JSONObject()
+        val bg = awakeBackground(row.id, factor)
+        val slot = "__zenHolder"
+        val reads = if (bg != null) probe(bg, privacyProbeSteps(slot, privacyGets(settings.map { it.first })), slot, scaled(10_000, factor)) else JSONObject().put("error", "no background view")
+        extra.put("privacyReads", reads)
+        val published = poll(scaled(10_000, factor), 400) { publishedControls().takeIf { c -> settings.all { (_, key) -> c.optJSONObject(key)?.optString("extensionId") == row.id } } } ?: publishedControls()
+        val mine = JSONObject()
+        for ((_, key) in settings) published.optJSONObject(key)?.let { mine.put(key, it) }
+        extra.put("privacyPublished", mine)
+        fun readOf(path: String): JSONObject? = stepOf(reads, "get $path")?.optJSONObject("r")
+        val held = settings.count { (path, key) ->
+            readOf(path)?.let { it.optString("levelOfControl") == "controlled_by_this_extension" && it.has("value") && !it.optBoolean("value", true) } == true &&
+                mine.optJSONObject(key)?.let { it.optString("extensionId") == row.id && !it.optBoolean("value", true) } == true
+        }
+        val note = "chrome.privacy: $held/${settings.size} settings held false and published (" +
+            settings.joinToString("; ") { (path, key) -> "$path reads ${readOf(path)?.toString() ?: stepOf(reads, "get $path")?.toString() ?: reads.optString("error", "no answer")}, published as $key ${mine.optJSONObject(key)?.let { "${it.opt("value")} by ${it.optString("name")}" } ?: "absent"}" } + ")"
+        Grade(grade.verdict, "${grade.note}; $note", extra)
+    }
+
+    /** The controls map core publishes (`UIState.extensionControls`): the setting's key → `{extensionId, name, value}`. */
+    private fun publishedControls(): JSONObject = coreSnapshot().optJSONObject("extensionControls") ?: JSONObject()
+
+    /**
+     * A same-origin navigation of the echo tab to `/echo-headers?p=<n>` (so the request carries
+     * a `Referer`, the page it left), then the request headers the server received (their names
+     * lower-cased) and `navigator.doNotTrack` in the new document; an error after 15 s.
+     */
+    private fun echoReading(view: TabWebView, factor: Double, n: Int): JSONObject {
+        tabEval(view, "(function(){location.assign('$BASE/echo-headers?p=$n');return 'asked'})()")
+        return poll(scaled(15_000, factor), 300) {
+            val r = tabEval(
+                view,
+                "(function(){if(location.search!=='?p=$n'||document.readyState!=='complete'||!window.__headers)return null;var h=window.__headers,o={};for(var k in h){o[k.toLowerCase()]=h[k]}" +
+                    "return JSON.stringify({p:$n,dnt:o['dnt']===undefined?null:o['dnt'],referer:o['referer']===undefined?null:o['referer'],navigatorDoNotTrack:navigator.doNotTrack===undefined?'undefined':navigator.doNotTrack,headers:Object.keys(o).length})})()"
+            )
+            if (r == "null") null else json(r)
+        } ?: JSONObject().put("p", n).put("error", "no reading within ${scaled(15_000, factor) / 1000} s")
+    }
+
+    /** [echoReading] repeated (`p` counting up from `from`) until `until` holds or `timeoutMs` pass; the last reading. */
+    private fun echoUntil(view: TabWebView, factor: Double, from: Int, timeoutMs: Long, until: (JSONObject) -> Boolean): JSONObject {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        var n = from
+        var last = echoReading(view, factor, n)
+        while (!until(last) && SystemClock.elapsedRealtime() < deadline) {
+            SystemClock.sleep(scaled(700, factor))
+            last = echoReading(view, factor, ++n)
+        }
+        return last
+    }
+
+    /** The `DNT` header the server received in an [echoReading], or null without one. */
+    private fun dntOf(reading: JSONObject): String? = if (reading.isNull("dnt")) null else reading.optString("dnt")
+
+    /** The `Referer` header the server received in an [echoReading], or null without one. */
+    private fun refererOf(reading: JSONObject): String? = if (reading.isNull("referer")) null else reading.optString("referer")
 
     /**
      * Search by Image: its action opens its popup – the engine list ("All search engines",
@@ -7185,8 +9465,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * Map Coaster Lanterns Hello World Neo Slow Walk EZ Map" – over two canvases, the first
      * unsized; the game canvas draws once a map is picked (round 18's BEFORE read [CANVAS_SHOWN]
      * on the menu: the first canvas, 0x0). The menu is waited for, its first map ("Welcome
-     * Map") tapped, then the largest canvas read ([CANVAS_LARGEST]); a "Play" or "Start" the
-     * pick reveals is tapped too when the canvas stays unsized.
+     * Map") tapped, then the largest canvas read ([CANVAS_LARGEST]). When the menu stays drawn
+     * (round 18's AFTER: the same tap started the game on 113 and not on 156), a popup item over
+     * it is confirmed ("OK", "Play", "Start", …) and then the card itself is clicked from the
+     * page ([ICE_DODO_CLICK_CARD] – the card's own `onClickMap`, the tap's target through its
+     * label); the note says which step started the game.
      */
     private fun iceDodo(row: Row, entry: JSONObject): Grade {
         val factor = speedFactor(entry)
@@ -7196,6 +9479,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val steps = JSONArray()
         var found = JSONObject()
         var picked = false
+        var startedBy = "nothing"
         if (popup != null) {
             val menu = poll(scaled(60_000, factor), 1_000) {
                 val live = popupView()?.takeIf { it.context == "popup" } ?: return@poll null
@@ -7207,20 +9491,31 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             if (picked) {
                 popupView()?.takeIf { it.context == "popup" }?.let { live ->
                     found = pollExpr(live, CANVAS_LARGEST, scaled(20_000, factor))
-                    if (!found.optBoolean("pass") && tapLabel("/^(play|start|go)$/i", factor, steps, "play")) {
+                    if (found.optBoolean("pass")) startedBy = "the tap on the map"
+                    // The menu still drawn after the tap (round 18's 156: the card's label tapped,
+                    // the game not started, the same tap starting it on 113): a popup item the
+                    // app put over the menu is confirmed, then the card itself is clicked from
+                    // the page (Vue's handler on `main.mapListing`, the same `onClickMap`).
+                    if (!found.optBoolean("pass") && tapLabel("/^(ok|okay|continue|got it|i understand|proceed|yes|play|start|go)$/i", factor, steps, "overlay")) {
+                        found = pollExpr(live, CANVAS_LARGEST, scaled(20_000, factor))
+                        if (found.optBoolean("pass")) startedBy = "the tap on the map and its overlay's confirm"
+                    }
+                    if (!found.optBoolean("pass")) {
+                        steps.put("card: ${tabEval(live, ICE_DODO_CLICK_CARD)}")
                         found = pollExpr(live, CANVAS_LARGEST, scaled(25_000, factor))
+                        if (found.optBoolean("pass")) startedBy = "the card clicked from the page after the tap did not take"
                     }
                     found.put("console", JSONArray(consoleOf(live).takeLast(10)))
                     extra.put("popupAfter", json(tabEval(live, DEEP_TEXT)).optString("text").take(200))
                 }
             }
         }
-        extra.put("steps", steps).put("canvas", found)
+        extra.put("steps", steps).put("canvas", found).put("startedBy", startedBy)
         SystemClock.sleep(600)
         snap("${entry.optString("slug")}-play-core")
         runCatching { coreCall("extension.closePopup", "null") }
         return when {
-            found.optBoolean("pass") -> Grade("P", "Ice Dodo: the game canvas draws after the map pick: ${found.toString().take(200)}", extra)
+            found.optBoolean("pass") -> Grade("P", "Ice Dodo: the game canvas draws after the map pick ($startedBy): ${found.toString().take(200)}", extra)
             popup == null -> Grade("F", "Ice Dodo: popup did not render in the core check", extra)
             !picked -> Grade("F", "Ice Dodo: no map entry reached in its menu (${steps.toString().take(200)}); menu \"${extra.optString("menu").take(100)}\"", extra)
             else -> Grade("F", "Ice Dodo: the map picked (${steps.toString().take(160)}) and no sized canvas within the wait: ${found.toString().take(160)}", extra)
@@ -9835,6 +12130,138 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "setTimeout(function(){if(!p.done){if(p.ownImage==='pending')p.ownImage='timeout';if(p.webFetch==='pending')p.webFetch='timeout';if(p.webImage==='pending')p.webImage='timeout';if(p.webImageNamed==='pending')p.webImageNamed='timeout';settle()}},15000)})();\n",
             "own.svg" to "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><rect width=\"64\" height=\"64\" fill=\"#3a6\"/><circle cx=\"32\" cy=\"32\" r=\"18\" fill=\"#fff\"/></svg>"
         )
+
+        /**
+         * The `chrome.fontSettings` probes ([fontsProbeSizes], [fontsProbePrecedence]): an
+         * extension with the `fontSettings` permission and one page (`probe.html`, its
+         * `options_ui` in a tab) that arms the four events' counters at load
+         * (`window.__zenEv`, the shape [FONT_EVENTS_ARM] makes); the calls themselves come from
+         * the driver. Two of them, alike but for the name, so the second is installed after the
+         * first and ahead of it in the install-order precedence.
+         */
+        private const val FONTS_PROBE_A_NAME = "Zenium compat proof: fonts probe A"
+        private val FONTS_PROBE_A_ID = fixtureId(FONTS_PROBE_A_NAME)
+        private const val FONTS_PROBE_B_NAME = "Zenium compat proof: fonts probe B"
+        private val FONTS_PROBE_B_ID = fixtureId(FONTS_PROBE_B_NAME)
+        private fun fontsProbeFiles(name: String): Map<String, String> = mapOf(
+            "manifest.json" to """{"manifest_version":3,"name":"$name","version":"1.0","description":"A fixture of the Zenium compat sweep: a page with the fontSettings permission, driven by the sweep.","permissions":["fontSettings"],"options_ui":{"page":"probe.html","open_in_tab":true}}""",
+            "probe.html" to
+                "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>$name</title><script src=\"probe.js\"></script></head>" +
+                "<body style=\"font:16px system-ui,sans-serif;margin:24px\"><h1 style=\"font-size:20px\">$name</h1><p id=\"status\">A page with the fontSettings permission; the sweep drives the calls.</p></body></html>",
+            "probe.js" to
+                "(function(){var e=window.__zenEv={font:0,size:0,fixed:0,min:0,last:null};var f=chrome.fontSettings;if(!f){document.addEventListener('DOMContentLoaded',function(){document.getElementById('status').textContent='chrome.fontSettings is missing'});return}" +
+                "f.onFontChanged.addListener(function(d){e.font++;e.last=d||null});f.onDefaultFontSizeChanged.addListener(function(){e.size++});f.onDefaultFixedFontSizeChanged.addListener(function(){e.fixed++});f.onMinimumFontSizeChanged.addListener(function(){e.min++})})();\n"
+        )
+        private val FONTS_PROBE_A_FILES = fontsProbeFiles(FONTS_PROBE_A_NAME)
+        private val FONTS_PROBE_B_FILES = fontsProbeFiles(FONTS_PROBE_B_NAME)
+
+        /** The Fonts page seam's probe ([fontsPageSeam]): probe A's fixture under its own name; its id comes out as `eicpojjdecdlodehmlcdjigijfepnedb`. */
+        private const val FONTS_PAGE_PROBE_NAME = "Zenium compat proof: fonts page probe"
+        private val FONTS_PAGE_PROBE_ID = fixtureId(FONTS_PAGE_PROBE_NAME)
+        private val FONTS_PAGE_PROBE_FILES = fontsProbeFiles(FONTS_PAGE_PROBE_NAME)
+
+        /**
+         * The `chrome.privacy` probe ([privacyProbe]; round 20's proof of the coordinator's
+         * ADDENDUM item 2d): an extension with the `privacy` permission and one page
+         * (`probe.html`, its `options_ui` in a tab) that arms `onChange` counters at load for the
+         * four settings the driver sets (`window.__zenEv`); the calls themselves come from the
+         * driver ([PRIVACY_PROBE_SET], [PRIVACY_PROBE_CLEAR]). Its id comes out as
+         * `pkjmmekkikdhpoegdhnbnoopodjfmdck` (the trigger's lists name it).
+         */
+        private const val PRIVACY_PROBE_NAME = "Zenium compat proof: privacy probe"
+        private val PRIVACY_PROBE_ID = fixtureId(PRIVACY_PROBE_NAME)
+        private val PRIVACY_PROBE_FILES: Map<String, String> = mapOf(
+            "manifest.json" to """{"manifest_version":3,"name":"$PRIVACY_PROBE_NAME","version":"1.0","description":"A fixture of the Zenium compat sweep: a page with the privacy permission, driven by the sweep.","permissions":["privacy"],"options_ui":{"page":"probe.html","open_in_tab":true}}""",
+            "probe.html" to
+                "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>$PRIVACY_PROBE_NAME</title><script src=\"probe.js\"></script></head>" +
+                "<body style=\"font:16px system-ui,sans-serif;margin:24px\"><h1 style=\"font-size:20px\">$PRIVACY_PROBE_NAME</h1><p id=\"status\">A page with the privacy permission; the sweep drives the calls.</p></body></html>",
+            "probe.js" to
+                "(function(){var e=window.__zenEv={passwords:0,dnt:0,referrers:0,pings:0,last:null};var v=chrome.privacy;if(!v||!v.services||!v.websites){document.addEventListener('DOMContentLoaded',function(){document.getElementById('status').textContent='chrome.privacy is missing'});return}" +
+                "v.services.passwordSavingEnabled.onChange.addListener(function(d){e.passwords++;e.last=d||null});v.websites.doNotTrackEnabled.onChange.addListener(function(d){e.dnt++;e.last=d||null});" +
+                "v.websites.referrersEnabled.onChange.addListener(function(){e.referrers++});v.websites.hyperlinkAuditingEnabled.onChange.addListener(function(){e.pings++})})();\n"
+        )
+
+        /** The privacy probe page's readiness: its counters armed and `chrome.privacy` there. */
+        private const val PRIVACY_PAGE_READY = "String(!!(window.__zenEv&&typeof chrome!=='undefined'&&chrome.privacy&&chrome.privacy.websites))"
+
+        /**
+         * The storage order probe ([storageOrderProbe]; round 21's R21-12, Zoom Video's lost
+         * update): an extension with the `storage` and `tabs` permissions and Zoom Video's two
+         * producers on one `chrome.storage.local` key (`order_probe`). Its popup (`popup.html`)
+         * has a button whose press does `get` → `set({…read, scale: +0.25})`, as Zoom Video's
+         * ratio button does, and `window.__zenOrderRun(what, n)` for the driver's script-driven
+         * legs (`tap`, `order`, `burst`). Its content script on the fixture server's pages
+         * (`content.js`) read-modify-writes the same key once a second with `{cs: n}`, its
+         * interval armed again after every tick as Zoom Video's dims effect re-arms its own;
+         * answers a `read` message with what its `get` saw; logs every `onChanged` of the key
+         * and the window's resize / focus / visibility events with the frame's clock; takes the
+         * driver's commands off the `data-zen-order` attribute on a `zen-order` event and
+         * publishes its log into a `<script type=application/json id=zen-order-cs>` node – the
+         * DOM being the one channel a main-world evaluation shares with an isolated world. Its
+         * worker (`worker.js`) logs `onChanged` too. Every write carries its own `set` time
+         * (`popAt`, `csAt`), so the store's commit history names each commit's writer. Its id
+         * comes out as `hnelfnelkfmbnhdelmcbkdcfedmjccjp` (the trigger's lists name it).
+         */
+        private const val ORDER_PROBE_NAME = "Zenium compat proof: storage order probe"
+        private val ORDER_PROBE_ID = fixtureId(ORDER_PROBE_NAME)
+        private val ORDER_PROBE_FILES: Map<String, String> = mapOf(
+            "manifest.json" to """{"manifest_version":3,"name":"$ORDER_PROBE_NAME","version":"1.0","description":"A fixture of the Zenium compat sweep: a popup and a content script read-modify-writing one chrome.storage.local key, the order read back.","permissions":["storage","tabs"],"action":{"default_popup":"popup.html","default_title":"$ORDER_PROBE_NAME"},"background":{"service_worker":"worker.js"},"content_scripts":[{"matches":["$BASE/*"],"js":["content.js"],"run_at":"document_end"}]}""",
+            "worker.js" to
+                "var o=self.__zenOrder={t0:Date.now(),changes:[],msgs:0,err:null};\n" +
+                "try{chrome.storage.onChanged.addListener(function(ch,area){var k;for(k in ch){if(o.changes.length<600)o.changes.push({t:Date.now(),area:area,key:k,nv:ch[k].newValue===undefined?null:ch[k].newValue,ov:ch[k].oldValue===undefined?null:ch[k].oldValue})}});\n" +
+                "chrome.runtime.onMessage.addListener(function(m,s,reply){o.msgs++;if(m&&m.type==='ping'){reply({pong:Date.now()});return true}})}catch(e){o.err=String(e&&e.message||e)}\n",
+            "content.js" to
+                "(function(){var KEY='order_probe';var L={t0:Date.now(),mode:'zoom',ticks:0,n:0,events:[],rmw:[],reads:[],changes:[],err:null,armed:false,bursting:false};var node=null;\n" +
+                "function publish(){try{if(!node||!node.isConnected){node=document.createElement('script');node.type='application/json';node.id='zen-order-cs';(document.head||document.documentElement).appendChild(node)}node.textContent=JSON.stringify(L)}catch(e){L.err=String(e&&e.message||e)}}\n" +
+                "function ev(name){return function(){if(L.events.length<200)L.events.push({t:Date.now(),e:name,vis:document.visibilityState,w:window.innerWidth,h:window.innerHeight})}}\n" +
+                "['resize','focus','blur','pageshow','pagehide','freeze','resume'].forEach(function(name){window.addEventListener(name,ev(name),true)});document.addEventListener('visibilitychange',ev('visibilitychange'),true);\n" +
+                "function pick(cur){cur=cur||{};return {scale:cur.scale===undefined?null:cur.scale,p:cur.p===undefined?null:cur.p,cs:cur.cs===undefined?null:cur.cs,seq:cur.seq===undefined?null:cur.seq,popAt:cur.popAt===undefined?null:cur.popAt,csAt:cur.csAt===undefined?null:cur.csAt}}\n" +
+                "function rmw(tag,done){var rec={i:++L.n,tag:tag,tGet:Date.now(),tGetReply:0,read:null,tSet:0,tSetReply:0,err:null};L.rmw.push(rec);\n" +
+                "try{chrome.storage.local.get(KEY,function(r){rec.tGetReply=Date.now();if(chrome.runtime.lastError){rec.err=String(chrome.runtime.lastError.message);if(done)done();return}var cur=(r&&r[KEY])||{};rec.read=pick(cur);var next={};var k;for(k in cur)next[k]=cur[k];rec.tSet=Date.now();next.cs=rec.i;next.csAt=rec.tSet;var w={};w[KEY]=next;\n" +
+                "chrome.storage.local.set(w,function(){rec.tSetReply=Date.now();if(chrome.runtime.lastError)rec.err=String(chrome.runtime.lastError.message);if(done)done()})})}catch(e){rec.err='threw: '+String(e&&e.message||e);if(done)done()}}\n" +
+                "var timer=null;function arm(){if(timer)clearInterval(timer);timer=setInterval(function(){if(L.mode!=='zoom')return;L.ticks++;rmw('tick');arm()},1000)}function disarm(){if(timer)clearInterval(timer);timer=null}arm();\n" +
+                "function burst(count){L.bursting=true;var i=0;(function step(){if(i>=count){L.bursting=false;publish();return}i++;rmw('burst',step)})()}\n" +
+                "try{chrome.storage.onChanged.addListener(function(ch,area){if(area!=='local'||!ch[KEY])return;var c=ch[KEY];if(L.changes.length<600)L.changes.push({t:Date.now(),nv:c.newValue===undefined?null:pick(c.newValue),ov:c.oldValue===undefined?null:pick(c.oldValue)})});\n" +
+                "chrome.runtime.onMessage.addListener(function(m,s,reply){if(!m||m.type!=='read')return;var rec={t:Date.now(),tReply:0,seq:m.seq,saw:null,err:null};L.reads.push(rec);chrome.storage.local.get(KEY,function(r){rec.tReply=Date.now();if(chrome.runtime.lastError)rec.err=String(chrome.runtime.lastError.message);rec.saw=pick((r&&r[KEY])||{});reply(rec)});return true});L.armed=true}catch(e){L.err=String(e&&e.message||e)}\n" +
+                "document.addEventListener('zen-order',function(){var cmd={};try{cmd=JSON.parse(document.documentElement.getAttribute('data-zen-order')||'{}')}catch(e){cmd={}}\n" +
+                "if(cmd.cmd==='mode'){L.mode=cmd.mode||'off';if(L.mode==='zoom')arm();else disarm()}else if(cmd.cmd==='burst'){burst(cmd.n||40)}else if(cmd.cmd==='clear'){L.rmw=[];L.reads=[];L.changes=[];L.events=[]}publish()});\n" +
+                "publish()})();\n",
+            "popup.html" to
+                "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>$ORDER_PROBE_NAME</title>" +
+                "<style>body{font:16px system-ui,sans-serif;margin:0;padding:16px;min-width:260px}button{display:block;width:100%;height:56px;margin:0 0 12px;font-size:18px}</style><script src=\"popup.js\"></script></head>" +
+                "<body><h1 style=\"font-size:18px;margin:0 0 12px\">Storage order probe</h1><button id=\"tap\">Scale +0.25</button><button id=\"burst\">Burst 40</button><button id=\"order\">Order 20</button><p id=\"status\">loading</p></body></html>",
+            "popup.js" to
+                "(function(){var KEY='order_probe';var P=window.__zenOrderPopup={t0:Date.now(),tabId:null,tabErr:null,n:0,taps:[],order:[],burst:[],busy:false,scale:null};\n" +
+                "try{chrome.tabs.query({active:true,currentWindow:true},function(tabs){if(chrome.runtime.lastError){P.tabErr=String(chrome.runtime.lastError.message);return}var t=tabs&&tabs[0];P.tabId=t&&typeof t.id==='number'?t.id:null;if(P.tabId===null)P.tabErr='no active tab'})}catch(e){P.tabErr='threw: '+String(e&&e.message||e)}\n" +
+                "function status(s){var el=document.getElementById('status');if(el)el.textContent=s}\n" +
+                "function pick(cur){cur=cur||{};return {scale:cur.scale===undefined?null:cur.scale,p:cur.p===undefined?null:cur.p,cs:cur.cs===undefined?null:cur.cs,seq:cur.seq===undefined?null:cur.seq,popAt:cur.popAt===undefined?null:cur.popAt,csAt:cur.csAt===undefined?null:cur.csAt}}\n" +
+                "function rmw(list,patchOf,extra,done){var rec={i:++P.n,tCall:Date.now(),tGet:0,tGetReply:0,read:null,tSet:0,tSetReply:0,wrote:null,err:null};var k;for(k in extra)rec[k]=extra[k];list.push(rec);\n" +
+                "try{rec.tGet=Date.now();chrome.storage.local.get(KEY,function(r){rec.tGetReply=Date.now();if(chrome.runtime.lastError){rec.err=String(chrome.runtime.lastError.message);done(rec);return}var cur=(r&&r[KEY])||{};rec.read=pick(cur);var patch=patchOf(cur);rec.wrote=patch;var next={};for(k in cur)next[k]=cur[k];for(k in patch)next[k]=patch[k];rec.tSet=Date.now();next.popAt=rec.tSet;var w={};w[KEY]=next;\n" +
+                "chrome.storage.local.set(w,function(){rec.tSetReply=Date.now();if(chrome.runtime.lastError)rec.err=String(chrome.runtime.lastError.message);done(rec)})})}catch(e){rec.err='threw: '+String(e&&e.message||e);done(rec)}}\n" +
+                "function tap(touched){if(P.busy)return 'busy';P.busy=true;rmw(P.taps,function(cur){return {scale:Math.round(((typeof cur.scale==='number'?cur.scale:1)+0.25)*100)/100}},{touched:!!touched},function(rec){P.busy=false;P.scale=rec.wrote?rec.wrote.scale:null;status('scale '+P.scale+(rec.err?' err '+rec.err:''))});return 'started'}\n" +
+                "function burst(count){if(P.busy)return 'busy';P.busy=true;var i=0;(function step(){if(i>=count){P.busy=false;status('burst done');return}i++;(function(k){rmw(P.burst,function(){return {p:k}},{},step)})(i)})();return 'started'}\n" +
+                "function order(count){if(P.busy)return 'busy';P.busy=true;var i=0;(function step(){if(i>=count){P.busy=false;status('order done');return}i++;var seq=i;var rec={seq:seq,tCall:Date.now(),tGet:0,tGetReply:0,tSet:0,tSetReply:0,tSend:0,tResp:0,resp:null,stale:null,err:null};P.order.push(rec);\n" +
+                "try{rec.tGet=Date.now();chrome.storage.local.get(KEY,function(r){rec.tGetReply=Date.now();var cur=(r&&r[KEY])||{};var next={};var k;for(k in cur)next[k]=cur[k];rec.tSet=Date.now();next.seq=seq;next.popAt=rec.tSet;var w={};w[KEY]=next;\n" +
+                "chrome.storage.local.set(w,function(){rec.tSetReply=Date.now();if(chrome.runtime.lastError)rec.err=String(chrome.runtime.lastError.message)});\n" +
+                "if(P.tabId===null){rec.err='no tabId';setTimeout(step,40);return}rec.tSend=Date.now();\n" +
+                "chrome.tabs.sendMessage(P.tabId,{type:'read',seq:seq},function(resp){rec.tResp=Date.now();if(chrome.runtime.lastError){rec.err=String(chrome.runtime.lastError.message)}else{rec.resp=resp||null;rec.stale=!!(resp&&resp.saw&&resp.saw.seq!==seq)}setTimeout(step,40)})})}catch(e){rec.err='threw: '+String(e&&e.message||e);setTimeout(step,40)}})();return 'started'}\n" +
+                "window.__zenOrderRun=function(what,n){if(what==='tap')return tap(false);if(what==='burst')return burst(n||40);if(what==='order')return order(n||20);return 'unknown'};\n" +
+                "document.addEventListener('DOMContentLoaded',function(){var b=document.getElementById('tap');if(b)b.addEventListener('click',function(){tap(true)});var c=document.getElementById('burst');if(c)c.addEventListener('click',function(){burst(40)});var d=document.getElementById('order');if(d)d.addEventListener('click',function(){order(20)});status('ready')})})();\n"
+        )
+
+        /** The order probe's content script mounted on the fixture: its log node in the DOM. */
+        private const val ORDER_CS_MOUNTED = "String(!!document.getElementById('zen-order-cs'))"
+        /** The order probe's content-script log as last published into its DOM node (`null` before the script mounted). */
+        private const val ORDER_CS_LOG = "(function(){var el=document.getElementById('zen-order-cs');return el?el.textContent:'null'})()"
+        /** The order probe's popup: how many taps its log holds. */
+        private const val ORDER_POPUP_TAPS = "String((window.__zenOrderPopup||{taps:[]}).taps.length)"
+
+        /** iCloud Passwords' three `chrome.privacy` settings ([privacyHolder]): the setting's path → the key core publishes it under (the desktop's keys). */
+        private val ICLOUD_PRIVACY_SETTINGS = listOf(
+            "services.passwordSavingEnabled" to "passwords.offerToSave",
+            "services.autofillCreditCardEnabled" to "autofill.cards",
+            "services.autofillAddressEnabled" to "autofill.addresses"
+        )
         private const val YOUTUBE_URL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
         private const val INSTALL_TIMEOUT_MS = 240_000L
         /** uBlock Origin (MV2) on Edge Add-ons: the heaviest row, run last by default. */
@@ -9966,6 +12393,19 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val FLOW_REPORT =
             "JSON.stringify((window.__zenExtStats&&window.__zenExtStats.flow)||{})"
         /**
+         * The content scripts the extension registered at run time (`scripting.registerContentScripts`),
+         * asked of its background and left in `window.__zenRegistered` for a poll: their count,
+         * their files, their `matches` split into the wide ones (`<all_urls>`, every scheme's every
+         * host) and the hostname ones, the first ids. An extension without `chrome.scripting`
+         * answers an error.
+         */
+        private const val REGISTERED_SCRIPTS_ASK =
+            "(function(){window.__zenRegistered=null;try{Promise.resolve().then(function(){return chrome.scripting.getRegisteredContentScripts()})" +
+                ".then(function(s){var files=0,wide=0,hosts=0;s.forEach(function(r){files+=(r.js||[]).length+(r.css||[]).length;(r.matches||[]).forEach(function(m){" +
+                "if(m==='<all_urls>'||/^\\*:\\/\\/\\*\\//.test(m)||/^https?:\\/\\/\\*\\//.test(m))wide++;else hosts++})});" +
+                "window.__zenRegistered=JSON.stringify({count:s.length,files:files,wideMatches:wide,hostMatches:hosts,ids:s.slice(0,12).map(function(r){return r.id})})}," +
+                "function(e){window.__zenRegistered=JSON.stringify({error:String(e&&e.message||e)})})}catch(e){window.__zenRegistered=JSON.stringify({error:'threw: '+String(e&&e.message||e)})}})()"
+        /**
          * The engine builtins the bootstrap gave an extension realm because the WebView lacked
          * them (`BootStats.polyfills`), and whether `Promise.withResolvers` is a function there
          * now, whoever's it is (the engine's on 156, the bootstrap's on 113).
@@ -10026,6 +12466,36 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val YT_CLOSE_UPSELL =
             "(function(){var d=Array.prototype.find.call(document.querySelectorAll('dialog[open], [role=\"dialog\"]'),function(el){return /YouTube app|best experience/i.test(el.textContent||'')});" +
                 "if(!d)return 'none';var c=d.querySelector('button[aria-label*=\"lose\"], [role=\"button\"][aria-label*=\"lose\"], button[aria-label*=\"ismiss\"]');if(!c)return 'no close button';c.click();return 'closed'})()"
+        /** The watch page's video as one word: none, unstarted, playing, paused (with time on the clock), ended. */
+        private const val YT_VIDEO_WORD =
+            "(function(v){return v ? (v.ended ? 'ended' : v.paused ? (v.currentTime > 0 ? 'paused' : 'unstarted') : 'playing') : 'none'})"
+        /** Where the watch-page check ended: the address, the title, the document's state, the video's ([YT_VIDEO_WORD]) and its clock. */
+        private const val YT_WHERE =
+            "(function(){var v=document.querySelector('#movie_player video, video');return JSON.stringify({url: location.href, title: document.title, readyState: document.readyState, video: $YT_VIDEO_WORD(v), t: v ? Math.round(v.currentTime * 10) / 10 : null})})()"
+        /**
+         * The watch page's playability gate: the player response's `playabilityStatus` (`OK`, or
+         * `LOGIN_REQUIRED` / `ERROR` / `UNPLAYABLE` with its reason – "Sign in to confirm you're
+         * not a bot" on a runner's address), the player's drawn error screen and whether either
+         * reads as a bot check. A gated page never starts its video (`src: false`): a control
+         * that waits for playback is not measurable on it.
+         */
+        private const val YT_PLAYABILITY =
+            "(function(){var p=null;try{p=(window.ytInitialPlayerResponse||{}).playabilityStatus||null}catch(e){}var r=p&&p.errorScreen&&p.errorScreen.playerErrorMessageRenderer;var sub=function(o){return o?(o.simpleText||(o.runs||[]).map(function(x){return x.text}).join('')):''};" +
+                "var reason=p?(p.reason||sub(r&&r.reason)||''):'';var err=document.querySelector('.ytp-error, #error-screen, .ytp-error-content-wrap');var errText=err&&err.offsetWidth>0?(err.textContent||'').replace(/\\s+/g,' ').trim().slice(0,160):'';" +
+                "var bot=/confirm (that )?you.?re not a bot|sign in to confirm|unusual traffic|not a robot/i.test(reason+' '+errText+' '+sub(r&&r.subreason));" +
+                "return JSON.stringify({status:p?p.status:null,reason:reason.slice(0,120),error:errText,bot:bot})})()"
+        /** The watch page's video present (`pass`), with its state, clock, readiness and whether it has a source. */
+        private const val YT_VIDEO_STATE =
+            "(function(){var v=document.querySelector('#movie_player video, video');return JSON.stringify({pass: !!v, state: $YT_VIDEO_WORD(v), t: v ? Math.round(v.currentTime * 10) / 10 : null, ready: v ? v.readyState : null, src: !!(v && (v.currentSrc || v.src))})})()"
+        /** The watch page's video playing (`pass`: present, not paused, not ended), the same fields. */
+        private const val YT_VIDEO_PLAYING =
+            "(function(){var v=document.querySelector('#movie_player video, video');return JSON.stringify({pass: !!v && !v.paused && !v.ended, state: $YT_VIDEO_WORD(v), t: v ? Math.round(v.currentTime * 10) / 10 : null, ready: v ? v.readyState : null, src: !!(v && (v.currentSrc || v.src))})})()"
+        /** The player asked to play from the page: its own API first (`#movie_player.playVideo()`), then the element's `play()`; what was asked. */
+        private const val YT_PLAY_FROM_PAGE =
+            "(function(){var mp=document.getElementById('movie_player');var v=document.querySelector('#movie_player video, video');var did=[];" +
+                "try{if(mp&&typeof mp.playVideo==='function'){mp.playVideo();did.push('playVideo')}}catch(e){did.push('playVideo threw '+e)}" +
+                "try{if(v){var p=v.play();did.push('play');if(p&&p.catch)p.catch(function(e){window.__zenPlayRefused=String(e)})}}catch(e){did.push('play threw '+e)}" +
+                "return did.length?did.join(', '):'no player'})()"
         /**
          * From the background of a row with the `nativeMessaging` permission: `sendNativeMessage`
          * and `connectNative` to a host that does not exist. Chrome answers both with "Specified
@@ -10103,12 +12573,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * role=button, labelled inputs, then the innermost text container; through open shadow
          * roots): its label and centre, or the document's text when nothing matched. A table
          * cell is a control too (Allow CORS's toggle is a `td` with the title "Toggle ON|OFF";
-         * round 13 missed it).
+         * round 13 missed it). A control's label is the first of its aria-label, title, value
+         * and text that is under 60 characters: a title that runs on (User-Agent Switcher and
+         * Manager's Apply, whose title is 61 characters – rounds 18-19 never reached it) gives
+         * way to the control's own value or text instead of hiding the control.
          */
         private const val CLICK_LABEL =
             "(function(){var re=__RE__;var visible=function(n){var r=n.getBoundingClientRect();return r.width>10&&r.height>10};" +
-                "var label=function(e){return ((e.getAttribute&&(e.getAttribute('aria-label')||e.getAttribute('title')))||e.value||e.textContent||'').replace(/\\s+/g,' ').trim()};var cands=[];" +
-                "var walk=function(root){var all=root.querySelectorAll('button, a, [role=button], input[type=button], input[type=submit], label, div, span, li, p, td');for(var i=0;i<all.length;i++){var e=all[i];var l=label(e);if(l.length>0&&l.length<60&&re.test(l)&&visible(e))cands.push(e);if(e.shadowRoot)walk(e.shadowRoot)}};" +
+                "var label=function(e){var c=[e.getAttribute&&e.getAttribute('aria-label'),e.getAttribute&&e.getAttribute('title'),e.value,e.textContent];for(var i=0;i<c.length;i++){var s=String(c[i]||'').replace(/\\s+/g,' ').trim();if(s.length>0&&s.length<60)return s}return ''};var cands=[];" +
+                "var walk=function(root){var all=root.querySelectorAll('button, a, [role=button], input[type=button], input[type=submit], label, div, span, li, p, td');for(var i=0;i<all.length;i++){var e=all[i];var l=label(e);if(l.length>0&&re.test(l)&&visible(e))cands.push(e);if(e.shadowRoot)walk(e.shadowRoot)}};" +
                 "if(document.body)walk(document.body);var leaves=cands.filter(function(e){return !cands.some(function(o){return o!==e&&e.contains(o)})});" +
                 "var hit=cands.find(function(e){return /^(BUTTON|A|INPUT)$/.test(e.tagName)||e.getAttribute('role')==='button'})||leaves[0]||null;" +
                 "if(!hit)return JSON.stringify({clicked:false,text:document.body?document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,100):''});var r=hit.getBoundingClientRect();try{hit.click()}catch(e){}" +
@@ -10398,9 +12871,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * tag, id or class matches `__PATTERN__` (a regex source, case-insensitive), the ones drawn
          * counted apart; `pass` when there is at least one.
          */
-        /** The pop-up fixture after the tap: what `window.open` answered (`window`, `fake`, `null`), Poper Blocker's toast, its page script's `window.open` replacement. */
+        /** The pop-up fixture after the tap: what `window.open` answered (`window`, `fake`, `null`), the blocker's toast (Poper Blocker's `#pb-toast-main`, Popup Blocker Pro's `#popup-blocker-pro-jq-toast`), its page script's `window.open` replacement. */
         private const val POPUP_BLOCK_REPORT =
-            "(function(){var r=window.__popupResult||'';var toast=document.getElementById('pb-toast-main')||document.querySelector('[id^=\"pb-toast\"], [class*=\"pb-toast\"], iframe[src*=\"bkkbcggnhapdmkeljlodobbkopceiche\"]');" +
+            "(function(){var r=window.__popupResult||'';var toast=document.getElementById('pb-toast-main')||document.getElementById('popup-blocker-pro-jq-toast')||document.querySelector('[id^=\"pb-toast\"], [class*=\"pb-toast\"], iframe[src*=\"bkkbcggnhapdmkeljlodobbkopceiche\"]');" +
                 "var src=String(window.open);var native=/\\[native code\\]/.test(src);var orig=typeof window.originalOpenFunction;" +
                 "return JSON.stringify({pass:r==='fake'||!!toast,result:r,toast:!!toast,toastTag:toast?(toast.tagName+' '+(toast.id||'')).trim():'',scriptInPage:!native||orig==='function',openIsNative:native,log:(window.__popupLog||[]).slice(-3)})})()"
         /**
@@ -10895,6 +13368,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "(function(){var all=Array.prototype.slice.call(document.querySelectorAll('canvas'));var best=null,br={width:0,height:0};all.forEach(function(x){var r=x.getBoundingClientRect();if(r.width*r.height>br.width*br.height){best=x;br=r}});var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
                 "return JSON.stringify({pass:!!best&&best.width>100&&best.height>100&&br.width>60,w:best?best.width:0,h:best?best.height:0,shown:Math.round(br.width)+'x'+Math.round(br.height),canvases:all.length,text:t.slice(0,80)})})()"
         /**
+         * Ice Dodo's Welcome Map card (`main.mapListing`, Vue's `onClickMap` on the card itself)
+         * clicked from the page, for the reading after a finger's tap on its label left the menu
+         * drawn (round 18's 156); what was clicked, or the cards found.
+         */
+        private const val ICE_DODO_CLICK_CARD =
+            "(function(){var cards=document.querySelectorAll('main.mapListing');for(var i=0;i<cards.length;i++){if(/welcome map/i.test(cards[i].textContent||'')){cards[i].click();return 'clicked card '+(i+1)+' of '+cards.length}}return 'no Welcome Map card among '+cards.length+' (page: '+(document.body?document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,100):'')+')'})()"
+        /**
          * Boxel 3D's level picker ([boxel3d]): its rows are a Vue carousel – `div.item` under
          * `.carousel`, each with a `div.title` child (the level's name), a `.label` and the
          * `more_horiz` tag, no `title` attribute (round 17's hook looked for one and matched
@@ -11108,13 +13588,178 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "return JSON.stringify({pass:es.length>0,entries:es.length,names:names.slice(0,5),mode:document.body?document.body.getAttribute('data-mode'):null,intro:!!intro&&getComputedStyle(intro).display!=='none',text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,160)})})()"
 
         /**
-         * Advanced Font Settings' options page: its script list (`#scriptList`) and the four font
-         * selects (`#standardFontList` and the serif, sans-serif, fixed lists) rendered, the
-         * `chrome.fontSettings` namespace's members counted from the page.
+         * Advanced Font Settings' options page with its standard font list filled from
+         * `getFontList` (the first option is its own "(Use default)"): the option ids and names,
+         * the script list's size, the `chrome.fontSettings` members counted; the family the proof
+         * picks – `casual` where the list has it, else the first of the fallbacks (they mirror the
+         * fixture's control spans), else the first listed.
          */
-        private const val FONT_SETTINGS_PAGE =
-            "(function(){var s=document.getElementById('scriptList');var std=document.getElementById('standardFontList');var selects=document.querySelectorAll('select').length;var api=(typeof chrome!=='undefined'&&chrome.fontSettings)?Object.keys(chrome.fontSettings).length:0;" +
-                "return JSON.stringify({pass:!!s&&!!std&&selects>=3,scriptList:!!s,standardFontList:!!std,selects:selects,scriptOptions:s?s.options.length:0,fontOptions:std?std.options.length:0,apiKeys:api,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,160)})})()"
+        private const val FONT_SETTINGS_LIST =
+            "(function(){var s=document.getElementById('scriptList');var std=document.getElementById('standardFontList');var api=(typeof chrome!=='undefined'&&chrome.fontSettings)?Object.keys(chrome.fontSettings).length:0;" +
+                "var ids=std?Array.prototype.slice.call(std.options).map(function(o){return o.value}).filter(function(v){return v!==''}):[];var names=std?Array.prototype.slice.call(std.options).map(function(o){return o.text}).slice(0,12):[];" +
+                "var picks=['casual','serif-monospace','sans-serif-smallcaps','sans-serif-condensed'];var picked=picks.filter(function(p){return ids.indexOf(p)>=0})[0]||ids[0]||'';" +
+                "return JSON.stringify({pass:!!s&&!!std&&ids.length>0,scriptOptions:s?s.options.length:0,fontOptions:ids.length,ids:ids.slice(0,40),names:names,picked:picked,apiKeys:api,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,120)})})()"
+
+        /** The four `chrome.fontSettings` events counted on an extension page, on `window.__zenEv`. */
+        private const val FONT_EVENTS_ARM =
+            "(function(){var e=window.__zenEv={font:0,size:0,fixed:0,min:0,last:null};var f=chrome.fontSettings;f.onFontChanged.addListener(function(d){e.font++;e.last=d||null});f.onDefaultFontSizeChanged.addListener(function(){e.size++});" +
+                "f.onDefaultFixedFontSizeChanged.addListener(function(){e.fixed++});f.onMinimumFontSizeChanged.addListener(function(){e.min++});return 'armed'})()"
+
+        /** `math` to `serif` through the API (Advanced Font Settings has no math picker), read back. Lands on `window.__zenMath`. */
+        private const val FONT_MATH_SET =
+            "(function(){var p=window.__zenMath={done:false,error:null,math:null};try{chrome.fontSettings.setFont({genericFamily:'math',fontId:'serif'},function(){p.error=chrome.runtime.lastError?String(chrome.runtime.lastError.message):null;" +
+                "chrome.fontSettings.getFont({genericFamily:'math'},function(d){p.math=d||null;p.done=true})})}catch(e){p.error='threw: '+String(e&&e.message||e);p.done=true}return 'asked'})()"
+
+        /** `getFont` for the Japanese and Cyrillic standard faces and the common one, and the default size. Lands on `window.__zenGet`. */
+        private const val FONT_GET =
+            "(function(){var p=window.__zenGet={done:false};var f=chrome.fontSettings;f.getFont({script:'Jpan',genericFamily:'standard'},function(a){p.jpan=a||null;f.getFont({script:'Cyrl',genericFamily:'standard'},function(b){p.cyrl=b||null;" +
+                "f.getFont({genericFamily:'standard'},function(c){p.standard=c||null;f.getDefaultFontSize({},function(d){p.size=d||null;p.done=true})})})});return 'asked'})()"
+
+        /** The revert on Advanced Font Settings' page: its per-script reset (four `clearFont` each) for the three scripts set, the size's clear and math's. */
+        private const val FONT_CLEAR_ALL =
+            "(function(){['Zyyy','Jpan','Cyrl'].forEach(function(s){advancedFonts.clearSettingsForScript(s)});chrome.fontSettings.clearDefaultFontSize();chrome.fontSettings.clearFont({genericFamily:'math'});return 'cleared'})()"
+
+        /** The fixture's spans two readings are compared on ([sameFonts]): computed family and size each. */
+        private val FONT_SPANS = listOf("body", "latin", "ja", "plain-ja", "ru", "plain-ru", "ru-latin", "math", "math-text", "tiny", "fixed")
+
+        /**
+         * The probe pages' step runner: `calls` (name → the call's code with `cb` its callback)
+         * run one after another, each step's answer and `lastError` kept on `steps`, the events
+         * counted so far beside them; lands on `window.<slot>`. `p` is the slot object, `f` the
+         * `chrome.fontSettings` namespace, for the calls' code.
+         */
+        private fun fontsProbeSteps(slot: String, calls: List<Pair<String, String>>): String = probeSteps(slot, "chrome.fontSettings", calls)
+
+        /** [fontsProbeSteps]'s runner over any namespace expression: `f` is `namespace` in the calls' code. */
+        private fun probeSteps(slot: String, namespace: String, calls: List<Pair<String, String>>): String {
+            val chain = calls.joinToString("") { (name, code) -> ".then(function(){return step('$name',function(cb){$code})})" }
+            return "(function(){var p=window.$slot={done:false,steps:[],error:null};var f=$namespace;" +
+                "function step(name,fn){return new Promise(function(res){try{fn(function(r){p.steps.push({name:name,r:r===undefined?null:r,err:chrome.runtime.lastError?String(chrome.runtime.lastError.message):null});res()})}catch(e){p.steps.push({name:name,threw:String(e&&e.message||e)});res()}})}" +
+                "Promise.resolve()$chain.then(function(){p.events=window.__zenEv||null;p.done=true},function(e){p.error=String(e&&e.message||e);p.done=true});return 'asked'})()"
+        }
+
+        /** A fonts probe page's readiness: its event counters armed at load and `chrome.fontSettings` present. */
+        private const val FONTS_PAGE_READY_EXPR = "!!(window.__zenEv&&typeof chrome!=='undefined'&&chrome.fontSettings)"
+        private const val FONTS_PAGE_READY = "String($FONTS_PAGE_READY_EXPR)"
+
+        /**
+         * Chromium's first major whose `FontDescription::IsMonospace` reads the family's own
+         * `FamilyIsGeneric()` in place of the description's generic slot (the 124.0.6367.0 tag
+         * has it, 123.0.6312.0 the older predicate): from here a standard face NAMED
+         * `monospace` (generic by `FontFamily::InferredTypeFor`) is monospace to
+         * `FontBuilder::CheckForGenericFamilyChange`, and keyword-sized text under it – a
+         * page's unstyled body – takes `defaultFixedFontSize`. WebView 113 sizes it off
+         * `defaultFontSize`; the 156 snapshot and desktop Chrome off the fixed size (R21-10).
+         */
+        private const val MONOSPACE_KEYWORD_SIZE_FROM = 124
+
+        /**
+         * Fonts probe A's sets: the standard face picked off `getFontList` (the first of `picks`
+         * the list carries, else the last of `picks`), the three sizes and the face, each read
+         * back. The size proof wants a face whose name is no CSS generic keyword (see
+         * [MONOSPACE_KEYWORD_SIZE_FROM]); the seam row keeps `monospace`.
+         */
+        private fun fontsProbeASet(picks: List<String>): String = fontsProbeSteps(
+            "__zenA",
+            listOf(
+                "getFontList" to "f.getFontList(function(list){var ids=(list||[]).map(function(x){return x.fontId});var picks=${JSONArray(picks)};p.picked=picks.filter(function(x){return ids.indexOf(x)>=0})[0]||picks[picks.length-1];p.fonts=ids.length;cb(ids.slice(0,12))})",
+                "setDefaultFontSize" to "f.setDefaultFontSize({pixelSize:20},cb)",
+                "setMinimumFontSize" to "f.setMinimumFontSize({pixelSize:12},cb)",
+                "setDefaultFixedFontSize" to "f.setDefaultFixedFontSize({pixelSize:18},cb)",
+                "setFont" to "f.setFont({genericFamily:'standard',fontId:p.picked},cb)",
+                "getDefaultFontSize" to "f.getDefaultFontSize({},cb)",
+                "getMinimumFontSize" to "f.getMinimumFontSize({},cb)",
+                "getDefaultFixedFontSize" to "f.getDefaultFixedFontSize({},cb)",
+                "getFont" to "f.getFont({genericFamily:'standard'},cb)"
+            )
+        )
+
+        /** Probe A's faces for the size proof: `fonts.xml` names that are no generic keyword first (Cutive Mono, Coming Soon), `monospace` the fallback that reads the engine's mapping itself. */
+        private val FONTS_PROBE_A_PICKS = listOf("serif-monospace", "casual", "monospace")
+        private val FONTS_PROBE_A_SET = fontsProbeASet(FONTS_PROBE_A_PICKS)
+
+        /** The Fonts page seam's set ([fontsPageSeam]): the face `monospace`, the name W6-C6's page labels; its size proof is probe A's. */
+        private val FONTS_PAGE_PROBE_SET = fontsProbeASet(listOf("monospace"))
+
+        /** Fonts probe A's clears, each read back (the browser's own value, `controllable_by_this_extension`). */
+        private val FONTS_PROBE_A_CLEAR = fontsProbeSteps(
+            "__zenAClear",
+            listOf(
+                "clearDefaultFontSize" to "f.clearDefaultFontSize({},cb)",
+                "clearMinimumFontSize" to "f.clearMinimumFontSize({},cb)",
+                "clearDefaultFixedFontSize" to "f.clearDefaultFixedFontSize({},cb)",
+                "clearFont" to "f.clearFont({genericFamily:'standard'},cb)",
+                "getDefaultFontSize" to "f.getDefaultFontSize({},cb)",
+                "getMinimumFontSize" to "f.getMinimumFontSize({},cb)",
+                "getDefaultFixedFontSize" to "f.getDefaultFixedFontSize({},cb)",
+                "getFont" to "f.getFont({genericFamily:'standard'},cb)"
+            )
+        )
+
+        /** A probe page's standard face set to `fontId` and read back. */
+        private fun fontsProbeSet(fontId: String): String = fontsProbeSteps(
+            "__zenSet",
+            listOf(
+                "setFont" to "f.setFont({genericFamily:'standard',fontId:'$fontId'},cb)",
+                "getFont" to "f.getFont({genericFamily:'standard'},cb)"
+            )
+        )
+
+        /** Fonts probe B's set: the family picked off `getFontList` (`casual` first, `serif-monospace`, `cursive`, `sans-serif-smallcaps` behind it), set and read back. */
+        private val FONTS_PROBE_B_SET = fontsProbeSteps(
+            "__zenSet",
+            listOf(
+                "getFontList" to "f.getFontList(function(list){var ids=(list||[]).map(function(x){return x.fontId});var picks=['casual','serif-monospace','cursive','sans-serif-smallcaps'];p.picked=picks.filter(function(x){return ids.indexOf(x)>=0})[0]||'';p.fonts=ids.length;cb(ids.slice(0,12))})",
+                "setFont" to "f.setFont({genericFamily:'standard',fontId:p.picked},cb)",
+                "getFont" to "f.getFont({genericFamily:'standard'},cb)"
+            )
+        )
+
+        /** A probe page's standard face read. */
+        private val FONTS_PROBE_GET = fontsProbeSteps("__zenGet", listOf("getFont" to "f.getFont({genericFamily:'standard'},cb)"))
+
+        /** A probe page's standard face cleared and read back. */
+        private val FONTS_PROBE_CLEAR = fontsProbeSteps(
+            "__zenClear",
+            listOf(
+                "clearFont" to "f.clearFont({genericFamily:'standard'},cb)",
+                "getFont" to "f.getFont({genericFamily:'standard'},cb)"
+            )
+        )
+
+        /** [probeSteps] over `chrome.privacy`: a step reads `f.websites.doNotTrackEnabled.set({value:true},cb)`. */
+        private fun privacyProbeSteps(slot: String, calls: List<Pair<String, String>>): String = probeSteps(slot, "chrome.privacy", calls)
+
+        /** A `chrome.privacy` setting read per path (`services.passwordSavingEnabled`), the step named `get <path>`. */
+        private fun privacyGets(paths: List<String>): List<Pair<String, String>> = paths.map { "get $it" to "f.$it.get({},cb)" }
+
+        /** The four settings the privacy probe sets ([PRIVACY_PROBE_SET]) and clears ([PRIVACY_PROBE_CLEAR]). */
+        private val PRIVACY_PROBE_PATHS = listOf("services.passwordSavingEnabled", "websites.doNotTrackEnabled", "websites.referrersEnabled", "websites.hyperlinkAuditingEnabled")
+
+        /**
+         * The privacy probe's sets – the password prompt off, Do Not Track on, referrers and
+         * hyperlink auditing off – each read back; `webRTCIPHandlingPolicy` and the third-party
+         * cookies setting read as the browser answers them (stored and published only, the
+         * WebView has no policy API for the first).
+         */
+        private val PRIVACY_PROBE_SET = privacyProbeSteps(
+            "__zenP",
+            listOf(
+                "set services.passwordSavingEnabled" to "f.services.passwordSavingEnabled.set({value:false},cb)",
+                "set websites.doNotTrackEnabled" to "f.websites.doNotTrackEnabled.set({value:true},cb)",
+                "set websites.referrersEnabled" to "f.websites.referrersEnabled.set({value:false},cb)",
+                "set websites.hyperlinkAuditingEnabled" to "f.websites.hyperlinkAuditingEnabled.set({value:false},cb)"
+            ) + privacyGets(PRIVACY_PROBE_PATHS + listOf("network.webRTCIPHandlingPolicy", "websites.thirdPartyCookiesAllowed"))
+        )
+
+        /** The privacy probe's clears, each read back (the browser's own value, `controllable_by_this_extension`). */
+        private val PRIVACY_PROBE_CLEAR = privacyProbeSteps(
+            "__zenPClear",
+            PRIVACY_PROBE_PATHS.map { "clear $it" to "f.$it.clear({},cb)" } + privacyGets(PRIVACY_PROBE_PATHS)
+        )
+
+        /** The three set values read again from a fresh probe page after a disable and an enable. */
+        private val PRIVACY_PROBE_KEPT = privacyProbeSteps("__zenPKept", privacyGets(PRIVACY_PROBE_PATHS))
 
         /**
          * Search by Image's image-pick mode on the page: its `src/select/script.js` (run through
@@ -11131,13 +13776,349 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         /**
          * A new-tab override's page rendered ([momentum]): text of more than twenty characters,
          * imagery (an image, a canvas, a background element), or the app's mounted root filled –
-         * Infinity New Tab's icon grid in `.site-items` or its search in `.search-box`, a framework
+         * Infinity New Tab's icon cards (`.items-card`) or its search in `.search-box`, a framework
          * root (`#app`, `#root`, `main`) with children – with the body shown (Infinity keeps
          * `hide-opacity` on the body until its app has loaded).
+         *
+         * Read through the page's open shadow roots as well as its light DOM (compat round 19):
+         * Infinity's app is Lit components – `newtab-main` and the rest render into open shadow
+         * roots – and once it has loaded it removes the static skeleton (`.main-middle`, with the
+         * skeleton's images and its footer) from the light DOM, so the light DOM of the loaded page
+         * is the wallpaper layer and a row of empty hosts; `body.innerText` and the document's
+         * `querySelectorAll` read nothing of a page fully drawn (rounds 17-19's F on both WebViews,
+         * `textLength:0, imagery:0, mounted:0, shown:true` under a rendered grid). The probe walks
+         * every open `shadowRoot` (nested ones too, a hundred hosts at most), counts the imagery
+         * and the mounted selectors in each, and adds each root's rendered text – its shown element
+         * children's `innerText`, `style`/`script`/`template`/`link` and `display:none` children
+         * left out, as a stylesheet's text is not the page's. `shadowRoots` is the count found.
+         * A remote frame laid out over 100x100 CSS px (`frames`: Yahoo Homepage's new tab is a
+         * sandboxed iframe of yahoo.com and nothing else, compat round 20) is the page's content
+         * too – its document is another origin's and cannot be read from here.
          */
         private const val NEW_TAB_RENDERED =
-            "(function(){var b=document.body;var text=b?b.innerText.replace(/\\s+/g,' ').trim():'';var imagery=document.querySelectorAll('img, canvas, .background, [class*=\"background\"]').length;" +
-                "var mounted=document.querySelectorAll('.site-items .items-card, .site-items a, .search-box input, .search-box form, #app > *, #root > *, main > *').length;var shown=!!b&&!b.classList.contains('hide-opacity');" +
-                "return JSON.stringify({pass:text.length>20||imagery>0||(mounted>0&&shown),textLength:text.length,imagery:imagery,mounted:mounted,shown:shown,bodyClass:b?b.className.slice(0,60):null,text:text.slice(0,120),url:location.href})})()"
+            "(function(){var b=document.body;var IMG='img, canvas, .background, [class*=\"background\"]';var MOUNT='.site-items .items-card, .items-card, .site-items a, .search-box input, .search-box form, #app > *, #root > *, main > *';" +
+                "var roots=[document],hosts=0;for(var i=0;i<roots.length&&hosts<100;i++){var all=roots[i].querySelectorAll('*');for(var j=0;j<all.length;j++){if(all[j].shadowRoot){roots.push(all[j].shadowRoot);hosts++}}}" +
+                "var text=b?b.innerText:'',imagery=0,mounted=0,frames=0;for(var k=0;k<roots.length;k++){var r=roots[k];imagery+=r.querySelectorAll(IMG).length;mounted+=r.querySelectorAll(MOUNT).length;frames+=Array.prototype.filter.call(r.querySelectorAll('iframe[src]'),function(f){var fr=f.getBoundingClientRect();return /^https?:/.test(f.src)&&fr.width>100&&fr.height>100}).length;" +
+                "if(k>0){var cs=r.children;for(var c=0;c<cs.length;c++){var e=cs[c],t=e.tagName;if(t==='STYLE'||t==='SCRIPT'||t==='TEMPLATE'||t==='LINK'||getComputedStyle(e).display==='none')continue;text+=' '+(e.innerText||'')}}}" +
+                "text=text.replace(/\\s+/g,' ').trim();var shown=!!b&&!b.classList.contains('hide-opacity');" +
+                "return JSON.stringify({pass:text.length>20||imagery>0||frames>0||(mounted>0&&shown),textLength:text.length,imagery:imagery,frames:frames,mounted:mounted,shadowRoots:hosts,shown:shown,bodyClass:b?b.className.slice(0,60):null,text:text.slice(0,120),url:location.href})})()"
+
+        // --- compat round 20 (ranks 481-510) ---
+
+        /**
+         * My Doodle on google.com: its content script swaps the logo (`#hplogo` / `#lga` /
+         * `#logo`) for its doodle – the text "MyDoodle" its first run writes to storage, or its
+         * clock (`#myDoodleClock`); the logo image gone from the page is read with it.
+         */
+        private const val MY_DOODLE =
+            "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ');var clock=document.getElementById('myDoodleClock');var doodle=/MyDoodle/.test(t);var logo=document.querySelector('#hplogo, img[alt=\"Google\"]');" +
+                "var visible=logo?(function(r){return r.width>0&&r.height>0})(logo.getBoundingClientRect()):false;" +
+                "return JSON.stringify({pass:doodle||!!clock,doodleText:doodle,clock:!!clock,logo:!!logo,logoVisible:visible,title:document.title.slice(0,40),text:t.slice(0,120)})})()"
+
+        /**
+         * Google Meet Breakout's control panel (`popup.html`, opened by `windows.create` from the
+         * action click): its toolbar controls (`#popup-help`, `#popup-refresh`, `#popup-resize`,
+         * `#popup-retile`) drawn with text in the page.
+         */
+        private const val MEET_BREAKOUT_PANEL =
+            "(function(){var ids=['popup-help','popup-refresh','popup-resize','popup-retile','popup-minimize','gmbr-help'];var found=ids.filter(function(i){return !!document.getElementById(i)});var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:found.length>=2&&t.length>10,controls:found,text:t.slice(0,160)})})()"
+
+        /**
+         * TickerIQ's popup: coins listed with prices – at least two ticker symbols (BTC, ETH, …)
+         * and a number with a decimal point in the text (its React root `#root` mounted).
+         */
+        private const val TICKERIQ_PRICES =
+            "(function(){var root=document.getElementById('root');var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var symbols=(t.match(/\\b(BTC|ETH|SOL|BNB|XRP|DOGE|ADA|USDT|LTC|DOT|AVAX|LINK)\\b/g)||[]).filter(function(s,i,a){return a.indexOf(s)===i});var prices=(t.match(/\\$?\\d[\\d,]*\\.\\d+/g)||[]).length;" +
+                "return JSON.stringify({pass:symbols.length>=2&&prices>=2,symbols:symbols.slice(0,8),prices:prices,mounted:!!root&&root.children.length>0,text:t.slice(0,160)})})()"
+
+        /**
+         * Speed Test for Chrome's popup (an OpenSpeedtest build): its `#OpenSpeedtest` SVG app
+         * laid out with a size and its start control (`#startButtonDesk` / `.startButton`)
+         * present; `#loading_app` no longer covering it.
+         */
+        private const val SPEEDTEST_APP =
+            "(function(){var app=document.getElementById('OpenSpeedtest');var r=app?app.getBoundingClientRect():{width:0,height:0};var start=document.querySelector('#startButtonDesk, #startButton, .startButton');var loading=document.getElementById('loading_app');var ls=loading?getComputedStyle(loading):null;var covering=!!ls&&ls.display!=='none'&&ls.visibility!=='hidden'&&parseFloat(ls.opacity||'1')>0.5;" +
+                "return JSON.stringify({pass:!!app&&r.width>200&&r.height>150&&!!start,app:!!app,size:Math.round(r.width)+'x'+Math.round(r.height),start:!!start,loadingShown:covering,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,100)})})()"
+
+        /**
+         * Ready X's Starknet provider in the page world: `window.starknet_argentX` (its id stays
+         * Argent X's; its `name` "Ready…") or `window.starknet_ready`, with `request` / `enable`
+         * functions; the Wallet Standard announcement (`__wallet.announced`) read alongside.
+         */
+        private const val READY_PROVIDER =
+            "JSON.stringify((function(){var p=window.starknet_argentX||window.starknet_ready||window.starknet||null;var announced=window.__wallet?window.__wallet.announced:null;var keys=Object.keys(window).filter(function(k){return /^starknet/i.test(k)});" +
+                "return {pass:!!p&&(typeof p.request==='function'||typeof p.enable==='function'),provider:p?String(p.id||''):null,name:p?String(p.name||''):null,version:p?String(p.version||''):null,request:typeof (p&&p.request),enable:typeof (p&&p.enable),keys:keys.slice(0,6),announced:announced}})())"
+
+        /**
+         * High Contrast applied to the fixture: `<html hc="a3">` (mode `a`ll, scheme 3 = invert)
+         * set by its content script on the storage change, and the SVG filter its stylesheet
+         * puts on the root (`filter: url(#hc_extension_invert)`) computed; `hcx` alongside.
+         */
+        private const val HIGH_CONTRAST_APPLIED =
+            "(function(){var h=document.documentElement;var hc=h.getAttribute('hc');var filter=getComputedStyle(h).filter;var sheet=!!document.getElementById('hc_style')||!!document.querySelector('style[id*=\"hc_\"], #hc_extension_svg_filters');" +
+                "return JSON.stringify({pass:!!hc&&hc!=='a0'&&/url\\(/.test(filter),hc:hc,hcx:h.getAttribute('hcx'),filter:String(filter).slice(0,60),sheet:sheet})})()"
+
+        /**
+         * Youtube Playback Speed Control's panel over the fixture's clip
+         * (`.PlayBackRatePanelYPSC` with its `.btnYPSC` buttons); its faster button clicked once
+         * while the rate is 1, the video's `playbackRate` above 1 the pass.
+         */
+        private const val YPSC_PANEL =
+            "(function(){var p=document.querySelector('.PlayBackRatePanelYPSC, .PlayBackRatePanelYPSCFullScreen');var v=document.querySelector('video');var buttons=document.querySelectorAll('.btnYPSC');var faster=document.querySelector('.btnYPSC-right, .btnYPSC[class*=\"right\"], .btnYPSC[class*=\"faster\"], .btnYPSC[class*=\"plus\"]');" +
+                "if(p&&v&&faster&&v.playbackRate===1){try{faster.click()}catch(e){}}var rate=v?v.playbackRate:null;" +
+                "return JSON.stringify({pass:!!p&&!!v&&rate!==null&&rate>1,panel:!!p,video:!!v,buttons:buttons.length,faster:!!faster,rate:rate,panelText:p?(p.innerText||'').replace(/\\s+/g,' ').trim().slice(0,40):null})})()"
+
+        // --- the expressions of compat round 21 (ranks 511-540) --------------------------------------
+
+        /**
+         * Night Eye's dark mode on the light fixture: `<html nighteye="dark|filtered|normal|
+         * disabled|passive">` (its content script's mode word) and its `#nighteyedefaultcss`
+         * style, with the body's computed background luminance. The pass is a darkening mode
+         * (`dark` or `filtered`) on the element, or the style in the page with the background
+         * read dark (luminance under 100); `disabled` and a page it left `normal` are the
+         * extension's own decision, recorded as the mode.
+         */
+        private const val NIGHT_EYE_DARK =
+            "(function(){var h=document.documentElement;var mode=h.getAttribute('nighteye');var css=!!document.getElementById('nighteyedefaultcss');var bg=document.body?getComputedStyle(document.body).backgroundColor:'';var m=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/.exec(bg);var lum=m?Math.round(0.2126*m[1]+0.7152*m[2]+0.0722*m[3]):255;" +
+                "return JSON.stringify({pass:mode==='dark'||mode==='filtered'||(css&&mode!=='disabled'&&lum<100),mode:mode,css:css,bg:bg,lum:lum,styles:document.querySelectorAll('style[id*=\"nighteye\"], link[id*=\"nighteye\"]').length})})()"
+
+        /** Temp Mail's popup: the mailbox address drawn into `#email` (an `@` in it, from web2.temp-mail.org's API), the `#workplace` around it. */
+        private const val TEMP_MAIL_ADDRESS =
+            "(function(){var e=document.getElementById('email');var v=e?(e.value||e.textContent||e.innerText||'').trim():'';var w=document.getElementById('workplace');" +
+                "return JSON.stringify({pass:/@/.test(v),email:v.slice(0,60),workplace:!!w,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,120)})})()"
+
+        /**
+         * Save as PDF's popup states: `.convert` (the button for a page not yet converted),
+         * `.in-progress` (its worker's request to pdfcrowd.com in flight), `.download` / `.open`
+         * (a conversion done) and `.error` (the service's refusal); the pass is any of the four
+         * working states shown – the popup read the tab's address and reached its worker –, the
+         * `.nothing-to-do` state (an address it refuses) is F with the text.
+         */
+        private const val SAVE_AS_PDF_POPUP =
+            "(function(){function shown(s){var e=document.querySelector(s);if(!e)return false;var r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).display!=='none'}var states={convert:shown('.convert'),inProgress:shown('.in-progress'),download:shown('.download'),open:shown('.open'),error:shown('.error'),nothing:shown('.nothing-to-do')};" +
+                "return JSON.stringify({pass:states.convert||states.inProgress||states.download||states.open||states.error,states:states,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,120)})})()"
+
+        /**
+         * Extensity's popup: the `management.getAll` listing as `li` rows under its sections
+         * (`listedExtensions`, `listedApps`, the favourites), or its `.empty` "No Extensions or
+         * Apps found." when the API answered an empty list; the pass is one or more rows – the
+         * sweep's own row is installed, so a working `management.getAll` lists at least it – with
+         * the header's switch (`.switch`) drawn.
+         */
+        private const val EXTENSITY_LIST =
+            "(function(){var items=document.querySelectorAll('ul li');var empty=document.querySelector('.empty');var emptyShown=empty&&empty.getBoundingClientRect().height>0;var sw=!!document.querySelector('.switch');var names=[];for(var i=0;i<items.length&&names.length<6;i++){var t=(items[i].innerText||'').replace(/\\s+/g,' ').trim();if(t)names.push(t.slice(0,30))}" +
+                "return JSON.stringify({pass:items.length>0,items:items.length,names:names,empty:!!emptyShown,switch:sw,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,120)})})()"
+
+        /** Requestly's popup: its React app mounted in `#root` with its text (rules, sessions, sign-in or the onboarding), over 20 characters and 5 elements. */
+        private const val REQUESTLY_POPUP =
+            "(function(){var root=document.getElementById('root');var text=root?(root.innerText||'').replace(/\\s+/g,' ').trim():'';var els=root?root.querySelectorAll('*').length:0;" +
+                "return JSON.stringify({pass:text.length>20&&els>5,chars:text.length,els:els,text:text.slice(0,120)})})()"
+
+        /** Bookmark Sidebar's side panel (`html/sidepanel.html`): its bookmark tree or list rendered – a search box, list items or its empty-state text, over 3 elements with text. */
+        private const val BOOKMARK_SIDEBAR_PANEL =
+            "(function(){var text=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var items=document.querySelectorAll('li, a[href], [class*=\"bookmark\"], [class*=\"entry\"]').length;var search=document.querySelectorAll('input[type=text], input[type=search], [class*=\"search\"]').length;var els=document.body?document.body.querySelectorAll('*').length:0;" +
+                "return JSON.stringify({pass:els>3&&(items>0||search>0||text.length>10),items:items,search:search,els:els,text:text.slice(0,120)})})()"
+
+        /** Pointer motion for a trail: a run of `mousemove` and `touchmove` events across the fixture from the page world (the content script's listeners on `document`). */
+        private const val POINTER_MOTION =
+            "(function(){var n=0;for(var i=0;i<12;i++){var x=40+i*20,y=80+i*12;try{document.dispatchEvent(new MouseEvent('mousemove',{clientX:x,clientY:y,bubbles:true}))}catch(e){}try{var t=new Touch({identifier:1,target:document.body,clientX:x,clientY:y,pageX:x,pageY:y});document.dispatchEvent(new TouchEvent('touchmove',{touches:[t],changedTouches:[t],bubbles:true}))}catch(e){}n++}return String(n)})()"
+
+        /** Custom Cursor Trails' drawing: the `.jso-cursor-trail-wrapper` in the page with one or more `.jso-cursor-trail-shape`s (or any child) after the motion. */
+        private const val CURSOR_TRAILS_DRAWN =
+            "(function(){for(var i=0;i<4;i++){try{document.dispatchEvent(new MouseEvent('mousemove',{clientX:60+i*30,clientY:120+i*20,bubbles:true}))}catch(e){}}var w=document.querySelector('.jso-cursor-trail-wrapper');var shapes=w?w.querySelectorAll('.jso-cursor-trail-shape, *').length:0;" +
+                "return JSON.stringify({pass:!!w&&shapes>0,wrapper:!!w,shapes:shapes,wrapperChildren:w?w.children.length:0})})()"
+
+        /**
+         * A Backspace `keydown` dispatched from the page world on `__TARGET__` (`body`, or an
+         * `input` appended and focused for the editable gate): bubbling and cancelable, `key`
+         * and `keyCode` as the physical key's, so the content script's `e.key !== 'Backspace'`
+         * and `composedPath()[0]` readings see the key.
+         */
+        private const val BACKSPACE_KEY =
+            "(function(){var target;if('__TARGET__'==='input'){target=document.getElementById('zen-backspace-input');if(!target){target=document.createElement('input');target.id='zen-backspace-input';target.type='text';target.value='abc';document.body.appendChild(target)}target.focus()}else{target=document.body;if(document.activeElement&&document.activeElement.blur)document.activeElement.blur()}" +
+                "var ev=new KeyboardEvent('keydown',{key:'Backspace',code:'Backspace',keyCode:8,which:8,bubbles:true,cancelable:true,composed:true});var sent=target.dispatchEvent(ev);return JSON.stringify({target:target.tagName,dispatched:true,defaultPrevented:!sent,history:history.length})})()"
+
+        /** Reader View's reader page (`data/reader/index.html`): the article's title and over 300 characters of its text (the fixture's own words), in the document or its reader frame. */
+        private const val READER_VIEW_ARTICLE =
+            "(function(){function textOf(d){try{return (d.body?d.body.innerText:'').replace(/\\s+/g,' ').trim()}catch(e){return ''}}var text=textOf(document);var frames=document.querySelectorAll('iframe');for(var i=0;i<frames.length;i++){try{var d=frames[i].contentDocument;if(d)text+=' '+textOf(d)}catch(e){}}var title=/tramway that outlived its river/i.test(text)||/tramway/i.test(document.title);var words=/embankment|preservation society|gasworks/i.test(text);" +
+                "return JSON.stringify({pass:title&&words&&text.length>300,title:document.title.slice(0,80),chars:text.length,frames:frames.length,text:text.slice(0,120)})})()"
+
+        /** The fixture's layout under the phone's page zoom: the layout viewport's width and the viewport meta the page script wrote (`pass` set by the caller). */
+        private const val ZOOM_LAYOUT =
+            "(function(){var m=document.querySelector('meta[name=viewport]');return JSON.stringify({pass:false,width:document.documentElement.clientWidth,inner:window.innerWidth,dpr:window.devicePixelRatio,scale:window.visualViewport?window.visualViewport.scale:null,viewport:m?m.getAttribute('content'):null})})()"
+
+        /** chrome lock's options page: the password form (`#new`, `#old`, `#save`) drawn – a fresh install offers the new password. */
+        private const val CHROME_LOCK_FORM =
+            "(function(){var n=document.getElementById('new');var o=document.getElementById('old');var s=document.getElementById('save');var pw=document.querySelectorAll('input[type=password]').length;" +
+                "return JSON.stringify({pass:!!n&&!!s&&pw>=1,newField:!!n,oldField:!!o,save:!!s,passwordInputs:pw,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,120)})})()"
+
+        /** Petra's Aptos provider in the page world: `window.aptos` (and its `window.petra` alias) with `connect` and `signAndSubmitTransaction` functions. */
+        private const val PETRA_PROVIDER =
+            "(function(){var p=window.aptos||window.petra||null;return JSON.stringify({pass:!!p&&typeof p.connect==='function',aptos:typeof window.aptos,petra:typeof window.petra,connect:typeof (p&&p.connect),sign:typeof (p&&p.signAndSubmitTransaction),network:typeof (p&&p.network),keys:p?Object.keys(p).slice(0,8):[]})})()"
+
+        /**
+         * SAML-tracer's trace window: its toolbar buttons (`#button-clear`, `#button-pause`,
+         * `#button-autoscroll`, `#button-export-list`, …) and its `#request-list` laid out.
+         */
+        private const val SAML_TRACER_TOOLBAR =
+            "(function(){var ids=['button-clear','button-pause','button-autoscroll','button-hide-resources','button-export-list','button-import-list'];var found=ids.filter(function(i){return !!document.getElementById(i)});var list=document.getElementById('request-list');" +
+                "return JSON.stringify({pass:found.length>=3&&!!list,buttons:found.join(' '),list:!!list,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,120)})})()"
+
+        /** SAML-tracer's `#request-list` after the second fixture's load: a row naming `page-b.html` (its rows' text and title attributes). */
+        private const val SAML_TRACER_LISTED =
+            "(function(){var list=document.getElementById('request-list');var rows=list?list.querySelectorAll('tr, li, div, .request'):[];var texts=[];for(var i=0;i<rows.length;i++){var e=rows[i];var t=((e.innerText||'')+' '+(e.getAttribute('title')||'')).replace(/\\s+/g,' ').trim();if(t)texts.push(t)}var all=texts.join(' | ');" +
+                "return JSON.stringify({pass:/page-b\\.html/.test(all),rows:rows.length,requests:(all.match(/https?:\\/\\/[^\\s|]+/g)||[]).slice(0,4),text:all.slice(0,160)})})()"
+
+        // --- compat round 19 (ranks 451-480) ---
+
+        /** Soda PDF Viewer's online viewer, where its `tabs.update` sends a PDF tab ([sodaPdf]). */
+        private val SODA_PDF_VIEWER = Regex("sodapdf\\.com", RegexOption.IGNORE_CASE)
+
+        /**
+         * CSS Peeper's side panel page as a tab: its Plasmo root (`#__plasmo`) mounted with the
+         * panel's tooling in it (Inspect Mode, Instances, Contrast, Sidebar view, Colors,
+         * Typography, Assets) and not its failure line ("Extension initialization failed.
+         * Please refresh the page.").
+         */
+        private const val CSS_PEEPER_PANEL =
+            "(function(){var root=document.getElementById('__plasmo');var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var failed=/initialization failed|refresh the page/i.test(t);var ui=/inspect mode|instances|contrast|sidebar view|colors|typography|assets/i.test(t);" +
+                "return JSON.stringify({pass:!!root&&root.children.length>0&&ui&&!failed,root:!!root,children:root?root.children.length:0,ui:ui,failed:failed,initializing:/initializing/i.test(t),buttons:document.querySelectorAll('button').length,text:t.slice(0,200)})})()"
+
+        /**
+         * OP Auto Clicker's fixture armed ([autoClicker]): a capturing click counter on the
+         * document (`window.__zenClicks`: every click, the synthetic ones by `isTrusted`, the
+         * targets by tag), then one `mousemove` over the heading so the clicker has a target.
+         */
+        private const val AUTO_CLICKER_ARM =
+            "(function(){if(window.__zenClicks)return JSON.stringify({armed:true,again:true});var z={n:0,synthetic:0,targets:{}};window.__zenClicks=z;" +
+                "document.addEventListener('click',function(e){z.n++;if(!e.isTrusted)z.synthetic++;var k=e.target&&e.target.tagName?e.target.tagName:'?';z.targets[k]=(z.targets[k]||0)+1},true);" +
+                "var el=document.querySelector('h1')||document.querySelector('p')||document.body;var r=el.getBoundingClientRect();var x=r.left+Math.min(10,r.width/2),y=r.top+Math.min(10,r.height/2);" +
+                "el.dispatchEvent(new MouseEvent('mousemove',{bubbles:true,cancelable:true,view:window,clientX:x,clientY:y}));" +
+                "return JSON.stringify({armed:true,target:el.tagName,x:Math.round(x),y:Math.round(y),scripts:document.scripts.length})})()"
+        /** OP Auto Clicker's hotkey: one `keydown` on the window with Alt held and `__CODE__` (F1 starts, F2 stops), as its listener reads it. */
+        private const val AUTO_CLICKER_HOTKEY =
+            "(function(){var code='__CODE__';window.dispatchEvent(new KeyboardEvent('keydown',{key:code,code:code,altKey:true,bubbles:true,cancelable:true}));return 'sent Alt+'+code})()"
+        /** OP Auto Clicker's state on the fixture: its indicator (`#AutoClickerIndicator`) and the clicks [AUTO_CLICKER_ARM] counted; pass is the indicator with three clicks or more. */
+        private const val AUTO_CLICKER_STATE =
+            "(function(){var z=window.__zenClicks||{n:0,synthetic:0,targets:{}};var ind=document.getElementById('AutoClickerIndicator');" +
+                "return JSON.stringify({pass:!!ind&&z.n>=3,indicator:!!ind,clicks:z.n,synthetic:z.synthetic,targets:z.targets,indicatorText:ind?(ind.innerText||'').replace(/\\s+/g,' ').trim().slice(0,60):null})})()"
+
+        /** Perplexity's popup composer: a textarea, a contenteditable or a text input rendered, with its placeholder. */
+        private const val PERPLEXITY_COMPOSER =
+            "(function(){var c=document.querySelector('textarea, [contenteditable=\"true\"], input[type=\"text\"], input:not([type])');var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:!!c,tag:c?c.tagName:null,placeholder:c?(c.getAttribute('placeholder')||c.getAttribute('aria-label')||c.getAttribute('data-placeholder')||''):null,text:t.slice(0,200),els:document.body?document.body.querySelectorAll('*').length:0})})()"
+        /**
+         * One question put in Perplexity's composer with the events a keyboard sends (the
+         * native value setter and an `input` event on a textarea or input, `insertText` on a
+         * contenteditable), submitted with Enter, then with the popup's send control when the
+         * text is still in the box; the popup's text length before the ask is kept on
+         * `window.__zenBase`.
+         */
+        private const val PERPLEXITY_ASK =
+            "(function(){var q='What is the capital of France? Answer in one sentence.';var c=document.querySelector('textarea, [contenteditable=\"true\"], input[type=\"text\"], input:not([type])');if(!c)return JSON.stringify({asked:false,reason:'no composer'});" +
+                "window.__zenBase=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().length;c.focus();" +
+                "if(c.isContentEditable){document.execCommand('selectAll',false,null);document.execCommand('insertText',false,q)}else{var proto=c.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;var d=Object.getOwnPropertyDescriptor(proto,'value');if(d&&d.set)d.set.call(c,q);else c.value=q;c.dispatchEvent(new Event('input',{bubbles:true}));c.dispatchEvent(new Event('change',{bubbles:true}))}" +
+                "var o={key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true};c.dispatchEvent(new KeyboardEvent('keydown',o));c.dispatchEvent(new KeyboardEvent('keypress',o));c.dispatchEvent(new KeyboardEvent('keyup',o));" +
+                "setTimeout(function(){var still=c.isContentEditable?(c.textContent||'').indexOf('capital')>=0:(c.value||'').indexOf('capital')>=0;if(!still)return;var b=document.querySelector('button[type=\"submit\"], button[aria-label*=\"ubmit\"], button[aria-label*=\"Ask\"], button[aria-label*=\"Send\"]');if(b)b.click()},600);" +
+                "return JSON.stringify({asked:true,tag:c.tagName,editable:!!c.isContentEditable})})()"
+        /** Perplexity's popup after the ask: the answer's word in its text (pass), the text grown by an answer's length, or its service's gate words. */
+        private const val PERPLEXITY_ANSWER =
+            "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var base=window.__zenBase||0;var paris=/\\bParis\\b/i.test(t);var grown=t.length>base+200;" +
+                "return JSON.stringify({pass:paris,paris:paris,grown:grown,length:t.length,base:base,text:t.slice(0,240),gate:/sign in|log in|rate limit|too many requests|something went wrong|try again|unauthorized|not available in your/i.test(t)})})()"
+        /** Perplexity's service gates in the popup's text: a sign-in, a rate limit, an error the service shows in the answer's place. */
+        private val PERPLEXITY_GATE = Regex("sign in|log in|rate limit|too many requests|something went wrong|try again|unauthorized|not available in your", RegexOption.IGNORE_CASE)
+
+        /**
+         * Netflix Party's party tab on a supported site: its content script mounts `#my-app` on
+         * every page and `#np-party-tab` (a fixed div, hidden until its React shows it) on the
+         * hosts its service lists (Netflix, Prime Video, YouTube, JioCinema). Pass is the party
+         * tab in the page.
+         */
+        private const val NETFLIX_PARTY_TAB =
+            "(function(){var tab=document.getElementById('np-party-tab');var app=document.getElementById('my-app');var cs=tab?getComputedStyle(tab):null;" +
+                "return JSON.stringify({pass:!!tab,tab:!!tab,display:cs?cs.display:null,position:cs?cs.position:null,app:!!app,appChildren:app?app.children.length:0,host:location.host,text:tab?(tab.innerText||'').replace(/\\s+/g,' ').trim().slice(0,80):null})})()"
+
+        /**
+         * Responsive Viewer's page after its action: `init.js` clears the document and mounts
+         * `#RESPONSIVE-VIEWER-ROOT` with `/main.css`, `main.js` renders the device frames
+         * (`#screens` with an iframe per device, `#canvas-dom-wrapper`).
+         */
+        private const val RESPONSIVE_VIEWER_SCREENS =
+            "(function(){var root=document.getElementById('RESPONSIVE-VIEWER-ROOT');var screens=document.querySelectorAll('#screens iframe, #RESPONSIVE-VIEWER-ROOT iframe').length;var wrap=document.getElementById('canvas-dom-wrapper');var r=root?root.getBoundingClientRect():{width:0,height:0};var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:!!root&&(screens>0||!!wrap),root:!!root,screens:screens,wrapper:!!wrap,size:Math.round(r.width)+'x'+Math.round(r.height),css:!!document.querySelector('link[href*=\"main.css\"]'),text:t.slice(0,120)})})()"
+
+        /** Directo's engine hosts in its worker's console ([directo]). */
+        private val DIRECTO_ENGINE = Regex("getdirecto\\.com", RegexOption.IGNORE_CASE)
+        /** A refusal in Directo's worker console: a failed fetch, a 4xx/5xx status, a network error, a CORS block. */
+        private val DIRECTO_REFUSED = Regex("failed to fetch|\\b(401|403|429|5\\d\\d)\\b|net::ERR|CORS|blocked|refused", RegexOption.IGNORE_CASE)
+
+        /**
+         * User-Agent Switcher and Manager's popup before its taps ([popupFlow]'s probe): the
+         * runner's user-agent string put in `#ua` with an `input` event (its "Apply" stays
+         * disabled while the box is empty; a fresh install has no string).
+         */
+        private const val UASM_TYPE_UA =
+            "(function(){var ua=document.getElementById('ua');if(!ua)return JSON.stringify({typed:false,reason:'no #ua'});ua.focus();ua.value='Mozilla/5.0 (ZeniumSweep/19; compat round 19) MSIE 10.0';ua.dispatchEvent(new Event('input',{bubbles:true}));ua.dispatchEvent(new Event('change',{bubbles:true}));var apply=document.querySelector('[data-cmd=\"apply\"]');" +
+                "return JSON.stringify({typed:true,value:ua.value.slice(0,60),applyDisabled:apply?apply.disabled:null})})()"
+        /** User-Agent Switcher and Manager's popup at the end: the string in `#ua`, its Apply's state, its toast. */
+        private const val UASM_POPUP_STATE =
+            "(function(){var ua=document.getElementById('ua');var apply=document.querySelector('[data-cmd=\"apply\"]');var toast=document.getElementById('toast');var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({value:ua?ua.value.slice(0,60):null,applyDisabled:apply?apply.disabled:null,toast:toast?(toast.textContent||'').trim().slice(0,80):null,text:t.slice(0,160)})})()"
+        /** The echo page after User-Agent Switcher and Manager's apply and refresh: the request's User-Agent header carrying the runner's string. */
+        private const val UASM_HEADER_ECHO =
+            "(function(){var h=window.__headers||{};var ua=h['User-Agent']||h['user-agent']||(document.getElementById('ua')||{}).textContent||'';" +
+                "return JSON.stringify({pass:/ZeniumSweep/.test(ua),ua:String(ua).slice(0,120),navigator:navigator.userAgent.slice(0,80),loaded:!!window.__headers})})()"
+
+        /** Font Finder's picker on the page (`div.iffselector`, mounted by `select.js` after the action), with its display and size. */
+        private const val FONT_FINDER_PICKER =
+            "(function(){var s=document.querySelector('.iffselector, div[class*=\"iffselector\"]');var cs=s?getComputedStyle(s):null;var r=s?s.getBoundingClientRect():{width:0,height:0};" +
+                "return JSON.stringify({pass:!!s,picker:!!s,display:cs?cs.display:null,size:Math.round(r.width)+'x'+Math.round(r.height),type:s&&s.dataset?s.dataset.type||null:null})})()"
+        /** Font Finder's pick of the heading: a `mouseover` (the picker's cue) and, a moment after, a left click (its capturing listener's `analyze`). */
+        private const val FONT_FINDER_PICK =
+            "(function(){var el=document.querySelector('h1')||document.querySelector('p')||document.body;var r=el.getBoundingClientRect();var o={bubbles:true,cancelable:true,view:window,button:0,clientX:r.left+Math.min(8,r.width/2),clientY:r.top+Math.min(8,r.height/2)};" +
+                "el.dispatchEvent(new MouseEvent('mouseover',o));el.dispatchEvent(new MouseEvent('mousemove',o));setTimeout(function(){el.dispatchEvent(new MouseEvent('mousedown',o));el.dispatchEvent(new MouseEvent('mouseup',o));el.dispatchEvent(new MouseEvent('click',o))},300);" +
+                "return JSON.stringify({picked:el.tagName,text:(el.textContent||'').trim().slice(0,40)})})()"
+        /** Font Finder's window (`data/window/index.html`): its property rows (`[data-obj]`) filled from the element – three or more with a value is the pass. */
+        private const val FONT_FINDER_WINDOW =
+            "(function(){var objs=Array.prototype.slice.call(document.querySelectorAll('[data-obj]'));var filled=objs.filter(function(e){var v=(e.textContent||'').trim();return v.length>0&&v!=='-'});var pick=function(n){var e=document.querySelector('[data-obj=\"'+n+'\"]');return e?(e.textContent||'').trim().slice(0,40):null};var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:filled.length>=3,objs:objs.length,filled:filled.length,sample:[pick('font-family'),pick('font-size'),pick('color-hex')].join(' | '),msg:(function(m){return m?(m.textContent||'').trim().slice(0,60):null})(document.getElementById('msg')),url:location.href.slice(0,100),text:t.slice(0,160)})})()"
+
+        /**
+         * VideoMirror's flip on the clip: its `setFlip` (run over every frame by the popup's
+         * `executeScript`) gives the video's `style.transform` a `rotateY(180deg)` (`scaleX(-1)`
+         * on Meet); the computed transform is read too (`matrix(-1, …` / `matrix3d(-1, …`).
+         */
+        private const val VIDEO_MIRRORED =
+            "(function(){var vs=Array.prototype.slice.call(document.querySelectorAll('video'));var flipped=vs.filter(function(v){var s=String(v.style.transform||'');var c=getComputedStyle(v).transform||'';return /rotateY\\(180deg\\)|scaleX\\(-1\\)/.test(s)||/^matrix\\(-1,|^matrix3d\\(-1,/.test(c)});" +
+                "return JSON.stringify({pass:flipped.length>0,videos:vs.length,flipped:flipped.length,transforms:vs.map(function(v){return String(v.style.transform||'').slice(0,40)}),computed:vs.map(function(v){return (getComputedStyle(v).transform||'').slice(0,40)})})})()"
+
+        /**
+         * VideoPlayer MPD's player page (`pages/player.html#<the playlist address>`): a video or a
+         * jwplayer wrapper drawn in `#player` (or the container filled), the hash carrying the
+         * redirected address.
+         */
+        private const val MEDIA_PLAYER_PAGE =
+            "(function(){var p=document.getElementById('player');var video=document.querySelector('#player video, video');var jw=document.querySelector('.jwplayer, .jw-wrapper, [id^=\"jwplayer\"]');var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var hash=location.hash.slice(1);" +
+                "return JSON.stringify({pass:!!(video||jw)||(!!p&&p.children.length>0),player:!!p,children:p?p.children.length:0,video:!!video,jw:!!jw,readyState:video?video.readyState:null,src:video?String(video.currentSrc||video.src||'').slice(0,80):null,hash:hash.slice(0,80),text:t.slice(0,120),err:/error|not supported|failed/i.test(t)})})()"
+
+        /**
+         * Snake's popup: its board (`#canvas`, 960x960 drawn at 400 px) laid out with a width and
+         * painted – pixels sampled from the bitmap that are neither transparent nor the body's
+         * `#222` (the snake and its head at rest, the food).
+         */
+        private const val SNAKE_CANVAS =
+            "(function(){var c=document.getElementById('canvas')||document.querySelector('canvas');if(!c)return JSON.stringify({pass:false,canvas:false,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,80)});var r=c.getBoundingClientRect();var drawn=0,sampled=0,err=null;" +
+                "try{var ctx=c.getContext('2d');var d=ctx.getImageData(0,0,c.width,c.height).data;for(var i=0;i<d.length;i+=64){sampled++;if(d[i+3]>0&&!(d[i]===34&&d[i+1]===34&&d[i+2]===34))drawn++}}catch(e){err=String(e)}" +
+                "return JSON.stringify({pass:r.width>100&&drawn>0,canvas:true,size:Math.round(r.width)+'x'+Math.round(r.height),bitmap:c.width+'x'+c.height,drawn:drawn,sampled:sampled,err:err,imgs:document.images.length})})()"
+
+        /**
+         * Plugins' popup: its three tabs (`.tabs-header .tab-button`: Plugins Manager, Settings,
+         * About), the manager frame (`#plugins-manager-iframe` on its own `extensions/extensions.html`)
+         * with a source, its bottom icon row; the frame's text length read when same-origin.
+         */
+        private const val PLUGINS_POPUP =
+            "(function(){var tabs=document.querySelectorAll('.tabs-header .tab-button').length;var f=document.getElementById('plugins-manager-iframe');var src=f?String(f.getAttribute('src')||f.src||''):'';var inner=-1;try{inner=f&&f.contentDocument&&f.contentDocument.body?f.contentDocument.body.innerText.replace(/\\s+/g,' ').trim().length:-1}catch(e){inner=-2}var icons=document.querySelectorAll('.bottom-icons a').length;var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:tabs>=3&&!!f&&src.length>0,tabs:tabs,frame:!!f,src:src.slice(0,80),frameText:inner,icons:icons,text:t.slice(0,160)})})()"
     }
 }

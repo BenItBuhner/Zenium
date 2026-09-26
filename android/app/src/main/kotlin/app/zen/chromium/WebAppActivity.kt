@@ -92,9 +92,14 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
         private set
     private var displayScript: ScriptHandler? = null
     private var taskIcon: Bitmap? = null
+    /** The page's `Notification` (PWA-02): the window's own script and bridge, the app's own channel group. */
+    private lateinit var notifications: WebAppNotifications
     /** The launch's splash (PWA-06): the platform's window held to the page's first frame, dressed as the app's. */
     private lateinit var startupSplash: StartupSplash
     private lateinit var splash: WebAppSplash
+    /** PWA-13: the first launch's "Running in Zenium" card while it is up ([WebAppDisclosure]); the insets move it. */
+    var disclosure: NativeToastCard? = null
+        private set
 
     /** The page (a fresh view after a renderer crash, see `TabHost.replaceCrashed`). */
     val page: TabWebView? get() = if (::host.isInitialized) host.tabs.get(TAB_ID) else null
@@ -131,6 +136,7 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
             visibility = View.GONE
         }
         host = CustomTabHost(this, this, pageContainer, fullscreenLayer, scheme.dark, pageDialogs = true)
+        notifications = WebAppNotifications(this, record)
         toolbar = CustomTabToolbar(this, toolbarConfig(url), this, CustomTabToolbar.Mode.WEB_APP)
         toolbar.visibility = View.GONE
         statusStrip = View(this).apply { setBackgroundColor(scheme.toolbar) }
@@ -151,6 +157,7 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
             toolbar.setTopInset(bars.top)
             statusStrip.layoutParams = (statusStrip.layoutParams as FrameLayout.LayoutParams).apply { height = bars.top }
             layoutPage()
+            disclosure?.setBottomInset(bottomInset)
             WindowInsetsCompat.CONSUMED
         }
 
@@ -300,6 +307,7 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
         view.layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         view.visibility = View.VISIBLE
         installDisplayScript(view)
+        notifications.attach(view)
         // The splash waits for this view's first painted document (a fresh view after a crash
         // under a splash still up takes the wait over). Until then the view wears the app's
         // ground instead of WebView's white: the platform draws this window's first frame before
@@ -331,8 +339,48 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
                 reportFullyDrawn()
                 startupSplash.ready()
                 Log.i(StartupSplash.TAG, "web app page painted: first frame; splash held ${startupSplash.heldForMs ?: -1} ms, lifted by ${startupSplash.hold.liftedBy ?: "nothing yet"}")
+                discloseOnFirstLaunch()
             }
         })
+    }
+
+    /**
+     * PWA-13: on the install's first launch, once the page is on screen and the splash has lifted,
+     * the window says whose it is – "Running in Zenium" on the §9.33 card in the first-time hint's
+     * plain form, 2.8 s, a swipe sends it off early – and the launch is remembered in the app's
+     * record once the card has LEFT (the clock's end or the swipe), not when it shows, so a launch
+     * killed under the card says it once more and no launch after a seen card says it again. The
+     * record's read here and the mark's write in [showDisclosure] are one small file's, off the
+     * main thread; the card comes up on the read.
+     */
+    private fun discloseOnFirstLaunch() {
+        val record = record
+        Thread({
+            val due = WebAppDisclosure.dueFor(this, record)
+            Log.i(WebAppDisclosure.TAG, "disclosure ${if (due) "due: the first launch of" else "not due: a later launch of"} ${record.shortcutId}")
+            if (due) shell.post { if (!isFinishing && !isDestroyed && disclosure == null) showDisclosure() }
+        }, "zen-webapp-disclosure").start()
+    }
+
+    private fun showDisclosure() {
+        val record = record
+        val card = NativeToastCard(
+            this, V2Ink(this, scheme.dark),
+            text = WebAppDisclosure.text(this),
+            action = null,
+            showMs = WebAppDisclosure.SHOW_MS,
+            onGone = { gone ->
+                if (disclosure === gone) disclosure = null
+                // Seen: the card left by its clock or under a swipe (a detach at teardown does not come here).
+                Thread({
+                    val written = WebAppDisclosure.markSeenFor(this, record, System.currentTimeMillis())
+                    Log.i(WebAppDisclosure.TAG, "disclosure ${if (written) "seen: marked in the record of" else "seen: the record already marked for"} ${record.shortcutId}")
+                }, "zen-webapp-disclosure").start()
+            }
+        )
+        disclosure = card
+        // Under the fullscreen layer, so a page gone fullscreen covers the card as it covers the chrome's.
+        card.show(shell, bottomInset, shell.indexOfChild(fullscreenLayer))
     }
 
     /**
@@ -489,13 +537,25 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
 
     // --- lifecycle -----------------------------------------------------------------------------------
 
-    // The tile tapped while the app runs (`singleTop` in its own document task) delivers the
-    // launch intent to `onNewIntent`, and the window comes forward as it stands: Chrome's
-    // `CustomTabIntentHandler.onNewIntent` does not navigate either unless the intent forces it
-    // ("the purpose of the intent was to bring the webapp to the foreground").
+    /**
+     * The tile tapped while the app runs (`singleTop` in its own document task) delivers the
+     * launch intent here, and the window comes forward as it stands: Chrome's
+     * `CustomTabIntentHandler.onNewIntent` does not navigate either unless the intent forces it
+     * ("the purpose of the intent was to bring the webapp to the foreground"). A notification's
+     * tap arrives the same way (its pending intent is the launch intent with the card's extras)
+     * and becomes the page's `click`. The activity's own intent stays the launch's: the task is
+     * still the one the tile made ([WebAppLauncherActivity]'s task URI is in its data).
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (::notifications.isInitialized) notifications.onOpenIntent(intent)
+    }
 
     override fun onDestroy() {
         displayScript?.remove()
+        disclosure?.detach()
+        disclosure = null
+        if (::notifications.isInitialized) notifications.destroy()
         if (::startupSplash.isInitialized) startupSplash.cancel()
         if (::host.isInitialized) host.destroy()
         super.onDestroy()

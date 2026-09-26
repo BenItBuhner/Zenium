@@ -294,14 +294,12 @@ describe('createEmulatedEngine', () => {
   })
 
   it('answers no-ops and stub results on the context side without a host round trip', async () => {
-    const h = harness({ permissions: ['fontSettings'] })
+    const h = harness({ permissions: ['sessions'] })
     const before = h.sent.length
     await expect(
       (h.chrome.runtime.setUninstallURL as Fn)('https://example.org/bye') as Promise<unknown>
     ).resolves.toBeUndefined()
-    await expect((h.chrome.fontSettings.getFontList as Fn)() as Promise<unknown>).resolves.toEqual(
-      []
-    )
+    await expect((h.chrome.sessions.getDevices as Fn)() as Promise<unknown>).resolves.toEqual([])
     expect(h.sent.length).toBe(before)
   })
 
@@ -643,7 +641,12 @@ describe('createEmulatedEngine', () => {
     })
     expect(page.last().userScript).toBeUndefined()
     void (page.chrome.runtime.connect as Fn)(EXT, { name: 'yss' })
-    expect(page.last()).toMatchObject({ t: 'connect', name: 'yss', target: { extensionId: EXT }, external: true })
+    expect(page.last()).toMatchObject({
+      t: 'connect',
+      name: 'yss',
+      target: { extensionId: EXT },
+      external: true
+    })
 
     const bg = harness()
     const plain: unknown[] = []
@@ -686,11 +689,44 @@ describe('createEmulatedEngine', () => {
       arch: 'arm64',
       nacl_arch: 'arm'
     })
-    const websites = (h.chrome.privacy.websites as Ns).hyperlinkAuditingEnabled as Ns & { get: Fn }
-    await expect(websites.get({}) as Promise<unknown>).resolves.toEqual({
-      value: false,
-      levelOfControl: 'not_controllable'
+    // `chrome.privacy`'s ChromeSettings are the shim's, routed to the host as the desktop's are
+    // (compat round 20: the phone's `extensionPrivacy.ts` answers them, and its `onChange` is
+    // the host's `privacy.<category>.<name>.onChange` event).
+    const websites = (h.chrome.privacy.websites as Ns).hyperlinkAuditingEnabled as Ns & {
+      get: Fn
+      set: Fn
+      onChange: Listenable
+    }
+    const pending = websites.get({ incognito: false }) as Promise<unknown>
+    expect(h.last()).toMatchObject({
+      t: 'call',
+      ns: 'privacy',
+      method: 'get',
+      args: ['websites', 'hyperlinkAuditingEnabled', { incognito: false }]
     })
+    h.reply(h.last().id, { value: false, levelOfControl: 'controlled_by_this_extension' })
+    await expect(pending).resolves.toEqual({
+      value: false,
+      levelOfControl: 'controlled_by_this_extension'
+    })
+    const settled = websites.set({ value: false, scope: 'regular' }) as Promise<unknown>
+    expect(h.last()).toMatchObject({
+      t: 'call',
+      ns: 'privacy',
+      method: 'set',
+      args: ['websites', 'hyperlinkAuditingEnabled', { value: false, scope: 'regular' }]
+    })
+    h.reply(h.last().id, undefined)
+    await expect(settled).resolves.toBeUndefined()
+    const heard: unknown[] = []
+    websites.onChange.addListener((details: unknown) => void heard.push(details))
+    h.engine.receive({
+      t: 'event',
+      ns: 'privacy',
+      name: 'websites.hyperlinkAuditingEnabled.onChange',
+      args: [{ value: false, levelOfControl: 'controlled_by_other_extensions' }]
+    })
+    expect(heard).toEqual([{ value: false, levelOfControl: 'controlled_by_other_extensions' }])
     // Chrome's redirect host, not the emulated origin: providers know chromiumapp.org.
     expect((h.chrome.identity.getRedirectURL as Fn)('cb')).toBe(`https://${EXT}.chromiumapp.org/cb`)
     expect((h.chrome.identity.getRedirectURL as Fn)()).toBe(`https://${EXT}.chromiumapp.org/`)

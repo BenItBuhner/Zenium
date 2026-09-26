@@ -1,0 +1,104 @@
+name: Android installed web app identity demo
+
+# Records an installed web app's own identity on the phone (matrix PWA-02, W6-9): the
+# Add-to-Home-screen demo's Sketch Studio installed through the install sheet (Add under a real
+# finger, the launcher's pin dialog, the confirmation toast), the pinned shortcut read back and
+# its intent asserted to aim at WebAppLauncherActivity, the core's installed list read from
+# zen/webapps.json with the app's name, shortcut id and origin, the Home screen tile opening the
+# app in its own task – the task's description read through the API and out of `dumpsys activity
+# recents` (the manifest's short_name as the label, its theme_color as the card's colour), the
+# browser's own task left standing – the Recents screen under KEYCODE_APP_SWITCH (the still),
+# the tile tapped a second time bringing the same task forward (one task, not two), then a page
+# notification asked for and shown from inside the app's window: the window's own permission
+# prompt on the native sheet (the still; the scrim and the system back dismissing it with nothing
+# written) and Allow under a real finger, the channel group named for the app (the API and `dumpsys
+# notification`), the card's sub text, tile and colour, the shade opened with the app's name on
+# the card (the still), a real tap on the card landing in the app's task with the page told
+# `click`, the system's notification settings listing the app, and last the browser's own tab
+# on the app's page posting under the app's channel. Every check is a line of
+# pwa-identity-findings.txt in the artifact; a FAIL fails the run once the stills are taken.
+#
+# Two acts, in parallel, each on its own emulator: the light and the dark colour scheme (the dark
+# act puts the device in night mode, which Recents, the shade and the app's window follow; the
+# same claims; the stills are the design record's). Dispatch-only, like the web app window demo:
+# it says nothing about a change being correct beyond what the findings record. The build, the
+# emulator and the Gradle cache live in android-emulator-demo.yml; this file picks the driver and
+# the theme. One more boot per act when the emulator itself went away under the driver (adb lost
+# the device), and never when the driver failed: a run is then spent on the demo rather than on
+# the runner.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-pwa-identity-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  light:
+    name: Installed web app identity demo, light
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.PwaIdentityDemo
+        DEMO_DIR=pwa-identity-demo
+        DEMO_OUT=artifacts/android-pwa-identity-demo
+        DEMO_VIDEO=android-pwa-identity-demo-light.mp4
+        DEMO_THEME=light
+      # The guest kernel's console in the log, should the emulator go away mid-demo.
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-pwa-identity-demo-light
+      artifact-path: artifacts/android-pwa-identity-demo/
+
+  light-again:
+    name: Installed web app identity demo, light, second boot
+    needs: light
+    if: ${{ failure() && needs.light.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.PwaIdentityDemo
+        DEMO_DIR=pwa-identity-demo
+        DEMO_OUT=artifacts/android-pwa-identity-demo
+        DEMO_VIDEO=android-pwa-identity-demo-light.mp4
+        DEMO_THEME=light
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-pwa-identity-demo-light-second-boot
+      artifact-path: artifacts/android-pwa-identity-demo/
+
+  dark:
+    name: Installed web app identity demo, dark
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.PwaIdentityDemo
+        DEMO_DIR=pwa-identity-demo
+        DEMO_OUT=artifacts/android-pwa-identity-demo
+        DEMO_VIDEO=android-pwa-identity-demo-dark.mp4
+        DEMO_THEME=dark
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-pwa-identity-demo-dark
+      artifact-path: artifacts/android-pwa-identity-demo/
+
+  dark-again:
+    name: Installed web app identity demo, dark, second boot
+    needs: dark
+    if: ${{ failure() && needs.dark.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.PwaIdentityDemo
+        DEMO_DIR=pwa-identity-demo
+        DEMO_OUT=artifacts/android-pwa-identity-demo
+        DEMO_VIDEO=android-pwa-identity-demo-dark.mp4
+        DEMO_THEME=dark
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-pwa-identity-demo-dark-second-boot
+      artifact-path: artifacts/android-pwa-identity-demo/

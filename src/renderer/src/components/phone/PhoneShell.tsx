@@ -34,10 +34,10 @@ import { closeSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import { mediaSession } from '@renderer/lib/media'
 import { barFade } from '@renderer/lib/motion/recede'
 import { focusHoldsChrome, focusOmnibox, omniboxFocusStore } from '@renderer/lib/omniboxFocus'
+import { phoneOnboardingCovers } from '@renderer/lib/onboarding'
 import { useFakeboxSurface } from '@renderer/hooks/useFakeboxSurface'
 import { useRecedeSurface } from '@renderer/hooks/useRecedeSurface'
 import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
-import { openSettings } from '@renderer/lib/pages'
 import { phoneAddressLabel } from '@renderer/lib/pillLabel'
 import { holdChromeInert } from '@renderer/lib/portals'
 import {
@@ -50,6 +50,7 @@ import { usePrivateSurface } from '@renderer/lib/privateSurface'
 import { isPrivateTab } from '@renderer/lib/privateTabs'
 import { activeSpace, activeTab } from '@renderer/lib/selectors'
 import { openQuietPrompt, quietPermissionPrompt } from '@renderer/lib/security'
+import { searchChoiceCovers } from '@renderer/lib/searchChoice'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
 import {
   closeBarEditor,
@@ -57,10 +58,7 @@ import {
   closeTabsMenu,
   contentAreaStore,
   dismissBanner,
-  openBarEditor,
-  openHistoryMenu,
   openMediaSheet,
-  openTabsMenu,
   overlayCoversContent,
   showBanner,
   uiStore,
@@ -71,6 +69,7 @@ import { ContentArea } from '../content/ContentArea'
 import { MessageLayer } from '../messages/MessageLayer'
 import { FakeboxMorphLayer } from '../newtab/FakeboxMorphLayer'
 import { Onboarding } from '../overlays/Onboarding'
+import { PhoneSearchChoiceScreen } from '../overlays/PhoneSearchChoice'
 import { BlockedPopupsChip } from '../security/BlockedPopupsPanel'
 import { Favicon } from '../sidebar/Favicon'
 import { TabDialogs } from '../TabDialogs'
@@ -84,6 +83,7 @@ import { PhoneStage } from './PhoneStage'
 import { SpacesDrawer } from './SpacesDrawer'
 import { TabPreview } from './TabPreview'
 import { BackHistoryMenu } from './BackHistoryMenu'
+import { barHold } from './barHold'
 import { TabsQuickMenu } from './TabsQuickMenu'
 import { useBarHold, type BarHoldHandlers } from './useBarHold'
 import { useFullscreenReturn } from './useFullscreenReturn'
@@ -111,7 +111,12 @@ interface Props {
 export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   const tab = activeTab(state)
   const edge = state.settings.phoneBarPosition
-  const onboarding = !state.settings.onboardingDone
+  // The first run over the window: the same term hides the page views under it (`useLayoutReporter`).
+  const tour = phoneOnboardingCovers(state)
+  // The EEA's search-engine choice screen on its own after the tour (W6-2 / OMN-26,
+  // `searchChoiceCovers`): the shell waits under it as it waits under the tour.
+  const searchChoice = !tour && searchChoiceCovers(state)
+  const onboarding = tour || searchChoice
   const htmlFullscreen = state.window.htmlFullscreenTabId !== null
   const activeTabId = tab?.id ?? null
   const dock = dockStore.use()
@@ -174,20 +179,9 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   const privateLocked = usePrivateTabLocked(state)
   useReaderEntryMessage(tab, !onboarding && !htmlFullscreen && !privateLocked)
 
-  // A hold on the Tabs button: its quick menu, anchored to the button; on Home, the homepage
-  // setting (TB-15: Chrome's long-press on its Home button); on Back or Forward with history that
-  // way, the tab's history popup (GN-08: Chrome's long-press on its toolbar's Back); any other
-  // hold – a Back with nothing behind it included – the editor, as before.
-  const hold = useBarHold({
-    onHold: (item, rect) => {
-      if (item === 'tabs') void openTabsMenu(rect, activeTabId)
-      else if (item === 'home') openSettings('look')
-      else if (item === 'back' && tab?.canGoBack) void openHistoryMenu(rect, 'back', activeTabId)
-      else if (item === 'forward' && tab?.canGoForward)
-        void openHistoryMenu(rect, 'forward', activeTabId)
-      else void openBarEditor(activeTabId)
-    }
-  })
+  // A hold on the bar: what it opens is `barHold`'s (the Tabs menu, the homepage setting, the
+  // history popups, else the editor).
+  const hold = useBarHold({ onHold: (item, rect) => barHold(item, rect, tab, activeTabId) })
 
   /**
    * The address surface from the pill: what a tap on the pill's body opens, and what a hold let
@@ -429,7 +423,8 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
       )}
       {/* The frame's dialog host (the shell's box on a phone): the bookmark editor is one of its sheets. */}
       <TabDialogs state={state} />
-      {onboarding && <Onboarding state={state} />}
+      {tour && <Onboarding state={state} />}
+      {searchChoice && <PhoneSearchChoiceScreen state={state} />}
     </div>
   )
 }

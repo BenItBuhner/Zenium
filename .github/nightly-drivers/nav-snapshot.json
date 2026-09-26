@@ -1,0 +1,13 @@
+{
+  "id": "nav-snapshot",
+  "order": 31,
+  "class": "NavSnapshotDemo",
+  "shard": "phone-b",
+  "mirrors": "android-nav-snapshot-demo.yml",
+  "dir": "nav-snapshot-demo",
+  "env": {
+    "DEMO_CLASS": "app.zen.chromium.NavigationStateWebViewTest,app.zen.chromium.NavSnapshotDemo"
+  },
+  "estimate": 3,
+  "note": "The WebView navigation-state test runs ahead of the driver on the one instrumentation, as the workflow does."
+}

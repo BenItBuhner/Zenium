@@ -1,0 +1,9 @@
+{
+  "id": "selection",
+  "order": 67,
+  "class": "SelectionDemo",
+  "shard": "phone-d",
+  "mirrors": "android-selection-demo.yml",
+  "dir": "selection-demo",
+  "estimate": 2.5
+}

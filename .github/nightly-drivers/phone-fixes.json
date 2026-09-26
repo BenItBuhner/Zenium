@@ -1,0 +1,9 @@
+{
+  "id": "phone-fixes",
+  "order": 66,
+  "class": "PhoneFixesDemo",
+  "shard": "phone-d",
+  "mirrors": "android-phone-fixes-demo.yml",
+  "dir": "phone-fixes-demo",
+  "estimate": 3.5
+}

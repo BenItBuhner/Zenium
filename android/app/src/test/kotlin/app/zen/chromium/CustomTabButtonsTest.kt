@@ -43,6 +43,34 @@ class CustomTabButtonsTest {
     }
 
     @Test
+    fun theTopSlotIsTheCallersButtonElseShareUnlessShareIsOff() {
+        // CCT-17, Chrome's adaptive toolbar button: the caller's action button always keeps the
+        // slot, whatever it said of Share; without one, Share fills it unless Share is off.
+        for (state in listOf(CustomTabsIntent.SHARE_STATE_DEFAULT, CustomTabsIntent.SHARE_STATE_ON, CustomTabsIntent.SHARE_STATE_OFF)) {
+            assertEquals(CustomTabButtons.Slot.CALLER, CustomTabButtons.topSlot(callerButton = true, shareState = state))
+        }
+        assertEquals(CustomTabButtons.Slot.SHARE, CustomTabButtons.topSlot(callerButton = false, shareState = CustomTabsIntent.SHARE_STATE_DEFAULT))
+        assertEquals(CustomTabButtons.Slot.SHARE, CustomTabButtons.topSlot(callerButton = false, shareState = CustomTabsIntent.SHARE_STATE_ON))
+        assertEquals(CustomTabButtons.Slot.NONE, CustomTabButtons.topSlot(callerButton = false, shareState = CustomTabsIntent.SHARE_STATE_OFF))
+        // A state the library does not name reads as the default, as Chrome's `getShareState` reads it.
+        assertEquals(CustomTabButtons.Slot.SHARE, CustomTabButtons.topSlot(callerButton = false, shareState = 7))
+    }
+
+    @Test
+    fun theLegacyShareMenuItemExtraFoldsIntoTheShareState() {
+        // `EXTRA_SHARE_STATE` on or off is the word; the deprecated `EXTRA_DEFAULT_SHARE_MENU_ITEM`
+        // only speaks when the state is the default, where false means off (Chrome's reading).
+        assertEquals(CustomTabsIntent.SHARE_STATE_ON, CustomTabButtons.shareState(CustomTabsIntent.SHARE_STATE_ON, legacyShareItem = false))
+        assertEquals(CustomTabsIntent.SHARE_STATE_OFF, CustomTabButtons.shareState(CustomTabsIntent.SHARE_STATE_OFF, legacyShareItem = true))
+        assertEquals(CustomTabsIntent.SHARE_STATE_DEFAULT, CustomTabButtons.shareState(CustomTabsIntent.SHARE_STATE_DEFAULT, legacyShareItem = true))
+        assertEquals(CustomTabsIntent.SHARE_STATE_OFF, CustomTabButtons.shareState(CustomTabsIntent.SHARE_STATE_DEFAULT, legacyShareItem = false))
+        assertEquals(CustomTabsIntent.SHARE_STATE_DEFAULT, CustomTabButtons.shareState(7, legacyShareItem = true))
+        // The menu's Share row and the toolbar's button read one state, so they never disagree.
+        val off = CustomTabButtons.shareState(CustomTabsIntent.SHARE_STATE_DEFAULT, legacyShareItem = false)
+        assertEquals(CustomTabButtons.Slot.NONE, CustomTabButtons.topSlot(callerButton = false, shareState = off))
+    }
+
+    @Test
     fun theExtrasZeniumReadsAreTheLibrarys() {
         // The provider reads the caller's extras by the library's names; a renamed constant would
         // silently turn the bottom toolbar off, so the names are pinned here.

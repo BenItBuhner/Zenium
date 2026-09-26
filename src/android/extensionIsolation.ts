@@ -164,6 +164,28 @@ function createMessageListeners(realWindow: object, scope: () => object): Messag
 }
 
 /**
+ * The event constructors whose init dictionary takes a `view` (a `Window`, WebIDL-checked):
+ * `UIEventInit.view` and every interface that inherits it. A content script writes
+ * `new MouseEvent('click', { view: window, bubbles: true })` for a synthetic click (OP Auto
+ * Clicker's interval, compat round 20 on WebView 113): under the `with` fallback `window` is
+ * the scope proxy, which the binding refuses ("Failed to convert value to 'Window'"), so these
+ * constructors are reached through a wrapper that puts the real window in the dictionary's
+ * place – the one property of the scope a WebIDL conversion ever reads.
+ */
+const VIEW_EVENT_CONSTRUCTORS: ReadonlySet<string> = new Set([
+  'UIEvent',
+  'MouseEvent',
+  'KeyboardEvent',
+  'FocusEvent',
+  'WheelEvent',
+  'PointerEvent',
+  'TouchEvent',
+  'InputEvent',
+  'CompositionEvent',
+  'DragEvent'
+])
+
+/**
  * A per-extension stand-in for `window` / `self` / `globalThis`: expandos land in a private
  * store and never reach the page, reads of browser globals fall through to the real window with
  * native methods bound so `window.setTimeout(...)` keeps working, page globals read as
@@ -177,7 +199,10 @@ function createMessageListeners(realWindow: object, scope: () => object): Messag
  * `collectOperations`): a bare call inside the `with` block otherwise runs with the scope object
  * as `this`, and a native, or a page's wrapper forwarding `this` to the native, refuses that
  * receiver. The binding follows the current value: a function the page replaces after a first
- * read is bound afresh. Constructors keep their identity.
+ * read is bound afresh. Constructors keep their identity, but for the UI event constructors
+ * ([VIEW_EVENT_CONSTRUCTORS]), read through a construct-trapping wrapper that swaps the scope
+ * for the real window in `init.view` (`instanceof`, `prototype` and the built instances are the
+ * native's; `MouseEvent === event.constructor` is what the wrapper costs).
  *
  * What it cannot hide is what makes the host report reduced isolation: the page and the script
  * share prototypes, and a bare identifier the page defined is found through the real global
@@ -192,6 +217,21 @@ export function createScopeProxy(
   const bound = new Map<PropertyKey, { of: unknown; fn: unknown }>()
   const target = Object.create(Object.getPrototypeOf(realWindow) as object) as Any
   const win = realWindow as Any
+  const viewed = (ctor: AnyFunction): AnyFunction => {
+    const wrapper: AnyFunction = new Proxy(ctor, {
+      construct(ctorTarget, args, newTarget) {
+        const init = args[1] as { view?: unknown } | null | undefined
+        if (typeof init === 'object' && init !== null && init.view === proxy)
+          args = [args[0], { ...init, view: realWindow }, ...args.slice(2)]
+        return Reflect.construct(
+          ctorTarget as unknown as new (...a: unknown[]) => object,
+          args,
+          (newTarget === wrapper ? ctorTarget : newTarget) as new (...a: unknown[]) => object
+        )
+      }
+    })
+    return wrapper
+  }
   const findSetter = (key: PropertyKey): boolean => {
     let obj: object | null = win
     while (obj) {
@@ -217,6 +257,14 @@ export function createScopeProxy(
       if ((key === 'top' || key === 'parent') && value === realWindow) return proxy
       if (typeof value === 'function' && typeof key === 'string') {
         const fn = value as { prototype?: unknown }
+        if (VIEW_EVENT_CONSTRUCTORS.has(key)) {
+          let b = bound.get(key)
+          if (!b || b.of !== value) {
+            b = { of: value, fn: viewed(value as AnyFunction) }
+            bound.set(key, b)
+          }
+          return b.fn
+        }
         // Methods (no `prototype`, lower-case name) and the window's operations of document
         // start, whatever their shape now, need `this === window`; constructors keep identity.
         if (operations.has(key) || (!('prototype' in fn) && key[0] === key[0].toLowerCase())) {

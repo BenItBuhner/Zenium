@@ -29,7 +29,7 @@ import { useElementWidth } from '@renderer/hooks/useElementWidth'
 import { cmd, run } from '@renderer/lib/api'
 import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { useViewport } from '@renderer/lib/formFactor'
-import { contextMenuAnchor, handleMenuKey } from '@renderer/lib/menuKeys'
+import { contextMenuAnchor, controlMenuAnchor, handleMenuKey } from '@renderer/lib/menuKeys'
 import { ChromePortal } from '@renderer/lib/portals'
 import { closeBookmarkChrome, openBookmarkChrome, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -711,16 +711,13 @@ export function BookmarkManager({ state, tab }: { state: UIState; tab: Tab }): J
         aria-label="More"
         aria-haspopup="menu"
         disabled={!selection.size}
-        onClick={(e) => {
-          const box = e.currentTarget.getBoundingClientRect()
+        onClick={(e) =>
           run('bookmark.contextMenu', {
             ids: orderedSelection(),
             folderId,
-            x: Math.round(box.right),
-            y: Math.round(box.bottom),
-            keyboard: e.detail === 0
+            ...controlMenuAnchor(e)
           })
-        }}
+        }
       >
         <Ellipsis aria-hidden />
       </button>

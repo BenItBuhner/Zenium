@@ -1,0 +1,11 @@
+{
+  "id": "import",
+  "order": 78,
+  "class": "ImportDemo",
+  "shard": "phone-e",
+  "mirrors": "android-import-demo.yml",
+  "dir": "import-demo",
+  "script": ".github/scripts/android-import-demo.sh",
+  "timeout": 900,
+  "estimate": 2.5
+}

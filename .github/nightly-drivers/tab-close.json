@@ -1,0 +1,9 @@
+{
+  "id": "tab-close",
+  "order": 44,
+  "class": "TabCloseDemo",
+  "shard": "phone-c",
+  "mirrors": "android-tab-close-demo.yml",
+  "dir": "tabclose-demo",
+  "estimate": 2.5
+}

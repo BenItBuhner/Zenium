@@ -85,7 +85,7 @@ import {
 } from '@shared/shortcuts'
 import { describeUpdateTarget, type UpdateChannel } from '@shared/updates'
 import { displayUrl, getDomain, inputToUrl, isWebPageUrl } from '@shared/url'
-import { homepageAddress, homepageDisplay } from '@shared/homepage'
+import { extensionHomepage, homepageAddress, homepageDisplay } from '@shared/homepage'
 import { languageName } from '@shared/languageNames'
 import { HELP_URL, ISSUES_URL } from '@shared/links'
 import { catalogueLanguageName } from '@renderer/lib/languageCatalogue'
@@ -133,7 +133,9 @@ import { formatBytes, relativeTime } from '@renderer/lib/utils'
 import { versionReport } from '@renderer/lib/versionReport'
 import { VaultPassphraseForm } from '../../autofill/PassphraseForm'
 import { ContainerIcon } from '../../ContainerIcon'
+import { openMagicStackCustomize } from '../../newtab/magicStackCustomize'
 import {
+  CLEAR_BROWSING_DATA_FORM,
   clearDataGroups,
   safetyCheckGroups,
   siteSettingsGroups
@@ -151,6 +153,7 @@ import {
 } from '../../overlays/settingsCopy'
 import { ModelPickList, PickList } from '../../translate/pickers'
 import { fontsGroups } from './fonts'
+import { startupGroup } from './startup'
 import type { FontsDraft } from './fontsDraft'
 import {
   addLanguageRow,
@@ -178,6 +181,7 @@ import {
 import { importGroups } from '../../import/importRows'
 import { AboutVersionBlock } from './AboutVersionBlock'
 import { CustomizeToolbarForm } from './CustomizeToolbarForm'
+import { extensionControlled } from './controlled'
 import { extensionsGroups } from './extensions'
 import { LayoutCards } from './LayoutCards'
 import {
@@ -190,10 +194,11 @@ import {
   type SettingsRow
 } from './model'
 import { syncGroups } from './sync'
-import { extensionControlled } from './controlled'
+import { PRIVACY_HUB_CARDS, PRIVACY_HUB_LINES, thirdPartyCookiesLine } from './privacyHub'
 import {
   heldSwitch,
   httpsOnlyGroups,
+  preloadGroups,
   safeBrowsingGroups,
   secureDnsGroups,
   signalsGroups
@@ -234,6 +239,14 @@ export interface SectionContext {
   set(patch: Partial<Settings>): void
   /** Move the page to another category (About › Check for updates lands on Updates). */
   navigate(section: string): void
+  /**
+   * Bring one of the shown section's groups on screen, its heading at the column's top (the
+   * Privacy and security hub's cards, W7-6): the page takes the group as the address's landing
+   * (`zen://settings/privacy?group=<id>`, the `?row=` deep link's twin, `SettingsPage`) and
+   * scrolls it up before the paint, padding the column's end for a group near the section's
+   * end as it does for a deep link. Left out where no page stands behind the rows (a test).
+   */
+  reveal?(groupId: string): void
   /** The navigation bar's editor sheet (Look and Feel › Navigation bar). */
   openBarEditor(): void
   /** Leave for `tabId` and open the Boost editor on it (Boosts › Boost the site you came from). */
@@ -329,6 +342,7 @@ const BUILDERS: Readonly<Record<string, Builder>> = {
   shortcuts: shortcutsSection,
   'default-browser': defaultBrowserSection,
   updates: updatesSection,
+  reset: resetSection,
   about: aboutSection
 }
 
@@ -904,10 +918,20 @@ function lookSection({
  * address as a §9.12 field row (the one-field sheet, a web address required) and Use current
  * page, which takes the address of the page Settings was opened from (the tab's opener). The
  * rows are the phone shell's: the desktop shells have no Home control that reads the setting
- * yet (their Alt+Home keeps its own destination).
+ * yet (their Alt+Home keeps its own destination). While an extension holds the homepage
+ * (`chrome_settings_overrides.homepage`, `UIState.extensionControls.homepage` with its page as
+ * the value) the rows are held (`RowBase.controlled`, §10.5's controlled-setting primitive):
+ * the picker at Specific page, the Address row showing the extension's page – what Home opens
+ * (`extensionHomepage`, the core's `effectiveHomepage`) – and Use current page with them, one
+ * run under one indicator. Off stays the user's, Home button and rows alike: Chrome's "Show
+ * home button" is no extension's to set, so an extension's page waits until the button is on.
  */
 function homepageGroup(state: UIState, tab: Tab, set: SectionContext['set']): RowGroup {
-  const homepage = state.settings.homepage
+  const own = state.settings.homepage
+  const control = extensionControlled(state, 'homepage')
+  const held = extensionHomepage(own, control)
+  const homepage = held ? { mode: 'url' as const, url: held } : own
+  const controlled = held ? control : undefined
   const address = homepageDisplay(homepage)
   const opener = tab.openerTabId ? state.tabs[tab.openerTabId] : undefined
   const current =
@@ -918,6 +942,7 @@ function homepageGroup(state: UIState, tab: Tab, set: SectionContext['set']): Ro
       label: 'Homepage',
       keywords: ['home', 'home button', 'start page', 'new tab page'],
       layouts: ['phone'],
+      controlled,
       value: homepage.mode,
       sheetDescription: 'Where the Home button goes.',
       options: [
@@ -929,7 +954,7 @@ function homepageGroup(state: UIState, tab: Tab, set: SectionContext['set']): Ro
           description: address || 'Enter an address below, or use the current page.'
         }
       ],
-      onChange: (mode) => set({ homepage: { ...homepage, mode } })
+      onChange: (mode) => set({ homepage: { ...own, mode } })
     })
   ]
   if (homepage.mode === 'url') {
@@ -940,6 +965,7 @@ function homepageGroup(state: UIState, tab: Tab, set: SectionContext['set']): Ro
         label: 'Address',
         keywords: ['homepage', 'url', 'web address'],
         layouts: ['phone'],
+        controlled,
         value: address,
         display: address || 'Not set',
         input: 'url',
@@ -960,6 +986,7 @@ function homepageGroup(state: UIState, tab: Tab, set: SectionContext['set']): Ro
           : 'Open a page, then come back to Settings from it.',
         keywords: ['homepage'],
         layouts: ['phone'],
+        controlled,
         disabled: current === null,
         onPress: () => {
           const url = current ? homepageAddress(current.url) : null
@@ -1042,7 +1069,40 @@ function accessibilitySection(ctx: SectionContext): RowGroup[] {
   const groups: RowGroup[] = []
   if (ctx.state.capabilities.pageControls) groups.push(...pageZoomGroups(ctx))
   if (ctx.state.capabilities.readAloud) groups.push(...readAloudGroups(ctx))
+  if (ctx.state.capabilities.caretBrowsing) groups.push(caretBrowsingGroup(ctx))
   return groups
+}
+
+/**
+ * Caret browsing (CT-34) on a host whose engine has the switch (the desktop): the state F7
+ * toggles, as a row too – Chrome keeps it in Settings › Accessibility – and whether F7 asks
+ * first, the setting the dialog's "Don't ask again" clears, so it can be turned back on.
+ */
+function caretBrowsingGroup({ state, set }: SectionContext): RowGroup {
+  const s = state.settings
+  return {
+    id: 'caret-browsing',
+    heading: 'Keyboard',
+    rows: [
+      {
+        kind: 'switch',
+        id: 'caret-browsing',
+        label: 'Caret browsing',
+        description:
+          "Move through a page's text with the arrow keys and select it with Shift. F7 turns it on and off.",
+        checked: s.caretBrowsing === true,
+        onChange: (v) => set({ caretBrowsing: v })
+      },
+      {
+        kind: 'switch',
+        id: 'caret-browsing-confirm',
+        label: 'Ask before turning on caret browsing',
+        description: 'F7 asks "Turn on caret browsing?" first.',
+        checked: s.caretBrowsingConfirm !== false,
+        onChange: (v) => set({ caretBrowsingConfirm: v })
+      }
+    ]
+  }
 }
 
 function pageZoomGroups({ state, set }: SectionContext): RowGroup[] {
@@ -1309,6 +1369,27 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
           sheetDescription: NEW_TAB_LAYOUT_HINT,
           onChange: (v) => write(pickNewTabPreset(prefs, v))
         }),
+        {
+          // The phone's cards under the shortcuts (NTP-16, Chrome's Magic Stack – "Cards" to the
+          // user): a level beside Layout and Shortcuts, the second door to the one Show list the
+          // page's gear sheet opens (§9.29's two doors, one setting) – the very sheet, over this
+          // page, not a copy of its rows. The hidden set is this device's, so the row is the
+          // phone layout's alone; the desktop has no stack and its page keeps its rows.
+          kind: 'action',
+          id: 'newtab-cards',
+          label: 'Cards',
+          description: 'Choose which cards show under the shortcuts',
+          keywords: [
+            'continue where you left off',
+            'recently closed',
+            'downloads',
+            'bookmarks',
+            'default browser'
+          ],
+          layouts: ['phone'],
+          leaves: 'chevron',
+          onPress: openMagicStackCustomize
+        },
         choice<NewTabShortcutsMode>({
           id: 'newtab-shortcuts',
           label: 'Shortcuts',
@@ -1574,6 +1655,21 @@ function tabsSection({ state, tab, set }: SectionContext): RowGroup[] {
           onChange: (v) => set({ confirmCloseAll: v })
         }
       ]
+  // The startup on a host without windows: the phone's boot knows two – the last session back,
+  // or one fresh tab – so its row stays the switch it was (`startup.mode` underneath: on is
+  // "Continue where you left off", off "Open the New Tab page"; a synced `pages` reads as on,
+  // the boot it gets there). The windowed hosts have Settings › On startup (`startupGroup`).
+  const startupRows: SettingsRow[] = windows
+    ? []
+    : [
+        {
+          kind: 'switch',
+          id: 'restore-session',
+          label: 'Restore previous session on startup',
+          checked: s.startup.mode !== 'newTab',
+          onChange: (v) => set({ startup: { ...s.startup, mode: v ? 'continue' : 'newTab' } })
+        }
+      ]
   const groups: RowGroup[] = [
     {
       id: 'tabs',
@@ -1604,17 +1700,12 @@ function tabsSection({ state, tab, set }: SectionContext): RowGroup[] {
           onChange: (v) => set({ ctrlTabCyclesWithinSection: v })
         },
         ...overviewRows,
-        {
-          kind: 'switch',
-          id: 'restore-session',
-          label: 'Restore previous session on startup',
-          checked: s.restoreSession,
-          onChange: (v) => set({ restoreSession: v })
-        },
+        ...startupRows,
         ...sessionRows
       ]
     }
   ]
+  if (windows) groups.push(startupGroup({ state, set }))
   if (state.capabilities.windows) {
     groups.push({
       id: 'window-sync',
@@ -2587,14 +2678,6 @@ function resourcesSection({ state, set }: SectionContext): RowGroup[] {
           checked: r.process.disableBackForwardCache,
           onChange: (v) => setP({ disableBackForwardCache: v })
         },
-        {
-          kind: 'switch',
-          id: 'no-prerender',
-          label: 'Block prerendering',
-          description: 'Stops pages from loading other pages in hidden renderers ahead of time.',
-          checked: r.process.disablePrerender,
-          onChange: (v) => setP({ disablePrerender: v })
-        },
         numberRow({
           id: 'raster-threads',
           label: 'Raster threads per page',
@@ -2636,25 +2719,77 @@ function resourcesSection({ state, set }: SectionContext): RowGroup[] {
 // ---------------------------------------------------------------------------
 
 /**
- * Groups in Chrome's Privacy and security order – Safety check, Safe Browsing, Tracking
+ * The hub at the top of the section (settings-12; Chrome's card list, `privacyHub.ts`): one
+ * §10.4 action row per card in Chrome's order – Clear browsing data…, Third-party cookies,
+ * Safe Browsing, Site settings, Safety check – the leading glyph, the title, one line under it.
+ * A card brings its program's first group on screen (`ctx.reveal`, the section's `?group=`
+ * landing) and trails the chevron that says so (Q5 of the #553 lead check: the four landings
+ * keep it); Clear browsing data… opens the PS-13 dialog the Clear browsing data row opens, with
+ * §9.1's ellipsis on its name and no chevron (F1). No heading: the cards stand under the
+ * section's title as Chrome's do. The desktop and tablet shells' (`layouts`): the phone's
+ * Privacy page keeps its plain list.
+ */
+function privacyHubGroups(ctx: SectionContext): RowGroup[] {
+  const { state, reveal } = ctx
+  const cookies = thirdPartyCookiesLine(
+    state.siteData.default,
+    state.settings.privacy.thirdPartyCookies,
+    state.capabilities.windows
+  )
+  const lines: Record<string, string> = {
+    'hub-clear-data': PRIVACY_HUB_LINES.clearData,
+    'hub-cookies': cookies,
+    'hub-security': PRIVACY_HUB_LINES.security,
+    'hub-site-settings': PRIVACY_HUB_LINES.siteSettings,
+    'hub-safety-check': PRIVACY_HUB_LINES.safetyCheck
+  }
+  return [
+    {
+      id: 'privacy-hub',
+      heading: null,
+      layouts: ['desktop', 'tablet'],
+      rows: PRIVACY_HUB_CARDS.map((card): SettingsRow => {
+        const Glyph = card.glyph
+        const group = card.group
+        return {
+          kind: 'action',
+          id: card.id,
+          label: card.label,
+          description: lines[card.id],
+          leading: <Glyph className="zen-settings-glyph" aria-hidden="true" />,
+          ...(group === null
+            ? { form: CLEAR_BROWSING_DATA_FORM }
+            : { leaves: 'chevron', onPress: () => reveal?.(group) })
+        }
+      })
+    }
+  ]
+}
+
+/**
+ * Groups in Chrome's Privacy and security order – the hub's cards (`privacyHubGroups`), then
+ * Safety check, Safe Browsing, Tracking
  * prevention, Clear browsing data, Cookies and site data, Site settings, HTTPS-only, Secure
  * DNS, Privacy signals – each program's groups self-contained: the site-controls program's
  * (`siteControls/settingsRows`) at the safety-check, clear-browsing-data and site-settings
  * positions, the request engine's (`tracking.tsx`) at the tracking-prevention position, the
  * site-data program's (`siteDataRows.tsx`, which carries the third-party cookie setting and its
  * related sites from `protectionRows.tsx`) at the cookies position, the protection program's
- * at the safe-browsing, https-only, secure-dns and privacy-signals positions; the remembered
+ * at the preload-pages (PS-43), safe-browsing, https-only, secure-dns and privacy-signals
+ * positions; the remembered
  * per-site answers are Security's (`securitySection`).
  */
 function privacySection(ctx: SectionContext): RowGroup[] {
   const { state, set } = ctx
   return [
+    ...privacyHubGroups(ctx),
     ...safetyCheckGroups(ctx),
     ...safeBrowsingGroups(state, set),
     ...trackingGroups(ctx),
     ...clearDataGroups(ctx),
     ...siteDataGroups(ctx),
     ...siteSettingsGroups(ctx),
+    ...preloadGroups(state, set),
     ...httpsOnlyGroups(state, set),
     ...secureDnsGroups(state, set),
     ...signalsGroups(state, set),
@@ -2767,6 +2902,25 @@ function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
           })),
           onChange: (v) => set({ searchEngineId: v })
         }),
+        // The EEA's choice screen again (W6-2; Chrome's chrome://search-engine-choice can be
+        // reopened from its Search engine settings): on a device in the EEA, or one that
+        // answered the screen once (a record) wherever it is now. Every shell draws the screen
+        // – the desktop's and tablet's `SearchChoiceScreen`, the phone's
+        // `PhoneSearchChoiceScreen` (OMN-26) – so the row stands on every layout.
+        ...(state.searchChoice?.eea || s.searchChoice !== null
+          ? [
+              {
+                kind: 'action',
+                id: 'search-choice-again',
+                label: 'Choose your search engine again',
+                description:
+                  'Shows the search engines again, in a random order, to set the default.',
+                keywords: ['choice', 'default', 'eea', 'dma'],
+                button: 'Choose…',
+                onPress: () => run('searchChoice.askAgain', undefined)
+              } satisfies SettingsRow
+            ]
+          : []),
         {
           kind: 'switch',
           id: 'search-suggestions',
@@ -5067,6 +5221,75 @@ function updatesSection({ state, set }: SectionContext): RowGroup[] {
     }
   ]
   return groups
+}
+
+// ---------------------------------------------------------------------------
+// Reset Settings
+// ---------------------------------------------------------------------------
+
+/**
+ * Chrome's Reset settings dialog (settings-70): the confirmation the row opens, Chrome's
+ * sentence word for word – its serial commas kept, as a verbatim line keeps its own punctuation
+ * (the #553 lead check) – with two clauses of the house's in Chrome's register: the home page
+ * (Chrome's resetter puts it back and its sentence does not say so) and the site permissions
+ * (the root's ruling on #553: Chrome's `ResetContentSettings`, ours through the call Clear
+ * browsing data's "Site settings" makes).
+ */
+export const RESET_SETTINGS_COPY = {
+  row: 'Restore settings to their original defaults',
+  title: 'Reset settings?',
+  body: 'This will reset your startup page, home page, new tab page, search engine, pinned tabs, and site permissions. It will also disable all extensions and clear temporary data like cookies. Your bookmarks, history, and saved passwords will not be cleared.',
+  action: 'Reset settings'
+} as const
+
+/**
+ * Reset Settings (settings-70; Chrome's `chrome://settings/reset`, the foot of its list): the
+ * one row, "Restore settings to their original defaults", label alone as Chrome's is – the
+ * sentence that says what resets is the confirmation's, read before anything runs, not a
+ * description that repeats it under the label – whose §9.23 confirmation carries Chrome's
+ * sentence: Cancel and "Reset settings" in the danger ink, no primary, Enter from the held
+ * container inert (§9.22): a bulk act that disables the extensions and clears the cookies –
+ * and whose act is the core's `settings.reset` (`core/settingsReset.ts`), which does what the
+ * sentence says and nothing else, then says "Settings reset" in one toast. The group carries
+ * no heading: the row stands under the category's 22 title as the Privacy and security hub's
+ * cards do – both panes one form (the #553 lead check's F2 / Q3) – the category's name being
+ * the nav's and the title's. The desktop trails its 32 px "Reset…" button on the 40 px control
+ * row (§10.5), the tablet's portrait page presses the row. The category is the desktop and
+ * tablet shells' (`internalPages.ts`).
+ */
+function resetSection(): RowGroup[] {
+  return [
+    {
+      id: 'reset',
+      heading: null,
+      rows: [
+        {
+          kind: 'action',
+          id: 'reset-settings',
+          label: RESET_SETTINGS_COPY.row,
+          keywords: [
+            'reset',
+            'restore',
+            'defaults',
+            'original',
+            'factory',
+            'home page',
+            'site permissions',
+            'extensions',
+            'cookies'
+          ],
+          button: 'Reset…',
+          destructive: true,
+          confirm: {
+            title: RESET_SETTINGS_COPY.title,
+            description: RESET_SETTINGS_COPY.body,
+            action: RESET_SETTINGS_COPY.action
+          },
+          onPress: () => run('settings.reset', undefined)
+        }
+      ]
+    }
+  ]
 }
 
 // ---------------------------------------------------------------------------

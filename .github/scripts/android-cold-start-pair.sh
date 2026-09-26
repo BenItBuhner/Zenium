@@ -95,16 +95,23 @@
 # alias way; the third null run read it alive before all 120 starts, one pid), and the frames
 # rendered when probed FRAMES_AT_S after the start request, beside the STATS_AT_S statistics –
 # the clock's evidence: a count still growing between the probes and the statistics means the
-# boot's frames were not over, and a count that is not says the clock can shorten (the third
-# null run read the 8 s count equal to the 15 s count on all 120 starts, so STATS_AT_S 8 and
-# NEXT_AT_S 15 would hold – ≈ 14 min less per run – once one null run at that cadence confirms
-# the band; the clock stays as calibrated until then). N is CALIBRATED on null pairs (the same
-# tree in both arms): the TotalTime paired median inside ±50 ms on both ways on consecutive
-# null runs at one N is the stopping rule – met at N = 30: direct +1 / +15.5 / −21.5, alias
-# +26.5 with the order alternated (36178688584) – and a measure whose null band is wider is
-# gated at twice its larger |null paired median| rounded up to the next 50 ms: Fully drawn's
-# −20 / +45.5 / −141.5 direct → +300, +236.5 / +83 / −56 alias → +500. The runs are in the PR
-# body of #482 (H4, round 2); the workflow's defaults are these.
+# boot's frames were not over, and a count that is not says the clock can shorten. The third
+# null run, at the calibration's clock (the frames probed at 8 and 12 s, the statistics read at
+# 15 s, the next start at 22 s), read the 8 s count equal to the 15 s count on all 120 starts;
+# the FOURTH (36216598295, N = 30, the order alternated) ran at the trimmed clock – the
+# statistics at 8 s, the next start at 15 s, the frames probed at 5 and 8 s – and read inside
+# the band: TotalTime paired median direct −13.5 / alias −12, Fully drawn −42 / +64, 30 valid
+# pairs on every row, no read failed, the 8 s count equal to the settled count on all 120
+# starts and the 5 s count one or two frames short of it on a few (the boot's frames are over
+# by 8 s, not always by 5; READY came within 2.6–4.4 s on every start), so the trimmed clock is
+# the default: the driver's step 46 min against the calibration's 62 at N = 30, ≈ 16 min less
+# per run. N is CALIBRATED on null pairs (the same tree in both arms): the TotalTime paired
+# median inside ±50 ms on both ways on consecutive null runs at one N is the stopping rule – met
+# at N = 30: direct +1 / +15.5 / −21.5 / −13.5, alias +26.5 / −12 once the order alternated
+# (36178688584, 36216598295) – and a measure whose null band is wider is gated at twice its
+# larger |null paired median| rounded up to the next 50 ms: Fully drawn's −20 / +45.5 / −141.5
+# direct → +300, +236.5 / +83 / −56 alias → +500 (the fourth's −42 / +64 inside). The runs are
+# in the PR bodies of #482 (H4, round 2) and #524 (H5); the workflow's defaults are these.
 #
 #   P0_BASE_APK   – the base build's debug APK (the caller's setup-script built it from the base ref)
 #   P0_BASE_LABEL – how the base is named in the table (its commit), `base` by default
@@ -115,19 +122,27 @@
 #   P0_TOTAL_THRESHOLD_MS, P0_ALIAS_THRESHOLD_MS, P0_FULLY_DRAWN_THRESHOLD_MS,
 #   P0_FULLY_DRAWN_ALIAS_THRESHOLD_MS – the gate's thresholds, for a calibration run only; the
 #                   defaults below are the gate
+#   P0_READY_WAIT_S, P0_FRAMES_AT_S, P0_STATS_AT_S, P0_NEXT_AT_S – the clock, for a null run at a
+#                   candidate cadence only (a change of clock proves its band before the defaults move)
+#   P0_LOGCAT_BUFFERS – the buffers every log read names, main,system by default; a name adb
+#                   refuses exercises the UNREAD path (every row UNREAD, not judged, read-errors.txt says why)
 #   DEMO_OUT      – where the record goes (cold-start-pair.txt, the raw am start output, read-errors.txt)
 #
 # The arms are interleaved (seed 71): `adb install -r -d` of one build over the other (the same
 # applicationId, so the profile stays and both boot the same state; -d since the base may carry
 # the newer version code when main has moved past the branch), block after block on the one
 # boot, so the boot's drift (627 ms across one pair's twenty starts measured arm after arm)
-# falls on both arms of a pair alike. Every run keeps one clock for both builds (a build without
-# the READY mark must not read its frame statistics later, nor start its next run later, than
-# one with it): the mark is waited for up to READY_WAIT_S from the start request, the frames
-# probed at FRAMES_AT_S, the statistics read STATS_AT_S after it whatever the wait found, and
-# the next start comes NEXT_AT_S after it, the device quiet and the boot – the chrome and the
-# core boot on after the first frame – long over on either. The table is written to the job
-# summary too.
+# falls on both arms of a pair alike. Every run keeps one clock for both builds: the mark is
+# waited for up to READY_WAIT_S reads of the log from the start request, the frames probed at
+# FRAMES_AT_S, the statistics read STATS_AT_S after it whatever the wait found, and the next
+# start comes NEXT_AT_S after it, the device quiet and the boot – the chrome and the core boot
+# on after the first frame – long over on either. A build WITHOUT the mark (a base before round
+# 4; none of today's) holds the wait to its limit, ≈ 14–15 s of wall (the deliberate UNREAD run
+# of #524 read it), past the trimmed clock's probes and statistics: they read when the wait
+# ends – each start's record says at which second (read<N>) – and its next start comes then,
+# about NEXT_AT_S anyway; TotalTime and Fully drawn, the gate, are the platform's own figures
+# whatever the clock, so the gate does not move – only such an arm's frame statistics stand
+# later than the other's, and the record shows it. The table is written to the job summary too.
 set -euo pipefail
 
 app_id=io.github.benitbuhner.zenium.debug
@@ -139,18 +154,25 @@ runs=${P0_RUNS:-15}
 starts=${P0_STARTS:-2}
 pairs=$((runs * starts))
 # The gate's thresholds (ms, on the paired median; over = FAIL), per measure and way. TotalTime
-# is the ruling's +100 on both ways (the three null runs' paired medians sit inside ±50 on each,
+# is the ruling's +100 on both ways (the four null runs' paired medians sit inside ±50 on each,
 # the alias's once the order alternated); Fully drawn is twice the larger |paired median| the
-# three null runs read on the way, rounded up to the next 50 ms (direct 141.5 → 300, alias
-# 236.5 → 500) – the PR body of #482 has the runs.
+# null runs read on the way, rounded up to the next 50 ms (direct 141.5 → 300, alias 236.5 →
+# 500; the fourth's −42 / +64 inside) – the PR bodies of #482 and #524 have the runs.
 TOTAL_THRESHOLD_MS=${P0_TOTAL_THRESHOLD_MS:-100}
 ALIAS_THRESHOLD_MS=${P0_ALIAS_THRESHOLD_MS:-$TOTAL_THRESHOLD_MS}
 FULLY_DRAWN_THRESHOLD_MS=${P0_FULLY_DRAWN_THRESHOLD_MS:-300}
 FULLY_DRAWN_ALIAS_THRESHOLD_MS=${P0_FULLY_DRAWN_ALIAS_THRESHOLD_MS:-500}
-READY_WAIT_S=12
-FRAMES_AT_S="8 12"
-STATS_AT_S=15
-NEXT_AT_S=22
+# The clock, trimmed on the fourth null run (the header; the READY wait as calibrated):
+# overridable from the environment for a null run at another cadence (P0_* – a change of clock
+# runs its null at the candidate cadence before the defaults move, as this one did).
+READY_WAIT_S=${P0_READY_WAIT_S:-12}
+FRAMES_AT_S=${P0_FRAMES_AT_S:-"5 8"}
+STATS_AT_S=${P0_STATS_AT_S:-8}
+NEXT_AT_S=${P0_NEXT_AT_S:-15}
+# The logcat buffers every read names (`-b`): main,system, the app's lines and the platform's.
+# Overridable (P0_LOGCAT_BUFFERS) so that the UNREAD path can be exercised on a runner with a
+# buffer name adb refuses – the read fails, the rows read UNREAD, the record says why.
+LOGCAT_BUFFERS=${P0_LOGCAT_BUFFERS:-main,system}
 out=${DEMO_OUT:-artifacts/android-cold-start-pair}
 base_apk=${P0_BASE_APK:?P0_BASE_APK must name the APK of the base build}
 head_apk=$(find android/app/build/outputs/apk/debug -name '*.apk' -print -quit)
@@ -231,9 +253,9 @@ read_errors="$out/read-errors.txt"
 read_log() {
   local status=0
   : > "$logcat_tmp"
-  adb logcat -d -b main,system -s "$@" > "$logcat_raw" 2>> "$read_errors" || status=$?
+  adb logcat -d -b "$LOGCAT_BUFFERS" -s "$@" > "$logcat_raw" 2>> "$read_errors" || status=$?
   if [ "$status" -ne 0 ]; then
-    echo "adb logcat -d -b main,system -s $* exited $status" >> "$read_errors"
+    echo "adb logcat -d -b $LOGCAT_BUFFERS -s $* exited $status" >> "$read_errors"
     return 1
   fi
   tr -d '\r' < "$logcat_raw" > "$logcat_tmp"
@@ -385,7 +407,7 @@ measure_one() {
   local seen started answer fully held marks_ stats_ total wait_ state launcher probes t
   local errors_before errors_lines errors_n errors_note=
   to_launcher
-  adb logcat -c -b main,system > /dev/null 2>> "$read_errors" || true
+  adb logcat -c -b "$LOGCAT_BUFFERS" > /dev/null 2>> "$read_errors" || true
   errors_before=$(wc -l < "$read_errors")
   # The count before the start; a failed read here reads as none seen (the wait reads afresh).
   seen=$(fully_drawn_count)
@@ -672,7 +694,7 @@ values_table() {
   echo "MainActivity's cold start, \`am start -W\` after \`am force-stop\`, $pairs starts per build and way on one emulator boot in $runs blocks of $starts, the arms interleaved and the order alternated (odd blocks base then head, even blocks head then base: each block installs one arm, reads its ART state (dexopt ${dexopt_ref:-?}: ART Service leaves a debuggable package no compiled code whatever is asked, so both arms boot in the one state the install leaves), starts it once to settle, measures it $starts times by each way, then the other arm the same; the i-th start of a block's one arm pairs with the i-th of its other; medians in ms): direct, the shell's start of MainActivity (the pair as it was, a start no user makes), and through the icon alias, the launcher's tap. THE GATE is the median of the paired differences (after − before within each pair), which the boot's drift across the run does not enter: TotalTime's paired median over +$TOTAL_THRESHOLD_MS ms on the direct way or +$ALIAS_THRESHOLD_MS ms on the alias way fails, Fully drawn's over +$FULLY_DRAWN_THRESHOLD_MS ms (direct) or +$FULLY_DRAWN_ALIAS_THRESHOLD_MS ms (alias) fails, a row with fewer than half its pairs valid is INCONCLUSIVE and fails – unless every pair it lacks was lost to a read that failed (UNREAD, below) and none to a build's -: that row is UNREAD, a warning, not judged; WaitTime is reported, not judged. The per-arm medians and their deltas are the record beside it; the position reading (the arm installed first in its block against the arm installed second, whatever the build) says what the order alone costs."
   # wm size / density answer two lines once overridden (Physical, Override): the last is the one in force.
   echo "device: $(adb shell getprop ro.build.fingerprint | tr -d '\r'); display $(adb shell wm size | tr -d '\r' | tail -n 1 | sed 's/.*: //') at $(adb shell wm density | tr -d '\r' | tail -n 1 | sed 's/.*: //') dpi"
-  echo "TotalTime: the app window's first frame under the splash (a plain window on a build before the boot theme, the splash's colour with it); on the alias rows from the alias's start to MainActivity's first frame – the trampoline's run in between (one launch to the platform). Fully drawn: the chrome's first real frame, reportFullyDrawn() at READY, from the same start; - when the log was read to the end of the wait and the line was not there (a build without the mark, or one that did not reach READY within the wait: the build's fact), UNREAD when the read itself failed (adb's error, or a start after which the buffers answered nothing: the runner's, its stderr in read-errors.txt beside this record). Every log read is \`adb logcat -d -b main,system -s <tag>\`, its stderr kept. Method: every start with the process gone (\`am force-stop\`) and the launcher in front, by \`am start -W\` from the shell – the direct rows at MainActivity with MAIN/LAUNCHER, the alias rows with the launcher's own intent (MAIN/LAUNCHER, NEW_TASK | RESET_TASK_IF_NEEDED) at the enabled icon alias, whose target (the shortcuts' NoDisplay trampoline on a build before round 4, IconTapActivity under the splash theme from it) forwards to MainActivity; READY waited for up to $READY_WAIT_S s, the log's lines and the frame statistics read $STATS_AT_S s after the start request, the next start $NEXT_AT_S s after it – one clock for both builds and ways."
+  echo "TotalTime: the app window's first frame under the splash (a plain window on a build before the boot theme, the splash's colour with it); on the alias rows from the alias's start to MainActivity's first frame – the trampoline's run in between (one launch to the platform). Fully drawn: the chrome's first real frame, reportFullyDrawn() at READY, from the same start; - when the log was read to the end of the wait and the line was not there (a build without the mark, or one that did not reach READY within the wait: the build's fact), UNREAD when the read itself failed (adb's error, or a start after which the buffers answered nothing: the runner's, its stderr in read-errors.txt beside this record). Every log read is \`adb logcat -d -b $LOGCAT_BUFFERS -s <tag>\`, its stderr kept. Method: every start with the process gone (\`am force-stop\`) and the launcher in front, by \`am start -W\` from the shell – the direct rows at MainActivity with MAIN/LAUNCHER, the alias rows with the launcher's own intent (MAIN/LAUNCHER, NEW_TASK | RESET_TASK_IF_NEEDED) at the enabled icon alias, whose target (the shortcuts' NoDisplay trampoline on a build before round 4, IconTapActivity under the splash theme from it) forwards to MainActivity; READY waited for up to $READY_WAIT_S s, the log's lines and the frame statistics read $STATS_AT_S s after the start request, the next start $NEXT_AT_S s after it – one clock for both builds and ways."
   echo
   echo "| build, way | TotalTime median | Fully drawn median | WaitTime median | TotalTime runs | Fully drawn runs | LaunchState | splash held (by) |"
   echo "| --- | --- | --- | --- | --- | --- | --- | --- |"

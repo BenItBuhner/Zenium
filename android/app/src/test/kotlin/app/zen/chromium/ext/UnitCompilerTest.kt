@@ -257,6 +257,112 @@ class UnitCompilerTest {
     }
 
     @Test
+    fun `a destroyed runtime's close releases every extension's units and held sources, reports them, and the compiler compiles nothing after`() {
+        val compiler = UnitCompiler { "/*boot*/" }
+        compiler.compile(id, "1.0.0", units("k" to listOf("cs.js"), "k2" to listOf("extra.js")), true, read, size)
+        val other = "bcdefghijklmnopqbcdefghijklmnopq"
+        compiler.compile(other, "2.0.0", units("k" to listOf("cs.js")), true, read, size)
+        val chars = (compiler.unitsOf(id) + compiler.unitsOf(other)).sumOf { it.script.length.toLong() }
+        assertTrue(chars > 0)
+        assertEquals(3, compiler.cachedSources(id)) // cs.js, extra.js, style.css
+        assertEquals(2, compiler.cachedSources(other))
+        assertFalse(compiler.isClosed)
+        val released = compiler.close()
+        assertTrue(compiler.isClosed)
+        assertFalse(released.deferred)
+        assertEquals(2, released.extensions)
+        assertEquals(3, released.units)
+        assertEquals(chars, released.unitChars)
+        assertEquals(5, released.sources)
+        for (ext in listOf(id, other)) {
+            assertEquals(0, compiler.unitsOf(ext).size)
+            assertEquals(0, compiler.cachedSources(ext))
+            assertEquals(0, compiler.memoryOf(ext).getInt("units"))
+        }
+        // Nothing compiles after the close: no file read, no unit answered, nothing held.
+        val readsAfter = reads
+        val after = compiler.compile(id, "1.0.0", units("k" to listOf("cs.js")), true, read, size)
+        assertTrue(after.isEmpty())
+        assertEquals(readsAfter, reads)
+        assertEquals(0, compiler.memoryOf(id).getInt("units"))
+        // A second close has nothing to report; a forget is harmless.
+        val again = compiler.close()
+        assertEquals(0, again.extensions + again.units + again.sources)
+        assertFalse(again.deferred)
+        compiler.forget(id)
+    }
+
+    @Test
+    fun `a close during a compile in flight does not wait for it - the compile releases at its next unit and answers empty`() {
+        val compiler = UnitCompiler { "/*boot*/" }
+        compiler.compile(id, "1.0.0", units("k" to listOf("cs.js")), true, read, size)
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val blockingRead: (String) -> String? = { path ->
+            if (path == "extra.js") {
+                entered.countDown()
+                release.await(10, java.util.concurrent.TimeUnit.SECONDS)
+            }
+            files[path]
+        }
+        var result: List<UnitCompiler.Compiled>? = null
+        // The first unit is cached, the second reads extra.js and blocks there, the third would compile cs.js again.
+        val worker = Thread {
+            result = compiler.compile(id, "1.0.0", units("k" to listOf("cs.js"), "k2" to listOf("extra.js"), "k3" to listOf("cs.js")), true, blockingRead, size)
+        }
+        worker.start()
+        assertTrue(entered.await(10, java.util.concurrent.TimeUnit.SECONDS))
+        // The close comes back at once with the release deferred to the compile (the main thread
+        // must not wait seconds at destroy); the lock is the compile's until it is done.
+        val t0 = System.nanoTime()
+        val released = compiler.close()
+        assertTrue("close waited ${(System.nanoTime() - t0) / 1_000_000} ms", System.nanoTime() - t0 < 5_000_000_000L)
+        assertTrue(released.deferred)
+        assertEquals(0, released.units)
+        assertTrue(compiler.isClosed)
+        release.countDown()
+        worker.join(10_000)
+        assertFalse(worker.isAlive)
+        // The compile saw the close at its next unit: the second unit it had assembled went with the first, nothing answered.
+        assertTrue(result!!.isEmpty())
+        assertEquals(0, compiler.unitsOf(id).size)
+        assertEquals(0, compiler.cachedSources(id))
+        assertEquals(0, compiler.memoryOf(id).getInt("units"))
+    }
+
+    @Test
+    fun `a compiled unit carries the size its builder was made with - the script's length exactly - kept through the cache, none for a refusal`() {
+        // A CSS text with `/` and a control character, a source with a relative import (its
+        // rewritten length is its length) and a character over U+00FF: the count is still the text.
+        files["style.css"] = "body{background:url(/img/x.png)}\t/* </style> */"
+        files["cs.js"] = """import("./chunk.js"); const mark = '✓'; var top = 1"""
+        val compiler = UnitCompiler(budgetChars = 10_000) { "/*boot*/" }
+        val plan = units("k" to listOf("cs.js", "extra.js"), "k2" to listOf("cs.js"))
+        plan.put(
+            org.json.JSONObject().put("key", "big:*").put("origins", JSONArray(listOf("*"))).put("world", org.json.JSONObject.NULL)
+                .put("config", "{}").put("groups", JSONArray().put(org.json.JSONObject().put("ext", id).put("index", 0).put("js", JSONArray(listOf(UnitCompiler.INLINE_CODE + "x".repeat(20_000)))).put("isolation", "with"))).put("css", JSONArray())
+        )
+        val compiled = compiler.compile(id, "1.0.0", plan, true, read, size)
+        assertEquals(3, compiled.size)
+        for (unit in compiled.take(2)) {
+            assertNull(unit.refused)
+            assertTrue(unit.script.contains("""import("https://$id.ext.zenium.invalid/chunk.js")"""))
+            // The public org.json leaves `/` alone where Android's escapes it; the count covers both, so it may sit over the JVM's text by the CSS's slashes alone.
+            assertTrue("${unit.key}: presized ${unit.presized} for ${unit.script.length}", unit.presized >= unit.script.length)
+            assertTrue(unit.presized - unit.script.length <= files["style.css"]!!.count { it == '/' })
+            assertFalse(unit.grown)
+        }
+        val refused = compiled[2]
+        assertEquals(0, refused.presized)
+        assertFalse(refused.grown)
+        // The same plan again: the cached units keep their builder's size.
+        val again = compiler.compile(id, "1.0.0", plan, true, read, size)
+        assertEquals(listOf(true, true, true), again.map { it.cached })
+        assertEquals(compiled.map { it.presized }, again.map { it.presized })
+        assertEquals(compiled.map { it.script.length }, again.map { it.script.length })
+    }
+
+    @Test
     fun `a unit under the budget compiles as before, its measure taken from the sizes and the held texts`() {
         val compiler = UnitCompiler(budgetChars = 10_000) { "/*boot*/" }
         val compiled = compiler.compile(id, "1.0.0", units("k" to listOf("cs.js", "extra.js")), true, read, size)
@@ -296,6 +402,41 @@ class UnitCompilerTest {
         assertEquals("75.3 million", UnitCompiler.millions(75_392_244))
         assertEquals("0.7 million", UnitCompiler.millions(766_022))
         assertEquals("33.5 million", UnitCompiler.millions((32 shl 20).toLong()))
+    }
+
+    @Test
+    fun `a unit's shape comes off the wire into its script, its identity and its measure, whole when the plan names none`() {
+        // A bootstrap the size of the real one against a budget a thin unit fits and a whole one does not.
+        val bootstrap = "/*" + "b".repeat(20_000) + "*/"
+        val compiler = UnitCompiler(budgetChars = 16_000) { bootstrap }
+        val plan = units("isolated:*" to listOf("cs.js"), "isolated:https://example.com" to listOf("extra.js"))
+        plan.getJSONObject(0).put("shape", "carrier")
+        plan.getJSONObject(1).put("shape", "thin")
+        val compiled = compiler.compile(id, "1.0.0", plan, true, read, size)
+        assertEquals(listOf("carrier", "thin"), compiled.map { it.shape })
+        // The carrier is over the budget by its bootstrap; the thin unit, measured without one, compiles.
+        assertTrue(compiled[0].refused != null && compiled[0].refused!!.chars > 20_000)
+        assertNull(compiled[1].refused)
+        assertTrue(compiled[1].script.contains("console.log('extra')"))
+        assertFalse(compiled[1].script.contains(bootstrap))
+        assertTrue(compiled[1].script.contains("globalThis.__zenExtCarrier;"))
+        // Room enough: the carrier carries the bootstrap once, wrapped, and runs it.
+        val roomy = UnitCompiler(budgetChars = 64_000) { bootstrap }
+        val both = roomy.compile(id, "1.0.0", plan, true, read, size)
+        assertTrue(both[0].script.contains("=function(__zenExtBoot){\n$bootstrap\n};\n__zenExtCarry(__zenExtBoot);"))
+        assertEquals(1, Regex(Regex.escape(bootstrap)).findAll(both[0].script).count())
+        // The same unit re-planned in another shape is compiled again: the shape is in the hash.
+        plan.getJSONObject(1).put("shape", "whole")
+        val reshaped = roomy.compile(id, "1.0.0", plan, true, read, size)
+        assertTrue(reshaped[0].cached)
+        assertFalse(reshaped[1].cached)
+        assertNotEquals(both[1].hash, reshaped[1].hash)
+        assertTrue(reshaped[1].script.contains(bootstrap))
+        // No shape on the wire (an older plan): whole, as ever.
+        plan.getJSONObject(1).remove("shape")
+        val plain = roomy.compile(id, "1.0.0", plan, true, read, size)
+        assertEquals("whole", plain[1].shape)
+        assertTrue(plain[1].cached)
     }
 
     @Test

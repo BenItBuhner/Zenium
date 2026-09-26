@@ -1,5 +1,5 @@
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
-import type { MenuAnchor, Platform } from '@shared/types'
+import type { MenuAnchor, Platform, Rect } from '@shared/types'
 import { isTextField } from './popover'
 import { browserStore } from './ui'
 
@@ -23,22 +23,118 @@ interface ContextMenuEventLike {
   sourceCapabilities?: { firesTouchEvents?: boolean } | null
 }
 
+/** A measured box as a `MenuAnchor.rect` (window CSS pixels), or undefined for an empty one. */
+function rectOf(box: DOMRect | undefined): Rect | undefined {
+  if (!box || !(box.width > 0) || !(box.height > 0)) return undefined
+  return { x: box.left, y: box.top, width: box.width, height: box.height }
+}
+
+/**
+ * The focused element's box, where a menu the keyboard asked for hangs (§9.23): undefined when
+ * the focus is on the document itself or the element has no box.
+ */
+export function focusedRect(doc: Document = document): Rect | undefined {
+  const el = doc.activeElement
+  if (!el || el === doc.body || el === doc.documentElement) return undefined
+  return rectOf(el.getBoundingClientRect())
+}
+
 /**
  * Where the menu a `contextmenu` event asks for opens (`MenuAnchor`): a right-click's at the
  * pointer; Shift+F10's and the Menu key's – Chromium raises the event at the middle of the
- * focused element with no button (`button` is -1, its `kNoButton`) – there, in keyboard mode, so
- * the first item starts selected and the arrow keys take over at once (Chrome's rule). A touch's
- * long-press comes without the right button too but is marked as a touch's: it opens at the
- * finger, a pointer's menu all the same.
+ * focused element with no button (`button` is -1, its `kNoButton`) – from the focused element,
+ * whose box goes along (`rect`; a native host hangs the menu from its bottom-left, §9.23), in
+ * keyboard mode, so the first item starts selected and the arrow keys take over at once
+ * (Chrome's rule). A touch's long-press comes without the right button too but is marked as a
+ * touch's: it opens at the finger, a pointer's menu all the same.
  */
 export function contextMenuAnchor(
   e: ReactMouseEvent | MouseEvent
 ): MenuAnchor & { x: number; y: number } {
   const native: ContextMenuEventLike = 'nativeEvent' in e ? e.nativeEvent : e
   const pointer = e.button === 2 || Boolean(native.sourceCapabilities?.firesTouchEvents)
-  return !pointer
-    ? { x: Math.round(e.clientX), y: Math.round(e.clientY), keyboard: true }
-    : { x: Math.round(e.clientX), y: Math.round(e.clientY) }
+  if (pointer) return { x: Math.round(e.clientX), y: Math.round(e.clientY) }
+  const rect = focusedRect()
+  return {
+    x: Math.round(e.clientX),
+    y: Math.round(e.clientY),
+    keyboard: true,
+    ...(rect ? { rect } : {})
+  }
+}
+
+/**
+ * Where the menu a control's press asks for opens – a row's "⋯", a heading's twisty: the menu
+ * hangs from the control (`rect`, its bottom-left; the point too, for a host that reads only
+ * that), in keyboard mode when the press was Enter's or Space's (a click they synthesise
+ * reports a `detail` of 0) so the first item starts selected.
+ */
+export function controlMenuAnchor(e: {
+  currentTarget: EventTarget | null
+  detail: number
+}): MenuAnchor & { x: number; y: number } {
+  const el = e.currentTarget instanceof Element ? e.currentTarget : null
+  const box = el?.getBoundingClientRect()
+  const rect = rectOf(box)
+  const keyboard = e.detail === 0
+  // A press of Enter or Space (no pointer): the keyboard goes back to the control on close (§9.23).
+  if (keyboard) noteKeyboardMenuSource(el)
+  return {
+    x: Math.round(box?.left ?? 0),
+    y: Math.round(box?.bottom ?? 0),
+    keyboard,
+    ...(rect ? { rect } : {})
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Returning the keyboard when a menu closes (§9.23)
+// ---------------------------------------------------------------------------
+
+/**
+ * The element a keyboard-invoked native menu hangs from, kept so the keyboard can go back to it
+ * when the menu closes. Chrome keeps the caret and selection on the element across its menu;
+ * Electron's native popup takes the chrome document's focus instead (measured: the element
+ * blurs, `activeElement` falls to the body), so the element is refocused on the close signal.
+ * Overwritten by the next keyboard menu and cleared once used.
+ */
+let keyboardMenuSource: HTMLElement | null = null
+
+function noteKeyboardMenuSource(el: EventTarget | null): void {
+  keyboardMenuSource = el instanceof HTMLElement ? el : null
+}
+
+/**
+ * Remembers the focused element whenever a context menu is asked for from the keyboard so the
+ * keyboard can return to it (§9.23). The chrome's own rows arm this through their handlers; this
+ * listener is for the menus Chromium raises straight to the main process without one – the URL
+ * bar, a chrome text field – where no renderer handler runs. Shift+F10 and the Menu key come as
+ * a `contextmenu` with no button (`-1`); a right-click (`2`) and a touch's long-press are a
+ * pointer's, with no element to return to. Returns the remover.
+ */
+export function trackKeyboardMenuSource(target: Window = window): () => void {
+  const onContextMenu = (event: Event): void => {
+    const e = event as MouseEvent & { sourceCapabilities?: { firesTouchEvents?: boolean } | null }
+    if (e.button !== -1 || e.sourceCapabilities?.firesTouchEvents) return
+    noteKeyboardMenuSource(target.document.activeElement)
+  }
+  target.addEventListener('contextmenu', onContextMenu, true)
+  return () => target.removeEventListener('contextmenu', onContextMenu, true)
+}
+
+/**
+ * The keyboard back to the element the last keyboard-invoked menu hung from, now that it has
+ * closed (§9.23). Left where it is when a pick moved the focus itself – to a rename field, a
+ * dialog – or opened another window (this one is no longer focused): only a focus that fell to
+ * the document body in this still-focused window is returned to the element.
+ */
+export function returnKeyboardMenuFocus(doc: Document = document): void {
+  const el = keyboardMenuSource
+  keyboardMenuSource = null
+  if (!el || !el.isConnected || !doc.hasFocus()) return
+  const active = doc.activeElement
+  if (active && active !== doc.body && active !== doc.documentElement) return
+  el.focus({ preventScroll: true })
 }
 
 // ---------------------------------------------------------------------------

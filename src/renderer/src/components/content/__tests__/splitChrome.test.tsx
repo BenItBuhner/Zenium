@@ -222,13 +222,16 @@ describe('the pane header names its site (split-18) and opens the pane’s menu 
     expect(more.getAttribute('aria-haspopup')).toBe('menu')
     expect(more.dataset.tooltip).toBe('Pane options')
     more.getBoundingClientRect = () =>
-      ({ left: 700.4, right: 720, top: 4, bottom: 20.6 }) as DOMRect
+      ({ left: 700.4, right: 720, top: 4, bottom: 20.6, width: 19.6, height: 16.6 }) as DOMRect
+    // A programmatic click reads as the keyboard's (`detail` 0): the first item starts selected.
+    // The button's box goes along, for a native host to hang the menu from (§9.23).
     act(() => more.click())
     expect(run).toHaveBeenCalledWith('split.paneMenu', {
       tabId: 'b',
       x: 700,
       y: 21,
-      keyboard: true
+      keyboard: true,
+      rect: { x: 700.4, y: 4, width: 19.6, height: 16.6 }
     })
     // The un-split control keeps its place after it.
     const buttons = [...header('b').querySelectorAll('button')].map((b) =>

@@ -29,6 +29,16 @@ sealed class PageMessageRoute {
      */
     data class Fullscreen(val active: Boolean, val videoWidth: Int, val videoHeight: Int, val video: Boolean) : PageMessageRoute()
 
+    /**
+     * The page's own referrer policy (`referrerPolicy.ts`), for the navigation the view holds
+     * for the core's content-settings answer (`ReferrerPolicyWord`): [next] is the word for the
+     * one navigation an anchor's click is about to start, [document] the document's
+     * `<meta name=referrer>`, tagged with its [origin]. A token the script did not recognise
+     * arrives as the empty string – the default policy. The main document's alone: a frame's
+     * anchors and meta govern the frame's own navigations, which the view does not hold.
+     */
+    data class ReferrerPolicy(val next: String?, val document: String?, val origin: String?) : PageMessageRoute()
+
     /** Anything else goes to the core as a `pageMessage` view event, without the token. */
     data class Forward(val message: JSONObject) : PageMessageRoute()
 
@@ -77,6 +87,7 @@ fun routePageMessage(data: String?, token: String): PageMessageRoute {
                 obj.optBoolean("video", videoWidth > 0)
             )
         }
+        "referrerPolicy" -> PageMessageRoute.ReferrerPolicy(obj.strOrNull("next"), obj.strOrNull("document"), obj.strOrNull("origin"))
         else -> {
             obj.remove("token")
             PageMessageRoute.Forward(obj)

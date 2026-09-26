@@ -37,6 +37,7 @@ import {
   splitFileName,
   type FileGlyph
 } from '@renderer/lib/downloadsView'
+import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { pushToast } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 
@@ -429,17 +430,9 @@ export function DownloadRow({
     e.preventDefault()
     e.stopPropagation()
     // A right click opens at the pointer; the menu key and Shift+F10 come without one and
-    // open on the row's text, with the keyboard on the first item.
-    if (e.button === 2) {
-      downloadsEngine.contextMenu(item.id, { x: e.clientX, y: e.clientY })
-    } else {
-      const box = e.currentTarget.getBoundingClientRect()
-      downloadsEngine.contextMenu(item.id, {
-        x: Math.round(box.left + 36),
-        y: Math.round(box.bottom - 4),
-        keyboard: true
-      })
-    }
+    // hang the menu from the focused row (its box goes along), with the keyboard on the first
+    // item.
+    downloadsEngine.contextMenu(item.id, contextMenuAnchor(e))
   }
   return (
     <li

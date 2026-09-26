@@ -42,6 +42,7 @@ function state(
     capabilities: { windows: true },
     tabs: opener ? { [opener.id]: opener, settings: settingsTab } : { settings: settingsTab },
     settings: { ...DEFAULT_SETTINGS, unloadEnabled: true, ...settings },
+    extensionControls: {},
     window: { id: 'w', kind: windowKind }
   } as unknown as UIState
 }

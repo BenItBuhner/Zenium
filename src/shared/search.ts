@@ -1,4 +1,13 @@
-import type { SearchEngine, SearchEngineControl, SearchEngineSource } from './types'
+import type {
+  ImageSearchPost,
+  ImageSearchTemplate,
+  ImageThumbnailBounds,
+  SearchEngine,
+  SearchEngineControl,
+  SearchEngineSource
+} from './types'
+import { GENERIC_IMAGE_THUMBNAIL, LENS_IMAGE_THUMBNAIL } from './imageUpload'
+import { isSecureContextUrl } from './webApp'
 
 /**
  * Zen ships Google, DuckDuckGo and Wikipedia by default and lets you pick Google, DuckDuckGo or
@@ -16,7 +25,24 @@ export const DEFAULT_SEARCH_ENGINES: SearchEngine[] = [
     suggestUrl: 'https://suggestqueries.google.com/complete/search?client=chrome&q=%s',
     keyword: '@google',
     glyph: 'G',
-    favicon: 'https://www.google.com/favicon.ico'
+    favicon: 'https://www.google.com/favicon.ico',
+    // Chrome's own image row for Google goes to Lens: `image_url` =
+    // `{google:baseSearchByImageURL}upload` (`https://lens.google.com/v3/upload`) with the
+    // multipart `image_url_post_params` below (Chromium's `prepopulated_engines.json`, the
+    // `google:` prefix dropped from the placeholders) and the Lens path's thumbnail bounds
+    // (`CoreTabHelper::SearchWithLens`: within 1000 px, `lens::kMaxPixelsForImageSearch`);
+    // `url` is the address form kept for a record from before the upload.
+    imageSearch: {
+      name: 'Google Lens',
+      url: 'https://lens.google.com/uploadbyurl?url=%s',
+      post: {
+        url: 'https://lens.google.com/v3/upload',
+        params:
+          'encoded_image={imageThumbnail},image_url={imageURL},sbisrc={imageSearchSource},original_width={imageOriginalWidth},original_height={imageOriginalHeight},processed_image_dimensions={processedImageDimensions}',
+        encoding: 'multipart',
+        thumbnail: LENS_IMAGE_THUMBNAIL
+      }
+    }
   },
   {
     id: 'duckduckgo',
@@ -43,7 +69,20 @@ export const DEFAULT_SEARCH_ENGINES: SearchEngine[] = [
     suggestUrl: 'https://api.bing.com/osjson.aspx?query=%s',
     keyword: '@bing',
     glyph: 'B',
-    favicon: 'https://www.bing.com/favicon.ico'
+    favicon: 'https://www.bing.com/favicon.ico',
+    // Bing's visual search takes the thumbnail base64 in one urlencoded field (Chromium's
+    // `prepopulated_engines.json`: `image_url` + `image_url_post_params`), the thumbnail within
+    // Chrome's bounds for any engine but Google (`CoreTabHelper::SearchByImage`: 600 px).
+    imageSearch: {
+      name: 'Bing',
+      url: 'https://www.bing.com/images/search?view=detailv2&iss=sbi&q=imgurl:%s',
+      post: {
+        url: 'https://www.bing.com/images/detail/search?iss=sbiupload&FORM=CHROMI#enterInsights',
+        params: 'imageBin={imageThumbnailBase64}',
+        encoding: 'urlencoded',
+        thumbnail: GENERIC_IMAGE_THUMBNAIL
+      }
+    }
   },
   {
     id: 'wikipedia',
@@ -55,6 +94,262 @@ export const DEFAULT_SEARCH_ENGINES: SearchEngine[] = [
     favicon: 'https://en.wikipedia.org/favicon.ico'
   }
 ]
+
+// ---------------------------------------------------------------------------
+// The EEA's search-engine choice screen: Chrome's per-country lists (W6-2; DMA Art. 6(3))
+// ---------------------------------------------------------------------------
+
+/*
+ * Chromium's public search-engine data is the source of the choice screen's lists and of every
+ * engine it offers beyond the shipped ones – the DEPS repository
+ * `chromium.googlesource.com/external/search_engines_data` at `effde84e` (data version 214),
+ * checked out as `third_party/search_engines_data/resources/`:
+ *
+ * - `definitions/regional_settings.json` `elements.<CC>.search_engines`: the engines each EEA
+ *   country's screen offers (eight per country in this version; the order there is the
+ *   table's order, never the order shown – the screen shuffles with its run's seed), and
+ *   `aggregation.map_aliases`: the territories that take a member state's list;
+ * - `components/regional_capabilities/eea_countries_ids.h` `kEeaChoiceCountriesIds`: the
+ *   countries the screen is owed in – the thirty EEA states and seventeen territories;
+ * - `definitions/prepopulated_engines.json`: each engine's name, `search_url`, `suggest_url`
+ *   and `favicon_url`. Chromium's template words become the core's: `{searchTerms}` is `%s`,
+ *   `{inputEncoding}` is `UTF-8`, `{google:pathWildcard}` is nothing. Chrome's own attribution
+ *   (the `regulatory_extensions`' `client=cs-chrome`, `source=csChrome`, `fr=crmas`,
+ *   `PC=U316&FORM=CHROMN`, `addon=opensearch`) is not carried: it marks a search as Chrome's.
+ *   Bing's and Ecosia's `{language}` suggest parameter is not carried either; the shipped
+ *   templates stand for the shipped engines.
+ *
+ * Templates are verified by their documented shape (`shared/__tests__/searchChoiceEngines.test.ts`
+ * renders a query into each and reads the address back), not by a request from wherever the
+ * build runs: an engine that answers a data-centre address with a 429 or a captcha is not a
+ * broken engine. Chrome bundles its engines' icons and marketing lines from a repository that
+ * is not public (`search_engines_data_internal`, `enable_builtin_search_provider_assets` is
+ * `is_internal_chrome_branded`); the renderer bundles the icons by engine id from each engine's
+ * documented `favicon_url` (`renderer/lib/searchEngineIcons.ts`), so the screen asks no engine
+ * for anything before the user has chosen. `favicon` here is that documented address – the
+ * reference a synced list carries, never the picture.
+ */
+
+/** Yahoo's country editions: one template shape, the country's host (Chromium's `yahoo_<cc>`). */
+function yahoo(id: string, host: string, name = 'Yahoo Search'): SearchEngine {
+  return {
+    id,
+    name,
+    searchUrl: `https://${host}/search?ei=UTF-8&p=%s`,
+    suggestUrl: `https://${host}/sugg/chrome?output=fxjson&command=%s`,
+    keyword: '@yahoo',
+    glyph: 'Y',
+    favicon: `https://${host}/favicon.ico`
+  }
+}
+
+/**
+ * The engines the choice screen offers that Zenium does not ship for everyone, as Chromium's
+ * `prepopulated_engines.json` defines them (the key there is the id here). Not in
+ * `DEFAULT_SEARCH_ENGINES`: the one the screen sets as the default is copied into the user's
+ * list (`settings.searchEngines`) by the core, so the id resolves on every device the profile
+ * syncs to, and it stands under Added in Settings › Search as an engine the user chose.
+ */
+export const SEARCH_CHOICE_EXTRA_ENGINES: readonly SearchEngine[] = [
+  {
+    id: 'brave',
+    name: 'Brave',
+    searchUrl: 'https://search.brave.com/search?q=%s',
+    suggestUrl: 'https://search.brave.com/api/suggest?q=%s&rich=true&rich_verticals=true',
+    keyword: '@brave',
+    glyph: 'B',
+    favicon: 'https://cdn.search.brave.com/serp/favicon.ico'
+  },
+  {
+    id: 'privacywall',
+    name: 'PrivacyWall',
+    searchUrl: 'https://www.privacywall.org/search/secure/?q=%s',
+    suggestUrl: 'https://search.privacywall.org/suggest.php?q=%s',
+    keyword: '@privacywall',
+    glyph: 'P',
+    favicon: 'https://www.privacywall.org/images/favicon_32x32.ico'
+  },
+  {
+    id: 'qwant',
+    name: 'Qwant',
+    searchUrl: 'https://www.qwant.com/?q=%s',
+    suggestUrl: 'https://api.qwant.com/api/suggest/?q=%s',
+    keyword: '@qwant',
+    glyph: 'Q',
+    favicon: 'https://www.qwant.com/favicon.ico'
+  },
+  {
+    id: 'seznam',
+    name: 'Seznam.cz',
+    searchUrl: 'https://search.seznam.cz/?q=%s',
+    suggestUrl: 'https://suggest.seznam.cz/fulltext_ff?phrase=%s',
+    keyword: '@seznam',
+    glyph: 'S',
+    favicon: 'https://search.seznam.cz/favicon.ico'
+  },
+  {
+    id: 'startpage',
+    name: 'Startpage',
+    searchUrl: 'https://www.startpage.com/sp/search?q=%s',
+    suggestUrl: 'https://www.startpage.com/osuggestions?q=%s',
+    keyword: '@startpage',
+    glyph: 'S',
+    favicon: 'https://www.startpage.com/favicon.ico'
+  },
+  {
+    id: 'yep',
+    name: 'Yep',
+    searchUrl: 'https://yep.com/web?q=%s',
+    suggestUrl: 'https://api.yep.com/ac/?query=%s&os=true',
+    keyword: '@yep',
+    glyph: 'Y',
+    favicon: 'https://cdn.yep.com/static/meta/favicon.ico'
+  },
+  yahoo('yahoo_at', 'at.search.yahoo.com'),
+  yahoo('yahoo_de', 'de.search.yahoo.com'),
+  yahoo('yahoo_dk', 'dk.search.yahoo.com'),
+  yahoo('yahoo_emea', 'emea.search.yahoo.com'),
+  yahoo('yahoo_es', 'es.search.yahoo.com', 'Yahoo Búsquedas'),
+  yahoo('yahoo_fi', 'fi.search.yahoo.com'),
+  yahoo('yahoo_fr', 'fr.search.yahoo.com', 'Yahoo Recherche'),
+  yahoo('yahoo_it', 'it.search.yahoo.com', 'Ricerca di Yahoo'),
+  yahoo('yahoo_nl', 'nl.search.yahoo.com'),
+  yahoo('yahoo_se', 'se.search.yahoo.com'),
+  yahoo('yahoo_uk', 'uk.search.yahoo.com')
+]
+
+/**
+ * The choice screen's engines per EEA country, ISO 3166-1 alpha-2 → engine ids: Chromium's
+ * `regional_settings.json` `elements.<CC>.search_engines` at `effde84e`, `&`-references
+ * resolved to ids, in the table's order. Every id is a shipped engine's or one of
+ * `SEARCH_CHOICE_EXTRA_ENGINES`; Wikipedia ships but is on no list (an encyclopedia's search is
+ * not a web search engine, and neither Chrome's table nor this one names it).
+ */
+export const EEA_SEARCH_CHOICE: Readonly<Record<string, readonly string[]>> = {
+  AT: ['google', 'brave', 'duckduckgo', 'ecosia', 'bing', 'yahoo_at', 'qwant', 'privacywall'],
+  BE: ['google', 'brave', 'duckduckgo', 'ecosia', 'bing', 'qwant', 'privacywall', 'yahoo_emea'],
+  BG: ['google', 'brave', 'duckduckgo', 'bing', 'yep', 'ecosia', 'qwant', 'yahoo_emea'],
+  HR: ['google', 'brave', 'duckduckgo', 'bing', 'ecosia', 'yep', 'privacywall', 'yahoo_emea'],
+  CY: ['google', 'brave', 'duckduckgo', 'bing', 'ecosia', 'qwant', 'yahoo_emea', 'privacywall'],
+  CZ: ['google', 'seznam', 'brave', 'duckduckgo', 'bing', 'ecosia', 'privacywall', 'yahoo_emea'],
+  DK: ['google', 'brave', 'duckduckgo', 'bing', 'ecosia', 'qwant', 'yahoo_dk', 'privacywall'],
+  EE: ['google', 'brave', 'duckduckgo', 'bing', 'ecosia', 'privacywall', 'qwant', 'yahoo_emea'],
+  FI: ['google', 'brave', 'duckduckgo', 'bing', 'ecosia', 'qwant', 'privacywall', 'yahoo_fi'],
+  FR: ['google', 'brave', 'ecosia', 'qwant', 'duckduckgo', 'bing', 'yahoo_fr', 'privacywall'],
+  DE: ['google', 'duckduckgo', 'brave', 'ecosia', 'bing', 'startpage', 'yahoo_de', 'qwant'],
+  GR: ['google', 'brave', 'duckduckgo', 'bing', 'yahoo_emea', 'ecosia', 'qwant', 'yep'],
+  HU: ['google', 'brave', 'bing', 'duckduckgo', 'ecosia', 'yep', 'qwant', 'yahoo_emea'],
+  IS: ['google', 'duckduckgo', 'brave', 'bing', 'ecosia', 'privacywall', 'qwant', 'yahoo_emea'],
+  IE: ['google', 'duckduckgo', 'brave', 'bing', 'yahoo_uk', 'ecosia', 'privacywall', 'qwant'],
+  IT: ['google', 'brave', 'bing', 'duckduckgo', 'ecosia', 'yahoo_it', 'qwant', 'privacywall'],
+  LV: ['google', 'brave', 'duckduckgo', 'bing', 'ecosia', 'privacywall', 'qwant', 'yahoo_emea'],
+  LI: ['google', 'duckduckgo', 'brave', 'bing', 'ecosia', 'startpage', 'qwant', 'privacywall'],
+  LT: ['google', 'brave', 'duckduckgo', 'bing', 'ecosia', 'qwant', 'yahoo_emea', 'yep'],
+  LU: ['google', 'brave', 'duckduckgo', 'bing', 'ecosia', 'qwant', 'yahoo_emea', 'privacywall'],
+  MT: ['google', 'brave', 'bing', 'duckduckgo', 'ecosia', 'privacywall', 'yahoo_emea', 'qwant'],
+  NL: ['google', 'duckduckgo', 'brave', 'bing', 'ecosia', 'privacywall', 'yahoo_nl', 'qwant'],
+  NO: ['google', 'duckduckgo', 'brave', 'bing', 'ecosia', 'yahoo_emea', 'privacywall', 'qwant'],
+  PL: ['google', 'brave', 'duckduckgo', 'bing', 'ecosia', 'yahoo_emea', 'privacywall', 'qwant'],
+  PT: ['google', 'brave', 'bing', 'duckduckgo', 'ecosia', 'yep', 'qwant', 'yahoo_emea'],
+  RO: ['google', 'brave', 'duckduckgo', 'bing', 'yahoo_emea', 'ecosia', 'yep', 'qwant'],
+  SK: ['google', 'brave', 'duckduckgo', 'bing', 'seznam', 'ecosia', 'privacywall', 'yahoo_emea'],
+  SI: ['google', 'brave', 'duckduckgo', 'bing', 'ecosia', 'yep', 'qwant', 'yahoo_emea'],
+  ES: ['google', 'brave', 'duckduckgo', 'bing', 'ecosia', 'yahoo_es', 'privacywall', 'qwant'],
+  SE: ['google', 'duckduckgo', 'brave', 'bing', 'ecosia', 'yahoo_se', 'qwant', 'privacywall']
+}
+
+/**
+ * The territories Chrome owes the screen in (`kEeaChoiceCountriesIds`) that take a member
+ * state's list (`regional_settings.json` `aggregation.map_aliases`): Åland's is Finland's, the
+ * French overseas departments' and collectivities' France's, Ceuta, Melilla and the Canaries'
+ * Spain's, Svalbard's Norway's, the Vatican's Italy's.
+ */
+export const SEARCH_CHOICE_ALIASES: Readonly<Record<string, string>> = {
+  AX: 'FI',
+  BL: 'FR',
+  EA: 'ES',
+  GF: 'FR',
+  GP: 'FR',
+  IC: 'ES',
+  MF: 'FR',
+  MQ: 'FR',
+  NC: 'FR',
+  PF: 'FR',
+  PM: 'FR',
+  RE: 'FR',
+  SJ: 'NO',
+  TF: 'FR',
+  VA: 'IT',
+  WF: 'FR',
+  YT: 'FR'
+}
+
+/**
+ * The list for a screen asked for from Settings where the table has no list (outside the EEA,
+ * or the OS did not say): the shipped web search engines, the encyclopedia aside. Chrome shows
+ * no screen there; this is Zenium's own row's list, no engine's country in it.
+ */
+export const SEARCH_CHOICE_FALLBACK: readonly string[] = ['google', 'duckduckgo', 'ecosia', 'bing']
+
+/**
+ * The table's country for `region`, or null when the table has none: a member state's own
+ * code, a territory's through its alias (`SEARCH_CHOICE_ALIASES`).
+ */
+export function searchChoiceCountry(region: string | null | undefined): string | null {
+  if (!region) return null
+  const country = SEARCH_CHOICE_ALIASES[region] ?? region
+  return country in EEA_SEARCH_CHOICE ? country : null
+}
+
+/**
+ * The engine ids the screen offers for `region`, in the table's order: the region's country's
+ * list, else the fallback. The screen shuffles them with its run's seed (`core/searchChoice.ts`).
+ */
+export function searchChoiceEngineIds(region: string | null | undefined): readonly string[] {
+  const country = searchChoiceCountry(region)
+  return country ? EEA_SEARCH_CHOICE[country]! : SEARCH_CHOICE_FALLBACK
+}
+
+/**
+ * Each tile's second line: one line of the engine's own words – a line the engine itself uses
+ * (its home page's headline, title or description) – never Zenium's, and short enough to stand
+ * on one line in the tile's text column (470 px at 13 px, the list's 8 px scrollbar taken), so
+ * every tile is the same height: Chrome keeps its choice screen's tiles equal, and a taller
+ * tile is a distinction the DMA reads as favour. Google's is the head of its own description,
+ * whole; Seznam's is its slogan, in Seznam's Czech (its lists are the Czech and Slovak
+ * screens). Chrome shows each engine's marketing snippet the same way and, for an engine
+ * without one, "You can use <name> to search the web." – its neutral fallback line
+ * (`search_engine_choice_strings.grdp`); `searchChoiceTagline` says that for an engine not
+ * named here. Yahoo's editions share Yahoo's line.
+ */
+const SEARCH_CHOICE_TAGLINES: Readonly<Record<string, string>> = {
+  google: "Search the world's information.",
+  duckduckgo: 'Protection. Privacy. Peace of mind.',
+  ecosia: 'The search engine that plants trees.',
+  bing: 'A smart search engine for the forever curious.',
+  brave: 'Private, independent, open.',
+  privacywall: 'The search engine that protects your privacy.',
+  qwant: 'The search engine that values you as a user, not as a product.',
+  seznam: 'Najdu tam, co neznám.',
+  startpage: "The world's most private search engine.",
+  yep: 'The private, revenue-sharing search engine.',
+  yahoo: 'Get the best of the web with Yahoo.'
+}
+
+/** The line under the engine's name on its tile: its own, or Chrome's neutral one. */
+export function searchChoiceTagline(engine: Pick<SearchEngine, 'id' | 'name'>): string {
+  const key = engine.id.startsWith('yahoo_') ? 'yahoo' : engine.id
+  return SEARCH_CHOICE_TAGLINES[key] ?? `You can use ${engine.name} to search the web.`
+}
+
+/** The engine `id` names among the shipped engines and the choice screen's, or null. */
+export function searchChoiceEngine(id: string): SearchEngine | null {
+  return (
+    DEFAULT_SEARCH_ENGINES.find((e) => e.id === id) ??
+    SEARCH_CHOICE_EXTRA_ENGINES.find((e) => e.id === id) ??
+    null
+  )
+}
 
 /**
  * The mark a field's leading slot shows for the engine it searches with (NTP-09; Chrome's
@@ -72,6 +367,11 @@ export function buildSearchUrl(engine: SearchEngine, query: string): string {
   return fillTemplate(engine.searchUrl, query)
 }
 
+/** The results' address for `query` on a bare `%s` template (the error page carries an engine's template alone). */
+export function fillSearchTemplate(template: string, query: string): string {
+  return fillTemplate(template, query)
+}
+
 export function buildSuggestUrl(engine: SearchEngine, query: string): string | null {
   if (!engine.suggestUrl) return null
   return fillTemplate(engine.suggestUrl, query)
@@ -80,6 +380,88 @@ export function buildSuggestUrl(engine: SearchEngine, query: string): string | n
 /** Every `%s` of a template takes the encoded query (an OpenSearch template may repeat it). */
 function fillTemplate(template: string, query: string): string {
   return template.split('%s').join(encodeURIComponent(query.trim()))
+}
+
+/**
+ * What the image context menu's "Search Image with <engine>" row (CT-32) does, and whose name
+ * it carries: an engine with a `post` takes the image's bytes (`upload`, Chrome's way); one
+ * with a template alone takes the image's address (`address`).
+ */
+export type ImageSearch = ImageSearchByAddress | ImageSearchByUpload
+
+export interface ImageSearchByAddress {
+  kind: 'address'
+  /** The product the row names, the engine definition's own: "Google Lens", "Bing". */
+  engine: string
+  /** The template filled with the image's address. */
+  url: string
+}
+
+export interface ImageSearchByUpload {
+  kind: 'upload'
+  engine: string
+  /** Where and how the bytes go (`ImageSearchPost`). */
+  post: ImageSearchPost
+  /**
+   * The body's `{imageURL}`: the image's http(s) address, `''` for a `data:` or `blob:` image
+   * (Chrome sends no address for a `data:` image; a `blob:` one names nothing off the page).
+   */
+  imageUrl: string
+}
+
+/**
+ * The reverse image search for an image (CT-32, Chrome's "Search image with …" row), read from
+ * the default engine's definition as Chrome reads a `TemplateURL`'s `image_url` and
+ * `image_url_post_params`: an engine with an `imageSearch` gets a row naming its product
+ * (Google's goes to Lens, Bing's to Bing's visual search), an engine without one gets none –
+ * DuckDuckGo, Ecosia, Wikipedia, and a hand-added or discovered engine, as Chrome shows the row
+ * only with an engine that has one.
+ *
+ * With `post` the row uploads the bytes, so any image the page can read has one: an http(s)
+ * address (which also travels as `{imageURL}`), a `data:` or `blob:` image (which does not).
+ * Without `post` only an address an engine can fetch has a row – an http(s) URL, filled into
+ * the template encoded once (`fillTemplate`) – and a `data:` or `blob:` image gets null. A
+ * `file:` image gets null either way: the page cannot read it back (its origin is opaque).
+ */
+export function imageSearchFor(
+  engine: Pick<SearchEngine, 'imageSearch'>,
+  imageUrl: string
+): ImageSearch | null {
+  const { imageSearch } = engine
+  if (!imageSearch) return null
+  const http = /^https?:\/\/./i.test(imageUrl)
+  if (imageSearch.post) {
+    if (!http && !/^(?:data|blob):./i.test(imageUrl)) return null
+    return {
+      kind: 'upload',
+      engine: imageSearch.name,
+      post: imageSearch.post,
+      imageUrl: http ? imageUrl : ''
+    }
+  }
+  return imageSearchByAddress(engine, imageUrl)
+}
+
+/**
+ * The address form alone – the template filled with an http(s) image's address, `post` or no
+ * `post` (null for another scheme or an engine without an image search): what the row does
+ * for an engine without `post`, and what an upload the page could not read falls back to.
+ */
+export function imageSearchByAddress(
+  engine: Pick<SearchEngine, 'imageSearch'>,
+  imageUrl: string
+): ImageSearchByAddress | null {
+  const { imageSearch } = engine
+  if (!imageSearch || !/^https?:\/\/./i.test(imageUrl)) return null
+  return { kind: 'address', engine: imageSearch.name, url: fillTemplate(imageSearch.url, imageUrl) }
+}
+
+/**
+ * Whether `url` can be an image search template: an `http(s)` address carrying `%s` once, where
+ * the image's address goes (`searchTemplateProblem`'s rules, one placeholder).
+ */
+export function isImageSearchTemplate(url: string): boolean {
+  return searchTemplateProblem(url) === null && url.split('%s').length === 2
 }
 
 // ---------------------------------------------------------------------------
@@ -458,7 +840,77 @@ function sanitizeSearchEngine(raw: unknown): SearchEngine | null {
       typeof r.visitedAt === 'number' && Number.isFinite(r.visitedAt) ? r.visitedAt : 0
   }
   if (r.active === false) engine.active = false
+  const imageSearch = sanitizeImageSearch(r.imageSearch)
+  if (imageSearch) engine.imageSearch = imageSearch
   return engine
+}
+
+/**
+ * A stored engine's `imageSearch`, kept when it is whole – a name and an image search template
+ * (`isImageSearchTemplate`) – and dropped otherwise: a record from a peer or a later build that
+ * defines one keeps its row, one that defines nothing valid gets none (the Search settings'
+ * form offers no field, so a hand-added engine carries one only through such a record).
+ */
+function sanitizeImageSearch(raw: unknown): ImageSearchTemplate | null {
+  if (!raw || typeof raw !== 'object') return null
+  const r = raw as Record<string, unknown>
+  if (typeof r.name !== 'string' || !r.name.trim()) return null
+  if (typeof r.url !== 'string' || !isImageSearchTemplate(r.url.trim())) return null
+  const template: ImageSearchTemplate = {
+    name: r.name.trim().slice(0, MAX_ENGINE_NAME),
+    url: r.url.trim()
+  }
+  const post = sanitizeImageSearchPost(r.post)
+  if (post) template.post = post
+  return template
+}
+
+/**
+ * A stored engine's upload form (`ImageSearchPost`), kept whole – an endpoint the bytes may go
+ * to, some params, one of the two encodings – and dropped otherwise (the row then searches by
+ * address). The endpoint is `https:`, or plain `http:` on a loopback host alone
+ * (`isSecureContextUrl`, the Secure Contexts rule): the upload carries the image's bytes and
+ * the engine's cookies, which an address form's GET does too but a stored engine asking for
+ * them in the clear over the network gets no row for; a server on the user's own machine never
+ * puts them on a wire.
+ */
+function sanitizeImageSearchPost(raw: unknown): ImageSearchPost | null {
+  if (!raw || typeof raw !== 'object') return null
+  const r = raw as Record<string, unknown>
+  if (typeof r.url !== 'string' || r.url.length > MAX_ENGINE_URL) return null
+  const url = r.url.trim()
+  if (!isSecureContextUrl(url)) return null
+  if (typeof r.params !== 'string' || !r.params.trim() || r.params.length > MAX_ENGINE_URL)
+    return null
+  if (r.encoding !== 'multipart' && r.encoding !== 'urlencoded') return null
+  return {
+    url,
+    params: r.params.trim(),
+    encoding: r.encoding,
+    thumbnail: sanitizeImageThumbnail(r.thumbnail)
+  }
+}
+
+/** The widest thumbnail bound a stored engine may ask for (Chrome's two are 600 and 1000). */
+const MAX_THUMBNAIL_SIDE = 8192
+
+/**
+ * A stored engine's thumbnail bounds (`ImageThumbnailBounds`), kept when they are whole
+ * positive integers within reason – a side at most `MAX_THUMBNAIL_SIDE`, an area at most that
+ * side squared (a larger area would let an image over the side travel at its own size, the
+ * pair contradicting itself) – and otherwise Chrome's bounds for an engine that is not Google
+ * (`GENERIC_IMAGE_THUMBNAIL`): a record from before the field, or a broken one, downscales as
+ * Chrome would for such an engine.
+ */
+function sanitizeImageThumbnail(raw: unknown): ImageThumbnailBounds {
+  if (raw && typeof raw === 'object') {
+    const { maxSide, minArea } = raw as Record<string, unknown>
+    const whole = (n: unknown, min: number, max: number): n is number =>
+      typeof n === 'number' && Number.isInteger(n) && n >= min && n <= max
+    if (whole(maxSide, 1, MAX_THUMBNAIL_SIDE) && whole(minArea, 0, maxSide * maxSide))
+      return { maxSide, minArea }
+  }
+  return { ...GENERIC_IMAGE_THUMBNAIL }
 }
 
 function sanitizeFavicon(raw: unknown): string | null {

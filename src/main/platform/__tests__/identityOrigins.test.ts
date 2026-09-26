@@ -197,6 +197,7 @@ function pipeline(flags: Partial<PrivacyFlags> = {}): {
     dnt: DEFAULT_PRIVACY_SETTINGS.dnt,
     secureDnsMode: DEFAULT_PRIVACY_SETTINGS.secureDnsMode,
     secureDnsServers: [],
+    preloadPages: 'standard',
     siteData: DEFAULT_SITE_DATA_POLICY,
     ...flags
   }

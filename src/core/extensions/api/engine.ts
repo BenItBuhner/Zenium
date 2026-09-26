@@ -990,40 +990,8 @@ export function createEmulatedEngine(
     // `launchWebAuthFlow` on the way back there.
     if (granted('identity'))
       chrome.identity = { getRedirectURL: (path?: unknown) => redirectUrl(config.id, path) }
-    if (granted('privacy')) {
-      // Chrome exposes ChromeSettings objects; extensions mostly probe `websites.hyperlinkAuditingEnabled`.
-      const setting = (): Record<string, unknown> => ({
-        get: (...args: unknown[]) =>
-          settle(
-            Promise.resolve({ value: false, levelOfControl: 'not_controllable' }),
-            takeCallback(args)
-          ),
-        set: (...args: unknown[]) => settle(Promise.resolve(undefined), takeCallback(args)),
-        clear: (...args: unknown[]) => settle(Promise.resolve(undefined), takeCallback(args)),
-        onChange: createEvent('privacy.onChange', false)
-      })
-      chrome.privacy = {
-        network: { networkPredictionEnabled: setting(), webRTCIPHandlingPolicy: setting() },
-        services: {
-          alternateErrorPagesEnabled: setting(),
-          autofillEnabled: setting(),
-          passwordSavingEnabled: setting(),
-          safeBrowsingEnabled: setting(),
-          searchSuggestEnabled: setting(),
-          spellingServiceEnabled: setting(),
-          translationServiceEnabled: setting()
-        },
-        websites: {
-          thirdPartyCookiesAllowed: setting(),
-          hyperlinkAuditingEnabled: setting(),
-          referrersEnabled: setting(),
-          doNotTrackEnabled: setting(),
-          topicsEnabled: setting(),
-          fledgeEnabled: setting(),
-          adMeasurementEnabled: setting()
-        }
-      }
-    }
+    // `chrome.privacy`'s ChromeSettings are the shim's, routed to the host (`spec.ts` `settings`;
+    // the phone's `extensionPrivacy.ts` answers them), since compat round 20.
     // `system.display`, `system.storage`, `system.cpu` and `system.memory` are the table's, for
     // the extensions that declared them (`engineSpec.ts`); the host answers each. The holder
     // `chrome.system` is the table's too, made once one of those permissions is held, as Chrome

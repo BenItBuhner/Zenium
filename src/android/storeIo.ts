@@ -1,7 +1,17 @@
 import { INDEX_FILE } from '@core/blocking/store'
 import type { StoreIO, StoreWriteOptions } from '@core/platform'
+import { BOOKMARKS_INBOX_FILE } from './bookmarkInbox'
 import type { Bridge } from './bridge'
 import { fetchStoredDocument, type HandoffFetch } from './handoff'
+
+/**
+ * Root documents with a writer outside the core: the custom tab (`CustomTabActivity.kt`, no
+ * core) files its star into the bookmark inbox from its own `Storage`. A mirror of such a
+ * document goes stale under that writer, and a write of the bytes the mirror holds would be
+ * skipped while the disk says otherwise – so one is never mirrored, like a backup: the boot
+ * copy is handed over once, every later read asks the host, every write goes through.
+ */
+const EXTERNAL_DOCUMENTS: ReadonlySet<string> = new Set([BOOKMARKS_INBOX_FILE])
 
 /**
  * Documents cross the bridge in pieces of this many characters. One bridge call carrying a
@@ -95,7 +105,7 @@ export class AndroidStoreIO implements StoreIO {
   ) {
     this.pending = new Set(deferred.map((doc) => doc.name))
     // A folder document the payload inlined (a Safe Browsing feed still small) is handed to its
-    // service like a deferred one, not mirrored.
+    // service like a deferred one, not mirrored; so is the bookmark inbox, to its drain.
     for (const name of Object.keys(files)) {
       if (!this.mirrored(name)) {
         this.handed.set(name, files[name])
@@ -107,10 +117,11 @@ export class AndroidStoreIO implements StoreIO {
   /**
    * Root documents and the rule-set index live in the mirror; every other document stays on
    * disk. So does a backup (`state.json.bak`): the host rotates it under a write of its document,
-   * which the mirror would not see, and the core reads it once, when the document is gone.
+   * which the mirror would not see, and the core reads it once, when the document is gone. And
+   * so does a document another activity writes ({@link EXTERNAL_DOCUMENTS}).
    */
   private mirrored(name: string): boolean {
-    if (name.endsWith('.bak')) return false
+    if (name.endsWith('.bak') || EXTERNAL_DOCUMENTS.has(name)) return false
     return !name.includes('/') || name === INDEX_FILE
   }
 

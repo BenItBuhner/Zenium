@@ -1,0 +1,17 @@
+{
+  "id": "motion-perf",
+  "order": 99,
+  "class": "MotionPerfDemo",
+  "shard": "api35",
+  "mirrors": "android-motion-perf.yml",
+  "dir": "perf-motion",
+  "env": {
+    "DEMO_THEME": "light",
+    "DEMO_ARGS": "-e holdBackgroundWork true",
+    "DEMO_HANDSHAKE_S": "480",
+    "DEMO_RECORD": "0"
+  },
+  "timeout": 1200,
+  "estimate": 11.5,
+  "note": "The workflow's arguments; no recording in the nightly (the profile is the point, the encoder a load of its own). The driver's default `scenes all` runs every group, the Space switch's included (MOT-05, #497). The estimate carries the group fold's four scenes (about a minute of the profile), the group leave's three – the search, the close, the drag-out – with their off-record steps (about another minute and a half), and the Space switch's two – forward and back over thirty tabs in each of two Spaces – with the second Space's making off the record (about a minute and a half more: the group alone ran 213–230 s on the workflow with its own start-up)."
+}

@@ -34,7 +34,10 @@ import {
  * against a fake.
  */
 export interface UserScriptsBridge {
-  /** `ipcRenderer.sendSync`: the frame's plan, asked once at document start. */
+  /**
+   * The frame's plan, asked once at document start – the `userScripts` field of the page's one
+   * synchronous document-start ask (`shared/documentStart.ts`), which the page preload carries.
+   */
   plan(request: PlanRequest): unknown
   /** `ipcRenderer.invoke`: a world's `runtime.sendMessage`. */
   message(message: WorldMessage): Promise<unknown>

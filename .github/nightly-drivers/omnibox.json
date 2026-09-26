@@ -1,0 +1,12 @@
+{
+  "id": "omnibox",
+  "order": 73,
+  "class": "OmniboxDemo",
+  "shard": "phone-d",
+  "mirrors": "android-omnibox-demo.yml",
+  "dir": "omnibox-demo",
+  "env": {
+    "DEMO_THEME": "light"
+  },
+  "estimate": 4
+}

@@ -1,0 +1,11 @@
+{
+  "id": "tablet-private",
+  "order": 116,
+  "class": "TabletPrivateDemo",
+  "shard": "tablet-webview",
+  "mirrors": "android-tablet-private-demo.yml",
+  "dir": "tablet-private-demo",
+  "timeout": 1200,
+  "estimate": 7,
+  "note": "Sets a device PIN for the run (locksettings set-pin, cleared at the end) as the private lock demo does."
+}

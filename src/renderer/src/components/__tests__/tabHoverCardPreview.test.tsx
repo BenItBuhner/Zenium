@@ -27,7 +27,7 @@ vi.mock('@renderer/lib/api', () => ({
 
 const { cmd } = await import('@renderer/lib/api')
 const { browserStore, HOVER_CARD_HIDDEN, uiStore } = await import('@renderer/lib/ui')
-const { HOVER_CARD_DELAY, hoverCard } = await import('@renderer/lib/hoverCard')
+const { HOVER_CARD_DELAY, hoverCard, hoverCardHosted } = await import('@renderer/lib/hoverCard')
 const { rememberThumbnail, resetThumbnails } = await import('@renderer/lib/thumbnails')
 const { TabHoverCard } = await import('../TabHoverCard')
 
@@ -226,12 +226,47 @@ describe('the page preview in the hover card (tabs-19)', () => {
     vi.useFakeTimers()
     const state = fixture([tab('a'), tab('b')], 'a')
     browserStore.set({ state })
+    render(<TabHoverCard state={state} />)
     hoverCard.pointerEnter('a', () => ({ anchor: box, sidebar }))
     await vi.advanceTimersByTimeAsync(HOVER_CARD_DELAY)
     await vi.advanceTimersByTimeAsync(0)
     const snapshots = vi.mocked(cmd).mock.calls.filter(([name]) => name === 'overlay.snapshot')
     expect(snapshots).toEqual([['overlay.snapshot', { tabId: 'a' }]])
     hoverCard.hide()
+  })
+
+  it('raises no card and captures nothing while no host is mounted – a mouse on the tablet chrome, which mounts none (Samsung DeX, OS-12); the host’s mount lets the rows raise it, its unmount takes it down', async () => {
+    vi.useFakeTimers()
+    const state = fixture([tab('a'), tab('b')], 'a')
+    browserStore.set({ state })
+    expect(hoverCardHosted()).toBe(false)
+    hoverCard.pointerEnter('b', () => ({ anchor: box, sidebar }))
+    await vi.advanceTimersByTimeAsync(HOVER_CARD_DELAY + 100)
+    await vi.advanceTimersByTimeAsync(0)
+    // Nothing raised, and – what the page would feel – nothing captured: the content frame keeps
+    // the live page shown (`overlayCoversContent` reads the store).
+    expect(uiStore.get().hoverCard.tabId).toBeNull()
+    expect(vi.mocked(cmd).mock.calls.filter(([name]) => name === 'overlay.snapshot')).toEqual([])
+    hoverCard.focus('b', () => ({ anchor: box, sidebar }))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(uiStore.get().hoverCard.tabId).toBeNull()
+
+    render(<TabHoverCard state={state} />)
+    expect(hoverCardHosted()).toBe(true)
+    hoverCard.pointerEnter('b', () => ({ anchor: box, sidebar }))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(HOVER_CARD_DELAY)
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(uiStore.get().hoverCard.tabId).toBe('b')
+    expect(card()).not.toBeNull()
+
+    act(() => root!.unmount())
+    root = null
+    mount?.remove()
+    mount = null
+    expect(hoverCardHosted()).toBe(false)
+    expect(uiStore.get().hoverCard.tabId).toBeNull()
   })
 
   it('frames the picture 16:10 at the card’s inner width as an inner box – r6 with no squircle inside the card’s own r8 (§2, the lead’s #436 ruling 2) – ringed by a 1 px hairline', () => {

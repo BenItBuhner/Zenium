@@ -1,0 +1,11 @@
+{
+  "id": "text-tools",
+  "order": 14,
+  "class": "TextToolsUiDemo",
+  "shard": "phone-a",
+  "mirrors": "android-text-tools-demo.yml",
+  "dir": "text-tools-demo",
+  "script": ".github/scripts/android-text-tools-demo.sh",
+  "timeout": 900,
+  "estimate": 2.5
+}

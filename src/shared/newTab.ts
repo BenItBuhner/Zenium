@@ -8,6 +8,7 @@
  * `settings.newTabPhone` – into this one.
  */
 import type {
+  MagicStackModuleId,
   NewTabBackgroundKind,
   NewTabDeviceState,
   NewTabMode,
@@ -31,6 +32,21 @@ export const MAX_NEW_TAB_SHORTCUTS = 8
 
 /** Most hosts the block list of the most-visited tiles keeps. */
 export const MAX_NEW_TAB_HIDDEN_HOSTS = 500
+
+/**
+ * The Magic Stack's modules in the order the stack pages through them (NTP-16): the cards with
+ * the user's own content first, the promo last. The Customise sheet lists them in this order too.
+ */
+export const MAGIC_STACK_MODULE_IDS: readonly MagicStackModuleId[] = [
+  'continue',
+  'downloads',
+  'bookmarks',
+  'default-browser'
+]
+
+export function isMagicStackModuleId(value: unknown): value is MagicStackModuleId {
+  return typeof value === 'string' && (MAGIC_STACK_MODULE_IDS as readonly string[]).includes(value)
+}
 
 export const NEW_TAB_PRESETS: readonly NewTabPreset[] = [
   'focused',
@@ -67,7 +83,7 @@ export const DEFAULT_NEW_TAB_SETTINGS: NewTabSettings = {
 }
 
 export function emptyNewTabDevice(): NewTabDeviceState {
-  return { shortcuts: [], hiddenHosts: [] }
+  return { shortcuts: [], hiddenHosts: [], hiddenModules: [] }
 }
 
 // ---------------------------------------------------------------------------
@@ -169,12 +185,31 @@ export function sanitizeNewTabShortcuts(raw: unknown): NewTabShortcut[] {
   return out
 }
 
+/** The hidden Magic Stack modules from disk: known ids only, once each, in the stack's order. */
+export function sanitizeHiddenModules(raw: unknown): MagicStackModuleId[] {
+  if (!Array.isArray(raw)) return []
+  return MAGIC_STACK_MODULE_IDS.filter((id) => raw.includes(id))
+}
+
 export function sanitizeNewTabDevice(raw: unknown): NewTabDeviceState {
   const r = obj(raw)
   return {
     shortcuts: sanitizeNewTabShortcuts(r.shortcuts),
-    hiddenHosts: sanitizeHiddenHosts(r.hiddenHosts)
+    hiddenHosts: sanitizeHiddenHosts(r.hiddenHosts),
+    hiddenModules: sanitizeHiddenModules(r.hiddenModules)
   }
+}
+
+/** `hidden` sets or clears one module in the device's hidden set; the set keeps the stack's order. */
+export function setModuleHidden(
+  device: NewTabDeviceState,
+  id: MagicStackModuleId,
+  hidden: boolean
+): NewTabDeviceState {
+  const current = device.hiddenModules.includes(id)
+  if (current === hidden) return device
+  const next = hidden ? [...device.hiddenModules, id] : device.hiddenModules.filter((m) => m !== id)
+  return { ...device, hiddenModules: sanitizeHiddenModules(next) }
 }
 
 // ---------------------------------------------------------------------------
@@ -329,7 +364,7 @@ export function pinShortcut(
   ) {
     return hiddenHosts.length === device.hiddenHosts.length ? device : { ...device, hiddenHosts }
   }
-  return { shortcuts: [...device.shortcuts, shortcut], hiddenHosts }
+  return { ...device, shortcuts: [...device.shortcuts, shortcut], hiddenHosts }
 }
 
 /** Unpin a site: its shortcut goes; its host stays visible among the most visited. */
@@ -512,13 +547,15 @@ export function migrateNewTabDevice(
       ? sanitizeNewTabDevice(sources.newTabDevice)
       : {
           shortcuts: sanitizeNewTabShortcuts(sources.newTabShortcuts),
-          hiddenHosts: sanitizeHiddenHosts(sources.newTabHiddenHosts)
+          hiddenHosts: sanitizeHiddenHosts(sources.newTabHiddenHosts),
+          hiddenModules: []
         }
   const phone = readLegacyPhone(sources.newTabPhone)
   if (!phone) return current
   let device: NewTabDeviceState = {
     shortcuts: current.shortcuts,
-    hiddenHosts: sanitizeHiddenHosts([...current.hiddenHosts, ...phone.hiddenHosts])
+    hiddenHosts: sanitizeHiddenHosts([...current.hiddenHosts, ...phone.hiddenHosts]),
+    hiddenModules: current.hiddenModules
   }
   for (const pin of phone.pinned)
     device = pinShortcut(device, {

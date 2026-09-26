@@ -33,6 +33,14 @@ export class UserActivation {
     return this.ever
   }
 
+  /**
+   * When trusted input last reached the page, on the blocker's clock (-Infinity: never, or spent
+   * on a window since). The download limiter reads it to tell one gesture's downloads apart.
+   */
+  lastActivatedAt(): number {
+    return this.lastAt
+  }
+
   /** One pop-up per gesture: allowing a window spends the transient activation. */
   consume(): void {
     this.lastAt = -Infinity

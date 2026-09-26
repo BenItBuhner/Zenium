@@ -1,0 +1,12 @@
+{
+  "id": "pill-chip-fold",
+  "order": 2,
+  "class": "PillChipFoldDemo",
+  "shard": "phone-a",
+  "mirrors": "android-pill-chip-fold-demo.yml",
+  "dir": "pill-chip-fold-demo",
+  "env": {
+    "DEMO_THEME": "dark"
+  },
+  "estimate": 2.5
+}

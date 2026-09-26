@@ -62,6 +62,7 @@ abstract class MediaDemoBase(private val shotPrefix: String) : DemoHarness("medi
             mapOf(
                 "/audio" to page,
                 "/video" to page,
+                "/background" to page,
                 "/notify" to page,
                 "/capture" to page,
                 "/private" to page,

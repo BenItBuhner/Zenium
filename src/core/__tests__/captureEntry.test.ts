@@ -207,7 +207,7 @@ describe('the palette', () => {
     }
     expect(searchCommands('web capture', desktop)[0]).toMatchObject({
       id: 'web-capture',
-      label: 'Web Capture',
+      label: 'Screenshot',
       action: 'capture.start'
     })
   })

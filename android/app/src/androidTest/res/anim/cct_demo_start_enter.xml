@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The caller's START animation for the custom tab (CustomTabsIntent.Builder.setStartAnimations, CCT-08):
+     a slow slide in from the right, long enough for the driver's screenshots to read its progress. -->
+<translate xmlns:android="http://schemas.android.com/apk/res/android"
+    android:duration="2000"
+    android:interpolator="@android:interpolator/linear"
+    android:fromXDelta="100%p"
+    android:toXDelta="0" />

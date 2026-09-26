@@ -119,8 +119,9 @@ export function quitChordOf(shortcuts: readonly Shortcut[]): KeyBinding | null {
 }
 
 /**
- * A toolbox's frontend as the relay needs it – its console, the frame of its own document and a
- * script run in it (Electron's `WebContents`; `mainFrame` and a line's `frame` its `WebFrameMain`).
+ * A toolbox's frontend as the relay needs it – its console, the frame of its own document, a
+ * script run in it and whether it is gone (Electron's `WebContents`; `mainFrame` and a line's
+ * `frame` its `WebFrameMain`).
  */
 export interface DevtoolsFrontendLike {
   readonly mainFrame: unknown
@@ -129,6 +130,31 @@ export interface DevtoolsFrontendLike {
     listener: (event: { message: string; frame?: unknown }) => void
   ): unknown
   executeJavaScript(code: string, userGesture?: boolean): Promise<unknown>
+  isDestroyed(): boolean
+}
+
+/**
+ * A toolbox as the held-key notice needs it: its frontend, the window its keys go to, and
+ * whether it stands in a window of its own.
+ */
+export interface DevtoolsToolbox {
+  readonly frontend: DevtoolsFrontendLike
+  /** The window the toolbox's relayed keys are the keys of; its identity alone is read. Null while it has none. */
+  window(): object | null
+  /**
+   * True while the toolbox is a window of its own – a page's at `undocked`, the Browser Console
+   * always (`detach`) – and false docked into the page's view, where the browser window has the
+   * keyboard and the page's panel stands in sight.
+   */
+  detached(): boolean
+}
+
+/**
+ * The held-key notice as the relay reports to it (`devtoolsQuitHoldNotice.ts`): the chord went
+ * down in a toolbox, or a key came up there – said before the key table hears the key.
+ */
+export interface DevtoolsKeyWitness {
+  heard(toolbox: DevtoolsToolbox, key: KeyEventInput): void
 }
 
 const relayed = new WeakSet<object>()
@@ -136,7 +162,9 @@ const relayed = new WeakSet<object>()
 /**
  * The relay on one toolbox: its console watched for the keys the script says, the script run
  * with the chord as bound at this moment. Once per frontend; `onKey` gets each key in the key
- * table's shape, for the window the toolbox belongs to.
+ * table's shape, for the window the toolbox belongs to. With `toolbox` named, each key is
+ * reported to the held-key notice first (`DevtoolsKeyWitness.heard`), so a hold the key table
+ * arms from it knows where the keyboard is.
  *
  * Only the frontend document's own frame is heard (the first line's R1 on #486): the console
  * event carries every frame's lines, and an extension's `devtools_page` – Zenium loads extensions
@@ -149,14 +177,20 @@ const relayed = new WeakSet<object>()
 export function relayDevtoolsQuitChord(
   frontend: DevtoolsFrontendLike,
   chord: () => KeyBinding | null,
-  onKey: (key: KeyEventInput) => void
+  onKey: (key: KeyEventInput) => void,
+  toolbox?: { notice: DevtoolsKeyWitness; window(): object | null; detached(): boolean }
 ): void {
   if (relayed.has(frontend)) return
   relayed.add(frontend)
+  const notice = toolbox
+    ? { at: toolbox.notice, of: { frontend, window: toolbox.window, detached: toolbox.detached } }
+    : null
   frontend.on('console-message', (event) => {
     if (event.frame === undefined || event.frame !== frontend.mainFrame) return
     const key = devtoolsKeyFromMessage(event.message)
-    if (key) onKey(key)
+    if (!key) return
+    if (notice) notice.at.heard(notice.of, key)
+    onKey(key)
   })
   frontend.executeJavaScript(devtoolsQuitChordScript(chord()), true).catch(() => undefined)
 }

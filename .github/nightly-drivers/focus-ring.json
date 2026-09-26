@@ -1,0 +1,9 @@
+{
+  "id": "focus-ring",
+  "order": 64,
+  "class": "FocusRingDemo",
+  "shard": "phone-d",
+  "mirrors": "android-focus-ring-demo.yml",
+  "dir": "focus-ring-demo",
+  "estimate": 3
+}

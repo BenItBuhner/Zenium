@@ -11,6 +11,7 @@ import { run } from '@renderer/lib/api'
 import { isPhone, useFormFactorReport, useViewport } from '@renderer/lib/formFactor'
 import { openNewTabPage } from '@renderer/lib/newtab'
 import { onboardingCovers } from '@renderer/lib/onboarding'
+import { searchChoiceCovers } from '@renderer/lib/searchChoice'
 import { activeTab } from '@renderer/lib/selectors'
 import {
   captureActiveTab,
@@ -36,6 +37,7 @@ import { ChromeDropLayer, DragLayer } from './components/DragLayer'
 import { PopupFrame } from './components/extensions/PopupFrame'
 import { ModStyles } from './components/ModStyles'
 import { Onboarding } from './components/overlays/Onboarding'
+import { SearchChoiceScreen } from './components/overlays/SearchChoice'
 import { InternalPageHost } from './components/pages/InternalPageHost'
 import { PhoneShell } from './components/phone/PhoneShell'
 import { COLLAPSED_WIDTH, Sidebar } from './components/sidebar/Sidebar'
@@ -144,6 +146,8 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
   // Blank / private windows never show onboarding (it belongs to the main profile window); the
   // chrome that waits for the tour to end (the URL bar) reads the same terms (`onboardingUp`).
   const onboarding = onboardingCovers(state)
+  // The EEA's search-engine choice screen on its own (W6-2): after the tour, on the same terms.
+  const searchChoice = !onboarding && searchChoiceCovers(state)
   const htmlFullscreen = state.window.htmlFullscreenTabId !== null
   // The window's fullscreen (F11): the page runs edge to edge and the chrome hides as it does in
   // compact mode with both switches on, coming out at its edge under the cursor.
@@ -380,6 +384,7 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
       {/* The chrome tooltip's one host (a11y-26): the desktop's, mouse and keyboard only (§9.31). */}
       <Tooltip />
       {onboarding && <Onboarding state={state} />}
+      {searchChoice && <SearchChoiceScreen state={state} />}
     </div>
   )
 }

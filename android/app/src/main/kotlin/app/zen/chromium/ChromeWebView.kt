@@ -20,6 +20,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.webkit.WebViewAssetLoader
+import app.zen.chromium.ext.ExtReplyHop
 import app.zen.chromium.ext.ExtensionStore
 import org.json.JSONObject
 import java.io.File
@@ -79,6 +80,10 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
         isVerticalScrollBarEnabled = false
         isHorizontalScrollBarEnabled = false
         addJavascriptInterface(bridge, "__zenNative")
+        // The extension runtime's reply hop (`ext.send` over a synchronous entry, one UI turn
+        // fewer than the port: `ExtReplyHop`); the extensions are read at each call, since the
+        // host builds this view before them.
+        addJavascriptInterface(ExtReplyHop(bridge.admission) { host.extensions }, ExtReplyHop.NAME)
         webViewClient = object : WebViewClient() {
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
                 handoffResponse(request.url) ?: loader.shouldInterceptRequest(request.url)?.also { profilable(request, it) }

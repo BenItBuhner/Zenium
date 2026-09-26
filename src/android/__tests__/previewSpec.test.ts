@@ -276,6 +276,13 @@ describe('parsePreviewSpec', () => {
       url: 'https://sample.example/other'
     })
     expect(parsePreviewSpec('link=')).toEqual({ kind: 'idle' })
+    // The image sheet: a hold on an image at the address (CT-32's Search Image row).
+    expect(parsePreviewSpec('image=https://sample.example/a.png')).toEqual({
+      kind: 'link',
+      url: 'https://sample.example/a.png',
+      image: true
+    })
+    expect(parsePreviewSpec('image=')).toEqual({ kind: 'idle' })
   })
 
   it('opens the app menu, behind an overlay but ahead of the bars', () => {
@@ -335,6 +342,21 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('sheet=recently-closed')).toEqual({ kind: 'idle' })
     expect(parsePreviewSteps('hold:Dark Reader;hold:;hold')).toEqual([
       { kind: 'hold', text: 'Dark Reader' }
+    ])
+  })
+
+  it('puts the new tab page’s cards strip on its nth card (`cards:<n>`, 1-based); a page that is no count is no step', () => {
+    expect(parsePreviewSpec('ntp=rest&then=cards:2;tap:More options for Downloads')).toEqual({
+      kind: 'ntp',
+      pose: { kind: 'rest' },
+      private: false,
+      then: [
+        { kind: 'cards', page: 2 },
+        { kind: 'tap', text: 'More options for Downloads' }
+      ]
+    })
+    expect(parsePreviewSteps('cards:0;cards:1.5;cards:;cards:two;cards:3')).toEqual([
+      { kind: 'cards', page: 3 }
     ])
   })
 

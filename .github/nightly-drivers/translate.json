@@ -1,0 +1,13 @@
+{
+  "id": "translate",
+  "order": 55,
+  "class": "TranslateDemo",
+  "shard": "phone-c",
+  "mirrors": "android-translate-demo.yml",
+  "dir": "translate-demo",
+  "script": ".github/scripts/android-translate-demo.sh",
+  "env": {
+    "TRANSLATE_SEQUENCE": "engine"
+  },
+  "estimate": 1.5
+}

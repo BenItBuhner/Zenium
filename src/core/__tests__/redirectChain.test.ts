@@ -214,4 +214,137 @@ describe('redirect chains from the hosts to history (history-23)', () => {
     view?.events.onNavigated(LANDING, false)
     expect(recorded(f)).toHaveLength(before)
   })
+
+  it('leaves no row for a chain whose tab closes before it commits', () => {
+    const f = fixture()
+    const { tabId, events } = page(f)
+    events.onStartNavigation?.(SHORT, false)
+    events.onRedirected?.(SHORT, HTTP)
+    f.browser.tabs.closeTab(tabId)
+    expect(recorded(f)).toEqual([])
+    expect(f.browser.history.visited(SHORT)).toBe(false)
+    expect(f.browser.history.visited(HTTP)).toBe(false)
+  })
+})
+
+/*
+ * Client redirects (history-23): a commit the page began that replaced the page's own history
+ * entry – `location.replace()`, a meta refresh within a second, a script's navigation before the
+ * load event finished – is Chromium's `did_replace_entry` on a renderer-initiated navigation, what
+ * Chrome's history marks `PAGE_TRANSITION_CLIENT_REDIRECT` and folds into the landing's chain.
+ * The desktop host reports both facts with the commit (`NavigationCommitDetails`); a host that
+ * cannot (the phone's WebView) leaves them out and the page keeps its row.
+ */
+describe('client redirects from the hosts to history (history-23)', () => {
+  const GATE = 'https://example.test/gate'
+  const HOME = 'https://example.test/home'
+  const replaced = { replacedEntry: true, initiatedByPage: true }
+
+  /** The address typed into the tab, committed as the page it shows. */
+  function shown(f: Fixture, tabId: string, events: TabViewEvents, url: string): void {
+    f.browser.tabs.navigate(tabId, url, { transition: 'typed' })
+    events.onStartNavigation?.(url, false)
+    events.onNavigated(url, false, { replacedEntry: false, initiatedByPage: false })
+    expect(f.browser.history.visits({ limit: 10 })[0]?.url).toBe(url)
+  }
+
+  it('folds the page into the landing’s row when the page replaced its own entry: one row, the typed credit kept, the late title on both', () => {
+    const f = fixture()
+    const { tabId, events } = page(f, GATE)
+    shown(f, tabId, events, GATE)
+    events.onStartNavigation?.(HOME, false)
+    events.onNavigated(HOME, false, replaced)
+    expect(recorded(f)).toEqual([
+      [GATE, true, undefined],
+      [HOME, undefined, [GATE]]
+    ])
+    const rows = f.browser.history.visits({ limit: 10 })
+    expect(rows.map((v) => [v.url, v.tabId])).toEqual([[HOME, tabId]])
+    const typed = new Map(f.browser.history.recent(5).map((e) => [e.url, e.typedCount]))
+    expect(typed.get(GATE)).toBe(1)
+    expect(typed.get(HOME)).toBe(0)
+    // The landing's title arrives after the commit: the row and the page it replaced take it.
+    events.onTitleUpdated('Example Home')
+    expect(f.browser.history.titleFor(HOME)).toBe('Example Home')
+    expect(f.browser.history.titleFor(GATE)).toBe('Example Home')
+    // The omnibox offers the chain once – by the typed start, which outranks the landing it
+    // led to and wears the landing's title (Chrome's `CullRedirects` keeps the best member).
+    expect(f.browser.history.search('example', 5).map((e) => [e.url, e.title])).toEqual([
+      [GATE, 'Example Home']
+    ])
+  })
+
+  it('carries a server chain into the fold: the typed start, its hops, the replaced page, the new hops, one landing', () => {
+    const f = fixture()
+    const { tabId, events } = page(f)
+    f.browser.tabs.navigate(tabId, SHORT, { transition: 'typed' })
+    events.onStartNavigation?.(SHORT, false)
+    events.onRedirected?.(SHORT, HTTP)
+    events.onRedirected?.(HTTP, LANDING)
+    events.onNavigated(LANDING, false, { replacedEntry: false, initiatedByPage: false })
+    events.onStartNavigation?.(GATE, false)
+    events.onRedirected?.(GATE, HOME)
+    events.onNavigated(HOME, false, replaced)
+    expect(recorded(f)).toEqual([
+      [SHORT, true, undefined],
+      [HTTP, true, undefined],
+      [LANDING, true, undefined],
+      [GATE, true, undefined],
+      [HOME, undefined, [SHORT, HTTP, LANDING, GATE]]
+    ])
+    expect(f.browser.history.visits({ limit: 10 }).map((v) => v.url)).toEqual([HOME])
+    expect(f.browser.history.recent(9).find((e) => e.url === SHORT)?.typedCount).toBe(1)
+  })
+
+  it('keeps the page’s row when its entry stayed, when the browser replaced it, for a same-document commit, and when the page came back to its own address', () => {
+    const f = fixture()
+    const { tabId, events } = page(f, GATE)
+    shown(f, tabId, events, GATE)
+    // A timed meta refresh, a click: a new entry, a visit of its own.
+    events.onStartNavigation?.(HOME, false)
+    events.onNavigated(HOME, false, { replacedEntry: false, initiatedByPage: true })
+    expect(recorded(f)).toEqual([
+      [GATE, undefined, undefined],
+      [HOME, undefined, undefined]
+    ])
+    // The browser's own replacement of the entry is no redirect of the page's.
+    events.onStartNavigation?.(SHORT, false)
+    events.onNavigated(SHORT, false, { replacedEntry: true, initiatedByPage: false })
+    expect(recorded(f).at(-1)).toEqual([SHORT, undefined, undefined])
+    expect(recorded(f)).toHaveLength(3)
+    // A pushState is not a redirect, whatever the host says of the entry.
+    events.onStartNavigation?.(`${SHORT}#p`, true)
+    events.onNavigated(`${SHORT}#p`, true, replaced)
+    expect(recorded(f).at(-1)).toEqual([`${SHORT}#p`, undefined, undefined])
+    expect(recorded(f)).toHaveLength(4)
+    // `location.replace(location.href)` reads as a reload: the page keeps its row.
+    events.onStartNavigation?.(`${SHORT}#p`, false)
+    events.onNavigated(`${SHORT}#p`, false, replaced)
+    expect(recorded(f).slice(-2)).toEqual([
+      [`${SHORT}#p`, undefined, undefined],
+      [`${SHORT}#p`, undefined, undefined]
+    ])
+    expect(f.browser.history.count(0, Infinity)).toBe(5)
+  })
+
+  it('works as before for a host that reports no commit details (the phone)', () => {
+    const f = fixture()
+    const { events } = page(f, GATE)
+    events.onStartNavigation?.(GATE, false)
+    events.onNavigated(GATE, false)
+    events.onStartNavigation?.(HOME, false)
+    events.onNavigated(HOME, false)
+    expect(recorded(f)).toEqual([
+      [GATE, undefined, undefined],
+      [HOME, undefined, undefined]
+    ])
+    // Two rows on the page (in no order of their own: one clock tick holds both here).
+    expect(
+      f.browser.history
+        .visits({ limit: 10 })
+        .map((v) => v.url)
+        .sort()
+    ).toEqual([GATE, HOME])
+    expect(f.browser.history.count(0, Infinity)).toBe(2)
+  })
 })

@@ -4,9 +4,10 @@
  * `DNT: 1` request headers the hosts' request engines add.
  */
 
-/** The page preload's sync IPC for the signals of the document it is about to run in. */
-export const PRIVACY_SIGNALS_CHANNEL = 'zen:privacy-signals'
-
+/**
+ * The signals of the document the page preload is about to run in: the `signals` field of its
+ * one document-start ask (`documentStart.ts`).
+ */
 export interface PrivacySignals {
   gpc: boolean
   dnt: boolean
