@@ -11,9 +11,6 @@ name: Android first run demo
 # live in android-emulator-demo.yml; this file only picks the driver.
 on:
   workflow_dispatch:
-  # TEMPORARY (H5, removed before READY): FirstRunDemo's About-row read through the shared names on this branch.
-  push:
-    branches: [cursor/android-harness-h5b-9271]
 
 permissions:
   contents: read
