@@ -2659,6 +2659,25 @@ function TabSheet({
         onPick: () => run('tab.moveToFolder', { tabId: tab.id, folderId: null })
       })
   }
+  // Chrome's card hold offers Share and Add to bookmarks between its group rows and the close
+  // (TAB-28), and so does this one, for a tab that is a page (`pageTabs`, the select-tabs bar's
+  // rule: a blank tab, the new tab page and the browser's own pages have nothing to share or
+  // file). Share… runs once the sheet has landed – the share panel below Android 14, the
+  // system sheet from 14 (`share.open`, the tab's title and address) – so no sheet stands over
+  // a sheet; the bookmark row reads the tab's state and toggles it in place (`bookmark.toggle`:
+  // the core's toast says which folder took it, or Undo on the removal), no ellipsis since
+  // nothing opens. Menu items, so Title Case (§9.1); "Remove Bookmark" is the tab row's word
+  // on every host.
+  if (pageTabs([tab]).length > 0) {
+    actions.push(
+      { id: 'share', label: 'Share…', onPick: () => run('share.open', { tabId: tab.id }) },
+      {
+        id: 'bookmark',
+        label: tab.bookmarked ? 'Remove Bookmark' : 'Add to Bookmarks',
+        onPick: () => run('bookmark.toggle', { tabId: tab.id })
+      }
+    )
+  }
   if (!tab.pinned && !tab.essential && others > 0)
     actions.push({
       id: 'close-others',
