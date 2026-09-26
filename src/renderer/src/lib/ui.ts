@@ -2051,9 +2051,13 @@ export async function openSharePanel(request: SharePanelRequest): Promise<void> 
     uiStore.set({ sharePanel: request, shareSeam: step.seam, drawerOpen: false })
     return
   }
-  // A menu still waiting for a request that is not its own leaves as a pick would have had it.
+  // A menu still waiting for a request that is not its own leaves as a pick would have had it. A
+  // panel the menu was hosting goes in the same set as the seam: the host has let that share go
+  // already (a newer share supersedes the older one on its side), and `SharePanelLayer` must not
+  // find the older request standing on its own for the frame the page's cover takes to capture.
   if (state.shareSeam) {
-    uiStore.set({ shareSeam: null })
+    if (state.shareSeam.phase === 'hosting') uiStore.set({ shareSeam: null, sharePanel: null })
+    else uiStore.set({ shareSeam: null })
     closeMenu(false)
   }
   await captureActiveTab(request.tabId)

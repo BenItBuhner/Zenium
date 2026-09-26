@@ -276,6 +276,7 @@ afterEach(() => {
     })
   )
   browserStore.set({ state: null })
+  invoke.mockReset()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
   vi.useRealTimers()
@@ -553,6 +554,53 @@ describe('the hand-off (the seam’s second half: the menu’s chassis becomes t
     // The panel's own layer draws it, not the menu's (which is on its way out).
     expect(q('.zen-share-panel [data-row="apps"]')).not.toBeNull()
     expect(q('.zen-share-panel .zen-share-seam')).toBeNull()
+  })
+
+  it("takes a hosted panel down with the seam when a page's request supersedes it: no frame draws the older request on its own while the page's cover is captured", async () => {
+    await show()
+    await pickShare()
+    await arrive()
+    expect(uiStore.get().shareSeam?.phase).toBe('hosting')
+    // The newer request's sheet waits on the page's capture; the host let the older share go
+    // when it took the newer one, so the older panel must not stand meanwhile.
+    let capture!: (data: string) => void
+    const captured = new Promise<string>((resolve) => {
+      capture = resolve
+    })
+    invoke.mockImplementation((name) =>
+      name === 'overlay.snapshot' ? captured : Promise.resolve(undefined)
+    )
+    let opened!: Promise<void>
+    act(() => {
+      opened = openSharePanel(request({ id: 'share-panel-9', source: 'page' }))
+    })
+    await settle()
+    runAll()
+    try {
+      expect(commands('overlay.snapshot')).toHaveLength(1)
+      expect(qa('.zen-share-panel')).toHaveLength(0)
+      expect(sheets()).toHaveLength(1)
+      expect(uiStore.get().sharePanel).toBeNull()
+      expect(uiStore.get().shareSeam).toBeNull()
+      expect(uiStore.get().menu).toBeNull()
+      // The chrome answers nothing for the older panel: its supersession is the host's own.
+      expect(commands('share.panelAction')).toEqual([])
+      expect(commands('menu.close')).toEqual([])
+    } finally {
+      // The capture comes in whatever was found (left pending it would hold the next test's).
+      await act(async () => {
+        capture('data:image/png;base64,PAGE9')
+        await opened
+      })
+    }
+    await settle()
+    runAll()
+    expect(uiStore.get().sharePanel?.id).toBe('share-panel-9')
+    expect(qa('.zen-share-panel')).toHaveLength(1)
+    expect(q('.zen-share-panel [data-row="apps"]')).not.toBeNull()
+    expect(q('.zen-share-panel .zen-share-seam')).toBeNull()
+    expect(topBackSurface()?.name).toBe('share-panel')
+    expect(commands('share.panelAction')).toEqual([])
   })
 
   it('hosts nothing for a menu that did not ask: a request arriving at a standing menu with no gather rises on its own', async () => {
