@@ -1075,6 +1075,24 @@
       "note": "The reader entry and the crossing into Reader View (PUI-14, MOT-36; W6-2): the offer on the §9.33 banner stack over an article from the driver's five loopback sites, Show under a finger through the crossing (frame scenes both ways), the offer's clock (about 10 s standing, the timeout a mute), the swipe / X / leaving-the-page memory per site, the page that is no article, the site-information sheet's Reader View row and its crossing, the pill's favicon kept through the reader, the strip and the crossing in dark. The driver waits out one clock (about 11 s). Its workflow's runs measured 162 s (before the clock and the sheet's acts) and 226 s: the longer one, rounded up. On phone-f, the shard with the room."
     },
     {
+      "id": "read-aloud-selection",
+      "class": "ReadAloudSelectionDemo",
+      "shard": "phone-f",
+      "mirrors": "android-read-aloud-selection-demo.yml",
+      "dir": "read-aloud-selection-demo",
+      "estimate": 3,
+      "note": "Read aloud from the selection (EDGE-12, W6-8): a real long press on a word of a loopback page, the selection toolbar's Listen behind the overflow under a real touch, the engine handed the selected word first and the sentences after it, the highlight never in the paragraph before, in both schemes; the sentence act is written down as NOT RUN on this WebView (it drops the mode on a scripted selection change). Needs the Google APIs image's speech engine (com.google.android.tts), this shard's. The dispatch run (36175414202) took about two minutes of driver after the boot; the driver puts the device's night mode back at its end."
+    },
+    {
+      "id": "link-menu",
+      "class": "LinkMenuDemo",
+      "shard": "phone-f",
+      "mirrors": "android-link-menu-demo.yml",
+      "dir": "link-menu-demo",
+      "estimate": 3,
+      "note": "The link menu on a tab in no group (PUI-17, W6-8): the tab-group drivers' seeded profile, a real hold on a loose tab's link, the sheet's rows read by name and checked against the design lead's order (Chrome 152's within Zenium's groups) with each Chrome 152 row looked up, then a real touch on Open Link in New Tab in Group making the group of two; light on Home, dark on Gamma, the two design stills. Its nightly stills are the device record of the ruled order (the dispatch runs 36196152105 and 36198125137 recorded the order before the ruling). About two and a half minutes of driver after the boot; the driver puts the device's night mode back at its end."
+    },
+    {
       "id": "sheet-leave",
       "class": "SheetLeaveDemo",
       "shard": "api35",
@@ -1330,6 +1348,15 @@
       "mirrors": "android-tab-groups-demo.yml:tablet",
       "dir": "tablet-groups-demo",
       "estimate": 2.5
+    },
+    {
+      "id": "page-class-seam",
+      "class": "PageClassSeamDemo",
+      "shard": "tablet",
+      "mirrors": "android-page-class-seam-demo.yml",
+      "dir": "page-class-seam-demo",
+      "estimate": 3,
+      "note": "The class-change seam of the page tabs (W6-S1, #499): the tablet's zen://history tab handed to the phone's History panel at wm size 1280x590 and back, five scenes in each scheme. The driver sets the dark scheme itself (the core's setting and the system's night mode), so DEMO_THEME is not read. The estimate is the dispatch run's measure: 125 s of instrumentation on this recipe."
     },
     {
       "id": "tablet-private",

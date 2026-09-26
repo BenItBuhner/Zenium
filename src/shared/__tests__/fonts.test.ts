@@ -3,15 +3,26 @@ import {
   DEFAULT_FONT_SETTINGS,
   FONT_SIZE_STEPS,
   MINIMUM_FONT_SIZE_STEPS,
+  browserLocaleScript,
+  cdpEffectiveFamilies,
+  cdpEffectiveFamilyChanges,
   cdpFontFamilies,
   cdpFontFamilyChanges,
+  chromiumEffectiveFontPreferences,
   chromiumFontPreferences,
+  effectiveFonts,
+  effectiveFontsAsMade,
+  effectiveSizesMove,
   electronFontDefaults,
+  electronGenericFontDefaults,
+  electronScriptFontDefaults,
+  firstAvailableFamily,
   FONT_RESTYLE_SCRIPT,
   fontSizesMove,
   isDefaultFontSettings,
   monospaceFontSize,
-  sanitizeFontSettings
+  sanitizeFontSettings,
+  type PageFontSettings
 } from '../fonts'
 
 describe('sanitizeFontSettings', () => {
@@ -163,5 +174,206 @@ describe('the engine’s terms', () => {
     expect(FONT_RESTYLE_SCRIPT).toContain('catch {}')
     // Valid script, and one that a document without the API leaves silent.
     expect(() => new Function(FONT_RESTYLE_SCRIPT)).not.toThrow()
+  })
+})
+
+describe('the extensions’ layer (chrome.fontSettings)', () => {
+  const USER: PageFontSettings = {
+    standard: 'Georgia',
+    serif: null,
+    sansSerif: 'Inter',
+    fixed: null,
+    size: 20,
+    minimumSize: 12
+  }
+
+  it('lays the extensions’ families and sizes over the setting, the user’s untouched where it names none', () => {
+    expect(effectiveFonts(USER, null)).toEqual({
+      settings: USER,
+      fixedSize: 16,
+      extras: {},
+      scripts: {}
+    })
+    const fonts = effectiveFonts(USER, {
+      // '' is Chrome's "fall back": the slot goes to the engine's own, over the user's choice.
+      families: { standard: 'Verdana', sansSerif: '', cursive: 'Zapfino', fantasy: '' },
+      scripts: { Jpan: { sansSerif: 'Noto Sans JP' } },
+      sizes: { standard: 24, minimum: 10 }
+    })
+    expect(fonts.settings).toEqual({
+      standard: 'Verdana',
+      serif: null,
+      sansSerif: null,
+      fixed: null,
+      size: 24,
+      minimumSize: 10
+    })
+    // Chrome's default_fixed_font_size is its own pref: the layer's default size leaves it.
+    expect(fonts.fixedSize).toBe(16)
+    expect(fonts.extras).toEqual({ cursive: 'Zapfino' })
+    expect(fonts.scripts).toEqual({ Jpan: { sansSerif: 'Noto Sans JP' } })
+    expect(
+      effectiveFonts(USER, { families: {}, scripts: {}, sizes: { fixed: 11 } }).fixedSize
+    ).toBe(11)
+    expect(effectiveFontsAsMade(fonts)).toEqual({ ...fonts, scripts: {} })
+  })
+
+  it('makes the web preferences with the layer’s fixed size and the three extra families', () => {
+    const fonts = effectiveFonts(USER, {
+      families: { cursive: 'Zapfino', fantasy: 'Papyrus', math: 'STIX Two Math' },
+      scripts: {},
+      sizes: { fixed: 11 }
+    })
+    expect(chromiumEffectiveFontPreferences(fonts)).toEqual({
+      defaultFontFamily: {
+        standard: 'Georgia',
+        sansSerif: 'Inter',
+        cursive: 'Zapfino',
+        fantasy: 'Papyrus',
+        math: 'STIX Two Math'
+      },
+      defaultFontSize: 20,
+      defaultMonospaceFontSize: 11,
+      minimumFontSize: 12
+    })
+    expect(chromiumEffectiveFontPreferences(effectiveFonts(USER, null))).toEqual(
+      chromiumFontPreferences(USER)
+    )
+  })
+
+  it('knows the engine’s own families for all seven slots: Electron’s cursive, Blink’s fantasy and math', () => {
+    expect(electronGenericFontDefaults('darwin')).toEqual({
+      ...electronFontDefaults('darwin'),
+      cursive: 'Apple Chancery',
+      fantasy: 'Impact',
+      math: 'Latin Modern Math'
+    })
+    expect(electronGenericFontDefaults('linux')).toMatchObject({
+      cursive: 'Comic Sans MS',
+      fantasy: 'Impact'
+    })
+  })
+
+  it('knows Electron’s per-script defaults on macOS and Windows, none on Linux, minus the locale’s own script', () => {
+    expect(electronScriptFontDefaults('linux', 'ja')).toEqual({})
+    expect(electronScriptFontDefaults('darwin', 'en-US').Jpan).toEqual({
+      standard: ['Hiragino Kaku Gothic ProN'],
+      fixed: ['Osaka', 'BIZ UDGothic', 'Menlo'],
+      serif: ['Hiragino Mincho ProN'],
+      sansSerif: ['Hiragino Kaku Gothic ProN']
+    })
+    expect(Object.keys(electronScriptFontDefaults('darwin', 'ja'))).toEqual([
+      'Hang',
+      'Hans',
+      'Hant'
+    ])
+    expect(Object.keys(electronScriptFontDefaults('win32', 'zh-CN'))).not.toContain('Hans')
+    expect(Object.keys(electronScriptFontDefaults('win32', 'zh-TW'))).toContain('Hans')
+    expect(electronScriptFontDefaults('win32', 'ru').Cyrl).toBeUndefined()
+    expect(electronScriptFontDefaults('win32', 'en-US').Cyrl?.sansSerif).toEqual(['Arial'])
+    expect(browserLocaleScript('zh-CN')).toBe('Hans')
+    expect(browserLocaleScript('zh_TW')).toBe('Hant')
+    expect(browserLocaleScript('ko-KR')).toBe('Hang')
+    expect(browserLocaleScript('ja')).toBe('Jpan')
+    expect(browserLocaleScript('el')).toBe('Grek')
+    expect(browserLocaleScript('fa-IR')).toBe('Arab')
+    expect(browserLocaleScript('en-US')).toBeNull()
+  })
+
+  it('resolves a list default as Chrome does: the first installed family, else the first', () => {
+    const list = ['Noto Sans JP', 'Meiryo', 'Yu Gothic']
+    expect(firstAvailableFamily(list, null)).toBe('Noto Sans JP')
+    expect(firstAvailableFamily(list, new Set(['Yu Gothic', 'Meiryo']))).toBe('Meiryo')
+    expect(firstAvailableFamily(list, new Set(['Arial']))).toBe('Noto Sans JP')
+    expect(firstAvailableFamily([], new Set(['Arial']))).toBe('')
+  })
+
+  it('names every family a page has under the layer, common and per script', () => {
+    const defaults = electronGenericFontDefaults('linux')
+    const fonts = effectiveFonts(USER, {
+      families: { math: 'STIX Two Math' },
+      scripts: { Jpan: { sansSerif: 'Noto Sans JP' } },
+      sizes: {}
+    })
+    expect(cdpEffectiveFamilies(fonts, defaults)).toEqual({
+      common: {
+        ...cdpFontFamilies(USER, electronFontDefaults('linux')),
+        cursive: 'Comic Sans MS',
+        fantasy: 'Impact',
+        math: 'STIX Two Math'
+      },
+      scripts: { Jpan: { sansSerif: 'Noto Sans JP' } }
+    })
+  })
+
+  it('sends the protocol the slots that move, a let-go script slot as the empty family, nothing when nothing moved', () => {
+    const defaults = electronGenericFontDefaults('linux')
+    const has = cdpEffectiveFamilies(effectiveFonts(USER, null), defaults)
+    const wanted = cdpEffectiveFamilies(
+      effectiveFonts(USER, {
+        families: { standard: 'Verdana', math: 'STIX Two Math' },
+        scripts: { Jpan: { sansSerif: 'Noto Sans JP' }, Cyrl: { standard: 'PT Serif' } },
+        sizes: {}
+      }),
+      defaults
+    )
+    expect(cdpEffectiveFamilyChanges(has, has)).toBeNull()
+    expect(cdpEffectiveFamilyChanges(has, wanted)).toEqual({
+      fontFamilies: { standard: 'Verdana', math: 'STIX Two Math' },
+      forScripts: [
+        { script: 'Cyrl', fontFamilies: { standard: 'PT Serif' } },
+        { script: 'Jpan', fontFamilies: { sansSerif: 'Noto Sans JP' } }
+      ]
+    })
+    // Back: the common slots by the engine's or the user's name, the scripts' slots erased.
+    expect(cdpEffectiveFamilyChanges(wanted, has)).toEqual({
+      fontFamilies: { standard: 'Georgia', math: 'Latin Modern Math' },
+      forScripts: [
+        { script: 'Cyrl', fontFamilies: { standard: '' } },
+        { script: 'Jpan', fontFamilies: { sansSerif: '' } }
+      ]
+    })
+    // A script slot changing alone: no common-slot key beyond the empty object.
+    const other = { ...wanted, scripts: { ...wanted.scripts, Jpan: { sansSerif: 'Meiryo' } } }
+    expect(cdpEffectiveFamilyChanges(wanted, other)).toEqual({
+      fontFamilies: {},
+      forScripts: [{ script: 'Jpan', fontFamilies: { sansSerif: 'Meiryo' } }]
+    })
+    // The user path's shape stands: the four slots only, no forScripts key.
+    expect(
+      cdpEffectiveFamilyChanges(
+        has,
+        cdpEffectiveFamilies(effectiveFonts({ ...USER, fixed: 'Fira Code' }, null), defaults)
+      )
+    ).toEqual({ fontFamilies: { fixed: 'Fira Code' } })
+  })
+
+  it('tells a size move under the layer, the fixed-width size counted', () => {
+    const base = effectiveFonts(USER, null)
+    expect(effectiveSizesMove(base, effectiveFonts(USER, null))).toBe(false)
+    expect(
+      effectiveSizesMove(
+        base,
+        effectiveFonts(USER, { families: {}, scripts: {}, sizes: { fixed: 11 } })
+      )
+    ).toBe(true)
+    expect(
+      effectiveSizesMove(
+        base,
+        effectiveFonts(USER, { families: {}, scripts: {}, sizes: { standard: 24 } })
+      )
+    ).toBe(true)
+    expect(
+      effectiveSizesMove(
+        base,
+        effectiveFonts(USER, { families: {}, scripts: {}, sizes: { minimum: 0 } })
+      )
+    ).toBe(true)
+    expect(
+      effectiveSizesMove(
+        base,
+        effectiveFonts(USER, { families: { standard: 'Verdana' }, scripts: {}, sizes: {} })
+      )
+    ).toBe(false)
   })
 })

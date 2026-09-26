@@ -2088,6 +2088,27 @@ export interface SearchEngineControl {
   extensionName: string
 }
 
+/**
+ * The extension holding a setting (`UIState.extensionControls`): Chrome's "An extension is
+ * controlling this setting" as the Settings page draws it – the row's control disabled, the
+ * indicator line "Controlled by <name>" and a Disable button under the row (`RowBase.
+ * controlled`). The user's own value is kept underneath and stands again when the extension
+ * lets go, is disabled or is uninstalled; the extension host publishes the map from the layers
+ * its APIs keep over the settings (`chrome.fontSettings` today; `privacy.*`, `proxy` as they
+ * take the primitive).
+ */
+export interface ExtensionControl {
+  extensionId: string
+  /** The extension's name as the Extensions page shows it. */
+  name: string
+  /**
+   * The extension's value, the one in effect: the disabled control shows it, as Chrome's
+   * shows the preference's effective value (a family's name, a size in px, a toggle's state),
+   * over the user's own kept in the setting. Absent, the row keeps to the setting's value.
+   */
+  value?: string | number | boolean
+}
+
 export interface SearchEngine {
   id: string
   name: string
@@ -3976,6 +3997,13 @@ export interface UIState {
   searchEngines: SearchEngine[]
   /** The extension holding the default search engine, if one does (`defaultSearchEngineOf`). */
   searchEngineControl: SearchEngineControl | null
+  /**
+   * The settings an extension holds, keyed by the setting's path in `Settings` (`fonts.
+   * standard`, `fonts.size`, `fonts.minimumSize`) or by a name for a setting kept elsewhere
+   * (`proxy`), each the controlling extension; empty when none is. A Settings row whose key is
+   * in the map draws Chrome's extension-controlled indicator (`ExtensionControl`).
+   */
+  extensionControls: Record<string, ExtensionControl>
   glance: GlanceState | null
   compactSidebarRevealed: boolean
   window: WindowState

@@ -21,6 +21,7 @@ import type {
   DevicePairingPrompt,
   DownloadItem,
   DownloadsProgress,
+  ExtensionControl,
   ExtensionInfo,
   ExtensionUpdateCheck,
   Folder,
@@ -515,6 +516,19 @@ export class BrowserState {
 
   get searchEngineControl(): SearchEngineControl | null {
     return this.extensionSearch.control
+  }
+
+  /**
+   * The settings the installed extensions hold (`UIState.extensionControls`, the Settings page's
+   * "Controlled by <extension>" rows): set by the extension host from the layers its APIs keep
+   * over the settings, whole, as the layers change; never persisted here, the extensions' own
+   * values are the record.
+   */
+  private extensionControls: Record<string, ExtensionControl> = {}
+
+  setExtensionControls(controls: Record<string, ExtensionControl>): void {
+    this.extensionControls = controls
+    this.commit()
   }
 
   /**
@@ -1026,6 +1040,7 @@ export class BrowserState {
       shortcuts: this.shortcuts,
       searchEngines: this.searchEngines,
       searchEngineControl: this.extensionSearch.control,
+      extensionControls: this.extensionControls,
       glance: win.glance,
       compactSidebarRevealed: win.compactSidebarRevealed,
       window: win.windowState(),
