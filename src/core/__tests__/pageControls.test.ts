@@ -315,6 +315,44 @@ describe('page controls in the browser', () => {
     expect(last(record.darken)).toBe(true)
   })
 
+  it('darkens an IP-host page too – a loopback dev server is a site keyed by its address (the port off, an IPv6’s brackets kept), its exception is stored under the address, another port of it follows, and the rules the host gets carry the address', () => {
+    const { browser, platform, win } = start()
+    const tab = browser.tabs.createTab(
+      { url: 'http://127.0.0.1:8787/dark.html', active: true },
+      win
+    )
+    const record = platform.records.get(tab.id)!
+    expect(last(record.darken)).toBe(false)
+    browser.handleCommand(win, 'settings.update', { pageControls: { darkenSites: true } })
+    expect(last(record.darken)).toBe(true)
+
+    browser.handleCommand(win, 'tab.setDarkenSite', { tabId: tab.id, on: false })
+    expect(browser.state.settings.pageControls.darkenSiteExceptions).toEqual({
+      '127.0.0.1': false
+    })
+    expect(last(record.darken)).toBe(false)
+    expect(last(platform.rules)!.darken).toEqual({ default: true, sites: { '127.0.0.1': false } })
+    // The exception is the address's, not the port's; another address is another site.
+    const otherPort = browser.tabs.createTab({ url: 'http://127.0.0.1:3000/', active: false }, win)
+    expect(last(platform.records.get(otherPort.id)!.darken)).toBe(false)
+    const lan = browser.tabs.createTab({ url: 'http://192.168.1.5/', active: false }, win)
+    expect(last(platform.records.get(lan.id)!.darken)).toBe(true)
+
+    const six = browser.tabs.createTab({ url: 'http://[::1]:5173/', active: false }, win)
+    expect(last(platform.records.get(six.id)!.darken)).toBe(true)
+    browser.handleCommand(win, 'tab.setDarkenSite', { tabId: six.id, on: false })
+    expect(browser.state.settings.pageControls.darkenSiteExceptions).toEqual({
+      '127.0.0.1': false,
+      '[::1]': false
+    })
+    expect(last(platform.records.get(six.id)!.darken)).toBe(false)
+
+    browser.handleCommand(win, 'pageControls.forgetSite', { kind: 'darken', domain: '127.0.0.1' })
+    expect(last(record.darken)).toBe(true)
+    expect(last(platform.records.get(otherPort.id)!.darken)).toBe(true)
+    expect(last(platform.rules)!.darken).toEqual({ default: true, sites: { '[::1]': false } })
+  })
+
   it('ignores internal pages', () => {
     const { browser, platform, win } = start()
     // An internal page is drawn by the chrome: the tab never gets a view to zoom or reload.
@@ -388,6 +426,29 @@ describe('zoom memory on the desktop', () => {
     expect(last(record.darken)).toBe(false)
     expect(browser.state.settings.pageControls.darkenSiteExceptions).toEqual({
       'github.com': false
+    })
+    expect(platform.rules).toEqual([])
+  })
+
+  it('darkens a loopback dev server on the desktop under the switch as it does any site – the address is the key its exception is stored under', () => {
+    const { browser, platform, win } = start(memoryIo(), 'desktop', true)
+    browser.handleCommand(win, 'settings.update', { pageControls: { darkenSites: true } })
+    const tab = browser.tabs.createTab(
+      { url: 'http://127.0.0.1:8787/dark.html', active: true },
+      win
+    )
+    const record = platform.records.get(tab.id)!
+    expect(record.darken).toEqual([true])
+    browser.handleCommand(win, 'tab.setDarkenSite', { tabId: tab.id, on: false })
+    expect(browser.state.settings.pageControls.darkenSiteExceptions).toEqual({
+      '127.0.0.1': false
+    })
+    expect(last(record.darken)).toBe(false)
+    // A file or an internal page has no site key and no darkening command of its own.
+    const file = browser.tabs.createTab({ url: 'file:///tmp/page.html', active: false }, win)
+    browser.handleCommand(win, 'tab.setDarkenSite', { tabId: file.id, on: false })
+    expect(browser.state.settings.pageControls.darkenSiteExceptions).toEqual({
+      '127.0.0.1': false
     })
     expect(platform.rules).toEqual([])
   })
