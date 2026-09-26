@@ -171,8 +171,9 @@ export function useLayoutReporter(
   // phone's, where the chrome lies under the pages): from the crossing's start until it asks
   // the destination's view back (`landing`), the page stays off the screen.
   const crossingHolds = readerCrossingStore.use((s) => readerCrossingHolds(s, activeTab(state)?.id))
-  // Or under the first-run tour, opaque over the whole window (`firstRunCovers`): the views
-  // composite above the chrome, and the New Tab's view left showing stood over the tour's panel.
+  // Or under the first-run tour or the EEA's search-engine choice screen (W6-2), opaque over
+  // the whole window (`firstRunCovers`): the views composite above the chrome, and the New Tab's
+  // view left showing stood over the tour's panel.
   const contentHidden = pageHidden(ui) || lockCover || crossingHolds || firstRunCovers(state)
   // The strips the chrome's message cards cover at the frame's edges (see `coverBandStore`).
   const band = coverBandStore.use()

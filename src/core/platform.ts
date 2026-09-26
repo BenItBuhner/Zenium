@@ -116,6 +116,13 @@ export interface PlatformInfo {
    * start such a profile from English.
    */
   locales?: readonly string[]
+  /**
+   * The OS's region (ISO 3166-1 alpha-2, upper case; Electron's `app.getLocaleCountryCode()`),
+   * null when the OS does not say: what the EEA's search-engine choice screen is gated on
+   * (`core/searchChoice.ts`, W6-2). A host may put a tester's override here (`--zen-region=DE`,
+   * `ZEN_REGION`) in the OS's place. Hosts that leave it out are never in the EEA.
+   */
+  region?: string | null
 }
 
 // ---------------------------------------------------------------------------

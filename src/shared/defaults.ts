@@ -265,6 +265,7 @@ export const DEFAULT_SETTINGS: Settings = {
   mutedHosts: [],
   searchEngineId: 'google',
   searchEngines: [],
+  searchChoice: null,
   searchSuggestions: true,
   historySuggestions: true,
   bookmarkSuggestions: true,

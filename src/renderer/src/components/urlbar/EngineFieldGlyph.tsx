@@ -2,8 +2,8 @@ import type { JSX } from 'react'
 import { useState } from 'react'
 import { Search } from 'lucide-react'
 import type { SearchEngine } from '@shared/types'
-import { engineFieldFavicon } from '@shared/search'
 import { useFaviconSrc } from '@renderer/lib/favicons'
+import { searchEngineIconSrc } from '@renderer/lib/searchEngineIcons'
 import { cn } from '@renderer/lib/utils'
 import { TOOLBAR_STROKE } from '../v2/controls'
 
@@ -20,7 +20,8 @@ const loaded = new Set<string>()
  * omnibox, the new tab page's resting field and the morph's double, whichever engine it is, the
  * vendor's default included – where `engineFieldFavicon` gives one; else the slot's own
  * fallback, the one it always showed: the omnibox field's 28 px letter tile (`tile`) or the new
- * tab field's magnifier (`magnifier`). The favicon takes the slot once it has loaded
+ * tab field's magnifier (`magnifier`). An engine of the choice screen's that is not shipped
+ * draws its bundled picture (`searchEngineIconSrc`). The favicon takes the slot once it has loaded
  * – the fallback is painted until then and stays if the image never comes, so the slot is never
  * blank (as a broken favicon leaves Chrome's globe) – arriving on a 120 ms opacity fade in place
  * (§11.4); an address that loaded once this session shows at once. The favicon keeps its own
@@ -42,7 +43,7 @@ export function EngineFieldGlyph({
 }): JSX.Element {
   // The core's cached copy where it holds one (HB-47); the engine's mark is no page's row, so
   // the live address stands where the cache has nothing, as it always did.
-  const favicon = useFaviconSrc(engineFieldFavicon(engine))
+  const favicon = useFaviconSrc(searchEngineIconSrc(engine))
   const [arrived, setArrived] = useState<string | null>(null)
   const [broken, setBroken] = useState<string | null>(null)
   const image = favicon !== null && broken !== favicon
