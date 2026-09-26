@@ -13100,9 +13100,10 @@ ol.zen-page-prose-list {
   gap: 8px;
 }
 /*
- * The family form's heading slot (`READING_ROW_FORM = 'family'`): the width of the rows' two
- * 28 boxes and their 8, set 12 from the count (the heading's 8 and 4 more) as the rows' slot is
- * from their times, so the heading's count and the rows' `.zen-page-row-time` end on one edge.
+ * The heading's slot (the reading list's rows carry two secondaries, so the heading holds the
+ * width of both – History's heading holds one ⋮): the rows' two 28 boxes and their 8, set 12
+ * from the count (the heading's 8 and 4 more) as the rows' slot is from their times, so the
+ * heading's count and the rows' `.zen-page-row-time` end on one right edge (§10.1).
  */
 .zen-page-heading > .zen-rl-heading-slot {
   flex-shrink: 0;

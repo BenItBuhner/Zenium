@@ -9,8 +9,9 @@ import type { ReadingListEntry, Tab, UIState } from '@shared/types'
  * list): the title block with Mark all as read, the search field that filters the list and moves
  * the tab's URL to `zen://reading-list?q=` without a history entry, the Unread and Read groups
  * as §9.27 headings (the count as Unread's aside) over §9.21 two-line rows – the favicon seat
- * with §9.29's dot on an unread row, the title over the host and when it was added – the row's
- * Mark as read / unread and ⋮ on approach, the core's row menu from the ⋮ and a right click,
+ * with §9.29's dot on an unread row, the title over the host alone, the time trailing in the
+ * rows' column (the family's row, the lead's C1 on #511) – the row's Mark as read / unread and
+ * ⋮ on approach, the core's row menu from the ⋮ and a right click,
  * opening from the row (a click, Enter, the middle button behind), Delete removing, and the
  * §9.17 empty states.
  */
@@ -111,16 +112,12 @@ function tab(url = 'zen://reading-list'): Tab {
 let root: Root | null = null
 let mount: HTMLElement | null = null
 
-async function mountPage(
-  t: Tab = tab(),
-  s: UIState = state(),
-  rowForm?: 'chrome' | 'family'
-): Promise<HTMLElement> {
+async function mountPage(t: Tab = tab(), s: UIState = state()): Promise<HTMLElement> {
   browserStore.set({ state: s })
   mount = document.createElement('div')
   document.body.appendChild(mount)
   root = createRoot(mount)
-  await act(async () => root!.render(createElement(ReadingListPage, { state: s, tab: t, rowForm })))
+  await act(async () => root!.render(createElement(ReadingListPage, { state: s, tab: t })))
   return mount
 }
 
@@ -227,45 +224,44 @@ describe('the Reading List page tab (§10.1, W6-1)', () => {
     }
   })
 
-  it('an unread row carries §9.29’s dot on its favicon seat, a read row none; the desc reads host · added-when', async () => {
+  it('an unread row carries §9.29’s dot on its favicon seat, a read row none; line 2 is the host alone', async () => {
     const el = await mountPage()
     const a = row(el, 'a')
     expect(a.hasAttribute('data-unread')).toBe(true)
     expect(a.querySelector('.zen-rl-favicon-seat[data-unread] > .zen-rl-unread-dot')).not.toBeNull()
     expect(a.querySelector('.zen-page-row-favicon')).not.toBeNull()
     expect(text(a.querySelector('.zen-page-row-label'))).toBe('A long essay')
-    expect(text(a.querySelector('.zen-page-row-desc'))).toBe('long.read · Added 5 min ago')
+    expect(text(a.querySelector('.zen-page-row-desc'))).toBe('long.read')
     expect(a.getAttribute('aria-label')).toBe('A long essay. Unread')
 
     const c = row(el, 'c')
     expect(c.hasAttribute('data-unread')).toBe(false)
     expect(c.querySelector('.zen-rl-unread-dot')).toBeNull()
     expect(c.getAttribute('aria-label')).toBe('Yesterday’s story. Read')
-    // Chrome's form (the default) puts nothing in the family's time column or the heading's slot.
-    expect(a.querySelector('.zen-page-row-time')).toBeNull()
-    expect(el.querySelector('.zen-rl-heading-slot')).toBeNull()
   })
 
-  it('the family form (behind READING_ROW_FORM): the host alone on line 2, the time trailing in the rows’ column, the heading holding the slot', async () => {
-    const el = await mountPage(tab(), state(), 'family')
+  it('the family’s row (the lead’s C1 on #511): the time trails the text in the rows’ column as "Added when", and each heading holds the rows’ slot', async () => {
+    const el = await mountPage()
     const a = row(el, 'a')
-    expect(text(a.querySelector('.zen-page-row-label'))).toBe('A long essay')
-    expect(text(a.querySelector('.zen-page-row-desc'))).toBe('long.read')
     const time = a.querySelector<HTMLTimeElement>('.zen-page-row-time')
     expect(time).not.toBeNull()
-    expect(text(time)).toBe('5 min ago')
+    expect(text(time)).toBe('Added 5 min ago')
     expect(time!.getAttribute('datetime')).toBe(new Date(unreadNew.addedAt).toISOString())
-    expect(time!.getAttribute('aria-label')).toBe('Added 5 min ago')
     // The time sits between the row's text and its on-approach slot, as in BookmarkRow and History.
     expect(time!.previousElementSibling?.classList.contains('zen-page-row-text')).toBe(true)
     expect(time!.nextElementSibling?.classList.contains('zen-rl-page-actions')).toBe(true)
-    // Both headings reserve the rows' slot so the count and the times end on one edge.
+    // Line 2 carries no time of its own.
+    expect(a.querySelector('.zen-page-row-desc time')).toBeNull()
+    expect(text(row(el, 'b').querySelector('.zen-page-row-time'))).toBe('Added 3 h ago')
+    // Both headings reserve the rows' slot (two 28 boxes and their 8) so the count and the
+    // times end on one right edge.
     const slots = [...el.querySelectorAll('.zen-page-heading > .zen-rl-heading-slot')]
     expect(slots).toHaveLength(2)
     expect(slots[0]!.getAttribute('aria-hidden')).toBe('true')
-    // The row's other parts are the same in both forms.
     expect(a.querySelectorAll('.zen-rl-page-actions button')).toHaveLength(2)
-    expect(a.getAttribute('aria-label')).toBe('A long essay. Unread')
+    // An age after the verb is lower case (§9.1): "Added just now".
+    await rerender(tab(), state([entry({ id: 'n', url: 'https://now.example/', addedAt: NOW })]))
+    expect(text(row(el, 'n').querySelector('.zen-page-row-time'))).toBe('Added just now')
   })
 
   it('the trailing slot holds the state’s verb and the ⋮ on approach: Mark as read on an unread row, Mark as unread on a read one', async () => {
