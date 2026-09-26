@@ -421,6 +421,8 @@ export class ElectronTabView implements TabView {
    */
   private agentDriven = false
   private staged: BaseWindow | null = null
+  /** The box the staged view stands in (`stageBox`), for `restage` to tell a move; null off the stage. */
+  private stagedBox: Rect | null = null
   /**
    * Captures of a staged page take turns (`capture`): a page has one frame subscription, and
    * the frame one capture waits for must not be taken down by another's end.
@@ -1545,14 +1547,46 @@ export class ElectronTabView implements TabView {
     if (!this.agentDriven || this.staged || this.visible || this.parked !== null) return
     const win = this.win
     if (!win) return
-    const box = this.bounds ?? this.owner.pageAreaOf(win)
+    const box = this.stageBox(win)
     if (this.inWindow) {
       win.contentView.removeChildView(this.view)
       this.inWindow = false
     }
     this.staged = this.owner.stageFor(this, box)
+    this.stagedBox = box
     this.view.setBounds({ x: 0, y: 0, width: box.width, height: box.height })
     this.view.setVisible(true)
+  }
+
+  /**
+   * The box a staged page stands in: the page area as the window's layout last placed a page
+   * alone in front (`ZenWindow.contentRect`, the freshest word – a hidden view hears no
+   * `setBounds` from the layout, so its own last box may predate a resize or a chrome change),
+   * else the view's own last box, else the owner's guess from the window's pages.
+   */
+  private stageBox(win: BrowserWindow): Rect {
+    const zen = this.host?.zen
+    const area = zen && typeof zen.contentRect === 'function' ? zen.contentRect() : null
+    if (area && area.width > 0 && area.height > 0) return area
+    return this.bounds ?? this.owner.pageAreaOf(win)
+  }
+
+  /**
+   * A staged page takes the box it would have in front now (`stageBox`), when that moved since
+   * it went on – the user resized the window or folded the sidebar meanwhile. The session
+   * prepares a tab before each action (`setAgentDriven` again): the viewport an agent's next
+   * snapshot or capture reads is the one the page would have in front, at the cost of a compare.
+   */
+  private restage(): void {
+    const win = this.win
+    const stage = this.staged
+    if (!win || !stage || stage.isDestroyed()) return
+    const box = this.stageBox(win)
+    const was = this.stagedBox
+    if (was && was.width === box.width && was.height === box.height) return
+    this.stagedBox = box
+    this.owner.stageRoom(stage, box)
+    this.view.setBounds({ x: 0, y: 0, width: box.width, height: box.height })
   }
 
   /**
@@ -1563,6 +1597,7 @@ export class ElectronTabView implements TabView {
     const stage = this.staged
     if (!stage) return
     this.staged = null
+    this.stagedBox = null
     this.arrivesFromElsewhere = true
     this.view.setVisible(false)
     if (!stage.isDestroyed()) stage.contentView.removeChildView(this.view)
@@ -2592,8 +2627,9 @@ export class ElectronTabView implements TabView {
    */
   setAgentDriven(driven: boolean): void {
     this.agentDriven = driven
-    if (driven) this.enterStage()
-    else this.leaveStage()
+    if (!driven) this.leaveStage()
+    else if (this.staged) this.restage()
+    else this.enterStage()
   }
 
   /**
@@ -3559,13 +3595,18 @@ export class ElectronTabViewHost implements TabViewHost {
       stage.excludedFromShownWindowsMenu = true
       this.stage = stage
     } else {
-      const [width, height] = stage.getContentSize()
-      if (box.width > width || box.height > height)
-        stage.setContentSize(Math.max(width, box.width), Math.max(height, box.height))
+      this.stageRoom(stage, box)
     }
     this.stagedViews.add(view)
     stage.contentView.addChildView(view.view)
     return stage
+  }
+
+  /** Room on `stage` for a page of `box`: the stage grows to the largest page on it, and never shrinks. */
+  stageRoom(stage: BaseWindow, box: Rect): void {
+    const [width, height] = stage.getContentSize()
+    if (box.width > width || box.height > height)
+      stage.setContentSize(Math.max(width, box.width), Math.max(height, box.height))
   }
 
   /** `view` left the stage (`ElectronTabView.leaveStage`, or its page went): the last one takes the stage down. */

@@ -5,6 +5,7 @@ import type { Tab } from '../../../shared/types'
 import type {
   AgentInputEvent,
   NavigationCommitDetails,
+  Rect,
   TabViewEvents,
   WindowHost,
   WindowOpenTicket
@@ -477,14 +478,17 @@ function fakeWindow(): WindowHost & {
   chrome: FakeChrome
   zen: { contentHidden: boolean }
   buttonHeld: boolean
+  /** Where the layout last placed a page alone in this window (`ZenWindow.contentRect`); null before a layout. */
+  contentRect: Rect | null
 } {
   const chrome = new FakeChrome()
   const win = new FakeBrowserWindow(chrome)
   const host = {
     win,
     chrome,
-    zen: { contentHidden: false },
+    zen: { contentHidden: false, contentRect: (): Rect | null => host.contentRect },
     buttonHeld: false,
+    contentRect: null as Rect | null,
     pointerButtonHeld: (): boolean => host.buttonHeld
   }
   return host as unknown as WindowHost & {
@@ -492,6 +496,7 @@ function fakeWindow(): WindowHost & {
     chrome: FakeChrome
     zen: { contentHidden: boolean }
     buttonHeld: boolean
+    contentRect: Rect | null
   }
 }
 
@@ -2066,6 +2071,50 @@ describe('a hidden page an agent drives and the stage', () => {
     expect(stages).toHaveLength(1)
     expect(staged()!.children).toEqual([view.view, wide.view])
     expect(staged()!.contentSize).toEqual([1600, 820])
+  })
+
+  it('stages a page at the page area the window’s layout last placed a page alone in, over the view’s own last box and a sibling’s', () => {
+    const { window, create } = setup()
+    const shown = create()
+    shown.setBounds(box)
+    shown.setVisible(true)
+    // The window's page area moved since either view was placed: a chrome bar went.
+    window.contentRect = { x: 200, y: 40, width: 1000, height: 760 }
+    const view = create()
+    view.setBounds({ x: 200, y: 60, width: 1000, height: 740 })
+    view.setVisible(true)
+    view.setVisible(false)
+    view.setAgentDriven(true)
+    expect(engine(view).bounds).toEqual({ x: 0, y: 0, width: 1000, height: 760 })
+    expect(staged()!.contentSize).toEqual([1000, 760])
+    // Off the stage it takes its own box back, as the layout gave it.
+    view.setVisible(true)
+    expect(engine(view).bounds).toEqual({ x: 200, y: 60, width: 1000, height: 740 })
+  })
+
+  it('moves a staged page to the page area the window has at the agent’s next word, growing the stage, and leaves it be when nothing moved', () => {
+    const { window, create } = setup()
+    window.contentRect = { x: 200, y: 60, width: 1000, height: 740 }
+    const view = create()
+    view.setAgentDriven(true)
+    const stage = staged()!
+    expect(engine(view).bounds).toEqual({ x: 0, y: 0, width: 1000, height: 740 })
+    // The user widens the window: a hidden view hears nothing of it from the layout.
+    window.contentRect = { x: 200, y: 60, width: 1200, height: 900 }
+    expect(engine(view).bounds).toEqual({ x: 0, y: 0, width: 1000, height: 740 })
+    // The session's next action prepares the tab: on the stage already, it takes the new box.
+    view.setAgentDriven(true)
+    expect(engine(view).bounds).toEqual({ x: 0, y: 0, width: 1200, height: 900 })
+    expect(stage.contentSize).toEqual([1200, 900])
+    expect(stages).toHaveLength(1)
+    expect(stage.children).toEqual([view.view])
+    // The same word with nothing moved changes nothing; a narrower window shrinks the view, not the stage.
+    view.setAgentDriven(true)
+    expect(engine(view).bounds).toEqual({ x: 0, y: 0, width: 1200, height: 900 })
+    window.contentRect = { x: 200, y: 60, width: 900, height: 700 }
+    view.setAgentDriven(true)
+    expect(engine(view).bounds).toEqual({ x: 0, y: 0, width: 900, height: 700 })
+    expect(stage.contentSize).toEqual([1200, 900])
   })
 
   it('never stages a page in front, and an active page hidden by a tab switch goes onto the stage at its own last box, back in front when shown again', () => {
