@@ -24,6 +24,7 @@ import {
   parseArgs,
   parseGroups,
   parseSnapshot,
+  parseSpaces,
   percentiles,
   pool,
   randomSessionId,
@@ -264,6 +265,35 @@ describe('parseGroups', () => {
   })
 })
 
+describe('parseSpaces', () => {
+  it('reads every space line with what the user sees and what is agents’', () => {
+    const text = [
+      'Spaces:',
+      '- space_84a8f389-d018-44cd-b08a-942a578e2c4b "Default" 🏠 – 1 tab(s)',
+      '- space_b229fbc3-2593-47cb-a9e8-99d9258911bf "Agents" 🤖 – 0 tab(s) [shown to the user] [agents]',
+      '- space_1 "Mine \\"too\\""  – 3 tab(s)'
+    ].join('\n')
+    expect(parseSpaces(text)).toEqual([
+      {
+        id: 'space_84a8f389-d018-44cd-b08a-942a578e2c4b',
+        name: 'Default',
+        tabs: 1,
+        shown: false,
+        agents: false
+      },
+      {
+        id: 'space_b229fbc3-2593-47cb-a9e8-99d9258911bf',
+        name: 'Agents',
+        tabs: 0,
+        shown: true,
+        agents: true
+      },
+      { id: 'space_1', name: 'Mine "too"', tabs: 3, shown: false, agents: false }
+    ])
+    expect(parseSpaces('Unknown space x')).toEqual([])
+  })
+})
+
 describe('readEndpoint', () => {
   it('reads <profile>/zen/agent.json and is null without one', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-soak-test-'))
@@ -464,6 +494,13 @@ class FakeZenium {
     this.sessions = new Map()
     this.groups = new Map()
     this.tabs = new Map()
+    // The user's space and the shared Agents space; a page act in foreground mode switches the
+    // user's window to the agents' (as `AgentService.prepare` activates the tab there).
+    this.spaces = [
+      { id: 'space_user', name: 'Default', icon: '🏠', agents: false },
+      { id: 'space_agents', name: 'Agents', icon: '🤖', agents: true }
+    ]
+    this.shownSpace = 'space_user'
     this.seq = 0
     this.counters = {
       created: 0,
@@ -710,6 +747,7 @@ class FakeZenium {
         return text(this.snapshot(s, needTab().id))
       case 'browser_take_screenshot': {
         needTab()
+        if (s.mode === 'foreground') this.shownSpace = 'space_agents'
         const mode = this.options.screenshots
         if (mode === 'error' || (mode === 'hidden-error' && s.mode === 'background'))
           return fail(
@@ -721,12 +759,35 @@ class FakeZenium {
       case 'browser_select_option':
       case 'browser_click': {
         const tab = needTab()
+        if (s.mode === 'foreground') this.shownSpace = 'space_agents'
         if (typeof args.target !== 'string' || !/^(e\d+|#[\w-]+)$/.test(args.target))
           throw new Error(`Bad target ${JSON.stringify(args.target)}`)
         if (name === 'browser_type' && typeof args.text !== 'string') throw new Error('text needed')
         if (name === 'browser_select_option' && !Array.isArray(args.values))
           throw new Error('values needed')
         return text(`${name} on ${args.target}\n\n${this.snapshot(s, tab.id)}`)
+      }
+      case 'zen_spaces': {
+        const list = () =>
+          this.spaces
+            .map(
+              (sp) =>
+                `- ${sp.id} ${JSON.stringify(sp.name)} ${sp.icon} – ${sp.agents ? this.tabs.size : 1} tab(s)` +
+                `${sp.id === this.shownSpace ? ' [shown to the user]' : ''}${sp.agents ? ' [agents]' : ''}`
+            )
+            .join('\n')
+        if (args.action === 'list') return text(`Spaces:\n${list()}`)
+        if (args.action !== 'switch') throw new Error(`Unsupported action ${args.action}`)
+        const space = this.spaces.find((sp) => sp.id === args.spaceId)
+        if (!space) return fail(`Unknown space ${args.spaceId}.\n\nSpaces:\n${list()}`)
+        if (s.mode !== 'foreground')
+          return fail(
+            'Switching the space the user sees needs the screen: you are in background mode. zen_mode {"mode":"foreground"} first – or leave the user\'s view alone and work in your groups.'
+          )
+        this.shownSpace = space.id
+        return text(
+          `Switched to space ${space.id} ${JSON.stringify(space.name)}.\n\nSpaces:\n${list()}`
+        )
       }
       case 'zen_session': {
         if (args.action !== 'end') throw new Error(`Unsupported action ${args.action}`)
@@ -972,13 +1033,20 @@ describe('the legs', () => {
     expect(fake.sessions.size).toBe(0)
     expect(fake.counters.created).toBe(12)
     expect(fake.counters.ended).toBe(24)
-    // Whatever odd sessions left behind and nobody adopted is what tidy is for.
+    // Whatever odd sessions left behind and nobody adopted is what tidy is for – and the user's
+    // window, which the foreground screenshots switched to the Agents space.
     const orphansLeft = [...fake.groups.values()].filter((g) => !g.owner).length
+    expect(fake.shownSpace).toBe('space_agents')
     await tidy(ctx)
     expect(fake.groups.size).toBe(0)
     expect(v.counters.tidiedGroups).toBe(orphansLeft)
+    expect(v.counters.spaceReturned).toBe(1)
+    expect(fake.shownSpace).toBe('space_user')
+    // Nothing to return once the window shows the user's space.
+    await tidy(ctx)
+    expect(v.counters.spaceReturned).toBe(1)
     const d = await readDiagnostics(ctx)
-    expect(d.sessions.created).toBe(14) // 12 soak sessions, tidy's and the reader's
+    expect(d.sessions.created).toBe(15) // 12 soak sessions, the two tidies' and the reader's
     expect(d.sessions.live).toBe(1) // the reader itself
     expect(d.calls.total).toBeGreaterThan(0)
   })

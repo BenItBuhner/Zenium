@@ -11,7 +11,9 @@
 // Optional legs: the stdio shim (`zenium --mcp`, one process per session; --shim), a dropped
 // client and simulated resurrections (--drop), a restart of the browser with the old session id
 // and a shim process carried across it (--restart). With --exe and no server answering, the
-// script starts the browser itself and quits it at the end.
+// script starts the browser itself and quits it at the end. The browser is left as it was found:
+// the groups the sessions orphaned are closed and the user's window, which foreground sessions
+// switch to the Agents space, is switched back to the user's own space.
 //
 // Usage:
 //
@@ -274,8 +276,31 @@ export function parseGroups(text) {
   }))
 }
 
+/**
+ * The spaces a `zen_spaces list` names (`- space_x "name" 🏠 – N tab(s) [shown to the user]
+ * [agents]`): id, name, tab count, whether the user's window shows it, whether it is agents'.
+ */
+export function parseSpaces(text) {
+  const out = []
+  const re = /^- (\S+) "((?:[^"\\]|\\.)*)" .*?– (\d+) tab\(s\)(.*)$/gm
+  for (const m of text.matchAll(re)) {
+    const flags = m[4]
+    out.push({
+      id: m[1],
+      name: unquote(m[2]),
+      tabs: Number(m[3]),
+      shown: /\[shown to the user\]/.test(flags),
+      agents: /\[agents\]/.test(flags)
+    })
+  }
+  return out
+}
+
 /** An adopt that failed because another session got there first, or the group is gone. */
 export const ADOPT_RACE = /which is still connected|Unknown group|is already yours/
+
+/** A space switch refused because another agent's screen lease is still warm. */
+const LEASE_HELD = /holds it|holds the screen/
 
 /** 24 hex characters, the shape of the server's own session ids. */
 export function randomSessionId() {
@@ -1420,7 +1445,13 @@ export async function restartVerify(ctx, carry) {
   }
 }
 
-/** Adopt and close every orphaned group left behind, so the browser is as it was. */
+/**
+ * Leave the browser as it was: every orphaned group left behind is adopted and closed, and the
+ * user's window, which the foreground sessions switched to the Agents space, is switched back to
+ * the first space that is the user's own (`spaceReturned` counts it). The switch matters to a
+ * restart: a window restored in a space with no tabs gets a new tab page there, and the next
+ * quit then asks about "2 tabs" – a question neither this script nor SIGTERM can answer.
+ */
 export async function tidy(ctx) {
   const client = new HttpClient({ ...ctx.endpoint, name: 'soak-tidy' })
   try {
@@ -1435,6 +1466,25 @@ export async function tidy(ctx) {
     }
     if (adopted) await client.call('zen_session', { action: 'end', closeTabs: true })
     ctx.verdict.bump('tidiedGroups', adopted)
+    const spaces = parseSpaces((await client.call('zen_spaces', { action: 'list' })).text)
+    const shown = spaces.find((sp) => sp.shown)
+    const users = spaces.find((sp) => !sp.agents)
+    if (shown?.agents && users) {
+      await client.call('zen_mode', { mode: 'foreground' })
+      // Another agent's lease outlives its last act by FOREGROUND_LEASE_MS (20 s): one wait.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const r = await client.call('zen_spaces', { action: 'switch', spaceId: users.id })
+        if (!r.isError) {
+          ctx.verdict.bump('spaceReturned', 1)
+          break
+        }
+        if (!LEASE_HELD.test(r.text) || attempt === 1) {
+          ctx.log(`tidy: the user's window stays in ${shown.name}: ${ctx.verdict.redact(r.text)}`)
+          break
+        }
+        await delay(21_000)
+      }
+    }
     await client.close()
   } catch (error) {
     if (!(error instanceof SoakError)) throw error
