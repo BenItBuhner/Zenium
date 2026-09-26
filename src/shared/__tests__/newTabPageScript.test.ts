@@ -478,4 +478,34 @@ describe('zen://newtab: the field under a finger is a hand-off control (NTP-35)'
       expect(h.sent.at(-1)).toEqual({ type: 'search', text: 'z' })
     })
   })
+
+  it("a tile's context menu carries the tile's box beside the point (`rect`: the square and its caption, for the touch layouts to hang the menu from)", () => {
+    const h = mount(
+      state({
+        shortcutsMode: 'my-shortcuts',
+        shortcuts: [
+          { id: 's1', title: 'One', url: 'https://one.example/', favicon: null },
+          { id: 's2', title: 'Two', url: 'https://two.example/', favicon: null }
+        ]
+      })
+    )
+    const tile = document.querySelector<HTMLElement>('.zen-tile[data-id="s2"]') as HTMLElement
+    const link = tile.querySelector<HTMLElement>('a.zen-v2-shortcut') as HTMLElement
+    // happy-dom lays nothing out: the tile's box is given to it.
+    tile.getBoundingClientRect = () =>
+      ({ left: 120.4, top: 200, width: 104, height: 95.6 }) as DOMRect
+    link.dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, button: 2, clientX: 150, clientY: 250 })
+    )
+    expect(h.sent.at(-1)).toEqual({
+      type: 'tile-menu',
+      id: 's2',
+      url: 'https://two.example/',
+      title: 'Two',
+      x: 150,
+      y: 250,
+      keyboard: false,
+      rect: { x: 120, y: 200, width: 104, height: 96 }
+    })
+  })
 })
