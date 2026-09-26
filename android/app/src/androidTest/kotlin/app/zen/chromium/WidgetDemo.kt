@@ -53,6 +53,7 @@ import java.io.File
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -65,6 +66,11 @@ import kotlin.math.roundToInt
  *    RemoteViews the provider delivers are inflated in a configuration the launcher would have
  *    (the system's night mode, `Theme.DeviceDefault`) over a wallpaper-like backdrop – the face
  *    still, light or dark by the `theme` argument – with its accessible names read off the tree;
+ *    its colours read against the system's Material You roles on Android 12+ (WID-03: the pill
+ *    colorSurfaceContainerHigh, the ink colorOnSurfaceVariant, as Chrome's widget; the drawn pill
+ *    sampled), and the face re-laid at the tightest three-cell frame the provider allows and at
+ *    the two-cell frame no launcher offers (`widget-<theme>-face-3cell.png`,
+ *    `widget-<theme>-face-2cell-unreachable.png`);
  *  - a real finger on each part of the face with Zenium in front: the mic lands in voice search
  *    (a stand-in recogniser, the sheet reads Listening), the pill in the omnibox with the keyboard
  *    up (traced: RULING 5's long tasks by the renderer's own clock), the mask in a new private
@@ -229,6 +235,8 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         expect("the widget asks for four cells by one (minWidth 250 dp, minHeight 40 dp)", info.minWidth == dp(250) && info.minHeight == dp(40))
         expect("the widget resizes horizontally only", info.resizeMode == AppWidgetProviderInfo.RESIZE_HORIZONTAL)
         expect("the widget is for the home screen", info.widgetCategory and AppWidgetProviderInfo.WIDGET_CATEGORY_HOME_SCREEN != 0)
+        expect("the widget is offered in the searchbox category too, as Chrome's is", info.widgetCategory and AppWidgetProviderInfo.WIDGET_CATEGORY_SEARCHBOX != 0)
+        expect("the widget shrinks to three cells and no further (minResizeWidth 180 dp)", info.minResizeWidth == dp(THREE_CELLS_DP))
         expect("the widget names itself for the picker", info.loadLabel(app.packageManager) == WIDGET_LABEL)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             expect("the picker's target is 4×1 with a description", info.targetCellWidth == 4 && info.targetCellHeight == 1 && !info.loadDescription(app).isNullOrEmpty())
@@ -272,7 +280,129 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         expect("the mic and the mask stand in 44 dp boxes", viewBounds(R.id.widget_search_mic).let { it.width() == dp(44) && it.height() == dp(44) })
         saveFace()
         shot("01-face-on-a-launcher-backdrop")
+        theFacesColours(launcherContext)
+        theNarrowerFrames(hostView)
     }
+
+    /**
+     * The face's colours (WID-03): on Android 12+ the roles Chrome's widget takes from Material
+     * You – the pill's fill colorSurfaceContainerHigh, the hint's and the glyphs' ink
+     * colorOnSurfaceVariant, the hairline colorOutlineVariant – resolved in the launcher's
+     * configuration and read against the system's own tokens: the platform's role colours on 34+,
+     * the neutral-variant palette steps MDC gives the roles on 31–33. Below 31 the v2 face. The
+     * mark keeps the brand indigo on every API. Then the drawn pill itself: a pixel of its
+     * interior along the top edge, clear of the hairline and the mark, must be the fill.
+     */
+    private fun theFacesColours(launcherContext: Context) {
+        val res = launcherContext.resources
+        val theme = launcherContext.theme
+        val dark = THEME == "dark"
+        val fill = res.getColor(R.color.widget_search_fill, theme)
+        val hairline = res.getColor(R.color.widget_search_hairline, theme)
+        val ink = res.getColor(R.color.widget_search_ink, theme)
+        val hint = res.getColor(R.color.widget_search_hint, theme)
+        val mark = res.getColor(R.color.widget_search_mark, theme)
+        val v2Panel = res.getColor(if (dark) R.color.v2_panel_dark else R.color.v2_panel_light, theme)
+        finding("\nface colours in the launcher's configuration ($THEME): fill ${hex(fill)} hairline ${hex(hairline)} ink ${hex(ink)} hint ${hex(hint)} mark ${hex(mark)}; the v2 panel would be ${hex(v2Panel)}")
+        when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> {
+                val systemFill = res.getColor(if (dark) android.R.color.system_surface_container_high_dark else android.R.color.system_surface_container_high_light, theme)
+                val systemInk = res.getColor(if (dark) android.R.color.system_on_surface_variant_dark else android.R.color.system_on_surface_variant_light, theme)
+                val systemHairline = res.getColor(if (dark) android.R.color.system_outline_variant_dark else android.R.color.system_outline_variant_light, theme)
+                finding("the system's roles: surfaceContainerHigh ${hex(systemFill)} onSurfaceVariant ${hex(systemInk)} outlineVariant ${hex(systemHairline)}")
+                expect("the pill fills with the system's colorSurfaceContainerHigh, as Chrome's does", fill == systemFill)
+                expect("the ink is the system's colorOnSurfaceVariant, as Chrome's hint and mic are", ink == systemInk)
+                expect("the hairline is the system's colorOutlineVariant", hairline == systemHairline)
+            }
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+                val systemInk = res.getColor(if (dark) android.R.color.system_neutral2_200 else android.R.color.system_neutral2_700, theme)
+                val systemHairline = res.getColor(if (dark) android.R.color.system_neutral2_700 else android.R.color.system_neutral2_200, theme)
+                finding("the system's neutral-variant steps: ink ${hex(systemInk)} hairline ${hex(systemHairline)}")
+                expect("the ink is the neutral-variant step MDC gives colorOnSurfaceVariant", ink == systemInk)
+                expect("the hairline is the neutral-variant step MDC gives colorOutlineVariant", hairline == systemHairline)
+                expect("the fill left the v2 panel for the system's palette (colorSurfaceContainerHigh re-lit)", fill != v2Panel && Color.alpha(fill) == 0xFF)
+            }
+            else -> expect("below Android 12 the face keeps the v2 panel", fill == v2Panel)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            expect("the hint reads in the ink's role at full alpha, as Chrome's default_text_color_secondary does", hint == ink)
+        } else {
+            expect("below Android 12 the hint is the ink at 69 %", Color.alpha(hint) in 170..182)
+        }
+        expect("the mark keeps the brand indigo on the system's surface", mark == (if (dark) 0xFF8284F0.toInt() else 0xFF6264DC.toInt()))
+
+        val drawn = drawFace() ?: return
+        val (bitmap, band) = drawn
+        val pill = viewBounds(R.id.widget_search_face)
+        val x = pill.left + dp(30) - band.left
+        val y = pill.top + dp(4) - band.top
+        val pixel = if (x in 0 until bitmap.width && y in 0 until bitmap.height) bitmap.getPixel(x, y) else 0
+        bitmap.recycle()
+        finding("the drawn pill's interior at (+30 dp, +4 dp): ${hex(pixel)}")
+        expect("the drawn pill is the fill colour", near(pixel, fill))
+    }
+
+    /**
+     * The face at the other widths a launcher can give it (WID-03): three cells – the tightest
+     * frame the provider allows, minResizeWidth's 180 dp – where the hint yields its room and the
+     * mark and the two 44 dp boxes must stand whole; and two cells' 110 dp, which no launcher
+     * offers (the provider refuses below 180 dp) and which Chrome's widget has no face for either
+     * – recorded, not checked, as the picture of why. The host is told each size as a launcher
+     * tells it (updateAppWidgetSize); the frame goes back to four cells for the touches.
+     */
+    private fun theNarrowerFrames(hostView: AppWidgetHostView?) {
+        relayFrame(hostView, THREE_CELLS_DP)
+        val frame = frameBounds()
+        val pill = viewBounds(R.id.widget_search_face)
+        val hint = viewBounds(R.id.widget_search_hint)
+        val mic = viewBounds(R.id.widget_search_mic)
+        val mask = viewBounds(R.id.widget_search_private)
+        finding("\nthree-cell frame ($THREE_CELLS_DP dp, minResizeWidth): frame $frame, pill $pill, mark ${viewBounds(R.id.widget_search_mark)}, hint $hint, mic $mic, mask $mask")
+        expect("at three cells the pill spans the frame", pill.width() == frame.width() && frame.width() == dp(THREE_CELLS_DP))
+        expect("at three cells the mark stands whole", viewBounds(R.id.widget_search_mark).width() == dp(20))
+        expect("at three cells the hint keeps room to read", hint.width() >= dp(24) && hint.right <= mic.left)
+        expect("at three cells the mic and the mask keep their 44 dp boxes inside the pill", mic.width() == dp(44) && mask.width() == dp(44) && mask.right <= pill.right)
+        saveFace("widget-$THEME-face-3cell")
+        shot("01b-face-at-three-cells")
+
+        relayFrame(hostView, TWO_CELLS_DP)
+        val pill2 = viewBounds(R.id.widget_search_face)
+        val hint2 = viewBounds(R.id.widget_search_hint)
+        val mask2 = viewBounds(R.id.widget_search_private)
+        finding(
+            "two-cell frame ($TWO_CELLS_DP dp, under minResizeWidth – no launcher offers it): pill $pill2, hint $hint2 (${hint2.width()} px wide), " +
+                "mask $mask2 – ${if (mask2.right > pill2.right) "the mask would clip by ${mask2.right - pill2.right} px" else "nothing clips"}; recorded, not checked"
+        )
+        saveFace("widget-$THEME-face-2cell-unreachable")
+
+        relayFrame(hostView, FRAME_WIDTH_DP)
+        expect("the frame is back at four cells for the touches", frameBounds().width() == dp(FRAME_WIDTH_DP))
+    }
+
+    /** The frame re-laid at `widthDp`, the host told the size as a launcher tells it. */
+    private fun relayFrame(hostView: AppWidgetHostView?, widthDp: Int) {
+        onMain {
+            val cells = frame ?: return@onMain
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                hostView?.updateAppWidgetSize(Bundle(), listOf(SizeF(widthDp.toFloat(), FRAME_HEIGHT_DP.toFloat())))
+            } else {
+                @Suppress("DEPRECATION")
+                hostView?.updateAppWidgetSize(null, widthDp, FRAME_HEIGHT_DP, widthDp, FRAME_HEIGHT_DP)
+            }
+            cells.layoutParams = (cells.layoutParams as FrameLayout.LayoutParams).apply { width = dp(widthDp) }
+            cells.requestLayout()
+        }
+        SystemClock.sleep(900)
+    }
+
+    private fun hex(color: Int): String = "#%08X".format(color)
+
+    /** Two opaque colours within a few steps a channel (a software draw's rounding). */
+    private fun near(a: Int, b: Int): Boolean =
+        Color.alpha(a) == Color.alpha(b) &&
+            abs(Color.red(a) - Color.red(b)) <= 3 &&
+            abs(Color.green(a) - Color.green(b)) <= 3 &&
+            abs(Color.blue(a) - Color.blue(b)) <= 3
 
     /**
      * What a launcher would inflate the face with: the SYSTEM's night mode (the app's own scheme
@@ -326,8 +456,15 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
     }
 
     /** The face's frame with a 24 dp margin, at the window's pixels, from the overlay's own drawing (no tree, no timing). */
-    private fun saveFace() {
-        val backdrop = overlay ?: return
+    private fun saveFace(name: String = "widget-$THEME-face") {
+        val (bitmap, _) = drawFace() ?: return
+        File(out, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        bitmap.recycle()
+    }
+
+    /** The band the face still is cut from – the frame with a 24 dp margin – drawn, with its screen rect; null before the host is up. */
+    private fun drawFace(): Pair<Bitmap, Rect>? {
+        val backdrop = overlay ?: return null
         val bounds = frameBounds()
         val margin = dp(24)
         val band = Rect(bounds).apply { inset(-margin, -margin) }
@@ -338,8 +475,7 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
             canvas.translate((at[0] - band.left).toFloat(), (at[1] - band.top).toFloat())
             backdrop.draw(canvas)
         }
-        File(out, "widget-$THEME-face.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
-        bitmap.recycle()
+        return bitmap to band
     }
 
     private fun frameBounds(): Rect = onMain {
@@ -1296,6 +1432,9 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         private const val FRAME_WIDTH_DP = 330
         private const val FRAME_HEIGHT_DP = 80
         private const val FRAME_TOP_SHARE = 0.18f
+        /** The platform's tightest three-cell frame (70 dp a cell less 30 dp) – the provider's minResizeWidth – and two cells', which it refuses. */
+        private const val THREE_CELLS_DP = 180
+        private const val TWO_CELLS_DP = 110
 
         /** Request codes the replays use where no face part fires (the widget's own are 1–3). */
         private const val SCAN_REPLAY_CODE = 11
