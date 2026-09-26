@@ -189,6 +189,7 @@ class MediaSessions(private val host: Host, private val io: Executor) {
         }
         if (!info.private) loadArtwork(info)
         publish(info)
+        syncBackgroundVideo(before, info)
         updatePictureInPictureParams()
         // A chrome player's session playing holds audio focus for its speech stream (ReadAloud.kt, the source note's 2.4).
         host.readAloud.onSession(info)
@@ -196,7 +197,7 @@ class MediaSessions(private val host: Host, private val io: Executor) {
 
     /** The controls go: the session ended (its tab closed, its media gone). */
     private fun clear() {
-        val had = current != null
+        val had = current
         current = null
         artwork = null
         artworkUrl = null
@@ -204,8 +205,21 @@ class MediaSessions(private val host: Host, private val io: Executor) {
         manager.cancel(MediaPlaybackService.NOTIFICATION_ID)
         if (session.isActive) session.isActive = false
         session.setPlaybackState(PlaybackStateCompat.Builder().setState(PlaybackStateCompat.STATE_NONE, 0L, 0f).build())
-        if (had) updatePictureInPictureParams()
-        if (had) host.readAloud.onSession(null)
+        syncBackgroundVideo(had, null)
+        if (had != null) updatePictureInPictureParams()
+        if (had != null) host.readAloud.onSession(null)
+    }
+
+    /**
+     * Background video (MED-08 / EDGE-32, [BackgroundVideoRule]): the session tab's view hears
+     * whether its video keeps playing while the app is in the background – the session its own,
+     * playing, a `<video>`, its site's `background-video` setting allow as the core resolved it –
+     * and holds the engine's hide by that word ([TabWebView.keepsVideoInBackground]); the tab a
+     * session left, or a session that ended, hears no, and a hide held for it goes through.
+     */
+    private fun syncBackgroundVideo(before: MediaSessionInfo?, info: MediaSessionInfo?) {
+        if (before != null && before.tabId != info?.tabId) host.tabs.get(before.tabId)?.keepsVideoInBackground = false
+        if (info != null) host.tabs.get(info.tabId)?.keepsVideoInBackground = BackgroundVideoRule.keepsPlaying(info)
     }
 
     /**

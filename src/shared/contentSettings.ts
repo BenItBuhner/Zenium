@@ -28,6 +28,13 @@ export interface ContentSetting {
   label: string
   /** Chrome's sub-line for the built-in default: "Sites can ask for your location". */
   description: string
+  /**
+   * The sub-line for a default other than the built-in, where the generic template ("Sites can
+   * use <label> without asking" / "Sites cannot use <label>") would say the wrong thing – a
+   * type a site never asks for, say. Read first by the rows' `defaultDescription`; a value
+   * without a line here (and every row without the field) keeps the template.
+   */
+  descriptions?: Partial<Record<ContentDefault, string>>
   group: ContentGroup
   builtInDefault: ContentDefault
   /** Defaults Settings may choose from (a type that is never asked about has no `ask`). */
@@ -332,6 +339,25 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     promptLabel: null,
     allowOnce: false,
     support: { desktop: 'enforced', android: 'enforced' }
+  },
+  // Android only: the WebView pauses a hidden page's video (Chromium's background-video
+  // optimisation) and most sites pause on `visibilitychange` besides. For an allowed site the
+  // host keeps the playing tab's view shown through the background transition (Home, the lock
+  // screen), so neither the engine nor the page learns it was hidden and the audio runs on;
+  // the core carries the resolution on the media session (`MediaSessionInfo.backgroundVideo`)
+  // and the host reads it at the transition. The desktop has no such transition to gate.
+  {
+    id: 'background-video',
+    label: 'Background video',
+    description: 'Sites cannot play video in the background',
+    // Not a thing a site asks for, so the template's "without asking" would be wrong here.
+    descriptions: { allow: 'Sites can keep playing video in the background' },
+    group: 'content',
+    builtInDefault: 'deny',
+    choices: ['allow', 'deny'],
+    promptLabel: null,
+    allowOnce: false,
+    support: { desktop: 'n-a', android: 'enforced' }
   },
   {
     id: 'zoom-levels',

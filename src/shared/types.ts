@@ -1770,6 +1770,41 @@ export interface Bookmark {
 
 export type BookmarkNodeType = 'url' | 'folder'
 
+/**
+ * One page saved for later (Chrome's reading list, bookmarks-33; W6-1). Kept in the profile's
+ * state as `readingList` (`BrowserState.readingList`, `shared/readingList.ts` for the pure
+ * helpers, `core/readingList.ts` for the writes), one entry per URL: re-adding a page marks it
+ * unread and brings it to the top. Local to the profile until the services slice replicates it
+ * as one `reading-list-entry` record per entry carrying every field but `favicon`
+ * (`internal/desktop-parity/reading-list-interface.md`, services' read beside it). The shape is
+ * frozen: the field order below is the normal form every write and `sanitizeReadingEntry`
+ * produce, so a load rewrites nothing the sync engine could take for an edit.
+ */
+export interface ReadingListEntry {
+  /** `rl_<uuid>`, stable across renames and read/unread flips; the sync record's key. */
+  id: string
+  /** The page's address as it was added; the dedupe key (exact string, as `chrome.readingList`). */
+  url: string
+  /** The page's title at the time it was added (the URL's host when the page had none). */
+  title: string
+  /** When the page was added, or added again (an add of a page already in the list refreshes it). */
+  addedAt: number
+  /**
+   * The last write to the entry of any kind: information for the chrome and the record's
+   * payload. The conflict clock is the sync engine's own `modified` stamp, set at the same
+   * commit (the two agree to the millisecond); nothing reads this field to resolve a conflict.
+   */
+  updatedAt: number
+  /**
+   * The page's favicon (a data URL or an address) when the tab had one. This device's alone,
+   * never in the sync record: a data URL is bytes across the boundary and an address may be
+   * host-local; the receiving side resolves the icon from its favicon cache by `url`.
+   */
+  favicon?: string
+  /** When the entry was last marked read; absent while it is unread. */
+  readAt?: number
+}
+
 /** When the bookmarks bar shows above the content frame (Edge's "Show favorites bar"). */
 export type BookmarksBarMode = 'always' | 'newtab' | 'never'
 
@@ -4105,6 +4140,12 @@ export interface UIState {
   downloadsProgress: DownloadsProgress
   /** Every bookmark node (roots included), ordered parent-first, then by index. */
   bookmarks: BookmarkNode[]
+  /**
+   * The reading list (W6-1, bookmarks-33), unread first and newest first within each half
+   * (`sortReadingList`): the `zen://reading-list` page's rows and the bookmarks bar control's
+   * unread count (`unreadReadingCount`), at most `READING_LIST_CAP` entries.
+   */
+  readingList: ReadingListEntry[]
   /** The new tab page's shortcuts on this device, in grid order (Settings and the phone's page). */
   newTabShortcuts: NewTabShortcut[]
   /** Hosts removed from the new tab page's most-visited tiles on this device (the phone filters). */
@@ -4314,6 +4355,8 @@ export interface CommandDescriptor {
     | 'space.new'
     | 'history.open'
     | 'bookmarks.open'
+    | 'readingList.add'
+    | 'readingList.open'
     | 'downloads.open'
     | 'tab.freezeOthers'
     | 'tab.wakeAll'
@@ -4477,6 +4520,7 @@ export interface MenuDescriptor {
     | 'bookmark'
     | 'history'
     | 'download'
+    | 'readingList'
     | 'urlbar'
     | 'translate'
   /** What the phone sheet calls the menu (a bookmark's name, "3 selected"); the source's generic name when absent. */
@@ -5459,6 +5503,34 @@ export interface Commands {
   'bookmark.import': { args: void; result: BookmarkImportResult | null }
   /** Netscape bookmark HTML export through the host's save dialog. */
   'bookmark.export': { args: void; result: boolean }
+
+  // --- reading list (W6-1; `core/readingList.ts`) ---------------------------------------------
+  /**
+   * Save the tab's page for later (the star's menu, the tab's menu, the app menu's row); a page
+   * already listed is marked unread and brought to the top. Null when the tab has no page the
+   * list holds (`zen://`, blank).
+   */
+  'readingList.add': { args: { tabId: string | null }; result: ReadingListEntry | null }
+  /** The tab's page out of the list (the star menu's Remove row); false when it was not in it. */
+  'readingList.removeTab': { args: { tabId: string }; result: boolean }
+  'readingList.remove': { args: { id: string }; result: boolean }
+  'readingList.setRead': { args: { id: string; read: boolean }; result: boolean }
+  /** Every unread entry read; how many changed. */
+  'readingList.markAllRead': { args: void; result: number }
+  /**
+   * Open an entry's page and mark it read: a tab of this window already showing the page is
+   * brought forward; otherwise the page loads in `tabId` (the window's active tab when null) or,
+   * with `newTab`, in a new tab – behind this one with `background` (§10.1's middle click).
+   */
+  'readingList.open': {
+    args: { id: string; tabId: string | null; newTab?: boolean; background?: boolean }
+    result: void
+  }
+  /** The row's menu (Mark as read / unread, Open in New Tab, Copy Link, Remove) at a point. */
+  'readingList.contextMenu': {
+    args: { id: string; x?: number; y?: number; keyboard?: boolean }
+    result: void
+  }
 
   /** The browsers and files an import can come from, freshly probed (profiles, locks). */
   'import.sources': { args: void; result: ImportSource[] }

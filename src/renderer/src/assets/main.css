@@ -5236,6 +5236,13 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  /*
+   * The Reading list control (W6-1): a chip whose badge – §9.19's pill in the window family,
+   * the unread count – trails the label at the badge's 8, the chip's 6 gap and 2 more.
+   */
+  .zen-bm-reading-list .zen-v2-badge {
+    margin-left: 2px;
+  }
   /* A bookmark without a name: the icon alone (Chrome), 28 square. */
   .zen-bm-chip[data-icon-only='true'] {
     padding: 0 6px;
@@ -13199,6 +13206,53 @@ ol.zen-page-prose-list {
  */
 .zen-v2-row.zen-dl-page-row:is([data-deleted], [data-state='cancelled']) .zen-dl-name {
   color: var(--v2-text-deemphasized);
+}
+
+/* -------------------------------------------------------------------------
+ * The Reading List page (components/pages/readingList/ReadingListPage.tsx, §10.1; W6-1,
+ * bookmarks-33; Chrome's reading list): the page frame's §9.21 two-line rows under the Unread
+ * and Read headings. Only what the page adds: the row's two-line floor (§9.2), the trailing
+ * slot with Mark as read and the ⋮ 8 apart and centred on the row (§9.18, §9.21), and §9.29's
+ * unread mark on the favicon seat – the 6 px accent disc overhanging the 16 favicon's top-right
+ * corner by 1, the favicon cut 1 px round it (the tab strip's attention mark, `.zen-attention-
+ * dot`, in the page family's accent since the row is a page's). A read row carries no mark:
+ * its heading says its state, and no width tells one state twice.
+ * ------------------------------------------------------------------------- */
+.zen-v2-row.zen-rl-page-row {
+  min-height: var(--v2-row-two-line);
+}
+.zen-rl-page-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+}
+/*
+ * The heading's slot (the reading list's rows carry two secondaries, so the heading holds the
+ * width of both – History's heading holds one ⋮): the rows' two 28 boxes and their 8, set 12
+ * from the count (the heading's 8 and 4 more) as the rows' slot is from their times, so the
+ * heading's count and the rows' `.zen-page-row-time` end on one right edge (§10.1).
+ */
+.zen-page-heading > .zen-rl-heading-slot {
+  flex-shrink: 0;
+  width: calc(2 * var(--v2-icon-button) + 8px);
+  margin-inline-start: 4px;
+}
+.zen-rl-favicon-seat {
+  position: relative;
+}
+.zen-rl-favicon-seat[data-unread] > .zen-page-row-favicon {
+  mask-image: radial-gradient(circle 4px at calc(100% - 2px) 2px, transparent 98%, #000 100%);
+}
+.zen-rl-unread-dot {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--v2-accent);
+  pointer-events: none;
 }
 
 /*

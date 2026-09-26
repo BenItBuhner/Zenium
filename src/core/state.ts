@@ -36,6 +36,7 @@ import type {
   PageWindowsDeviceState,
   PasswordsDeviceState,
   PrivateDeviceState,
+  ReadingListEntry,
   ScreenCaptureRequest,
   ShareRequest,
   PasswordsStatus,
@@ -112,6 +113,7 @@ import {
   migrateLegacyBookmarks,
   normalizeBookmarkNodes
 } from '../shared/bookmarks'
+import { emptyReadingList, sanitizeReadingList, sortReadingList } from '../shared/readingList'
 import { JsonStore } from './store/JsonStore'
 import { createSpace, createTabRecord, emptyModel, tabVisibleIn, type Model } from './model'
 import { newSearchChoiceSeed, sanitizeSearchChoice, searchChoiceState } from './searchChoice'
@@ -254,6 +256,13 @@ export interface Persisted {
    * before the task manager had a window.
    */
   pageWindowsDevice?: PageWindowsDeviceState
+  /**
+   * The reading list (W6-1): every page saved for later, one entry per URL, at most
+   * `READING_LIST_CAP`. The profile's, independent of the session (a restart keeps it, a window
+   * closing leaves it alone); additive – a profile without it has none. Not in the sync record
+   * yet: the services slice replicates it as `reading-list-entry` records.
+   */
+  readingList?: ReadingListEntry[]
 }
 
 /**
@@ -402,6 +411,12 @@ export class BrowserState {
    * does. Written by the window's bounds report, persisted with the profile, never synced.
    */
   pageWindowsDevice: PageWindowsDeviceState = emptyPageWindows()
+  /**
+   * The reading list (W6-1), one entry per URL in no particular order (`sortReadingList` puts
+   * the unread first for the chrome). Written by the `ReadingListService` alone, replaced whole
+   * and committed; persisted with the profile, not synced yet.
+   */
+  readingList: ReadingListEntry[] = emptyReadingList()
   media: MediaState[] = []
   devtoolsOpenFor = new Set<string>()
   resources: ResourceSnapshot = emptyResourceSnapshot()
@@ -762,6 +777,7 @@ export class BrowserState {
     this.privateDevice = sanitizePrivateDevice(data.privateDevice)
     this.passwordsDevice = sanitizePasswordsDevice(data.passwordsDevice)
     this.pageWindowsDevice = sanitizePageWindows(data.pageWindowsDevice)
+    this.readingList = sanitizeReadingList(data.readingList)
     if (Array.isArray(data.windows) && data.windows.length) {
       this.restoredWindows = data.windows.filter((w) => w && typeof w.id === 'string')
     } else {
@@ -1072,6 +1088,7 @@ export class BrowserState {
       window: win.windowState(),
       ...this.downloadsFor(win),
       bookmarks: this.bookmarks,
+      readingList: this.readingListFor(),
       newTabShortcuts: this.newTabDevice.shortcuts,
       newTabHiddenHosts: this.newTabDevice.hiddenHosts,
       privateLockOnLeave: this.privateDevice.lockOnLeave,
@@ -1088,6 +1105,18 @@ export class BrowserState {
       resources: this.resources,
       pageEnvironment: this.pageEnvironment
     }
+  }
+
+  private sortedReadingList: ReadingListEntry[] = []
+  private sortedReadingListFor: ReadingListEntry[] | null = null
+
+  /** The list in the chrome's order, sorted once per write (every window's snapshot shares it). */
+  private readingListFor(): ReadingListEntry[] {
+    if (this.sortedReadingListFor !== this.readingList) {
+      this.sortedReadingList = sortReadingList(this.readingList)
+      this.sortedReadingListFor = this.readingList
+    }
+    return this.sortedReadingList
   }
 
   /** Broadcast + persist, coalesced to once per tick. */
@@ -1202,7 +1231,8 @@ export class BrowserState {
       newTabDevice: this.newTabDevice,
       privateDevice: this.privateDevice,
       passwordsDevice: this.passwordsDevice,
-      pageWindowsDevice: this.pageWindowsDevice
+      pageWindowsDevice: this.pageWindowsDevice,
+      readingList: this.readingList
     }
   }
 
