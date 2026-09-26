@@ -73,6 +73,7 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 const { buildSection, buildSections, autoCloseDescription } = await import('../sections')
 const {
   allRows,
+  controlledRuns,
   currentOptionLabel,
   findRow,
   groupShows,
@@ -82,6 +83,7 @@ const {
   rowText,
   searchRows
 } = await import('../model')
+const { extensionRevealStore } = await import('@renderer/lib/extensions/manage')
 const { FontPreview } = await import('../fontBlocks')
 const { SearchEngineForm } = await import('../blocks')
 const { familyOptions, fontSizeOptions, previewFamilies } = await import('../fontsModel')
@@ -3015,7 +3017,7 @@ describe('what a row does', () => {
       expect(c.patches.at(-1)).toEqual({ fonts: DEFAULT_SETTINGS.fonts })
     })
 
-    it('a slot or size an extension holds (chrome.fontSettings; state.extensionControls keyed fonts.<slot>, fonts.size, fonts.minimumSize) is drawn controlled in both of the row’s forms showing the extension’s value – the one in effect – over the user’s own, its neighbours not; the preview renders in the effective fonts, Reset keeps to the user’s; Disable takes the Extensions page’s path', () => {
+    it('a slot or size an extension holds (chrome.fontSettings; state.extensionControls keyed fonts.<slot>, fonts.size, fonts.minimumSize) is drawn controlled in both of the row’s forms showing the extension’s value – the one in effect – over the user’s own, its neighbours not; the preview renders in the effective fonts, Reset keeps to the user’s; Disable takes the Extensions page’s path, Manage the extension’s own page', async () => {
       const extension = { extensionId: 'a'.repeat(32), name: 'Advanced Font Settings' }
       const extensionControls = {
         'fonts.standard': { ...extension, value: 'Inter' },
@@ -3071,6 +3073,27 @@ describe('what a row does', () => {
         id: extension.extensionId,
         enabled: false
       })
+      // Manage – the phone indicator row's press – is "Manage extension": the extension's
+      // details, where its switch is, asked for on the management surface
+      // (`extensionRevealStore`); on this host without page tabs, the Add-ons overlay.
+      standard.controlled!.onManage()
+      expect(extensionRevealStore.get().id).toBe(extension.extensionId)
+      await vi.waitFor(() => expect(uiStore.get().overlay).toBe('addons'))
+      expect(invoke).not.toHaveBeenCalledWith('extension.setEnabled', {
+        id: extension.extensionId,
+        enabled: true
+      })
+      uiStore.set({ overlay: 'none' })
+      extensionRevealStore.set({ id: null })
+      // The indicator rows the group draws (`controlledRuns`, one per run of consecutive rows
+      // one extension holds): the held size and the held standard face are separated by the
+      // free minimum size, so each gets its own, after itself.
+      const fontsRows = desktop.groups.find((g) => g.id === 'fonts')!.rows
+      const ids = fontsRows.map((r) => r.id)
+      const after = controlledRuns(fontsRows)
+        .map((n, i) => (n > 0 ? `${ids[i]}:${n}` : null))
+        .filter((s) => s !== null)
+      expect(after).toEqual(['fonts-size:1', 'fonts-standard:1'])
 
       // The phone shell's forms of the same rows carry the same control and value: the family
       // row's description is the extension's face, the slider stands on its stop.
@@ -3091,6 +3114,47 @@ describe('what a row does', () => {
       })
       for (const r of free.groups.find((g) => g.id === 'fonts')!.rows)
         expect(r.controlled).toBeUndefined()
+    })
+
+    it('an extension holding the size, the minimum size and the standard face – a run of consecutive rows – gets one indicator row after the run in either shell’s form, the faces beside them free (controlledRuns on the built group)', () => {
+      const extension = { extensionId: 'a'.repeat(32), name: 'Advanced Font Settings' }
+      const held = state(
+        {
+          platform: 'linux',
+          capabilities: { ...ANDROID, genericFontFamilies: true },
+          extensionControls: {
+            'fonts.size': { ...extension, value: 18 },
+            'fonts.minimumSize': { ...extension, value: 12 },
+            'fonts.standard': { ...extension, value: 'Inter' }
+          }
+        },
+        { fonts: { ...DEFAULT_SETTINGS.fonts } }
+      )
+      const c = context(held)
+      for (const formFactor of ['desktop', 'phone'] as const) {
+        const model = buildSection(PAGE.sections[0], {
+          ...c.ctx,
+          formFactor,
+          localFonts: ['Inter']
+        })
+        const rows = model.groups.find((g) => g.id === 'fonts')!.rows
+        const suffix = formFactor === 'phone' ? '-phone' : ''
+        expect(rows.slice(0, 4).map((r) => r.id)).toEqual([
+          `fonts-size${suffix}`,
+          `fonts-minimum-size${suffix}`,
+          `fonts-standard${suffix}`,
+          `fonts-serif${suffix}`
+        ])
+        // The run of three closes on the standard face: one indicator there, none elsewhere.
+        const runs = controlledRuns(rows)
+        expect(runs[2]).toBe(3)
+        expect(runs.filter((n) => n > 0)).toEqual([3])
+        for (const r of rows.slice(3)) expect(r.controlled).toBeUndefined()
+        // The held rows show the extension's values, the one in effect.
+        const standard = row(model, `fonts-standard${suffix}`)
+        expect(standard.controlled).toMatchObject({ ...extension, value: 'Inter' })
+        expect(standard.kind === 'value' ? standard.value : standard.description).toBe('Inter')
+      }
     })
 
     it('the preview is §10.3’s static content row – a 13/69 % label over the samples, which are decoration for the eye – in the page fonts themselves: the standard family at the size, the fixed one at Chrome’s ratio, both floored by the minimum', () => {

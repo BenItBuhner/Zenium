@@ -1,6 +1,6 @@
 import type { FocusEvent, JSX, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
 import { Fragment, useCallback, useEffect, useId, useRef, useState } from 'react'
-import { ChevronRight, Ellipsis, ExternalLink, Loader2, Minus, Plus, Puzzle } from 'lucide-react'
+import { ChevronRight, Ellipsis, ExternalLink, Loader2, Minus, Plus } from 'lucide-react'
 import { anchorOf, type Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
 import { cn } from '@renderer/lib/utils'
@@ -11,6 +11,7 @@ import { LocalMenu } from '../../menus/LocalMenu'
 import { useLongPress, type LongPressHandlers } from '../../phone/useLongPress'
 import { Slider } from '../../ui/slider'
 import {
+  controlledRuns,
   currentOptionLabel,
   groupShows,
   itemMenuItems,
@@ -150,14 +151,7 @@ export function GroupList({
           {group.rows.length === 0 ? (
             <p className="zen-settings-empty">{group.empty}</p>
           ) : (
-            group.rows.map((row, index) => (
-              <Fragment key={row.id}>
-                {/* A row that closes a run stands under the builder's hairline (`RowBase.hairline`):
-                    the landing's run separator, never over a group's first row. */}
-                {index > 0 && row.hairline && <hr className="zen-settings-hairline" />}
-                <RowView row={row} ctx={ctx} variant={variant} />
-              </Fragment>
-            ))
+            <GroupRows rows={group.rows} ctx={ctx} variant={variant} />
           )}
         </section>
       ))}
@@ -167,47 +161,100 @@ export function GroupList({
 }
 
 /**
- * One row of any kind; `caption` is the search result's "Category › Group" line above it. A row
- * an extension holds (`RowBase.controlled`) is two: the row itself as a dependent row – its
- * control disabled, at .4, no press (§10.4) – and the indicator row under it, the way out.
+ * A group's rows in order, each under the builder's hairline where it has one
+ * (`RowBase.hairline`: the landing's run separator, never over a group's first row), and the
+ * rows an extension holds followed by their indicator – one per run of consecutive rows the
+ * same extension holds (`controlledRuns`), after the run, so an extension that holds every
+ * font row does not double the group (§10.3's density; the §10.5 primitive's rule).
  */
-export function RowView(props: {
-  row: SettingsRow
+function GroupRows({
+  rows,
+  ctx,
+  variant
+}: {
+  rows: readonly SettingsRow[]
   ctx: RowContext
-  caption?: string
-  variant?: RowVariant
+  variant: RowVariant
 }): JSX.Element {
-  const control = props.row.controlled
-  if (!control) return <PlainRowView {...props} />
-  const held: SettingsRow = { ...props.row, controlled: undefined, disabled: true }
+  const runs = controlledRuns(rows)
   return (
     <>
-      <PlainRowView {...props} row={held} />
-      <ControlledRow row={props.row} control={control} variant={props.variant ?? 'phone'} />
+      {rows.map((row, index) => (
+        <Fragment key={row.id}>
+          {index > 0 && row.hairline && <hr className="zen-settings-hairline" />}
+          <RowView row={row} ctx={ctx} variant={variant} indicator={runs[index]} />
+        </Fragment>
+      ))}
     </>
   )
 }
 
 /**
- * The indicator under a row an extension holds (Chrome's extension-controlled indicator, its
- * three parts in the settings rows' own forms): "Controlled by <name>" as the row's 15/400
- * label in the text ink – full ink, since it is the way out and never under the held row's .4
- * (§9.30 as amended on #299) – the 16 px puzzle glyph trailing it (§10.4: a lone status row
- * trails its glyph before any trailing button, never leading in a group whose other rows carry
- * none), and Disable. On the desktop Disable is the row's 32 secondary button after the glyph
- * (§10.5's one action as a trailing button; named "Disable <name>" for a reader, since a page
- * may hold several); on the phone the whole row is the target (§10.4: no inline buttons) and
- * its description says what the press does. Disabling an extension destroys nothing – the
- * Extensions page turns it back on – so nothing confirms, as Chrome's button asks nothing.
- * The row is the held row's twin in id (`<id>-controlled`) and comes back with it.
+ * One row of any kind; `caption` is the search result's "Category › Group" line above it. A row
+ * an extension holds (`RowBase.controlled`) is drawn as a dependent row – its control disabled
+ * showing the value in effect, at .4, no press (§10.4) – with the indicator row after it, the
+ * way out, for the run of held rows it closes: `indicator` is that run's length as
+ * `controlledRuns` counts it (0 inside a run that goes on, so the run's last row carries the
+ * one indicator); left out, the row stands alone – a search result, a form's list – and the
+ * indicator is its own.
+ */
+export function RowView({
+  indicator,
+  ...props
+}: {
+  row: SettingsRow
+  ctx: RowContext
+  caption?: string
+  variant?: RowVariant
+  indicator?: number
+}): JSX.Element {
+  const control = props.row.controlled
+  if (!control) return <PlainRowView {...props} />
+  const held: SettingsRow = { ...props.row, controlled: undefined, disabled: true }
+  const count = indicator ?? 1
+  return (
+    <>
+      <PlainRowView {...props} row={held} />
+      {count > 0 && (
+        <ControlledRow
+          row={props.row}
+          control={control}
+          count={count}
+          variant={props.variant ?? 'phone'}
+        />
+      )}
+    </>
+  )
+}
+
+/**
+ * The indicator after a row – or a run of rows – an extension holds (Chrome's
+ * extension-controlled indicator in the settings rows' own form; §10.5's controlled-setting
+ * primitive): "Controlled by <name>" as the row's 15/400 label in the text ink – full ink,
+ * since it is the way out and never under the held row's .4 (§9.30 as amended on #299) – the
+ * extension's name as it names itself; under it "An extension sets this. Disable it to use
+ * your own value." ("An extension sets these." after a run of more than one); and one trailing
+ * control (§9.18 centres one thing in the trailing slot; §10.4 gives a row one control – so
+ * no glyph beside it, the words carry what a puzzle glyph said). On the desktop the control is
+ * the 32 secondary button reading Disable – its object is the row's subject and the
+ * description's "it", so never "Disable extension" – named "Disable <name>" for a reader,
+ * since a page may hold several; disabling an extension destroys nothing – the Extensions
+ * page turns it back on – so nothing confirms, as Chrome's button asks nothing. On the phone
+ * the row is a §10.4 action row with a chevron opening the extension's own page, where its
+ * switch is (`RowControl.onManage`): no inline button, and no row that disables on a tap,
+ * which would be too easy to hit. The row is the twin in id of the held row it follows
+ * (`<id>-controlled`) and comes back with it.
  */
 function ControlledRow({
   row,
   control,
+  count,
   variant
 }: {
   row: SettingsRow
   control: RowControl
+  /** The rows of the run this indicator stands for: the words are plural past 1. */
+  count: number
   variant: RowVariant
 }): JSX.Element {
   const indicator: InfoRow = {
@@ -215,11 +262,13 @@ function ControlledRow({
     id: `${row.id}-controlled`,
     label: `Controlled by ${control.name}`
   }
-  const glyph = <Puzzle aria-hidden="true" />
+  const description =
+    count > 1
+      ? 'An extension sets these.'
+      : 'An extension sets this. Disable it to use your own value.'
   if (variant === 'desktop') {
     return (
-      <ControlRow row={indicator}>
-        {glyph}
+      <ControlRow row={indicator} description={description}>
         <V2Button
           variant="secondary"
           aria-label={`Disable ${control.name}`}
@@ -233,9 +282,9 @@ function ControlledRow({
   return (
     <PressableRow
       row={indicator}
-      description={`Disables ${control.name} so you can set this yourself.`}
-      trailing={glyph}
-      onPress={control.onDisable}
+      description={description}
+      trailing={<ChevronRight aria-hidden="true" />}
+      onPress={control.onManage}
     />
   )
 }
