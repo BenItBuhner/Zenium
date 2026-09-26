@@ -7287,7 +7287,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // controls core publishes, `navigator.doNotTrack`, the `DNT` header and the `Referer`
         // drop on a document request, a disable and an enable, the clears. iCloud Passwords' row
         // (the desktop's thirty, above) reads the three services values its background takes.
-        Row(PRIVACY_PROBE_ID, PRIVACY_PROBE_NAME, "proof-privacy-probe", fixture = PRIVACY_PROBE_FILES, core = ::privacyProbe)
+        Row(PRIVACY_PROBE_ID, PRIVACY_PROBE_NAME, "proof-privacy-probe", fixture = PRIVACY_PROBE_FILES, core = ::privacyProbe),
+        // Round 20's seam reading with W6-C6's Fonts page (#518, on main since the round's
+        // merge): probe A's fixture under another name, the phone's Customise fonts rows held at
+        // its values, the "Controlled by" row's press opening the probe's details, its Enabled
+        // switch dropping the layer. A `[lane]` row (the trigger's SWEEP_ONLY names it).
+        Row(FONTS_PAGE_PROBE_ID, FONTS_PAGE_PROBE_NAME, "proof-fonts-page-probe", fixture = FONTS_PAGE_PROBE_FILES, core = ::fontsPageSeam)
     )
 
     // --- the core checks of compat round 20 (ranks 481-510 by installs) --------------------------
@@ -8028,6 +8033,142 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             off.isEmpty() -> Grade("P", "fonts probe A: $note", extra)
             else -> Grade("PARTIAL", "fonts probe A: the sizes and the face applied; off: ${off.joinToString(", ")}: $note", extra)
         }
+    }
+
+    /**
+     * The seam with W6-C6's Fonts page (#518; round 20's `[lane]` reading on the merged head):
+     * the phone's Settings › Look and Feel › Customise fonts rows under the probe's layer. The
+     * page is read at the user's values first (the baseline); the probe – probe A's fixture under
+     * another name – sets the default size 20, the minimum 12, the fixed 18 and the standard face
+     * `monospace` from its page; the Fonts page then shows the held rows at those values (the
+     * slider's thumb `aria-disabled`, the family row's description the face) with one
+     * "Controlled by <name>" row after the run; that row's press opens Settings › Extensions
+     * with the probe's details – its Enabled switch – which, pressed, disables the probe: the
+     * layer drops, the fixture reads its baseline fonts again and the Fonts page its user's
+     * rows with no indicator. The probe is enabled again and cleared at the end, as every row's
+     * extension is disabled by the row's cleanup. `P` on all of it; `PARTIAL` with the held rows
+     * shown and a later step off (named); `F` when the page never showed the rows held (the seam
+     * not reached); `n/m` when the Settings page did not open on this lane.
+     */
+    private fun fontsPageSeam(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val slug = entry.optString("slug")
+        val extra = JSONObject()
+        val name = row.name
+        val (fixture1, fixtureView) = fixture("fonts-lang.html", factor, 1_500)
+        val r0 = fontReadings(fixtureView)
+        extra.put("r0", r0)
+        // 1. The Fonts page at the user's values.
+        if (!openSettingsSection(LOOK_SECTION, scaled(12_000, factor))) {
+            return Grade("n/m", "fonts page seam: Settings › Look and Feel never opened on this lane (section '${settingsSection()}')", extra)
+        }
+        val user = pollFontsPage(scaled(10_000, factor)) { it.optBoolean("present") }
+        extra.put("pageUser", user)
+        snap("$slug-page-user")
+        leaveSettingsTab()
+        // 2. The probe's layer from its page.
+        val page = createTab("chrome-extension://${row.id}/probe.html")
+        val pageView = waitForView(page)
+        val ready = poll(scaled(15_000, factor), 400) { if (tabEval(pageView, "String(!!(window.__zenEv&&typeof chrome!=='undefined'&&chrome.fontSettings))") == "true") true else null }
+        extra.put("pageReady", ready == true)
+        val set = probe(pageView, FONTS_PROBE_A_SET, "__zenA", scaled(15_000, factor))
+        extra.put("set", set)
+        showTab(fixture1)
+        val r1 = pollFonts(fixtureView, scaled(15_000, factor)) { familyOf(it, "body") == "monospace" && sizeOf(it, "body") == "20px" }
+        extra.put("r1", r1)
+        // 3. The Fonts page held.
+        val opened = openSettingsSection(LOOK_SECTION, scaled(12_000, factor))
+        val held = pollFontsPage(scaled(10_000, factor)) { it.optBoolean("present") && (it.optJSONArray("held")?.length() ?: 0) > 0 }
+        extra.put("pageHeld", held).put("heldOpened", opened)
+        snap("$slug-page-held")
+        val indicators = held.optJSONArray("held") ?: JSONArray()
+        val indicatorTexts = (0 until indicators.length()).map { indicators.getJSONObject(it).optString("text") }
+        val heldOk = indicators.length() > 0 && indicatorTexts.any { it.contains(name) } &&
+            held.optString("size").contains("20") && held.optString("minimum").contains("12") &&
+            held.optString("standard").lowercase().let { it.contains("monospace") || it.contains("droid sans mono") } &&
+            held.optString("sizeThumb") == "true"
+        // 4. The indicator's press: Settings › Extensions with the probe's details (its switch).
+        val switchRow = "extension:${row.id}:enabled"
+        val detailsUp = { chromeJsString("(function(){var e=document.querySelector('[data-row=\"$switchRow\"]');return e?String(e.getAttribute('aria-checked')):''})()").orEmpty().isNotEmpty() }
+        var manageOk = false
+        if (indicators.length() > 0) {
+            manageOk = touchSettingsRowExpecting("Controlled by", "the probe's details are up", scaled(10_000, factor), detailsUp) ||
+                detailsUp() ||
+                (clickSettingsRow("Controlled by") && awaitTrue(scaled(10_000, factor), detailsUp))
+        }
+        extra.put("manage", JSONObject().put("section", settingsSection() ?: "").put("switchChecked", chromeJsString("(function(){var e=document.querySelector('[data-row=\"$switchRow\"]');return e?String(e.getAttribute('aria-checked')):''})()") ?: ""))
+        snap("$slug-page-manage")
+        // 5. The switch off: the probe disabled, the layer dropped.
+        val disabled = { extensions().firstOrNull { it.getString("id") == row.id }?.optBoolean("enabled", true) == false }
+        var switchOk = false
+        if (manageOk) {
+            switchOk = touchSettingsRowExpecting("Enabled", "the probe is disabled", scaled(10_000, factor), disabled) ||
+                disabled() ||
+                (clickSettingsRow("Enabled") && awaitTrue(scaled(10_000, factor), disabled))
+        }
+        extra.put("switchOff", switchOk)
+        val r2 = if (switchOk) pollFonts(fixtureView, scaled(15_000, factor)) { sameFonts(it, r0) && near(widthOf(it, "tiny"), widthOf(r0, "tiny")) } else fontReadings(fixtureView)
+        extra.put("r2", r2)
+        val fixtureBack = sameFonts(r2, r0) && near(widthOf(r2, "tiny"), widthOf(r0, "tiny"))
+        // 6. The Fonts page released: the user's rows, no indicator.
+        back()
+        SystemClock.sleep(scaled(1_000, factor))
+        leaveSettingsTab()
+        val reopened = openSettingsSection(LOOK_SECTION, scaled(12_000, factor))
+        val released = pollFontsPage(scaled(10_000, factor)) { it.optBoolean("present") && (it.optJSONArray("held")?.length() ?: 0) == 0 }
+        extra.put("pageReleased", released).put("releasedOpened", reopened)
+        snap("$slug-page-released")
+        val pageBack = released.optBoolean("present") && (released.optJSONArray("held")?.length() ?: 0) == 0 &&
+            released.optString("size") == user.optString("size") && released.optString("standard") == user.optString("standard") &&
+            released.optString("sizeThumb") != "true"
+        leaveSettingsTab()
+        // The probe enabled again and cleared; the row's cleanup disables it as every row's.
+        coreCall("extension.setEnabled", JSONObject().put("id", row.id).put("enabled", true).toString())
+        SystemClock.sleep(scaled(1_500, factor))
+        showTab(page)
+        val clear = runCatching { probe(pageView, FONTS_PROBE_A_CLEAR, "__zenAClear", scaled(15_000, factor)) }.getOrElse { JSONObject().put("error", it.toString()) }
+        extra.put("clear", clear)
+        closeTab(page)
+        closeTab(fixture1)
+        showTab(fixtureTab)
+        val note = "the page at the user's values: size '${user.optString("size")}', minimum '${user.optString("minimum")}', standard '${user.optString("standard")}', indicators ${user.optJSONArray("held")?.length() ?: 0}; " +
+            "held: size '${held.optString("size")}' (thumb aria-disabled ${held.optString("sizeThumb")}), minimum '${held.optString("minimum")}', standard '${held.optString("standard")}', " +
+            "indicators ${indicators.length()} [${indicatorTexts.joinToString(" | ") { it.take(90) }}]; " +
+            "the indicator's press ${if (manageOk) "opened the probe's details (section '${extra.optJSONObject("manage")?.optString("section")}', switch ${extra.optJSONObject("manage")?.optString("switchChecked")})" else "did not open the details (section '${extra.optJSONObject("manage")?.optString("section")}')"}; " +
+            "the switch ${if (switchOk) "disabled the probe" else "did not disable the probe"}; the fixture ${if (fixtureBack) "back to its baseline (body ${familyOf(r2, "body")} ${sizeOf(r2, "body")})" else "NOT back (body ${familyOf(r2, "body")} ${sizeOf(r2, "body")})"}; " +
+            "the page released: size '${released.optString("size")}', standard '${released.optString("standard")}', indicators ${released.optJSONArray("held")?.length() ?: 0}"
+        val off = listOfNotNull(
+            if (!manageOk) "the indicator's press" else null,
+            if (!switchOk) "the switch" else null,
+            if (!fixtureBack) "the fixture's revert" else null,
+            if (!pageBack) "the page's release" else null
+        )
+        return when {
+            !heldOk -> Grade("F", "fonts page seam: the phone's Fonts page never showed the rows held at the probe's values: $note", extra)
+            off.isEmpty() -> Grade("P", "fonts page seam: $note", extra)
+            else -> Grade("PARTIAL", "fonts page seam: the rows held as published; off: ${off.joinToString(", ")}: $note", extra)
+        }
+    }
+
+    /** The phone's Customise fonts rows as the chrome draws them: the sliders' values, the size thumb's `aria-disabled`, the standard row's text, the "Controlled by" rows. */
+    private fun fontsPageRows(): JSONObject = json(
+        chromeJsString(
+            "(function(){var q=function(s){return document.querySelector(s)};var txt=function(e){return e?(e.textContent||'').trim().replace(/\\s+/g,' '):''};" +
+                "var val=function(id){return txt(q('[data-row=\"'+id+'\"] .zen-settings-slider-value'))};" +
+                "var thumb=function(id){var t=q('[data-row=\"'+id+'\"] [role=\"slider\"]');return t?String(t.getAttribute('aria-disabled')):''};" +
+                "var held=Array.prototype.map.call(document.querySelectorAll('[data-row*=\"-controlled\"]'),function(e){return {row:e.getAttribute('data-row'),text:txt(e)}});" +
+                "var p=q('.zen-settings-phone');return JSON.stringify({present:!!q('[data-row=\"fonts-size-phone\"]'),size:val('fonts-size-phone'),sizeThumb:thumb('fonts-size-phone'),minimum:val('fonts-minimum-size-phone'),standard:txt(q('[data-row=\"fonts-standard-phone\"]')),held:held,section:p?String(p.dataset.section||''):''})})()"
+        ) ?: "{}"
+    )
+
+    /** [fontsPageRows] polled until `ready` holds, for up to `timeoutMs`; the last reading either way. */
+    private fun pollFontsPage(timeoutMs: Long, ready: (JSONObject) -> Boolean): JSONObject {
+        var last = JSONObject()
+        poll(timeoutMs, 500) {
+            last = fontsPageRows()
+            if (ready(last)) true else null
+        }
+        return last
     }
 
     /**
@@ -11085,6 +11226,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         )
         private val FONTS_PROBE_A_FILES = fontsProbeFiles(FONTS_PROBE_A_NAME)
         private val FONTS_PROBE_B_FILES = fontsProbeFiles(FONTS_PROBE_B_NAME)
+
+        /** The Fonts page seam's probe ([fontsPageSeam]): probe A's fixture under its own name; its id comes out as `eicpojjdecdlodehmlcdjigijfepnedb`. */
+        private const val FONTS_PAGE_PROBE_NAME = "Zenium compat proof: fonts page probe"
+        private val FONTS_PAGE_PROBE_ID = fixtureId(FONTS_PAGE_PROBE_NAME)
+        private val FONTS_PAGE_PROBE_FILES = fontsProbeFiles(FONTS_PAGE_PROBE_NAME)
 
         /**
          * The `chrome.privacy` probe ([privacyProbe]; round 20's proof of the coordinator's

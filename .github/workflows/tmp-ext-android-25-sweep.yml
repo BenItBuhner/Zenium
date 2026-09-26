@@ -247,7 +247,7 @@ jobs:
       artifact-name: android-ext-compat-sweep-lane
       artifact-path: artifacts/android-ext-compat-sweep/
       script-env: |
-        SWEEP_ONLY=ochhcgamjcnhpaekcckimgofnedofplf,caclkomlalccbpcdllchkeecicepbmbm,oaopicjopnabmjiginojoghmphbmaoah,aincogolagbkgdpooijhninfkahoidfm,dbfmnekepjoapopniengjbcpnbljalfg,fjoiihoancoimepbgfcmopaciegpigpa,pejdijmoenmkgeppbflobdenhhabjlaj,pkjmmekkikdhpoegdhnbnoopodjfmdck
+        SWEEP_ONLY=ochhcgamjcnhpaekcckimgofnedofplf,caclkomlalccbpcdllchkeecicepbmbm,oaopicjopnabmjiginojoghmphbmaoah,aincogolagbkgdpooijhninfkahoidfm,dbfmnekepjoapopniengjbcpnbljalfg,fjoiihoancoimepbgfcmopaciegpigpa,pejdijmoenmkgeppbflobdenhhabjlaj,pkjmmekkikdhpoegdhnbnoopodjfmdck,eicpojjdecdlodehmlcdjigijfepnedb
         SWEEP_LAST=
       timeout-minutes: 75
 
@@ -264,7 +264,7 @@ jobs:
       script-env: |
         WEBVIEW_APK=artifacts/webview/SystemWebView.apk
         SOFT_FAIL=1
-        SWEEP_ONLY=ochhcgamjcnhpaekcckimgofnedofplf,caclkomlalccbpcdllchkeecicepbmbm,oaopicjopnabmjiginojoghmphbmaoah,aincogolagbkgdpooijhninfkahoidfm,dbfmnekepjoapopniengjbcpnbljalfg,fjoiihoancoimepbgfcmopaciegpigpa,pejdijmoenmkgeppbflobdenhhabjlaj,pkjmmekkikdhpoegdhnbnoopodjfmdck
+        SWEEP_ONLY=ochhcgamjcnhpaekcckimgofnedofplf,caclkomlalccbpcdllchkeecicepbmbm,oaopicjopnabmjiginojoghmphbmaoah,aincogolagbkgdpooijhninfkahoidfm,dbfmnekepjoapopniengjbcpnbljalfg,fjoiihoancoimepbgfcmopaciegpigpa,pejdijmoenmkgeppbflobdenhhabjlaj,pkjmmekkikdhpoegdhnbnoopodjfmdck,eicpojjdecdlodehmlcdjigijfepnedb
         SWEEP_LAST=
       setup-script: |
         base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
