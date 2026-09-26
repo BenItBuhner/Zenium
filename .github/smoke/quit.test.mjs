@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  NO_WINDOW_MESSAGE,
   TARGET_CLOSED_MESSAGE,
   exitWithin,
   isTargetClosedError,
   mainProcessState,
+  unlessNoWindow,
   unlessTargetClosed
 } from './quit.mjs'
 
@@ -14,7 +16,9 @@ const evaluateGone = new Error(
 const waitForGone = new Error(`locator.waitFor: ${TARGET_CLOSED_MESSAGE}`)
 const clickGone = new Error(`locator.click: ${TARGET_CLOSED_MESSAGE}`)
 const timedOut = new Error('app.evaluate timed out after 30000 ms')
-const noWindow = new Error('no window to send keys to')
+const noWindow = new Error(NO_WINDOW_MESSAGE)
+// Playwright prefixes the API name here too: the throw comes from inside the main-process evaluate.
+const noWindowFromEvaluate = new Error(`electronApplication.evaluate: Error: ${NO_WINDOW_MESSAGE}`)
 const pending = new Promise(() => {})
 
 describe('isTargetClosedError', () => {
@@ -55,6 +59,38 @@ describe('unlessTargetClosed', () => {
   it('propagates every other rejection', async () => {
     await expect(unlessTargetClosed(Promise.reject(noWindow))).rejects.toBe(noWindow)
     await expect(unlessTargetClosed(Promise.reject(timedOut))).rejects.toBe(timedOut)
+  })
+})
+
+describe('unlessNoWindow (the quit chord’s release after a hold that ran its time, session-08)', () => {
+  it('passes a value through', async () => {
+    await expect(unlessNoWindow(Promise.resolve('sent'))).resolves.toBe('sent')
+  })
+
+  it('turns a release that found no window – the held quit tearing them down before the process exits – into the fallback', async () => {
+    await expect(unlessNoWindow(Promise.reject(noWindow))).resolves.toBeUndefined()
+    await expect(unlessNoWindow(Promise.reject(noWindowFromEvaluate), 'gone')).resolves.toBe('gone')
+    await expect(
+      unlessNoWindow(Promise.reject(`evaluate: ${NO_WINDOW_MESSAGE}`))
+    ).resolves.toBeUndefined()
+  })
+
+  it('propagates every other rejection, the lost target included (that one is unlessTargetClosed’s)', async () => {
+    await expect(unlessNoWindow(Promise.reject(timedOut))).rejects.toBe(timedOut)
+    await expect(unlessNoWindow(Promise.reject(evaluateGone))).rejects.toBe(evaluateGone)
+    await expect(unlessNoWindow(Promise.reject(null))).rejects.toBeNull()
+  })
+
+  it('composes with unlessTargetClosed: the release meets a quit under way either way', async () => {
+    await expect(
+      unlessNoWindow(unlessTargetClosed(Promise.reject(noWindow)))
+    ).resolves.toBeUndefined()
+    await expect(
+      unlessNoWindow(unlessTargetClosed(Promise.reject(evaluateGone)))
+    ).resolves.toBeUndefined()
+    await expect(unlessNoWindow(unlessTargetClosed(Promise.reject(timedOut)))).rejects.toBe(
+      timedOut
+    )
   })
 })
 

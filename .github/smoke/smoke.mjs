@@ -3,7 +3,7 @@
 // blocking dialog, takes OS-level screenshots at each step and writes one JSON result per step.
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
-//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,features,recaptcha,downloads,notifications,restart-registration,private-taskbar,default-browser]
+//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,features,recaptcha,downloads,notifications,restart-registration,private-taskbar,quit-hold,default-browser]
 //        [--extra-args="--no-sandbox --disable-gpu"]   (space-separated, passed to the app)
 //        [--sandbox]             (the run is a sandboxed leg: Chromium's sandbox stays on, so
 //                                 --no-sandbox in --extra-args is refused and ELECTRON_DISABLE_SANDBOX
@@ -37,7 +37,10 @@
 //                visible window titled Zenium, the fixture's first page typed into the URL bar
 //                the new tab left by the onboarding has up (that tab loads it in place), a
 //                graceful quit (the preset's chord, "Quit Zenium?" answered when several tabs
-//                are open) that leaves `cleanExit: true` in the profile
+//                are open; on macOS the chord is HELD – Warn Before Quitting (⌘Q) is on by
+//                default, so the key down arms the "Hold ⌘Q to quit" panel and the quit comes
+//                at the hold's 1.5 s, with no tab-count question) that leaves `cleanExit: true`
+//                in the profile
 //   restore      the profile from `boot` comes back with its tab loaded, no onboarding and no
 //                "Restore pages?" bar (skipped, like `crash`, when boot's launch or onboarding
 //                failed: that profile is not past onboarding; scenario-deps.mjs)
@@ -182,6 +185,19 @@
 //                the private ICO this copy ships; the main window's frame carries none of its
 //                own; the id's class key holds the name and the private PNG (Windows jobs; the
 //                taskbar itself is on the screenshot, not judged)
+//   quit-hold    Hold ⌘Q to quit on macOS (session-08; the W5-19 slice): a profile past
+//                onboarding with a page up has "Warn Before Quitting (⌘Q)" in the Zenium menu
+//                as a checkbox, checked, with `settings.warnBeforeQuitting === true` behind it;
+//                ⌘Q's key down alone (sent to the chrome) arms the hold – `window.quitHold`
+//                carries the chord and its 1500 ms – and the key up at 0.5 s takes it down
+//                with nothing quit; the menu item clicked in the main process turns the
+//                setting off and the row unchecked; the graceful quit then comes at the PRESS,
+//                with no hold, and the profile's state.json keeps `warnBeforeQuitting: false`
+//                (macOS jobs; every other macOS scenario's graceful quit holds the chord and
+//                records the hold it saw – `hold` in the quit step, the screen grabbed
+//                mid-hold as <scenario>-quit-hold.png; the harness holds on Linux too when
+//                --extra-args carries the app's --test-quit-hold, the stand-in's chord being
+//                Ctrl+Shift+Q)
 //   default-browser  Make default on macOS (os-07; default-browser-scenario.mjs): the bundle's
 //                Info.plist claims http and https (CFBundleURLTypes); `defaultBrowser.request`
 //                calls app.setAsDefaultProtocolClient('http') – the call the OS's "Do you want
@@ -195,8 +211,8 @@
 //
 // Windows and macOS run boot, restore, scale and dark (the installed Windows build boot and
 // restore), Windows notifications, restart-registration and private-taskbar too and macOS
-// default-browser too; the walkthrough, the crash pair, clear-on-exit, the two mv3-worker legs,
-// pip, the split pair, features and recaptcha run on Linux under Xvfb only.
+// quit-hold and default-browser too; the walkthrough, the crash pair, clear-on-exit, the two
+// mv3-worker legs, pip, the split pair, features and recaptcha run on Linux under Xvfb only.
 //
 // Zero tolerated JS errors: a chrome console error, a chrome page error, a preload or Electron-side
 // error in a tab view, a main-process exception, a crashed process, a blocking native dialog or a
@@ -248,7 +264,7 @@ import {
   rowsExpected,
   waitForTabWithRetry
 } from './navigation.mjs'
-import { exitWithin, mainProcessState, unlessTargetClosed } from './quit.mjs'
+import { exitWithin, mainProcessState, unlessNoWindow, unlessTargetClosed } from './quit.mjs'
 import { skipReason, skippedEntries } from './scenario-deps.mjs'
 import {
   SITE_DATA_FILE,
@@ -267,6 +283,15 @@ const IS_LINUX = process.platform === 'linux'
 const ACCEL = IS_MAC ? 'Meta' : 'Control'
 // The Chrome shortcut preset is the default (#126): Chrome's chords on every platform.
 const QUIT_COMBO = IS_MAC ? 'Meta+q' : 'Control+Shift+q'
+// On a Mac the chord is held this long before the app quits (session-08; `QUIT_HOLD_MS` in
+// src/core/quitHold.ts, Chrome's `kTimeToConfirmQuit`), and the smoke keeps the keys down a
+// margin past it before letting go.
+const QUIT_HOLD_MS = 1500
+const QUIT_HOLD_MARGIN_MS = 1000
+// The chord as the hold's panel spells it ("Hold ⌘Q to quit"; the stand-in names Chrome's Linux chord).
+const QUIT_HOLD_CHORD = IS_MAC ? '⌘Q' : 'Ctrl + Shift + Q'
+// The macOS application menu's checkbox that arms the hold (src/core/menuBar.ts).
+const WARN_BEFORE_QUITTING_LABEL = 'Warn Before Quitting (⌘Q)'
 const PRIVATE_WINDOW_COMBO = `${ACCEL}+Shift+n`
 const FULLSCREEN_COMBO = IS_MAC ? 'Control+Meta+f' : 'F11'
 // Web capture (`capture.start`, the Chrome preset's Ctrl+Shift+S; Edge's chord) and the desktop's
@@ -291,6 +316,8 @@ const EXTRA_ARGS =
 // the launch); here the caller keeps --no-sandbox out of --extra-args, and the flag says so.
 const SANDBOX = opts.sandbox === true
 const NO_SANDBOX_ARG = EXTRA_ARGS.includes('--no-sandbox')
+// The app holds the quit chord on every OS under this flag (src/main/platform/backgroundWork.ts).
+const QUIT_HOLD_EVERYWHERE = EXTRA_ARGS.includes('--test-quit-hold')
 if (SANDBOX && NO_SANDBOX_ARG) {
   console.error('--sandbox contradicts --no-sandbox in --extra-args: pick one')
   process.exit(2)
@@ -1338,6 +1365,19 @@ class Session {
    * app's shortcut table lives. (Playwright's CDP key events are delivered to the renderer only.)
    */
   press(combo, windowId = this.mainWindowId) {
+    return this.sendKeys(combo, ['keyDown', 'keyUp'], windowId)
+  }
+
+  /** The chord's keys pressed and kept down – `releaseKeys` lets them go (the quit hold, session-08). */
+  holdKeys(combo, windowId = this.mainWindowId) {
+    return this.sendKeys(combo, ['keyDown'], windowId)
+  }
+
+  releaseKeys(combo, windowId = this.mainWindowId) {
+    return this.sendKeys(combo, ['keyUp'], windowId)
+  }
+
+  sendKeys(combo, types, windowId) {
     const parts = combo.split('+')
     const key = parts.pop()
     const modifiers = parts.map(
@@ -1345,7 +1385,7 @@ class Session {
         ({ Control: 'control', Meta: 'meta', Shift: 'shift', Alt: 'alt' })[m] || m.toLowerCase()
     )
     return this.app.evaluate(
-      ({ BrowserWindow }, { key, modifiers, windowId }) => {
+      ({ BrowserWindow }, { key, modifiers, windowId, types }) => {
         const w =
           (windowId && BrowserWindow.fromId(windowId)) ||
           BrowserWindow.getFocusedWindow() ||
@@ -1353,11 +1393,63 @@ class Session {
         if (!w || w.isDestroyed()) throw new Error('no window to send keys to')
         w.focus()
         w.webContents.focus()
-        w.webContents.sendInputEvent({ type: 'keyDown', keyCode: key, modifiers })
-        w.webContents.sendInputEvent({ type: 'keyUp', keyCode: key, modifiers })
+        for (const type of types) w.webContents.sendInputEvent({ type, keyCode: key, modifiers })
       },
-      { key, modifiers, windowId }
+      { key, modifiers, windowId, types }
     )
+  }
+
+  /** The core's state as the chrome reads it (`app.getState`). */
+  appState(page = this.chrome) {
+    return page.evaluate(() => window.zen.invoke('app.getState'))
+  }
+
+  /**
+   * Whether the quit chord holds on this host (session-08): a Mac with "Warn Before Quitting
+   * (⌘Q)" set, which it is by default. Elsewhere the chord quits at once, whatever the setting
+   * – unless the app was launched with `--test-quit-hold` (the drives' stand-in, which holds
+   * on every OS), which a run under an X server can pass in --extra-args to walk this path.
+   */
+  async quitChordHolds() {
+    if (!IS_MAC && !QUIT_HOLD_EVERYWHERE) return false
+    const state = await this.appState()
+    return state.settings.warnBeforeQuitting !== false
+  }
+
+  /**
+   * The quit chord held until the app quits (session-08, Chrome's "Hold ⌘Q to Quit"): the keys
+   * go down and stay down – a key up before the hold's 1500 ms releases it and nothing quits –
+   * while the chrome's state is read for the hold ("Hold ⌘Q to quit" is up: `window.quitHold`
+   * names the chord and the duration), and they come up again only once the app has exited or
+   * the hold has had its time and a margin (a downloads question or a slow teardown can keep
+   * the app alive past it; a hold that ran its time quits whatever the keys do after). Returns
+   * what was seen: the hold's state, and whether the exit came within the hold.
+   */
+  async holdQuitChord() {
+    await Promise.race([unlessTargetClosed(this.holdKeys(QUIT_COMBO)), delay(3000)])
+    const panel = await unlessTargetClosed(
+      waitFor(async () => (await this.appState()).window.quitHold, 2000, 'the hold armed', 50),
+      null
+    ).catch((e) => ({ error: String(e && e.message ? e.message : e) }))
+    // The screen while the keys are down: "Hold ⌘Q to quit" over the page, as the Mac draws it
+    // (no bring-to-front or settle first – the hold has 1500 ms, and a screencapture takes
+    // most of a second of it on a runner).
+    const shot = panel && !panel.error ? grabScreen(`${this.scenario}-quit-hold`) : null
+    const exit = await exitWithin(
+      this.exitPromise,
+      QUIT_HOLD_MS + QUIT_HOLD_MARGIN_MS,
+      this.quitStartedAt
+    )
+    // The keys come up only if the app is still there to see them: a quit that began at the
+    // hold's end but has not exited within the margin (a slow teardown on a runner) has torn its
+    // windows down already, so the release finds none – the quit under way, not a fault; the
+    // exit budget that follows in `quitGracefully` judges it.
+    if (!exit)
+      await Promise.race([
+        unlessNoWindow(unlessTargetClosed(this.releaseKeys(QUIT_COMBO))),
+        delay(3000)
+      ])
+    return { panel, shot, exitedDuringHold: Boolean(exit) }
   }
 
   bringToFront(windowId = this.mainWindowId) {
@@ -1960,6 +2052,12 @@ class Session {
    * on by default): the question must show exactly then, name the tab count, and its Quit button
    * ends the run. The app has to exit with code 0 within the budget either way.
    *
+   * On a Mac the chord is HELD (session-08, Chrome's "Hold ⌘Q to Quit", on by default): a press
+   * arms the hold and its key up releases it, and nothing quits; the keys stay down through the
+   * hold's 1500 ms and the app quits at its end. The held quit is the confirmation (design
+   * language v2 §10.5), so no "Quit Zenium?" comes for the open tabs then. What the hold showed
+   * is returned with the exit (`hold`), the macOS runner's evidence of it in every scenario.
+   *
    * The exit is the process's exit event and nothing else. From the moment the app quits,
    * Playwright's connections to it are gone – before the process is, by seconds on a slow runner
    * – so a call still in flight then ("Target page, context or browser has been closed") is the
@@ -1969,11 +2067,17 @@ class Session {
    */
   async quitGracefully(budgetMs = QUIT_BUDGET_MS) {
     const tabs = await this.sidebarTabCount().catch(() => 0)
-    const expectPrompt = tabs > 1
+    const holds = await this.quitChordHolds().catch(() => false)
+    const expectPrompt = tabs > 1 && !holds
     this.quitStartedAt = Date.now()
-    // The chord's evaluate may lose its target: the quit it triggers can take the main-process
-    // session down before the reply arrives. The exit event says what happened then.
-    await Promise.race([unlessTargetClosed(this.press(QUIT_COMBO)), delay(3000)])
+    let hold = null
+    if (holds) {
+      hold = await this.holdQuitChord()
+    } else {
+      // The chord's evaluate may lose its target: the quit it triggers can take the main-process
+      // session down before the reply arrives. The exit event says what happened then.
+      await Promise.race([unlessTargetClosed(this.press(QUIT_COMBO)), delay(3000)])
+    }
     const prompt = this.chrome.locator('[data-window-prompt="quit"]').first()
     // The wait ends early when the chrome page closes under it: the app quitting without asking.
     const first = await Promise.race([
@@ -2024,8 +2128,24 @@ class Session {
     if (expectPrompt && !asked)
       throw new Error(`quit went ahead without "Quit Zenium?" although ${tabs} tabs were open`)
     if (!expectPrompt && asked)
-      throw new Error(`"Quit Zenium?" asked with ${tabs} tab open: ${JSON.stringify(asked)}`)
-    return { ms, exit, prompt: asked }
+      throw new Error(
+        `"Quit Zenium?" asked with ${tabs} tab${tabs === 1 ? '' : 's'} open${holds ? ' after the chord was held (the hold is the confirmation)' : ''}: ${JSON.stringify(asked)}`
+      )
+    if (hold) {
+      // The hold must have shown: the chrome's state named it while the keys were down, with
+      // the Mac's chord and Chrome's 1500 ms; and the quit must have come from the hold's end,
+      // not before it (a quit at the press is the hold not running).
+      if (!hold.panel || hold.panel.error || hold.panel.chord !== QUIT_HOLD_CHORD) {
+        throw new Error(`the quit chord held showed no hold: ${JSON.stringify(hold.panel)}`)
+      }
+      if (hold.panel.durationMs !== QUIT_HOLD_MS) {
+        throw new Error(`the hold runs ${hold.panel.durationMs} ms, not ${QUIT_HOLD_MS}`)
+      }
+      if (ms < QUIT_HOLD_MS) {
+        throw new Error(`the app quit ${ms} ms after the chord went down, before the hold's end`)
+      }
+    }
+    return { ms, exit, prompt: asked, hold }
   }
 
   /**
@@ -7004,6 +7124,173 @@ async function scenarioRecaptcha() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// quit-hold (session-08, macOS): Chrome's "Warn Before Quitting (⌘Q)" – the application menu's
+// checkbox, on by default, arming the hold. The quit chord held arms it and the chrome's state
+// names it; a key up before its 1500 ms releases it and nothing quits; the checkbox picked off,
+// the chord quits at the press and the setting is on disk after. The hold run to its end is
+// every macOS scenario's quit (Session.quitGracefully), screen grab and all.
+// ---------------------------------------------------------------------------------------------
+
+const QUIT_HOLD_SCENARIO = 'quit-hold'
+
+/** The application menu's first (application) submenu as the main process has it. */
+function readApplicationMenu(s) {
+  return s.app.evaluate(({ Menu }) => {
+    const menu = Menu.getApplicationMenu()
+    const first = menu?.items[0]
+    if (!first) return null
+    return {
+      app: first.label,
+      items: (first.submenu?.items ?? []).map((i) => ({
+        label: i.label,
+        type: i.type,
+        role: i.role ?? null,
+        checked: i.checked,
+        enabled: i.enabled
+      }))
+    }
+  })
+}
+
+/** The Warn Before Quitting row of the application menu, or null. */
+async function warnBeforeQuittingRow(s) {
+  const menu = await readApplicationMenu(s)
+  return {
+    menu,
+    row: menu?.items.find((i) => i.label === WARN_BEFORE_QUITTING_LABEL) ?? null
+  }
+}
+
+async function scenarioQuitHold() {
+  if (!IS_MAC) {
+    const note =
+      'the hold and the application menu are the Mac’s; elsewhere the chord quits at the press, which every quit step runs'
+    result.scenarios[QUIT_HOLD_SCENARIO] = { skipped: 'platform', note }
+    log(`${QUIT_HOLD_SCENARIO}: skipped: platform (${note})`)
+    return
+  }
+  const userData = freshProfile('profile-quit-hold', { onboardingDone: true })
+  return runScenario(QUIT_HOLD_SCENARIO, userData, {}, async (s, out) => {
+    out.fixture = { origin: bootSite.origin, page: bootSite.first.url }
+    await s.step('menu-item', async () => {
+      // A page in the front window: the hold's panel is the page-drawn one over it.
+      await openUrlInNewTab(s, bootSite.first.url)
+      const { menu, row } = await warnBeforeQuittingRow(s)
+      if (!row) {
+        throw new Error(
+          `no "${WARN_BEFORE_QUITTING_LABEL}" in the ${menu?.app ?? '(no)'} menu: ${JSON.stringify(
+            menu?.items.map((i) => i.label ?? i.type) ?? null
+          )}`
+        )
+      }
+      if (row.type !== 'checkbox' || row.checked !== true) {
+        throw new Error(
+          `"${WARN_BEFORE_QUITTING_LABEL}" is ${JSON.stringify(row)}, not a checkbox checked by default`
+        )
+      }
+      const state = await s.appState()
+      if (state.settings.warnBeforeQuitting !== true) {
+        throw new Error(
+          `settings.warnBeforeQuitting reads ${JSON.stringify(state.settings.warnBeforeQuitting)} on a fresh profile`
+        )
+      }
+      // Quit Zenium keeps the host's role: a pick of the row quits at once, and with every
+      // window closed the role's chord does.
+      const quit = menu.items.find((i) => i.label === 'Quit Zenium') ?? null
+      return { app: menu.app, row, quit, setting: state.settings.warnBeforeQuitting }
+    })
+    await s.step('hold-release', async () => {
+      // The chord down: the hold arms and the chrome's state names it (the panel is up). The
+      // keys let go at half a second: the hold ends, nothing quits, the main process answers.
+      const down = Date.now()
+      await s.holdKeys(QUIT_COMBO)
+      const hold = await waitFor(
+        async () => (await s.appState()).window.quitHold,
+        1000,
+        'the hold armed by the chord',
+        50
+      )
+      await delay(Math.max(0, down + 500 - Date.now()))
+      await s.releaseKeys(QUIT_COMBO)
+      const releasedAtMs = Date.now() - down
+      if (releasedAtMs >= QUIT_HOLD_MS) {
+        throw new Error(
+          `the keys came up ${releasedAtMs} ms after they went down, past the hold: the release cannot be judged on this runner`
+        )
+      }
+      await waitFor(
+        async () => ((await s.appState()).window.quitHold === null ? { cleared: true } : null),
+        1000,
+        'the hold released by the key up',
+        50
+      )
+      // Past where the hold would have quit: still here, and answering.
+      const exit = await exitWithin(s.exitPromise, QUIT_HOLD_MS + 500, down)
+      if (exit) {
+        throw new Error(
+          `the app quit (${JSON.stringify(exit)}) although the chord was released at ${releasedAtMs} ms`
+        )
+      }
+      const main = await mainProcessState(
+        s.app.evaluate(() => 'ok'),
+        3000
+      )
+      if (main !== 'responsive') throw new Error(`main process ${main} after the release`)
+      if (hold.chord !== QUIT_HOLD_CHORD || hold.durationMs !== QUIT_HOLD_MS) {
+        throw new Error(`the hold reads ${JSON.stringify(hold)}`)
+      }
+      return { hold, releasedAtMs, main }
+    })
+    await s.step('toggle-off', async () => {
+      // The checkbox picked as a mouse picks it: the item's click flips its check and runs the
+      // row's handler, which writes the setting; the menu is rebuilt on it and the row reads
+      // unchecked.
+      const clicked = await s.app.evaluate(({ Menu, BrowserWindow }, label) => {
+        const item = Menu.getApplicationMenu()?.items[0]?.submenu?.items.find(
+          (i) => i.label === label
+        )
+        if (!item) return null
+        const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+        item.click(undefined, win, win?.webContents)
+        return { checkedAfterClick: item.checked }
+      }, WARN_BEFORE_QUITTING_LABEL)
+      if (!clicked) throw new Error(`no "${WARN_BEFORE_QUITTING_LABEL}" row to pick`)
+      const state = await waitFor(
+        async () => {
+          const st = await s.appState()
+          return st.settings.warnBeforeQuitting === false ? st : null
+        },
+        3000,
+        'settings.warnBeforeQuitting off after the pick'
+      )
+      const row = await waitFor(
+        async () => {
+          const { row } = await warnBeforeQuittingRow(s)
+          return row && row.checked === false ? row : null
+        },
+        3000,
+        'the menu rebuilt with the row unchecked'
+      )
+      return { clicked, row, setting: state.settings.warnBeforeQuitting }
+    })
+    await s.step('quit-at-once', async () => {
+      // With the checkbox off the chord quits at the press: quitGracefully reads the setting
+      // and presses rather than holds, and expects the tab-count question as before. The
+      // setting is on disk once the process has exited.
+      const r = await s.quitGracefully()
+      if (r.hold) throw new Error('the chord was held although Warn Before Quitting is off')
+      const raw = JSON.parse(fs.readFileSync(path.join(userData, 'zen', 'state.json'), 'utf8'))
+      if (raw.settings?.warnBeforeQuitting !== false) {
+        throw new Error(
+          `state.json holds warnBeforeQuitting ${JSON.stringify(raw.settings?.warnBeforeQuitting)} after the toggle`
+        )
+      }
+      return { ...r, persisted: raw.settings.warnBeforeQuitting, state: readState(userData) }
+    })
+  })
+}
+
+// ---------------------------------------------------------------------------------------------
 
 function finish(exitCode) {
   const failures = []
@@ -7118,6 +7405,7 @@ async function main() {
       split: scenarioSplit,
       features: scenarioFeatures,
       recaptcha: scenarioRecaptcha,
+      [QUIT_HOLD_SCENARIO]: scenarioQuitHold,
       [DOWNLOADS_SCENARIO]: () =>
         scenarioDownloads({
           freshProfile,

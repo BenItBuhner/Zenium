@@ -12,7 +12,7 @@ import { installShellTasks } from './platform/shellTasks'
 import { runStdioShim } from './agent/shim'
 import { LINUX_DESKTOP_ID } from './platform/defaultBrowser'
 import { parseLaunchArgs, pathToFileUrl, type LaunchArgs } from '../shared/launchArgs'
-import { holdBackgroundWorkRequested } from './platform/backgroundWork'
+import { holdBackgroundWorkRequested, quitHoldEverywhereRequested } from './platform/backgroundWork'
 import {
   describeSwitches,
   droppedSecondInstanceSwitches,
@@ -205,6 +205,8 @@ function main(): void {
       // The desktop demo drivers' hold on the startup sweeps (`--hold-background-work`; a normal
       // launch never carries it): the core's `performance.releaseBackgroundWork` ends it.
       holdBackgroundWork: holdBackgroundWorkRequested(process.argv),
+      // The drives' stand-in for the macOS hold-to-quit; a normal launch never carries it.
+      quitHoldEverywhere: quitHoldEverywhereRequested(process.argv),
       windowSwitches: windowSwitchesOf(switches, userDataDir)
     })
     // Launched for an app alone (`zenium --app=<url>`, an installed app's launcher): the app's

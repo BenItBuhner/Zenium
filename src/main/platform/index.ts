@@ -109,6 +109,8 @@ import {
   permissionRequestDetails
 } from './security'
 import { electronPerformanceHost } from './backgroundWork'
+import { quitChordOf } from './devtoolsKeys'
+import { QUIT_HOLD_COVER_CHANNEL, primeChromeForRelease } from './quitHoldKeys'
 import createBackgroundWorker from './backgroundWorker?nodeWorker'
 import { ElectronBlocking, ElectronBundledLists, bundledListsDirectory } from './blocking'
 import { supportsWindowMaterial } from './appShell'
@@ -282,6 +284,8 @@ export class ElectronPlatform implements Platform {
     private readonly userDataDir: string,
     options: {
       holdBackgroundWork?: boolean
+      /** `--test-quit-hold` was on the command line: the quit chord holds on every OS (the drives). */
+      quitHoldEverywhere?: boolean
       /** The launch's `--kiosk` / `--start-maximized` (`cli.ts`), for every browser window. */
       windowSwitches?: WindowSwitches
     } = {}
@@ -527,7 +531,10 @@ export class ElectronPlatform implements Platform {
                 systemPreferences.getUserDefault('AppleActionOnDoubleClick', 'string')
               )
           }
-        : {})
+        : {}),
+      // The desktop drives' stand-in for the macOS hold-to-quit (`--test-quit-hold`): present
+      // only when the launch asked, so a normal launch's host holds on macOS alone.
+      ...(options.quitHoldEverywhere === true ? { quitHoldEverywhere: () => true } : {})
     }
     this.theme = {
       systemDark: () => nativeTheme.shouldUseDarkColors,
@@ -583,6 +590,8 @@ export class ElectronPlatform implements Platform {
   start(options: { windows?: boolean; restoreLastSession?: boolean } = {}): Browser {
     const browser = new Browser(this)
     this.browser = browser
+    // A toolbox's quit-chord relay reads the chord the key table binds to `app.quit` (`devtoolsKeys.ts`).
+    this.views.quitChord = () => quitChordOf(browser.state.shortcuts)
     this.windows.bind(browser)
     this.downloads.bind(browser.downloads, {
       tabIdFor: (source) => this.views.tabIdForWebContents(source) ?? null,
@@ -854,6 +863,14 @@ export class ElectronPlatform implements Platform {
       const win = this.windows.windowForWebContents(event.sender.id)
       if (!win) throw new Error('Unauthorised sender')
       return browser.handleCommand(win, name, args)
+    })
+    // A window's chrome says its hold-to-quit cover engaged over a hung page: the keyboard is
+    // about to come to the chrome, and one key down of the chord goes into the chrome's widget
+    // first, so the release the hold waits for is heard there (`quitHoldKeys.ts`). The chrome
+    // alone is heard; the key is sent while a hold runs and never otherwise.
+    ipcMain.on(QUIT_HOLD_COVER_CHANNEL, (event) => {
+      if (!this.windows.windowForWebContents(event.sender.id)) return
+      primeChromeForRelease(event.sender, browser.quitHold, browser.state.shortcuts)
     })
     ipcMain.on('zen:page', (event, message: PageMessage) => {
       this.views.viewForWebContents(event.sender)?.dispatchPageMessage(message)

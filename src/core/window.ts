@@ -9,6 +9,7 @@ import type {
   GlanceState,
   HapticKind,
   LayoutReport,
+  QuitHoldState,
   Rect,
   Space,
   WindowChrome,
@@ -128,6 +129,8 @@ export class ZenWindow {
   lastFocusedAt = 0
   /** The window-modal question the chrome is showing ("Close N tabs?"), owned by `WindowPrompts`. */
   prompt: WindowPrompt | null = null
+  /** The quit chord held in this window ("Hold ⌘Q to Quit"), owned by `QuitHoldService`. */
+  quitHold: QuitHoldState | null = null
   /**
    * The user's request to close this window went through its checks (the tab-count warning,
    * every page's `beforeunload`): the host may close it for real. Hosts whose native close
@@ -244,6 +247,7 @@ export class ZenWindow {
       focused: alive ? this.host.isFocused() : false,
       htmlFullscreenTabId: this.htmlFullscreenTabId,
       prompt: this.prompt,
+      quitHold: this.quitHold,
       app: this.app,
       name: this.name
     }
@@ -337,6 +341,15 @@ export class ZenWindow {
   onFocused(): void {
     this.lastFocusedAt = Date.now()
     this.browser.onWindowFocused(this)
+    this.onWindowStateChanged()
+  }
+
+  /**
+   * The host window lost the keyboard (to another app or another window). A quit hold running
+   * here ends first – its key up will never arrive – then the focus flag is republished.
+   */
+  onBlur(): void {
+    this.browser.quitHold.onWindowBlur(this)
     this.onWindowStateChanged()
   }
 

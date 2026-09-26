@@ -234,7 +234,9 @@ jobs:
         # default-browser (os-07) runs last: Make default's setAsDefaultProtocolClient('http') may
         # leave the OS's "change your default web browser?" dialog on screen, which no runner
         # answers (mac-facts.sh after-run reads LaunchServices' handlers and the unified log).
-        run: node "$SMOKE/smoke.mjs" --exe "${{ steps.app.outputs.app }}/Contents/MacOS/Zenium" --label unpacked --out "$SMOKE_OUT" --scenarios boot,restore,scale,dark,default-browser
+        # quit-hold (session-08) is the Mac's: the Warn Before Quitting (⌘Q) row, the hold's
+        # release, the setting off and persisted; every scenario's quit runs the hold itself.
+        run: node "$SMOKE/smoke.mjs" --exe "${{ steps.app.outputs.app }}/Contents/MacOS/Zenium" --label unpacked --out "$SMOKE_OUT" --scenarios boot,restore,scale,dark,quit-hold,default-browser
       - name: Bundle facts and crash reports after the run
         if: always()
         run: bash "$SMOKE/mac-facts.sh" "${{ steps.app.outputs.app }}" "$SMOKE_OUT" after-run
