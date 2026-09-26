@@ -608,6 +608,7 @@ export class ElectronTabView implements TabView {
     wc.on('did-fail-load', (_e, code, description, url, isMainFrame) => {
       if (!isMainFrame || wc.isDestroyed()) return
       this.navigatingUrl = null
+      this.commitBaseline = null
       const refused = this.refusedCertificate
       this.refusedCertificate = null
       // The certificate the failure is about: refused for this site in this navigation.

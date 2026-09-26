@@ -4,6 +4,7 @@ import type { WebPreferences } from 'electron'
 import type { Tab } from '../../../shared/types'
 import type {
   AgentInputEvent,
+  NavigationCommitDetails,
   TabViewEvents,
   WindowHost,
   WindowOpenTicket
@@ -198,8 +199,18 @@ vi.mock('electron', async () => {
     getURL(): string {
       return this.url
     }
-    /** A host older than Electron 34's `restore`: `restoreNavigation` loads the current entry. */
-    readonly navigationHistory = {}
+    /**
+     * The tab's entry list as `navigationHistory` reads it: a test sets `entries` and `index` as
+     * the engine would have them when a document commits (`did-navigate` measures them against
+     * the baseline `did-start-navigation` took). A host older than Electron 34's `restore`:
+     * `restoreNavigation` loads the current entry.
+     */
+    readonly navigationHistory = {
+      entries: [] as string[],
+      index: -1,
+      length: (): number => this.navigationHistory.entries.length,
+      getActiveIndex: (): number => this.navigationHistory.index
+    }
     /** The page's session, for the tests that look something up by it. */
     session: object = {}
     getZoomFactor(): number {
@@ -227,6 +238,13 @@ vi.mock('electron', async () => {
      * after a renderer turn – a hung renderer answers neither.
      */
     readonly mainFrame = {
+      /** The frame's identity, which `did-start-navigation`'s `initiator` is matched against. */
+      processId: this.id,
+      routingId: 1,
+      /** The page's frame tree: the main frame alone. */
+      get framesInSubtree(): Array<{ processId: number; routingId: number }> {
+        return [this]
+      },
       scripts: [] as string[],
       executeJavaScript: (code: string): Promise<unknown> => {
         if (code === PAINT_STATE_SCRIPT) {
@@ -548,6 +566,112 @@ describe('ElectronTabViewHost', () => {
     redirect('https://c.example/')
     redirect('https://d.example/')
     expect(hops.slice(2)).toEqual([['https://c.example/', 'https://d.example/']])
+  })
+
+  it('tells the core at each commit whether the document took the previous one’s entry and whether the page began the navigation – Chromium’s did_replace_entry read off the entry list (history-23’s client redirects)', () => {
+    const host = new ElectronTabViewHost(sessions)
+    const commits: Array<[string, boolean, NavigationCommitDetails | undefined]> = []
+    const events = new Proxy({} as TabViewEvents, {
+      get: (_t, name) =>
+        name === 'onNavigated'
+          ? (url: string, inPage: boolean, details?: NavigationCommitDetails) =>
+              commits.push([url, inPage, details])
+          : () => undefined
+    })
+    const view = host.createView(
+      { id: 'tab_commit', containerId: 'default' } as Tab,
+      events,
+      detachedWindow
+    )
+    const wc = (
+      view as unknown as {
+        webContents: Electron.WebContents & {
+          navigationHistory: { entries: string[]; index: number }
+        }
+      }
+    ).webContents
+    const history = wc.navigationHistory
+    const start = (url: string, initiator: unknown = null): void => {
+      wc.emit('did-start-navigation', { url, isMainFrame: true, isSameDocument: false, initiator })
+    }
+    const commit = (url: string): void => {
+      wc.emit('did-navigate', {}, url)
+    }
+    const last = (): NavigationCommitDetails | undefined => commits[commits.length - 1]?.[2]
+    /** A frame of another page: an opener's, which began this page's first load. */
+    const openerFrame = { processId: 9999, routingId: 7 }
+
+    // The browser's own load (a typed address): an entry added, nothing of the page's in it.
+    start('https://example.com/gate')
+    history.entries.push('https://example.com/gate')
+    history.index = 0
+    commit('https://example.com/gate')
+    expect(commits).toEqual([
+      ['https://example.com/gate', false, { replacedEntry: false, initiatedByPage: false }]
+    ])
+
+    // The page replaced itself (`location.replace`, a meta refresh within a second): the list
+    // neither longer nor moved along, the start the page's own frame's.
+    start('https://example.com/home', wc.mainFrame)
+    history.entries[0] = 'https://example.com/home'
+    commit('https://example.com/home')
+    expect(last()).toEqual({ replacedEntry: true, initiatedByPage: true })
+
+    // A link the page followed: the page began it, but the document got an entry of its own.
+    start('https://example.com/next', wc.mainFrame)
+    history.entries.push('https://example.com/next')
+    history.index = 1
+    commit('https://example.com/next')
+    expect(last()).toEqual({ replacedEntry: false, initiatedByPage: true })
+
+    // Back: the list as long but the index moved – the browser's navigation, no replacement.
+    start('https://example.com/home')
+    history.index = 0
+    commit('https://example.com/home')
+    expect(last()).toEqual({ replacedEntry: false, initiatedByPage: false })
+
+    // The browser replaced the entry itself (a `loadURL` over an error page, a restore): not
+    // the page's doing, so not a client redirect.
+    start('https://example.com/again')
+    history.entries[0] = 'https://example.com/again'
+    commit('https://example.com/again')
+    expect(last()).toEqual({ replacedEntry: true, initiatedByPage: false })
+
+    // Another page's frame began it (an opener's `window.open`): not this page's navigation.
+    start('https://example.com/opened', openerFrame)
+    history.entries.push('https://example.com/opened')
+    history.index = 2
+    commit('https://example.com/opened')
+    expect(last()).toEqual({ replacedEntry: false, initiatedByPage: false })
+
+    // A same-document start leaves the baseline of the navigation under way alone.
+    start('https://example.com/replaced', wc.mainFrame)
+    wc.emit('did-start-navigation', {
+      url: 'https://example.com/opened#x',
+      isMainFrame: true,
+      isSameDocument: true
+    })
+    history.entries[2] = 'https://example.com/replaced'
+    commit('https://example.com/replaced')
+    expect(last()).toEqual({ replacedEntry: true, initiatedByPage: true })
+
+    // A same-document commit carries no details; neither does a commit no start was seen for.
+    wc.emit('did-navigate-in-page', {}, 'https://example.com/replaced#y', true)
+    expect(commits[commits.length - 1]).toEqual(['https://example.com/replaced#y', true, undefined])
+    commit('https://example.com/stray')
+    expect(last()).toBeUndefined()
+
+    // A start that failed is measured against by nothing that follows.
+    start('https://b.example/', wc.mainFrame)
+    wc.emit('did-fail-load', {}, -105, 'ERR_NAME_NOT_RESOLVED', 'https://b.example/', true)
+    commit('https://c.example/')
+    expect(last()).toBeUndefined()
+    // A sub-frame's failure does not close the main frame's navigation.
+    start('https://d.example/', wc.mainFrame)
+    wc.emit('did-fail-load', {}, -105, 'ERR_NAME_NOT_RESOLVED', 'https://ad.example/', false)
+    history.entries[2] = 'https://d.example/'
+    commit('https://d.example/')
+    expect(last()).toEqual({ replacedEntry: true, initiatedByPage: true })
   })
 
   it('reports a renderer End process crashed as `ended`, once, and a crash of the page’s own as the engine says', () => {
