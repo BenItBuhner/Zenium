@@ -27,6 +27,9 @@ name: Android tab groups demo
 # the shared default, soft.
 on:
   workflow_dispatch:
+  # TEMPORARY (H5, removed before READY): the phone act's TabGroupsDemo read and the tablet act's new link-menu stills on this branch.
+  push:
+    branches: [cursor/android-harness-h5b-9271]
 
 permissions:
   contents: read

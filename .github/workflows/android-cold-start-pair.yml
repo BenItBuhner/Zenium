@@ -19,6 +19,11 @@ name: Android cold start pair
 # correct, only that the two builds' cold starts measured within the gate on the recipe's
 # emulator. The build, the emulator and the Gradle cache live in android-emulator-demo.yml.
 on:
+  # TEMPORARY (H5, removed before READY): one NULL pair (base = this commit) at the trimmed cadence
+  # (STATS_AT_S 8 / NEXT_AT_S 15, the frames probed at 5 and 8) and one deliberate UNREAD run (a
+  # logcat buffer adb refuses) on this branch.
+  push:
+    branches: [cursor/android-harness-h5b-9271]
   workflow_dispatch:
     inputs:
       base-ref:
@@ -58,7 +63,13 @@ concurrency:
 
 jobs:
   pair:
-    name: Cold start pair (before ${{ inputs.base-ref || 'main' }} / after this commit)
+    name: Cold start pair (before ${{ inputs.base-ref || 'main' }} / after this commit) – ${{ matrix.run }}
+    # TEMPORARY (H5, removed before READY): two arms – null-trim (N = 30, base = this commit, the
+    # trimmed clock) and unread (one start by each way, the buffers adb refuses).
+    strategy:
+      fail-fast: false
+      matrix:
+        run: [null-trim, unread]
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-cold-start-pair.sh
@@ -66,10 +77,14 @@ jobs:
       # The base APK: the base ref in a worktree, its web build, then assembleDebug -PskipWeb as the
       # head's own step ran it. The labels are the two commits, for the table.
       script-env: |
-        P0_BASE_REF=${{ inputs.base-ref || 'main' }}
+        P0_BASE_REF=${{ inputs.base-ref || github.sha }}
         P0_BASE_APK=artifacts/cold-start-base/app-base.apk
-        P0_RUNS=${{ inputs.runs || 15 }}
-        P0_STARTS=${{ inputs.starts || 2 }}
+        P0_RUNS=${{ matrix.run == 'unread' && 1 || inputs.runs || 15 }}
+        P0_STARTS=${{ matrix.run == 'unread' && 1 || inputs.starts || 2 }}
+        P0_FRAMES_AT_S=5 8
+        P0_STATS_AT_S=8
+        P0_NEXT_AT_S=15
+        P0_LOGCAT_BUFFERS=${{ matrix.run == 'unread' && 'nonesuch' || 'main,system' }}
         DEMO_OUT=artifacts/android-cold-start-pair
       setup-script: |
         set -euo pipefail
@@ -95,6 +110,6 @@ jobs:
           echo "P0_BASE_LABEL=${base_sha:0:9}"
           echo "P0_HEAD_LABEL=${GITHUB_SHA:0:9}"
         } >> "$GITHUB_ENV"
-      artifact-name: android-cold-start-pair
+      artifact-name: android-cold-start-pair-${{ matrix.run }}
       artifact-path: artifacts/android-cold-start-pair/
       timeout-minutes: ${{ inputs.timeout-minutes || 150 }}
