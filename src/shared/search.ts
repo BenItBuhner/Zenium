@@ -57,6 +57,57 @@ export const DEFAULT_SEARCH_ENGINES: SearchEngine[] = [
 ]
 
 /**
+ * The static set the EEA's search-engine choice screen (W6-2; DMA Art. 6(3), Chrome's
+ * `chrome://search-engine-choice`) offers on top of the shipped engines: general web search
+ * engines with a presence in the EEA that Zenium does not ship for everyone. Each entry's
+ * search, suggest and icon addresses were verified by a real request before it joined; an
+ * engine none of whose endpoints answered from here (Brave Search, Yahoo, Startpage at the time
+ * of writing) is left out rather than offered blind. Not in `DEFAULT_SEARCH_ENGINES`: the engine
+ * the screen sets as the default is copied into the user's list (`settings.searchEngines`) by
+ * the core, so the id resolves on every device the profile syncs to, and it stands under
+ * Added in Settings › Search as an engine the user chose.
+ */
+export const EEA_SEARCH_ENGINES: SearchEngine[] = [
+  {
+    id: 'qwant',
+    name: 'Qwant',
+    searchUrl: 'https://www.qwant.com/?q=%s',
+    suggestUrl: 'https://api.qwant.com/v3/suggest/?q=%s&client=opensearch',
+    keyword: '@qwant',
+    glyph: 'Q',
+    favicon: 'https://www.qwant.com/favicon.ico'
+  }
+]
+
+/**
+ * The choice screen's eligible engines, in the registry's order (the screen shuffles them with
+ * its session seed, `core/searchChoice.ts`): every shipped general web search engine and the
+ * EEA set, each with one line of the engine's own words (its home page's or OpenSearch
+ * description's line, not Zenium's). Wikipedia is shipped but not eligible: an encyclopedia's
+ * search is not a web search engine, and the screen is about the default for web searches. No
+ * entry is favoured; the order here is not the order shown.
+ */
+export const SEARCH_CHOICE_ENGINES: ReadonlyArray<{ id: string; tagline: string }> = [
+  {
+    id: 'google',
+    tagline: "Search the world's information, including webpages, images, videos and more."
+  },
+  { id: 'duckduckgo', tagline: 'Protection. Privacy. Peace of mind.' },
+  { id: 'ecosia', tagline: 'The search engine that plants trees.' },
+  { id: 'bing', tagline: 'A smart search engine for the forever curious.' },
+  { id: 'qwant', tagline: "The search engine that doesn't know anything about you." }
+]
+
+/** The engine `id` names among the shipped and EEA engines, or null. */
+export function searchChoiceEngine(id: string): SearchEngine | null {
+  return (
+    DEFAULT_SEARCH_ENGINES.find((e) => e.id === id) ??
+    EEA_SEARCH_ENGINES.find((e) => e.id === id) ??
+    null
+  )
+}
+
+/**
  * The mark a field's leading slot shows for the engine it searches with (NTP-09; Chrome's
  * search engine logo at the start of its box, Edge's Bing logo): the engine's favicon from the
  * registry when it has one – every shipped engine does, the vendor's default included, since

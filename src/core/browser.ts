@@ -136,9 +136,11 @@ import {
   isPickableSearchEngine,
   matchKeyword,
   sanitizeSearchEngines,
+  searchChoiceEngine,
   withDefaultSearchEngineActive
 } from '../shared/search'
 import { SearchEngineService } from './searchEngines'
+import { isSearchChoiceEngine, normalizeRegion, searchChoiceRecord } from './searchChoice'
 import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
 import { copyConfirmation } from '../shared/clipboard'
 import { IMAGE_URL_PREFIX } from '../shared/zenPages'
@@ -395,6 +397,9 @@ export class Browser {
     this.state.liveWindows = () => this.allWindows()
     // A profile without a preferred languages list starts from the OS's languages (CT-41).
     this.state.systemLocales = platform.info.locales ?? []
+    // The OS's region, for the EEA's search-engine choice screen (W6-2); a fact the state
+    // carries, read by the chrome at its first render – no startup step of its own.
+    this.state.searchChoiceRegion = normalizeRegion(platform.info.region)
     this.state.load()
     const performance = platform.performance
     this.background = new BackgroundWork({
@@ -3926,10 +3931,53 @@ export class Browser {
         else this.openNewTab(win)
       },
 
+      'searchChoice.choose': ({ engineId }) => this.chooseSearchEngine(engineId),
+      'searchChoice.skip': () => {
+        // Nothing is written: the screen waits for the next run (Chrome's choice screen comes
+        // back until it is answered). Settings' ask, if one was pending, is answered by the skip.
+        state.searchChoiceSession.skipped = true
+        state.searchChoiceSession.askAgain = false
+        state.commitVolatile()
+      },
+      'searchChoice.askAgain': () => {
+        state.searchChoiceSession.askAgain = true
+        state.searchChoiceSession.skipped = false
+        state.commitVolatile()
+      },
+
       'defaultBrowser.request': ({ source }) => this.defaultBrowser.request(source),
       'defaultBrowser.dismiss': ({ prompt }) => this.defaultBrowser.dismiss(prompt),
       'defaultBrowser.refresh': () => this.defaultBrowser.refresh()
     }
+  }
+
+  /**
+   * The choice screen's "Set as default" (W6-2): the picked engine – one of the screen's, or
+   * nothing happens – becomes the default (active, as `updateSettings` makes a default), and the
+   * device's record is written, so the screen is not owed again. An engine of the EEA set is
+   * not shipped: it is copied into the user's list first (`source: 'custom'`), so the id
+   * resolves on every device the profile syncs to and Settings › Search lists it under Added.
+   */
+  private chooseSearchEngine(engineId: string): void {
+    const state = this.state
+    const engine = searchChoiceEngine(engineId)
+    if (!engine || !isSearchChoiceEngine(engineId)) return
+    if (!state.searchEngines.some((e) => e.id === engineId)) {
+      state.settings.searchEngines = [
+        ...(state.settings.searchEngines ?? []),
+        { ...engine, source: 'custom' }
+      ]
+    }
+    state.settings.searchEngineId = engineId
+    if (state.settings.searchEngines)
+      state.settings.searchEngines = withDefaultSearchEngineActive(
+        state.settings.searchEngines,
+        engineId
+      )
+    state.settings.searchChoice = searchChoiceRecord(engineId, state.searchChoiceRegion, Date.now())
+    state.searchChoiceSession.askAgain = false
+    state.searchChoiceSession.skipped = false
+    state.commit()
   }
 
   updateSettings(patch: Partial<Settings>, win: ZenWindow): void {

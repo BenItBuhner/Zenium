@@ -218,13 +218,15 @@ describe('collectLocal', () => {
 
   it('keeps the device-local settings out of the settings record, every other key in (W5-F3)', () => {
     const src = sources()
-    // A device that chose both ways: the record carries neither choice.
+    // A device that chose both ways, and answered the choice screen: the record carries none.
     src.settings.sidebarExpandOnHover = false
     src.settings.onboardingDone = true
+    src.settings.searchChoice = { engineId: 'duckduckgo', region: 'DE', madeAt: 1, version: 1 }
     const data = collectLocal(src, defaultScope()).get('settings')?.data as Record<string, unknown>
-    expect(DEVICE_LOCAL_SETTINGS).toEqual(['onboardingDone', 'sidebarExpandOnHover'])
+    expect(DEVICE_LOCAL_SETTINGS).toEqual(['onboardingDone', 'sidebarExpandOnHover', 'searchChoice'])
     expect(data).not.toHaveProperty('sidebarExpandOnHover')
     expect(data).not.toHaveProperty('onboardingDone')
+    expect(data).not.toHaveProperty('searchChoice')
     const local = new Set<string>(DEVICE_LOCAL_SETTINGS)
     expect(Object.keys(data)).toEqual(
       Object.keys(DEFAULT_SETTINGS).filter((key) => !local.has(key))
