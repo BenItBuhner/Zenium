@@ -1043,6 +1043,14 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.setZoom" -> { tab?.setZoom(args.num("factor", 1.0)); reply(null) }
             "view.setDesktopMode" -> { tab?.setDesktopMode(args.bool("on")); reply(null) }
             "view.setDarkening" -> { tab?.setDarkening(args.bool("on")); reply(null) }
+            // The image-search upload (CT-32): an urlencoded body through `postUrl`, a multipart
+            // one as the self-submitting form document the core built (`ImagePostNavigation`).
+            "view.post" -> {
+                val url = args.str("url")
+                tab?.presetResolvedRules(url, args.optJSONObject("rules"))
+                tab?.postForImageSearch(url, args.optString("body", null), args.optString("html", null))
+                reply(null)
+            }
             "view.setPageRules" -> { setPageRules(args); reply(null) }
             "view.setContentRules" -> { setContentRules(args); reply(null) }
             "view.find" -> { tab?.find(args.str("text"), args.bool("forward", true), args.bool("newSession", true)); reply(null) }

@@ -9,7 +9,23 @@ import {
   type PageContextParams,
   type TabView
 } from './platform'
-import { buildSearchUrl, imageSearchFor } from '../shared/search'
+import {
+  buildSearchUrl,
+  imageSearchByAddress,
+  imageSearchFor,
+  type ImageSearchByUpload
+} from '../shared/search'
+import {
+  IMAGE_UPLOAD_MAX_BYTES,
+  expandImagePost,
+  imageFetchScript,
+  imageResourceDataUrl,
+  imageSearchSource,
+  parseImageFetchResult,
+  type ImageFetchResult,
+  type ImagePost,
+  type ImageThumbnail
+} from '../shared/imageUpload'
 import { copyConfirmation } from '../shared/clipboard'
 import { internalPageOf } from '../shared/internalPages'
 import { bindingFor, formatChord, toAccelerator } from '../shared/shortcuts'
@@ -36,6 +52,7 @@ import {
   type Folder,
   type MenuAnchor,
   type MenuHeader,
+  type ImageThumbnailBounds,
   type MenuItemDescriptor,
   type NavigationDirection,
   type NavigationSnapshotEntry,
@@ -884,23 +901,19 @@ export class Menus {
         click: () => this.browser.copyText(src, 'Link copied', win)
       },
       // Chrome's "Search image with …" (CT-32): the default engine's reverse image search, in a
-      // tab beside this one and in front, as the menu's text search opens. An address only an
-      // engine can fetch – a `data:` or `blob:` image gets no row (`imageSearchFor`).
+      // tab beside this one and in front, as the menu's text search opens. An engine that takes
+      // the bytes (`post`) gets them – a `data:` or `blob:` image included – as Chrome uploads
+      // its thumbnail; an engine with a template alone gets the address, so only an http(s)
+      // image has its row (`imageSearchFor`).
       ...(search
         ? [
             {
               label: `Search Image with ${search.engine}`,
-              click: () =>
-                tabs.createTab(
-                  {
-                    url: search.url,
-                    active: true,
-                    afterTabId: tab.id,
-                    containerId: tab.containerId,
-                    openerTabId: tab.id
-                  },
-                  win
-                )
+              click: () => {
+                if (search.kind === 'upload')
+                  void this.searchImageByUpload(tab, view, params, search, win)
+                else this.openImageSearch(tab, search.url, win)
+              }
             }
           ]
         : []),
@@ -1879,6 +1892,126 @@ export class Menus {
     )
     if (parent.splitGroupId) tabs.addToSplit(parent.splitGroupId, tab.id)
     else tabs.createSplit([parent.id, tab.id], 'vertical', win)
+  }
+
+  /** The image search's tab: beside the page and in front, as the menu's text search opens. */
+  private openImageSearch(tab: Tab, url: string, win: ZenWindow, post?: ImagePost): void {
+    this.browser.tabs.createTab(
+      {
+        url,
+        active: true,
+        afterTabId: tab.id,
+        containerId: tab.containerId,
+        openerTabId: tab.id,
+        ...(post ? { post } : {})
+      },
+      win
+    )
+  }
+
+  /**
+   * "Search Image with <engine>" for an engine that takes the bytes (CT-32, Chrome's
+   * `image_url_post_params`): the image is read where it can be read – the bytes the host's
+   * renderer holds (`readImageResource`, the desktop's DevTools resource read), else the page's
+   * own script fetches it with the page's cookies and referrer, or reads a `data:`/`blob:`
+   * image in place – and downscaled in the page to the engine's thumbnail bounds
+   * (`imageThumbnail`, Chrome's numbers for the engine's path: `post.thumbnail`); then the
+   * engine's params expand to the body's fields and a new tab beside the page POSTs them
+   * (`createTab`'s `post`). An image above the cap, or one no path could read, falls back to
+   * the address form for an http(s) address (today's row, silently) and is refused with a
+   * toast otherwise – a `data:`/`blob:` image has no address to take. The bytes leave the
+   * device to the engine the user chose – as Chrome's row sends them – and the address
+   * travels only for an http(s) image.
+   */
+  private async searchImageByUpload(
+    tab: Tab,
+    view: TabView,
+    params: PageContextParams,
+    search: ImageSearchByUpload,
+    win: ZenWindow
+  ): Promise<void> {
+    const { state, platform } = this.browser
+    const src = params.srcURL
+    const thumbnail = await this.imageThumbnail(view, src, search.post.thumbnail, params.frameId)
+    if (!thumbnail || thumbnail === 'too-large') {
+      // A refusal is owed only where nothing else can be done: an http(s) image over the cap
+      // or unread takes the address route; a `data:`/`blob:` image has none to take.
+      const address = imageSearchByAddress(state.defaultSearchEngine(), src)
+      if (address) this.openImageSearch(tab, address.url, win)
+      else if (thumbnail === 'too-large')
+        this.browser.toast('This image is too large to search', 'info', win)
+      else this.browser.toast('This image cannot be read', 'error', win)
+      return
+    }
+    const post = expandImagePost(search.post, {
+      thumbnail,
+      imageUrl: search.imageUrl,
+      source: imageSearchSource(state.version, platform.info.os)
+    })
+    this.openImageSearch(tab, search.post.url, win, post)
+  }
+
+  /**
+   * The image's thumbnail, read where the image can be read. For an http(s) image the host's
+   * copy first (`readImageResource`, the desktop's DevTools read of the bytes the renderer
+   * holds: the page's own response, no second request, a cross-origin image without CORS
+   * headers included), handed to the page's script as a `data:` address for the canvas; the
+   * host's copy comes before any fetch from the page because a refused cross-origin fetch
+   * evicts it. Then the page's own fetch of the address (`imageFetchScript`, run in the
+   * clicked frame: the page's cookies and referrer; a `data:`/`blob:` image read in place),
+   * downscaled within the engine's `bounds`. `'too-large'` past the cap, null when neither
+   * could read it.
+   */
+  private async imageThumbnail(
+    view: TabView,
+    src: string,
+    bounds: ImageThumbnailBounds,
+    frameId?: number
+  ): Promise<ImageThumbnail | 'too-large' | null> {
+    if (view.readImageResource && /^https?:\/\//i.test(src)) {
+      const held = await Promise.resolve()
+        .then(() => view.readImageResource!(src, IMAGE_UPLOAD_MAX_BYTES))
+        .catch(() => null)
+      if (held === 'too-large') return 'too-large'
+      if (held) {
+        const result = await this.runImageFetchScript(
+          view,
+          imageResourceDataUrl(held),
+          bounds,
+          frameId
+        )
+        if (result?.ok) return result.thumbnail
+        if (result?.reason === 'too-large') return 'too-large'
+      }
+    }
+    const result = await this.runImageFetchScript(view, src, bounds, frameId)
+    if (result?.ok) return result.thumbnail
+    if (result?.reason === 'too-large') return 'too-large'
+    return null
+  }
+
+  /**
+   * The thumbnail script, in the clicked frame: in the browser's private world where the host
+   * has one (`executeJavaScriptInPrivateWorld`, the desktop – the page's patched built-ins
+   * cannot pick the bytes the search uploads), else the page's main world (the phone). The
+   * answer is checked, never trusted raw.
+   */
+  private async runImageFetchScript(
+    view: TabView,
+    src: string,
+    bounds: ImageThumbnailBounds,
+    frameId?: number
+  ): Promise<ImageFetchResult | null> {
+    const code = imageFetchScript(src, bounds)
+    const frame = frameId || undefined
+    const raw = await Promise.resolve()
+      .then(() =>
+        view.executeJavaScriptInPrivateWorld
+          ? view.executeJavaScriptInPrivateWorld(code, frame)
+          : view.executeJavaScript(code, frame)
+      )
+      .catch(() => null)
+    return parseImageFetchResult(raw)
   }
 
   private async copyImage(

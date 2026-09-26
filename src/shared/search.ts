@@ -1,9 +1,13 @@
 import type {
+  ImageSearchPost,
   ImageSearchTemplate,
+  ImageThumbnailBounds,
   SearchEngine,
   SearchEngineControl,
   SearchEngineSource
 } from './types'
+import { GENERIC_IMAGE_THUMBNAIL, LENS_IMAGE_THUMBNAIL } from './imageUpload'
+import { isSecureContextUrl } from './webApp'
 
 /**
  * Zen ships Google, DuckDuckGo and Wikipedia by default and lets you pick Google, DuckDuckGo or
@@ -22,8 +26,23 @@ export const DEFAULT_SEARCH_ENGINES: SearchEngine[] = [
     keyword: '@google',
     glyph: 'G',
     favicon: 'https://www.google.com/favicon.ico',
-    // Chrome's own image row for Google goes to Lens.
-    imageSearch: { name: 'Google Lens', url: 'https://lens.google.com/uploadbyurl?url=%s' }
+    // Chrome's own image row for Google goes to Lens: `image_url` =
+    // `{google:baseSearchByImageURL}upload` (`https://lens.google.com/v3/upload`) with the
+    // multipart `image_url_post_params` below (Chromium's `prepopulated_engines.json`, the
+    // `google:` prefix dropped from the placeholders) and the Lens path's thumbnail bounds
+    // (`CoreTabHelper::SearchWithLens`: within 1000 px, `lens::kMaxPixelsForImageSearch`);
+    // `url` is the address form kept for a record from before the upload.
+    imageSearch: {
+      name: 'Google Lens',
+      url: 'https://lens.google.com/uploadbyurl?url=%s',
+      post: {
+        url: 'https://lens.google.com/v3/upload',
+        params:
+          'encoded_image={imageThumbnail},image_url={imageURL},sbisrc={imageSearchSource},original_width={imageOriginalWidth},original_height={imageOriginalHeight},processed_image_dimensions={processedImageDimensions}',
+        encoding: 'multipart',
+        thumbnail: LENS_IMAGE_THUMBNAIL
+      }
+    }
   },
   {
     id: 'duckduckgo',
@@ -51,9 +70,18 @@ export const DEFAULT_SEARCH_ENGINES: SearchEngine[] = [
     keyword: '@bing',
     glyph: 'B',
     favicon: 'https://www.bing.com/favicon.ico',
+    // Bing's visual search takes the thumbnail base64 in one urlencoded field (Chromium's
+    // `prepopulated_engines.json`: `image_url` + `image_url_post_params`), the thumbnail within
+    // Chrome's bounds for any engine but Google (`CoreTabHelper::SearchByImage`: 600 px).
     imageSearch: {
       name: 'Bing',
-      url: 'https://www.bing.com/images/search?view=detailv2&iss=sbi&q=imgurl:%s'
+      url: 'https://www.bing.com/images/search?view=detailv2&iss=sbi&q=imgurl:%s',
+      post: {
+        url: 'https://www.bing.com/images/detail/search?iss=sbiupload&FORM=CHROMI#enterInsights',
+        params: 'imageBin={imageThumbnailBase64}',
+        encoding: 'urlencoded',
+        thumbnail: GENERIC_IMAGE_THUMBNAIL
+      }
     }
   },
   {
@@ -354,30 +382,78 @@ function fillTemplate(template: string, query: string): string {
   return template.split('%s').join(encodeURIComponent(query.trim()))
 }
 
-/** Where the image context menu's "Search Image with <engine>" row (CT-32) goes, and whose name it carries. */
-export interface ImageSearch {
+/**
+ * What the image context menu's "Search Image with <engine>" row (CT-32) does, and whose name
+ * it carries: an engine with a `post` takes the image's bytes (`upload`, Chrome's way); one
+ * with a template alone takes the image's address (`address`).
+ */
+export type ImageSearch = ImageSearchByAddress | ImageSearchByUpload
+
+export interface ImageSearchByAddress {
+  kind: 'address'
   /** The product the row names, the engine definition's own: "Google Lens", "Bing". */
   engine: string
+  /** The template filled with the image's address. */
   url: string
 }
 
+export interface ImageSearchByUpload {
+  kind: 'upload'
+  engine: string
+  /** Where and how the bytes go (`ImageSearchPost`). */
+  post: ImageSearchPost
+  /**
+   * The body's `{imageURL}`: the image's http(s) address, `''` for a `data:` or `blob:` image
+   * (Chrome sends no address for a `data:` image; a `blob:` one names nothing off the page).
+   */
+  imageUrl: string
+}
+
 /**
- * The reverse image search for an image's address (CT-32, Chrome's "Search image with …" row),
- * read from the default engine's definition as Chrome reads a `TemplateURL`'s `image_url`: an
- * engine with an `imageSearch` gets a row naming its product (Google's goes to Lens, Bing's to
- * Bing's visual search), an engine without one gets none – DuckDuckGo, Ecosia, Wikipedia, and
- * a hand-added or discovered engine, as Chrome shows the row only with an engine that has one.
- * Only an address an engine can fetch has a row: an http(s) URL; a `data:` or `blob:` image
- * gets null. The address goes into the template encoded once (`fillTemplate`).
+ * The reverse image search for an image (CT-32, Chrome's "Search image with …" row), read from
+ * the default engine's definition as Chrome reads a `TemplateURL`'s `image_url` and
+ * `image_url_post_params`: an engine with an `imageSearch` gets a row naming its product
+ * (Google's goes to Lens, Bing's to Bing's visual search), an engine without one gets none –
+ * DuckDuckGo, Ecosia, Wikipedia, and a hand-added or discovered engine, as Chrome shows the row
+ * only with an engine that has one.
+ *
+ * With `post` the row uploads the bytes, so any image the page can read has one: an http(s)
+ * address (which also travels as `{imageURL}`), a `data:` or `blob:` image (which does not).
+ * Without `post` only an address an engine can fetch has a row – an http(s) URL, filled into
+ * the template encoded once (`fillTemplate`) – and a `data:` or `blob:` image gets null. A
+ * `file:` image gets null either way: the page cannot read it back (its origin is opaque).
  */
 export function imageSearchFor(
   engine: Pick<SearchEngine, 'imageSearch'>,
   imageUrl: string
 ): ImageSearch | null {
-  if (!/^https?:\/\/./i.test(imageUrl)) return null
   const { imageSearch } = engine
   if (!imageSearch) return null
-  return { engine: imageSearch.name, url: fillTemplate(imageSearch.url, imageUrl) }
+  const http = /^https?:\/\/./i.test(imageUrl)
+  if (imageSearch.post) {
+    if (!http && !/^(?:data|blob):./i.test(imageUrl)) return null
+    return {
+      kind: 'upload',
+      engine: imageSearch.name,
+      post: imageSearch.post,
+      imageUrl: http ? imageUrl : ''
+    }
+  }
+  return imageSearchByAddress(engine, imageUrl)
+}
+
+/**
+ * The address form alone – the template filled with an http(s) image's address, `post` or no
+ * `post` (null for another scheme or an engine without an image search): what the row does
+ * for an engine without `post`, and what an upload the page could not read falls back to.
+ */
+export function imageSearchByAddress(
+  engine: Pick<SearchEngine, 'imageSearch'>,
+  imageUrl: string
+): ImageSearchByAddress | null {
+  const { imageSearch } = engine
+  if (!imageSearch || !/^https?:\/\/./i.test(imageUrl)) return null
+  return { kind: 'address', engine: imageSearch.name, url: fillTemplate(imageSearch.url, imageUrl) }
 }
 
 /**
@@ -780,7 +856,61 @@ function sanitizeImageSearch(raw: unknown): ImageSearchTemplate | null {
   const r = raw as Record<string, unknown>
   if (typeof r.name !== 'string' || !r.name.trim()) return null
   if (typeof r.url !== 'string' || !isImageSearchTemplate(r.url.trim())) return null
-  return { name: r.name.trim().slice(0, MAX_ENGINE_NAME), url: r.url.trim() }
+  const template: ImageSearchTemplate = {
+    name: r.name.trim().slice(0, MAX_ENGINE_NAME),
+    url: r.url.trim()
+  }
+  const post = sanitizeImageSearchPost(r.post)
+  if (post) template.post = post
+  return template
+}
+
+/**
+ * A stored engine's upload form (`ImageSearchPost`), kept whole – an endpoint the bytes may go
+ * to, some params, one of the two encodings – and dropped otherwise (the row then searches by
+ * address). The endpoint is `https:`, or plain `http:` on a loopback host alone
+ * (`isSecureContextUrl`, the Secure Contexts rule): the upload carries the image's bytes and
+ * the engine's cookies, which an address form's GET does too but a stored engine asking for
+ * them in the clear over the network gets no row for; a server on the user's own machine never
+ * puts them on a wire.
+ */
+function sanitizeImageSearchPost(raw: unknown): ImageSearchPost | null {
+  if (!raw || typeof raw !== 'object') return null
+  const r = raw as Record<string, unknown>
+  if (typeof r.url !== 'string' || r.url.length > MAX_ENGINE_URL) return null
+  const url = r.url.trim()
+  if (!isSecureContextUrl(url)) return null
+  if (typeof r.params !== 'string' || !r.params.trim() || r.params.length > MAX_ENGINE_URL)
+    return null
+  if (r.encoding !== 'multipart' && r.encoding !== 'urlencoded') return null
+  return {
+    url,
+    params: r.params.trim(),
+    encoding: r.encoding,
+    thumbnail: sanitizeImageThumbnail(r.thumbnail)
+  }
+}
+
+/** The widest thumbnail bound a stored engine may ask for (Chrome's two are 600 and 1000). */
+const MAX_THUMBNAIL_SIDE = 8192
+
+/**
+ * A stored engine's thumbnail bounds (`ImageThumbnailBounds`), kept when they are whole
+ * positive integers within reason – a side at most `MAX_THUMBNAIL_SIDE`, an area at most that
+ * side squared (a larger area would let an image over the side travel at its own size, the
+ * pair contradicting itself) – and otherwise Chrome's bounds for an engine that is not Google
+ * (`GENERIC_IMAGE_THUMBNAIL`): a record from before the field, or a broken one, downscales as
+ * Chrome would for such an engine.
+ */
+function sanitizeImageThumbnail(raw: unknown): ImageThumbnailBounds {
+  if (raw && typeof raw === 'object') {
+    const { maxSide, minArea } = raw as Record<string, unknown>
+    const whole = (n: unknown, min: number, max: number): n is number =>
+      typeof n === 'number' && Number.isInteger(n) && n >= min && n <= max
+    if (whole(maxSide, 1, MAX_THUMBNAIL_SIDE) && whole(minArea, 0, maxSide * maxSide))
+      return { maxSide, minArea }
+  }
+  return { ...GENERIC_IMAGE_THUMBNAIL }
 }
 
 function sanitizeFavicon(raw: unknown): string | null {
