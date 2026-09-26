@@ -6478,6 +6478,13 @@ export interface Events {
   'urlbar.toggle': { mode: UrlbarOpenMode; text?: string }
   'urlbar.close': void
   /**
+   * A native context menu the keyboard asked for (Shift+F10, the Menu key, Enter or Space on a
+   * "⋯") has closed: the chrome returns the keyboard to the element the menu hung from (§9.23),
+   * unless a pick moved the focus itself. Electron's native popup blurs the chrome document, so
+   * the element does not get the keyboard back on its own – the renderer refocuses it here.
+   */
+  'menu.keyboardReturn': void
+  /**
    * A pick in a suggestion row's native menu (`urlbar.suggestionContextMenu`): the bar removes
    * the row through the core's removes as Shift+Delete does (`remove`), or has every remembered
    * search forgotten and takes their rows out of its list (`delete-search-history`).

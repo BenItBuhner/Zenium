@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { UIState } from '@shared/types'
 
 vi.mock('../api', () => ({ cmd: vi.fn(), run: vi.fn(), onEvent: vi.fn(() => () => undefined) }))
@@ -14,6 +14,8 @@ import {
   mnemonicActivates,
   mnemonicKey,
   mnemonicMatch,
+  returnKeyboardMenuFocus,
+  trackKeyboardMenuSource,
   type MenuKeyLike
 } from '../menuKeys'
 import { browserStore } from '../ui'
@@ -171,6 +173,129 @@ describe('controlMenuAnchor', () => {
       y: 0,
       keyboard: true
     })
+  })
+})
+
+describe('returning the keyboard when a menu closes (§9.23)', () => {
+  /*
+   * Measured on Electron 44.4.5/Linux: a native popup takes the chrome document's focus while it
+   * stands – the element blurs, `activeElement` falls to the body – and the document gets its
+   * focus back on close with no element in it. The renderer therefore remembers the element a
+   * keyboard-invoked menu hung from and refocuses it when the main process reports the close.
+   */
+  let off: () => void = () => undefined
+  beforeEach(() => {
+    off = trackKeyboardMenuSource()
+  })
+  afterEach(() => {
+    off()
+    vi.restoreAllMocks()
+    // Whatever a test armed and did not use, cleared for the next.
+    vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+    returnKeyboardMenuFocus()
+    vi.restoreAllMocks()
+  })
+
+  /** The menu Chromium raises for Shift+F10 or the Menu key: at the focused element, no button. */
+  const askFromKeyboard = (el: HTMLElement, init: MouseEventInit = {}): void => {
+    el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, button: -1, ...init }))
+  }
+  /** The native menu standing: the element blurred, the document's focus fallen to the body. */
+  const menuTakesFocus = (el: HTMLElement): void => {
+    el.blur()
+    expect(document.activeElement).toBe(document.body)
+  }
+
+  it('Shift+F10 on a row: the row loses the keyboard to the menu and has it back when the menu closes', () => {
+    const row = boxed('button', { left: 8, top: 144, width: 200, height: 28 })
+    row.focus()
+    askFromKeyboard(row)
+    menuTakesFocus(row)
+    returnKeyboardMenuFocus()
+    expect(document.activeElement).toBe(row)
+  })
+
+  it('Enter or Space on a "⋯" arms the return through its anchor; a pointer’s click on it does not', () => {
+    const more = boxed('button', { left: 700, top: 4, width: 20, height: 16 })
+    more.focus()
+    controlMenuAnchor({ currentTarget: more, detail: 0 })
+    menuTakesFocus(more)
+    returnKeyboardMenuFocus()
+    expect(document.activeElement).toBe(more)
+
+    controlMenuAnchor({ currentTarget: more, detail: 1 })
+    menuTakesFocus(more)
+    returnKeyboardMenuFocus()
+    expect(document.activeElement).toBe(document.body)
+  })
+
+  it("a right-click's menu and a long-press's are a pointer's: nothing to return to", () => {
+    const row = boxed('button', { left: 8, top: 144, width: 200, height: 28 })
+    row.focus()
+    askFromKeyboard(row, { button: 2 })
+    menuTakesFocus(row)
+    returnKeyboardMenuFocus()
+    expect(document.activeElement).toBe(document.body)
+
+    row.focus()
+    const touch = new MouseEvent('contextmenu', { bubbles: true, button: -1 })
+    Object.defineProperty(touch, 'sourceCapabilities', { value: { firesTouchEvents: true } })
+    row.dispatchEvent(touch)
+    menuTakesFocus(row)
+    returnKeyboardMenuFocus()
+    expect(document.activeElement).toBe(document.body)
+  })
+
+  it('a pick that moved the keyboard itself – to a rename field, a dialog – keeps it there', () => {
+    const row = boxed('button', { left: 8, top: 144, width: 200, height: 28 })
+    row.focus()
+    askFromKeyboard(row)
+    menuTakesFocus(row)
+    const field = boxed('input', { left: 8, top: 144, width: 200, height: 28 })
+    field.focus()
+    returnKeyboardMenuFocus()
+    expect(document.activeElement).toBe(field)
+  })
+
+  it('a pick that opened another window – this document no longer focused – is left alone', () => {
+    const row = boxed('button', { left: 8, top: 144, width: 200, height: 28 })
+    row.focus()
+    askFromKeyboard(row)
+    menuTakesFocus(row)
+    vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+    returnKeyboardMenuFocus()
+    expect(document.activeElement).toBe(document.body)
+  })
+
+  it('an element the pick removed, and a menu already returned from, give nothing back', () => {
+    const row = boxed('button', { left: 8, top: 144, width: 200, height: 28 })
+    row.focus()
+    askFromKeyboard(row)
+    menuTakesFocus(row)
+    row.remove()
+    expect(() => returnKeyboardMenuFocus()).not.toThrow()
+    expect(document.activeElement).toBe(document.body)
+
+    const other = boxed('button', { left: 8, top: 172, width: 200, height: 28 })
+    other.focus()
+    askFromKeyboard(other)
+    menuTakesFocus(other)
+    returnKeyboardMenuFocus()
+    expect(document.activeElement).toBe(other)
+    // The same close reported twice, or a later pointer menu's: the element is not refocused again.
+    menuTakesFocus(other)
+    returnKeyboardMenuFocus()
+    expect(document.activeElement).toBe(document.body)
+  })
+
+  it('the listener comes off with its remover', () => {
+    off()
+    const row = boxed('button', { left: 8, top: 144, width: 200, height: 28 })
+    row.focus()
+    askFromKeyboard(row)
+    menuTakesFocus(row)
+    returnKeyboardMenuFocus()
+    expect(document.activeElement).toBe(document.body)
   })
 })
 

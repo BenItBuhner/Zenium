@@ -414,6 +414,29 @@ describe('where a native menu opens (shortcuts-menus-167, §9.23)', () => {
     expect(popped[0]).toMatchObject({ x: 12, y: 0, sourceType: 'keyboard' })
   })
 
+  it('a keyboard menu, closing, tells the chrome to return the keyboard to the element it hung from (§9.23); a pointer’s menu says nothing', async () => {
+    const menus = new ElectronMenus()
+    const win = { host: host(), send: vi.fn() }
+    menus.popup(items, {
+      source: 'tab',
+      win: win as never,
+      keyboard: true,
+      rect: { x: 12, y: 40, width: 200, height: 28 }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(popped[0].callback).toBeTypeOf('function')
+    // Nothing is said while the menu stands – only Electron's close callback speaks.
+    expect(win.send).not.toHaveBeenCalled()
+    popped[0].callback?.()
+    expect(win.send).toHaveBeenCalledTimes(1)
+    expect(win.send).toHaveBeenCalledWith('menu.keyboardReturn', undefined)
+
+    menus.popup(items, { source: 'tab', win: win as never, x: 300, y: 44 })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(popped[1]).not.toHaveProperty('callback')
+    expect(popped[1]).not.toHaveProperty('sourceType')
+  })
+
   it('a menu asked for while the window is gone never opens', () => {
     const menus = new ElectronMenus()
     const win = { host: { ...host(), alive: false }, send: vi.fn() } as never

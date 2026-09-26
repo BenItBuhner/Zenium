@@ -67,9 +67,12 @@ export class ElectronMenus implements MenuHost {
    * native menu opens at the pointer unless the core anchors it – to a point, or to the element
    * it belongs to, whose bottom-left corner it hangs from (`popupPoint`, §9.23); opened by the
    * keyboard it says so: Chromium then starts with its first item selected, and the arrow keys
-   * and Escape work from there. The menu never takes the chrome document's focus – a views menu
-   * runs in its own popup widget over the still-active window – so the element that opened it
-   * has the keyboard back the moment it closes.
+   * and Escape work from there. A native popup runs in its own widget and takes the keyboard off
+   * the chrome document while it stands (measured on Electron 44.4.5/Linux: the focused element
+   * blurs, the document's `activeElement` falls to the body), and the chrome does not get it
+   * back on its own when the menu closes – so a keyboard-opened menu tells the chrome to return
+   * the keyboard to the element it hung from on close (`menu.keyboardReturn`, §9.23), which the
+   * renderer honours unless a pick moved the focus itself.
    */
   popup(items: MenuItemTemplate[], options: MenuPopupOptions): void {
     if (options.source === 'app') {
@@ -86,7 +89,13 @@ export class ElectronMenus implements MenuHost {
         popup.x = point.x
         popup.y = point.y
       }
-      if (options.keyboard) popup.sourceType = 'keyboard'
+      if (options.keyboard) {
+        popup.sourceType = 'keyboard'
+        // §9.23: return the keyboard to the element the menu hung from once it closes. The
+        // element does not get it back on its own (a native popup takes the chrome document's
+        // focus), so the renderer refocuses it on this signal unless a pick moved the focus.
+        popup.callback = () => options.win.send('menu.keyboardReturn', undefined)
+      }
       Menu.buildFromTemplate(this.template(items)).popup(popup)
     }
     const pending = [...remoteIcons(items)].filter((url) => !this.icons.has(url))
