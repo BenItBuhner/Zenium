@@ -216,7 +216,7 @@ Wait until `text` appears, `textGone` disappears, a CSS `selector` matches, or f
 
 ### browser_take_screenshot
 
-An image of the tab: the viewport by default, `"fullPage":true` for the whole scrollable page, `"target":"e12"` (or a CSS selector) for one element; `"type":"png"` or `"jpeg"`.
+An image of the tab: the viewport by default, `"fullPage":true` for the whole scrollable page, `"target":"e12"` (or a CSS selector) for one element; `"type":"png"` or `"jpeg"`. On a tab off the user's screen (background mode, or foreground without the screen taken) `fullPage` and `target` return the visible viewport instead - the whole of it, or the element's part of it - and the text line says so (`viewport - not the full page`, or `cut from the visible viewport` for an element, with the reason); `browser_scroll` brings what you need into view first.
 
 - Example: `browser_take_screenshot {"tabId":"tab_3f9a...","fullPage":true}`
 - Pitfalls: never zoom, hide or restyle the page to fake a full-page or element capture; the options exist. Use `browser_snapshot` to find elements, screenshots only to look. `The page could not be captured` names the reason (the tab off screen in background mode, the screen not taken or held by another agent, the first frame not painted yet); follow it - a retry after a moment, or the readers `browser_snapshot` / `browser_read_page` - instead of switching modes blindly.
