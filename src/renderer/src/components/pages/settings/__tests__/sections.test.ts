@@ -120,6 +120,7 @@ const ANDROID: HostCapabilities = {
   agentSkills: false,
   updates: true,
   share: true,
+  sharePanel: false,
   clipboardChip: true,
   appLinkSettings: true,
   pullToRefresh: true,

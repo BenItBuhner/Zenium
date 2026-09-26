@@ -14,6 +14,7 @@ import { copyConfirmation } from '../shared/clipboard'
 import { internalPageOf } from '../shared/internalPages'
 import { bindingFor, formatChord, toAccelerator } from '../shared/shortcuts'
 import { DEVTOOLS_DOCK_ROWS } from '../shared/devtoolsDock'
+import { touchLayout } from '../shared/formFactor'
 import {
   BLANK_URL,
   NEW_TAB_URL,
@@ -671,10 +672,11 @@ export class Menus {
             win
           )
       }
-      // The phone seats the pair as Chrome for Android 152 does – "Open in new tab" before "Open
-      // in new tab in group" (Chrome 140's swap, permanent by 144; the design lead's ruling on
-      // #492's (b)). The desktop's and the tablet's rows stay in their order, the group row first.
-      if (win.formFactor === 'phone') open.push(plain, ...(inGroup ? [inGroup] : []))
+      // The touch hosts seat the pair as Chrome for Android 152 does – "Open in new tab" before
+      // "Open in new tab in group" (Chrome 140's swap, permanent by 144; the design lead's ruling
+      // on #492's (b), extended to the tablet: one link menu on both touch hosts). The desktop's
+      // rows stay in their order, the group row first.
+      if (touchLayout(win.formFactor)) open.push(plain, ...(inGroup ? [inGroup] : []))
       else open.push(...(inGroup ? [inGroup] : []), plain)
       if (caps.windows) {
         open.push(
@@ -727,10 +729,10 @@ export class Menus {
           click: () => view.downloadURL(url, { saveAs: true })
         }
       : undefined
-    // Chrome desktop's "Save link as…" leads the group, and the desktop's and the tablet's rows
-    // keep it there; Chrome for Android 152 puts "Download link" after the two copies, and the
-    // phone's rows follow it (the lead's ruling on #492's (b)).
-    if (save && win.formFactor !== 'phone') transfer.push(save)
+    // Chrome desktop's "Save link as…" leads the group, and the desktop's rows keep it there;
+    // Chrome for Android 152 puts "Download link" after the two copies, and the touch hosts'
+    // rows – the phone's and the tablet's – follow it (the lead's ruling on #492's (b)).
+    if (save && !touchLayout(win.formFactor)) transfer.push(save)
     const copy = linkCopyItem(url)
     transfer.push({
       label: copy.label,
@@ -743,7 +745,7 @@ export class Menus {
         click: () => this.browser.copyText(linkText, 'Text copied', win)
       })
     }
-    if (save && win.formFactor === 'phone') transfer.push(save)
+    if (save && touchLayout(win.formFactor)) transfer.push(save)
     if (caps.share && navigable) {
       transfer.push({
         label: 'Share Link…',

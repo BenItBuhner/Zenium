@@ -1,7 +1,9 @@
 package app.zen.chromium
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ShareTest {
@@ -107,5 +109,32 @@ class ShareTest {
     fun aShareWithoutATabHasNoPageActions() {
         // Long screenshot and Print work on the sharing tab: a bare link's share goes with Copy link and QR code alone.
         assertEquals(listOf(Share.KIND_COPY, Share.KIND_QR), Share.browserRow(withTab = false).map { it.kind })
+    }
+
+    // --- SH-03 follow-up: a page's navigator.share on the panel -----------------------------------
+
+    @Test
+    fun thePanelStandsInBelowAndroid14ForAnythingButAPagesFiles() {
+        // Chrome's fork (`ShareDelegateImpl.isSharingHubEnabled`): the hub below 14, a Web Share taking
+        // the same fork as the menu's share; a page's files go to the system sheet on every version.
+        assertTrue(Share.panelStandsIn(sdkInt = 33, files = false))
+        assertTrue(Share.panelStandsIn(sdkInt = 28, files = false))
+        assertFalse(Share.panelStandsIn(sdkInt = 34, files = false))
+        assertFalse(Share.panelStandsIn(sdkInt = 33, files = true))
+        assertFalse(Share.panelStandsIn(sdkInt = 34, files = true))
+    }
+
+    @Test
+    fun aPagesPromiseHearsThePanelsAnswerAsChromesHubAnswersIt() {
+        // `ShareParams.TargetChosenCallback`: an app taking the share, or a first-party chip
+        // (`callTargetChosenCallback()`), resolves the page's promise; the sheet closed unchosen rejects it.
+        assertEquals(Share.SHARE_SHARED, Share.awaitedPanelAnswer("target"))
+        assertEquals(Share.SHARE_ABORTED, Share.awaitedPanelAnswer("target", started = false))
+        assertEquals(Share.SHARE_SHARED, Share.awaitedPanelAnswer("chip"))
+        assertEquals(Share.SHARE_SHARED, Share.awaitedPanelAnswer("qr"))
+        assertEquals(Share.SHARE_SHARED, Share.awaitedPanelAnswer("copyImage"))
+        assertEquals(Share.SHARE_ABORTED, Share.awaitedPanelAnswer("dismiss"))
+        // More opens the system sheet, whose own closing answers (`Outcome`): the panel says nothing.
+        assertNull(Share.awaitedPanelAnswer("more"))
     }
 }

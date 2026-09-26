@@ -32,6 +32,7 @@ import { pageCovered } from '@renderer/lib/pageView'
 import { readerSiteOf } from '@renderer/lib/readerEntry'
 import { READER_BANNER_KEY, readerMutes } from '@renderer/lib/readerEntryMessage'
 import { readerCrossingStore, readerSurfaceColor } from '@renderer/lib/readerTransition'
+import { SHARE_ROW_KEY, SHARE_SEAM_BUSY_MS } from '@renderer/lib/shareSeam'
 import {
   fakeboxMorphStore,
   fakeboxScrubTravel,
@@ -1447,13 +1448,40 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     } else {
       whenStore(() => uiStore.get().toasts.length > 0, spec)
     }
-  } else if (target.kind === 'share' && state) {
+  } else if (target.kind === 'share' && target.share === 'gathering') {
+    // The seam's first half held (§9.38 with §9.30's busy row): the app menu up and its Share
+    // row picked, the host's request withheld – the seam set as `beginShareSeam` leaves it,
+    // less the pick and the guard – so the row's spinner, due 150 ms into the gather, stands
+    // for a still. The state is reached once the sign is up.
+    const unsubscribe = uiStore.subscribe(() => {
+      const menu = uiStore.get().menu
+      if (!menu) return
+      unsubscribe()
+      const share = menu.items.find((item) => item.key === SHARE_ROW_KEY)
+      if (!share) {
+        finish()
+        return
+      }
+      afterFrames(2, () => {
+        // The row on screen, as it was under the finger that picked it.
+        show(share.label)
+        uiStore.set({ shareSeam: { phase: 'gathering', menuId: menu.id, itemId: share.id } })
+        whenStore(
+          () => uiStore.get().shareSeam?.phase === 'gathering',
+          spec,
+          SHARE_SEAM_BUSY_MS + 100
+        )
+      })
+    })
+    run('app.menu', {})
+  } else if (target.kind === 'share' && target.share !== 'gathering' && state) {
     // The panel as the host would put it up for the active tab – over a private tab on the page
     // first when the share is a private tab's – with the stand-in row of apps; the state is
     // reached once the sheet is up.
+    const kind = target.share
     const panel = (): void => {
       const now = browserStore.get().state ?? state
-      void openSharePanel(previewShareRequest(target.share, activeTab(now) ?? null, target.private))
+      void openSharePanel(previewShareRequest(kind, activeTab(now) ?? null, target.private))
       whenStore(() => uiStore.get().sharePanel !== null, spec)
     }
     if (target.private) applyPrivate('page', PRIVATE_PAGE, state, panel)
