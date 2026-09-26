@@ -398,8 +398,8 @@ class CustomTabMenuDemo : DemoHarness("customtabs-demo-state.json", "customtabs-
         SystemClock.sleep(1_000)
         assertTrue("the Bookmarks page opened from the menu", openMenuItem(MENU_BOOKMARKS, MENU_SHOW_BOOKMARKS))
         assertTrue("the Bookmarks page is up", awaitTrue(10_000) { bookmarksPageUp() })
-        assertTrue("the Bookmarks page lists the page filed in the custom tab", awaitTrue(10_000) { findByLabelPrefix(SECOND_TITLE) != null })
-        assertTrue("the Bookmarks page lists the page filed before the browser ran", findByLabelPrefix(FILED_TITLE) != null)
+        assertTrue("the Bookmarks page lists the page filed in the custom tab", awaitTrue(10_000) { bookmarkRowUp(SECOND_TITLE) })
+        assertTrue("the Bookmarks page lists the page filed before the browser ran", bookmarkRowUp(FILED_TITLE))
         SystemClock.sleep(1_500)
         shot("20-bookmarks-page")
         beat()
@@ -698,6 +698,10 @@ class CustomTabMenuDemo : DemoHarness("customtabs-demo-state.json", "customtabs-
     }
 
     private fun coreBookmarkUrls(): List<String> = coreBookmarks().map { it.optString("url") }
+
+    /** A bookmark row of `title` is on the Bookmarks page: its title text, or its 3-dot button's name. */
+    private fun bookmarkRowUp(title: String): Boolean =
+        findByLabelPrefix(title) != null || findByLabel("More options for $title") != null
 
     /** The browser's Bookmarks page is on screen: its search field (a hint, which no label read sees) is in the tree. */
     private fun bookmarksPageUp(): Boolean =
