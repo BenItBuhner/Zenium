@@ -194,6 +194,7 @@ import {
 import { syncGroups } from './sync'
 import {
   httpsOnlyGroups,
+  preloadGroups,
   safeBrowsingGroups,
   secureDnsGroups,
   signalsGroups
@@ -2643,14 +2644,6 @@ function resourcesSection({ state, set }: SectionContext): RowGroup[] {
           checked: r.process.disableBackForwardCache,
           onChange: (v) => setP({ disableBackForwardCache: v })
         },
-        {
-          kind: 'switch',
-          id: 'no-prerender',
-          label: 'Block prerendering',
-          description: 'Stops pages from loading other pages in hidden renderers ahead of time.',
-          checked: r.process.disablePrerender,
-          onChange: (v) => setP({ disablePrerender: v })
-        },
         numberRow({
           id: 'raster-threads',
           label: 'Raster threads per page',
@@ -2699,7 +2692,8 @@ function resourcesSection({ state, set }: SectionContext): RowGroup[] {
  * positions, the request engine's (`tracking.tsx`) at the tracking-prevention position, the
  * site-data program's (`siteDataRows.tsx`, which carries the third-party cookie setting and its
  * related sites from `protectionRows.tsx`) at the cookies position, the protection program's
- * at the safe-browsing, https-only, secure-dns and privacy-signals positions; the remembered
+ * at the preload-pages (PS-43), safe-browsing, https-only, secure-dns and privacy-signals
+ * positions; the remembered
  * per-site answers are Security's (`securitySection`).
  */
 function privacySection(ctx: SectionContext): RowGroup[] {
@@ -2711,6 +2705,7 @@ function privacySection(ctx: SectionContext): RowGroup[] {
     ...clearDataGroups(ctx),
     ...siteDataGroups(ctx),
     ...siteSettingsGroups(ctx),
+    ...preloadGroups(state, set),
     ...httpsOnlyGroups(state, set),
     ...secureDnsGroups(state, set),
     ...signalsGroups(state, set),

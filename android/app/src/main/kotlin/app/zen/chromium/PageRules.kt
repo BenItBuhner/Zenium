@@ -1,5 +1,6 @@
 package app.zen.chromium
 
+import app.zen.chromium.blocking.Decision
 import org.json.JSONObject
 import kotlin.math.roundToInt
 
@@ -73,6 +74,55 @@ class PageRules(
          */
         fun hostOf(url: String): String? {
             if (!isWebPage(url)) return null
+            val authority = authorityOf(url)
+            val host = if (authority.startsWith("[")) authority.substringBefore(']').removePrefix("[")
+            else authority.substringBefore(':')
+            return host.lowercase().trimEnd('.').takeIf { it.isNotEmpty() }
+        }
+
+        /**
+         * WebView asks `shouldOverrideUrlLoading` for a speculation-rules prerender as it asks
+         * for a navigation, marking the request `Sec-Purpose: prefetch;prerender` (Chromium's
+         * `AwContentBrowserClient::ShouldOverrideUrlLoading` under `is_prerendering`) – the one
+         * place the embedder can veto it. True when the request headers carry the token
+         * `prerender` among `Sec-Purpose`'s `;`-separated values, the header name matched in any
+         * case; a page cannot forge a `Sec-` header, so the token is the proof. A prefetch alone
+         * (`Sec-Purpose: prefetch`) is not a navigation and never reaches the hook.
+         */
+        fun isPrerender(headers: Map<String, String>?): Boolean {
+            headers ?: return false
+            for ((name, value) in headers) {
+                if (!name.equals("Sec-Purpose", ignoreCase = true)) continue
+                if (value.split(';').any { it.trim().equals("prerender", ignoreCase = true) }) return true
+            }
+            return false
+        }
+
+        /**
+         * Whether a prerender the page declared is refused (the hook answers true: the prerender
+         * cancelled, nothing shown, loaded or recorded). Refused when the engine would not let it
+         * go as it stands – Safe Browsing names the address, or the rule sets decide anything but
+         * allow – and when it could not run under this view's settings: another site than the
+         * document's (one WebView, one set of WebSettings; the sites as [ContentRules.siteOf]
+         * spells them, the permission store's origin) or the other desktop-site setting. A
+         * target or a document without a web origin has no site to run under, and is refused
+         * too. The real tap comes through the hook as itself and is decided then.
+         */
+        fun prerenderVeto(
+            guardHit: Boolean,
+            action: Decision.Action,
+            targetSite: String?,
+            currentSite: String?,
+            desktopDiffers: Boolean
+        ): Boolean {
+            if (guardHit) return true
+            if (action != Decision.Action.ALLOW && action != Decision.Action.MODIFY_HEADERS) return true
+            if (targetSite == null || currentSite == null || targetSite != currentSite) return true
+            return desktopDiffers
+        }
+
+        /** What lies between an http(s) URL's `//` and its path, query or fragment, credentials removed. */
+        private fun authorityOf(url: String): String {
             val start = url.indexOf("//") + 2
             var end = url.length
             for (i in start until url.length) {
@@ -82,11 +132,7 @@ class PageRules(
                     break
                 }
             }
-            var authority = url.substring(start, end)
-            authority = authority.substringAfterLast('@')
-            val host = if (authority.startsWith("[")) authority.substringBefore(']').removePrefix("[")
-            else authority.substringBefore(':')
-            return host.lowercase().trimEnd('.').takeIf { it.isNotEmpty() }
+            return url.substring(start, end).substringAfterLast('@')
         }
 
         /** Parse the core's `view.setPageRules` payload; anything malformed falls back to the defaults. */

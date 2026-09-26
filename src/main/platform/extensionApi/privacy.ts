@@ -1,4 +1,5 @@
-import { PRIVATE_CONTAINER_ID } from '../../../shared/types'
+import { PRIVATE_CONTAINER_ID, type ExtensionControl } from '../../../shared/types'
+import { EXTENSION_SETTING_KEYS } from '../../../shared/extensionSettings'
 import {
   INCOGNITO_ERROR,
   INCOGNITO_SCOPE_ERROR,
@@ -48,6 +49,23 @@ const REFERRERS = settingKey('websites', 'referrersEnabled')
 const DO_NOT_TRACK = settingKey('websites', 'doNotTrackEnabled')
 const WEB_RTC = settingKey('network', 'webRTCIPHandlingPolicy')
 const PASSWORD_SAVING = settingKey('services', 'passwordSavingEnabled')
+
+/**
+ * The settings whose services read the extension layer (`shared/extensionSettings.ts`), by the
+ * key the Settings row and the service share (`UIState.extensionControls`). Published from
+ * `recompute` with the normal windows' effective value – the regular profile's, as Chrome's
+ * Settings rows are – so the service reads the extension's value over the user's and the user's
+ * again once every holder has cleared, been disabled or uninstalled (services pass 10, F3).
+ */
+const SERVICE_CONTROL_KEYS: ReadonlyArray<readonly [string, string]> = [
+  [PASSWORD_SAVING, EXTENSION_SETTING_KEYS.passwordSaving],
+  [settingKey('services', 'autofillAddressEnabled'), EXTENSION_SETTING_KEYS.autofillAddresses],
+  [settingKey('services', 'autofillCreditCardEnabled'), EXTENSION_SETTING_KEYS.autofillCards],
+  [settingKey('services', 'safeBrowsingEnabled'), EXTENSION_SETTING_KEYS.safeBrowsing],
+  [settingKey('websites', 'thirdPartyCookiesAllowed'), EXTENSION_SETTING_KEYS.thirdPartyCookies],
+  [settingKey('services', 'searchSuggestEnabled'), EXTENSION_SETTING_KEYS.searchSuggestions],
+  [settingKey('network', 'networkPredictionEnabled'), EXTENSION_SETTING_KEYS.preloadPages]
+]
 
 /**
  * `chrome.privacy` for the browser layer. Every extension holding `privacy` may set every
@@ -280,6 +298,29 @@ export class PrivacyApi {
       }
     }
     this.refreshRequestHooks()
+    this.publishControls()
+  }
+
+  /** The layer the services read (`SERVICE_CONTROL_KEYS`): every held key with its holder and value. */
+  private publishControls(): void {
+    const controls: Record<string, ExtensionControl> = {}
+    for (const [key, controlKey] of SERVICE_CONTROL_KEYS) {
+      const effective = this.effective.get(effectiveKey(key, false))
+      if (!effective || effective.controller === null) continue
+      controls[controlKey] = {
+        extensionId: effective.controller,
+        name: this.nameOf(effective.controller),
+        value: effective.value
+      }
+    }
+    this.host.controls.publish('privacy', controls)
+  }
+
+  /** The extension's name as the Extensions page shows it (the id when nothing better is known). */
+  private nameOf(extensionId: string): string {
+    const info = this.host.browser.extensions.list().find((record) => record.id === extensionId)
+    if (info?.name) return info.name
+    return this.host.loaded(extensionId)?.extension.name || extensionId
   }
 
   // ---------------------------------------------------------------------------

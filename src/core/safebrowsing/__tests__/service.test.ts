@@ -10,6 +10,12 @@ import {
   type PrivacySettings,
   type SafeBrowsingHit
 } from '../../../shared/privacy'
+import {
+  EMPTY_EXTENSION_LAYER,
+  EXTENSION_SETTING_KEYS,
+  type ExtensionLayer
+} from '../../../shared/extensionSettings'
+import type { ExtensionControl } from '../../../shared/types'
 import { prefixCountOf } from '../document'
 import { SAFE_BROWSING_FEEDS, safeBrowsingFeed } from '../feeds'
 import { PrefixTable } from '../prefixes'
@@ -59,7 +65,7 @@ function fake(overrides: Partial<PrivacySettings> = {}): Fake {
   const fetchText = vi.fn<FetchText>(async () => ({ ok: false, status: 0, text: '' }))
   const bundled = new Map<string, string>()
   const browser = {
-    state: { settings: { privacy: settings } },
+    state: { settings: { privacy: settings }, extensionLayer: EMPTY_EXTENSION_LAYER },
     background: new BackgroundWork(),
     platform: {
       io,
@@ -170,6 +176,46 @@ describe('SafeBrowsingService', () => {
     f.settings.safeBrowsingEnabled = false
     expect(service.lookup('https://evil.example/')).toBeNull()
     expect(service.status().enabled).toBe(false)
+  })
+
+  it("reads the switch as an extension holds it (chrome.privacy.services.safeBrowsingEnabled) and as the user's again once released", () => {
+    const f = fake()
+    f.io.files.set(feedFile('urlhaus'), JSON.stringify(document('urlhaus', ['evil.example'])))
+    const service = start(f)
+    const state = f.browser.state as unknown as { extensionLayer: ExtensionLayer }
+    // The extension host's publish as the fake state takes it: a landed layer, nothing pending.
+    const publish = (controls: Record<string, ExtensionControl>): void => {
+      state.extensionLayer = { controls, pending: false }
+    }
+    const guard = { extensionId: 'guard', name: 'Guard' }
+    expect(service.lookup('http://evil.example/')).not.toBeNull()
+
+    publish({ [EXTENSION_SETTING_KEYS.safeBrowsing]: { ...guard, value: false } })
+    expect(service.enabled).toBe(false)
+    expect(service.lookup('http://evil.example/')).toBeNull()
+    expect(service.status().enabled).toBe(false)
+    // The user's setting is untouched, and the user's own flip changes nothing while held.
+    expect(f.settings.safeBrowsingEnabled).toBe(true)
+    f.settings.safeBrowsingEnabled = false
+    f.settings.safeBrowsingEnabled = true
+    expect(service.enabled).toBe(false)
+
+    publish({})
+    expect(service.enabled).toBe(true)
+    expect(service.lookup('http://evil.example/')).not.toBeNull()
+
+    // The extension's `true` over the user's `false`; a hold on another key is not this switch.
+    f.settings.safeBrowsingEnabled = false
+    publish({ [EXTENSION_SETTING_KEYS.safeBrowsing]: { ...guard, value: true } })
+    expect(service.enabled).toBe(true)
+    publish({ [EXTENSION_SETTING_KEYS.passwordSaving]: { ...guard, value: true } })
+    expect(service.enabled).toBe(false)
+
+    // Until the first publish lands (the layer pending), the switch reads its strict pole – ON –
+    // whatever the user's own value.
+    state.extensionLayer = { controls: {}, pending: true }
+    expect(service.enabled).toBe(true)
+    expect(service.lookup('http://evil.example/')).not.toBeNull()
   })
 
   it('seeds a feed without a table from the bundled snapshot and persists it as bundled', async () => {

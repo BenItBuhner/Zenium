@@ -177,7 +177,7 @@ import { displayModeFor, type DisplayMode } from '../shared/displayMode'
 import { sanitizeBlockingSettings } from '../shared/blocking'
 import { isShortcutPreset } from '../shared/shortcuts'
 import { sanitizeDevtoolsDock } from '../shared/devtoolsDock'
-import { sanitizePrivacySettings } from '../shared/privacy'
+import { sanitizePreloadPages, sanitizePrivacySettings } from '../shared/privacy'
 import { sanitizeSpellcheck } from '../shared/spellcheck'
 import { sanitizeReaderPreferences } from '../shared/reader'
 import { sanitizeFontSettings } from '../shared/fonts'
@@ -1477,6 +1477,10 @@ export class Browser {
       // The left pane's link rule follows the splits (a swap, a pane joining or leaving).
       this.tabs.syncSplitLinkFlags()
     })
+    // An extension taking or releasing a privacy setting (`chrome.privacy`) changes the effective
+    // policy without a settings change: the service that pushes a document to the hosts re-reads.
+    // The services that read at the decision (credentials, autofill, suggestions) need no push.
+    this.state.onExtensionControlsChange(() => this.protection.onExtensionControlsChanged())
     // Rule sets load synchronously so the first page is protected.
     this.blocking.start()
     // After the blocking store is attached: HTTPS-only mode's set is persisted like the others.
@@ -4232,6 +4236,7 @@ export class Browser {
       updates: JSON.stringify(s.updates),
       blocking: s.blocking,
       privacy: JSON.stringify(s.privacy),
+      preloadPages: s.preloadPages,
       autofill: `${JSON.stringify(s.passwords)}${JSON.stringify(s.autofill)}`,
       spellcheck: JSON.stringify(s.spellcheck),
       reader: JSON.stringify(s.reader),
@@ -4323,6 +4328,8 @@ export class Browser {
           ...s.privacy,
           ...(value as Partial<Settings['privacy']>)
         })
+      } else if (key === 'preloadPages') {
+        s.preloadPages = sanitizePreloadPages(value)
       } else if (key === 'spellcheck' && value && typeof value === 'object') {
         s.spellcheck = sanitizeSpellcheck({
           ...s.spellcheck,
@@ -4406,7 +4413,8 @@ export class Browser {
     if (before.updates !== JSON.stringify(s.updates)) this.updates.onSettingsChanged()
     if (before.appIcon !== s.appIcon) this.platform.app.setAppIcon?.(s.appIcon)
     if (before.blocking !== s.blocking) this.blocking.onSettingsChanged()
-    if (before.privacy !== JSON.stringify(s.privacy)) this.protection.onSettingsChanged()
+    if (before.privacy !== JSON.stringify(s.privacy) || before.preloadPages !== s.preloadPages)
+      this.protection.onSettingsChanged()
     if (before.autofill !== `${JSON.stringify(s.passwords)}${JSON.stringify(s.autofill)}`)
       this.autofill.onSettingsChanged()
     if (before.spellcheck !== JSON.stringify(s.spellcheck)) this.spellcheck.onSettingsChanged()
