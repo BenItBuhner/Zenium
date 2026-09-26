@@ -5,13 +5,19 @@ import app.zen.chromium.PageRules
 /**
  * Preload pages "No preloading" (PS-43) at the request engine, the half `TabWebView`'s
  * `applySpeculativeLoading` cannot reach: `SPECULATIVE_LOADING_DISABLED` governs Prerender2 alone
- * (`AwSettings::IsPrerender2Allowed`), while a `<link rel=prefetch>` and a speculation-rules
- * prefetch are Blink resource fetches that still leave. Chromium marks exactly those requests –
- * and no page can forge the mark (the `Sec-` prefix) – with `Sec-Purpose: prefetch`, or
- * `prefetch;prerender` on the fetch a prerender starts with; the legacy `Purpose: prefetch` is
- * read too, as the desktop reads it. The twin of `isPreloadRequest` in
- * `src/core/protection/policy.ts`, token for token, and of the desktop's `PreloadHandler`
+ * (`AwSettings::IsPrerender2Allowed`), while a speculation-rules prefetch still leaves. Chromium
+ * marks a speculative request – and no page can forge the mark (the `Sec-` prefix) – with
+ * `Sec-Purpose: prefetch`, or `prefetch;prerender` on the fetch a prerender starts with; the
+ * legacy `Purpose: prefetch` is read too, as the desktop reads it. The twin of `isPreloadRequest`
+ * in `src/core/protection/policy.ts`, token for token, and of the desktop's `PreloadHandler`
  * (`src/main/platform/privacy.ts`), which cancels every such request under `none`.
+ *
+ * What reaches `shouldInterceptRequest` marked is refused; what reaches it unmarked cannot be.
+ * Measured on WebView 113 (run 36244937529): a speculation-rules prefetch arrives with
+ * `Sec-Purpose: prefetch` and `Purpose: prefetch` and is refused; a `<link rel=prefetch>` arrives
+ * as a plain fetch (`Accept`, `Referer`, `User-Agent`) – its wire `Purpose: prefetch` is added
+ * downstream in the network service, where the desktop's `onBeforeSendHeaders` reads it and this
+ * hook cannot – and is the phone's remaining limit under `none`.
  *
  * Pure, so the JVM tests pin it; read per request on WebView's network threads, at the level the
  * core last pushed ([PrivacyFlags.preloadPages], live on every `privacy.apply`).

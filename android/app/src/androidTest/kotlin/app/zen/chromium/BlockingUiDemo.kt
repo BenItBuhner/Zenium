@@ -32,8 +32,10 @@ import java.util.concurrent.TimeUnit
  * sheet, the counter, the filter lists as item rows with a sheet each, the sites without
  * blocking), a level change the Kotlin engine follows, the current site excepted from its switch
  * row and blocked again from its item's sheet, and the master switch off and on. Last, Preload
- * pages at the request engine (PS-43): a fixture page's `<link rel=prefetch>` refused under
- * `none` and let go under `standard`, read on the loopback server ([preloadScene]).
+ * pages at the request engine (PS-43): a fixture page's speculation-rules prefetch refused under
+ * `none` and let go under `standard`, read on the loopback server, and its `<link rel=prefetch>`
+ * – shown to the engine without its mark on WebView 113 – written as the finding it is
+ * ([preloadScene]).
  *
  * Every row is found through the chrome's accessibility tree the way a screen reader would (a
  * row is one button whose text runs its label and description together) and pressed with a real
@@ -348,9 +350,11 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
 
         // 11. Preload pages at the request engine (PS-43, W6-S10): the fixture page asks for
         //     `/prefetched.txt` through `<link rel=prefetch>` and `/speculated.html` through a
-        //     speculation-rules prefetch block; under `none` the server must see no prefetch while
-        //     the page's own resources load, and under `standard` the same prefetch must arrive.
-        note("\n11. Preload pages: none refuses the prefetch, standard lets it go")
+        //     speculation-rules prefetch block; under `none` the server must see no prefetch the
+        //     engine is shown marked while the page's own resources load, and under `standard`
+        //     every prefetch must arrive (the control); one the engine is shown unmarked is a
+        //     FINDING, the WebView's limit.
+        note("\n11. Preload pages: none refuses the marked prefetch, standard lets it go")
         preloadScene()
         note("\ndone")
     }
@@ -373,10 +377,12 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
      * `standard`, it must answer empty under `none` – the server sees nothing of it within 5 s
      * of the page's own resources loading. A prefetch the engine is never shown, or is shown
      * without a mark, is the WebView's limit, written as a FINDING and not failed on: the engine
-     * cannot refuse what it does not see (run 36242992489 on WebView 113: the link prefetch
-     * carries `Purpose: prefetch` on the wire and still reached the server under `none`, while
-     * the speculation-rules prefetch – `Sec-Purpose: prefetch` – was refused). Every reading is
-     * in the notes before a failed assertion fails the run.
+     * cannot refuse what it does not see. Measured on WebView 113 (runs 36242992489 and
+     * 36244937529): the speculation-rules prefetch is shown to the engine with `Sec-Purpose:
+     * prefetch` and `Purpose: prefetch` and refused under `none`; the link prefetch is shown as a
+     * plain fetch (`Accept`, `Referer`, `User-Agent`) – its wire `Purpose: prefetch` is added
+     * downstream, in the network service – and reaches the server under `none` (the FINDING).
+     * Every reading is in the notes before a failed assertion fails the run.
      */
     private fun preloadScene() {
         val failures = mutableListOf<String>()

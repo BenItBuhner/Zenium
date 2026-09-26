@@ -2724,20 +2724,25 @@ class TabWebView(
 
         /**
          * Preload pages "No preloading" (PS-43) at the request engine, as the desktop's
-         * `PreloadHandler` enforces it: under `none` every request Chromium marks speculative
-         * (`Sec-Purpose` / `Purpose: prefetch` – a `<link rel=prefetch>`, a speculation-rules
-         * prefetch, the fetch a prerender starts with; [PreloadRules]) is answered empty, so
-         * nothing leaves the device for it. [applySpeculativeLoading]'s DISABLED stops the
-         * prerenders alone (`IsPrerender2Allowed`); the prefetches are Blink resource fetches and
-         * arrive here with the mark. The level is [Privacy.flags]' as last pushed, read per
-         * request. Ahead of the engine on purpose: the refusal is the user's setting, not a rule
-         * set's block – no decision observed, no listener told, nothing added to the tab's
-         * blocked count, as on the desktop (`HANDLER_ORDER.preload` before `ruleEngine`). An
-         * empty 403, the engine's answer for a subresource it stops: the page sees a failed fetch
-         * (the desktop's cancel is `ERR_BLOCKED_BY_CLIENT`, the same to the page), and a non-2xx
-         * that no prefetch cache will serve for the tap that follows – a 204 would, and a
-         * navigation onto a 204 commits nothing (the engine's answer for a blocked DOCUMENT),
-         * which is not what a refused prefetch may do to the link the user then taps.
+         * `PreloadHandler` enforces it: under `none` every request that arrives here marked
+         * speculative (`Sec-Purpose` / `Purpose: prefetch`; [PreloadRules]) is answered empty,
+         * so nothing leaves the device for it. [applySpeculativeLoading]'s DISABLED stops the
+         * prerenders alone (`IsPrerender2Allowed`); a speculation-rules prefetch is a request the
+         * browser process builds with both marks on it, and arrives here so marked (refused on
+         * WebView 113, run 36244937529). A `<link rel=prefetch>` does NOT: WebView shows it here
+         * as the plain fetch it looks like (`Accept`, `Referer`, `User-Agent` and nothing else)
+         * and the `Purpose: prefetch` it carries on the wire is added downstream, in the network
+         * service – where the desktop's `onBeforeSendHeaders` reads it and this hook cannot. That
+         * one prefetch is the phone's remaining limit under `none`; the rest of what the setting
+         * names is refused. The level is [Privacy.flags]' as last pushed, read per request.
+         * Ahead of the engine on purpose: the refusal is the user's setting, not a rule set's
+         * block – no decision observed, no listener told, nothing added to the tab's blocked
+         * count, as on the desktop (`HANDLER_ORDER.preload` before `ruleEngine`). An empty 403,
+         * the engine's answer for a subresource it stops: the page sees a failed fetch (the
+         * desktop's cancel is `ERR_BLOCKED_BY_CLIENT`, the same to the page), and a non-2xx that
+         * no prefetch cache will serve for the tap that follows – a 204 would, and a navigation
+         * onto a 204 commits nothing (the engine's answer for a blocked DOCUMENT), which is not
+         * what a refused prefetch may do to the link the user then taps.
          */
         private fun refusePreload(request: WebResourceRequest): WebResourceResponse? =
             if (PreloadRules.refuses(host.privacy.flags, request.url.toString(), request.requestHeaders)) {
