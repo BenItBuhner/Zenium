@@ -255,9 +255,12 @@ class WebAppDemo : DemoHarness("pwa-demo-state.json", "android-pwa-display", "we
         check("the card carries the one action, OK", ok != null)
         val marked = runCatching { WebAppDisclosure.shown(JSONObject(WebAppStore.recordFile(app, webApp.record.shortcutId).readText())) }.getOrDefault(false)
         check("the launch is remembered in the app's record (${webApp.record.shortcutId}.json: ${WebAppDisclosure.KEY})", marked)
-        if (card != null) {
+        // The label's node re-read at rest: `waitFor` answers the instant the node exists, mid-arrival,
+        // when its bounds still lie below the screen's edge.
+        val rested = findByLabel(text)
+        if (rested != null) {
             val bottom = onMain { webApp.window.decorView.height }
-            finding("card: $card, ${card.height()} px tall, ${bottom - card.bottom} px above the window's bottom edge")
+            finding("the card's text at rest: $rested, ${rested.height()} px tall, ${bottom - rested.bottom} px above the window's bottom edge")
         }
         if (ok != null) {
             f.tap(ok.exactCenterX(), ok.exactCenterY())
