@@ -196,6 +196,11 @@ describe('the chrome focus ring (§1, a11y-10)', () => {
       (r) => r.value === 'none' && r.selector.includes("[data-pointer='coarse']")
     )
     expect(suppressor.map((r) => r.selector)).toEqual([
+      // The menu container's exemption (§9.22; v2Tokens.test.ts pins its text, order and
+      // weight): not a suppressor – a container that holds the focus by design draws no ring,
+      // as the dialog root draws none – its `:root[data-pointer='coarse']` form is the weight
+      // of the v2 ring rule's coarse form, which its plain form could not beat on a phone.
+      ".zen-v2-menu:focus-visible, :root[data-pointer='coarse'] .zen-v2-menu:focus-visible, .zen-v2-menu[data-keyboard-focus]:focus, :root[data-pointer='coarse'] .zen-v2-menu[data-keyboard-focus]:focus",
       ":root[data-pointer='coarse']:where(:not([data-input='keyboard'])) button:focus-visible, :root[data-pointer='coarse']:where(:not([data-input='keyboard'])) [role='button']:focus-visible"
     ])
     expect(css).not.toMatch(/:root\[data-pointer='coarse'\] button:focus-visible/)
