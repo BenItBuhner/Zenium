@@ -238,7 +238,11 @@ class MenuRowsDemo : GroupsDemoBase("menu-rows", "menu-rows-demo") {
         finding("  the host: capabilities.privateTabs $privateTabs (${webViewPackage()})")
         val id = coreInvoke("newtab.addShortcut", JSONObject().put("title", SHORTCUT_TITLE).put("url", SHORTCUT_URL).toString())
         finding("  pinned $SHORTCUT_TITLE -> $SHORTCUT_URL (id $id)")
-        coreInvoke("tab.new")
+        // The phone's new tab page is a blank tab the chrome draws its page over (`lib/newtab.ts`
+        // `openNewTabPage`: `tab.create` at zen://blank, active); the core's `tab.new` is the
+        // desktop's served page or, without it, the URL bar in new-tab mode – no tab (run 1).
+        val created = coreInvoke("tab.create", "{\"url\":${JSONObject.quote(BLANK_URL)},\"active\":true}")
+        finding("  a new tab page asked of the core the chrome's way (tab.create $BLANK_URL, active; id $created)")
         val ntp = awaitCore { st -> activeTabId(st)?.let { tabUrl(it, st) } == BLANK_URL }
         val tile = awaitRect { domRect(TILE) }
         check("D: a new tab page opens with the pinned tile on it", ntp && tile != null, "active ${activeTabId()?.let { tabUrl(it) }}, tile $tile")
