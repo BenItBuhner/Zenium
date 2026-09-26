@@ -158,6 +158,38 @@ export function allSpaces(model: Model): Space[] {
   return [...model.spaces, ...Object.values(model.localSpaces)]
 }
 
+/**
+ * Whether the space is agents' territory by its persisted mark – the shared Agents space or one
+ * an agent made for itself (`Space.agent`). The mark is the truth that outlives a run; the
+ * agent service's `isAgentSpace` adds the spaces made this run, which carry the mark too.
+ */
+export function agentOwnedSpace(space: Pick<Space, 'agent'>): boolean {
+  return Boolean(space.agent)
+}
+
+/**
+ * The space a window comes up on when `spaceId` is agents' territory with nothing in it: an
+ * empty agent-owned space never stays a window's active space across a quit or a restore (the
+ * user is left on the agent's space after a foreground session, and a tab seeded there is not
+ * theirs). The window goes back to the last user space it was on (`lastUserSpaceId`, recorded
+ * when it moved onto an agent's space) when that still exists and is a user's, else to the
+ * first user space; `spaceId` itself when it is fine as it is, or when every space is an
+ * agent's. `spaces` are the synced spaces; local ones are never an agent's.
+ */
+export function userSpaceInstead(
+  spaces: ReadonlyArray<Space>,
+  spaceId: string,
+  lastUserSpaceId: string | null | undefined
+): string {
+  const space = spaces.find((s) => s.id === spaceId)
+  if (!space || !agentOwnedSpace(space) || space.tabIds.length > 0) return spaceId
+  const user = (s: Space | undefined): s is Space =>
+    s !== undefined && !s.windowId && !agentOwnedSpace(s)
+  const last = spaces.find((s) => s.id === lastUserSpaceId)
+  if (user(last)) return last.id
+  return spaces.find((s) => user(s))?.id ?? spaceId
+}
+
 /** The most recently active real space (falls back to the first one). */
 export function activeSpace(model: Model): Space {
   return model.spaces.find((s) => s.id === model.activeSpaceId) ?? model.spaces[0]

@@ -2044,12 +2044,16 @@ export class TabManager {
     let n = 0
     for (const tab of Object.values(m.tabs)) {
       if (tab.id === glance || (tab.spaceId && m.localSpaces[tab.spaceId])) continue
+      if (this.agentsTab(tab)) continue
       if (others.length === 0 || tab.windowId === win.id) n += 1
     }
     return n
   }
 
-  /** How many tabs close when the app quits: every tab of every window (Glance previews aside). */
+  /**
+   * How many tabs close when the app quits: every tab of every window the user sees (Glance
+   * previews and the agents' tabs aside).
+   */
   openTabCount(): number {
     const glances = new Set(
       this.browser
@@ -2057,7 +2061,21 @@ export class TabManager {
         .map((w) => w.glance?.tabId)
         .filter((id): id is string => Boolean(id))
     )
-    return Object.keys(this.model.tabs).filter((id) => !glances.has(id)).length
+    return Object.values(this.model.tabs).filter(
+      (tab) => !glances.has(tab.id) && !this.agentsTab(tab)
+    ).length
+  }
+
+  /**
+   * A tab the user did not open, for the questions before a close ("Close N tabs?"): one in an
+   * agents' space – the shared Agents space, a space an agent made – told apart by the space's
+   * ownership (W7-F3). The count Zen asks with is Firefox's (`browser.tabs.warnOnClose` over the
+   * window's `openTabs`), and Firefox leaves the tab it made itself – Firefox View – out of it
+   * the same way; Chrome asks about downloads and `beforeunload`, never about a tab count. A
+   * `zen://newtab` the boot seeded stands in the user's space and counts as one tab.
+   */
+  private agentsTab(tab: Tab): boolean {
+    return tab.spaceId !== null && this.browser.agents.isAgentSpace(tab.spaceId)
   }
 
   /** Which window a tab belongs to under the current window-sync mode (null = shared). */
@@ -2161,6 +2179,14 @@ export class TabManager {
     const fromIndex = m.spaces.findIndex((s) => s.id === win.activeSpaceId)
     const toIndex = m.spaces.findIndex((s) => s.id === spaceId)
     if (win.glance) this.closeGlance(win)
+    if (!win.localSpace) {
+      // The user's space the window leaves for an agent's is remembered, for the way back when
+      // the agent's space is left empty (`Browser.leaveEmptyAgentSpace`); on a user's space the
+      // window's own place is the last user space, and nothing is remembered.
+      const agents = this.browser.agents
+      if (!agents.isAgentSpace(spaceId)) win.lastUserSpaceId = null
+      else if (!agents.isAgentSpace(win.activeSpaceId)) win.lastUserSpaceId = win.activeSpaceId
+    }
     win.activeSpaceId = spaceId
     if (!win.localSpace) m.activeSpaceId = spaceId
     if (activateTabId && this.tab(activateTabId)) win.select(space, activateTabId)

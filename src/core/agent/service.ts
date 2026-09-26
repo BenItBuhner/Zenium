@@ -258,6 +258,14 @@ export class AgentService implements SessionStore, McpHandlers {
   private skillRefresh: ReturnType<typeof setTimeout> | null = null
   /** The lease's clock; tests replace it to age a lease without waiting. */
   clock: () => number = () => Date.now()
+  /**
+   * Called once a session has let go of everything it held in the browser (`release`: the
+   * agent's `zen_session end`, the idle park, the record's close – DELETE, Disconnect, the
+   * parked limit, shutdown), after its tabs are closed or orphaned. The browser's hook to hand
+   * the user's window back when the session's end left it on an empty agents' space
+   * (`Browser.leaveEmptyAgentSpace`); null in a harness that has no browser rule to run.
+   */
+  onSessionReleased: ((session: AgentSession) => void) | null = null
 
   constructor(readonly browser: Browser) {
     this.transport = browser.platform.createAgentTransport?.(browser) ?? null
@@ -694,6 +702,7 @@ export class AgentService implements SessionStore, McpHandlers {
     this.memos.delete(s.id)
     this.callStates.delete(s.id)
     for (const [win, lease] of this.leases) if (lease.sessionId === s.id) this.leases.delete(win)
+    this.onSessionReleased?.(s)
   }
 
   /**

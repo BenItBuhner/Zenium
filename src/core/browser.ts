@@ -551,6 +551,8 @@ export class Browser {
     this.mods = new ModService(this)
     this.sync = platform.sync ? new SyncEngine(this, platform.sync) : new NoSync(this)
     this.agents = new AgentService(this)
+    // A session's end that emptied its space hands the user's window back (W7-F3).
+    this.agents.onSessionReleased = () => this.leaveEmptyAgentSpaces()
     this.updates = new UpdateService(
       this,
       platform.createUpdateHost?.(this) ?? new NoUpdateHost(platform)
@@ -966,6 +968,7 @@ export class Browser {
       displayId: opts.persisted?.displayId ?? opts.displayId ?? null,
       maximized: opts.persisted?.maximized ?? false,
       activeSpaceId,
+      lastUserSpaceId: opts.persisted?.lastUserSpaceId ?? from?.lastUserSpaceId ?? null,
       selection: opts.persisted?.selection ?? {},
       // Toolbar-only popups and app windows have no sidebar or toolbar to hide.
       compact:
@@ -1100,19 +1103,66 @@ export class Browser {
    * the splash would hold to the host's watchdog. Its window comes up with no tab, the chrome's
    * own empty surface in the content area and the first run ending in the omnibox
    * (`onboarding.complete` → `openNewTab`), exactly as before this rule.
+   *
+   * An empty agents' space is never seeded (W7-F3): a window standing on one – left there by a
+   * foreground agent session whose tabs closed – goes back to the user's space first
+   * (`leaveEmptyAgentSpace`), and the fresh tab, when that space has none either, opens there.
    */
   ensureFirstTab(win: ZenWindow): void {
     if (!win.alive || win.chrome !== 'full') return
     if (!this.state.capabilities.newTabPage) return
-    if (this.tabs.activeTabFor(win)) return
-    const space = win.activeSpace()
+    if (this.tabs.activeTabFor(win) || this.hasOwnTab(win)) return
+    if (this.leaveEmptyAgentSpace(win) && (this.tabs.activeTabFor(win) || this.hasOwnTab(win)))
+      return
+    this.openFreshTab(win)
+  }
+
+  /** The window's active space has a tab of its own the window can show. */
+  private hasOwnTab(win: ZenWindow): boolean {
     const m = this.state.model
-    const own = space.tabIds.some((id) => {
+    return win.activeSpace().tabIds.some((id) => {
       const tab = m.tabs[id]
       return tab !== undefined && tabVisibleIn(tab, win.id)
     })
-    if (own) return
-    this.openFreshTab(win)
+  }
+
+  /**
+   * The user's space for a window standing on an agents' one: the last user space it was on
+   * (`ZenWindow.lastUserSpaceId`, recorded when it moved onto the agent's space) while that
+   * exists and is still a user's, else the first space that is not an agent's; null when every
+   * space is an agent's. Local (blank / private window) spaces are never in question.
+   */
+  userSpaceFor(win: ZenWindow): Space | null {
+    const m = this.state.model
+    const user = (s: Space | undefined): s is Space =>
+      s !== undefined && !s.windowId && !this.agents.isAgentSpace(s.id)
+    const last = m.spaces.find((s) => s.id === win.lastUserSpaceId)
+    if (user(last)) return last
+    return m.spaces.find((s) => user(s)) ?? null
+  }
+
+  /**
+   * W7-F3: an empty agent-owned space (`AgentService.isAgentSpace`) never stays the window's
+   * active space – when an agent session's end empties the space it had the user's window on
+   * (`onSessionReleased`), and when a window is restored onto one (`ensureFirstTab`;
+   * `ProfileState.ensureValid` already moved a remembered window), the window returns to the
+   * last user space it was on (`userSpaceFor`). True when the window moved. Nothing moves while
+   * the browser quits – the agents' `stop` releases every session on the way out, and the
+   * session's windows are being remembered as they stand – or once the host is gone.
+   */
+  leaveEmptyAgentSpace(win: ZenWindow): boolean {
+    if (this.quitting || this.hostGone || !win.alive || win.localSpace) return false
+    const space = win.activeSpace()
+    if (space.tabIds.length > 0 || !this.agents.isAgentSpace(space.id)) return false
+    const home = this.userSpaceFor(win)
+    if (!home || home.id === space.id) return false
+    this.tabs.switchSpace(home.id, win)
+    return true
+  }
+
+  /** Every window standing on an empty agents' space goes back to the user's (`leaveEmptyAgentSpace`). */
+  private leaveEmptyAgentSpaces(): void {
+    for (const win of this.allWindows()) this.leaveEmptyAgentSpace(win)
   }
 
   onWindowClosing(win: ZenWindow): void {
