@@ -25,6 +25,9 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.browser.customtabs.CustomTabsCallback
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.core.content.ContextCompat
+import androidx.core.content.pm.ShortcutInfoCompat
+import androidx.core.content.pm.ShortcutManagerCompat
+import androidx.core.graphics.drawable.IconCompat
 import androidx.core.os.BundleCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -73,6 +76,8 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
     private var scrolledSinceTurn = 0
     private var lastScrollY = 0
     private var currentUrl = ""
+    /** The page is between `startLoading` and its end: the icon row's Reload reads Stop (§9.13). */
+    private var pageLoading = false
     /** The caller's `PendingIntent` for a swipe up on the bottom toolbar; the caller can set it later. */
     private var swipeUpIntent: PendingIntent? = null
     /** The intent that hears the bottom toolbar's RemoteViews clicks; replaced by the caller's later views. */
@@ -177,14 +182,17 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
             }
             "title" -> toolbar.setTitle(payload?.strOrNull("title"))
             "startLoading" -> {
+                pageLoading = true
                 showToolbar()
                 CustomTabSessions.navigationEvent(config.session, CustomTabsCallback.NAVIGATION_STARTED)
             }
             "stopLoading" -> {
+                pageLoading = false
                 toolbar.setProgress(100)
                 CustomTabSessions.navigationEvent(config.session, CustomTabsCallback.NAVIGATION_FINISHED)
             }
             "failLoad" -> {
+                pageLoading = false
                 toolbar.setProgress(100)
                 CustomTabSessions.navigationEvent(config.session, CustomTabsCallback.NAVIGATION_FAILED)
             }
@@ -442,7 +450,73 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
 
     override fun onMenu() {
         val titles = config.menuItems.map { it.title }
-        CustomTabMenuSheet(this, config.scheme.dark, CustomTabMenu.groups(titles, config.share), ::onMenuPick).show()
+        // The page's state is read once, as the menu opens (§9.13): the row does not flip under a finger.
+        val state = CustomTabMenu.PageState(
+            canGoForward = page?.canGoForward() == true,
+            bookmarked = false,
+            loading = pageLoading,
+            desktopSite = host.desktopSite
+        )
+        CustomTabMenuSheet(
+            this, config.scheme.dark,
+            CustomTabMenu.groups(titles, config.share, host.desktopSite), ::onMenuPick,
+            CustomTabMenu.iconRow(state, bookmarks = false, download = false), ::onIconPick
+        ).show()
+    }
+
+    /** The icon row's five (§9.13); the star and Download take their place in the next commit. */
+    private fun onIconPick(icon: CustomTabMenu.Icon) {
+        when (icon) {
+            CustomTabMenu.Icon.Forward -> page?.goForward()
+            CustomTabMenu.Icon.Reload -> if (pageLoading) page?.stopLoading() else page?.reload()
+            CustomTabMenu.Icon.Info -> showPageInfo()
+            CustomTabMenu.Icon.Bookmark, CustomTabMenu.Icon.Download -> Unit
+        }
+    }
+
+    /**
+     * Page Info, the icon row's (i): the page's host and its connection, natively (a custom tab has
+     * no chrome to draw the browser's site-info sheet; the connection is what the tab knows).
+     */
+    private fun showPageInfo() {
+        val url = currentUrl.ifEmpty { config.url }
+        val host = Uri.parse(url).host ?: url
+        val secure = url.startsWith("https://", ignoreCase = true)
+        MaterialAlertDialogBuilder(this)
+            .setTitle(host)
+            .setMessage(getString(if (secure) R.string.cct_secure else R.string.cct_not_secure))
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
+    }
+
+    /**
+     * Add to Home Screen (CCT-03): the page as a pinned shortcut that opens a tab of the browser –
+     * the browser's own pin path's tile (its title's first letter on the app's colour, `Shortcuts`'
+     * letter tile) and launch intent, requested of the launcher, whose dialog names it.
+     */
+    private fun addToHomeScreen() {
+        if (!ShortcutManagerCompat.isRequestPinShortcutSupported(this)) return
+        val url = currentUrl.ifEmpty { config.url }
+        val title = page?.title?.trim()?.ifEmpty { null } ?: Uri.parse(url).host ?: url
+        val tile = Shortcuts.letterTile(this, title, config.scheme.toolbar)
+        val info = ShortcutInfoCompat.Builder(this, Shortcuts.shortcutId(url))
+            .setShortLabel(title.take(Shortcuts.SHORT_LABEL_MAX))
+            .setLongLabel(title)
+            .setIcon(IconCompat.createWithAdaptiveBitmap(tile))
+            .setIntent(Shortcuts.launchIntent(this, url, null))
+            .build()
+        ShortcutManagerCompat.requestPinShortcut(this, info, null)
+    }
+
+    /**
+     * Desktop site (CCT-03), Chrome's check row: the tab's user agent and layout from the next
+     * load on, and the page asked for again at once, as the browser's row does through the core.
+     */
+    private fun setDesktopSite(on: Boolean) {
+        host.desktopSite = on
+        val current = page ?: return
+        current.setDesktopMode(on)
+        current.reload()
     }
 
     override fun onAction() {
@@ -456,6 +530,8 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
             CustomTabMenu.Item.CopyLink -> copyLink(currentUrl.ifEmpty { config.url })
             CustomTabMenu.Item.Reload -> page?.reload()
             CustomTabMenu.Item.FindInPage -> openFind()
+            CustomTabMenu.Item.AddToHomeScreen -> addToHomeScreen()
+            is CustomTabMenu.Item.DesktopSite -> setDesktopSite(!item.checked)
             CustomTabMenu.Item.OpenInZenium -> openInZenium()
         }
     }
