@@ -1,6 +1,6 @@
-import type { DeviceGrant, DeviceKind, Tab, UIState } from '@shared/types'
+import type { DeviceGrant, DeviceKind, MediaState, Platform, Tab, UIState } from '@shared/types'
 import { DEFAULT_CONTAINER_ID } from '@shared/types'
-import { builtInDefault } from '@shared/contentSettings'
+import { builtInDefault, contentSetting } from '@shared/contentSettings'
 import {
   certificateErrorDetail,
   certificateFault,
@@ -15,6 +15,7 @@ import {
 } from '@shared/siteInfo'
 import type { MenulistOption } from '@renderer/components/siteControls/primitives'
 import { DEVICE_KIND_ORDER, DEVICE_KIND_WORDS, grantsByKind } from '@renderer/lib/devices'
+import { defaultDescription } from '@renderer/lib/siteSettings'
 
 /**
  * The words of the desktop site-information popover (`components/siteControls/SiteInfoPopover`):
@@ -219,6 +220,47 @@ export function showsSoundRow(permissions: readonly SitePermission[], tab: Tab):
 /** The Sound row's value: the stored decision, else the default (Allow). */
 export function soundChoice(permissions: readonly SitePermission[]): PermissionChoice {
   return permissions.find((p) => p.permission === 'sound')?.decision ?? 'default'
+}
+
+/** The catalogue's Background video row (services' #523): Block by default, Android enforced, the desktop `n-a`. */
+const BACKGROUND_VIDEO = contentSetting('background-video')
+
+/**
+ * Whether the phone sheet carries the Background video row (MED-08 / EDGE-32, the lead's ruling
+ * on #523: a site's per-site answer has its home among the sheet's permission rows). Two
+ * conditions: the host honours the setting – the catalogue's `support` for the platform is not
+ * `n-a`, so Android alone today; the desktop has no background transition to gate and never
+ * earns the row, whatever its window's form factor – and, in Sound's `audible || muted` shape,
+ * the site has a stored `background-video` answer or the tab's media session reports video
+ * (`MediaState.video`: a page that plays or has played a video while the tab lives; a chrome
+ * player's session never says video).
+ */
+export function showsBackgroundVideoRow(
+  permissions: readonly SitePermission[],
+  media: Pick<MediaState, 'video'> | null | undefined,
+  platform: Platform
+): boolean {
+  const support = BACKGROUND_VIDEO?.support[platform === 'android' ? 'android' : 'desktop']
+  if (!support || support === 'n-a') return false
+  return permissions.some((p) => p.permission === 'background-video') || media?.video === true
+}
+
+/**
+ * The Background video row's value: the stored decision, else the default (Block). The inverse
+ * of Sound: only a stored `allow` reads as on; a stored `deny` and the default both read as off.
+ */
+export function backgroundVideoChoice(permissions: readonly SitePermission[]): PermissionChoice {
+  return permissions.find((p) => p.permission === 'background-video')?.decision ?? 'default'
+}
+
+/**
+ * The row's second line for its state, in the catalogue's own words – the lines the Settings
+ * row reads through `defaultDescription` (`descriptions.allow` for on, `description` for off),
+ * never a copy of them: "Sites can keep playing video in the background" / "Sites cannot play
+ * video in the background".
+ */
+export function backgroundVideoLine(allowed: boolean): string {
+  return BACKGROUND_VIDEO ? defaultDescription(BACKGROUND_VIDEO, allowed ? 'allow' : 'deny') : ''
 }
 
 /**

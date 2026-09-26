@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import type { SiteInfoSnapshot, SiteSecurity } from '@shared/siteInfo'
 import { DEFAULT_CONTAINER_ID, type CertificateError, type Tab, type UIState } from '@shared/types'
+import { contentSetting } from '@shared/contentSettings'
 import {
+  backgroundVideoChoice,
+  backgroundVideoLine,
   connectionDetail,
   connectionFault,
   connectionHeadline,
   connectionValue,
+  permissionRows,
   security,
+  showsBackgroundVideoRow,
   summaryLine
 } from '../siteInfoCopy'
 
@@ -193,5 +198,68 @@ describe("the Connection row's fault (W5-2 (c), #382)", () => {
     expect(
       security(null, 'http://plain.example/', { certificateError: error }).certificateError
     ).toBe(undefined)
+  })
+})
+
+/*
+ * The Background video row of the phone sheet (W6-S8; MED-08 / EDGE-32, the lead's ruling on
+ * services' #523): when the sheet earns it, what it reads, and the words under it – all from the
+ * catalogue's `background-video` entry, never a copy of its sentences.
+ */
+describe('the Background video row (W6-S8, #523)', () => {
+  const stored = [{ permission: 'camera', decision: 'allow' as const }]
+  const allowed = [{ permission: 'background-video', decision: 'allow' as const }]
+  const blocked = [{ permission: 'background-video', decision: 'deny' as const }]
+
+  it('is earned on Android by a stored answer or a media session that reports video, in Sound’s shape', () => {
+    expect(showsBackgroundVideoRow(stored, null, 'android')).toBe(false)
+    expect(showsBackgroundVideoRow(stored, { video: false }, 'android')).toBe(false)
+    expect(showsBackgroundVideoRow(stored, { video: undefined }, 'android')).toBe(false)
+    expect(showsBackgroundVideoRow(stored, { video: true }, 'android')).toBe(true)
+    expect(showsBackgroundVideoRow(allowed, null, 'android')).toBe(true)
+    expect(showsBackgroundVideoRow(blocked, undefined, 'android')).toBe(true)
+  })
+
+  it('never shows where the catalogue marks the setting n-a: the desktop, whatever the tab plays or stored', () => {
+    expect(contentSetting('background-video')?.support).toEqual({
+      desktop: 'n-a',
+      android: 'enforced'
+    })
+    for (const platform of ['linux', 'win32', 'darwin'] as const) {
+      expect(showsBackgroundVideoRow(allowed, { video: true }, platform)).toBe(false)
+      expect(showsBackgroundVideoRow(blocked, { video: true }, platform)).toBe(false)
+    }
+  })
+
+  it('reads the stored decision, else the default – Block, Sound’s inverse: only a stored allow is on', () => {
+    expect(backgroundVideoChoice(stored)).toBe('default')
+    expect(backgroundVideoChoice(allowed)).toBe('allow')
+    expect(backgroundVideoChoice(blocked)).toBe('deny')
+    expect(backgroundVideoChoice([]) === 'allow').toBe(false)
+  })
+
+  it('says what on and off mean in the catalogue’s own words, the lines the Settings row reads', () => {
+    const setting = contentSetting('background-video')!
+    expect(backgroundVideoLine(true)).toBe(setting.descriptions?.allow)
+    expect(backgroundVideoLine(true)).toBe('Sites can keep playing video in the background')
+    expect(backgroundVideoLine(false)).toBe(setting.description)
+    expect(backgroundVideoLine(false)).toBe('Sites cannot play video in the background')
+  })
+
+  it('leaves the desktop popover’s permission rows as they were: no Background video row is added to them', () => {
+    // The desktop's `permissionRows` is pinned: the stored decisions as the engine lists them,
+    // Sound where the tab earns it, and nothing else – the row is the phone sheet's alone.
+    const audible = { audible: true, muted: false } as unknown as Tab
+    const quiet = { audible: false, muted: false } as unknown as Tab
+    expect(permissionRows(stored, quiet)).toEqual([{ permission: 'camera', decision: 'allow' }])
+    expect(permissionRows(stored, audible)).toEqual([
+      { permission: 'camera', decision: 'allow' },
+      { permission: 'sound', decision: 'default' }
+    ])
+    // A stored background-video answer lists as the engine lists it, like any other decision.
+    expect(permissionRows([...stored, ...allowed], quiet)).toEqual([
+      { permission: 'camera', decision: 'allow' },
+      { permission: 'background-video', decision: 'allow' }
+    ])
   })
 })
