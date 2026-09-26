@@ -12,7 +12,7 @@ import app.zen.chromium.PullGestureClassifier.Disposition
 /**
  * Overscroll history navigation on one tab's WebView – a finger's drag in from an edge (GN-04,
  * 3-button navigation mode) and a touchpad's two-finger swipe from anywhere (GN-23 / A11Y-14,
- * which Android hands the view as one fake finger): feeds its touches, its clamped horizontal
+ * which Android 14+ hands the view as one fake finger): feeds its touches, its clamped horizontal
  * overscrolls and the page's `overscroll-behavior-x` answer to a [HistoryNavClassifier] and
  * carries out what it decides – which events the WebView sees (with synthetic cancels and downs
  * where the drag takes the finger over or gives it back) and which become `historyNav` events
@@ -145,12 +145,12 @@ class HistoryNavGesture(
 
     /**
      * Whether `event` (a down) opens a touchpad's two-finger swipe rather than a finger's touch:
-     * the classifier's test on the event's source, tool, buttons and – from API 29, where it
-     * exists – its classification.
+     * the classifier's test on the event's buttons and – from API 29, where it exists – its
+     * classification (before that nothing is classified, and no touch is the swipe).
      */
     private fun isTouchpadSwipe(event: MotionEvent): Boolean {
         val classification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) event.classification else HistoryNavClassifier.CLASSIFICATION_NONE
-        return HistoryNavClassifier.isTouchpadSwipe(event.source, event.getToolType(0), event.buttonState, classification)
+        return HistoryNavClassifier.isTouchpadSwipe(event.buttonState, classification)
     }
 
     /** A single-pointer event for the first finger, at its latest position, with the given action. */

@@ -20,11 +20,12 @@ import kotlin.math.abs
  * the edges. Until activation the WebView sees every event; on activation it gets a cancel for
  * the gesture it had, and the drag owns the finger until it lifts.
  *
- * A touchpad's two-finger swipe (GN-23 / A11Y-14; Android delivers it as one fake finger, see
- * [isTouchpadSwipe]) is Chrome's `touchpad_swipe_to_navigate` (same `OnOverscrolled`): it needs
- * no edge – it arms from anywhere on the page, in either navigation-bar mode – and its side is
- * the one it pulls the page in from, settled at activation from the overscroll the page reports
- * for that side. The cone, the page's veto and its `overscroll-behavior-x` say are the same.
+ * A touchpad's two-finger swipe (GN-23 / A11Y-14; Android 14+ delivers it as one fake finger
+ * it classifies, see [isTouchpadSwipe]) is Chrome's `touchpad_swipe_to_navigate` (same
+ * `OnOverscrolled`): it needs no edge – it arms from anywhere on the page, in either
+ * navigation-bar mode – and its side is the one it pulls the page in from, settled at activation
+ * from the overscroll the page reports for that side. The cone, the page's veto and its
+ * `overscroll-behavior-x` say are the same.
  *
  * Distances are in whatever unit the caller uses for the touches, [touchSlop] and [edgeWidth]
  * (device pixels on Android).
@@ -243,26 +244,23 @@ class HistoryNavClassifier(private val touchSlop: Float, private val edgeWidth: 
         /** Chrome's `kDefaultNavigationEdgeWidth`: how far in from a side a drag may begin (dp). */
         const val EDGE_WIDTH_DP = 24f
 
-        /** `InputDevice.SOURCE_MOUSE`. */
-        const val SOURCE_MOUSE = 0x2002
-        /** `MotionEvent.TOOL_TYPE_FINGER`. */
-        const val TOOL_TYPE_FINGER = 1
-        /** `MotionEvent.CLASSIFICATION_NONE` (API 29; the value for a device that classifies nothing). */
+        /** `MotionEvent.CLASSIFICATION_NONE` (API 29; the value for an event nothing classified). */
         const val CLASSIFICATION_NONE = 0
         /** `MotionEvent.CLASSIFICATION_TWO_FINGER_SWIPE` (API 34); spelt out, as lint reads minSdk 26. */
         const val CLASSIFICATION_TWO_FINGER_SWIPE = 3
 
         /**
          * Whether a touch sequence, by the fields of its down, is a touchpad's two-finger swipe.
-         * Android delivers the swipe as a single fake finger from a mouse-sourced device
-         * (`GestureConverter.cpp`, `handleScroll`); from Android 14 it classifies it, and
-         * Chromium reads exactly that (`EventForwarder.java`, `isTrackpadScrollEventFromAtLeastU`).
-         * Before that the test is Chromium's touchpad one (`MotionEventUtils.isTrackpadEvent`:
-         * `SOURCE_MOUSE` with `TOOL_TYPE_FINGER`, not the `SOURCE_TOUCHPAD` of a captured
-         * touchpad) less the click-and-drag it sends to the mouse path: a swipe holds no button.
+         * From Android 14 the platform delivers the swipe as a single fake finger it classifies
+         * as one (`GestureConverter.cpp`, `handleScroll`), and Chromium reads exactly that
+         * (`EventForwarder.java`, `isTrackpadScrollEventFromAtLeastU`) – after sending any
+         * event with a button held to its mouse path (`isTrackpadToMouseConversionEvent`), so
+         * a swipe with the touchpad's button down is a click-and-drag, not this. Before Android
+         * 14 nothing is classified: the legacy touchpad's one-finger tap-drag and its two-finger
+         * scroll arrive alike, Chrome treats both as a finger on the screen (the edge rule), and
+         * so does this.
          */
-        fun isTouchpadSwipe(source: Int, toolType: Int, buttonState: Int, classification: Int): Boolean =
-            classification == CLASSIFICATION_TWO_FINGER_SWIPE ||
-                (classification == CLASSIFICATION_NONE && source == SOURCE_MOUSE && toolType == TOOL_TYPE_FINGER && buttonState == 0)
+        fun isTouchpadSwipe(buttonState: Int, classification: Int): Boolean =
+            classification == CLASSIFICATION_TWO_FINGER_SWIPE && buttonState == 0
     }
 }

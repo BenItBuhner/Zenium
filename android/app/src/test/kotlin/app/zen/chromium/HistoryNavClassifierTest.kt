@@ -1,6 +1,5 @@
 package app.zen.chromium
 
-import android.view.InputDevice
 import android.view.MotionEvent
 import app.zen.chromium.HistoryNavClassifier.Edge
 import app.zen.chromium.HistoryNavClassifier.Nav
@@ -379,27 +378,28 @@ class HistoryNavClassifierTest {
     }
 
     @Test
-    fun aTouchpadSwipeIsAMouseSourcedFingerWithNoButtonOrAndroid14sClassifiedOne() {
+    fun aTouchpadSwipeIsAndroid14sClassifiedFingerWithNoButtonHeld() {
         // The spelt-out constants are Android's.
-        assertEquals(InputDevice.SOURCE_MOUSE, HistoryNavClassifier.SOURCE_MOUSE)
-        assertEquals(MotionEvent.TOOL_TYPE_FINGER, HistoryNavClassifier.TOOL_TYPE_FINGER)
         assertEquals(MotionEvent.CLASSIFICATION_NONE, HistoryNavClassifier.CLASSIFICATION_NONE)
         assertEquals(MotionEvent.CLASSIFICATION_TWO_FINGER_SWIPE, HistoryNavClassifier.CLASSIFICATION_TWO_FINGER_SWIPE)
 
         // Android 14+ classifies the fake finger it makes of the swipe (GestureConverter.cpp).
-        assertTrue(HistoryNavClassifier.isTouchpadSwipe(InputDevice.SOURCE_MOUSE, MotionEvent.TOOL_TYPE_FINGER, 0, MotionEvent.CLASSIFICATION_TWO_FINGER_SWIPE))
-        // Before that, Chromium's touchpad test (MotionEventUtils.isTrackpadEvent) with no button held.
-        assertTrue(HistoryNavClassifier.isTouchpadSwipe(InputDevice.SOURCE_MOUSE, MotionEvent.TOOL_TYPE_FINGER, 0, MotionEvent.CLASSIFICATION_NONE))
-        // A finger on the screen.
-        assertFalse(HistoryNavClassifier.isTouchpadSwipe(InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.TOOL_TYPE_FINGER, 0, MotionEvent.CLASSIFICATION_NONE))
-        // A mouse, and a click-and-drag with the touchpad's button (Chromium's mouse path).
-        assertFalse(HistoryNavClassifier.isTouchpadSwipe(InputDevice.SOURCE_MOUSE, MotionEvent.TOOL_TYPE_MOUSE, MotionEvent.BUTTON_PRIMARY, MotionEvent.CLASSIFICATION_NONE))
-        assertFalse(HistoryNavClassifier.isTouchpadSwipe(InputDevice.SOURCE_MOUSE, MotionEvent.TOOL_TYPE_FINGER, MotionEvent.BUTTON_PRIMARY, MotionEvent.CLASSIFICATION_NONE))
-        // A captured touchpad's raw fingers, a stylus, and Android 14's pinch and (hidden
-        // CLASSIFICATION_MULTI_FINGER_SWIPE, 4) three-finger system swipes.
-        assertFalse(HistoryNavClassifier.isTouchpadSwipe(InputDevice.SOURCE_TOUCHPAD, MotionEvent.TOOL_TYPE_FINGER, 0, MotionEvent.CLASSIFICATION_NONE))
-        assertFalse(HistoryNavClassifier.isTouchpadSwipe(InputDevice.SOURCE_STYLUS, MotionEvent.TOOL_TYPE_STYLUS, 0, MotionEvent.CLASSIFICATION_NONE))
-        assertFalse(HistoryNavClassifier.isTouchpadSwipe(InputDevice.SOURCE_MOUSE, MotionEvent.TOOL_TYPE_FINGER, 0, MotionEvent.CLASSIFICATION_PINCH))
-        assertFalse(HistoryNavClassifier.isTouchpadSwipe(InputDevice.SOURCE_MOUSE, MotionEvent.TOOL_TYPE_FINGER, 0, 4))
+        assertTrue(HistoryNavClassifier.isTouchpadSwipe(0, MotionEvent.CLASSIFICATION_TWO_FINGER_SWIPE))
+        // The same with the touchpad's button held is a click-and-drag: Chromium's mouse path
+        // (EventForwarder.isTrackpadToMouseConversionEvent runs before its swipe test).
+        assertFalse(HistoryNavClassifier.isTouchpadSwipe(MotionEvent.BUTTON_PRIMARY, MotionEvent.CLASSIFICATION_TWO_FINGER_SWIPE))
+        assertFalse(HistoryNavClassifier.isTouchpadSwipe(MotionEvent.BUTTON_SECONDARY, MotionEvent.CLASSIFICATION_TWO_FINGER_SWIPE))
+        // Unclassified: a finger on the screen – and, on Android 13 and before, the legacy
+        // touchpad's one-finger tap-drag and its two-finger scroll alike, which arrive as an
+        // unclassified mouse-sourced finger (TouchInputMapper.cpp) and are a finger on the
+        // screen to Chrome there too: the edge rule, not this.
+        assertFalse(HistoryNavClassifier.isTouchpadSwipe(0, MotionEvent.CLASSIFICATION_NONE))
+        assertFalse(HistoryNavClassifier.isTouchpadSwipe(MotionEvent.BUTTON_PRIMARY, MotionEvent.CLASSIFICATION_NONE))
+        // Android's other classifications: an ambiguous gesture, a deep press, Android 14's
+        // pinch and (hidden CLASSIFICATION_MULTI_FINGER_SWIPE, 4) three-finger system swipes.
+        assertFalse(HistoryNavClassifier.isTouchpadSwipe(0, MotionEvent.CLASSIFICATION_AMBIGUOUS_GESTURE))
+        assertFalse(HistoryNavClassifier.isTouchpadSwipe(0, MotionEvent.CLASSIFICATION_DEEP_PRESS))
+        assertFalse(HistoryNavClassifier.isTouchpadSwipe(0, MotionEvent.CLASSIFICATION_PINCH))
+        assertFalse(HistoryNavClassifier.isTouchpadSwipe(0, 4))
     }
 }
