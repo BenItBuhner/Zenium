@@ -139,12 +139,13 @@ const only = (browser: Browser): ZenWindow => {
   return win
 }
 
-const completeTour = (browser: Browser, win: ZenWindow): void =>
+const completeTour = (browser: Browser, win: ZenWindow): void => {
   browser.handleCommand(win, 'onboarding.complete', {
     searchEngineId: browser.state.settings.searchEngineId,
     colorScheme: 'system',
     essentials: []
   })
+}
 
 const PAGE = 'https://example.com/restored'
 
