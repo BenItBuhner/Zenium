@@ -460,6 +460,7 @@ export class ZenWindow {
   applyLayout(report: LayoutReport): void {
     this.lastLayout = report
     if (!this.alive) return
+    console.error(`[stage-trace] applyLayout contentHidden=${report.contentHidden} placements=${JSON.stringify(report.placements.map((p) => ({ tabId: p.tabId, rect: p.rect })))} glance=${report.glance?.tabId ?? null}`)
     const tabs = this.browser.tabs
     const owned = tabs.viewsOwnedBy(this)
     const fullscreenTabId = this.htmlFullscreenTabId
@@ -539,6 +540,7 @@ export class ZenWindow {
       }
     }
     // The chrome sequences its page cover against the host's frames from this (lib/pageView.ts).
+    console.error(`[stage-trace] applyLayout done hid=${JSON.stringify(hid)} shown=${JSON.stringify(shown)} owned=${JSON.stringify([...owned.keys()])}`)
     this.send('layout.applied', { contentHidden: report.contentHidden, hid, shown })
     if (this.pendingContentFocus && !report.contentHidden) this.focusContent()
     // A view placed again may have come up above the popup surface: put it back on top.

@@ -1790,9 +1790,11 @@ export class AgentService implements SessionStore, McpHandlers {
       const shown =
         win.activeSpaceId === (tab.spaceId ?? win.activeSpaceId) &&
         win.selectedTabIn(space) === tabId
+      console.error(`[stage-trace] prepare tab=${tabId} activate shown=${shown}`)
       if (!shown) tabs.activateTab(tabId, win)
     }
     let view = tabs.view(tabId)
+    console.error(`[stage-trace] prepare tab=${tabId} activate=${activate} view=${Boolean(view)}`)
     if (!view) {
       view = tabs.ensureLoaded(tabId, win)
       if (!view) throw new RpcError(-32002, `Tab ${tabId} could not be loaded`)

@@ -389,6 +389,12 @@ function pageWebPreferences(session?: Session): WebPreferences {
  * `ElectronTabViewHost`, which wires the core's events once the tab exists – a page Chromium
  * created for `window.open` is adopted after the fact.
  */
+
+const TRACE_T0 = Date.now()
+function trace(what: string, data?: Record<string, unknown>): void {
+  console.error(`[stage-trace] +${Date.now() - TRACE_T0}ms ${what} ${data ? JSON.stringify(data) : ''}`)
+}
+
 export class ElectronTabView implements TabView {
   /** Captured up front: on Electron 44 `view.webContents` is already undefined when `destroyed` fires. */
   readonly webContentsId: number
@@ -1294,6 +1300,7 @@ export class ElectronTabView implements TabView {
   }
 
   focus(): void {
+    trace('focus', { wc: this.webContentsId, visible: this.visible, staged: this.stagedIn !== null, parked: this.parked !== null, inWindow: this.inWindow, concealed: this.windowConcealed, driven: this.agentDriven })
     this.keyboardAsked = true
     // A tab being activated is focused a frame before the layout shows it, and a view in no
     // window has no keyboard to be given (`WebContents.focus` is a no-op there): into the window
@@ -1366,6 +1373,7 @@ export class ElectronTabView implements TabView {
   attachTo(host: WindowHost): void {
     const target = host as ElectronWindow
     if (this.host === target) return
+    trace('attachTo', { wc: this.webContentsId, visible: this.visible, staged: this.stagedIn !== null, parked: this.parked !== null, inWindow: this.inWindow, concealed: this.windowConcealed, driven: this.agentDriven })
     this.detach()
     this.host = target
     const win = this.win
@@ -1385,6 +1393,7 @@ export class ElectronTabView implements TabView {
   }
 
   detach(): void {
+    trace('detach', { wc: this.webContentsId, visible: this.visible, staged: this.stagedIn !== null, parked: this.parked !== null, inWindow: this.inWindow, concealed: this.windowConcealed, driven: this.agentDriven })
     // A view parked under this window's cover leaves it hidden: the engine's view must not be
     // a shown one when another window takes it in (`enterWindow` from `focus`, `bringToFront`).
     // A staged view leaves this window's stage the same way, hidden and out of every window.
@@ -1408,6 +1417,7 @@ export class ElectronTabView implements TabView {
 
   setBounds(rect: Rect): void {
     this.bounds = rect
+    if (this.stagedIn || this.agentDriven) trace('setBounds', { rect, ...{ wc: this.webContentsId, visible: this.visible, staged: this.stagedIn !== null, parked: this.parked !== null, inWindow: this.inWindow, concealed: this.windowConcealed, driven: this.agentDriven } })
     // A staged view keeps the stage's box (the layout's is remembered for when it leaves the
     // stage: `leaveStage`, a step before the layout shows it).
     if (this.stagedIn) return
@@ -1446,6 +1456,7 @@ export class ElectronTabView implements TabView {
    * windows (no cover on) is hidden as before.
    */
   setVisible(visible: boolean): void {
+    trace('setVisible', { visible, ...{ wc: this.webContentsId, visible: this.visible, staged: this.stagedIn !== null, parked: this.parked !== null, inWindow: this.inWindow, concealed: this.windowConcealed, driven: this.agentDriven } })
     const flipped = this.visible !== visible
     const wasShown = this.visible
     this.visible = visible
@@ -1498,6 +1509,7 @@ export class ElectronTabView implements TabView {
    * a window merely blurred while on screen is not concealed.
    */
   applyWindowVisible(visible: boolean): void {
+    trace('applyWindowVisible', { visible, ...{ wc: this.webContentsId, visible: this.visible, staged: this.stagedIn !== null, parked: this.parked !== null, inWindow: this.inWindow, concealed: this.windowConcealed, driven: this.agentDriven } })
     const concealed = !visible
     if (this.windowConcealed === concealed) return
     this.windowConcealed = concealed
@@ -1643,6 +1655,7 @@ export class ElectronTabView implements TabView {
    * tab switch hides a page. Nothing for a view that is not parked.
    */
   coverLifted(): void {
+    trace('coverLifted', { wc: this.webContentsId, visible: this.visible, staged: this.stagedIn !== null, parked: this.parked !== null, inWindow: this.inWindow, concealed: this.windowConcealed, driven: this.agentDriven })
     this.unparkHidden()
     // Every uncovered layout: an agent's hidden page takes the stage – from its parking, or in
     // the page area this layout has (a resized window; `enterStage` refreshes a staged box).
@@ -1668,6 +1681,7 @@ export class ElectronTabView implements TabView {
    * as the layout has it either way, and stages when a layout next hides it.
    */
   setAgentDriven(driven: boolean): void {
+    trace('setAgentDriven', { driven, ...{ wc: this.webContentsId, visible: this.visible, staged: this.stagedIn !== null, parked: this.parked !== null, inWindow: this.inWindow, concealed: this.windowConcealed, driven: this.agentDriven } })
     if (this.agentDriven === driven) return
     this.agentDriven = driven
     if (driven) this.enterStage()
@@ -1680,6 +1694,7 @@ export class ElectronTabView implements TabView {
    * Out of the user's window first: a view has one parent.
    */
   private enterStage(): void {
+    trace('enterStage', { wc: this.webContentsId, visible: this.visible, staged: this.stagedIn !== null, parked: this.parked !== null, inWindow: this.inWindow, concealed: this.windowConcealed, driven: this.agentDriven })
     if (this.stagedIn) {
       if (!this.grown) this.view.setBounds(this.stageBox())
       return
@@ -1712,6 +1727,7 @@ export class ElectronTabView implements TabView {
   private leaveStage(): void {
     const stage = this.stagedIn
     if (!stage) return
+    trace('leaveStage', { wc: this.webContentsId, visible: this.visible, staged: this.stagedIn !== null, parked: this.parked !== null, inWindow: this.inWindow, concealed: this.windowConcealed, driven: this.agentDriven })
     this.stagedIn = null
     this.grown = false
     if (!stage.isDestroyed()) stage.contentView.removeChildView(this.view)
@@ -1747,6 +1763,7 @@ export class ElectronTabView implements TabView {
   }
 
   bringToFront(): void {
+    trace('bringToFront', { wc: this.webContentsId, visible: this.visible, staged: this.stagedIn !== null, parked: this.parked !== null, inWindow: this.inWindow, concealed: this.windowConcealed, driven: this.agentDriven })
     // Re-adding moves the view to the top of the z-order; a view not in the window yet (a tab
     // glanced at or made fullscreen before it was ever shown) joins there. A staged view (an
     // agent's) leaves the stage for the window: a view has one parent.
@@ -3533,6 +3550,7 @@ export class ElectronTabViewHost implements TabViewHost {
     if (standing && !standing.isDestroyed()) return standing
     const [width, height] = win.getContentSize()
     const stage = new BaseWindow(stageWindowOptions(win.getBounds(), { width, height }))
+    trace('stageFor: made', { bounds: win.getBounds(), width, height })
     stage.excludedFromShownWindowsMenu = true
     this.stages.set(win, stage)
     const follow = (): void => {
