@@ -339,4 +339,25 @@ class PrivacyFlagsTest {
         // The full document keeps the bypasses, sorted.
         assertEquals("evil.example", flags.toJson().getJSONArray("safeBrowsingBypassed").getString(0))
     }
+
+    @Test
+    fun `Preload pages maps none to speculative loading off and the other levels to prerender on, standard by default`() {
+        // The phone's whole enforcement of PS-43: what `TabWebView.applyPrivacy` sets on each view.
+        assertEquals("standard", PrivacyFlags.DEFAULT.preloadPages)
+        assertEquals(PrivacyFlags.SpeculativeLoading.PRERENDER_ENABLED, PrivacyFlags.DEFAULT.speculativeLoading())
+        assertEquals("standard", PrivacyFlags.parse(pushed).preloadPages)
+        val none = PrivacyFlags.parse(JSONObject("""{"preloadPages":"none"}"""))
+        assertEquals("none", none.preloadPages)
+        assertEquals(PrivacyFlags.SpeculativeLoading.DISABLED, none.speculativeLoading())
+        // Extended is Standard here: no prediction service, the pages' own rules alone.
+        val extended = PrivacyFlags.parse(JSONObject("""{"preloadPages":"extended"}"""))
+        assertEquals("extended", extended.preloadPages)
+        assertEquals(PrivacyFlags.SpeculativeLoading.PRERENDER_ENABLED, extended.speculativeLoading())
+        // Malformed reads as the default; the level rides the stored copy and the session-less one.
+        assertEquals("standard", PrivacyFlags.parse(JSONObject("""{"preloadPages":"turbo"}""")).preloadPages)
+        assertEquals("standard", PrivacyFlags.parse(JSONObject("""{"preloadPages":7}""")).preloadPages)
+        assertEquals("none", PrivacyFlags.parse(JSONObject(none.toJson().toString())).preloadPages)
+        val withSession = PrivacyFlags.parse(JSONObject("""{"preloadPages":"none","safeBrowsingBypassed":["evil.example"]}"""))
+        assertEquals("none", withSession.withoutSession().preloadPages)
+    }
 }

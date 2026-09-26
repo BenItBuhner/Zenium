@@ -731,6 +731,7 @@ describe('the section model', () => {
       'sites-content',
       'sites-additional',
       'sites-own',
+      'preload',
       'https-only',
       'https-only-sites',
       'secure-dns',
@@ -2011,6 +2012,7 @@ describe('the section model', () => {
       'sites-content',
       'sites-additional',
       'sites-own',
+      'preload',
       'https-only',
       'https-only-sites',
       'secure-dns',
@@ -5081,7 +5083,10 @@ describe('searching the rows', () => {
     expect(at('cookies-related-sites')).toBe(at('site-data') + 1)
     expect(at('site-data-allow')).toBe(at('cookies-add-site') + 1)
     expect(at('site-data-viewer')).toBe(at('sites-permissions') - 1)
-    expect(at('https-only')).toBe(at('sites-own') + 1)
+    // Preload pages (PS-43) stands between Site settings and HTTPS-only mode, as on Chrome's
+    // Android page (Chrome desktop moved it to Performance; the shared builder keeps one place).
+    expect(at('preload')).toBe(at('sites-own') + 1)
+    expect(at('https-only')).toBe(at('preload') + 1)
     // The signals close the protection groups; after them only the private-tab lock (INC-05,
     // Chrome's Incognito lock after Do Not Track).
     expect(at('signals')).toBe(ids.length - 2)
@@ -5165,6 +5170,54 @@ describe('searching the rows', () => {
 
     expect(row(privacy, 'signals-gpc').kind).toBe('switch')
     expect(row(privacy, 'signals-dnt').kind).toBe('switch')
+  })
+
+  // Preload pages (PS-43, services pass 10): Find in Settings lands a user typing Resources' old
+  // word here, Resources gains no note row, and no relaunch notice follows a change of the level
+  // – the request engine's refusal is live and the whole of the enforcement; no startup switch
+  // waits behind it, so the level's own sentence went with the switch (the #522 addendum of
+  // 06:02; the Resources process profile's generic notice is untouched by the level).
+  it('Preload pages: the row’s search keywords carry prerender, prefetch and preload; Resources has no note row; no relaunch notice after a change of the level, whatever the process runs with', () => {
+    const preload = row(section('privacy'), 'preload-pages')
+    if (preload.kind !== 'value') throw new Error('not a value row')
+    expect(preload.keywords).toEqual(expect.arrayContaining(['prerender', 'prefetch', 'preload']))
+    expect(preload.options.map((o) => o.value)).toEqual(['standard', 'none'])
+    // No note row in Resources: nothing there speaks of preloading or prerendering any more.
+    const resources = section(
+      'resources',
+      state({}, { resources: { ...DEFAULT_SETTINGS.resources } })
+    )
+    for (const g of resources.groups)
+      for (const r of g.rows) expect(rowText(r), r.id).not.toMatch(/preload|prerender/i)
+    // The level's group is the one value row, under every level and every snapshot.
+    for (const preloadPages of ['standard', 'none'] as const) {
+      for (const snapshot of [
+        emptyResourceSnapshot(),
+        { ...emptyResourceSnapshot(), restartRequired: true, pendingSwitches: ['js-flags'] }
+      ]) {
+        const privacy = section('privacy', state({ resources: snapshot }, { preloadPages }))
+        const group = privacy.groups.find((g) => g.id === 'preload')!
+        expect(group.rows.map((r) => r.id)).toEqual(['preload-pages'])
+        for (const r of group.rows) expect(rowText(r), r.id).not.toMatch(/relaunch/i)
+        expect(privacy.groups.flatMap((g) => g.rows.map((r) => r.id))).not.toContain(
+          'preload-relaunch'
+        )
+      }
+    }
+    // The process profile's own notice is Resources' and follows its own switches alone.
+    expect(
+      section(
+        'resources',
+        state({
+          resources: { ...emptyResourceSnapshot(), restartRequired: true, pendingSwitches: ['gpu'] }
+        })
+      ).groups.flatMap((g) => g.rows.map((r) => r.id))
+    ).toContain('resources-relaunch')
+    expect(
+      section('resources', state({ resources: emptyResourceSnapshot() })).groups.flatMap((g) =>
+        g.rows.map((r) => r.id)
+      )
+    ).not.toContain('resources-relaunch')
   })
 
   it('#156’s rows patch settings.privacy on top of what is there, and run the protection commands', async () => {

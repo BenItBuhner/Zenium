@@ -180,6 +180,8 @@ class TabWebView(
     private var signalScriptHandler: ScriptHandler? = null
     /** The third-party cookie switch as last set on this view (`applyCookiePolicy`); null before the first policy. */
     private var acceptsThirdPartyCookies: Boolean? = null
+    /** The speculative-loading status last set on this view (PS-43), null before the first `applyPrivacy`. */
+    private var speculativeLoadingStatus: Int? = null
     private var currentFlags: JSONObject = json("glanceEnabled" to true, "glanceTrigger" to "alt", "thirdParty" to null)
     private var pendingFlags = false
     private var zoomFactor = 1.0
@@ -416,6 +418,7 @@ class TabWebView(
     fun applyPrivacy() {
         val flags = host.privacy.flags
         if (WebViewFeature.isFeatureSupported(WebViewFeature.SAFE_BROWSING_ENABLE)) settings.safeBrowsingEnabled = flags.safeBrowsing
+        applySpeculativeLoading(flags)
         applyMixedContentPolicy(flags, currentDocument)
         applyCookiePolicy(flags, currentDocument)
         val script = flags.navigatorScript()
@@ -427,6 +430,29 @@ class TabWebView(
                 signalScriptHandler = WebViewCompat.addDocumentStartJavaScript(this, script, setOf("*"))
             }
         }
+    }
+
+    /**
+     * Preload pages (PS-43) for this view: `none` → `SPECULATIVE_LOADING_DISABLED`, the other
+     * levels → `SPECULATIVE_LOADING_PRERENDER_ENABLED` (`PrivacyFlags.speculativeLoading`), through
+     * androidx.webkit's `setSpeculativeLoadingStatus` where the WebView on the device offers it
+     * (`WebViewFeature.SPECULATIVE_LOADING`; an older WebView keeps its own default, which runs no
+     * prerender). Set only when the answer changes: the core pushes the policy to every open tab.
+     * WebView's own default is disabled, so `standard` is what first lets a page's speculation
+     * rules prerender on the phone at all (Chrome Android's Standard does): the view answers each
+     * prerender's navigation in `Client.shouldOverrideUrlLoading`, and refuses the ones it could
+     * not run.
+     */
+    @OptIn(WebSettingsCompat.ExperimentalSpeculativeLoading::class)
+    private fun applySpeculativeLoading(flags: PrivacyFlags) {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.SPECULATIVE_LOADING)) return
+        val status = when (flags.speculativeLoading()) {
+            PrivacyFlags.SpeculativeLoading.DISABLED -> WebSettingsCompat.SPECULATIVE_LOADING_DISABLED
+            PrivacyFlags.SpeculativeLoading.PRERENDER_ENABLED -> WebSettingsCompat.SPECULATIVE_LOADING_PRERENDER_ENABLED
+        }
+        if (status == speculativeLoadingStatus) return
+        speculativeLoadingStatus = status
+        WebSettingsCompat.setSpeculativeLoadingStatus(settings, status)
     }
 
     /**
@@ -2499,6 +2525,19 @@ class TabWebView(
     private inner class Client : WebViewClient() {
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             val url = request.url
+            // A speculation-rules prerender the page declared: WebView asks here for it as for a
+            // navigation (`Sec-Purpose: prefetch;prerender`, no gesture, the outermost main
+            // frame), and this answer is the embedder's only veto – the activation later runs no
+            // throttles. It is not the user's navigation, so none of a primary load's steps below
+            // happen for it: no engine interstitial or redirect load, no App Link probe, no
+            // desktop-mode re-issue, no back preview, no `redirected` event, no document record,
+            // no settings flip. Refused where it could not go as it stands or could not run under
+            // this view's settings ([vetoPrerender]); the real tap comes through here as itself
+            // and is decided then. The prerender's requests still meet the engine in
+            // `shouldInterceptRequest`, as Chrome's do.
+            if (PageRules.isPrerender(request.requestHeaders) && request.isForMainFrame && !request.hasGesture()) {
+                return vetoPrerender(url.toString())
+            }
             return when (url.scheme?.lowercase()) {
                 "http", "https" -> webNavigationTaken(
                     engine = { interceptNavigation(request) },
@@ -2552,6 +2591,24 @@ class TabWebView(
                     true
                 }
             }
+        }
+
+        /**
+         * The answer for a prerender ([PageRules.isPrerender]); true refuses it. The engine is
+         * read as a navigation reads it ([interceptNavigation]) with none of the outcomes acted
+         * on – a Safe Browsing hit or a decision other than allow refuses the prerender in place
+         * of the interstitial or the redirect load – and the view's own terms are read without
+         * being changed: the target's site against the document's (one WebView, one set of
+         * WebSettings; [ContentRules.siteOf], the site the content rules are kept by) and its
+         * desktop-site setting against the mode the view is in ([PageRules.prerenderVeto]).
+         * Nothing of the tab's is written either way.
+         */
+        private fun vetoPrerender(target: String): Boolean {
+            val guardHit = host.blocking.guardNavigation(target) != null
+            val action = host.blocking.decideNavigation(this@TabWebView, target).action
+            val desktopDiffers = PageRules.isWebPage(target) && host.pageRules.desktop(target) != desktopMode
+            val currentSite = currentDocument?.let(ContentRules::siteOf)
+            return PageRules.prerenderVeto(guardHit, action, ContentRules.siteOf(target), currentSite, desktopDiffers)
         }
 
         override fun onReceivedHttpAuthRequest(view: WebView, handler: HttpAuthHandler, host: String, realm: String) {

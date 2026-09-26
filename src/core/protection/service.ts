@@ -7,16 +7,24 @@ import {
   HTTPS_ONLY_PERMISSION,
   hostInSites,
   isThirdPartyCookiePrivateMode,
-  privateThirdPartyCookieStatus,
   secureDnsServers,
   type HttpsOnlyMode,
+  type PreloadPagesLevel,
   type PrivacyFlags,
   type PrivacySettings,
   type PrivacyStatus,
   type ProtectionCheck,
   type SecureDnsMode,
+  type ThirdPartyCookiePolicy,
   type ThirdPartyCookiePrivateMode
 } from '../../shared/privacy'
+import {
+  EXTENSION_SETTING_KEYS,
+  effectivePreloadPages,
+  effectiveSwitch,
+  effectiveThirdPartyCookiePolicy,
+  privateThirdPartyCookieSwitch
+} from '../../shared/extensionSettings'
 import type { ZenWindow } from '../window'
 import { RESOLVER_UNREACHABLE, resolverCheckOf, resolverProbeUrl } from './checks'
 import { LookalikeChecker, type LookalikeContext } from './lookalikes'
@@ -170,6 +178,15 @@ export class ProtectionService {
     if (this.started) this.refresh()
   }
 
+  /**
+   * An extension took or released one of the privacy settings (`chrome.privacy`, published as
+   * `State.extensionControls`): the effective policy may have changed while the user's settings
+   * did not, so the hosts' flags are recomputed the way a settings change recomputes them.
+   */
+  onExtensionControlsChanged(): void {
+    this.onSettingsChanged()
+  }
+
   /** The per-site cookie policy (`SiteDataService`) changed: the hosts' flags carry it. */
   onSiteDataChanged(): void {
     if (this.started) this.refresh()
@@ -192,8 +209,24 @@ export class ProtectionService {
         mode: dns.mode,
         servers: dns.servers
       },
-      privateThirdPartyCookies: privateThirdPartyCookieStatus(this.settings)
+      // The private switch under the layer: locked at either pole while an extension holds the
+      // cookie setting, the holder named ({@link privateThirdPartyCookieSwitch}).
+      privateThirdPartyCookies: privateThirdPartyCookieSwitch(
+        this.browser.state.extensionLayer,
+        this.settings
+      )
     }
+  }
+
+  /**
+   * The third-party cookie policy as it acts: the user's two values, or – while an extension
+   * holds `chrome.privacy.websites.thirdPartyCookiesAllowed` – its boolean read as Chrome's one
+   * cookie pref ({@link effectiveThirdPartyCookiePolicy}); the block while the layer's first
+   * publish is pending. Read at every use (the flags, the private switch's status); the user's
+   * values are never written by the extension's.
+   */
+  private cookiePolicy(): ThirdPartyCookiePolicy {
+    return effectiveThirdPartyCookiePolicy(this.browser.state.extensionLayer, this.settings)
   }
 
   // ---------------------------------------------------------------------------
@@ -224,20 +257,58 @@ export class ProtectionService {
   flags(): PrivacyFlags {
     const s = this.settings
     const dns = this.secureDns()
+    // The switch and the cookie policy as they act – an extension's value over the user's while
+    // one holds it (`SafeBrowsingService.enabled`, `cookiePolicy`), so both hosts' engines take
+    // the effective values.
+    const cookies = this.cookiePolicy()
     return {
-      safeBrowsing: s.safeBrowsingEnabled,
+      safeBrowsing: this.safeBrowsing.enabled,
       safeBrowsingBypassed: this.safeBrowsing.bypasses(),
       httpsOnly: s.httpsOnly,
       httpsOnlyAllowed: this.plaintextSites(),
-      thirdPartyCookies: s.thirdPartyCookies,
-      thirdPartyCookiesPrivate: s.thirdPartyCookiesPrivate,
+      thirdPartyCookies: cookies.thirdPartyCookies,
+      thirdPartyCookiesPrivate: cookies.thirdPartyCookiesPrivate,
       thirdPartyCookieExceptions: [...s.thirdPartyCookieExceptions],
       gpc: s.gpc,
-      dnt: s.dnt,
+      dnt: this.doNotTrack(),
       secureDnsMode: dns.mode,
       secureDnsServers: dns.servers,
+      preloadPages: this.preloadPages(),
       siteData: this.effectiveSiteData()
     }
+  }
+
+  /**
+   * Do Not Track as it acts – the one value the `DNT: 1` header both hosts' request stages send
+   * and the desktop page's `navigator.doNotTrack` read (`ElectronPrivacy.signals`): the user's
+   * `Settings.privacy.dnt`, or the signal sent while the layer's first publish is pending – the
+   * eighth guarded key's strict pole (`STRICT_POLE`, the root's ruling of ADDENDUM G: the
+   * cold-start rule is the strictest value until the extensions publish, and asking not to be
+   * tracked is DNT's) – through the same layer read the seven use ({@link effectiveSwitch}).
+   * The publish hands over to the extension's value where one holds `privacy.doNotTrack` and the
+   * user's where none does; the key's publisher is the extension host's table (#508's fold), so
+   * until it lands an extension's own `websites.doNotTrackEnabled` reaches the wire and the page
+   * by the extension host's paths (its request hook, the desktop's `DoNotTrackSource`), added to
+   * this value, never in place of the pole.
+   */
+  doNotTrack(): boolean {
+    return effectiveSwitch(
+      this.browser.state.extensionLayer,
+      EXTENSION_SETTING_KEYS.doNotTrack,
+      this.settings.dnt
+    )
+  }
+
+  /**
+   * The Preload pages level in effect (PS-43): the user's `Settings.preloadPages`, or `none`
+   * while an extension holds `chrome.privacy.network.networkPredictionEnabled` at `false`
+   * ({@link effectivePreloadPages}), or while the layer's first publish is pending. Read at
+   * every push of the flags, so both hosts' engines take the effective level and the user's own
+   * returns when the extension lets go.
+   */
+  preloadPages(): PreloadPagesLevel {
+    const state = this.browser.state
+    return effectivePreloadPages(state.extensionLayer, state.settings.preloadPages)
   }
 
   /**
@@ -398,10 +469,12 @@ export class ProtectionService {
   /**
    * The lookalike verdict on a main-frame navigation to `url` (`LookalikeChecker.check` with
    * the browser's context: history's engaged sites, the `lookalike` allows), or null. Under the
-   * Safe Browsing switch: a user who turned the warnings off turned this one off too, as in Chrome.
+   * Safe Browsing switch as it acts (`SafeBrowsingService.enabled`): a user – or an extension
+   * holding `chrome.privacy.services.safeBrowsingEnabled` – who turned the warnings off turned
+   * this one off too, as in Chrome.
    */
   checkLookalike(url: string): LookalikeVerdict | null {
-    if (!this.settings.safeBrowsingEnabled) return null
+    if (!this.safeBrowsing.enabled) return null
     return this.lookalikes.check(url, this.lookalikeContext())
   }
 

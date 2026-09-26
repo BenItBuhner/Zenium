@@ -3,7 +3,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Decision, RequestContext } from '../../../core/blocking/rules'
-import type { LookalikeVerdict, PrivacyFlags, SafeBrowsingHit } from '../../../shared/privacy'
+import type {
+  LookalikeVerdict,
+  PreloadPagesLevel,
+  PrivacyFlags,
+  SafeBrowsingHit
+} from '../../../shared/privacy'
 import { DEFAULT_SITE_DATA_POLICY } from '../../../shared/siteData'
 import type {
   ElectronPrivacy as PrivacyHostImpl,
@@ -11,7 +16,7 @@ import type {
   RequestTab,
   SafeBrowsingLookup
 } from '../privacy'
-import type { HostRequest, WebRequestBase } from '../webRequest'
+import type { HostRequest, RequestHandler, WebRequestBase } from '../webRequest'
 
 vi.mock('electron', () => ({
   app: {
@@ -23,8 +28,13 @@ vi.mock('electron', () => ({
   ipcMain: { on: () => undefined }
 }))
 
-const { ElectronPrivacy, LookalikeHandler, PrivacyRequestHandler, SafeBrowsingHandler } =
-  await import('../privacy')
+const {
+  ElectronPrivacy,
+  LookalikeHandler,
+  PreloadHandler,
+  PrivacyRequestHandler,
+  SafeBrowsingHandler
+} = await import('../privacy')
 const { HANDLER_ORDER } = await import('../webRequest')
 
 const FLAGS: PrivacyFlags = {
@@ -39,6 +49,7 @@ const FLAGS: PrivacyFlags = {
   dnt: false,
   secureDnsMode: 'automatic',
   secureDnsServers: [],
+  preloadPages: 'standard',
   siteData: DEFAULT_SITE_DATA_POLICY
 }
 
@@ -514,11 +525,99 @@ describe('ElectronPrivacy', () => {
     expect(tabs.upgraded).toHaveLength(1)
   })
 
-  it('hands out the two handlers in multiplexer order', () => {
+  it('hands out the three handlers in multiplexer order', () => {
     const { privacy } = host()
     expect(privacy.handlers().map((h) => [h.id, h.order])).toEqual([
       ['safe-browsing', HANDLER_ORDER.safeBrowsing],
+      ['preload', HANDLER_ORDER.preload],
       ['privacy', HANDLER_ORDER.privacy]
     ])
+  })
+})
+
+describe('PreloadHandler (Preload pages, PS-43)', () => {
+  // What Electron 44 / Chromium 152 put on the wire, measured against a loopback server: the
+  // link prefetch is `other` with `Sec-Purpose: prefetch`; a speculation-rules prefetch and the
+  // prefetch a prerender starts with are `mainFrame` with `prefetch` / `prefetch;prerender`.
+  const linkPrefetch = (): [HostRequest, Record<string, string>] => [
+    request({ url: 'http://127.0.0.1:8080/link-prefetch.js', type: 'other' }),
+    { 'Sec-Purpose': 'prefetch', 'Sec-Fetch-Dest': 'empty', Accept: '*/*' }
+  ]
+  const rulesPrefetch = (): [HostRequest, Record<string, string>] => [
+    request({ url: 'https://news.example/next' }),
+    { 'Sec-Purpose': 'prefetch', 'Sec-Fetch-Dest': 'document' }
+  ]
+  const rulesPrerender = (): [HostRequest, Record<string, string>] => [
+    request({ url: 'https://news.example/after' }),
+    { 'sec-purpose': 'prefetch;prerender', 'Sec-Fetch-Dest': 'document' }
+  ]
+  const navigation = (): [HostRequest, Record<string, string>] => [
+    request({ url: 'https://news.example/' }),
+    { 'Sec-Fetch-Dest': 'document', 'Sec-Fetch-Mode': 'navigate' }
+  ]
+  const beacon = (): [HostRequest, Record<string, string>] => [
+    request({ url: 'https://news.example/beacon', type: 'other' }),
+    { 'Sec-Fetch-Dest': 'empty', 'Content-Type': 'text/plain' }
+  ]
+
+  it('sits between the lookalike check and the rule engine, a header stage', () => {
+    const handler = new PreloadHandler(() => FLAGS)
+    expect(handler.order).toBe(HANDLER_ORDER.preload)
+    expect(handler.order).toBeGreaterThan(HANDLER_ORDER.lookalike)
+    expect(handler.order).toBeLessThan(HANDLER_ORDER.ruleEngine)
+    expect((handler as RequestHandler).onBeforeRequest).toBeUndefined()
+  })
+
+  it('refuses every speculative load under "none" – link prefetch, speculation-rules prefetch, the prefetch of a prerender – and nothing else', () => {
+    const handler = new PreloadHandler(() => ({ ...FLAGS, preloadPages: 'none' }))
+    for (const [req, headers] of [linkPrefetch(), rulesPrefetch(), rulesPrerender()])
+      expect(handler.onBeforeSendHeaders(req, headers), req.ctx.url).toEqual({ cancel: true })
+    for (const [req, headers] of [navigation(), beacon()])
+      expect(handler.onBeforeSendHeaders(req, headers), req.ctx.url).toBeUndefined()
+    // A page cannot forge the header, but a scheme the engine does not govern is left alone.
+    expect(
+      handler.onBeforeSendHeaders(
+        request({ url: 'chrome-extension://abc/next.js', type: 'other' }),
+        { 'Sec-Purpose': 'prefetch' }
+      )
+    ).toBeUndefined()
+  })
+
+  it('is the whole of "none": the fetch every prerender starts with (Sec-Purpose: prefetch;prerender) is refused, so no prerender activates – live at the level the core last pushed, with no startup switch behind it', () => {
+    // The #522 addendum of 06:02: no `Prerender2` switch under `none` (`deriveStartupProfile`
+    // puts none on), so a change of level needs no relaunch – the next request meets the level
+    // the core pushed last, both ways.
+    let level: PreloadPagesLevel = 'none'
+    const handler = new PreloadHandler(() => ({ ...FLAGS, preloadPages: level }))
+    expect(handler.onBeforeSendHeaders(...rulesPrerender())).toEqual({ cancel: true })
+    level = 'standard'
+    expect(handler.onBeforeSendHeaders(...rulesPrerender())).toBeUndefined()
+    level = 'none'
+    expect(handler.onBeforeSendHeaders(...rulesPrerender())).toEqual({ cancel: true })
+  })
+
+  it('refuses nothing under "standard" or "extended", nor before the core has pushed a policy', () => {
+    for (const flags of [FLAGS, { ...FLAGS, preloadPages: 'extended' as const }, null]) {
+      const handler = new PreloadHandler(() => flags)
+      for (const [req, headers] of [linkPrefetch(), rulesPrefetch(), rulesPrerender()])
+        expect(handler.onBeforeSendHeaders(req, headers), req.ctx.url).toBeUndefined()
+    }
+  })
+
+  it("is one of the host's handlers, at the level the core last pushed", () => {
+    const host = new ElectronPrivacy(
+      { viewForTab: () => undefined },
+      { lookup: () => null },
+      '/nowhere',
+      () => undefined
+    )
+    const handler = host.handlers().find((h) => h.id === 'preload')
+    expect(handler).toBeDefined()
+    const [req, headers] = linkPrefetch()
+    expect(handler!.onBeforeSendHeaders!(req, headers, {} as never)).toBeUndefined()
+    host.apply({ ...FLAGS, preloadPages: 'none' })
+    expect(handler!.onBeforeSendHeaders!(req, headers, {} as never)).toEqual({ cancel: true })
+    host.apply(FLAGS)
+    expect(handler!.onBeforeSendHeaders!(req, headers, {} as never)).toBeUndefined()
   })
 })

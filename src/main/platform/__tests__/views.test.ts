@@ -198,6 +198,8 @@ vi.mock('electron', async () => {
     getURL(): string {
       return this.url
     }
+    /** A host older than Electron 34's `restore`: `restoreNavigation` loads the current entry. */
+    readonly navigationHistory = {}
     /** The page's session, for the tests that look something up by it. */
     session: object = {}
     getZoomFactor(): number {
@@ -434,6 +436,46 @@ describe('ElectronTabViewHost', () => {
 
     expect(host.tabIdForWebContents(wc)).toBeUndefined()
     expect(host.viewForWebContents(wc)).toBeUndefined()
+  })
+
+  it('gives a page its first document only once the startup hold opens – loadURL and restoreNavigation alike, in order, a destroyed page’s dropped (services pass 10, the extension layer’s first publish)', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    let settle!: () => void
+    host.startupHold.until(new Promise<void>((resolve) => (settle = resolve)))
+    const view = host.createView(
+      { id: 'tab_held', containerId: 'default' } as Tab,
+      noEvents,
+      detachedWindow
+    )
+    const wc = (view as unknown as { webContents: Electron.WebContents & { loaded: string[] } })
+      .webContents
+    const gone = host.createView(
+      { id: 'tab_gone', containerId: 'default' } as Tab,
+      noEvents,
+      detachedWindow
+    )
+    const goneWc = (gone as unknown as { webContents: Electron.WebContents & { loaded: string[] } })
+      .webContents
+
+    view.loadURL('https://example.com/login')
+    const restored = view.restoreNavigation({
+      entries: [{ url: 'https://example.com/account', title: '' }],
+      index: 0
+    })
+    gone.loadURL('https://gone.example/')
+    gone.destroy()
+    await new Promise((r) => setTimeout(r, 5))
+    expect(wc.loaded).toEqual([])
+    expect(goneWc.loaded).toEqual([])
+
+    settle()
+    await restored
+    expect(wc.loaded).toEqual(['https://example.com/login', 'https://example.com/account'])
+    expect(goneWc.loaded).toEqual([])
+
+    // Open for the run: the next document goes out at once.
+    view.loadURL('https://example.com/next')
+    expect(wc.loaded[2]).toBe('https://example.com/next')
   })
 
   it('reports each server redirect of the main-frame navigation under way as a hop, from the address it was bound for (history-23)', () => {

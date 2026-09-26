@@ -112,6 +112,7 @@ import type { SessionManager } from './sessions'
 import { requestDetails, type ContentRulesLookup } from './contentRules'
 import { downloadDir } from './downloads'
 import { savePageDialogOptions, savePageTarget } from './savePage'
+import { StartupHold } from './startupHold'
 import { uniquePath } from './uniquePath'
 import { frameById, frameIdOf } from './extensionApi/frames'
 import type { ElectronWindow } from './window'
@@ -875,7 +876,12 @@ export class ElectronTabView implements TabView {
     // `link` too, so no `typed` claim is made without knowing the source.
     this.navigationHint = {}
     this.recordHostNavigation(false, () => this.loadURL(url))
-    void this.wc.loadURL(url).catch(() => undefined)
+    // The run's first documents wait for the extension layer's first publish (`startupHold.ts`);
+    // the hold is open for the run once it opened, and the page may have gone while it waited.
+    this.owner.startupHold.run(() => {
+      if (this.wc.isDestroyed()) return
+      void this.wc.loadURL(url).catch(() => undefined)
+    })
   }
 
   /**
@@ -955,6 +961,9 @@ export class ElectronTabView implements TabView {
 
   async restoreNavigation(snapshot: NavigationSnapshot): Promise<void> {
     const wc = this.wc
+    if (wc.isDestroyed()) return
+    // A restored tab's first document, held like `loadURL`'s (`startupHold.ts`).
+    await this.owner.startupHold.whenOpen()
     if (wc.isDestroyed()) return
     const entries = snapshot.entries.filter((e) => typeof e.url === 'string' && e.url !== '')
     const index = Math.min(Math.max(snapshot.index, 0), entries.length - 1)
@@ -2834,6 +2843,12 @@ export class ElectronTabViewHost implements TabViewHost {
   private readonly keyboardWatched = new WeakSet<BrowserWindow>()
   /** Windows whose focus the pages' hang monitors follow (`watchFocus`). */
   private readonly focusWatched = new WeakSet<BrowserWindow>()
+  /**
+   * The hold on the run's first documents until the extension layer's first publish
+   * (`startupHold.ts`): the pages' first `loadURL` / `restoreNavigation` go through it. Open
+   * unless the platform closes it at start (`ElectronPlatform.start`).
+   */
+  startupHold = new StartupHold()
   /** The certificates the sessions verified, by host, for the site-information card (`certificate`). */
   readonly certificates = new SiteCertificates()
   /**

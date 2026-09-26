@@ -21,6 +21,8 @@
  *   source beside the user's setting: an extension's `chrome.privacy.websites.doNotTrackEnabled`
  *   ({@link DoNotTrackSource}, the extension layer's effective value), whose `DNT: 1` header the
  *   extension layer's own request hook adds; the page's `navigator.doNotTrack` says the same.
+ * - Preload pages (PS-43): {@link PreloadHandler} refuses the speculative loads under
+ *   "No preloading" – the whole of the level's enforcement; no startup switch.
  * - Secure DNS: `app.configureHostResolver`, whenever the mode or the templates change.
  * - The bundled Safe Browsing snapshot (`resources/safebrowsing/<feed>.json`).
  */
@@ -30,7 +32,7 @@ import { join } from 'node:path'
 import { gunzipSync } from 'node:zlib'
 import { BUILTIN_RULE_SETS, type Decision } from '../../core/blocking/rules'
 import type { LookalikeTableName, PrivacyHost } from '../../core/platform'
-import { cookiesWithheld, signalHeaders } from '../../core/protection/policy'
+import { cookiesWithheld, isPreloadRequest, signalHeaders } from '../../core/protection/policy'
 import type { LookalikeVerdict, PrivacyFlags, SafeBrowsingHit } from '../../shared/privacy'
 import type { SiteDataPolicy } from '../../shared/siteData'
 import { PRIVACY_SIGNALS_CHANNEL, type PrivacySignals } from '../../shared/privacySignals'
@@ -40,6 +42,7 @@ import {
   applyRequestHeaderOps,
   applyResponseHeaderOps,
   type BeforeRequestResult,
+  type BeforeSendHeadersResult,
   type HostRequest,
   type RequestHandler,
   type WebRequestBase
@@ -132,6 +135,36 @@ export class LookalikeHandler implements RequestHandler {
     if (!verdict) return undefined
     tab.noteLookalikeNavigation(ctx.url, verdict)
     return { cancel: true }
+  }
+}
+
+/**
+ * "No preloading" (PS-43): refuses every request Chromium marks as speculative –
+ * `<link rel=prefetch>`, a speculation-rules prefetch, the prefetch a prerender starts with
+ * (`isPreloadRequest`: the `Sec-Purpose` header, which is why this is a header stage; the
+ * request phase has no headers, and the resource type alone – `other` for the link prefetch,
+ * `mainFrame` for the speculation-rules ones – does not tell them apart from a beacon or a
+ * navigation). DNS prefetch and preconnect never reach the request engine (no HTTP request), and
+ * Electron has no prediction service to switch off. The refusal is the level's whole
+ * enforcement and it is live: a prerender cannot activate without the fetch it starts with, so
+ * nothing is switched off at startup and a change of level needs no relaunch (Blink's
+ * `Prerender2` feature is left as Electron ships it). Under the other levels nothing is refused.
+ * One header scan per request, at the level the core last pushed.
+ */
+export class PreloadHandler implements RequestHandler {
+  readonly id = 'preload'
+  readonly order = HANDLER_ORDER.preload
+
+  constructor(private readonly flags: () => PrivacyFlags | null) {}
+
+  onBeforeSendHeaders(
+    request: HostRequest,
+    headers: Record<string, string>
+  ): BeforeSendHeadersResult | undefined {
+    const flags = this.flags()
+    if (!flags || flags.preloadPages !== 'none') return undefined
+    if (!/^https?:/i.test(request.ctx.url)) return undefined
+    return isPreloadRequest(headers) ? { cancel: true } : undefined
   }
 }
 
@@ -268,6 +301,7 @@ export class ElectronPrivacy implements PrivacyHost {
     return [
       new SafeBrowsingHandler(this.safeBrowsing, this.tabs),
       ...(this.lookalikes ? [new LookalikeHandler(this.lookalikes, this.tabs)] : []),
+      new PreloadHandler(() => this.flags),
       new PrivacyRequestHandler(() => this.flags)
     ]
   }

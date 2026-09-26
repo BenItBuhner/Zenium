@@ -32,7 +32,7 @@ function state(overrides: Partial<NewTabPageState> = {}): NewTabPageState {
 
 /** A private page's state; `null` leaves the switch's field out altogether. */
 function privateState(
-  cookies: { blocked: boolean; locked: boolean } | null = { blocked: true, locked: false }
+  cookies: NewTabPageState['privateThirdPartyCookies'] | null = { blocked: true, locked: false }
 ): NewTabPageState {
   return state({
     isPrivate: true,
@@ -140,6 +140,47 @@ describe('zen://newtab: the private page\'s "Block third-party cookies" switch',
     // Leaving the private state (a regular state arrives) hides the row.
     h.push(state())
     expect(h.row.hidden).toBe(true)
+  })
+
+  it('locked by an extension’s chrome.privacy hold (services pass 10): on, disabled, the line names the holder – or "an extension" without a name – and a press sends nothing', () => {
+    const h = mount(
+      privateState({ blocked: true, locked: true, lockedByExtension: 'Cookie Shield Probe' })
+    )
+    expect(h.toggle.getAttribute('aria-checked')).toBe('true')
+    expect(h.toggle.disabled).toBe(true)
+    expect(h.toggle.getAttribute('aria-disabled')).toBe('true')
+    expect(h.description.textContent).toBe(
+      'Blocked in every window by the extension Cookie Shield Probe.'
+    )
+    h.toggle.click()
+    expect(cookieActions(h)).toEqual([])
+
+    h.push(privateState({ blocked: true, locked: true, lockedByExtension: '' }))
+    expect(h.description.textContent).toBe('Blocked in every window by an extension.')
+
+    // The hold withdrawn (Disable, uninstall): the user's own state shows again.
+    h.push(privateState({ blocked: false, locked: false }))
+    expect(h.toggle.disabled).toBe(false)
+    expect(h.description.textContent).toBe(PRIVATE_COOKIES.description)
+  })
+
+  it('locked OFF by a hold at true (allow everywhere – the independent review’s Required 1): off, disabled, the twin sentence names the holder, and a press sends nothing', () => {
+    const h = mount(
+      privateState({ blocked: false, locked: true, lockedByExtension: 'Cookie Shield Probe' })
+    )
+    expect(h.toggle.getAttribute('aria-checked')).toBe('false')
+    expect(h.toggle.disabled).toBe(true)
+    expect(h.toggle.getAttribute('aria-disabled')).toBe('true')
+    expect(h.description.textContent).toBe(
+      'Allowed in every window by the extension Cookie Shield Probe.'
+    )
+    // No optimistic flip, no write: the switch would spring back with no word otherwise.
+    h.toggle.click()
+    expect(h.toggle.getAttribute('aria-checked')).toBe('false')
+    expect(cookieActions(h)).toEqual([])
+
+    h.push(privateState({ blocked: false, locked: true, lockedByExtension: '' }))
+    expect(h.description.textContent).toBe('Allowed in every window by an extension.')
   })
 
   it('a press sends the flipped position and moves the switch at once; the next state confirms it', () => {

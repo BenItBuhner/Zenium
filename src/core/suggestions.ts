@@ -19,6 +19,7 @@ import {
 import { localAnswer } from '../shared/answers'
 import { searchCommands } from '../shared/commands'
 import { spaceLabel } from '../shared/defaults'
+import { EXTENSION_SETTING_KEYS, effectiveSwitch } from '../shared/extensionSettings'
 import {
   BOOKMARKS_URL,
   HISTORY_URL,
@@ -124,6 +125,22 @@ export class SuggestionService {
 
   constructor(private readonly browser: Browser) {
     this.answers = new AnswerService(browser.platform.net)
+  }
+
+  /**
+   * "Show search suggestions" as it acts: an extension's
+   * `chrome.privacy.services.searchSuggestEnabled` over the user's `Settings.searchSuggestions`
+   * while one holds it (`State.extensionLayer`, Chrome's extension pref layer above the
+   * user's), the user's own value otherwise – so a hold or its release acts on the next query;
+   * off while the layer's first publish is pending at a cold start (no query leaves the device).
+   */
+  suggestionsEnabled(): boolean {
+    const state = this.browser.state
+    return effectiveSwitch(
+      state.extensionLayer,
+      EXTENSION_SETTING_KEYS.searchSuggestions,
+      state.settings.searchSuggestions
+    )
   }
 
   async suggest(
@@ -287,7 +304,10 @@ export class SuggestionService {
     }
 
     // Network sources run together; the popup waits for the slowest but never past its timeout.
-    const online = state.settings.searchSuggestions && !isPrivate
+    // The switch as it acts: an extension's `chrome.privacy.services.searchSuggestEnabled` over
+    // the user's while one holds it, read per query (`State.extensionLayer`), the user's
+    // setting never written by it.
+    const online = this.suggestionsEnabled() && !isPrivate
     const wantsRemote = online && searchTerms.length >= 2 && !url
     const wantsAnswer = online && !keyword && !url && !offline
     const wantsEntity = online && !keyword && !url

@@ -30,8 +30,27 @@ class PrivacyFlags(
     val gpc: Boolean,
     val dnt: Boolean,
     /** The per-site cookie policy (Chrome's three lists and the "block all" default); empty before the core has one. */
-    val siteData: SiteDataPolicy = SiteDataPolicy.EMPTY
+    val siteData: SiteDataPolicy = SiteDataPolicy.EMPTY,
+    /**
+     * Preload pages (PS-43; `preloadPages` in `src/shared/privacy.ts`): `standard`, `extended` or
+     * `none` – the effective level, an extension's `none` included. Read per WebView
+     * ([speculativeLoading]); `standard` before the core has pushed anything, as the setting's default.
+     */
+    val preloadPages: String = "standard"
 ) {
+    /** What a WebView's speculative loading is set to under [preloadPages]. */
+    enum class SpeculativeLoading { DISABLED, PRERENDER_ENABLED }
+
+    /**
+     * The speculative-loading status for every WebView under this policy, the phone's whole
+     * enforcement of Preload pages (`WebSettingsCompat.setSpeculativeLoadingStatus`, androidx.webkit
+     * 1.13+): `none` → `SPECULATIVE_LOADING_DISABLED`; `standard` and `extended` →
+     * `SPECULATIVE_LOADING_PRERENDER_ENABLED` (Extended is Standard here: the phone has no
+     * prediction service, only the pages' own speculation rules). Applied by `TabWebView.applyPrivacy`.
+     */
+    fun speculativeLoading(): SpeculativeLoading =
+        if (preloadPages == "none") SpeculativeLoading.DISABLED else SpeculativeLoading.PRERENDER_ENABLED
+
     /**
      * Whether the WebView of `containerId` showing `documentUrl` accepts third-party cookies:
      * the policy allows them in this container ([blocksThirdPartyCookiesIn]), or the document's
@@ -134,7 +153,7 @@ class PrivacyFlags(
     /** The policy without its session-only part (the Safe Browsing bypasses), for the copy kept on disk. */
     fun withoutSession(): PrivacyFlags = if (safeBrowsingBypassed.isEmpty()) this else PrivacyFlags(
         safeBrowsing, emptySet(), httpsOnly, httpsOnlyAllowed, thirdPartyCookies, thirdPartyCookiesPrivate,
-        thirdPartyCookieExceptions, gpc, dnt, siteData
+        thirdPartyCookieExceptions, gpc, dnt, siteData, preloadPages
     )
 
     fun toJson(): JSONObject = JSONObject()
@@ -148,6 +167,7 @@ class PrivacyFlags(
         .put("gpc", gpc)
         .put("dnt", dnt)
         .put("siteData", siteData.toJson())
+        .put("preloadPages", preloadPages)
 
     companion object {
         /** The container id of private tabs (`Tab.containerId` in the core). */
@@ -156,6 +176,7 @@ class PrivacyFlags(
         private val HTTPS_ONLY_MODES = setOf("off", "ask", "always")
         private val COOKIE_MODES = setOf("allow", "block-private", "block")
         private val COOKIE_PRIVATE_MODES = setOf("default", "allow", "block")
+        private val PRELOAD_PAGES_LEVELS = setOf("standard", "extended", "none")
 
         /** What applies before the core has pushed anything: the settings' defaults. */
         val DEFAULT = PrivacyFlags(
@@ -186,7 +207,9 @@ class PrivacyFlags(
                 thirdPartyCookieExceptions = strings(o.optJSONArray("thirdPartyCookieExceptions")),
                 gpc = o.optBoolean("gpc", d.gpc),
                 dnt = o.optBoolean("dnt", d.dnt),
-                siteData = SiteDataPolicy.parse(o.optJSONObject("siteData"))
+                siteData = SiteDataPolicy.parse(o.optJSONObject("siteData")),
+                preloadPages = o.optString("preloadPages", d.preloadPages).takeIf { it in PRELOAD_PAGES_LEVELS }
+                    ?: d.preloadPages
             )
         }
 

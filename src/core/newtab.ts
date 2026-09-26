@@ -26,7 +26,8 @@ import type {
   Tab,
   TopSite
 } from '../shared/types'
-import { privateThirdPartyCookieStatus, type SafeBrowsingHit } from '../shared/privacy'
+import type { SafeBrowsingHit } from '../shared/privacy'
+import { privateThirdPartyCookieSwitch } from '../shared/extensionSettings'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import { BLANK_URL, NEW_TAB_URL, inputToUrl, isNewTabUrl } from '../shared/url'
 import { makeTheme, resolveTheme, themeCssVariables, unfollowedTheme } from '../shared/theme'
@@ -438,12 +439,17 @@ export class NewTabService {
       engineFavicon: engineFieldFavicon(this.browser.state.defaultSearchEngine())
     }
     // The same answer `ProtectionService.status()` gives the chrome (`PrivacyStatus`), read from
-    // the settings it is computed from: a settings commit re-pushes the page, so a global-mode
-    // change in Settings locks or unlocks the switch on a live private page at once.
-    if (isPrivate)
-      state.privateThirdPartyCookies = privateThirdPartyCookieStatus(
+    // what it is computed from – the user's settings under the extension layer (an extension
+    // holding `chrome.privacy`'s `thirdPartyCookiesAllowed` locks the switch at either pole, and
+    // the locked line names it): a settings commit and a change of the layer both re-push the
+    // page, so a global-mode change in Settings or an extension's hold locks or unlocks the
+    // switch on a live private page at once.
+    if (isPrivate) {
+      state.privateThirdPartyCookies = privateThirdPartyCookieSwitch(
+        this.browser.state.extensionLayer,
         this.browser.state.settings.privacy
       )
+    }
     return state
   }
 
