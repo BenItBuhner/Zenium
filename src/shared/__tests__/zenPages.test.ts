@@ -3,6 +3,7 @@ import chromeCss from '../../renderer/src/assets/main.css?raw'
 import { classifyViewport, type ViewportMetrics } from '../formFactor'
 import {
   crashPageUrl,
+  errorPageSearchOf,
   errorPageUrl,
   httpsOnlyPageUrl,
   interstitialKindOf,
@@ -25,9 +26,12 @@ import {
   errorPageAttributesScript,
   errorPageContent,
   errorPageHtml,
+  errorPageSearchAction,
   errorPageStyle,
   inPlaceErrorPageScript,
   parseZenUrl,
+  searchTermOf,
+  suggestionsFor,
   zenPageHtml,
   type ErrorPageContent
 } from '../zenPages'
@@ -94,6 +98,12 @@ describe('errorPageContent', () => {
       title: "This site can't be reached",
       site: 'nonexistent.invalid',
       reason: "nonexistent.invalid's server IP address could not be found.",
+      suggestions: [
+        'Checking the connection',
+        'Checking the proxy, firewall and DNS configuration'
+      ],
+      hint: null,
+      search: null,
       code: 'ERR_NAME_NOT_RESOLVED',
       target: 'http://nonexistent.invalid/',
       showTabs: false,
@@ -117,12 +127,232 @@ describe('errorPageContent', () => {
     expect(content.code).toBe('ERR_UNSAFE_PORT')
   })
 
-  it('tells the user the device is offline', () => {
+  it('tells the user the device is offline, with the checks Chrome lists for the host', () => {
     const content = errorPageContent(-106, 'net::ERR_INTERNET_DISCONNECTED', 'https://example.com/')
     expect(content.title).toBe('No internet')
-    expect(content.reason).toMatch(/offline/)
-    expect(content.reason).toMatch(/reload/i)
+    expect(content.reason).toBe('Your device is offline.')
     expect(content.code).toBe('ERR_INTERNET_DISCONNECTED')
+    // Desktop: Chrome's cables and Wi-Fi lines; Android: the phone's three (`suggestionsFor`).
+    expect(content.suggestions).toEqual([
+      'Checking the network cables, modem and router',
+      'Reconnecting to Wi-Fi'
+    ])
+    expect(
+      errorPageContent(
+        -106,
+        'net::ERR_INTERNET_DISCONNECTED',
+        'https://example.com/',
+        null,
+        {},
+        {
+          host: 'android'
+        }
+      ).suggestions
+    ).toEqual([
+      'Turning off airplane mode',
+      'Turning on mobile data or Wi-Fi',
+      'Checking the signal in your area'
+    ])
+  })
+
+  describe("Chrome's suggestion list and search action (ERR-05)", () => {
+    const ENGINE = { engine: 'DuckDuckGo', template: 'https://duckduckgo.com/?q=%s' }
+    const content = (
+      code: number,
+      name: string,
+      target: string,
+      host: 'android' | 'desktop' = 'desktop'
+    ): ErrorPageContent => errorPageContent(code, `net::${name}`, target, null, {}, { host })
+
+    it("lists Chrome 152's lines per code on the desktop: the connection, then the proxy / firewall / DNS combination", () => {
+      // `net_error_options[]` → `GetSuggestionsSummaryList`, the desktop branch.
+      const desktop = (code: number, name: string): string[] =>
+        content(code, name, 'http://site.example/').suggestions
+      expect(desktop(-105, 'ERR_NAME_NOT_RESOLVED')).toEqual([
+        'Checking the connection',
+        'Checking the proxy, firewall and DNS configuration'
+      ])
+      for (const [code, name] of [
+        [-102, 'ERR_CONNECTION_REFUSED'],
+        [-7, 'ERR_TIMED_OUT'],
+        [-118, 'ERR_CONNECTION_TIMED_OUT'],
+        [-101, 'ERR_CONNECTION_RESET'],
+        [-100, 'ERR_CONNECTION_CLOSED'],
+        [-21, 'ERR_NETWORK_CHANGED']
+      ] as Array<[number, string]>) {
+        expect(desktop(code, name), name).toEqual([
+          'Checking the connection',
+          'Checking the proxy and the firewall'
+        ])
+      }
+      expect(desktop(-138, 'ERR_NETWORK_ACCESS_DENIED')).toEqual([
+        'Checking the connection',
+        'Checking firewall and antivirus configurations'
+      ])
+      // Codes Chrome lists nothing for (or only the diagnostics tool Zenium has no counterpart for).
+      for (const [code, name] of [
+        [-109, 'ERR_ADDRESS_UNREACHABLE'],
+        [-324, 'ERR_EMPTY_RESPONSE'],
+        [-107, 'ERR_SSL_PROTOCOL_ERROR'],
+        [-113, 'ERR_SSL_VERSION_OR_CIPHER_MISMATCH'],
+        [-312, 'ERR_UNSAFE_PORT'],
+        [-300, 'ERR_INVALID_URL'],
+        [-6, 'ERR_FILE_NOT_FOUND'],
+        [-2, 'ERR_FAILED']
+      ] as Array<[number, string]>) {
+        expect(desktop(code, name), name).toEqual([])
+      }
+    })
+
+    it("lists Chrome Android's lines on the Android host: the connection alone for a connection failure", () => {
+      // The proxy / firewall / DNS summaries sit behind `!IS_ANDROID && !IS_IOS` in Chrome.
+      for (const [code, name] of [
+        [-105, 'ERR_NAME_NOT_RESOLVED'],
+        [-102, 'ERR_CONNECTION_REFUSED'],
+        [-118, 'ERR_CONNECTION_TIMED_OUT'],
+        [-101, 'ERR_CONNECTION_RESET'],
+        [-138, 'ERR_NETWORK_ACCESS_DENIED']
+      ] as Array<[number, string]>) {
+        expect(content(code, name, 'http://site.example/', 'android').suggestions, name).toEqual([
+          'Checking the connection'
+        ])
+      }
+      expect(
+        content(-324, 'ERR_EMPTY_RESPONSE', 'http://site.example/', 'android').suggestions
+      ).toEqual([])
+      expect(suggestionsFor(-105, 'android')).toEqual(['Checking the connection'])
+      expect(suggestionsFor(-999, 'android')).toEqual([])
+    })
+
+    it("words each code as Chrome 152 does, distinct per code, and Chromium's numbers for -21 and -138", () => {
+      const reason = (code: number, name: string): string =>
+        content(code, name, 'http://site.example/').reason
+      expect(reason(-105, 'ERR_NAME_NOT_RESOLVED')).toBe(
+        "site.example's server IP address could not be found."
+      )
+      expect(reason(-102, 'ERR_CONNECTION_REFUSED')).toBe('site.example refused to connect.')
+      expect(reason(-118, 'ERR_CONNECTION_TIMED_OUT')).toBe(
+        'site.example took too long to respond.'
+      )
+      expect(reason(-7, 'ERR_TIMED_OUT')).toBe('site.example took too long to respond.')
+      expect(reason(-101, 'ERR_CONNECTION_RESET')).toBe('The connection was reset.')
+      expect(reason(-100, 'ERR_CONNECTION_CLOSED')).toBe(
+        'site.example unexpectedly closed the connection.'
+      )
+      expect(reason(-109, 'ERR_ADDRESS_UNREACHABLE')).toBe('site.example is unreachable.')
+      expect(reason(-21, 'ERR_NETWORK_CHANGED')).toBe('A network change was detected.')
+      const denied = content(-138, 'ERR_NETWORK_ACCESS_DENIED', 'http://site.example/')
+      expect(denied.title).toBe('Your internet access is blocked')
+      expect(denied.reason).toBe('Firewall or antivirus software may have blocked the connection.')
+      expect(denied.code).toBe('ERR_NETWORK_ACCESS_DENIED')
+      // The redirect loop carries Chrome's standalone sentence, not a list.
+      const loop = content(-310, 'ERR_TOO_MANY_REDIRECTS', 'http://site.example/')
+      expect(loop.hint).toBe('Try deleting your cookies.')
+      expect(loop.suggestions).toEqual([])
+      expect(content(-105, 'ERR_NAME_NOT_RESOLVED', 'http://site.example/').hint).toBeNull()
+    })
+
+    it('reads a failed host as a search term only when it is one typed word', () => {
+      expect(searchTermOf('zeniumm')).toBe('zeniumm')
+      expect(searchTermOf('zenium-browser')).toBe('zenium-browser')
+      expect(searchTermOf('xn--mnchen-3ya')).toBe('münchen')
+      expect(searchTermOf('nonexistent.invalid')).toBeNull()
+      expect(searchTermOf('localhost')).toBeNull()
+      expect(searchTermOf('10.0.0.1')).toBeNull()
+      expect(searchTermOf('[::1]')).toBeNull()
+      expect(searchTermOf('')).toBeNull()
+    })
+
+    it('offers Search <engine> for <term> through the engine the core handed over, for a DNS failure of a typed word only', () => {
+      const word = errorPageContent(
+        -105,
+        'net::ERR_NAME_NOT_RESOLVED',
+        'http://zeniumm/',
+        null,
+        {},
+        {
+          host: 'android',
+          search: ENGINE
+        }
+      )
+      expect(word.search).toEqual({
+        label: 'Search DuckDuckGo for zeniumm',
+        url: 'https://duckduckgo.com/?q=zeniumm'
+      })
+      // The engine is whichever the profile chose: nothing here names one.
+      expect(
+        errorPageContent(
+          -105,
+          'net::ERR_NAME_NOT_RESOLVED',
+          'http://zeniumm/',
+          null,
+          {},
+          {
+            search: { engine: 'Ecosia', template: 'https://www.ecosia.org/search?q=%s' }
+          }
+        ).search
+      ).toEqual({
+        label: 'Search Ecosia for zeniumm',
+        url: 'https://www.ecosia.org/search?q=zeniumm'
+      })
+      // A domain, another failure, or no engine: no action.
+      expect(
+        errorPageContent(
+          -105,
+          'net::ERR_NAME_NOT_RESOLVED',
+          'http://nonexistent.invalid/',
+          null,
+          {},
+          {
+            search: ENGINE
+          }
+        ).search
+      ).toBeNull()
+      expect(
+        errorPageContent(
+          -102,
+          'net::ERR_CONNECTION_REFUSED',
+          'http://zeniumm/',
+          null,
+          {},
+          {
+            search: ENGINE
+          }
+        ).search
+      ).toBeNull()
+      expect(
+        errorPageContent(-105, 'net::ERR_NAME_NOT_RESOLVED', 'http://zeniumm/').search
+      ).toBeNull()
+      // The term is encoded into the template, whatever it carries.
+      expect(errorPageSearchAction(-105, 'caf\u00e9', ENGINE)?.url).toBe(
+        'https://duckduckgo.com/?q=caf%C3%A9'
+      )
+    })
+
+    it('carries the engine in the page URL, the way the accent travels, and reads only a usable one back', () => {
+      const url = errorPageUrl(
+        -105,
+        'net::ERR_NAME_NOT_RESOLVED',
+        'http://zeniumm/',
+        null,
+        undefined,
+        ENGINE
+      )
+      const params = parseZenUrl(url)!.searchParams
+      expect(params.get('engine')).toBe('DuckDuckGo')
+      expect(params.get('search')).toBe('https://duckduckgo.com/?q=%s')
+      expect(errorPageSearchOf(params)).toEqual(ENGINE)
+      expect(errorPageSearchOf(new URLSearchParams(DNS.split('?')[1]))).toBeNull()
+      expect(
+        errorPageSearchOf(new URLSearchParams({ engine: 'X', search: 'javascript:1%s' }))
+      ).toBeNull()
+      expect(
+        errorPageSearchOf(new URLSearchParams({ engine: 'X', search: 'https://x.example/' }))
+      ).toBeNull()
+      expect(
+        errorPageSearchOf(new URLSearchParams({ engine: ' ', search: 'https://x.example/?q=%s' }))
+      ).toBeNull()
+    })
   })
 
   it("takes the host's Chromium name over the table and keeps the table's reason", () => {
@@ -311,6 +541,92 @@ describe('errorPageContent', () => {
     expect(html).toContain('<span class="zen-interstitial-spinner">')
     // The core's call (`ERROR_PAGE_RELOADING_SCRIPT`) finds the function under this name.
     expect(html).toContain('function zenReloading()')
+  })
+
+  describe("Chrome's suggestions and the search action (ERR-05)", () => {
+    const WORD = errorPageUrl(
+      -105,
+      'net::ERR_NAME_NOT_RESOLVED',
+      'http://zeniumm/',
+      null,
+      undefined,
+      {
+        engine: 'DuckDuckGo',
+        template: 'https://duckduckgo.com/?q=%s'
+      }
+    )
+
+    it('lists the suggestions under Try: between the reason and the code line, per host', () => {
+      const desktop = errorPageHtml(parseZenUrl(DNS)!)
+      expect(desktop).toContain(
+        '<div class="zen-error-suggestions">\n    <p>Try:</p>\n    <ul>\n      <li>Checking the connection</li>\n      <li>Checking the proxy, firewall and DNS configuration</li>\n    </ul>\n  </div>'
+      )
+      const reason = desktop.indexOf('server IP address could not be found.</p>')
+      const list = desktop.indexOf('<div class="zen-error-suggestions">')
+      const code = desktop.indexOf('<p class="zen-error-code">')
+      expect(reason).toBeLessThan(list)
+      expect(list).toBeLessThan(code)
+      const android = errorPageHtml(parseZenUrl(DNS)!, 'system', 'android')
+      expect(android).toContain('<ul>\n      <li>Checking the connection</li>\n    </ul>')
+      expect(android).not.toContain('DNS configuration')
+      // The Android host asks for its own list through `zenPageHtml`.
+      expect(zenPageHtml(DNS, undefined, undefined, undefined, 'system', 'android')).toBe(android)
+      expect(zenPageHtml(DNS)).toBe(desktop)
+    })
+
+    it('leaves the list out where Chrome lists nothing, and writes a standalone hint as a paragraph', () => {
+      const empty = errorPageHtml(
+        parseZenUrl(errorPageUrl(-324, 'net::ERR_EMPTY_RESPONSE', 'http://site.example/'))!
+      )
+      expect(empty).not.toContain('class="zen-error-suggestions"')
+      expect(empty).not.toContain('Try:')
+      const loop = errorPageHtml(
+        parseZenUrl(errorPageUrl(-310, 'net::ERR_TOO_MANY_REDIRECTS', 'http://site.example/'))!
+      )
+      expect(loop).toContain('<p class="zen-error-hint">Try deleting your cookies.</p>')
+      expect(loop).not.toContain('class="zen-error-suggestions"')
+      // The certificate interstitial keeps its own structure: no list.
+      expect(errorPageHtml(parseZenUrl(EXPIRED)!)).not.toContain('class="zen-error-suggestions"')
+    })
+
+    it('draws Search <engine> for <term> as the secondary before the primary Reload, a link to the results', () => {
+      const html = errorPageHtml(parseZenUrl(WORD)!, 'system', 'android')
+      const row = html.indexOf('<div class="zen-error-actions">')
+      const search = html.indexOf(
+        '<a id="zen-error-search" class="zen-v2-button zen-error-search" href="https://duckduckgo.com/?q=zeniumm">Search DuckDuckGo for zeniumm</a>'
+      )
+      const reload = html.indexOf('id="zen-error-reload"')
+      expect(row).toBeGreaterThan(-1)
+      expect(search).toBeGreaterThan(row)
+      expect(reload).toBeGreaterThan(search)
+      expect(html).toContain('zen-interstitial-action" data-primary onclick="zenReloading();')
+      expect(html).not.toContain('class="zen-v2-button zen-error-show-tabs"')
+      // Without a word to search for, Reload stands alone and is no primary, as before.
+      const plain = errorPageHtml(parseZenUrl(DNS)!)
+      expect(plain).not.toContain('id="zen-error-search"')
+      expect(plain).not.toContain('<div class="zen-error-actions">')
+      expect(plain).toContain(
+        'class="zen-v2-button zen-interstitial-action" onclick="zenReloading();'
+      )
+    })
+
+    it('escapes the engine and the results address like the rest of the page', () => {
+      const url = errorPageUrl(
+        -105,
+        'net::ERR_NAME_NOT_RESOLVED',
+        'http://zeniumm/',
+        null,
+        undefined,
+        {
+          engine: 'A<b>&"c"',
+          template: 'https://x.example/?q=%s&a="1"'
+        }
+      )
+      const html = errorPageHtml(parseZenUrl(url)!)
+      expect(html).toContain('>Search A&lt;b&gt;&amp;&quot;c&quot; for zeniumm</a>')
+      expect(html).toContain('href="https://x.example/?q=zeniumm&amp;a=&quot;1&quot;"')
+      expect(html).not.toContain('<b>')
+    })
   })
 })
 

@@ -25,13 +25,16 @@ import {
 } from './privacy'
 import { INTERSTITIAL_MESSAGE_KEY, type InterstitialAction } from './interstitial'
 import { unicodeHost } from './punycode'
+import { fillSearchTemplate } from './search'
 import { isCertificateError } from './siteInfo'
 import {
   crashPageOptionsOf,
   errorPageAccentOf,
   errorPageCertificate,
+  errorPageSearchOf,
   type CrashPageOptions,
-  type ErrorPageAccent
+  type ErrorPageAccent,
+  type ErrorPageSearch
 } from './url'
 import { hexToRgb, resolveTheme, rgbToHex } from './theme'
 import { newTabPageHtml } from './newTabPage'
@@ -48,6 +51,15 @@ const NOT_WORKING = "This page isn't working"
 const NOT_PRIVATE = 'Your connection is not private'
 const NO_INTERNET = 'No internet'
 
+/**
+ * Chrome's suggestion flags for a code (`localized_error.cc`'s `SUGGEST_*` in `net_error_options[]`),
+ * the ones its summary list – "Try:" and the lines under it – is drawn from (ERR-05). The two
+ * that need a facility Zenium has no counterpart for are left out: `SUGGEST_DIAGNOSE_TOOL` (a
+ * network diagnostics dialog on Windows, macOS and ChromeOS) and `SUGGEST_CAPTIVE_PORTAL_SIGNIN`
+ * (the portal detector's state).
+ */
+type Suggestion = 'connection' | 'dns' | 'firewall' | 'proxy' | 'antivirus' | 'offline'
+
 /** Chrome's phrasing for a failed load, with the site named where Chrome names it. */
 interface NetErrorCopy {
   /** The Chromium `net::` name, shown as the small line at the end (`ERR_…`). */
@@ -55,6 +67,13 @@ interface NetErrorCopy {
   title: string
   /** The one-line reason; `site` is the host of the failed URL or '' when it has none. */
   reason: (site: string) => string
+  /** The flags the suggestion list draws from (`suggestionsFor`); none when Chrome lists nothing. */
+  suggest?: Suggestion[]
+  /**
+   * A one-sentence suggestion Chrome shows on its own instead of a list (its "standalone"
+   * summaries): the redirect loop's "Try deleting your cookies."
+   */
+  hint?: string
 }
 
 const named =
@@ -62,7 +81,14 @@ const named =
   (site: string): string =>
     site ? withSite(site) : without
 
-/** Keep the names equal to `BY_NAME` in the Android host's `NetErrors.kt`, which reports failures by them. */
+/** Chrome's flags for a connection that was made and lost: timed out, reset, closed, refused. */
+const CONNECTION_LOST: Suggestion[] = ['connection', 'firewall', 'proxy']
+
+/**
+ * Keep the names equal to `BY_NAME` in the Android host's `NetErrors.kt`, which reports failures
+ * by them. Titles and reasons are Chrome 152's (`error_page_strings.grdp`) in the app's voice;
+ * the suggestion flags are its `net_error_options[]` rows for the same codes.
+ */
 const NET_ERRORS: Record<number, NetErrorCopy> = {
   [-2]: {
     name: 'ERR_FAILED',
@@ -77,7 +103,8 @@ const NET_ERRORS: Record<number, NetErrorCopy> = {
   [-7]: {
     name: 'ERR_TIMED_OUT',
     title: UNREACHABLE,
-    reason: named((s) => `${s} took too long to respond.`, 'The server took too long to respond.')
+    reason: named((s) => `${s} took too long to respond.`, 'The server took too long to respond.'),
+    suggest: CONNECTION_LOST
   },
   [-20]: {
     name: 'ERR_BLOCKED_BY_CLIENT',
@@ -85,9 +112,12 @@ const NET_ERRORS: Record<number, NetErrorCopy> = {
     reason: () => 'Zenium blocked this request.'
   },
   [-21]: {
-    name: 'ERR_NETWORK_ACCESS_DENIED',
+    // `net_error_list.h`: -21 is the network changing under the request (a Wi-Fi to mobile
+    // handover); `ERR_NETWORK_ACCESS_DENIED` is -138 below.
+    name: 'ERR_NETWORK_CHANGED',
     title: UNREACHABLE,
-    reason: () => 'Network access was denied.'
+    reason: () => 'A network change was detected.',
+    suggest: CONNECTION_LOST
   },
   [-100]: {
     name: 'ERR_CONNECTION_CLOSED',
@@ -95,17 +125,20 @@ const NET_ERRORS: Record<number, NetErrorCopy> = {
     reason: named(
       (s) => `${s} unexpectedly closed the connection.`,
       'The connection was closed unexpectedly.'
-    )
+    ),
+    suggest: CONNECTION_LOST
   },
   [-101]: {
     name: 'ERR_CONNECTION_RESET',
     title: UNREACHABLE,
-    reason: () => 'The connection was reset.'
+    reason: () => 'The connection was reset.',
+    suggest: CONNECTION_LOST
   },
   [-102]: {
     name: 'ERR_CONNECTION_REFUSED',
     title: UNREACHABLE,
-    reason: named((s) => `${s} refused to connect.`, 'The server refused to connect.')
+    reason: named((s) => `${s} refused to connect.`, 'The server refused to connect.'),
+    suggest: CONNECTION_LOST
   },
   [-105]: {
     name: 'ERR_NAME_NOT_RESOLVED',
@@ -113,12 +146,16 @@ const NET_ERRORS: Record<number, NetErrorCopy> = {
     reason: named(
       (s) => `${s}'s server IP address could not be found.`,
       "The server's IP address could not be found."
-    )
+    ),
+    suggest: ['connection', 'dns', 'firewall', 'proxy']
   },
   [-106]: {
     name: 'ERR_INTERNET_DISCONNECTED',
     title: NO_INTERNET,
-    reason: () => 'Your device is offline. Check Wi-Fi or mobile data, then reload.'
+    // The offline page: the device, not the site, is the reason; the list under it says what
+    // to check, and the page reloads itself when the device is back (`connectivity`).
+    reason: () => 'Your device is offline.',
+    suggest: ['offline']
   },
   [-107]: {
     name: 'ERR_SSL_PROTOCOL_ERROR',
@@ -141,7 +178,14 @@ const NET_ERRORS: Record<number, NetErrorCopy> = {
   [-118]: {
     name: 'ERR_CONNECTION_TIMED_OUT',
     title: UNREACHABLE,
-    reason: named((s) => `${s} took too long to respond.`, 'The server took too long to respond.')
+    reason: named((s) => `${s} took too long to respond.`, 'The server took too long to respond.'),
+    suggest: CONNECTION_LOST
+  },
+  [-138]: {
+    name: 'ERR_NETWORK_ACCESS_DENIED',
+    title: 'Your internet access is blocked',
+    reason: () => 'Firewall or antivirus software may have blocked the connection.',
+    suggest: ['connection', 'firewall', 'antivirus']
   },
   [-200]: {
     name: 'ERR_CERT_COMMON_NAME_INVALID',
@@ -186,7 +230,8 @@ const NET_ERRORS: Record<number, NetErrorCopy> = {
     reason: named(
       (s) => `${s} redirected you too many times.`,
       'The page redirected you too many times.'
-    )
+    ),
+    hint: 'Try deleting your cookies.'
   },
   [-312]: {
     // Chromium never connects to a few reserved ports (1, 7, 25, …): `localhost:1` fails this way.
@@ -319,12 +364,99 @@ export function describeNetError(code: number, fallback: string): string {
   return NET_ERRORS[code]?.reason('') ?? fallback
 }
 
+/**
+ * The host the page is drawn for, which decides the suggestion list as Chrome's
+ * `GetSuggestionsSummaryList` decides it per platform: Android's list is the connection line
+ * (and, offline, the phone's three checks); the desktop's adds the proxy, firewall and DNS line
+ * (and, offline, the cables and the Wi-Fi). Every host but the Android one is the desktop.
+ */
+export type ErrorPageHost = 'android' | 'desktop'
+
+/**
+ * The lines Chrome lists under "Try:" for a code on `host` (ERR-05): its
+ * `IDS_ERRORPAGES_SUGGESTION_*_SUMMARY` strings in the order and under the platform conditions of
+ * `GetSuggestionsSummaryList` – the connection first; the proxy / firewall / DNS combinations
+ * behind `!IS_ANDROID && !IS_IOS`; the offline checks per platform. Empty when Chrome lists none.
+ */
+export function suggestionsFor(code: number, host: ErrorPageHost): string[] {
+  const flags = NET_ERRORS[code]?.suggest ?? []
+  const has = (flag: Suggestion): boolean => flags.includes(flag)
+  const lines: string[] = []
+  if (has('connection')) lines.push('Checking the connection')
+  if (host === 'desktop') {
+    if (has('dns') && has('firewall') && has('proxy'))
+      lines.push('Checking the proxy, firewall and DNS configuration')
+    else if (has('firewall') && has('antivirus'))
+      lines.push('Checking firewall and antivirus configurations')
+    else if (has('proxy') && has('firewall')) lines.push('Checking the proxy and the firewall')
+    else if (has('proxy')) lines.push('Checking the proxy address')
+  }
+  if (has('offline')) {
+    if (host === 'android')
+      lines.push(
+        'Turning off airplane mode',
+        'Turning on mobile data or Wi-Fi',
+        'Checking the signal in your area'
+      )
+    else lines.push('Checking the network cables, modem and router', 'Reconnecting to Wi-Fi')
+  }
+  return lines
+}
+
+/**
+ * The word a failed host is when it reads as a search term (ERR-05, Chrome's "Search <engine>
+ * for <term>" for a typed word): one label with no dot – neither a domain nor an IP literal –
+ * and not `localhost`, which names this device. A punycode label is shown as the user typed it.
+ * Null for any other host.
+ */
+export function searchTermOf(site: string): string | null {
+  if (!site || /[.:[\]]/.test(site) || site === 'localhost') return null
+  return unicodeHost(site)
+}
+
+/** The search action the page offers: its label, `Search <engine> for <term>`, and the results' address. */
+export interface ErrorPageSearchAction {
+  label: string
+  url: string
+}
+
+/**
+ * "Search <engine> for <term>" for a DNS failure (`ERR_NAME_NOT_RESOLVED`) of a host that reads
+ * as a typed word (`searchTermOf`), through the engine the core handed over; null for any other
+ * failure, host or when no engine came.
+ */
+export function errorPageSearchAction(
+  code: number,
+  site: string,
+  search: ErrorPageSearch | null
+): ErrorPageSearchAction | null {
+  if (code !== NAME_NOT_RESOLVED_CODE || !search) return null
+  const term = searchTermOf(site)
+  if (!term) return null
+  return {
+    label: `Search ${search.engine} for ${term}`,
+    url: fillSearchTemplate(search.template, term)
+  }
+}
+
+/** `net::ERR_NAME_NOT_RESOLVED`: the name did not resolve – the one failure that offers a search. */
+export const NAME_NOT_RESOLVED_CODE = -105
+
 /** What the error page shows: everything is derived here so the rendering stays a template. */
 export interface ErrorPageContent {
   title: string
   /** The host name of the failed URL ('' when the URL has none). */
   site: string
   reason: string
+  /**
+   * Chrome's suggestion list for the code on this host (`suggestionsFor`), the lines under "Try:";
+   * empty when Chrome lists none, and the header goes with it.
+   */
+  suggestions: string[]
+  /** Chrome's standalone suggestion sentence for the code (`NetErrorCopy.hint`), or null. */
+  hint: string | null
+  /** "Search <engine> for <term>" beside Reload (`errorPageSearchAction`), or null. */
+  search: ErrorPageSearchAction | null
   /** The Chromium error name (`ERR_…`), or the host's own description when the code has no name. */
   code: string
   /** The failed URL the Reload control goes back to ('' when there is none). */
@@ -459,12 +591,19 @@ const CRASH_COPY: Record<
   }
 }
 
+/** What besides the failure the page is built from: the host it is drawn for, the engine it may search with. */
+export interface ErrorPageOptions {
+  host?: ErrorPageHost
+  search?: ErrorPageSearch | null
+}
+
 export function errorPageContent(
   code: number,
   description: string,
   target: string,
   certificate: CertificateDetails | null = null,
-  crash: CrashPageOptions = {}
+  crash: CrashPageOptions = {},
+  options: ErrorPageOptions = {}
 ): ErrorPageContent {
   const site = siteOf(target)
   if (code === CRASH_ERROR_CODE) {
@@ -476,6 +615,9 @@ export function errorPageContent(
       title: repeat && crash.variant !== 'memory' ? `${copy.title} again` : copy.title,
       site,
       reason: repeat ? copy.again : copy.reason,
+      suggestions: [],
+      hint: null,
+      search: null,
       code: description ? `Error code: ${description}` : '',
       target,
       showTabs: repeat,
@@ -493,6 +635,9 @@ export function errorPageContent(
     title: copy?.title ?? (interstitial ? NOT_PRIVATE : UNREACHABLE),
     site,
     reason: copy?.reason(site) ?? (interstitial ? NET_ERRORS[-207].reason(site) : fallback),
+    suggestions: interstitial ? [] : suggestionsFor(code, options.host ?? 'desktop'),
+    hint: copy?.hint ?? null,
+    search: errorPageSearchAction(code, site, options.search ?? null),
     code: name,
     target,
     showTabs: false,
@@ -711,11 +856,16 @@ export function inPlaceErrorPageScript(url: URL, scheme: ColorScheme = 'system')
 
 /**
  * `zen://error?code=…&description=…&url=…`: Chrome's error page, in the tab, for the failed URL.
- * `scheme` is the app's colour scheme, which the page's root takes (`errorPageAttributesScript`).
- * The body is a `data-surface="page"` root (design language v2 §9.29): the document is a page
- * inside the tab, so its controls draw in the page family's ink and fill, never the window's.
+ * `scheme` is the app's colour scheme, which the page's root takes (`errorPageAttributesScript`);
+ * `host` decides the suggestion list (`suggestionsFor`). The body is a `data-surface="page"` root
+ * (design language v2 §9.29): the document is a page inside the tab, so its controls draw in the
+ * page family's ink and fill, never the window's.
  */
-export function errorPageHtml(url: URL, scheme: ColorScheme = 'system'): string {
+export function errorPageHtml(
+  url: URL,
+  scheme: ColorScheme = 'system',
+  host: ErrorPageHost = 'desktop'
+): string {
   const code = Number(url.searchParams.get('code') ?? 0)
   const target = url.searchParams.get('url') ?? ''
   const kind = url.searchParams.get('kind')
@@ -741,7 +891,8 @@ export function errorPageHtml(url: URL, scheme: ColorScheme = 'system'): string 
     url.searchParams.get('description') ?? '',
     target,
     errorPageCertificate(url.searchParams),
-    crashPageOptionsOf(url.searchParams)
+    crashPageOptionsOf(url.searchParams),
+    { host, search: errorPageSearchOf(url.searchParams) }
   )
   const controls = content.interstitial
     ? interstitialHtml(content.interstitial, content.target)
@@ -752,8 +903,20 @@ export function errorPageHtml(url: URL, scheme: ColorScheme = 'system'): string 
   return `<!doctype html><html class="zen-error-document"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(content.site || 'Problem loading page')}</title><script>${errorPageAttributesScript(scheme)}</script><style>${errorDocumentStyle(accent)}</style></head>
 <body class="zen-error-page" data-surface="page"><main>
   <h1>${escapeHtml(content.title)}</h1>
-  <p>${emphasiseSite(content.reason, content.site)}</p>${name}${controls}
+  <p>${emphasiseSite(content.reason, content.site)}</p>${suggestionsHtml(content)}${name}${controls}
 </main><script>${RELOADING_SCRIPT}</script></body></html>`
+}
+
+/**
+ * Chrome's suggestions between the reason and the code line (ERR-05): the standalone sentence
+ * where the code has one, and the list – "Try:" over the lines for the code on this host – where
+ * it has lines. Nothing when the code has neither, so the page reads as it did.
+ */
+function suggestionsHtml(content: ErrorPageContent): string {
+  const hint = content.hint ? `\n  <p class="zen-error-hint">${escapeHtml(content.hint)}</p>` : ''
+  if (content.suggestions.length === 0) return hint
+  const items = content.suggestions.map((line) => `\n      <li>${escapeHtml(line)}</li>`).join('')
+  return `${hint}\n  <div class="zen-error-suggestions">\n    <p>Try:</p>\n    <ul>${items}\n    </ul>\n  </div>`
 }
 
 /**
@@ -773,15 +936,24 @@ const RELOADING_SCRIPT =
 
 /**
  * The error page's controls when it stands in for a page that could not be had: Reload, which
- * goes back to the page with the busy state above, and on the crash page's repeat variant the
- * way to the tab switcher before it (a page's §9.11 action row, the primary trailing; the
- * phone's overview is what the switcher is, so the control is the phone's: `.zen-error-show-tabs`).
+ * goes back to the page with the busy state above, and before it, where the page has one, its
+ * second action (a page's §9.11 action row, Reload the primary and trailing): on the crash
+ * page's repeat variant the way to the tab switcher (the phone's overview is what the switcher
+ * is, so the control is the phone's: `.zen-error-show-tabs`); for a typed word that did not
+ * resolve, "Search <engine> for <term>" (ERR-05) – a link drawn as the secondary, since it goes
+ * to another page, which the browser also lets be held for its own menu.
  */
 function reloadHtml(content: ErrorPageContent): string {
-  const reload = `<button type="button" id="zen-error-reload" class="zen-v2-button zen-interstitial-action"${content.showTabs ? ' data-primary' : ''} onclick="zenReloading();location.replace(${escapeHtml(JSON.stringify(content.target))})"><span class="zen-interstitial-label">Reload</span><span class="zen-interstitial-spinner">${glyph('loader-circle')}</span></button>`
-  if (!content.showTabs) return `\n  ${reload}`
-  const showTabs = `<button type="button" class="zen-v2-button zen-error-show-tabs" onclick="${escapeHtml(postAction('show-tabs', content.target))}">Show tabs</button>`
-  return `\n  <div class="zen-error-actions">${showTabs}${reload}</div>`
+  const primary = content.showTabs || content.search !== null
+  const reload = `<button type="button" id="zen-error-reload" class="zen-v2-button zen-interstitial-action"${primary ? ' data-primary' : ''} onclick="zenReloading();location.replace(${escapeHtml(JSON.stringify(content.target))})"><span class="zen-interstitial-label">Reload</span><span class="zen-interstitial-spinner">${glyph('loader-circle')}</span></button>`
+  if (!primary) return `\n  ${reload}`
+  const showTabs = content.showTabs
+    ? `<button type="button" class="zen-v2-button zen-error-show-tabs" onclick="${escapeHtml(postAction('show-tabs', content.target))}">Show tabs</button>`
+    : ''
+  const search = content.search
+    ? `<a id="zen-error-search" class="zen-v2-button zen-error-search" href="${escapeHtml(content.search.url)}">${escapeHtml(content.search.label)}</a>`
+    : ''
+  return `\n  <div class="zen-error-actions">${showTabs}${search}${reload}</div>`
 }
 
 /**
@@ -1167,14 +1339,16 @@ export function parseZenUrl(rawUrl: string): URL | null {
  * HTML for any `zen://` URL (unknown pages fall back to the blank page). `scheme` is the app's
  * colour scheme for the pages that paint a theme of their own (`errorPageAttributesScript`); a
  * host whose pages' `prefers-color-scheme` follows the setting already (Android's night mode)
- * leaves it out.
+ * leaves it out. `host` names the Android host, whose error page lists Chrome Android's
+ * suggestions (`ErrorPageHost`); every other host is the desktop.
  */
 export function zenPageHtml(
   rawUrl: string,
   reader?: ReaderPageLookup,
   image?: ImagePageLookup,
   pdf?: PdfPageLookup,
-  scheme: ColorScheme = 'system'
+  scheme: ColorScheme = 'system',
+  host: ErrorPageHost = 'desktop'
 ): string {
   const url = parseZenUrl(rawUrl)
   if (!url) return blankPageHtml()
@@ -1182,7 +1356,7 @@ export function zenPageHtml(
     case 'newtab':
       return newTabPageHtml()
     case 'error':
-      return errorPageHtml(url, scheme)
+      return errorPageHtml(url, scheme, host)
     case 'reader':
       return (
         reader?.(url.searchParams.get('id') ?? '') ??

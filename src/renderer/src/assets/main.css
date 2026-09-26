@@ -927,11 +927,50 @@
   line-height: var(--v2-line-small);
   color: var(--v2-text-deemphasized);
 }
+/*
+ * Chrome's suggestions (ERR-05; `localized_error.cc`'s summary list): between the reason and
+ * the code line, the standalone sentence where the code has one, and the list – "Try:" as a body
+ * line, the lines under it as a plain list in the body type, its markers 20 in from the text
+ * edge – where it has lines. Body ink throughout: these are the page's words, not an aside.
+ */
+.zen-error-suggestions {
+  margin: 0 0 8px;
+}
+.zen-error-suggestions p {
+  margin: 0;
+}
+.zen-error-suggestions ul {
+  margin: 0;
+  padding: 0 0 0 20px;
+}
+.zen-error-suggestions li {
+  overflow-wrap: anywhere;
+}
 .zen-error-page button {
   margin: 0;
   border: 0;
   font-family: inherit;
   cursor: pointer;
+}
+/*
+ * "Search <engine> for <term>" (ERR-05): a link drawn as the v2 secondary beside Reload, the
+ * primary, in the action row below. Its label carries the engine's name and the typed word, so
+ * on a phone's half-row it may run to two lines: the label wraps inside the control, which
+ * grows from the control height, and Reload beside it grows to the same so the row stays level.
+ */
+.zen-error-search {
+  box-sizing: border-box;
+  text-decoration: none;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.zen-error-actions:has(> .zen-error-search) > * {
+  box-sizing: border-box;
+  height: auto;
+  min-height: var(--v2-control);
+  padding-top: 6px;
+  padding-bottom: 6px;
 }
 /*
  * The certificate interstitial (the page's ERR_CERT_* variant): the row of Advanced and Back to
