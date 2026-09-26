@@ -1034,15 +1034,15 @@ describe('a landing reaches the top of the column at a 1000 px window (the deskt
    * geometry at a 1000 px window: the content column's viewport 944 tall, 1113 of content –
    * 169 of scroll, the number the desktop measured – and Sync's Open tabs group (`sync-scope`)
    * starting 521 down the content, so that scrolled as far as the content allowed it stopped at
-   * 352, mid-page. The desktop's column has the sticky find field's box plus the section's 32 of
-   * air as its scroll padding (`main.css`'s declaration, pinned below; the stylesheet in `layout`
-   * carries its value: 16 + 32 + 8 + 32 – the #553 lead check's Q1); the phone's column none.
-   * `scrollIntoView({ block: 'start' })` scrolls as Chrome would: to the group's top less the
-   * padding, and no further than the content allows.
+   * 352, mid-page. The desktop's column has the sticky find field's box as its scroll padding
+   * (`main.css`'s declaration, pinned below; the stylesheet in `layout` carries its value:
+   * 16 + 32 + 8 – a landed group lands flush under the field, the #553 lead check's N1); the
+   * phone's column none. `scrollIntoView({ block: 'start' })` scrolls as Chrome would: to the
+   * group's top less the padding, and no further than the content allows.
    */
   const VIEWPORT = 944
   const GROUP_TOP = 521
-  const INSET = 88
+  const INSET = 56
 
   function layout(content: number): () => void {
     const isColumn = (el: Element): boolean =>
@@ -1086,8 +1086,8 @@ describe('a landing reaches the top of the column at a 1000 px window (the deskt
       )
     })
     // happy-dom leaves `calc()` unevaluated in a computed style, so the sheet carries the
-    // declaration's value at the desktop's 32 control – 16 + 32 + 8, plus the 32 of air; the pin
-    // below holds the declaration itself.
+    // declaration's value at the desktop's 32 control – 16 + 32 + 8; the pin below holds the
+    // declaration itself.
     const sheet = document.createElement('style')
     sheet.textContent = `.zen-settings-content { scroll-padding-top: ${INSET}px; }`
     document.head.appendChild(sheet)
@@ -1112,7 +1112,7 @@ describe('a landing reaches the top of the column at a 1000 px window (the deskt
     }
   }
 
-  it('the desktop column pads its end by what the group lacks, and the group lands 32 under the find field – the column’s top for scrolled content, plus the section’s air (Q1)', () => {
+  it('the desktop column pads its end by what the group lacks, and the group lands flush under the find field – the column’s top for scrolled content (N1)', () => {
     const restore = layout(1113)
     try {
       viewport(TWO_PANE_MIN_WIDTH)
@@ -1122,10 +1122,9 @@ describe('a landing reaches the top of the column at a 1000 px window (the deskt
       const { page, column, groupTop } = landed(el)
       expect(parseFloat(getComputedStyle(column).scrollPaddingTop)).toBe(INSET)
       expect(page.hasAttribute('data-landing')).toBe(true)
-      // 521 − 88 + 944 − 1113: the 264 the group stopped short of its place under the field (at
-      // 352, where the field's edge is 56 and the air ends at 88).
-      expect(page.style.getPropertyValue('--zen-settings-landing-pad')).toBe('264px')
-      expect(column.scrollTop).toBe(433)
+      // 521 − 56 + 944 − 1113: the 296 the group stopped short of the field's edge (at 352).
+      expect(page.style.getPropertyValue('--zen-settings-landing-pad')).toBe('296px')
+      expect(column.scrollTop).toBe(465)
       expect(groupTop).toBe(INSET)
     } finally {
       restore()
@@ -1170,16 +1169,16 @@ describe('a landing reaches the top of the column at a 1000 px window (the deskt
     }
   })
 
-  it('main.css: the pad is the column body’s padding-bottom only under `data-landing`, and the desktop column’s scroll padding is the find field’s box plus the section’s 32 of air', () => {
+  it('main.css: the pad is the column body’s padding-bottom only under `data-landing`, and the desktop column’s scroll padding is the find field’s box – a landed group lands flush under it (N1)', () => {
     // The field's box: the control between the two paddings the column names and the field
     // reads (`.zen-settings-find`), so the scroll padding and the field's padding cannot drift;
-    // then the air a landed group keeps under the field's hairline (the #553 lead check's Q1).
+    // no air rides on it (the #553 lead check's N1 – the section's 32 stays its layout gap).
     const column = rule('.zen-settings-content').replace(/\s+/g, ' ')
     expect(column).toContain('--zen-settings-find-pad-top: 16px;')
     expect(column).toContain('--zen-settings-find-pad-bottom: 8px;')
-    expect(column).toContain('--zen-settings-landing-air: 32px;')
+    expect(column).not.toContain('landing-air')
     expect(column).toContain(
-      'scroll-padding-top: calc( var(--v2-control) + var(--zen-settings-find-pad-top) + var(--zen-settings-find-pad-bottom) + var(--zen-settings-landing-air) );'
+      'scroll-padding-top: calc( var(--v2-control) + var(--zen-settings-find-pad-top) + var(--zen-settings-find-pad-bottom) );'
     )
     expect(rule('.zen-settings-find')).toMatch(
       /^ {2}padding: var\(--zen-settings-find-pad-top\) 16px var\(--zen-settings-find-pad-bottom\);$/m
