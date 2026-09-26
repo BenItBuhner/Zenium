@@ -18,7 +18,10 @@ name: Android tablet new tab page demo
 # bridge. The driver judges every step from the core's state, the chrome's DOM and the served
 # page's own DOM and fails the run when a claim does not hold; see TabletNewTabDemo.kt. On a
 # build whose host has no new tab page (main's tree before NTP-35) the same driver records the
-# cold start and the blank new tab alone: the boot path's 'before'.
+# cold start and the sidebar's New Tab row opening the URL bar bound to no tab (no tab is made):
+# the boot path's 'before'. The fresh tab's reveal on the tablet is the desktop's – the URL bar
+# in new-tab mode over the served page, the live view hidden under its cover until a back – and
+# the driver reads it as a claim and puts the bar away before it reads the tree or holds a tile.
 #
 # The engine, as the tablet private mode demo: Open in Private Tab runs on a WebView profile of
 # its own, which needs WebViewFeature.MULTI_PROFILE, and the API 34 images' WebView 113 does not
@@ -30,8 +33,6 @@ name: Android tablet new tab page demo
 # `tablet-webview` shard (.github/nightly-drivers/tablet-newtab.json).
 on:
   workflow_dispatch:
-  push:
-    branches: [cursor/android-tablet-newtab-page-9271]
 
 permissions:
   contents: read
