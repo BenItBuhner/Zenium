@@ -26,7 +26,9 @@ import {
  * placeholder slides in); the window's store is the new grid's (its token, its cards alone); the
  * FLIP tracker measures the cells with the slot's transform held off and glides nothing from the
  * grid that left; the strip's indicator is drawn from the old chip's box towards the new one's;
- * the overview leaving mid-slide lands the grid first. Under reduced motion nothing travels.
+ * the overview leaving mid-slide lands the grid first. Under reduced motion nothing travels –
+ * the theme blend (`useTheme.ts`'s, pinned by the hook's own suite) stays, a colour blend being
+ * a fade and not travel (§11.6 as amended).
  */
 
 const WORK = 'work'

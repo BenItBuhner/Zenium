@@ -88,14 +88,16 @@ describe('the space switch plan', () => {
     expect(plan.indicatorGlides).toBe(true)
   })
 
-  it('under reduced motion nothing travels: a 120 ms fade, the blend a cut, the indicator a jump (§11.3, §11.6)', () => {
+  it('under reduced motion nothing travels: a 120 ms fade, the indicator a jump, the blend kept (§11.3; §11.6 as amended)', () => {
     for (const direction of ['forward', 'back', 'none'] as const) {
       const plan = planSpaceSwitch(direction, { reduced: true, rtl: direction === 'back' })
       expect(plan.slide).toBe(0)
       expect(plan.incoming.duration).toBe(120)
       expect(plan.incoming.keyframes).toEqual([{ opacity: 0 }, { opacity: 1 }])
       expect(plan.outgoing.duration).toBe(120)
-      expect(plan.blend).toBe(false)
+      // A colour blend is a fade in colour and moves no pixel; a whole window cutting from one
+      // Space's colour to another's is a flash (#497's design gate).
+      expect(plan.blend).toBe(true)
       expect(plan.indicatorGlides).toBe(false)
     }
   })

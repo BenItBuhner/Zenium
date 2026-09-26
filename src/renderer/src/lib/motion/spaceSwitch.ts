@@ -8,8 +8,11 @@
  * so that they can be pinned by tests without a DOM. `TabOverview.tsx` drives the elements.
  *
  * Reduced motion (§11.3): nothing travels. The incoming grid is a 120 ms opacity fade in place,
- * the outgoing grid's 120 ms fade stays (the fades are declared explicitly), the blend is a cut
- * (§11.6) and the indicator jumps.
+ * the outgoing grid's 120 ms fade stays (the fades are declared explicitly) and the indicator
+ * jumps. The theme blend runs as under full motion: §11.3 removes springs and travel, not fades,
+ * and a colour blend is a fade in colour that moves no pixel, where a whole window cutting from
+ * one Space's colour to another's is a flash (§11.6 as amended at #497's design gate). The blend
+ * itself is `useTheme.ts`'s, which reads no reduced-motion preference.
  */
 
 import { REDUCED_FADE_MS } from './fade'
@@ -69,8 +72,11 @@ export interface SpaceSwitchPlan {
   incoming: { keyframes: Keyframe[]; duration: number; easing: string }
   /** The outgoing grid's still: a fade 1 → 0. */
   outgoing: { duration: number; easing: string }
-  /** The theme blend runs (false: a cut, §11.6). */
-  blend: boolean
+  /**
+   * The theme blend runs – on both branches: a colour blend is a fade, which reduced motion
+   * keeps (§11.6 as amended). The field records the ruling where the plan's tests pin it.
+   */
+  blend: true
   /** The strip's indicator glides (false: a jump). */
   indicatorGlides: boolean
 }
@@ -97,7 +103,7 @@ export function planSpaceSwitch(
         easing: SPACE_EASE
       },
       outgoing: { duration: SPACE_FADE_MS, easing: SPACE_EASE },
-      blend: !options.reduced,
+      blend: true,
       indicatorGlides: !options.reduced
     }
   }

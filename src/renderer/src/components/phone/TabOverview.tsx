@@ -523,8 +523,9 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   // SLIDES in over 250 ms from the side the new Space stands on in the strip's order
   // (`planSpaceSwitch`: later, from the trailing edge; earlier, from the leading), the window's
   // theme blending meanwhile (`useTheme`). Under reduced motion nothing travels (§11.3): the
-  // new grid fades in place over 120 ms, the blend is a cut (§11.6). The Private pane's grid is
-  // one slot for the pane's life (its key the pane's), so it never slides.
+  // new grid fades in place over 120 ms and the indicator jumps; the blend stays, a colour blend
+  // being a fade and not travel (§11.6 as amended). The Private pane's grid is one slot for the
+  // pane's life (its key the pane's), so it never slides.
   const gridKey = pane === 'tabs' ? space.id : `#${pane}`
   // The slot in its slide, for as long as it slides – the FLIP tracker measures the cells with
   // its transform held off (`useFlip`'s `frame`), so nothing reads the slide as a move.
