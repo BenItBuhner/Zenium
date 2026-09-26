@@ -334,6 +334,27 @@ describe('the Magic Stack on the page (NTP-16)', () => {
     expect(dots[1]!.getAttribute('aria-label')).toBe('Page 2 of 4: Downloads')
   })
 
+  it('the dots follow the strip’s scroll on their own subscription, the strip itself untouched', () => {
+    render(stack(state()))
+    const strip = q<HTMLUListElement>('.zen-mstack-strip')!
+    // happy-dom lays nothing out: a card is 0 wide, so the pitch is the 8 gap alone.
+    const observer = new MutationObserver(() => undefined)
+    observer.observe(strip, { attributes: true, childList: true, subtree: true })
+    Object.defineProperty(strip, 'scrollLeft', { configurable: true, value: 8 })
+    act(() => {
+      strip.dispatchEvent(new Event('scroll'))
+    })
+    const dots = qa('.zen-mstack-dots [role="tab"]')
+    expect(dots.map((d) => d.getAttribute('aria-selected'))).toEqual([
+      'false',
+      'true',
+      'false',
+      'false'
+    ])
+    expect(observer.takeRecords()).toEqual([])
+    observer.disconnect()
+  })
+
   it('draws nothing at all when no module has content, or every one is hidden', () => {
     render(
       stack(

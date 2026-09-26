@@ -1,4 +1,4 @@
-import type { JSX, ReactNode, RefObject, UIEvent } from 'react'
+import type { JSX, ReactNode, RefObject } from 'react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Bookmark,
@@ -90,7 +90,6 @@ export function MagicStack({
   // The card on its way out: hidden already, drawn once more for the fade.
   const [leaving, setLeaving] = useState<MagicStackModuleId | null>(null)
   const stripRef = useRef<HTMLUListElement>(null)
-  const [page, setPage] = useState(0)
   useStackFlip(stripRef)
 
   // The fade's end takes the card out; a timer stands in for an `animationend` that never comes
@@ -130,35 +129,12 @@ export function MagicStack({
     )
   }
 
-  const onScroll = (e: UIEvent<HTMLUListElement>): void => {
-    const el = e.currentTarget
-    const first = el.firstElementChild as HTMLElement | null
-    if (!first) return
-    const pitch = first.getBoundingClientRect().width + CARD_GAP
-    setPage(pageAt(el.scrollLeft, pitch, el.children.length))
-  }
-
-  const goTo = (index: number): void => {
-    const el = stripRef.current
-    const target = el?.children[index] as HTMLElement | undefined
-    if (!el || !target) return
-    el.scrollTo({ left: target.offsetLeft, behavior: reducedMotion() ? 'auto' : 'smooth' })
-  }
-
-  const current = Math.min(page, cards.length - 1)
-
   return (
     <section
       className={cn('zen-mstack w-full max-w-[520px]', dock === 'bottom' ? 'mb-6' : 'mt-6')}
       aria-label="Magic Stack"
     >
-      <ul
-        ref={stripRef}
-        className="zen-mstack-strip"
-        role="list"
-        aria-roledescription="carousel"
-        onScroll={onScroll}
-      >
+      <ul ref={stripRef} className="zen-mstack-strip" role="list" aria-roledescription="carousel">
         {cards.map((card) => (
           <li
             key={card.id}
@@ -175,25 +151,63 @@ export function MagicStack({
           </li>
         ))}
       </ul>
-      {cards.length > 1 && (
-        // The pages, named and pickable (Chrome's strip announces its page the same way).
-        <div className="zen-mstack-dots" role="tablist" aria-label="Magic Stack pages">
-          {cards.map((card, index) => (
-            <button
-              key={card.id}
-              type="button"
-              role="tab"
-              className="zen-mstack-dot"
-              aria-selected={index === current}
-              aria-label={`Page ${index + 1} of ${cards.length}: ${magicStackModule(card.id).title}`}
-              onClick={() => goTo(index)}
-            >
-              <span aria-hidden />
-            </button>
-          ))}
-        </div>
-      )}
+      {cards.length > 1 && <PageDots strip={stripRef} cards={cards} />}
     </section>
+  )
+}
+
+/**
+ * The pages, named and pickable (Chrome's strip announces its page the same way). The dots
+ * follow the strip's scroll on their own subscription: a page change re-renders the dots alone,
+ * never the strip – a strip re-rendered as the finger crosses the half-way mark would re-run the
+ * FLIP commit under it (a forced layout and a transform write per card, on a snap container
+ * mid-swipe).
+ */
+function PageDots({
+  strip,
+  cards
+}: {
+  strip: RefObject<HTMLUListElement | null>
+  cards: MagicStackCard[]
+}): JSX.Element {
+  const [page, setPage] = useState(0)
+  useEffect(() => {
+    const el = strip.current
+    if (!el) return
+    const onScroll = (): void => {
+      const first = el.firstElementChild as HTMLElement | null
+      if (!first) return
+      const pitch = first.getBoundingClientRect().width + CARD_GAP
+      setPage(pageAt(el.scrollLeft, pitch, el.children.length))
+    }
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => el.removeEventListener('scroll', onScroll)
+  }, [strip])
+
+  const goTo = (index: number): void => {
+    const el = strip.current
+    const target = el?.children[index] as HTMLElement | undefined
+    if (!el || !target) return
+    el.scrollTo({ left: target.offsetLeft, behavior: reducedMotion() ? 'auto' : 'smooth' })
+  }
+
+  const current = Math.min(page, cards.length - 1)
+  return (
+    <div className="zen-mstack-dots" role="tablist" aria-label="Magic Stack pages">
+      {cards.map((card, index) => (
+        <button
+          key={card.id}
+          type="button"
+          role="tab"
+          className="zen-mstack-dot"
+          aria-selected={index === current}
+          aria-label={`Page ${index + 1} of ${cards.length}: ${magicStackModule(card.id).title}`}
+          onClick={() => goTo(index)}
+        >
+          <span aria-hidden />
+        </button>
+      ))}
+    </div>
   )
 }
 
