@@ -55,9 +55,10 @@ class NotificationsTest {
      * something the user is waiting to see), and Android never raises an existing channel's
      * importance – so the channel is re-made under a new id and the old `zenium.sharing` is in the
      * registry's legacy list, deleted at the first registration in a process, as Chrome deletes its
-     * `LEGACY_CHANNEL_IDS`. A deleted id must never be given out again (Android un-deletes it with
-     * its old settings), so the old literal may appear in the registry alone: no poster, no test
-     * helper, no driver builds on it.
+     * `LEGACY_CHANNEL_IDS` (the deletion itself, and its place before the fixed set, is pinned by
+     * [theFirstRegistrationDeletesTheLegacyIdsThenMakesGeneralAndTheFixedSetOnce]). A deleted id
+     * must never be given out again (Android un-deletes it with its old settings), so the old
+     * literal may appear in the registry alone: no poster, no test helper, no driver builds on it.
      */
     @Test
     fun theLegacySharingIdIsDeletedOnUpgradeAndNeverReused() {
@@ -100,6 +101,104 @@ class NotificationsTest {
             setOf(Notifications.BROWSER, Notifications.DOWNLOADS, Notifications.COMPLETED_DOWNLOADS, Notifications.PRIVATE, Notifications.MEDIA, Notifications.CAPTURE, Notifications.UPDATES, Notifications.SHARING),
             Notifications.fixed.toSet()
         )
+    }
+
+    // --- the registration ---------------------------------------------------------------------------------
+
+    /** A fake of the system's three channel calls that writes each one down in order; one call may be made to throw. */
+    private class RecordingSystem : Notifications.ChannelSystem {
+        val calls = mutableListOf<String>()
+        var failOn: String? = null
+
+        override fun delete(id: String) = record("delete $id")
+        override fun group(group: Notifications.Group) = record("group ${group.id}")
+        override fun channel(channel: Notifications.Channel) = record("channel ${channel.id}")
+
+        private fun record(call: String) {
+            calls += call
+            if (call == failOn) throw IllegalStateException(call)
+        }
+    }
+
+    /** What the process's first registration must do, in order: the legacy ids deleted, General made, the eight fixed channels made. */
+    private val firstRegistration = listOf("delete zenium.sharing", "group zenium.general") + Notifications.fixed.map { "channel ${it.id}" }
+
+    /**
+     * The act behind the legacy list, pinned on a fake of the system: the process's first
+     * `ensure` deletes the legacy ids before anything is created (an id deleted after its
+     * re-creation would take the new channel with it), then makes General, then the eight fixed
+     * channels in the settings page's order – and only that first call does. A later `ensure` of a
+     * fixed channel makes nothing (it came with the set); a later `ensure` of a site's or an app's
+     * channel makes its group and itself alone. Drop the deletion loop and this fails.
+     */
+    @Test
+    fun theFirstRegistrationDeletesTheLegacyIdsThenMakesGeneralAndTheFixedSetOnce() {
+        val system = RecordingSystem()
+        val registrar = Notifications.Registrar()
+        registrar.ensure(system, Notifications.DOWNLOADS)
+        assertEquals(firstRegistration, system.calls)
+        assertEquals("delete zenium.sharing", system.calls.first())
+        system.calls.clear()
+        registrar.ensure(system, Notifications.SHARING)
+        assertEquals(emptyList<String>(), system.calls)
+        val site = Notifications.site("https://news.example", 1L)
+        registrar.ensure(system, site)
+        assertEquals(listOf("group zenium.sites", "channel ${site.id}"), system.calls)
+        system.calls.clear()
+        val app = Notifications.webApp(sketch, 1L)
+        registrar.ensure(system, app)
+        assertEquals(listOf("group ${Notifications.webAppGroupId(sketch.shortcutId)}", "channel ${app.id}"), system.calls)
+    }
+
+    /** A site's channel on the process's first call: the whole registration first, the caller's group and channel after it. */
+    @Test
+    fun aDynamicChannelOnTheFirstCallComesAfterTheFixedSet() {
+        val system = RecordingSystem()
+        val site = Notifications.site("https://news.example", 1L)
+        Notifications.Registrar().ensure(system, site)
+        assertEquals(firstRegistration + listOf("group zenium.sites", "channel ${site.id}"), system.calls)
+    }
+
+    /**
+     * A system call that fails is swallowed – every other call is still made and the poster still
+     * posts – and the registration is tried again at the next call instead of being marked done
+     * for the process; once every call went through, it is done and never repeated.
+     */
+    @Test
+    fun aFailedRegistrationIsRetriedAtTheNextCallAndThenDone() {
+        val system = RecordingSystem().apply { failOn = "channel ${Notifications.MEDIA.id}" }
+        val registrar = Notifications.Registrar()
+        registrar.ensure(system, Notifications.DOWNLOADS)
+        assertEquals(firstRegistration, system.calls)
+        system.calls.clear()
+        system.failOn = null
+        registrar.ensure(system, Notifications.DOWNLOADS)
+        assertEquals(firstRegistration, system.calls)
+        system.calls.clear()
+        registrar.ensure(system, Notifications.DOWNLOADS)
+        assertEquals(emptyList<String>(), system.calls)
+    }
+
+    /**
+     * Nothing registers a channel on the boot path: the three files that run at start – the
+     * Application, the Activity and the `Host` it builds – never call `Notifications.ensure` (a
+     * poster does, at its first post) nor reach the registration behind it. A text pin, as
+     * `PrivateLockTest` reads `Host.kt`: a registration added to `Host`'s body went green without it.
+     */
+    @Test
+    fun nothingRegistersAChannelOnTheBootPath() {
+        val sources = File(repoRoot(), "android/app/src/main/kotlin/app/zen/chromium")
+        val registration = Regex("""\bNotifications\.ensure\(|\bregisterFixed\b|\bRegistrar\b|\bChannelSystem\b""")
+        for (name in listOf("ZenApplication.kt", "MainActivity.kt", "Host.kt")) {
+            val file = File(sources, name)
+            assertTrue(name, file.isFile)
+            val code = file.readText().replace(Regex("""/\*[\s\S]*?\*/"""), "").lines().filterNot { it.trim().startsWith("//") }.joinToString("\n")
+            assertFalse("$name registers a notification channel on the boot path", registration.containsMatchIn(code))
+        }
+        // The registration has the one entry: `registerFixed` is private to the registrar, reached through `ensure` alone.
+        val registry = File(sources, "Notifications.kt").readText()
+        assertTrue(Regex("""private fun registerFixed\(""").containsMatchIn(registry))
+        assertEquals(1, Regex("""registerFixed\(system\)""").findAll(registry).count())
     }
 
     // --- the posters ---------------------------------------------------------------------------------------

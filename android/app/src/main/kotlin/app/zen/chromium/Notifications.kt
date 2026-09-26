@@ -19,18 +19,19 @@ import app.zen.chromium.ext.ExtensionNotifications
  * in Zenium's voice.
  *
  * Nothing here runs on the boot path. A channel is created at its poster's first use through
- * [ensure], and the first such call in a process registers the whole fixed set – Chrome's
- * startup channels, made once per process on the first post of any notification rather than in
- * the Application or the Activity – and deletes the [legacy] ids, as Chrome's
- * `ChromeChannelDefinitions` deletes its `LEGACY_CHANNEL_IDS`. On a system that already has a
+ * [ensure], and the first such call in a process deletes the [legacy] ids, as Chrome's
+ * `ChromeChannelDefinitions` deletes its `LEGACY_CHANNEL_IDS`, then registers the whole fixed
+ * set – Chrome's startup channels, made once per process on the first post of any notification
+ * rather than in the Application or the Activity. On a system that already has a
  * channel under the id, `createNotificationChannel` updates its name, its description and its
  * group (a channel that had none), lowers an importance the user never touched, and leaves
  * everything the user set alone – so an upgrader's channels move under General and take the
  * aligned names with their settings intact.
  *
  * The plain [Channel] and [Group] values are what the JVM tests read (`NotificationsTest`); the
- * system's [NotificationChannel] is built from them in [ensure] alone, and nowhere else in the
- * app (the test scans the sources for that).
+ * system's [NotificationChannel] is built from them here alone ([AndroidChannelSystem]), and
+ * nowhere else in the app (the test scans the sources for that), and the registration itself
+ * runs on the JVM against a fake of the system's calls ([Registrar], [ChannelSystem]).
  */
 object Notifications {
     /** A channel group as the system's notification settings list it. */
@@ -177,34 +178,91 @@ object Notifications {
 
     // --- registration ------------------------------------------------------------------------------------
 
-    private var registered = false
-
     /**
-     * The channel a poster is about to post on, made if the system has none under its id, and –
-     * once per process, on the first call – the whole fixed set with its group, the [legacy] ids
-     * deleted. Synchronized so a second poster on another thread never posts before the first
-     * call has made its channel. Returns the channel's id for the builder.
+     * The three calls the registry makes on the system, behind one seam so that `NotificationsTest`
+     * can drive a [Registrar] against a recording fake and pin the act – the [legacy] ids deleted
+     * before anything is created, then General, then the fixed set, once per process. The
+     * notification manager ([AndroidChannelSystem]) is the one implementation in the app.
      */
-    @Synchronized
-    fun ensure(context: Context, channel: Channel): String {
-        val system = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        registerFixed(system)
-        if (fixed.none { it.id == channel.id }) {
-            runCatching {
-                channel.group?.let { system.createNotificationChannelGroup(NotificationChannelGroup(it.id, it.name)) }
-                system.createNotificationChannel(toSystem(channel))
-            }
-        }
-        return channel.id
+    internal interface ChannelSystem {
+        fun delete(id: String)
+        fun group(group: Group)
+        fun channel(channel: Channel)
     }
 
-    private fun registerFixed(system: NotificationManager) {
-        if (registered) return
-        registered = true
-        // A deleted id is a no-op when the system never had it, so upgraders and fresh installs share the path.
-        for (id in legacy) runCatching { system.deleteNotificationChannel(id) }
-        runCatching { system.createNotificationChannelGroup(NotificationChannelGroup(GENERAL.id, GENERAL.name)) }
-        for (channel in fixed) runCatching { system.createNotificationChannel(toSystem(channel)) }
+    /** The system's notification manager behind the seam; the [NotificationChannel] is built here alone. */
+    private class AndroidChannelSystem(private val manager: NotificationManager) : ChannelSystem {
+        override fun delete(id: String) {
+            manager.deleteNotificationChannel(id)
+        }
+
+        override fun group(group: Group) {
+            manager.createNotificationChannelGroup(NotificationChannelGroup(group.id, group.name))
+        }
+
+        override fun channel(channel: Channel) {
+            manager.createNotificationChannel(toSystem(channel))
+        }
+    }
+
+    /**
+     * One process's registration: the fixed set is registered on the first [ensure] and not again.
+     * [Notifications] holds the process's one instance; a test makes its own and drives it through
+     * a fake [ChannelSystem].
+     */
+    internal class Registrar {
+        private var registered = false
+
+        /**
+         * Makes `channel` current on the system – created, or updated where the system already has
+         * it – after the process's one registration of the fixed set ([registerFixed]). A fixed
+         * channel is made with the set, so nothing more is called for it. Synchronized so a second
+         * poster on another thread never posts before the first call has made its channel.
+         */
+        @Synchronized
+        fun ensure(system: ChannelSystem, channel: Channel) {
+            registerFixed(system)
+            if (fixed.none { it.id == channel.id }) {
+                runCatching {
+                    channel.group?.let { system.group(it) }
+                    system.channel(channel)
+                }
+            }
+        }
+
+        /**
+         * Once per process, in this order: the [legacy] ids deleted (a no-op when the system never
+         * had one, so upgraders and fresh installs share the path; before any creation, so a deleted
+         * id can never take a channel made a moment earlier), then General, then every fixed channel
+         * in [fixed]'s order. Done only when every call went through: a failure is swallowed so the
+         * poster still posts, and the registration is tried again at the next call rather than
+         * lost for the process.
+         */
+        private fun registerFixed(system: ChannelSystem) {
+            if (registered) return
+            var failures = 0
+            fun attempt(call: () -> Unit) {
+                if (runCatching(call).isFailure) failures++
+            }
+            for (id in legacy) attempt { system.delete(id) }
+            attempt { system.group(GENERAL) }
+            for (channel in fixed) attempt { system.channel(channel) }
+            registered = failures == 0
+        }
+    }
+
+    private val registrar = Registrar()
+
+    /**
+     * The channel a poster is about to post on – created, or updated where the system already has
+     * it (its name, its description, a group it lacked; an importance only lowered) – and, once per
+     * process on the first call, the whole fixed set with its group, the [legacy] ids deleted first
+     * ([Registrar]). Returns the channel's id for the builder.
+     */
+    fun ensure(context: Context, channel: Channel): String {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        registrar.ensure(AndroidChannelSystem(manager), channel)
+        return channel.id
     }
 
     private fun toSystem(channel: Channel): NotificationChannel =

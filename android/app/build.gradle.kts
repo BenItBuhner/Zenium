@@ -236,6 +236,10 @@ android {
             ).withPathSensitivity(PathSensitivity.RELATIVE)
             it.inputs.dir(projectDir.resolve("src/main/res/values")).withPathSensitivity(PathSensitivity.RELATIVE)
             it.inputs.dir(projectDir.resolve("src/main/res/anim")).withPathSensitivity(PathSensitivity.RELATIVE)
+            // NotificationsTest scans every source set for a deleted channel id, and the drivers
+            // (androidTest) are not on the unit tests' classpath: name them as an input so a
+            // driver-only change re-runs the scan instead of a cached pass standing for it.
+            it.inputs.dir(projectDir.resolve("src/androidTest/kotlin")).withPathSensitivity(PathSensitivity.RELATIVE)
         }
     }
 
