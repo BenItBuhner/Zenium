@@ -1,0 +1,14 @@
+{
+  "id": "memory-pressure",
+  "order": 89,
+  "class": "MemoryPressureDemo",
+  "shard": "phone-f",
+  "mirrors": "android-memory-pressure-demo.yml:light",
+  "dir": "memory-pressure-demo",
+  "env": {
+    "DEMO_THEME": "light"
+  },
+  "timeout": 900,
+  "estimate": 5,
+  "note": "The memory-pressure row (OS-37, W6-6): thirty background pages with ballast, am send-trim-memory at RUNNING_MODERATE / RUNNING_LOW / RUNNING_CRITICAL and BACKGROUND behind Home, the return to a sleeping page read thirty times a second, the renderer priorities, the memory table from dumpsys meminfo. The workflow runs light and dark; the nightly runs light. The driver waits out the core's one-minute recency guard once (the thirty pages' creation), and Home and back once. The estimate is the author's, not yet a nightly's measure. First on phone-f, the shard opened for it."
+}

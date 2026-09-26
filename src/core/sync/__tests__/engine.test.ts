@@ -547,6 +547,25 @@ describe('an edit is stamped where it is made, not where it is noticed', () => {
         )
         return undefined
       }
+    },
+    {
+      name: 'a renamed key (the 0.4.x restoreSession switch folded into startup at boot, the switch mirrored beside it for a release)',
+      upgrade: (files, record) => {
+        // The previous build's record: the switch (on, as the untouched default reads), no
+        // `startup`; this build's mirrors the switch and adds the key it folded.
+        const { startup: _folded, ...asWritten } = record
+        void _folded
+        expect(asWritten.restoreSession).toBe(true)
+        asPreviousBuild(
+          files,
+          (s) => {
+            delete s.startup
+            s.restoreSession = true
+          },
+          asWritten
+        )
+        return undefined
+      }
     }
   ]
 

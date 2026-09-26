@@ -1,0 +1,10 @@
+{
+  "id": "media-ui",
+  "order": 107,
+  "class": "MediaUiDemo",
+  "shard": "webview",
+  "mirrors": "android-media-demo.yml:driver=ui",
+  "dir": "media-demo",
+  "timeout": 900,
+  "estimate": 5
+}

@@ -1,0 +1,14 @@
+{
+  "id": "snapshot",
+  "order": 36,
+  "class": "SnapshotSwapDemo",
+  "shard": "phone-b",
+  "mirrors": "android-snapshot-demo.yml",
+  "dir": "snapshot-demo",
+  "script": ".github/scripts/android-snapshot-demo.sh",
+  "env": {
+    "DEMO_THEME": "light"
+  },
+  "setup": ["ffmpeg"],
+  "estimate": 3
+}

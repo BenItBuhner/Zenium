@@ -1,0 +1,14 @@
+{
+  "id": "fullscreen",
+  "order": 109,
+  "class": "FullscreenDemo",
+  "shard": "webview",
+  "mirrors": "android-fullscreen-demo.yml",
+  "dir": "media-demo",
+  "env": {
+    "DEMO_REVOKE": "android.permission.CAMERA"
+  },
+  "timeout": 1200,
+  "estimate": 8,
+  "note": "CAMERA revoked before the driver, granted back after. Thirteen scenes with the exit hint's touch, the chrome's motion pair and rotate-to-fullscreen's eight turns of the screen (MOT-32, MED-02, MED-03)."
+}

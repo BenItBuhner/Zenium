@@ -6,7 +6,7 @@
  */
 import type { SiteDataSiteState } from './siteData'
 import type { CertificateDetails, CertificateError } from './types'
-import { FILE_SITE } from './contentSettings'
+import { FILE_SITE, contentSetting } from './contentSettings'
 import {
   BLANK_URL,
   ERROR_URL_PREFIX,
@@ -394,6 +394,9 @@ export const PERMISSION_LABELS: Record<string, string> = {
   'idle-detection': 'Know when you are active',
   ads: 'Ads and trackers',
   sound: 'Sound',
+  // A stored answer the desktop's toast writes ("Turn off for this site", MW-28): the site card
+  // and the phone's sheet name it as the Site settings row does, not by its id.
+  'auto-picture-in-picture': 'Automatic picture-in-picture',
   usb: 'USB devices',
   serial: 'Serial ports',
   hid: 'HID devices',
@@ -403,12 +406,15 @@ export const PERMISSION_LABELS: Record<string, string> = {
 /**
  * A stored permission may carry a qualifier after a colon (`openExternal:tel`, `storage-access:
  * https://embedder.example`): the label names the permission and keeps the qualifier in brackets.
+ * A name the map above does not carry takes the content-settings catalogue's label for its row
+ * (every stored per-site answer is a catalogue id), and only a name the catalogue does not know
+ * either reads as itself.
  */
 export function permissionLabel(permission: string): string {
   const colon = permission.indexOf(':')
   const name = colon === -1 ? permission : permission.slice(0, colon)
   const qualifier = colon === -1 ? null : permission.slice(colon + 1)
-  const label = PERMISSION_LABELS[name] ?? name
+  const label = PERMISSION_LABELS[name] ?? contentSetting(name)?.label ?? name
   if (!qualifier) return label
   if (name === 'openExternal') return `Open ${qualifier}: links`
   if (name === 'fileSystem' && qualifier === 'read') return 'View folders you picked'

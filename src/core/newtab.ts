@@ -353,13 +353,15 @@ export class NewTabService {
   }
 
   /**
-   * Where a Home control goes (Settings › Homepage, SET-36 / NTP-30): the user's page, or the
-   * new tab page – the served page where it is on, the blank tab the phone's chrome draws its
-   * page over elsewhere; a "Specific page" homepage with no address yet opens that too. Null
-   * with the homepage off: the Home controls hide and nothing runs.
+   * Where a Home control goes (Settings › Homepage, SET-36 / NTP-30): the user's page – or an
+   * extension's over it while one holds the setting (`chrome_settings_overrides.homepage`,
+   * `BrowserState.effectiveHomepage`) – or the new tab page: the served page where it is on,
+   * the blank tab the phone's chrome draws its page over elsewhere; a "Specific page" homepage
+   * with no address yet opens that too. Null with the homepage off: the Home controls hide and
+   * nothing runs, whatever an extension declares.
    */
   homepageUrl(): string | null {
-    const { homepage } = this.browser.state.settings
+    const homepage = this.browser.state.effectiveHomepage()
     if (homepage.mode === 'off') return null
     if (homepage.mode === 'url' && homepage.url) return homepage.url
     return this.homeUrl() ?? BLANK_URL

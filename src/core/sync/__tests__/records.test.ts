@@ -218,21 +218,63 @@ describe('collectLocal', () => {
 
   it('keeps the device-local settings out of the settings record, every other key in (W5-F3)', () => {
     const src = sources()
-    // A device that chose both ways: the record carries neither choice.
+    // A device that chose both ways, and answered the choice screen: the record carries none.
     src.settings.sidebarExpandOnHover = false
     src.settings.onboardingDone = true
+    src.settings.searchChoice = { engineId: 'duckduckgo', region: 'DE', madeAt: 1, version: 1 }
     const data = collectLocal(src, defaultScope()).get('settings')?.data as Record<string, unknown>
-    expect(DEVICE_LOCAL_SETTINGS).toEqual(['onboardingDone', 'sidebarExpandOnHover'])
+    expect(DEVICE_LOCAL_SETTINGS).toEqual([
+      'onboardingDone',
+      'sidebarExpandOnHover',
+      'searchChoice'
+    ])
     expect(data).not.toHaveProperty('sidebarExpandOnHover')
     expect(data).not.toHaveProperty('onboardingDone')
+    expect(data).not.toHaveProperty('searchChoice')
     const local = new Set<string>(DEVICE_LOCAL_SETTINGS)
-    expect(Object.keys(data)).toEqual(
-      Object.keys(DEFAULT_SETTINGS).filter((key) => !local.has(key))
-    )
+    // Every other key, plus the retired switch mirrored beside `startup` for a release.
+    expect(Object.keys(data)).toEqual([
+      ...Object.keys(DEFAULT_SETTINGS).filter((key) => !local.has(key)),
+      'restoreSession'
+    ])
     // The helper copies: the device's own settings keep their values.
     expect(withoutDeviceLocalSettings(src.settings)).not.toBe(src.settings)
     expect(src.settings.sidebarExpandOnHover).toBe(false)
     expect(src.settings.onboardingDone).toBe(true)
+  })
+
+  it('mirrors the 0.4.x restoreSession switch beside startup for one release – on unless the mode is newTab – stamped with it as one item; a profile from before the key sends its record as it was', () => {
+    const src = sources()
+    const data = (): Record<string, unknown> =>
+      collectLocal(src, defaultScope()).get(SETTINGS_RECORD_ID)!.data as Record<string, unknown>
+    expect(src.settings).not.toHaveProperty('restoreSession')
+    expect(data().startup).toEqual({ mode: 'continue', pages: [] })
+    expect(data().restoreSession).toBe(true)
+    src.settings.startup = { mode: 'newTab', pages: [] }
+    expect(data().restoreSession).toBe(false)
+    // `pages` reads as on: the phone boots it as continue.
+    src.settings.startup = { mode: 'pages', pages: ['https://zen.test/'] }
+    expect(data().restoreSession).toBe(true)
+    // An edit of the mode stamps the switch with it: the two are one item to a peer.
+    src.settings.startup = { mode: 'continue', pages: [] }
+    const seeded = diffLocal({}, collectLocal(src, defaultScope()), 1000)
+    const migrated = diffLocal(seeded.meta, collectLocal(src, defaultScope()), 2000)
+    src.settings.startup = { mode: 'newTab', pages: [] }
+    const edited = diffLocal(migrated.meta, collectLocal(src, defaultScope()), 3000)
+    const keys = edited.meta[SETTINGS_RECORD_ID]!.keys!
+    expect(keys.startup!.modified).toBe(3000)
+    expect(keys.restoreSession!.modified).toBe(3000)
+    expect(keys.colorScheme!.modified).toBe(0)
+    // The switch alone changing cannot happen: it is derived. A settings object from a build
+    // before `startup` (the golden fixtures) has no mode to mirror and sends the switch it holds.
+    const old = { ...src.settings, restoreSession: true } as Record<string, unknown>
+    delete old.startup
+    const asBefore = collectLocal(
+      { ...src, settings: old as unknown as typeof src.settings },
+      defaultScope()
+    ).get(SETTINGS_RECORD_ID)!.data as Record<string, unknown>
+    expect(asBefore.restoreSession).toBe(true)
+    expect(asBefore).not.toHaveProperty('startup')
   })
 })
 
@@ -417,11 +459,13 @@ describe('the settings record, key by key', () => {
     active: true
   })
 
-  it('settingsKeyGroup: the two pairs merge as one item each, every other key on its own', () => {
+  it('settingsKeyGroup: the three pairs merge as one item each, every other key on its own', () => {
     expect(settingsKeyGroup('searchEngineId')).toBe('searchEngines')
     expect(settingsKeyGroup('searchEngines')).toBe('searchEngines')
     expect(settingsKeyGroup('newTabPhone')).toBe('newTab')
     expect(settingsKeyGroup('newTab')).toBe('newTab')
+    expect(settingsKeyGroup('restoreSession')).toBe('startup')
+    expect(settingsKeyGroup('startup')).toBe('startup')
     expect(settingsKeyGroup('colorScheme')).toBe('colorScheme')
   })
 
@@ -749,6 +793,98 @@ describe('the settings record, key by key', () => {
       hash: hashData({ v: 1 }),
       modified: 3,
       deleted: false
+    })
+  })
+
+  it('winningRemote: across a rename, an old peer’s retired key is weighed against this device’s successor as one item – a device holding `startup` alone is not an unheld group the switch beats once per value', () => {
+    const NEWTAB = { mode: 'newTab', pages: [] }
+    // This device on the new build, the mirror already off: `startup` alone, edited at 10.
+    const alone: MetaMap = { [SETTINGS_RECORD_ID]: meta(10, { startup: NEWTAB, x: 'x1' }) }
+    // The peer's older switch loses: nothing lands, the meta is untouched.
+    expect(
+      winningRemote(alone, new Map([[SETTINGS_RECORD_ID, record(5, { restoreSession: true })]]))
+    ).toEqual([])
+    expect(
+      winningRemote(alone, new Map([[SETTINGS_RECORD_ID, record(10, { restoreSession: true })]]))
+    ).toEqual([])
+    // The peer's later flip wins, as the switch alone: `apply` folds it.
+    expect(
+      winningRemote(alone, new Map([[SETTINGS_RECORD_ID, record(20, { restoreSession: true })]]))
+    ).toEqual([{ ...settings(), modified: 20, data: { restoreSession: true } }])
+    // With the mirror on (this device sends both, stamped together), the same three answers –
+    // and a peer's switch that says what this device's already says has nothing to apply.
+    const mirrored: MetaMap = {
+      [SETTINGS_RECORD_ID]: meta(10, { startup: NEWTAB, restoreSession: false, x: 'x1' })
+    }
+    expect(
+      winningRemote(mirrored, new Map([[SETTINGS_RECORD_ID, record(5, { restoreSession: true })]]))
+    ).toEqual([])
+    expect(
+      winningRemote(mirrored, new Map([[SETTINGS_RECORD_ID, record(20, { restoreSession: true })]]))
+    ).toEqual([{ ...settings(), modified: 20, data: { restoreSession: true } }])
+    expect(
+      winningRemote(
+        mirrored,
+        new Map([[SETTINGS_RECORD_ID, record(20, { restoreSession: false })]])
+      )
+    ).toEqual([])
+    // A new peer carries both: the pair wins or loses whole, `startup` preferred at apply.
+    const both = record(20, {
+      startup: { mode: 'pages', pages: ['https://p.test/'] },
+      restoreSession: true
+    })
+    expect(winningRemote(mirrored, new Map([[SETTINGS_RECORD_ID, both]]))).toEqual([both])
+    // The same rule for the older rename: a 0.3.x phone's `newTabPhone` against `newTab`.
+    const desk: MetaMap = { [SETTINGS_RECORD_ID]: meta(10, { newTab: { enabled: true } }) }
+    expect(
+      winningRemote(desk, new Map([[SETTINGS_RECORD_ID, record(5, { newTabPhone: { a: 1 } })]]))
+    ).toEqual([])
+    expect(
+      winningRemote(desk, new Map([[SETTINGS_RECORD_ID, record(11, { newTabPhone: { a: 1 } })]]))
+    ).toEqual([{ ...settings(), modified: 11, data: { newTabPhone: { a: 1 } } }])
+  })
+
+  it('seedSettingsMeta: a key the entry did not know inherits the newest time of its group siblings – `startup` the retired switch’s – so an old peer’s older switch cannot revert this device’s later choice', () => {
+    const YESTERDAY = 1_000_000
+    const TWO_WEEKS_AGO = YESTERDAY - 13 * 24 * 60 * 60 * 1000
+    const NEWTAB = { mode: 'newTab', pages: [] }
+    // The desktop flipped its switch off yesterday, on the old build; the phone flipped its
+    // own on two weeks ago and the desktop had pulled nothing since (a tie at 0 elsewhere).
+    const before = meta(0, { restoreSession: false, x: 'x1' }, { restoreSession: YESTERDAY, x: 0 })
+    // Upgrade: the boot folds the switch into `startup`, the record carries it and the mirror.
+    const seeded = seedSettingsMeta(before, { startup: NEWTAB, restoreSession: false, x: 'x1' })
+    expect(seeded.keys).toEqual({
+      startup: entry(hashData(NEWTAB), YESTERDAY),
+      restoreSession: entry(hashData(false), YESTERDAY),
+      x: entry(hashData('x1'), 0)
+    })
+    expect(seeded.modified).toBe(0)
+    // The phone's two-week-old flip meets the group at yesterday: the desktop's choice stands.
+    const phone = record(TWO_WEEKS_AGO, { restoreSession: true, x: 'x1' })
+    expect(
+      winningRemote({ [SETTINGS_RECORD_ID]: seeded }, new Map([[SETTINGS_RECORD_ID, phone]]))
+    ).toEqual([])
+    // A flip the phone makes after the desktop's is newer and wins, as it should.
+    const later = record(YESTERDAY + 1, { restoreSession: true, x: 'x1' })
+    expect(
+      winningRemote({ [SETTINGS_RECORD_ID]: seeded }, new Map([[SETTINGS_RECORD_ID, later]]))
+    ).toEqual([{ ...settings(), modified: YESTERDAY + 1, data: { restoreSession: true } }])
+    // Without the mirror the successor alone carries the time; a key without siblings is at 0.
+    const bare = seedSettingsMeta(before, { startup: NEWTAB, x: 'x1', fresh: 1 })
+    expect(bare.keys).toEqual({
+      startup: entry(hashData(NEWTAB), YESTERDAY),
+      x: entry(hashData('x1'), 0),
+      fresh: entry(hashData(1), 0)
+    })
+    // The seed never raises the group's time: `searchEngineId` new beside `searchEngines` at 7
+    // takes 7, what the group was at already.
+    const pair = seedSettingsMeta(meta(0, { searchEngines: [] }, { searchEngines: 7 }), {
+      searchEngines: [],
+      searchEngineId: 'a'
+    })
+    expect(pair.keys).toEqual({
+      searchEngines: entry(hashData([]), 7),
+      searchEngineId: entry(hashData('a'), 7)
     })
   })
 

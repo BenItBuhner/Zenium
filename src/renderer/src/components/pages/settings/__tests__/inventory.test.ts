@@ -91,6 +91,7 @@ const ELECTRON: HostCapabilities = {
   readAloud: true,
   pageLanguages: true,
   genericFontFamilies: true,
+  caretBrowsing: true,
   placementAnswered: false
 }
 
@@ -218,6 +219,7 @@ function desktopState(): UIState {
     downloads: [],
     downloadsProgress: { active: 0, progress: 0 },
     bookmarks: [],
+    readingList: [],
     newTabShortcuts: [{ id: 'nt1', title: 'Zenium', url: 'https://zenium.example/' }],
     newTabHiddenHosts: [],
     newTabBackground: { image: false, canPick: true, accent: null },
@@ -449,7 +451,9 @@ const INVENTORY: Record<string, readonly string[]> = {
     'Open new tabs',
     'Show separator between pinned and regular tabs',
     'Ctrl+Tab stays within Essentials or regular tabs',
-    'Restore previous session on startup',
+    // W6-3: the "Restore previous session on startup" switch became Settings › On startup's
+    // choice on the windowed hosts (the phone keeps the switch).
+    'When Zenium starts',
     'Restore pages after a crash',
     'Confirm before closing multiple tabs',
     'Tabs across windows',
@@ -605,6 +609,7 @@ const INVENTORY: Record<string, readonly string[]> = {
     'Cookies for embedded sites',
     'Your device use',
     'Fullscreen',
+    'Automatic picture-in-picture',
     'Pointer lock',
     'Keyboard lock',
     'Speaker selection',
@@ -802,9 +807,11 @@ describe('the desktop Settings tab carries every row of the overlay panes it rep
     // Accessibility was the overlay's `pageControls` category (false on Electron); the speech
     // engine (#257, `readAloud`) brings it to the desktop with Read aloud's groups alone – the
     // zoom groups stay the phone's.
+    // Caret browsing's group (CT-34) is the desktop's too: its engine has the switch.
     expect(models.get('accessibility')!.groups.map((g) => g.id)).toEqual([
       'read-aloud',
-      'read-aloud-voices'
+      'read-aloud-voices',
+      'caret-browsing'
     ])
   })
 

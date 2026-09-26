@@ -105,6 +105,7 @@ import type { ZenWindow } from './window'
 import type { AgentHttpRequest, AgentHttpResponse } from './agent/http'
 import type { BackgroundWorkerHandle } from './background/work'
 import type { RuleSet } from './blocking/rules'
+import type { StartupOverride } from './startup'
 
 export interface PlatformInfo {
   os: PlatformOs
@@ -115,6 +116,13 @@ export interface PlatformInfo {
    * start such a profile from English.
    */
   locales?: readonly string[]
+  /**
+   * The OS's region (ISO 3166-1 alpha-2, upper case; Electron's `app.getLocaleCountryCode()`),
+   * null when the OS does not say: what the EEA's search-engine choice screen is gated on
+   * (`core/searchChoice.ts`, W6-2). A host may put a tester's override here (`--zen-region=DE`,
+   * `ZEN_REGION`) in the OS's place. Hosts that leave it out are never in the EEA.
+   */
+  region?: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -437,11 +445,17 @@ export interface MediaContextFlags {
 
 /**
  * Chrome elements with a context menu of their own, marked `data-zen-menu` in the renderer: the
- * URL bar's field and pill, the reload button.
+ * URL bar's field and pill, the reload button, the pill's star (its bookmark and reading list
+ * rows, W6-1).
  */
-export type ChromeMenuTarget = 'urlbar' | 'urlpill' | 'reload'
+export type ChromeMenuTarget = 'urlbar' | 'urlpill' | 'reload' | 'star'
 
-export const CHROME_MENU_TARGETS: readonly ChromeMenuTarget[] = ['urlbar', 'urlpill', 'reload']
+export const CHROME_MENU_TARGETS: readonly ChromeMenuTarget[] = [
+  'urlbar',
+  'urlpill',
+  'reload',
+  'star'
+]
 
 /**
  * A right-click inside the chrome document (URL bar, toolbar, overlays): what the host's own
@@ -800,6 +814,12 @@ export interface TabView {
   setPopupsAllowed?(allowed: boolean): void
   /** Boost "zap element" picker on/off. */
   setZapMode(on: boolean): void
+  /**
+   * Chromium's caret browsing for this page (CT-34): a text cursor the arrow keys move and Shift
+   * selects with. Electron's `webContents.setCaretBrowsingEnabled`; hosts without the call
+   * (`HostCapabilities.caretBrowsing` off) leave it out and the core never asks.
+   */
+  setCaretBrowsingEnabled?(enabled: boolean): void
   /** Autofill: fill values into the page's form, or reconfigure the forms script. */
   sendFormsCommand?(command: FormsCommand): void
 
@@ -1273,6 +1293,8 @@ export type MenuSource =
   | 'bookmark'
   | 'history'
   | 'download'
+  /** A reading list row's menu (W6-1). */
+  | 'readingList'
   | 'urlbar'
   | 'translate'
 
@@ -1943,6 +1965,13 @@ export interface ExtensionHost {
   setNewTabOverride(id: string, enabled: boolean): void
   /** The page new tabs open with while an enabled extension holds the override, else null. */
   newTabUrl(): string | null
+  /**
+   * An enabled extension's `chrome_settings_overrides.startup_pages` (the newest-installed of
+   * several, `resolveStartupOverride`), read from the registry alone so the boot – which opens
+   * its windows before the extensions load – can follow it; null while none holds the setting.
+   * Hosts without it (the phone) never let an extension set the startup.
+   */
+  startupPagesOverride?(): StartupOverride | null
   /** Chrome's "Allow in Incognito": whether the extension's request rules reach private windows. */
   setAllowPrivate(id: string, allowed: boolean): void
   /** Chrome's "Allow user scripts": whether `chrome.userScripts` works for the extension. */

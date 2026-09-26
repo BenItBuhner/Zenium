@@ -5236,6 +5236,13 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  /*
+   * The Reading list control (W6-1): a chip whose badge – §9.19's pill in the window family,
+   * the unread count – trails the label at the badge's 8, the chip's 6 gap and 2 more.
+   */
+  .zen-bm-reading-list .zen-v2-badge {
+    margin-left: 2px;
+  }
   /* A bookmark without a name: the icon alone (Chrome), 28 square. */
   .zen-bm-chip[data-icon-only='true'] {
     padding: 0 6px;
@@ -8949,11 +8956,12 @@
 /*
  * The still of a pane that left (`PaneSlot`: the sidebar's pose, the overview's pane) is a
  * picture of it under the window's polarity as it was taken (`data-still-theme`, the root's
- * `data-theme` then). Its rows read the live tokens, and §11.6's blend cuts the ink (`--zen-fg`,
- * `data-theme`) at its midpoint: a still still up past the cut – a slow frame, or reduced
- * motion's cut at once – would draw the rows that left in the other pose's ink, the private
- * titles in the regular ink. Once the window's polarity is not the still's, the still is not
- * drawn (a cut, the polarity's own).
+ * `data-theme` then). Its rows read the live tokens, and §11.6's blend flips the ink (`--zen-fg`,
+ * `data-theme`) at its midpoint – under reduced motion too, where the blend stays and only
+ * travel is cut (§11.6 as amended at #497's gate): a still still up past the flip – its 120 ms
+ * fade ends where the 240 ms blend turns, a slow frame puts it past – would draw the rows that
+ * left in the other pose's ink, the private titles in the regular ink. Once the window's
+ * polarity is not the still's, the still is not drawn (a cut, the polarity's own).
  */
 :root[data-theme='light'] .zen-pane-still[data-still-theme='dark'],
 :root[data-theme='dark'] .zen-pane-still[data-still-theme='light'] {
@@ -10230,6 +10238,134 @@
 [aria-checked='true'] > .zen-v2-radio {
   border-color: var(--v2-accent);
   box-shadow: inset 0 0 0 calc((var(--v2-checkbox) - 2px - 6px) / 2) var(--v2-accent);
+}
+
+/*
+ * The EEA's search-engine choice screen (W6-2; `overlays/SearchChoice.tsx`), in the first-run
+ * tour's chassis on the window surface, so in the window family's inks as the phone's first run
+ * is (§9.29): a radio group of two-line rows (§9.2: 20 + 20 + 12 = 52 on `--v2-row-two-line`,
+ * padding 6 12 at the card radius, the rows 4 apart so each reads as one tile), the engine's
+ * icon at 24 in a 32 box, the name on the body line at the button weight, the engine's own line
+ * at 13 in the deemphasised ink – one line, so every tile is the same 52 – and the plain radio's
+ * mark (§9.14, `.zen-v2-radio`'s geometry: 16, a hairline at 45 %, checked an accent ring round
+ * a 6 px dot) at the trailing edge, centred on the row since the row is one tile and not a list
+ * line. The picked row takes the accent at .12 (the window family's selection tint; `--v2-selected`
+ * is the page family's and the two never mix, §9.29) and keeps it under the pointer; the others
+ * take the hover fill. No border (§0): the fill says which row is picked, the mark says it twice.
+ * Past five rows the list scrolls in its own box under the chassis's thin bar (§9.20), so the
+ * footer's verbs stay seated whatever the list's length; the fold cuts the sixth row through
+ * its middle – a row cut, not a clean edge, is the pull's affordance (§9.13) – and the random
+ * order means the fold favours no engine, which is why Chrome's own screen scrolls.
+ */
+.zen-search-choice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  /* Five whole rows and half of the sixth (5 × 52 + 5 × 4 + 26), plus the ring room above the
+     first row, which scrolls with the rows and is inside this border-box height. */
+  max-height: calc(
+    var(--v2-ring-room) + 5 * var(--v2-row-two-line) + 5 * 4px + var(--v2-row-two-line) / 2
+  );
+  overflow-y: auto;
+  /* Room for the focus ring on the first and last rows (§9.20). */
+  padding: var(--v2-ring-room);
+  margin: calc(-1 * var(--v2-ring-room));
+}
+.zen-search-choice-row {
+  display: flex;
+  width: 100%;
+  min-height: var(--v2-row-two-line);
+  /* A row keeps its height in the scrolling column: past the list's ceiling the column's flex
+     would otherwise squeeze the rows below their content and a tagline would spill into the gaps. */
+  flex-shrink: 0;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  border-radius: var(--v2-radius-card);
+  color: inherit;
+  text-align: left;
+  transition: background 120ms var(--zen-ease);
+}
+:where(:root[data-hover='hover']) .zen-search-choice-row:hover {
+  background: var(--zen-element-bg);
+}
+.zen-search-choice-row:active {
+  background: var(--zen-element-bg-active);
+}
+.zen-search-choice-row[aria-checked='true'],
+:where(:root[data-hover='hover']) .zen-search-choice-row[aria-checked='true']:hover {
+  background: rgb(var(--zen-accent-rgb) / 0.12);
+}
+.zen-search-choice-icon {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+}
+.zen-search-choice-icon > img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+.zen-search-choice-letter {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--v2-radius-inner);
+  background: var(--zen-element-bg);
+  font-size: var(--v2-font-small);
+  font-weight: var(--v2-weight-heading);
+  line-height: 1;
+}
+.zen-search-choice-text {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+}
+.zen-search-choice-name {
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-button);
+  line-height: var(--v2-line-body);
+}
+.zen-search-choice-tagline {
+  /* The engine's own words, one line, whole: each line in `searchChoiceTagline` is chosen to fit
+     the text column at 13 px, so every tile is the same 52. No clamp and no ellipsis – a line
+     that did not fit would show, and the drive measures each one. */
+  white-space: nowrap;
+  color: var(--zen-muted);
+  font-size: var(--v2-font-small);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-small);
+}
+.zen-search-choice-mark {
+  display: inline-flex;
+  width: var(--v2-checkbox);
+  height: var(--v2-checkbox);
+  flex-shrink: 0;
+  border: 1px solid rgb(var(--zen-fg-rgb) / 0.45);
+  border-radius: 50%;
+  transition:
+    border-color 120ms var(--zen-ease),
+    background 120ms var(--zen-ease),
+    box-shadow 120ms var(--zen-ease);
+}
+.zen-search-choice-row[aria-checked='true'] > .zen-search-choice-mark {
+  border-color: var(--zen-accent);
+  background: var(--zen-on-accent);
+  box-shadow: inset 0 0 0 calc((var(--v2-checkbox) - 2px - 6px) / 2) var(--zen-accent);
+}
+/* The row keeps its ring under the generic suppressor, as every v2 control does (§9.6). */
+.zen-search-choice-row:focus-visible,
+:root[data-pointer='coarse'] .zen-search-choice-row:focus-visible,
+.zen-search-choice-row[data-keyboard-focus]:focus,
+:root[data-pointer='coarse'] .zen-search-choice-row[data-keyboard-focus]:focus {
+  outline: 2px solid var(--v2-ring);
+  outline-offset: var(--v2-ring-offset);
 }
 
 /*
@@ -13071,6 +13207,53 @@ ol.zen-page-prose-list {
  */
 .zen-v2-row.zen-dl-page-row:is([data-deleted], [data-state='cancelled']) .zen-dl-name {
   color: var(--v2-text-deemphasized);
+}
+
+/* -------------------------------------------------------------------------
+ * The Reading List page (components/pages/readingList/ReadingListPage.tsx, §10.1; W6-1,
+ * bookmarks-33; Chrome's reading list): the page frame's §9.21 two-line rows under the Unread
+ * and Read headings. Only what the page adds: the row's two-line floor (§9.2), the trailing
+ * slot with Mark as read and the ⋮ 8 apart and centred on the row (§9.18, §9.21), and §9.29's
+ * unread mark on the favicon seat – the 6 px accent disc overhanging the 16 favicon's top-right
+ * corner by 1, the favicon cut 1 px round it (the tab strip's attention mark, `.zen-attention-
+ * dot`, in the page family's accent since the row is a page's). A read row carries no mark:
+ * its heading says its state, and no width tells one state twice.
+ * ------------------------------------------------------------------------- */
+.zen-v2-row.zen-rl-page-row {
+  min-height: var(--v2-row-two-line);
+}
+.zen-rl-page-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+}
+/*
+ * The heading's slot (the reading list's rows carry two secondaries, so the heading holds the
+ * width of both – History's heading holds one ⋮): the rows' two 28 boxes and their 8, set 12
+ * from the count (the heading's 8 and 4 more) as the rows' slot is from their times, so the
+ * heading's count and the rows' `.zen-page-row-time` end on one right edge (§10.1).
+ */
+.zen-page-heading > .zen-rl-heading-slot {
+  flex-shrink: 0;
+  width: calc(2 * var(--v2-icon-button) + 8px);
+  margin-inline-start: 4px;
+}
+.zen-rl-favicon-seat {
+  position: relative;
+}
+.zen-rl-favicon-seat[data-unread] > .zen-page-row-favicon {
+  mask-image: radial-gradient(circle 4px at calc(100% - 2px) 2px, transparent 98%, #000 100%);
+}
+.zen-rl-unread-dot {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--v2-accent);
+  pointer-events: none;
 }
 
 /*

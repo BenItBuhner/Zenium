@@ -1,0 +1,10 @@
+{
+  "id": "tablet-groups",
+  "order": 113,
+  "class": "TabletGroupsDemo",
+  "shard": "tablet",
+  "mirrors": "android-tab-groups-demo.yml:tablet",
+  "dir": "tablet-groups-demo",
+  "estimate": 3.5,
+  "note": "Act 10 (H5) holds Alpha's link for the tablet's link menu, light and dark, and touches a row of each: about a minute over the group acts."
+}

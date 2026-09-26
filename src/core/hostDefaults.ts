@@ -21,6 +21,7 @@ import type {
   TabView,
   UpdateHost
 } from './platform'
+import type { StartupOverride } from './startup'
 import { defaultScope } from './sync/records'
 import type { ZenWindow } from './window'
 
@@ -132,6 +133,9 @@ export class NoExtensions implements ExtensionHost {
   async setAllowFileAccess(): Promise<void> {}
   setNewTabOverride(): void {}
   newTabUrl(): string | null {
+    return null
+  }
+  startupPagesOverride(): StartupOverride | null {
     return null
   }
   setAllowPrivate(): void {}

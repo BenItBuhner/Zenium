@@ -1,0 +1,9 @@
+{
+  "id": "a11y-pill-chips",
+  "order": 48,
+  "class": "PillChipsA11yDemo",
+  "shard": "phone-c",
+  "mirrors": "android-a11y-pill-chips-demo.yml",
+  "dir": "a11y-pill-chips-demo",
+  "estimate": 2.5
+}

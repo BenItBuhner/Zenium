@@ -165,6 +165,57 @@
       } catch (e) { state.error = 'fullscreen:' + e.name; render(); }
     });
     installSession(video, 'Zenium demo clip', 'The Zenium demo studio', '', updateVideo);
+  } else if (path === '/background') {
+    // Background video (MED-08 / EDGE-32): the clip with sound, inline, and what the page sees
+    // of its own visibility – `vis` (document.visibilityState), `hidden`, `vc` (visibilitychange
+    // events), `pauses` / `plays` (the element's events, whoever caused them) – so the driver can
+    // tell the engine's pause from the site's. `?handler=1` (the default) is the site that pauses
+    // itself on visibilitychange, as most players do (`sitepaused` counts those); `?handler=0` is
+    // a plain autoplaying `<video>` with sound and no script of its own.
+    prefix = 'MD';
+    var handler = params.get('handler') !== '0';
+    $('heading').textContent = 'Background video';
+    $('lead').textContent = handler
+      ? 'A looping clip with sound; this page pauses it when it hears it was hidden, as most sites do.'
+      : 'A looping clip with sound, and no script that reacts to being hidden.';
+    var bg = document.createElement('video');
+    bg.id = 'media';
+    bg.src = '/clip.webm';
+    bg.loop = true;
+    bg.setAttribute('playsinline', '');
+    bg.controls = true;
+    bg.preload = 'auto';
+    $('controls').appendChild(bg);
+    var playBg = button('play', 'Play video');
+    var updateBg = trackMedia(bg, 'video');
+    state.handler = handler ? 1 : 0;
+    state.vc = 0;
+    state.pauses = 0;
+    state.plays = 0;
+    state.sitepaused = 0;
+    var visibility = function () {
+      state.vis = document.visibilityState;
+      state.hidden = document.hidden ? 1 : 0;
+      render();
+    };
+    visibility();
+    bg.addEventListener('pause', function () { state.pauses += 1; updateBg(); });
+    bg.addEventListener('play', function () { state.plays += 1; updateBg(); });
+    document.addEventListener('visibilitychange', function () {
+      state.vc += 1;
+      if (handler && document.hidden && !bg.paused) { state.sitepaused += 1; bg.pause(); }
+      visibility();
+    });
+    bg.addEventListener('play', function () { playBg.textContent = 'Pause video'; });
+    bg.addEventListener('pause', function () { playBg.textContent = 'Play video'; });
+    playBg.addEventListener('click', function () {
+      if (bg.paused) {
+        bg.play().catch(function (e) { state.error = 'play:' + e.name; render(); });
+      } else {
+        bg.pause();
+      }
+    });
+    installSession(bg, 'Zenium background clip', 'The Zenium demo studio', '', updateBg);
   } else if (path === '/notify') {
     prefix = 'NT';
     $('heading').textContent = 'Web notifications';

@@ -6,7 +6,7 @@ import type { MenuDescriptor, MenuItemDescriptor, SharePanelRequest, UIState } f
 import { DEFAULT_SETTINGS } from '@shared/defaults'
 import { MenuSheet } from '../MenuSheet'
 import { SharePanelLayer } from '../../share/SharePanelSheet'
-import { topBackSurface } from '@renderer/lib/back'
+import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { SheetPresence } from '@renderer/lib/motion/presence'
 import {
@@ -212,6 +212,21 @@ const escape = (): void => {
     )
   })
 }
+/** A finger on `target` at (x, y), stamped with the frame clock (the sheet reads its velocity). */
+const pointer = (type: string, target: EventTarget, x: number, y: number): void => {
+  const event = new PointerEvent(type, {
+    pointerId: 7,
+    clientX: x,
+    clientY: y,
+    button: 0,
+    bubbles: true,
+    cancelable: true,
+    pointerType: 'touch',
+    isPrimary: true
+  })
+  Object.defineProperty(event, 'timeStamp', { value: frames.now })
+  act(() => void target.dispatchEvent(event))
+}
 const reducedMotion = (matches: boolean): void => {
   Object.assign(window, {
     matchMedia: (query: string) => ({
@@ -276,6 +291,7 @@ afterEach(() => {
     })
   )
   browserStore.set({ state: null })
+  invoke.mockReset()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
   vi.useRealTimers()
@@ -419,6 +435,92 @@ describe("the app menu's Share row below Android 14 (the seam's first half: the 
   })
 })
 
+describe('the menu let go while it gathers (Escape, the back gesture, a drag): the sheet’s leave is the gather’s end, not a menu’s close', () => {
+  /** Where every exit comes to: the seam and the menu gone, the host told of no close. */
+  function letGo(): void {
+    expect(uiStore.get().shareSeam).toBeNull()
+    expect(uiStore.get().menu).toBeNull()
+    expect(uiStore.get().sharePanel).toBeNull()
+    expect(commands('menu.close')).toEqual([])
+    expect(commands('share.panelAction')).toEqual([])
+    expect(commands('menu.click')).toEqual([{ menuId: 'menu_1', itemId: 'menu_1_4' }])
+  }
+
+  /**
+   * The request the host went on gathering comes in after the menu left: it rises in the panel's
+   * own sheet, and the guard armed at the pick finds no gather to end.
+   */
+  async function requestRisesAlone(): Promise<void> {
+    await arrive()
+    expect(uiStore.get().sharePanel?.id).toBe('share-panel-1')
+    expect(uiStore.get().shareSeam).toBeNull()
+    expect(uiStore.get().menu).toBeNull()
+    expect(qa('.zen-share-panel')).toHaveLength(1)
+    expect(q('.zen-share-panel [data-row="apps"]')).not.toBeNull()
+    expect(q('.zen-share-panel .zen-share-seam')).toBeNull()
+    expect(topBackSurface()?.name).toBe('share-panel')
+    elapse(SHARE_SEAM_GUARD_MS)
+    await settle()
+    expect(uiStore.get().sharePanel?.id).toBe('share-panel-1')
+    expect(q('.zen-share-panel [data-row="apps"]')).not.toBeNull()
+    expect(commands('share.panelAction')).toEqual([])
+  }
+
+  it('on Escape: the sheet slides away with the seam, the host hears no menu.close, and the request rises on its own', async () => {
+    await show()
+    await pickShare()
+    escape()
+    await settle()
+    runAll()
+    letGo()
+    await requestRisesAlone()
+  })
+
+  it("on the back gesture committed over the menu's surface: the same exit", async () => {
+    await show()
+    await pickShare()
+    expect(topBackSurface()?.name).toBe('menu')
+    act(() => void dispatchBackEvent('start'))
+    act(() => void dispatchBackEvent('progress', { progress: 0.6 }))
+    // Half-way the menu still stands, its gather on.
+    expect(uiStore.get().shareSeam?.phase).toBe('gathering')
+    expect(uiStore.get().menu?.id).toBe('menu_1')
+    act(() => void dispatchBackEvent('commit'))
+    await settle()
+    runAll()
+    letGo()
+    await requestRisesAlone()
+  })
+
+  it('on a drag of the grip past the commit point: the same exit', async () => {
+    await show()
+    await pickShare()
+    const grip = q('[data-sheet-grip]')!
+    pointer('pointerdown', grip, 200, 400)
+    frames.now += 16
+    pointer('pointermove', grip, 200, 420)
+    frames.now += 16
+    pointer('pointermove', grip, 200, 700)
+    frames.now += 16
+    pointer('pointerup', grip, 200, 700)
+    await settle()
+    runAll()
+    letGo()
+    await requestRisesAlone()
+  })
+
+  it('on a press on the scrim: the same exit', async () => {
+    await show()
+    await pickShare()
+    const layerEl = q('[data-sheet-layer]')!
+    pointer('pointerdown', layerEl, 10, 10)
+    await settle()
+    runAll()
+    letGo()
+    await requestRisesAlone()
+  })
+})
+
 describe('the hand-off (the seam’s second half: the menu’s chassis becomes the panel’s)', () => {
   it("draws the menu's own request in the same sheet element: the header the preview, the body the panel's rows, one sheet and no second", async () => {
     await show()
@@ -553,6 +655,53 @@ describe('the hand-off (the seam’s second half: the menu’s chassis becomes t
     // The panel's own layer draws it, not the menu's (which is on its way out).
     expect(q('.zen-share-panel [data-row="apps"]')).not.toBeNull()
     expect(q('.zen-share-panel .zen-share-seam')).toBeNull()
+  })
+
+  it("takes a hosted panel down with the seam when a page's request supersedes it: no frame draws the older request on its own while the page's cover is captured", async () => {
+    await show()
+    await pickShare()
+    await arrive()
+    expect(uiStore.get().shareSeam?.phase).toBe('hosting')
+    // The newer request's sheet waits on the page's capture; the host let the older share go
+    // when it took the newer one, so the older panel must not stand meanwhile.
+    let capture!: (data: string) => void
+    const captured = new Promise<string>((resolve) => {
+      capture = resolve
+    })
+    invoke.mockImplementation((name) =>
+      name === 'overlay.snapshot' ? captured : Promise.resolve(undefined)
+    )
+    let opened!: Promise<void>
+    act(() => {
+      opened = openSharePanel(request({ id: 'share-panel-9', source: 'page' }))
+    })
+    await settle()
+    runAll()
+    try {
+      expect(commands('overlay.snapshot')).toHaveLength(1)
+      expect(qa('.zen-share-panel')).toHaveLength(0)
+      expect(sheets()).toHaveLength(1)
+      expect(uiStore.get().sharePanel).toBeNull()
+      expect(uiStore.get().shareSeam).toBeNull()
+      expect(uiStore.get().menu).toBeNull()
+      // The chrome answers nothing for the older panel: its supersession is the host's own.
+      expect(commands('share.panelAction')).toEqual([])
+      expect(commands('menu.close')).toEqual([])
+    } finally {
+      // The capture comes in whatever was found (left pending it would hold the next test's).
+      await act(async () => {
+        capture('data:image/png;base64,PAGE9')
+        await opened
+      })
+    }
+    await settle()
+    runAll()
+    expect(uiStore.get().sharePanel?.id).toBe('share-panel-9')
+    expect(qa('.zen-share-panel')).toHaveLength(1)
+    expect(q('.zen-share-panel [data-row="apps"]')).not.toBeNull()
+    expect(q('.zen-share-panel .zen-share-seam')).toBeNull()
+    expect(topBackSurface()?.name).toBe('share-panel')
+    expect(commands('share.panelAction')).toEqual([])
   })
 
   it('hosts nothing for a menu that did not ask: a request arriving at a standing menu with no gather rises on its own', async () => {

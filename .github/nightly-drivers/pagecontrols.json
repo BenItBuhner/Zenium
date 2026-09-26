@@ -1,0 +1,12 @@
+{
+  "id": "pagecontrols",
+  "order": 54,
+  "class": "PageControlsDemo",
+  "shard": "phone-c",
+  "mirrors": "android-pagecontrols-demo.yml",
+  "dir": "pagecontrols-demo",
+  "env": {
+    "DEMO_THEME": "dark"
+  },
+  "estimate": 5
+}

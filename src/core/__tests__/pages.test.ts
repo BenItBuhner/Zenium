@@ -1617,6 +1617,153 @@ describe('the page tabs follow the window’s class (the class-change seam, W6-S
       f.sent.filter((s) => s.winId === win.id && s.name === 'overlay.open').slice(before)
     ).toEqual([])
   })
+
+  /** The chrome's hand-back as `useStageContinuity` runs it: the overlay up as the window widens becomes the tab again. */
+  function handBack(f: Fixture, id: string): string {
+    report(f, 'tablet')
+    return f.browser.handleCommand(f.win, 'page.open', { id, handedBack: true }) as string
+  }
+
+  // The fixture's space opens with its new tab page; the rows below read from it.
+  const NEWTAB = 'zen://newtab'
+  const A = 'https://a.test/'
+  const B = 'https://b.test/'
+  const C = 'https://c.test/'
+
+  it('brings the handed-over page back at the slot its tab had when the window widens again (the chrome’s hand-back), not beside the active tab', () => {
+    const { f, tabId } = tabletWith('history')
+    const b = openSite(f, B)
+    f.browser.tabs.activateTab(tabId, f.win)
+    expect(spaceUrls(f)).toEqual([NEWTAB, A, 'zen://history', B])
+    report(f, 'phone')
+    expect(spaceUrls(f)).toEqual([NEWTAB, A, B])
+    // The slot is kept on the window, with the page and the space it stood in.
+    expect(f.win.handedPage).toEqual({
+      pageId: 'history',
+      spaceId: f.win.activeSpace().id,
+      index: 2
+    })
+    // The user moves on to b on the phone; a page opened by hand would land after it.
+    f.browser.tabs.activateTab(b.id, f.win)
+    const back = handBack(f, 'history')
+    expect(spaceUrls(f)).toEqual([NEWTAB, A, 'zen://history', B])
+    expect(activeTab(f)?.id).toBe(back)
+    expect(f.browser.tabs.tab(back)?.openerTabId).toBe(b.id)
+    // The slot is spent: the next hand-back finds nothing to go back to.
+    expect(f.win.handedPage).toBeNull()
+  })
+
+  it('reads the slot in the row the narrowing leaves: the other page tabs handed over, which never come back, are out of it', () => {
+    const { f, tabId: downloads } = tabletWith('downloads')
+    const history = f.browser.handleCommand(f.win, 'page.open', { id: 'history' }) as string
+    const b = openSite(f, B)
+    f.browser.tabs.moveTab(downloads, { section: 'regular', index: 1 }, f.win)
+    f.browser.tabs.activateTab(history, f.win)
+    expect(spaceUrls(f)).toEqual([NEWTAB, 'zen://downloads', A, 'zen://history', B])
+    report(f, 'phone')
+    expect(spaceUrls(f)).toEqual([NEWTAB, A, B])
+    expect(f.win.handedPage?.index).toBe(2)
+    f.browser.tabs.activateTab(b.id, f.win)
+    handBack(f, 'history')
+    // Between a and b, where it stood – not at the row's end, where its old count would put it.
+    expect(spaceUrls(f)).toEqual([NEWTAB, A, 'zen://history', B])
+  })
+
+  it('opens the page beside the active tab, as any page opens, when the hand-back is not the one the slot was kept for', () => {
+    // A page opened by hand on the tablet after the narrowing is no hand-back: the ordinary
+    // placement, the slot left for the hand-back that may still come.
+    const byHand = tabletWith('history')
+    const b1 = openSite(byHand.f, B)
+    byHand.f.browser.tabs.activateTab(byHand.tabId, byHand.f.win)
+    report(byHand.f, 'phone')
+    byHand.f.browser.tabs.activateTab(b1.id, byHand.f.win)
+    report(byHand.f, 'tablet')
+    byHand.f.browser.handleCommand(byHand.f.win, 'page.open', { id: 'history' })
+    expect(spaceUrls(byHand.f)).toEqual([NEWTAB, A, B, 'zen://history'])
+    expect(byHand.f.win.handedPage?.index).toBe(2)
+
+    // The slot no longer fits: the row of regular tabs grew shorter than it on the phone.
+    const shorter = tabletWith('history')
+    openSite(shorter.f, B)
+    const c = openSite(shorter.f, C)
+    shorter.f.browser.tabs.moveTab(shorter.tabId, { section: 'regular', index: 4 }, shorter.f.win)
+    shorter.f.browser.tabs.activateTab(shorter.tabId, shorter.f.win)
+    expect(spaceUrls(shorter.f)).toEqual([NEWTAB, A, B, C, 'zen://history'])
+    report(shorter.f, 'phone')
+    expect(shorter.f.win.handedPage?.index).toBe(4)
+    shorter.f.browser.tabs.closeTab(c.id, true, shorter.f.win)
+    shorter.f.browser.tabs.activateTab(shorter.site.id, shorter.f.win)
+    expect(spaceUrls(shorter.f)).toEqual([NEWTAB, A, B])
+    handBack(shorter.f, 'history')
+    // Beside a, not clamped to the row's end.
+    expect(spaceUrls(shorter.f)).toEqual([NEWTAB, A, 'zen://history', B])
+    expect(shorter.f.win.handedPage).toBeNull()
+
+    // The slot was another page's: History went, and it is Downloads' panel up as the window widens.
+    const other = tabletWith('history')
+    const b3 = openSite(other.f, B)
+    other.f.browser.tabs.activateTab(other.tabId, other.f.win)
+    report(other.f, 'phone')
+    other.f.browser.tabs.activateTab(b3.id, other.f.win)
+    handBack(other.f, 'downloads')
+    expect(spaceUrls(other.f)).toEqual([NEWTAB, A, B, 'zen://downloads'])
+    expect(other.f.win.handedPage).toBeNull()
+
+    // Nothing was handed over (the panel was opened by hand on the phone): the same placement.
+    const fresh = fixture()
+    report(fresh, 'tablet')
+    const a4 = openSite(fresh, A)
+    openSite(fresh, B)
+    fresh.browser.tabs.activateTab(a4.id, fresh.win)
+    expect(fresh.win.handedPage).toBeNull()
+    handBack(fresh, 'history')
+    expect(spaceUrls(fresh)).toEqual([NEWTAB, A, 'zen://history', B])
+  })
+
+  it('keeps no slot for a pinned page tab (unpinned to go) or one that went in the background, and forgets an older slot at the next hand-over', () => {
+    const pinned = tabletWith('history')
+    pinned.f.browser.tabs.togglePin(pinned.tabId, pinned.f.win)
+    report(pinned.f, 'phone')
+    expect(pinned.f.win.handedPage).toBeNull()
+
+    // History in front is kept; Downloads behind it is not the one the overlay opens for, and
+    // it never comes back: the slot is History's place in the row without it.
+    const { f, tabId: downloads } = tabletWith('downloads')
+    const history = f.browser.handleCommand(f.win, 'page.open', { id: 'history' }) as string
+    expect(activeTab(f)?.id).toBe(history)
+    expect(spaceUrls(f)).toEqual([NEWTAB, A, 'zen://downloads', 'zen://history'])
+    report(f, 'phone')
+    expect(f.browser.tabs.tab(downloads)).toBeUndefined()
+    expect(spaceUrls(f)).toEqual([NEWTAB, A])
+    expect(f.win.handedPage).toEqual({
+      pageId: 'history',
+      spaceId: f.win.activeSpace().id,
+      index: 2
+    })
+    // The slot is not taken up: a later hand-over with a site in front forgets it.
+    report(f, 'tablet')
+    const site = openSite(f, B)
+    f.browser.handleCommand(f.win, 'page.open', { id: 'history' })
+    f.browser.tabs.activateTab(site.id, f.win)
+    report(f, 'phone')
+    expect(f.win.handedPage).toBeNull()
+  })
+
+  it('takes the slot with a hand-back that finds the page’s tab standing, and moves nothing', () => {
+    const { f, tabId } = tabletWith('history')
+    const b = openSite(f, B)
+    f.browser.tabs.activateTab(tabId, f.win)
+    report(f, 'phone')
+    // The user opened History as a tab by hand once the window widened; the hand-back that
+    // follows (the chrome's panel closing into its tab) re-focuses that tab and spends the slot.
+    report(f, 'tablet')
+    f.browser.tabs.activateTab(b.id, f.win)
+    const opened = f.browser.handleCommand(f.win, 'page.open', { id: 'history' }) as string
+    expect(spaceUrls(f)).toEqual([NEWTAB, A, B, 'zen://history'])
+    expect(handBack(f, 'history')).toBe(opened)
+    expect(spaceUrls(f)).toEqual([NEWTAB, A, B, 'zen://history'])
+    expect(f.win.handedPage).toBeNull()
+  })
 })
 
 // ---------------------------------------------------------------------------

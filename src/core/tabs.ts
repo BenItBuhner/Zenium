@@ -528,6 +528,7 @@ export class TabManager {
     }
     if (this.releaseHidden(win)) moved = true
     this.browser.governor.wakeVisible(win)
+    this.browser.mediaSession.onVisibleTabsChanged(win)
     if (moved) this.browser.state.commitVolatile()
   }
 
@@ -556,6 +557,7 @@ export class TabManager {
     if (this.siteMuted(tab.url)) tab.muted = true
     if (tab.muted) view.setMuted(true)
     this.browser.pageControls.onViewCreated(tab, view)
+    this.browser.caretBrowsing.onViewCreated(view)
     this.browser.governor.onViewCreated(tab.id, view)
     win.relayout()
     return view
@@ -1485,12 +1487,16 @@ export class TabManager {
       if (frames.size === 0) this.captureReports.delete(tabId)
     }
     this.refreshAlert(tabId)
+    // Automatic picture-in-picture learns of its entry, and of the user closing the small window.
+    const pip = [...(this.captureReports.get(tabId)?.values() ?? [])].some((r) => r.pip)
+    this.browser.mediaSession.onPagePictureInPicture(tabId, pip)
   }
 
   /** Forget every frame's capture report of a tab (its document, renderer or page is gone). */
   private clearCaptureState(tabId: string): void {
     if (!this.captureReports.delete(tabId)) return
     this.refreshAlert(tabId)
+    this.browser.mediaSession.onPagePictureInPicture(tabId, false)
   }
 
   private refreshAlert(tabId: string): void {
@@ -2058,6 +2064,8 @@ export class TabManager {
     }
     this.releaseHidden(win)
     this.browser.governor.wakeVisible(win)
+    // A playing video left behind goes into its small window; one in front again comes back (MW-28).
+    this.browser.mediaSession.onVisibleTabsChanged(win)
     // An offline error page that came back online while hidden reloads on its turn on screen.
     this.browser.connectivity.onTabsShown(this.visibleTabIds(win))
     win.findResult = null
@@ -2095,6 +2103,7 @@ export class TabManager {
     }
     this.releaseHidden(win)
     this.browser.governor.wakeVisible(win)
+    this.browser.mediaSession.onVisibleTabsChanged(win)
     win.findResult = null
     this.browser.emit('space.switched', { fromIndex, toIndex }, win)
     this.browser.state.commit()
@@ -3337,6 +3346,7 @@ export class TabManager {
     if (next) this.activateTab(next, source)
     else {
       this.releaseHidden(source)
+      this.browser.mediaSession.onVisibleTabsChanged(source)
       source.relayout()
     }
   }

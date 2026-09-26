@@ -681,6 +681,44 @@ class TabWebView(
         host.viewSized(this, w, h)
     }
 
+    // --- background video (MED-08 / EDGE-32) ----------------------------------------------------
+
+    private val backgroundVideo = BackgroundVideoHold()
+
+    /**
+     * Whether this tab's video keeps playing while the app is in the background: the OS controls'
+     * session is this tab's, playing, a `<video>`, and its site's `background-video` setting is
+     * allow – [MediaSessions] keeps the word current. While it is yes and the window leaves the
+     * screen (Home, the lock screen), the hide the system dispatches is held from the WebView
+     * ([onWindowVisibilityChanged]), so the engine and the page both keep the page visible and
+     * nothing pauses; the moment it turns no with the window still away, the held hide goes
+     * through ([BackgroundVideoRule]).
+     */
+    var keepsVideoInBackground: Boolean
+        get() = backgroundVideo.keep
+        set(value) {
+            backgroundVideo.onKeep(value)?.let { visible -> forwardWindowVisibility(visible) }
+        }
+
+    /** A hide of the window is being held from the engine for this tab's video (diagnostics, the demo). */
+    val holdingWindowHide: Boolean get() = backgroundVideo.holding
+
+    /**
+     * The window's visibility, as `ViewRootImpl` dispatches it to the tree: GONE when the
+     * activity's window leaves the screen, VISIBLE when it is back. `WebView` hands it to
+     * `AwContents`, whose WebContents is shown or hidden by it – the hide that pauses a video and
+     * tells the page `visibilitychange` – so a hide is held here while the tab's video may keep
+     * playing, and the return goes through as it always does.
+     */
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        if (backgroundVideo.onWindow(visibility == View.VISIBLE) != null) super.onWindowVisibilityChanged(visibility)
+    }
+
+    /** The word the engine gets once a held hide goes through (or a show, were one ever held). */
+    private fun forwardWindowVisibility(visible: Boolean) {
+        super.onWindowVisibilityChanged(if (visible) View.VISIBLE else View.GONE)
+    }
+
     /**
      * While this page's element is fullscreen the engine draws the page in the view it handed
      * the fullscreen layer, and here – the view the core lays over the whole window meanwhile –

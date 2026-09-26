@@ -80,9 +80,7 @@ class BarHidePerfDemo : DemoHarness("bar-hide-demo-state.json", "perf-bar-hide",
         ).also { it.start() }
         capture = PerfCapture(ui, app.packageName, tag)
         try {
-            // A perf reading: no events hold (DemoHarness.runDemo – the hold's service moves the WebView to
-            // its complete tree mode with every event, work inside what the frames and the traces measure).
-            runDemo(holdEvents = false)
+            runPerfDemo() // a perf reading: no events hold (the rule at DemoHarness.runDemo)
         } finally {
             finishCaptures()
             server.close()

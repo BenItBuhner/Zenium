@@ -1,0 +1,10 @@
+{
+  "id": "private",
+  "order": 102,
+  "class": "PrivateTabsDemo",
+  "shard": "webview",
+  "mirrors": "android-private-demo.yml",
+  "dir": "private-demo",
+  "timeout": 900,
+  "estimate": 6
+}

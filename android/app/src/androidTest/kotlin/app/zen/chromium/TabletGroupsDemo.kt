@@ -2,6 +2,7 @@ package app.zen.chromium
 
 import android.graphics.PointF
 import android.graphics.RectF
+import android.os.Build
 import android.os.SystemClock
 import android.view.KeyEvent
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -43,11 +44,19 @@ import kotlin.math.roundToInt
  *     chevron – the core keeping the two pages in order;
  *  8. a touch on the saved row opens it: the pages come back as the group's tabs, in order, and
  *     the row is the open group's again;
- *  9. Ungroup: the group's record goes, its tabs stay where they were, loose.
+ *  9. Ungroup: the group's record goes, its tabs stay where they were, loose;
+ *  10. a hold on the link of Alpha's page (loose now): the LINK MENU as a §9.36 popover, its
+ *     rows read in order with their hairlines against the ruled order (#509: the phone's on
+ *     the tablet too – Open Link in New Tab · New Tab in Group · Private Tab where the host
+ *     offers it · Glance · Split View · New Container Tab | Copy Link Address · Copy Link Text ·
+ *     Save Link As… · Share Link… | Boosts), on the light scheme and on the dark, the two byte
+ *     for byte; a touch on Open Link in New Tab opens the page loose behind Alpha in the
+ *     background, a touch on Copy Link Address closes the menu.
  *
- * Findings in `tablet-groups-findings.txt`, stills `tablet-groups-NN-<state>.png`, the traced
- * scenes in `frames.jsonl`. Driven by `android-tab-groups-demo.yml`'s tablet act. See
- * [GroupsDemoBase] and [DemoHarness].
+ * Findings in `tablet-groups-findings.txt`, stills `tablet-groups-NN-<state>.png` (the link
+ * menu's `link-menu-rows-light` / `-dark`), the traced scenes in `frames.jsonl`. Driven by
+ * `android-tab-groups-demo.yml`'s tablet act and by the nightly sweep's tablet shard
+ * (`.github/nightly-drivers/tablet-groups.json`). See [GroupsDemoBase] and [DemoHarness].
  */
 @RunWith(AndroidJUnit4::class)
 class TabletGroupsDemo : GroupsDemoBase("tablet-groups", "tablet-groups-demo") {
@@ -92,6 +101,7 @@ class TabletGroupsDemo : GroupsDemoBase("tablet-groups", "tablet-groups-demo") {
         closeToSaved()
         openSaved()
         ungroup()
+        linkMenu()
         still("end")
         tail()
     }
@@ -368,6 +378,117 @@ class TabletGroupsDemo : GroupsDemoBase("tablet-groups", "tablet-groups-demo") {
         still("ungrouped")
     }
 
+    // --- 10. the link menu -------------------------------------------------------------------------
+
+    /**
+     * The link menu on the tablet (#509's ruling: one link menu on both touch hosts): a real hold
+     * on the link of Alpha's page – loose after act 9 – brings the §9.36 popover; its rows are
+     * read in order, the hairlines as `-`, against the ruled order, light and then dark (the
+     * device's night mode put back off in a finally: the nightly's next driver runs on this
+     * boot). Each menu is left by a real touch: Open Link in New Tab on the light one (the page
+     * opens as a loose tab right behind Alpha, in the background), Copy Link Address on the dark.
+     */
+    private fun linkMenu() {
+        section("10. The link menu on the tablet: #509's ruled order, light and dark")
+        val lightRows = linkRows("light") ?: return
+        opensBehind()
+        try {
+            dark()
+            val darkRows = linkRows("dark")
+            if (darkRows != null) {
+                check("the dark menu's rows are the light menu's, byte for byte", darkRows == lightRows, "dark $darkRows, light $lightRows")
+                copies()
+            }
+        } finally {
+            shellCommand("cmd uimode night no")
+            finding("  the device's night mode put back off for the next driver")
+        }
+    }
+
+    /** Alpha in front, its link held, the menu's rows (hairlines as `-`) against the ruled order; null when no menu came. */
+    private fun linkRows(scheme: String): List<String>? {
+        coreInvoke("tab.activate", "{\"tabId\":${JSONObject.quote(alphaId)}}")
+        awaitCore { activeTabId(it) == alphaId }
+        awaitLoaded(alphaId, ALPHA_URL)
+        SystemClock.sleep(1_500)
+        val link = linkOnScreen(alphaId)
+        if (link == null) {
+            check("Alpha's link is on the screen ($scheme)", false, "no link")
+            return null
+        }
+        finding("  hold at ${link.x.roundToInt()},${link.y.roundToInt()} on Alpha's link ($scheme)")
+        val f = Finger()
+        f.press(link.x, link.y)
+        f.up()
+        if (!(awaitJs(MENU_OPEN, true, SHEET_WAIT) && awaitDom(MENU_ITEM, SHEET_WAIT))) {
+            check("the link's menu comes up as a popover ($scheme)", false, "menu ${jsText(MENU_OPEN)}")
+            return null
+        }
+        SystemClock.sleep(600)
+        val rows = menuRows()
+        val offered = PRIVATE_ROW in rows
+        finding("  rows ($scheme): $rows; $PRIVATE_ROW ${if (offered) "offered" else "not offered (the host keeps no profiles)"}")
+        val expected = RULED_LINK_ROWS.filter { it != PRIVATE_ROW || offered }
+        check(
+            "the rows stand in #509's ruled order ($scheme): New Tab · New Tab in Group${if (offered) " · Private Tab" else ""} · Glance · Split View · Container | Copy Link Address · Copy Link Text · Save Link As… · Share Link… | Boosts",
+            rows == expected,
+            "rows $rows"
+        )
+        val menu = domRect(MENU)
+        check("the link menu is the §9.36 popover, 332 wide with 44 rows ($scheme)", menu != null && abs(menu.width() - 332) <= 1 && jsBoolean("[...document.querySelectorAll('$MENU_ITEM')].every(function(r){return Math.abs(r.getBoundingClientRect().height-44)<=1})"), "menu $menu")
+        SystemClock.sleep(800)
+        still("link-menu-rows-$scheme")
+        return rows
+    }
+
+    /** A touch on Open Link in New Tab: the page as a loose tab right behind Alpha, Alpha still in front. */
+    private fun opensBehind() {
+        val before = trackOrder()
+        val opened = touchUntil("Open Link in New Tab", { menuRow("Open Link in New Tab") }, { trackOrder().size == before.size + 1 }, waitMs = 6_000)
+        val order = trackOrder()
+        val linked = order.map { it.first }.firstOrNull { id -> id !in before.map { it.first } }
+        val at = order.indexOfFirst { it.first == linked }
+        val alphaAt = order.indexOfFirst { it.first == alphaId }
+        check("Open Link in New Tab opens the page as a new tab", opened && linked != null && awaitCore { tabUrl(linked!!, it) == LINKED_URL }, "new ${linked?.let { tabUrl(it) }}")
+        check("the new tab is loose, right behind Alpha", linked != null && folderOf(linked) == null && at == alphaAt + 1, "order ${order.map { "${it.first}${if (it.second != null) "(g)" else ""}" }}")
+        check("Alpha stays the active tab (the link opened in the background)", activeTabId() == alphaId, "active ${activeTabId()}")
+        check("the menu is gone after the touch", awaitJs(MENU_OPEN, false, 3_000) && awaitDomGone(MENU, 3_000), "menu ${jsText(MENU_OPEN)}")
+        check("the new tab has its row in the sidebar", linked != null && awaitDom(row(linked), 4_000), "row ${linked?.let { inDom(row(it)) }}")
+        SystemClock.sleep(800)
+        still("link-opened-behind")
+    }
+
+    /**
+     * A touch on Copy Link Address: the menu closes, and the copy's confirmation is the platform's –
+     * below Android 13 the app's toast ("Link copied"); from 13 the OS shows its clipboard chip and
+     * the app withholds its own toast (`src/shared/clipboard.ts`, the `clipboardChip` capability).
+     */
+    private fun copies() {
+        val copied = touchUntil("Copy Link Address", { menuRow("Copy Link Address") }, { !jsBoolean(MENU_OPEN) }, waitMs = 6_000)
+        check("Copy Link Address closes the menu", copied && awaitDomGone(MENU, 3_000), "menu ${jsText(MENU_OPEN)}")
+        val chip = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+        val toast = awaitToast("Link copied", if (chip) 1_500 else 4_000)
+        if (chip) {
+            check("the copy shows no app toast on Android 13+ (the OS's clipboard chip is the confirmation)", toast == null, "toast '$toast'")
+        } else {
+            check("the copy's toast reads Link copied below Android 13", toast != null, "no toast within 4 s")
+        }
+        awaitToastGone()
+    }
+
+    private fun dark() {
+        ensureForeground()
+        shellCommand("cmd uimode night yes")
+        coreInvoke("settings.update", "{\"colorScheme\":\"dark\"}")
+        SystemClock.sleep(4_000)
+        ensureForeground()
+        finding("  the chrome's scheme now: ${chromeScheme()}")
+    }
+
+    /** The menu's children in order: a row's trimmed text, a hairline as `-` (the desktop test's notation). */
+    private fun menuRows(): List<String> =
+        jsArray("Array.prototype.map.call(document.querySelectorAll('$MENU > *'),function(n){return n.getAttribute('role')==='separator'?'-':n.textContent.trim()})").strings()
+
     // --- the menu ----------------------------------------------------------------------------------
 
     /** Hold the group's row until its menu is up; where the finger was, as CSS px, or null (and a failed claim). */
@@ -425,6 +546,30 @@ class TabletGroupsDemo : GroupsDemoBase("tablet-groups", "tablet-groups-demo") {
         private const val MENU = ".zen-v2-menu"
         private const val MENU_ITEM = ".zen-v2-menu-item"
         private const val RADIO = ".zen-v2-menu [role=\"menuitemradio\"]"
+        private const val PRIVATE_ROW = "Open Link in Private Tab"
+
+        /**
+         * #509's ruled order for the link menu on the touch hosts (pinned for the desktop's model in
+         * savedGroups.test.ts): Chrome 152's pair, the private row where the host keeps profiles,
+         * Glance, Split View (the tablet's own row), Container, then the copies and the saves, then
+         * Boosts, the hairlines between the three groups. Copy Link Text is there because the link
+         * has its own text.
+         */
+        private val RULED_LINK_ROWS = listOf(
+            "Open Link in New Tab",
+            "Open Link in New Tab in Group",
+            PRIVATE_ROW,
+            "Open Link in Glance",
+            "Open Link in Split View",
+            "Open Link in New Container Tab",
+            "-",
+            "Copy Link Address",
+            "Copy Link Text",
+            "Save Link As…",
+            "Share Link…",
+            "-",
+            "Boosts"
+        )
 
         private fun row(tabId: String) = "$SIDEBAR [data-tab-id=\"$tabId\"]"
     }

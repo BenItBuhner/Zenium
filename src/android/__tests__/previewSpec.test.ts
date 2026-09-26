@@ -276,6 +276,13 @@ describe('parsePreviewSpec', () => {
       url: 'https://sample.example/other'
     })
     expect(parsePreviewSpec('link=')).toEqual({ kind: 'idle' })
+    // The image sheet: a hold on an image at the address (CT-32's Search Image row).
+    expect(parsePreviewSpec('image=https://sample.example/a.png')).toEqual({
+      kind: 'link',
+      url: 'https://sample.example/a.png',
+      image: true
+    })
+    expect(parsePreviewSpec('image=')).toEqual({ kind: 'idle' })
   })
 
   it('opens the app menu, behind an overlay but ahead of the bars', () => {

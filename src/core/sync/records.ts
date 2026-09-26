@@ -251,8 +251,14 @@ export function readBookmarkData(data: unknown): BookmarkData | null {
  * - `onboardingDone`: the one-time flag.
  * - `sidebarExpandOnHover`: a pointer's hover preference for the rail (tabs-03), on by default
  *   since profile v6; a peer on v5 still stores that build's default `false`, no choice.
+ * - `searchChoice`: the EEA's search-engine choice screen's record (W6-2) – each device's to
+ *   answer once, as Chrome's; the engine it set travels as `searchEngineId`, the record does not.
  */
-export const DEVICE_LOCAL_SETTINGS = ['onboardingDone', 'sidebarExpandOnHover'] as const
+export const DEVICE_LOCAL_SETTINGS = [
+  'onboardingDone',
+  'sidebarExpandOnHover',
+  'searchChoice'
+] as const
 export type DeviceLocalSetting = (typeof DEVICE_LOCAL_SETTINGS)[number]
 const DEVICE_LOCAL = new Set<string>(DEVICE_LOCAL_SETTINGS)
 
@@ -492,13 +498,18 @@ export function hashData(data: unknown): string {
 /**
  * Top-level settings keys that only make sense together and so merge as one: `searchEngineId`
  * names an engine that `searchEngines` may be the only carrier of (an engine added by hand on
- * the peer), and a 0.3.x phone's frozen `newTabPhone` is folded into `newTab` at apply. An edit
- * of either member stamps both; a peer's copy wins or loses for both at once; the two travel in
- * one record from one device (`newestByRecord`).
+ * the peer), a 0.3.x phone's frozen `newTabPhone` is folded into `newTab` at apply, and the
+ * 0.4.x `restoreSession` switch – retired by 0.4.83's `startup` (Settings › On startup) – is
+ * folded into `startup` there. An edit of either member stamps both; a peer's copy wins or
+ * loses for both at once; the two travel in one record from one device (`newestByRecord`). A
+ * renamed key's group is what lets an old peer's key and this device's successor compare as one
+ * item by time (`winningSettings`) and lets the successor inherit the retired key's time at the
+ * upgrade (`seedSettingsMeta`).
  */
 const SETTINGS_KEY_GROUPS: Readonly<Record<string, string>> = {
   searchEngineId: 'searchEngines',
-  newTabPhone: 'newTab'
+  newTabPhone: 'newTab',
+  restoreSession: 'startup'
 }
 
 /** The composite group a settings key merges under: its own name unless it is a member. */
@@ -649,9 +660,12 @@ function diffSettings(
  * the build's, adopted without a stamp, key by key. An entry from before per-key merge gains
  * every key at the record's time – nothing finer is known – with its value's hash; an entry
  * with keys adopts a changed value's hash at the key's own time, puts a key it did not know (a
- * default this build added) at 0 – a key no one edited never beats a peer's – and drops a key
- * the build no longer holds. The record's `modified` stands. Returns `prev` itself when
- * nothing differs.
+ * default this build added) at the newest time of its group's other members the entry knew –
+ * a key that succeeds a retired one (`startup` after `restoreSession`) is the same edit under a
+ * new name, so the edit's time travels with the rename and an old peer's older switch cannot
+ * beat this device's later choice – else at 0, a key no one edited never beats a peer's; and
+ * drops a key the build no longer holds. The record's `modified` stands. Returns `prev` itself
+ * when nothing differs.
  */
 export function seedSettingsMeta(prev: RecordMeta, data: unknown): RecordMeta {
   const entries = settingsEntries(data)
@@ -670,11 +684,30 @@ export function seedSettingsMeta(prev: RecordMeta, data: unknown): RecordMeta {
       keys[key] = before
       continue
     }
-    keys[key] = { hash: valueHash, modified: before ? before.modified : 0 }
+    keys[key] = {
+      hash: valueHash,
+      modified: before ? before.modified : inheritedKeyTime(prev.keys, key)
+    }
     changed = true
   }
   for (const key of Object.keys(prev.keys)) if (!(key in keys)) changed = true
   return changed ? { ...prev, hash, keys } : prev
+}
+
+/**
+ * The time a key the entry did not know is seeded at: the newest of its group's other members
+ * (`SETTINGS_KEY_GROUPS`) the entry holds, else 0. Never raises the group's time – a sibling's
+ * time IS the group's – so the seed still beats no peer it did not beat before.
+ */
+function inheritedKeyTime(previous: Record<string, KeyMeta>, key: string): number {
+  const group = settingsKeyGroup(key)
+  const siblings = Object.entries(previous).filter(
+    ([other]) => other !== key && settingsKeyGroup(other) === group
+  )
+  return newestOf(
+    siblings.map(([, entry]) => entry.modified),
+    0
+  )
 }
 
 /**
@@ -715,11 +748,13 @@ function mergeSettingsRecords(records: SyncRecord[]): SyncRecord {
  * The keys of a peer's settings record that beat this device's, as a record of those keys
  * alone – `applyRemote` lands what the record carries, so the winner IS the winning set. A
  * composite group wins when the peer's time for it (its newest member) is strictly newer than
- * this device's (the newest member it holds; a group it holds nothing of cannot be beaten) and
- * a member's value differs – ties keep the local, as they always have per record (Chrome's
- * preferences prefer the sync copy on a conflict, which a folder without a server cannot do).
- * A device-local key (`DEVICE_LOCAL_SETTINGS`, still sent by an older build) is no one's to
- * win. Null when nothing wins.
+ * this device's (the newest member it holds of the group, whether or not the peer carries that
+ * member: an old peer's retired key is weighed against this device's successor, `restoreSession`
+ * against `startup`, `newTabPhone` against `newTab`; a group it holds nothing of cannot be
+ * beaten) and a member's value differs – ties keep the local, as they always have per record
+ * (Chrome's preferences prefer the sync copy on a conflict, which a folder without a server
+ * cannot do). A device-local key (`DEVICE_LOCAL_SETTINGS`, still sent by an older build) is no
+ * one's to win. Null when nothing wins.
  */
 function winningSettings(
   mine: RecordMeta & { keys: Record<string, KeyMeta> },
@@ -728,16 +763,16 @@ function winningSettings(
   const entries = settingsEntries(r.data)
   if (entries.length === 0) return null
   const hashes = new Map(entries.map(([key, value]) => [key, hashData(value)] as const))
+  const held = groupsOf(Object.keys(mine.keys))
   const won = new Set<string>()
-  for (const [, members] of groupsOf(hashes.keys())) {
+  for (const [group, members] of groupsOf(hashes.keys())) {
     if (members.every(isDeviceLocalSetting)) continue
     const theirs = newestOf(
       members.map((key) => settingsKeyTime(r, key)),
       r.modified
     )
-    const held = members.filter((key) => mine.keys[key])
     const ours = newestOf(
-      held.map((key) => mine.keys[key].modified),
+      (held.get(group) ?? []).map((key) => mine.keys[key].modified),
       Number.NEGATIVE_INFINITY
     )
     if (theirs <= ours) continue
@@ -911,10 +946,18 @@ export function collectLocal(
     // so the reset reaches the peers as an edit of the key, where a key the record lacks says
     // nothing to `apply`.
     const rest = withoutDeviceLocalSettings(src.settings)
-    const data: SettingsData = {
+    const data: SettingsData & { restoreSession?: boolean } = {
       ...rest,
       compactMode: { ...rest.compactMode, sidebarPersistent: false }
     }
+    // The 0.4.x `restoreSession` switch rides beside its successor `startup` for one release –
+    // mirrored here, in the same group, so an edit stamps both and a peer on the old build still
+    // hears this device's choice (a new peer prefers `startup`, `apply` folds the switch for an
+    // old one). Coarse on purpose: `pages` reads as on, as the phone boots it (continue). Comes
+    // off in 0.4.84, the release after the one that retires the key. Only a settings object that
+    // holds `startup` mirrors it: a profile from before the key (the golden fixtures) sends the
+    // record its build sent, switch and all, and manufactures no edit.
+    if (rest.startup) data.restoreSession = rest.startup.mode !== 'newTab'
     out.set(SETTINGS_RECORD_ID, { type: 'settings', data })
     if (src.siteData) out.set(SITE_DATA_RECORD_ID, { type: 'site-data', data: src.siteData })
   }

@@ -150,7 +150,7 @@ function seedTab(browser: Browser, url: string): string {
 describe("the boot's first tab on the phone (no new tab page capability)", () => {
   it('a fresh profile starts with no tab, so READY is armed without a placement to wait for', () => {
     const { browser } = phone(phoneCapabilities())
-    expect(browser.state.settings.restoreSession).toBe(true)
+    expect(browser.state.settings.startup.mode).toBe('continue')
     browser.start()
     const win = only(browser)
     expect(browser.allWindows()).toHaveLength(1)

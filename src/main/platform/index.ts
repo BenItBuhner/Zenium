@@ -54,7 +54,7 @@ import type {
 import type { ZenWindow } from '../../core/window'
 import type { WindowSwitches } from '../cli'
 import { MediaAccessGate, mediaRefusedMessage } from './mediaAccess'
-import { DEFAULT_CONTAINER_ID } from '../../shared/types'
+import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../../shared/types'
 import { resolveDownloadSettings } from '../../shared/downloads'
 import {
   DISMISSED_ANSWER,
@@ -194,6 +194,8 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   pageLanguages: true,
   // Blink on the desktop maps `serif` / `sans-serif` / `monospace` through the web preferences.
   genericFontFamilies: true,
+  // Electron 44's `webContents.setCaretBrowsingEnabled` (`platform/views.ts`), F7's toggle.
+  caretBrowsing: true,
   // DESKTOP FYI (Q1, the observable landing): the page's `WebContentsView` composites above the
   // chrome and the main process places it synchronously, so the chrome's stand-ins leave as
   // they always have; nothing here answers a placement with the view's drawn frame. Were the
@@ -289,12 +291,19 @@ export class ElectronPlatform implements Platform {
       quitHoldEverywhere?: boolean
       /** The launch's `--kiosk` / `--start-maximized` (`cli.ts`), for every browser window. */
       windowSwitches?: WindowSwitches
+      /**
+       * `--zen-region` / `ZEN_REGION` (`cli.ts` `regionOverride`): the region reported in the
+       * OS's place, for the EEA's search-engine choice screen (W6-2); a normal launch has none.
+       */
+      regionOverride?: string | null
     } = {}
   ) {
     this.info = {
       os: process.platform as PlatformOs,
       version: app.getVersion(),
-      locales: systemLocales()
+      locales: systemLocales(),
+      // The OS's region as Electron reads it (`''` when it cannot tell), the override first.
+      region: options.regionOverride ?? app.getLocaleCountryCode()
     }
     this.performance = electronPerformanceHost({
       holdBackgroundWork: options.holdBackgroundWork === true,
@@ -648,6 +657,23 @@ export class ElectronPlatform implements Platform {
     // so do the request-side effects of chrome.privacy (pings, Referer, DNT).
     extensionApi.webRequest.attach(this.requestBlocking)
     extensionApi.privacy.attach(this.requestBlocking)
+    // `navigator.doNotTrack` follows the same effective source as the `DNT: 1` header: the
+    // user's setting or an extension's `chrome.privacy.websites.doNotTrackEnabled` (the value
+    // for private windows counts only for a private tab's documents).
+    this.privacy.attachExtensionSignals(
+      {
+        doNotTrack: (privateWindow) =>
+          extensionApi.privacy.effectiveValue('websites', 'doNotTrackEnabled', privateWindow) ===
+          true
+      },
+      (sender) => {
+        const tabId = this.views.tabIdForWebContents(sender)
+        return (
+          tabId !== undefined &&
+          browser.state.model.tabs[tabId]?.containerId === PRIVATE_CONTAINER_ID
+        )
+      }
+    )
     // chrome.fontSettings' per-script families, cursive/fantasy/math and fixed-width size have
     // no slot in the page fonts setting: they reach the pages through the views' font layer.
     extensionApi.fontSettings.attachPages({

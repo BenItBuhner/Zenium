@@ -110,6 +110,7 @@ const DESKTOP: HostCapabilities = {
   readAloud: false,
   pageLanguages: false,
   genericFontFamilies: false,
+  caretBrowsing: false,
   placementAnswered: false
 }
 
@@ -170,6 +171,7 @@ const ANDROID: HostCapabilities = {
   readAloud: false,
   pageLanguages: false,
   genericFontFamilies: false,
+  caretBrowsing: false,
   placementAnswered: false
 }
 
@@ -454,6 +456,7 @@ const DESKTOP_APP_MENU = [
   'Bookmarks > -',
   'Bookmarks > Show Bookmarks',
   'Bookmarks > Show Bookmarks Bar',
+  'Bookmarks > Reading List',
   'Bookmarks > -',
   'Bookmarks > Import Bookmarks and Settings…',
   'Bookmarks > Export Bookmarks…',
@@ -1585,7 +1588,9 @@ describe('the app menu', () => {
     expect(appMenu(h)).toContain('Help > Keyboard Shortcuts')
     h.browser.handleCommand(h.win, 'window.formFactor', { formFactor: 'phone' })
     expect(appMenu(h)).not.toContain('Help > Keyboard Shortcuts')
-    expect(appMenu(h)).not.toContain('Help')
+    // The phone's Help is Chrome's flat row (TB-07), not the submenu.
+    expect(appMenu(h)).toContain('Help')
+    expect(item(h.shown(), 'Help').submenu).toBeUndefined()
   })
 
   it('opens Keyboard Shortcuts through page.open: the Settings overlay on its Shortcuts section on the desktop (a tablet with page tabs gets the tab)', () => {
@@ -1720,11 +1725,15 @@ describe('the app menu', () => {
       'Fullscreen',
       'Name Window…',
       'Quit',
-      // Chrome's phone menu is one flat list: the desktop's submenus are not folded into it.
+      // Chrome's phone menu is one flat list: the desktop's submenus are not folded into it –
+      // Help is a row of its own there (TB-07), not the desktop's Help submenu with its children.
       'More Tools',
-      'Help'
+      'Zenium Help',
+      "What's New",
+      'Report an Issue…'
     ])
       expect(everywhere).not.toContain(label)
+    expect(item(h.shown(), 'Help').submenu).toBeUndefined()
     // The host has no windows, extensions, devtools or resource governor.
     for (const label of [
       'New Window',
@@ -1777,11 +1786,54 @@ describe('the app menu', () => {
       'Desktop Site',
       '-',
       'Settings',
+      'Help',
       '-',
       'About Zenium 1.2.3',
       '-',
       'Change Menu'
     ])
+  })
+
+  it('on a phone Help is Chrome’s "Help & feedback" row (TB-07): after Settings, no submenu, and it opens the help page in a new tab in front, a child of the page the menu was over, in that page’s container', () => {
+    const h = harness(ANDROID, 'phone')
+    h.browser.handleCommand(h.win, 'urlbar.submit', {
+      input: 'https://example.com/a',
+      newTab: true,
+      background: false
+    })
+    const opener = h.browser.tabs.activeTabFor(h.win)!
+    const items = appMenu(h)
+    expect(items.indexOf('Help')).toBe(items.indexOf('Settings') + 1)
+    expect(items.filter((l) => l === 'Help')).toHaveLength(1)
+    const help = item(h.shown(), 'Help')
+    expect(help.submenu).toBeUndefined()
+    expect(help.key).toBe('row.help')
+    expect(help.enabled).not.toBe(false)
+    help.click?.()
+    const opened = h.browser.tabs.activeTabFor(h.win)!
+    expect(opened.id).not.toBe(opener.id)
+    expect(opened.url).toBe(HELP_URL)
+    // The page the menu was over is not left: a back from the help page's first entry returns
+    // to its opener (the renderer's `rootBackAction`), as Chrome's help returns to the tab.
+    expect(opened.openerTabId).toBe(opener.id)
+    expect(opened.containerId).toBe(opener.containerId)
+    // From a private page the help page is private too – the tab's own container.
+    const privatePage = h.browser.tabs.createTab(
+      { url: 'https://example.com/p', active: true, containerId: PRIVATE_CONTAINER_ID },
+      h.win
+    )
+    appMenu(h)
+    item(h.shown(), 'Help').click?.()
+    const fromPrivate = h.browser.tabs.activeTabFor(h.win)!
+    expect(fromPrivate.url).toBe(HELP_URL)
+    expect(fromPrivate.containerId).toBe(PRIVATE_CONTAINER_ID)
+    expect(fromPrivate.openerTabId).toBe(privatePage.id)
+    // The sidebar layouts keep Chrome desktop's Help submenu: no flat row there.
+    for (const other of [harness(DESKTOP), harness(ANDROID, 'tablet')]) {
+      appMenu(other)
+      expect(item(other.shown(), 'Help').submenu?.length).toBeGreaterThan(0)
+      expect(labels(other.shown()).filter((l) => l === 'Help')).toHaveLength(1)
+    }
   })
 
   describe('the phone menu’s order (Edge’s Change menu, TB-22)', () => {
@@ -2230,11 +2282,12 @@ describe('the app menu', () => {
     const h = harness(ANDROID, 'phone')
     expect(appMenu(h)).not.toContain('Dark Theme for This Site')
     h.browser.pageControls.update({ darkenSites: true })
-    expect(appMenu(h).slice(-8)).toEqual([
+    expect(appMenu(h).slice(-9)).toEqual([
       'Desktop Site',
       'Dark Theme for This Site',
       '-',
       'Settings',
+      'Help',
       '-',
       'About Zenium 1.2.3',
       '-',
@@ -2820,6 +2873,7 @@ describe('the page context menu', () => {
       'Save Link As…',
       'Copy Link Address',
       'Copy Link Text',
+      'Add Link to Reading List',
       '-',
       'Boosts',
       'Inspect Element'
@@ -2977,12 +3031,138 @@ describe('the page context menu', () => {
       'Save Image As…',
       'Copy Image',
       'Copy Image Address',
+      'Search Image with Google Lens',
       '-',
       'Boosts',
       'Inspect Element'
     ])
     h.click('Save Image As…')
     expect(h.viewCalls).toEqual(['downloadURL("https://example.com/a.png",{"saveAs":true})'])
+  })
+
+  describe('Search Image with <engine> (CT-32)', () => {
+    const IMAGE = 'https://example.com/pics/a b.png?size=large&v=2'
+    const imageMenu = (h: ReturnType<typeof pageHarness>, src: string): string[] =>
+      h.menu(pageParams({ mediaType: 'image', srcURL: src }))
+
+    const hasRow = (menu: string[]): boolean =>
+      menu.some((label) => label.startsWith('Search Image with'))
+    /** An engine of the user's that defines an image search of its own (Chrome's `image_url`). */
+    const YANDEX = {
+      id: 'custom:yandex',
+      name: 'Yandex',
+      searchUrl: 'https://yandex.com/search/?text=%s',
+      suggestUrl: null,
+      keyword: '@yandex',
+      glyph: 'Y',
+      source: 'custom' as const,
+      imageSearch: { name: 'Yandex', url: 'https://yandex.com/images/search?rpt=imageview&url=%s' }
+    }
+
+    it('names Google Lens for Google', () => {
+      expect(imageMenu(pageHarness(), IMAGE)).toContain('Search Image with Google Lens')
+    })
+
+    it('names Bing for Bing', () => {
+      const h = pageHarness()
+      h.browser.handleCommand(h.win, 'settings.update', { searchEngineId: 'bing' })
+      expect(imageMenu(h, IMAGE)).toContain('Search Image with Bing')
+      expect(imageMenu(h, IMAGE)).not.toContain('Search Image with Google Lens')
+    })
+
+    it('names the product of an engine of the user’s that defines an image search', () => {
+      const h = pageHarness()
+      h.browser.handleCommand(h.win, 'settings.update', {
+        searchEngines: [YANDEX],
+        searchEngineId: YANDEX.id
+      })
+      expect(imageMenu(h, IMAGE)).toContain('Search Image with Yandex')
+      h.click('Search Image with Yandex')
+      const tabIds = h.win.activeSpace().tabIds
+      expect(h.browser.tabs.tab(tabIds[tabIds.indexOf(h.tabId) + 1] ?? '')?.url).toBe(
+        `https://yandex.com/images/search?rpt=imageview&url=${encodeURIComponent(IMAGE)}`
+      )
+    })
+
+    it.each(['duckduckgo', 'ecosia', 'wikipedia'])(
+      'has no row for %s, which defines no image search (Chrome shows none either)',
+      (id) => {
+        const h = pageHarness()
+        h.browser.handleCommand(h.win, 'settings.update', { searchEngineId: id })
+        expect(hasRow(imageMenu(h, IMAGE))).toBe(false)
+      }
+    )
+
+    it('has no row for a hand-added engine, which defines none', () => {
+      const h = pageHarness()
+      const id = h.browser.handleCommand(h.win, 'search.addEngine', {
+        name: 'Kagi',
+        url: 'https://kagi.com/search?q=%s'
+      }) as string
+      h.browser.handleCommand(h.win, 'settings.update', { searchEngineId: id })
+      expect(h.browser.state.defaultSearchEngine().id).toBe(id)
+      expect(hasRow(imageMenu(h, IMAGE))).toBe(false)
+    })
+
+    it.each([
+      ['a data: image', 'data:image/png;base64,iVBORw0KGgo='],
+      ['a blob: image', 'blob:https://example.com/1d2c3b4a'],
+      ['a file', 'file:///home/me/a.png'],
+      ['an extension resource', 'chrome-extension://abcdef/icon.png'],
+      ['a blank source', '']
+    ])('has no row for %s', (_name, src) => {
+      const h = pageHarness()
+      // A blank source is no image at all; the others are images no engine can fetch.
+      const menu = h.menu(pageParams({ mediaType: 'image', srcURL: src }))
+      expect(menu.some((label) => label.startsWith('Search Image with'))).toBe(false)
+    })
+
+    it('opens the engine’s lookup of the address in a tab beside this one, in front, with this tab as the opener', () => {
+      const h = pageHarness()
+      imageMenu(h, IMAGE)
+      h.click('Search Image with Google Lens')
+      const tabIds = h.win.activeSpace().tabIds
+      const opened = h.browser.tabs.tab(tabIds[tabIds.indexOf(h.tabId) + 1] ?? '')
+      expect(opened?.url).toBe(
+        `https://lens.google.com/uploadbyurl?url=${encodeURIComponent(IMAGE)}`
+      )
+      expect(opened?.openerTabId).toBe(h.tabId)
+      expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(opened?.id)
+      h.browser.handleCommand(h.win, 'settings.update', { searchEngineId: 'bing' })
+      h.browser.tabs.activateTab(h.tabId, h.win)
+      imageMenu(h, IMAGE)
+      h.click('Search Image with Bing')
+      const ids = h.win.activeSpace().tabIds
+      expect(h.browser.tabs.tab(ids[ids.indexOf(h.tabId) + 1] ?? '')?.url).toBe(
+        `https://www.bing.com/images/search?view=detailv2&iss=sbi&q=imgurl:${encodeURIComponent(IMAGE)}`
+      )
+    })
+
+    it('reaches the phone’s image sheet through the same template: after Copy Image Address, before Share Image…', () => {
+      const h = pageHarness(ANDROID, { formFactor: 'phone' })
+      const menu = imageMenu(h, IMAGE)
+      expect(menu.indexOf('Search Image with Google Lens')).toBe(
+        menu.indexOf('Copy Image Address') + 1
+      )
+      expect(menu.indexOf('Share Image…')).toBe(menu.indexOf('Search Image with Google Lens') + 1)
+      expect(imageMenu(h, 'data:image/gif;base64,R0lGOD')).not.toContain(
+        'Search Image with Google Lens'
+      )
+      // Bing as the engine: its own product, in the same seat.
+      h.browser.handleCommand(h.win, 'settings.update', { searchEngineId: 'bing' })
+      const bing = imageMenu(h, IMAGE)
+      expect(bing.indexOf('Search Image with Bing')).toBe(bing.indexOf('Copy Image Address') + 1)
+      expect(bing.indexOf('Share Image…')).toBe(bing.indexOf('Search Image with Bing') + 1)
+    })
+
+    it('has no row for a DuckDuckGo default on either host', () => {
+      for (const h of [pageHarness(), pageHarness(ANDROID, { formFactor: 'phone' })]) {
+        h.browser.handleCommand(h.win, 'settings.update', { searchEngineId: 'duckduckgo' })
+        const menu = imageMenu(h, IMAGE)
+        expect(hasRow(menu)).toBe(false)
+        expect(menu).toContain('Copy Image Address')
+      }
+    })
   })
 
   it('folds a linked image’s link items into one group to stay within three separators', () => {
@@ -3728,11 +3908,12 @@ describe("the phone's new tab tile menu (NTP-06)", () => {
     return topLabels(h.shown())
   }
 
-  it('a pinned tile: Open in New Tab, Copy Link, then Edit Shortcut…, Move Left, Move Right, Unpin Shortcut and Remove', () => {
+  it('a pinned tile: Open in New Tab, Open in Private Tab, Copy Link, then Edit Shortcut…, Move Left, Move Right, Unpin Shortcut and Remove', () => {
     const h = pageHarness(ANDROID, { formFactor: 'phone' })
     const id = h.browser.newTab.addShortcut('Docs', 'https://docs.example/')!
     expect(tileMenu(h, 'https://docs.example/', 'Docs')).toEqual([
       'Open in New Tab',
+      'Open in Private Tab',
       'Copy Link',
       '-',
       'Edit Shortcut…',
@@ -3780,6 +3961,7 @@ describe("the phone's new tab tile menu (NTP-06)", () => {
     const h = pageHarness(ANDROID, { formFactor: 'phone' })
     expect(tileMenu(h, 'https://often.example/', 'Often')).toEqual([
       'Open in New Tab',
+      'Open in Private Tab',
       'Copy Link',
       '-',
       'Pin Shortcut',
@@ -3791,6 +3973,42 @@ describe("the phone's new tab tile menu (NTP-06)", () => {
     ])
     h.click('Remove')
     expect(h.browser.state.newTabDevice.hiddenHosts).toContain('often.example')
+  })
+
+  it('offers Open in Private Tab second – Chrome’s "Open in Incognito tab" (GN-11) – only where private browsing is a tab: the site opens in the window’s private container, in front; the rest of the menu is as it was', () => {
+    const h = pageHarness(ANDROID, { formFactor: 'phone' })
+    const menu = tileMenu(h, 'https://often.example/', 'Often')
+    expect(menu.indexOf('Open in Private Tab')).toBe(menu.indexOf('Open in New Tab') + 1)
+    const before = Object.keys(h.browser.state.model.tabs).length
+    h.click('Open in Private Tab')
+    const opened = Object.values(h.browser.state.model.tabs).find(
+      (t) => t.url === 'https://often.example/'
+    )
+    expect(Object.keys(h.browser.state.model.tabs).length).toBe(before + 1)
+    expect(opened?.containerId).toBe(PRIVATE_CONTAINER_ID)
+    expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(opened?.id)
+    // Open in New Tab is still the background open it was.
+    tileMenu(h, 'https://often.example/', 'Often')
+    h.click('Open in New Tab')
+    const plain = Object.values(h.browser.state.model.tabs).filter(
+      (t) => t.url === 'https://often.example/' && t.containerId !== PRIVATE_CONTAINER_ID
+    )
+    expect(plain).toHaveLength(1)
+    expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(opened?.id)
+    // Without the capability (WebView 113 on API 34: no profiles) the row stays out, not
+    // greyed – the menu as it was before the row.
+    const bare = pageHarness({ ...ANDROID, privateTabs: false }, { formFactor: 'phone' })
+    expect(tileMenu(bare, 'https://often.example/', 'Often')).toEqual([
+      'Open in New Tab',
+      'Copy Link',
+      '-',
+      'Pin Shortcut',
+      'Remove'
+    ])
+    // The desktop's tile menu never had one.
+    expect(tileMenu(pageHarness(DESKTOP), 'https://often.example/', 'Often')).not.toContain(
+      'Open in Private Tab'
+    )
   })
 })
 
@@ -4992,7 +5210,7 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
   const enabled = (h: Harness, label: string): boolean => item(h, label).enabled !== false
 
   describe("the tab row's menu is Firefox's, in Firefox's groups (§6 Menus: a long context menu regrouped to the app menu's counts)", () => {
-    /** Firefox's skeleton for a regular row: five groups, four separators, twenty rows. */
+    /** Firefox's skeleton for a regular row: five groups, four separators, twenty rows – and Chrome's reading list row (W6-1). */
     const REGULAR_TAB_MENU = [
       'New Tab Below',
       '-',
@@ -5009,6 +5227,7 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       '-',
       'Bookmark Tab',
       'Bookmark All Tabs…',
+      'Add Tab to Reading List',
       'Move Tab',
       'Split with Current Tab',
       'Open in New Container Tab',
@@ -5020,12 +5239,13 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       'Reopen Closed Tab'
     ]
 
-    it('a regular row: twenty rows and four separators, every move under Move Tab and the three scoped closes under Close Multiple Tabs', () => {
+    it('a regular row: twenty-one rows and four separators, every move under Move Tab and the three scoped closes under Close Multiple Tabs', () => {
       const h = pageHarness()
       h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
       const shown = h.shown()
       expect(topLabels(shown)).toEqual(REGULAR_TAB_MENU)
-      expect(topLabels(shown).filter((l) => l !== '-')).toHaveLength(20)
+      // Firefox's twenty and Chrome's Add tab to reading list (W6-1) under the bookmark rows.
+      expect(topLabels(shown).filter((l) => l !== '-')).toHaveLength(21)
       expect(separators(shown)).toBe(4)
       // The state group in Firefox's order – Reload, Mute, Unload, Freeze, Duplicate, Pin: the
       // unload and the freeze are the tab's state, as its mute is, not its place.
@@ -5042,6 +5262,7 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       expect(top.slice(top.indexOf('Bookmark Tab'), top.indexOf('Move Tab') + 1)).toEqual([
         'Bookmark Tab',
         'Bookmark All Tabs…',
+        'Add Tab to Reading List',
         'Move Tab'
       ])
       expect(topLabels(item(h, 'Move Tab').submenu!)).toEqual([

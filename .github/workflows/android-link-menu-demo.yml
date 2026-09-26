@@ -12,8 +12,8 @@ name: Android link menu demo
 # two design stills `link-menu-design-rows-{light,dark}.png`. The driver writes
 # `link-menu-findings.txt` with an OK or FAIL per claim and fails when any did. Dispatch-only, like
 # the other demos: it takes about four minutes; the nightly sweep runs the same driver on its
-# phone-f shard (.github/nightly-drivers.json). The build, the emulator and the Gradle cache live in
-# android-emulator-demo.yml; this file only picks the driver and the demo it runs.
+# phone-f shard (.github/nightly-drivers/link-menu.json). The build, the emulator and the Gradle cache
+# live in android-emulator-demo.yml; this file only picks the driver and the demo it runs.
 on:
   workflow_dispatch:
 

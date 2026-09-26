@@ -107,9 +107,7 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
             mapOf("/" to ("text/html; charset=utf-8" to readAsset("sheet-recede-demo-page.html").toByteArray()))
         ).also { it.start() }
         try {
-            // A perf reading: no events hold (DemoHarness.runDemo – the hold's service moves the WebView to
-            // its complete tree mode with every event, work inside what the frames and the traces measure).
-            runDemo(holdEvents = false)
+            runPerfDemo() // a perf reading: no events hold (the rule at DemoHarness.runDemo)
         } finally {
             server.close()
             // Whatever cut the sequence short, what was measured up to then is worth having.

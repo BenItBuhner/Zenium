@@ -52,15 +52,16 @@ abstract class GroupsDemoBase(shotPrefix: String, handshakeDir: String) :
 
     /**
      * The concrete driver's `@Test`: the server up (the seeded pages, and `pages` of the driver's
-     * own beside them), the recorded run, the findings written, a FAIL failing the test.
-     * `holdEvents` goes to [runDemo]: a driver whose acts need no accessibility service enabled
-     * at all (a mouse's hover, which a WebView takes as accessibility exploration while one is)
-     * passes `false`.
+     * own beside them), the recorded run, the findings written, a FAIL failing the test. `run` is
+     * the way the recording runs – [runDemo], the events hold, unless the driver is one of the
+     * two kinds that run without it and names its own ([runMouseDemo]: a driver whose acts need
+     * no accessibility service enabled at all, a mouse's hover being taken as accessibility
+     * exploration while one is; [runPerfDemo]: a perf driver) – see the rule at [runDemo].
      */
-    protected fun recordDemo(pages: Map<String, Pair<String, ByteArray>> = emptyMap(), holdEvents: Boolean = true) {
+    protected fun recordDemo(pages: Map<String, Pair<String, ByteArray>> = emptyMap(), run: () -> Unit = ::runDemo) {
         server = DemoServer(PORT, PAGES + pages).also { it.start() }
         try {
-            runDemo(holdEvents)
+            run()
         } finally {
             server.close()
             File(out, findingsFile).writeText(findings.toString())

@@ -85,7 +85,7 @@ import {
 } from '@shared/shortcuts'
 import { describeUpdateTarget, type UpdateChannel } from '@shared/updates'
 import { displayUrl, getDomain, inputToUrl, isWebPageUrl } from '@shared/url'
-import { homepageAddress, homepageDisplay } from '@shared/homepage'
+import { extensionHomepage, homepageAddress, homepageDisplay } from '@shared/homepage'
 import { languageName } from '@shared/languageNames'
 import { HELP_URL, ISSUES_URL } from '@shared/links'
 import { catalogueLanguageName } from '@renderer/lib/languageCatalogue'
@@ -151,6 +151,7 @@ import {
 } from '../../overlays/settingsCopy'
 import { ModelPickList, PickList } from '../../translate/pickers'
 import { fontsGroups } from './fonts'
+import { startupGroup } from './startup'
 import type { FontsDraft } from './fontsDraft'
 import {
   addLanguageRow,
@@ -178,6 +179,7 @@ import {
 import { importGroups } from '../../import/importRows'
 import { AboutVersionBlock } from './AboutVersionBlock'
 import { CustomizeToolbarForm } from './CustomizeToolbarForm'
+import { extensionControlled } from './controlled'
 import { extensionsGroups } from './extensions'
 import { LayoutCards } from './LayoutCards'
 import {
@@ -902,10 +904,20 @@ function lookSection({
  * address as a §9.12 field row (the one-field sheet, a web address required) and Use current
  * page, which takes the address of the page Settings was opened from (the tab's opener). The
  * rows are the phone shell's: the desktop shells have no Home control that reads the setting
- * yet (their Alt+Home keeps its own destination).
+ * yet (their Alt+Home keeps its own destination). While an extension holds the homepage
+ * (`chrome_settings_overrides.homepage`, `UIState.extensionControls.homepage` with its page as
+ * the value) the rows are held (`RowBase.controlled`, §10.5's controlled-setting primitive):
+ * the picker at Specific page, the Address row showing the extension's page – what Home opens
+ * (`extensionHomepage`, the core's `effectiveHomepage`) – and Use current page with them, one
+ * run under one indicator. Off stays the user's, Home button and rows alike: Chrome's "Show
+ * home button" is no extension's to set, so an extension's page waits until the button is on.
  */
 function homepageGroup(state: UIState, tab: Tab, set: SectionContext['set']): RowGroup {
-  const homepage = state.settings.homepage
+  const own = state.settings.homepage
+  const control = extensionControlled(state, 'homepage')
+  const held = extensionHomepage(own, control)
+  const homepage = held ? { mode: 'url' as const, url: held } : own
+  const controlled = held ? control : undefined
   const address = homepageDisplay(homepage)
   const opener = tab.openerTabId ? state.tabs[tab.openerTabId] : undefined
   const current =
@@ -916,6 +928,7 @@ function homepageGroup(state: UIState, tab: Tab, set: SectionContext['set']): Ro
       label: 'Homepage',
       keywords: ['home', 'home button', 'start page', 'new tab page'],
       layouts: ['phone'],
+      controlled,
       value: homepage.mode,
       sheetDescription: 'Where the Home button goes.',
       options: [
@@ -927,7 +940,7 @@ function homepageGroup(state: UIState, tab: Tab, set: SectionContext['set']): Ro
           description: address || 'Enter an address below, or use the current page.'
         }
       ],
-      onChange: (mode) => set({ homepage: { ...homepage, mode } })
+      onChange: (mode) => set({ homepage: { ...own, mode } })
     })
   ]
   if (homepage.mode === 'url') {
@@ -938,6 +951,7 @@ function homepageGroup(state: UIState, tab: Tab, set: SectionContext['set']): Ro
         label: 'Address',
         keywords: ['homepage', 'url', 'web address'],
         layouts: ['phone'],
+        controlled,
         value: address,
         display: address || 'Not set',
         input: 'url',
@@ -958,6 +972,7 @@ function homepageGroup(state: UIState, tab: Tab, set: SectionContext['set']): Ro
           : 'Open a page, then come back to Settings from it.',
         keywords: ['homepage'],
         layouts: ['phone'],
+        controlled,
         disabled: current === null,
         onPress: () => {
           const url = current ? homepageAddress(current.url) : null
@@ -1040,7 +1055,40 @@ function accessibilitySection(ctx: SectionContext): RowGroup[] {
   const groups: RowGroup[] = []
   if (ctx.state.capabilities.pageControls) groups.push(...pageZoomGroups(ctx))
   if (ctx.state.capabilities.readAloud) groups.push(...readAloudGroups(ctx))
+  if (ctx.state.capabilities.caretBrowsing) groups.push(caretBrowsingGroup(ctx))
   return groups
+}
+
+/**
+ * Caret browsing (CT-34) on a host whose engine has the switch (the desktop): the state F7
+ * toggles, as a row too – Chrome keeps it in Settings › Accessibility – and whether F7 asks
+ * first, the setting the dialog's "Don't ask again" clears, so it can be turned back on.
+ */
+function caretBrowsingGroup({ state, set }: SectionContext): RowGroup {
+  const s = state.settings
+  return {
+    id: 'caret-browsing',
+    heading: 'Keyboard',
+    rows: [
+      {
+        kind: 'switch',
+        id: 'caret-browsing',
+        label: 'Caret browsing',
+        description:
+          "Move through a page's text with the arrow keys and select it with Shift. F7 turns it on and off.",
+        checked: s.caretBrowsing === true,
+        onChange: (v) => set({ caretBrowsing: v })
+      },
+      {
+        kind: 'switch',
+        id: 'caret-browsing-confirm',
+        label: 'Ask before turning on caret browsing',
+        description: 'F7 asks "Turn on caret browsing?" first.',
+        checked: s.caretBrowsingConfirm !== false,
+        onChange: (v) => set({ caretBrowsingConfirm: v })
+      }
+    ]
+  }
 }
 
 function pageZoomGroups({ state, set }: SectionContext): RowGroup[] {
@@ -1572,6 +1620,21 @@ function tabsSection({ state, tab, set }: SectionContext): RowGroup[] {
           onChange: (v) => set({ confirmCloseAll: v })
         }
       ]
+  // The startup on a host without windows: the phone's boot knows two – the last session back,
+  // or one fresh tab – so its row stays the switch it was (`startup.mode` underneath: on is
+  // "Continue where you left off", off "Open the New Tab page"; a synced `pages` reads as on,
+  // the boot it gets there). The windowed hosts have Settings › On startup (`startupGroup`).
+  const startupRows: SettingsRow[] = windows
+    ? []
+    : [
+        {
+          kind: 'switch',
+          id: 'restore-session',
+          label: 'Restore previous session on startup',
+          checked: s.startup.mode !== 'newTab',
+          onChange: (v) => set({ startup: { ...s.startup, mode: v ? 'continue' : 'newTab' } })
+        }
+      ]
   const groups: RowGroup[] = [
     {
       id: 'tabs',
@@ -1602,17 +1665,12 @@ function tabsSection({ state, tab, set }: SectionContext): RowGroup[] {
           onChange: (v) => set({ ctrlTabCyclesWithinSection: v })
         },
         ...overviewRows,
-        {
-          kind: 'switch',
-          id: 'restore-session',
-          label: 'Restore previous session on startup',
-          checked: s.restoreSession,
-          onChange: (v) => set({ restoreSession: v })
-        },
+        ...startupRows,
         ...sessionRows
       ]
     }
   ]
+  if (windows) groups.push(startupGroup({ state, set }))
   if (state.capabilities.windows) {
     groups.push({
       id: 'window-sync',
@@ -2752,6 +2810,25 @@ function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
           })),
           onChange: (v) => set({ searchEngineId: v })
         }),
+        // The EEA's choice screen again (W6-2; Chrome's chrome://search-engine-choice can be
+        // reopened from its Search engine settings): on a device in the EEA, or one that
+        // answered the screen once (a record) wherever it is now. The screen is the desktop's
+        // and the tablet's; the phone draws none yet, so it keeps no row for it.
+        ...(state.searchChoice?.eea || s.searchChoice !== null
+          ? [
+              {
+                kind: 'action',
+                id: 'search-choice-again',
+                label: 'Choose your search engine again',
+                description:
+                  'Shows the search engines again, in a random order, to set the default.',
+                keywords: ['choice', 'default', 'eea', 'dma'],
+                layouts: ['desktop', 'tablet'],
+                button: 'Choose…',
+                onPress: () => run('searchChoice.askAgain', undefined)
+              } satisfies SettingsRow
+            ]
+          : []),
         {
           kind: 'switch',
           id: 'search-suggestions',

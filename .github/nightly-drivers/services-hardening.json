@@ -1,0 +1,11 @@
+{
+  "id": "services-hardening",
+  "order": 74,
+  "class": "ServicesHardeningDemo",
+  "shard": "phone-d",
+  "mirrors": "(none: dispatch-only driver without a workflow)",
+  "dir": "services-hardening-demo",
+  "setup": ["hardening-server"],
+  "estimate": 3.5,
+  "note": "Its pages come from services-hardening-demo-server.mjs on the runner (10.0.2.2:8787) with a demo PKCS#12 made in the setup for the certificate chooser."
+}

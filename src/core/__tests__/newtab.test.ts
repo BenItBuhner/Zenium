@@ -1612,6 +1612,37 @@ describe('NewTabService: the homepage (SET-36 / NTP-30)', () => {
     expect(phone.browser.newTab.homepageUrl()).toBe(BLANK_URL)
   })
 
+  it('homepageUrl follows an extension’s homepage while one holds the setting (chrome_settings_overrides.homepage, the `homepage` control), the user’s own back when it lets go, and Off stays Off', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    const bing = {
+      extensionId: 'a'.repeat(32),
+      name: 'Bing Homepage',
+      value: 'https://www.bing.com/'
+    }
+    f.browser.handleCommand(win, 'settings.update', {
+      homepage: { mode: 'url', url: 'https://news.example/' }
+    })
+    f.browser.state.setExtensionControls({ homepage: bing })
+    expect(f.browser.newTab.homepageUrl()).toBe('https://www.bing.com/')
+    expect(f.browser.state.effectiveHomepage()).toEqual({
+      mode: 'url',
+      url: 'https://www.bing.com/'
+    })
+    // The user's own setting waits underneath, untouched.
+    expect(f.browser.state.settings.homepage).toEqual({ mode: 'url', url: 'https://news.example/' })
+    // Over the new tab page too: the extension's page is where Home goes.
+    f.browser.handleCommand(win, 'settings.update', { homepage: { mode: 'newtab', url: '' } })
+    expect(f.browser.newTab.homepageUrl()).toBe('https://www.bing.com/')
+    // Off is the user's: no Home button, nothing runs, whatever the extension declares.
+    f.browser.handleCommand(win, 'settings.update', { homepage: { mode: 'off', url: '' } })
+    expect(f.browser.newTab.homepageUrl()).toBeNull()
+    // The extension gone (disabled, uninstalled): the user's own again.
+    f.browser.handleCommand(win, 'settings.update', { homepage: { mode: 'newtab', url: '' } })
+    f.browser.state.setExtensionControls({})
+    expect(f.browser.newTab.homepageUrl()).toBe(NEW_TAB_URL)
+  })
+
   it('tab.home navigates the tab to the homepage and closes the URL bar; nothing runs while Off', () => {
     const f = fixture()
     const win = f.browser.focusedWindow()

@@ -1,0 +1,9 @@
+{
+  "id": "blocking-ui",
+  "order": 43,
+  "class": "BlockingUiDemo",
+  "shard": "phone-c",
+  "mirrors": "android-blocking-ui-demo.yml",
+  "dir": "blocking-ui-demo",
+  "estimate": 3.5
+}

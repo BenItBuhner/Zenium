@@ -9,7 +9,9 @@ import {
   type MediaSessionSource,
   type MediaSessionSourceHandle
 } from '../shared/mediaSession'
+import { displayHost } from '../shared/url'
 import type { Browser } from './browser'
+import { permissionSite } from './permissions'
 import type { ZenWindow } from './window'
 
 /**
@@ -17,6 +19,52 @@ import type { ZenWindow } from './window'
  * `MediaSession` waits for a duration of at least this many seconds before it takes an element.
  */
 export const MIN_SESSION_DURATION_S = 5
+
+/** The content setting the desktop's automatic picture-in-picture obeys: Chrome's row of the same name. */
+export const AUTO_PIP_SETTING = 'auto-picture-in-picture'
+
+/**
+ * How long after a window's blur the desktop waits before it counts the user as gone from the
+ * app: a focus that only moves to another Zenium window arrives within this and leaves the
+ * video where it is, as that window is still the user's.
+ */
+export const AUTO_PIP_BLUR_GRACE_MS = 150
+
+/**
+ * The page side of an automatic entry: the largest video playing that does not forbid the small
+ * window goes in; `'held'` when the page already has one there (the user's own, left alone).
+ * With `hiddenOnly` the entry is for a document the user cannot see – Chrome's rule for its
+ * automatic picture-in-picture, read where Chrome reads it: `document.visibilityState`, which
+ * Chromium computes from the window's own state (minimized, or covered by another window on the
+ * platforms where it tracks occlusion natively – Windows and macOS; not X11) – and a document
+ * still visible answers `'visible'` and keeps its video where the user is watching it.
+ */
+const AUTO_PIP_HIDDEN_GUARD = "if (document.visibilityState !== 'hidden') return 'visible'"
+
+function autoPipEnter(hiddenOnly: boolean): string {
+  return `(async () => {
+  ${hiddenOnly ? AUTO_PIP_HIDDEN_GUARD : ''}
+  if (document.pictureInPictureElement) return 'held'
+  const videos = [...document.querySelectorAll('video')].filter(v => v.readyState > 0 && !v.disablePictureInPicture && !v.paused && !v.ended)
+  const video = videos.sort((a, b) => (b.videoWidth * b.videoHeight) - (a.videoWidth * a.videoHeight))[0]
+  if (!video) return false
+  await video.requestPictureInPicture()
+  return true
+})()`
+}
+
+const AUTO_PIP_LEAVE = `(async () => {
+  if (!document.pictureInPictureElement) return false
+  await document.exitPictureInPicture()
+  return true
+})()`
+
+/** What the desktop put into the small window of its own accord, and whether the page confirmed it. */
+interface AutoPip {
+  tabId: string
+  /** The page reported its picture-in-picture element (`capture-state`): a later report without one is the user closing it. */
+  confirmed: boolean
+}
 
 interface TabReport {
   report: MediaReport
@@ -73,6 +121,11 @@ export class MediaSessionService {
   /** The tab whose video the window is showing as picture-in-picture, as the host reported. */
   private pipTabId: string | null = null
   private lastSent: string | null = null
+  /** The desktop's automatic picture-in-picture, while a video is in the small window on its account. */
+  private autoPip: AutoPip | null = null
+  /** The tabs each window showed at the last look (`onVisibleTabsChanged`), by window id. */
+  private readonly shown = new Map<string, string[]>()
+  private blurTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(
     private readonly browser: Browser,
@@ -220,6 +273,7 @@ export class MediaSessionService {
       })
     }
     if (this.pipTabId && !live.has(this.pipTabId)) this.pipTabId = null
+    if (this.autoPip && !live.has(this.autoPip.tabId)) this.autoPip = null
     this.held = this.pickSession()
     this.sessionTabId = this.tabOf(this.held)
     for (const state of states) if (state.tabId === this.sessionTabId) state.session = true
@@ -309,8 +363,24 @@ export class MediaSessionService {
       actions: report.actions,
       fullscreen: report.fullscreen,
       private: isPrivate,
+      backgroundVideo: this.backgroundVideoAllowed(tab?.url),
       source: 'page'
     }
+  }
+
+  /**
+   * Whether the page's site may keep its video playing in the background: its `background-video`
+   * content setting resolves to allow (block by default; Android-only, read by the host at its
+   * background transition). Pages without a site (`zen://`, `about:blank`) never do.
+   */
+  private backgroundVideoAllowed(url: string | undefined): boolean {
+    if (!url || permissionSite(url) === null) return false
+    return this.browser.permissions.resolve('background-video', url) === 'allow'
+  }
+
+  /** A `background-video` decision changed: the session carries the site's new answer to the host. */
+  followBackgroundVideoSetting(): void {
+    this.push()
   }
 
   /** A chrome player's session as the host's controls see it: no video, no PiP; blank on a private tab. */
@@ -335,6 +405,7 @@ export class MediaSessionService {
       actions: [...source.actions],
       fullscreen: false,
       private: isPrivate,
+      backgroundVideo: false,
       source: 'chrome',
       sourceId: source.id
     }
@@ -456,6 +527,7 @@ export class MediaSessionService {
       actions: report.actions,
       fullscreen: report.fullscreen,
       private: isPrivate,
+      backgroundVideo: this.backgroundVideoAllowed(tab?.url),
       source: 'page'
     })
   }
@@ -547,6 +619,217 @@ export class MediaSessionService {
   /** The tab in picture-in-picture, if any. */
   get pictureInPictureTab(): string | null {
     return this.pipTabId
+  }
+
+  // ---------------------------------------------------------------------------
+  // Automatic picture-in-picture (MW-28): the desktop's mirror of Android's hook (#223)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The tab whose video the desktop put into the small window of its own accord, or null: a
+   * video the user put there themselves is never this service's to take back.
+   */
+  get autoPictureInPictureTab(): string | null {
+    return this.autoPip?.tabId ?? null
+  }
+
+  /**
+   * `win` shows other tabs than a moment ago (the active tab changed, the space switched, a
+   * split formed or a tab moved windows: `TabManager` says so after every such change). A tab
+   * that left the screen everywhere while an eligible video played goes into the small window
+   * without a click, as Chrome's automatic picture-in-picture does when the tab is hidden; the
+   * tab in front again, its video comes back to the page. Eligibility is Chrome's rule as the
+   * hub sees it ({@link eligibleForAuto}): a video playing with a media session, on a page the
+   * user interacted with, not private, the site's `auto-picture-in-picture` setting allowing.
+   */
+  onVisibleTabsChanged(win: ZenWindow): void {
+    const { tabs } = this.browser
+    const before = this.shown.get(win.id) ?? []
+    const visible = tabs.visibleTabIds(win)
+    this.shown.set(win.id, visible)
+    if (!this.autoPipSupported()) return
+    if (this.autoPip && visible.includes(this.autoPip.tabId)) {
+      void this.leaveAuto()
+      return
+    }
+    for (const tabId of before) {
+      if (visible.includes(tabId) || tabs.windowsShowing(tabId).length > 0) continue
+      if (!this.eligibleForAuto(tabId)) continue
+      void this.enterAuto(tabId)
+      return
+    }
+  }
+
+  /**
+   * `win` gained or lost the focus (the desktop's `focus` / `blur` window events, through
+   * `ZenWindow.onWindowStateChanged`). Losing it to something outside Zenium – no window of
+   * ours focused once the grace period is over – puts the window's eligible playing video into
+   * the small window when the page went out of sight with the window, as leaving the app does
+   * on Android; gaining it back with that video's tab in front returns the video to the page.
+   * The trigger is Electron's blur, the rule the page's own visibility (Chrome's: its automatic
+   * picture-in-picture fires for a hidden document, never for one the user can still see – two
+   * windows side by side, a second monitor, a video watched while typing elsewhere): the entry
+   * script asks `document.visibilityState` and a visible document stays ({@link autoPipEnter}).
+   * That reads as Chromium computes it: a minimized window is hidden everywhere; a window
+   * another application covers is hidden where Chromium tracks occlusion natively (Windows,
+   * macOS) and visible on Linux/X11, where an app switch therefore leaves the video on the page
+   * and minimizing moves it – as Chrome on Linux behaves. An occlusion that arrives after the
+   * grace, with no new blur, is not heard.
+   *
+   * What this host gives the rule today (the pass 10 probe, Electron 44.4.5 under Xvfb): a tab
+   * page's `visibilityState` stayed `visible` behind another tab, on blur and with the window
+   * hidden outright – the host does not forward the window's state to a child
+   * `WebContentsView`'s page – so until it tells a tab page it is hidden with the window, this
+   * path enters nothing and the tab trigger above carries the feature.
+   */
+  onWindowFocusChanged(win: ZenWindow, focused: boolean): void {
+    if (this.blurTimer !== null) {
+      clearTimeout(this.blurTimer)
+      this.blurTimer = null
+    }
+    if (!this.autoPipSupported()) return
+    if (focused) {
+      if (this.autoPip && this.browser.tabs.visibleTabIds(win).includes(this.autoPip.tabId)) {
+        void this.leaveAuto()
+      }
+      return
+    }
+    this.blurTimer = setTimeout(() => {
+      this.blurTimer = null
+      if (!win.alive) return
+      if (this.browser.allWindows().some((w) => w.host.isFocused())) return
+      for (const tabId of this.browser.tabs.visibleTabIds(win)) {
+        if (!this.eligibleForAuto(tabId)) continue
+        void this.enterAuto(tabId, true)
+        return
+      }
+    }, AUTO_PIP_BLUR_GRACE_MS)
+  }
+
+  /**
+   * `tabId`'s page has (or no longer has) a picture-in-picture element, as its capture-state
+   * reporter says: the automatic entry is confirmed by the first, and the user closing the
+   * small window (the second, after it) ends the desktop's claim – the video stays on the page
+   * until the tab leaves the screen again.
+   */
+  onPagePictureInPicture(tabId: string, active: boolean): void {
+    const auto = this.autoPip
+    if (!auto || auto.tabId !== tabId) return
+    if (active) auto.confirmed = true
+    else if (auto.confirmed) this.autoPip = null
+  }
+
+  /**
+   * Whether this host's pages go into their own small window on the desktop's terms: a host
+   * whose window itself goes into picture-in-picture (Android) has its own automatic entry.
+   */
+  private autoPipSupported(): boolean {
+    return (
+      !this.browser.platform.mediaSession?.enterPictureInPicture &&
+      this.browser.state.capabilities.pictureInPicture
+    )
+  }
+
+  /**
+   * Chrome's eligibility for automatic picture-in-picture, read from what the hub knows: the
+   * tab's page reports a video playing (audible, so it holds a media session) long enough for
+   * the OS controls; the user has interacted with the page (Chromium's sticky activation, as
+   * the pop-up blocker tracks it); the tab is not private (PiP is withheld there); the site's
+   * `auto-picture-in-picture` setting allows; and no video is in the small window already,
+   * the desktop's own or the user's.
+   */
+  private eligibleForAuto(tabId: string): boolean {
+    if (this.autoPip) return false
+    const tracked = this.reports.get(tabId)
+    if (!tracked) return false
+    const { report } = tracked
+    if (!report.video || !reportIsPlaying(report) || !sessionWorthy(report)) return false
+    const { tabs } = this.browser
+    const view = tabs.view(tabId)
+    if (!view || view.isDestroyed()) return false
+    const tab = tabs.tab(tabId)
+    if (!tab || tabs.isPrivate(tab)) return false
+    if (!this.browser.popups.activation(tabId).hasBeenActive()) return false
+    if (!this.browser.permissions.check(AUTO_PIP_SETTING, tab.url)) return false
+    for (const [id] of tabs.allViews()) if (tabs.tab(id)?.alert === 'pip') return false
+    return true
+  }
+
+  /**
+   * The video of `tabId` into the small window; `hiddenOnly` (the window trigger) for a document
+   * out of the user's sight alone – a visible one answers `'visible'` and the claim is dropped
+   * as for any refusal: no `autoPip`, no toast, the tab's alert never set.
+   */
+  private async enterAuto(tabId: string, hiddenOnly = false): Promise<void> {
+    const view = this.browser.tabs.view(tabId)
+    if (!view || view.isDestroyed()) return
+    // Claimed before the page answers, so a second trigger in the meantime does not double up.
+    this.autoPip = { tabId, confirmed: false }
+    let entered = false
+    try {
+      entered = (await view.executeJavaScript(autoPipEnter(hiddenOnly))) === true
+    } catch {
+      entered = false
+    }
+    if (!entered && this.autoPip?.tabId === tabId && !this.autoPip.confirmed) this.autoPip = null
+    if (entered && this.autoPip?.tabId === tabId) this.noticeAuto(tabId)
+  }
+
+  /**
+   * The first automatic entry for a site says so (the design lead's ruling on MW-28): a toast
+   * in the tab's own window – "Video from <site> opened in a small window", `<site>` the host
+   * without `www.` as the site card names it (`displayHost`) – with the one action "Turn off
+   * for this site" (`media.autoPipOptOut`, §9.33's action clock). Once per site: the memory is
+   * the permission answers' own (`permissions.noticed`, device-local, gone with the site's
+   * reset), so every later entry is silent and the setting stands in Additional permissions.
+   * The tab's window is the right one both ways: on a tab or space switch the user is still in
+   * it; on a blur to another application it is the only Zenium window (none has the focus once
+   * the grace is over), what the user sees on return. The user's own toggle and Android's hook
+   * (#223) never come this way.
+   */
+  private noticeAuto(tabId: string): void {
+    const tab = this.browser.tabs.tab(tabId)
+    if (!tab) return
+    const { permissions } = this.browser
+    if (permissions.noticed(AUTO_PIP_SETTING, tab.url)) return
+    permissions.markNoticed(AUTO_PIP_SETTING, tab.url)
+    let win: ZenWindow | undefined
+    try {
+      win = this.browser.tabs.windowFor(tabId)
+    } catch {
+      win = undefined
+    }
+    this.browser.toast(`Video from ${displayHost(tab.url)} opened in a small window`, 'info', win, {
+      label: 'Turn off for this site',
+      command: 'media.autoPipOptOut',
+      args: { tabId }
+    })
+  }
+
+  /**
+   * "Turn off for this site", the toast's action: the site of `tabId`'s page gets
+   * `auto-picture-in-picture` = deny through the permissions service – the same write the site
+   * card's row makes, so the row shows it and resets it – and the video the desktop just put in
+   * the small window comes back to its tab, playing on (a video the user meant as sound alone
+   * is stopped in one tap). The user's own picture-in-picture is not this service's to take back.
+   */
+  async optOutAuto(tabId: string): Promise<void> {
+    const tab = this.browser.tabs.tab(tabId)
+    if (tab) this.browser.permissions.set(AUTO_PIP_SETTING, tab.url, 'deny')
+    if (this.autoPip?.tabId === tabId) await this.leaveAuto()
+  }
+
+  private async leaveAuto(): Promise<void> {
+    const auto = this.autoPip
+    if (!auto) return
+    this.autoPip = null
+    const view = this.browser.tabs.view(auto.tabId)
+    if (!view || view.isDestroyed()) return
+    try {
+      await view.executeJavaScript(AUTO_PIP_LEAVE)
+    } catch {
+      // The document is gone with its small window.
+    }
   }
 }
 

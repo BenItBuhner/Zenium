@@ -11,9 +11,17 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { is } from '@electron-toolkit/utils'
 import { quitChordOf, relayDevtoolsQuitChord } from './devtoolsKeys'
+import { devtoolsQuitHoldNotice } from './devtoolsQuitHoldNotice'
 import { focusedDocumentOf } from './focusedDocument'
 import { ElectronShortcuts } from './shortcuts'
-import type { EventName, Events, Rect, WindowChrome } from '../../shared/types'
+import type {
+  EventName,
+  Events,
+  QuitHoldState,
+  Rect,
+  UIState,
+  WindowChrome
+} from '../../shared/types'
 import { CAPTION_HEIGHT, type CaptionColors } from '../../shared/theme'
 import { forcesRail, hasTopToolbar } from '../../shared/toolbarLayout'
 import type { Browser } from '../../core/browser'
@@ -334,13 +342,15 @@ export class ElectronWindow implements WindowHost {
     // The chrome's own toolbox (the Browser Console, `openChromeDevTools`): its keys raise no
     // `before-input-event` either, so the quit chord typed there is relayed from the frontend's
     // console into the table as a chrome key, as a page's toolbox relays it (`devtoolsKeys.ts`).
+    // It always stands in a window of its own, so a hold armed from it is its to show (§9.23).
     wc.on('devtools-opened', () => {
       const frontend = wc.devToolsWebContents
       if (!frontend || frontend.isDestroyed()) return
       relayDevtoolsQuitChord(
         frontend,
         () => quitChordOf(browser.state.shortcuts),
-        (key) => void browser.keys.handle(key, null, zen)
+        (key) => void browser.keys.handle(key, null, zen),
+        { notice: devtoolsQuitHoldNotice, window: () => win, detached: () => true }
       )
     })
     wc.setWindowOpenHandler(({ url }) => {
@@ -384,10 +394,20 @@ export class ElectronWindow implements WindowHost {
 
   send<K extends EventName>(name: K, payload: Events[K]): void {
     if (!this.alive) return
+    // The hold the state carries goes where the keyboard is (§9.23): a detached toolbox the quit
+    // chord is down in draws it in its own document, and the chrome reads no hold meanwhile
+    // (`DevtoolsQuitHoldNotice`); it is taken down there with the hold.
+    if (name === 'state') payload = this.quitHoldRouted(payload as UIState) as Events[K]
     this.win.webContents.send('zen:event', name, payload)
     // The popup surface mirrors the window's state like the chrome does (the picker lives in it).
     const popup = this.popup?.webContents
     if (popup && !popup.isDestroyed()) popup.send('zen:event', name, payload)
+  }
+
+  private quitHoldRouted(state: UIState): UIState {
+    return devtoolsQuitHoldNotice.route(this.win, state, (hold: QuitHoldState) =>
+      this.browser.quitHold.panelFor(this.zen, hold)
+    )
   }
 
   focusChrome(): void {

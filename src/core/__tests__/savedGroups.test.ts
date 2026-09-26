@@ -724,6 +724,9 @@ describe('the link menu’s group item (TAB-15)', () => {
       'Save Link As…',
       'Copy Link Address',
       'Share Link…',
+      // The reading list's row (W6-1) closes the desktop's transfer group; the touch hosts'
+      // menus are pinned whole above.
+      'Add Link to Reading List',
       '-',
       'Boosts',
       'Inspect Element'

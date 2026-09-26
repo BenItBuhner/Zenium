@@ -114,10 +114,8 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
             )
         ).also { it.start() }
         try {
-            // A perf reading (the enter and exit traces): no events hold (DemoHarness.runDemo – the hold's
-            // service moves the WebView to its complete tree mode with every event, work inside what the
-            // frames and the traces measure; the webview shard's snapshot WebView is a current Chromium).
-            runDemo(holdEvents = false)
+            // A perf reading (the enter and exit traces): no events hold (the rule at DemoHarness.runDemo).
+            runPerfDemo()
         } finally {
             server.close()
         }

@@ -1,0 +1,13 @@
+{
+  "id": "siteinfo",
+  "order": 61,
+  "class": "SiteInfoDemo",
+  "shard": "phone-d",
+  "mirrors": "android-siteinfo-demo.yml",
+  "dir": "siteinfo-demo",
+  "env": {
+    "DEMO_THEME": "light"
+  },
+  "estimate": 2,
+  "note": "The workflow runs light and dark; the nightly runs light."
+}

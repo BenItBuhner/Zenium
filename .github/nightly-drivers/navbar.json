@@ -1,0 +1,9 @@
+{
+  "id": "navbar",
+  "order": 65,
+  "class": "NavbarDemo",
+  "shard": "phone-d",
+  "mirrors": "android-navbar-demo.yml",
+  "dir": "navbar-demo",
+  "estimate": 4
+}

@@ -10,12 +10,17 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.accessibility.AccessibilityManager
+import android.widget.CheckBox
+import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.ColorUtils
+import androidx.core.view.AccessibilityDelegateCompat
 import androidx.core.view.ViewCompat
+import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
 import androidx.core.widget.ImageViewCompat
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialog
@@ -25,16 +30,21 @@ import com.google.android.material.bottomsheet.BottomSheetDialog
  * tab has no chrome. Neutral panel surface with the native chassis's hairline edge ([SheetEdge]:
  * top and sides, one dp, the sides running through the host's bar to the screen's bottom with the
  * bar as the column's own padding, as the prompt sheet's and the extension sheet's do) and 12 dp
- * top corners, a 32×4 grabber, rows 44 dp tall at 15/400 with
+ * top corners, a 32×4 grabber, then – a custom tab's, not a web app's – Chrome's icon row (§9.13:
+ * 44 × 44 buttons with 20 dp glyphs spread evenly inside the 16 gutter, a hairline 8 below; the
+ * star its one stateful glyph; Reload read as Stop once, at open), rows 44 dp tall at 15/400 with
  * a 20 dp glyph (the caller's own items keep the glyph slot so every label lines up), one-dp
  * hairlines with 4 dp margins between [CustomTabMenu.groups], and a footer naming the browser
- * the page is running in, as Chrome's and Firefox's custom tabs do.
+ * the page is running in, as Chrome's and Firefox's custom tabs do. Under touch exploration or
+ * a font scale of 1.3 and up the icon row is a list of the same actions (A11Y-04).
  */
 class CustomTabMenuSheet(
     private val context: Context,
     private val dark: Boolean,
     private val groups: List<List<CustomTabMenu.Item>>,
-    private val onPick: (CustomTabMenu.Item) -> Unit
+    private val onPick: (CustomTabMenu.Item) -> Unit,
+    private val iconRow: List<CustomTabMenu.IconButton> = emptyList(),
+    private val onIcon: (CustomTabMenu.Icon) -> Unit = {}
 ) {
     private val density = context.resources.displayMetrics.density
     private val ink = ContextCompat.getColor(context, if (dark) R.color.v2_text_dark else R.color.v2_text_light)
@@ -71,6 +81,19 @@ class CustomTabMenuSheet(
             gravity = Gravity.CENTER_HORIZONTAL
             bottomMargin = dp(8)
         })
+        if (iconRow.isNotEmpty()) {
+            if (iconRowAsList()) {
+                for (button in iconRow) column.addView(iconListRow(button) {
+                    dialog.dismiss()
+                    onIcon(button.icon)
+                })
+            } else {
+                column.addView(iconRow(dialog), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(ROW_DP)).apply {
+                    bottomMargin = dp(4)
+                })
+            }
+            column.addView(separator())
+        }
         groups.forEachIndexed { index, group ->
             if (index > 0) column.addView(separator())
             for (item in group) column.addView(row(item) {
@@ -83,6 +106,12 @@ class CustomTabMenuSheet(
             bottomMargin = dp(8)
         })
         return column
+    }
+
+    /** A11Y-04: with touch exploration on, or text at 1.3 and up, the icon row's actions are rows. */
+    private fun iconRowAsList(): Boolean {
+        val manager = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager
+        return manager?.isTouchExplorationEnabled == true || context.resources.configuration.fontScale >= LARGE_TEXT_FONT_SCALE
     }
 
     private fun grabber(): View = View(context).apply {
@@ -102,33 +131,96 @@ class CustomTabMenuSheet(
         }
     }
 
-    private fun row(item: CustomTabMenu.Item, onClick: () -> Unit): View {
+    /**
+     * The icon row: each button a 44 dp box round a 20 dp glyph, the boxes at the gutter's edges
+     * and the space between them shared out evenly (the phone row's `space-between`).
+     */
+    private fun iconRow(dialog: BottomSheetDialog): View {
+        val row = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(16), 0, dp(16), 0)
+        }
+        iconRow.forEachIndexed { index, button ->
+            if (index > 0) row.addView(View(context), LinearLayout.LayoutParams(0, 1, 1f))
+            row.addView(iconButton(button) {
+                dialog.dismiss()
+                onIcon(button.icon)
+            }, LinearLayout.LayoutParams(dp(ROW_DP), dp(ROW_DP)))
+        }
+        return row
+    }
+
+    /**
+     * One button of the icon row: an [ImageButton], as the toolbar's are ([CustomTabToolbar]), so
+     * TalkBack reads it with the button role; its name from [nameOf], a 20 dp glyph in the 44 dp box.
+     */
+    private fun iconButton(button: CustomTabMenu.IconButton, onClick: () -> Unit): View = ImageButton(context).apply {
+        setImageResource(glyphOf(button))
+        ImageViewCompat.setImageTintList(this, ColorStateList.valueOf(ink))
+        scaleType = ImageView.ScaleType.FIT_CENTER
+        setPadding(dp(12), dp(12), dp(12), dp(12))
+        background = ripple(round = true)
+        contentDescription = nameOf(button)
+        isEnabled = button.enabled
+        // §9.30: a disabled control stands at .4 of its ink.
+        if (!button.enabled) alpha = DISABLED_ALPHA
+        setOnClickListener { onClick() }
+    }
+
+    /** The icon row's action as a text row (A11Y-04), the glyph in the row's slot. */
+    private fun iconListRow(button: CustomTabMenu.IconButton, onClick: () -> Unit): View =
+        row(glyphOf(button), nameOf(button), checked = null, enabled = button.enabled, onClick = onClick)
+
+    private fun row(item: CustomTabMenu.Item, onClick: () -> Unit): View =
+        row(iconOf(item), labelOf(item), checked = (item as? CustomTabMenu.Item.DesktopSite)?.checked, enabled = true, onClick = onClick)
+
+    private fun row(icon: Int, label: String, checked: Boolean?, enabled: Boolean, onClick: () -> Unit): View {
         val row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             minimumHeight = dp(ROW_DP)
             setPadding(dp(16), 0, dp(16), 0)
-            background = ripple()
+            background = ripple(round = false)
             isClickable = true
             isFocusable = true
+            isEnabled = enabled
+            if (!enabled) alpha = DISABLED_ALPHA
             setOnClickListener { onClick() }
         }
         val glyph = ImageView(context)
-        val icon = iconOf(item)
         if (icon != 0) {
             glyph.setImageResource(icon)
             ImageViewCompat.setImageTintList(glyph, ColorStateList.valueOf(ink))
         }
         row.addView(glyph, LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginEnd = dp(12) })
-        val label = TextView(context).apply {
-            text = labelOf(item)
+        val text = TextView(context).apply {
+            text = label
             setTextColor(ink)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
         }
-        row.addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        row.contentDescription = label.text
+        row.addView(text, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        row.contentDescription = label
+        if (checked != null) {
+            // Chrome's check row: the mark in the trailing slot while on; the row reads as a checkbox.
+            val mark = ImageView(context).apply {
+                setImageResource(R.drawable.ic_check)
+                ImageViewCompat.setImageTintList(this, ColorStateList.valueOf(ink))
+                visibility = if (checked) View.VISIBLE else View.INVISIBLE
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }
+            row.addView(mark, LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginStart = dp(12) })
+            ViewCompat.setAccessibilityDelegate(row, object : AccessibilityDelegateCompat() {
+                override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfoCompat) {
+                    super.onInitializeAccessibilityNodeInfo(host, info)
+                    info.className = CheckBox::class.java.name
+                    info.isCheckable = true
+                    info.isChecked = checked
+                }
+            })
+        }
         return row
     }
 
@@ -141,9 +233,9 @@ class CustomTabMenuSheet(
         setPadding(dp(48), 0, dp(16), 0)
     }
 
-    private fun ripple(): RippleDrawable {
+    private fun ripple(round: Boolean): RippleDrawable {
         val mask = GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
+            shape = if (round) GradientDrawable.OVAL else GradientDrawable.RECTANGLE
             setColor(Color.WHITE)
         }
         return RippleDrawable(ColorStateList.valueOf(ColorUtils.setAlphaComponent(ink, (0.12f * 255).toInt())), null, mask)
@@ -155,6 +247,8 @@ class CustomTabMenuSheet(
         CustomTabMenu.Item.CopyLink -> context.getString(R.string.cct_copy_link)
         CustomTabMenu.Item.Reload -> context.getString(R.string.cct_reload)
         CustomTabMenu.Item.FindInPage -> context.getString(R.string.cct_find_in_page)
+        CustomTabMenu.Item.AddToHomeScreen -> context.getString(R.string.cct_add_to_home_screen)
+        is CustomTabMenu.Item.DesktopSite -> context.getString(R.string.cct_desktop_site)
         CustomTabMenu.Item.OpenInZenium -> context.getString(R.string.cct_open_in_zenium)
     }
 
@@ -164,13 +258,46 @@ class CustomTabMenuSheet(
         CustomTabMenu.Item.CopyLink -> R.drawable.ic_cct_copy
         CustomTabMenu.Item.Reload -> R.drawable.ic_cct_reload
         CustomTabMenu.Item.FindInPage -> R.drawable.ic_cct_find
+        CustomTabMenu.Item.AddToHomeScreen -> R.drawable.ic_cct_add_home
+        is CustomTabMenu.Item.DesktopSite -> R.drawable.ic_cct_desktop
         CustomTabMenu.Item.OpenInZenium -> R.drawable.ic_cct_open_in
+    }
+
+    /**
+     * The icon row's names, the phone row's (TB-08): the star's by its state – `Bookmark`, `Remove
+     * Bookmark` for a filing its tap withdraws, `Edit Bookmark` for a page the browser holds
+     * ([CustomTabMenu.Star]) – Reload's by the page's, read once.
+     */
+    private fun nameOf(button: CustomTabMenu.IconButton): String = when (button.icon) {
+        CustomTabMenu.Icon.Forward -> context.getString(R.string.cct_forward)
+        CustomTabMenu.Icon.Bookmark -> context.getString(
+            when {
+                button.pending -> R.string.cct_remove_bookmark
+                button.filled -> R.string.cct_edit_bookmark
+                else -> R.string.cct_bookmark
+            }
+        )
+        CustomTabMenu.Icon.Download -> context.getString(R.string.cct_download_page)
+        CustomTabMenu.Icon.Info -> context.getString(R.string.cct_page_info)
+        CustomTabMenu.Icon.Reload -> context.getString(if (button.stop) R.string.cct_stop else R.string.cct_reload)
+    }
+
+    private fun glyphOf(button: CustomTabMenu.IconButton): Int = when (button.icon) {
+        CustomTabMenu.Icon.Forward -> R.drawable.ic_cct_forward
+        CustomTabMenu.Icon.Bookmark -> if (button.filled) R.drawable.ic_cct_star_filled else R.drawable.ic_cct_star
+        CustomTabMenu.Icon.Download -> R.drawable.ic_cct_download
+        CustomTabMenu.Icon.Info -> R.drawable.ic_cct_info
+        CustomTabMenu.Icon.Reload -> if (button.stop) R.drawable.ic_cct_stop else R.drawable.ic_cct_reload
     }
 
     private fun dp(value: Int): Int = (value * density + 0.5f).toInt()
 
     companion object {
-        /** v2 §5: a phone menu row is 44 dp. */
+        /** v2 §5: a phone menu row is 44 dp; the icon row's buttons are 44 dp boxes. */
         const val ROW_DP = 44
+        /** §9.30: a disabled control at .4. */
+        const val DISABLED_ALPHA = 0.4f
+        /** A11Y-04: from this font scale the icon row is a list. */
+        const val LARGE_TEXT_FONT_SCALE = 1.3f
     }
 }

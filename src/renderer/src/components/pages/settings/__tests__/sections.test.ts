@@ -149,6 +149,7 @@ const ANDROID: HostCapabilities = {
   readAloud: false,
   pageLanguages: false,
   genericFontFamilies: false,
+  caretBrowsing: false,
   placementAnswered: true
 }
 
@@ -279,6 +280,7 @@ function state(patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): 
     },
     downloads: [],
     bookmarks: [],
+    readingList: [],
     recentlyClosedCount: 0,
     media: [],
     findResult: null,
@@ -830,6 +832,8 @@ describe('the section model', () => {
     const phone = section('tabs')
     expect(findRow(phone.groups, 'crash-restore')).toBeNull()
     expect(findRow(phone.groups, 'warn-close-window')).toBeNull()
+    // The phone's startup row is the switch it was (W6-3): the windowed hosts have On startup.
+    expect(findRow(phone.groups, 'restore-session')?.kind).toBe('switch')
 
     const c = context(state({ platform: 'linux', capabilities: { ...ANDROID, windows: true } }))
     const tabs = buildSection(
@@ -837,11 +841,8 @@ describe('the section model', () => {
       c.ctx
     )
     const ids = tabs.groups.find((g) => g.id === 'tabs')?.rows.map((r) => r.id) ?? []
-    expect(ids.slice(ids.indexOf('restore-session'))).toEqual([
-      'restore-session',
-      'crash-restore',
-      'warn-close-window'
-    ])
+    expect(findRow(tabs.groups, 'restore-session')).toBeNull()
+    expect(ids.slice(ids.indexOf('crash-restore'))).toEqual(['crash-restore', 'warn-close-window'])
     const crash = row(tabs, 'crash-restore')
     if (crash.kind !== 'value') throw new Error('not a value row')
     expect(crash.value).toBe(DEFAULT_SETTINGS.crashRestore)
@@ -3577,6 +3578,50 @@ describe('what a row does', () => {
       })
       const model = buildSection(def, { ...context(s).ctx, formFactor: 'desktop' })
       expect(model.groups.map((g) => g.id)).toEqual([
+        'search',
+        'search-engines',
+        'add-search-engine'
+      ])
+    })
+
+    it('"Choose your search engine again" (W6-2) stands in the EEA or over a record, on the desktop and tablet, and asks the core for the screen', () => {
+      const eea = { region: 'DE', eea: true, required: false, seed: 1 }
+      const elsewhere = { region: 'US', eea: false, required: false, seed: 1 }
+      const record = { engineId: 'duckduckgo', region: 'DE', madeAt: 1, version: 1 }
+
+      // In the EEA the row stands whether or not the choice was made yet.
+      const inEea = buildSection(def, {
+        ...context(state({ searchChoice: eea })).ctx,
+        formFactor: 'desktop'
+      })
+      const again = row(inEea, 'search-choice-again')
+      if (again.kind !== 'action') throw new Error('not an action')
+      expect(again).toMatchObject({
+        label: 'Choose your search engine again',
+        button: 'Choose…',
+        layouts: ['desktop', 'tablet']
+      })
+      expect(again.description).toMatch(/random order/)
+      expect(inEea.groups[0]!.rows.map((r) => r.id)).toEqual(
+        expect.arrayContaining(['search-engine', 'search-choice-again'])
+      )
+      again.onPress?.()
+      expect(invoke).toHaveBeenCalledWith('searchChoice.askAgain', undefined)
+
+      // A device that left the EEA keeps the row while its record stands.
+      const recorded = buildSection(def, {
+        ...context(state({ searchChoice: elsewhere }, { searchChoice: record })).ctx,
+        formFactor: 'desktop'
+      })
+      expect(findRow(recorded.groups, 'search-choice-again')).not.toBeNull()
+
+      // Outside the EEA with no record: no row, and the group is as it was.
+      const outside = buildSection(def, {
+        ...context(state({ searchChoice: elsewhere })).ctx,
+        formFactor: 'desktop'
+      })
+      expect(findRow(outside.groups, 'search-choice-again')).toBeNull()
+      expect(outside.groups.map((g) => g.id)).toEqual([
         'search',
         'search-engines',
         'add-search-engine'
@@ -6450,5 +6495,67 @@ describe('SET-36 / NTP-30: the Home group of Look and Feel on a phone', () => {
         (r) => r.id
       )
     ).toEqual(['homepage'])
+  })
+
+  it('an extension holding the homepage (chrome_settings_overrides.homepage; state.extensionControls.homepage with its page) holds the rows: the picker at Specific page, the Address showing the extension’s page over the user’s, Use current page with them – one run under one indicator; Off stays the user’s, and the row is free again without the extension', () => {
+    const extension = { extensionId: 'a'.repeat(32), name: 'Bing Homepage & Search' }
+    const extensionControls = { homepage: { ...extension, value: 'https://www.bing.com/' } }
+    // The user's own page underneath differs from the extension's.
+    const held = homeGroup(
+      withHomepage({ mode: 'url', url: 'https://news.example/' }, { extensionControls })
+    )
+    expect(held.rows.map((r) => r.id)).toEqual([
+      'homepage',
+      'homepage-address',
+      'homepage-use-current'
+    ])
+    const picker = held.rows[0]
+    if (picker.kind !== 'value') throw new Error('not a value row')
+    expect(picker.controlled).toMatchObject({ ...extension, value: 'https://www.bing.com/' })
+    expect(currentOptionLabel(picker)).toBe('Specific page')
+    expect(picker.options[2]).toMatchObject({ label: 'Specific page', description: 'bing.com' })
+    const address = held.rows[1]
+    if (address.kind !== 'field') throw new Error('not a field row')
+    expect(address.controlled).toMatchObject(extension)
+    expect(address.value).toBe('bing.com')
+    expect(held.rows[2].controlled).toMatchObject(extension)
+    // One run of three held rows: the indicator stands after the last (§10.5's rule).
+    expect(controlledRuns(held.rows)).toEqual([0, 0, 3])
+
+    // Over the new tab page as well: the extension's page is what Home opens.
+    const overNewTab = homeGroup(withHomepage({ mode: 'newtab', url: '' }, { extensionControls }))
+    expect(overNewTab.rows.map((r) => r.id)).toEqual([
+      'homepage',
+      'homepage-address',
+      'homepage-use-current'
+    ])
+    expect(overNewTab.rows[0].controlled).toMatchObject(extension)
+
+    // Off is the user's – Chrome's "Show home button" is no extension's: the row stands free,
+    // Off, alone; the extension's page waits until the button is on.
+    const off = homeGroup(withHomepage({ mode: 'off', url: '' }, { extensionControls }))
+    expect(off.rows.map((r) => r.id)).toEqual(['homepage'])
+    expect(off.rows[0].controlled).toBeUndefined()
+    if (off.rows[0].kind !== 'value') throw new Error('not a value row')
+    expect(currentOptionLabel(off.rows[0])).toBe('Off')
+
+    // A choice made from the held state's neighbour keeps the user's own address, not the extension's.
+    const c = context(
+      withHomepage({ mode: 'newtab', url: 'https://kept.example/' }, { extensionControls })
+    )
+    const look = buildSection(PAGE.sections[0], c.ctx)
+    const homepage = row(look, 'homepage')
+    if (homepage.kind !== 'value') throw new Error('not a value row')
+    homepage.onChange('url')
+    expect(c.patches).toEqual([{ homepage: { mode: 'url', url: 'https://kept.example/' } }])
+
+    // Disable takes the Extensions page's path; nothing held without the extension.
+    homepage.controlled!.onDisable()
+    expect(invoke).toHaveBeenCalledWith('extension.setEnabled', {
+      id: extension.extensionId,
+      enabled: false
+    })
+    const free = homeGroup(withHomepage({ mode: 'url', url: 'https://news.example/' }))
+    expect(free.rows[0].controlled).toBeUndefined()
   })
 })

@@ -420,6 +420,69 @@ describe('applyRemote: the settings record and the new tab page', () => {
   })
 })
 
+describe('applyRemote: the settings record and Settings › On startup', () => {
+  const MINE = ['https://mine.example/', 'https://mine.example/two']
+
+  it("folds an old peer's restoreSession into the startup mode over this device's own pages and never lets the key land", () => {
+    const b = browser()
+    b.state.settings.startup = { mode: 'newTab', pages: MINE }
+    // The record as a 0.4.x build writes it: the switch, no `startup`.
+    applyRemote(b, [settingsRecord({ restoreSession: true })])
+    expect(b.state.settings.startup).toEqual({ mode: 'continue', pages: MINE })
+    expect('restoreSession' in b.state.settings).toBe(false)
+    applyRemote(b, [settingsRecord({ restoreSession: false })])
+    expect(b.state.settings.startup).toEqual({ mode: 'newTab', pages: MINE })
+    expect('restoreSession' in b.state.settings).toBe(false)
+    // A switch that is no boolean (a hand-edited record) says nothing.
+    applyRemote(b, [settingsRecord({ restoreSession: 'yes' })])
+    expect(b.state.settings.startup).toEqual({ mode: 'newTab', pages: MINE })
+  })
+
+  it("prefers a new peer's startup to the mirrored switch beside it, read like a profile's own: known modes, web addresses, no stray key", () => {
+    const b = browser()
+    b.state.settings.startup = { mode: 'newTab', pages: MINE }
+    applyRemote(b, [
+      settingsRecord({
+        startup: {
+          mode: 'pages',
+          pages: ['peer.example', 'zenium://settings', 'https://peer.example/', 'not a url']
+        },
+        restoreSession: true
+      })
+    ])
+    expect(b.state.settings.startup).toEqual({ mode: 'pages', pages: ['https://peer.example/'] })
+    expect('restoreSession' in b.state.settings).toBe(false)
+    // A mode a newer build knows reads as the default's; junk in the list is dropped.
+    applyRemote(b, [settingsRecord({ startup: { mode: 'lastWindow', pages: [7] } })])
+    expect(b.state.settings.startup).toEqual({ mode: 'continue', pages: [] })
+    // A record without either key says nothing about the startup.
+    b.state.settings.startup = { mode: 'newTab', pages: MINE }
+    applyRemote(b, [settingsRecord({ colorScheme: 'dark' })])
+    expect(b.state.settings.startup).toEqual({ mode: 'newTab', pages: MINE })
+  })
+
+  it('the settings record this device sends carries startup in its sanitised shape and the mirrored switch, never a stray', () => {
+    const b = browser()
+    b.state.settings.startup = { mode: 'pages', pages: MINE }
+    const record = collectLocal(
+      {
+        model: b.state.model,
+        settings: b.state.settings,
+        shortcutOverrides: {},
+        bookmarks: [],
+        boosts: []
+      },
+      defaultScope()
+    ).get(SETTINGS_RECORD_ID)
+    const data = record?.data as Record<string, unknown>
+    expect(data.startup).toEqual({ mode: 'pages', pages: MINE })
+    expect(data.restoreSession).toBe(true)
+    expect(Object.keys(data).filter((key) => !(key in b.state.settings))).toEqual([
+      'restoreSession'
+    ])
+  })
+})
+
 describe("applyRemote: the agents' mark on space and folder records", () => {
   const space = (id: string, data: Record<string, unknown>, modified = 1000): SyncRecord => ({
     id,

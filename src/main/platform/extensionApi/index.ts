@@ -88,12 +88,14 @@ import { electronOffscreenDocumentHost } from './offscreenBridge'
 import { OmniboxApi } from './omnibox'
 import { PermissionsApi } from './permissions'
 import { FontSettingsApi } from './fontSettings'
+import { HomepageApi } from './homepage'
 import { PrivacyApi } from './privacy'
 import { ExtensionControls } from './controls'
 import { ProxyApi } from './proxy'
 import { ContentSettingsApi } from './contentSettings'
 import { RuntimeApi } from './runtime'
 import { SearchProviderApi } from './searchProvider'
+import { StartupPagesApi } from './startupPages'
 import { SessionsApi } from './sessions'
 import { SidePanelApi } from './sidePanel'
 import { DebuggerApi } from './debugger'
@@ -232,9 +234,12 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly tabCapture: TabCaptureApi
   readonly debugger: DebuggerApi
   readonly identity: IdentityApi
+  /** `chrome_settings_overrides.homepage`: manifest-driven, no namespace of its own. */
+  readonly homepage: HomepageApi
   readonly omnibox: OmniboxApi
   /** `chrome_settings_overrides.search_provider`: manifest-driven, no namespace of its own. */
   readonly searchProvider: SearchProviderApi
+  readonly startupPages: StartupPagesApi
   readonly browsingData: BrowsingDataApi
   readonly tts: TtsApi
   readonly userScripts: UserScriptsApi
@@ -338,8 +343,10 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.systemInfo = new SystemInfoApi(this)
     this.tabGroups = new TabGroupsApi(this)
     this.identity = new IdentityApi(electronAuthWindowHost(this.model))
+    this.homepage = new HomepageApi(this)
     this.omnibox = new OmniboxApi(this)
     this.searchProvider = new SearchProviderApi(this)
+    this.startupPages = new StartupPagesApi(this)
     this.browsingData = new BrowsingDataApi(this, electronDataClearer)
     this.tts = new TtsApi(this, sharedSpeechEngine())
     this.userScripts = new UserScriptsApi(this, this.webNavigation)
@@ -464,6 +471,10 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
    * once an extension is gone for good (a disable or a reload keeps its stored state).
    */
   registryChanged(event: RegistryEvent): void {
+    // The registry is what names the extension holding Settings › On startup: an install, an
+    // update (its `startupPages` rewritten), an uninstall (the record gone after the unload) or
+    // an enable/disable may have changed the answer.
+    this.startupPages.refresh()
     switch (event.type) {
       case 'installed':
       case 'updated':
@@ -702,8 +713,10 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.commands.load(loaded)
     this.contextMenus.load(loaded)
     this.sidePanel.load(loaded)
+    this.homepage.load(loaded)
     this.omnibox.load(loaded)
     this.searchProvider.load(loaded)
+    this.startupPages.refresh()
     // After the permissions: the state exists only for extensions holding the permission.
     this.declarativeNetRequest.load(loaded)
     this.privacy.load(ext.id)
@@ -747,8 +760,10 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.systemDisplay.unload()
     this.power.unload(ext.id)
     this.identity.unload(ext.id)
+    this.homepage.unload(ext.id)
     this.omnibox.unload(ext.id)
     this.searchProvider.unload(ext.id)
+    this.startupPages.refresh()
     this.tts.unload(ext.id)
     this.declarativeNetRequest.unload(ext.id)
     this.webRequest.unload(ext.id)

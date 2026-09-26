@@ -94,6 +94,7 @@ const DESKTOP: HostCapabilities = {
   readAloud: true,
   pageLanguages: true,
   genericFontFamilies: true,
+  caretBrowsing: true,
   placementAnswered: false
 }
 
@@ -213,6 +214,7 @@ function state(
     },
     downloads: [],
     bookmarks: [],
+    readingList: [],
     recentlyClosedCount: 0,
     media: [],
     findResult: null,

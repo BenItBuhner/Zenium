@@ -7,7 +7,7 @@ import { cmd, run } from '@renderer/lib/api'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { drawerStore, openSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import { dismissStage, openOverview, stageStore } from '@renderer/lib/gestures/stage'
-import { browserStore, contentAreaStore, uiStore } from '@renderer/lib/ui'
+import { browserStore, contentAreaStore, openOverlay, uiStore } from '@renderer/lib/ui'
 import {
   dismissTabletDrawer,
   openTabletDrawer,
@@ -170,8 +170,9 @@ afterEach(() => {
 /*
  * The reverse of the core's hand-over (W6-S1, `PageService.reconcileLayout`): a page's overlay
  * up on the phone – the History panel, Bookmarks, Downloads – as the window widens into a
- * layout that holds the page as a tab becomes that tab, through `page.open`; everything that
- * stays an overlay on the new layout stays up.
+ * layout that holds the page as a tab becomes that tab, through `page.open` marked the hand-back
+ * it is (`handedBack`: the core puts the tab back at the slot it had when it closed it for the
+ * narrowing); everything that stays an overlay on the new layout stays up.
  */
 describe('a page’s overlay follows the window’s class (the reverse seam, W6-S1)', () => {
   const pageOpens = (): unknown[][] =>
@@ -187,11 +188,13 @@ describe('a page’s overlay follows the window’s class (the reverse seam, W6-
     viewportStore.set({ formFactor: 'phone' })
   })
 
-  it('turns the History panel into the zen://history tab as the phone widens into the tablet', () => {
+  it('turns the History panel into the zen://history tab as the phone widens into the tablet, the open marked the hand-back', () => {
     uiStore.set({ overlay: 'history' })
     swapTo('tablet')
     expect(uiStore.get().overlay).toBe('none')
-    expect(pageOpens()).toEqual([['page.open', { id: 'history', section: null, query: undefined }]])
+    expect(pageOpens()).toEqual([
+      ['page.open', { id: 'history', section: null, query: undefined, handedBack: true }]
+    ])
   })
 
   it('carries the Bookmarks panel’s folder into the manager’s tab', () => {
@@ -200,8 +203,17 @@ describe('a page’s overlay follows the window’s class (the reverse seam, W6-
     expect(uiStore.get().overlay).toBe('none')
     expect(uiStore.get().overlayFolderId).toBeNull()
     expect(pageOpens()).toEqual([
-      ['page.open', { id: 'bookmarks', section: null, query: { folder: 'f_work' } }]
+      [
+        'page.open',
+        { id: 'bookmarks', section: null, query: { folder: 'f_work' }, handedBack: true }
+      ]
     ])
+  })
+
+  it('marks no open a user asks for as the hand-back: the page opens beside the active tab, as it always has', async () => {
+    viewportStore.set({ formFactor: 'tablet' })
+    await openOverlay('history', 'a')
+    expect(pageOpens()).toEqual([['page.open', { id: 'history', section: null, query: undefined }]])
   })
 
   it('leaves the panel up while the layout stays the phone, and an overlay of every layout up on the tablet', () => {
