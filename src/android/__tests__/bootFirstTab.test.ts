@@ -267,7 +267,9 @@ describe("the boot's first tab on the phone (no new tab page capability)", () =>
  * before #490. `healRestoredBlankTab` closes that tab once, right after `browser.start()` and
  * before the boot opens anything of its own, so the space is empty again and the arm reads the
  * healed state. The rules: the phone only; the window's active tab, exactly `zen://blank`; the
- * only tab the active space has; no history in the profile or on the tab. Everything else stays.
+ * only tab the active space has; no history in the profile or on the tab; "Restore previous
+ * session" on (a restore-off boot forgets the session and opens a fresh blank tab of its own, on
+ * purpose, at every boot); not pinned. Everything else stays.
  */
 describe("the heal of #490's restored blank tab on the phone", () => {
   /** A phone past its first run, restored on one blank tab, as v0.4.71–v0.4.76 left it. */
@@ -343,6 +345,50 @@ describe("the heal of #490's restored blank tab on the phone", () => {
     expect(healRestoredBlankTab(browser, win, true)).toBe(false)
     expect(Object.keys(browser.state.model.tabs)).toEqual([id])
     expect(bootNeedsPlacement(browser, win, true)).toBe(true)
+  })
+
+  it("leaves the phone's own new tab page tab alone: the rule is exactly `zen://blank`", () => {
+    // `zen://newtab` is an empty-tab URL too (`isEmptyTabUrl`), but not the tab #490's rule made
+    // on this host (`ensureFirstTab` opened `zen://blank` without the new tab page capability).
+    const { browser } = phone(phoneCapabilities())
+    browser.state.settings.onboardingDone = true
+    const id = seedTab(browser, NEW_TAB_URL)
+    browser.start()
+    const win = only(browser)
+    expect(browser.tabs.activeTabFor(win)?.url).toBe(NEW_TAB_URL)
+    expect(healRestoredBlankTab(browser, win, true)).toBe(false)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([id])
+  })
+
+  it("leaves the fresh blank tab a 'Restore previous session' off boot makes on purpose", () => {
+    // `Browser.openStartupWindows` with the setting off: the session is forgotten (#490's tab
+    // with it) and the window gets one fresh `zen://blank` tab (`openFreshTab`) at EVERY such
+    // boot – that cohort's new tab page and omnibox, pre-#490 and since, not the tab the heal
+    // is for. Android reads the setting alone: `bootAndroid` passes no `restoreLastSession`.
+    const { browser } = phone(phoneCapabilities())
+    browser.state.settings.onboardingDone = true
+    browser.state.settings.restoreSession = false
+    const restored = seedTab(browser, BLANK_URL)
+    browser.start()
+    const win = only(browser)
+    const fresh = browser.tabs.activeTabFor(win)
+    expect(fresh?.url).toBe(BLANK_URL)
+    expect(fresh?.id).not.toBe(restored)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([fresh?.id])
+    expect(healRestoredBlankTab(browser, win, true)).toBe(false)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([fresh?.id])
+    expect(browser.tabs.activeTabFor(win)?.id).toBe(fresh?.id)
+    // The arm reads the blank tab as nothing to place, as for any blank tab on the phone (#503).
+    expect(bootNeedsPlacement(browser, win, true)).toBe(false)
+  })
+
+  it('leaves a pinned blank tab: the user pinned it, and `closeTab` would keep a pinned tab anyway', () => {
+    // Before the rule the heal reported a tab closed while `pinnedCloseBehavior` kept it.
+    const { browser, id, win } = upgraded()
+    browser.state.model.tabs[id].pinned = true
+    expect(healRestoredBlankTab(browser, win, true)).toBe(false)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([id])
+    expect(browser.tabs.activeTabFor(win)?.id).toBe(id)
   })
 
   it('does nothing on a fresh profile (no tab to heal)', () => {

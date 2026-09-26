@@ -21,11 +21,21 @@ import type { Bridge } from './bridge'
  * alone as the space's only tab is the same tab to every rule here and goes the same way: the
  * pre-#490 empty space stands in for it. Returns whether a tab was closed. A healed profile has
  * no such tab and heals no further.
+ *
+ * Two tabs that look the same are not #490's and stay. With "Restore previous session" off
+ * (`settings.restoreSession` – the whole of `Browser.restoreSessionAtStartup` on Android, where
+ * `bootAndroid` starts the core without the desktop's `--restore-last-session`), the start
+ * forgets the session, #490's tab with it, and opens one fresh `zen://blank` tab on purpose
+ * (`openStartupWindows` → `openFreshTab`) – at EVERY such boot, pre-#490 and since; that tab
+ * is the restore-off boot's own, and closing it would take that cohort's new tab page and
+ * omnibox away for an empty space. And a pinned blank tab is the user's (`forgetSession` keeps
+ * it too); `closeTab` would not close it (`pinnedCloseBehavior`) and this reports nothing done.
  */
 export function healRestoredBlankTab(browser: Browser, win: ZenWindow, phone: boolean): boolean {
   if (!phone) return false
   const active = browser.tabs.activeTabFor(win)
   if (active === undefined || active.url !== BLANK_URL) return false
+  if (!browser.state.settings.restoreSession || active.pinned) return false
   if (!lonelyIn(browser, win, active) || hasHistory(browser, active)) return false
   browser.tabs.closeTab(active.id, false, win)
   return true
