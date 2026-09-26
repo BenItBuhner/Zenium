@@ -61,7 +61,7 @@ import { canRetryDownload, deleteFileToast, displayName } from '../shared/downlo
 import { SAVE_PAGE_FORMATS, SAVE_PAGE_FORMAT_SPECS } from '../shared/savePage'
 import { languageName, sortedByName } from '../shared/languageNames'
 import { orderMediaEntries } from '../shared/mediaHub'
-import { toolbarPinned } from '../shared/toolbarPins'
+import { toolbarPinned, withToolbarPin, type ToolbarControl } from '../shared/toolbarPins'
 import { serialiseMenu } from './rendererMenus'
 import { dictionaryFor } from '../shared/spellcheck'
 import { installMenuLabel, openAppMenuLabel } from '../shared/webApp'
@@ -197,6 +197,11 @@ const SPELLCHECK_MENU_LANGUAGES_MAX = 8
 const REMOTE_TABS_MENU_MAX = 10
 /** The name a device with none reads under; the engine fills one in, a seeded list may not. */
 const UNNAMED_DEVICE = 'Another device'
+/**
+ * Settings › Look and Feel's Customise toolbar row (`settings/sections.tsx`, settings-36): the
+ * row the toolbar button's menu lands on and opens (`?row=` and `?open=`).
+ */
+export const CUSTOMIZE_TOOLBAR_ROW = 'customize-toolbar'
 /** Settings › Autofill's two vault groups (`settings/sections.tsx`), Chrome's Payments and Contact info landings. */
 const AUTOFILL_CARDS_GROUP = 'autofill-cards'
 const AUTOFILL_ADDRESSES_GROUP = 'autofill-addresses'
@@ -1532,8 +1537,29 @@ export class Menus {
       this.popup(this.reloadItems(tab), win, 'urlbar', anchor)
       return
     }
+    // The desktop bar's pinnable controls (`shared/toolbarPins.ts`; the pins are the desktop
+    // layout's alone): the button marked with its control gets Chrome's pinned button menu –
+    // the star's own rows first, then the pin rows behind a hairline, as Chrome's
+    // `PinnedActionToolbarButtonMenuModel` seats an action's children over its pin rows.
+    const control = win.formFactor === 'desktop' ? (params.control ?? null) : null
     if (params.target === 'star') {
-      if (tab) this.popup(this.starItems(tab, win), win, 'urlbar', anchor)
+      if (tab) {
+        this.popup(
+          [
+            ...this.starItems(tab, win),
+            ...(control
+              ? [{ type: 'separator' as const }, ...this.toolbarButtonItems(control, win)]
+              : [])
+          ],
+          win,
+          'urlbar',
+          anchor
+        )
+      }
+      return
+    }
+    if (params.target === 'toolbar') {
+      if (control) this.popup(this.toolbarButtonItems(control, win), win, 'urlbar', anchor)
       return
     }
     if (params.target === 'urlbar' || params.target === 'urlpill') {
@@ -1611,6 +1637,40 @@ export class Menus {
       this.readingListTabItem(tab, win, 'page'),
       { type: 'separator' },
       this.showReadingListItem(win)
+    ]
+  }
+
+  /**
+   * The pinned toolbar button's menu (context-menus-112; Chrome's
+   * `PinnedActionToolbarButtonMenuModel` on a right-click or the Menu key on one of the desktop
+   * bar's pinnable action controls – the pill's Reader View, Translate and star chips, the
+   * media hub's button; `shared/toolbarPins.ts`): Chrome's two rows in Chrome's order and
+   * words, "Unpin" – the one of Chrome's Pin / Unpin pair the control's state shows (a control
+   * folded away has no button to right-click, so Unpin is the row met; Pin stands for the
+   * state all the same) – writing the control's key of `Settings.toolbarPins` as the Customise
+   * toolbar dialog's row does, the control folding into the app menu; then "Customise
+   * Toolbar…", which opens that dialog over Settings › Look and Feel (`?open=` lands the page
+   * on the row and opens its form) – the ellipsis because Zenium's surface is a dialog where
+   * Chrome's is a side panel (§9.1). Forward is not among them: its right-click is the stack's
+   * menu, as Chrome's Forward keeps its `BackForwardMenuModel` (a pref-toggled button, its pin
+   * Settings' "Show forward button" switch). The extension buttons keep their own menu (#104).
+   */
+  toolbarButtonItems(control: ToolbarControl, win: ZenWindow): Template {
+    const pins = this.browser.state.settings.toolbarPins
+    const pinned = toolbarPinned(pins, control)
+    const patch: Partial<Settings> = { toolbarPins: withToolbarPin(pins, control, !pinned) }
+    return [
+      {
+        label: pinned ? 'Unpin' : 'Pin',
+        click: () => this.browser.handleCommand(win, 'settings.update', patch)
+      },
+      {
+        label: 'Customise Toolbar…',
+        click: () =>
+          void this.browser.pages.open('settings', 'look', win, undefined, {
+            query: { row: CUSTOMIZE_TOOLBAR_ROW, open: CUSTOMIZE_TOOLBAR_ROW }
+          })
+      }
     ]
   }
 

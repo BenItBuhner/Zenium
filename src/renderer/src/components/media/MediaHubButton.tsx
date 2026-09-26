@@ -8,6 +8,7 @@ import {
   toggleMediaHub
 } from '@renderer/lib/mediaHub'
 import { openedFromKeyboard } from '@renderer/lib/popover'
+import type { toolbarMenuMarks } from '@renderer/lib/toolbarPins'
 import { TOOLBAR_STROKE } from '../v2/controls'
 
 /**
@@ -29,7 +30,17 @@ export function MediaLiveDot({ state }: { state: UIState }): JSX.Element | null 
  * closes it again (the chrome layer's light dismiss takes a pointer press while the popover is
  * up; the keyboard's press gets here). The tooltip is Chrome's line for the button.
  */
-export function MediaHubButton({ state }: { state: UIState }): JSX.Element | null {
+export function MediaHubButton({
+  state,
+  menuMarks
+}: {
+  state: UIState
+  /**
+   * The pinned control's right-click menu marks on the desktop bar (`toolbarMenuMarks('media')`:
+   * Unpin, Customise Toolbar… – context-menus-112); none where the button is not pinnable.
+   */
+  menuMarks?: ReturnType<typeof toolbarMenuMarks>
+}): JSX.Element | null {
   const entries = mediaHubEntries(state)
   if (entries.length === 0) return null
   const label = mediaHubLabel(entries)
@@ -37,6 +48,7 @@ export function MediaHubButton({ state }: { state: UIState }): JSX.Element | nul
     <button
       type="button"
       data-zen-media-hub-button
+      {...menuMarks}
       // The pressed fill while the popover is up is the toolbar button's own, off `aria-expanded`
       // – which the popover holds `true` on whichever control is its anchor for its life
       // (`holdExpanded`: this button, or the "⋯" it has folded into) and gives back to the rest

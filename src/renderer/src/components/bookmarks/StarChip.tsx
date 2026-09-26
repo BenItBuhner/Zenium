@@ -1,6 +1,7 @@
 import type { JSX } from 'react'
 import { useEffect, useRef } from 'react'
 import { Star } from 'lucide-react'
+import type { ToolbarControl } from '@shared/toolbarPins'
 import type { Tab } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { reducedMotion } from '@renderer/lib/motion/spring'
@@ -19,7 +20,8 @@ export function StarChip({
   tab,
   filled,
   title,
-  collapsed = false
+  collapsed = false,
+  control
 }: {
   tab: Tab
   filled: boolean
@@ -30,6 +32,12 @@ export function StarChip({
    * bubble is up, which keeps its anchor (§9.20).
    */
   collapsed?: boolean
+  /**
+   * The star as one of the desktop bar's pinnable controls (`shared/toolbarPins.ts`, `'star'`):
+   * its menu then ends with the pinned control's rows (Unpin, Customise Toolbar… –
+   * context-menus-112). Absent on the layouts whose bar has no pins.
+   */
+  control?: ToolbarControl
 }): JSX.Element | null {
   const glyph = useRef<HTMLSpanElement>(null)
   const shown = useRef({ tabId: tab.id, filled })
@@ -64,9 +72,11 @@ export function StarChip({
       data-filled={filled}
       data-open={open}
       // A right-click or the Menu key on the star opens the core's star menu (W6-1): the
-      // bookmark row beside Add to Reading List and the way to the list.
+      // bookmark row beside Add to Reading List and the way to the list – then, on the desktop
+      // bar, the pinned control's rows.
       data-zen-menu="star"
       data-zen-menu-tab={tab.id}
+      data-zen-menu-control={control}
       className="zen-pill-chip zen-bm-star -mr-2 flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px]"
       onActivate={() => {
         // The bubble commits its pending name as it goes; the chip that put it away keeps the

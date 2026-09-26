@@ -98,7 +98,7 @@ import { MediaHubButton, MediaLiveDot } from '../media/MediaHubButton'
 import { downloadButtonVisible, downloadsUi } from '@renderer/lib/downloads'
 import { actionable } from '@renderer/lib/extensions/toolbar'
 import { useViewport } from '@renderer/lib/formFactor'
-import { pinsFor, publishToolbarTiering } from '@renderer/lib/toolbarPins'
+import { pinsFor, publishToolbarTiering, toolbarMenuMarks } from '@renderer/lib/toolbarPins'
 import {
   mediaHubButtonFits,
   mediaHubFoldedAt,
@@ -816,6 +816,7 @@ export function NavRow({
                   // above); unlit it is a tool and goes with the rest under a 130 px pill.
                   isReader ? 'text-[var(--v2-control-accent)] opacity-100' : 'zen-pill-chip'
                 )}
+                {...toolbarMenuMarks('reader', formFactor)}
                 onActivate={() => run('reader.toggle', { tabId: tab.id })}
               >
                 <BookOpenText className="h-3.5 w-3.5" />
@@ -907,6 +908,7 @@ export function NavRow({
                       ? 'flex'
                       : 'hidden group-hover/pill:flex group-focus-within/chips:flex'
                   )}
+                  {...toolbarMenuMarks('translate', formFactor)}
                   onActivate={() => {
                     if (translateBarUp) run('translate.dismiss', { tabId: tab.id })
                     else run('translate.offer', { tabId: tab.id })
@@ -954,12 +956,13 @@ export function NavRow({
                   state,
                   'bookmark.add'
                 )}
+                control={toolbarMenuMarks('star', formFactor)['data-zen-menu-control']}
               />
             )}
           </span>
         </div>
       )}
-      {hubUp && <MediaHubButton state={state} />}
+      {hubUp && <MediaHubButton state={state} menuMarks={toolbarMenuMarks('media', formFactor)} />}
       <DownloadButton state={state} activeTabId={tab?.id ?? null} />
       <ToolbarActions
         state={state}

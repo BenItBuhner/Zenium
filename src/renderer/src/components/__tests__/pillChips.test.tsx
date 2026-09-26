@@ -2224,3 +2224,63 @@ describe('PillChip', () => {
     expect([opens, toggles, acts, both].every((chip) => chip.type === PillChip)).toBe(true)
   })
 })
+
+/*
+ * The pinned toolbar button's right-click menu (context-menus-112, W8-1): the desktop bar's
+ * pinnable action controls – the pill's Reader View, Translate and star chips, the media hub's
+ * button – are marked `data-zen-menu="toolbar"` with their control in `data-zen-menu-control`,
+ * for the host to read under the pointer and the core to answer with Chrome's Unpin / Customise
+ * Toolbar… rows. The star keeps its own `star` target and takes the control alone. Forward
+ * carries no mark: its right-click is the stack's menu, as Chrome's Forward keeps its
+ * `BackForwardMenuModel`. The desktop layout's alone: on the tablet no button is marked.
+ */
+const { viewportStore } = await import('@renderer/lib/formFactor')
+
+describe('the toolbar button menu marks (context-menus-112, W8-1)', () => {
+  const page = tab('https://example.com/some/path', {
+    readerable: true,
+    canGoBack: true,
+    canGoForward: true
+  })
+  const byLabel = (el: HTMLElement, label: string): HTMLElement =>
+    el.querySelector<HTMLElement>(`button[aria-label="${label}"]`)!
+  const marks = (el: HTMLElement): [string | null, string | null] => [
+    el.getAttribute('data-zen-menu'),
+    el.getAttribute('data-zen-menu-control')
+  ]
+
+  it('marks Reader View, Translate and the star with their controls on the desktop; Back, Forward and the reload button carry none', () => {
+    const el = render(<NavRow state={state(page)} tab={page} compact={false} />)
+    expect(marks(byLabel(el, 'Reader View'))).toEqual(['toolbar', 'reader'])
+    expect(marks(byLabel(el, 'Translate this page'))).toEqual(['toolbar', 'translate'])
+    expect(marks(byLabel(el, 'Bookmark this tab'))).toEqual(['star', 'star'])
+    for (const label of ['Back', 'Forward']) {
+      const button = el.querySelector<HTMLElement>(`button[aria-label^="${label}"]`)!
+      expect(button).not.toBeNull()
+      expect(marks(button)).toEqual([null, null])
+    }
+    expect(marks(el.querySelector<HTMLElement>('[data-zen-menu="reload"]')!)).toEqual([
+      'reload',
+      null
+    ])
+    // The pill's field keeps its own target and no control.
+    expect(marks(el.querySelector<HTMLElement>('[data-zen-menu="urlpill"]')!)).toEqual([
+      'urlpill',
+      null
+    ])
+    expect(el.querySelectorAll('[data-zen-menu="toolbar"]')).toHaveLength(2)
+  })
+
+  it('on the tablet no control is marked: the pins are the desktop layout’s', () => {
+    const before = viewportStore.get()
+    act(() => viewportStore.set({ ...before, formFactor: 'tablet', coarse: true, hover: false }))
+    try {
+      const el = render(<NavRow state={state(page)} tab={page} compact={false} />)
+      expect(el.querySelector('[data-zen-menu="toolbar"]')).toBeNull()
+      expect(el.querySelector('[data-zen-menu-control]')).toBeNull()
+      expect(marks(byLabel(el, 'Bookmark this tab'))).toEqual(['star', null])
+    } finally {
+      act(() => viewportStore.set(before))
+    }
+  })
+})

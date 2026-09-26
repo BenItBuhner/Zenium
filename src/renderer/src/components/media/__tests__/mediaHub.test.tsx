@@ -174,6 +174,22 @@ describe('MediaHubButton', () => {
     expect(q('[data-zen-media-hub-button]')).toBeNull()
   })
 
+  it('wears the toolbar button menu marks the row hands it (W8-1: the desktop bar’s pinnable control), and none without them', () => {
+    render(<MediaHubButton state={stateWith([track()])} />)
+    let button = q('[data-zen-media-hub-button]')!
+    expect(button.hasAttribute('data-zen-menu')).toBe(false)
+    expect(button.hasAttribute('data-zen-menu-control')).toBe(false)
+    render(
+      <MediaHubButton
+        state={stateWith([track()])}
+        menuMarks={{ 'data-zen-menu': 'toolbar', 'data-zen-menu-control': 'media' }}
+      />
+    )
+    button = q('[data-zen-media-hub-button]')!
+    expect(button.getAttribute('data-zen-menu')).toBe('toolbar')
+    expect(button.getAttribute('data-zen-menu-control')).toBe('media')
+  })
+
   it('opens and closes the hub', async () => {
     const state = stateWith([track()])
     browserStore.set({ state })
