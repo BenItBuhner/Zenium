@@ -589,7 +589,10 @@ export const ENGINE_SPEC: ApiSpec = {
     },
     events: {}
   },
-  privacy: { methods: {}, events: {} },
+  // `privacy` is not listed: its `types.ChromeSetting`s are the layer's shapes (`spec.ts`
+  // `settings`), which the shim builds and routes to the host as `privacy.<method>(category,
+  // name, details)`; the phone's host answers them (`android/extensionPrivacy.ts`) as the
+  // desktop's does.
   omnibox: {
     methods: { setDefaultSuggestion: stub(object('suggestion')) },
     events: {
@@ -806,9 +809,9 @@ function mergeNamespace(
   const eventStyle = over?.eventStyle ?? base?.eventStyle
   // The `types.ChromeSetting` and `ContentSetting` members (`proxy.settings`,
   // `contentSettings.cookies`) are the layer's shapes, built by the shim and routed to the host
-  // like methods; they travel with a namespace the engine table leaves alone. A namespace the
-  // engine lists answers its settings itself (`engine.ts` defines `privacy`'s on the context
-  // side), and the shim would replace them with routed ones the host has no answer for.
+  // like methods; they travel with a namespace the engine table leaves alone (`privacy`,
+  // `proxy`, `contentSettings`). A namespace the engine lists answers its settings itself, and
+  // the shim would replace them with routed ones the host has no answer for.
   const settings = over ? undefined : base?.settings
   const ownSettings = over ? undefined : base?.ownSettings
   const contentSettings = over ? undefined : base?.contentSettings

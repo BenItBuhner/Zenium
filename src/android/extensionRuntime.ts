@@ -32,7 +32,8 @@ import {
   type ExtraInfoSpec,
   type WebRequestEventName
 } from '@core/extensions/api/webRequest'
-import { RESOURCE_TYPES, type ResourceType } from '@core/blocking/rules'
+import { RESOURCE_TYPES, type ResourceType, type RuleSet } from '@core/blocking/rules'
+import type { BlockingService } from '@core/blocking/service'
 import {
   msUntilNext,
   rescheduleAlarm,
@@ -113,6 +114,7 @@ import type { ClientInfo } from './extensionServiceWorker'
 import type { AndroidExtensionStoreIo } from './extensionStoreIo'
 import { ExtensionControlsMerge } from './extensionControls'
 import { EMPTY_WEBVIEW_FONT_LAYER, type WebViewFontLayer } from './extensionFontSettings'
+import type { WebViewPrivacyLayer } from './extensionPrivacy'
 import { webViewProxyOverride } from './extensionProxy'
 import type { KeepAwakeLevel } from '@core/extensions/api/power'
 import { relayServedObservation, type ScriptRequestObservation } from './relaySelection'
@@ -160,6 +162,7 @@ import type { ViewEventPayloads } from './views'
  *  ext.proxy.set { rules, bypass, bypassSimpleHostnames, removeImplicitRules } / clear   chrome.proxy.settings over ProxyController
  *  ext.fonts.apply { standard, serif, sansSerif, fixed, cursive, fantasy, size, fixedSize, minimumSize, css, script }   chrome.fontSettings' layer over every tab WebView's WebSettings and its :lang() stylesheet
  *  ext.fonts.list                            [{ id, name }] – fonts.xml's named families with the font files' own names (fontSettings.getFontList)
+ *  ext.privacy.apply { doNotTrack, doNotTrackPrivate, script: { on, off } }   chrome.privacy's navigator.doNotTrack at document start on every tab WebView
  *  view.capture { tabId, mode: 'viewport', format, quality }   tabs.captureVisibleTab
  * Kotlin → runtime (host events): ext.message, ext.gone, ext.popupClosed, ext.request,
  * ext.requestHeaders, ext.response, ext.authView { viewId, event, url? }, ext.notification,
@@ -492,6 +495,8 @@ interface RuntimeData {
   proxy: Record<string, ScopedValues>
   /** id → the `chrome.fontSettings` values it set (Chrome's `ExtensionPrefs` font layer; the user's setting is never written). */
   fontSettings: Record<string, FontValues>
+  /** id → the `chrome.privacy` values it set, by setting key and scope (Chrome's `ExtensionPrefs`; the session-only scope is not kept). */
+  privacy: Record<string, Record<string, ScopedValues>>
   /**
    * id → the optional permissions `permissions.request` granted (API permissions and host
    * patterns), kept across sessions as Chrome's `ExtensionPrefs` keep the granted set; the
@@ -664,6 +669,7 @@ function emptyData(): RuntimeData {
     sidePanelOnActionClick: {},
     proxy: {},
     fontSettings: {},
+    privacy: {},
     grants: {}
   }
 }
@@ -684,6 +690,7 @@ function readData(saved: Partial<RuntimeData> | null): RuntimeData {
   data.sidePanelOnActionClick = saved.sidePanelOnActionClick ?? {}
   data.proxy = saved.proxy ?? {}
   data.fontSettings = saved.fontSettings ?? {}
+  data.privacy = saved.privacy ?? {}
   data.grants = saved.grants ?? {}
   return data
 }
@@ -924,6 +931,32 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       if (removed.length > 0)
         console.info(`[zen] declarativeNetRequest: ${removed.length} stale rule set(s) removed`)
     }
+    // The engine is up: the privacy layer's request sets follow what the boot-time rebuild
+    // resolved (a stale set of an extension gone while the app was closed leaves here).
+    this.api.privacy.engineReady()
+  }
+
+  /**
+   * The boot-time rebuild of the extension layer the services read, from the store, before any
+   * tab WebView exists (`AndroidExtensionsWithRuntime`'s constructor calls it inside the `Browser`
+   * constructor, ahead of `openStartupWindows`): the enabled records' persisted `chrome.privacy`
+   * values are published as `extensionControls` at once; each extension's attach re-resolves with
+   * its manifest's permission checked. The order at boot, then: this rebuild → `Browser.start()`
+   * (`blocking.start()`, the startup windows and their first tab WebViews) → `extensions.start()`
+   * (`ext.env`, the store's sweep, each enabled extension's attach and `api.load`).
+   */
+  prime(): void {
+    const records = this.store?.records() ?? []
+    this.api.prime(
+      records
+        .filter((record) => record.enabled && !record.staged)
+        .map((record) => ({
+          id: record.id,
+          name: record.name,
+          installedAt: record.installedAt,
+          allowPrivate: record.allowPrivate === true
+        }))
+    )
   }
 
   private ensureEnv(): Promise<RuntimeEnv> {
@@ -1151,6 +1184,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     // host hands the runtime the record object it mutated in place (`setAllowPrivate`), so a
     // before/after comparison here would see no change; the engine skips an unchanged scope.
     this.dnr.sessionsChanged(record.id)
+    // The same for its `chrome.privacy` values' reach into private tabs.
+    this.api.privateAccessChanged()
   }
 
   /** The extension was uninstalled: its persisted runtime state and `chrome.storage` go too. */
@@ -1166,6 +1201,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     delete this.data.sidePanelOnActionClick[id]
     delete this.data.proxy[id]
     delete this.data.fontSettings[id]
+    delete this.data.privacy[id]
     delete this.data.grants[id]
     this.startupFired.delete(id)
     this.save()
@@ -1570,6 +1606,45 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     if (Object.keys(values).length === 0) delete this.data.fontSettings[id]
     else this.data.fontSettings[id] = values
     this.save()
+  }
+
+  privacyValues(id: string): unknown {
+    return this.data.privacy[id] ?? {}
+  }
+
+  setPrivacyValues(id: string, values: Record<string, ScopedValues>): void {
+    if (Object.keys(values).length === 0) delete this.data.privacy[id]
+    else this.data.privacy[id] = values
+    this.save()
+  }
+
+  /** Every persistent container: the regular tabs' partitions (`partitionsOf` without the private one). */
+  regularPartitions(): readonly string[] {
+    const partitions = [DEFAULT_CONTAINER_ID]
+    for (const container of this.browser.state.model.containers) {
+      if (container.id === PRIVATE_CONTAINER_ID || partitions.includes(container.id)) continue
+      partitions.push(container.id)
+    }
+    return partitions
+  }
+
+  /**
+   * The privacy layer's request rule sets (`DNT: 1`, the `Referer` drop on documents) into the
+   * blocking engine, which persists them and hands them to Kotlin's engine with every other set.
+   * False before `browser.blocking` exists: the runtime is built inside the `Browser` constructor
+   * and the boot-time rebuild runs there; `start()` applies them once the engine is up.
+   */
+  applyPrivacyRules(sets: { set: RuleSet[]; remove: string[] }): boolean {
+    const blocking = this.browser.blocking as BlockingService | undefined
+    if (!blocking) return false
+    for (const set of sets.set) blocking.engine.setRuleSet(set)
+    for (const id of sets.remove) if (blocking.engine.has(id)) blocking.engine.removeRuleSet(id)
+    return true
+  }
+
+  /** `navigator.doNotTrack` to Kotlin (`ext.privacy.apply`): the document-start script of every tab WebView and the open documents' value. */
+  applyPrivacyLayer(layer: WebViewPrivacyLayer): Promise<void> {
+    return this.bridge.call('ext.privacy.apply', layer)
   }
 
   /**
@@ -3325,6 +3400,9 @@ export class AndroidExtensionsWithRuntime extends AndroidExtensions {
   ) {
     super(browser, io, { ...options, hooks: runtime })
     runtime.store = this
+    // What the services read of the extensions' `chrome.privacy` values, rebuilt from the store
+    // now, inside the `Browser` constructor, before the startup windows make the first tab WebView.
+    runtime.prime()
   }
 
   override async start(): Promise<void> {

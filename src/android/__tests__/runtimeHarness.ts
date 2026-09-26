@@ -103,6 +103,10 @@ export class FakeKotlin implements RuntimeBridge {
   fontLayer: Record<string, unknown> | undefined = undefined
   /** How often a layer was applied. */
   fontApplies = 0
+  /** The privacy layer the fake WebViews hold (`ext.privacy.apply`, the whole payload); undefined while none was ever applied. */
+  privacyLayer: Record<string, unknown> | undefined = undefined
+  /** How often a privacy layer was applied. */
+  privacyApplies = 0
   /** The fake phone's font configuration (`ext.fonts.list`): `fonts.xml`'s named families with their files' own names. */
   fontNames: Array<{ id: string; name: string }> = [
     { id: 'sans-serif', name: 'Roboto' },
@@ -306,6 +310,10 @@ export class FakeKotlin implements RuntimeBridge {
         return null
       case 'ext.fonts.list':
         return this.fontNames.map((entry) => ({ ...entry }))
+      case 'ext.privacy.apply':
+        this.privacyLayer = args
+        this.privacyApplies++
+        return null
       case 'ext.hosts':
         this.hosts.set(String(args.id), (args.hosts as string[]) ?? [])
         return undefined
@@ -535,6 +543,8 @@ export interface Harness {
   search: Array<{ engines: SearchEngine[]; control: SearchEngineControl | null }>
   /** The user's page fonts (`state.settings.fonts`), mutable: a test changes a row and calls `notifyState`. */
   fonts: PageFontSettings
+  /** The user's password setting (`state.settings.passwords`): the browser's value of `services.passwordSavingEnabled`. */
+  passwords: { offerToSave: boolean }
   /** Every map the runtime published to `state.setExtensionControls`, in order (the whole map each time). */
   controls: Array<Record<string, ExtensionControl>>
   /** Write the debounced JSON documents out now and parse one of them. */
@@ -615,6 +625,7 @@ export function harness(
   const pdfDocuments = new Map<string, string>()
   const search: Harness['search'] = []
   const fonts: PageFontSettings = { ...DEFAULT_FONT_SETTINGS }
+  const passwords = { offerToSave: true }
   const controls: Harness['controls'] = []
   const browser = {
     platform: { io, speech },
@@ -628,7 +639,7 @@ export function harness(
     },
     state: {
       model: { containers },
-      settings: { fonts },
+      settings: { fonts, passwords },
       subscribe: (fn: () => void) => {
         listeners.push(fn)
         return () => undefined
@@ -754,6 +765,7 @@ export function harness(
     pdfDocuments,
     search,
     fonts,
+    passwords,
     controls,
     turnScreen: (angle) => {
       screen.angle = angle
