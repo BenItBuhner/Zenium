@@ -2,6 +2,7 @@ import { Menu, nativeImage, net, type MenuItemConstructorOptions } from 'electro
 import type { MenuHost, MenuItemTemplate, MenuPopupOptions } from '../../core/platform'
 import { RendererMenuHost } from '../../core/rendererMenus'
 import { withMnemonics } from './menuMnemonics'
+import { popupPoint } from './menuPlacement'
 import type { ElectronWindow } from './window'
 
 /** Longest a menu waits for uncached remote favicons before it opens without them. */
@@ -63,9 +64,12 @@ export class ElectronMenus implements MenuHost {
   /**
    * The app menu goes to the renderer, which hangs it from the "⋯" button it finds on screen
    * (end-aligned under its bar, §9.20) and starts on its first row when the keyboard asked. A
-   * native menu opens at the pointer unless the core anchors it to a control; opened by the
+   * native menu opens at the pointer unless the core anchors it – to a point, or to the element
+   * it belongs to, whose bottom-left corner it hangs from (`popupPoint`, §9.23); opened by the
    * keyboard it says so: Chromium then starts with its first item selected, and the arrow keys
-   * and Escape work from there (Escape leaves the keyboard where it was, on the button).
+   * and Escape work from there. The menu never takes the chrome document's focus – a views menu
+   * runs in its own popup widget over the still-active window – so the element that opened it
+   * has the keyboard back the moment it closes.
    */
   popup(items: MenuItemTemplate[], options: MenuPopupOptions): void {
     if (options.source === 'app') {
@@ -77,9 +81,10 @@ export class ElectronMenus implements MenuHost {
     const show = (): void => {
       if (!host.alive) return
       const popup: Electron.PopupOptions = { window: host.win }
-      if (options.x !== undefined && options.y !== undefined) {
-        popup.x = Math.round(options.x)
-        popup.y = Math.round(options.y)
+      const point = popupPoint(options, host.contentSize())
+      if (point) {
+        popup.x = point.x
+        popup.y = point.y
       }
       if (options.keyboard) popup.sourceType = 'keyboard'
       Menu.buildFromTemplate(this.template(items)).popup(popup)

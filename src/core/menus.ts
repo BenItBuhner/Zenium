@@ -306,9 +306,15 @@ export class Menus {
       : { keyboard: true }
   }
 
-  /** The chrome document's own: the event's coordinates are the window's already. */
+  /**
+   * The chrome document's own: the event's coordinates are the window's already, and the
+   * keyboard's menu carries the focused element's box for the host to hang it from (§9.23).
+   */
   private chromeAnchor(params: ChromeContextParams): MenuAnchor {
-    return params.keyboard ? { x: params.x, y: params.y, keyboard: true } : {}
+    if (!params.keyboard) return {}
+    return params.rect
+      ? { x: params.x, y: params.y, keyboard: true, rect: params.rect }
+      : { x: params.x, y: params.y, keyboard: true }
   }
 
   private containerSubmenu(onPick: (containerId: string) => void): Template {
@@ -1655,11 +1661,7 @@ export class Menus {
    * A reading list row's menu (the page's ⋮ and right-click): Open and Open in New Tab, the
    * read flip, Copy Link, Remove – the Downloads page's row menu's shape.
    */
-  showReadingListContextMenu(
-    id: string,
-    anchor: { x?: number; y?: number; keyboard?: boolean },
-    win: ZenWindow
-  ): void {
+  showReadingListContextMenu(id: string, anchor: MenuAnchor, win: ZenWindow): void {
     const { readingList, platform } = this.browser
     const entry = readingList.get(id)
     if (!entry) return
@@ -3232,11 +3234,7 @@ export class Menus {
    * row is what takes the file away). A finished file the engine found gone from disk
    * (`fileMissing`) has nothing to open, show or delete and offers Retry instead.
    */
-  showDownloadContextMenu(
-    id: string,
-    anchor: { x?: number; y?: number; keyboard?: boolean },
-    win: ZenWindow
-  ): void {
+  showDownloadContextMenu(id: string, anchor: MenuAnchor, win: ZenWindow): void {
     const { downloads, platform } = this.browser
     const item = downloads.item(id)
     if (!item) return

@@ -4,6 +4,7 @@ import { Columns2, Grid2x2, Minus, MoreHorizontal, Rows2 } from 'lucide-react'
 import type { Rect, SplitGroup, SplitLayout, UIState } from '@shared/types'
 import { displayHost } from '@shared/url'
 import { run } from '@renderer/lib/api'
+import { controlMenuAnchor } from '@renderer/lib/menuKeys'
 import { useViewport } from '@renderer/lib/formFactor'
 import { gutterRects, splitPaneRects, SPLIT_GAP, SPLIT_GAP_TOUCH } from '@renderer/lib/layout'
 import { tabTitle } from '@renderer/lib/selectors'
@@ -112,15 +113,7 @@ export function SplitChrome({ state, group, area, activeTabId }: Props): JSX.Ele
               aria-label="Pane options"
               aria-haspopup="menu"
               data-tooltip="Pane options"
-              onClick={(e) => {
-                const box = e.currentTarget.getBoundingClientRect()
-                run('split.paneMenu', {
-                  tabId: pane.tabId,
-                  x: Math.round(box.left),
-                  y: Math.round(box.bottom),
-                  keyboard: e.detail === 0
-                })
-              }}
+              onClick={(e) => run('split.paneMenu', { tabId: pane.tabId, ...controlMenuAnchor(e) })}
             >
               <MoreHorizontal className="h-3 w-3" />
             </button>

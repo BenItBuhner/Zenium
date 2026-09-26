@@ -3718,14 +3718,8 @@ export class Browser {
       'bookmark.allTabs': (_a, win) => this.bookmarkTabs(win),
       'bookmark.createFromTabs': ({ tabIds, title, parentId, quiet }, win) =>
         this.createBookmarksFromTabs(tabIds, title, parentId, win, quiet ?? false),
-      'bookmark.contextMenu': ({ ids, folderId, x, y, keyboard, surface }, win) =>
-        this.menus.showBookmarkContextMenu(
-          ids,
-          folderId,
-          { x, y, keyboard },
-          win,
-          surface ?? 'manager'
-        ),
+      'bookmark.contextMenu': ({ ids, folderId, surface, ...anchor }, win) =>
+        this.menus.showBookmarkContextMenu(ids, folderId, anchor, win, surface ?? 'manager'),
       'bookmark.menu': ({ x, y }, win) => this.menus.showBookmarksMenu({ x, y }, win),
       'bookmark.toggleBar': (_a, win) => this.toggleBookmarksBar(win),
       'bookmark.cut': ({ ids }) => this.clipBookmarks(ids, 'cut'),
@@ -3744,8 +3738,8 @@ export class Browser {
       'readingList.markAllRead': () => this.readingList.markAllRead(),
       'readingList.open': ({ id, tabId, newTab, background }, win) =>
         this.openReadingEntry(id, tabId, win, { newTab, background }),
-      'readingList.contextMenu': ({ id, x, y, keyboard }, win) =>
-        this.menus.showReadingListContextMenu(id, { x, y, keyboard }, win),
+      'readingList.contextMenu': ({ id, ...anchor }, win) =>
+        this.menus.showReadingListContextMenu(id, anchor, win),
 
       'import.sources': () => this.imports.sources(),
       'import.run': ({ source, kinds }, win) => this.imports.run(source, kinds, win),
@@ -3778,8 +3772,8 @@ export class Browser {
           platform.downloads.startFileDrag?.(item, win)
       },
       'download.openFolder': () => platform.downloads.openDownloadsFolder?.(),
-      'download.contextMenu': ({ id, x, y, keyboard }, win) =>
-        this.menus.showDownloadContextMenu(id, { x, y, keyboard }, win),
+      'download.contextMenu': ({ id, ...anchor }, win) =>
+        this.menus.showDownloadContextMenu(id, anchor, win),
 
       'find.start': ({ tabId, text, forward, newSession }, win) => {
         const view = tabs.view(tabId)

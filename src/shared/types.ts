@@ -4589,11 +4589,17 @@ export interface MenuItemDescriptor {
  * (Chrome's rule): a right-click opens it at the pointer; Shift+F10 and the Menu key open it at
  * the focused element – Chromium raises the event at the element's middle – in keyboard mode,
  * so its first item starts selected and the arrow keys take over at once. Chrome CSS pixels.
+ *
+ * `rect` is the box of the element the menu belongs to – the focused element for Shift+F10 and
+ * the Menu key, the control for a "⋯" button's press – in chrome CSS pixels, window
+ * coordinates. A host with native menus hangs the menu from it (its bottom-left; §9.23) rather
+ * than at the point; the phone, whose menus are sheets, reads no position at all.
  */
 export interface MenuAnchor {
   x?: number
   y?: number
   keyboard?: boolean
+  rect?: Rect
 }
 
 /**
@@ -5614,6 +5620,8 @@ export interface Commands {
       y: number
       /** Opened with Shift+F10 or the Menu key: the first item starts selected (`MenuAnchor`). */
       keyboard?: boolean
+      /** The element the menu hangs from – the focused row, the "More" button (`MenuAnchor`). */
+      rect?: Rect
       /** The bar and its folder panels get Chrome's bar menu (open targets, "Show bookmarks bar"). */
       surface?: 'manager' | 'bar'
     }
@@ -5656,7 +5664,7 @@ export interface Commands {
   }
   /** The row's menu (Mark as read / unread, Open in New Tab, Copy Link, Remove) at a point. */
   'readingList.contextMenu': {
-    args: { id: string; x?: number; y?: number; keyboard?: boolean }
+    args: { id: string } & MenuAnchor
     result: void
   }
 
@@ -5719,7 +5727,7 @@ export interface Commands {
    * Retry, Remove from list), at the pointer or at `x, y` when opened from the keyboard.
    */
   'download.contextMenu': {
-    args: { id: string; x?: number; y?: number; keyboard?: boolean }
+    args: { id: string } & MenuAnchor
     result: void
   }
 

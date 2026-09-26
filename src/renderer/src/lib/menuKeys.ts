@@ -1,5 +1,5 @@
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
-import type { MenuAnchor, Platform } from '@shared/types'
+import type { MenuAnchor, Platform, Rect } from '@shared/types'
 import { isTextField } from './popover'
 import { browserStore } from './ui'
 
@@ -23,22 +23,65 @@ interface ContextMenuEventLike {
   sourceCapabilities?: { firesTouchEvents?: boolean } | null
 }
 
+/** A measured box as a `MenuAnchor.rect` (window CSS pixels), or undefined for an empty one. */
+function rectOf(box: DOMRect | undefined): Rect | undefined {
+  if (!box || !(box.width > 0) || !(box.height > 0)) return undefined
+  return { x: box.left, y: box.top, width: box.width, height: box.height }
+}
+
+/**
+ * The focused element's box, where a menu the keyboard asked for hangs (§9.23): undefined when
+ * the focus is on the document itself or the element has no box.
+ */
+export function focusedRect(doc: Document = document): Rect | undefined {
+  const el = doc.activeElement
+  if (!el || el === doc.body || el === doc.documentElement) return undefined
+  return rectOf(el.getBoundingClientRect())
+}
+
 /**
  * Where the menu a `contextmenu` event asks for opens (`MenuAnchor`): a right-click's at the
  * pointer; Shift+F10's and the Menu key's – Chromium raises the event at the middle of the
- * focused element with no button (`button` is -1, its `kNoButton`) – there, in keyboard mode, so
- * the first item starts selected and the arrow keys take over at once (Chrome's rule). A touch's
- * long-press comes without the right button too but is marked as a touch's: it opens at the
- * finger, a pointer's menu all the same.
+ * focused element with no button (`button` is -1, its `kNoButton`) – from the focused element,
+ * whose box goes along (`rect`; a native host hangs the menu from its bottom-left, §9.23), in
+ * keyboard mode, so the first item starts selected and the arrow keys take over at once
+ * (Chrome's rule). A touch's long-press comes without the right button too but is marked as a
+ * touch's: it opens at the finger, a pointer's menu all the same.
  */
 export function contextMenuAnchor(
   e: ReactMouseEvent | MouseEvent
 ): MenuAnchor & { x: number; y: number } {
   const native: ContextMenuEventLike = 'nativeEvent' in e ? e.nativeEvent : e
   const pointer = e.button === 2 || Boolean(native.sourceCapabilities?.firesTouchEvents)
-  return !pointer
-    ? { x: Math.round(e.clientX), y: Math.round(e.clientY), keyboard: true }
-    : { x: Math.round(e.clientX), y: Math.round(e.clientY) }
+  if (pointer) return { x: Math.round(e.clientX), y: Math.round(e.clientY) }
+  const rect = focusedRect()
+  return {
+    x: Math.round(e.clientX),
+    y: Math.round(e.clientY),
+    keyboard: true,
+    ...(rect ? { rect } : {})
+  }
+}
+
+/**
+ * Where the menu a control's press asks for opens – a row's "⋯", a heading's twisty: the menu
+ * hangs from the control (`rect`, its bottom-left; the point too, for a host that reads only
+ * that), in keyboard mode when the press was Enter's or Space's (a click they synthesise
+ * reports a `detail` of 0) so the first item starts selected.
+ */
+export function controlMenuAnchor(e: {
+  currentTarget: EventTarget | null
+  detail: number
+}): MenuAnchor & { x: number; y: number } {
+  const el = e.currentTarget instanceof Element ? e.currentTarget : null
+  const box = el?.getBoundingClientRect()
+  const rect = rectOf(box)
+  return {
+    x: Math.round(box?.left ?? 0),
+    y: Math.round(box?.bottom ?? 0),
+    keyboard: e.detail === 0,
+    ...(rect ? { rect } : {})
+  }
 }
 
 // ---------------------------------------------------------------------------

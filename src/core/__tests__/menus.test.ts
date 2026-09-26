@@ -4608,6 +4608,91 @@ describe('a menu asked for from the keyboard', () => {
     expect(h.where()).toMatchObject({ source: 'tab' })
     expect(h.where()).not.toHaveProperty('x')
   })
+
+  it('the element\'s box rides along with the anchor (§9.23), for a host that hangs the menu from it – the rows, the strip, a page\'s "⋯"', () => {
+    const h = pageHarness()
+    const rect = { x: 12, y: 240, width: 200, height: 28 }
+    h.browser.handleCommand(h.win, 'tab.contextMenu', {
+      tabId: h.tabId,
+      x: 112,
+      y: 254,
+      keyboard: true,
+      rect
+    })
+    expect(h.where()).toMatchObject({ source: 'tab', x: 112, y: 254, keyboard: true, rect })
+    h.browser.handleCommand(h.win, 'newtab.contextMenu', {
+      x: 90,
+      y: 500,
+      keyboard: true,
+      rect: { x: 0, y: 60, width: 240, height: 600 }
+    })
+    expect(h.where()).toMatchObject({
+      source: 'newtab',
+      rect: { x: 0, y: 60, width: 240, height: 600 }
+    })
+    h.browser.readingList.add('https://read.example/long', 'Long read')
+    const entry = h.browser.readingList.list()[0]!
+    h.browser.handleCommand(h.win, 'readingList.contextMenu', {
+      id: entry.id,
+      x: 900,
+      y: 300,
+      keyboard: true,
+      rect: { x: 880, y: 280, width: 20, height: 20 }
+    })
+    expect(h.where()).toMatchObject({
+      source: 'readingList',
+      keyboard: true,
+      rect: { x: 880, y: 280, width: 20, height: 20 }
+    })
+    // Without a box, the point alone – a pointer's menu, or a phone's command.
+    h.browser.handleCommand(h.win, 'readingList.contextMenu', { id: entry.id, x: 900, y: 300 })
+    expect(h.where()).toMatchObject({ x: 900, y: 300 })
+    expect(h.where()).not.toHaveProperty('rect')
+    expect(h.where()).not.toHaveProperty('keyboard')
+  })
+
+  it("a right-click the chrome did not handle reads the document once for its target; the keyboard's reads the focused element's box too, and the box goes to the menu", async () => {
+    const focused = { x: 300, y: 8, width: 600, height: 32 }
+    const h = pageHarness(DESKTOP, {
+      chromeDocument: { hit: { target: 'urlbar', tabId: null }, focused }
+    })
+    const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+    // The pointer's: the element under it is looked up, the focus is nobody's business.
+    h.win.onContextMenu(chromeParams({ x: 420, y: 18, isEditable: true, editFlags: ALL_EDITS }))
+    await settle()
+    expect(h.documentReads).toEqual(['menuTargetAt(420,18)'])
+    expect(h.where()).toMatchObject({ source: 'urlbar' })
+    expect(h.where()).not.toHaveProperty('rect')
+    expect(h.where()).not.toHaveProperty('x')
+    // Shift+F10's: both reads, at once; the menu hangs from the field.
+    h.documentReads.length = 0
+    h.win.onContextMenu(
+      chromeParams({ x: 600, y: 24, keyboard: true, isEditable: true, editFlags: ALL_EDITS })
+    )
+    await settle()
+    expect(h.documentReads).toEqual(['menuTargetAt(600,24)', 'focusedRect()'])
+    expect(h.where()).toMatchObject({
+      source: 'urlbar',
+      x: 600,
+      y: 24,
+      keyboard: true,
+      rect: focused
+    })
+  })
+
+  it('a host that reads nothing from its document – the phone, a fake – still gets the menu, at the point', async () => {
+    const field = { isEditable: true, editFlags: ALL_EDITS }
+    const h = pageHarness(DESKTOP, { chromeDocument: { hit: null, focused: null } })
+    h.win.onContextMenu(chromeParams({ x: 600, y: 24, keyboard: true, ...field }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(h.where()).toMatchObject({ x: 600, y: 24, keyboard: true })
+    expect(h.where()).not.toHaveProperty('rect')
+    // No reader at all (the stub's nothing) is no error either.
+    const bare = pageHarness()
+    bare.win.onContextMenu(chromeParams({ x: 10, y: 10, keyboard: true, ...field }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(bare.where()).toMatchObject({ keyboard: true })
+  })
 })
 
 describe('Send to your devices (ID-27)', () => {

@@ -1,4 +1,4 @@
-import type { FormFactor, HostCapabilities, Platform as PlatformOs } from '../../shared/types'
+import type { FormFactor, HostCapabilities, Platform as PlatformOs, Rect } from '../../shared/types'
 import { Browser } from '../browser'
 import { closeBootTabs } from './bootTab'
 import type {
@@ -182,6 +182,8 @@ export interface Harness {
   where: () => MenuPopupOptions | null
   /** Every call a tab view received, as `method(args)`. */
   viewCalls: string[]
+  /** Every read of the chrome document a right-click asked the host for (`options.chromeDocument`). */
+  documentReads: string[]
   /** What the host's clipboard says on `readText`. */
   clipboardText: { value: string }
   /** Every `tel:` / `mailto:` hand-off the shell was asked for, as `target url`. */
@@ -220,6 +222,15 @@ export interface HarnessOptions {
    * Android); absent, the shell has no dialer or mail app to speak of (the desktop).
    */
   linkApps?: boolean
+  /**
+   * What the host reads from its chrome document for a right-click it did not handle: the
+   * `data-zen-menu` element under the point, and the focused element's box (the desktop's
+   * `menuTargetAt` / `focusedRect`); absent, the host answers nothing.
+   */
+  chromeDocument?: {
+    hit?: { target: string; tabId: string | null } | null
+    focused?: Rect | null
+  }
 }
 
 /** The languages the fake spellchecker was last told to check in. */
@@ -238,6 +249,7 @@ export function harness(
   let lastOptions: MenuPopupOptions | null = null
   let count = 0
   const viewCalls: string[] = []
+  const documentReads: string[] = []
   const clipboardText = { value: '' }
   const sent: string[] = []
   const focused: string[] = []
@@ -307,7 +319,19 @@ export function harness(
           isFocused: () => true,
           isVisible: () => true,
           send: (name) => void sent.push(name),
-          focus: () => void focused.push(win.id)
+          focus: () => void focused.push(win.id),
+          ...(opts.chromeDocument
+            ? {
+                menuTargetAt: (x, y) => {
+                  documentReads.push(`menuTargetAt(${x},${y})`)
+                  return Promise.resolve(opts.chromeDocument?.hit ?? null)
+                },
+                focusedRect: () => {
+                  documentReads.push('focusedRect()')
+                  return Promise.resolve(opts.chromeDocument?.focused ?? null)
+                }
+              }
+            : {})
         })
     },
     views: stub<TabViewHost>({ createView: () => recordingView() }),
@@ -362,6 +386,7 @@ export function harness(
     popups: () => count,
     where: () => lastOptions,
     viewCalls,
+    documentReads,
     clipboardText,
     sent,
     focused,
