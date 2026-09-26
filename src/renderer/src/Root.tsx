@@ -8,6 +8,7 @@ import { NewTabCustomizeLayer } from './components/newtab/CustomizeSheet'
 import { MagicStackCustomizeLayer } from './components/newtab/MagicStack'
 import { NewTabGrowLayer } from './components/newtab/NewTabGrowLayer'
 import { ExternalProtocolLayer } from './components/protocol/ExternalProtocolSheet'
+import { QrCodeLayer } from './components/qr/QrCodeSheet'
 import { QrScanLayer } from './components/qr/QrScanSheet'
 import { SharePanelLayer } from './components/share/SharePanelSheet'
 import { BarEditorLayer } from './components/phone/BarEditorSheet'
@@ -46,6 +47,7 @@ export function Root(): JSX.Element {
       <SharePanelLayer />
       <VoiceSearchLayer />
       <QrScanLayer />
+      <QrCodeLayer />
     </>
   )
 }

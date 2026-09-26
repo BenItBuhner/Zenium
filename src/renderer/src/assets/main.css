@@ -4883,6 +4883,58 @@
     border-bottom-right-radius: calc(var(--v2-radius-card) + 4px);
   }
   /*
+   * The QR code sheet's body (SH-06; `components/qr/QrCodeSheet.tsx`): the code black on a white
+   * card in both themes, as Chrome's `qrcode_background` is white over either theme (a camera
+   * reads the code, not the theme) – Chrome's box is 248 dp with the code 16 dp inside it at the
+   * chip radius and a hairline stroke; here the card at the card radius with the border hairline,
+   * the code's own quiet zone (two modules) inside the 16 – and the link under it in the
+   * deemphasised ink, two lines at most and ellipsised, as the picture Download keeps writes it
+   * above the code. The card, not the sheet, is white: the surface keeps the theme.
+   */
+  .zen-qr-code-body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 0 16px 8px;
+  }
+  .zen-qr-code-card {
+    display: grid;
+    place-items: center;
+    box-sizing: border-box;
+    width: min(100%, 248px);
+    aspect-ratio: 1;
+    padding: 16px;
+    background: #fff;
+    border: 1px solid var(--v2-border);
+    border-radius: var(--v2-radius-card);
+  }
+  .zen-qr-code {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+  .zen-qr-code-error {
+    margin: 0;
+    color: rgb(0 0 0 / 0.69);
+    font-size: 14px;
+    line-height: 20px;
+    text-align: center;
+  }
+  .zen-qr-code-url {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    margin: 0;
+    max-width: 100%;
+    color: var(--v2-text-deemphasized);
+    font-size: 13px;
+    line-height: 18px;
+    text-align: center;
+    overflow-wrap: anywhere;
+  }
+  /*
    * The browser's own share panel (Android below 14; SH-03; §9.38): the share's preview is
    * PUI-18's header, read-only (no press fill: nothing happens on it), then two rows that scroll
    * sideways when they overflow – Zenium's own chips, a hairline, and the apps the user shares

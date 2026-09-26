@@ -17,6 +17,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Rect
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.Icon
 import android.net.Uri
@@ -24,19 +26,18 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.service.chooser.ChooserAction
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextPaint
+import android.text.TextUtils
 import android.util.Base64
+import android.util.TypedValue
 import android.webkit.CookieManager
-import android.widget.ImageView
-import android.widget.Toast
 import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.core.content.IntentCompat
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
-import com.google.zxing.BarcodeFormat
-import com.google.zxing.EncodeHintType
-import com.google.zxing.qrcode.QRCodeWriter
-import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
+import com.google.zxing.common.BitMatrix
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -343,7 +344,7 @@ class Share(private val host: Host, private val io: Executor) {
         val url = intent.getStringExtra(EXTRA_URL) ?: return
         val tabId = intent.getStringExtra(EXTRA_TAB_ID)
         if (kind == KIND_QR) {
-            showQrCode(url)
+            showQrCode(url, tabId)
             return
         }
         val event = json("kind" to kind, "url" to url, "tabId" to tabId)
@@ -559,7 +560,7 @@ class Share(private val host: Host, private val io: Executor) {
                 }
             }, awaitOutcome = entry.awaited)
             "qr" -> {
-                entry.url?.let { showQrCode(it) }
+                entry.url?.let { showQrCode(it, entry.tabId) }
                 entry.settle("qr")
             }
             "copyImage" -> {
@@ -582,8 +583,8 @@ class Share(private val host: Host, private val io: Executor) {
     }
 
     /** A word to the user through the chrome's toast (the one toast the app has; `BrowserActivity` speaks the same way). */
-    private fun toast(message: String) {
-        host.chrome.hostEvent("toast", json("message" to message, "kind" to "info", "action" to null))
+    private fun toast(message: String, kind: String = "info") {
+        host.chrome.hostEvent("toast", json("message" to message, "kind" to kind, "action" to null))
     }
 
     /** A launcher icon as a `data:` WebP of `side` px (adaptive icons draw their mask themselves). */
@@ -683,45 +684,82 @@ class Share(private val host: Host, private val io: Executor) {
     private fun dataUrl(mime: String, bytes: ByteArray): String =
         "data:$mime;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
 
-    // --- QR code (the action row) -------------------------------------------------------------------
+    // --- QR code (the action row's and the panel's "QR code"; SH-06) -------------------------------
 
-    /** The link as a QR code in a dialog, with a button to keep it as a picture. */
-    private fun showQrCode(url: String) {
+    /**
+     * The link as a QR code in the chrome's code sheet (`components/qr/QrCodeSheet.tsx`), as
+     * Chrome 152's sharing hub option opens `QrCodeDialog`: the code is encoded here
+     * ([QrCodeLogic.codeFor]) and handed over as its modules (`qr.code`), the sheet draws it and
+     * asks [downloadQrCode] for Download. A link too long for a code (Chrome's 2331) or one the
+     * encoder refuses goes over as the error the sheet shows in the code's place.
+     */
+    private fun showQrCode(url: String, tabId: String?) {
         io.execute {
-            val bitmap = runCatching { qrBitmap(url, QR_SIZE_PX) }.getOrNull()
+            val code = QrCodeLogic.codeFor(url)
+            val payload = json("url" to url, "tabId" to tabId, "rows" to JSONArray(code.rows), "error" to code.error)
+            main.post { host.chrome.hostEvent("qr.code", payload) }
+        }
+    }
+
+    /**
+     * `qr.download`: the sheet's Download. The picture Chrome's `addUrlToBitmap` composes – the
+     * link above the code on white ([QrCodeLogic.composition]) – as a PNG in the public Downloads
+     * collection, named `zenium_qrcode_<millis>.png` as Chrome's `chrome_qrcode_<millis>` is; the
+     * chrome's toast says it is there, or that it could not be kept. The sheet has already gone
+     * (Chrome's dialog closes on Download); the answer comes as soon as the write is under way.
+     */
+    fun downloadQrCode(url: String, reply: (Any?) -> Unit) {
+        reply(null)
+        io.execute {
+            val bytes = runCatching { composeQrPicture(url) }.getOrNull()?.let { picture ->
+                ByteArrayOutputStream().also { picture.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+            }
             main.post {
-                if (bitmap == null) {
-                    Toast.makeText(activity, "This link is too long for a QR code", Toast.LENGTH_SHORT).show()
+                if (bytes == null) {
+                    toast("Could not save the QR code", kind = "error")
                     return@post
                 }
-                val pad = (24 * activity.resources.displayMetrics.density).toInt()
-                val image = ImageView(activity).apply {
-                    setImageBitmap(bitmap)
-                    adjustViewBounds = true
-                    setPadding(pad, pad, pad, 0)
+                host.saveToDownloads(QrCodeLogic.fileName(System.currentTimeMillis()), QrCodeLogic.MIME, bytes) { result ->
+                    if (result != null) toast("Saved to Downloads") else toast("Could not save the QR code", kind = "error")
                 }
-                MaterialAlertDialogBuilder(activity)
-                    .setTitle("Scan to open")
-                    .setMessage(url)
-                    .setView(image)
-                    .setPositiveButton("Save") { _, _ -> saveQrCode(url, bitmap) }
-                    .setNegativeButton("Close", null)
-                    .show()
             }
         }
     }
 
-    private fun saveQrCode(url: String, bitmap: Bitmap) {
-        io.execute {
-            val out = ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
-            val name = "zenium-qr-" + (Uri.parse(url).host ?: "link").replace(Regex("[^A-Za-z0-9.-]"), "_") + ".png"
-            main.post {
-                host.saveToDownloads(name, "image/png", out.toByteArray()) { result ->
-                    Toast.makeText(activity, if (result != null) "Saved to Downloads" else "Could not save the QR code", Toast.LENGTH_SHORT).show()
-                }
-            }
+    /**
+     * Chrome's `QrCodeShareMediator.addUrlToBitmap`: the link in black at `text_size_large`,
+     * centred, as wide as the code, two lines at most with the second ellipsised, 70 dp from the
+     * top; the code 200 dp on a side 25 dp under it, drawn module for module (no filtering, so
+     * the edges stay hard); 50 dp of white at either side and the text's band again under the
+     * code. Null when the link makes no code. Off the main thread.
+     */
+    private fun composeQrPicture(url: String): Bitmap? {
+        val matrix = QrCodeLogic.encode(url) ?: return null
+        val metrics = activity.resources.displayMetrics
+        val paint = TextPaint().apply {
+            isAntiAlias = true
+            color = Color.BLACK
+            textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, QrCodeLogic.URL_TEXT_SP, metrics)
         }
+        val codeSize = (QrCodeLogic.CODE_DP * metrics.density).roundToInt()
+        val text = StaticLayout.Builder.obtain(url, 0, url.length, paint, codeSize)
+            .setAlignment(Layout.Alignment.ALIGN_CENTER)
+            .setMaxLines(QrCodeLogic.URL_MAX_LINES)
+            .setEllipsize(TextUtils.TruncateAt.END)
+            .setIncludePad(true)
+            .build()
+        val geometry = QrCodeLogic.composition(metrics.density, text.height)
+        val picture = Bitmap.createBitmap(geometry.width, geometry.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(picture)
+        canvas.drawColor(Color.WHITE)
+        canvas.save()
+        canvas.translate(geometry.textLeft.toFloat(), geometry.textTop.toFloat())
+        text.draw(canvas)
+        canvas.restore()
+        val modules = qrBitmap(matrix)
+        val target = Rect(geometry.codeLeft, geometry.codeTop, geometry.codeLeft + geometry.codeSize, geometry.codeTop + geometry.codeSize)
+        canvas.drawBitmap(modules, null, target, Paint().apply { isFilterBitmap = false })
+        return picture
     }
 
     // --- cache files behind the FileProvider ----------------------------------------------------
@@ -897,16 +935,13 @@ class Share(private val host: Host, private val io: Executor) {
             return candidate
         }
         private const val CACHE_TTL_MS = 24 * 60 * 60 * 1000L
-        private const val QR_SIZE_PX = 720
         /** A shared image larger than this is not read at all (the text that came with it still is). */
         private const val MAX_IMAGE_BYTES = 40 * 1024 * 1024
         private const val MAX_GIF_BYTES = 4 * 1024 * 1024
         private const val MAX_IMAGE_SIDE = 2048
 
-        /** The link as a QR code (error correction M, a two-module quiet zone), black on white. */
-        fun qrBitmap(text: String, size: Int): Bitmap {
-            val hints = mapOf(EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.M, EncodeHintType.MARGIN to 2)
-            val matrix = QRCodeWriter().encode(text, BarcodeFormat.QR_CODE, size, size, hints)
+        /** A code's modules as a bitmap, one pixel a module, black on white (the quiet zone is the matrix's). */
+        fun qrBitmap(matrix: BitMatrix): Bitmap {
             val pixels = IntArray(matrix.width * matrix.height)
             for (y in 0 until matrix.height) for (x in 0 until matrix.width) {
                 pixels[y * matrix.width + x] = if (matrix.get(x, y)) Color.BLACK else Color.WHITE

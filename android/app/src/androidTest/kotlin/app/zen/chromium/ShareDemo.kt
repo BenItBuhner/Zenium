@@ -11,6 +11,7 @@ import android.graphics.Rect
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.provider.MediaStore
 import android.util.Base64
 import android.util.Log
 import android.view.View
@@ -173,16 +174,44 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
         // Android 13's own clipboard chip stands over the bar for a while and takes fingers.
         awaitClipboardOverlayGone(copiedAt)
 
-        // 3. QR code: the code dialog ("Scan to open"), closed.
+        // 3. QR code (SH-06): the chrome's code sheet (`QrCodeSheet.tsx`) with the generated code
+        // and the page's link under it. Download, a real touch, closes the sheet first – Chrome's
+        // dialog closes on Download – and the picture lands in MediaStore.Downloads as
+        // `zenium_qrcode_<millis>.png` with the chrome's toast saying so. Then the sheet once more,
+        // left by Close.
         if (reopen("QR code")) {
             expect("QR code dismisses the panel", tapCell(QR_LABEL))
-            val dialog = waitFor(QR_TITLE, 10_000) != null
-            expect("QR code opens the code dialog", dialog)
-            if (dialog) {
+            val sheet = waitFor(QR_IMAGE_LABEL, 10_000) != null
+            expect("QR code opens the code sheet with the generated code", sheet)
+            if (sheet) {
+                val shown = chromeJsString(QR_URL_JS)
+                finding("  the sheet's link reads '$shown'")
+                expect("the link under the code is the page's URL", shown == PAGE_URL)
                 SystemClock.sleep(1_000)
                 shot("04-qr-code")
-                clickByLabel(QR_CLOSE)
-                awaitTrue(5_000) { findByLabel(QR_TITLE) == null }
+                val before = qrPicturesInDownloads()
+                val downloaded = touchTapLabelExpecting(QR_DOWNLOAD, "the sheet left", timeoutMs = 8_000) {
+                    findByLabel(QR_IMAGE_LABEL) == null
+                }
+                expect("Download closes the sheet, as Chrome's dialog does", downloaded)
+                if (downloaded) {
+                    val saved = awaitTrue(10_000) { qrPicturesInDownloads().size > before.size }
+                    val rows = qrPicturesInDownloads() - before
+                    finding("  MediaStore.Downloads gained ${rows.size} QR picture(s): $rows")
+                    expect("the picture is in Downloads as zenium_qrcode_<millis>.png", saved && rows.isNotEmpty() && rows.all { it.matches(QR_FILE_NAME) })
+                    expect("the chrome's toast says Saved to Downloads", awaitToastSeen(QR_SAVED_TOAST))
+                    SystemClock.sleep(600)
+                    shot("04-qr-saved")
+                }
+            }
+        }
+        if (reopen("QR code, then Close")) {
+            expect("QR code dismisses the panel", tapCell(QR_LABEL))
+            if (waitFor(QR_IMAGE_LABEL, 10_000) != null) {
+                val closed = touchTapLabelExpecting(QR_CLOSE, "the sheet left", timeoutMs = 8_000) {
+                    findByLabel(QR_IMAGE_LABEL) == null
+                }
+                expect("Close takes the code sheet down without a download", closed)
             }
         }
 
@@ -840,6 +869,13 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
         if (!up) expect("the panel opens again for $forStep", false)
         return up
     }
+
+    /** The QR pictures in `MediaStore.Downloads` (`zenium_qrcode_<millis>.png`), by display name; the app's own rows are the ones it can see. */
+    private fun qrPicturesInDownloads(): Set<String> =
+        app.contentResolver.query(
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME),
+            "${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ?", arrayOf("zenium_qrcode_%"), null
+        )?.use { c -> buildSet { while (c.moveToNext()) c.getString(0)?.let { add(it) } } } ?: emptySet()
 
     /** A real touch on the cell reading `label`; true when the panel then left. */
     private fun tapCell(label: String): Boolean =
@@ -1544,8 +1580,14 @@ ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({from:P.from,fromWa
         private val ROW_LABELS = listOf(COPY_LABEL, QR_LABEL, SCREENSHOT_LABEL, PRINT_LABEL)
         private const val MORE_LABEL = "More"
         private const val MORE_KIND = "more"
-        private const val QR_TITLE = "Scan to open"
+        /** The code sheet's image, by its accessible name (Chrome's `qr_code_a11y_label` is "Generated QR Code"). */
+        private const val QR_IMAGE_LABEL = "Generated QR code"
         private const val QR_CLOSE = "Close"
+        private const val QR_DOWNLOAD = "Download"
+        private const val QR_SAVED_TOAST = "Saved to Downloads"
+        /** `QrCodeLogic.fileName`: the prefix and the wall-clock millis. */
+        private val QR_FILE_NAME = Regex("zenium_qrcode_\\d+\\.png")
+        private const val QR_URL_JS = "(document.querySelector('[data-testid=\"qr-code-url\"]')||{}).textContent||''"
         private const val EDGE_LABEL = "Top edge"
         /** The stitched capture's budget on a software GPU (`ShareScreenshotDemo` allows its Capture more 40 s). */
         private const val LONG_CAPTURE_WAIT_MS = 30_000L

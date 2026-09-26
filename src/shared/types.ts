@@ -33,7 +33,7 @@ import type { InternalPageId, InternalPageQuery } from './internalPages'
 import type { InstallSurface, InstalledWebApp, WebAppInfo } from './webApp'
 import type { ContentDefault } from './contentSettings'
 import type { VoiceEvent, VoiceStartOutcome } from './voice'
-import type { QrEvent, QrStartOutcome } from './qrScan'
+import type { QrCodeRequest, QrEvent, QrStartOutcome } from './qrScan'
 import type { MediaPositionInfo, MediaSessionAction, MediaSessionSourceKind } from './mediaSession'
 import type { SpellcheckSettings, SpellcheckStatus } from './spellcheck'
 import type { ReaderPreferences } from './reader'
@@ -4758,6 +4758,12 @@ export interface Commands {
   'qr.setTorch': { args: { on: boolean }; result: void }
   /** The app's system settings screen, where a permanently refused camera is turned back on. */
   'qr.openSettings': { args: void; result: void }
+  /**
+   * The QR code sheet's Download (SH-06; the host sent `qr.code`): the host keeps the link's
+   * code as a picture in Downloads – the link written above the code, as Chrome's
+   * `QrCodeShareMediator.addUrlToBitmap` composes it – and says so through its toast.
+   */
+  'qr.download': { args: { url: string }; result: void }
   /** The external-protocol sheet's answer (`always` remembers the scheme in settings). */
   'externalProtocol.respond': {
     args: { requestId: string; allow: boolean; always: boolean }
@@ -6637,6 +6643,11 @@ export interface Events {
   'voice.event': VoiceEvent
   /** The host's camera reports while a scan runs (after `qr.start` answered `scanning`). */
   'qr.event': QrEvent
+  /**
+   * The share sheet's "QR code" was picked (SH-06): the host encoded the link and the chrome
+   * draws the code sheet with it; its Download asks `qr.download`.
+   */
+  'qr.code': QrCodeRequest
   /**
    * The host put up the browser's own share panel for a share (Android below 14, SH-03): the
    * chrome draws it and answers with `share.panelAction`.

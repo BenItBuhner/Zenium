@@ -1285,6 +1285,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "qr.layout" -> { qrScan.layout(args); reply(null) }
             "qr.setTorch" -> { qrScan.setTorch(args.bool("on")); reply(null) }
             "qr.openSettings" -> { qrScan.openSettings(); reply(null) }
+            // The QR code sheet's Download (Share.kt; SH-06): the link's code as a picture in Downloads.
+            "qr.download" -> share.downloadQrCode(args.str("url"), reply)
 
             // --- read aloud (ReadAloud.kt; the contract is `SpeechHost` in src/core/platform.ts) -------
             "speech.voices" -> readAloud.voices(reply)
