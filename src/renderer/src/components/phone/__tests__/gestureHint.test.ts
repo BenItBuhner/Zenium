@@ -11,6 +11,8 @@ const {
   gestureHintText
 } = await import('../useGestureHint')
 const { TOAST_DURATION, claimMessageCards, uiStore } = await import('@renderer/lib/ui')
+const { chromeHover, viewportStore } = await import('@renderer/lib/formFactor')
+const { notePointer, resetLivePointer } = await import('@renderer/lib/livePointer')
 
 /** The phone shell is up: messages are on the cards (the hint is only ever shown there). */
 let releaseCards: (() => void) | null = null
@@ -19,11 +21,15 @@ beforeEach(() => {
   vi.useFakeTimers()
   invoke.mockClear()
   uiStore.set({ toasts: [], banners: [] })
+  // A phone's touch screen: the `(hover: hover)` query says no, the live pointer decides.
+  viewportStore.set({ hover: false })
+  resetLivePointer()
   releaseCards = claimMessageCards()
 })
 afterEach(() => {
   releaseCards?.()
   releaseCards = null
+  resetLivePointer()
   vi.useRealTimers()
 })
 
@@ -32,6 +38,27 @@ describe('the one-time gesture hint (FRE-07) as a toast on the shared card', () 
     expect(gestureHintDue({ onboardingDone: false, gestureHintDone: false })).toBe(false)
     expect(gestureHintDue({ onboardingDone: true, gestureHintDone: false })).toBe(true)
     expect(gestureHintDue({ onboardingDone: true, gestureHintDone: true })).toBe(false)
+  })
+
+  it('is a touch pointer’s: not owed under a mouse (the phone chrome in a Samsung DeX window, §9.36), owed again to a finger', () => {
+    const owed = { onboardingDone: true, gestureHintDone: false }
+    expect(gestureHintDue(owed, 'hover')).toBe(false)
+    expect(gestureHintDue(owed, 'none')).toBe(true)
+
+    // The default is the chrome's own hover – the root's `data-hover`, the live pointer's word
+    // on a touch screen: a mouse moving over the chrome takes the hint away, a finger after it
+    // brings it back; a screen no pointer has touched yet is a finger's.
+    expect(chromeHover()).toBe('none')
+    expect(gestureHintDue(owed)).toBe(true)
+    notePointer({ type: 'pointermove', pointerType: 'mouse' })
+    expect(chromeHover()).toBe('hover')
+    expect(gestureHintDue(owed)).toBe(false)
+    notePointer({ type: 'pointerdown', pointerType: 'touch' })
+    expect(gestureHintDue(owed)).toBe(true)
+
+    // A desktop's mouse (the media query's own answer) never sees it either.
+    viewportStore.set({ hover: true })
+    expect(gestureHintDue(owed)).toBe(false)
   })
 
   it('names the pull from the bar it is on', () => {

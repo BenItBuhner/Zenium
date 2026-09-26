@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
 import { classifyViewport, touchLayout, type ViewportMetrics } from '@shared/formFactor'
 import type { FormFactor, WindowChrome } from '@shared/types'
 import { run } from './api'
@@ -148,15 +148,37 @@ export function hoverAttribute(
 }
 
 /**
+ * The chrome's hover as the root's `data-hover` says it: whether the pointer over the chrome
+ * can hover (a desktop's mouse; a mouse or a pen on a touch screen – Samsung DeX, §9.36) or not
+ * (a finger, or a touch screen no pointer has touched yet). What the stylesheets gate the hover
+ * fills on, for the code that gates on the same – a gesture hint is a touch pointer's and does
+ * not show under a mouse.
+ */
+export function chromeHover(): 'hover' | 'none' {
+  return hoverAttribute(viewportStore.get().hover, livePointerHover())
+}
+
+function subscribeChromeHover(listener: () => void): () => void {
+  const viewport = viewportStore.subscribe(listener)
+  const pointer = onLivePointerChange(listener)
+  return () => {
+    viewport()
+    pointer()
+  }
+}
+
+/** `chromeHover()` as a subscription: the media query flipping or the live pointer changing kind re-renders the reader. */
+export function useChromeHover(): 'hover' | 'none' {
+  return useSyncExternalStore(subscribeChromeHover, chromeHover, () => 'none')
+}
+
+/**
  * The live pointer changed kind (a mouse after fingers, a finger after a mouse): only the root's
  * `data-hover` moves. The layout is the media queries' and the store's viewport stands as it is –
  * a pointer event re-derives nothing and publishes nothing.
  */
 function refreshHover(): void {
-  document.documentElement.dataset.hover = hoverAttribute(
-    viewportStore.get().hover,
-    livePointerHover()
-  )
+  document.documentElement.dataset.hover = chromeHover()
 }
 
 /**
