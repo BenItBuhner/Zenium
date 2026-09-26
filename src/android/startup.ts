@@ -61,18 +61,24 @@ function hasHistory(browser: Browser, tab: Tab): boolean {
  * profile restored on it (one #490's first tab left behind, v0.4.71–v0.4.74) would hold READY to
  * the host's watchdog. The tablet places the blank view and waits for it as for any page.
  *
- * Nor is a page placed on the phone while its first-run tour stands: the tour is the whole
- * window, drawn in the chrome, and the chrome reports the content hidden under it
- * (`useLayoutReporter`, on the same `onboardingDone` the phone shell mounts the tour on –
- * `lib/onboarding.ts` `phoneOnboardingCovers`), so a fresh profile's first launch from a link
- * (a VIEW intent's page, active and loaded before the arm) has no placement coming until the
- * tour ends: READY on the theme's paint and the insets, the splash lifting to the tour. The
- * tablet's tour is the desktop's, over pages the tablet places; it is left as it is.
+ * Nor is a page placed while the first-run tour stands, on either form factor: the tour is the
+ * whole window, drawn in the chrome, and the chrome reports the content hidden under it
+ * (`useLayoutReporter`: the phone's `tourUp`, on the same `onboardingDone` the phone shell
+ * mounts the tour on – `lib/onboarding.ts` `phoneOnboardingCovers`; the tablet's
+ * `firstRunCovers` (#528), on `onboardingCovers`, which for Android's one window – the profile's
+ * synced window with the full chrome – is that same flag), and `Window.applyLayout` places
+ * nothing of a hidden report. So a fresh profile's first launch from a link (a VIEW intent's
+ * page, active and loaded before the arm) has no placement coming until the tour ends: READY on
+ * the theme's paint and the insets, the splash lifting to the tour. (The tablet's
+ * `firstRunCovers` hides the page under the EEA's search-engine choice screen too, past the
+ * tour – W6-2, `searchChoiceCovers`; the core owes that screen on `PlatformInfo.region`, which
+ * Android does not report, so no boot here has it. When Android does, the arm must read
+ * `searchChoiceRequired` as well.)
  */
 export function bootNeedsPlacement(browser: Browser, win: ZenWindow, phone: boolean): boolean {
   const active = browser.tabs.activeTabFor(win)
   if (active === undefined || browser.pages.isChromePage(active)) return false
-  if (phone && !browser.state.settings.onboardingDone) return false
+  if (!browser.state.settings.onboardingDone) return false
   return !(phone && active.url === BLANK_URL)
 }
 

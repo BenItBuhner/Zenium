@@ -391,8 +391,9 @@ describe("the heal of #490's restored blank tab on the phone", () => {
  * `onboardingDone` the shell mounts the tour on), so no placement comes until the tour ends.
  * The arm reads the tour off the core's copy of the flag and waits for nothing: READY on the
  * theme's paint and the insets, the splash lifting to the tour. Nothing else reads the arm
- * (`ChromeReady.arm` is its one consumer). The tablet's tour is the desktop's, over pages the
- * tablet places; its arm is unchanged.
+ * (`ChromeReady.arm` is its one consumer). The tablet's tour hides the page the same way since
+ * #528 (`firstRunCovers`, on `onboardingCovers` – for Android's one synced window the same
+ * flag), so the tablet's arm waits for nothing under its tour either.
  */
 describe("READY under the phone's first-run tour", () => {
   /** A fresh phone profile launched from a link: the intent's page opened as the boot's flush does. */
@@ -431,8 +432,18 @@ describe("READY under the phone's first-run tour", () => {
     expect(bootNeedsPlacement(browser, win, true)).toBe(true)
   })
 
-  it("the tablet's arm is unchanged under its tour: it places the page and waits for it", () => {
+  it("the tablet's arm waits for no placement under its tour either: #528's firstRunCovers hides the page", () => {
     const { browser, win } = launchedFromLink()
+    expect(bootNeedsPlacement(browser, win, false)).toBe(false)
+  })
+
+  it('past the first run the tablet waits for the page, as before', () => {
+    const { browser } = phone(phoneCapabilities())
+    browser.state.settings.onboardingDone = true
+    browser.start()
+    const win = only(browser)
+    browser.openExternalUrl('https://linked.example/', win, { fromIntent: true })
+    expect(browser.tabs.activeTabFor(win)?.url).toBe('https://linked.example/')
     expect(bootNeedsPlacement(browser, win, false)).toBe(true)
   })
 
