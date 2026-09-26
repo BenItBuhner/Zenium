@@ -9,9 +9,8 @@ name: Android boot heal demo
 # page view hidden under the first-run tour, then the driver (BootHealDemo) doing the link's
 # launch in its own process on a cleared profile and walking the tour to its end: the page's view
 # GONE under the tour, the omnibox up over the page at the tour's end, the page placed once the
-# omnibox closes. The claims fail
-# the run under `assert`. Dispatch-only, like the other demos; the build, the emulator and the
-# Gradle cache live in android-emulator-demo.yml.
+# omnibox closes. The claims fail the run under `assert`. Dispatch-only, like the other demos;
+# the build, the emulator and the Gradle cache live in android-emulator-demo.yml.
 on:
   workflow_dispatch:
     inputs:
