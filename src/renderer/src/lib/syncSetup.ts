@@ -80,10 +80,11 @@ export const SYNC_COPY = {
 } as const
 
 /**
- * The data types in Chrome's "Manage what you sync" order – Bookmarks, History, Open tabs,
- * Passwords, Reading list, Settings – then Zenium's own: Spaces, folders, pinned tabs,
- * Essentials, containers, shortcuts, Boosts. Every key of `SyncScope` is here once (the engine's
- * toggles are the page's).
+ * The data types in the page's own order: Chrome's types first – Bookmarks, History, Open tabs,
+ * Passwords, Reading list, Settings; Chrome's "Manage what you sync" seats Reading list directly
+ * after Bookmarks, ours sits beside Passwords, as the lead seated it – then Zenium's own:
+ * Spaces, folders, pinned tabs, Essentials, containers, shortcuts, Boosts. Every key of
+ * `SyncScope` is here once (the engine's toggles are the page's).
  */
 export const SYNC_SCOPES: ReadonlyArray<{ key: keyof SyncScope; label: string; hint?: string }> = [
   { key: 'bookmarks', label: 'Bookmarks' },
