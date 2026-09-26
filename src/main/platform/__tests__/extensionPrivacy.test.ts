@@ -472,7 +472,15 @@ describe('PrivacyApi and the services (the layer the readers take, services pass
     set(w, OLD, 'websites', 'thirdPartyCookiesAllowed', { value: false })
     set(w, OLD, 'services', 'searchSuggestEnabled', { value: false })
     set(w, OLD, 'network', 'networkPredictionEnabled', { value: false })
-    expect(Object.keys(w.controls[0]).sort()).toEqual(Object.values(EXTENSION_SETTING_KEYS).sort())
+    // The seven the table publishes; the eighth guarded key, Do Not Track, has its guard here
+    // (its strict pole while the layer is pending) and its publisher in the extension host's
+    // table at #508's fold – a set of it publishes nothing yet.
+    set(w, OLD, 'websites', 'doNotTrackEnabled', { value: true })
+    const published = Object.values(EXTENSION_SETTING_KEYS).filter(
+      (key) => key !== EXTENSION_SETTING_KEYS.doNotTrack
+    )
+    expect(Object.keys(w.controls[0]).sort()).toEqual(published.sort())
+    expect(w.controls[0][EXTENSION_SETTING_KEYS.doNotTrack]).toBeUndefined()
     // A newer install takes a key with its own value; clearing hands it back to the older holder.
     set(w, NEW, 'services', 'safeBrowsingEnabled', { value: true })
     expect(w.controls[0][EXTENSION_SETTING_KEYS.safeBrowsing]).toEqual({

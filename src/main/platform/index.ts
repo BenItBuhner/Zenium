@@ -661,7 +661,10 @@ export class ElectronPlatform implements Platform {
     extensionApi.privacy.attach(this.requestBlocking)
     // `navigator.doNotTrack` follows the same effective source as the `DNT: 1` header: the
     // user's setting or an extension's `chrome.privacy.websites.doNotTrackEnabled` (the value
-    // for private windows counts only for a private tab's documents).
+    // for private windows counts only for a private tab's documents). While the extension
+    // layer's first publish is pending the flags' `dnt` already says sent – the eighth guarded
+    // key's strict pole (`ProtectionService.doNotTrack`), which the header and the signal both
+    // read – so nothing here waits on the publish.
     this.privacy.attachExtensionSignals(
       {
         doNotTrack: (privateWindow) =>

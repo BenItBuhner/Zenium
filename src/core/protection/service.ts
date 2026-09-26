@@ -19,7 +19,9 @@ import {
   type ThirdPartyCookiePrivateMode
 } from '../../shared/privacy'
 import {
+  EXTENSION_SETTING_KEYS,
   effectivePreloadPages,
+  effectiveSwitch,
   effectiveThirdPartyCookiePolicy,
   privateThirdPartyCookieSwitch
 } from '../../shared/extensionSettings'
@@ -268,12 +270,33 @@ export class ProtectionService {
       thirdPartyCookiesPrivate: cookies.thirdPartyCookiesPrivate,
       thirdPartyCookieExceptions: [...s.thirdPartyCookieExceptions],
       gpc: s.gpc,
-      dnt: s.dnt,
+      dnt: this.doNotTrack(),
       secureDnsMode: dns.mode,
       secureDnsServers: dns.servers,
       preloadPages: this.preloadPages(),
       siteData: this.effectiveSiteData()
     }
+  }
+
+  /**
+   * Do Not Track as it acts – the one value the `DNT: 1` header both hosts' request stages send
+   * and the desktop page's `navigator.doNotTrack` read (`ElectronPrivacy.signals`): the user's
+   * `Settings.privacy.dnt`, or the signal sent while the layer's first publish is pending – the
+   * eighth guarded key's strict pole (`STRICT_POLE`, the root's ruling of ADDENDUM G: the
+   * cold-start rule is the strictest value until the extensions publish, and asking not to be
+   * tracked is DNT's) – through the same layer read the seven use ({@link effectiveSwitch}).
+   * The publish hands over to the extension's value where one holds `privacy.doNotTrack` and the
+   * user's where none does; the key's publisher is the extension host's table (#508's fold), so
+   * until it lands an extension's own `websites.doNotTrackEnabled` reaches the wire and the page
+   * by the extension host's paths (its request hook, the desktop's `DoNotTrackSource`), added to
+   * this value, never in place of the pole.
+   */
+  doNotTrack(): boolean {
+    return effectiveSwitch(
+      this.browser.state.extensionLayer,
+      EXTENSION_SETTING_KEYS.doNotTrack,
+      this.settings.dnt
+    )
   }
 
   /**

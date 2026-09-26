@@ -156,7 +156,7 @@ describe("the private contexts' cookie switch under the layer (the independent r
 })
 
 describe('the pending layer answers the strict pole at every reader (the root’s merge condition, C1)', () => {
-  it('has one strict pole per key, the least permissive: only Safe Browsing is on', () => {
+  it('has one strict pole per key, the least permissive: Safe Browsing on and Do Not Track sent are the two that read true', () => {
     expect(Object.keys(STRICT_POLE).sort()).toEqual(Object.values(EXTENSION_SETTING_KEYS).sort())
     expect(STRICT_POLE).toEqual({
       'passwords.offerToSave': false,
@@ -165,8 +165,24 @@ describe('the pending layer answers the strict pole at every reader (the root’
       'privacy.safeBrowsingEnabled': true,
       'privacy.thirdPartyCookies': false,
       'search.suggestions': false,
-      'privacy.preloadPages': false
+      'privacy.preloadPages': false,
+      'privacy.doNotTrack': true
     })
+  })
+
+  it('Do Not Track is the eighth guarded key (the root’s ruling, ADDENDUM G): sent while pending, the layer’s value once published, the user’s where none holds it', () => {
+    const key = EXTENSION_SETTING_KEYS.doNotTrack
+    expect(key).toBe('privacy.doNotTrack')
+    expect(effectiveSwitch(PENDING, key, false)).toBe(true)
+    expect(effectiveSwitch(PENDING, key, true)).toBe(true)
+    const published = (value: boolean): ExtensionLayer => ({
+      controls: { [key]: { ...GUARD, value } },
+      pending: false
+    })
+    expect(effectiveSwitch(published(false), key, true)).toBe(false)
+    expect(effectiveSwitch(published(true), key, false)).toBe(true)
+    expect(effectiveSwitch(EMPTY_EXTENSION_LAYER, key, true)).toBe(true)
+    expect(effectiveSwitch(EMPTY_EXTENSION_LAYER, key, false)).toBe(false)
   })
 
   it("answers the strict pole over the user's permissive value, and over a value already published", () => {

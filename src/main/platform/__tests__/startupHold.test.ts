@@ -467,7 +467,7 @@ function holdForLayer(
 }
 
 /**
- * A run before this one that left the login page open and every one of the six settings at its
+ * A run before this one that left the login page open and every one of the eight settings at its
  * PERMISSIVE value – the values the bound must not let the first documents read.
  */
 function permissiveProfileWithLoginPage(): StoreIO {
@@ -480,7 +480,8 @@ function permissiveProfileWithLoginPage(): StoreIO {
         ...DEFAULT_PRIVACY_SETTINGS,
         safeBrowsingEnabled: false,
         thirdPartyCookies: 'allow',
-        thirdPartyCookiesPrivate: 'allow'
+        thirdPartyCookiesPrivate: 'allow',
+        dnt: false
       },
       searchSuggestions: true,
       preloadPages: 'standard'
@@ -590,7 +591,8 @@ describe('the bound fires before the publish: the pending layer fails safe (the 
       ),
       sent
     )
-    expect(sent).toEqual({ Accept: '*/*' })
+    // The cookie stripped; `DNT: 1` added by the same pass – the eighth pole, sent while pending.
+    expect(sent).toEqual({ Accept: '*/*', DNT: '1' })
     // The private New Tab's switch reads the block: locked, an extension's – unnamed until the
     // publish says which.
     expect(f.browser.protection.status().privateThirdPartyCookies).toEqual({
@@ -622,6 +624,67 @@ describe('the bound fires before the publish: the pending layer fails safe (the 
     ).toEqual({ cancel: true })
   })
 
+  it('doNotTrackEnabled: SENT – the flags carry it and the request handler adds `DNT: 1` to every request – over the user’s off (the eighth guarded key, ADDENDUM G)', async () => {
+    const { f } = await coldStartTimedOut()
+    expect(f.browser.state.settings.privacy.dnt).toBe(false)
+    expect(f.browser.protection.doNotTrack()).toBe(true)
+    expect(lastFlags(f).dnt).toBe(true)
+    // The wire: the privacy handler reads the same flags the page's `navigator.doNotTrack`
+    // does (`ElectronPrivacy.signals`), so the two never disagree while the pole holds.
+    const handler = new PrivacyRequestHandler(() => lastFlags(f))
+    const sent: Record<string, string> = { Accept: '*/*' }
+    handler.onBeforeSendHeaders(
+      request(
+        { url: 'https://news.example/', documentUrl: 'https://news.example/' },
+        f.views[0].tabId
+      ),
+      sent
+    )
+    expect(sent.DNT).toBe('1')
+  })
+
+  it('doNotTrackEnabled: the publish hands over – an extension’s false is not sent over the user’s on, the user’s value stands where no holder publishes the key', async () => {
+    const { f } = await coldStartTimedOut()
+    f.browser.updateSettings(
+      { privacy: { ...f.browser.state.settings.privacy, dnt: true } },
+      f.browser.focusedWindow()
+    )
+    expect(lastFlags(f).dnt).toBe(true)
+    // The extension host's publish carrying the key (the publisher is #508's table; the state's
+    // publish is the same call): the layer's false over the user's on – Chrome's extension layer
+    // above the user's – and the pole no longer read.
+    f.browser.state.setExtensionControls({
+      [EXTENSION_SETTING_KEYS.doNotTrack]: { ...GUARD, value: false }
+    })
+    expect(f.browser.state.extensionLayer.pending).toBe(false)
+    expect(f.browser.protection.doNotTrack()).toBe(false)
+    expect(lastFlags(f).dnt).toBe(false)
+    const handler = new PrivacyRequestHandler(() => lastFlags(f))
+    const sent: Record<string, string> = { Accept: '*/*' }
+    handler.onBeforeSendHeaders(
+      request(
+        { url: 'https://news.example/', documentUrl: 'https://news.example/' },
+        f.views[0].tabId
+      ),
+      sent
+    )
+    expect(sent.DNT).toBeUndefined()
+    // The holder lets go: the user's on again. A publish without the key leaves it to the user.
+    f.browser.state.setExtensionControls({})
+    expect(f.browser.protection.doNotTrack()).toBe(true)
+    expect(lastFlags(f).dnt).toBe(true)
+    f.browser.state.setExtensionControls({
+      [EXTENSION_SETTING_KEYS.passwordSaving]: { ...GUARD, value: true }
+    })
+    expect(f.browser.protection.doNotTrack()).toBe(true)
+    f.browser.updateSettings(
+      { privacy: { ...f.browser.state.settings.privacy, dnt: false } },
+      f.browser.focusedWindow()
+    )
+    expect(f.browser.protection.doNotTrack()).toBe(false)
+    expect(lastFlags(f).dnt).toBe(false)
+  })
+
   it('the publish ends the interval: from the next decision on, the extension’s value where it holds one and the user’s where it does not – and the flags are pushed again', async () => {
     const { f, settle } = await coldStartTimedOut()
     const pushes = f.applied.length
@@ -640,7 +703,8 @@ describe('the bound fires before the publish: the pending layer fails safe (the 
       safeBrowsing: false,
       thirdPartyCookies: 'allow',
       thirdPartyCookiesPrivate: 'allow',
-      preloadPages: 'standard'
+      preloadPages: 'standard',
+      dnt: false
     })
     expect(f.browser.protection.status().privateThirdPartyCookies).toEqual({
       blocked: false,
@@ -725,7 +789,8 @@ describe('the bound fires before the publish: the pending layer fails safe (the 
       [EXTENSION_SETTING_KEYS.safeBrowsing]: true,
       [EXTENSION_SETTING_KEYS.thirdPartyCookies]: false,
       [EXTENSION_SETTING_KEYS.searchSuggestions]: false,
-      [EXTENSION_SETTING_KEYS.preloadPages]: false
+      [EXTENSION_SETTING_KEYS.preloadPages]: false,
+      [EXTENSION_SETTING_KEYS.doNotTrack]: true
     })
     // Synchronous answers: booleans and flags, no promise to await, no thread stalled.
     expect(typeof f.browser.autofill.offerToSave()).toBe('boolean')
@@ -734,6 +799,7 @@ describe('the bound fires before the publish: the pending layer fails safe (the 
     expect(typeof f.browser.protection.safeBrowsing.enabled).toBe('boolean')
     expect(typeof f.browser.suggestions.suggestionsEnabled()).toBe('boolean')
     expect(typeof lastFlags(f).preloadPages).toBe('string')
+    expect(typeof lastFlags(f).dnt).toBe('boolean')
   })
 })
 

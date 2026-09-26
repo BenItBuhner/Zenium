@@ -34,7 +34,15 @@ export const EXTENSION_SETTING_KEYS = {
   /** `services.searchSuggestEnabled` → `Settings.searchSuggestions`: the omnibox's online suggestions. */
   searchSuggestions: 'search.suggestions',
   /** `network.networkPredictionEnabled` → `Settings.preloadPages`: Preload pages (PS-43). */
-  preloadPages: 'privacy.preloadPages'
+  preloadPages: 'privacy.preloadPages',
+  /**
+   * `websites.doNotTrackEnabled` → `Settings.privacy.dnt`: the `DNT: 1` header and
+   * `navigator.doNotTrack`. The eighth guarded key (the root's ruling, ADDENDUM G): its strict
+   * pole holds while the layer is pending; its publisher is the extension host's table
+   * (`PRIVACY_CONTROL_KEYS`, #508's fold), which this key waits for – until then an extension's
+   * own value reaches the wire and the page by the extension host's paths.
+   */
+  doNotTrack: 'privacy.doNotTrack'
 } as const
 
 export type ExtensionSettingKey =
@@ -51,8 +59,9 @@ export type ExtensionControls = Readonly<Record<string, ExtensionControl>>
  * publish that carries one of these keys, or the load's settling, ends it. While it lasts every
  * reader answers the setting's strict pole ({@link STRICT_POLE}), never the user's permissive
  * value: the root's merge condition for #522 – no save or autofill offer, Safe Browsing on,
- * third-party cookies blocked, no online suggestion, no preload – until the extension's own
- * value is known. A layer that is not pending reads `extension ?? user` as before.
+ * third-party cookies blocked, no online suggestion, no preload, Do Not Track sent – until the
+ * extension's own value is known. A layer that is not pending reads `extension ?? user` as
+ * before.
  */
 export interface ExtensionLayer {
   readonly controls: ExtensionControls
@@ -67,8 +76,8 @@ export const EMPTY_EXTENSION_LAYER: ExtensionLayer = Object.freeze({
 
 /**
  * Each setting's fail-safe pole, the value the readers answer while the layer is pending: the
- * one that offers, sends or allows the least. `safeBrowsing` is the one `true` – protection on
- * is the strict side.
+ * one that offers, sends or allows the least. `safeBrowsing` and `doNotTrack` are the two
+ * `true`s – protection on, and the signal asking not to be tracked sent, are the strict sides.
  */
 export const STRICT_POLE: Readonly<Record<ExtensionSettingKey, boolean>> = Object.freeze({
   [EXTENSION_SETTING_KEYS.passwordSaving]: false,
@@ -77,7 +86,8 @@ export const STRICT_POLE: Readonly<Record<ExtensionSettingKey, boolean>> = Objec
   [EXTENSION_SETTING_KEYS.safeBrowsing]: true,
   [EXTENSION_SETTING_KEYS.thirdPartyCookies]: false,
   [EXTENSION_SETTING_KEYS.searchSuggestions]: false,
-  [EXTENSION_SETTING_KEYS.preloadPages]: false
+  [EXTENSION_SETTING_KEYS.preloadPages]: false,
+  [EXTENSION_SETTING_KEYS.doNotTrack]: true
 })
 
 function strictPole(key: string): boolean | undefined {
