@@ -396,21 +396,36 @@ export class ZenWindow {
   /**
    * A right-click in the chrome document that the chrome itself did not handle (its sidebar,
    * tab and bookmark rows show their menus through commands): the URL bar's field and pill and
-   * plain text fields get Chrome's menus for them.
+   * plain text fields get Chrome's menus for them. Asked for by the keyboard (Shift+F10, the
+   * Menu key), the menu hangs from the focused element, whose box the host reads for it.
    */
   onContextMenu(params: Omit<ChromeContextParams, 'target' | 'tabId'>): void {
     if (!this.alive) return
-    const lookup = this.host.menuTargetAt?.(params.x, params.y) ?? Promise.resolve(null)
-    void lookup
-      .catch(() => null)
-      .then((hit) => {
-        if (!this.alive) return
-        const target = CHROME_MENU_TARGETS.find((t): t is ChromeMenuTarget => t === hit?.target)
-        return this.browser.menus.showChromeContextMenu(
-          { ...params, target: target ?? null, tabId: hit?.tabId ?? null },
-          this
-        )
-      })
+    // Both reads go to the document at once; a host without one, or one that fails, reads null.
+    const ask = <T>(read: (() => Promise<T>) | undefined): Promise<T | null> =>
+      read
+        ? Promise.resolve()
+            .then(read)
+            .catch(() => null)
+        : Promise.resolve(null)
+    const { menuTargetAt, focusedRect } = this.host
+    const lookup = ask(menuTargetAt && (() => menuTargetAt.call(this.host, params.x, params.y)))
+    const focused = ask(
+      params.keyboard && focusedRect ? () => focusedRect.call(this.host) : undefined
+    )
+    void Promise.all([lookup, focused]).then(([hit, rect]) => {
+      if (!this.alive) return
+      const target = CHROME_MENU_TARGETS.find((t): t is ChromeMenuTarget => t === hit?.target)
+      return this.browser.menus.showChromeContextMenu(
+        {
+          ...params,
+          ...(rect ? { rect } : {}),
+          target: target ?? null,
+          tabId: hit?.tabId ?? null
+        },
+        this
+      )
+    })
   }
 
   // ---------------------------------------------------------------------------

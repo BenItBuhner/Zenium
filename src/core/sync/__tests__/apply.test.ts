@@ -747,8 +747,10 @@ describe('applyRemote: the reading list (services pass 11, ID-48)', () => {
     expect(b.state.readingList).toEqual([rl('rl_new', 'https://again.example/', 400)])
   })
 
-  it('the cap after apply: the list stays within READING_LIST_CAP, the oldest read entry dropping first', () => {
+  it('the cap after apply bounds the READ half alone: landed unread entries over 1 000 all stay, landed read entries over 1 000 read drop the oldest by readAt', () => {
     const b = browser()
+    // 1 000 unread and one read: a landed unread entry runs the list past the old cap, and
+    // nothing goes – neither the read one (the read half is one) nor any unread one.
     const entries: ReadingListEntry[] = []
     for (let i = 1; i <= READING_LIST_CAP; i++) {
       const id = `rl_${String(i).padStart(4, '0')}`
@@ -756,11 +758,34 @@ describe('applyRemote: the reading list (services pass 11, ID-48)', () => {
     }
     b.state.readingList = entries
     applyRemote(b, [rlRecord(rl('rl_landed', 'https://landed.example/', 5))])
-    expect(b.state.readingList).toHaveLength(READING_LIST_CAP)
+    expect(b.state.readingList).toHaveLength(READING_LIST_CAP + 1)
     expect(b.readingList.get('rl_landed')).not.toBeNull()
-    // The one read entry went, however new; every unread one stayed, the landed one among them.
-    expect(b.readingList.get('rl_0007')).toBeNull()
-    expect(b.readingList.get('rl_0001')).not.toBeNull()
+    expect(b.readingList.get('rl_0007')).not.toBeNull()
     expect(b.readingList.unreadCount).toBe(READING_LIST_CAP)
+
+    // 1 000 read (rl_0007 read the earliest) and one unread: two landed READ entries run the
+    // read half to 1 002, and the two oldest by `readAt` go – rl_0007, then rl_0001 – the unread
+    // one never, whatever its age.
+    b.state.readingList = [
+      ...Array.from({ length: READING_LIST_CAP }, (_, k) => {
+        const i = k + 1
+        return rl(`rl_${String(i).padStart(4, '0')}`, `https://p${i}.example/`, 10_000 + i, {
+          readAt: i === 7 ? 15_000 : 20_000 + i
+        })
+      }),
+      rl('rl_unread', 'https://unread.example/', 1)
+    ]
+    applyRemote(b, [
+      rlRecord(rl('rl_read_a', 'https://read-a.example/', 30_000, { readAt: 30_001 })),
+      rlRecord(rl('rl_read_b', 'https://read-b.example/', 30_002, { readAt: 30_003 }))
+    ])
+    expect(b.state.readingList).toHaveLength(READING_LIST_CAP + 1)
+    expect(b.readingList.get('rl_read_a')).not.toBeNull()
+    expect(b.readingList.get('rl_read_b')).not.toBeNull()
+    expect(b.readingList.get('rl_0007')).toBeNull()
+    expect(b.readingList.get('rl_0001')).toBeNull()
+    expect(b.readingList.get('rl_0002')).not.toBeNull()
+    expect(b.readingList.get('rl_unread')).not.toBeNull()
+    expect(b.readingList.unreadCount).toBe(1)
   })
 })

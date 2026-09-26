@@ -13,6 +13,7 @@ import {
   type FramePage,
   type Located
 } from './frames'
+import { summarize } from './diagnostics'
 import { RpcError, UNAUTHORIZED } from './jsonrpc'
 import { pageCall, type PageLocation } from './page'
 import type { JsonSchema, ToolDefinition, ToolResult } from './protocol'
@@ -772,7 +773,7 @@ function statusText(ctx: ToolContext): string {
     'Spaces:',
     listSpaces(ctx),
     '',
-    `Server: ${server.url ?? 'stdio'}${server.running ? '' : ' (not listening)'}. The user's tabs are not listed here: browser_tabs {"action":"list","scope":"all"} shows every tab with its owner.`
+    `Server: ${server.url ?? 'stdio'}${server.running ? '' : ' (not listening)'}; ${summarize(ctx.agents.diagnosticsSnapshot())} (zenium://diagnostics has the JSON). The user's tabs are not listed here: browser_tabs {"action":"list","scope":"all"} shows every tab with its owner.`
   ].join('\n')
 }
 
@@ -850,11 +851,13 @@ const zenSession: AgentTool = {
     const closeTabs = bool(args, 'closeTabs')
     const groups = ctx.agents.groupsOf(s)
     const { groups: n, tabs } = ctx.agents.endSession(s, closeTabs)
-    if (!n) return text('Session ended. You had no groups; nothing was left behind.')
+    const stays =
+      'Your connection stays open: the next call starts a fresh session under the same id (a new home group on first use), so there is nothing to reconnect.'
+    if (!n) return text(`Session ended. You had no groups; nothing was left behind. ${stays}`)
     return text(
       closeTabs
-        ? `Session ended: your ${n} group${n === 1 ? '' : 's'} and ${tabs} tab${tabs === 1 ? '' : 's'} were closed.`
-        : `Session ended: your ${n} group${n === 1 ? '' : 's'} with ${tabs} tab${tabs === 1 ? '' : 's'} stay open as orphaned groups (${groups.map((g) => `${g.id} ${JSON.stringify(g.name)}`).join(', ')}) – a later session can take them back with zen_groups {"action":"adopt","groupId":"…"}, or the user closes them.`
+        ? `Session ended: your ${n} group${n === 1 ? '' : 's'} and ${tabs} tab${tabs === 1 ? '' : 's'} were closed. ${stays}`
+        : `Session ended: your ${n} group${n === 1 ? '' : 's'} with ${tabs} tab${tabs === 1 ? '' : 's'} stay open as orphaned groups (${groups.map((g) => `${g.id} ${JSON.stringify(g.name)}`).join(', ')}) – a later session can take them back with zen_groups {"action":"adopt","groupId":"…"}, or the user closes them. ${stays}`
     )
   }
 }

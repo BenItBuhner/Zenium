@@ -439,10 +439,21 @@ describe('end of session and orphaned groups', () => {
     expect(fake.model.folders[home].name).toBe(`Researcher · ${A.id.slice(-4)}`)
     const kept = await fake.call(A, 'zen_session', { action: 'end' })
     expect(textOf(kept)).toContain('stay open as orphaned groups')
-    expect(fake.service.session(A.id)).toBeUndefined()
+    expect(textOf(kept)).toContain('Your connection stays open')
+    // The MCP session is the transport's, not the agent's to destroy: the record stays, empty.
+    expect(fake.service.session(A.id)).toBe(A)
+    expect(A.groupIds.size).toBe(0)
+    expect(A.homeGroupId).toBeNull()
     expect(fake.model.tabs[a1]).toBeDefined()
     expect(fake.service.isOrphan(home)).toBe(true)
     expect(fake.service.orphanWas(home)).toBe('Researcher')
+    // The next call is answered and starts over: a new home group, the old one still orphaned.
+    const again = await fake.call(A, 'browser_tabs', { action: 'new', url: 'https://a.example/2' })
+    expect(again.isError).toBeUndefined()
+    expect(A.homeGroupId).not.toBeNull()
+    expect(A.homeGroupId).not.toBe(home)
+    expect(fake.service.isOrphan(home)).toBe(true)
+    expect(fake.service.diagnosticsSnapshot().sessions.ended).toBe(1)
 
     const B = await fake.connect('B')
     const b1 = fake.openedTab(
@@ -453,9 +464,98 @@ describe('end of session and orphaned groups', () => {
     expect(textOf(ended)).toContain('your 1 group and 1 tab were closed')
     expect(fake.model.tabs[b1]).toBeUndefined()
     expect(fake.model.folders[bHome]).toBeUndefined()
-    expect(fake.service.session(B.id)).toBeUndefined()
+    expect(fake.service.session(B.id)).toBe(B)
+    expect(B.groupIds.size).toBe(0)
     // A's orphaned group is still there: nothing closes orphans by itself.
     expect(fake.model.folders[home]).toBeDefined()
+  })
+
+  it('an idle session is parked, not lost: its next call is answered and its groups come back', async () => {
+    const fake = fakeBrowser()
+    const A = await fake.connect('A')
+    const a1 = fake.openedTab(
+      await fake.call(A, 'browser_tabs', { action: 'new', url: 'https://a.example/1' })
+    )
+    const home = A.homeGroupId!
+    // Idle past the limit: the sweeper runs (as its minute timer would).
+    A.lastActiveAt = Date.now() - 31 * 60 * 1000
+    ;(fake.service as unknown as { sweep(): void }).sweep()
+    expect(fake.service.session(A.id)).toBe(A)
+    expect(A.parked).toBe(true)
+    expect(fake.service.isOrphan(home)).toBe(true)
+    expect(fake.service.list().map((a) => a.id)).not.toContain(A.id)
+    // The transport touches the session on the client's next request: it is back, groups and all.
+    fake.service.touch(A)
+    expect(A.parked).toBe(false)
+    expect(A.groupIds.has(home)).toBe(true)
+    expect(fake.service.isOrphan(home)).toBe(false)
+    const status = await fake.call(A, 'zen_status')
+    expect(textOf(status)).toContain('parked; it is back, and your 1 group')
+    expect(textOf(status)).toContain(a1)
+    const d = fake.service.diagnosticsSnapshot()
+    expect(d.sessions.parkedTotal).toBe(1)
+    expect(d.sessions.resumed).toBe(1)
+    expect(d.sessions.live).toBe(1)
+
+    // Parked long enough with nobody coming back, the record goes for good.
+    A.lastActiveAt = Date.now() - 31 * 60 * 1000
+    ;(fake.service as unknown as { sweep(): void }).sweep()
+    A.lastActiveAt = Date.now() - 25 * 60 * 60 * 1000
+    ;(fake.service as unknown as { sweep(): void }).sweep()
+    expect(fake.service.session(A.id)).toBeUndefined()
+    expect(fake.service.isOrphan(home)).toBe(true)
+  })
+
+  it('a session id nothing answers is resumed for a client with the token, and a 404 without', async () => {
+    const fake = fakeBrowser()
+    const token = fake.service.serverStatus().token
+    const A = await fake.connect('A')
+    await fake.call(A, 'browser_tabs', { action: 'new', url: 'https://a.example/1' })
+    const home = A.homeGroupId!
+    // The browser "restarts": the record is gone, the client still holds the id.
+    fake.service.close(A.id)
+    expect(fake.service.session(A.id)).toBeUndefined()
+    const post = (
+      body: unknown,
+      headers: Record<string, string>
+    ): ReturnType<typeof fake.service.handleHttp> =>
+      fake.service.handleHttp({
+        method: 'POST',
+        url: '/mcp',
+        headers: { 'content-type': 'application/json', 'user-agent': 'test', ...headers },
+        body: JSON.stringify(body),
+        remoteAddress: '127.0.0.1'
+      })
+    const call = { jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'zen_status' } }
+    const refused = await post(call, { 'mcp-session-id': A.id })
+    expect(refused.status).toBe(404)
+    expect(fake.service.diagnosticsSnapshot().sessions.unknown).toBe(1)
+
+    const resumed = await post(call, {
+      'mcp-session-id': A.id,
+      'mcp-protocol-version': '2025-06-18',
+      authorization: `Bearer ${token}`
+    })
+    expect(resumed.status).toBe(200)
+    const body = JSON.parse(resumed.body) as { result: { content: { text: string }[] } }
+    const text = body.result.content[0].text
+    expect(text).toContain('your connection was resumed without an initialize')
+    expect(text).toContain('You are "A"') // the name the client last introduced itself with
+    const again = fake.service.session(A.id)!
+    expect(again.protocolVersion).toBe('2025-06-18')
+    expect(again.approved).toBe(true)
+    expect(fake.service.isOrphan(home)).toBe(true)
+    expect(fake.service.diagnosticsSnapshot().sessions.resurrected).toBe(1)
+    // A second call on the resumed session carries no notice any more.
+    const second = await post(
+      { ...call, id: 8 },
+      { 'mcp-session-id': A.id, authorization: `Bearer ${token}` }
+    )
+    expect(second.status).toBe(200)
+    expect(
+      (JSON.parse(second.body) as { result: { content: { text: string }[] } }).result.content[0]
+        .text
+    ).not.toContain('Notice: your connection was resumed')
   })
 })
 

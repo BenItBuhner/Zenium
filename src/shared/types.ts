@@ -1108,8 +1108,10 @@ export interface SyncScope {
   /**
    * The reading list (Chrome's "Reading list" type; W6-1's model, one `reading-list-entry`
    * record per entry carrying every field but `favicon`), on by default as the bookmarks are.
-   * Off, a device neither publishes its entries nor takes the others' in, and deletes nothing
-   * anywhere (`frozenRecords`). Absent on a `sync.json` older than the key, where the engine
+   * While off, the device neither publishes the type nor takes it in, and its metadata for the
+   * type is FROZEN (`frozenRecords`): a removal made while off tombstones the peers' copies when
+   * the scope returns, and an edit made while off is stamped at the return, not at the edit –
+   * as with every scoped type. Absent on a `sync.json` older than the key, where the engine
    * completes it with the default; a scope object from an older build says nothing for it, so
    * `collectLocal` under one publishes no entry (`__tests__/compat.test.ts`).
    */
@@ -4257,7 +4259,9 @@ export interface UIState {
   /**
    * The reading list (W6-1, bookmarks-33), unread first and newest first within each half
    * (`sortReadingList`): the `zen://reading-list` page's rows and the bookmarks bar control's
-   * unread count (`unreadReadingCount`), at most `READING_LIST_CAP` entries.
+   * unread count (`unreadReadingCount`). At most `READING_LIST_CAP` of the entries are READ
+   * (`trimReadingList` drops the oldest by `readAt` past it); the unread half is unbounded – an
+   * unread entry is never trimmed.
    */
   readingList: ReadingListEntry[]
   /** The new tab page's shortcuts on this device, in grid order (Settings and the phone's page). */
@@ -4585,11 +4589,17 @@ export interface MenuItemDescriptor {
  * (Chrome's rule): a right-click opens it at the pointer; Shift+F10 and the Menu key open it at
  * the focused element – Chromium raises the event at the element's middle – in keyboard mode,
  * so its first item starts selected and the arrow keys take over at once. Chrome CSS pixels.
+ *
+ * `rect` is the box of the element the menu belongs to – the focused element for Shift+F10 and
+ * the Menu key, the control for a "⋯" button's press – in chrome CSS pixels, window
+ * coordinates. A host with native menus hangs the menu from it (its bottom-left; §9.23) rather
+ * than at the point; the phone, whose menus are sheets, reads no position at all.
  */
 export interface MenuAnchor {
   x?: number
   y?: number
   keyboard?: boolean
+  rect?: Rect
 }
 
 /**
@@ -5620,6 +5630,8 @@ export interface Commands {
       y: number
       /** Opened with Shift+F10 or the Menu key: the first item starts selected (`MenuAnchor`). */
       keyboard?: boolean
+      /** The element the menu hangs from – the focused row, the "More" button (`MenuAnchor`). */
+      rect?: Rect
       /** The bar and its folder panels get Chrome's bar menu (open targets, "Show bookmarks bar"). */
       surface?: 'manager' | 'bar'
     }
@@ -5662,7 +5674,7 @@ export interface Commands {
   }
   /** The row's menu (Mark as read / unread, Open in New Tab, Copy Link, Remove) at a point. */
   'readingList.contextMenu': {
-    args: { id: string; x?: number; y?: number; keyboard?: boolean }
+    args: { id: string } & MenuAnchor
     result: void
   }
 
@@ -5725,7 +5737,7 @@ export interface Commands {
    * Retry, Remove from list), at the pointer or at `x, y` when opened from the keyboard.
    */
   'download.contextMenu': {
-    args: { id: string; x?: number; y?: number; keyboard?: boolean }
+    args: { id: string } & MenuAnchor
     result: void
   }
 
@@ -6475,6 +6487,13 @@ export interface Events {
   state: UIState
   'urlbar.toggle': { mode: UrlbarOpenMode; text?: string }
   'urlbar.close': void
+  /**
+   * A native context menu the keyboard asked for (Shift+F10, the Menu key, Enter or Space on a
+   * "⋯") has closed: the chrome returns the keyboard to the element the menu hung from (§9.23),
+   * unless a pick moved the focus itself. Electron's native popup blurs the chrome document, so
+   * the element does not get the keyboard back on its own – the renderer refocuses it here.
+   */
+  'menu.keyboardReturn': void
   /**
    * A pick in a suggestion row's native menu (`urlbar.suggestionContextMenu`): the bar removes
    * the row through the core's removes as Shift+Delete does (`remove`), or has every remembered

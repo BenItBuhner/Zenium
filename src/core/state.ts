@@ -266,9 +266,11 @@ export interface Persisted {
   pageWindowsDevice?: PageWindowsDeviceState
   /**
    * The reading list (W6-1): every page saved for later, one entry per URL, at most
-   * `READING_LIST_CAP`. The profile's, independent of the session (a restart keeps it, a window
-   * closing leaves it alone); additive – a profile without it has none. Synced one
-   * `reading-list-entry` record per entry, every field but `favicon` (`sync/records.ts`).
+   * `READING_LIST_CAP` of them READ (`trimReadingList`: the oldest by `readAt` go past the cap;
+   * an unread entry is never trimmed – the unread half is unbounded, as Chrome's list is). The
+   * profile's, independent of the session (a restart keeps it, a window closing leaves it
+   * alone); additive – a profile without it has none. Synced one `reading-list-entry` record per
+   * entry, every field but `favicon` (`sync/records.ts`).
    */
   readingList?: ReadingListEntry[]
 }

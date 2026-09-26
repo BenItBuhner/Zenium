@@ -508,6 +508,32 @@ export class ElectronWindow implements WindowHost {
     return { target: hit.target, tabId: typeof hit.tabId === 'string' ? hit.tabId : null }
   }
 
+  /**
+   * The chrome document's focused element's box, read from the document itself – where a menu
+   * Shift+F10 or the Menu key asked for hangs (§9.23). Null when the focus is on the document
+   * (body) or the element has no box to speak of.
+   */
+  async focusedRect(): Promise<Rect | null> {
+    if (!this.alive) return null
+    const result: unknown = await this.win.webContents
+      .executeJavaScript(
+        `(() => {
+          const el = document.activeElement;
+          if (!el || el === document.body || el === document.documentElement) return null;
+          const r = el.getBoundingClientRect();
+          if (!(r.width > 0) || !(r.height > 0)) return null;
+          return { x: r.left, y: r.top, width: r.width, height: r.height };
+        })()`,
+        true
+      )
+      .catch(() => null)
+    if (!result || typeof result !== 'object') return null
+    const box = result as Record<keyof Rect, unknown>
+    const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+    if (!finite(box.x) || !finite(box.y) || !finite(box.width) || !finite(box.height)) return null
+    return { x: box.x, y: box.y, width: box.width, height: box.height }
+  }
+
   contentSize(): { width: number; height: number } {
     const [width, height] = this.win.getContentSize()
     return { width, height }

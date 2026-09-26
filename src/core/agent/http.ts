@@ -42,6 +42,13 @@ export interface SessionStore {
   get(id: string): McpSession | undefined
   /** Session for clients that send no `Mcp-Session-Id` (keyed by whatever identifies them). */
   sessionless(key: string, init: SessionInit): McpSession
+  /**
+   * A request named a session no record answers. A store that can trust the client (its token)
+   * re-makes the session under that id, initialised; `undefined` keeps the spec's 404, which
+   * tells the client to initialize again. `protocolVersion` is the `MCP-Protocol-Version`
+   * header, when sent.
+   */
+  resurrect?(id: string, init: SessionInit, protocolVersion: string | null): McpSession | undefined
   touch(session: McpSession): void
   close(id: string): void
 }
@@ -101,7 +108,9 @@ export class StreamableHttp {
       session = this.sessions.create(init)
       fresh = true
     } else if (sessionId) {
-      session = this.sessions.get(sessionId)
+      session =
+        this.sessions.get(sessionId) ??
+        this.sessions.resurrect?.(sessionId, init, req.headers['mcp-protocol-version'] ?? null)
       if (!session)
         return json(
           404,

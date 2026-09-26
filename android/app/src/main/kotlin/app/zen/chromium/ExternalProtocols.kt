@@ -107,7 +107,8 @@ class ExternalProtocols(private val host: PageHost) {
             p.appHost?.let(declinedAppHosts::add)
             return
         }
-        val intent = p.intent ?: return
+        // An address that parsed to no intent has nothing to start; it does not vanish without a word.
+        val intent = p.intent ?: run { fallback(p); return }
         try {
             host.activity.startActivity(intent)
         } catch (e: ActivityNotFoundException) {
@@ -118,26 +119,63 @@ class ExternalProtocols(private val host: PageHost) {
     }
 
     /**
-     * Nothing on the device took the intent after all (an app the manifest could not see was not
-     * installed). An `intent://` names what should have: its web fallback loads in the tab, or
-     * the store listing of the app it wants; anything else is a toast.
+     * The host's own word that no app can open the link (`handler == "none"` answered natively –
+     * the custom tab, which has no core to decide through): the request is REFUSED, nothing is
+     * started for it, and the deliberate fallback runs in the browser window's order (the core's
+     * `noHandler`, `src/core/externalProtocols.ts`: the `intent://`'s web address in the tab,
+     * else the store listing of the app it wants, else the toast). No app was declined – there
+     * was none – so no site is remembered as having declined one.
+     */
+    fun refuseWithFallback(requestId: String) {
+        val p = pending.remove(requestId) ?: return
+        fallback(p)
+    }
+
+    /**
+     * Nothing on the device takes the link: an app the manifest could not see was not installed
+     * after all, or the host knew from the start ([refuseWithFallback]). An `intent://` names
+     * what should have ([Fallback]): its web fallback loads in the tab, or the store listing of
+     * the app it wants; anything else is a toast. A window on its way out shows nothing.
      */
     private fun fallback(p: Pending) {
-        if (p.fallbackUrl != null) {
-            p.tab.loadUrl(p.fallbackUrl)
-            return
+        if (host.activity.isFinishing || host.activity.isDestroyed) return
+        when (val plan = Fallback.of(p.fallbackUrl, p.intent?.`package`)) {
+            is Fallback.LoadInTab -> p.tab.loadUrl(plan.url)
+            is Fallback.StoreListing -> {
+                val store = Intent(Intent.ACTION_VIEW, Uri.parse(plan.uri)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                try {
+                    host.activity.startActivity(store)
+                } catch (e: ActivityNotFoundException) {
+                    // No store either; the toast says so.
+                    toastNoApp()
+                }
+            }
+            Fallback.Toast -> toastNoApp()
         }
-        val pkg = p.intent?.`package`
-        if (pkg != null) {
-            val store = Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=$pkg")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            try {
-                host.activity.startActivity(store)
-                return
-            } catch (e: ActivityNotFoundException) {
-                // No store either; the toast below says so.
+    }
+
+    private fun toastNoApp() {
+        Toast.makeText(host.activity, NO_APP_TOAST, Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * What runs for a link nothing on the device opens, decided from what the request carried –
+     * the order the browser window's core runs (`noHandler`): the `intent://`'s
+     * `S.browser_fallback_url` loaded in the tab; else the store listing of the package it names
+     * (`market://details?id=`, as Chrome opens it); else a word. Pure, so the order is tested.
+     */
+    sealed class Fallback {
+        data class LoadInTab(val url: String) : Fallback()
+        data class StoreListing(val uri: String) : Fallback()
+        object Toast : Fallback()
+
+        companion object {
+            fun of(fallbackUrl: String?, pkg: String?): Fallback = when {
+                fallbackUrl != null -> LoadInTab(fallbackUrl)
+                pkg != null -> StoreListing("market://details?id=$pkg")
+                else -> Toast
             }
         }
-        Toast.makeText(host.activity, "No app can open this link", Toast.LENGTH_SHORT).show()
     }
 
     /**
@@ -169,6 +207,9 @@ class ExternalProtocols(private val host: PageHost) {
     companion object {
         /** `S.browser_fallback_url` of an `intent://` URL, as `Intent.parseUri` stores it. */
         const val EXTRA_FALLBACK_URL = "browser_fallback_url"
+
+        /** The word for a link nothing opens; the browser window's core says the same (`noHandler`). */
+        const val NO_APP_TOAST = "No app can open this link"
 
         /** The schemes the manifest's `<queries>` make visible on Android 11+ (keep both in step). */
         val VISIBLE_SCHEMES = setOf("http", "https", "mailto", "tel", "sms", "smsto", "mms", "mmsto", "market", "geo")

@@ -22,6 +22,7 @@ import { noteViewSized } from '@renderer/lib/fullscreenLanding'
 import { applyHostInsets } from '@renderer/lib/insets'
 import { presentInstallBanner, retireInstallBanner } from '@renderer/lib/installBanner'
 import { onLayoutApplied, onViewDrawn } from '@renderer/lib/pageView'
+import { returnKeyboardMenuFocus, trackKeyboardMenuSource } from '@renderer/lib/menuKeys'
 import { afterPageShown } from '@renderer/lib/sharePanel'
 import { focusPane, pageHandedKeyboard, pageTookKeyboard } from '@renderer/lib/panes'
 import { dropStalePdfReports, setPdfReport } from '@renderer/lib/pdfViewer'
@@ -112,6 +113,11 @@ export function useMainEvents(): void {
       // The status region hears of the tab that came to the front and of tabs muted or unmuted;
       // in the phone's voice (name first, as its overview cards read) and of a load finishing.
       startAnnouncer(() => announcementVoice(viewportStore.get().formFactor)),
+      // §9.23: a keyboard-opened native menu (the URL bar's, a chrome field's) has no renderer
+      // handler to arm the return – this records the focused element for those; the row menus
+      // arm their own. The keyboard goes back when the main process reports the menu closed.
+      trackKeyboardMenuSource(),
+      onEvent('menu.keyboardReturn', () => returnKeyboardMenuFocus()),
       onEvent('urlbar.toggle', ({ mode, text }) => {
         const ui = uiStore.get()
         if (ui.urlbar.open && ui.urlbar.mode === mode && text === undefined) {
