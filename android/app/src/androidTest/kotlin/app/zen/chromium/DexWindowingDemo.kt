@@ -114,20 +114,43 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
     /** A mark on the chrome document that launched: a relaunch would lose it. */
     private val runMark = "dex-${SystemClock.uptimeMillis()}"
 
+    /**
+     * No accessibility service held open for this run: the hover acts detach UiAutomation so that
+     * `AccessibilityManager.isEnabled()` reads false (the WebView hands a hover to accessibility
+     * exploration while any service is enabled – `WebContentsAccessibilityImpl.onHoverEvent`
+     * behind `web_contents_view_android.cc`'s hover path – and Blink never sees a mousemove), and
+     * the harness's own service ([DemoHarness.runDemo]'s hold) would count as one. The recipe's
+     * API 34 image carries WebView 113, which sends its events without the hold anyway.
+     */
     @Test
-    fun record() = recordDemo()
+    fun record() {
+        try {
+            recordDemo(holdEvents = false)
+        } finally {
+            // After the recording: the two global settings as the device had them (the nightly's
+            // reset between drivers covers the display, not these).
+            for ((name, before) in windowingSettingsBefore) {
+                if (before == null) shellCommand("settings delete global $name") else shellCommand("settings put global $name $before")
+            }
+        }
+    }
 
     override fun patchState(json: String): String =
         json.replace("\"colorScheme\": \"light\"", "\"colorScheme\": \"$THEME\"")
 
+    private val windowingSettingsBefore = LinkedHashMap<String, String?>()
+
     /** Freeform windowing on the display, and every activity resizable: the window manager reads both settings live. */
     override fun beforeLaunch() {
-        shellCommand("settings put global enable_freeform_support 1")
-        shellCommand("settings put global force_resizable_activities 1")
+        for (name in listOf("enable_freeform_support", "force_resizable_activities")) {
+            windowingSettingsBefore[name] = shellCommand("settings get global $name").trim().takeUnless { it.isEmpty() || it == "null" }
+            shellCommand("settings put global $name 1")
+        }
         Log.i(
             tag,
             "enable_freeform_support ${shellCommand("settings get global enable_freeform_support").trim()}, " +
-                "force_resizable_activities ${shellCommand("settings get global force_resizable_activities").trim()}"
+                "force_resizable_activities ${shellCommand("settings get global force_resizable_activities").trim()} " +
+                "(before: $windowingSettingsBefore)"
         )
         // The window manager reads both settings through an observer: a moment for them to land before the launch.
         SystemClock.sleep(1_000)
