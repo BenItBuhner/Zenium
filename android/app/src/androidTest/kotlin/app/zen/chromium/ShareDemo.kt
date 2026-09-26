@@ -175,15 +175,21 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
         awaitClipboardOverlayGone(copiedAt)
 
         // 3. QR code (SH-06): the chrome's code sheet (`QrCodeSheet.tsx`) with the generated code
-        // and the page's link under it. Download, a real touch, closes the sheet first – Chrome's
-        // dialog closes on Download – and the picture lands in MediaStore.Downloads as
-        // `zenium_qrcode_<millis>.png` with the chrome's toast saying so. Then the sheet once more,
-        // left by Close. Each touch waits on the sheet's REST first (its top the same over two
-        // readings, as the editor's still does): the code is in the tree from the sheet's first
-        // frame, while its footer is still below the viewport on the spring up – run 36269709292
-        // found Close at y 1601 on a 1516 window and refused the finger.
+        // and the page's link under it, on the PANEL'S OWN CHASSIS (§9.38's hand-off,
+        // `beginQrCodeSeam`): the panel stands, its chip busy, while the host encodes, and the code
+        // takes its place on the same sheet – the panel's marker (`.zen-share-panel`) goes at the
+        // hand-off, which is what the chip's tap waits on. The probe records the way (as it does the
+        // menu's hand-off to the panel): no sheet removed, no second sheet, one sheet on every
+        // frame. Download, a real touch, closes the sheet first – Chrome's dialog closes on
+        // Download – and the picture lands in MediaStore.Downloads as `zenium_qrcode_<millis>.png`
+        // with the chrome's toast saying so. Then the sheet once more, left by Close. Each touch
+        // waits on the sheet's REST first (its top the same over two readings, as the editor's
+        // still does): the code is in the tree from the hand-off's first frame, while its footer
+        // may still be below the viewport on the re-detent – run 36269709292 found Close at y 1601
+        // on a 1516 window and refused the finger.
         if (reopen("QR code")) {
-            expect("QR code dismisses the panel", tapCell(QR_LABEL))
+            chromeJs("window.__zenShare&&window.__zenShare.begin()")
+            expect("QR code takes the panel's chassis: the panel's marker gone, the sheet kept", tapCell(QR_LABEL))
             val sheet = waitFor(QR_IMAGE_LABEL, 10_000) != null
             expect("QR code opens the code sheet with the generated code", sheet)
             if (sheet) {
@@ -191,6 +197,7 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
                 finding("  the sheet's link reads '$shown'")
                 expect("the link under the code is the page's URL", shown == PAGE_URL)
                 finding("  the code sheet ${if (awaitSheetRest(QR_SHEET_TOP_JS)) "came to rest" else "had not come to rest within 6 s"}")
+                expectCodeHandOff(probeRecord())
                 shot("04-qr-code")
                 val before = qrPicturesInDownloads()
                 val downloaded = touchTapLabelExpecting(QR_DOWNLOAD, "the sheet left", timeoutMs = 8_000) {
@@ -209,7 +216,7 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
             }
         }
         if (reopen("QR code, then Close")) {
-            expect("QR code dismisses the panel", tapCell(QR_LABEL))
+            expect("QR code takes the panel's chassis again", tapCell(QR_LABEL))
             if (waitFor(QR_IMAGE_LABEL, 10_000) != null) {
                 finding("  the code sheet ${if (awaitSheetRest(QR_SHEET_TOP_JS)) "came to rest" else "had not come to rest within 6 s"}")
                 val closed = touchTapLabelExpecting(QR_CLOSE, "the sheet left", timeoutMs = 8_000) {
@@ -866,6 +873,36 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
         expect("one sheet on every frame from the touch to the panel: no gap frame between the sheets, no sheet over a sheet ($scene)", sheets.isNotEmpty() && sheets.all { it == 1 })
         expect("the outgoing rows fade and leave after the hand-off ($scene)", hosting != null && faded != null && faded >= hosting)
     }
+
+    /**
+     * The QR code chip's hand-off in the probe's record (§9.38 once more, `beginQrCodeSeam`,
+     * `QrCodeHandOff`): the panel's chassis was handed to the code sheet, not left first – the
+     * hand-off marked (the code's `.zen-share-seam` drawn in the standing sheet), no sheet removed
+     * and no second panel mounted on the way – one sheet on every frame from the chip's touch to
+     * the code's rest (a dismiss-then-rise reads a gap frame at 0), and the panel's inert copy
+     * left after its fade. The record runs from the `begin()` before the chip's tap to the
+     * `end()` after the rest.
+     */
+    private fun expectCodeHandOff(record: JSONObject?) {
+        val first = record?.let { firstMarks(it) }.orEmpty()
+        val hosting = first[MARK_SEAM_HOSTING]
+        val faded = first[MARK_SEAM_FADED]
+        val sheetGone = first[MARK_MENU_GONE]
+        val mounted = first[MARK_PANEL_MOUNTED]
+        val sheets = sheetsPerFrame(record)
+        finding(
+            "  the code's hand-off: ${if (hosting != null) "marked" else "not marked"}, a sheet ${if (sheetGone != null) "removed" else "kept"}, " +
+                "a second panel ${if (mounted != null) "mounted" else "not mounted"}, the panel's fade ${if (faded != null && hosting != null) "done ${(faded - hosting).roundToInt()} ms after the hand-off" else "not marked"}; " +
+                "${sheets.size} frames sampled, sheets per frame ${sheets.minOrNull() ?: "-"}..${sheets.maxOrNull() ?: "-"}"
+        )
+        expect("the panel's chassis is handed to the code sheet, not left first: the hand-off marked, no sheet removed, no second sheet mounted", hosting != null && sheetGone == null && mounted == null)
+        expect("one sheet on every frame from the chip's touch to the code's rest: no gap frame, no sheet over a sheet", sheets.isNotEmpty() && sheets.all { it == 1 })
+        expect("the panel's copy fades and leaves after the hand-off to the code", hosting != null && faded != null && faded >= hosting)
+    }
+
+    /** The probe's record from its `begin()` to now (`end()`), null when the chrome did not answer. */
+    private fun probeRecord(): JSONObject? =
+        runCatching { JSONObject(panelString("window.__zenShare?window.__zenShare.end():''")) }.getOrNull()
 
     /** [openPanel] for a step, with the finding when it could not. */
     private fun reopen(forStep: String): Boolean {
