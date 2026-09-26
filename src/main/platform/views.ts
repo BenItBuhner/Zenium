@@ -1,4 +1,5 @@
 import {
+  BaseWindow,
   ClipboardItem,
   WebContentsView,
   app,
@@ -174,6 +175,17 @@ const SNAPSHOT_JPEG_QUALITY = 90
  * and macOS round the window's own corners over that pixel; a frameless X11 window shows it.
  */
 const PARK_CORNERS = 4
+
+/**
+ * A staged view's paint (`stagedFrame`): how long a frame of its renderer's is waited for
+ * before the renderer is kicked into painting (`kickPainting`), and how long after that.
+ */
+const STAGED_FRAME_FIRST_MS = 800
+const STAGED_FRAME_RETRY_MS = 2000
+/** A resized window's stage follows it after the chrome's own layout has had its frame. */
+const STAGE_FOLLOW_MS = 150
+/** Before the first layout: the page area of a window with the sidebar open (`stageRect`). */
+const STAGE_SIDEBAR_WIDTH = 260
 
 /** Keys that never count as a gesture in Chromium's user-activation model. */
 const NON_ACTIVATING_KEYS = new Set(['Escape', 'Shift', 'Control', 'Alt', 'Meta', 'AltGr'])
@@ -402,6 +414,27 @@ export class ElectronTabView implements TabView {
    * the hand-back in the `focus` handler stays as the backstop for that case.
    */
   private inWindow = false
+  /**
+   * An agent drives this page while it may be off the user's screen (`setAgentDriven`): the
+   * view is kept on its window's stage whenever the core has it hidden (`refreshStage`), so the
+   * page is laid out at the window's page area and paints there, seen by nobody.
+   */
+  private agentDriven = false
+  /**
+   * The stage the engine's view is a child of, when it is on one: a never-shown window of the
+   * view host's, one per user window (`ElectronTabViewHost.stageFor`). A view in no window has
+   * no native box – `innerWidth`/`innerHeight` 0, layout at width 0, no element boxes, an empty
+   * `capturePage` – and no compositor to paint into; a hidden view in the user's window has no
+   * box either (an invisible `views::View` installs none), and a shown one stacked under the
+   * active page takes the keyboard when its renderer comes up. On the stage the view is shown,
+   * at the page area, with nothing on the user's screen and no keyboard to take. Never set while
+   * `inWindow` or `visible` is; null off the stage.
+   */
+  private stage: BaseWindow | null = null
+  /** What `setBackgroundThrottling` last set; Electron's default (`pageWebPreferences`) is on. */
+  private throttling = true
+  /** A staged view's captures, one after the other: the engine keeps one frame subscription. */
+  private stagedTurn: Promise<unknown> = Promise.resolve()
   private navigationHint: ViewNavigationHint | null = null
   /**
    * The main-frame certificate the current navigation was refused over (`certificate-error`),
@@ -603,6 +636,9 @@ export class ElectronTabView implements TabView {
       this.navigatingUrl = null
       ev.onNavigated(url, false, this.commitDetails(wc))
       this.fontsAfterNavigation()
+      // A navigation may bring a new renderer widget, made hidden as its page is: on the stage
+      // it is kicked into painting as the first one was (measured: none paints otherwise).
+      this.kickPainting()
     })
     wc.on('did-navigate-in-page', (_e, url, isMainFrame) => {
       if (isMainFrame) ev.onNavigated(url, true)
@@ -1449,6 +1485,7 @@ export class ElectronTabView implements TabView {
         ? win.isMinimized() || !win.isVisible()
         : false
     if (this.visible) this.enterWindow(win)
+    this.refreshStage()
     this.refreshHangWatch()
   }
 
@@ -1456,6 +1493,7 @@ export class ElectronTabView implements TabView {
     // A view parked under this window's cover leaves it hidden: the engine's view must not be
     // a shown one when another window takes it in (`enterWindow` from `focus`, `bringToFront`).
     this.coverLifted()
+    this.leaveStage()
     const win = this.win
     if (win && this.inWindow) win.contentView.removeChildView(this.view)
     this.inWindow = false
@@ -1468,8 +1506,105 @@ export class ElectronTabView implements TabView {
   /** Into the window's `contentView` (on top), once; a view already there is left where it is. */
   private enterWindow(win: BrowserWindow): void {
     if (this.inWindow) return
+    this.leaveStage()
     win.contentView.addChildView(this.view)
     this.inWindow = true
+  }
+
+  // --- the stage --------------------------------------------------------------------
+
+  /**
+   * An agent drives this page while it may be off the user's screen (`TabView.setAgentDriven`).
+   * On, and whenever the core has the page hidden, the engine's view is kept on its window's
+   * stage (`ElectronTabViewHost.stageFor`): laid out at the window's page area, shown to a
+   * compositor nobody sees, painting. The page's `visibilityState` stays `hidden` – the view is
+   * shown on a window that never is, which Chromium counts as hidden, and its pictures are
+   * frames of its own (`captureStaged`), not copies that would count as a capturer. Off, the
+   * view leaves the stage and stands as any hidden view does.
+   */
+  setAgentDriven(on: boolean): void {
+    if (this.agentDriven === on) return
+    this.agentDriven = on
+    this.refreshStage()
+  }
+
+  /**
+   * On the stage exactly when an agent drives the page and the core has it hidden – not parked
+   * (a parked view stands shown in the window under a chrome cover, at its size) – in a window.
+   */
+  private refreshStage(): void {
+    const wanted =
+      this.agentDriven &&
+      !this.visible &&
+      this.parked === null &&
+      this.host !== null &&
+      !this.wc.isDestroyed()
+    if (wanted && this.stage === null) this.enterStage()
+    else if (!wanted && this.stage !== null) this.leaveStage()
+  }
+
+  /**
+   * Onto the window's stage, at the page area, shown; out of the window's `contentView` first
+   * when it was left there hidden after a showing (a view in the window is the one case
+   * `inWindow` keeps, and it has no box). The renderer is kicked into painting at once.
+   */
+  private enterStage(): void {
+    const host = this.host
+    const win = this.win
+    if (!host || !win || this.stage !== null) return
+    const stage = this.owner.stageFor(win)
+    if (!stage) return
+    if (this.inWindow) {
+      win.contentView.removeChildView(this.view)
+      this.inWindow = false
+    }
+    stage.contentView.addChildView(this.view)
+    this.stage = stage
+    this.view.setBounds(this.owner.stageRect(host))
+    this.view.setVisible(true)
+    this.kickPainting()
+  }
+
+  /** Off the stage, hidden: what comes next (`enterWindow`, nothing) shows it or not. */
+  private leaveStage(): void {
+    const stage = this.stage
+    if (stage === null) return
+    this.stage = null
+    if (!stage.isDestroyed()) stage.contentView.removeChildView(this.view)
+    this.view.setVisible(false)
+  }
+
+  /** The window's page area changed (`ElectronTabViewHost.stageFor`'s follow): a staged view takes it. */
+  restage(): void {
+    const host = this.host
+    if (this.stage === null || !host) return
+    this.view.setBounds(this.owner.stageRect(host))
+  }
+
+  /** The stage `stage` is about to go with its window: a view still on it leaves. */
+  stageClosing(stage: BaseWindow): void {
+    if (this.stage === stage) this.leaveStage()
+  }
+
+  /** Whether the engine's view stands on its window's stage (for the tests and the diagnostics). */
+  isStaged(): boolean {
+    return this.stage !== null
+  }
+
+  /**
+   * Get a staged view's renderer painting. Electron's `setBackgroundThrottling(false)` un-hides
+   * the page's widget (`ShowWithVisibility(kHiddenButPainting)`: it paints, the page stays
+   * hidden) – but only the widget of the moment, and only where it has a compositor to paint
+   * into. The core turns throttling off before the view is staged (`prepare()`), when it has
+   * none, and a navigation may bring a new widget, made hidden as its page is: neither paints
+   * (measured: no frame in 3 s). Throttling set on and off again, on the stage, un-hides the
+   * widget of the moment (measured: first frame in 12 ms, `visibilityState` still `hidden`).
+   * Nothing off the stage, or while the core lets the page throttle.
+   */
+  private kickPainting(): void {
+    if (this.stage === null || this.throttling || this.wc.isDestroyed()) return
+    this.wc.setBackgroundThrottling(true)
+    this.wc.setBackgroundThrottling(false)
   }
 
   setBounds(rect: Rect): void {
@@ -1531,6 +1666,8 @@ export class ElectronTabView implements TabView {
       if (this.parked !== null) this.unpark()
       this.view.setVisible(false)
     }
+    // An agent-driven page hidden goes to the stage; shown, it left it (`enterWindow`).
+    this.refreshStage()
     if (flipped) {
       this.refreshHangWatch()
       this.owner.visibilityChanged(this)
@@ -1556,6 +1693,12 @@ export class ElectronTabView implements TabView {
     const concealed = !visible
     if (this.windowConcealed === concealed) return
     this.windowConcealed = concealed
+    if (this.stage !== null) {
+      // A staged view is on no screen whatever its window does: the agent's page keeps painting
+      // behind a minimised window, and the flag alone is kept for the view's return to it.
+      this.refreshHangWatch()
+      return
+    }
     if (concealed) {
       // Down to Chromium, parked or not: a parked view's box goes back to its own so nothing of
       // it is left a pixel on screen behind the hidden window.
@@ -1695,6 +1838,7 @@ export class ElectronTabView implements TabView {
     if (this.parked === null) return
     this.unpark()
     this.view.setVisible(false)
+    this.refreshStage()
   }
 
   isVisible(): boolean {
@@ -1709,6 +1853,7 @@ export class ElectronTabView implements TabView {
     // glanced at or made fullscreen before it was ever shown) joins there.
     const win = this.win
     if (!win) return
+    this.leaveStage()
     win.contentView.addChildView(this.view)
     this.inWindow = true
   }
@@ -2469,6 +2614,7 @@ export class ElectronTabView implements TabView {
   }
 
   setBackgroundThrottling(allowed: boolean): void {
+    this.throttling = allowed
     if (!this.wc.isDestroyed()) this.wc.setBackgroundThrottling(allowed)
   }
 
@@ -2493,6 +2639,14 @@ export class ElectronTabView implements TabView {
     if (wc.isDestroyed()) return null
     const format = options.format
     const mimeType = format === 'png' ? 'image/png' : 'image/jpeg'
+    if (this.stage !== null) {
+      const turn = this.stagedTurn.then(
+        () => this.captureStaged(options, mimeType),
+        () => this.captureStaged(options, mimeType)
+      )
+      this.stagedTurn = turn.catch(() => undefined)
+      return turn
+    }
     let fallback: AgentCapture['fallback']
     if (options.mode !== 'viewport') {
       if (!hasForeignDebuggerOwner(wc.id)) {
@@ -2505,43 +2659,155 @@ export class ElectronTabView implements TabView {
       fallback = 'viewport'
     }
     try {
-      let image = await wc.capturePage()
+      const image = await wc.capturePage()
       if (image.isEmpty()) return null
       // `capturePage` hands the device pixels over as a 1x bitmap: CSS px times the page's device
       // pixel ratio (the display's scale times the zoom – `window.devicePixelRatio` carries both).
       const geometry = await this.viewport()
-      const bitmap = image.getSize()
-      const visible = geometry
-        ? visibleAreaClip(geometry, bitmap)
-        : { x: 0, y: 0, width: bitmap.width, height: bitmap.height }
-      if (options.mode === 'region' && options.region) {
-        // The region's CSS px minus the scroll offset, cut at the visible area's edge: the
-        // gutter is never part of a region.
-        const scroll = geometry ?? { scrollX: 0, scrollY: 0 }
-        const ratio = geometry?.devicePixelRatio ?? wc.getZoomFactor()
-        const r = options.region
-        const x = Math.max(0, Math.round((r.x - scroll.scrollX) * ratio))
-        const y = Math.max(0, Math.round((r.y - scroll.scrollY) * ratio))
-        const width = Math.min(visible.width - x, Math.round(r.width * ratio))
-        const height = Math.min(visible.height - y, Math.round(r.height * ratio))
-        if (width <= 0 || height <= 0) return null
-        image = image.crop({ x, y, width, height })
-      } else if (visible.width < bitmap.width || visible.height < bitmap.height) {
-        image = image.crop(visible)
-      }
-      const size = image.getSize()
-      const buffer = format === 'png' ? image.toPNG() : image.toJPEG(75)
-      const result: AgentCapture = {
-        data: buffer.toString('base64'),
-        mimeType,
-        width: size.width,
-        height: size.height
-      }
-      if (fallback) result.fallback = fallback
-      return result
+      return this.pictureOf(image, geometry, options, mimeType, fallback)
     } catch {
       return null
     }
+  }
+
+  /**
+   * A staged view's picture is a frame of its renderer's own (`beginFrameSubscription`, the
+   * viz video capturer), not `capturePage`'s copy: a copy counts as a capturer on the page, and
+   * on a page whose background throttling is off – an agent's page – Electron makes the page
+   * `visible` on the lifecycle update that count brings, for good (measured: `visibilityState`
+   * `visible` after one `capturePage`, `stayHidden` or not). A frame changes nothing about the
+   * page. A full page or a region is painted by growing the view to the document's height on
+   * the stage, where nobody sees it, taking the frame at that size and putting the box back
+   * (measured: a 2500 px frame in 60 ms); the DevTools path (`captureBeyondViewport`) stalls on a
+   * staged page and leaves its device-metrics override on it when it does. Without the page's
+   * geometry the viewport stands in (`fallback: 'viewport'`), as it does off the stage.
+   */
+  private async captureStaged(
+    options: AgentCaptureOptions,
+    mimeType: string
+  ): Promise<AgentCapture | null> {
+    const wc = this.wc
+    const host = this.host
+    if (wc.isDestroyed() || this.stage === null || !host) return null
+    const box = this.owner.stageRect(host)
+    let fallback: AgentCapture['fallback']
+    let grown = false
+    if (options.mode !== 'viewport') {
+      const before = await this.viewport()
+      const height = before
+        ? Math.round(
+            Math.min(Math.max(before.documentHeight, before.height, 1), this.fullPageCut())
+          )
+        : 0
+      if (before && height > box.height) {
+        this.view.setBounds({ ...box, height })
+        grown = true
+      } else if (!before) {
+        fallback = 'viewport'
+      }
+    }
+    try {
+      const image = await this.stagedFrame()
+      if (!image || image.isEmpty() || wc.isDestroyed()) return null
+      const geometry = await this.viewport()
+      return this.pictureOf(image, geometry, options, mimeType, fallback)
+    } catch {
+      return null
+    } finally {
+      if (grown && this.stage !== null) this.view.setBounds(box)
+    }
+  }
+
+  /**
+   * One frame of a staged view's renderer, as `capturePage` paints: the whole widget in device
+   * pixels. The engine's subscriber delivers frames of the view's current size only (an older
+   * size's is refused and a fresh one asked for), so a view just grown or put back is pictured
+   * at its new size. A renderer that shows nothing for `STAGED_FRAME_FIRST_MS` is kicked into
+   * painting (`kickPainting`: a widget the un-hide missed) and waited for once more; null when
+   * it still shows nothing. The subscription is ended off its own callback.
+   */
+  private stagedFrame(): Promise<Electron.NativeImage | null> {
+    const wc = this.wc
+    return new Promise((resolve) => {
+      let settled = false
+      let kicked = false
+      let timer: ReturnType<typeof setTimeout> | null = null
+      const finish = (image: Electron.NativeImage | null): void => {
+        if (settled) return
+        settled = true
+        if (timer) clearTimeout(timer)
+        defer(() => {
+          try {
+            if (!wc.isDestroyed()) wc.endFrameSubscription()
+          } catch {
+            /* the subscription is gone with the page */
+          }
+        })
+        resolve(image)
+      }
+      const wait = (ms: number): void => {
+        timer = setTimeout(() => {
+          if (kicked || this.stage === null) {
+            finish(null)
+            return
+          }
+          kicked = true
+          this.kickPainting()
+          wait(STAGED_FRAME_RETRY_MS)
+        }, ms)
+      }
+      try {
+        wc.beginFrameSubscription(false, (image) => finish(image))
+      } catch {
+        finish(null)
+        return
+      }
+      wait(STAGED_FRAME_FIRST_MS)
+    })
+  }
+
+  /**
+   * The picture from a paint of the whole widget (`capturePage`'s bitmap, a staged view's frame):
+   * the visible area (`visibleAreaClip`) or the region asked for, encoded. `geometry` is the
+   * page's word on its viewport at the time of the paint; without it the bitmap stands as it is.
+   */
+  private pictureOf(
+    image: Electron.NativeImage,
+    geometry: PageViewport | null,
+    options: AgentCaptureOptions,
+    mimeType: string,
+    fallback: AgentCapture['fallback']
+  ): AgentCapture | null {
+    const bitmap = image.getSize()
+    const visible = geometry
+      ? visibleAreaClip(geometry, bitmap)
+      : { x: 0, y: 0, width: bitmap.width, height: bitmap.height }
+    let picture = image
+    if (options.mode === 'region' && options.region) {
+      // The region's CSS px minus the scroll offset, cut at the visible area's edge: the
+      // gutter is never part of a region.
+      const scroll = geometry ?? { scrollX: 0, scrollY: 0 }
+      const ratio = geometry?.devicePixelRatio ?? this.wc.getZoomFactor()
+      const r = options.region
+      const x = Math.max(0, Math.round((r.x - scroll.scrollX) * ratio))
+      const y = Math.max(0, Math.round((r.y - scroll.scrollY) * ratio))
+      const width = Math.min(visible.width - x, Math.round(r.width * ratio))
+      const height = Math.min(visible.height - y, Math.round(r.height * ratio))
+      if (width <= 0 || height <= 0) return null
+      picture = image.crop({ x, y, width, height })
+    } else if (visible.width < bitmap.width || visible.height < bitmap.height) {
+      picture = image.crop(visible)
+    }
+    const size = picture.getSize()
+    const buffer = options.format === 'png' ? picture.toPNG() : picture.toJPEG(75)
+    const result: AgentCapture = {
+      data: buffer.toString('base64'),
+      mimeType,
+      width: size.width,
+      height: size.height
+    }
+    if (fallback) result.fallback = fallback
+    return result
   }
 
   /**
@@ -3054,6 +3320,8 @@ export class ElectronTabViewHost implements TabViewHost {
   private readonly visibilityListeners = new Set<(view: ElectronTabView) => void>()
   /** The window corners the views parked under a chrome cover hold (`claimParkingCorner`). */
   private readonly parkingCorners = new Map<ElectronTabView, number>()
+  /** Per user window, its stage (`stageFor`): made on first need, gone with the window. */
+  private readonly stages = new WeakMap<BrowserWindow, BaseWindow>()
   /** Per window, the page or chrome that last lost the keyboard – a hidden page gives it back there. */
   private readonly lastKeyboard = new WeakMap<BrowserWindow, WebContents>()
   private readonly keyboardWatched = new WeakSet<BrowserWindow>()
@@ -3356,6 +3624,74 @@ export class ElectronTabViewHost implements TabViewHost {
   /** The view left its parking corner (`ElectronTabView.unpark`). */
   releaseParkingCorner(view: ElectronTabView): void {
     this.parkingCorners.delete(view)
+  }
+
+  /**
+   * The window's stage (`ElectronTabView.setAgentDriven`): a window of the stage's own that is
+   * never shown, cannot take focus and is in no taskbar, sized as the user's window, where the
+   * views of agent-driven pages that are not on the user's screen are laid out at the window's
+   * page area and paint. Never shown, it has a compositor for them to paint into and no keyboard
+   * to hand them: nothing shows, flashes or takes the focus on the user's screen (measured under
+   * Xvfb: the focused web contents does not change when a renderer comes up on the stage). Made
+   * when first asked for; it follows the window's size, a moment after the chrome's own layout
+   * (`STAGE_FOLLOW_MS`), and goes when the window closes, its views off it first. Null where the
+   * engine has no `BaseWindow` (the tests' fake).
+   */
+  stageFor(win: BrowserWindow): BaseWindow | null {
+    const held = this.stages.get(win)
+    if (held && !held.isDestroyed()) return held
+    if (typeof BaseWindow !== 'function' || win.isDestroyed()) return null
+    const [width, height] = win.getContentSize()
+    const stage = new BaseWindow({
+      show: false,
+      focusable: false,
+      skipTaskbar: true,
+      frame: false,
+      width: Math.max(1, width),
+      height: Math.max(1, height),
+      useContentSize: true
+    })
+    this.stages.set(win, stage)
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const follow = (): void => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => {
+        timer = null
+        if (win.isDestroyed() || stage.isDestroyed()) return
+        const [w, h] = win.getContentSize()
+        stage.setContentSize(Math.max(1, w), Math.max(1, h))
+        for (const view of this.byWebContentsId.values()) {
+          if (view.hostedBy(win)) view.restage()
+        }
+      }, STAGE_FOLLOW_MS)
+    }
+    win.on('resize', follow)
+    win.on('enter-full-screen', follow)
+    win.on('leave-full-screen', follow)
+    win.once('closed', () => {
+      if (timer) clearTimeout(timer)
+      for (const view of this.byWebContentsId.values()) view.stageClosing(stage)
+      if (!stage.isDestroyed()) stage.destroy()
+    })
+    return stage
+  }
+
+  /**
+   * The window's page area, for a view on its stage: where the window's one page last stood
+   * (`ZenWindow.contentRect`, the box the active tab's view gets), or before the first layout
+   * the page area of a window with the sidebar open, as the new tab page's preload is sized.
+   */
+  stageRect(host: ElectronWindow): Rect {
+    const zen = host.zen as { contentRect?: () => Rect | null }
+    const known = typeof zen.contentRect === 'function' ? zen.contentRect() : null
+    if (known && known.width > 0 && known.height > 0) return known
+    const [width, height] = host.win.getContentSize()
+    return {
+      x: STAGE_SIDEBAR_WIDTH,
+      y: 8,
+      width: Math.max(320, width - STAGE_SIDEBAR_WIDTH - 8),
+      height: Math.max(240, height - 16)
+    }
   }
 
   /**
