@@ -11,6 +11,7 @@ import android.webkit.WebSettings
 import androidx.browser.customtabs.CustomTabsCallback
 import androidx.browser.customtabs.CustomTabsService
 import androidx.browser.customtabs.CustomTabsSessionToken
+import androidx.browser.customtabs.EngagementSignalsCallback
 import java.net.InetAddress
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
@@ -21,7 +22,8 @@ import java.util.concurrent.TimeUnit
  * What other apps bind (`CustomTabsClient.bindCustomTabsService`) before they open a custom tab:
  * `warmup` brings the WebView up, `newSession` gives the caller a session whose callback the
  * custom tab later reports navigation events to, and `mayLaunchUrl` resolves the likely hosts
- * ahead of time. The rest of the protocol (post messages, engagement signals, Trusted Web
+ * ahead of time; `setEngagementSignalsCallback` keeps the callback the tab's scrolls and its
+ * end are reported to (CCT-14). The rest of the protocol (post messages, Trusted Web
  * Activities, file transfer) is declined.
  */
 class CustomTabsConnectionService : CustomTabsService() {
@@ -85,6 +87,18 @@ class CustomTabsConnectionService : CustomTabsService() {
         return done.await(UPDATE_VISUALS_WAIT_MS, TimeUnit.MILLISECONDS) && applied
     }
 
+    /**
+     * The engagement signals (CCT-14, androidx.browser 1.8.0's `EngagementSignalsCallback`):
+     * the API is there for every client, and a session the client holds open gets its callback
+     * kept, to hear the custom tab's scroll direction, greatest scroll percentage and end
+     * ([CustomTabEngagement] decides them from the page). A session never opened, or cleaned up,
+     * takes no callback, as Chrome's `ClientManager` answers.
+     */
+    override fun isEngagementSignalsApiAvailable(sessionToken: CustomTabsSessionToken, extras: Bundle): Boolean = true
+
+    override fun setEngagementSignalsCallback(sessionToken: CustomTabsSessionToken, callback: EngagementSignalsCallback, extras: Bundle): Boolean =
+        CustomTabSessions.setEngagementCallback(sessionToken, callback)
+
     override fun requestPostMessageChannel(sessionToken: CustomTabsSessionToken, postMessageOrigin: Uri): Boolean = false
 
     override fun postMessage(sessionToken: CustomTabsSessionToken, message: String, extras: Bundle?): Int =
@@ -121,6 +135,8 @@ object CustomTabSessions {
 
     private val sessions = ConcurrentHashMap<CustomTabsSessionToken, Session>()
     private val live = ConcurrentHashMap<CustomTabsSessionToken, Visuals>()
+    /** The clients' `EngagementSignalsCallback`s, one per session that asked (CCT-14). */
+    private val engagement = ConcurrentHashMap<CustomTabsSessionToken, EngagementSignalsCallback>()
 
     fun register(token: CustomTabsSessionToken, packageName: String?) {
         sessions[token] = Session(packageName)
@@ -133,6 +149,32 @@ object CustomTabSessions {
     fun remove(token: CustomTabsSessionToken) {
         sessions.remove(token)
         live.remove(token)
+        engagement.remove(token)
+    }
+
+    /** The client's engagement callback for a session it holds; false for one never opened (or cleaned up). */
+    fun setEngagementCallback(token: CustomTabsSessionToken, callback: EngagementSignalsCallback): Boolean {
+        if (!sessions.containsKey(token)) return false
+        engagement[token] = callback
+        return true
+    }
+
+    /** A user scroll of the session's tab started, or turned: `onVerticalScrollEvent(isDirectionUp)`. */
+    fun verticalScroll(token: CustomTabsSessionToken?, isDirectionUp: Boolean) {
+        val callback = token?.let { engagement[it] } ?: return
+        runCatching { callback.onVerticalScrollEvent(isDirectionUp, Bundle()) }
+    }
+
+    /** The farthest the user scrolled the session's tab's document reached a new 5 % step. */
+    fun greatestScrollPercentage(token: CustomTabsSessionToken?, percentage: Int) {
+        val callback = token?.let { engagement[it] } ?: return
+        runCatching { callback.onGreatestScrollPercentageIncreased(percentage, Bundle()) }
+    }
+
+    /** The session's tab closed: `onSessionEnded(didUserInteract)`. The callback stays for the session's next tab. */
+    fun sessionEnded(token: CustomTabsSessionToken?, didUserInteract: Boolean) {
+        val callback = token?.let { engagement[it] } ?: return
+        runCatching { callback.onSessionEnded(didUserInteract, Bundle()) }
     }
 
     fun packageOf(token: CustomTabsSessionToken?): String? = token?.let { sessions[it]?.packageName }

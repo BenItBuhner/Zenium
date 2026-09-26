@@ -32,6 +32,7 @@ import androidx.browser.customtabs.CustomTabsClient
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.browser.customtabs.CustomTabsServiceConnection
 import androidx.browser.customtabs.CustomTabsSession
+import androidx.browser.customtabs.EngagementSignalsCallback
 import androidx.core.content.ContextCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
@@ -75,10 +76,18 @@ import kotlin.math.abs
  * `onMinimized`, the platform's Expand bringing the tab back and `onUnminimized` following. A
  * fourth, dark tab does the same with `EXTRA_TOOLBAR_ITEMS` buttons instead of RemoteViews.
  *
+ * Then the toolbar's Share (CCT-17): a caller that set no action button gets Chrome's adaptive
+ * Share button in the slot – light and dark – and a touch on it opens the system share sheet;
+ * `SHARE_STATE_OFF` empties the slot and the menu's row. Through all of it the session's
+ * `EngagementSignalsCallback` (CCT-14) hears the scrolls' direction, the greatest scroll
+ * percentage stepping by fives on a long scroll, and each tab's end with whether the page was
+ * touched.
+ *
  * The session callback's navigation events and the return to the caller are asserted, as are
  * the bottom toolbar's clicks and swipe reaching the caller, the secondary toolbar's update
- * taking, the picture-in-picture entry and exit and their callbacks; the screenshots
- * (`customtabs-*.png`) and the recording are the rest of the evidence.
+ * taking, the picture-in-picture entry and exit and their callbacks, the engagement signals
+ * and the Share slot's occupant; the screenshots (`customtabs-*.png`) and the recording are the
+ * rest of the evidence.
  */
 @RunWith(AndroidJUnit4::class)
 class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "customtabs-demo") {
@@ -88,6 +97,8 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
     private var client: CustomTabsClient? = null
     private var session: CustomTabsSession? = null
     private val events: MutableList<String> = Collections.synchronizedList(ArrayList())
+    /** What the session's `EngagementSignalsCallback` heard (CCT-14): `SCROLL_DOWN`, `SCROLL_UP`, `PERCENT:<n>`, `ENDED:<didUserInteract>`. */
+    private val signals: MutableList<String> = Collections.synchronizedList(ArrayList())
     /** What the caller's bottom toolbar intents carried back: `BOTTOM:<id>`, `ITEM:<id>`, `SWIPE_UP`. */
     private val callerHits: MutableList<String> = Collections.synchronizedList(ArrayList())
     /** `setSecondaryToolbarViews`' answer after the swipe up, null until the caller has sent it. */
@@ -130,6 +141,8 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         //    lock, the action button and the menu button, sliding up over the caller.
         openCustomTab()
         shot("02-toolbar-light")
+        // CCT-17: the caller sent an action button, so it keeps the slot – no Share button beside it.
+        claim("scene 2: the caller's '$SAVE_LABEL' button holds the toolbar's slot and there is no toolbar Share", findByLabel(SAVE_LABEL) != null && toolbarShareButton() == null)
         beat()
 
         // 3. A link followed inside the tab: the toolbar follows the page (host, title, lock).
@@ -155,11 +168,16 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         beat()
 
         // 5. EXTRA_ENABLE_URLBAR_HIDING: the toolbar leaves as the page scrolls down and returns
-        //    as it scrolls up.
+        //    as it scrolls up. The session's engagement callback hears each scroll's direction
+        //    (CCT-14): `isDirectionUp` false for the finger's drag up (the page toward its bottom), true for the way back.
+        val beforeScroll = signals.size
         scroll(-0.45f)
+        claim("scene 5: the scroll down reached the caller as onVerticalScrollEvent(isDirectionUp=false)", awaitSignal("SCROLL_DOWN", beforeScroll))
         SystemClock.sleep(1_500)
         shot("05-toolbar-hidden")
+        val beforeScrollUp = signals.size
         scroll(0.45f)
+        claim("scene 5: the scroll back up reached the caller as onVerticalScrollEvent(isDirectionUp=true)", awaitSignal("SCROLL_UP", beforeScrollUp))
         SystemClock.sleep(1_500)
 
         // 5b. The page asks for its location: the custom tab's prompt on §9.23's native sheet, in
@@ -200,6 +218,7 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
 
         // 8. Open in Zenium: the live page moves into the browser window.
         openMenu()
+        val beforeHandoff = signals.size
         // A finger on the row (the menu sheet's injected touch, the rule in DemoHarness): the
         // browser's own window, with its address pill, must come up on it (the custom tab shares
         // the package, so the window in front does not tell). The other rows go through the tree.
@@ -210,6 +229,8 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
             SystemClock.sleep(6_000)
             shot("08-open-in-zenium")
             Log.i(tag, "browser window shows ${findByLabelPrefix(PILL_LABEL)}")
+            // The tab is gone into the browser: its session's engagement ended, the page touched (the link, the scrolls).
+            claim("scene 8: handing the page to Zenium ended the tab's engagement – onSessionEnded(didUserInteract=true)", awaitSignal("ENDED:true", beforeHandoff))
         } else {
             Log.w(tag, "$OPEN_IN_ZENIUM_LABEL did not hand the page over under a finger")
             dismissSheet()
@@ -233,13 +254,16 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         beat()
         findInPage("10b-find-dark")
 
-        // 10. X closes the tab, with the caller's exit animation, back into the caller.
+        // 10. X closes the tab, with the caller's exit animation, back into the caller; the
+        //     session hears the tab's end with the page touched (the asks' fingers, CCT-14).
+        val beforeClose = signals.size
         clickByLabel(CLOSE_LABEL)
         val returned = waitForWindow(callerPackage, 8_000)
+        claim("scene 10: closing the dark tab ended its engagement – onSessionEnded(didUserInteract=true)", awaitSignal("ENDED:true", beforeClose))
         SystemClock.sleep(1_500)
         shot("11-closed-to-caller")
 
-        Log.i(tag, "session events: $events")
+        Log.i(tag, "session events: $events; engagement signals: $signals")
         assertTrue("the session callback heard the tab show (TAB_SHOWN)", events.contains("TAB_SHOWN"))
         assertTrue("the session callback heard a navigation start", events.contains("NAVIGATION_STARTED"))
         assertTrue("the session callback heard the tab hide (TAB_HIDDEN)", events.contains("TAB_HIDDEN"))
@@ -318,7 +342,97 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         assertTrue("closing the dark custom tab returned to the caller", waitForWindow(callerPackage, 8_000))
         SystemClock.sleep(1_200)
         shot("22-closed-to-caller")
-        Log.i(tag, "caller hits: $callerHits; session events: $events")
+
+        // --- the toolbar's Share (CCT-17) and the greatest scroll percentage (CCT-14) ----------------
+
+        // 23. A caller that set no action button (and said nothing of share): Chrome's adaptive
+        //     Share fills the slot – the bar's own share glyph in the action button's box, named
+        //     Share, between the title and the menu button.
+        showCaller(customTabIntent(dark = false, actionButton = false, shareState = CustomTabsIntent.SHARE_STATE_DEFAULT))
+        openCustomTab()
+        val shareLight = awaitTrue(5_000) { toolbarShareButton() != null }
+        claim("scene 23: with no action button the toolbar's slot holds the Share button, named '$SHARE_BUTTON_LABEL' (light)", shareLight)
+        claim("scene 23: the caller's '$SAVE_LABEL' is not on the toolbar – it sent no button", findByLabel(SAVE_LABEL) == null)
+        Log.i(tag, "toolbar Share button at ${toolbarShareButton()}; close at ${findByLabel(CLOSE_LABEL)}; menu at ${findByLabel(MENU_LABEL)}")
+        shot("23-share-button-light")
+        beat()
+
+        // 24. Share under a finger: the system's share sheet comes up over the tab with the page's
+        //     title and URL (the same intent the menu's row sends); back dismisses it.
+        if (touchTapLabelExpecting(SHARE_BUTTON_LABEL, "the system share sheet is up over the tab", timeoutMs = 10_000) {
+                val top = topPackage()
+                top != null && top != app.packageName && top != callerPackage
+            }
+        ) {
+            Log.i(tag, "share sheet from ${topPackage()}")
+            SystemClock.sleep(1_500)
+            shot("24-share-sheet-light")
+            back()
+            assertTrue("back dismissed the share sheet into the tab", waitForWindow(app.packageName, 6_000))
+            SystemClock.sleep(1_000)
+        } else {
+            Log.w(tag, "the toolbar's Share did not open the share sheet under a finger")
+        }
+
+        // 24b. A long scroll down the story: the greatest scroll percentage the caller hears
+        //      steps by five and only grows (CCT-14); the page's own standing at the rest is the
+        //      step the last signal should have reached.
+        if (customTab() != null) {
+            val beforeLong = signals.size
+            repeat(LONG_SCROLL_DRAGS) {
+                scroll(-0.5f)
+                SystemClock.sleep(400)
+            }
+            SystemClock.sleep(1_200)
+            val standing = pageScrollStep()
+            val heard = signalsSince(beforeLong).filter { it.startsWith("PERCENT:") }.map { it.removePrefix("PERCENT:").toInt() }
+            Log.i(tag, "long scroll: the page stands at $standing %, the caller heard $heard (all signals since: ${signalsSince(beforeLong)})")
+            claim("scene 24b: the greatest scroll percentage reached the caller in steps of five, each above the last ($heard)", heard.isNotEmpty() && heard.all { it > 0 && it % 5 == 0 } && heard == heard.distinct().sorted())
+            // Within two steps: the story's images and formulas keep laying out under the drags,
+            // which moves the page's scrollable range a little between a signal and this reading.
+            claim("scene 24b: the last step heard is where the page stands at the rest (${heard.lastOrNull()} vs $standing)", heard.isNotEmpty() && standing >= 0 && abs(heard.last() - standing) <= 2 * CustomTabEngagement.STEP)
+            val beforeBackUp = signals.size
+            repeat(LONG_SCROLL_DRAGS) {
+                scroll(0.5f)
+                SystemClock.sleep(400)
+            }
+            claim("scene 24b: the way back up reports onVerticalScrollEvent(isDirectionUp=true) and no percentage – the greatest only grows", awaitSignal("SCROLL_UP", beforeBackUp) && signalsSince(beforeBackUp).none { it.startsWith("PERCENT:") })
+            SystemClock.sleep(1_000)
+        }
+        val beforeShareClose = signals.size
+        clickByLabel(CLOSE_LABEL)
+        assertTrue("closing the Share tab returned to the caller", waitForWindow(callerPackage, 8_000))
+        claim("scene 24: the Share tab's end reached the caller with the page touched – onSessionEnded(didUserInteract=true)", awaitSignal("ENDED:true", beforeShareClose))
+        SystemClock.sleep(1_200)
+
+        // 25. The dark tab the same way (SHARE_STATE_ON, no action button): the Share button in
+        //     the dark bar's ink. Nothing touches the page here, so its end says so.
+        showCaller(customTabIntent(dark = true, actionButton = false, shareState = CustomTabsIntent.SHARE_STATE_ON))
+        openCustomTab()
+        claim("scene 25: with no action button the dark toolbar's slot holds the Share button too", awaitTrue(5_000) { toolbarShareButton() != null })
+        shot("25-share-button-dark")
+        beat()
+        val beforeDarkClose = signals.size
+        clickByLabel(CLOSE_LABEL)
+        assertTrue("closing the dark Share tab returned to the caller", waitForWindow(callerPackage, 8_000))
+        claim("scene 25: a tab whose page was never touched ends with onSessionEnded(didUserInteract=false)", awaitSignal("ENDED:false", beforeDarkClose))
+        SystemClock.sleep(1_200)
+
+        // 26. SHARE_STATE_OFF with no action button: the slot stays empty and the menu has no Share row.
+        showCaller(customTabIntent(dark = false, actionButton = false, shareState = CustomTabsIntent.SHARE_STATE_OFF))
+        openCustomTab()
+        claim("scene 26: with SHARE_STATE_OFF the toolbar has no Share button (and no caller's button)", toolbarShareButton() == null && findByLabel(SAVE_LABEL) == null)
+        openMenu()
+        claim("scene 26: with SHARE_STATE_OFF the menu has no '$MENU_SHARE_LABEL' row (Copy Link stays)", findByLabel(MENU_SHARE_LABEL) == null && findByLabel(COPY_LINK_LABEL) != null)
+        shot("26-share-off-menu")
+        beat()
+        dismissSheet()
+        clickByLabel(CLOSE_LABEL)
+        assertTrue("closing the share-off tab returned to the caller", waitForWindow(callerPackage, 8_000))
+        SystemClock.sleep(1_200)
+        shot("27-closed-to-caller")
+
+        Log.i(tag, "caller hits: $callerHits; session events: $events; engagement signals: $signals")
         assertTrue("the scenes' claims held (${sheetFaults.size} did not): $sheetFaults", sheetFaults.isEmpty())
     }
 
@@ -974,6 +1088,59 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         }) ?: error("newSession returned null")
         session = s
         Log.i(tag, "mayLaunchUrl: ${s.mayLaunchUrl(Uri.parse(STORY_URL), null, null)}")
+
+        // CCT-14: the client asks whether the provider signals engagement and sets its callback
+        // on the session (androidx.browser 1.8.0's `EngagementSignalsCallback`), as Chrome's
+        // clients do; both answers are the provider's word and are asserted here.
+        val available = s.isEngagementSignalsApiAvailable(Bundle())
+        Log.i(tag, "isEngagementSignalsApiAvailable: $available")
+        assertTrue("the provider offers the engagement signals API", available)
+        val set = s.setEngagementSignalsCallback(object : EngagementSignalsCallback {
+            override fun onVerticalScrollEvent(isDirectionUp: Boolean, extras: Bundle) {
+                signals.add(if (isDirectionUp) "SCROLL_UP" else "SCROLL_DOWN")
+                Log.i(tag, "engagement: onVerticalScrollEvent(isDirectionUp=$isDirectionUp)")
+            }
+
+            override fun onGreatestScrollPercentageIncreased(percentage: Int, extras: Bundle) {
+                signals.add("PERCENT:$percentage")
+                Log.i(tag, "engagement: onGreatestScrollPercentageIncreased($percentage)")
+            }
+
+            override fun onSessionEnded(didUserInteract: Boolean, extras: Bundle) {
+                signals.add("ENDED:$didUserInteract")
+                Log.i(tag, "engagement: onSessionEnded(didUserInteract=$didUserInteract)")
+            }
+        }, Bundle())
+        assertTrue("setEngagementSignalsCallback took on the session", set)
+    }
+
+    /** The signals heard since `since` entries were in the list (a scene's own). */
+    private fun signalsSince(since: Int): List<String> = synchronized(signals) { signals.drop(since) }
+
+    /** Whether a signal reading `signal` arrives past the first `since` entries within `timeoutMs`. */
+    private fun awaitSignal(signal: String, since: Int, timeoutMs: Long = 5_000): Boolean =
+        awaitTrue(timeoutMs) { signalsSince(since).contains(signal) }
+
+    /**
+     * The toolbar's Share button (CCT-17), if the bar has one: the `ImageButton` named `Share` –
+     * a control's word, which nothing in the page's own tree carries as an image button.
+     */
+    private fun toolbarShareButton(): Rect? = findNodeWhere { node ->
+        node.contentDescription?.toString() == SHARE_BUTTON_LABEL && node.className?.toString() == IMAGE_BUTTON_CLASS
+    }?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
+
+    /**
+     * Chrome's step for where the page stands now – its offset over what it can scroll, rounded
+     * down to a multiple of five ([CustomTabEngagement.percentageStep]) – read off the tab's page
+     * on the main thread; -1 without a page.
+     */
+    private fun pageScrollStep(): Int {
+        var step = -1
+        instrumentation.runOnMainSync {
+            val page = customTabOnMain(Stage.RESUMED)?.page ?: return@runOnMainSync
+            step = CustomTabEngagement.percentageStep(page.scrollY, page.scrollY + page.scrollRemaining())
+        }
+        return step
     }
 
     /**
@@ -1062,18 +1229,26 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
      * PendingIntent that hears them all with the clicked id), the dark tab two custom toolbar
      * items instead (`addToolbarItem`: an icon, a description and an intent each, ids other than
      * the top bar's), and both the swipe-up gesture's intent (`setSecondaryToolbarSwipeUpGesture`).
+     *
+     * Without `actionButton`, a caller that set none (CCT-17: the provider's Share takes the
+     * slot unless `shareState` is `SHARE_STATE_OFF`); the menu items stay.
      */
-    private fun customTabIntent(dark: Boolean, depth: Boolean = false): Intent {
+    private fun customTabIntent(
+        dark: Boolean,
+        depth: Boolean = false,
+        actionButton: Boolean = true,
+        shareState: Int = CustomTabsIntent.SHARE_STATE_ON
+    ): Intent {
         val s = session ?: error("no session")
         val save = callerAction(ACTION_SAVE, 1)
         val builder = CustomTabsIntent.Builder(s)
             .setShowTitle(true)
             .setUrlBarHidingEnabled(true)
-            .setShareState(CustomTabsIntent.SHARE_STATE_ON)
-            .setActionButton(bookmarkIcon(), SAVE_LABEL, save, true)
+            .setShareState(shareState)
             .addMenuItem(SAVE_LABEL, save)
             .addMenuItem("Open in Nimbus News", callerAction(ACTION_OPEN_IN_APP, 2))
             .setExitAnimations(app, android.R.anim.fade_in, android.R.anim.slide_out_right)
+        if (actionButton) builder.setActionButton(bookmarkIcon(), SAVE_LABEL, save, true)
         if (depth) {
             if (dark) {
                 @Suppress("DEPRECATION")
@@ -1344,6 +1519,14 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         /** SystemUI's picture-in-picture menu control that returns the window to full size. */
         private const val PIP_EXPAND_LABEL = "Expand"
         private const val OPEN_IN_ZENIUM_LABEL = "Open in Zenium"
+        /** The toolbar's Share button (strings.xml cct_share_button, CCT-17) and the menu's row (cct_share). */
+        private const val SHARE_BUTTON_LABEL = "Share"
+        private const val MENU_SHARE_LABEL = "Share…"
+        private const val COPY_LINK_LABEL = "Copy Link"
+        /** The class the toolbar's icon buttons report (CustomTabToolbar.iconButton); the page's tree has no image buttons. */
+        private const val IMAGE_BUTTON_CLASS = "android.widget.ImageButton"
+        /** Half-window drags down the story for the greatest scroll percentage (CCT-14), and back up. */
+        private const val LONG_SCROLL_DRAGS = 4
         private const val FIND_LABEL = "Find in Page"
         private const val FIND_CLOSE_LABEL = "Close find bar"
         private const val FIND_QUERY = "damping"

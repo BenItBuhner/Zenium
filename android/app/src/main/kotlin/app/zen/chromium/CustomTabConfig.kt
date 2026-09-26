@@ -36,6 +36,12 @@ class CustomTabConfig(
     val menuItems: List<MenuItem>,
     /** Whether the menu offers the system share sheet (`EXTRA_SHARE_STATE`). */
     val share: Boolean,
+    /**
+     * The caller's share state (`EXTRA_SHARE_STATE` with the deprecated flag folded in,
+     * [CustomTabButtons.shareState]; the default when it sent none): with [actionButton] it
+     * decides the toolbar's one action slot ([toolbarSlot], CCT-17).
+     */
+    val shareState: Int = CustomTabsIntent.SHARE_STATE_DEFAULT,
     /** The icon row's star, unless the caller sent `EXTRA_DISABLE_BOOKMARKS_BUTTON`. */
     val bookmarksButton: Boolean = true,
     /** The icon row's Download, unless the caller sent `EXTRA_DISABLE_DOWNLOAD_BUTTON`. */
@@ -61,6 +67,12 @@ class CustomTabConfig(
 
     /** Whether there is a bottom toolbar at all: the caller's views or its buttons. */
     val hasBottomBar: Boolean get() = remoteViews != null || bottomButtons.isNotEmpty()
+
+    /**
+     * The toolbar's one action slot: the caller's button, Zenium's Share when the caller sent
+     * none and did not turn share off, or nothing ([CustomTabButtons.topSlot]).
+     */
+    val toolbarSlot: CustomTabButtons.Slot get() = CustomTabButtons.topSlot(actionButton != null, shareState)
 
     /** The caller's animation for the tab closing, as resource ids in the caller's package. */
     class ExitAnimation(val packageName: String, val enterRes: Int, val exitRes: Int)
@@ -99,9 +111,11 @@ class CustomTabConfig(
                 light = CustomTabScheme.Defaults(color(context, R.color.v2_window_light), color(context, R.color.v2_page_light)),
                 dark = CustomTabScheme.Defaults(color(context, R.color.v2_window_dark), color(context, R.color.v2_page_dark))
             )
-            val shareState = extras.getInt(CustomTabsIntent.EXTRA_SHARE_STATE, CustomTabsIntent.SHARE_STATE_DEFAULT)
             @Suppress("DEPRECATION")
-            val legacyShare = extras.getBoolean(CustomTabsIntent.EXTRA_DEFAULT_SHARE_MENU_ITEM, true)
+            val shareState = CustomTabButtons.shareState(
+                extras.getInt(CustomTabsIntent.EXTRA_SHARE_STATE, CustomTabsIntent.SHARE_STATE_DEFAULT),
+                legacyShareItem = extras.getBoolean(CustomTabsIntent.EXTRA_DEFAULT_SHARE_MENU_ITEM, true)
+            )
             val tint = extras.getBoolean(CustomTabsIntent.EXTRA_TINT_ACTION_BUTTON, false)
             val actionBundle = actionButton(extras.getBundle(CustomTabsIntent.EXTRA_ACTION_BUTTON_BUNDLE), tint)
             val items = toolbarItems(extras, tint)
@@ -118,7 +132,8 @@ class CustomTabConfig(
                 hideToolbarOnScroll = extras.getBoolean(CustomTabsIntent.EXTRA_ENABLE_URLBAR_HIDING, false),
                 actionButton = actionBundle ?: placement.top?.let { items[it] },
                 menuItems = menuItems(extras),
-                share = shareState != CustomTabsIntent.SHARE_STATE_OFF && (shareState == CustomTabsIntent.SHARE_STATE_ON || legacyShare),
+                share = shareState != CustomTabsIntent.SHARE_STATE_OFF,
+                shareState = shareState,
                 bookmarksButton = !extras.getBoolean(CustomTabsIntent.EXTRA_DISABLE_BOOKMARKS_BUTTON, false),
                 downloadButton = !extras.getBoolean(CustomTabsIntent.EXTRA_DISABLE_DOWNLOAD_BUTTON, false),
                 exitAnimation = extras.getBundle(CustomTabsIntent.EXTRA_EXIT_ANIMATION_BUNDLE),

@@ -1,5 +1,6 @@
 package app.zen.chromium
 
+import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.app.PictureInPictureParams
 import android.content.ClipData
@@ -18,9 +19,11 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.util.Rational
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -99,6 +102,11 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
     private var minimized = false
     /** While set, [getPackageName] answers with the caller's package (see [closeToCaller]). */
     private var packageForAnimation: String? = null
+    /** The engagement signals (CCT-14), decided from the page's scrolls and touches, sent to the session's callback. */
+    private val engagement = CustomTabEngagement(object : CustomTabEngagement.Listener {
+        override fun onVerticalScroll(isDirectionUp: Boolean) = CustomTabSessions.verticalScroll(config.session, isDirectionUp)
+        override fun onGreatestScrollPercentageIncreased(percentage: Int) = CustomTabSessions.greatestScrollPercentage(config.session, percentage)
+    })
 
     /** The page (a fresh view after a renderer crash, see `TabHost.replaceCrashed`). */
     val page: TabWebView? get() = host.tabs.get(TAB_ID)
@@ -174,11 +182,25 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
         return view
     }
 
+    /**
+     * The page's scrolls feed the engagement signals (its offset over what it can scroll, and
+     * the touches that say which scrolls are the user's) and, when the caller asked, the
+     * toolbar's hiding. The touch listener only listens: the page handles every event itself.
+     */
+    @SuppressLint("ClickableViewAccessibility")
     private fun attachPage(view: TabWebView) {
         view.layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         view.visibility = View.VISIBLE
-        if (config.hideToolbarOnScroll) {
-            view.setOnScrollChangeListener { _, _, y, _, _ -> onPageScrolled(y) }
+        view.setOnScrollChangeListener { v, _, y, _, _ ->
+            engagement.scrolled(y, y + (v as TabWebView).scrollRemaining(), SystemClock.uptimeMillis())
+            if (config.hideToolbarOnScroll) onPageScrolled(y)
+        }
+        view.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> engagement.touchDown()
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> engagement.touchUp(event.eventTime)
+            }
+            false
         }
     }
 
@@ -189,6 +211,9 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
                 val url = payload?.strOrNull("url") ?: return
                 currentUrl = url
                 toolbar.setUrl(url)
+                // A new document (not a pushState or hash change of the one shown): the greatest
+                // scroll percentage starts over for it, as Chrome's does at a committed navigation.
+                if (!payload.optBoolean("inPage", false)) engagement.navigated()
             }
             "title" -> toolbar.setTitle(payload?.strOrNull("title"))
             "startLoading" -> {
@@ -655,6 +680,9 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
         config.actionButton?.let { sendToCaller(it.intent) }
     }
 
+    /** The toolbar's Share (CCT-17): the same sheet, the same title and URL, as the menu's row. */
+    override fun onShare() = share()
+
     private fun onMenuPick(item: CustomTabMenu.Item) {
         when (item) {
             is CustomTabMenu.Item.Caller -> config.menuItems.getOrNull(item.index)?.let { sendToCaller(it.intent) }
@@ -762,6 +790,7 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
         closeFind()
         host.tabs.release(TAB_ID) ?: return
         view.setOnScrollChangeListener(null)
+        view.setOnTouchListener(null)
         val token = TabHandoff.park(view)
         startActivity(
             Intent(Intent.ACTION_VIEW, Uri.parse(url))
@@ -808,6 +837,9 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
     }
 
     override fun onDestroy() {
+        // The tab is going for good (Close, back out, Open in Zenium, the task swiped away), not
+        // being recreated for a configuration change: the session's engagement ends (CCT-14).
+        if (isFinishing) CustomTabSessions.sessionEnded(config.session, engagement.didUserInteract)
         CustomTabSessions.detach(config.session, this)
         bottomBar.stopSettling()
         host.destroy()
