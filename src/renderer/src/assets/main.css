@@ -10448,8 +10448,11 @@
  * never a message card (§9.34). One rule for both panes, the Groups pane's selector last where
  * its test pins it. The Tabs pane at none (TAB-34, `TabsEmpty`; `.zen-overview-tabs-empty`) is
  * the same note under the same two rules – "No open tabs" with New tab as its follow-up – in
- * place of the grid inside the Space's slot; it comes up on the 120 ms fade a state change in
- * place takes (§11.4), which reduced motion keeps (§11.3), as the panes' own entrance does.
+ * place of the grid inside the Space's slot. Its 120 ms fade is keyed to the replacement, not
+ * the mount (`[data-in-place]`, the gate's ruling on #562; §11.1): the note that takes the
+ * grid's place in its own slot fades in as a state change in place does (§11.4), which reduced
+ * motion keeps (§11.3); the note that comes up with its pane, its Space or the overview carries
+ * no mark and rides their motion – one object, one move.
  */
 .zen-overview-private-empty,
 .zen-overview-tabs-empty,
@@ -10487,11 +10490,11 @@
 .zen-overview-groups > .zen-phone-empty {
   padding-top: 48px;
 }
-.zen-overview-tabs-empty {
+.zen-overview-tabs-empty[data-in-place] {
   animation: zen-fade 120ms var(--zen-ease);
 }
 @media (prefers-reduced-motion: reduce) {
-  .zen-overview-tabs-empty {
+  .zen-overview-tabs-empty[data-in-place] {
     animation: zen-fade 120ms var(--zen-ease) !important;
   }
 }
