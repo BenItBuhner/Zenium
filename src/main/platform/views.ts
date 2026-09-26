@@ -41,6 +41,7 @@ import {
   pageBoundsFromConsoleMessage
 } from './devtoolsFrontend'
 import { relayDevtoolsQuitChord } from './devtoolsKeys'
+import { DevtoolsQuitHoldNotice, devtoolsQuitHoldNotice } from './devtoolsQuitHoldNotice'
 import { isDockedInFrame } from '../../shared/devtoolsDock'
 import { refusedFromDocument } from '../../shared/internalPages'
 import { PAGE_HOST_CHANNEL } from '../../shared/pageScript'
@@ -1127,9 +1128,16 @@ export class ElectronTabView implements TabView {
     if (!this.wc.isDestroyed()) this.wc.send('zen:page-hint', hint)
   }
 
-  /** "Hold ⌘Q to quit" over the page, or its way down (`preload/page.ts` listens on `zen:quit-hold`). */
+  /**
+   * "Hold ⌘Q to quit" over the page, or its way down (`preload/page.ts` listens on `zen:quit-hold`).
+   * Not while the chord is down in a detached toolbox: the notice is drawn there, where the
+   * keyboard is (§9.23, `DevtoolsQuitHoldNotice`), and the page behind the toolbox draws none;
+   * the way down still goes, for a panel that stood before the keyboard moved.
+   */
   showQuitHold(panel: QuitHoldPanel | null): void {
-    if (!this.wc.isDestroyed()) this.wc.send(QUIT_HOLD_CHANNEL, panel)
+    if (this.wc.isDestroyed()) return
+    if (panel && this.owner.quitHoldNotice.inToolbox()) return
+    this.wc.send(QUIT_HOLD_CHANNEL, panel)
   }
 
   /** Fresh `NewTabPageState` for a `zen://newtab` page (its preload listens on this channel). */
@@ -1368,8 +1376,14 @@ export class ElectronTabView implements TabView {
     // `before-input-event` on nothing – its delegate is Electron's `InspectableWebContents`,
     // which hands only the keys the frontend left unhandled on, to the menu bar – so the
     // frontend says the chord's key down and the key up after it on its console, and they go to
-    // the key table for this page's window as the page's own keys do (`devtoolsKeys.ts`).
-    relayDevtoolsQuitChord(frontend, this.owner.quitChord, (key) => void this.events?.onKey(key))
+    // the key table for this page's window as the page's own keys do (`devtoolsKeys.ts`). The
+    // held-key notice hears each key first: a hold armed from the toolbox while it stands
+    // undocked is drawn in the toolbox, where the keyboard is (§9.23).
+    relayDevtoolsQuitChord(frontend, this.owner.quitChord, (key) => void this.events?.onKey(key), {
+      notice: this.owner.quitHoldNotice,
+      window: () => this.win,
+      detached: () => this.devtoolsDock === 'undocked'
+    })
     frontend.on('console-message', (event) => {
       const hole = pageBoundsFromConsoleMessage(event.message)
       if (hole) {
@@ -2606,6 +2620,11 @@ export class ElectronTabViewHost implements TabViewHost {
    * (`devtoolsKeys.ts`); the platform supplies it once the core is up (`ElectronPlatform.start`).
    */
   quitChord: () => KeyBinding | null = () => null
+  /**
+   * The held-key notice over a detached toolbox (`devtoolsKeys.ts`): where the quit chord is
+   * down, for the page's panel to yield to the toolbox's. The process's one, unless a test's.
+   */
+  quitHoldNotice: DevtoolsQuitHoldNotice = devtoolsQuitHoldNotice
 
   constructor(
     private readonly sessions: SessionManager,

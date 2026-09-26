@@ -24,6 +24,8 @@ import {
 } from '../pageDebugger'
 import { HANG_MISSES, HANG_PING_MS, HANG_PROBE_TIMEOUT_MS } from '../hangMonitor'
 import { PAINT_STATE_SCRIPT } from '../firstPaint'
+import { DevtoolsQuitHoldNotice } from '../devtoolsQuitHoldNotice'
+import type { QuitHoldPanel } from '../../../shared/quitHoldPanel'
 import {
   ElectronTabViewHost,
   ENDED_BY_USER_MS,
@@ -122,6 +124,8 @@ vi.mock('electron', async () => {
     readonly scripts: string[] = []
     /** Scripts that reject, by a substring: a frontend without the module the host imports. */
     rejecting: string | null = null
+    /** The frontend document's own frame: the frame a console line of its own is said from. */
+    readonly mainFrame = { name: 'devtools://devtools/bundled/devtools_app.html' }
     private closed = false
     isDestroyed(): boolean {
       return this.closed
@@ -199,6 +203,11 @@ vi.mock('electron', async () => {
     }
     sendInputEvent(event: Record<string, unknown>): void {
       this.widgetEvents.push(event)
+    }
+    /** Every message posted to the page's preload (`webContents.send`), by channel. */
+    readonly sent: Array<{ channel: string; args: unknown[] }> = []
+    send(channel: string, ...args: unknown[]): void {
+      this.sent.push({ channel, args })
     }
     /**
      * What the main frame answers the first-paint probe (`firstPaint.ts`), one answer per
@@ -1476,6 +1485,129 @@ describe('ElectronTabView and the developer tools dock', () => {
     } finally {
       warn.mockRestore()
     }
+  })
+})
+
+/*
+ * "Hold ⌘Q to quit" and a toolbox (#486's R2, design language v2 §9.23: the notice is drawn
+ * where the keyboard is). The chord relayed from a page's toolbox is reported to the held-key
+ * notice with the toolbox's window and dock; while the chord is down in a toolbox standing
+ * undocked, the page's own panel is not posted – the toolbox draws it (`devtoolsKeys.ts`) – and
+ * a docked toolbox changes nothing.
+ */
+describe('ElectronTabView and the held-key notice over a toolbox', () => {
+  const settle = (): Promise<void> => new Promise((r) => setImmediate(r))
+  const KEY_DOWN_LINE =
+    'zenium-devtools-key:{"type":"keyDown","key":"q","control":false,"alt":false,"shift":false,"meta":true,"isAutoRepeat":false}'
+  const KEY_UP_LINE =
+    'zenium-devtools-key:{"type":"keyUp","key":"Meta","control":false,"alt":false,"shift":false,"meta":false,"isAutoRepeat":false}'
+  const panel: QuitHoldPanel = {
+    startedAt: 10_000,
+    durationMs: 1500,
+    chord: '⌘Q',
+    dark: false,
+    accent: '#3366cc'
+  }
+  interface HoldContents {
+    sent: Array<{ channel: string; args: unknown[] }>
+    devToolsWebContents: {
+      scripts: string[]
+      mainFrame: object
+      emit(event: string, ...args: unknown[]): boolean
+    } | null
+  }
+  const setup = (): {
+    view: ElectronTabView
+    wc: HoldContents
+    win: FakeBrowserWindow
+    notice: DevtoolsQuitHoldNotice
+    keys: string[]
+    /** The toolbox's frontend says `line` from its own document. */
+    say(line: string): void
+  } => {
+    const keys: string[] = []
+    const events = new Proxy({} as TabViewEvents, {
+      get: (_t, name) => {
+        if (name === 'onKey')
+          return (key: { type: string; key: string }): void =>
+            void keys.push(`${key.type}:${key.key}`)
+        return (): undefined => undefined
+      }
+    })
+    const host = new ElectronTabViewHost(sessions)
+    const notice = new DevtoolsQuitHoldNotice((p) => (p ? `shown:${p.startedAt}` : 'down'))
+    host.quitHoldNotice = notice
+    const window = fakeWindow()
+    const view = host.createView(
+      { id: 'tab_hold', containerId: 'default' } as Tab,
+      events,
+      window
+    ) as ElectronTabView
+    const wc = view.webContents as unknown as HoldContents
+    return {
+      view,
+      wc,
+      win: window.win,
+      notice,
+      keys,
+      say: (line) => {
+        const frontend = wc.devToolsWebContents!
+        frontend.emit('console-message', { message: line, frame: frontend.mainFrame })
+      }
+    }
+  }
+  const posted = (wc: HoldContents): unknown[] =>
+    wc.sent.filter((m) => m.channel === 'zen:quit-hold').map((m) => m.args[0])
+
+  it('posts the panel and its way down to the page while no toolbox has the chord', () => {
+    const { view, wc } = setup()
+    view.showQuitHold(panel)
+    view.showQuitHold(null)
+    expect(posted(wc)).toEqual([panel, null])
+  })
+
+  it('the chord down in the page’s undocked toolbox: the key reaches the tab, the toolbox is marked, the page’s panel yields and the toolbox draws the hold from the window’s state', async () => {
+    const { view, wc, win, notice, keys, say } = setup()
+    view.openDevTools('toggle', 'undocked')
+    await settle()
+    say(KEY_DOWN_LINE)
+    expect(keys).toEqual(['keyDown:q'])
+    expect(notice.inToolbox()).toBe(true)
+    view.showQuitHold(panel)
+    expect(posted(wc)).toEqual([])
+    // The window's state stream, as `ElectronWindow.send` mirrors it: the toolbox is this window's.
+    notice.mirror(win, panel)
+    expect(wc.devToolsWebContents!.scripts.at(-1)).toBe('shown:10000')
+    notice.mirror({}, panel)
+    expect(wc.devToolsWebContents!.scripts.at(-1)).toBe('shown:10000')
+    // The key up: the hold's way down goes to the page (nothing stood there) and to the toolbox.
+    say(KEY_UP_LINE)
+    expect(keys).toEqual(['keyDown:q', 'keyUp:Meta'])
+    expect(notice.inToolbox()).toBe(false)
+    view.showQuitHold(null)
+    expect(posted(wc)).toEqual([null])
+    notice.mirror(win, null)
+    expect(wc.devToolsWebContents!.scripts.at(-1)).toBe('down')
+  })
+
+  it('a docked toolbox changes nothing: the chord down there, the page draws its panel as before', async () => {
+    const { view, wc, win, notice, say } = setup()
+    view.openDevTools('toggle', 'bottom')
+    await settle()
+    say(KEY_DOWN_LINE)
+    expect(notice.inToolbox()).toBe(false)
+    view.showQuitHold(panel)
+    expect(posted(wc)).toEqual([panel])
+    notice.mirror(win, panel)
+    expect(wc.devToolsWebContents!.scripts.some((s) => s.startsWith('shown:'))).toBe(false)
+    say(KEY_UP_LINE)
+    // Undocked by its own button (the console read-back), the next hold is the toolbox's.
+    say('zenium-devtools-dock:undocked')
+    say(KEY_DOWN_LINE)
+    expect(notice.inToolbox()).toBe(true)
+    view.showQuitHold({ ...panel, startedAt: 12_000 })
+    expect(posted(wc)).toEqual([panel])
+    say(KEY_UP_LINE)
   })
 })
 

@@ -1,11 +1,13 @@
 import { resolve } from 'path'
 import { defineConfig } from 'vitest/config'
+import { inlineScriptPlugin } from './scripts/inline-script'
 import { licencesPlugin } from './scripts/licences'
 
 export default defineConfig({
   // The Licences page's `virtual:zenium-licences` resolves to the real tree here, as in a build;
-  // a test that wants a short list mocks the module.
-  plugins: [licencesPlugin({ electron: true })],
+  // a test that wants a short list mocks the module. The main process's inlined scripts
+  // (`virtual:zenium-devtools-quit-hold-panel`) are bundled from their entries the same way.
+  plugins: [licencesPlugin({ electron: true }), inlineScriptPlugin()],
   resolve: {
     alias: {
       '@shared': resolve('src/shared'),
