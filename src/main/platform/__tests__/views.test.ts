@@ -25,6 +25,7 @@ import {
 } from '../pageDebugger'
 import { HANG_MISSES, HANG_PING_MS, HANG_PROBE_TIMEOUT_MS } from '../hangMonitor'
 import { PAINT_STATE_SCRIPT } from '../firstPaint'
+import { IMAGE_THUMBNAIL_WORLD_ID, PRIVATE_WORLD_CHANNELS } from '../../../shared/privateWorld'
 import { DevtoolsQuitHoldNotice } from '../devtoolsQuitHoldNotice'
 import type { QuitHoldPanel } from '../../../shared/quitHoldPanel'
 import {
@@ -44,7 +45,7 @@ const constructed: Array<Record<string, unknown>> = []
  * Which page has the keyboard. `takeKeyboard` moves it the way Chromium does: the holder gets
  * `blur`, the taker `focus`.
  */
-const { keyboard, takeKeyboard, cursor } = vi.hoisted(() => {
+const { keyboard, takeKeyboard, cursor, stages } = vi.hoisted(() => {
   /** Where the OS pointer stands on the screen (`screen.getCursorScreenPoint`); a test moves it. */
   const cursor = { x: -100, y: -100 }
   const keyboard = { current: null as { emit(event: string): unknown } | null }
@@ -55,7 +56,14 @@ const { keyboard, takeKeyboard, cursor } = vi.hoisted(() => {
     previous?.emit('blur')
     taker.emit('focus')
   }
-  return { keyboard, takeKeyboard, cursor }
+  /** Every `BaseWindow` made (the stages of `ElectronTabViewHost.stageFor`), in order. */
+  const stages: Array<{
+    options: Record<string, unknown>
+    children: unknown[]
+    contentSize: [number, number]
+    destroyed: boolean
+  }> = []
+  return { keyboard, takeKeyboard, cursor, stages }
 })
 
 vi.mock('electron', async () => {
@@ -91,6 +99,10 @@ vi.mock('electron', async () => {
     readonly commands: Array<{ method: string; params: Record<string, unknown> | undefined }> = []
     /** How many agents (attachments) have seen `Page.setFontFamilies`: Chromium allows one per agent. */
     private fontFamiliesSet = false
+    /** Answers for the commands a test needs answered (`Page.getResourceTree`…); `{}` otherwise. */
+    respond:
+      | ((method: string, params?: Record<string, unknown>) => Record<string, unknown> | undefined)
+      | null = null
     isAttached(): boolean {
       return this.attached
     }
@@ -116,7 +128,7 @@ vi.mock('electron', async () => {
         if (this.fontFamiliesSet) throw new Error('Font families can only be set once')
         this.fontFamiliesSet = true
       }
-      return {}
+      return this.respond?.(method, params) ?? {}
     }
   }
   /**
@@ -241,10 +253,12 @@ vi.mock('electron', async () => {
       /** The frame's identity, which `did-start-navigation`'s `initiator` is matched against. */
       processId: this.id,
       routingId: 1,
-      /** The page's frame tree: the main frame alone. */
+      /** The page's frame tree: the main frame, then every sub-frame a test gave the page. */
       get framesInSubtree(): Array<{ processId: number; routingId: number }> {
-        return [this]
+        return [this, ...this.subFrames]
       },
+      /** Sub-frames of the page (`frameById` finds them by `frameTreeNodeId`); none unless a test adds one. */
+      subFrames: [] as Array<{ processId: number; routingId: number }>,
       scripts: [] as string[],
       executeJavaScript: (code: string): Promise<unknown> => {
         if (code === PAINT_STATE_SCRIPT) {
@@ -324,6 +338,43 @@ vi.mock('electron', async () => {
       this.bounds = rect
     }
   }
+  /**
+   * A `BaseWindow` as the stage uses it (`ElectronTabViewHost.stageFor`): its options, its
+   * `contentView`'s children and its content size, recorded in `stages`.
+   */
+  class FakeBaseWindow {
+    readonly children: unknown[] = []
+    contentSize: [number, number]
+    destroyed = false
+    excludedFromShownWindowsMenu = false
+    readonly contentView = {
+      addChildView: (view: unknown): void => {
+        const at = this.children.indexOf(view)
+        if (at >= 0) this.children.splice(at, 1)
+        this.children.push(view)
+      },
+      removeChildView: (view: unknown): void => {
+        const at = this.children.indexOf(view)
+        if (at >= 0) this.children.splice(at, 1)
+      }
+    }
+    constructor(readonly options: Record<string, unknown>) {
+      this.contentSize = [options.width as number, options.height as number]
+      stages.push(this)
+    }
+    getContentSize(): [number, number] {
+      return this.contentSize
+    }
+    setContentSize(width: number, height: number): void {
+      this.contentSize = [width, height]
+    }
+    isDestroyed(): boolean {
+      return this.destroyed
+    }
+    destroy(): void {
+      this.destroyed = true
+    }
+  }
   /** The view host follows the chrome's scheme for dark theme for sites; light and quiet here. */
   // Every view host in the tests listens for a flip (the app has one host; the tests many).
   const nativeTheme = Object.assign(new EventEmitter().setMaxListeners(0), {
@@ -334,7 +385,17 @@ vi.mock('electron', async () => {
     getAllDisplays: () => [{ scaleFactor: 1 }],
     getCursorScreenPoint: () => ({ ...cursor })
   }
-  return { WebContentsView: FakeWebContentsView, nativeTheme, screen }
+  /** The plain `View` the host adds and removes to re-stack a window's children (`restack`). */
+  class FakeView {
+    readonly throwaway = true
+  }
+  return {
+    BaseWindow: FakeBaseWindow,
+    View: FakeView,
+    WebContentsView: FakeWebContentsView,
+    nativeTheme,
+    screen
+  }
 })
 
 /** A window's chrome page: the keyboard's home when no page on screen has it. */
@@ -361,14 +422,18 @@ class FakeChrome extends EventEmitter {
 class FakeBrowserWindow extends EventEmitter {
   focused = true
   readonly children: unknown[] = []
+  /** Every add and remove on the `contentView`, in order – the re-stacking's throwaway included. */
+  readonly childLog: Array<['add' | 'remove', unknown]> = []
   readonly contentView = {
     children: this.children,
     addChildView: (view: unknown): void => {
+      this.childLog.push(['add', view])
       const at = this.children.indexOf(view)
       if (at >= 0) this.children.splice(at, 1)
       this.children.push(view)
     },
     removeChildView: (view: unknown): void => {
+      this.childLog.push(['remove', view])
       const at = this.children.indexOf(view)
       if (at >= 0) this.children.splice(at, 1)
     }
@@ -1928,6 +1993,282 @@ describe('a hidden tab page and the window', () => {
 })
 
 /**
+ * A hidden page an agent drives (`TabView.setAgentDriven`, MCP B) stands shown on the host's
+ * stage – one `BaseWindow` never shown – so it has a layout viewport and paints for the agent's
+ * snapshots and captures, while the user's window keeps its pixels and its keyboard.
+ */
+describe('a hidden page an agent drives and the stage', () => {
+  const box = { x: 200, y: 60, width: 1000, height: 740 }
+  const staged = (): (typeof stages)[number] | undefined => stages[stages.length - 1]
+  const engine = (view: ElectronTabView): { visible: boolean; bounds: unknown } => {
+    const v = view.view as unknown as { getVisible(): boolean; bounds: unknown }
+    return { visible: v.getVisible(), bounds: v.bounds }
+  }
+  const setup = (): {
+    host: ElectronTabViewHost
+    window: ReturnType<typeof fakeWindow>
+    create: (window?: ReturnType<typeof fakeWindow>) => ElectronTabView
+  } => {
+    keyboard.current = null
+    cursor.x = -100
+    cursor.y = -100
+    stages.length = 0
+    const host = new ElectronTabViewHost(sessions)
+    const window = fakeWindow()
+    let n = 0
+    const create = (target = window): ElectronTabView =>
+      host.createView(
+        { id: `tab_stage${++n}`, containerId: 'default' } as Tab,
+        noEvents,
+        target
+      ) as ElectronTabView
+    return { host, window, create }
+  }
+
+  it('puts a hidden page the agent drives on a stage: a window never shown, unfocusable, with the page shown in it at the box a page of the window has', () => {
+    const { window, create } = setup()
+    const shown = create()
+    shown.setBounds(box)
+    shown.setVisible(true)
+    const view = create()
+    view.setAgentDriven(true)
+    const stage = staged()
+    expect(stage).toBeDefined()
+    expect(stage!.options).toMatchObject({ show: false, focusable: false, skipTaskbar: true })
+    expect(stage!.contentSize).toEqual([box.width, box.height])
+    expect(stage!.children).toEqual([view.view])
+    // Shown to the engine on the stage, at the sibling's size; hidden to the core, out of the
+    // user's window.
+    expect(engine(view)).toEqual({
+      visible: true,
+      bounds: { x: 0, y: 0, width: 1000, height: 740 }
+    })
+    expect(view.isVisible()).toBe(false)
+    expect(window.win.children).toEqual([shown.view])
+    // No word again is nothing again.
+    view.setAgentDriven(true)
+    expect(stages).toHaveLength(1)
+  })
+
+  it('sizes the stage to the window’s content when no page of the window was laid out, and grows it for a larger page', () => {
+    const { window, create } = setup()
+    window.win.contentSize = [1280, 820]
+    const view = create()
+    view.setAgentDriven(true)
+    expect(staged()!.contentSize).toEqual([1280, 820])
+    expect(engine(view).bounds).toEqual({ x: 0, y: 0, width: 1280, height: 820 })
+    // A second driven page with a box of its own shares the stage, which grows to hold it.
+    const wide = create()
+    wide.setBounds({ x: 0, y: 0, width: 1600, height: 500 })
+    wide.setVisible(true)
+    wide.setVisible(false)
+    wide.setAgentDriven(true)
+    expect(stages).toHaveLength(1)
+    expect(staged()!.children).toEqual([view.view, wide.view])
+    expect(staged()!.contentSize).toEqual([1600, 820])
+  })
+
+  it('never stages a page in front, and an active page hidden by a tab switch goes onto the stage at its own last box, back in front when shown again', () => {
+    const { window, create } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setVisible(true)
+    view.setAgentDriven(true)
+    expect(stages).toHaveLength(0)
+    expect(engine(view)).toEqual({ visible: true, bounds: box })
+    // The user switches tabs: hidden by the layout, the page moves onto the stage.
+    view.setVisible(false)
+    expect(window.win.children).toEqual([])
+    expect(staged()!.children).toEqual([view.view])
+    expect(engine(view)).toEqual({
+      visible: true,
+      bounds: { x: 0, y: 0, width: 1000, height: 740 }
+    })
+    expect(view.isVisible()).toBe(false)
+    // Back in front: it leaves the stage for the window, at its box, and the empty stage goes.
+    view.setBounds(box)
+    view.setVisible(true)
+    expect(window.win.children).toEqual([view.view])
+    expect(engine(view)).toEqual({ visible: true, bounds: box })
+    expect(staged()!.children).toEqual([])
+    expect(staged()!.destroyed).toBe(true)
+    // Hidden again: a new stage, for the agent still drives it.
+    view.setVisible(false)
+    expect(stages).toHaveLength(2)
+    expect(staged()!.children).toEqual([view.view])
+  })
+
+  it('takes the page off the stage when the agent lets go, hidden as a page no agent drives, and a later hide leaves it alone', () => {
+    const { window, create } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setVisible(true)
+    view.setVisible(false)
+    view.setAgentDriven(true)
+    expect(staged()!.children).toEqual([view.view])
+    view.setAgentDriven(false)
+    expect(staged()!.children).toEqual([])
+    expect(staged()!.destroyed).toBe(true)
+    expect(engine(view)).toEqual({ visible: false, bounds: box })
+    expect(window.win.children).toEqual([])
+    view.setVisible(true)
+    view.setVisible(false)
+    expect(stages).toHaveLength(1)
+    expect(engine(view).visible).toBe(false)
+  })
+
+  it('leaves a page parked under a chrome cover where it is, and stages it once the cover lifts without the layout showing it', () => {
+    const { window, create } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setVisible(true)
+    window.zen.contentHidden = true
+    view.setVisible(false)
+    expect(view.parkedCorner()).toBe(0)
+    view.setAgentDriven(true)
+    expect(stages).toHaveLength(0)
+    expect(window.win.children).toEqual([view.view])
+    window.zen.contentHidden = false
+    view.coverLifted()
+    expect(view.parkedCorner()).toBeNull()
+    expect(staged()!.children).toEqual([view.view])
+    expect(window.win.children).toEqual([])
+  })
+
+  it('keeps a staged page painting while the user’s window is minimised, and shows it in the window hidden until the window returns', () => {
+    const { window, create } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setAgentDriven(true)
+    view.applyWindowVisible(false)
+    expect(engine(view).visible).toBe(true)
+    expect(staged()!.children).toEqual([view.view])
+    // Activated while the window is away: in the window, down to Chromium until it returns.
+    view.setVisible(true)
+    expect(window.win.children).toEqual([view.view])
+    expect(engine(view)).toEqual({ visible: false, bounds: box })
+    view.applyWindowVisible(true)
+    expect(engine(view)).toEqual({ visible: true, bounds: box })
+  })
+
+  it('leaves the stage for the window when brought to the front, asked for the keyboard, detached or destroyed – and when its page went', () => {
+    const { host, window, create } = setup()
+    const glanced = create()
+    glanced.setAgentDriven(true)
+    glanced.bringToFront()
+    expect(window.win.children).toEqual([glanced.view])
+    expect(engine(glanced).visible).toBe(false)
+    expect(staged()!.destroyed).toBe(true)
+    const focused = create()
+    focused.setAgentDriven(true)
+    focused.focus()
+    expect(window.win.children).toEqual([glanced.view, focused.view])
+    // Moved to another window (`TabManager.claim`): off the stage with the detach, on the new
+    // window's stage once attached hidden there.
+    const moved = create()
+    moved.setAgentDriven(true)
+    moved.detach()
+    expect(staged()!.children).toEqual([])
+    const other = fakeWindow()
+    moved.attachTo(other)
+    expect(staged()!.children).toEqual([moved.view])
+    expect(other.win.children).toEqual([])
+    moved.destroy()
+    expect(staged()!.children).toEqual([])
+    // A page that closes itself: the host forgets it, and the stage keeps no dead view.
+    const gone = create()
+    gone.setAgentDriven(true)
+    expect(staged()!.children).toEqual([gone.view])
+    host.forget(gone.webContentsId)
+    expect(staged()!.children).toEqual([])
+    expect(staged()!.destroyed).toBe(true)
+  })
+
+  /**
+   * The window's `contentView` traffic, the re-stacking's throwaway `View` named: Chromium 152
+   * on Linux stacks a view arriving from another window (the stage, another window) at the
+   * bottom of the native z-order and does not re-sort it, so the host adds and removes a plain
+   * view right after such a join – and only then (`ElectronTabView.restack`).
+   */
+  const traffic = (window: ReturnType<typeof fakeWindow>): Array<[string, 'throwaway' | unknown]> =>
+    window.win.childLog.map(([op, child]) => [
+      op,
+      (child as { throwaway?: boolean }).throwaway ? 'throwaway' : child
+    ])
+
+  it('re-stacks a page coming off the stage into the window – shown by the layout, asked for the keyboard, or brought to the front – with a throwaway view added and removed after it', () => {
+    const { window, create } = setup()
+    const shown = create()
+    shown.setBounds(box)
+    shown.setAgentDriven(true)
+    expect(window.win.childLog).toEqual([])
+    shown.setVisible(true)
+    expect(traffic(window)).toEqual([
+      ['add', shown.view],
+      ['add', 'throwaway'],
+      ['remove', 'throwaway']
+    ])
+    expect(window.win.children).toEqual([shown.view])
+    window.win.childLog.length = 0
+    const focused = create()
+    focused.setAgentDriven(true)
+    focused.focus()
+    expect(traffic(window)).toEqual([
+      ['add', focused.view],
+      ['add', 'throwaway'],
+      ['remove', 'throwaway']
+    ])
+    window.win.childLog.length = 0
+    const glanced = create()
+    glanced.setAgentDriven(true)
+    glanced.bringToFront()
+    expect(traffic(window)).toEqual([
+      ['add', glanced.view],
+      ['add', 'throwaway'],
+      ['remove', 'throwaway']
+    ])
+    expect(window.win.children).toEqual([shown.view, focused.view, glanced.view])
+  })
+
+  it('re-stacks a page moved between windows once shown in the new one, and leaves alone a page joining its first window, hidden and shown within it, or re-added to the top', () => {
+    const { window, create } = setup()
+    const fresh = create()
+    fresh.setBounds(box)
+    fresh.setVisible(true)
+    expect(traffic(window)).toEqual([['add', fresh.view]])
+    fresh.setVisible(false)
+    fresh.setVisible(true)
+    fresh.bringToFront()
+    expect(traffic(window)).toEqual([
+      ['add', fresh.view],
+      ['add', fresh.view]
+    ])
+    // Moved the way the tab manager moves a tab: hidden, detached, shown in the other window.
+    fresh.setVisible(false)
+    fresh.detach()
+    expect(traffic(window)).toEqual([
+      ['add', fresh.view],
+      ['add', fresh.view],
+      ['remove', fresh.view]
+    ])
+    const other = fakeWindow()
+    fresh.attachTo(other)
+    expect(other.win.childLog).toEqual([])
+    fresh.setVisible(true)
+    expect(traffic(other)).toEqual([
+      ['add', fresh.view],
+      ['add', 'throwaway'],
+      ['remove', 'throwaway']
+    ])
+    // Once re-stacked, a further show or re-add in that window is stacked right by Chromium.
+    fresh.setVisible(false)
+    fresh.setVisible(true)
+    fresh.bringToFront()
+    expect(traffic(other).filter(([, child]) => child === 'throwaway')).toHaveLength(2)
+  })
+})
+
+/**
  * Agent input goes through the DevTools protocol's Input domain, whose session is held the way
  * the resource governor holds its own: attached for the action, detached once nothing is
  * pending, an existing session used and left alone, and never `Runtime.enable`.
@@ -2503,6 +2844,9 @@ describe('page fonts (CT-25)', () => {
     taken: boolean
     log: string[]
     commands: Array<{ method: string; params: Record<string, unknown> | undefined }>
+    respond:
+      | ((method: string, params?: Record<string, unknown>) => Record<string, unknown> | undefined)
+      | null
   }
   const FONTS: PageFontSettings = {
     standard: 'Georgia',
@@ -2694,6 +3038,145 @@ describe('page fonts (CT-25)', () => {
     wc.emit('did-navigate', {}, 'https://c.example/')
     await settle()
     expect(dbg.log).toHaveLength(8)
+  })
+
+  /** `Page.getResourceTree` and `getResourceContent` answered for one image, as the renderer would. */
+  const imageAnswers =
+    (url: string) =>
+    (method: string): Record<string, unknown> | undefined => {
+      if (method === 'Page.getResourceTree')
+        return {
+          frameTree: {
+            frame: { id: 'F1' },
+            resources: [{ url, type: 'Image', mimeType: 'image/png', contentSize: 3 }]
+          }
+        }
+      if (method === 'Page.getResourceContent') return { content: 'AAAA', base64Encoded: true }
+      return undefined
+    }
+  const PIC = 'https://a.example/pic.png'
+
+  it('reads an image’s renderer copy (CT-32) over a session of its own: Page on for the read, off again, the session let go', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    const { view, dbg } = page(host, 'tab_fonts_image_own')
+    dbg.respond = imageAnswers(PIC)
+    await expect(view.readImageResource(PIC, 20_000_000)).resolves.toEqual({
+      base64: 'AAAA',
+      mimeType: 'image/png'
+    })
+    expect(dbg.log).toEqual([
+      'attach',
+      'Page.enable',
+      'Page.getResourceTree',
+      'Page.getResourceContent',
+      'Page.disable',
+      'detach'
+    ])
+    expect(dbg.attached).toBe(false)
+  })
+
+  it('never disables Page on a session that stood before the read: the fonts set on it survive a renderer swap', async () => {
+    const { nativeTheme } = await import('electron')
+    const theme = nativeTheme as unknown as { shouldUseDarkColors: boolean }
+    theme.shouldUseDarkColors = true
+    try {
+      const host = new ElectronTabViewHost(sessions)
+      const { view, dbg } = page(host, 'tab_fonts_image_held')
+      const wc = view.webContents as unknown as EventEmitter & { pid: number }
+      // The dark theme for sites holds the session; the fonts go on it and are the agent's state.
+      view.setDarkening(true)
+      await settle()
+      host.applyFonts(FONTS)
+      await settle()
+      expect(dbg.log).toEqual([
+        'attach',
+        'Emulation.setAutoDarkModeOverride',
+        'Page.setFontFamilies',
+        'Page.setFontSizes'
+      ])
+      dbg.respond = imageAnswers(PIC)
+      await expect(view.readImageResource(PIC, 20_000_000)).resolves.toEqual({
+        base64: 'AAAA',
+        mimeType: 'image/png'
+      })
+      // Page enabled for the read and left so – Blink's `Page.disable` clears the agent's whole
+      // state, the fonts with it – and the session stays the hold's.
+      expect(dbg.log.slice(4)).toEqual([
+        'Page.enable',
+        'Page.getResourceTree',
+        'Page.getResourceContent'
+      ])
+      expect(dbg.attached).toBe(true)
+      // A swap with the session attached: the agent's `Restore()` carries the fonts, nothing is re-sent.
+      wc.pid = 2000
+      wc.emit('did-navigate', {}, 'https://b.example/')
+      await settle()
+      expect(dbg.log).toHaveLength(7)
+      expect(dbg.log).not.toContain('Page.disable')
+      view.setDarkening(false)
+      await settle()
+      expect(dbg.attached).toBe(false)
+    } finally {
+      theme.shouldUseDarkColors = false
+    }
+  })
+
+  it('keeps Page on when a hold took the read’s own session over while it ran', async () => {
+    const { nativeTheme } = await import('electron')
+    const theme = nativeTheme as unknown as { shouldUseDarkColors: boolean }
+    theme.shouldUseDarkColors = true
+    try {
+      const host = new ElectronTabViewHost(sessions)
+      const { view, dbg } = page(host, 'tab_fonts_image_joined')
+      const answers = imageAnswers(PIC)
+      dbg.respond = (method) => {
+        // The dark theme for sites comes on under the read: its hold joins the read's session.
+        if (method === 'Page.getResourceTree') view.setDarkening(true)
+        return answers(method)
+      }
+      await expect(view.readImageResource(PIC, 20_000_000)).resolves.toEqual({
+        base64: 'AAAA',
+        mimeType: 'image/png'
+      })
+      await settle()
+      // The session is the hold's now: `Page` stays as the read left it and nothing detaches.
+      expect(dbg.log[0]).toBe('attach')
+      expect(dbg.log).toContain('Emulation.setAutoDarkModeOverride')
+      expect(dbg.log).not.toContain('Page.disable')
+      expect(dbg.log).not.toContain('detach')
+      expect(dbg.attached).toBe(true)
+      view.setDarkening(false)
+      await settle()
+      expect(dbg.attached).toBe(false)
+    } finally {
+      theme.shouldUseDarkColors = false
+    }
+  })
+
+  it('joins the session the resource governor holds for the read, never disabling Page on it nor letting it go (nothing of the view’s stood on it)', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    const { view, dbg } = page(host, 'tab_fonts_image_governed')
+    // The governor's session stands on the page (its clamp is the session's), attached by the
+    // governor alone: the view holds nothing on it, and the read must not take it for its own.
+    dbg.attached = true
+    dbg.respond = imageAnswers(PIC)
+    await expect(view.readImageResource(PIC, 20_000_000)).resolves.toEqual({
+      base64: 'AAAA',
+      mimeType: 'image/png'
+    })
+    // Neither attached nor detached by the read, and no `Page.disable`: the agent's state on the
+    // governor's session (the fonts CT-25 may have set there) is not the read's to clear. What
+    // the read leaves is `Page` enabled for that session's life – event traffic alone.
+    expect(dbg.log).toEqual(['Page.enable', 'Page.getResourceTree', 'Page.getResourceContent'])
+    expect(dbg.attached).toBe(true)
+    // A second read joins the same way.
+    await view.readImageResource(PIC, 20_000_000)
+    expect(dbg.log.slice(3)).toEqual([
+      'Page.enable',
+      'Page.getResourceTree',
+      'Page.getResourceContent'
+    ])
+    expect(dbg.attached).toBe(true)
   })
 
   it('shares the session the resource governor holds, and recycles it for a second family change', async () => {
@@ -4022,5 +4505,81 @@ describe('pageViewportFrom', () => {
     expect(pageViewportFrom({ ...raw, vw: 0 }, 1)).toBeNull()
     expect(pageViewportFrom({ sx: 0, sy: 0 }, 1)).toBeNull()
     expect(pageViewportFrom({ ...raw, sy: 'a' }, 1)).toBeNull()
+  })
+})
+
+describe('ElectronTabView.executeJavaScriptInPrivateWorld (CT-32, the world the thumbnail runs in)', () => {
+  interface WorldWc {
+    scripts: string[]
+    isolatedScripts: Array<{ worldId: number; code: string }>
+    mainFrame: {
+      scripts: string[]
+      framesInSubtree: Array<{ processId: number; routingId: number }>
+      subFrames: Array<{ processId: number; routingId: number }>
+    }
+  }
+  const page = (host: ElectronTabViewHost, id: string): { view: ElectronTabView; wc: WorldWc } => {
+    const view = host.createView(
+      { id, containerId: 'default' } as Tab,
+      noEvents,
+      detachedWindow
+    ) as ElectronTabView
+    return { view, wc: view.webContents as unknown as WorldWc }
+  }
+
+  it('runs a top-frame script through webContents.executeJavaScriptInIsolatedWorld in the thumbnail world – 1 << 28, never the main world, never the preload’s 999', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    const { view, wc } = page(host, 'tab_world')
+    await view.executeJavaScriptInPrivateWorld('(async () => 1)()')
+    expect(wc.isolatedScripts).toEqual([{ worldId: 1 << 28, code: '(async () => 1)()' }])
+    expect(wc.isolatedScripts[0]!.worldId).toBe(IMAGE_THUMBNAIL_WORLD_ID)
+    expect(wc.isolatedScripts[0]!.worldId).not.toBe(999)
+    expect(wc.scripts).toEqual([])
+    expect(wc.mainFrame.scripts).toEqual([])
+  })
+
+  it('runs a sub-frame script through the frame’s own preload (the relay, the same world id) and settles with the frame’s answer – the main world untouched', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    const { view, wc } = page(host, 'tab_world_frame')
+    const sent: Array<{ channel: string; payload: unknown }> = []
+    const child = {
+      parent: wc.mainFrame,
+      frameTreeNodeId: 7,
+      detached: false,
+      processId: 3,
+      routingId: 9,
+      url: 'https://frame.example/',
+      isDestroyed: () => false,
+      send: (channel: string, payload: unknown) => void sent.push({ channel, payload }),
+      executeJavaScript: () => Promise.reject(new Error('the main world was reached'))
+    }
+    wc.mainFrame.subFrames.push(child)
+    expect(wc.mainFrame.framesInSubtree).toEqual([wc.mainFrame, child])
+    const done = view.executeJavaScriptInPrivateWorld('(async () => 2)()', 7)
+    expect(sent).toEqual([
+      {
+        channel: PRIVATE_WORLD_CHANNELS.execute,
+        payload: { token: 1, worldId: IMAGE_THUMBNAIL_WORLD_ID, code: '(async () => 2)()' }
+      }
+    ])
+    host.privateWorld.answer(child as unknown as Electron.WebFrameMain, {
+      token: 1,
+      result: { ok: true }
+    })
+    await expect(done).resolves.toEqual({ ok: true })
+    expect(wc.isolatedScripts).toEqual([])
+    expect(wc.scripts).toEqual([])
+    expect(wc.mainFrame.scripts).toEqual([])
+  })
+
+  it('rejects for a frame the page no longer has, running nothing anywhere', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    const { view, wc } = page(host, 'tab_world_gone')
+    expect(wc.mainFrame.framesInSubtree).toEqual([wc.mainFrame])
+    await expect(view.executeJavaScriptInPrivateWorld('1', 7)).rejects.toThrow(
+      'Frame 7 is no longer part of the page'
+    )
+    expect(wc.isolatedScripts).toEqual([])
+    expect(wc.scripts).toEqual([])
   })
 })

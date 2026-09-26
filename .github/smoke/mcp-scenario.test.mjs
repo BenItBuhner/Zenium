@@ -1,13 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import { SOFT_CHECKS, Verdict } from '../../scripts/mcp-soak.mjs'
 import {
+  COLOUR_TOLERANCE,
   MCP_RESTART_SCENARIO,
   MCP_SCENARIO,
   MCP_SOAK,
+  STAGE_PAGES,
   agentSettings,
+  colourPage,
   freePort,
+  isColour,
+  judgePixels,
   judgeStep,
-  mark
+  mark,
+  samplePoints,
+  startStagePages
 } from './mcp-scenario.mjs'
 
 describe('the profile the scenario seeds', () => {
@@ -48,8 +55,8 @@ describe('judgeStep', () => {
     v.sessions += 2
     v.calls += 9
     v.hard('zen_status', true)
-    v.soft(SOFT_CHECKS.backgroundScreenshot, false, 'no image part in the result')
-    v.soft(SOFT_CHECKS.backgroundScreenshot, false, 'no image part in the result')
+    v.soft(SOFT_CHECKS.dropForceAdopt, false, 'still connected')
+    v.soft(SOFT_CHECKS.dropForceAdopt, false, 'still connected')
     const { detail, error } = judgeStep(v, before)
     expect(error).toBeNull()
     expect(detail).toEqual({
@@ -61,13 +68,27 @@ describe('judgeStep', () => {
         hard: [],
         soft: [
           {
-            name: SOFT_CHECKS.backgroundScreenshot,
+            name: SOFT_CHECKS.dropForceAdopt,
             failures: 2,
-            sample: 'no image part in the result'
+            sample: 'still connected'
           }
         ]
       }
     })
+  })
+
+  it('fails a step on a background snapshot or screenshot that failed during it (hard since B)', () => {
+    const v = new Verdict()
+    const before = mark(v)
+    v.hard('background-snapshot', false, 'viewport 0×0, headings [], 0 refs')
+    v.hard('background-screenshot', false, 'no image part in the result')
+    v.hard('foreground-screenshot', true)
+    const { detail, error } = judgeStep(v, before)
+    expect(error).toBe(
+      '2 hard check(s) failed: background-snapshot ×1 (viewport 0×0, headings [], 0 refs); background-screenshot ×1 (no image part in the result)'
+    )
+    expect(detail.hardFailures).toBe(2)
+    expect(detail.failed.soft).toEqual([])
   })
 
   it('fails a step on a hard check that failed during it, naming the check and what it quoted', () => {
@@ -86,5 +107,90 @@ describe('judgeStep', () => {
     // The failure before the mark belongs to an earlier step.
     expect(detail.failed.hard.map((f) => f.name)).toEqual(['zen_status after end'])
     expect(JSON.stringify(detail)).not.toContain('s3cret')
+  })
+})
+
+describe('the stage pages the hand-off is judged with', () => {
+  it('are two colours told apart from each other and from the greys the chrome paints', () => {
+    const { handOff, userSwitch } = STAGE_PAGES
+    expect(isColour(handOff.rgb, userSwitch.rgb)).toBe(false)
+    for (const page of [handOff, userSwitch]) {
+      for (const grey of [0, 64, 128, 157, 192, 255])
+        expect(isColour([grey, grey, grey], page.rgb)).toBe(false)
+      expect(page.title).toMatch(/^Stage /)
+    }
+    expect(handOff.title).not.toBe(userSwitch.title)
+  })
+
+  it('are a page of nothing but the colour, titled for the sidebar row', () => {
+    const html = colourPage(STAGE_PAGES.userSwitch)
+    expect(html).toContain('<title>Stage user switch</title>')
+    expect(html).toContain('background:rgb(0,102,255)')
+    expect(html).not.toMatch(/<(h1|p|button)/)
+  })
+
+  it('are served on the loopback interface by name, and nothing else is', async () => {
+    const pages = await startStagePages()
+    try {
+      const url = pages.url(STAGE_PAGES.handOff)
+      expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/hand-off$/)
+      const res = await fetch(url)
+      expect(res.status).toBe(200)
+      expect(await res.text()).toBe(colourPage(STAGE_PAGES.handOff))
+      expect((await fetch(url.replace('/hand-off', '/other'))).status).toBe(404)
+    } finally {
+      await pages.close()
+    }
+  })
+})
+
+describe('the pixels read where the tab is', () => {
+  const rect = { x: 300, y: 100, width: 1000, height: 800, scale: 1 }
+
+  it('are five points well inside the view – the centre and the quarter points – in device pixels', () => {
+    expect(samplePoints(rect)).toEqual([
+      { x: 800, y: 500 },
+      { x: 550, y: 300 },
+      { x: 1050, y: 300 },
+      { x: 550, y: 700 },
+      { x: 1050, y: 700 }
+    ])
+    // A display at 2× counts device pixels: the DIPs the main process reports, doubled.
+    expect(samplePoints({ ...rect, scale: 2 })[0]).toEqual({ x: 1600, y: 1000 })
+    for (const p of samplePoints(rect)) {
+      expect(p.x).toBeGreaterThan(rect.x + rect.width * 0.2)
+      expect(p.x).toBeLessThan(rect.x + rect.width * 0.8)
+      expect(p.y).toBeGreaterThan(rect.y + rect.height * 0.2)
+      expect(p.y).toBeLessThan(rect.y + rect.height * 0.8)
+    }
+  })
+
+  it('match the colour within the tolerance per channel, and nothing off screen', () => {
+    const orange = STAGE_PAGES.handOff.rgb
+    expect(isColour([255, 136, 0], orange)).toBe(true)
+    expect(
+      isColour([255 - COLOUR_TOLERANCE, 136 + COLOUR_TOLERANCE, COLOUR_TOLERANCE], orange)
+    ).toBe(true)
+    expect(isColour([255, 136, COLOUR_TOLERANCE + 1], orange)).toBe(false)
+    expect(isColour(null, orange)).toBe(false)
+  })
+
+  it('pass only when every point shows the colour, and say what each showed otherwise', () => {
+    const orange = STAGE_PAGES.handOff.rgb
+    const painted = { at: () => [255, 136, 0] }
+    expect(judgePixels(painted, rect, orange)).toMatchObject({ matched: 5, of: 5, ok: true })
+    // The page under the chrome: the window's grey where the page should be, but for one point.
+    const underChrome = { at: (x, y) => (x === 800 && y === 500 ? [255, 136, 0] : [157, 157, 160]) }
+    const judged = judgePixels(underChrome, rect, orange)
+    expect(judged).toMatchObject({ matched: 1, of: 5, ok: false })
+    expect(judged.seen).toEqual([
+      '800,500→rgb(255,136,0)',
+      '550,300→rgb(157,157,160)',
+      '1050,300→rgb(157,157,160)',
+      '550,700→rgb(157,157,160)',
+      '1050,700→rgb(157,157,160)'
+    ])
+    // A view partly off the display: the grab has nothing there.
+    expect(judgePixels({ at: () => null }, rect, orange).seen[0]).toBe('800,500→off screen')
   })
 })

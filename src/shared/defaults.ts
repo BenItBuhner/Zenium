@@ -40,7 +40,7 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   lan: false,
   approveNewAgents: true,
   approvedNames: [],
-  defaultMode: 'foreground',
+  defaultMode: 'background',
   allowScripts: false,
   showCursor: true
 }

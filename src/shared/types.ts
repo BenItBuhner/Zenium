@@ -2222,10 +2222,57 @@ export interface SearchEngine {
   imageSearch?: ImageSearchTemplate
 }
 
-/** An engine's reverse image search: the product's name and the URL template (`%s` takes the image's encoded address). */
+/**
+ * An engine's reverse image search: the product's name and the URL template (`%s` takes the
+ * image's encoded address), plus – additive – where the image's BYTES go when the engine takes
+ * an upload (`post`, Chrome's `image_url` + `image_url_post_params`). With `post` the row
+ * uploads the bytes as Chrome does (a `data:`/`blob:` or cookie-gated image searches too);
+ * without it the row searches by address (`url`), as before.
+ */
 export interface ImageSearchTemplate {
   name: string
   url: string
+  post?: ImageSearchPost
+}
+
+/**
+ * Chrome's `image_url` + `image_url_post_params`, spelled for Zenium: the upload endpoint and
+ * the body's fields, `name={placeholder}` pairs separated by commas – `{imageThumbnail}` (the
+ * downscaled JPEG's bytes, a file part), `{imageThumbnailBase64}`, `{imageURL}` (the image's
+ * http(s) address; empty for a `data:`/`blob:` image), `{imageOriginalWidth}` /
+ * `{imageOriginalHeight}` (the image's natural size), `{processedImageDimensions}` (the
+ * thumbnail's, `w,h`) and `{imageSearchSource}` (a constant naming Zenium); a placeholder may
+ * carry Chrome's `google:` prefix (`{google:imageThumbnail}`, as `prepopulated_engines.json`
+ * spells them); a value without braces travels as written. `encoding` is the body's:
+ * `multipart/form-data` (Chrome's `UploadRawData` body with a boundary) or
+ * `application/x-www-form-urlencoded`. `url` is `https:` (or `http:` on a loopback host).
+ * `thumbnail` is the engine's bounds for the downscale (`ImageThumbnailBounds`): Chrome's
+ * differ between its Lens path and any other engine, so the engine's definition carries them,
+ * as it carries the post form.
+ */
+export interface ImageSearchPost {
+  url: string
+  params: string
+  encoding: 'multipart' | 'urlencoded'
+  thumbnail: ImageThumbnailBounds
+}
+
+/**
+ * The bounds Chrome downscales an upload's image within, per engine
+ * (`CoreTabHelper::SearchByImageImpl`'s `thumbnail_min_area`, `thumbnail_max_width` /
+ * `thumbnail_max_height`, `chrome/browser/ui/tab_contents/core_tab_helper.cc`): an image
+ * whose area is at most `minArea` pixels travels at its own size, whatever its sides; a larger
+ * one has each side over `maxSide` brought to it, the other scaled with it (Chrome's max width
+ * and height are equal on both paths, so one `maxSide` stands for them). Google Lens:
+ * `lens::kMaxPixelsForImageSearch` = 1000 (`components/lens/lens_constants.h`); any other
+ * engine: `kImageSearchThumbnailMaxWidth` / `Height` = 600; the trigger
+ * `kImageSearchThumbnailMinSize` = 300 × 300 on both (`LENS_IMAGE_THUMBNAIL`,
+ * `GENERIC_IMAGE_THUMBNAIL` in `imageUpload.ts`). The thumbnail is then always re-encoded as
+ * a JPEG at Chrome's `kEncodingQualityJpeg` = 40 (`IMAGE_THUMBNAIL_JPEG_QUALITY`).
+ */
+export interface ImageThumbnailBounds {
+  maxSide: number
+  minArea: number
 }
 
 /**
