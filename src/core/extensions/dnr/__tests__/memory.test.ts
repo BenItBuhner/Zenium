@@ -1,4 +1,6 @@
+// eslint-disable-next-line no-restricted-imports
 import v8 from 'node:v8'
+// eslint-disable-next-line no-restricted-imports
 import vm from 'node:vm'
 import { describe, expect, test } from 'vitest'
 import { parseRuleset, type Rule } from '../rules'
@@ -32,11 +34,40 @@ const CENSUS: Record<string, number> = {
 const HOSTS_RULE_DOMAINS = 108_195
 const MEGA_LISTS = [48_868, 43_095]
 const SYLLABLES = [
-  'ad', 'trk', 'pix', 'stat', 'cdn', 'media', 'serve', 'click', 'banner', 'metric',
-  'tag', 'sync', 'beacon', 'promo', 'yield', 'bid', 'count', 'log', 'track', 'img'
+  'ad',
+  'trk',
+  'pix',
+  'stat',
+  'cdn',
+  'media',
+  'serve',
+  'click',
+  'banner',
+  'metric',
+  'tag',
+  'sync',
+  'beacon',
+  'promo',
+  'yield',
+  'bid',
+  'count',
+  'log',
+  'track',
+  'img'
 ]
 const TLDS = ['com', 'com', 'com', 'com', 'net', 'org', 'io', 'co', 'de', 'fr', 'ru', 'info']
-const TYPES = ['script', 'image', 'xmlhttprequest', 'sub_frame', 'media', 'font', 'stylesheet', 'other', 'websocket', 'ping']
+const TYPES = [
+  'script',
+  'image',
+  'xmlhttprequest',
+  'sub_frame',
+  'media',
+  'font',
+  'stylesheet',
+  'other',
+  'websocket',
+  'ping'
+]
 
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0
@@ -50,7 +81,9 @@ function mulberry32(seed: number): () => number {
 }
 
 function domain(index: number): string {
-  let name = SYLLABLES[index % SYLLABLES.length]! + SYLLABLES[Math.floor(index / SYLLABLES.length) % SYLLABLES.length]!
+  let name =
+    SYLLABLES[index % SYLLABLES.length]! +
+    SYLLABLES[Math.floor(index / SYLLABLES.length) % SYLLABLES.length]!
   if (index % 3 === 0) name += SYLLABLES[Math.floor(index / 400) % SYLLABLES.length]!
   return `${name}${index}.${TLDS[Math.floor(index / 7) % TLDS.length]!}`
 }
@@ -58,7 +91,7 @@ function domain(index: number): string {
 /** The census set as `parseRuleset` receives it: the rules file's value. */
 function generate(count: number): { rules: Rule[]; domainRefs: number; lists: number } {
   const random = mulberry32(1)
-  const int = (n: number) => Math.floor(random() * n)
+  const int = (n: number): number => Math.floor(random() * n)
   const marks = (n: number): Uint8Array => {
     const out = new Uint8Array(count)
     const indices = Array.from({ length: count }, (_, i) => i)
@@ -98,8 +131,8 @@ function generate(count: number): { rules: Rule[]; domainRefs: number; lists: nu
     lists++
     return out
   }
-  const scaled = (n: number) => Math.max(1, Math.round((n * count) / CENSUS_RULES))
-  const syllable = () => SYLLABLES[int(SYLLABLES.length)]!
+  const scaled = (n: number): number => Math.max(1, Math.round((n * count) / CENSUS_RULES))
+  const syllable = (): string => SYLLABLES[int(SYLLABLES.length)]!
   const urlFilter = (id: number): string => {
     const host = domain(int(24_000))
     const u = int(100)
@@ -127,10 +160,16 @@ function generate(count: number): { rules: Rule[]; domainRefs: number; lists: nu
     if (r === 998) {
       return {
         type: 'modifyHeaders',
-        requestHeaders: [{ header: 'cookie', operation: 'remove' }, { header: 'referer', operation: 'remove' }]
+        requestHeaders: [
+          { header: 'cookie', operation: 'remove' },
+          { header: 'referer', operation: 'remove' }
+        ]
       }
     }
-    return { type: 'modifyHeaders', responseHeaders: [{ header: 'set-cookie', operation: 'remove' }] }
+    return {
+      type: 'modifyHeaders',
+      responseHeaders: [{ header: 'set-cookie', operation: 'remove' }]
+    }
   }
   const requestDomains = has['requestDomains']!
   let hostsAt = requestDomains.indexOf(1)
@@ -146,7 +185,10 @@ function generate(count: number): { rules: Rule[]; domainRefs: number; lists: nu
     const condition: Record<string, unknown> = {}
     const foldedRule = requestDomains[k] === 1 && (k === hostsAt || (megaLeft > 0 && k > hostsAt))
     if (foldedRule) {
-      const size = k === hostsAt ? scaled(HOSTS_RULE_DOMAINS) : scaled(MEGA_LISTS[MEGA_LISTS.length - megaLeft--]!)
+      const size =
+        k === hostsAt
+          ? scaled(HOSTS_RULE_DOMAINS)
+          : scaled(MEGA_LISTS[MEGA_LISTS.length - megaLeft--]!)
       condition['requestDomains'] = folded(nextFolded, size)
       nextFolded += size
     } else {
@@ -154,14 +196,21 @@ function generate(count: number): { rules: Rule[]; domainRefs: number; lists: nu
       if (requestDomains[k]) condition['requestDomains'] = list(listSize())
     }
     if (has['initiatorDomains']![k]) condition['initiatorDomains'] = list(listSize())
-    if (has['excludedInitiatorDomains']![k]) condition['excludedInitiatorDomains'] = list(listSize())
+    if (has['excludedInitiatorDomains']![k])
+      condition['excludedInitiatorDomains'] = list(listSize())
     if (has['excludedRequestDomains']![k]) condition['excludedRequestDomains'] = list(listSize())
     if (has['resourceTypes']![k]) condition['resourceTypes'] = types()
     if (has['excludedResourceTypes']![k]) condition['excludedResourceTypes'] = ['main_frame']
     if (has['domainType']![k]) condition['domainType'] = int(10) === 0 ? 'firstParty' : 'thirdParty'
     if (has['requestMethods']![k]) condition['requestMethods'] = [random() < 0.5 ? 'get' : 'post']
-    if (has['responseHeaders']![k]) condition['responseHeaders'] = [{ header: 'content-type', values: ['text/html*'] }]
-    const rule = { id, priority: int(10) === 0 ? 2 + int(4) : 1, action: action(), condition } as unknown as Rule
+    if (has['responseHeaders']![k])
+      condition['responseHeaders'] = [{ header: 'content-type', values: ['text/html*'] }]
+    const rule = {
+      id,
+      priority: int(10) === 0 ? 2 + int(4) : 1,
+      action: action(),
+      condition
+    } as unknown as Rule
     rules.push(rule)
   }
   return { rules, domainRefs, lists }
@@ -178,8 +227,9 @@ function collector(): (() => void) | null {
   }
 }
 
-const mb = (bytes: number) => `${(bytes / 1048576).toFixed(1)} MB`
-const perRule = (bytes: number, rules: number) => `${Math.round(bytes / Math.max(1, rules))} B/rule`
+const mb = (bytes: number): string => `${(bytes / 1048576).toFixed(1)} MB`
+const perRule = (bytes: number, rules: number): string =>
+  `${Math.round(bytes / Math.max(1, rules))} B/rule`
 
 interface Measured {
   textLength: number
@@ -219,7 +269,17 @@ function measure(count: number, settled: () => number, base: number): Measured {
   for (const compiled of result.compiled) (compiled as { rule: Rule | undefined }).rule = undefined
   const compiledBytes = settled() - base
   result = null
-  return { textLength, lists: generated.lists, domainRefs: generated.domainRefs, compiledCount, errors, biggest, treeBytes, parsedBytes, compiledBytes }
+  return {
+    textLength,
+    lists: generated.lists,
+    domainRefs: generated.domainRefs,
+    compiledCount,
+    errors,
+    biggest,
+    treeBytes,
+    parsedBytes,
+    compiledBytes
+  }
 }
 
 describe("the core's copy of a static ruleset", () => {
