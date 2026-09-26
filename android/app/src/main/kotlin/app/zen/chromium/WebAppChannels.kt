@@ -39,7 +39,11 @@ class WebAppChannels(context: Context) {
 
     /** The app's channel, made with its group if the app has none yet; its id. */
     fun ensure(app: InstalledWebApp): String {
-        known[app.shortcutId]?.let { return it }
+        known[app.shortcutId]?.let { id ->
+            // The memory goes stale when another instance deleted the channel (the browser's [deleteForOrigin] while the app's window is up).
+            if (runCatching { system.getNotificationChannel(id) }.getOrNull() != null) return id
+            known.remove(app.shortcutId)
+        }
         val existing = find(app.shortcutId)
         if (existing != null) {
             known[app.shortcutId] = existing

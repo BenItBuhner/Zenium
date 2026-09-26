@@ -356,6 +356,11 @@ class WebAppNotifications(private val activity: WebAppActivity, private val reco
         /** The window's own answers, by shortcut id (`allow` / `deny`). */
         const val PREFS = "zenium.webapp.notifications"
         const val PERMISSION = "notifications"
+
+        /** The window's own answer for the app forgotten (the browser withdrew the site's permission, [WebNotifications.forgetOrigin]): the question is open again. */
+        fun forget(context: Context, shortcutId: String) {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(shortcutId).apply()
+        }
         /** The core's cap of cards up per site (`MAX_LIVE_PER_ORIGIN`). */
         const val MAX_LIVE = 20
         private const val MAX_ICON_PX = 256

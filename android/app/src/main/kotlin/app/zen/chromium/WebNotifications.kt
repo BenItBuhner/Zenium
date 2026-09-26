@@ -157,6 +157,8 @@ class WebNotifications(private val host: Host, private val io: Executor) {
             manager.cancel(notificationTag(id, origin, entry.tag), NOTIFICATION_ID)
         }
         channels.delete(origin)
+        // The apps' channels go, and the answer each app's own window kept with them: the site's question is open again everywhere.
+        for (app in webApps.apps()) if (app.origin == origin) WebAppNotifications.forget(context, app.shortcutId)
         webApps.deleteForOrigin(origin)
     }
 
