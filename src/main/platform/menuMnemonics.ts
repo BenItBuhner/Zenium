@@ -71,6 +71,8 @@ export const CHROME_MNEMONICS: ReadonlyMap<string, string> = new Map<string, str
   ['Reopen Closed Tab', 'e'],
   ['Name Window…', 'W'],
   ['Task Manager', 'T'],
+  ['Close Tab', 'C'],
+  ['Close Tab (keep pinned)', 'C'],
   ['Close Window', 'd'],
   ['Restore', 'R'],
   ['Move', 'M'],
@@ -91,18 +93,20 @@ export const CHROME_MNEMONICS: ReadonlyMap<string, string> = new Map<string, str
   ['Save and Share', 'S'],
   ['Copy Link', 'L'],
   ['Copy URL', 'U'],
-  ['Send to Your Devices', 'd'],
-  ['Send to Your Devices…', 'd'],
+  ['Send to Your Devices', 'D'],
+  ['Send to Your Devices…', 'D'],
   ['More Tools', 'l'],
   ['Help', 'e'],
   ['Settings', 'g'],
   ['Report an Issue…', 'R'],
   ['Delete Browsing Data…', 'D'],
   ['Manage Search Engines…', 'M'],
+  ['Paste and Go', 's'],
+  ['Paste and Search', 's'],
   ['Edit', 'E'],
   // Downloads (IDS_DOWNLOAD_MENU_*).
   ['Open', 'O'],
-  ['Open When Done', 'd'],
+  ['Open When Done', 'D'],
   ['Always Open Files of This Type', 'A'],
   ['Cancel', 'C'],
   ['Pause', 'P'],
@@ -120,20 +124,66 @@ export const CHROME_TEMPLATE_MNEMONICS: ReadonlyArray<readonly [RegExp, string]>
   [/^Go to /u, 'G'], // &Go to http://…
   [/^Save (Video|Audio) As…$/u, 'v'], // Sa&ve video as...
   [/^Copy (Video|Audio) Address$/u, 'o'], // C&opy video address
-  [/^Open (Video|Audio) in New Tab$/u, 'O'], // &Open video in new tab
-  [/^Send to /u, 'd'] // Send to your &device
+  [/^Open (Video|Audio) in New Tab$/u, 'O'] // &Open video in new tab
+]
+
+/** Zenium's own shaped labels: the bookmark folder's Open All rows, by the word that tells them apart. */
+export const ZENIUM_TEMPLATE_MNEMONICS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/^Open All \(\d+\)$/u, 'O'],
+  [/^Open All \(\d+\) in New Window$/u, 'W'],
+  [/^Open All \(\d+\) in New Private Window$/u, 'P'],
+  [/^Open All \(\d+\) in New Tab Folder$/u, 'F']
 ]
 
 /**
  * Zenium's own letters where Chrome has no such item and the first-letter rule would land on a
- * poor one or on a neighbour's – kept small; the rule does the rest.
+ * poor one or on a neighbour's: Firefox's access keys where Firefox has the row (Book&mark Page,
+ * &Bookmark Tab, &Reload Tab, &Mute Tab, &Pin Tab, &Duplicate Tab, Mo&ve Tab, Close &Other Tabs,
+ * Move &Left / &Right), the distinguishing word elsewhere (Open in New &Window, Open Link in
+ * &Glance). The rule does the rest.
  */
 export const ZENIUM_MNEMONICS: ReadonlyMap<string, string> = new Map<string, string>([
+  // Links and rows that open somewhere: the word that tells the rows apart.
   ['Open Link in New Private Window', 'P'],
   ['Open Link in Private Tab', 'v'],
+  ['Open Link in Glance', 'G'],
+  ['Open Link in Split View', 'S'],
+  ['Open Link in New Container Tab', 'C'],
+  ['Open in New Tab', 'T'],
+  ['Open in New Window', 'W'],
+  ['Open in New Private Window', 'P'],
+  ['Open in Private Tab', 'v'],
+  ['Open in Glance', 'G'],
+  ['Open in Split View', 'S'],
+  ['Open in New Container Tab', 'C'],
+  ['Open All in Tabs', 'O'],
   ['New Private Window', 'P'],
   ['New Private Tab', 'v'],
+  // The page and the tab (Firefox's letters where it has the row).
+  ['Bookmark Page', 'm'],
+  ['Bookmark Tab', 'B'],
   ['Bookmark All Tabs…', 'B'],
+  ['Bookmark Manager', 'M'],
+  ['New Tab Below', 'N'],
+  ['Reload Tab', 'R'],
+  ['Mute Tab', 'M'],
+  ['Mute Site', 'S'],
+  ['Unload Tab', 'U'],
+  ['Freeze Tab', 'F'],
+  ['Duplicate Tab', 'D'],
+  ['Pin Tab', 'P'],
+  ['Unpin Tab', 'p'],
+  ['Add to Essentials', 'A'],
+  ['Add Tab to Reading List', 'L'],
+  ['Change Icon…', 'I'],
+  ['Move Tab', 'v'],
+  ['Close Tabs Above', 'A'],
+  ['Close Tabs Below', 'B'],
+  ['Close Other Tabs', 'O'],
+  ['Move Left', 'L'],
+  ['Move Right', 'R'],
+  ['Rename…', 'n'],
+  ['Paste as Plain Text', 'l'],
   ['Quit', 'Q'],
   ['Exit Full Screen', 'x'],
   ['Developer Tools', 'D']
@@ -144,18 +194,52 @@ export function escapeAmpersands(label: string): string {
   return label.replace(/&/g, '&&')
 }
 
+/** Whose letter a label carries: Chrome's are claimed before Zenium's, both before the rule's. */
+export type MnemonicSource = 'chrome' | 'zenium'
+
+function lookUp(
+  label: string,
+  fixed: ReadonlyMap<string, string>,
+  shaped: ReadonlyArray<readonly [RegExp, string]>
+): string | undefined {
+  const exact = fixed.get(label)
+  if (exact !== undefined) return exact
+  for (const [pattern, letter] of shaped) if (pattern.test(label)) return letter
+  return undefined
+}
+
+/** The table's letter for a label and whose it is, if it has one. */
+export function tableEntry(label: string): { letter: string; source: MnemonicSource } | undefined {
+  const chrome = lookUp(label, CHROME_MNEMONICS, CHROME_TEMPLATE_MNEMONICS)
+  if (chrome !== undefined) return { letter: chrome, source: 'chrome' }
+  const zenium = lookUp(label, ZENIUM_MNEMONICS, ZENIUM_TEMPLATE_MNEMONICS)
+  return zenium === undefined ? undefined : { letter: zenium, source: 'zenium' }
+}
+
 /** The table's letter for a label, if it has one. */
 export function tableMnemonic(label: string): string | undefined {
-  const fixed = CHROME_MNEMONICS.get(label) ?? ZENIUM_MNEMONICS.get(label)
-  if (fixed !== undefined) return fixed
-  for (const [pattern, letter] of CHROME_TEMPLATE_MNEMONICS) {
-    if (pattern.test(label)) return letter
-  }
-  return undefined
+  return tableEntry(label)?.letter
 }
 
 const LETTER_OR_DIGIT = /[\p{L}\p{N}]/u
 const VOWELS = new Set(['a', 'e', 'i', 'o', 'u'])
+
+const isInitial = (chars: string[], index: number): boolean =>
+  index === 0 || /\s/u.test(chars[index - 1] ?? '')
+
+/**
+ * Where a table letter sits in its label: the letter as written (Chrome's `Sa&ve` is the small
+ * v, its `Save &as` the capital of Zenium's `As`), else a word's initial of either case, else
+ * its first occurrence; -1 when the label has no such letter.
+ */
+export function tableLetterIndex(label: string, letter: string): number {
+  const chars = [...label]
+  const exact = chars.indexOf(letter)
+  if (exact >= 0) return exact
+  const lower = letter.toLowerCase()
+  const initial = chars.findIndex((c, i) => c.toLowerCase() === lower && isInitial(chars, i))
+  return initial >= 0 ? initial : chars.findIndex((c) => c.toLowerCase() === lower)
+}
 
 /**
  * The positions in a label that may carry its mnemonic, best first: the table's letter, the
@@ -170,19 +254,22 @@ export function mnemonicCandidates(label: string): number[] {
   }
   const table = tableMnemonic(label)
   if (table !== undefined) {
-    const at = chars.findIndex((char) => char.toLowerCase() === table.toLowerCase())
+    const at = tableLetterIndex(label, table)
     if (at >= 0) push(at)
   }
   const initials: number[] = []
   const consonants: number[] = []
   const vowels: number[] = []
   const digits: number[] = []
+  // In a Title Case label the small words (in, to, as) start lower-case and make poor letters;
+  // their initials count as consonants or vowels only. A label with no capital at all – a
+  // spelling suggestion, a page's own words – keeps every word's initial.
+  const capitals = /\p{Lu}/u.test(label)
   chars.forEach((char, index) => {
     if (!LETTER_OR_DIGIT.test(char)) return
-    const lower = char.toLowerCase()
-    if (index === 0 || /\s/u.test(chars[index - 1] ?? '')) initials.push(index)
+    if (isInitial(chars, index) && (!capitals || /[\p{Lu}\p{N}]/u.test(char))) initials.push(index)
     if (/\p{N}/u.test(char)) digits.push(index)
-    else if (VOWELS.has(lower)) vowels.push(index)
+    else if (VOWELS.has(char.toLowerCase())) vowels.push(index)
     else consonants.push(index)
   })
   for (const index of [...initials, ...consonants, ...vowels, ...digits]) push(index)
@@ -191,35 +278,73 @@ export function mnemonicCandidates(label: string): number[] {
 }
 
 /**
- * One letter per label, unique within the list (case-insensitive) – `undefined` where every
- * letter of a label is taken. Rows are served in order, so an earlier row keeps its table letter
- * and a later one that wanted the same moves on, as Chrome's rule reads.
+ * One letter per label, unique within the list (case-insensitive) – `undefined` only where no
+ * assignment can give the row a letter of its own.
+ *
+ * Rows with a table letter claim it first – Chrome's rows before Zenium's, each set in menu
+ * order, so a Zenium row placed above Cut never costs Cu&t its t (two rows wanting one letter:
+ * the first keeps it, the other joins the rest). The rest are served in order and take their
+ * best free candidate. A row that finds every letter taken makes room by moving a neighbour on
+ * to another of its letters – the fewest neighbours it can (a shortest augmenting path, so the
+ * matching is a maximum one), rows with no table letter before Zenium's own, Chrome's never. A
+ * crowded menu – the tab's two dozen rows draw on twenty-one distinct letters – leaves a row
+ * unmarked only when every letter it has is held by a row that has no other.
  */
 export function chooseMnemonics(labels: ReadonlyArray<string | undefined>): (number | undefined)[] {
-  const taken = new Set<string>()
+  const rows = labels.map((label) => [...(label ?? '')])
+  const candidates = labels.map((label) => (label === undefined ? [] : mnemonicCandidates(label)))
   const picks: (number | undefined)[] = labels.map(() => undefined)
-  // Two passes: rows with a table letter claim it first, so a row's Chrome letter is not lost to
-  // a neighbour whose first-letter fallback happens to be the same character.
-  const claim = (index: number, candidates: number[]): boolean => {
-    const chars = [...(labels[index] ?? '')]
-    for (const at of candidates) {
-      const key = chars[at]?.toLowerCase()
-      if (key === undefined || taken.has(key)) continue
-      taken.add(key)
-      picks[index] = at
-      return true
+  const holder = new Map<string, number>()
+  const fixed = new Set<number>()
+  const settled = new Set<number>()
+  const keyAt = (row: number, at: number): string => rows[row]![at]!.toLowerCase()
+
+  for (const source of ['chrome', 'zenium'] as const) {
+    labels.forEach((label, row) => {
+      if (label === undefined || tableEntry(label)?.source !== source) return
+      const at = candidates[row]![0]
+      if (at === undefined || holder.has(keyAt(row, at))) return
+      holder.set(keyAt(row, at), row)
+      picks[row] = at
+      // Chrome's letters are the ones a Chrome user's hand knows: those rows stay put. Zenium's
+      // own are settled – moved only when nothing else makes room.
+      if (source === 'chrome') fixed.add(row)
+      else settled.add(row)
+    })
+  }
+
+  const take = (row: number, at: number): void => {
+    holder.set(keyAt(row, at), row)
+    picks[row] = at
+    settled.delete(row)
+  }
+  // Breadth-first from `row` over the rows holding its letters: the first free letter found ends
+  // the shortest chain of moves, and every row on the chain steps on to the letter it wanted.
+  const place = (row: number, movable: (other: number) => boolean): boolean => {
+    const wanted = new Map<number, { by: number; at: number }>()
+    const queue = [row]
+    for (let head = 0; head < queue.length; head++) {
+      const current = queue[head]!
+      for (const at of candidates[current]!) {
+        const other = holder.get(keyAt(current, at))
+        if (other === undefined) {
+          take(current, at)
+          for (let step = wanted.get(current); step !== undefined; step = wanted.get(step.by)) {
+            take(step.by, step.at)
+          }
+          return true
+        }
+        if (other === row || wanted.has(other) || !movable(other)) continue
+        wanted.set(other, { by: current, at })
+        queue.push(other)
+      }
     }
     return false
   }
-  labels.forEach((label, index) => {
-    if (label === undefined || tableMnemonic(label) === undefined) return
-    const [first, ...rest] = mnemonicCandidates(label)
-    if (first !== undefined && !claim(index, [first])) claim(index, rest)
-  })
-  labels.forEach((label, index) => {
-    if (label === undefined || picks[index] !== undefined) return
-    if (tableMnemonic(label) !== undefined) return // Handled above (or every letter taken).
-    claim(index, mnemonicCandidates(label))
+  labels.forEach((label, row) => {
+    if (label === undefined || picks[row] !== undefined) return
+    place(row, (other) => !fixed.has(other) && !settled.has(other)) ||
+      place(row, (other) => !fixed.has(other))
   })
   return picks
 }
@@ -244,7 +369,8 @@ export function withMnemonics(items: MenuItemTemplate[], os: NodeJS.Platform): M
   return items.map((item, index) => {
     if (item.type === 'separator') return item
     const out: MenuItemTemplate = { ...item }
-    if (item.label !== undefined) out.label = markMnemonic(item.label, marks ? picks[index] : undefined)
+    if (item.label !== undefined)
+      out.label = markMnemonic(item.label, marks ? picks[index] : undefined)
     if (item.submenu) out.submenu = withMnemonics(item.submenu, os)
     return out
   })

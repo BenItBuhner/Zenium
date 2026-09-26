@@ -50,6 +50,7 @@ import {
   separators,
   topLabels,
   type Harness,
+  type HarnessOptions,
   type PageHarness
 } from './menusFixture'
 
