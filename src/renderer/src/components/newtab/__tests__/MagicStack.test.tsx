@@ -10,8 +10,11 @@ import type {
   Tab,
   UIState
 } from '@shared/types'
+import { DEFAULT_NEW_TAB_SETTINGS } from '@shared/newTab'
 import { BLANK_URL } from '@shared/url'
 import { viewportStore } from '@renderer/lib/formFactor'
+import { closeCustomize, openCustomize } from '@renderer/lib/newtab'
+import { pageViewStore } from '@renderer/lib/pageView'
 import { FrameDialogHost } from '@renderer/lib/portals'
 import { browserStore, uiStore } from '@renderer/lib/ui'
 
@@ -34,7 +37,9 @@ vi.mock('@renderer/lib/api', () => ({
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const { MagicStack, MagicStackCustomizeLayer } = await import('../MagicStack')
-const { openMagicStackCustomize, closeMagicStackCustomize } = await import('../magicStackCustomize')
+const { NewTabCustomizeLayer } = await import('../CustomizeSheet')
+const { openMagicStackCustomize, closeMagicStackCustomize, magicStackCustomizeStore } =
+  await import('../magicStackCustomize')
 const { pickMenuItem } = await import('@renderer/lib/ui')
 
 /** A hand-cranked animation frame: `run(n)` advances the clock 16 ms a frame and runs the callbacks. */
@@ -198,6 +203,13 @@ async function settle(): Promise<void> {
   })
 }
 
+/** Let every pending promise chain run out (a macrotask's worth). */
+async function flush(): Promise<void> {
+  await act(async () => {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+  })
+}
+
 /** Run a spring to rest. */
 function rest(): void {
   for (let i = 0; i < 200 && frames.scheduled; i++) act(() => frames.run(1))
@@ -273,7 +285,9 @@ afterEach(() => {
   mount = null
   uiStore.set({ menu: null })
   closeMagicStackCustomize()
+  closeCustomize()
   browserStore.set({ state: null })
+  pageViewStore.set({ phases: new Map(), lastApplied: null })
   act(() => viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop', coarse: false }))
   vi.unstubAllGlobals()
   frames.now = 0
@@ -465,6 +479,51 @@ describe('the Magic Stack on the page (NTP-16)', () => {
       'Continue where you left off',
       'Downloads',
       'Bookmarks'
+    ])
+  })
+
+  it('the page’s gear sheet carries a Magic Stack row – the way to the switches once every card is hidden; it leaves first and the stack’s sheet comes up as it has gone', async () => {
+    browserStore.set({
+      state: state({
+        settings: { newTab: structuredClone(DEFAULT_NEW_TAB_SETTINGS) },
+        newTabHiddenModules: ['continue', 'downloads', 'bookmarks', 'default-browser']
+      } as Partial<UIState>)
+    })
+    // The page is under its cover already: the gear sheet presents (and so leaves on a spring).
+    pageViewStore.set({ phases: new Map([['r', 'hidden']]), lastApplied: null })
+    render(
+      <FrameDialogHost frame>
+        <NewTabCustomizeLayer />
+        <MagicStackCustomizeLayer />
+      </FrameDialogHost>
+    )
+    act(() => openCustomize())
+    await flush()
+    rest()
+    const gear = q('.zen-sheet[role="dialog"]')!
+    expect(gear.querySelector('h2.zen-sheet-title')?.textContent).toBe('New tab page')
+    const row = qa('.zen-sheet[role="dialog"] .zen-v2-row').find((r) =>
+      r.textContent?.startsWith('Magic Stack')
+    )
+    expect(row).toBeDefined()
+    expect(row!.textContent).toContain('Choose which cards show under the shortcuts')
+    click(row!)
+    // One sheet over the page (§9.24): the stack's waits for the gear's landing.
+    expect(magicStackCustomizeStore.get().open).toBe(false)
+    expect(frames.scheduled).toBe(true)
+    rest()
+    expect(magicStackCustomizeStore.get().open).toBe(true)
+    await flush()
+    rest()
+    const sheets = qa('.zen-sheet[role="dialog"]')
+    expect(sheets.map((s) => s.querySelector('h2.zen-sheet-title')?.textContent)).toEqual([
+      'Magic Stack'
+    ])
+    expect(qa('[role="switch"]').map((s) => s.getAttribute('aria-checked'))).toEqual([
+      'false',
+      'false',
+      'false',
+      'false'
     ])
   })
 })
