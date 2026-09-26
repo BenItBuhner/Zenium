@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { SiteInfoSnapshot, SiteSecurity } from '@shared/siteInfo'
+import type { SiteInfoSnapshot, SitePermission, SiteSecurity } from '@shared/siteInfo'
 import { DEFAULT_CONTAINER_ID, type CertificateError, type Tab, type UIState } from '@shared/types'
 import { contentSetting } from '@shared/contentSettings'
 import {
@@ -281,8 +281,10 @@ describe('the Background video row (W6-S8, #523)', () => {
  * a stored allow, a stored deny – what the switch reads and what the press writes.
  */
 describe('the switch rows’ effective state (W6-S12, §10.4)', () => {
-  const none: Array<{ permission: string; decision: 'allow' | 'deny' }> = []
-  const stored = (permission: string, decision: 'allow' | 'deny') => [{ permission, decision }]
+  const none: SitePermission[] = []
+  const stored = (permission: string, decision: 'allow' | 'deny'): SitePermission[] => [
+    { permission, decision }
+  ]
 
   it('takes the default in force from the state the core carries, else the catalogue’s built-in', () => {
     expect(defaultInForce('sound', undefined)).toBe('allow')
