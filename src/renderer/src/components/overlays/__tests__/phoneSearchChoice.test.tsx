@@ -185,6 +185,41 @@ describe('the phone tour’s search step in the EEA', () => {
     ])
   })
 
+  it('a tile picked and then Skip for now is let go: the tour ends on the profile’s engine, no record (§9.39)', async () => {
+    await mount(phone(false, EEA))
+    await toSearchStep()
+
+    await click(rows().find((r) => r.dataset.engine === 'ecosia')!)
+    expect(setDefault().disabled).toBe(false)
+    // The search step is this tour's last: the skip completes the tour in the same tick.
+    await click(skipForNow())
+    expect(commands()).toContainEqual(['searchChoice.skip', undefined])
+    expect(commands().map(([n]) => n)).not.toContain('searchChoice.choose')
+    expect(commands()).toContainEqual([
+      'onboarding.complete',
+      { searchEngineId: 'google', colorScheme: 'system', essentials: [] }
+    ])
+  })
+
+  it('a pick skipped on a tour with a step after it is gone when that step completes the tour', async () => {
+    const state = phone(false, EEA)
+    state.capabilities = { ...state.capabilities, defaultBrowser: true }
+    await mount(state)
+    await toSearchStep()
+
+    await click(rows().find((r) => r.dataset.engine === 'ecosia')!)
+    await click(skipForNow())
+    // The default-browser step follows; its Skip completes the tour on the profile's engine.
+    expect(q('[data-testid="search-choice"]')).toBeNull()
+    expect(commands().map(([n]) => n)).not.toContain('onboarding.complete')
+    await click(button('Skip'))
+    expect(commands().map(([n]) => n)).not.toContain('searchChoice.choose')
+    expect(commands()).toContainEqual([
+      'onboarding.complete',
+      { searchEngineId: 'google', colorScheme: 'system', essentials: [] }
+    ])
+  })
+
   it('keeps the choice form when the core answers mid-tour – the step is settled when the tour mounts', async () => {
     await mount(phone(false, EEA))
     await toSearchStep()

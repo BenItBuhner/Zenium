@@ -115,23 +115,27 @@ export function PhoneOnboarding({ state }: { state: UIState }): JSX.Element {
   )
 
   const last = index === steps.length - 1
-  const finish = (): void => {
+  const finish = (picked: string | null = engine): void => {
     run('onboarding.complete', {
       // The choice step told the core its pick already (or skipped, keeping the default).
-      searchEngineId: engine ?? state.settings.searchEngineId,
+      searchEngineId: picked ?? state.settings.searchEngineId,
       colorScheme: scheme,
       essentials: []
     })
   }
-  const onward = (): void => (last ? finish() : go(1))
+  const onward = (picked: string | null = engine): void => (last ? finish(picked) : go(1))
   // The choice step's two verbs answer the core the moment they are pressed, as the desktop's
   // do: Skip writes nothing (`searchChoice.skip`: the screen waits for the next run), Set makes
   // the pick the default and writes the device's record (`searchChoice.choose`). Either moves
   // the tour on; a tour that ends here completes with the pick.
   const choiceStep = choice && step === 'search'
+  // Skip never installs a pick (§9.39): a tile picked and then skipped is let go, so `finish()`
+  // sends the profile's own engine – on this tour the search step is often the last, so the
+  // skip's `finish()` is told so in the same tick, not through the next render's `engine`.
   const skipChoice = (): void => {
+    setEngine(null)
     run('searchChoice.skip', undefined)
-    onward()
+    onward(null)
   }
   const chooseEngine = (): void => {
     if (engine === null) return
@@ -221,7 +225,7 @@ export function PhoneOnboarding({ state }: { state: UIState }): JSX.Element {
           <PhoneSearchChoiceActions picked={engine} onSkip={skipChoice} onChoose={chooseEngine} />
         ) : step === 'default' ? (
           <>
-            <V2Button className="min-w-0 flex-1" disabled={busy} onClick={finish}>
+            <V2Button className="min-w-0 flex-1" disabled={busy} onClick={() => finish()}>
               Skip
             </V2Button>
             <V2Button
