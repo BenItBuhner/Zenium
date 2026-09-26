@@ -98,7 +98,13 @@ import { closedTabEntry, closedWindowEntry } from './session'
 import { newId } from '../shared/ids'
 import { clampZoom, stepZoom } from '../shared/pageControls'
 import type { FaviconFetcher } from './favicons'
-import { defer, type PageFlags, type TabView, type TabViewEvents } from './platform'
+import {
+  defer,
+  type NavigationCommitDetails,
+  type PageFlags,
+  type TabView,
+  type TabViewEvents
+} from './platform'
 import { permissionSite, safeOrigin } from './permissions'
 import { certificateSiteOf } from './security'
 import { openedWindowKind, planWindowOpen } from './windowOpen'
@@ -193,6 +199,13 @@ export class TabManager {
    * elsewhere, fails or loses its tab drops them.
    */
   private readonly pendingRedirects = new Map<string, { hops: string[]; to: string }>()
+  /**
+   * The address of the document that last committed in each loaded tab, same-document commits
+   * included (history-23): what a client redirect – a commit the page began that replaced its
+   * own history entry – folds into the landing's chain. Not `Tab.url`, which `navigate` writes
+   * as soon as an address is asked for. Goes with the view.
+   */
+  private readonly committedUrls = new Map<string, string>()
   /**
    * Tabs whose crash page `onCrashed` has asked the view for and that has not committed yet. A
    * load already in flight when the renderer went (a restored list's current entry, Android)
@@ -640,7 +653,7 @@ export class TabManager {
         update((t) => {
           t.progress = loadProgressAfter(t, progress)
         }, true),
-      onNavigated: (url, inPage) => {
+      onNavigated: (url, inPage, details) => {
         if (!inPage) this.browser.blocking.onNavigated(tabId)
         const v = view()
         this.browser.popups.onNavigated(tabId, inPage)
@@ -668,7 +681,7 @@ export class TabManager {
           // all-clear may not have crossed before the renderer went).
           this.clearCaptureState(tabId)
         }
-        if (v) this.onNavigated(tabId, v, url, inPage)
+        if (v) this.onNavigated(tabId, v, url, inPage, details)
       },
       onWillNavigate: (url) => this.onWillNavigate(tabId, url),
       onTitleUpdated: (title) =>
@@ -1128,9 +1141,17 @@ export class TabManager {
     return pending.to === url && pending.hops.length > 0 ? pending.hops : undefined
   }
 
-  private onNavigated(tabId: string, view: TabView, url: string, inPage = false): void {
+  private onNavigated(
+    tabId: string,
+    view: TabView,
+    url: string,
+    inPage = false,
+    details?: NavigationCommitDetails
+  ): void {
     const tab = this.tab(tabId)
     if (!tab) return
+    const previousUrl = this.committedUrls.get(tabId)
+    this.committedUrls.set(tabId, url)
     // The crash page committing is the crash mark, whatever committed between the renderer's
     // end and it (a restored entry's load that got there first cleared the mark: the sad tab
     // – the crashed favicon, Show tabs – reads from the mark, so it is set again here). A
@@ -1158,11 +1179,26 @@ export class TabManager {
     const transition = this.pendingTransition.get(tabId) ?? 'link'
     this.pendingTransition.delete(tabId)
     const redirectedFrom = inPage ? undefined : this.takeRedirects(tabId, url)
+    // The page replaced itself with this document – `location.replace()`, a meta refresh within
+    // a second, a script's navigation before its load event finished: a commit the page began
+    // that took its own history entry's place, Chromium's `did_replace_entry`, which Chrome's
+    // history reads as a client redirect and folds into the landing's chain (history-23). A host
+    // that cannot tell (the phone) leaves `details` out and the page keeps its row; a page that
+    // came back to its own address reads the same as a reload to the host and keeps it too.
+    const clientRedirectFrom =
+      !inPage &&
+      details?.replacedEntry &&
+      details.initiatedByPage &&
+      previousUrl !== undefined &&
+      previousUrl !== url
+        ? previousUrl
+        : undefined
     if (!this.isPrivate(tab))
       this.browser.history.visit(url, tab.title, tab.favicon, {
         transition,
         tabId,
-        ...(redirectedFrom ? { redirectedFrom } : {})
+        ...(redirectedFrom ? { redirectedFrom } : {}),
+        ...(clientRedirectFrom ? { clientRedirectFrom } : {})
       })
     for (const w of this.browser.allWindows())
       if (w.findResult?.tabId === tabId) w.findResult = null
@@ -1845,6 +1881,7 @@ export class TabManager {
     this.splitLinkFlags.delete(tabId)
     this.splitLinkLoads.delete(tabId)
     this.pendingRedirects.delete(tabId)
+    this.committedUrls.delete(tabId)
     this.crashPagePending.delete(tabId)
     this.browser.externalProtocols.cancelForTab(tabId)
     this.browser.popups.onTabGone(tabId)
