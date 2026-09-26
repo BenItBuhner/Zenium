@@ -142,11 +142,18 @@ object WebAppStore {
 
     /** Any thread but the main one. Failures are swallowed: the intent's extras carry the record too. */
     fun save(context: Context, record: WebAppRecord, tile: Bitmap?) {
-        runCatching {
-            dir(context).mkdirs()
-            recordFile(context, record.shortcutId).writeText(record.toJson().toString())
-            if (tile != null) tileFile(context, record.shortcutId).outputStream().use { tile.compress(Bitmap.CompressFormat.PNG, 100, it) }
-        }
+        runCatching { write(dir(context), record, tile) }
+    }
+
+    /**
+     * The install's write into [dir]: the record as [WebAppRecord.toJson] has it – so a record
+     * written before (a re-install) starts over, its first-launch mark ([WebAppDisclosure.KEY])
+     * with it – and the tile beside it.
+     */
+    fun write(dir: File, record: WebAppRecord, tile: Bitmap?) {
+        dir.mkdirs()
+        File(dir, "${record.shortcutId}.json").writeText(record.toJson().toString())
+        if (tile != null) File(dir, "${record.shortcutId}.png").outputStream().use { tile.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
 
     fun load(context: Context, shortcutId: String): WebAppRecord? =

@@ -112,6 +112,11 @@
          prompt sheet (PermissionPromptSheet, v2 §9.23) – the permission family's question naming the requester,
          with the pair Block | Allow (cct_block, cct_allow) under it. -->
     <string name="webapp_notifications_question">Allow %1$s to show notifications?</string>
+    <!-- PWA-13: the installed app's window says whose it is on the app's first launch (Chrome's "Running in
+         Chrome", IDS_WEBAPK_RUNNING_IN_CHROME's shape) on the §9.33 toast card drawn natively (NativeToastCard,
+         WebAppDisclosure); the product name is app_name, the one action the plain OK. -->
+    <string name="webapp_disclosure">Running in %1$s</string>
+    <string name="webapp_disclosure_ok">OK</string>
 
     <!-- The unresponsive-page prompt (ERR-16) on the native prompt sheet, since the chrome shares the hung renderer. -->
     <string name="unresponsive_description">This page isn’t responding. You can wait for it to respond, or exit the page.</string>

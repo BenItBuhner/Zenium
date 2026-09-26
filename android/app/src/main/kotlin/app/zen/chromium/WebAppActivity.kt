@@ -97,6 +97,9 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
     /** The launch's splash (PWA-06): the platform's window held to the page's first frame, dressed as the app's. */
     private lateinit var startupSplash: StartupSplash
     private lateinit var splash: WebAppSplash
+    /** PWA-13: the first launch's "Running in Zenium" card while it is up ([WebAppDisclosure]); the insets move it. */
+    var disclosure: NativeToastCard? = null
+        private set
 
     /** The page (a fresh view after a renderer crash, see `TabHost.replaceCrashed`). */
     val page: TabWebView? get() = if (::host.isInitialized) host.tabs.get(TAB_ID) else null
@@ -154,6 +157,7 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
             toolbar.setTopInset(bars.top)
             statusStrip.layoutParams = (statusStrip.layoutParams as FrameLayout.LayoutParams).apply { height = bars.top }
             layoutPage()
+            disclosure?.setBottomInset(bottomInset)
             WindowInsetsCompat.CONSUMED
         }
 
@@ -335,8 +339,37 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
                 reportFullyDrawn()
                 startupSplash.ready()
                 Log.i(StartupSplash.TAG, "web app page painted: first frame; splash held ${startupSplash.heldForMs ?: -1} ms, lifted by ${startupSplash.hold.liftedBy ?: "nothing yet"}")
+                discloseOnFirstLaunch()
             }
         })
+    }
+
+    /**
+     * PWA-13: on the install's first launch, once the page is on screen and the splash has lifted,
+     * the window says whose it is – "Running in Zenium" on the §9.33 card with OK – and the launch
+     * is remembered in the app's record, so no later launch says it again. The record's read and
+     * the mark's write are one small file's, off the main thread; the card comes up on it.
+     */
+    private fun discloseOnFirstLaunch() {
+        val record = record
+        Thread({
+            val due = WebAppDisclosure.claimFirstLaunch(this, record, System.currentTimeMillis())
+            Log.i(WebAppDisclosure.TAG, "disclosure ${if (due) "due: the first launch of" else "not due: a later launch of"} ${record.shortcutId}")
+            if (due) shell.post { if (!isFinishing && !isDestroyed && disclosure == null) showDisclosure() }
+        }, "zen-webapp-disclosure").start()
+    }
+
+    private fun showDisclosure() {
+        val card = NativeToastCard(
+            this, V2Ink(this, scheme.dark),
+            text = WebAppDisclosure.text(this),
+            action = getString(R.string.webapp_disclosure_ok),
+            showMs = WebAppDisclosure.SHOW_MS,
+            onGone = { gone -> if (disclosure === gone) disclosure = null }
+        )
+        disclosure = card
+        // Under the fullscreen layer, so a page gone fullscreen covers the card as it covers the chrome's.
+        card.show(shell, bottomInset, shell.indexOfChild(fullscreenLayer))
     }
 
     /**
@@ -509,6 +542,8 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
 
     override fun onDestroy() {
         displayScript?.remove()
+        disclosure?.detach()
+        disclosure = null
         if (::notifications.isInitialized) notifications.destroy()
         if (::startupSplash.isInitialized) startupSplash.cancel()
         if (::host.isInitialized) host.destroy()

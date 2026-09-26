@@ -226,12 +226,50 @@ class WebAppDemo : DemoHarness("pwa-demo-state.json", "android-pwa-display", "we
             return false
         }
         waitForPage(webApp, "/app/")
+        disclosure(f, webApp)
         SystemClock.sleep(2_500)
         shot("design-standalone-$THEME")
         beat()
         describeWindow(webApp, "standalone", THEME_COLOR, expectToolbar = false, expectBarsHidden = false, expectMode = "standalone")
         recents(webApp)
         return true
+    }
+
+    // --- 3b. the first launch's disclosure (PWA-13) --------------------------------------------------
+
+    /**
+     * The install's first launch says whose window it is – "Running in Zenium" on the §9.33 toast
+     * card with OK, drawn natively ([NativeToastCard]) – the still is the lead read's; OK takes the
+     * card away under a real finger; the launch is remembered in the app's own record, so the
+     * relaunch (scene 8) says nothing.
+     */
+    private fun disclosure(f: Finger, webApp: WebAppActivity) {
+        finding("\n3b. The first launch: 'Running in Zenium' on the toast card, once per install (PWA-13)")
+        val text = WebAppDisclosure.text(app)
+        val card = waitFor(text, 6_000)
+        check("the first launch shows '$text' on the toast card", card != null)
+        // The arrival spring's settle, then the still with the card at rest over the page.
+        SystemClock.sleep(900)
+        shot("disclosure-$THEME")
+        val ok = findByLabel(OK_LABEL)
+        check("the card carries the one action, OK", ok != null)
+        val marked = runCatching { WebAppDisclosure.shown(JSONObject(WebAppStore.recordFile(app, webApp.record.shortcutId).readText())) }.getOrDefault(false)
+        check("the launch is remembered in the app's record (${webApp.record.shortcutId}.json: ${WebAppDisclosure.KEY})", marked)
+        if (card != null) {
+            val bottom = onMain { webApp.window.decorView.height }
+            finding("card: $card, ${card.height()} px tall, ${bottom - card.bottom} px above the window's bottom edge")
+        }
+        if (ok != null) {
+            f.tap(ok.exactCenterX(), ok.exactCenterY())
+            val gone = awaitTrue(4_000) { findByLabel(text) == null && onMain { webApp.disclosure == null } }
+            check("OK takes the card away", gone)
+        }
+    }
+
+    /** A fixture launched without the install (minimal-ui, fullscreen): its first-launch disclosure marked ahead, so its design still is the window's alone. */
+    private fun quietFirstLaunch(record: WebAppRecord) {
+        val claimed = WebAppDisclosure.claim(WebAppStore.recordFile(app, record.shortcutId), record, System.currentTimeMillis())
+        finding("${record.name}: first-launch disclosure marked ahead of the launch (${if (claimed) "was due" else "already marked"})")
     }
 
     // --- 4. links inside and outside the scope -----------------------------------------------------
@@ -360,6 +398,8 @@ class WebAppDemo : DemoHarness("pwa-demo-state.json", "android-pwa-display", "we
         val opened = started.webApp ?: return fail("no WebAppActivity came up from the shortcut's intent")
         shot("frames-launch-$THEME")
         beat()
+        // PWA-13: the launch after the first says nothing – the mark scene 3b left in the app's record.
+        check("the relaunch shows no 'Running in Zenium' card (once per install)", findByLabel(WebAppDisclosure.text(app)) == null && onMain { opened.disclosure == null })
         describeWindow(opened, "standalone (relaunched)", THEME_COLOR, expectToolbar = false, expectBarsHidden = false, expectMode = "standalone")
         // A fresh task: finishWebApps() removed the earlier one before this launch, so this is
         // the label read back on the task the launch made, not a task resumed.
@@ -394,6 +434,7 @@ class WebAppDemo : DemoHarness("pwa-demo-state.json", "android-pwa-display", "we
     private fun minimalUi() {
         finding("\n9. minimal-ui: no strip on a phone (Chrome's pose; the design lead's question)")
         val intent = Shortcuts.launchIntent(app, MINI_URL, MINI)
+        quietFirstLaunch(MINI)
         var launch: Launch? = null
         measureFrames("webapp-launch-minimal-ui", JankBudget.Kind.OPEN) {
             launch = launch(intent, "/mini/")
@@ -411,6 +452,7 @@ class WebAppDemo : DemoHarness("pwa-demo-state.json", "android-pwa-display", "we
     private fun fullscreen() {
         finding("\n10. fullscreen: both bars hidden (immersive)")
         val intent = Shortcuts.launchIntent(app, FULL_URL, FULL)
+        quietFirstLaunch(FULL)
         var launch: Launch? = null
         measureFrames("webapp-launch-fullscreen", JankBudget.Kind.OPEN) {
             launch = launch(intent, "/full/")
@@ -866,6 +908,8 @@ class WebAppDemo : DemoHarness("pwa-demo-state.json", "android-pwa-display", "we
         private const val GALLERY_LINK = "gallery"
         private const val NOTES_LINK = "notes"
         private const val CLOSE_LABEL = "Close"
+        /** The disclosure card's one action (webapp_disclosure_ok). */
+        private const val OK_LABEL = "OK"
         private const val MENU_LABEL = "Menu"
         private const val MINIMIZE_LABEL = "Minimize"
         private const val SHARE_LABEL = "Share…"
