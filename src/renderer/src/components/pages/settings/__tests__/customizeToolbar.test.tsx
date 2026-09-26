@@ -76,6 +76,7 @@ function state(settings: Partial<Settings> = {}): UIState {
     settings: { ...DEFAULT_SETTINGS, ...settings },
     shortcuts: defaultShortcuts('linux', 'chrome'),
     searchEngines: DEFAULT_SEARCH_ENGINES,
+    extensionControls: {},
     glance: null,
     compactSidebarRevealed: false,
     window: { id: 'w', kind: 'main', maximized: false, fullscreen: false, focused: true },

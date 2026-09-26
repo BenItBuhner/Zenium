@@ -198,6 +198,7 @@ function state(
     settings: { ...DEFAULT_SETTINGS, ...settings },
     shortcuts: [],
     searchEngines: DEFAULT_SEARCH_ENGINES,
+    extensionControls: {},
     glance: null,
     compactSidebarRevealed: false,
     window: {

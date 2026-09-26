@@ -6,6 +6,7 @@ import {
   type FontFamilySlot,
   type PageFontSettings
 } from '@shared/fonts'
+import { extensionControlled } from './controlled'
 import { FontPickList, FontPreview } from './fontBlocks'
 import { immediateFontsDraft } from './fontsDraft'
 import {
@@ -17,7 +18,7 @@ import {
   formatFontSize,
   stepIndex
 } from './fontsModel'
-import type { RowGroup, SettingsRow } from './model'
+import type { RowControl, RowGroup, SettingsRow } from './model'
 import type { SectionContext } from './sections'
 
 /**
@@ -43,7 +44,25 @@ import type { SectionContext } from './sections'
  * settings) only the standard family and the two sizes are rows – the honest list, as the
  * interface note records – and the standard family's options are the aliases WebView resolves
  * by name.
+ *
+ * A row whose setting an extension holds (`chrome.fontSettings`; `state.extensionControls`
+ * keyed `fonts.<slot>`, `fonts.size`, `fonts.minimumSize`) is drawn controlled
+ * (`RowBase.controlled`, Chrome's extension-controlled indicator): the row shows the value in
+ * effect – the extension's (`RowControl.value`), as Chrome's fonts page shows the preference's
+ * effective value in its disabled dropdown – and the indicator row under it names the
+ * extension and disables it. The preview renders in the effective fonts, what a page gets;
+ * the user's own values stay in the setting underneath and stand again when the extension
+ * lets go, so Reset keeps to them: it resets the user's, and a held preference stays the
+ * extension's until it is disabled, as in Chrome.
  */
+
+/** A held preference's value from its control when it is of the setting's type; else the setting's own. */
+function heldFamily(control: RowControl | undefined, own: string | null): string | null {
+  return typeof control?.value === 'string' && control.value !== '' ? control.value : own
+}
+function heldSize(control: RowControl | undefined, own: number): number {
+  return typeof control?.value === 'number' ? control.value : own
+}
 
 /**
  * The group: sizes, families, preview, Reset. The size and family rows come in two forms by
@@ -84,18 +103,34 @@ export function fontsGroups({
     if (minimumSize !== fonts.minimumSize) draft.step({ minimumSize })
   }
   const minimumDescription = 'The smallest text a page may use.'
+  // The extension holding a row's setting, if one does: both of a row's forms carry it, and
+  // show its value – the one in effect – over the user's own (`effective`, what a page gets).
+  const sizeControl = extensionControlled(state, 'fonts.size')
+  const minimumControl = extensionControlled(state, 'fonts.minimumSize')
+  const slots: FontFamilySlot[] = generic
+    ? ['standard', 'serif', 'sansSerif', 'fixed']
+    : ['standard']
+  const slotControls = new Map(
+    slots.map((slot) => [slot, extensionControlled(state, `fonts.${slot}`)] as const)
+  )
+  const effective: PageFontSettings = { ...fonts }
+  effective.size = heldSize(sizeControl, fonts.size)
+  effective.minimumSize = heldSize(minimumControl, fonts.minimumSize)
+  for (const slot of slots) effective[slot] = heldFamily(slotControls.get(slot), fonts[slot])
+
   const rows: SettingsRow[] = [
     {
       kind: 'slider',
       id: 'fonts-size-phone',
       label: 'Font size',
       keywords,
+      controlled: sizeControl,
       layouts: ['phone'],
-      value: stepIndex(FONT_SIZE_STEPS, fonts.size),
+      value: stepIndex(FONT_SIZE_STEPS, effective.size),
       min: 0,
       max: FONT_SIZE_STEPS.length - 1,
       step: 1,
-      format: (i) => formatFontSize(FONT_SIZE_STEPS[i] ?? fonts.size),
+      format: (i) => formatFontSize(FONT_SIZE_STEPS[i] ?? effective.size),
       onChange: (i) => {
         const size = FONT_SIZE_STEPS[i]
         if (size !== undefined) stepSize(size)
@@ -108,9 +143,10 @@ export function fontsGroups({
       id: 'fonts-size',
       label: 'Font size',
       keywords,
+      controlled: sizeControl,
       layouts: ['desktop', 'tablet'],
-      value: String(fonts.size),
-      options: fontSizeOptions(FONT_SIZE_STEPS, fonts.size),
+      value: String(effective.size),
+      options: fontSizeOptions(FONT_SIZE_STEPS, effective.size),
       onChange: (v) => setSize(Number(v))
     },
     {
@@ -119,12 +155,13 @@ export function fontsGroups({
       label: 'Minimum font size',
       description: minimumDescription,
       keywords,
+      controlled: minimumControl,
       layouts: ['phone'],
-      value: stepIndex(MINIMUM_FONT_SIZE_STEPS, fonts.minimumSize),
+      value: stepIndex(MINIMUM_FONT_SIZE_STEPS, effective.minimumSize),
       min: 0,
       max: MINIMUM_FONT_SIZE_STEPS.length - 1,
       step: 1,
-      format: (i) => formatFontSize(MINIMUM_FONT_SIZE_STEPS[i] ?? fonts.minimumSize),
+      format: (i) => formatFontSize(MINIMUM_FONT_SIZE_STEPS[i] ?? effective.minimumSize),
       onChange: (i) => {
         const minimumSize = MINIMUM_FONT_SIZE_STEPS[i]
         if (minimumSize !== undefined) stepMinimumSize(minimumSize)
@@ -138,28 +175,28 @@ export function fontsGroups({
       label: 'Minimum font size',
       description: minimumDescription,
       keywords,
+      controlled: minimumControl,
       layouts: ['desktop', 'tablet'],
-      value: String(fonts.minimumSize),
-      options: fontSizeOptions(MINIMUM_FONT_SIZE_STEPS, fonts.minimumSize),
+      value: String(effective.minimumSize),
+      options: fontSizeOptions(MINIMUM_FONT_SIZE_STEPS, effective.minimumSize),
       onChange: (v) => setMinimumSize(Number(v))
     }
   ]
 
-  const slots: FontFamilySlot[] = generic
-    ? ['standard', 'serif', 'sansSerif', 'fixed']
-    : ['standard']
   for (const slot of slots) {
-    const current = fonts[slot]
+    const current = effective[slot]
     const options = familyOptions(current, generic ? (localFonts ?? null) : null, generic)
     const value = current ?? DEFAULT_FAMILY
     const pick = (next: string): void => patch({ [slot]: next === DEFAULT_FAMILY ? null : next })
     const label = SLOT_LABELS[slot]
+    const controlled = slotControls.get(slot)
     rows.push(
       {
         kind: 'value',
         id: `fonts-${slot}`,
         label,
         keywords,
+        controlled,
         layouts: ['desktop', 'tablet'],
         value,
         options,
@@ -172,6 +209,7 @@ export function fontsGroups({
         label,
         description: options.find((o) => o.value === value)?.label ?? value,
         keywords,
+        controlled,
         layouts: ['phone'],
         form: {
           title: label,
@@ -197,7 +235,7 @@ export function fontsGroups({
     label: 'Preview',
     keywords,
     bare: true,
-    render: () => <FontPreview fonts={fonts} platform={state.platform} />
+    render: () => <FontPreview fonts={effective} platform={state.platform} />
   })
 
   if (!isDefaultFontSettings(fonts)) {

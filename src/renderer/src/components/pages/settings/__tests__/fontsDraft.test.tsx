@@ -52,12 +52,13 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-/** The phone host's state as far as the group reads it: the fonts, no generic slots, the platform for the preview. */
+/** The phone host's state as far as the group reads it: the fonts, no generic slots, the platform for the preview, no extension holding a row. */
 function phoneState(fonts: PageFontSettings): UIState {
   return {
     platform: 'android',
     capabilities: { genericFontFamilies: false },
-    settings: { fonts }
+    settings: { fonts },
+    extensionControls: {}
   } as unknown as UIState
 }
 

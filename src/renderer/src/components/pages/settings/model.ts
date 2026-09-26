@@ -31,6 +31,18 @@ export interface RowBase {
   /** A dependent row whose parent is off: 40%, still laid out, not pressable (§10.4). */
   disabled?: boolean
   /**
+   * An extension holds the setting this row sets (`UIState.extensionControls`, Chrome's
+   * extension-controlled indicator; §10.5's controlled-setting primitive): the row is drawn
+   * as a dependent row – its control disabled showing the value in effect, the row at .4, no
+   * press – and the indicator row stands after it, full ink, the way out: "Controlled by
+   * <name>" over "An extension sets this. Disable it to use your own value.", trailing one
+   * control – the desktop's 32 secondary Disable button; on the phone a §10.4 action row
+   * whose chevron opens the extension's own page, where its switch is. Consecutive rows one
+   * extension holds share one indicator row after the run (`controlledRuns`).
+   * `extensionControlled` builds it from the state for a setting key.
+   */
+  controlled?: RowControl
+  /**
    * The chrome layouts the row exists on, when what it sets is a control one shell alone has:
    * the phone bar's position and its editor are the phone shell's, the URL bar's full addresses
    * the desktop and tablet shells'. `onLayout` leaves the row out of the other layouts' pages –
@@ -47,6 +59,60 @@ export interface RowBase {
    * Nothing for a group's first row (no run above it) or a row shown alone (a search result).
    */
   hairline?: boolean
+}
+
+/**
+ * The extension holding a row's setting (`RowBase.controlled`; the shared `ExtensionControl`
+ * with the ways out attached): Disable goes through the host's own path, the one the Extensions
+ * page's switch takes, and the host drops the extension's layer – the row re-enables through
+ * the same state that disabled it.
+ */
+export interface RowControl {
+  extensionId: string
+  /** The extension's name as it names itself, the one the Extensions page shows. */
+  name: string
+  /**
+   * The extension's value, in effect over the user's own: the held row shows it in its
+   * disabled control, as Chrome's Settings shows the preference's effective value. Absent,
+   * the row keeps to the setting's value.
+   */
+  value?: string | number | boolean
+  /** Disable the extension: the desktop indicator row's button (§10.5). */
+  onDisable(): void
+  /**
+   * Open the extension's own page – Settings › Extensions with its details open, where its
+   * switch is (`manageExtension`): the phone indicator row's press (§10.4: an action row with
+   * a chevron; a row that disabled on a tap would be too easy to hit, so the phone never
+   * disables inline).
+   */
+  onManage(): void
+}
+
+/**
+ * Where the indicator rows stand among a group's rows (§10.5's controlled-setting primitive,
+ * one row per run): consecutive rows the same extension holds are one run and share one
+ * "Controlled by <name>" row after it – a run of one is the row's own – and a held row an
+ * unheld row (or another extension's) separates from the run begins a run of its own. Per row,
+ * the length of the run the row closes, 0 for every other row; a drawer puts the indicator
+ * after each row whose count is not 0, its words plural past 1.
+ */
+export function controlledRuns(rows: readonly SettingsRow[]): number[] {
+  const out: number[] = rows.map(() => 0)
+  let length = 0
+  rows.forEach((row, index) => {
+    const control = row.controlled
+    if (!control) {
+      length = 0
+      return
+    }
+    length += 1
+    const next = rows[index + 1]?.controlled
+    if (!next || next.extensionId !== control.extensionId) {
+      out[index] = length
+      length = 0
+    }
+  })
+  return out
 }
 
 export interface RowOption {

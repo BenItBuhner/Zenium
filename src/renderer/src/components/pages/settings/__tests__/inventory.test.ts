@@ -203,6 +203,7 @@ function desktopState(): UIState {
     ],
     searchEngines: DEFAULT_SEARCH_ENGINES,
     searchEngineControl: null,
+    extensionControls: {},
     glance: null,
     compactSidebarRevealed: false,
     window: {

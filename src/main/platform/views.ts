@@ -55,16 +55,20 @@ import {
 } from '../../shared/pageDialogIpc'
 import type { FormsCommand } from '../../shared/forms'
 import {
-  cdpFontFamilies,
-  cdpFontFamilyChanges,
-  chromiumFontPreferences,
+  cdpEffectiveFamilies,
+  cdpEffectiveFamilyChanges,
+  chromiumEffectiveFontPreferences,
   DEFAULT_FONT_SETTINGS,
-  electronFontDefaults,
+  effectiveFonts,
+  effectiveFontsAsMade,
+  effectiveSizesMove,
+  electronGenericFontDefaults,
   FONT_RESTYLE_SCRIPT,
-  fontSizesMove,
   sanitizeFontSettings,
+  type CdpFamilies,
   type ChromiumFontPreferences,
-  type FontFamilySlot,
+  type EffectiveFonts,
+  type ExtensionFontLayer,
   type PageFontSettings
 } from '../../shared/fonts'
 import { defer } from '../../core/platform'
@@ -234,14 +238,23 @@ interface UnloadCheck {
  * the engine's terms. Web preferences are read once, as a page's contents are made; a page
  * already open takes a change over the DevTools protocol (`ElectronTabView.applyFonts`).
  */
-let pageFonts: ChromiumFontPreferences = chromiumFontPreferences(DEFAULT_FONT_SETTINGS)
-/** The setting behind `pageFonts` (what an open page is brought to). */
-let pageFontSettings: PageFontSettings = DEFAULT_FONT_SETTINGS
+let pageFonts: ChromiumFontPreferences = chromiumEffectiveFontPreferences(
+  effectiveFonts(DEFAULT_FONT_SETTINGS, null)
+)
+/** The user's setting as the core last handed it over (`ElectronTabViewHost.applyFonts`). */
+let userFontSettings: PageFontSettings = DEFAULT_FONT_SETTINGS
+/**
+ * What the extensions holding `chrome.fontSettings` control, over the user's setting
+ * (`ElectronTabViewHost.applyExtensionFonts`); null while none does.
+ */
+let extensionFonts: ExtensionFontLayer | null = null
+/** The fonts behind `pageFonts` (what an open page is brought to): the setting with the extensions' layer over it. */
+let pageFontSettings: EffectiveFonts = effectiveFonts(DEFAULT_FONT_SETTINGS, null)
 /** The families a page has where the setting names none: Chrome's for this OS, as Electron installs them. */
-const FONT_DEFAULTS = electronFontDefaults(process.platform)
+const FONT_DEFAULTS = electronGenericFontDefaults(process.platform)
 
 /** One string per font setting, so a page knows whether it has the one that stands. */
-function fontsKey(fonts: PageFontSettings): string {
+function fontsKey(fonts: EffectiveFonts): string {
   return JSON.stringify(fonts)
 }
 
@@ -274,9 +287,22 @@ function sameCommand(a: CdpCommand | null, b: CdpCommand | null): boolean {
   return a.method === b.method && JSON.stringify(a.params) === JSON.stringify(b.params)
 }
 
-/** The setting behind a page's `fontsKey` (what it has), for the restyle decision in `sendFonts`. */
-function fontsOf(key: string): PageFontSettings {
-  return sanitizeFontSettings(JSON.parse(key))
+/** The fonts behind a page's `fontsKey` (what it has), for the restyle decision in `sendFonts`. */
+function fontsOf(key: string): EffectiveFonts {
+  const parsed = JSON.parse(key) as Partial<EffectiveFonts>
+  const settings = sanitizeFontSettings(parsed.settings)
+  const size = typeof parsed.settings?.size === 'number' ? parsed.settings.size : settings.size
+  const minimumSize =
+    typeof parsed.settings?.minimumSize === 'number'
+      ? parsed.settings.minimumSize
+      : settings.minimumSize
+  return {
+    // An extension's size is Chrome's integer, not the setting's 9–72: kept as sent.
+    settings: { ...settings, size, minimumSize },
+    fixedSize: typeof parsed.fixedSize === 'number' ? parsed.fixedSize : 0,
+    extras: parsed.extras ?? {},
+    scripts: parsed.scripts ?? {}
+  }
 }
 
 /** What every tab page runs with; `session` picks the container (omitted for pages that exist). */
@@ -403,10 +429,14 @@ export class ElectronTabView implements TabView {
    * then whatever a live change brought it to. Compared with the setting on each change and
    * each navigation (`applyFonts`, `refreshFonts`).
    */
-  private fontsApplied = fontsKey(pageFontSettings)
-  /** The families the page has by slot, so `Page.setFontFamilies` (once per agent) names only what changes. */
-  private familiesApplied: Record<FontFamilySlot, string> = cdpFontFamilies(
-    pageFontSettings,
+  private fontsApplied = fontsKey(effectiveFontsAsMade(pageFontSettings))
+  /**
+   * The families the page has by slot (and per script), so `Page.setFontFamilies` (once per
+   * agent) names only what changes. Web preferences carry no per-script family: a page is made
+   * without them and takes the extensions' over the protocol once its first navigation commits.
+   */
+  private familiesApplied: CdpFamilies = cdpEffectiveFamilies(
+    effectiveFontsAsMade(pageFontSettings),
     FONT_DEFAULTS
   )
   /** What the page's web preferences were made from: where the engine takes it back to. */
@@ -1753,27 +1783,27 @@ export class ElectronTabView implements TabView {
     this.refreshFonts()
   }
 
-  private async sendFonts(fonts: PageFontSettings, key: string): Promise<void> {
+  private async sendFonts(fonts: EffectiveFonts, key: string): Promise<void> {
     if (this.wc.isDestroyed()) return
     // An extension's session is left alone: the change waits for the page's next load.
     if (hasForeignDebuggerOwner(this.wc.id)) return
-    const families = cdpFontFamilies(fonts, FONT_DEFAULTS)
+    const families = cdpEffectiveFamilies(fonts, FONT_DEFAULTS)
     // Only the slots that move are named: a family the user never chose keeps the engine's face.
-    const changes = cdpFontFamilyChanges(this.familiesApplied, families)
-    const sizes = chromiumFontPreferences(fonts)
+    const changes = cdpEffectiveFamilyChanges(this.familiesApplied, families)
+    const sizes = chromiumEffectiveFontPreferences(fonts)
     // What the page shows follows a size on its own; a family alone must be asked for.
-    const restyle = changes !== null && !fontSizesMove(fontsOf(this.fontsApplied), fonts)
+    const restyle = changes !== null && !effectiveSizesMove(fontsOf(this.fontsApplied), fonts)
     try {
       await this.withDebugger(async (session) => {
         if (changes) {
           try {
-            await session.sendCommand('Page.setFontFamilies', { fontFamilies: changes })
+            await session.sendCommand('Page.setFontFamilies', changes)
           } catch (error) {
             if (!/only be set once/i.test(String(error))) throw error
             // A long-lived session (the governor's overrides, the dark theme hold) set families
             // before: a fresh agent takes the new ones, the holds' overrides go back on it.
             await this.recycleSession()
-            await session.sendCommand('Page.setFontFamilies', { fontFamilies: changes })
+            await session.sendCommand('Page.setFontFamilies', changes)
           }
           this.familiesApplied = families
         }
@@ -2581,8 +2611,27 @@ export class ElectronTabViewHost implements TabViewHost {
    * (`ElectronTabView.refreshFonts`).
    */
   applyFonts(fonts: PageFontSettings): void {
-    pageFontSettings = fonts
-    pageFonts = chromiumFontPreferences(fonts)
+    userFontSettings = fonts
+    this.refontPages()
+  }
+
+  /**
+   * The extensions' layer beside the setting (`chrome.fontSettings`, `platform/extensionApi/
+   * fontSettings.ts`): the per-script families, the cursive, fantasy and math families and the
+   * fixed-width size the extensions holding the permission control – the preferences the page
+   * fonts setting has no slot for – laid over the fonts every page has, open pages over the
+   * protocol (`Page.setFontFamilies` with `forScripts`, `Page.setFontSizes`), new ones through
+   * their web preferences, exactly as the setting itself is. The setting is never written:
+   * null takes the layer off and the fonts stand again as the pages had them.
+   */
+  applyExtensionFonts(layer: ExtensionFontLayer | null): void {
+    extensionFonts = layer
+    this.refontPages()
+  }
+
+  private refontPages(): void {
+    pageFontSettings = effectiveFonts(userFontSettings, extensionFonts)
+    pageFonts = chromiumEffectiveFontPreferences(pageFontSettings)
     for (const view of this.byWebContentsId.values()) view.refreshFonts()
   }
 
@@ -2618,7 +2667,7 @@ export class ElectronTabViewHost implements TabViewHost {
 
   /** The page fonts every new page view is made with right now (for the tests). */
   static currentFonts(): PageFontSettings {
-    return pageFontSettings
+    return userFontSettings
   }
 
   /** Follow the window's own chrome for the keyboard, as every tab page in it is followed. */

@@ -638,6 +638,12 @@ export class ElectronPlatform implements Platform {
     // so do the request-side effects of chrome.privacy (pings, Referer, DNT).
     extensionApi.webRequest.attach(this.requestBlocking)
     extensionApi.privacy.attach(this.requestBlocking)
+    // chrome.fontSettings' per-script families, cursive/fantasy/math and fixed-width size have
+    // no slot in the page fonts setting: they reach the pages through the views' font layer.
+    extensionApi.fontSettings.attachPages({
+      locale: app.getLocale(),
+      applyExtensionFonts: (layer) => this.views.applyExtensionFonts(layer)
+    })
     // `chrome-extension://<id>/_favicon/` requests go to the served origin's route (Electron's
     // loader would leave them hanging), for extensions granted the `favicon` permission.
     this.requestBlocking.multiplexer.register(
