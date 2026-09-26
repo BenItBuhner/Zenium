@@ -43,6 +43,21 @@ describe('the phone choice list’s box (§9.39)', () => {
     expect(phoneSearchChoiceListHeight({ ...tall, available: 600 })).toBe(8 + 7 * 76 - 4 + 36)
   })
 
+  it('at the phone’s density the German list folds at six and a half on a 915 frame, four and a half on 732', () => {
+    // §9.34's two-line row: 64 with 12 inside, 84 on an 88 pitch where a line wraps (Germany's
+    // eight all stand 84: 8 × 88 − 4 + 8 = 708 whole). Measured on the preview host at 412 wide,
+    // `?region=DE`: the column leaves the list 651 under the title block at 915 and 468 at 732.
+    const phone = { row: 84, gap: 4, ring: 4, count: 8 }
+    expect(phoneSearchChoiceListHeight({ ...phone, available: 651 })).toBe(8 + 6 * 88 - 4 + 42)
+    expect(phoneSearchChoiceListHeight({ ...phone, available: 468 })).toBe(8 + 4 * 88 - 4 + 42)
+    expect(phoneSearchChoiceListHeight({ ...phone, available: 708 })).toBeNull()
+    // A list whose lines all fit at the phone's density – 64 on 68, 548 whole – shows whole in
+    // the 915 frame's 651 and folds at six and a half (the cut at 32) in the 732 frame's 468.
+    const plain = { row: 64, gap: 4, ring: 4, count: 8 }
+    expect(phoneSearchChoiceListHeight({ ...plain, available: 651 })).toBeNull()
+    expect(phoneSearchChoiceListHeight({ ...plain, available: 468 })).toBe(8 + 6 * 68 - 4 + 32)
+  })
+
   it('measures nothing before layout: an unmeasured tile or an empty list caps nothing', () => {
     expect(phoneSearchChoiceListHeight({ ...desktop, row: 0, available: 300 })).toBeNull()
     expect(phoneSearchChoiceListHeight({ ...desktop, count: 0, available: 300 })).toBeNull()

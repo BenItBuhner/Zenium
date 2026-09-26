@@ -656,12 +656,12 @@ function pxOf(value: string): number {
 }
 
 /**
- * One engine of the choice screen as §9.39's tile in the phone's inks: 52 tall on a 56 pitch
- * at radius 8 inside the tour's 16 gutter (the desktop's numbers: one panel drawn one way in
- * its three seats), the engine's mark at 24 in a 32 box, the name 15/500 over the engine's own
+ * One engine of the choice screen as §9.39's tile at the phone's density (§9.34): the two-line
+ * row, 64 tall on a 68 pitch (84 on 88 where a line wraps) at radius 8 inside the tour's 16
+ * gutter, the engine's mark at 24 in a 32 box, the name 15/500 over the engine's own
  * line at 13 in the deemphasised ink, the radio mark trailing and centred (the row is one
  * tile), the picked row in the window's accent at .12. The line is whole – no clamp, no
- * ellipsis; a line the phone's 280 column cannot hold on one line wraps, and the list's grid
+ * ellipsis; a line the phone's 270 column cannot hold on one line wraps, and the list's grid
  * gives every tile the tallest tile's height, so no engine's tile stands out (the stylesheet's
  * rule). The whole row is the radio; its accessible name is the engine's (the line is read as
  * its description).

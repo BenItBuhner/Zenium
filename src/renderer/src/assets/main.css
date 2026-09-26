@@ -6550,15 +6550,18 @@
    * The EEA's search-engine choice screen on the phone (W6-2 / OMN-26; `PhoneSearchChoiceStep`
    * in overlays/PhoneOnboarding.tsx, for the tour's search step and the standalone
    * `PhoneSearchChoiceScreen`): §9.39's one panel in its phone seat, and where §9.39 and the
-   * tour's chassis meet §9.39 wins for the tiles and the scroller. Every tile equal: 52 tall on a
-   * 56 pitch at radius 8 – the desktop's two-line row (20 + 20 + 12; §9.39's number, not the
-   * phone's 64) with 6 12 inside and the tiles 4 apart, inset to the tour's 16 gutter – the
-   * engine's own mark at 24 in a 32 box on its own ground (content, exempt from the token rule
+   * tour's chassis meet §9.39 wins for the tiles and the scroller. Every tile equal, at the
+   * PHONE's density (§9.34: one primitive, two densities by pointer – §9.39's 52 on 56 is the
+   * mouse's; the tablet's list draws 64 on 68 under the coarse pointer already): the two-line
+   * row token, `--v2-row-two-line` (64 on the phone: 20 + 20 + 24), on a 68 pitch at radius 8
+   * with 12 inside and the tiles 4 apart, inset to the tour's 16 gutter – 84 on 88 where a
+   * line wraps (below) – the engine's own mark at 24 in a 32 box on its own ground (content,
+   * exempt from the token rule
    * as favicons are, §9.29), the name 15/500 over the engine's own line at 13 in the
    * deemphasised ink, the tour's radio mark (20 on the phone) trailing and centred since the row
    * is one tile, the picked row in the window's accent at .12 (never `--v2-selected`, the page
    * family's), the press in the control fill. No border: the fill says which row is picked,
-   * the mark says it twice. The phone's text column is 280 (412 − the gutters, the tile's 6 12,
+   * the mark says it twice. The phone's text column is 270 (412 − the gutters, the tile's 12,
    * the mark's box, the radio and the gaps) where the desktop panel's is 480, so a line chosen
    * to fit the panel at 13 may not fit here (Qwant's and Bing's on the DE list): rather than a
    * cut or an ellipsis – a lone cut on one engine is the distinction §9.39 forbids – the line
@@ -6588,11 +6591,11 @@
   .zen-firstrun-choice {
     display: flex;
     width: 100%;
-    min-height: calc(var(--v2-line-body-box) + var(--v2-line-small-box) + 12px);
+    min-height: var(--v2-row-two-line);
     flex-shrink: 0;
     align-items: center;
     gap: 12px;
-    padding: 6px 12px;
+    padding: 12px;
     border-radius: var(--v2-radius-card);
     color: inherit;
     text-align: left;
