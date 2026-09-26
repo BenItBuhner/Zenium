@@ -1290,15 +1290,19 @@ describe('a hidden tab page and the window', () => {
     const v = view.view as unknown as { getVisible(): boolean; bounds: unknown; radius: number }
     return { visible: v.getVisible(), bounds: v.bounds, radius: v.radius }
   }
-  /** Where a parked view stands: its box, moved so only its top-left pixel is inside the window. */
-  const parkedAt = (b: typeof box): typeof box => ({
-    x: b.x + b.width - 1,
-    y: b.y + b.height - 1,
+  /**
+   * Where a parked view stands: its box, moved so only one corner pixel of it is inside the
+   * window, in the window content's corner (0 bottom-right, 1 bottom-left, 2 top-right, 3
+   * top-left; the fake window's content is 1280×820).
+   */
+  const parkedAt = (b: typeof box, corner = 0, content = [1280, 820]): typeof box => ({
+    x: corner % 2 === 0 ? content[0] - 1 : -(b.width - 1),
+    y: corner < 2 ? content[1] - 1 : -(b.height - 1),
     width: b.width,
     height: b.height
   })
 
-  it('is parked, not hidden, when chrome UI covers the page: shown to the engine at its size, one pixel inside the window under a rounded corner (W6-F5)', () => {
+  it('is parked, not hidden, when chrome UI covers the page: shown to the engine at its size, one pixel inside the window’s corner under a rounded corner (W6-F5)', () => {
     const { host, window, create } = setup()
     const view = create()
     const flips: boolean[] = []
@@ -1340,30 +1344,59 @@ describe('a hidden tab page and the window', () => {
     expect(engine(view).radius).toBe(2)
   })
 
-  it('takes a new box parked, at the new box’s corner, until the layout shows it', () => {
+  it('takes a new box parked, at the new box’s size in the window’s corner, until the layout shows it', () => {
     const { window, create } = setup()
     const view = create()
     view.setBounds(box)
     view.setVisible(true)
     window.zen.contentHidden = true
     view.setVisible(false)
-    const wider = { x: 0, y: 40, width: 1000, height: 700 }
-    view.setBounds(wider)
-    expect(engine(view).bounds).toEqual(parkedAt(wider))
+    // The window shrinks under the cover: the layout speaks of a new box, and the pixel moves
+    // with the window's corner.
+    window.win.contentSize = [1000, 760]
+    const smaller = { x: 0, y: 40, width: 1000, height: 700 }
+    view.setBounds(smaller)
+    expect(engine(view).bounds).toEqual(parkedAt(smaller, 0, [1000, 760]))
     window.zen.contentHidden = false
     view.setVisible(true)
-    expect(engine(view).bounds).toEqual(wider)
+    expect(engine(view).bounds).toEqual(smaller)
   })
 
-  it('keeps the parked pixel inside the window’s content when the box outruns it (a window shrinking under the cover)', () => {
+  it('gives each pane of a split parked under the cover its own window corner, so none stands under another’s pixel', () => {
     const { window, create } = setup()
-    const view = create()
-    view.setBounds({ x: 0, y: 40, width: 1400, height: 900 })
-    view.setVisible(true)
-    window.win.contentSize = [1280, 820]
+    const panes = [create(), create(), create(), create(), create()]
+    const boxes = panes.map((_, i) => ({ x: i * 250, y: 40, width: 240, height: 700 }))
+    panes.forEach((pane, i) => {
+      pane.setBounds(boxes[i])
+      pane.setVisible(true)
+    })
     window.zen.contentHidden = true
-    view.setVisible(false)
-    expect(engine(view).bounds).toEqual({ x: 1279, y: 819, width: 1400, height: 900 })
+    for (const pane of panes) pane.setVisible(false)
+    // Four corners for four panes; a fifth shares the last.
+    expect(panes.map((p) => p.parkedCorner())).toEqual([0, 1, 2, 3, 3])
+    expect(engine(panes[1]).bounds).toEqual(parkedAt(boxes[1], 1))
+    expect(engine(panes[2]).bounds).toEqual(parkedAt(boxes[2], 2))
+    expect(engine(panes[3]).bounds).toEqual(parkedAt(boxes[3], 3))
+    // The cover lifts with the first pane closed meanwhile: its corner is free for the next.
+    window.zen.contentHidden = false
+    panes[0].coverLifted()
+    expect(panes[0].parkedCorner()).toBeNull()
+    panes.slice(1).forEach((pane, i) => {
+      pane.setBounds(boxes[i + 1])
+      pane.setVisible(true)
+    })
+    expect(panes.map((p) => p.parkedCorner())).toEqual([null, null, null, null, null])
+    window.zen.contentHidden = true
+    panes[4].setVisible(false)
+    expect(panes[4].parkedCorner()).toBe(0)
+    // Another window's parked view takes no corner of this one's.
+    const other = fakeWindow()
+    const elsewhere = create(other)
+    elsewhere.setBounds(box)
+    elsewhere.setVisible(true)
+    other.zen.contentHidden = true
+    elsewhere.setVisible(false)
+    expect(elsewhere.parkedCorner()).toBe(0)
   })
 
   it('hides the view as before when no chrome covers the page: a tab switch, a chrome page tab, a move between windows', () => {

@@ -154,12 +154,22 @@ const SNAPSHOT_TARGET_PIXELS = 3_700_000
 const SNAPSHOT_JPEG_QUALITY = 90
 
 /**
- * The corner radius a parked view wears (`park`): its one pixel still inside the window is the
- * box's top-left, and at a radius of 4 or more that pixel lies wholly outside the rounded rect
- * (the corner's arc is at (4, 4); the pixel's far corner (1, 1) is 4.24 away), so the layer's
- * mask shows none of it – the chrome's picture under the cover is the only thing on screen.
+ * The corner radius a parked view wears (`park`): its one pixel still inside the window is a
+ * corner pixel of its box, and at a radius of 4 or more that pixel lies wholly outside the rounded
+ * rect (the corner's arc is centred 4 in from the corner; the pixel's far corner is 4.24 away), so
+ * the layer's mask shows none of it – the chrome's picture under the cover is the only thing on
+ * screen.
  */
 const PARK_RADIUS = 4
+
+/**
+ * The window corners a parked view can keep its pixel in (`park`): 0 the window's bottom-right
+ * (the box's top-left pixel inside), 1 bottom-left (the box's top-right pixel), 2 top-right (its
+ * bottom-left), 3 top-left (its bottom-right). Each parked view of a window takes its own, so no
+ * view's pixel sits under another's – a view whose whole inside lies under another view is
+ * OCCLUDED to Chromium, as good as hidden. A fifth parked view shares a corner.
+ */
+const PARK_CORNERS = 4
 
 /** Keys that never count as a gesture in Chromium's user-activation model. */
 const NON_ACTIVATING_KEYS = new Set(['Escape', 'Shift', 'Control', 'Alt', 'Meta', 'AltGr'])
@@ -425,10 +435,11 @@ export class ElectronTabView implements TabView {
   /** The corner radius the chrome last gave the box (`setBorderRadius`). */
   private radius = 0
   /**
-   * Whether the engine's view stands parked under a chrome cover rather than hidden (`park`):
-   * shown, at its size, with one pixel still inside the window. Never true while `visible` is.
+   * The window corner the engine's view stands parked in under a chrome cover rather than hidden
+   * (`park`): shown, at its size, with one pixel still inside the window; null when not parked.
+   * Never set while `visible` is.
    */
-  private parked = false
+  private parked: number | null = null
   /** The user chose to leave: the next `beforeunload` objection is overruled. */
   private leaveApproved = false
   /** The last navigation this host started, for the "Leave site?" replay. */
@@ -1270,12 +1281,12 @@ export class ElectronTabView implements TabView {
     this.bounds = rect
     // A parked view takes its new box parked: the layout that shows it again sets the box first
     // and `setVisible(true)` puts the view in it.
-    this.view.setBounds(this.parked ? this.parkedBox(rect) : rect)
+    this.view.setBounds(this.parked === null ? rect : this.parkedBox(rect, this.parked))
   }
 
   setBorderRadius(radius: number): void {
     this.radius = radius
-    this.view.setBorderRadius(this.parked ? Math.max(radius, PARK_RADIUS) : radius)
+    this.view.setBorderRadius(this.parked === null ? radius : Math.max(radius, PARK_RADIUS))
   }
 
   /**
@@ -1295,7 +1306,8 @@ export class ElectronTabView implements TabView {
    * for most pages is never. Chrome keeps the page visible under its own popups, and a
    * speculation rule in a page loaded under Zenium's omnibox dropdown (the address on the command
    * line, a fresh profile) never prefetched at all. A parked view keeps its size and stays shown
-   * with one pixel inside the window, which Chromium counts as VISIBLE: the page keeps painting,
+   * with one corner pixel in a corner of the window, under its rounded corner (`PARK_RADIUS`:
+   * nothing of it on screen), which Chromium counts as VISIBLE: the page keeps painting,
    * `document.visibilityState` stays `visible`, its prefetches run, and the view comes back with
    * `setVisible(true)` untouched, as Chrome's pages do from under a popup. The window's host ends
    * the parking of a view the next uncovered layout leaves out (`coverLifted`: a tab switched
@@ -1310,12 +1322,12 @@ export class ElectronTabView implements TabView {
       // before (`setBounds`), as the popup surface is placed: added, then shown.
       const win = this.win
       if (win) this.enterWindow(win)
-      if (this.parked) this.unpark()
+      if (this.parked !== null) this.unpark()
       this.view.setVisible(true)
     } else if (this.coverable()) {
       this.park()
     } else {
-      if (this.parked) this.unpark()
+      if (this.parked !== null) this.unpark()
       this.view.setVisible(false)
     }
     if (flipped) {
@@ -1342,35 +1354,48 @@ export class ElectronTabView implements TabView {
   }
 
   /**
-   * The box a parked view stands in: its own size, moved so that only its top-left pixel is
-   * still inside the window, at the box's bottom-right corner (clamped to the window's content,
-   * should the box outrun a window mid-resize). Each pane of a split keeps its own corner, so
-   * none is occluded by another's pixel.
+   * The box a parked view stands in: its own size, moved so that only one of its corner pixels
+   * is still inside the window, in the window content's corner `corner` (`PARK_CORNERS`). The
+   * page's box ends short of the window's edge (the frame around it), so it is the window's
+   * corner pixel and not the box's that the view keeps – anything more of the view inside the
+   * window would show beside the frame.
    */
-  private parkedBox(rect: Rect): Rect {
-    let x = rect.x + rect.width - 1
-    let y = rect.y + rect.height - 1
+  private parkedBox(rect: Rect, corner: number): Rect {
     const win = this.win
-    if (win) {
-      const [width, height] = win.getContentSize()
-      x = Math.min(x, width - 1)
-      y = Math.min(y, height - 1)
+    const [width, height] = win ? win.getContentSize() : [rect.x + rect.width, rect.y + rect.height]
+    const right = corner % 2 === 0
+    const bottom = corner < 2
+    return {
+      x: right ? width - 1 : -(rect.width - 1),
+      y: bottom ? height - 1 : -(rect.height - 1),
+      width: rect.width,
+      height: rect.height
     }
-    return { x: Math.max(0, x), y: Math.max(0, y), width: rect.width, height: rect.height }
   }
 
   private park(): void {
     const rect = this.bounds
     if (!rect) return
-    this.parked = true
+    if (this.parked === null) this.parked = this.owner.claimParkingCorner(this)
     this.view.setBorderRadius(Math.max(this.radius, PARK_RADIUS))
-    this.view.setBounds(this.parkedBox(rect))
+    this.view.setBounds(this.parkedBox(rect, this.parked))
   }
 
   private unpark(): void {
-    this.parked = false
+    this.parked = null
+    this.owner.releaseParkingCorner(this)
     if (this.bounds) this.view.setBounds(this.bounds)
     this.view.setBorderRadius(this.radius)
+  }
+
+  /** Whether the engine's view stands parked under a chrome cover, and in which corner. */
+  parkedCorner(): number | null {
+    return this.parked
+  }
+
+  /** The window the view is parked in, for the owner's handing out of corners. */
+  windowOf(): BrowserWindow | null {
+    return this.win
   }
 
   /**
@@ -1379,7 +1404,7 @@ export class ElectronTabView implements TabView {
    * tab switch hides a page. Nothing for a view that is not parked.
    */
   coverLifted(): void {
-    if (!this.parked) return
+    if (this.parked === null) return
     this.unpark()
     this.view.setVisible(false)
   }
@@ -2714,6 +2739,8 @@ export class ElectronTabViewHost implements TabViewHost {
   private readonly tabIds = new Map<number, string>()
   private readonly viewListeners = new Set<(view: ElectronTabView) => void>()
   private readonly visibilityListeners = new Set<(view: ElectronTabView) => void>()
+  /** The window corners the views parked under a chrome cover hold (`claimParkingCorner`). */
+  private readonly parkingCorners = new Map<ElectronTabView, number>()
   /** Per window, the page or chrome that last lost the keyboard – a hidden page gives it back there. */
   private readonly lastKeyboard = new WeakMap<BrowserWindow, WebContents>()
   private readonly keyboardWatched = new WeakSet<BrowserWindow>()
@@ -2962,6 +2989,31 @@ export class ElectronTabViewHost implements TabViewHost {
     this.byWebContentsId.delete(webContentsId)
     this.tabIds.delete(webContentsId)
     if (tabId !== undefined && this.byTabId.get(tabId) === view) this.byTabId.delete(tabId)
+    if (view) this.parkingCorners.delete(view)
+  }
+
+  /**
+   * The window corner for a view parking under a chrome cover (`ElectronTabView.park`): the
+   * lowest no other view parked in the same window holds, and the last one when all are held. A
+   * view already parked keeps its corner.
+   */
+  claimParkingCorner(view: ElectronTabView): number {
+    const held = this.parkingCorners.get(view)
+    if (held !== undefined) return held
+    const win = view.windowOf()
+    const taken = new Set<number>()
+    for (const [other, at] of this.parkingCorners) {
+      if (other !== view && other.windowOf() === win) taken.add(at)
+    }
+    let free = 0
+    while (free < PARK_CORNERS - 1 && taken.has(free)) free++
+    this.parkingCorners.set(view, free)
+    return free
+  }
+
+  /** The view left its parking corner (`ElectronTabView.unpark`). */
+  releaseParkingCorner(view: ElectronTabView): void {
+    this.parkingCorners.delete(view)
   }
 
   /**
