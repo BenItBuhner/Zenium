@@ -474,9 +474,9 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
   // Chrome's row of the same name, without its prompt: the desktop enters of its own accord
   // when the video's tab leaves the screen (`MediaSessionService.onVisibleTabsChanged`, MW-28)
   // and says so once per site with a toast carrying "Turn off for this site" (the row's deny).
-  // Hidden on the phone until Android's own hook (#223, a fullscreen video's tab left behind)
-  // reads it – a row is a promise, and a stored answer nothing honours is a dead control
-  // (the root's ruling of 04:43Z on #506); `android` flips to `enforced` with that hook.
+  // Android's own hook (#223: a fullscreen video's tab left behind on Home) reads the site's
+  // answer off the media session (`MediaSessionInfo.autoPictureInPicture`) and enters for an
+  // allowed site alone; the user's own picture-in-picture request is not the row's to refuse.
   {
     id: 'auto-picture-in-picture',
     label: 'Automatic picture-in-picture',
@@ -486,7 +486,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     choices: ['allow', 'deny'],
     promptLabel: null,
     allowOnce: false,
-    support: { desktop: 'enforced', android: 'n-a' }
+    support: { desktop: 'enforced', android: 'enforced' }
   },
   {
     id: 'pointerLock',
