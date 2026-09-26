@@ -294,14 +294,12 @@ describe('createEmulatedEngine', () => {
   })
 
   it('answers no-ops and stub results on the context side without a host round trip', async () => {
-    const h = harness({ permissions: ['fontSettings'] })
+    const h = harness({ permissions: ['sessions'] })
     const before = h.sent.length
     await expect(
       (h.chrome.runtime.setUninstallURL as Fn)('https://example.org/bye') as Promise<unknown>
     ).resolves.toBeUndefined()
-    await expect((h.chrome.fontSettings.getFontList as Fn)() as Promise<unknown>).resolves.toEqual(
-      []
-    )
+    await expect((h.chrome.sessions.getDevices as Fn)() as Promise<unknown>).resolves.toEqual([])
     expect(h.sent.length).toBe(before)
   })
 
@@ -643,7 +641,12 @@ describe('createEmulatedEngine', () => {
     })
     expect(page.last().userScript).toBeUndefined()
     void (page.chrome.runtime.connect as Fn)(EXT, { name: 'yss' })
-    expect(page.last()).toMatchObject({ t: 'connect', name: 'yss', target: { extensionId: EXT }, external: true })
+    expect(page.last()).toMatchObject({
+      t: 'connect',
+      name: 'yss',
+      target: { extensionId: EXT },
+      external: true
+    })
 
     const bg = harness()
     const plain: unknown[] = []

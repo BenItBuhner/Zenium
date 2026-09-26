@@ -375,7 +375,9 @@ class TabWebView(
      * frame's channel). A page with no document yet has nothing to restyle.
      */
     fun applyFonts() {
-        val restyle = host.pageFonts.applyTo(settings)
+        // The user's document, with `chrome.fontSettings`' layer over it where an extension holds a value.
+        val fonts = host.extensions?.fontLayer?.over(host.pageFonts) ?: host.pageFonts
+        val restyle = fonts.applyTo(settings)
         if (restyle && currentDocument != null) evaluateJavascript(PageFonts.RESTYLE_SCRIPT, null)
     }
 

@@ -1,4 +1,9 @@
-import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID, type ExtensionInfo } from '@shared/types'
+import {
+  DEFAULT_CONTAINER_ID,
+  PRIVATE_CONTAINER_ID,
+  type ExtensionControl,
+  type ExtensionInfo
+} from '@shared/types'
 import { pdfPageDownloadId } from '@shared/pdfPage'
 import { PDF_VIEWER_ORIGIN } from '@shared/pdfViewerProtocol'
 import type { Browser } from '@core/browser'
@@ -36,6 +41,7 @@ import {
   type Alarm
 } from '@core/extensions/api/alarms'
 import type { PersistedMenuItem } from '@core/extensions/api/contextMenus'
+import type { FontName, FontValues } from '@core/extensions/api/fontSettings'
 import type { ScopedValues } from '@core/extensions/api/privacy'
 import type { ProxyConfig } from '@core/extensions/api/proxy'
 import {
@@ -105,6 +111,8 @@ import { AndroidIdentity, authSheetEvent } from './extensionIdentity'
 import type { ExtensionRuntimeHooks } from './extensionRuntimeHooks'
 import type { ClientInfo } from './extensionServiceWorker'
 import type { AndroidExtensionStoreIo } from './extensionStoreIo'
+import { ExtensionControlsMerge } from './extensionControls'
+import { EMPTY_WEBVIEW_FONT_LAYER, type WebViewFontLayer } from './extensionFontSettings'
 import { webViewProxyOverride } from './extensionProxy'
 import type { KeepAwakeLevel } from '@core/extensions/api/power'
 import { relayServedObservation, type ScriptRequestObservation } from './relaySelection'
@@ -150,6 +158,8 @@ import type { ViewEventPayloads } from './views'
  *  ext.auth.open { viewId, id, url, title } / show { viewId } / close { viewId }   identity.launchWebAuthFlow's sheet
  *  ext.notifications.show { id, notification } / hide { id, notificationId } / forget { id } / allowed
  *  ext.proxy.set { rules, bypass, bypassSimpleHostnames, removeImplicitRules } / clear   chrome.proxy.settings over ProxyController
+ *  ext.fonts.apply { standard, serif, sansSerif, fixed, cursive, fantasy, size, fixedSize, minimumSize, css, script }   chrome.fontSettings' layer over every tab WebView's WebSettings and its :lang() stylesheet
+ *  ext.fonts.list                            [{ id, name }] – fonts.xml's named families with the font files' own names (fontSettings.getFontList)
  *  view.capture { tabId, mode: 'viewport', format, quality }   tabs.captureVisibleTab
  * Kotlin → runtime (host events): ext.message, ext.gone, ext.popupClosed, ext.request,
  * ext.requestHeaders, ext.response, ext.authView { viewId, event, url? }, ext.notification,
@@ -480,6 +490,8 @@ interface RuntimeData {
   sidePanelOnActionClick: Record<string, boolean>
   /** id → the `chrome.proxy.settings` values it set, by scope (Chrome's `ExtensionPrefs`; the session-only scope is not kept). */
   proxy: Record<string, ScopedValues>
+  /** id → the `chrome.fontSettings` values it set (Chrome's `ExtensionPrefs` font layer; the user's setting is never written). */
+  fontSettings: Record<string, FontValues>
   /**
    * id → the optional permissions `permissions.request` granted (API permissions and host
    * patterns), kept across sessions as Chrome's `ExtensionPrefs` keep the granted set; the
@@ -651,6 +663,7 @@ function emptyData(): RuntimeData {
     contextMenus: {},
     sidePanelOnActionClick: {},
     proxy: {},
+    fontSettings: {},
     grants: {}
   }
 }
@@ -670,6 +683,7 @@ function readData(saved: Partial<RuntimeData> | null): RuntimeData {
   data.contextMenus = saved.contextMenus ?? {}
   data.sidePanelOnActionClick = saved.sidePanelOnActionClick ?? {}
   data.proxy = saved.proxy ?? {}
+  data.fontSettings = saved.fontSettings ?? {}
   data.grants = saved.grants ?? {}
   return data
 }
@@ -815,12 +829,16 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
   readonly screen: () => PhoneScreen
   readonly onScreenChange: (listener: () => void) => void
 
+  /** The settings the extensions hold, merged over the publishing APIs into the core's state (`extensionControls.ts`). */
+  private readonly controls: ExtensionControlsMerge
+
   constructor(
     private readonly bridge: RuntimeBridge,
     readonly browser: Browser,
     private readonly windowOf: () => ZenWindow,
     options: AndroidExtensionRuntimeOptions = {}
   ) {
+    this.controls = new ExtensionControlsMerge((map) => browser.state.setExtensionControls(map))
     this.debug = options.debug ?? true
     this.now = options.now ?? (() => Date.now())
     this.timers = {
@@ -1147,6 +1165,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     delete this.data.contextMenus[id]
     delete this.data.sidePanelOnActionClick[id]
     delete this.data.proxy[id]
+    delete this.data.fontSettings[id]
     delete this.data.grants[id]
     this.startupFired.delete(id)
     this.save()
@@ -1541,6 +1560,48 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     if (Object.keys(values).length === 0) delete this.data.proxy[id]
     else this.data.proxy[id] = values
     this.save()
+  }
+
+  fontSettingsValues(id: string): unknown {
+    return this.data.fontSettings[id] ?? {}
+  }
+
+  setFontSettingsValues(id: string, values: FontValues): void {
+    if (Object.keys(values).length === 0) delete this.data.fontSettings[id]
+    else this.data.fontSettings[id] = values
+    this.save()
+  }
+
+  /**
+   * The extensions' font layer to Kotlin (`ext.fonts.apply`): the `WebSettings` values held and
+   * the `:lang()` stylesheet, laid over the user's `PageFonts` on every tab WebView, live and at
+   * creation; the empty layer drops it (the user's setting stands again).
+   */
+  applyFontLayer(layer: WebViewFontLayer | null): Promise<void> {
+    return this.bridge.call('ext.fonts.apply', layer ?? EMPTY_WEBVIEW_FONT_LAYER)
+  }
+
+  /**
+   * The installed families (`ext.fonts.list`): Kotlin's `{ id, name }` per named family of the
+   * system's font configuration – `id` the `fonts.xml` name a page resolves, `name` the font
+   * file's own family name for the display – as Chrome's `FontName`s.
+   */
+  async listFonts(): Promise<FontName[]> {
+    const entries = await this.bridge.call('ext.fonts.list')
+    if (!Array.isArray(entries)) return []
+    const out: FontName[] = []
+    for (const entry of entries) {
+      if (typeof entry !== 'object' || entry === null) continue
+      const { id, name } = entry as { id?: unknown; name?: unknown }
+      if (typeof id !== 'string') continue
+      out.push({ fontId: id, displayName: typeof name === 'string' && name !== '' ? name : id })
+    }
+    return out
+  }
+
+  /** The settings the extensions hold, merged over every publishing API into the core's state (the Settings page's rows). */
+  publishControls(api: string, controls: Record<string, ExtensionControl>): void {
+    this.controls.publish(api, controls)
   }
 
   /** The resolved `chrome.proxy` configuration to Kotlin's `ProxyController`: one override for the process, or none. */

@@ -181,11 +181,20 @@ class Extensions(private val host: Host) {
         val world: Boolean get() = slot != null
     }
 
-    /** Per tab WebView: the janitor's handler and, per extension, the handlers of its units. */
+    /** Per tab WebView: the janitor's handler, `chrome.fontSettings`' stylesheet's, and, per extension, the handlers of its units. */
     private class ViewHandlers {
         var janitor: ScriptHandler? = null
+        var fonts: ScriptHandler? = null
         val byExtension = HashMap<String, MutableList<ScriptHandler>>()
     }
+
+    /**
+     * `chrome.fontSettings`' layer over the user's page fonts (`ext.fonts.apply`; [ExtensionFontLayer]):
+     * what every tab's `TabWebView.applyFonts` lays over `Host.pageFonts`, [EMPTY][ExtensionFontLayer.EMPTY]
+     * while no extension holds a value. Main thread.
+     */
+    var fontLayer: ExtensionFontLayer = ExtensionFontLayer.EMPTY
+        private set
 
     @Volatile private var served: Map<String, Served> = emptyMap()
     /**
@@ -547,6 +556,14 @@ class Extensions(private val host: Host) {
                 setKeepAwake(args.str("id"), args.strOrNull("level"))
                 reply(null)
             }
+            "ext.fonts.apply" -> { setFontLayer(ExtensionFontLayer.fromJson(args)); reply(null) }
+            "ext.fonts.list" -> {
+                // The configuration files and the font files' `name` tables: file IO, off the main thread.
+                io.execute {
+                    val list = runCatching { FontFiles.list() }.getOrElse { e -> Log.w(TAG, "fonts.list: ${e.message}"); emptyList() }
+                    main.post { reply(JSONArray(list.map { it.toJson() })) }
+                }
+            }
             else -> throw IllegalArgumentException("Unknown method: $method")
         }
     }
@@ -815,6 +832,8 @@ class Extensions(private val host: Host) {
         if (host.blocking.observer === observer) setObserveResponses(false)
         closeAuthSheets()
         releaseKeepAwake()
+        // The runtime that goes held the layer; the new one lays its own as its extensions attach.
+        setFontLayer(ExtensionFontLayer.EMPTY)
     }
 
     /**
@@ -1219,9 +1238,42 @@ class Extensions(private val host: Host) {
         // The janitor first: document-start scripts run in registration order, and it has to take
         // the bridge object off the main world's global before any unit or page script looks.
         mine.janitor = runCatching { WebViewCompat.addDocumentStartJavaScript(view, janitor, setOf("*")) }.getOrNull()
+        // `chrome.fontSettings`' stylesheet, for the documents this view will load (its WebSettings
+        // values the view took in `applyFonts` as it was built).
+        if (fontLayer.css.isNotEmpty()) mine.fonts = addFontStylesheet(view, fontLayer)
         handlers[view] = mine
         for ((id, list) in units) served[id]?.let { installExtension(view, it, list) }
     }
+
+    /**
+     * `ext.fonts.apply`: the layer every tab lays over the user's page fonts moved. The WebSettings
+     * values go to every tab through `TabWebView.applyFonts` (the open document restyled where a
+     * family alone moved, as the user's own change is handled); the stylesheet – what WebSettings
+     * cannot carry – is re-registered at document start on every view and replaced in place in
+     * every open document (the main frame; a frame takes the new sheet with its next document).
+     */
+    private fun setFontLayer(next: ExtensionFontLayer) {
+        val prev = fontLayer
+        if (next == prev) return
+        fontLayer = next
+        val tabs = host.tabs.all()
+        for (view in tabs) view.applyFonts()
+        if (next.css != prev.css) {
+            for (view in tabs) {
+                val mine = handlers[view] ?: continue
+                mine.fonts?.let { runCatching { it.remove() } }
+                mine.fonts = if (next.css.isEmpty()) null else addFontStylesheet(view, next)
+                // The open document: the sheet replaced, or taken out by the empty layer's script.
+                if (view.currentUrl != null && next.script.isNotEmpty()) view.evaluateJavascript(next.script, null)
+            }
+        }
+        Log.i(TAG, "fontSettings: ${next.summary()}; applied to ${tabs.size} page(s)")
+    }
+
+    private fun addFontStylesheet(view: WebView, layer: ExtensionFontLayer): ScriptHandler? =
+        runCatching { WebViewCompat.addDocumentStartJavaScript(view, layer.script, setOf("*")) }
+            .onFailure { e -> Log.w(TAG, "fontSettings: the stylesheet's document-start script was refused: ${e.message}") }
+            .getOrNull()
 
     /**
      * One extension's handlers on one view: the previous ones go, the current units come. A
