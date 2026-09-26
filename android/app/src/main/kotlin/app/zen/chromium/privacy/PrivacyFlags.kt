@@ -34,7 +34,8 @@ class PrivacyFlags(
     /**
      * Preload pages (PS-43; `preloadPages` in `src/shared/privacy.ts`): `standard`, `extended` or
      * `none` – the effective level, an extension's `none` included. Read per WebView
-     * ([speculativeLoading]); `standard` before the core has pushed anything, as the setting's default.
+     * ([speculativeLoading]) and per request (`PreloadRules.refuses`); `standard` before the core
+     * has pushed anything, as the setting's default.
      */
     val preloadPages: String = "standard"
 ) {
@@ -42,11 +43,13 @@ class PrivacyFlags(
     enum class SpeculativeLoading { DISABLED, PRERENDER_ENABLED }
 
     /**
-     * The speculative-loading status for every WebView under this policy, the phone's whole
-     * enforcement of Preload pages (`WebSettingsCompat.setSpeculativeLoadingStatus`, androidx.webkit
-     * 1.13+): `none` → `SPECULATIVE_LOADING_DISABLED`; `standard` and `extended` →
+     * The speculative-loading status for every WebView under this policy, the prerender half of
+     * the phone's enforcement of Preload pages (`WebSettingsCompat.setSpeculativeLoadingStatus`,
+     * androidx.webkit 1.13+): `none` → `SPECULATIVE_LOADING_DISABLED`; `standard` and `extended` →
      * `SPECULATIVE_LOADING_PRERENDER_ENABLED` (Extended is Standard here: the phone has no
      * prediction service, only the pages' own speculation rules). Applied by `TabWebView.applyPrivacy`.
+     * The prefetch half – the `Sec-Purpose: prefetch` requests this status leaves alone – is
+     * refused at the request engine under `none` (`PreloadRules`).
      */
     fun speculativeLoading(): SpeculativeLoading =
         if (preloadPages == "none") SpeculativeLoading.DISABLED else SpeculativeLoading.PRERENDER_ENABLED
