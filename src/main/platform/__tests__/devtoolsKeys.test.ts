@@ -6,12 +6,12 @@ import type { KeyEventInput } from '../../../core/platform'
 import type { KeyBinding, Shortcut } from '../../../shared/types'
 import {
   DEVTOOLS_KEY_MESSAGE_PREFIX,
-  type DevtoolsFrontendLike,
   devtoolsKeyFromMessage,
   devtoolsQuitChordScript,
   quitChordOf,
   relayDevtoolsQuitChord
 } from '../devtoolsKeys'
+import { KEY_DOWN_LINE, KEY_UP_LINE, fakeFrontend } from './devtoolsKeysFixture'
 
 /*
  * The quit chord typed into a DevTools toolbox (session-08, review F3's DevTools path). The
@@ -265,37 +265,6 @@ describe('the relayed chord through the inspected page’s key table', () => {
 })
 
 describe('the relay on a toolbox', () => {
-  /**
-   * A frontend as the relay sees it: its console listeners, the scripts run in it, its main
-   * frame – the frame a line is said from is the main frame unless the test names another.
-   */
-  function fakeFrontend(): DevtoolsFrontendLike & {
-    listeners: ((event: { message: string; frame?: unknown }) => void)[]
-    scripts: string[]
-    say(message: string, frame?: unknown): void
-    sayFrameless(message: string): void
-  } {
-    const listeners: ((event: { message: string; frame?: unknown }) => void)[] = []
-    const scripts: string[] = []
-    const mainFrame = { name: 'devtools://devtools/bundled/devtools_app.html' }
-    return {
-      listeners,
-      scripts,
-      mainFrame,
-      on: (_event, listener) => listeners.push(listener),
-      executeJavaScript: (code) => {
-        scripts.push(code)
-        return Promise.resolve('hooked')
-      },
-      say: (message, frame = mainFrame) =>
-        listeners.forEach((listener) => listener({ message, frame })),
-      sayFrameless: (message) => listeners.forEach((listener) => listener({ message }))
-    }
-  }
-
-  const KEY_DOWN_LINE = `${DEVTOOLS_KEY_MESSAGE_PREFIX}{"type":"keyDown","key":"q","control":false,"alt":false,"shift":false,"meta":true,"isAutoRepeat":false}`
-  const KEY_UP_LINE = `${DEVTOOLS_KEY_MESSAGE_PREFIX}{"type":"keyUp","key":"Meta","control":false,"alt":false,"shift":false,"meta":false,"isAutoRepeat":false}`
-
   it('watches the console for the keys the script says, runs the script with the chord as bound now, and once per frontend', () => {
     const frontend = fakeFrontend()
     const keys: KeyEventInput[] = []
