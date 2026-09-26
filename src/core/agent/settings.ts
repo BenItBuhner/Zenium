@@ -11,7 +11,9 @@ export function sanitizeAgentSettings(
   const d = DEFAULT_AGENT_SETTINGS
   const r = raw ?? {}
   const port = Number(r.port)
-  const mode: AgentMode = r.defaultMode === 'background' ? 'background' : 'foreground'
+  // A mode the user chose stands, either one; anything else is the default's.
+  const mode: AgentMode =
+    r.defaultMode === 'background' || r.defaultMode === 'foreground' ? r.defaultMode : d.defaultMode
   return {
     enabled: typeof r.enabled === 'boolean' ? r.enabled : d.enabled,
     port:

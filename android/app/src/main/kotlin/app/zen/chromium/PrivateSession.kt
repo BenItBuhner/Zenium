@@ -1,7 +1,5 @@
 package app.zen.chromium
 
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -49,7 +47,7 @@ class PrivateSession(private val host: Host) {
             return
         }
         if (!manager.areNotificationsEnabled()) return
-        ensureChannel(context)
+        Notifications.ensure(context, Notifications.PRIVATE)
         val card = card(openTabs)
         val notification = NotificationCompat.Builder(context, card.channelId)
             .setSmallIcon(R.drawable.ic_stat_private)
@@ -100,17 +98,13 @@ class PrivateSession(private val host: Host) {
     }
 
     companion object {
-        /** Chrome's channel for it is "Incognito", low importance. */
-        const val CHANNEL_ID = "zenium.private"
-        const val CHANNEL_NAME = "Private browsing"
-        const val CHANNEL_IMPORTANCE = NotificationManager.IMPORTANCE_LOW
         const val TITLE = "Close all private tabs"
 
         /** The card for `openTabs` private tabs (at least one); see [Card]. */
         fun card(openTabs: Int): Card = Card(
             title = TITLE,
             text = if (openTabs == 1) "1 private tab is open" else "$openTabs private tabs are open",
-            channelId = CHANNEL_ID,
+            channelId = Notifications.PRIVATE.id,
             // Not on the lock screen: what is private stays out of sight there, as Chrome keeps it.
             visibility = NotificationCompat.VISIBILITY_SECRET,
             ongoing = true,
@@ -129,19 +123,6 @@ class PrivateSession(private val host: Host) {
         @Volatile
         var live: PrivateSession? = null
             private set
-
-        fun ensureChannel(context: Context) {
-            val system = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            if (system.getNotificationChannel(CHANNEL_ID) != null) return
-            system.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, CHANNEL_NAME, CHANNEL_IMPORTANCE).apply {
-                    description = "Shows while private tabs are open, to close them all at once"
-                    setShowBadge(false)
-                    enableVibration(false)
-                    setSound(null, null)
-                }
-            )
-        }
 
         private fun closeAllIntent(context: Context): PendingIntent {
             val intent = Intent(context, PrivateSessionReceiver::class.java).setAction(ACTION_CLOSE_ALL)

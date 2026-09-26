@@ -49,9 +49,15 @@ class WebNotificationsTest {
 
     @Test
     fun theChannelIdsAreGroupedUnderSites() {
-        assertEquals("zenium.site:", SitesChannels.PREFIX)
-        assertEquals("zenium.sites", SitesChannels.GROUP_ID)
-        assertEquals("Sites", SitesChannels.GROUP_NAME)
+        // The registry's site channel: the prefix, the origin, the time; under the Sites group; named by the host.
+        val channel = Notifications.site("https://news.example:8443", 1_700_000_000_000L)
+        assertEquals("zenium.site:https://news.example:8443;1700000000000", channel.id)
+        assertTrue(channel.id.startsWith(Notifications.sitePrefix("https://news.example:8443")))
+        assertEquals("news.example:8443", channel.name)
+        assertEquals("Notifications from news.example:8443", channel.description)
+        assertEquals(Notifications.SITES, channel.group)
+        assertEquals("zenium.sites", Notifications.SITES.id)
+        assertEquals("Sites", Notifications.SITES.name)
     }
 
     // --- the app's Sharing channel (tabs sent from another device) ---------------------------------
@@ -67,13 +73,13 @@ class WebNotificationsTest {
 
     @Test
     fun theSharingChannelIsTheAppsOwnBesideTheSitesGroup() {
-        assertEquals("Sharing", SharingChannel.NAME)
+        assertEquals("Sharing", Notifications.SHARING.name)
         assertEquals("sharing", SharingChannel.KIND)
         // Not a site's channel (the sites' prefix would make it one the site's permission could withdraw).
-        assertFalse(SharingChannel.ID.startsWith(SitesChannels.PREFIX))
-        // Its id is its own among the app's fixed channels.
-        val ids = listOf(SharingChannel.ID, PrivateSession.CHANNEL_ID, MediaSessions.CHANNEL_ID, DownloadNotifications.CHANNEL_PROGRESS, DownloadNotifications.CHANNEL_DONE)
-        assertEquals(ids.size, ids.toSet().size)
+        assertFalse(Notifications.SHARING.id.startsWith(Notifications.SITE_PREFIX))
+        // A fixed channel of the app's own, under General beside the Sites group (the registry pins the rest).
+        assertTrue(Notifications.SHARING in Notifications.fixed)
+        assertEquals(Notifications.GENERAL, Notifications.SHARING.group)
     }
 
     @Test
