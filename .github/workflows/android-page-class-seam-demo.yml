@@ -15,16 +15,10 @@ name: Android page-class seam demo
 # layout demo (#273's recipe: a push of this file on its branch registered the workflow and was
 # the run while the PR was open; the branch-scoped push trigger is gone from the final head).
 # The build, the emulator and its caches live in android-emulator-demo.yml; this file picks the
-# driver, the profile and the display. The nightly sweep's shard for it is #482's manifest to add.
+# driver, the profile and the display. The nightly sweep runs the driver on its tablet shard
+# (.github/nightly-drivers.json, `page-class-seam`).
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - cursor/android-page-class-seam-b0d8
-    paths:
-      - .github/workflows/android-page-class-seam-demo.yml
-      - android/app/src/androidTest/kotlin/app/zen/chromium/PageClassSeamDemo.kt
-      - android/app/src/androidTest/assets/page-class-seam-demo-state.json
 
 permissions:
   contents: read
