@@ -150,13 +150,13 @@ describe('zen://newtab: the private page\'s "Block third-party cookies" switch',
     expect(h.toggle.disabled).toBe(true)
     expect(h.toggle.getAttribute('aria-disabled')).toBe('true')
     expect(h.description.textContent).toBe(
-      'Blocked in every window by the extension Cookie Shield Probe'
+      'Blocked in every window by the extension Cookie Shield Probe.'
     )
     h.toggle.click()
     expect(cookieActions(h)).toEqual([])
 
     h.push(privateState({ blocked: true, locked: true, lockedByExtension: '' }))
-    expect(h.description.textContent).toBe('Blocked in every window by an extension')
+    expect(h.description.textContent).toBe('Blocked in every window by an extension.')
 
     // The hold withdrawn (Disable, uninstall): the user's own state shows again.
     h.push(privateState({ blocked: false, locked: false }))
@@ -172,7 +172,7 @@ describe('zen://newtab: the private page\'s "Block third-party cookies" switch',
     expect(h.toggle.disabled).toBe(true)
     expect(h.toggle.getAttribute('aria-disabled')).toBe('true')
     expect(h.description.textContent).toBe(
-      'Allowed in every window by the extension Cookie Shield Probe'
+      'Allowed in every window by the extension Cookie Shield Probe.'
     )
     // No optimistic flip, no write: the switch would spring back with no word otherwise.
     h.toggle.click()
@@ -180,7 +180,7 @@ describe('zen://newtab: the private page\'s "Block third-party cookies" switch',
     expect(cookieActions(h)).toEqual([])
 
     h.push(privateState({ blocked: false, locked: true, lockedByExtension: '' }))
-    expect(h.description.textContent).toBe('Allowed in every window by an extension')
+    expect(h.description.textContent).toBe('Allowed in every window by an extension.')
   })
 
   it('a press sends the flipped position and moves the switch at once; the next state confirms it', () => {

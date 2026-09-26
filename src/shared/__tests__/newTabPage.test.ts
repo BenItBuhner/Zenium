@@ -221,27 +221,28 @@ describe('zen://newtab tokens', () => {
     expect(html).toContain(
       '<button type="button" class="zen-v2-switch" id="zen-cookies-switch" role="switch" aria-checked="false" aria-describedby="zen-cookies-desc"></button>'
     )
-    // Sentence case, no dash; the locked copy names where the lock is – the pane by its actual
+    // Sentence case, no dash, each a sentence with its full stop (the lead's amendment of 08:40);
+    // the locked copy names where the lock is – the pane by its actual
     // name behind the language's path glyph (the lead's ruling on #522), or the extension whose
     // `chrome.privacy` hold locks the switch at either pole (services pass 10: "Blocked" under
     // `false`, "Allowed" under `true`), "an extension" without a name.
     expect(PRIVATE_COOKIES.label).toBe('Block third-party cookies')
-    expect(PRIVATE_COOKIES.description).toBe('Blocks third-party cookies in private windows')
+    expect(PRIVATE_COOKIES.description).toBe('Blocks third-party cookies in private windows.')
     expect(PRIVATE_COOKIES.lockedDescription).toBe(
-      'Blocked in every window by Settings › Privacy and Security'
+      'Blocked in every window by Settings › Privacy and Security.'
     )
     for (const text of Object.values(PRIVATE_COOKIES)) expect(text).not.toMatch(/[—–>]/)
     expect(privateCookiesLockedByExtension(true, 'uBlock Origin')).toBe(
-      'Blocked in every window by the extension uBlock Origin'
+      'Blocked in every window by the extension uBlock Origin.'
     )
     expect(privateCookiesLockedByExtension(false, 'Cookie Shield')).toBe(
-      'Allowed in every window by the extension Cookie Shield'
+      'Allowed in every window by the extension Cookie Shield.'
     )
     expect(privateCookiesLockedByExtension(true, '  ')).toBe(
-      'Blocked in every window by an extension'
+      'Blocked in every window by an extension.'
     )
     expect(privateCookiesLockedByExtension(false, '')).toBe(
-      'Allowed in every window by an extension'
+      'Allowed in every window by an extension.'
     )
     expect(privateCookiesDescription({ blocked: false, locked: false })).toBe(
       PRIVATE_COOKIES.description
@@ -254,15 +255,15 @@ describe('zen://newtab tokens', () => {
     )
     expect(
       privateCookiesDescription({ blocked: true, locked: true, lockedByExtension: 'Cookie Shield' })
-    ).toBe('Blocked in every window by the extension Cookie Shield')
-    // The allow pole: off and locked, the sentence in the desktop's own words, no full stop.
+    ).toBe('Blocked in every window by the extension Cookie Shield.')
+    // The allow pole: off and locked, the sentence in the desktop's own noun.
     expect(
       privateCookiesDescription({
         blocked: false,
         locked: true,
         lockedByExtension: 'Cookie Shield'
       })
-    ).toBe('Allowed in every window by the extension Cookie Shield')
+    ).toBe('Allowed in every window by the extension Cookie Shield.')
     // The row: the primitive's geometry (§9.21 padding from the token, the row's min height), the
     // title block's measure 8 below it (§9.26), label 15 in the window ink, description 13 at 69 %.
     expect(NEW_TAB_PAGE_STYLE).toMatch(

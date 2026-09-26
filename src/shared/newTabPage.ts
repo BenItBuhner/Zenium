@@ -341,12 +341,14 @@ export const PRIVATE_EXPLAINER = {
  * `privacy.thirdPartyCookiesPrivate` – private windows only, regular browsing never changes.
  * Sentence case (§9.1). The locked description stands while Settings › Privacy and Security
  * blocks third-party cookies in every window, when the switch is on and disabled – the pane by
- * its actual name behind the language's path glyph (the lead's ruling on #522).
+ * its actual name behind the language's path glyph (the lead's ruling on #522). Each description
+ * is a sentence and takes its full stop, as the phone's twins and every settings row's do (the
+ * lead's amendment of 08:40).
  */
 export const PRIVATE_COOKIES = {
   label: 'Block third-party cookies',
-  description: 'Blocks third-party cookies in private windows',
-  lockedDescription: 'Blocked in every window by Settings › Privacy and Security'
+  description: 'Blocks third-party cookies in private windows.',
+  lockedDescription: 'Blocked in every window by Settings › Privacy and Security.'
 } as const
 
 /**
@@ -354,14 +356,14 @@ export const PRIVATE_COOKIES = {
  * (services pass 10), at either pole – "Blocked" under `false`, "Allowed" under `true`, when the
  * switch is off and locked since a tap would spring back – the holder named, as Settings'
  * controlled rows name theirs; "an extension" only where the name is not to hand. The desktop
- * document's own words – "window", no full stop – around the lead's sentence for the phone's page.
+ * document's own noun – "window" – around the lead's sentence for the phone's page.
  */
 export function privateCookiesLockedByExtension(blocked: boolean, name: string): string {
   const verb = blocked ? 'Blocked' : 'Allowed'
   const holder = name.trim()
   return holder
-    ? `${verb} in every window by the extension ${holder}`
-    : `${verb} in every window by an extension`
+    ? `${verb} in every window by the extension ${holder}.`
+    : `${verb} in every window by an extension.`
 }
 
 /** The row's description for a state: the switch's own line, or why the switch is locked. */
