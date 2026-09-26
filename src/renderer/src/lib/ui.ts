@@ -24,10 +24,12 @@ import type {
   ScreenshotSaved,
   SharePanelAction,
   SharePanelRequest,
+  UIState,
   UrlbarOpenMode,
   WebAppInstallPrompt
 } from '@shared/types'
 import { TOAST_SHOW_MS } from '@shared/toastCard'
+import { isEmptyTabUrl } from '@shared/url'
 import type { Anchor } from './anchor'
 import type { PopoverAlignment } from './portals'
 import { cmd, run } from './api'
@@ -1668,6 +1670,53 @@ export function closeUrlbar(opts: UrlbarCloseOptions = {}): void {
   uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: false } }))
   invalidateSnapshot()
   if (!opts.keepKeyboard) returnFocusToPage()
+}
+
+/**
+ * Whether a fresh empty tab comes up here with the new tab page's palette – the core's own test
+ * before it sends `newtab.opened` (`NewTabService.enabled`): the host serves the page and the
+ * setting has it on. Off (the phone, whose chrome draws its own page; the setting off) a fresh
+ * tab gets the bar through `urlbar.toggle` instead, bound to no tab.
+ */
+function newTabPaletteOn(state: UIState): boolean {
+  return state.capabilities.newTabPage && state.settings.newTab.enabled
+}
+
+/**
+ * The bar in new-tab mode bound to a tab – the palette over a fresh New Tab
+ * (`openNewTabPageUrlbar`) – follows the window's active tab. Its cover hides every page view
+ * (`overlayCoversContent`), so a tab made active under it by anything but a press on the chrome
+ * (an extension's `chrome.tabs.create({ active: true })`, a `tab.create` over the bridge, Ctrl+Tab
+ * from the bar, a page's `window.open`) stood behind the palette with no live view on screen
+ * until a key put the bar away. Now, the moment the active tab is not the one the bar is bound
+ * to, the bar closes – without a reason: not a dismissal, so nothing is kept as a draft and the
+ * phone's field morph would not run back; the keyboard goes to the page as after a submit – or,
+ * when the tab now active is itself an empty New Tab whose palette is the one to show (Ctrl+T
+ * over the palette, a tab an extension made without an address), the palette re-binds to it
+ * through `openNewTabPageUrlbar`: the bar stays up over the new tab, and the core's own
+ * `newtab.opened` for that tab – sent after the state that made it active
+ * (`NewTabService.open`) – finds it bound already. The bar over a split's empty pane is the
+ * pane's own field and goes with the pane (`Urlbar.tsx`, `paneLive`); the bar bound to no tab
+ * (`openUrlbar` in new-tab mode) belongs to the window and stays as it is.
+ */
+export function urlbarFollowsActiveTab(): void {
+  const { urlbar } = uiStore.get()
+  if (!urlbar.open || urlbar.mode !== 'new-tab' || !urlbar.tabId || urlbar.pane) return
+  const state = browserStore.get().state
+  if (!state) return
+  const active = activeTab(state)
+  if (active?.id === urlbar.tabId) return
+  if (active && isEmptyTabUrl(active.url) && newTabPaletteOn(state)) {
+    openNewTabPageUrlbar(active.id, undefined, urlbar.attached)
+    return
+  }
+  closeUrlbar()
+}
+
+const urlbarFlags = globalThis as unknown as { __zenUrlbarFollowsWired?: boolean }
+if (!urlbarFlags.__zenUrlbarFollowsWired) {
+  urlbarFlags.__zenUrlbarFollowsWired = true
+  browserStore.subscribe(urlbarFollowsActiveTab)
 }
 
 // ---------------------------------------------------------------------------
