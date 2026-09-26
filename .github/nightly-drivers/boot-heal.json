@@ -1,0 +1,15 @@
+{
+  "id": "boot-heal",
+  "class": "BootHealDemo",
+  "shard": "phone-f",
+  "mirrors": "android-boot-heal-demo.yml",
+  "dir": "boot-heal-demo",
+  "script": ".github/scripts/android-boot-heal-demo.sh",
+  "env": {
+    "BOOT_HEAL_ASSERT": "true",
+    "BOOT_HEAL_THEMES": "light"
+  },
+  "timeout": 900,
+  "estimate": 4,
+  "note": "The phone's boot follow-ups after #490 and #503 (W6-HF2): its own script seeds a profile with #490's blank tab as the space's one tab and cold-starts it (am start -W: Fully drawn, the splash lifted by READY, the core's heal line, no page view in the window, no tab on disk; then the healed profile again), and cold-starts a fresh profile through a link (a VIEW intent at LinkDispatchActivity: Fully drawn before the watchdog, the intent's page view hidden under the first-run tour); the driver then does the link's launch in its own process on a cleared profile and walks the tour to its end (the page's view GONE under the tour, the omnibox over the page at the tour's end, the page placed once the omnibox closes). Light only here (the dispatch records both schemes). The estimate is the author's, not yet a nightly's measure. On phone-f, the shard with the room."
+}

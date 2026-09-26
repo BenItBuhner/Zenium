@@ -11,8 +11,9 @@ import { Browser } from '@core/browser'
 import { createTabRecord } from '@core/model'
 import type { Platform, StoreIO, TabView, TabViewHost, WindowHost } from '@core/platform'
 import type { ZenWindow } from '@core/window'
+import { landFromIntent, type LandingSurfaces } from '../landing'
 import { androidCapabilities } from '../platform'
-import { bootNeedsPlacement } from '../startup'
+import { bootNeedsPlacement, healRestoredBlankTab } from '../startup'
 
 /*
  * The boot's first tab on the phone (the P0 hotfix after #490, W5-F2): `Browser.ensureFirstTab`
@@ -89,14 +90,21 @@ function phoneCapabilities(overrides: Partial<HostCapabilities> = {}): HostCapab
   }
 }
 
-/** A browser on a phone-shaped host, not yet started; the window host records what it is sent. */
-function phone(capabilities: HostCapabilities): {
+/**
+ * A browser on a phone-shaped host, not yet started; the window host records what it is sent.
+ * `region` is the device's country as the host reports it (`PlatformInfo.region`, W6-13; every
+ * host before it reports none).
+ */
+function phone(
+  capabilities: HostCapabilities,
+  region: string | null = null
+): {
   browser: Browser
   sent: Array<{ name: EventName; payload: unknown }>
 } {
   const sent: Array<{ name: EventName; payload: unknown }> = []
   const platform: Platform = {
-    info: { os: 'android' as PlatformOs, version: '0.0.0' },
+    info: { os: 'android' as PlatformOs, version: '0.0.0', region },
     capabilities,
     io: memoryIo(),
     windows: {
@@ -257,5 +265,389 @@ describe("the boot's first tab on the phone (no new tab page capability)", () =>
     seedTab(browser, BLANK_URL)
     browser.start()
     expect(bootNeedsPlacement(browser, only(browser), false)).toBe(true)
+  })
+})
+
+/*
+ * The heal (W6-HF2, hole 1): every phone profile made on v0.4.71–v0.4.76 restores with #490's
+ * `zen://blank` tab as the space's only tab – the phone's new tab page where the space was empty
+ * before #490. `healRestoredBlankTab` closes that tab once, right after `browser.start()` and
+ * before the boot opens anything of its own, so the space is empty again and the arm reads the
+ * healed state. The rules: the phone only; the window's active tab, exactly `zen://blank`; the
+ * only tab the active space has; no history in the profile or on the tab; a boot that continues
+ * the last session (`Browser.startupPlan`, Settings › On startup – a boot that does not forgets
+ * the session and opens a fresh blank tab of its own, on purpose, at every boot); not pinned.
+ * Everything else stays.
+ */
+describe("the heal of #490's restored blank tab on the phone", () => {
+  /** A phone past its first run, restored on one blank tab, as v0.4.71–v0.4.76 left it. */
+  function upgraded(): { browser: Browser; id: string; win: ZenWindow } {
+    const { browser } = phone(phoneCapabilities())
+    browser.state.settings.onboardingDone = true
+    const id = seedTab(browser, BLANK_URL)
+    browser.start()
+    return { browser, id, win: only(browser) }
+  }
+
+  it('closes the lone restored blank tab: the space is empty again, the arm reads no placement', () => {
+    const { browser, id, win } = upgraded()
+    expect(browser.tabs.activeTabFor(win)?.id).toBe(id)
+    expect(healRestoredBlankTab(browser, win, true)).toBe(true)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([])
+    expect(browser.tabs.activeTabFor(win)).toBeUndefined()
+    expect(win.activeSpace().tabIds).toEqual([])
+    expect(bootNeedsPlacement(browser, win, true)).toBe(false)
+    // An unvisited blank tab leaves no "Recently closed" entry behind (`captureClosed`).
+    expect(browser.state.recentlyClosed).toEqual([])
+  })
+
+  it('heals exactly once: the healed profile has nothing to heal at its next boot', () => {
+    const { browser, win } = upgraded()
+    expect(healRestoredBlankTab(browser, win, true)).toBe(true)
+    expect(healRestoredBlankTab(browser, win, true)).toBe(false)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([])
+  })
+
+  it('leaves a blank tab that carries history (a back/forward stack with a page in it)', () => {
+    const { browser, id, win } = upgraded()
+    browser.state.tabNavigation.set(id, {
+      entries: [
+        { url: 'https://visited.example/', title: 'Visited' },
+        { url: BLANK_URL, title: '' }
+      ],
+      index: 1
+    })
+    expect(healRestoredBlankTab(browser, win, true)).toBe(false)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([id])
+  })
+
+  it('leaves a blank tab that can go back or forward', () => {
+    const { browser, id, win } = upgraded()
+    browser.state.model.tabs[id].canGoBack = true
+    expect(healRestoredBlankTab(browser, win, true)).toBe(false)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([id])
+  })
+
+  it('leaves a blank tab that sits among other restored tabs (the user opened more since)', () => {
+    const { browser } = phone(phoneCapabilities())
+    browser.state.settings.onboardingDone = true
+    const blank = seedTab(browser, BLANK_URL)
+    const page = seedTab(browser, 'https://open.example/')
+    // Back on the blank tab, as the last run left it.
+    browser.state.model.spaces[0].activeTabId = blank
+    browser.start()
+    const win = only(browser)
+    expect(browser.tabs.activeTabFor(win)?.id).toBe(blank)
+    expect(healRestoredBlankTab(browser, win, true)).toBe(false)
+    expect(Object.keys(browser.state.model.tabs).sort()).toEqual([blank, page].sort())
+    // The arm still reads the blank tab as nothing to place (#503).
+    expect(bootNeedsPlacement(browser, win, true)).toBe(false)
+  })
+
+  it('leaves a restored page tab alone', () => {
+    const { browser } = phone(phoneCapabilities())
+    browser.state.settings.onboardingDone = true
+    const id = seedTab(browser, 'https://open.example/')
+    browser.start()
+    const win = only(browser)
+    expect(healRestoredBlankTab(browser, win, true)).toBe(false)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([id])
+    expect(bootNeedsPlacement(browser, win, true)).toBe(true)
+  })
+
+  it("leaves the phone's own new tab page tab alone: the rule is exactly `zen://blank`", () => {
+    // `zen://newtab` is an empty-tab URL too (`isEmptyTabUrl`), but not the tab #490's rule made
+    // on this host (`ensureFirstTab` opened `zen://blank` without the new tab page capability).
+    const { browser } = phone(phoneCapabilities())
+    browser.state.settings.onboardingDone = true
+    const id = seedTab(browser, NEW_TAB_URL)
+    browser.start()
+    const win = only(browser)
+    expect(browser.tabs.activeTabFor(win)?.url).toBe(NEW_TAB_URL)
+    expect(healRestoredBlankTab(browser, win, true)).toBe(false)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([id])
+  })
+
+  it("leaves the fresh blank tab an 'Open the New Tab page' boot makes on purpose", () => {
+    // `Browser.openStartupWindows` when the startup does not continue the last session (Settings
+    // › On startup, #525; the 0.4.x "Restore previous session" off folds into this mode): the
+    // session is forgotten (#490's tab with it) and the window gets one fresh `zen://blank` tab
+    // (`openFreshTab`) at EVERY such boot – that cohort's new tab page and omnibox, pre-#490 and
+    // since, not the tab the heal is for. Android reads the boot's own plan (`startupPlan`):
+    // `bootAndroid` passes no `restoreLastSession`.
+    const { browser } = phone(phoneCapabilities())
+    browser.state.settings.onboardingDone = true
+    browser.state.settings.startup.mode = 'newTab'
+    const restored = seedTab(browser, BLANK_URL)
+    browser.start()
+    expect(browser.startupPlan().mode).toBe('newTab')
+    const win = only(browser)
+    const fresh = browser.tabs.activeTabFor(win)
+    expect(fresh?.url).toBe(BLANK_URL)
+    expect(fresh?.id).not.toBe(restored)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([fresh?.id])
+    expect(healRestoredBlankTab(browser, win, true)).toBe(false)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([fresh?.id])
+    expect(browser.tabs.activeTabFor(win)?.id).toBe(fresh?.id)
+    // The arm reads the blank tab as nothing to place, as for any blank tab on the phone (#503).
+    expect(bootNeedsPlacement(browser, win, true)).toBe(false)
+  })
+
+  it("heals under 'Open a specific page or set of pages': on the phone that plan reads as continue", () => {
+    // A host without windows knows two boots alone (`Browser.startupPlan`): the last session
+    // back, or one fresh tab. `pages` reads as `continue` there – the session comes back, #490's
+    // tab with it, no startup page opens – and the heal follows the plan the boot followed, not
+    // the raw setting (which says `pages`).
+    const { browser } = phone(phoneCapabilities())
+    browser.state.settings.onboardingDone = true
+    browser.state.settings.startup = { mode: 'pages', pages: ['https://start.example/'] }
+    const id = seedTab(browser, BLANK_URL)
+    browser.start()
+    expect(browser.state.capabilities.windows).toBe(false)
+    expect(browser.startupPlan().mode).toBe('continue')
+    const win = only(browser)
+    expect(browser.tabs.activeTabFor(win)?.id).toBe(id)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([id])
+    expect(healRestoredBlankTab(browser, win, true)).toBe(true)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([])
+    expect(bootNeedsPlacement(browser, win, true)).toBe(false)
+  })
+
+  it('leaves a pinned blank tab: the user pinned it, and `closeTab` would keep a pinned tab anyway', () => {
+    // Before the rule the heal reported a tab closed while `pinnedCloseBehavior` kept it.
+    const { browser, id, win } = upgraded()
+    browser.state.model.tabs[id].pinned = true
+    expect(healRestoredBlankTab(browser, win, true)).toBe(false)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([id])
+    expect(browser.tabs.activeTabFor(win)?.id).toBe(id)
+  })
+
+  it('does nothing on a fresh profile (no tab to heal)', () => {
+    const { browser } = phone(phoneCapabilities())
+    browser.start()
+    const win = only(browser)
+    expect(healRestoredBlankTab(browser, win, true)).toBe(false)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([])
+  })
+
+  it("never touches the tablet's restored blank tab (its view is placed like any page)", () => {
+    const { browser, id, win } = upgraded()
+    expect(healRestoredBlankTab(browser, win, false)).toBe(false)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([id])
+    expect(bootNeedsPlacement(browser, win, false)).toBe(true)
+  })
+
+  it('never closes the blank tab a widget or shortcut landing makes: the heal runs before the landing', () => {
+    // `bootAndroid`'s order: `browser.start()`, the heal, then `landFromIntent` for the boot's
+    // landing, the host queue's flush (an intent's page), and the arm. A landing over the
+    // upgraded profile: the restored blank tab goes, the landing's own blank tab stands.
+    const { browser, id, win } = upgraded()
+    expect(healRestoredBlankTab(browser, win, true)).toBe(true)
+    const surfaces: LandingSurfaces = {
+      omnibox: () => undefined,
+      voice: () => undefined,
+      scan: () => undefined,
+      unavailable: () => undefined
+    }
+    const landed = landFromIntent('search', browser, win, surfaces, (fn) => fn())
+    expect(landed).not.toBeNull()
+    expect(landed?.url).toBe(BLANK_URL)
+    expect(landed?.id).not.toBe(id)
+    expect(browser.tabs.activeTabFor(win)?.id).toBe(landed?.id)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([landed?.id])
+    // A second heal at this point would take the landing's tab – the order is the guard.
+    expect(bootNeedsPlacement(browser, win, true)).toBe(false)
+  })
+})
+
+/*
+ * The tour (W6-HF2, hole 2): a fresh profile's first launch from a link. The VIEW intent's page
+ * is opened in `bootAndroid`'s flush, before the arm – a page tab, active and loaded – and the
+ * arm read it as a page to place; but the phone's first-run tour stands over the whole window
+ * and the chrome reports the content hidden under it (`useLayoutReporter`, on the same
+ * `onboardingDone` the shell mounts the tour on), so no placement comes until the tour ends.
+ * The arm reads the tour off the core's copy of the flag and waits for nothing: READY on the
+ * theme's paint and the insets, the splash lifting to the tour. Nothing else reads the arm
+ * (`ChromeReady.arm` is its one consumer). The tablet's tour hides the page the same way since
+ * #528 (`firstRunCovers`, on `onboardingCovers` – for Android's one synced window the same
+ * flag), so the tablet's arm waits for nothing under its tour either.
+ */
+describe("READY under the phone's first-run tour", () => {
+  /** A fresh phone profile launched from a link: the intent's page opened as the boot's flush does. */
+  function launchedFromLink(): {
+    browser: Browser
+    win: ZenWindow
+    tabId: string
+    sent: Array<{ name: EventName; payload: unknown }>
+  } {
+    const { browser, sent } = phone(phoneCapabilities())
+    browser.start()
+    const win = only(browser)
+    browser.openExternalUrl('https://linked.example/', win, { fromIntent: true })
+    const active = browser.tabs.activeTabFor(win)
+    if (!active) throw new Error('the intent opened no tab')
+    return { browser, win, tabId: active.id, sent }
+  }
+
+  it("a fresh profile's first launch from a link arms READY without a placement to wait for", () => {
+    const { browser, win, tabId } = launchedFromLink()
+    expect(browser.state.settings.onboardingDone).toBe(false)
+    const tab = browser.state.model.tabs[tabId]
+    expect(tab.url).toBe('https://linked.example/')
+    expect(tab.fromIntent).toBe(true)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([tabId])
+    expect(bootNeedsPlacement(browser, win, true)).toBe(false)
+  })
+
+  it('past the first run the same launch waits for the page, as before', () => {
+    const { browser } = phone(phoneCapabilities())
+    browser.state.settings.onboardingDone = true
+    browser.start()
+    const win = only(browser)
+    browser.openExternalUrl('https://linked.example/', win, { fromIntent: true })
+    expect(browser.tabs.activeTabFor(win)?.url).toBe('https://linked.example/')
+    expect(bootNeedsPlacement(browser, win, true)).toBe(true)
+  })
+
+  it("the tablet's arm waits for no placement under its tour either: #528's firstRunCovers hides the page", () => {
+    const { browser, win } = launchedFromLink()
+    expect(bootNeedsPlacement(browser, win, false)).toBe(false)
+  })
+
+  it('past the first run the tablet waits for the page, as before', () => {
+    const { browser } = phone(phoneCapabilities())
+    browser.state.settings.onboardingDone = true
+    browser.start()
+    const win = only(browser)
+    browser.openExternalUrl('https://linked.example/', win, { fromIntent: true })
+    expect(browser.tabs.activeTabFor(win)?.url).toBe('https://linked.example/')
+    expect(bootNeedsPlacement(browser, win, false)).toBe(true)
+  })
+
+  it('a fresh profile with no link keeps arming without a placement (no tab)', () => {
+    const { browser } = phone(phoneCapabilities())
+    browser.start()
+    expect(bootNeedsPlacement(browser, only(browser), true)).toBe(false)
+  })
+
+  it("the tour's end leaves the intent's page active, to be placed by the first layout after it – with the omnibox over it, the core's rule", () => {
+    // `onboarding.complete` ends the tour "in a new tab" (core/browser.ts): on a host without
+    // the new tab page that is the omnibox alone in new-tab mode (`NewTabService.open`), no tab
+    // made – so the intent's page stays the active tab, the chrome's next layout report places
+    // it (`useLayoutReporter`, the tour gone), and the omnibox rises over it. What the tour ends
+    // on is that rule's, not this seam's; pinned so the phone's first launch from a link reads
+    // as it is.
+    const { browser, win, tabId, sent } = launchedFromLink()
+    sent.length = 0
+    browser.handleCommand(win, 'onboarding.complete', {
+      searchEngineId: browser.state.settings.searchEngineId,
+      colorScheme: 'system',
+      essentials: []
+    })
+    expect(browser.state.settings.onboardingDone).toBe(true)
+    expect(browser.tabs.activeTabFor(win)?.id).toBe(tabId)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([tabId])
+    expect(sent.filter((e) => e.name === 'urlbar.toggle').map((e) => e.payload)).toEqual([
+      { mode: 'new-tab' }
+    ])
+    // With the tour gone the page is a page to place, as on any boot past the first run.
+    expect(bootNeedsPlacement(browser, win, true)).toBe(true)
+  })
+})
+
+/*
+ * The EEA's search-engine choice screen (W6-2 / #514; R3 of #505's review): past the tour, on a
+ * device in the EEA with no choice made, the screen stands on its own over the whole window and
+ * the chrome reports the content hidden under it (`firstRunCovers` counts `searchChoiceCovers`;
+ * W6-13's phone screen hides the page the same way), so a profile restored on a page has no
+ * placement coming until the choice is made or skipped. The arm reads the screen through the
+ * core's own rule on the core's own terms – what the chrome's `UIState.searchChoice.required` is
+ * built from – and waits for nothing. The screen is owed on the region the host reports
+ * (`PlatformInfo.region`): W6-13 supplies it; every host before it reports none, and nothing
+ * here changes for them.
+ */
+describe("READY under the EEA's search-engine choice screen", () => {
+  /** A profile past its first run, restored on a page, on a host that reports `region`. */
+  function restoredOnPage(region: string | null): { browser: Browser; win: ZenWindow } {
+    const { browser } = phone(phoneCapabilities(), region)
+    browser.state.settings.onboardingDone = true
+    seedTab(browser, 'https://open.example/')
+    browser.start()
+    return { browser, win: only(browser) }
+  }
+
+  it('in the EEA with no choice made, the screen is owed and the arm waits for no placement', () => {
+    const { browser, win } = restoredOnPage('DE')
+    // The chrome's own term, off the same state: the screen stands.
+    expect(browser.state.snapshot(win).searchChoice.required).toBe(true)
+    expect(browser.tabs.activeTabFor(win)?.url).toBe('https://open.example/')
+    expect(bootNeedsPlacement(browser, win, false)).toBe(false)
+  })
+
+  it("the phone reads the same terms: W6-13's screen of its own hides the page there too", () => {
+    // Before W6-13 no phone host reports a region, so this profile cannot exist on one; with it
+    // the phone's `firstRunCovers` counts the screen like the tablet's, and the arm agrees.
+    const { browser, win } = restoredOnPage('DE')
+    expect(bootNeedsPlacement(browser, win, true)).toBe(false)
+  })
+
+  it('a choice made on this device: the screen is not owed, the page is waited for as before', () => {
+    const { browser } = phone(phoneCapabilities(), 'DE')
+    browser.state.settings.onboardingDone = true
+    browser.state.settings.searchChoice = {
+      engineId: browser.state.settings.searchEngineId,
+      region: 'DE',
+      madeAt: 1,
+      version: 2
+    }
+    seedTab(browser, 'https://open.example/')
+    browser.start()
+    const win = only(browser)
+    expect(browser.state.snapshot(win).searchChoice.required).toBe(false)
+    expect(bootNeedsPlacement(browser, win, false)).toBe(true)
+    expect(bootNeedsPlacement(browser, win, true)).toBe(true)
+  })
+
+  it('outside the EEA the page is waited for as before', () => {
+    const { browser, win } = restoredOnPage('US')
+    expect(browser.state.snapshot(win).searchChoice.required).toBe(false)
+    expect(bootNeedsPlacement(browser, win, false)).toBe(true)
+    expect(bootNeedsPlacement(browser, win, true)).toBe(true)
+  })
+
+  it('a host that reports no region (every Android host before W6-13) owes the screen to nobody', () => {
+    const { browser, win } = restoredOnPage(null)
+    expect(browser.state.snapshot(win).searchChoice.required).toBe(false)
+    expect(bootNeedsPlacement(browser, win, false)).toBe(true)
+    expect(bootNeedsPlacement(browser, win, true)).toBe(true)
+  })
+
+  it("the tour's end leaves the screen owed until the choice is made; the arm follows the same terms", () => {
+    // A fresh EEA profile launched from a link: the arm false under the tour; `onboarding.complete`
+    // writes no record (the tour's search step sends `searchChoice.choose` on its own), so with
+    // the tour done the screen is owed and the arm stays false; the choice frees the page.
+    const { browser } = phone(phoneCapabilities(), 'DE')
+    browser.start()
+    const win = only(browser)
+    browser.openExternalUrl('https://linked.example/', win, { fromIntent: true })
+    expect(bootNeedsPlacement(browser, win, false)).toBe(false)
+    expect(bootNeedsPlacement(browser, win, true)).toBe(false)
+    browser.handleCommand(win, 'onboarding.complete', {
+      searchEngineId: browser.state.settings.searchEngineId,
+      colorScheme: 'system',
+      essentials: []
+    })
+    expect(browser.state.settings.onboardingDone).toBe(true)
+    expect(browser.state.snapshot(win).searchChoice.required).toBe(true)
+    expect(bootNeedsPlacement(browser, win, false)).toBe(false)
+    expect(bootNeedsPlacement(browser, win, true)).toBe(false)
+    browser.handleCommand(win, 'searchChoice.choose', {
+      engineId: browser.state.settings.searchEngineId
+    })
+    expect(browser.state.settings.searchChoice?.region).toBe('DE')
+    expect(browser.state.snapshot(win).searchChoice.required).toBe(false)
+    expect(browser.tabs.activeTabFor(win)?.url).toBe('https://linked.example/')
+    expect(bootNeedsPlacement(browser, win, false)).toBe(true)
+    expect(bootNeedsPlacement(browser, win, true)).toBe(true)
   })
 })
