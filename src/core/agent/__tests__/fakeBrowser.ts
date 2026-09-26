@@ -318,7 +318,17 @@ export function fakeBrowser(
     state: {
       model,
       settings: {
-        agents: { ...DEFAULT_AGENT_SETTINGS, enabled: true, approveNewAgents: false, ...settings }
+        // The fixture's sessions start in foreground – the mode most of these tests are about
+        // (the lease, a tab brought in front, the implicit tab) – while the product's default is
+        // background (`DEFAULT_AGENT_SETTINGS`, held to in settings.test.ts); a test of the
+        // other mode passes `defaultMode` itself.
+        agents: {
+          ...DEFAULT_AGENT_SETTINGS,
+          enabled: true,
+          approveNewAgents: false,
+          defaultMode: 'foreground',
+          ...settings
+        }
       },
       commit: () => {
         commits += 1
