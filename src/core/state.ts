@@ -1068,8 +1068,11 @@ export class BrowserState {
       )
         w.lastUserSpaceId = null
       // The window left on an agent's space that is empty now (a foreground session that closed
-      // its tabs) comes up on the user's space it left, else the first user space (W7-F3).
+      // its tabs) comes up on the user's space it left, else the first user space (W7-F3). On a
+      // user's space there is nothing to go back to: where the window stands is the last user space.
       w.activeSpaceId = userSpaceInstead(m.spaces, w.activeSpaceId, w.lastUserSpaceId)
+      const active = m.spaces.find((s) => s.id === w.activeSpaceId)
+      if (active && !agentOwnedSpace(active)) w.lastUserSpaceId = null
       w.selection = Object.fromEntries(
         Object.entries(w.selection ?? {}).filter(([spaceId, tabId]) => {
           const space = m.spaces.find((s) => s.id === spaceId)

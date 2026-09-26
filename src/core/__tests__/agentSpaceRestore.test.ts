@@ -182,7 +182,14 @@ describe('an empty agents’ space never stays the window’s active space (W7-F
       browser.state.restoredWindows = [window('window_1', agents.id, null, user.id)]
       browser.state.repair()
       expect(browser.state.restoredWindows[0].activeSpaceId).toBe(user.id)
+      expect(browser.state.restoredWindows[0].lastUserSpaceId).toBeNull()
       expect(m.activeSpaceId).toBe(user.id)
+      // A window remembered on an agents' space that still has its tabs keeps both as they were.
+      const t = seedTab(browser, 'https://agent.example/result', agents)
+      browser.state.restoredWindows = [window('window_1', agents.id, t, user.id)]
+      browser.state.repair()
+      expect(browser.state.restoredWindows[0].activeSpaceId).toBe(agents.id)
+      expect(browser.state.restoredWindows[0].lastUserSpaceId).toBe(user.id)
     })
 
     it('the last user space wins over the first when it is remembered; the first stands in when it is not', () => {
