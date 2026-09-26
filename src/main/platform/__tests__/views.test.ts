@@ -1551,7 +1551,7 @@ describe('a hidden tab page and the window', () => {
   })
 
   it('hides a shown page to Chromium while its window is minimised or hidden, and shows it again on restore – the core’s flag and the visibility accounting untouched (W6-F6)', () => {
-    const { host, window, create } = setup()
+    const { host, create } = setup()
     const view = create()
     const flips: boolean[] = []
     host.onVisibilityChanged((v) => flips.push(v.isVisible()))
@@ -1573,7 +1573,6 @@ describe('a hidden tab page and the window', () => {
     // Idempotent: the same state again does nothing.
     view.applyWindowVisible(true)
     expect(engine(view).visible).toBe(true)
-    window.win // referenced so the window is kept for the assertions above
   })
 
   it('hides a parked page for real while the window is minimised, then parks it again when the window returns with the cover still up (W6-F6 over W6-F5)', () => {
@@ -1596,6 +1595,45 @@ describe('a hidden tab page and the window', () => {
     // Restored with the cover still up: parked again, a pixel in its corner.
     view.applyWindowVisible(true)
     expect(engine(view)).toEqual({ visible: true, bounds: parkedAt(box) })
+    expect(view.isVisible()).toBe(false)
+  })
+
+  it('keeps the parking through a layout re-applied under the cover while the window is away, and lets the cover lift there: the page comes back where the layout left it (W6-F6 over W6-F5)', () => {
+    const { window, create } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setVisible(true)
+    window.zen.contentHidden = true
+    view.setVisible(false)
+    view.applyWindowVisible(false)
+    expect(engine(view)).toEqual({ visible: false, bounds: box })
+    // The chrome re-applies its layout with the cover still up (a state change under the
+    // minimised window): the engine's view is down, but the parking is kept for the return –
+    // not dropped for a plain hide.
+    view.setVisible(false)
+    expect(view.parkedCorner()).toBe(0)
+    expect(engine(view).visible).toBe(false)
+    view.applyWindowVisible(true)
+    expect(engine(view)).toEqual({ visible: true, bounds: parkedAt(box) })
+    // Away again, and this time the cover lifts while the window is hidden: the layout shows the
+    // page, which stays down to Chromium until the window is back – then in its box.
+    view.applyWindowVisible(false)
+    window.zen.contentHidden = false
+    view.setVisible(true)
+    expect(view.parkedCorner()).toBeNull()
+    expect(engine(view)).toEqual({ visible: false, bounds: box })
+    expect(view.isVisible()).toBe(true)
+    view.applyWindowVisible(true)
+    expect(engine(view)).toEqual({ visible: true, bounds: box })
+    // And a cover lifting while away with the page switched from under it: hidden, as a tab
+    // switch hides a page, and still hidden on the window’s return.
+    window.zen.contentHidden = true
+    view.setVisible(false)
+    view.applyWindowVisible(false)
+    view.coverLifted()
+    expect(view.parkedCorner()).toBeNull()
+    view.applyWindowVisible(true)
+    expect(engine(view)).toEqual({ visible: false, bounds: box })
     expect(view.isVisible()).toBe(false)
   })
 

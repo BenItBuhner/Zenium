@@ -1334,6 +1334,7 @@ export class ElectronTabView implements TabView {
    */
   setVisible(visible: boolean): void {
     const flipped = this.visible !== visible
+    const wasShown = this.visible
     this.visible = visible
     if (visible) {
       // The first showing puts the view into the window, at the box the layout gave it just
@@ -1348,7 +1349,7 @@ export class ElectronTabView implements TabView {
         this.view.setVisible(true)
         if (parked) this.pointerBack()
       }
-    } else if (this.coverable()) {
+    } else if (this.coverable(wasShown)) {
       this.park()
     } else {
       if (this.parked !== null) this.unpark()
@@ -1398,16 +1399,22 @@ export class ElectronTabView implements TabView {
   /**
    * Whether a hide asked for now is a chrome cover's: the window's chrome covers the content and
    * the engine's view is on screen in it (a page never shown, or shown in no window, has nothing
-   * to keep visible).
+   * to keep visible). In a window minimised or hidden the engine's view is down whatever the
+   * layout says (W6-F6), so "on screen" is what the core's flag held before this call (`wasShown`)
+   * or the parking already on: a layout re-applied under the cover while the window is away keeps
+   * the parking for the window's return rather than dropping it for a plain hide.
    */
-  private coverable(): boolean {
+  private coverable(wasShown: boolean): boolean {
     const host = this.host
+    const onScreen = this.windowConcealed
+      ? wasShown || this.parked !== null
+      : this.view.getVisible()
     return (
       host !== null &&
       this.win !== null &&
       this.inWindow &&
       this.bounds !== null &&
-      this.view.getVisible() &&
+      onScreen &&
       host.zen.contentHidden
     )
   }
