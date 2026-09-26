@@ -110,12 +110,17 @@ describe('the phases (capture-16: Escape from any phase closes cleanly)', () => 
 
   it.each<[string, CapturePhase]>([
     ['selecting', SELECTING],
-    ['mid-drag', dragging],
     ['capturing', capturing],
     ['captured', captured],
     ['failed', failed]
   ])('Escape from %s is closed', (_, phase) => {
     expect(captureReducer(phase, { type: 'escape' })).toEqual({ kind: 'closed' })
+  })
+
+  it('Escape mid-drag lets the drag go and keeps the toolbar (§9.5 one hop); a second Escape closes', () => {
+    const letGo = captureReducer(dragging, { type: 'escape' })
+    expect(letGo).toEqual(SELECTING)
+    expect(captureReducer(letGo, { type: 'escape' })).toEqual({ kind: 'closed' })
   })
 
   it.each<[string, CapturePhase]>([
@@ -379,6 +384,62 @@ describe('the size label (§3: the marquee mapped to the page’s document)', ()
     expect(marqueeSize(marquee, FRAME, { ...VIEWPORT, zoom: 0.5 })).toEqual({
       width: 600,
       height: 300
+    })
+  })
+
+  it('at the desktop’s scales – 1, 1.5, 2 – the read-out is the device rect the engine will paint, whole pixels', () => {
+    // 301 × 151 chrome px: at 1.5 the device size is 451.5 × 226.5, said as 452 × 227 (the
+    // engine paints whole device pixels; the card's title reads the same of the picture).
+    const marquee: Rect = { x: 100, y: 200, width: 301, height: 151 }
+    expect(marqueeSize(marquee, FRAME, { ...VIEWPORT, devicePixelRatio: 1 })).toEqual({
+      width: 301,
+      height: 151
+    })
+    expect(marqueeSize(marquee, FRAME, { ...VIEWPORT, devicePixelRatio: 1.5 })).toEqual({
+      width: 452,
+      height: 227
+    })
+    expect(marqueeSize(marquee, FRAME, { ...VIEWPORT, devicePixelRatio: 2 })).toEqual({
+      width: 602,
+      height: 302
+    })
+    // The region the engine gets is in page CSS pixels at every scale: the ratio is the
+    // engine's to apply, not the chrome's.
+    for (const devicePixelRatio of [1, 1.5, 2]) {
+      expect(regionFromChrome(marquee, FRAME, { ...VIEWPORT, devicePixelRatio })).toEqual({
+        x: 100,
+        y: 200,
+        width: 301,
+        height: 151
+      })
+    }
+  })
+
+  it('a drag past the page’s box is clamped to it, in the region and in the read-out alike', () => {
+    // From (1100, 700) to (1400, 1000) over a 1200 × 800 frame: 100 × 100 of page under it.
+    const past: Rect = { x: 1100, y: 700, width: 300, height: 300 }
+    expect(regionFromChrome(past, FRAME, VIEWPORT)).toEqual({
+      x: 1100,
+      y: 700,
+      width: 100,
+      height: 100
+    })
+    expect(marqueeSize(past, FRAME, VIEWPORT)).toEqual({ width: 100, height: 100 })
+    expect(marqueeSize(past, FRAME, { ...VIEWPORT, devicePixelRatio: 1.5 })).toEqual({
+      width: 150,
+      height: 150
+    })
+    // A drag that began off the frame's top-left corner is clamped there too.
+    const before: Rect = { x: -50, y: -30, width: 250, height: 130 }
+    expect(regionFromChrome(before, FRAME, VIEWPORT)).toEqual({
+      x: 0,
+      y: 0,
+      width: 200,
+      height: 100
+    })
+    expect(marqueeSize(before, FRAME, { ...VIEWPORT, devicePixelRatio: 2 })).toEqual({
+      width: 400,
+      height: 200
     })
   })
 

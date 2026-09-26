@@ -372,6 +372,7 @@ const SCALE = [
   'row-two-line',
   'row-pad',
   'control',
+  'button-compact-min',
   'checkbox',
   'nav-item',
   'menu-row',

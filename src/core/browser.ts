@@ -3859,6 +3859,7 @@ export class Browser {
       'capture.copy': ({ dataUrl }) => this.capture.copy(dataUrl),
       'capture.save': ({ dataUrl, fileName, tabId }, win) =>
         this.capture.save(dataUrl, win, { fileName, tabId }),
+      'capture.share': ({ dataUrl, tabId }, win) => this.capture.share(dataUrl, win, { tabId }),
       'page.print': ({ tabId }, win) => this.actions.run('page.print', { sourceTabId: tabId, win }),
       'page.printPreview': ({ tabId }, win) =>
         this.actions.run('page.printPreview', { sourceTabId: tabId, win }),

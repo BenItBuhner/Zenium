@@ -80,7 +80,8 @@ function stateWith(activeTabId = 't1'): UIState {
     essentialTabIds: [],
     foreignTabIds: [],
     glance: null,
-    downloads: []
+    downloads: [],
+    shareRequests: []
   } as unknown as UIState
 }
 
@@ -190,12 +191,18 @@ describe('the dimmed page (capture-02)', () => {
     const dialog = overlay(el)!
     expect(dialog.getAttribute('role')).toBe('dialog')
     expect(dialog.getAttribute('aria-modal')).toBe('true')
-    expect(dialog.getAttribute('aria-label')).toBe('Web capture')
+    expect(dialog.getAttribute('aria-label')).toBe('Screenshot')
     expect(dialog.dataset.capture).toBe('selecting')
     expect(dialog.dataset.selecting).toBe('true')
-    expect(el.querySelector('.zen-capture-scrim')).not.toBeNull()
+    // The dim is the host's own scrim (its colour, its corners the frame's), drawn by the
+    // overlay for the marquee's cut-out – not a second scrim of the overlay's own.
+    const scrim = el.querySelector<HTMLElement>('[data-capture-scrim]')!
+    expect(scrim.classList.contains('zen-frame-scrim')).toBe(true)
+    expect(el.querySelectorAll('.zen-frame-scrim')).toHaveLength(1)
     const toolbar = el.querySelector<HTMLElement>('[data-capture-toolbar]')!
     expect(toolbar.getAttribute('role')).toBe('toolbar')
+    // Named for what it takes, as the dialog and the card's title are (§9.23).
+    expect(toolbar.getAttribute('aria-label')).toBe('Screenshot')
     // §9.20's floating toolbar: the state told as the leading run's hint (no pressed Free
     // select), a hairline, the two actions with the geometry in hand (neither aria-disabled
     // nor a title), the close at the end.
@@ -221,7 +228,9 @@ describe('the dimmed page (capture-02)', () => {
     }
     expect(toolbar.querySelector('[data-capture-visible]')?.textContent).toBe('Visible area')
     expect(toolbar.querySelector('[data-capture-full]')?.textContent).toBe('Full page')
-    expect(toolbar.querySelector('[data-capture-cancel]')).not.toBeNull()
+    expect(toolbar.querySelector('[data-capture-cancel]')?.getAttribute('aria-label')).toBe(
+      'Cancel screenshot'
+    )
     expect(document.activeElement).toBe(dialog)
     // Nothing is asked of the engine until a way is picked.
     expect(invoke).not.toHaveBeenCalled()
@@ -286,7 +295,7 @@ describe('the dimmed page (capture-02)', () => {
     expect(marquee.style.width).toBe('400px')
     expect(marquee.style.height).toBe('300px')
     expect(el.querySelector('[data-capture-size]')?.textContent).toBe('400 × 300')
-    const scrim = el.querySelector<HTMLElement>('.zen-capture-scrim')!
+    const scrim = el.querySelector<HTMLElement>('[data-capture-scrim]')!
     expect(scrim.style.clipPath).toContain('evenodd')
     expect(scrim.style.clipPath).toContain('100px 200px')
     expect(scrim.style.clipPath).toContain('500px 500px')
@@ -327,7 +336,7 @@ describe('the dimmed page (capture-02)', () => {
     expect(el.querySelector('[data-capture-toolbar]')).not.toBeNull()
   })
 
-  it('over a page with a classic scrollbar the drag field is clientWidth wide from the frame’s corner, the toolbar centres on it, a drag is clamped inside it and the engine gets that box; a press on the gutter draws nothing (§5: the gutter is not capturable)', async () => {
+  it('over a page with a classic scrollbar the drag field is clientWidth wide from the frame’s corner, the toolbar keeps the frame’s axis, a drag is clamped inside the field and the engine gets that box; a press on the gutter draws nothing (§5: the gutter is not capturable)', async () => {
     const computed = window.getComputedStyle.bind(window)
     vi.spyOn(window, 'getComputedStyle').mockImplementation((node, pseudo) =>
       node instanceof HTMLElement && node.hasAttribute('data-capture-toolbar')
@@ -344,10 +353,11 @@ describe('the dimmed page (capture-02)', () => {
     expect(field.style.width).toBe('1185px')
     expect(field.style.height).toBe('800px')
     expect(dialog.dataset.selecting).toBe('true')
-    // The toolbar centres on the field (7.5 px left of the frame's centre; 456, not 463).
+    // The toolbar keeps the frame's axis – the cards' and the toast's – not the field's, 7.5 px
+    // to its left (463, not 456): one centre line for everything the overlay stands on the page.
     const toolbar = el.querySelector<HTMLElement>('[data-capture-toolbar]')!
-    expect(toolbar.style.left).toBe(`${Math.round(1185 / 2 - 273.7 / 2)}px`)
-    expect(toolbar.style.left).toBe('456px')
+    expect(toolbar.style.left).toBe(`${Math.round(1200 / 2 - 273.7 / 2)}px`)
+    expect(toolbar.style.left).toBe('463px')
     // A press on the gutter draws nothing.
     pointer(dialog, 'pointerdown', 1190, 300)
     pointer(dialog, 'pointermove', 1199, 500)
@@ -433,7 +443,7 @@ describe('the result card (capture-21)', () => {
     return el
   }
 
-  it('is a §9.20 dialog at 400 over the page, titled with the picture’s size, the picture on it, and Close, Copy, Save (the primary) in its footer; the keyboard lands on it', async () => {
+  it('is a §9.20 dialog at 400 over the page, titled with the picture’s size, the picture on it, and Close, Copy, Share, Save (the primary) in its footer; the keyboard lands on it', async () => {
     const el = await captured()
     const card = el.querySelector<HTMLElement>('[data-capture-result]')!
     expect(card.dataset.captureResult).toBe('ok')
@@ -443,7 +453,7 @@ describe('the result card (capture-21)', () => {
     expect(card.getAttribute('role')).toBe('dialog')
     expect(card.getAttribute('aria-modal')).toBe('true')
     expect(card.tabIndex).toBe(-1)
-    expect(card.querySelector('#zen-capture-title')?.textContent).toBe('Web capture')
+    expect(card.querySelector('#zen-capture-title')?.textContent).toBe('Screenshot')
     expect(card.querySelector('#zen-capture-description')?.textContent).toBe('400 × 300 pixels')
     const img = card.querySelector<HTMLImageElement>('img')!
     expect(img.getAttribute('src')).toBe(RESULT.dataUrl)
@@ -458,8 +468,17 @@ describe('the result card (capture-21)', () => {
     const buttons = [...card.querySelectorAll<HTMLButtonElement>('button')].map(
       (b) => b.textContent
     )
-    expect(buttons).toEqual(['Close', 'Copy', 'Save'])
+    expect(buttons).toEqual(['Close', 'Copy', 'Share', 'Save'])
     expect(card.querySelector('[data-capture-save]')?.hasAttribute('data-primary')).toBe(true)
+    // Share opens the share hub's popover on itself (§9.20: a popover hangs from its opener).
+    const share = card.querySelector<HTMLButtonElement>('[data-capture-share]')!
+    expect(share.hasAttribute('data-share-anchor')).toBe(true)
+    expect(share.getAttribute('aria-haspopup')).toBe('dialog')
+    // Four verbs hug at 80 in the 400 form's column (§9.11), not the primitive's 96: each wears
+    // the unlayered modifier beside the primitive (main.css's `.zen-v2-button.zen-capture-verb`).
+    expect(card.querySelector('.zen-capture-card-footer')?.contains(share)).toBe(true)
+    for (const verb of card.querySelectorAll<HTMLButtonElement>('.zen-capture-card-footer button'))
+      expect(verb.className.split(' '), verb.textContent ?? '').toContain('zen-capture-verb')
     expect(document.activeElement).toBe(card)
     // No fallback: nothing said of the visible area.
     expect(card.textContent).not.toContain('Visible area captured')
@@ -482,7 +501,7 @@ describe('the result card (capture-21)', () => {
     expect(el.querySelector('#zen-capture-description')?.textContent).toBe('1,600 × 600 pixels')
   })
 
-  it('Copy hands the picture to the engine’s clipboard and says so on a toast; the card stays up (capture-10)', async () => {
+  it('Copy hands the picture to the engine’s clipboard and says so on a toast – "Image copied", the share hub’s words for the same act; the card stays up (capture-10)', async () => {
     vi.mocked(cmd).mockImplementation(async (name: string) =>
       name === 'capture.copy' ? true : null
     )
@@ -491,7 +510,7 @@ describe('the result card (capture-21)', () => {
     await settle()
     expect(cmd).toHaveBeenCalledWith('capture.copy', { dataUrl: RESULT.dataUrl })
     const toast = el.querySelector<HTMLElement>('[data-capture-toast]')!
-    expect(toast.textContent).toBe('Copied')
+    expect(toast.textContent).toBe('Image copied')
     expect(toast.dataset.kind).toBe('info')
     expect(toast.dataset.surface).toBe('page')
     expect(toast.getAttribute('role')).toBe('status')
@@ -600,7 +619,9 @@ describe('the result card (capture-21)', () => {
 
     click(el.querySelector('[data-capture-copy]'))
     await flush()
-    expect(el.querySelector('[data-capture-toast] .zen-message-text')?.textContent).toBe('Copied')
+    expect(el.querySelector('[data-capture-toast] .zen-message-text')?.textContent).toBe(
+      'Image copied'
+    )
     act(() => vi.advanceTimersByTime(TOAST_SHOW_MS - 1))
     expect(el.querySelector('[data-capture-toast]')).not.toBeNull()
     act(() => vi.advanceTimersByTime(1))
@@ -613,6 +634,86 @@ describe('the result card (capture-21)', () => {
     click(el.querySelector('[data-capture-save]'))
     await settle()
     expect(el.querySelector('[data-capture-toast]')?.textContent).toBe('Couldn’t save the picture')
+  })
+
+  it('Share hands the picture to the share hub for this tab; the card stays up under the popover and says nothing itself', async () => {
+    vi.mocked(cmd).mockImplementation(async (name: string) =>
+      name === 'capture.share' ? true : null
+    )
+    const el = await captured()
+    click(el.querySelector('[data-capture-share]'))
+    await settle()
+    expect(cmd).toHaveBeenCalledWith('capture.share', { dataUrl: RESULT.dataUrl, tabId: 't1' })
+    expect(cmd).not.toHaveBeenCalledWith('capture.copy', expect.anything())
+    // The hub's popover is the answer; no toast of the card's own.
+    expect(el.querySelector('[data-capture-toast]')).toBeNull()
+    expect(el.querySelector('[data-capture-result]')).not.toBeNull()
+    expect(uiStore.get().capture).not.toBeNull()
+  })
+
+  it('Share is aria-expanded while the share it asked for – this tab’s, of the picture alone – waits in the host’s queue, and not for another tab’s or a page’s own', async () => {
+    const el = await captured()
+    const share = (): HTMLButtonElement =>
+      el.querySelector<HTMLButtonElement>('[data-capture-share]')!
+    expect(share().getAttribute('aria-expanded')).toBe('false')
+    const picture = { name: 'Screenshot.png', type: 'image/png', size: 3 }
+    const mine = {
+      id: 'share-1',
+      tabId: 't1',
+      windowId: 'w1',
+      origin: null,
+      title: 'Example',
+      text: '',
+      url: '',
+      files: [picture],
+      imageUrl: null,
+      system: false,
+      requestedAt: 1
+    }
+    act(() => {
+      browserStore.set({ state: { ...stateWith(), shareRequests: [mine] } as unknown as UIState })
+    })
+    expect(share().getAttribute('aria-expanded')).toBe('true')
+    // The page's own navigator.share, or a share from another tab, lights nothing here.
+    act(() => {
+      browserStore.set({
+        state: {
+          ...stateWith(),
+          shareRequests: [
+            { ...mine, origin: 'example.test', url: 'https://example.test/' },
+            { ...mine, tabId: 't2' }
+          ]
+        } as unknown as UIState
+      })
+    })
+    expect(share().getAttribute('aria-expanded')).toBe('false')
+    act(() => {
+      browserStore.set({ state: { ...stateWith(), shareRequests: [] } as unknown as UIState })
+    })
+    expect(share().getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('a window with no share hub (an app window’s chrome) copies the picture instead and says so', async () => {
+    vi.mocked(cmd).mockImplementation(async (name: string) =>
+      name === 'capture.share' ? false : name === 'capture.copy' ? true : null
+    )
+    const el = await captured()
+    click(el.querySelector('[data-capture-share]'))
+    await settle()
+    expect(cmd).toHaveBeenCalledWith('capture.copy', { dataUrl: RESULT.dataUrl })
+    const toast = el.querySelector<HTMLElement>('[data-capture-toast]')!
+    expect(toast.textContent).toBe('Nothing to share with here, so the picture was copied')
+    expect(toast.dataset.kind).toBe('info')
+  })
+
+  it('a share that neither hub nor clipboard would take is an error toast', async () => {
+    vi.mocked(cmd).mockImplementation(async () => false)
+    const el = await captured()
+    click(el.querySelector('[data-capture-share]'))
+    await settle()
+    const toast = el.querySelector<HTMLElement>('[data-capture-toast]')!
+    expect(toast.textContent).toBe('Couldn’t share the picture')
+    expect(toast.dataset.kind).toBe('error')
   })
 
   it('the visible-area fallback is named on the card, in the warn ink', async () => {
@@ -637,13 +738,13 @@ describe('the result card (capture-21)', () => {
     root = null
     mount?.remove()
     el = await captured()
-    pointer(el.querySelector('.zen-capture-scrim')!, 'pointerdown', 20, 700)
+    pointer(el.querySelector('[data-capture-scrim]')!, 'pointerdown', 20, 700)
     expect(uiStore.get().capture).toBeNull()
   })
 
   it('a press on the scrim while the page is dimmed is the start of a drag, not a close', () => {
     const el = open()
-    pointer(el.querySelector('.zen-capture-scrim')!, 'pointerdown', 20, 700)
+    pointer(el.querySelector('[data-capture-scrim]')!, 'pointerdown', 20, 700)
     expect(uiStore.get().capture).not.toBeNull()
     expect(overlay(el)!.dataset.capture).toBe('selecting')
   })
@@ -758,11 +859,21 @@ describe('Escape closes cleanly from every phase (capture-16)', () => {
     closedCleanly(el)
   })
 
-  it('mid-drag', () => {
+  it('mid-drag: the first Escape lets the drag go and keeps the dimmed page (§9.5 one hop), the second closes', () => {
     const el = open()
     const dialog = overlay(el)!
     pointer(dialog, 'pointerdown', 100, 200)
     pointer(dialog, 'pointermove', 300, 400)
+    expect(el.querySelector('[data-capture-marquee]')).not.toBeNull()
+    keydown(dialog, 'Escape')
+    expect(uiStore.get().capture).not.toBeNull()
+    expect(dialog.dataset.capture).toBe('selecting')
+    expect(el.querySelector('[data-capture-marquee]')).toBeNull()
+    expect(el.querySelector('[data-capture-toolbar]')).not.toBeNull()
+    // The release that follows a let-go drag captures nothing.
+    pointer(dialog, 'pointerup', 300, 400)
+    expect(invoke).not.toHaveBeenCalled()
+    expect(dialog.dataset.capture).toBe('selecting')
     keydown(dialog, 'Escape')
     closedCleanly(el)
     expect(invoke).not.toHaveBeenCalled()

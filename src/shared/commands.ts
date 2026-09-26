@@ -174,7 +174,7 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
   // full page, then Copy or Save). "web capture" typed names this row, not the one above.
   {
     id: 'web-capture',
-    label: 'Web Capture',
+    label: 'Screenshot',
     keywords: ['web capture', 'capture', 'screenshot', 'region', 'select', 'clip', 'snip'],
     action: 'capture.start',
     layouts: DESKTOP_LAYOUT

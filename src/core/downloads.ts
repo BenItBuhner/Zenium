@@ -895,16 +895,21 @@ export class DownloadService {
     delete record.errorMessage
   }
 
-  /** Register a file we produced ourselves (e.g. a screenshot) so it shows in the panel. */
+  /**
+   * Register a file we produced ourselves (e.g. a screenshot) so it shows in the panel. `size`
+   * is the file's bytes where the caller wrote them and knows; the row reads it as any finished
+   * download's size, and 0 – "no size" to the row – where nothing was said.
+   */
   addCompleted(
     savePath: string,
     mimeType: string,
-    options: { containerId?: string; private?: boolean } = {}
+    options: { containerId?: string; private?: boolean; size?: number } = {}
   ): DownloadItem {
     const now = this.now()
     const name = basename(savePath)
     const containerId =
       options.containerId ?? (options.private ? PRIVATE_CONTAINER_ID : DEFAULT_CONTAINER_ID)
+    const size = options.size !== undefined && options.size > 0 ? Math.floor(options.size) : 0
     const record: DownloadItem = {
       id: newId('dl'),
       url: savePath.startsWith('content:') ? savePath : `file://${savePath}`,
@@ -912,8 +917,8 @@ export class DownloadService {
       filename: name,
       finalName: name,
       savePath,
-      totalBytes: 0,
-      receivedBytes: 0,
+      totalBytes: size,
+      receivedBytes: size,
       state: 'completed',
       startedAt: now,
       completedAt: now,
