@@ -433,6 +433,11 @@ export function createPreviewBridge(): NativeBridge {
   // `?touchExploration=1` stands in for a service exploring by touch (TalkBack): the phone
   // menu's icon row poses as its labelled list (A11Y-04), the bar that hides on scroll stays.
   const touchExploration = params.get('touchExploration') === '1'
+  // `?region=DE` stands in for the device's country (`DeviceRegion.kt`'s answer in the boot
+  // payload): an EEA code puts the search-engine choice screen in the first-run tour and, once
+  // the tour is done, over the shell while the choice is owed (OMN-26). Absent: no region, as a
+  // device that names none – never in the EEA.
+  const region = params.get('region')?.trim().toUpperCase() || null
   // `?platform=linux|win32|darwin` makes the chrome report a desktop OS, so a capture taken at
   // the desktop form factor shows the desktop's platform-bound rows (the Default Browser
   // section, file URLs, the engine's name) rather than Android's. Capabilities stay the
@@ -650,6 +655,7 @@ export function createPreviewBridge(): NativeBridge {
       // disabled, SET-17); a spec's `screenlock=` overrides it (previewStates.ts).
       screenLock: vaultMode !== 'none',
       touchExploration,
+      region,
       environment: {
         largeScreen: false,
         pointerAndKeyboard: false,
@@ -898,6 +904,13 @@ export function createPreviewBridge(): NativeBridge {
       applyFrame(String(tabId))
     },
     'chrome.setPullToRefresh': () => undefined,
+    // The chrome's READY (`ChromeReady`, startup.ts): the Kotlin host lifts its splash on it and
+    // sets the launch's mark. The preview has no splash; it writes the moment on the root
+    // (`data-chrome-ready`, ms since the document's start) so a probe can read that READY came,
+    // and when – or that it never did, a boot the host's watchdog would have had to end.
+    'chrome.ready': () => {
+      document.documentElement.dataset.chromeReady = performance.now().toFixed(0)
+    },
     // The history navigation disc the host draws above the pages (Kotlin: `HistoryNavBubbleView`):
     // the preview has no 3-button edge drag to start one, so nothing ever arrives here.
     'chrome.historyNavBubble': () => undefined,

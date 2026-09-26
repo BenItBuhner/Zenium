@@ -2807,8 +2807,9 @@ function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
         }),
         // The EEA's choice screen again (W6-2; Chrome's chrome://search-engine-choice can be
         // reopened from its Search engine settings): on a device in the EEA, or one that
-        // answered the screen once (a record) wherever it is now. The screen is the desktop's
-        // and the tablet's; the phone draws none yet, so it keeps no row for it.
+        // answered the screen once (a record) wherever it is now. Every shell draws the screen
+        // – the desktop's and tablet's `SearchChoiceScreen`, the phone's
+        // `PhoneSearchChoiceScreen` (OMN-26) – so the row stands on every layout.
         ...(state.searchChoice?.eea || s.searchChoice !== null
           ? [
               {
@@ -2818,7 +2819,6 @@ function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
                 description:
                   'Shows the search engines again, in a random order, to set the default.',
                 keywords: ['choice', 'default', 'eea', 'dma'],
-                layouts: ['desktop', 'tablet'],
                 button: 'Choose…',
                 onPress: () => run('searchChoice.askAgain', undefined)
               } satisfies SettingsRow

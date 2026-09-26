@@ -47,6 +47,8 @@ import { closeCustomize, openCustomize } from '@renderer/lib/newtab'
 import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
 import { BLANK_URL, ERROR_URL_PREFIX, EXTENSION_SCHEME, crashPageOptionsOf } from '@shared/url'
 import { DEFAULT_FOLDER_ICON } from '@renderer/lib/groups'
+import { phoneSteps } from '@renderer/lib/onboarding'
+import { tourAsksSearchChoice } from '@renderer/lib/searchChoice'
 import { activeSpace, activeTab, regularOf } from '@renderer/lib/selectors'
 import {
   browserStore,
@@ -130,6 +132,7 @@ import {
   parsePreviewSteps,
   type PreviewCrashVariant,
   type PreviewDownloadSpec,
+  type PreviewFirstRunStep,
   type PreviewSiteDataSeed,
   type PreviewMediaVariant,
   type PreviewNetworkVariant,
@@ -1102,6 +1105,12 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
       else if (then.length > 0) setTimeout(() => steps(then, finish), STEP_SETTLE_MS)
       else requestAnimationFrame(() => requestAnimationFrame(() => done(spec)))
     })
+  } else if (target.kind === 'firstrun') {
+    // The phone's first-run tour at one of its steps: the seeded profile (`onboardingDone:
+    // false`) has the tour up at its welcome, and the steps before the one asked for are pressed
+    // through their footer verbs; the steps asked for follow once the tour is there.
+    const taps = state ? firstRunTaps(target.step, state) : []
+    setTimeout(() => steps([...taps, ...(target.then ?? [])], finish), STEP_SETTLE_MS)
   } else if (target.kind === 'page') {
     // The Extensions category is only on a host with the capability: the seed turns it on before
     // the page opens on that section, so the section resolves and its rows are what is waited for.
@@ -2801,6 +2810,26 @@ function typeInto(input: HTMLInputElement, text: string): void {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
   setter?.call(input, text)
   input.dispatchEvent(new Event('input', { bubbles: true }))
+}
+
+/**
+ * The footer taps that take the phone's tour from its welcome to `step`: "Get started" leaves
+ * the welcome, "Continue" each step after it – except the EEA's choice step (OMN-26,
+ * `tourAsksSearchChoice`), which has no Continue and is left behind with "Skip for now", so a
+ * later step is reached without a record being written.
+ */
+export function firstRunTaps(step: PreviewFirstRunStep, state: UIState): PreviewStep[] {
+  const order = phoneSteps({
+    defaultBrowser: state.capabilities.defaultBrowser,
+    isDefault: state.defaultBrowser.isDefault
+  })
+  const index = order.indexOf(step)
+  if (index <= 0) return []
+  const choice = tourAsksSearchChoice(state)
+  return order.slice(0, index).map((left, i) => ({
+    kind: 'tap',
+    text: i === 0 ? 'Get started' : left === 'search' && choice ? 'Skip for now' : 'Continue'
+  }))
 }
 
 /** Take `list` in order, a settle between steps, then `then`. */

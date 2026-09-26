@@ -791,6 +791,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 "online" to connectivity.online,
                 // What sync calls this device until the user renames it (Chrome names a phone by its model).
                 "deviceModel" to Build.MODEL,
+                // The device's country (network, SIM, then the locale; `DeviceRegion.kt`): what the
+                // EEA's search-engine choice screen is gated on (OMN-26). A debuggable build reads
+                // `debug.zenium.region` first. Null when the device names none.
+                "region" to DeviceRegion.read(activity, BuildConfig.DEBUG),
                 // A screen lock (or biometric) the device can verify the user with: the "Lock
                 // private tabs when you leave Zenium" switch is enabled (`PrivateLock`); the lock
                 // itself is never on at boot (it lives in memory).
