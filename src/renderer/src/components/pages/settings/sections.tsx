@@ -133,6 +133,7 @@ import { formatBytes, relativeTime } from '@renderer/lib/utils'
 import { versionReport } from '@renderer/lib/versionReport'
 import { VaultPassphraseForm } from '../../autofill/PassphraseForm'
 import { ContainerIcon } from '../../ContainerIcon'
+import { openMagicStackCustomize } from '../../newtab/magicStackCustomize'
 import {
   clearDataGroups,
   safetyCheckGroups,
@@ -1356,6 +1357,27 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
           sheetDescription: NEW_TAB_LAYOUT_HINT,
           onChange: (v) => write(pickNewTabPreset(prefs, v))
         }),
+        {
+          // The phone's cards under the shortcuts (NTP-16, Chrome's Magic Stack – "Cards" to the
+          // user): a level beside Layout and Shortcuts, the second door to the one Show list the
+          // page's gear sheet opens (§9.29's two doors, one setting) – the very sheet, over this
+          // page, not a copy of its rows. The hidden set is this device's, so the row is the
+          // phone layout's alone; the desktop has no stack and its page keeps its rows.
+          kind: 'action',
+          id: 'newtab-cards',
+          label: 'Cards',
+          description: 'Choose which cards show under the shortcuts',
+          keywords: [
+            'continue where you left off',
+            'recently closed',
+            'downloads',
+            'bookmarks',
+            'default browser'
+          ],
+          layouts: ['phone'],
+          leaves: 'chevron',
+          onPress: openMagicStackCustomize
+        },
         choice<NewTabShortcutsMode>({
           id: 'newtab-shortcuts',
           label: 'Shortcuts',
