@@ -7,11 +7,12 @@
  * a second press before then withdraws the entry, and the inbox never sees it. This module is
  * the browser's half: once the core is up (a startup sweep, off the boot path) and whenever the
  * app comes back to the front (a custom tab in front was the one writing), the inbox is read
- * from the disk – never a mirror, the writer is another activity (`storeIo.ts`) – and every
- * entry whose URL the tree does not hold is created through the core's public `bookmark.create`
- * command, into the star's default folder, in filing order (`at`). The URLs of the entries read
- * are then emptied from a fresh read of the inbox, so an entry filed meanwhile stays; the custom
- * tab's star reads "Edit Bookmark" from the browser's store on its next open.
+ * from the disk – never a mirror, the writer is another activity (`storeIo.ts`); off the main
+ * thread, so a return to the front pays no bridge hop for it – and every entry whose URL the
+ * tree does not hold is created through the core's public `bookmark.create` command, into the
+ * star's default folder, in filing order (`at`). The URLs of the entries read are then emptied
+ * from a fresh read of the inbox, so an entry filed meanwhile stays; the custom tab's star reads
+ * "Edit Bookmark" from the browser's store on its next open.
  *
  * Idempotent: the tree is asked before each create, so a pass cut short between its creates and
  * its emptying (the process killed) makes no second bookmark on the next pass, which only
@@ -32,8 +33,12 @@ export interface InboxEntry {
 
 /** What the drain reaches for: the inbox on the disk, and the core's bookmarks. */
 export interface InboxDrainHost {
-  /** The inbox's text, fresh from the disk; null when there is no such document. */
-  readInbox(): string | null
+  /**
+   * The inbox's text, fresh from the disk – read off the main thread where the host can
+   * (`AndroidStoreIO.read`), so the caller's turn is not held for it; null when there is no
+   * such document.
+   */
+  readInbox(): Promise<string | null>
   /** Replace the inbox's text. */
   writeInbox(text: string): Promise<void>
   /** Whether the tree holds a bookmark of this exact URL (`browser.bookmarks.has`). */
@@ -145,7 +150,7 @@ export class BookmarkInboxDrain {
   }
 
   private async pass(): Promise<void> {
-    const read = parseInbox(this.host.readInbox())
+    const read = parseInbox(await this.host.readInbox())
     if (read.length === 0) return
     for (const entry of planDrain(read, (url) => this.host.has(url))) {
       if (!this.host.create(entry)) {
@@ -154,7 +159,7 @@ export class BookmarkInboxDrain {
     }
     // Emptied from the inbox as it is now, not as it was read: an entry filed since stays.
     const drained = new Set(read.map((entry) => entry.url))
-    const kept = drainedInbox(parseInbox(this.host.readInbox()), drained)
+    const kept = drainedInbox(parseInbox(await this.host.readInbox()), drained)
     if (kept !== null) await this.host.writeInbox(serializeInbox(kept))
   }
 }

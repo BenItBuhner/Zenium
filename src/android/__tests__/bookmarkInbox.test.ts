@@ -14,7 +14,9 @@ import {
   type InboxEntry
 } from '../bookmarkInbox'
 import type { Bridge } from '../bridge'
+import { DOCS_PATH, type HandoffFetch } from '../handoff'
 import { AndroidPlatform, BOOKMARK_INBOX_SWEEP_DELAY_MS, type BootInfo } from '../platform'
+import { AndroidStoreIO } from '../storeIo'
 
 const A: InboxEntry = { url: 'https://a.example/', title: 'A', at: 1_000 }
 const B: InboxEntry = { url: 'https://b.example/', title: 'B', at: 2_000 }
@@ -100,7 +102,7 @@ function fakeHost(
   const created: InboxEntry[] = []
   const writes: string[] = []
   const host: InboxDrainHost = {
-    readInbox: () => state.disk,
+    readInbox: async () => state.disk,
     writeInbox: async (next) => {
       writes.push(next)
       state.disk = next
@@ -210,11 +212,20 @@ const BOOT: BootInfo = {
   fullscreen: false
 }
 
-/** A bridge over `disk`, as the Kotlin host: `storage.read` answers it, `storage.write` lands. */
-function fakeBridge(disk: Record<string, string>): { bridge: Bridge; writes: string[] } {
+/**
+ * A bridge over `disk`, as the Kotlin host: `storage.read` answers it, `storage.write` lands.
+ * `log` has every `storage.*` call about the inbox by method, in order (the platform's other
+ * stores read their own documents through the same bridge), for the tests that read what a
+ * turn cost.
+ */
+function fakeBridge(
+  disk: Record<string, string>,
+  log: string[] = []
+): { bridge: Bridge; writes: string[]; log: string[] } {
   const writes: string[] = []
   const answer = (method: string, args: Record<string, unknown>): unknown => {
     const name = String(args.name)
+    if (method.startsWith('storage.') && name === BOOKMARKS_INBOX_FILE) log.push(method)
     if (method === 'storage.read') return disk[name] ?? null
     if (method === 'storage.write') {
       writes.push(String(args.text))
@@ -227,12 +238,33 @@ function fakeBridge(disk: Record<string, string>): { bridge: Bridge; writes: str
     callSync: (method: string, args: Record<string, unknown>) => answer(method, args),
     send: () => undefined
   } as unknown as Bridge
-  return { bridge, writes }
+  return { bridge, writes, log }
 }
 
 /**
- * The platform with the boot payload's copy of the inbox, a browser whose tree holds `held`
- * and whose `bookmark.create` is recorded, and the window `Browser.start` would create.
+ * The document handler over `disk`, as `BootHandoff.document` answers `/zen-docs/<name>`: the
+ * text of a document that is there, 404 for one that is not (the store then reads it through
+ * the bridge, the pre-handoff path). Logged as `fetch <name>`.
+ */
+function fakeHandler(disk: Record<string, string>, log: string[]): HandoffFetch {
+  return async (url) => {
+    const name = decodeURIComponent(url.slice(url.indexOf(DOCS_PATH) + DOCS_PATH.length))
+    log.push(`fetch ${name}`)
+    const text = disk[name]
+    return {
+      ok: text !== undefined,
+      status: text === undefined ? 404 : 200,
+      headers: { get: () => null },
+      text: async () => text ?? ''
+    }
+  }
+}
+
+/**
+ * The platform with the boot payload's copy of the inbox – its store over the bridge and the
+ * document handler, as `bootAndroid` builds it – a browser whose tree holds `held` and whose
+ * `bookmark.create` is recorded, and the window `Browser.start` would create. `log` reads the
+ * bridge's calls, the handler's fetches and the window's `onFocused` in order.
  */
 function booted(
   inboxText: string | null,
@@ -245,18 +277,23 @@ function booted(
   >
   disk: Record<string, string>
   writes: string[]
+  log: string[]
   files: Record<string, string>
   win: ZenWindow
 } {
   const disk: Record<string, string> = {}
   if (inboxText !== null) disk[BOOKMARKS_INBOX_FILE] = inboxText
-  const { bridge, writes } = fakeBridge(disk)
+  const log: string[] = []
+  const { bridge, writes } = fakeBridge(disk, log)
   const files: Record<string, string> = { 'state.json': '{}' }
   if (inboxText !== null) files[BOOKMARKS_INBOX_FILE] = inboxText
-  const platform = new AndroidPlatform(bridge, { ...BOOT, files })
+  const boot = { ...BOOT, files }
+  const io = new AndroidStoreIO(bridge, files, [], fakeHandler(disk, log))
+  const platform = new AndroidPlatform(bridge, boot, io)
   const tree = new Set(held)
   const handleCommand = vi.fn((_win: ZenWindow, name: string, args: { url: string }) => {
     if (name !== 'bookmark.create') throw new Error(`Unknown command: ${name}`)
+    log.push(`create ${args.url}`)
     tree.add(args.url)
     return { id: 'bm_new', url: args.url }
   })
@@ -270,10 +307,12 @@ function booted(
   const win = {
     id: 1,
     onChromeReady: vi.fn(),
-    onFocused: vi.fn(),
+    onFocused: vi.fn(() => {
+      log.push('onFocused')
+    }),
     onWindowStateChanged: vi.fn()
   } as unknown as ZenWindow
-  return { platform, background, handleCommand, disk, writes, files, win }
+  return { platform, background, handleCommand, disk, writes, log, files, win }
 }
 
 afterEach(() => {
@@ -284,46 +323,67 @@ afterEach(() => {
 describe('the platform’s drain of the inbox', () => {
   it('runs a startup sweep once the core has its window, and reads the boot copy without a bridge call', async () => {
     vi.useFakeTimers()
-    const { platform, handleCommand, disk, writes, files, win } = booted(inbox(A))
+    const { platform, handleCommand, disk, writes, log, files, win } = booted(inbox(A))
     // The payload's copy is the drain's, not the mirror's.
     expect(files).toEqual({ 'state.json': '{}' })
     platform.windows.create(win, INIT)
-    vi.advanceTimersByTime(BOOKMARK_INBOX_SWEEP_DELAY_MS - 1)
+    await vi.advanceTimersByTimeAsync(BOOKMARK_INBOX_SWEEP_DELAY_MS - 1)
     expect(handleCommand).not.toHaveBeenCalled()
-    vi.advanceTimersByTime(1)
+    expect(log).toEqual([])
+    await vi.advanceTimersByTimeAsync(1)
     expect(handleCommand).toHaveBeenCalledTimes(1)
     expect(handleCommand.mock.calls[0]!.slice(1)).toEqual([
       'bookmark.create',
       { title: 'A', url: A.url, type: 'url' }
     ])
-    await vi.runAllTimersAsync()
+    // The create before any fetch or bridge call: the first read was the boot copy. The
+    // re-read before the emptying is the disk's, through the handler.
+    expect(log).toEqual([`create ${A.url}`, `fetch ${BOOKMARKS_INBOX_FILE}`, 'storage.write'])
     expect(writes).toEqual([EMPTY])
     expect(disk[BOOKMARKS_INBOX_FILE]).toBe(EMPTY)
   })
 
-  it('runs again each time the app comes back to the front, from the disk as the custom tab left it', async () => {
+  it('runs again each time the app comes back to the front, from the disk as the custom tab left it, after the window’s own focus handling and without a bridge hop in the handler', async () => {
     vi.useFakeTimers()
     // The focus cue also ends a cut-short gesture on the chrome document (`zen-resume`).
     vi.stubGlobal('window', { dispatchEvent: vi.fn() })
-    const { platform, handleCommand, disk, writes, win } = booted(null)
+    const { platform, handleCommand, disk, writes, log, win } = booted(null)
     platform.windows.create(win, INIT)
-    // The cold start's own focus, before the sweep: nothing runs yet.
+    // The cold start's own focus, before the sweep: the window's, and nothing of the drain's.
     platform.hostEvent('focus', { focused: true })
-    expect(handleCommand).not.toHaveBeenCalled()
+    expect(log).toEqual(['onFocused'])
+    // The sweep over a profile without an inbox: the handler's 404, then the one bridge read of
+    // the pre-handoff path – in the sweep's own turn, nothing to create, nothing to write.
     await vi.advanceTimersByTimeAsync(BOOKMARK_INBOX_SWEEP_DELAY_MS)
+    expect(log).toEqual(['onFocused', `fetch ${BOOKMARKS_INBOX_FILE}`, 'storage.read'])
     expect(handleCommand).not.toHaveBeenCalled()
     expect(writes).toEqual([])
     // A custom tab's star filed two pages; the browser returns to the front.
     disk[BOOKMARKS_INBOX_FILE] = inbox(B, A)
+    log.length = 0
     platform.hostEvent('focus', { focused: false })
     expect(handleCommand).not.toHaveBeenCalled()
+    expect(log).toEqual([])
     platform.hostEvent('focus', { focused: true })
+    // The handler's own turn: the window's focus handling first, then the inbox asked of the
+    // document handler – off the main thread – and the bridge not called at all.
+    expect(log).toEqual(['onFocused', `fetch ${BOOKMARKS_INBOX_FILE}`])
     await vi.runAllTimersAsync()
     expect(handleCommand.mock.calls.map(([, , args]) => args.url)).toEqual([A.url, B.url])
+    expect(log).toEqual([
+      'onFocused',
+      `fetch ${BOOKMARKS_INBOX_FILE}`,
+      `create ${A.url}`,
+      `create ${B.url}`,
+      `fetch ${BOOKMARKS_INBOX_FILE}`,
+      'storage.write'
+    ])
     expect(writes).toEqual([EMPTY])
-    // Back again with nothing filed: a read, no create, no write.
+    // Back again with nothing filed: one read of the emptied inbox, no create, no write.
+    log.length = 0
     platform.hostEvent('focus', { focused: true })
     await vi.runAllTimersAsync()
+    expect(log).toEqual(['onFocused', `fetch ${BOOKMARKS_INBOX_FILE}`])
     expect(handleCommand).toHaveBeenCalledTimes(2)
     expect(writes).toEqual([EMPTY])
   })
