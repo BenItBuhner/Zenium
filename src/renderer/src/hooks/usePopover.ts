@@ -6,14 +6,23 @@ import { useEscape } from './useEscape'
 type Initial = 'first' | 'container' | 'none' | ((root: HTMLElement) => HTMLElement | null)
 
 /**
+ * The active popovers, oldest first: Tab wraps inside the one on top alone (§9.22, §9.5's
+ * one-hop stack), as Escape closes the one on top alone (`useEscape`). Two wrapping at once –
+ * a share popover over the capture card – would each pull the focus to their own first
+ * control on one key.
+ */
+const stack: Array<RefObject<HTMLElement | null>> = []
+
+/**
  * The keyboard inside a renderer-owned popover, menu or dialog (v2 draft §9.22): Escape closes
  * it; once it is painted (`active`) focus moves into it – its first focusable, the container
  * itself (`tabIndex -1`, for a menu opened by pointer or a title-and-notice panel), or an
  * element of the caller's choosing – or, for `'none'`, stays where it was (a prompt a page event
- * raised beside a chip in the pill takes no focus on open); Tab wraps inside it; and when it
- * goes while focus is still inside, focus returns to the control that opened it (what had focus
- * when it mounted) – a control of the inert window chrome's once the chrome is back
- * (lib/popover.ts `returnFocusTo`, the Settings dialogs' return too).
+ * raised beside a chip in the pill takes no focus on open); Tab wraps inside it while it is the
+ * topmost active popover; and when it goes while focus is still inside, focus returns to the
+ * control that opened it (what had focus when it mounted) – a control of the inert window
+ * chrome's once the chrome is back (lib/popover.ts `returnFocusTo`, the Settings dialogs'
+ * return too).
  *
  * The chrome layer and the frame dialog host (lib/portals.tsx) place the surface and own the
  * rest: light dismiss, one popover at a time, the scroll and resize that close an anchored
@@ -76,12 +85,18 @@ export function usePopover(
 
   useEffect(() => {
     if (!active) return
+    stack.push(ref)
     const onKey = (e: KeyboardEvent): void => {
+      if (stack.at(-1) !== ref) return
       const root = ref.current
       if (root) wrapTab(root, e)
     }
     window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
+    return () => {
+      const at = stack.indexOf(ref)
+      if (at !== -1) stack.splice(at, 1)
+      window.removeEventListener('keydown', onKey, true)
+    }
   }, [active, ref])
 
   useLayoutEffect(() => {

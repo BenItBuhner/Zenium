@@ -88,6 +88,78 @@ describe('usePopover', () => {
   })
 })
 
+/** Two popovers up at once: a card, and a second one opened over it (`over`). */
+function Nested({ over }: { over: boolean }): JSX.Element {
+  const card = useRef<HTMLDivElement>(null)
+  const top = useRef<HTMLDivElement>(null)
+  usePopover(card, { onClose: () => undefined, initial: 'container' })
+  usePopover(top, { onClose: () => undefined, active: over, initial: 'first' })
+  return (
+    <>
+      <div ref={card} role="dialog" tabIndex={-1} data-card>
+        <button type="button" data-card-first>
+          Close
+        </button>
+        <button type="button" data-card-last>
+          Save
+        </button>
+      </div>
+      {over && (
+        <div ref={top} role="dialog" data-top>
+          <button type="button" data-top-first>
+            Copy image
+          </button>
+          <button type="button" data-top-last>
+            Save file
+          </button>
+        </div>
+      )}
+    </>
+  )
+}
+
+/** Tab (or Shift+Tab) on the focused element; true when a wrap took the key from the browser. */
+function tab(shift = false): boolean {
+  let prevented = false
+  act(() => {
+    const e = new KeyboardEvent('keydown', {
+      key: 'Tab',
+      shiftKey: shift,
+      bubbles: true,
+      cancelable: true
+    })
+    document.activeElement?.dispatchEvent(e)
+    prevented = e.defaultPrevented
+  })
+  return prevented
+}
+
+describe('Tab wraps in the topmost popover alone (§9.5 one hop)', () => {
+  it('a popover over a card takes the wrap; the card has it again once the popover has gone', () => {
+    const el = render(<Nested over />)
+    const topFirst = el.querySelector<HTMLElement>('[data-top-first]')!
+    const topLast = el.querySelector<HTMLElement>('[data-top-last]')!
+    expect(document.activeElement).toBe(topFirst)
+    // A step within the popover is the browser's: the card's wrap does not take the key and
+    // pull the keyboard to its Close on the way.
+    expect(tab()).toBe(false)
+    expect(document.activeElement).toBe(topFirst)
+    // From the popover's last control Tab wraps to its first, Shift+Tab back.
+    act(() => topLast.focus())
+    expect(tab()).toBe(true)
+    expect(document.activeElement).toBe(topFirst)
+    expect(tab(true)).toBe(true)
+    expect(document.activeElement).toBe(topLast)
+
+    // The popover leaves: the card is on top again and wraps Tab as before.
+    act(() => root!.render(<Nested over={false} />))
+    const cardLast = el.querySelector<HTMLElement>('[data-card-last]')!
+    act(() => cardLast.focus())
+    expect(tab()).toBe(true)
+    expect(document.activeElement).toBe(el.querySelector('[data-card-first]'))
+  })
+})
+
 /**
  * An opener in the window chrome, which the frame dialog host keeps inert through the popover's
  * way out (lib/portals.tsx), and the popover it opened; `open` false unmounts the popover.

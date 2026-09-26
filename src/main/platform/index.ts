@@ -66,7 +66,7 @@ import { SessionManager, buildUserAgent, systemLocales } from './sessions'
 import { acceptLanguageList } from '../../shared/languages'
 import { installFaviconProtocol, installZenProtocol } from './protocol'
 import { chromiumLicencesResponder } from './licences'
-import { ElectronDownloads } from './downloads'
+import { ElectronDownloads, downloadDir } from './downloads'
 import { ElectronDownloadsShell } from './downloadsShell'
 import { ElectronMenus } from './menus'
 import { ElectronTabViewHost, copyImageFromUrl } from './views'
@@ -345,11 +345,9 @@ export class ElectronPlatform implements Platform {
       markEndedByUser: (id) => this.views.noteEndedByUser(id)
     })
     this.screenCapture = new ElectronScreenCapture(this.views, () => this.browser.screenCapture)
-    this.shareSheet = new ElectronShareSheet(
-      () =>
-        resolveDownloadSettings(this.browser.state.settings).directory ?? app.getPath('downloads'),
-      (win) => browserWindowOf(win)
-    )
+    // The hub's Save writes where every other save goes (`downloadDir`: the configured folder,
+    // else the platform's Downloads – made, not $HOME, where Electron lands without an XDG dir).
+    this.shareSheet = new ElectronShareSheet(downloadDir, (win) => browserWindowOf(win))
     if (process.platform === 'linux') this.mediaSession = new ElectronMpris(() => this.browser)
     // The core's Safe Browsing service exists once the browser does (`start`); no request runs before.
     this.privacy = new ElectronPrivacy(

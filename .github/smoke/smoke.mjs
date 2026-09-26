@@ -338,7 +338,7 @@ const FULLSCREEN_COMBO = IS_MAC ? 'Control+Meta+f' : 'F11'
 // Web capture (`capture.start`, the Chrome preset's Ctrl+Shift+S; Edge's chord) and the desktop's
 // overlay for it, a modal dialog over the content frame (components/capture/CaptureOverlay.tsx).
 const CAPTURE_COMBO = `${ACCEL}+Shift+s`
-const CAPTURE_OVERLAY = '[role="dialog"][aria-label="Web capture"]'
+const CAPTURE_OVERLAY = '[role="dialog"][aria-label="Screenshot"]'
 
 const opts = parseArgs(process.argv.slice(2))
 if (!opts.exe || !opts.label || !opts.out) {
@@ -3858,7 +3858,7 @@ async function scenarioWalkthrough() {
           ? { role: el.getAttribute('role'), label: el.getAttribute('aria-label') }
           : null
       })
-      if (focused?.label !== 'Web capture') {
+      if (focused?.label !== 'Screenshot') {
         throw new Error(`the focus is on ${JSON.stringify(focused)}, not the overlay`)
       }
       const inert = await inertChrome.count()

@@ -458,7 +458,25 @@ describe('DownloadService state machine', () => {
     expect(shot.state).toBe('completed')
     expect(shot.finalName).toBe('page.png')
     expect(shot.private).toBe(false)
+    // A caller that does not know the size leaves the row's bytes at 0, as before.
+    expect(shot.totalBytes).toBe(0)
+    expect(shot.receivedBytes).toBe(0)
     expect(h.changes.at(-1)).toEqual({ id: shot.id, kind: 'done' })
+  })
+
+  it('takes the file’s size where the caller knows it, so the row does not read as empty (BUG-031)', () => {
+    const shot = h.service.addCompleted('/shots/page.png', 'image/png', {
+      size: 48_213.7,
+      private: true,
+      containerId: 'work'
+    })
+    expect(shot.totalBytes).toBe(48_213)
+    expect(shot.receivedBytes).toBe(48_213)
+    expect(shot.private).toBe(true)
+    expect(shot.containerId).toBe('work')
+    // A size that is no size is left at 0.
+    expect(h.service.addCompleted('/shots/a.png', 'image/png', { size: -5 }).totalBytes).toBe(0)
+    expect(h.service.addCompleted('/shots/b.png', 'image/png', { size: NaN }).totalBytes).toBe(0)
   })
 })
 
