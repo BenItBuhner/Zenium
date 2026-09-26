@@ -3,6 +3,7 @@ import {
   PRIVACY_SETTINGS,
   PRIVACY_SETTING_NAMES,
   acceptsValue,
+  browserValueOf,
   controllerOf,
   effectiveSetting,
   incognitoSpecific,
@@ -18,6 +19,8 @@ import {
   withValue,
   withoutValue,
   type PrivacyRank,
+  type PrivacySettingSpec,
+  type PrivacyUserSettings,
   type ScopedValues
 } from '../api/privacy'
 
@@ -232,5 +235,57 @@ describe('chrome.privacy precedence', () => {
     // A private-window value of an extension that is not allowed there does not count.
     expect(incognitoSpecific(new Map([[OLD, { incognito_persistent: true }]]), rank)).toBe(false)
     expect(incognitoSpecific(new Map([[NEW, { incognito_persistent: true }]]), rank)).toBe(true)
+  })
+})
+
+describe("chrome.privacy's browser values", () => {
+  const settings: PrivacyUserSettings = {
+    passwords: { offerToSave: true },
+    autofill: { addresses: true, cards: false },
+    privacy: { safeBrowsingEnabled: true, thirdPartyCookies: 'block-private', dnt: true },
+    searchSuggestions: false,
+    preloadPages: 'standard'
+  }
+  const spec = (category: string, name: string): PrivacySettingSpec =>
+    PRIVACY_SETTINGS.find((s) => s.category === category && s.name === name)!
+
+  it("reads a setting the browser has a value for off the user's Settings, as Chrome reads its prefs", () => {
+    expect(browserValueOf(spec('services', 'passwordSavingEnabled'), settings)).toBe(true)
+    expect(browserValueOf(spec('services', 'autofillAddressEnabled'), settings)).toBe(true)
+    expect(browserValueOf(spec('services', 'autofillCreditCardEnabled'), settings)).toBe(false)
+    expect(browserValueOf(spec('services', 'safeBrowsingEnabled'), settings)).toBe(true)
+    expect(browserValueOf(spec('services', 'searchSuggestEnabled'), settings)).toBe(false)
+    expect(browserValueOf(spec('websites', 'doNotTrackEnabled'), settings)).toBe(true)
+  })
+
+  it('maps the cookie and preload choices as Chrome transforms those prefs: allowed unless blocked everywhere, predicted unless never', () => {
+    expect(browserValueOf(spec('websites', 'thirdPartyCookiesAllowed'), settings)).toBe(true)
+    expect(browserValueOf(spec('network', 'networkPredictionEnabled'), settings)).toBe(true)
+    const strict: PrivacyUserSettings = {
+      ...settings,
+      privacy: { ...settings.privacy, thirdPartyCookies: 'block' },
+      preloadPages: 'none'
+    }
+    expect(browserValueOf(spec('websites', 'thirdPartyCookiesAllowed'), strict)).toBe(false)
+    expect(browserValueOf(spec('network', 'networkPredictionEnabled'), strict)).toBe(false)
+  })
+
+  it("keeps the table's default for a setting the browser has no value of its own", () => {
+    for (const s of PRIVACY_SETTINGS) {
+      if (
+        [
+          'passwordSavingEnabled',
+          'autofillAddressEnabled',
+          'autofillCreditCardEnabled',
+          'safeBrowsingEnabled',
+          'searchSuggestEnabled',
+          'thirdPartyCookiesAllowed',
+          'networkPredictionEnabled',
+          'doNotTrackEnabled'
+        ].includes(s.name)
+      )
+        continue
+      expect(browserValueOf(s, settings)).toBe(s.browserDefault)
+    }
   })
 })

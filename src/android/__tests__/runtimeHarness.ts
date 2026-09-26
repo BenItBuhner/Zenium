@@ -9,6 +9,8 @@ import type {
   TabSection
 } from '@shared/types'
 import { DEFAULT_FONT_SETTINGS, type PageFontSettings } from '@shared/fonts'
+import { DEFAULT_AUTOFILL_SETTINGS } from '@shared/defaults'
+import { DEFAULT_PRELOAD_PAGES, DEFAULT_PRIVACY_SETTINGS } from '@shared/privacy'
 import { RuleEngine } from '@core/blocking/engine'
 import { moveTab as moveTabInModel, type Model } from '@core/model'
 import type { Browser } from '@core/browser'
@@ -626,6 +628,15 @@ export function harness(
   const search: Harness['search'] = []
   const fonts: PageFontSettings = { ...DEFAULT_FONT_SETTINGS }
   const passwords = { offerToSave: true }
+  // The rest of what `chrome.privacy` reads the browser's own values from (`PrivacyUserSettings`), at the defaults.
+  const settings = {
+    fonts,
+    passwords,
+    autofill: { ...DEFAULT_AUTOFILL_SETTINGS },
+    privacy: structuredClone(DEFAULT_PRIVACY_SETTINGS),
+    searchSuggestions: true,
+    preloadPages: DEFAULT_PRELOAD_PAGES
+  }
   const controls: Harness['controls'] = []
   const browser = {
     platform: { io, speech },
@@ -639,7 +650,7 @@ export function harness(
     },
     state: {
       model: { containers },
-      settings: { fonts, passwords },
+      settings,
       subscribe: (fn: () => void) => {
         listeners.push(fn)
         return () => undefined

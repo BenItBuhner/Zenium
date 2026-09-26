@@ -137,6 +137,55 @@ export function privacySetting(category: unknown, name: unknown): PrivacySetting
   return PRIVACY_SETTINGS.find((s) => s.category === category && s.name === name)
 }
 
+/**
+ * The user's Settings the paired `chrome.privacy` settings read while no extension controls
+ * them (`PRIVACY_CONTROL_KEYS`' pairs; the `Settings` document has this shape). Chrome's `get`
+ * answers the user's pref there, not a table's default: iCloud Passwords' `#g(setting, target)`
+ * reads first and returns without `set` when the value already equals its target, so a host
+ * answering the table's `false` for `autofillAddressEnabled` where the user's `autofill.addresses`
+ * is `true` sees the extension hold one of its three settings (round 20's `1/3`, R21-9) while
+ * Chrome sees three. The enum fields are read as Chrome's transformers read the prefs.
+ */
+export interface PrivacyUserSettings {
+  passwords: { offerToSave: boolean }
+  autofill: { addresses: boolean; cards: boolean }
+  privacy: { safeBrowsingEnabled: boolean; thirdPartyCookies: string; dnt: boolean }
+  searchSuggestions: boolean
+  preloadPages: string
+}
+
+const USER_SETTING_READERS: ReadonlyMap<string, (settings: PrivacyUserSettings) => PrivacyValue> =
+  new Map([
+    [settingKey('services', 'passwordSavingEnabled'), (s) => s.passwords.offerToSave],
+    [settingKey('services', 'autofillAddressEnabled'), (s) => s.autofill.addresses],
+    [settingKey('services', 'autofillCreditCardEnabled'), (s) => s.autofill.cards],
+    [settingKey('services', 'safeBrowsingEnabled'), (s) => s.privacy.safeBrowsingEnabled],
+    // Chrome's `CookieControlsModeTransformer`: allowed unless third-party cookies are blocked
+    // everywhere; the block in private windows alone reads allowed for the regular profile.
+    [
+      settingKey('websites', 'thirdPartyCookiesAllowed'),
+      (s) => s.privacy.thirdPartyCookies !== 'block'
+    ],
+    [settingKey('services', 'searchSuggestEnabled'), (s) => s.searchSuggestions],
+    // Chrome's `NetworkPredictionTransformer`: `false` is "never", `true` any preloading level.
+    [settingKey('network', 'networkPredictionEnabled'), (s) => s.preloadPages !== 'none'],
+    [settingKey('websites', 'doNotTrackEnabled'), (s) => s.privacy.dnt]
+  ])
+
+/**
+ * The browser's own value of a setting for `get` and the resolution: the user's Settings value
+ * for the paired settings, the table's `browserDefault` for the rest (the features Zenium does
+ * not have). The regular profile's reading: a private-window `get` under the user's
+ * block-in-private cookie mode answers `true` here where Chrome answers `false`.
+ */
+export function browserValueOf(
+  spec: PrivacySettingSpec,
+  settings: PrivacyUserSettings
+): PrivacyValue {
+  const read = USER_SETTING_READERS.get(settingKey(spec.category, spec.name))
+  return read ? read(settings) : spec.browserDefault
+}
+
 export function isPrivacyScope(value: unknown): value is PrivacyScope {
   return typeof value === 'string' && (PRIVACY_SCOPES as readonly string[]).includes(value)
 }
