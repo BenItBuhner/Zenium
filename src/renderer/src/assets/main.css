@@ -6547,35 +6547,53 @@
     outline-offset: 2px;
   }
   /*
-   * The EEA's search-engine choice screen in the phone's pose (W6-2 / OMN-26, §9.39 through
-   * §10.4; `PhoneSearchChoiceStep` in overlays/PhoneOnboarding.tsx, for the tour's search step
-   * and the standalone `PhoneSearchChoiceScreen`). Each engine is one two-line row (§9.2:
-   * 12 + 20 + 20 + 12 = 64 on `--v2-row-two-line`), edge to edge with its text at the 16 gutter,
-   * rows touching (§9.21), so every tile is the same height whatever its engine – the DMA reads
-   * any distinction as favour. The engine's mark is 24 in a 32 box on the first text line
-   * (content, exempt from the token rule as favicons are, §9.29), the name on the body line at
-   * the button weight over the engine's own line at 13 in the deemphasised ink, whole – no
-   * clamp, no ellipsis – and the tour's radio mark (`.zen-firstrun-radio-mark`, 20 on the phone)
-   * trailing, centred on the row since the row is one tile. The phone's text column (412 − the
-   * gutters, the mark's box, the radio and the gaps: 304) is narrower than the desktop panel's,
-   * so a line chosen to fit the panel at 13 may not fit here (Qwant's on the DE list): the line
-   * wraps rather than being cut, and the list is a grid whose rows share the tallest row's height
-   * (`grid-auto-rows: 1fr`), so every tile stays the same height whatever its engine's line. The
-   * picked row takes the window's accent at .12 (§9.39; never `--v2-selected`, the page family's)
-   * bleeding to the edges as the press fill does (§9.25).
+   * The EEA's search-engine choice screen on the phone (W6-2 / OMN-26; `PhoneSearchChoiceStep`
+   * in overlays/PhoneOnboarding.tsx, for the tour's search step and the standalone
+   * `PhoneSearchChoiceScreen`): §9.39's one panel in its phone seat, and where §9.39 and the
+   * tour's chassis meet §9.39 wins for the tiles and the scroller. Every tile equal: 52 tall on a
+   * 56 pitch at radius 8 – the desktop's two-line row (20 + 20 + 12; §9.39's number, not the
+   * phone's 64) with 6 12 inside and the tiles 4 apart, inset to the tour's 16 gutter – the
+   * engine's own mark at 24 in a 32 box on its own ground (content, exempt from the token rule
+   * as favicons are, §9.29), the name 15/500 over the engine's own line at 13 in the
+   * deemphasised ink, the tour's radio mark (20 on the phone) trailing and centred since the row
+   * is one tile, the picked row in the window's accent at .12 (never `--v2-selected`, the page
+   * family's), the press in the control fill. No border: the fill says which row is picked,
+   * the mark says it twice. The phone's text column is 280 (412 − the gutters, the tile's 6 12,
+   * the mark's box, the radio and the gaps) where the desktop panel's is 480, so a line chosen
+   * to fit the panel at 13 may not fit here (Qwant's and Bing's on the DE list): rather than a
+   * cut or an ellipsis – a lone cut on one engine is the distinction §9.39 forbids – the line
+   * wraps, and the list is a grid whose rows share the tallest row's height (`grid-auto-rows:
+   * 1fr`), so every tile stays the same height whatever its engine's line.
+   * The list scrolls in its own box (`.zen-firstrun-choices-box`, round the grid) under the
+   * chassis's bar (§9.20: on a finger's chrome the WebView's own thin overlay bar, no rule of
+   * the list's own) when the step measures that not every tile fits the column:
+   * `phoneSearchChoiceListHeight` sets the box's `max-height` so as many tiles as fit show whole
+   * and the next is cut at half its height – the row cut is the pull's affordance (§9.13) – and
+   * where every tile fits whole nothing scrolls. The box, not the grid, takes the cap: a grid
+   * with a definite height would divide it among its `1fr` rows and squeeze them to the floor,
+   * the wrapped lines spilling over the tiles below. The ring room round the first and last
+   * tiles is the box's padding, inside it (the desktop list's padding-and-negative-margin).
    */
+  .zen-firstrun-choices-box {
+    overflow-y: auto;
+    padding: var(--v2-ring-room);
+    margin-inline: calc(16px - var(--v2-ring-room));
+    overscroll-behavior: contain;
+  }
   .zen-firstrun-choices {
     display: grid;
     grid-auto-rows: 1fr;
+    gap: 4px;
   }
   .zen-firstrun-choice {
     display: flex;
     width: 100%;
-    min-height: var(--v2-row-two-line);
+    min-height: calc(var(--v2-line-body-box) + var(--v2-line-small-box) + 12px);
     flex-shrink: 0;
     align-items: center;
     gap: 12px;
-    padding: 12px 16px;
+    padding: 6px 12px;
+    border-radius: var(--v2-radius-card);
     color: inherit;
     text-align: left;
     transition: background 120ms var(--zen-ease);

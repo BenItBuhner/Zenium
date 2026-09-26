@@ -9,7 +9,11 @@ import { useBackSurface } from '@renderer/lib/back'
 import { fadeOpacity } from '@renderer/lib/motion/fade'
 import { reducedMotion, SPRING_GENTLE, SpringAnimation } from '@renderer/lib/motion/spring'
 import { phoneSteps, type PhoneStep } from '@renderer/lib/onboarding'
-import { searchChoiceListRegionOf, tourAsksSearchChoice } from '@renderer/lib/searchChoice'
+import {
+  phoneSearchChoiceListHeight,
+  searchChoiceListRegionOf,
+  tourAsksSearchChoice
+} from '@renderer/lib/searchChoice'
 import { bundledSearchEngineIcon } from '@renderer/lib/searchEngineIcons'
 import { activeSpace, isDarkScheme } from '@renderer/lib/selectors'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
@@ -525,11 +529,20 @@ function RadioRow({
 }
 
 /**
- * The EEA's choice screen as a step (W6-2 / OMN-26; §9.39 in the phone's pose): the shared
- * title and sentence over the region's list – `searchChoiceListRegionOf`, so the list is the
- * one `searchChoice.choose` accepts a pick from – in the run's order (`UIState.searchChoice.seed`,
- * held for the run: the tour's step and the screen after it agree). For the tour's search step
- * and `PhoneSearchChoiceScreen` alike.
+ * The EEA's choice screen as a step (W6-2 / OMN-26; §9.39's panel in its phone seat): the
+ * shared title and sentence over the region's list – `searchChoiceListRegionOf`, so the list is
+ * the one `searchChoice.choose` accepts a pick from – in the run's order
+ * (`UIState.searchChoice.seed`, held for the run: the tour's step and the screen after it
+ * agree). For the tour's search step and `PhoneSearchChoiceScreen` alike.
+ *
+ * The list scrolls in its own box under §9.39's rule when the column cannot show every tile:
+ * the step measures what the title block leaves the list (the column's height less its padding
+ * and the box's offset in the step, so the step's centring does not count) and one tile's
+ * height as the grid laid it out, and `phoneSearchChoiceListHeight` gives the box – as many
+ * tiles whole as fit and the next cut at half its height, the pull's affordance (§9.13) – or no
+ * cap where all fit. The box round the grid takes the cap, never the grid (the stylesheet says
+ * why). Measured again when the column resizes (a rotation, the keyboard) and when the list
+ * changes; a test renderer without layout measures nothing and caps nothing.
  */
 export function PhoneSearchChoiceStep({
   state,
@@ -547,41 +560,107 @@ export function PhoneSearchChoiceStep({
   const region = searchChoiceListRegionOf(state)
   const seed = state.searchChoice.seed
   const tiles = useMemo(() => shuffledSearchChoiceTiles(region, seed), [region, seed])
+  const root = useRef<HTMLDivElement>(null)
+  const box = useRef<HTMLDivElement>(null)
+  const grid = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const step = root.current
+    const scroller = box.current
+    const list = grid.current
+    if (!step || !scroller || !list) return
+    const column = scrollColumnOf(step)
+    const measure = (): void => {
+      const row = list.firstElementChild as HTMLElement | null
+      const height = column
+        ? phoneSearchChoiceListHeight({
+            available: availableFor(column, step, scroller),
+            row: row?.offsetHeight ?? 0,
+            gap: pxOf(getComputedStyle(list).rowGap),
+            ring: pxOf(getComputedStyle(scroller).paddingTop),
+            count: tiles.length
+          })
+        : null
+      const value = height === null ? '' : `${height}px`
+      if (scroller.style.maxHeight !== value) scroller.style.maxHeight = value
+    }
+    measure()
+    if (!column || typeof ResizeObserver === 'undefined') return
+    // The column's resize is read on the next frame, outside the observer's own delivery.
+    let frame = 0
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(measure)
+    })
+    observer.observe(column)
+    return () => {
+      cancelAnimationFrame(frame)
+      observer.disconnect()
+    }
+  }, [tiles])
   return (
-    <div className="my-auto flex flex-col" data-testid="search-choice">
+    <div ref={root} className="my-auto flex flex-col" data-testid="search-choice">
       <StepHeading title={SEARCH_CHOICE_TITLE} titleId={titleId}>
         {SEARCH_CHOICE_DESCRIPTION}
       </StepHeading>
-      <div
-        role="radiogroup"
-        aria-labelledby={titleId}
-        aria-required="true"
-        className="zen-firstrun-choices pt-4"
-        data-testid="search-choice-list"
-      >
-        {tiles.map((tile) => (
-          <ChoiceRow
-            key={tile.engine.id}
-            tile={tile}
-            checked={picked === tile.engine.id}
-            onPick={() => onPick(tile.engine.id)}
-          />
-        ))}
+      <div ref={box} className="zen-firstrun-choices-box mt-4">
+        <div
+          ref={grid}
+          role="radiogroup"
+          aria-labelledby={titleId}
+          aria-required="true"
+          className="zen-firstrun-choices"
+          data-testid="search-choice-list"
+        >
+          {tiles.map((tile) => (
+            <ChoiceRow
+              key={tile.engine.id}
+              tile={tile}
+              checked={picked === tile.engine.id}
+              onPick={() => onPick(tile.engine.id)}
+            />
+          ))}
+        </div>
       </div>
     </div>
   )
 }
 
+/** The nearest ancestor that scrolls vertically: the tour's step column, the standalone screen's. */
+function scrollColumnOf(element: HTMLElement): HTMLElement | null {
+  for (let node = element.parentElement; node; node = node.parentElement) {
+    const overflow = getComputedStyle(node).overflowY
+    if (overflow === 'auto' || overflow === 'scroll') return node
+  }
+  return null
+}
+
 /**
- * One engine of the choice screen as a phone row (§10.4's pose of §9.39's tile): a two-line
- * row edge to edge – 64 on the phone's `--v2-row-two-line`, rows touching (§9.21) – the
- * engine's mark at 24 in a 32 box, the name 15/500 over the engine's own line at 13 in the
- * deemphasised ink, whole (a line the phone's column cannot hold wraps, and the list's grid
- * gives every row the tallest row's height: a taller tile on one engine is a distinction the DMA
- * reads as favour), the radio mark trailing and centred (the row is one tile), the picked row in
- * the window's accent at .12 bleeding to the edges as the tour's press fill does (§9.25). The
- * whole row is the radio; its accessible name is the engine's (the line is read as its
- * description).
+ * What the column leaves the list: its height inside its padding, less the title block above
+ * the list (the list's offset from the step's top – the step's own centring in a column with
+ * room to spare, `my-auto`, is not part of it).
+ */
+function availableFor(column: HTMLElement, step: HTMLElement, list: HTMLElement): number {
+  const style = getComputedStyle(column)
+  const inner = column.clientHeight - pxOf(style.paddingTop) - pxOf(style.paddingBottom)
+  const above = list.getBoundingClientRect().top - step.getBoundingClientRect().top
+  return Math.max(0, inner - above)
+}
+
+function pxOf(value: string): number {
+  const n = parseFloat(value)
+  return Number.isFinite(n) ? n : 0
+}
+
+/**
+ * One engine of the choice screen as §9.39's tile in the phone's inks: 52 tall on a 56 pitch
+ * at radius 8 inside the tour's 16 gutter (the desktop's numbers: one panel drawn one way in
+ * its three seats), the engine's mark at 24 in a 32 box, the name 15/500 over the engine's own
+ * line at 13 in the deemphasised ink, the radio mark trailing and centred (the row is one
+ * tile), the picked row in the window's accent at .12. The line is whole – no clamp, no
+ * ellipsis; a line the phone's 280 column cannot hold on one line wraps, and the list's grid
+ * gives every tile the tallest tile's height, so no engine's tile stands out (the stylesheet's
+ * rule). The whole row is the radio; its accessible name is the engine's (the line is read as
+ * its description).
  */
 function ChoiceRow({
   tile: { engine, tagline },
