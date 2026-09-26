@@ -2,8 +2,8 @@ import { run } from './api'
 
 /**
  * The one reset of a space's theme (settings-30; Chrome's Appearance › Theme › "Reset to
- * default", `ThemeService::UseDefaultTheme`): the theme picker's "Reset theme" and the Settings
- * row's "Reset to default" call this and nothing else (§9.1: one action, one vocabulary). The
+ * default", `ThemeService::UseDefaultTheme`): the theme picker's "Reset to default" and the
+ * Settings row's call this and nothing else (§9.1: one action, one vocabulary – one name). The
  * space's `theme` goes to null – the default look, `resolveTheme(null)` – through the same
  * `space.update` the picker's edits take; the picker, if open, follows the state it reads.
  */

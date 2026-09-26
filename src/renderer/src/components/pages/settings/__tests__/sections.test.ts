@@ -6731,7 +6731,7 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
     )
   })
 
-  it('with a theme the row names it – a preset by its name, colours of the user’s own "Custom" – and trails "Reset to default", the picker’s "Reset theme" by its Settings name: one space.update putting the theme to null (§9.1)', () => {
+  it('with a theme the row names it – a preset by its name, colours of the user’s own "Custom" – and trails "Reset to default", the picker’s button by the same name: one space.update putting the theme to null (§9.1)', () => {
     invoke.mockClear()
     const { model } = look(themed())
     const theme = row(model, 'theme')

@@ -493,8 +493,8 @@ function lookSection({
           onChange: (v) => set({ colorScheme: v })
         }),
         // Chrome's Appearance › Theme row (settings-30): the theme's name, and "Reset to default"
-        // while the space has one – the theme picker's "Reset theme" by its Settings name, the
-        // one reset (`lib/theme.ts`, §9.1). At the default look the row is the door to the
+        // while the space has one – the theme picker's button by the same name, the one reset
+        // (`lib/theme.ts`, §9.1). At the default look the row is the door to the
         // picker instead, as Chrome's row opens Customize Chrome (its Web Store is no part of
         // Zenium's; the row says nothing of a store). The theme is a space's, so the row reads
         // the active space's and names the space where there is more than one. The phone's

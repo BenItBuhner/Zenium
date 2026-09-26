@@ -55,8 +55,10 @@ export function ThemePicker({ state, spaceId }: { state: UIState; spaceId: strin
     setTheme(next)
     apply(next)
   }
-  // "Reset theme" is the Settings theme row's "Reset to default" (settings-30): the one reset,
-  // `lib/theme.ts`, at once – an edit still in the debounce is dropped rather than applied over it.
+  // "Reset to default" is the Settings theme row's "Reset to default" (settings-30) – one act,
+  // one name (§9.1; the FIRST LINE's N4 on #572, where the picker still said "Reset theme"):
+  // the one reset, `lib/theme.ts`, at once – an edit still in the debounce is dropped rather
+  // than applied over it. The picker is the phone's too, so the phone's button reads the same.
   const reset = (): void => {
     apply.cancel()
     setTheme(null)
@@ -197,7 +199,7 @@ export function ThemePicker({ state, spaceId }: { state: UIState; spaceId: strin
         </div>
         <div className="flex justify-end">
           <Button variant="secondary" size="sm" onClick={reset}>
-            Reset theme
+            Reset to default
           </Button>
         </div>
       </div>
