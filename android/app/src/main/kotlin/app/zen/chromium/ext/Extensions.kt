@@ -192,6 +192,11 @@ class Extensions(private val host: Host) {
      * when it is not coming (see [HeldPages]).
      */
     private val heldPages = HeldPages<TabWebView>()
+    /**
+     * The extension frame documents each tab's page holds, for [intercept] to tell a frame's
+     * own Referer-less requests from the page's (see [FrameOwnership]); network threads.
+     */
+    private val frames = FrameOwnership<TabWebView>()
     /** Per extension, the units currently installed on every tab (main thread). */
     private val units = LinkedHashMap<String, List<ScriptUnit>>()
     /**
@@ -790,6 +795,7 @@ class Extensions(private val host: Host) {
         }
         units.clear()
         served = emptyMap()
+        frames.clear()
         endpoints.clear()
         worldSlots.clear()
         configureStats.clear()
@@ -1548,7 +1554,10 @@ class Extensions(private val host: Host) {
     /**
      * Every WebView's `shouldInterceptRequest` (background thread), ahead of the request engine.
      * Tab pages: a top-level navigation to an extension origin gets any file (Chrome lets any
-     * extension page open as a tab), other frames only its web-accessible resources; a fetch of
+     * extension page open as a tab), other frames only its web-accessible resources – and the
+     * extension's own frame in the tab, once such a document is in it, any file again, told by
+     * its Referer, its CORS requests' `Origin`, or the frame document served before where the
+     * frame sends no Referer ([FrameOwnership]); a fetch of
      * an extension page to a permitted host goes through the CORS proxy. Extension WebViews: any
      * file of their own extension, another extension's web-accessible resources only, and the
      * background view's document is the generated background page wherever the
@@ -1568,6 +1577,8 @@ class Extensions(private val host: Host) {
         backgroundDocument: Boolean = false
     ): WebResourceResponse? {
         val url = request.url
+        // The tab's page is going with a main-frame request, and its frames with it.
+        if (tab != null && request.isForMainFrame) frames.forget(tab)
         val hostName = url.host ?: return null
         if (hostName.endsWith(ORIGIN_SUFFIX)) {
             val id = hostName.removeSuffix(ORIGIN_SUFFIX)
@@ -1579,10 +1590,17 @@ class Extensions(private val host: Host) {
             if (tab?.isPrivateTab == true && !ext.allowPrivate) return if (request.isForMainFrame) refusedPage(tab, url.toString()) else notFound()
             val path = (url.path ?: "/").trimStart('/')
             val origin = "https://$hostName/"
+            val referer = request.requestHeaders?.get("Referer")
+            val originHeader = request.requestHeaders?.entries?.firstOrNull { it.key.equals("Origin", ignoreCase = true) }?.value
+            val document = ExtensionScripts.mimeType(path) == "text/html"
+            // The extension's own frame in a web tab is told by its Referer – or, where the
+            // frame's document sends none (`no-referrer`), by its CORS requests' `Origin` and by
+            // the frame document served into the tab before (FrameOwnership).
             val ownPage = tab != null && (
                 request.isForMainFrame ||
-                    request.requestHeaders?.get("Referer")?.startsWith(origin) == true ||
-                    tab.currentUrl?.startsWith(origin) == true
+                    referer?.startsWith(origin) == true ||
+                    tab.currentUrl?.startsWith(origin) == true ||
+                    frames.ownRequest(tab, id, "https://$hostName", referer, originHeader, document)
                 )
             // A foreign page (a web page, or another extension's own view asking for this one's
             // files: `chrome-extension://<other>/...` spelled out in Read&Write's offscreen
@@ -1590,6 +1608,8 @@ class Extensions(private val host: Host) {
             // only, as Chrome serves them; the extension's own pages get any file.
             val foreign = if (extensionPage != null) extensionPage.id != id else !ownPage
             if (foreign && !ext.webAccessible.any { it.matches(path) }) return notFound()
+            // A web-accessible document going into a frame of the tab's page: its own requests follow.
+            if (foreign && tab != null && !request.isForMainFrame && document) frames.framed(tab, id)
             if (backgroundDocument && ext.backgroundHtml != null && "$origin$path" == ext.backgroundUrl) {
                 if (request.isForMainFrame) {
                     workerScriptGate.documentServed(id)
@@ -1623,13 +1643,15 @@ class Extensions(private val host: Host) {
             // graph is told by the document, not the Referer (ExtensionScripts.isPageModuleGraph:
             // a dependency's referrer is the module that imports it). A webpack chunk of the graph
             // is served as the stub that runs it in the content script's scope, unless this is the
-            // stub's own plain request for it (ExtensionScripts.chunkStub).
+            // stub's own plain request for it (ExtensionScripts.chunkStub). A CORS request naming
+            // the extension's own origin is an extension document's (a frame's module script or
+            // font), not a graph of the page's.
             val moduleGraph = tab != null && extensionPage == null && ExtensionScripts.isPageModuleGraph(
                 path,
                 request.isForMainFrame,
                 tab.currentUrl,
                 origin,
-                request.requestHeaders?.keys?.any { it.equals("Origin", ignoreCase = true) } == true,
+                originHeader != null && originHeader != "https://$hostName",
                 isolatedWorlds
             )
             val chunkStubUrl = if (moduleGraph && url.getQueryParameter(ExtensionScripts.PLAIN_QUERY) == null) url.toString() else null
