@@ -1338,6 +1338,91 @@ describe('a section asked for one of its groups (zen://settings/<section>?group=
   })
 })
 
+describe('a section asked to open one of its rows’ forms (zen://settings/<section>?open=<id>; the toolbar button’s Customise Toolbar…, W8-1)', () => {
+  const ASKED = 'zen://settings/look?row=customize-toolbar&open=customize-toolbar'
+  const DIALOG = '[data-dialog="form:customize-toolbar"]'
+  const navigations = (): unknown[][] =>
+    invoke.mock.calls.filter(([name]) => name === 'page.navigate')
+
+  /** Re-render the mounted page with the state the core answers with: the address as rewritten. */
+  function answer(s: UIState): void {
+    act(() =>
+      root!.render(
+        createElement(
+          FrameDialogHost,
+          null,
+          createElement(SettingsPage, { state: s, tab: s.tabs.settings! })
+        )
+      )
+    )
+  }
+
+  it('opens the row’s form dialog over Look and Feel as its button would, landing on the row, and spends the address: page.navigate rewrites the entry without `open`, keeping `row`', async () => {
+    const scrolled = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
+    const el = mountHosted(state(DESKTOP, 'linux', {}, ASKED))
+    const dialog = el.querySelector<HTMLElement>(DIALOG)
+    expect(dialog).not.toBeNull()
+    expect(dialog!.textContent).toContain('Customise toolbar')
+    // `?row=` did its part too: the row's group came to the column's top.
+    expect(scrolled).toHaveBeenCalledTimes(1)
+    expect(
+      (scrolled.mock.instances[0] as Element).querySelector('[data-row="customize-toolbar"]')
+    ).not.toBeNull()
+    expect(navigations()).toEqual([
+      [
+        'page.navigate',
+        {
+          tabId: 'settings',
+          section: 'look',
+          subpage: null,
+          query: { row: 'customize-toolbar' },
+          replace: true
+        }
+      ]
+    ])
+    // The core's answer – the tab at the spent address – leaves the dialog up and asks nothing more.
+    answer(state(DESKTOP, 'linux', {}, 'zen://settings/look?row=customize-toolbar'))
+    expect(el.querySelector(DIALOG)).not.toBeNull()
+    expect(navigations()).toHaveLength(1)
+    // Asked again (the menu row pressed once more): the address is new to the tab, and the
+    // dialog – closed meanwhile by its Done – opens again.
+    const done = [...el.querySelectorAll<HTMLButtonElement>(`${DIALOG} button`)].find(
+      (b) => b.textContent === 'Done'
+    )!
+    expect(done).toBeDefined()
+    act(() => done.click())
+    await settle()
+    expect(el.querySelector(`${DIALOG}:not([data-leaving])`)).toBeNull()
+    answer(state(DESKTOP, 'linux', {}, ASKED))
+    expect(el.querySelector(`${DIALOG}:not([data-leaving])`)).not.toBeNull()
+    expect(navigations()).toHaveLength(2)
+    scrolled.mockRestore()
+  })
+
+  it('a row without a form, a row the section does not have, or an id that is not one opens nothing and spends nothing', () => {
+    for (const url of [
+      'zen://settings/look?open=show-forward-button',
+      'zen://settings/look?open=no-such-row',
+      'zen://settings/look?open=%22%5D%2C%20*'
+    ]) {
+      const el = mountHosted(state(DESKTOP, 'linux', {}, url))
+      expect(el.querySelector('[data-dialog]')).toBeNull()
+      expect(navigations()).toEqual([])
+      act(() => root!.unmount())
+      root = null
+    }
+  })
+
+  it('the phone layout has no such row, and opens nothing', () => {
+    viewport(TWO_PANE_MIN_WIDTH - 1, false)
+    const el = mountHosted(state(ANDROID, 'android', {}, ASKED))
+    expect(el.querySelector('.zen-settings-phone')).not.toBeNull()
+    expect(el.querySelector('[data-dialog]')).toBeNull()
+    expect(el.querySelector('[data-row="customize-toolbar"]')).toBeNull()
+    expect(navigations()).toEqual([])
+  })
+})
+
 describe('Reset settings (zen://settings/reset; W7-6, settings-70)', () => {
   const DIALOG = '[data-dialog="confirm:reset-settings"]'
   // The host keeps a closed prompt through its exit animation, `data-leaving` (#188): open is

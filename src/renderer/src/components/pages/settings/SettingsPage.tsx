@@ -67,7 +67,11 @@ import { useSheetStack } from './useSheetStack'
  * screen, where Chrome's order has it one screen down; Chrome's `siteDetails?site=`, less the
  * page of its own – and `row`, a section asked for one of its rows (`zen://settings/sync?row=
  * sync-scope:openTabs`, the History page's "Open sync settings" row landing on the Open tabs
- * switch), which opens with that row's group on screen the same way.
+ * switch), which opens with that row's group on screen the same way; `group`, a section asked
+ * for one of its groups outright (the Privacy and security hub's cards); and `open`, a section
+ * asked to open one of its action rows' forms as the row's button would (`zen://settings/look?
+ * row=customize-toolbar&open=customize-toolbar`, the toolbar button's "Customise Toolbar…"
+ * row), honoured by the two-pane layout once per address and then spent (`desktop.tsx`).
  */
 
 /** Width from which the tab shows the two-pane layout (v2 §10.2, §10.5; the pages' shared one). */
@@ -154,6 +158,11 @@ export function SettingsPage({ state, tab }: Props): JSX.Element {
   // cards, W7-6): the group itself is the landing, where `?row=` lands on a row's group.
   const askedGroup = ref?.query?.group
   const groupId = !row && askedGroup && ROW_ID_RE.test(askedGroup) ? askedGroup : null
+  // A section asked to open one of its action rows' forms (`?open=`, the toolbar button's
+  // Customise Toolbar… row, W8-1): the two-pane layout opens the row's dialog; the phone
+  // layout's rows are not that kind (the row is the desktop's), and it opens nothing.
+  const askedOpen = ref?.query?.open
+  const openRow = askedOpen && ROW_ID_RE.test(askedOpen) ? askedOpen : null
   // A card pressed while its address is already the landing (the user scrolled away and pressed
   // again) moves the address nowhere, so the press counts here and the landing runs again.
   const [landings, setLandings] = useState(0)
@@ -199,6 +208,7 @@ export function SettingsPage({ state, tab }: Props): JSX.Element {
           page={page}
           sections={sections}
           current={current}
+          openRow={openRow}
           pointer={hover}
           formFactor={formFactor}
           land={land}

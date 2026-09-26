@@ -3,7 +3,9 @@ import { Fragment, useEffect, useRef, useState } from 'react'
 import { Search, Settings as SettingsGlyph, X } from 'lucide-react'
 import {
   landingRuns,
+  parseInternalPageUrl,
   type InternalPageDefinition,
+  type InternalPageQuery,
   type InternalPageSection
 } from '@shared/internalPages'
 import type { FormFactor, Settings, Tab, UIState } from '@shared/types'
@@ -22,7 +24,7 @@ import { openBarEditor, openOverlay } from '@renderer/lib/ui'
 import { DialogStack } from './dialogs'
 import { useFontsDraft } from './fontsDraft'
 import { SECTION_GLYPH, SECTION_GLYPHS } from './glyphs'
-import { searchRows, type RowGroup, type SearchHit, type SectionModel } from './model'
+import { findRow, searchRows, type RowGroup, type SearchHit, type SectionModel } from './model'
 import { GroupList, RowView, type RowContext } from './rows'
 import { buildSection, buildSections, type SectionContext } from './sections'
 import { SheetStack } from './sheets'
@@ -60,6 +62,7 @@ export function DesktopSettings({
   page,
   sections,
   current,
+  openRow,
   pointer,
   formFactor,
   land
@@ -70,6 +73,11 @@ export function DesktopSettings({
   sections: readonly InternalPageSection[]
   /** The section the tab's URL names; none shows the first. */
   current: InternalPageSection | null
+  /**
+   * The action row whose form the address asks to open (`?open=`, `SettingsPage`): opened over
+   * the column once per address, as the row's button opens it, and the address then spent.
+   */
+  openRow: string | null
   /** The host's primary pointer hovers (a mouse): rows may describe mouse gestures. */
   pointer: boolean
   /** The chrome's layout (a phone in landscape reaches the two panes inside the phone shell). */
@@ -170,8 +178,34 @@ export function DesktopSettings({
   const hits = searching ? searchRows(models, query) : []
 
   // A section change closes whatever dialog the previous one had open.
-  const { closeAll } = sheets
+  const { closeAll, ctx: sheetCtx } = sheets
   useEffect(() => closeAll(), [sectionId, closeAll])
+  // The address asked for one of the section's action rows' forms (`?open=`, the toolbar
+  // button's Customise Toolbar… row): the row's dialog opens as its button would open it – after
+  // the section change's closing, so the two in one commit leave the dialog up – and the address
+  // is spent, rewritten without `open` (`replace`, no history entry): the same request made
+  // again is then a new address for the tab, and opens the dialog again, where a navigation to
+  // the address the tab already shows would be none (`Pages.navigate`). A row the section does
+  // not have, or one without a form, opens nothing and spends nothing.
+  const askedRow = openRow && model ? findRow(model.groups, openRow) : null
+  const openForm = askedRow?.kind === 'action' && askedRow.form ? askedRow.id : null
+  useEffect(() => {
+    if (!openForm || !sectionId) return
+    sheetCtx.open({ kind: 'form', rowId: openForm })
+    const ref = parseInternalPageUrl(tab.url)
+    const spent: Record<string, string> = {}
+    for (const [key, value] of Object.entries(ref?.query ?? {})) {
+      if (key !== 'open') spent[key] = value
+    }
+    const query: InternalPageQuery = spent
+    run('page.navigate', {
+      tabId: tab.id,
+      section: sectionId,
+      subpage: ref?.subpage ?? null,
+      query,
+      replace: true
+    })
+  }, [openForm, sectionId, sheetCtx, tab.id, tab.url])
 
   const open = (id: string): void => {
     setQuery('')
