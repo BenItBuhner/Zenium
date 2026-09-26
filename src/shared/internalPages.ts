@@ -45,6 +45,7 @@ export type InternalPageId =
   | 'settings'
   | 'history'
   | 'bookmarks'
+  | 'reading-list'
   | 'downloads'
   | 'licences'
   | 'whats-new'
@@ -77,7 +78,15 @@ export type InternalPageRender = 'chrome' | 'document'
  * legal pages, `activity` for the task manager); a page tab never fetches a favicon.
  */
 export type InternalPageGlyph =
-  'settings' | 'history' | 'star' | 'download' | 'scale' | 'sparkles' | 'file-text' | 'activity'
+  | 'settings'
+  | 'history'
+  | 'star'
+  | 'download'
+  | 'scale'
+  | 'sparkles'
+  | 'file-text'
+  | 'activity'
+  | 'book-open'
 
 /** One section of an internal page: `zen://<page>/<id>`. */
 export interface InternalPageSection {
@@ -500,6 +509,24 @@ export const INTERNAL_PAGES: Readonly<Record<InternalPageId, InternalPageDefinit
     pill: { showStar: false },
     splittable: false,
     overlay: 'bookmarks',
+    layouts: TAB_LAYOUTS,
+    sections: []
+  },
+  /**
+   * The reading list (`zen://reading-list`, W6-1; Chrome's is a side panel, bookmarks-33): the
+   * pages saved for later as one scroll under Unread and Read headings, no sections. A page on
+   * the desktop and the tablet (the lead's #286 ruling keeps the browser's lists as page tabs);
+   * the phone has no form of it yet – with no `overlay`, an ask there is dropped, as the task
+   * manager's is. No star: a page of the browser's own.
+   */
+  'reading-list': {
+    id: 'reading-list',
+    title: 'Reading List',
+    render: 'chrome',
+    singleton: true,
+    glyph: 'book-open',
+    pill: { showStar: false },
+    splittable: false,
     layouts: TAB_LAYOUTS,
     sections: []
   },
