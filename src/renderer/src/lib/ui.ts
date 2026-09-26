@@ -38,6 +38,7 @@ import { devtoolsDockOf } from './contentRadius'
 import { isPhone, viewportStore } from './formFactor'
 import { afterKeyRelease } from './keyRelease'
 import { onboardingCovers } from './onboarding'
+import { searchChoiceCovers } from './searchChoice'
 import { awaitingShow, coverStore, markCoverDrop } from './cover'
 import { pageCovered, pageOffScreen, pageViewStore, type Hold } from './pageView'
 import { crossReaderView } from './readerTransition'
@@ -1555,7 +1556,9 @@ export function closeMediaSheet(): void {
  * used to focus its field once, on mount, and the tour's buttons took the keyboard from it: the
  * bar stood there after the tour with no caret. The tour's last click ends in a new tab whose
  * `newtab.opened` arrives after the state that puts the tour away, and that one opens the bar.
- * The phone's tour is its shell's own flow over its own bar, and is left as it is.
+ * The phone's tour is its shell's own flow over its own bar, and is left as it is. The EEA's
+ * search-engine choice screen standing on its own after the tour (W6-2, `searchChoiceCovers`)
+ * holds the bar the same way; the core announces the fresh tab again once it is answered.
  */
 export function onboardingUp(): boolean {
   const state = browserStore.get().state
@@ -1563,17 +1566,20 @@ export function onboardingUp(): boolean {
 }
 
 /**
- * The first-run tour stands over this window's whole chrome (`onboardingCovers`; not the phone,
- * whose tour is its shell's own flow). What `onboardingUp` reads of the state, and one of the
- * terms of the layout report's `contentHidden` (`useLayoutReporter`): the pages' views composite
- * ABOVE the chrome, so a page left showing under the tour stands over it – the New Tab's view
- * over the tour's panel, since the window has had a tab from creation (#490) and the bar that
- * used to open under the tour, and hid the page under its cover, waits for the tour's end
- * (#347). Nothing is captured for this: the panel is opaque over the window, there is no
- * picture to wait for, and the views hide at once (`decideHidden`, nothing to wait for).
+ * The first-run tour or the EEA's search-engine choice screen (W6-2, `searchChoiceCovers`)
+ * stands over this window's whole chrome (`onboardingCovers`; not the phone, whose tour is its
+ * shell's own flow). What `onboardingUp` reads of the state, and one of the terms of the layout
+ * report's `contentHidden` (`useLayoutReporter`): the pages' views composite ABOVE the chrome,
+ * so a page left showing under the tour stands over it – the New Tab's view over the tour's
+ * panel, since the window has had a tab from creation (#490) and the bar that used to open under
+ * the tour, and hid the page under its cover, waits for the tour's end (#347). Nothing is
+ * captured for these: the panel is opaque over the window, there is no picture to wait for, and
+ * the views hide at once (`decideHidden`, nothing to wait for).
  */
-export function firstRunCovers(state: Pick<UIState, 'settings' | 'window'>): boolean {
-  return !isPhone() && onboardingCovers(state)
+export function firstRunCovers(
+  state: Pick<UIState, 'settings' | 'window' | 'searchChoice'>
+): boolean {
+  return !isPhone() && (onboardingCovers(state) || searchChoiceCovers(state))
 }
 
 export async function openUrlbar(

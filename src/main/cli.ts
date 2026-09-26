@@ -26,6 +26,13 @@ export interface CliSwitches {
   startMaximized: boolean
   /** `--profile-directory=<name>`: Chrome's profile within the user data directory; ignored. */
   profileDirectory: string | null
+  /**
+   * `--zen-region=<code>`: the region the EEA's search-engine choice screen is gated on
+   * (W6-2), in the OS's place – a tester's or a drive's switch, as Chrome's
+   * `--search-engine-choice-country`. The code as given; the core normalises it
+   * (`resolveSearchChoiceRegion`). Null when the launch carried none.
+   */
+  region: string | null
 }
 
 export const KIOSK_SWITCH = 'kiosk'
@@ -33,13 +40,17 @@ export const USER_DATA_DIR_SWITCH = 'user-data-dir'
 export const RESTORE_LAST_SESSION_SWITCH = 'restore-last-session'
 export const START_MAXIMIZED_SWITCH = 'start-maximized'
 export const PROFILE_DIRECTORY_SWITCH = 'profile-directory'
+export const REGION_SWITCH = 'zen-region'
+/** The environment's spelling of `--zen-region` (the switch wins when both are set). */
+export const REGION_ENV = 'ZEN_REGION'
 
 const NO_SWITCHES: CliSwitches = {
   kiosk: false,
   userDataDir: null,
   restoreLastSession: false,
   startMaximized: false,
-  profileDirectory: null
+  profileDirectory: null,
+  region: null
 }
 
 /**
@@ -70,9 +81,26 @@ export function parseCliSwitches(argv: readonly string[]): CliSwitches {
       case PROFILE_DIRECTORY_SWITCH:
         switches.profileDirectory = value ?? ''
         break
+      case REGION_SWITCH:
+        if (value) switches.region = value
+        break
     }
   }
   return switches
+}
+
+/**
+ * The region override a launch carries, if any: `--zen-region=<code>` first, else the
+ * environment's `ZEN_REGION`; null when neither is set. Read by the host for `PlatformInfo.
+ * region` in the OS's place; the core normalises and gates (`core/searchChoice.ts`).
+ */
+export function regionOverride(
+  switches: Pick<CliSwitches, 'region'>,
+  env: Readonly<Record<string, string | undefined>>
+): string | null {
+  if (switches.region) return switches.region
+  const fromEnv = env[REGION_ENV]
+  return fromEnv && fromEnv.trim() ? fromEnv : null
 }
 
 /**
@@ -118,6 +146,9 @@ export function describeSwitches(switches: CliSwitches, userDataDir: string): st
     lines.push(
       `--${RESTORE_LAST_SESSION_SWITCH}: the last session is restored whatever the setting`
     )
+  }
+  if (switches.region !== null) {
+    lines.push(`--${REGION_SWITCH}=${switches.region}: the search engine choice reads this region`)
   }
   return lines
 }

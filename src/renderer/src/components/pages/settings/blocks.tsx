@@ -23,6 +23,7 @@ import { formatZoom } from '@shared/pageControls'
 import { engineKeywordProblem, searchTemplateProblem } from '@shared/search'
 import { inputToUrl } from '@shared/url'
 import { useFaviconSrc } from '@renderer/lib/favicons'
+import { searchEngineIconSrc } from '@renderer/lib/searchEngineIcons'
 import { cn } from '@renderer/lib/utils'
 import { ContainerIcon } from '../../ContainerIcon'
 import { ZoomStepper } from '../../ZoomStepper'
@@ -596,13 +597,14 @@ export function RadioOption({
 
 /**
  * A search engine's mark in a row's 16 px glyph slot: its favicon where a page offered one (an
- * OpenSearch engine), else the letter the URL bar shows for it, in a small disc.
+ * OpenSearch engine), the bundled picture for a choice-screen engine that is not shipped
+ * (`searchEngineIconSrc`), else the letter the URL bar shows for it, in a small disc.
  */
 export function EngineGlyph({ engine }: { engine: SearchEngine }): JSX.Element {
   const [broken, setBroken] = useState(false)
   // The cached copy where the core holds one (HB-47); the engine's mark is no page's row, so
   // the live address stands where the cache has nothing, as it always did.
-  const favicon = useFaviconSrc(engine.favicon)
+  const favicon = useFaviconSrc(searchEngineIconSrc(engine))
   if (favicon && !broken) {
     return (
       <img
