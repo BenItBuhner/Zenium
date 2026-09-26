@@ -232,7 +232,7 @@ export interface HarnessOptions {
    * `menuTargetAt` / `focusedRect`); absent, the host answers nothing.
    */
   chromeDocument?: {
-    hit?: { target: string; tabId: string | null } | null
+    hit?: { target: string; tabId: string | null; control?: string | null } | null
     focused?: Rect | null
   }
   /** The window starts maximized (`WindowHost.isMaximized`); its `maximize` / `unmaximize` flip it. */
