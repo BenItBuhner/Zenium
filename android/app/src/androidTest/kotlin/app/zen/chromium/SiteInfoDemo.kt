@@ -304,10 +304,12 @@ class SiteInfoDemo {
      * The Background video row on the sheet's main level (W6-S8, the per-site toggle of #523's
      * setting), driven by real touches and asserted through the core: the profile seeds the site's
      * own Block, so the row is there reading off. The first touch writes `allow` for the site
-     * (`permissions.set`, read back with `permissions.listForPermission`) and the row reads the
-     * catalogue's Allow line; the second forgets the site's answer (`permissions.forget`: the
-     * default is Block, and an answer equal to the default is not stored) and the row stays on the
-     * sheet reading off – it is kept for the sheet's life, so it never leaves under the finger.
+     * (`permissions.set`, read back with `permissions.listForPermission`) and the switch reads on;
+     * the second forgets the site's answer (`permissions.forget`: the default is Block, and an
+     * answer equal to the default is not stored) and the row stays on the sheet, the switch
+     * reading off – it is kept while its origin is under the sheet, so it never leaves under the
+     * finger. The row's line is one and the same in both states (the lead's ruling on #531), so
+     * the state is read from the switch (`isChecked`), not from the name, which only has to stay.
      * Each wrong outcome is a touch fault the run fails on once the recording is done.
      */
     private fun backgroundVideo(f: Finger) {
@@ -326,17 +328,22 @@ class SiteInfoDemo {
             }
         }
         val seeded = backgroundVideoDecision()
-        Log.i(TAG, "background-video for $SITE_ORIGIN before the touch: $seeded; row $row")
+        Log.i(TAG, "background-video for $SITE_ORIGIN before the touch: $seeded; row $row; switch on: ${switchOn(BACKGROUND_VIDEO_LABEL)}")
         if (seeded != "deny") touchFault("the seeded background-video answer for $SITE_ORIGIN reads $seeded, not deny")
+        if (findByLabel(BACKGROUND_VIDEO_NAME) == null) {
+            touchFault("the row does not read its one line before the touch; names ${namesFor(BACKGROUND_VIDEO_LABEL)}")
+        }
         shot("01b-background-video-off")
 
         f.tap(row.exactCenterX(), row.exactCenterY())
         if (!awaitDecision("allow", 8_000)) {
             touchFault("the touch on '$BACKGROUND_VIDEO_LABEL' did not write allow for $SITE_ORIGIN (reads ${backgroundVideoDecision()})")
-        } else if (!awaitLabel("$BACKGROUND_VIDEO_LABEL, $BACKGROUND_VIDEO_ALLOW_LINE", 6_000)) {
-            touchFault("allow was written but the row does not read the Allow line; names ${namesFor(BACKGROUND_VIDEO_LABEL)}")
+        } else if (!awaitSwitch(BACKGROUND_VIDEO_LABEL, true, 6_000)) {
+            touchFault("allow was written but the switch does not read on (checked ${switchOn(BACKGROUND_VIDEO_LABEL)}); names ${namesFor(BACKGROUND_VIDEO_LABEL)}")
+        } else if (findByLabel(BACKGROUND_VIDEO_NAME) == null) {
+            touchFault("the switch reads on but the row's line changed; names ${namesFor(BACKGROUND_VIDEO_LABEL)}")
         } else {
-            Log.i(TAG, "background-video for $SITE_ORIGIN after the touch: allow; the row reads the Allow line")
+            Log.i(TAG, "background-video for $SITE_ORIGIN after the touch: allow; the switch reads on under the same line")
         }
         SystemClock.sleep(800)
         shot("01c-background-video-on")
@@ -349,10 +356,12 @@ class SiteInfoDemo {
         f.tap(again.exactCenterX(), again.exactCenterY())
         if (!awaitDecision(null, 8_000)) {
             touchFault("the second touch on '$BACKGROUND_VIDEO_LABEL' did not forget the site's answer (reads ${backgroundVideoDecision()})")
-        } else if (!awaitLabel("$BACKGROUND_VIDEO_LABEL, $BACKGROUND_VIDEO_BLOCK_LINE", 6_000)) {
-            touchFault("the answer was forgotten but the row does not stay reading the Block line; names ${namesFor(BACKGROUND_VIDEO_LABEL)}")
+        } else if (!awaitSwitch(BACKGROUND_VIDEO_LABEL, false, 6_000)) {
+            touchFault("the answer was forgotten but the switch does not read off (checked ${switchOn(BACKGROUND_VIDEO_LABEL)}); names ${namesFor(BACKGROUND_VIDEO_LABEL)}")
+        } else if (findByLabel(BACKGROUND_VIDEO_NAME) == null) {
+            touchFault("the answer was forgotten but the row does not stay under its one line; names ${namesFor(BACKGROUND_VIDEO_LABEL)}")
         } else {
-            Log.i(TAG, "background-video for $SITE_ORIGIN after the second touch: none; the row stays, reading the Block line")
+            Log.i(TAG, "background-video for $SITE_ORIGIN after the second touch: none; the row stays, the switch reading off under the same line")
         }
         SystemClock.sleep(800)
         shot("01d-background-video-forgotten")
@@ -575,6 +584,46 @@ class SiteInfoDemo {
         return false
     }
 
+    /**
+     * The state of the switch row named `label` as the tree tells it – `isChecked` on the row's
+     * own node (`role="switch"` with `aria-checked`, checkable to the WebView), the smallest such
+     * node named `label` or "`label`, …" – or null while no checkable node carries the name.
+     */
+    private fun switchOn(label: String): Boolean? {
+        val root = ui.rootInActiveWindow ?: return null
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        var best: AccessibilityNodeInfo? = null
+        var bestArea = Int.MAX_VALUE
+        queue.add(root)
+        var visited = 0
+        while (queue.isNotEmpty() && visited < 8_000) {
+            val node = queue.removeFirst()
+            visited++
+            val names = listOfNotNull(node.contentDescription?.toString(), node.text?.toString())
+                .map { it.replace(Regex("\\s+"), " ").trim() }
+            if (node.isCheckable && names.any { it == label || it.startsWith("$label,") }) {
+                val bounds = Rect().also { node.getBoundsInScreen(it) }
+                val area = bounds.width() * bounds.height()
+                if (area < bestArea) {
+                    best = node
+                    bestArea = area
+                }
+            }
+            for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
+        }
+        return best?.isChecked
+    }
+
+    /** Wait until the switch row named `label` reads `on`, up to `timeoutMs`; false when it never did. */
+    private fun awaitSwitch(label: String, on: Boolean, timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (switchOn(label) == on) return true
+            SystemClock.sleep(300)
+        }
+        return false
+    }
+
     /** Wait until no node is labelled `label` any more, up to `timeoutMs`; false when it is still there. */
     private fun awaitGone(label: String, timeoutMs: Long): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
@@ -779,10 +828,14 @@ class SiteInfoDemo {
         private const val BACK_LABEL = "Back to site information"
         /** The active site the profile seeds (its own Block for background video among its answers). */
         private const val SITE_ORIGIN = "https://www.google.com"
-        /** The Background video switch row: its name is the label, a comma, the catalogue's line for its state. */
+        /**
+         * The Background video switch row: its name is the label, a comma, the sheet's one line –
+         * the same in both states (`BACKGROUND_VIDEO_LINE` in `lib/siteInfoCopy.ts`); the state is
+         * the switch's, read as `isChecked`.
+         */
         private const val BACKGROUND_VIDEO_LABEL = "Background video"
-        private const val BACKGROUND_VIDEO_ALLOW_LINE = "Sites can keep playing video in the background"
-        private const val BACKGROUND_VIDEO_BLOCK_LINE = "Sites cannot play video in the background"
+        private const val BACKGROUND_VIDEO_LINE = "Keeps playing video in the background"
+        private const val BACKGROUND_VIDEO_NAME = "$BACKGROUND_VIDEO_LABEL, $BACKGROUND_VIDEO_LINE"
         private const val STEP_MS = 8L
         /** Past the 8 CSS px slop at any plausible density, hardly visible on the track. */
         private const val NUDGE = 30f
