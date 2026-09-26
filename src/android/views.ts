@@ -6,6 +6,7 @@ import {
   type NavigationSnapshot,
   type PageRules,
   type Rect,
+  type Shortcut,
   type Tab
 } from '@shared/types'
 import type { SafeBrowsingHit } from '@shared/privacy'
@@ -38,6 +39,7 @@ import type {
 import { looksLikeStatements } from '@core/agent/util'
 import { isKeepableHostState, NAVIGATION_ENTRIES_MAX, sanitizeSnapshot } from '@core/session'
 import { bridgeTraced, type Bridge } from './bridge'
+import { helperShortcuts } from './shortcutHelper'
 
 /** Navigation state Kotlin mirrors into JS on every navigation event. */
 export interface ViewNavState {
@@ -1060,8 +1062,12 @@ export class AndroidTabViewHost implements TabViewHost, PlacementListener {
     this.views.delete(tabId)
   }
 
-  setShortcuts(bindings: KeyBinding[]): void {
-    this.bridge.send('keys.setShortcuts', { bindings })
+  /**
+   * Kotlin pre-filters native key presses against `bindings`; the system's keyboard-shortcut
+   * helper (a Meta long-press) lists the table's rows in Chrome's groups, so the rows cross too.
+   */
+  setShortcuts(bindings: KeyBinding[], table: readonly Shortcut[]): void {
+    this.bridge.send('keys.setShortcuts', { bindings, shortcuts: helperShortcuts(table) })
   }
 
   /** Kotlin keeps the policy so a navigation gets its user agent and viewport before it starts. */

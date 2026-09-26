@@ -2794,7 +2794,7 @@ export class Browser {
       if (s.binding) bindings.push(s.binding)
       bindings.push(...s.extraBindings)
     }
-    this.platform.views.setShortcuts?.(bindings)
+    this.platform.views.setShortcuts?.(bindings, table)
     // The menu bar shows the chords: it changes with the table.
     this.menus.syncApplicationMenu()
   }

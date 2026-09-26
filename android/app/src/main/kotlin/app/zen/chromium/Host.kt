@@ -1191,7 +1191,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "app.isDefaultBrowser" -> reply(DefaultBrowser.isDefault(activity))
             "app.appLinkState" -> reply(DefaultBrowser.appLinkState(activity))
             "app.requestDefaultBrowser" -> activity.requestDefaultBrowser(reply)
-            "keys.setShortcuts" -> { keys.setShortcuts(args.arr("bindings")); reply(null) }
+            "keys.setShortcuts" -> { keys.setShortcuts(args.arr("bindings"), args.arr("shortcuts")); reply(null) }
 
             // --- services --------------------------------------------------------------------------
             "dialog.confirm" -> confirm(args, reply)
