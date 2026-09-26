@@ -77,21 +77,22 @@ class ExternalProtocolsNoHandlerTest {
             ExternalProtocols.Fallback.StoreListing("market://details?id=a_b.c1"),
             ExternalProtocols.Fallback.of(null, "a_b.c1")
         )
-        // The core's regex, verbatim from `intentPackage`, is quoted in the engine and its class is the engine's check.
+        // The rule is the core's: the regex `intentPackage` reads a package with, taken from the shared source.
         val intentPackage = shared.substring(shared.indexOf("export function intentPackage(").also { assertTrue("the shared source has intentPackage", it >= 0) })
         val coreRegex = Regex("""const match = (/\S+/)\.exec\(url\)""").find(intentPackage)?.groupValues?.get(1) ?: error("intentPackage has no regex to read")
-        assertTrue("the core's regex is quoted verbatim in the engine", engine.contains(coreRegex))
         val coreClass = Regex("""package=\(\[([^\]]+)\]\+\)""").find(coreRegex)?.groupValues?.get(1) ?: error("the core's regex has no package class to read")
-        assertTrue("the engine's check is the core's class, whole-token", engine.contains("val PACKAGE = Regex(\"[$coreClass]+\")"))
-        val body = body(engine, "fun of(fallbackUrl: String?, pkg: String?): Fallback")
-        assertTrue("the check guards the store step", body.contains("pkg != null && PACKAGE.matches(pkg) -> StoreListing(\"market://details?id=\$pkg\")"))
-        // The plan names a package exactly when the core would: the same samples through the core's regex, whole-token.
+        // The plan names a package exactly when the core would: the same samples through the core's class, whole-token.
         val core = Regex("[$coreClass]+")
         val samples = listOf("com.example.app", "a_b.c1", "a", "com.evil/../x", "com.example app", "https://play.google.com/store/apps/details?id=com.example.app", "", "com.example.app;end", "com.example.app#Intent", "com.example.app?x=1", "com.example.app&y=2", "com-example")
         for (pkg in samples) {
             val listing = ExternalProtocols.Fallback.of(null, pkg) is ExternalProtocols.Fallback.StoreListing
             assertEquals("`$pkg`: a listing exactly when the core would name the package", core.matches(pkg), listing)
         }
+        // And the engine says so: the core's regex quoted verbatim, its class the check, the check on the store step.
+        assertTrue("the core's regex is quoted verbatim in the engine", engine.contains(coreRegex))
+        assertTrue("the engine's check is the core's class, whole-token", engine.contains("val PACKAGE = Regex(\"[$coreClass]+\")"))
+        val body = body(engine, "fun of(fallbackUrl: String?, pkg: String?): Fallback")
+        assertTrue("the check guards the store step", body.contains("pkg != null && PACKAGE.matches(pkg) -> StoreListing(\"market://details?id=\$pkg\")"))
     }
 
     /** The web address still wins, over a malformed package as over a well-formed one: the check stands behind the URL, never ahead of it. */
