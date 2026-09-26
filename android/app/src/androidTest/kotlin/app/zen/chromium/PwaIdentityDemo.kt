@@ -109,7 +109,18 @@ class PwaIdentityDemo : DemoHarness("pwa-demo-state.json", "android-pwa-identity
             back()
         }
         SystemClock.sleep(1_500)
-        finding("start: active ${activeCoreTab()?.optString("url")}")
+        // Recents once off camera: the launcher's first-visit tip ("Select text and images…", over the
+        // cards in the first run's still) is spent here, and the scene's still shows the cards alone.
+        shellCommand("input keyevent KEYCODE_APP_SWITCH")
+        SystemClock.sleep(3_000)
+        back()
+        if (!awaitTrue(5_000) { ui.rootInActiveWindow?.packageName?.toString() == app.packageName }) {
+            shellCommand("am start -a android.intent.action.MAIN -n ${app.packageName}/${MainActivity::class.java.name}")
+            awaitTrue(8_000) { ui.rootInActiveWindow?.packageName?.toString() == app.packageName }
+        }
+        SystemClock.sleep(1_500)
+        awaitActiveUrl(APP_URL)
+        finding("start: active ${activeCoreTab()?.optString("url")}; front ${ui.rootInActiveWindow?.packageName}")
     }
 
     override fun demo() {
@@ -183,7 +194,8 @@ class PwaIdentityDemo : DemoHarness("pwa-demo-state.json", "android-pwa-identity
         shortcutIntent = intent
         val record = WebAppRecord.fromIntent(intent)
         finding("shortcut '${shortcut.shortLabel}' -> ${intent.component?.className} ${intent.action} ${intent.data}; record ${record?.toJson()}")
-        check("the shortcut's intent aims at WebAppLauncherActivity with the app's task URI (${intent.data})", intent.component?.className == WebAppLauncherActivity::class.java.name && intent.data?.scheme == WebAppRules.TASK_SCHEME)
+        // The tile's intent carries the start URL; the launcher activity mints the task URI (zen-webapp://<id>) for the app's own task.
+        check("the shortcut's intent aims at WebAppLauncherActivity with the app's start URL (${intent.data})", intent.component?.className == WebAppLauncherActivity::class.java.name && intent.data?.toString() == APP_URL)
         check("the record's name is the tile's label ('${record?.name}')", record?.name == TILE_LABEL)
     }
 
@@ -239,12 +251,13 @@ class PwaIdentityDemo : DemoHarness("pwa-demo-state.json", "android-pwa-identity
         check("the browser's task is another one", appTasks().any { it.baseIntent.component?.className == MainActivity::class.java.name })
         val recents = readRecents()
         finding("dumpsys activity recents, the app's task (${recents.count} WebAppActivity task(s)): ${recents.lines.joinToString(" | ")}")
-        check("dumpsys activity recents reads the label '$TILE_LABEL' on the task (Label: ${recents.label ?: "?"})", recents.count >= 1 && (recents.label == TILE_LABEL || recents.block.contains("Label: $TILE_LABEL")))
-        // The platform prints the colour as a signed decimal (TaskDescription.toString); a check once the description line is there at all.
-        if (recents.label != null) {
-            check("dumpsys activity recents reads the task's colorPrimary as the theme_color ${hex(THEME_COLOR)} (${recents.color ?: "?"})", recents.color == hex(THEME_COLOR))
-        } else {
-            finding("dumpsys activity recents printed no task description line for the task (colour ${recents.color ?: "not printed"}; theme_color ${hex(THEME_COLOR)})")
+        check("dumpsys activity recents lists the app's task once, on the tile's task URI", recents.count == 1 && recents.block.contains("${WebAppRules.TASK_SCHEME}://"))
+        // The description as the platform holds it: `dumpsys activity activities` prints each record's
+        // taskDescription (label, primaryColor); the recents dump on API 34 prints the task without it.
+        finding("dumpsys activity activities, the task descriptions: ${recents.descriptions.joinToString(" | ").ifEmpty { "none printed" }}")
+        if (recents.descriptions.isNotEmpty()) {
+            check("the platform holds the label '$TILE_LABEL' on the app's record (label ${recents.label ?: "?"})", recents.label == TILE_LABEL)
+            check("the platform holds the theme_color ${hex(THEME_COLOR)} as the record's primaryColor (${recents.color ?: "?"})", recents.color == hex(THEME_COLOR))
         }
         // Recents as the user sees it (the still): the app's card apart from the browser's.
         shellCommand("input keyevent KEYCODE_APP_SWITCH")
@@ -311,13 +324,13 @@ class PwaIdentityDemo : DemoHarness("pwa-demo-state.json", "android-pwa-identity
         beat()
         // Allow under a finger: the page reads granted and posts; Android 13's own prompt should the run lack POST_NOTIFICATIONS.
         touchTapLabelExpecting("Allow", "the page reads granted", timeoutMs = 10_000) {
-            pageStatus(page).let { it.startsWith("permission: granted") || it == "shown" }
+            pageStatus(page).startsWith("permission: granted")
         }
         if (awaitSystemWindow(2_000)) {
             finding("Android 13's prompt after the grant: up (${ui.rootInActiveWindow?.packageName})")
             if (!tapInWindows(f, "Allow")) shellCommand("pm grant ${app.packageName} android.permission.POST_NOTIFICATIONS")
         }
-        val shown = awaitTrue(12_000) { pageStatus(page) == "shown" }
+        val shown = awaitTrue(12_000) { pageStatus(page).contains("shown") }
         val memory = app.getSharedPreferences(WebAppNotifications.PREFS, Context.MODE_PRIVATE).getString(SHORTCUT_ID, null)
         finding("page after: '${pageStatus(page)}'; the window's own memory for the app: $memory; the browser's site decisions: ${siteDecisions()}")
         check("the page's notification was shown (its 'show' event fired)", shown)
@@ -367,7 +380,7 @@ class PwaIdentityDemo : DemoHarness("pwa-demo-state.json", "android-pwa-identity
         val bounds = Rect().also { card.getBoundsInScreen(it) }
         f.tap(bounds.exactCenterX(), bounds.exactCenterY())
         val forward = awaitTrue(10_000) { webApp() === opened }
-        val clicked = awaitTrue(6_000) { onMain { opened.page }?.let(::pageStatus) == "click" }
+        val clicked = awaitTrue(6_000) { onMain { opened.page }?.let(::pageStatus)?.contains("click") == true }
         SystemClock.sleep(1_000)
         val tasks = appTasks().count { it.baseIntent.component?.className == WebAppActivity::class.java.name }
         val left = notificationManager.activeNotifications.count { it.tag?.startsWith("zenium.webapp/") == true }
@@ -415,9 +428,7 @@ class PwaIdentityDemo : DemoHarness("pwa-demo-state.json", "android-pwa-identity
         SystemClock.sleep(1_500)
         coreInvoke("tab.activate", "{\"tabId\":\"tab_app\"}")
         awaitActiveUrl(APP_URL)
-        // A fresh document of the tab (the browser's own page script, the core behind it); its status line read from it.
-        coreInvoke("tab.navigate", "{\"tabId\":\"tab_app\",\"input\":\"$APP_URL\"}")
-        awaitActiveUrl(APP_URL)
+        // The tab's document as the warm-up loaded it (the browser's own page script, the core behind it); its status line read from it.
         val page = onMain { (activity as? MainActivity)?.host?.tabs?.get("tab_app") } ?: run {
             fail("no page view for tab_app")
             return
@@ -437,13 +448,13 @@ class PwaIdentityDemo : DemoHarness("pwa-demo-state.json", "android-pwa-identity
             if (allowUp) {
                 SystemClock.sleep(1_000)
                 touchTapLabelExpecting("Allow", "the tab reads granted", timeoutMs = 12_000) {
-                    pageStatus(page).let { it.startsWith("permission: granted") || it == "shown" }
+                    pageStatus(page).startsWith("permission: granted")
                 }
             } else {
                 touchFault("the touch on the tab's '$NOTIFY_LABEL' brought no prompt in 8 s (page: ${pageStatus(page)})")
             }
         }
-        val shown = awaitTrue(12_000) { pageStatus(page) == "shown" }
+        val shown = awaitTrue(12_000) { pageStatus(page).contains("shown") }
         finding("the tab after: '${pageStatus(page)}'; the browser's site decisions: ${siteDecisions()}")
         check("the tab's notification was shown", shown)
         val cards = notificationManager.activeNotifications.filter { it.tag?.startsWith("zenium.web/") == true }
@@ -460,23 +471,38 @@ class PwaIdentityDemo : DemoHarness("pwa-demo-state.json", "android-pwa-identity
 
     // --- Recents, read ----------------------------------------------------------------------------------------
 
-    private class RecentsRead(val count: Int, val block: String, val label: String?, val color: String?, val lines: List<String>)
+    private class RecentsRead(
+        val count: Int,
+        val block: String,
+        val lines: List<String>,
+        val descriptions: List<String>,
+        val label: String?,
+        val color: String?
+    )
 
-    /** `dumpsys activity recents`: the app window's task block, its label and colour as the platform prints them. */
+    /**
+     * The app's task as the platform prints it: `dumpsys activity recents` for the task list (its raw
+     * list only – the "Visible recent tasks" echo below it names every task's base intent again),
+     * `dumpsys activity activities` for the record's `taskDescription: label="…" … primaryColor=…`
+     * line (the recents dump on API 34 prints the task without its description).
+     */
     private fun readRecents(): RecentsRead {
-        val dump = shellCommand("dumpsys activity recents")
+        val dump = shellCommand("dumpsys activity recents").substringBefore("Visible recent tasks")
         val blocks = dump.split(Regex("(?m)^\\s*\\* Recent #")).drop(1)
         val ours = blocks.filter { it.contains(WebAppActivity::class.java.simpleName) }
-        val block = ours.firstOrNull() ?: return RecentsRead(0, "", null, null, emptyList())
-        val lines = block.lines().map(String::trim).filter {
-            it.contains("Label:") || it.contains("lastDescription") || it.contains("realActivity") || it.contains(WebAppRules.TASK_SCHEME + "://")
-        }.take(6)
-        val label = Regex("Label: (.*?) (?:Icon|IconFilename|colorPrimary|colorBackground)").find(block)?.groupValues?.get(1)?.trim()
-        // `TaskDescription.toString()` prints the colour as a signed decimal int; a hex form is taken too.
-        val color = Regex("colorPrimary: (-?\\d+|#?[0-9a-fA-F]{6,8})").find(block)?.groupValues?.get(1)?.let { raw ->
-            raw.toIntOrNull()?.let(::hex) ?: "#${raw.removePrefix("#").lowercase().takeLast(6)}"
-        }
-        return RecentsRead(ours.size, block, label, color, lines)
+        val block = ours.firstOrNull() ?: ""
+        val lines = block.lines().map(String::trim).filter { it.isNotEmpty() }.take(8).map { it.take(220) }
+        val activities = shellCommand("dumpsys activity activities")
+        val descriptions = activities.lines().map(String::trim).filter { it.startsWith("taskDescription:") }.map { it.take(300) }
+        // The app window's own record ("* Hist #n: ActivityRecord{… WebAppActivity …}" and its indented detail).
+        val records = activities.split(Regex("(?m)^\\s*\\* Hist\\s+#\\d+: ActivityRecord\\{")).drop(1)
+        val own = records.firstOrNull { it.substringBefore('\n').contains(WebAppActivity::class.java.simpleName) }
+        val ownDescription = own?.lines()?.map(String::trim)?.firstOrNull { it.startsWith("taskDescription:") }
+            // Without the record's block in that shape: the one description that carries the app's label (no other activity sets it).
+            ?: descriptions.firstOrNull { it.contains("label=\"$TILE_LABEL\"") }
+        val label = ownDescription?.let { Regex("label=\"(.*?)\"").find(it)?.groupValues?.get(1) }
+        val color = ownDescription?.let { Regex("primaryColor=([0-9a-fA-F]+)").find(it)?.groupValues?.get(1) }?.let { "#${it.lowercase().takeLast(6)}" }
+        return RecentsRead(ours.size, block, lines, descriptions, label, color)
     }
 
     private fun appTasks(): List<ActivityManager.RecentTaskInfo> {
@@ -531,7 +557,7 @@ class PwaIdentityDemo : DemoHarness("pwa-demo-state.json", "android-pwa-identity
         Log.w(tag, "the page never reported $path complete (${onMain { webApp.page?.url }})")
     }
 
-    /** The page's status line (`#status`: "permission: default", "shown", "click", …). */
+    /** The page's status line (`#status`: "permission: default", then "permission: granted > shown > click > close" as the events come). */
     private fun pageStatus(page: TabWebView): String =
         evalJs(page, "String((document.getElementById('status')||{}).textContent||'')") ?: ""
 
@@ -816,8 +842,12 @@ class PwaIdentityDemo : DemoHarness("pwa-demo-state.json", "android-pwa-identity
             <button id=notify>$NOTIFY_LABEL</button>
             <p class=status id=status></p>
             <script>
-              var status = document.getElementById('status');
-              function say(t) { status.textContent = t; }
+              // Not `status`: window.status is a string-typed built-in, and an element assigned to it at the top level coerces.
+              var line = document.getElementById('status');
+              var events = [];
+              function say(t) { events = [t]; line.textContent = t; }
+              // The notification's events accumulate (a tap fires click and then close at once).
+              function note(t) { events.push(t); line.textContent = events.join(' > '); }
               say(window.Notification ? 'permission: ' + Notification.permission : 'no Notification API');
               document.getElementById('notify').addEventListener('click', function () {
                 if (!window.Notification) { say('no Notification API'); return; }
@@ -825,10 +855,10 @@ class PwaIdentityDemo : DemoHarness("pwa-demo-state.json", "android-pwa-identity
                   say('permission: ' + p);
                   if (p !== 'granted') return;
                   var n = new Notification('$NOTIFY_TITLE', { body: '$NOTIFY_BODY', tag: 'share' });
-                  n.onshow = function () { say('shown'); };
-                  n.onclick = function () { say('click'); };
-                  n.onclose = function () { say('close'); };
-                  n.onerror = function () { say('error'); };
+                  n.onshow = function () { note('shown'); };
+                  n.onclick = function () { note('click'); };
+                  n.onclose = function () { note('close'); };
+                  n.onerror = function () { note('error'); };
                 }, function (e) { say('error: ' + e); });
               });
             </script></body></html>
