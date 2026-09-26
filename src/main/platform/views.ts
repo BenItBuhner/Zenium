@@ -154,20 +154,16 @@ const SNAPSHOT_TARGET_PIXELS = 3_700_000
 const SNAPSHOT_JPEG_QUALITY = 90
 
 /**
- * The corner radius a parked view wears (`park`): its one pixel still inside the window is a
- * corner pixel of its box, and at a radius of 4 or more that pixel lies wholly outside the rounded
- * rect (the corner's arc is centred 4 in from the corner; the pixel's far corner is 4.24 away), so
- * the layer's mask shows none of it – the chrome's picture under the cover is the only thing on
- * screen.
- */
-const PARK_RADIUS = 4
-
-/**
  * The window corners a parked view can keep its pixel in (`park`): 0 the window's bottom-right
  * (the box's top-left pixel inside), 1 bottom-left (the box's top-right pixel), 2 top-right (its
  * bottom-left), 3 top-left (its bottom-right). Each parked view of a window takes its own, so no
  * view's pixel sits under another's – a view whose whole inside lies under another view is
  * OCCLUDED to Chromium, as good as hidden. A fifth parked view shares a corner.
+ *
+ * That pixel is on screen: the layer's rounded-corner mask (`setBorderRadius`) is laid over the
+ * view's clipped rect, not its box, so at any radius the one pixel shows a circle inscribed in it
+ * (measured: about 78% of the page's colour) – no radius hides it, and none is tried. Windows 11
+ * and macOS round the window's own corners over that pixel; a frameless X11 window shows it.
  */
 const PARK_CORNERS = 4
 
@@ -432,8 +428,6 @@ export class ElectronTabView implements TabView {
   private devtoolsPageBounds: Rect | null = null
   /** The view's box as the chrome last laid it out (`setBounds`), in DIP; null before the first. */
   private bounds: Rect | null = null
-  /** The corner radius the chrome last gave the box (`setBorderRadius`). */
-  private radius = 0
   /**
    * The window corner the engine's view stands parked in under a chrome cover rather than hidden
    * (`park`): shown, at its size, with one pixel still inside the window; null when not parked.
@@ -1285,8 +1279,7 @@ export class ElectronTabView implements TabView {
   }
 
   setBorderRadius(radius: number): void {
-    this.radius = radius
-    this.view.setBorderRadius(this.parked === null ? radius : Math.max(radius, PARK_RADIUS))
+    this.view.setBorderRadius(radius)
   }
 
   /**
@@ -1306,8 +1299,8 @@ export class ElectronTabView implements TabView {
    * for most pages is never. Chrome keeps the page visible under its own popups, and a
    * speculation rule in a page loaded under Zenium's omnibox dropdown (the address on the command
    * line, a fresh profile) never prefetched at all. A parked view keeps its size and stays shown
-   * with one corner pixel in a corner of the window, under its rounded corner (`PARK_RADIUS`:
-   * nothing of it on screen), which Chromium counts as VISIBLE: the page keeps painting,
+   * with one corner pixel in a corner of the window (`PARK_CORNERS`: the one pixel of it on
+   * screen), which Chromium counts as VISIBLE: the page keeps painting,
    * `document.visibilityState` stays `visible`, its prefetches run, and the view comes back with
    * `setVisible(true)` untouched, as Chrome's pages do from under a popup. The window's host ends
    * the parking of a view the next uncovered layout leaves out (`coverLifted`: a tab switched
@@ -1377,7 +1370,6 @@ export class ElectronTabView implements TabView {
     const rect = this.bounds
     if (!rect) return
     if (this.parked === null) this.parked = this.owner.claimParkingCorner(this)
-    this.view.setBorderRadius(Math.max(this.radius, PARK_RADIUS))
     this.view.setBounds(this.parkedBox(rect, this.parked))
   }
 
@@ -1385,7 +1377,6 @@ export class ElectronTabView implements TabView {
     this.parked = null
     this.owner.releaseParkingCorner(this)
     if (this.bounds) this.view.setBounds(this.bounds)
-    this.view.setBorderRadius(this.radius)
   }
 
   /** Whether the engine's view stands parked under a chrome cover, and in which corner. */

@@ -301,10 +301,6 @@ vi.mock('electron', async () => {
     setBounds(rect: { x: number; y: number; width: number; height: number }): void {
       this.bounds = rect
     }
-    radius = 0
-    setBorderRadius(radius: number): void {
-      this.radius = radius
-    }
   }
   /** The view host follows the chrome's scheme for dark theme for sites; light and quiet here. */
   // Every view host in the tests listens for a flip (the app has one host; the tests many).
@@ -1285,10 +1281,10 @@ describe('a hidden tab page and the window', () => {
     expect(other.win.children).toEqual([view.view])
   })
 
-  /** The engine's view as the fakes record it: shown or not, where, and how rounded. */
-  const engine = (view: ElectronTabView): { visible: boolean; bounds: unknown; radius: number } => {
-    const v = view.view as unknown as { getVisible(): boolean; bounds: unknown; radius: number }
-    return { visible: v.getVisible(), bounds: v.bounds, radius: v.radius }
+  /** The engine's view as the fakes record it: shown or not, and where. */
+  const engine = (view: ElectronTabView): { visible: boolean; bounds: unknown } => {
+    const v = view.view as unknown as { getVisible(): boolean; bounds: unknown }
+    return { visible: v.getVisible(), bounds: v.bounds }
   }
   /**
    * Where a parked view stands: its box, moved so only one corner pixel of it is inside the
@@ -1302,13 +1298,12 @@ describe('a hidden tab page and the window', () => {
     height: b.height
   })
 
-  it('is parked, not hidden, when chrome UI covers the page: shown to the engine at its size, one pixel inside the window’s corner under a rounded corner (W6-F5)', () => {
+  it('is parked, not hidden, when chrome UI covers the page: shown to the engine at its size, one pixel inside the window’s corner (W6-F5)', () => {
     const { host, window, create } = setup()
     const view = create()
     const flips: boolean[] = []
     host.onVisibilityChanged((v) => flips.push(v.isVisible()))
     view.setBounds(box)
-    view.setBorderRadius(8)
     view.setVisible(true)
     // The omnibox dropdown opens over the page: the core's layout hides the view.
     window.zen.contentHidden = true
@@ -1316,32 +1311,14 @@ describe('a hidden tab page and the window', () => {
     // Hidden to the core – the chrome shows its picture, the snapshot logic and the governor
     // read a page behind – but on screen to Chromium, which keeps prefetching for it.
     expect(view.isVisible()).toBe(false)
-    expect(engine(view)).toEqual({ visible: true, bounds: parkedAt(box), radius: 8 })
+    expect(engine(view)).toEqual({ visible: true, bounds: parkedAt(box) })
     expect(flips).toEqual([true, false])
     // The dropdown closes: the layout places the view again, and it is back where it was.
     window.zen.contentHidden = false
     view.setBounds(box)
-    view.setBorderRadius(8)
     view.setVisible(true)
-    expect(engine(view)).toEqual({ visible: true, bounds: box, radius: 8 })
+    expect(engine(view)).toEqual({ visible: true, bounds: box })
     expect(flips).toEqual([true, false, true])
-  })
-
-  it('rounds a parked view’s corner to at least the parking radius, so its pixel shows nothing, and gives the layout’s radius back', () => {
-    const { window, create } = setup()
-    const view = create()
-    view.setBounds(box)
-    view.setBorderRadius(0)
-    view.setVisible(true)
-    window.zen.contentHidden = true
-    view.setVisible(false)
-    expect(engine(view).radius).toBe(4)
-    // The layout under the cover (a resize) speaks of the radius: still the parking's.
-    view.setBorderRadius(2)
-    expect(engine(view).radius).toBe(4)
-    window.zen.contentHidden = false
-    view.setVisible(true)
-    expect(engine(view).radius).toBe(2)
   })
 
   it('takes a new box parked, at the new box’s size in the window’s corner, until the layout shows it', () => {
@@ -1405,7 +1382,7 @@ describe('a hidden tab page and the window', () => {
     view.setBounds(box)
     view.setVisible(true)
     view.setVisible(false)
-    expect(engine(view)).toEqual({ visible: false, bounds: box, radius: 0 })
+    expect(engine(view)).toEqual({ visible: false, bounds: box })
     // A cover on, but this view was never on screen in the window: nothing to keep visible.
     window.zen.contentHidden = true
     const behind = create()
@@ -1419,7 +1396,6 @@ describe('a hidden tab page and the window', () => {
     const { window, create } = setup()
     const view = create()
     view.setBounds(box)
-    view.setBorderRadius(8)
     view.setVisible(true)
     window.zen.contentHidden = true
     view.setVisible(false)
@@ -1427,12 +1403,12 @@ describe('a hidden tab page and the window', () => {
     // The uncovered layout placed another tab; the window host tells the rest.
     window.zen.contentHidden = false
     view.coverLifted()
-    expect(engine(view)).toEqual({ visible: false, bounds: box, radius: 8 })
+    expect(engine(view)).toEqual({ visible: false, bounds: box })
     // Nothing for a view not parked.
     view.coverLifted()
     expect(engine(view).visible).toBe(false)
     view.setVisible(true)
-    expect(engine(view)).toEqual({ visible: true, bounds: box, radius: 8 })
+    expect(engine(view)).toEqual({ visible: true, bounds: box })
 
     // Parked, then taken to another window (`TabManager.claim`): it leaves hidden, so entering
     // the other window for the keyboard does not put a shown view on its screen.
@@ -1440,7 +1416,7 @@ describe('a hidden tab page and the window', () => {
     view.setVisible(false)
     expect(engine(view).visible).toBe(true)
     view.detach()
-    expect(engine(view)).toEqual({ visible: false, bounds: box, radius: 8 })
+    expect(engine(view)).toEqual({ visible: false, bounds: box })
     const other = fakeWindow()
     view.setVisible(false)
     view.attachTo(other)
@@ -1458,10 +1434,10 @@ describe('a hidden tab page and the window', () => {
     view.setVisible(false)
     // Still covered: hidden again (a `refreshVisibility` pass) stays parked.
     view.setVisible(false)
-    expect(engine(view)).toEqual({ visible: true, bounds: parkedAt(box), radius: 4 })
+    expect(engine(view)).toEqual({ visible: true, bounds: parkedAt(box) })
     window.zen.contentHidden = false
     view.setVisible(false)
-    expect(engine(view)).toEqual({ visible: false, bounds: box, radius: 0 })
+    expect(engine(view)).toEqual({ visible: false, bounds: box })
   })
 
   it('is quiet for a view whose window is gone', () => {
