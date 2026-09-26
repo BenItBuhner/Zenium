@@ -55,6 +55,7 @@ import {
 import { normalizeEventFilters, type UrlFilter } from '../../../core/extensions/api/urlFilter'
 import type { KeyEventInput, MenuItemTemplate, PageContextParams } from '../../../core/platform'
 import type { RegistryEvent } from '../extensions'
+import { registerDocumentStartProvider } from '../documentStart'
 import type { SessionManager } from '../sessions'
 import type { ElectronTabViewHost } from '../views'
 import { ActionApi } from './action'
@@ -422,17 +423,15 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       event.returnValue = this.shimOptionsFor(frameSender(event))
     })
     // The page preload's side of `chrome.userScripts`, from every frame of every tab page:
-    // the plan (synchronous, at document start), the worlds' messaging, and the answers to
-    // deliveries and executions. `returnValue` is always set: the page blocks on it.
-    ipcMain.on(USER_SCRIPTS_CHANNELS.plan, (event, request) => {
-      let plan: unknown = []
-      try {
-        plan = this.userScripts.plan(event.sender, event.senderFrame, request)
-      } catch (error) {
-        console.warn('[zen] userScripts plan failed:', error)
-      }
-      event.returnValue = plan
-    })
+    // the plan, the worlds' messaging, and the answers to deliveries and executions. The plan
+    // rides the page's ONE synchronous document-start ask (`platform/documentStart.ts`) as its
+    // `userScripts` field, read from the `{ url }` the preload sends (the frame's own URL where
+    // Chromium has none yet). The composed handler asks this provider on every ask – the plan
+    // is the document's registration here, never cached, never skipped when a sibling field's
+    // provider throws – and answers `[]` for the field when it throws; the page blocks on it.
+    registerDocumentStartProvider('userScripts', (event, request) =>
+      this.userScripts.plan(event.sender, event.senderFrame, request)
+    )
     ipcMain.handle(USER_SCRIPTS_CHANNELS.message, (event, message) =>
       this.userScripts.worldMessage(event.sender, event.senderFrame, message)
     )

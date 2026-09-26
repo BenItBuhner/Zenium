@@ -435,16 +435,10 @@ describe('ElectronPrivacy', () => {
     expect(privacy.signals()).toEqual({ gpc: true, dnt: false })
   })
 
-  it("turns navigator's Do Not Track on for an extension's value too, per kind of window (the preload's IPC asking for the sender's), the user's setting still winning when on", async () => {
-    let handler: ((event: { sender: unknown; returnValue?: unknown }) => void) | undefined
-    const electron = await import('electron')
-    const on = vi.spyOn(electron.ipcMain, 'on').mockImplementation(((
-      channel: string,
-      listener: typeof handler
-    ) => {
-      if (channel === 'zen:privacy-signals') handler = listener
-      return electron.ipcMain
-    }) as typeof electron.ipcMain.on)
+  it("turns navigator's Do Not Track on for an extension's value too, per kind of window (the document-start answer's `signals` for the sender's), the user's setting still winning when on", async () => {
+    // The preload's ask reaches the composed document-start handler; `attach` registers the
+    // `signals` provider into the app's registry, so the answer is read from there.
+    const { documentStart } = await import('../documentStart')
     const { privacy } = host()
     privacy.apply(FLAGS)
     // Before the extension layer is attached: the user's setting alone, whatever the window.
@@ -468,18 +462,17 @@ describe('ElectronPrivacy', () => {
     expect(privacy.signals(true)).toEqual({ gpc: false, dnt: false })
     expect(privacy.signals()).toEqual({ gpc: false, dnt: true })
 
-    // The preload's IPC answers for the sender's kind of window; a sender the lookup cannot
-    // place (a page window's, a destroyed one) reads as a normal window's.
+    // The document-start answer's `signals` are the sender's kind of window's; a sender the
+    // lookup cannot place (a page window's, a destroyed one) reads as a normal window's.
     privacy.attach({
       multiplexer: { register: () => undefined },
       onDecision: () => undefined
     } as unknown as Parameters<PrivacyHostImpl['attach']>[0])
-    expect(handler).toBeDefined()
-    const ask = (sender: unknown): unknown => {
-      const event = { sender, returnValue: undefined as unknown }
-      handler?.(event)
-      return event.returnValue
-    }
+    const ask = (sender: unknown): unknown =>
+      documentStart.answer(
+        { sender, senderFrame: null } as unknown as Parameters<typeof documentStart.answer>[0],
+        { url: 'https://page.example/' }
+      ).signals
     expect(ask({ private: false })).toEqual({ gpc: false, dnt: true })
     expect(ask({ private: true })).toEqual({ gpc: false, dnt: false })
     expect(ask({})).toEqual({ gpc: false, dnt: true })
@@ -493,7 +486,6 @@ describe('ElectronPrivacy', () => {
     values.set(false, false)
     privacy.apply(FLAGS)
     expect(ask({ private: false })).toEqual({ gpc: false, dnt: false })
-    on.mockRestore()
   })
 
   it('reads a bundled feed document by id and refuses ids that are not plain feed names', async () => {

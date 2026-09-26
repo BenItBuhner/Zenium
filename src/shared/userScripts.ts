@@ -3,14 +3,14 @@ import type { WithheldPermissions } from './types'
 
 /**
  * The wire between the page preload (`preload/userScripts.ts`, every frame of every tab) and the
- * `chrome.userScripts` host (`main/platform/extensionApi/userScripts.ts`). The preload asks for
- * the frame's injection plan synchronously at document start, runs the worlds, and relays the
- * worlds' `runtime.sendMessage` / `runtime.connect` traffic; the host pushes `tabs.sendMessage`
- * deliveries and `userScripts.execute` requests down, each answered under a token.
+ * `chrome.userScripts` host (`main/platform/extensionApi/userScripts.ts`). The frame's injection
+ * plan comes with the page's one synchronous document-start ask (the `userScripts` field of
+ * `shared/documentStart.ts`'s answer, provided by the host); the preload runs the worlds and
+ * relays the worlds' `runtime.sendMessage` / `runtime.connect` traffic over these channels; the
+ * host pushes `tabs.sendMessage` deliveries and `userScripts.execute` requests down, each
+ * answered under a token.
  */
 export const USER_SCRIPTS_CHANNELS = {
-  /** `sendSync` from a document at document start: what every extension injects into this frame. */
-  plan: 'zen-ext:us-plan',
   /** `invoke`: a world's `runtime.sendMessage`; resolves with the extension's answer. */
   message: 'zen-ext:us-message',
   /** Both ways: the life of a `runtime.connect` port a world opened. */
@@ -93,7 +93,10 @@ export interface WireExtensionPlan {
   worlds: WireWorldPlan[]
 }
 
-/** What the preload sends with its plan request: the document's own view of its URL. */
+/**
+ * What the preload sends with its plan request – the document's own view of its URL – which is
+ * what the document-start ask carries (`DocumentStartRequest`).
+ */
 export interface PlanRequest {
   url: string
 }
