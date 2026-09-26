@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type {
   EventName,
   Events,
@@ -157,6 +157,25 @@ describe("the boot's first tab on the phone (no new tab page capability)", () =>
     expect(Object.keys(browser.state.model.tabs)).toEqual([])
     expect(browser.tabs.activeTabFor(win)).toBeUndefined()
     expect(bootNeedsPlacement(browser, win, true)).toBe(false)
+  })
+
+  it('the boot itself raises no omnibox: the first run comes up without the keyboard', () => {
+    // #490's fresh tab queued the new-tab omnibox for the chrome's ready (`urlbarOnReady`), so
+    // main's fresh start put the keyboard up under the first-run overlay.
+    const { browser, sent } = phone(phoneCapabilities())
+    browser.start()
+    const win = only(browser)
+    sent.length = 0
+    vi.useFakeTimers()
+    try {
+      win.onChromeReady()
+      vi.advanceTimersByTime(1000)
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(sent.filter((e) => e.name === 'urlbar.toggle')).toEqual([])
+    expect(sent.some((e) => e.name === 'newtab.opened')).toBe(false)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([])
   })
 
   it('a first run past onboarding starts the same way: no tab', () => {
