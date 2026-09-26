@@ -477,11 +477,15 @@
  * fold's menu, dark alone). The container is exempted by name, weighted as the dialog rule is:
  * the plain form (0,2,0) wins its tie with the ring rule by order, the `:root[data-pointer]`
  * form (0,4,0) the coarse one's. The rows keep their own focus mark, the cursor fill with no
- * ring (`.zen-v2-menu-item:focus-visible`, below); the pane chord never lands on a menu
- * (`paneTarget` names panes), so the rule carries no `[data-keyboard-focus]:focus` twin.
+ * ring (`.zen-v2-menu-item:focus-visible`, below). The pane chord's twin (§1 as amended,
+ * a11y-09: every ring form carries `[data-keyboard-focus]:focus` beside its `:focus-visible`)
+ * stands in the same rule, one per form – the chord names panes, never a menu, and the twin
+ * costs nothing.
  */
 .zen-v2-menu:focus-visible,
-:root[data-pointer='coarse'] .zen-v2-menu:focus-visible {
+:root[data-pointer='coarse'] .zen-v2-menu:focus-visible,
+.zen-v2-menu[data-keyboard-focus]:focus,
+:root[data-pointer='coarse'] .zen-v2-menu[data-keyboard-focus]:focus {
   outline: none;
 }
 

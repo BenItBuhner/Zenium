@@ -1566,9 +1566,12 @@ describe('the focus ring (§1, §4)', () => {
   })
 })
 
-/** The menu container's exemption from the ring rule (§9.22; pr-552 F1), both pointer forms. */
+/**
+ * The menu container's exemption from the ring rule (§9.22; pr-552 F1): both pointer forms,
+ * each with the pane chord's twin (§1 as amended, a11y-09) in the same rule.
+ */
 const MENU_EXEMPTION =
-  ".zen-v2-menu:focus-visible,\n:root[data-pointer='coarse'] .zen-v2-menu:focus-visible"
+  ".zen-v2-menu:focus-visible,\n:root[data-pointer='coarse'] .zen-v2-menu:focus-visible,\n.zen-v2-menu[data-keyboard-focus]:focus,\n:root[data-pointer='coarse'] .zen-v2-menu[data-keyboard-focus]:focus"
 
 describe('the chassis corner and the holders of focus (§2, §9.22; the W7-F4 slice)', () => {
   /** A renderer source or stylesheet by its path under `src/renderer/src`. */
@@ -1618,7 +1621,8 @@ describe('the chassis corner and the holders of focus (§2, §9.22; the W7-F4 sl
     // wore the 2 px ring round the whole panel. Exactly one rule names the container's
     // `:focus-visible`, declares nothing but `outline: none`, and sits after the ring rule
     // unlayered – the plain form (0,2,0) wins its tie by order, the `:root[data-pointer]` form
-    // (0,4,0) the coarse form's.
+    // (0,4,0) the coarse form's – each form with its pane-chord twin (focusRing.test.ts holds
+    // every ring rule to the twin; the chord names panes, never a menu).
     const menu = read('components/menus/MenuSheet.tsx')
     expect(menu).toMatch(
       /role="menu"\n(?:[^\n]*\n)*? *tabIndex=\{0\}\n *className="zen-v2 zen-v2-panel zen-v2-menu /
@@ -1632,9 +1636,9 @@ describe('the chassis corner and the holders of focus (§2, §9.22; the W7-F4 sl
     expect(nesting(exemption)).toBe(0)
     expect(layered(exemption)).toBe(false)
     // Not a `[role='menu'][tabindex='-1']` twin of the dialog rule: the container is exempted
-    // by its class. The pane chord never lands on a menu, so no `[data-keyboard-focus]` form.
+    // by its class, and the rule is the only one to read the mark on it.
     expect(bare).not.toMatch(/\[role='menu'\]/)
-    expect(bare).not.toMatch(/\.zen-v2-menu\[data-keyboard-focus\]/)
+    expect(bare.match(/\.zen-v2-menu\[data-keyboard-focus\]/g)).toHaveLength(2)
     // The rows keep their own mark – the cursor fill and no ring (§9.6, the #299 ruling).
     expect(
       block(
