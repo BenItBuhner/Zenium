@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   DEVICE_LOCAL_SETTINGS,
   ORDER_SPACES,
+  SETTINGS_RECORD_ID,
   applyOrder,
   collectLocal,
   defaultScope,
@@ -15,12 +16,16 @@ import {
   readCredentialData,
   readFolderAgentMark,
   readSpaceAgentMark,
+  seedSettingsMeta,
+  settingsKeyGroup,
+  settingsKeyTime,
   stableStringify,
   winningRemote,
   withoutDeviceLocalSettings,
   type BookmarkData,
   type MetaMap,
   type OrderData,
+  type RecordMeta,
   type SyncRecord
 } from '../records'
 import {
@@ -37,7 +42,7 @@ import {
   createBookmarkRoots
 } from '../../../shared/bookmarks'
 import { DEFAULT_CONTAINERS, DEFAULT_SETTINGS } from '../../../shared/defaults'
-import type { BookmarkNode, Space, Tab } from '../../../shared/types'
+import type { BookmarkNode, SearchEngine, Space, Tab } from '../../../shared/types'
 import { emptyLeakFields } from '../../../shared/types'
 
 type Fixture = Parameters<typeof collectLocal>[0] & {
@@ -361,6 +366,419 @@ describe('merge', () => {
       modified: 2,
       deleted: true
     })
+  })
+})
+
+/**
+ * The settings record merges key by key (`SyncRecord.keys`, `RecordMeta.keys`): each top-level
+ * key carries the time of its own edit, the record's `modified` is the newest of them, and the
+ * wire names only the keys that are older – additive, outside `data`, so `hashData(data)` and
+ * every pinned hash stand. `searchEngines`+`searchEngineId` and `newTab`+`newTabPhone` are one
+ * item each (`settingsKeyGroup`).
+ */
+describe('the settings record, key by key', () => {
+  type Json = Record<string, unknown>
+  const settings = (): SyncRecord => ({
+    id: SETTINGS_RECORD_ID,
+    type: 'settings',
+    modified: 0,
+    deleted: false,
+    data: {}
+  })
+  const record = (modified: number, data: Json, keys?: Record<string, number>): SyncRecord => ({
+    ...settings(),
+    modified,
+    data,
+    ...(keys ? { keys } : {})
+  })
+  const entry = (hash: string, modified: number): { hash: string; modified: number } => ({
+    hash,
+    modified
+  })
+  const meta = (modified: number, data: Json, keys?: Record<string, number>): RecordMeta => ({
+    type: 'settings',
+    hash: hashData(data),
+    modified,
+    deleted: false,
+    keys: Object.fromEntries(
+      Object.entries(data).map(([key, value]) => [
+        key,
+        entry(hashData(value), keys?.[key] ?? modified)
+      ])
+    )
+  })
+  const engine = (id: string): Json => ({
+    id,
+    name: id,
+    searchUrl: `https://${id}.test/?q=%s`,
+    suggestUrl: null,
+    keyword: id,
+    glyph: id[0]!.toUpperCase(),
+    active: true
+  })
+
+  it('settingsKeyGroup: the two pairs merge as one item each, every other key on its own', () => {
+    expect(settingsKeyGroup('searchEngineId')).toBe('searchEngines')
+    expect(settingsKeyGroup('searchEngines')).toBe('searchEngines')
+    expect(settingsKeyGroup('newTabPhone')).toBe('newTab')
+    expect(settingsKeyGroup('newTab')).toBe('newTab')
+    expect(settingsKeyGroup('colorScheme')).toBe('colorScheme')
+  })
+
+  it('settingsKeyTime: a key named in `keys` has its own time, any other the record’s – a record without `keys` reads as every key at its `modified`', () => {
+    const r = record(30, { x: 1, y: 2 }, { y: 10 })
+    expect(settingsKeyTime(r, 'x')).toBe(30)
+    expect(settingsKeyTime(r, 'y')).toBe(10)
+    expect(settingsKeyTime(record(30, { x: 1 }), 'x')).toBe(30)
+    expect(settingsKeyTime(record(30, { x: 1 }), 'absent')).toBe(30)
+  })
+
+  it('diffLocal: first seen the record is whole at 0 and the entry has no per-key part; the next diff gives every key its entry at that time, stamps nothing and publishes no `keys`', () => {
+    const src = sources()
+    const first = diffLocal({}, collectLocal(src, defaultScope()), 1000)
+    const firstEntry = first.meta[SETTINGS_RECORD_ID]!
+    expect(firstEntry.modified).toBe(0)
+    expect(firstEntry).not.toHaveProperty('keys')
+    expect(first.records.find((r) => r.id === SETTINGS_RECORD_ID)).not.toHaveProperty('keys')
+
+    const second = diffLocal(first.meta, collectLocal(src, defaultScope()), 2000)
+    expect(second.changed).toBe(false)
+    const migrated = second.meta[SETTINGS_RECORD_ID]!
+    expect(migrated.modified).toBe(0)
+    expect(migrated.hash).toBe(firstEntry.hash)
+    const data = collectLocal(src, defaultScope()).get(SETTINGS_RECORD_ID)!.data as Json
+    expect(Object.keys(migrated.keys!).sort()).toEqual(Object.keys(data).sort())
+    for (const [key, value] of Object.entries(data)) {
+      expect(migrated.keys![key]).toEqual(entry(hashData(value), 0))
+    }
+    const published = second.records.find((r) => r.id === SETTINGS_RECORD_ID)!
+    expect(published.modified).toBe(0)
+    expect(published).not.toHaveProperty('keys')
+    expect(hashData(published.data)).toBe(firstEntry.hash)
+    // A record whose hash stands settles on it: the per-key part is the entry's own, unhashed
+    // (most commits touch no setting; the diff costs the record what it did before).
+    const third = diffLocal(second.meta, collectLocal(src, defaultScope()), 3000)
+    expect(third.changed).toBe(false)
+    expect(third.meta[SETTINGS_RECORD_ID]!.keys).toBe(migrated.keys)
+  })
+
+  it('diffLocal: an edit stamps the key it is on and no other; the record is at its newest key with the older ones named on the wire; a change only noticed keeps the key’s time', () => {
+    const src = sources()
+    const seeded = diffLocal({}, collectLocal(src, defaultScope()), 1000)
+    const migrated = diffLocal(seeded.meta, collectLocal(src, defaultScope()), 2000)
+
+    src.settings.colorScheme = 'dark'
+    const edited = diffLocal(migrated.meta, collectLocal(src, defaultScope()), 3000)
+    expect(edited.changed).toBe(true)
+    const entryAfter = edited.meta[SETTINGS_RECORD_ID]!
+    expect(entryAfter.modified).toBe(3000)
+    expect(entryAfter.keys!.colorScheme).toEqual(entry(hashData('dark'), 3000))
+    expect(entryAfter.keys!.sidebarWidth!.modified).toBe(0)
+    const published = edited.records.find((r) => r.id === SETTINGS_RECORD_ID)!
+    expect(published.modified).toBe(3000)
+    expect(published.keys).not.toHaveProperty('colorScheme')
+    const data = published.data as Json
+    for (const key of Object.keys(data).filter((k) => k !== 'colorScheme')) {
+      expect(published.keys![key]).toBe(0)
+    }
+    expect(Object.keys(published.keys!)).toHaveLength(Object.keys(data).length - 1)
+    // `hashData(data)` is the same function of the same data: `keys` sits outside it.
+    expect(hashData(published.data)).toBe(entryAfter.hash)
+
+    // The round notices a change no state event carried (`stamp: null`): the key keeps its
+    // time, the content goes out, the entry adopts the hash.
+    src.settings.sidebarWidth = 300
+    const noticed = diffLocal(edited.meta, collectLocal(src, defaultScope()), 4000, {
+      stamp: null
+    })
+    expect(noticed.changed).toBe(true)
+    expect(noticed.meta[SETTINGS_RECORD_ID]!.keys!.sidebarWidth).toEqual(entry(hashData(300), 0))
+    expect(noticed.meta[SETTINGS_RECORD_ID]!.modified).toBe(3000)
+    const republished = noticed.records.find((r) => r.id === SETTINGS_RECORD_ID)!
+    expect(republished.modified).toBe(3000)
+    expect((republished.data as Json).sidebarWidth).toBe(300)
+    expect(republished.keys!.sidebarWidth).toBe(0)
+  })
+
+  it('diffLocal: an edit of either member of a pair stamps both, and a key removed from the settings loses its entry and leaves the record – which says nothing to a peer', () => {
+    const src = sources()
+    const seeded = diffLocal({}, collectLocal(src, defaultScope()), 1000)
+    const migrated = diffLocal(seeded.meta, collectLocal(src, defaultScope()), 2000)
+
+    src.settings.searchEngines = [engine('kagi') as unknown as SearchEngine]
+    const added = diffLocal(migrated.meta, collectLocal(src, defaultScope()), 3000)
+    expect(added.meta[SETTINGS_RECORD_ID]!.keys!.searchEngines!.modified).toBe(3000)
+    expect(added.meta[SETTINGS_RECORD_ID]!.keys!.searchEngineId!.modified).toBe(3000)
+
+    src.settings.searchEngineId = 'kagi'
+    const chosen = diffLocal(added.meta, collectLocal(src, defaultScope()), 4000)
+    const pair = chosen.meta[SETTINGS_RECORD_ID]!.keys!
+    expect(pair.searchEngineId!.modified).toBe(4000)
+    expect(pair.searchEngines!.modified).toBe(4000)
+    expect(pair.colorScheme!.modified).toBe(0)
+    const published = chosen.records.find((r) => r.id === SETTINGS_RECORD_ID)!
+    expect(published.modified).toBe(4000)
+    expect(published.keys).not.toHaveProperty('searchEngines')
+    expect(published.keys).not.toHaveProperty('searchEngineId')
+
+    src.settings.menuOrder = ['row.settings']
+    const ordered = diffLocal(chosen.meta, collectLocal(src, defaultScope()), 5000)
+    expect(ordered.meta[SETTINGS_RECORD_ID]!.keys!.menuOrder!.modified).toBe(5000)
+    delete src.settings.menuOrder
+    const removed = diffLocal(ordered.meta, collectLocal(src, defaultScope()), 6000)
+    expect(removed.changed).toBe(true)
+    expect(removed.meta[SETTINGS_RECORD_ID]!.keys).not.toHaveProperty('menuOrder')
+    expect(removed.meta[SETTINGS_RECORD_ID]!.modified).toBe(4000)
+    const without = removed.records.find((r) => r.id === SETTINGS_RECORD_ID)!
+    expect(without.data).not.toHaveProperty('menuOrder')
+    expect(without.modified).toBe(4000)
+    // A peer that holds the key keeps it, and this device takes the peer's copy back when it
+    // is offered: a removal has no time to speak with (the Reset travels as `[]`).
+    const peers = winningRemote(
+      removed.meta,
+      new Map([[SETTINGS_RECORD_ID, record(7, { menuOrder: ['row.settings'] })]])
+    )
+    expect(peers).toHaveLength(1)
+    expect(peers[0]!.data).toEqual({ menuOrder: ['row.settings'] })
+  })
+
+  it('newestByRecord: the devices’ settings records merge key by key – each pair or key from the device whose copy is newest, ties to the first read, the record at the newest of them', () => {
+    const merged = newestByRecord([
+      [record(30, { x: 'a', y: 'a', z: 'a' }, { y: 10, z: 30 })],
+      [record(20, { x: 'b', y: 'b', z: 'b' }, { x: 5, z: 30 })]
+    ]).get(SETTINGS_RECORD_ID)!
+    expect(merged.data).toEqual({ x: 'a', y: 'b', z: 'a' })
+    expect(merged.modified).toBe(30)
+    expect(merged.keys).toEqual({ y: 20 })
+
+    // A pair travels from one device: the newer default brings that device's list, whatever
+    // the list's own time.
+    const pair = newestByRecord([
+      [record(50, { searchEngines: [engine('a')], searchEngineId: 'a' }, { searchEngines: 5 })],
+      [record(40, { searchEngines: [engine('b')], searchEngineId: 'b' })]
+    ]).get(SETTINGS_RECORD_ID)!
+    expect(pair.data).toEqual({ searchEngines: [engine('a')], searchEngineId: 'a' })
+    expect(pair.modified).toBe(50)
+    expect(pair.keys).toEqual({ searchEngines: 5 })
+
+    // A single live record is taken as it is; a tombstone counts only when there is nothing else.
+    const alone = record(9, { x: 1 }, { x: 9 })
+    expect(
+      newestByRecord([[alone], [{ ...settings(), modified: 99, deleted: true, data: null }]]).get(
+        SETTINGS_RECORD_ID
+      )
+    ).toBe(alone)
+    expect(
+      newestByRecord([
+        [{ ...settings(), modified: 1, deleted: true, data: null }],
+        [{ ...settings(), modified: 2, deleted: true, data: null }]
+      ]).get(SETTINGS_RECORD_ID)?.modified
+    ).toBe(2)
+    // Every other record is one copy per id, newest wins, as before.
+    const space: SyncRecord = {
+      id: 's',
+      type: 'space',
+      modified: 3,
+      deleted: false,
+      data: { v: 1 }
+    }
+    expect(newestByRecord([[{ ...space, modified: 1 }], [space]]).get('s')).toBe(space)
+  })
+
+  it('winningRemote: against a per-key entry, a peer’s key wins when strictly newer and different, and the winner is the record narrowed to the keys that won', () => {
+    const local: MetaMap = {
+      [SETTINGS_RECORD_ID]: meta(10, { x: 'x1', y: 'y1', z: 'z1' })
+    }
+    const remote = record(20, { x: 'x2', y: 'y1', z: 'z2', w: 'w1' }, { z: 5, y: 20 })
+    const winners = winningRemote(local, new Map([[SETTINGS_RECORD_ID, remote]]))
+    expect(winners).toHaveLength(1)
+    // x: newer and different – won. y: newer but the same value – nothing to apply. z: older –
+    // the local copy stands. w: a key this device holds nothing of – taken.
+    expect(winners[0]).toEqual({ ...settings(), modified: 20, data: { x: 'x2', w: 'w1' } })
+    // A tie keeps the local copy, as it always has per record.
+    expect(winningRemote(local, new Map([[SETTINGS_RECORD_ID, record(10, { x: 'x2' })]]))).toEqual(
+      []
+    )
+    expect(winningRemote(local, new Map([[SETTINGS_RECORD_ID, record(11, { x: 'x2' })]]))).toEqual([
+      { ...settings(), modified: 11, data: { x: 'x2' } }
+    ])
+    // The narrowed record keeps each key's own time.
+    const older = winningRemote(
+      local,
+      new Map([[SETTINGS_RECORD_ID, record(30, { x: 'x2', y: 'y2' }, { y: 12 })]])
+    )
+    expect(older).toEqual([
+      { ...settings(), modified: 30, data: { x: 'x2', y: 'y2' }, keys: { y: 12 } }
+    ])
+  })
+
+  it('winningRemote: a pair wins or loses whole – its newest member against this device’s – and a peer’s record without `keys` is judged at its `modified` for every key', () => {
+    const local: MetaMap = {
+      [SETTINGS_RECORD_ID]: meta(
+        10,
+        { searchEngines: [engine('a')], searchEngineId: 'a', colorScheme: 'dark' },
+        { searchEngines: 10, searchEngineId: 10, colorScheme: 40 }
+      )
+    }
+    // The peer's default is newer than this device's pair: list and default land together,
+    // though the peer's list itself is older than this device's.
+    const later = winningRemote(
+      local,
+      new Map([
+        [
+          SETTINGS_RECORD_ID,
+          record(
+            20,
+            { searchEngines: [engine('b')], searchEngineId: 'b', colorScheme: 'light' },
+            { searchEngines: 5, colorScheme: 20 }
+          )
+        ]
+      ])
+    )
+    expect(later).toEqual([
+      {
+        ...settings(),
+        modified: 20,
+        data: { searchEngines: [engine('b')], searchEngineId: 'b' },
+        keys: { searchEngines: 5 }
+      }
+    ])
+    // The pair's newest member decides for both: a newer list brings an older default with it,
+    // and a pair no newer than this device's loses whole.
+    const listNewer = record(
+      15,
+      { searchEngines: [engine('b')], searchEngineId: 'b' },
+      { searchEngineId: 5 }
+    )
+    expect(winningRemote(local, new Map([[SETTINGS_RECORD_ID, listNewer]]))).toEqual([listNewer])
+    expect(
+      winningRemote(
+        local,
+        new Map([
+          [
+            SETTINGS_RECORD_ID,
+            record(10, { searchEngines: [engine('b')], searchEngineId: 'b' }, { searchEngineId: 5 })
+          ]
+        ])
+      )
+    ).toEqual([])
+    // A record from a build before per-key merge names no `keys`: every key is at its
+    // `modified`, so a newer record brings each key of it that differs.
+    const legacy = record(50, {
+      searchEngines: [engine('b')],
+      searchEngineId: 'b',
+      colorScheme: 'dark'
+    })
+    expect(winningRemote(local, new Map([[SETTINGS_RECORD_ID, legacy]]))).toEqual([
+      {
+        ...settings(),
+        modified: 50,
+        data: { searchEngines: [engine('b')], searchEngineId: 'b' }
+      }
+    ])
+  })
+
+  it('winningRemote: an entry without per-key part – a metadata from before, a record first seen at the last diff – judges the record whole, as every record always was', () => {
+    const before: MetaMap = {
+      [SETTINGS_RECORD_ID]: {
+        type: 'settings',
+        hash: hashData({ x: 'x1' }),
+        modified: 10,
+        deleted: false
+      }
+    }
+    const newer = record(20, { x: 'x2', y: 'y1' }, { y: 3 })
+    expect(winningRemote(before, new Map([[SETTINGS_RECORD_ID, newer]]))).toEqual([newer])
+    expect(winningRemote(before, new Map([[SETTINGS_RECORD_ID, record(10, { x: 'x2' })]]))).toEqual(
+      []
+    )
+    expect(winningRemote(before, new Map([[SETTINGS_RECORD_ID, record(20, { x: 'x1' })]]))).toEqual(
+      []
+    )
+    // A tombstone is weighed against the record whole, per-key entries or not.
+    const tomb: SyncRecord = { ...settings(), modified: 99, deleted: true, data: null }
+    expect(
+      winningRemote(
+        { [SETTINGS_RECORD_ID]: meta(10, { x: 1 }) },
+        new Map([[SETTINGS_RECORD_ID, tomb]])
+      )
+    ).toEqual([tomb])
+  })
+
+  it('winningRemote: a device-local key an older build still sends never wins – this device holds no entry for it, so it would be "newer" every round and land nothing – and never enters the per-key metadata', () => {
+    const local: MetaMap = { [SETTINGS_RECORD_ID]: meta(10, { colorScheme: 'light' }) }
+    for (const key of DEVICE_LOCAL_SETTINGS) {
+      const stray = record(20, { colorScheme: 'light', [key]: true })
+      expect(winningRemote(local, new Map([[SETTINGS_RECORD_ID, stray]]))).toEqual([])
+      // Alongside a real edit the edit wins alone; the stray key is left out of the winner.
+      const edited = record(20, { colorScheme: 'dark', [key]: true })
+      const won = winningRemote(local, new Map([[SETTINGS_RECORD_ID, edited]]))
+      expect(won).toHaveLength(1)
+      expect(won[0]!.data).toEqual({ colorScheme: 'dark' })
+      // A record that won whole (no per-key entry here) gets an entry per key but that one.
+      const fresh = metaFromRemote([edited])[SETTINGS_RECORD_ID]!
+      expect(fresh.keys).toEqual({ colorScheme: entry(hashData('dark'), 20) })
+    }
+  })
+
+  it('metaFromRemote: the settings winner is a set of keys – this device’s entry with those keys at the peer’s times – or every key of the record when there was no per-key entry', () => {
+    const local: MetaMap = { [SETTINGS_RECORD_ID]: meta(10, { x: 'x1', y: 'y1', z: 'z1' }) }
+    const won = record(20, { x: 'x2', w: 'w1' }, { w: 15 })
+    const merged = metaFromRemote([won], local)[SETTINGS_RECORD_ID]!
+    expect(merged.modified).toBe(20)
+    expect(merged.deleted).toBe(false)
+    expect(merged.keys).toEqual({
+      x: entry(hashData('x2'), 20),
+      y: entry(hashData('y1'), 10),
+      z: entry(hashData('z1'), 10),
+      w: entry(hashData('w1'), 15)
+    })
+    const fresh = metaFromRemote([won])[SETTINGS_RECORD_ID]!
+    expect(fresh.keys).toEqual({ x: entry(hashData('x2'), 20), w: entry(hashData('w1'), 15) })
+    expect(fresh.modified).toBe(20)
+    // Any other record's entry is as it was.
+    const space: SyncRecord = {
+      id: 's',
+      type: 'space',
+      modified: 3,
+      deleted: false,
+      data: { v: 1 }
+    }
+    expect(metaFromRemote([space], local).s).toEqual({
+      type: 'space',
+      hash: hashData({ v: 1 }),
+      modified: 3,
+      deleted: false
+    })
+  })
+
+  it('seedSettingsMeta: an entry from before gains every key at the record’s time; one with keys adopts a changed value at the key’s time, a new key at 0, drops a gone key, and is returned itself when nothing differs', () => {
+    const before: RecordMeta = {
+      type: 'settings',
+      hash: 'as-the-previous-build-wrote-it',
+      modified: 10,
+      deleted: false
+    }
+    const migrated = seedSettingsMeta(before, { x: 'x1', y: 'y1' })
+    expect(migrated).toEqual({
+      type: 'settings',
+      hash: hashData({ x: 'x1', y: 'y1' }),
+      modified: 10,
+      deleted: false,
+      keys: { x: entry(hashData('x1'), 10), y: entry(hashData('y1'), 10) }
+    })
+    expect(seedSettingsMeta(migrated, { x: 'x1', y: 'y1' })).toBe(migrated)
+    const upgraded = seedSettingsMeta(migrated, { x: 'x1', y: 'y2', added: 'on' })
+    expect(upgraded.modified).toBe(10)
+    expect(upgraded.hash).toBe(hashData({ x: 'x1', y: 'y2', added: 'on' }))
+    expect(upgraded.keys).toEqual({
+      x: entry(hashData('x1'), 10),
+      y: entry(hashData('y2'), 10),
+      added: entry(hashData('on'), 0)
+    })
+    const dropped = seedSettingsMeta(migrated, { x: 'x1' })
+    expect(dropped.keys).toEqual({ x: entry(hashData('x1'), 10) })
+    expect(dropped.modified).toBe(10)
   })
 })
 

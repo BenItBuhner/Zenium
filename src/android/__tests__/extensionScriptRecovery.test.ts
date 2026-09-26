@@ -583,8 +583,7 @@ describe('extension-origin stylesheets the page CSP refused', () => {
 
   it("spells a script file's URL as the page-origin alias for runtime.getURL once an isolated world's refused graph was asked for from the alias, so a two-hop graph's own chunk imports load (Buyhatke's Vite preload helper on flipkart.com, compat round 16 7.8)", async () => {
     const { host, errors } = harness([EXT, 'zyxwvutsrqponmlkzyxwvutsrqponmlk'])
-    const imported: Array<{ url: string; resolve: () => void; reject: (e: unknown) => void }> =
-      []
+    const imported: Array<{ url: string; resolve: () => void; reject: (e: unknown) => void }> = []
     host.document = new FakeDocument(null)
     host.pageModules = false
     host.pageOrigin = 'https://www.flipkart.com'

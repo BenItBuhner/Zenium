@@ -1,0 +1,91 @@
+{
+  "version": 2,
+  "activeSpaceId": "space_browse",
+  "spaces": [
+    {
+      "id": "space_browse",
+      "name": "Browse",
+      "icon": "🧭",
+      "containerId": "default",
+      "theme": {
+        "type": "gradient",
+        "colors": [
+          { "c": [96, 110, 235], "x": 0.3, "y": 0.35, "isPrimary": true },
+          { "c": [214, 92, 160], "x": 0.7, "y": 0.65 }
+        ],
+        "opacity": 0.55,
+        "texture": 0,
+        "algorithm": "floating",
+        "monochrome": false,
+        "rotation": 40
+      },
+      "tabIds": ["tab_home", "tab_web", "tab_tablets"],
+      "activeTabId": "tab_home",
+      "pinnedCollapsed": false
+    }
+  ],
+  "folders": [],
+  "tabs": [
+    {
+      "id": "tab_home",
+      "spaceId": "space_browse",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18166/",
+      "title": "Seam demo",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_web",
+      "spaceId": "space_browse",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18166/web.html",
+      "title": "World Wide Web",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_tablets",
+      "spaceId": "space_browse",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18166/tablets.html",
+      "title": "Tablet computer",
+      "pinned": false,
+      "essential": false
+    }
+  ],
+  "essentialTabIds": [],
+  "containers": [],
+  "splitGroups": [],
+  "settings": {
+    "onboardingDone": true,
+    "colorScheme": "light",
+    "sidebarExpanded": true,
+    "updates": { "autoCheck": false, "autoDownload": false, "channel": "stable" },
+    "pageControls": {
+      "desktopSite": "off",
+      "desktopSites": {},
+      "darkenSites": false,
+      "darkenSiteExceptions": {},
+      "zoom": 1,
+      "zoomIncludesOsFontSize": true,
+      "siteZooms": {},
+      "forceZoom": false
+    }
+  },
+  "shortcutOverrides": {},
+  "bookmarks": [],
+  "windows": [
+    {
+      "id": "window_main",
+      "bounds": null,
+      "maximized": false,
+      "activeSpaceId": "space_browse",
+      "selection": { "space_browse": "tab_home" },
+      "compact": false
+    }
+  ]
+}

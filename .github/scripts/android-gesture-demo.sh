@@ -26,6 +26,11 @@
 #   WEBVIEW_APK – a Chromium snapshot SystemWebView.apk to swap in for the image's own WebView
 #                 before anything else (android-webview-swap.sh: an AOSP image booted with
 #                 -writable-system); the run fails when the swap does not take
+#   WEBVIEW_GOOGLE_DIR – the directory android-webview-google.sh's fetch filled (a current
+#                 com.google.android.webview out of a later Google system image, for the API 33
+#                 Google APIs image whose own WebView 109 keeps no profiles); installed over the
+#                 image's provider before anything else, and the run fails when the device does
+#                 not then report the pinned version
 #   DEMO_SCENES – which of a driver's scenes run, passed to the instrumentation as the `scenes`
 #                 argument (`all` by default; ChromeA11yDemo's `private` is the one scene its
 #                 audit needs a multi-profile WebView for); drivers without scenes ignore it
@@ -182,6 +187,18 @@ if [ -n "${WEBVIEW_APK:-}" ]; then
     exit 1
   fi
   adb shell dumpsys webviewupdate > "$out/webviewupdate.txt" 2>&1 || true
+fi
+# Optional: a current Google WebView over the API 33 image's own (android-webview-google.sh; the
+# share demo's private-tab scene needs a WebView with profiles, which the image's 109 has not).
+# The same signer, so a plain install upgrades the provider; one that does not take fails the
+# run here, with the device's provider line in the log.
+if [ -n "${WEBVIEW_GOOGLE_DIR:-}" ]; then
+  cp -f "$WEBVIEW_GOOGLE_DIR/VERSION" "$out/webview-google-VERSION.txt" 2> /dev/null || true
+  if ! bash .github/scripts/android-webview-google.sh install "$WEBVIEW_GOOGLE_DIR" "$out"; then
+    echo "::error::the current Google WebView did not take; the demo needs a WebView with profiles"
+    kill "$monitor_pid" 2> /dev/null || true
+    exit 1
+  fi
 fi
 # The same 411 CSS px wide layout a Pixel 6 gets, at 2.3x fewer pixels: the emulator renders,
 # snapshots and records through a software GPU, and every pixel costs. A demo of another layout

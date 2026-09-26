@@ -55,7 +55,9 @@ class StartupDemo : DemoHarness("startup-demo-state.json", "android-startup", "s
 
     @Test
     fun record() {
-        runDemo()
+        // A perf reading: no events hold (DemoHarness.runDemo – the hold's service moves the WebView to
+        // its complete tree mode with every event, work inside what the frames and the traces measure).
+        runDemo(holdEvents = false)
         if (assertive) assertEquals("the seed's claims did not hold (see android-startup-notes.txt)", 0, failures)
     }
 

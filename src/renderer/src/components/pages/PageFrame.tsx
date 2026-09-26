@@ -33,7 +33,9 @@ export const TWO_PANE_MIN_WIDTH = 720
  * the column is scrolled (the sticky header's hairline reads it). `header` is what stays put;
  * the children are the body; `footer`, when a page has one (the task manager's End process,
  * §9.11), is pinned at the page's foot outside the scroll, carrying `data-more` while rows are
- * still below the fold (its hairline reads it, the header's mirror).
+ * still below the fold (its hairline reads it, the header's mirror). The header's measured
+ * height is the page's `--zen-page-header-height`, so a body element that stays put under it
+ * (a table's column header) knows where to stick.
  */
 export function PageColumn({
   testId,
@@ -54,6 +56,8 @@ export function PageColumn({
 }): JSX.Element {
   const [scrolled, setScrolled] = useState(false)
   const [more, setMore] = useState(false)
+  const page = useRef<HTMLDivElement | null>(null)
+  const head = useRef<HTMLElement | null>(null)
   const scroller = useRef<HTMLDivElement | null>(null)
   const measure = useCallback((el: HTMLDivElement) => {
     setScrolled(el.scrollTop > 0)
@@ -72,8 +76,25 @@ export function PageColumn({
     for (const child of el.children) observer.observe(child)
     return () => observer.disconnect()
   }, [hasFooter, measure])
+  // The header's height, as it stands and as it changes (a description wrapping, the text zoom).
+  useEffect(() => {
+    const root = page.current
+    const el = head.current
+    if (!root || !el || typeof ResizeObserver === 'undefined') return
+    const publish = (): void =>
+      root.style.setProperty('--zen-page-header-height', `${el.offsetHeight}px`)
+    publish()
+    const observer = new ResizeObserver(publish)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
   return (
-    <div className={cn('zen-page', className)} data-testid={testId} onKeyDown={onKeyDown}>
+    <div
+      ref={page}
+      className={cn('zen-page', className)}
+      data-testid={testId}
+      onKeyDown={onKeyDown}
+    >
       <div
         ref={(el) => {
           scroller.current = el
@@ -83,7 +104,9 @@ export function PageColumn({
         data-scrolled={scrolled || undefined}
         onScroll={onScroll}
       >
-        <header className="zen-page-header">{header}</header>
+        <header ref={head} className="zen-page-header">
+          {header}
+        </header>
         <div className="zen-page-body">{children}</div>
       </div>
       {footer && (
@@ -128,7 +151,8 @@ export function PageTitleBlock({
  * The page's search field (§9.12, as "Find in Settings" draws it): the 32 px `--v2-field` with
  * its 16 px glyph and, while there is a query, the clear icon button. Escape clears the query,
  * and with none to clear leaves the field (the focus returns to the page), so a second Escape
- * is the chrome's again.
+ * is the chrome's again – or, with `passEmptyEscape`, is left to the page's frame at once (a
+ * page window closes on it: an empty field never swallows the key there).
  */
 export function PageSearchField({
   value,
@@ -137,7 +161,8 @@ export function PageSearchField({
   label = placeholder,
   field,
   testId,
-  autoFocus = false
+  autoFocus = false,
+  passEmptyEscape = false
 }: {
   value: string
   onChange: (value: string) => void
@@ -146,6 +171,7 @@ export function PageSearchField({
   field?: RefObject<HTMLInputElement | null>
   testId?: string
   autoFocus?: boolean
+  passEmptyEscape?: boolean
 }): JSX.Element {
   return (
     <div className="zen-page-search">
@@ -168,6 +194,7 @@ export function PageSearchField({
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {
           if (e.key !== 'Escape') return
+          if (!value && passEmptyEscape) return
           e.preventDefault()
           e.stopPropagation()
           if (value) onChange('')

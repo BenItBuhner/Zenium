@@ -2,7 +2,13 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { Settings } from '../../../shared/types'
 import { DEFAULT_SETTINGS } from '../../../shared/defaults'
 import { FOLDER_LOST_MESSAGE } from '../engine'
-import { SETTINGS_RECORD_ID, hashData, type MetaMap, type SyncRecord } from '../records'
+import {
+  SETTINGS_RECORD_ID,
+  hashData,
+  settingsKeyTime,
+  type MetaMap,
+  type SyncRecord
+} from '../records'
 import { README_NAME, SYNC_DIR_NAME, isDeviceFileName, parseDeviceFile } from '../transport'
 import {
   type Device,
@@ -454,7 +460,8 @@ describe('an edit is stamped where it is made, not where it is noticed', () => {
   /**
    * Leave a closed device's files as the previous build left them: its settings edited in
    * `state.json`, and its sync metadata naming the hash of the settings record as that build
-   * wrote it (`recordAsWritten`).
+   * wrote it (`recordAsWritten`) – one hash for the whole record, no per-key entries, as every
+   * build before this one kept it.
    */
   function asPreviousBuild(
     files: Files,
@@ -465,7 +472,8 @@ describe('an edit is stamped where it is made, not where it is noticed', () => {
     edit(state.settings)
     files['state.json'] = JSON.stringify(state)
     const sync = JSON.parse(files['sync.json']!) as { meta: MetaMap }
-    const before = sync.meta[SETTINGS_RECORD_ID]!
+    const { keys: _perKey, ...before } = sync.meta[SETTINGS_RECORD_ID]!
+    void _perKey
     sync.meta[SETTINGS_RECORD_ID] = { ...before, hash: hashData(recordAsWritten) }
     files['sync.json'] = JSON.stringify(sync)
   }
@@ -477,7 +485,7 @@ describe('an edit is stamped where it is made, not where it is noticed', () => {
      * record this build wrote for it; returns the undo of any change made to the build itself.
      */
     upgrade: (files: Files, record: Json) => (() => void) | undefined
-    /** Keys this build puts on every record, which the peer's record lacks. */
+    /** Keys this build puts on every record, which the peer's record lacks: at 0, never an edit. */
     carries?: Json
   }
 
@@ -544,12 +552,20 @@ describe('an edit is stamped where it is made, not where it is noticed', () => {
 
   const edits: Array<{
     name: string
+    /** The top-level settings key the edit sits under: the item the merge weighs. */
+    key: keyof Settings
     patch: (s: Settings) => Partial<Settings>
     read: (s: Settings) => unknown
   }> = [
-    { name: 'colorScheme', patch: () => ({ colorScheme: 'dark' }), read: (s) => s.colorScheme },
+    {
+      name: 'colorScheme',
+      key: 'colorScheme',
+      patch: () => ({ colorScheme: 'dark' }),
+      read: (s) => s.colorScheme
+    },
     {
       name: 'resources.memoryPercent',
+      key: 'resources',
       patch: (s) => ({ resources: { ...s.resources, memoryPercent: 42 } }),
       read: (s) => s.resources.memoryPercent
     }
@@ -558,7 +574,7 @@ describe('an edit is stamped where it is made, not where it is noticed', () => {
   describe.each(causes)('$name', (cause) => {
     it.each(edits)(
       "the device's first sync on the new build takes the peer's unpulled edit of $name instead of reverting it",
-      async ({ patch, read }) => {
+      async ({ key, patch, read }) => {
         // The desktop and the phone in sync on the previous build, the settings untouched.
         const a = device('Desk (Linux)')
         const b = device('Pixel 9')
@@ -594,12 +610,22 @@ describe('an edit is stamped where it is made, not where it is noticed', () => {
           await upgraded.engine.syncNow()
           expect(upgraded.engine.status().lastError).toBeNull()
           expect(read(upgraded.browser.state.settings)).toEqual(read(theirs.data as Settings))
-          // What the desktop publishes is the phone's record (plus whatever this build puts on
-          // every record) at the PHONE's timestamp – never at its own launch.
+          // What the desktop publishes carries the phone's edit at the PHONE's timestamp – never
+          // at its own launch – and that key alone sits at the record's time. Every other key is
+          // where the untouched profile had it, 0: this build's own form of an unedited key (a
+          // default it added, a clamp, a fold) is not an edit, so it is never pushed as one; nor
+          // is it reverted by the phone's key of the same age, which says nothing newer.
           const mine = await settingsRecord(upgraded)
           expect(mine.modified).toBe(theirs.modified)
           expect(mine.modified).toBeLessThan(launched)
-          expect(hashData(mine.data)).toBe(hashData({ ...(theirs.data as Json), ...cause.carries }))
+          expect(read(mine.data as Settings)).toEqual(read(theirs.data as Settings))
+          expect(mine.keys?.[key]).toBeUndefined()
+          for (const other of Object.keys(mine.data as Json).filter((k) => k !== key)) {
+            expect(mine.keys?.[other]).toBe(0)
+          }
+          for (const [carried, value] of Object.entries(cause.carries ?? {})) {
+            expect((mine.data as Json)[carried]).toEqual(value)
+          }
           // The phone's next round keeps its change, and has nothing newer to take.
           await b.engine.syncNow()
           expect(read(b.browser.state.settings)).toEqual(read(theirs.data as Settings))
@@ -846,5 +872,292 @@ describe('an edit is stamped where it is made, not where it is noticed', () => {
     await b.engine.syncNow()
     expect(b.browser.passwords.store.get(login.id)).toMatchObject({ password: 'second-secret' })
     expect((await published(b)).find((r) => r.id === login.id)!.modified).toBe(theirs.modified)
+  }, 30_000)
+})
+
+/**
+ * The settings record merges per key, as Chrome Sync treats each preference as its own item
+ * (`SyncRecord.keys`, `diffSettings`, `winningSettings`): two devices editing DIFFERENT settings
+ * while apart both keep their edits; the same setting edited on both is the later edit's, a tie
+ * the local copy's; `searchEngines`+`searchEngineId` and `newTab`+`newTabPhone` are one item
+ * each. The record's `modified` is its newest key's, and its `keys` map on the wire names only
+ * the keys that are older, outside `data`: a record from before per-key merge (no `keys`) reads
+ * as every key at its `modified`, and an old build reads a record with `keys` as the whole
+ * record it always was (`compat.test.ts` pins both).
+ */
+describe('the settings record merges per key, as Chrome Sync treats preferences', () => {
+  type Json = Record<string, unknown>
+
+  /** Lets the deferred state broadcast (`onLocalChange`) run, and moves the clock by a few ms. */
+  const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 5))
+
+  const settingsOf = (d: Device): Settings => d.browser.state.settings
+
+  async function settingsRecord(d: Device): Promise<SyncRecord> {
+    const record = (await published(d)).find((r) => r.id === SETTINGS_RECORD_ID)
+    expect(record).toBeDefined()
+    return record!
+  }
+
+  /** Devices set up on one folder, in sync, the settings untouched. */
+  async function inSync(...names: string[]): Promise<Device[]> {
+    const all = names.map((name) => device(name))
+    await setup(all[0]!)
+    for (const d of all.slice(1)) {
+      await setup(d)
+      await d.engine.confirmMerge(true)
+    }
+    for (const d of all) await d.engine.syncNow()
+    return all
+  }
+
+  it("two devices editing different settings while apart both keep their edits, each key at its own edit's time", async () => {
+    const [a, b] = (await inSync('Desk (Linux)', 'Pixel 9')) as [Device, Device]
+    // Apart: the desktop picks a colour scheme; later the phone adds an engine and makes it the
+    // default (two commits, the pair stamped at the second).
+    await settle()
+    a.browser.updateSettings({ colorScheme: 'dark' }, a.win)
+    await settle()
+    const kagi = b.browser.searchEngines.add('Kagi', 'https://kagi.com/search?q=%s', b.win)
+    await settle()
+    b.browser.updateSettings({ searchEngineId: kagi }, b.win)
+    await settle()
+    expect(settingsOf(b).searchEngineId).toBe(kagi)
+
+    // The desktop syncs, then the phone, then the desktop again. Merged whole, last writer
+    // wins, the phone's later record replaced the desktop's, colour scheme and all.
+    await a.engine.syncNow()
+    await b.engine.syncNow()
+    await a.engine.syncNow()
+    for (const d of [a, b]) {
+      expect(settingsOf(d).colorScheme).toBe('dark')
+      expect(settingsOf(d).searchEngineId).toBe(kagi)
+      expect(settingsOf(d).searchEngines?.map((e) => e.id)).toContain(kagi)
+    }
+    // Both publish the same record: the colour scheme at the desktop's edit, the engine and
+    // the default at the phone's, the record at the newest of them.
+    const mine = await settingsRecord(a)
+    const theirs = await settingsRecord(b)
+    expect(hashData(mine.data)).toBe(hashData(theirs.data))
+    const scheme = settingsKeyTime(mine, 'colorScheme')
+    const engines = settingsKeyTime(mine, 'searchEngines')
+    expect(scheme).toBeGreaterThan(0)
+    expect(engines).toBeGreaterThan(scheme)
+    expect(settingsKeyTime(mine, 'searchEngineId')).toBe(engines)
+    expect(mine.modified).toBe(engines)
+    expect(theirs.modified).toBe(engines)
+    for (const key of ['colorScheme', 'searchEngines', 'searchEngineId']) {
+      expect(settingsKeyTime(theirs, key)).toBe(settingsKeyTime(mine, key))
+    }
+    // A key no one edited sits where the untouched profile had it, older than both edits.
+    expect(settingsKeyTime(mine, 'fonts')).toBeLessThan(scheme)
+    expect(mine.keys).toHaveProperty('fonts')
+    expect(mine.keys).not.toHaveProperty('searchEngines')
+    // Another round each finds nothing newer.
+    await b.engine.syncNow()
+    await a.engine.syncNow()
+    expect(await settingsRecord(a)).toEqual(mine)
+    expect(await settingsRecord(b)).toEqual(theirs)
+  }, 30_000)
+
+  it("the same setting edited on both while apart is the later edit's, and the earlier device's other edit stands", async () => {
+    const [a, b] = (await inSync('Desk (Linux)', 'Pixel 9')) as [Device, Device]
+    await settle()
+    a.browser.updateSettings({ colorScheme: 'dark', sidebarWidth: 300 }, a.win)
+    await settle()
+    b.browser.updateSettings({ colorScheme: 'light' }, b.win)
+    await settle()
+    await a.engine.syncNow()
+    await b.engine.syncNow()
+    await a.engine.syncNow()
+    for (const d of [a, b]) {
+      expect(settingsOf(d).colorScheme).toBe('light')
+      expect(settingsOf(d).sidebarWidth).toBe(300)
+    }
+    const mine = await settingsRecord(a)
+    const theirs = await settingsRecord(b)
+    expect(hashData(mine.data)).toBe(hashData(theirs.data))
+    expect(settingsKeyTime(mine, 'colorScheme')).toBe(theirs.modified)
+    expect(settingsKeyTime(mine, 'sidebarWidth')).toBeLessThan(theirs.modified)
+    expect(settingsKeyTime(theirs, 'sidebarWidth')).toBe(settingsKeyTime(mine, 'sidebarWidth'))
+    expect(mine.modified).toBe(theirs.modified)
+  }, 30_000)
+
+  it('three devices: a Reset made while one is away reaches it when it returns, its own edit made meanwhile reaches the others, and all three converge', async () => {
+    const [a, b, c] = (await inSync('Desk (Linux)', 'Pixel 9', 'MacBook')) as [
+      Device,
+      Device,
+      Device
+    ]
+    // A saved menu order, on every device.
+    await settle()
+    a.browser.updateSettings({ menuOrder: ['row.settings', 'row.newTab'] }, a.win)
+    await settle()
+    for (const d of [a, b, c]) await d.engine.syncNow()
+    for (const d of [a, b, c])
+      expect(settingsOf(d).menuOrder).toEqual(['row.settings', 'row.newTab'])
+
+    // The laptop goes away. The phone resets the menu – the empty list, stored and sent – and
+    // the desktop takes it.
+    await settle()
+    b.browser.updateSettings({ menuOrder: [] }, b.win)
+    await settle()
+    await b.engine.syncNow()
+    await a.engine.syncNow()
+    expect(settingsOf(a).menuOrder).toEqual([])
+    const reset = await settingsRecord(b)
+
+    // Away, the laptop picks a colour scheme; back, its round takes the reset and keeps its own.
+    await settle()
+    c.browser.updateSettings({ colorScheme: 'dark' }, c.win)
+    await settle()
+    await c.engine.syncNow()
+    expect(settingsOf(c).menuOrder).toEqual([])
+    expect(settingsOf(c).colorScheme).toBe('dark')
+    const scheme = (await settingsRecord(c)).modified
+    expect(scheme).toBeGreaterThan(reset.modified)
+
+    await a.engine.syncNow()
+    await b.engine.syncNow()
+    const records = await Promise.all([a, b, c].map(settingsRecord))
+    for (const [i, d] of [a, b, c].entries()) {
+      expect(settingsOf(d).menuOrder).toEqual([])
+      expect(settingsOf(d).colorScheme).toBe('dark')
+      const r = records[i]!
+      expect(hashData(r.data)).toBe(hashData(records[0]!.data))
+      expect(settingsKeyTime(r, 'menuOrder')).toBe(reset.modified)
+      expect(settingsKeyTime(r, 'colorScheme')).toBe(scheme)
+      expect(r.modified).toBe(scheme)
+    }
+  }, 30_000)
+
+  it("a third device reads every device's keys out of the folder: a key only an away device's file carries lands, though another device's record is newer", async () => {
+    const [a, b, c] = (await inSync('Desk (Linux)', 'Pixel 9', 'MacBook')) as [
+      Device,
+      Device,
+      Device
+    ]
+    // Apart, the phone's edit first, the desktop's later. Both come back at once: each reads the
+    // folder before the other has written, so each file carries its own device's edit alone.
+    await settle()
+    b.browser.updateSettings({ colorScheme: 'dark' }, b.win)
+    await settle()
+    a.browser.updateSettings({ sidebarWidth: 300 }, a.win)
+    await settle()
+    await Promise.all([a.engine.syncNow(), b.engine.syncNow()])
+    const desk = await settingsRecord(a)
+    const phone = await settingsRecord(b)
+    expect((desk.data as Settings).colorScheme).not.toBe('dark')
+    expect((phone.data as Settings).sidebarWidth).not.toBe(300)
+    expect(desk.modified).toBeGreaterThan(phone.modified)
+
+    // The laptop's round: the desktop's record is the newer one, and the phone's colour scheme
+    // lands too – one record per id, newest wins, would have read the desktop's file alone.
+    await c.engine.syncNow()
+    expect(settingsOf(c).sidebarWidth).toBe(300)
+    expect(settingsOf(c).colorScheme).toBe('dark')
+    const laptop = await settingsRecord(c)
+    expect(settingsKeyTime(laptop, 'colorScheme')).toBe(phone.modified)
+    expect(settingsKeyTime(laptop, 'sidebarWidth')).toBe(desk.modified)
+    expect(laptop.modified).toBe(desk.modified)
+    // And the two take each other's at their next round.
+    await a.engine.syncNow()
+    await b.engine.syncNow()
+    expect(settingsOf(a).colorScheme).toBe('dark')
+    expect(settingsOf(b).sidebarWidth).toBe(300)
+    expect(hashData((await settingsRecord(b)).data)).toBe(hashData(laptop.data))
+  }, 30_000)
+
+  it('searchEngines and searchEngineId are one item: an edit of either stamps both, and a peer takes or keeps the pair whole', async () => {
+    const [a, b] = (await inSync('Desk (Linux)', 'Pixel 9')) as [Device, Device]
+    // The desktop adds an engine, then makes it the default: the phone takes list and default
+    // together, both at the time of the second edit.
+    await settle()
+    const kagi = a.browser.searchEngines.add('Kagi', 'https://kagi.com/search?q=%s', a.win)
+    await settle()
+    a.browser.updateSettings({ searchEngineId: kagi }, a.win)
+    await settle()
+    await a.engine.syncNow()
+    await b.engine.syncNow()
+    expect(settingsOf(b).searchEngineId).toBe(kagi)
+    const first = await settingsRecord(b)
+    expect(settingsKeyTime(first, 'searchEngines')).toBe(first.modified)
+    expect(settingsKeyTime(first, 'searchEngineId')).toBe(first.modified)
+
+    // Apart: the desktop renames its engine (the list); later the phone puts the default back on
+    // the shipped engine (the id). The pair is the later edit's on both devices – the phone's
+    // list, the rename undone, and the phone's default. Key by key, the desktop's renamed list
+    // would stand beside the phone's default: a list and a default no device ever held together
+    // (a default naming an engine only the other key carries).
+    await settle()
+    a.browser.searchEngines.update(
+      kagi,
+      { name: 'Kagi Search', searchUrl: 'https://kagi.com/search?q=%s', keyword: '' },
+      a.win
+    )
+    await settle()
+    expect(settingsOf(a).searchEngines?.find((e) => e.id === kagi)?.name).toBe('Kagi Search')
+    b.browser.updateSettings({ searchEngineId: DEFAULT_SETTINGS.searchEngineId }, b.win)
+    await settle()
+    await a.engine.syncNow()
+    await b.engine.syncNow()
+    await a.engine.syncNow()
+    for (const d of [a, b]) {
+      expect(settingsOf(d).searchEngineId).toBe(DEFAULT_SETTINGS.searchEngineId)
+      expect(settingsOf(d).searchEngines?.find((e) => e.id === kagi)?.name).toBe('Kagi')
+    }
+    const mine = await settingsRecord(a)
+    const theirs = await settingsRecord(b)
+    expect(hashData(mine.data)).toBe(hashData(theirs.data))
+    expect(settingsKeyTime(mine, 'searchEngines')).toBe(theirs.modified)
+    expect(settingsKeyTime(mine, 'searchEngineId')).toBe(theirs.modified)
+    expect(mine.modified).toBe(theirs.modified)
+  }, 30_000)
+
+  it("a metadata from before per-key merge gains its per-key entries at the boot seed – every key at the record's time, the record's time and hash untouched – and nothing goes out for it", async () => {
+    const a = device('Desk (Linux)')
+    await setup(a)
+    a.browser.updateSettings({ colorScheme: 'dark' }, a.win)
+    await settle()
+    await a.engine.syncNow()
+    const stamped = await settingsRecord(a)
+    expect(stamped.modified).toBeGreaterThan(0)
+
+    // The device closed; its metadata as every build before this one kept it: one hash and one
+    // time for the record, no per-key entries.
+    a.browser.flushSync()
+    const files = { ...a.io.files }
+    a.engine.disconnect(false)
+    const sync = JSON.parse(files['sync.json']!) as { meta: MetaMap }
+    const { keys: _perKey, ...legacy } = sync.meta[SETTINGS_RECORD_ID]!
+    void _perKey
+    sync.meta[SETTINGS_RECORD_ID] = legacy
+    files['sync.json'] = JSON.stringify(sync)
+    const folderBefore = new Map(folderFiles('/drive'))
+
+    // At start the entry names every key of the record at the record's time – nothing finer is
+    // known – with its value's hash; the record's own time and hash stand.
+    const io = memoryIo()
+    Object.assign(io.files, files)
+    const upgraded = device('Desk (Linux)', { io })
+    upgraded.engine.flushSync()
+    const meta = (JSON.parse(upgraded.io.files['sync.json']!) as { meta: MetaMap }).meta[
+      SETTINGS_RECORD_ID
+    ]!
+    expect(meta.modified).toBe(legacy.modified)
+    expect(meta.hash).toBe(legacy.hash)
+    expect(Object.keys(meta.keys ?? {}).sort()).toEqual(Object.keys(stamped.data as Json).sort())
+    for (const [key, entry] of Object.entries(meta.keys ?? {})) {
+      expect(entry.modified).toBe(stamped.modified)
+      expect(entry.hash).toBe(hashData((stamped.data as Json)[key]))
+    }
+    // Nothing went out for the migration: the folder is as the closed device left it, and the
+    // round publishes the record as before – the same content, the same time, no key older.
+    expect(folderFiles('/drive')).toEqual(folderBefore)
+    await upgraded.engine.syncNow()
+    const mine = await settingsRecord(upgraded)
+    expect(hashData(mine.data)).toBe(hashData(stamped.data))
+    expect(mine.modified).toBe(stamped.modified)
+    expect(mine.keys).toBeUndefined()
   }, 30_000)
 })

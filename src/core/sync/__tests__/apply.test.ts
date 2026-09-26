@@ -349,6 +349,75 @@ describe('applyRemote: the settings record and the new tab page', () => {
     expect('menuOrder' in b.state.settings).toBe(false)
     expect(sent()).not.toHaveProperty('menuOrder')
   })
+
+  it('a record narrowed to the keys that won (per-key merge) lands those keys alone: every other setting, the new tab page and the engines included, stands', () => {
+    const b = browser()
+    b.updateSettings(
+      {
+        sidebarWidth: 300,
+        newTab: { ...b.state.settings.newTab, background: 'solid' },
+        menuOrder: ['row.settings'],
+        fonts: { ...b.state.settings.fonts, size: 20 }
+      },
+      stub()
+    )
+    const engineId = b.searchEngines.add('Mine', 'https://mine.example/?q=%s', stub())
+    b.updateSettings({ searchEngineId: engineId }, stub())
+    const before = structuredClone(b.state.settings)
+    expect(before.searchEngineId).toBe(engineId)
+
+    // `winningRemote` hands over the winning keys as the record: two keys here, out of the
+    // seventy a whole record carries.
+    applyRemote(b, [
+      {
+        ...settingsRecord({ colorScheme: 'dark', languages: ['de', 'en'] }),
+        keys: { languages: 900 }
+      }
+    ])
+    expect(b.state.settings.colorScheme).toBe('dark')
+    expect(b.state.settings.languages).toEqual(['de', 'en'])
+    const { colorScheme: _scheme, languages: _languages, ...rest } = b.state.settings
+    void _scheme
+    void _languages
+    const { colorScheme: _wasScheme, languages: _wasLanguages, ...wasRest } = before
+    void _wasScheme
+    void _wasLanguages
+    expect(rest).toEqual(wasRest)
+    expect(b.state.settings.newTab).toEqual(before.newTab)
+    expect(b.state.settings.searchEngineId).toBe(engineId)
+    expect(b.state.settings.menuOrder).toEqual(['row.settings'])
+  })
+
+  it("the pair travels as one: a record carrying the peer's engines and default lands both; one carrying newTabPhone alone (a 0.3.x phone's key) folds into newTab", () => {
+    const b = browser()
+    b.updateSettings({ newTab: { ...b.state.settings.newTab, background: 'solid' } }, stub())
+    applyRemote(b, [
+      settingsRecord({
+        searchEngineId: 'custom:peer',
+        searchEngines: [
+          {
+            id: 'custom:peer',
+            name: 'Peer',
+            searchUrl: 'https://peer.example/?q=%s',
+            keyword: '@peer',
+            active: true
+          }
+        ]
+      })
+    ])
+    expect(b.state.settings.searchEngineId).toBe('custom:peer')
+    expect(b.state.settings.searchEngines?.map((e) => e.id)).toEqual(['custom:peer'])
+    expect(b.state.settings.newTab.background).toBe('solid')
+
+    applyRemote(b, [settingsRecord({ newTabPhone: PEER_PHONE })])
+    expect(b.state.settings.newTab).toEqual({
+      ...DEFAULT_NEW_TAB_SETTINGS,
+      preset: 'inspirational',
+      background: 'image'
+    })
+    expect('newTabPhone' in b.state.settings).toBe(false)
+    expect(b.state.settings.searchEngineId).toBe('custom:peer')
+  })
 })
 
 describe("applyRemote: the agents' mark on space and folder records", () => {

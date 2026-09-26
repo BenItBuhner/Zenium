@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  EventsTapService.java: every event type, generic feedback, no flags, no capabilities – enough
+  for a current WebView's event mask to cover everything, nothing the app could take for a screen
+  reader or touch exploration.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeAllMask"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault"
+    android:canRetrieveWindowContent="false"
+    android:description="@string/events_tap_service_description"
+    android:isAccessibilityTool="false"
+    android:notificationTimeout="0" />

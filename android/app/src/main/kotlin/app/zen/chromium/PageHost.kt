@@ -126,6 +126,27 @@ interface PageHost {
         json("reason" to if (didCrash) "crashed" else "killed")
 
     /**
+     * `tab`'s main frame started a new document (`onPageStarted`): whatever the host had up for
+     * the document before – the picture-in-picture window showing its video – is over. Main
+     * thread, before the `startLoading` event. A host without a chrome has nothing up.
+     */
+    fun documentStarted(tab: TabWebView) {}
+
+    /**
+     * `tab`'s view is being torn down ([TabHost.destroy], [TabHost.dropAll]), before the
+     * fullscreen it may hold is exited: a picture-in-picture window showing it ends with it. A
+     * host without a chrome has no window.
+     */
+    fun tabRemoved(tab: TabWebView) {}
+
+    /**
+     * `tabId`'s view now fills the picture-in-picture window over the chrome ([TabHost.fillWindow]),
+     * or null: the one that did went back where the chrome has it. A host without a chrome has
+     * nothing under the view.
+     */
+    fun windowFillChanged(tabId: String?) {}
+
+    /**
      * Hear the renderer behind `view` stop and start answering again
      * (`WebViewRenderProcessClient`; the unresponsive-page prompt, ERR-16). A host without a
      * chrome leaves the platform to it.

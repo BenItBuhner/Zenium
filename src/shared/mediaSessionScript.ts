@@ -10,6 +10,7 @@ import {
   type MediaReport,
   type MediaSessionAction,
   type MediaSessionHostMessage,
+  PIP_CONTROLS_ATTRIBUTE,
   PIP_FILL_ATTRIBUTE
 } from './mediaSession'
 import type { PageScriptMessage } from './pageScript'
@@ -42,6 +43,9 @@ const REPORT_DELAY_MS = 40
 
 /** Detached players remembered at most (sound effects come and go by the dozen). */
 const MAX_DETACHED = 32
+
+/** The fill's landing measures the video again this long after the fill ends (see `landOn`). */
+const LANDING_RECHECK_MS = 250
 
 interface PageWithSession {
   navigator: Navigator & { mediaSession?: unknown; userActivation?: { isActive: boolean } }
@@ -243,14 +247,32 @@ export function installMediaTracking(transport: MediaTrackingTransport): void {
    * `fill`: the host is showing the page's window as a picture-in-picture of its video, so the
    * video alone is laid over the viewport, the page's own layout untouched underneath (Chrome's
    * PiP shows the video surface alone; a WebView can only show the page, so the page shows the
-   * video). Off puts the page back as it was.
+   * video). The element's own `controls` come off for the window's stand (the system draws the
+   * window's buttons; the engine's bar would sit under them at thumbnail size) and go back with
+   * the fill's end. Off puts the page back as it was and, the fill having been the whole viewport,
+   * lands the page on the video: if the element sits out of view once the layout is back, it is
+   * scrolled into view here, in the page – the chrome never scrolls a page for it.
    */
   const setFill = (element: HTMLMediaElement, on: boolean): void => {
     const marked = document.querySelectorAll(`[${PIP_FILL_ATTRIBUTE}]`)
-    for (const m of marked) m.removeAttribute(PIP_FILL_ATTRIBUTE)
+    for (const m of marked) {
+      m.removeAttribute(PIP_FILL_ATTRIBUTE)
+      if (m.hasAttribute(PIP_CONTROLS_ATTRIBUTE)) {
+        m.removeAttribute(PIP_CONTROLS_ATTRIBUTE)
+        m.setAttribute('controls', '')
+      }
+    }
     document.getElementById(PIP_FILL_ATTRIBUTE)?.remove()
-    if (!on || !(element instanceof HTMLVideoElement)) return
+    if (!on) {
+      if (marked.length > 0) landOn(marked[0])
+      return
+    }
+    if (!(element instanceof HTMLVideoElement)) return
     element.setAttribute(PIP_FILL_ATTRIBUTE, '')
+    if (element.hasAttribute('controls')) {
+      element.setAttribute(PIP_CONTROLS_ATTRIBUTE, '')
+      element.removeAttribute('controls')
+    }
     const style = document.createElement('style')
     style.id = PIP_FILL_ATTRIBUTE
     style.textContent =
@@ -260,6 +282,29 @@ export function installMediaTracking(transport: MediaTrackingTransport): void {
       `z-index:2147483647!important;border-radius:0!important}` +
       `html,body{overflow:hidden!important;background:#000!important}`
     ;(document.head ?? document.documentElement).appendChild(style)
+  }
+
+  /**
+   * The landing after a fill: the element's centre inside the viewport, else the page scrolled
+   * so that it is (`block: 'center'`). Checked at once and again shortly after, because the
+   * window's growth back to the screen reaches the page as a viewport resize a frame or two later
+   * and the first check may still be measuring the small window's height.
+   */
+  const landOn = (element: Element): void => {
+    const settle = (): void => {
+      if (!element.isConnected) return
+      const rect = element.getBoundingClientRect()
+      const centreY = rect.top + rect.height / 2
+      const centreX = rect.left + rect.width / 2
+      const inView =
+        centreY >= 0 &&
+        centreY <= window.innerHeight &&
+        centreX >= 0 &&
+        centreX <= window.innerWidth
+      if (!inView) element.scrollIntoView({ block: 'center', inline: 'nearest' })
+    }
+    settle()
+    setTimeout(settle, LANDING_RECHECK_MS)
   }
 
   transport.onMediaSession?.((message) => {

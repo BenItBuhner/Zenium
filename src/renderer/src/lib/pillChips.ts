@@ -44,7 +44,7 @@
 export type PillChipFold = 'glyph' | 'sheet' | 'live' | 'quiet'
 
 export interface PillChipFoldSpec {
-  /** A stable id (`lock` and the glyph's other states, `blocked`, `translate`, `media`, `save-prompt`). */
+  /** A stable id (`lock` and the glyph's other states, `blocked`, `translate`, `reader`, `media`, `save-prompt`). */
   id: string
   fold: PillChipFold
 }
@@ -71,6 +71,10 @@ export const PILL_CHIP_FOLDS: Readonly<Record<string, PillChipFold>> = {
   dangerous: 'glyph',
   blocked: 'sheet',
   translate: 'sheet',
+  // Reader View on an article page (PUI-14): §9.29's "reader chip", informational – information
+  // the user did not ask for, as the translate offer is – so the sheet's row always, never the
+  // pill's (the fixed phone pill draws no reader glyph; the design gate for #491 held to it).
+  reader: 'sheet',
   'save-prompt': 'live',
   media: 'live',
   // The quiet notification ask (NOT-03): a quiet state, not a live one (the design gate's

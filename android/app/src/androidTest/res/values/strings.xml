@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The system's accessibility settings show this under the service (EventsTapService.java). -->
+    <string name="events_tap_service_description">Keeps the demo harness in the accessibility events of a current WebView. Reads nothing, changes nothing.</string>
+</resources>
