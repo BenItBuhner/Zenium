@@ -20,7 +20,8 @@ import type {
   WindowHost
 } from '../platform'
 import type { ZenWindow } from '../window'
-import { HELP_URL, ISSUES_URL, menuSignature } from '../menuBar'
+import { reportUnsafeSiteUrl } from '../help'
+import { HELP_URL, ISSUES_URL, menuSignature, tabDirectionLabels } from '../menuBar'
 
 function memoryIo(): StoreIO {
   const files: Record<string, string> = {}
@@ -656,7 +657,7 @@ describe('the macOS menu bar', () => {
     expect(overlays[0]!.payload).toEqual({ kind: 'settings', section: 'shortcuts' })
   })
 
-  it("orders Help as the app menu's Help submenu does, less About Zenium, which is the application menu's: What's New over the hairline, then Zenium Help, Keyboard Shortcuts, Report an Issue…; the help role for macOS's Search field; no Report Unsafe Site, Zenium having no Safe Browsing report path (shortcuts-menus-162)", () => {
+  it("orders Help as the app menu's Help submenu does, less About Zenium, which is the application menu's: What's New over the hairline, then Zenium Help, Keyboard Shortcuts, Report an Issue…, Report an Unsafe Site…; the help role for macOS's Search field; Chrome's ⌥⇧⌘I on Report an Issue… alone (shortcuts-menus-162)", () => {
     const h = harness()
     const help = submenu(last(h), 'Help')
     expect(help.map((i) => (i.type === 'separator' ? '-' : i.label))).toEqual([
@@ -664,29 +665,49 @@ describe('the macOS menu bar', () => {
       '-',
       'Zenium Help',
       'Keyboard Shortcuts',
-      'Report an Issue…'
+      'Report an Issue…',
+      'Report an Unsafe Site…'
     ])
     expect(item(last(h), 'Help').role).toBe('help')
-    // Chrome's Help chords name no action of the key table: no row shows one.
-    for (const row of help) expect(row.accelerator).toBeUndefined()
-    // Every row is a pick: enabled, with a click.
+    // Report an Issue… names the key table's action, so Chrome's chord shows after it – the
+    // table's binding, never a second truth; Chrome's ⇧⌘/ (its help page) names no action of
+    // the table, so no other row shows one.
+    const report = item(help, 'Report an Issue…')
+    expect(report.action).toBe('help.reportIssue')
+    expect(report.accelerator).toBe('Cmd+Alt+Shift+I')
+    expect(report.accelerator).toBe(
+      toAccelerator(bindingFor(h.browser.state.shortcuts, 'help.reportIssue'))
+    )
+    for (const row of help.filter((i) => i.label !== 'Report an Issue…'))
+      expect(row.accelerator).toBeUndefined()
+    // Every row is a pick with a click; every row but Report an Unsafe Site… is enabled
+    // without a page – that one wants a web page to report and greys until there is one.
     for (const row of help.filter((i) => i.type !== 'separator')) {
-      expect(row.enabled).not.toBe(false)
       expect(row.click).toBeTypeOf('function')
+      expect(row.enabled).toBe(row.label === 'Report an Unsafe Site…' ? false : undefined)
     }
     expect(help.map((i) => i.label)).not.toContain('About Zenium')
   })
 
-  it('Help › Zenium Help and Report an Issue… open their pages in the system browser; What’s New opens this version’s release notes (in a window opened for it with every window closed)', () => {
+  it('Help › Zenium Help opens the help page in a new tab in front of the active page, in its container, in a window opened for it with every window closed (the lead’s ruling on #578); Report an Issue… opens the tracker in the system browser, with or without a window; What’s New opens this version’s release notes', () => {
     const h = harness()
+    const { tabs } = h.browser
     const opened: string[] = []
     h.browser.platform.shell.openExternal = (url: string) => {
       opened.push(url)
     }
+    const page = tabs.createTab({ url: 'https://a.test/', active: true }, h.win)
     const help = submenu(last(h), 'Help')
     item(help, 'Zenium Help').click?.()
+    expect(opened).toEqual([])
+    const helpTab = tabs.activeTabFor(h.win)!
+    expect(helpTab.id).not.toBe(page.id)
+    expect(helpTab.url).toBe(HELP_URL)
+    expect(helpTab.openerTabId).toBe(page.id)
+    expect(helpTab.containerId).toBe(page.containerId)
+    // The tracker is a page of the system browser's, as Chrome's feedback leaves the browser.
     item(help, 'Report an Issue…').click?.()
-    expect(opened).toEqual([HELP_URL, ISSUES_URL])
+    expect(opened).toEqual([ISSUES_URL])
     expect(ISSUES_URL).toMatch(/\/issues/)
     const whatsNew = vi.spyOn(h.browser.updates, 'openWhatsNew').mockImplementation(() => undefined)
     item(help, "What's New").click?.()
@@ -697,6 +718,57 @@ describe('the macOS menu bar', () => {
     item(help, "What's New").click?.()
     expect(h.browser.allWindows()).toHaveLength(1)
     expect(whatsNew).toHaveBeenLastCalledWith(h.browser.allWindows()[0])
+    // The bar stands with every window closed: Zenium Help opens a window for its tab, Report
+    // an Issue… needs none.
+    for (const w of h.browser.allWindows()) {
+      w.onClosing()
+      w.onClosed()
+    }
+    expect(h.browser.allWindows()).toHaveLength(0)
+    item(help, 'Report an Issue…').click?.()
+    expect(opened).toEqual([ISSUES_URL, ISSUES_URL])
+    expect(h.browser.allWindows()).toHaveLength(0)
+    item(help, 'Zenium Help').click?.()
+    expect(h.browser.allWindows()).toHaveLength(1)
+    expect(tabs.activeTabFor(h.browser.allWindows()[0]!)?.url).toBe(HELP_URL)
+  })
+
+  it('Help › Report an Unsafe Site… is Google’s Safe Browsing report form for the front window’s page in a new tab in front, greyed while the page is not one the form takes – a new tab page, a zen:// page, no tab – where the ⋯ menu hides its row (§9.30)', () => {
+    vi.useFakeTimers()
+    try {
+      const h = harness()
+      const { tabs } = h.browser
+      const row = (): MenuItemTemplate => item(submenu(last(h), 'Help'), 'Report an Unsafe Site…')
+      expect(row().enabled).toBe(false)
+      tabs.createTab({ url: NEW_TAB_URL, active: true }, h.win)
+      vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+      expect(row().enabled).toBe(false)
+      tabs.createTab({ url: 'zen://settings', active: true }, h.win)
+      vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+      expect(row().enabled).toBe(false)
+      const page = tabs.createTab({ url: 'https://a.test/path?q=1&r=2', active: true }, h.win)
+      vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+      expect(row().enabled).toBe(true)
+      const before = h.win.activeSpace().tabIds.length
+      row().click?.()
+      const report = tabs.activeTabFor(h.win)!
+      expect(h.win.activeSpace().tabIds).toHaveLength(before + 1)
+      expect(report.id).not.toBe(page.id)
+      expect(report.url).toBe(
+        `https://safebrowsing.google.com/safebrowsing/report_phish/?url=${encodeURIComponent('https://a.test/path?q=1&r=2')}`
+      )
+      expect(report.url).toBe(reportUnsafeSiteUrl(page.url))
+      expect(report.openerTabId).toBe(page.id)
+      expect(report.containerId).toBe(page.containerId)
+      // Nothing to report from a page the form does not take: the pick opens nothing.
+      tabs.createTab({ url: NEW_TAB_URL, active: true }, h.win)
+      vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+      const count = h.win.activeSpace().tabIds.length
+      row().click?.()
+      expect(h.win.activeSpace().tabIds).toHaveLength(count)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('Zenium › About Zenium is an enabled row opening the About page (Settings › About) through the Settings page’s one route, as the ⋯ menu’s Help › About Zenium does – not the host’s About panel (shortcuts-menus-123)', () => {
@@ -727,7 +799,7 @@ describe('the macOS menu bar', () => {
     const enabled = (h: Harness): Record<string, boolean> =>
       Object.fromEntries(tabMenu(h).map((i) => [i.label, i.enabled !== false]))
 
-    it('lists Chrome’s rows in Chrome’s order, the vertical strip’s twins for the two rows Chrome words by direction, and Zenium’s folder rows for Group Tab', () => {
+    it('lists Chrome’s rows in Chrome’s order, the vertical strip’s twins for the two rows Chrome words by direction, Zenium’s folder rows for Group Tab, and Add Tab to New Split View after Move Tab to New Window', () => {
       const h = harness()
       expect(labels(tabMenu(h))).toEqual([
         'New Tab Below',
@@ -741,12 +813,60 @@ describe('the macOS menu bar', () => {
         'Close Other Tabs',
         'Close Tabs Below',
         'Move Tab to New Window',
+        'Add Tab to New Split View',
         'Search Tabs…'
       ])
       // The tab rows left the Window menu for it, as Chrome's Window menu has none.
       const window = labels(submenu(last(h), 'Window'))
       for (const row of ['Select Next Tab', 'Select Previous Tab', 'Search Tabs…'])
         expect(window).not.toContain(row)
+    })
+
+    it('words the two direction rows along the strip: "to the Right" under the desktop’s horizontal layout, "Below" under its sidebar layouts, rebuilt when the layout setting changes; a strip that runs down keeps "Below" whatever the setting', async () => {
+      const h = harness()
+      await tick()
+      expect(labels(tabMenu(h))).toContain('New Tab Below')
+      expect(labels(tabMenu(h))).toContain('Close Tabs Below')
+      h.browser.handleCommand(h.win, 'settings.update', { toolbarLayout: 'horizontal' })
+      await tick()
+      await new Promise((resolve) => setTimeout(resolve, MENU_BAR_SETTLE_MS))
+      const horizontal = labels(tabMenu(h))
+      expect(horizontal).toContain('New Tab to the Right')
+      expect(horizontal).toContain('Close Tabs to the Right')
+      expect(horizontal).not.toContain('New Tab Below')
+      expect(horizontal).not.toContain('Close Tabs Below')
+      // The same seats: the rows moved nowhere, only their words changed.
+      expect(horizontal.indexOf('New Tab to the Right')).toBe(0)
+      expect(horizontal.indexOf('Close Tabs to the Right')).toBe(
+        horizontal.indexOf('Close Other Tabs') + 1
+      )
+      for (const layout of ['multiple', 'collapsed', 'single'] as const) {
+        h.browser.handleCommand(h.win, 'settings.update', { toolbarLayout: layout })
+        await tick()
+        await new Promise((resolve) => setTimeout(resolve, MENU_BAR_SETTLE_MS))
+        expect(labels(tabMenu(h))).toContain('New Tab Below')
+        expect(labels(tabMenu(h))).toContain('Close Tabs Below')
+      }
+      // A window laid out as a phone or tablet has a strip that runs down whatever the setting
+      // says (the horizontal layout is the desktop shell's alone): its rows keep "Below".
+      h.win.formFactor = 'tablet'
+      h.browser.handleCommand(h.win, 'settings.update', { toolbarLayout: 'horizontal' })
+      await tick()
+      await new Promise((resolve) => setTimeout(resolve, MENU_BAR_SETTLE_MS))
+      expect(labels(tabMenu(h))).toContain('New Tab Below')
+      expect(labels(tabMenu(h))).toContain('Close Tabs Below')
+      // The pair the rows are drawn from: Chrome's words for either orientation, with the
+      // context menu's "before" row beside them.
+      expect(tabDirectionLabels(true)).toEqual({
+        newTab: 'New Tab to the Right',
+        closeAfter: 'Close Tabs to the Right',
+        closeBefore: 'Close Tabs to the Left'
+      })
+      expect(tabDirectionLabels(false)).toEqual({
+        newTab: 'New Tab Below',
+        closeAfter: 'Close Tabs Below',
+        closeBefore: 'Close Tabs Above'
+      })
     })
 
     it('shows each chord row the key table’s binding – never a second truth – and none on the rows without an action', () => {
@@ -763,12 +883,15 @@ describe('the macOS menu bar', () => {
       expectChord('Select Previous Tab', 'tab.prev')
       expectChord('Duplicate Tab', 'tab.duplicate')
       expectChord('Pin Tab', 'tab.togglePin')
+      expectChord('Add Tab to New Split View', 'split.newEmpty')
       expectChord('Search Tabs…', 'tab.search')
-      // Chrome's chords, in the chrome preset.
+      // Chrome's chords, in the chrome preset; Add Tab to New Split View has none in Chrome and
+      // shows the key table's own (the View menu's New Empty Split View row's, the same action).
       expect(chords['Select Next Tab']).toBe('Ctrl+Tab')
       expect(chords['Select Previous Tab']).toBe('Ctrl+Shift+Tab')
       expect(chords['Duplicate Tab']).toBe('Cmd+Shift+K')
       expect(chords['Pin Tab']).toBe('Cmd+Ctrl+P')
+      expect(chords['Add Tab to New Split View']).toBe('Cmd+Shift+*')
       expect(chords['Search Tabs…']).toBe('Cmd+Shift+A')
       for (const label of [
         'New Tab Below',
@@ -796,12 +919,13 @@ describe('the macOS menu bar', () => {
         ['Select Previous Tab', 'tab.prev'],
         ['Duplicate Tab', 'tab.duplicate'],
         ['Pin Tab', 'tab.togglePin'],
+        ['Add Tab to New Split View', 'split.newEmpty'],
         ['Search Tabs…', 'tab.search']
       ] as Array<[string, ShortcutAction]>)
         expect(item(menu, label).accelerator ?? null).toBe(toAccelerator(bindingFor(table, action)))
     })
 
-    it('greys with the active tab: a page without a site cannot be muted, one tab leaves nothing to close, a tab in no folder has none to leave; a site tab among others enables them; every row greys with every window closed', () => {
+    it('greys with the active tab: a page without a site cannot be muted, one tab leaves nothing to close and nothing to move to a new window, a tab in no folder has none to leave; a site tab among others enables them; every row greys with every window closed', () => {
       vi.useFakeTimers()
       try {
         const h = harness()
@@ -814,7 +938,9 @@ describe('the macOS menu bar', () => {
             .filter(([, on]) => on)
             .map(([l]) => l)
         ).toEqual(['Search Tabs…'])
-        // A new tab page: no site to mute, nothing else to close, no folder to leave.
+        // A new tab page: no site to mute, nothing else to close, no folder to leave; the one
+        // tab the window shows is not moved to a window of its own (Chrome's
+        // `CanMoveTabsToNewWindow`), but it can head a split.
         h.browser.tabs.createTab({ url: NEW_TAB_URL, active: true }, h.win)
         vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
         expect(enabled(h)).toEqual({
@@ -828,7 +954,8 @@ describe('the macOS menu bar', () => {
           'Remove from Folder': false,
           'Close Other Tabs': false,
           'Close Tabs Below': false,
-          'Move Tab to New Window': true,
+          'Move Tab to New Window': false,
+          'Add Tab to New Split View': true,
           'Search Tabs…': true
         })
         const site = h.browser.tabs.createTab({ url: 'https://a.test/', active: true }, h.win)
@@ -838,7 +965,8 @@ describe('the macOS menu bar', () => {
         expect(enabled(h)).toMatchObject({
           'Mute Site': true,
           'Close Other Tabs': true,
-          'Close Tabs Below': true
+          'Close Tabs Below': true,
+          'Move Tab to New Window': true
         })
         for (const w of h.browser.allWindows()) {
           w.onClosing()
@@ -848,7 +976,41 @@ describe('the macOS menu bar', () => {
         expect(h.browser.allWindows()).toHaveLength(0)
         expect(Object.values(enabled(h)).every((on) => !on)).toBe(true)
         // The rows stand, greyed: same labels, nothing gone.
-        expect(labels(tabMenu(h))).toHaveLength(12)
+        expect(labels(tabMenu(h))).toHaveLength(13)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('Add Tab to New Split View is Chrome’s row over the key table’s New Empty Split View: it splits the active tab with a new blank one, and greys while the active tab is in a split already or is an Essentials tab', () => {
+      vi.useFakeTimers()
+      try {
+        const h = harness()
+        const { tabs } = h.browser
+        const page = tabs.createTab({ url: 'https://a.test/', active: true }, h.win)
+        vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+        const row = item(tabMenu(h), 'Add Tab to New Split View')
+        expect(row.action).toBe('split.newEmpty')
+        expect(row.enabled).toBe(true)
+        row.click?.()
+        const split = tabs.tab(page.id)?.splitGroupId
+        expect(split).toBeTypeOf('string')
+        const group = h.browser.state.model.splitGroups[split!]!
+        expect(group.tabIds).toHaveLength(2)
+        expect(group.tabIds[0]).toBe(page.id)
+        // The new pane is the active tab now, in the same split: no new split from here.
+        expect(tabs.activeTabFor(h.win)?.splitGroupId).toBe(split)
+        vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+        expect(item(tabMenu(h), 'Add Tab to New Split View').enabled).toBe(false)
+        // Out of the split, the row is back; an Essentials tab greys it (no split takes one).
+        tabs.removeFromSplit(page.id, true, h.win)
+        vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+        expect(item(tabMenu(h), 'Add Tab to New Split View').enabled).toBe(true)
+        tabs.toggleEssential(page.id, h.win)
+        vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+        expect(tabs.activeTabFor(h.win)?.id).toBe(page.id)
+        expect(tabs.tab(page.id)?.essential).toBe(true)
+        expect(item(tabMenu(h), 'Add Tab to New Split View').enabled).toBe(false)
       } finally {
         vi.useRealTimers()
       }
@@ -957,14 +1119,21 @@ describe('the macOS menu bar', () => {
         item(tabMenu(h), 'Close Other Tabs').click?.()
         expect(ids()).toEqual([first.id])
         vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
-        // The one tab left: nothing to cycle to, but the rows run – and Move Tab to New Window
-        // opens a second window around it.
+        // The one tab left: nothing to cycle to, but the row runs; Move Tab to New Window greys
+        // – the move would only close this window behind it (Chrome's rule) – and runs again
+        // with a second tab in the window, opening a window around the active one.
         item(tabMenu(h), 'Select Next Tab').click?.()
         expect(tabs.activeTabFor(h.win)?.id).toBe(first.id)
-        item(tabMenu(h), 'Move Tab to New Window').click?.()
+        expect(item(tabMenu(h), 'Move Tab to New Window').enabled).toBe(false)
+        const other = tabs.createTab({ url: 'https://b.test/', active: false }, h.win)
+        vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+        const move = item(tabMenu(h), 'Move Tab to New Window')
+        expect(move.enabled).toBe(true)
+        move.click?.()
         expect(h.browser.allWindows()).toHaveLength(2)
         const moved = h.browser.allWindows().find((w) => w !== h.win)!
         expect(tabs.activeTabFor(moved)?.id).toBe(first.id)
+        expect(tabs.activeTabFor(h.win)?.id).toBe(other.id)
       } finally {
         vi.useRealTimers()
       }

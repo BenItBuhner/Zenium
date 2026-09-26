@@ -2512,6 +2512,12 @@ export type ShortcutAction =
   | 'tasks.open'
   | 'settings.open'
   | 'addons.open'
+  /**
+   * Chrome's Help › Report an issue… (`IDC_FEEDBACK`, ⌥⇧⌘I on macOS, Alt+Shift+I on Windows
+   * and Linux): Zenium's issue tracker in the system browser (`ISSUES_URL`), the Help rows'
+   * command. Desktop layouts only – the touch shells' listings leave the row out.
+   */
+  | 'help.reportIssue'
   | 'boost.new'
 
 export interface Shortcut {

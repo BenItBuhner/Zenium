@@ -5492,6 +5492,65 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
     expect(enabled(h, 'Reopen Closed Tab')).toBe(false)
   })
 
+  describe("the tab row's direction rows read along the strip, Chrome's rule for its tab menu (`tab_menu_model.cc`, the lead's ruling under §9.37)", () => {
+    const directionRows = (h: Harness): string[] => [
+      topLabels(h.shown())[0]!,
+      ...topLabels(item(h, 'Close Multiple Tabs').submenu!)
+    ]
+
+    it('the desktop under its horizontal layout: New Tab to the Right, Close Tabs to the Left / to the Right; under each sidebar layout: Below / Above – the same seats and commands, only the words', () => {
+      const h = pageHarness()
+      const { tabs } = h.browser
+      h.browser.handleCommand(h.win, 'settings.update', { toolbarLayout: 'horizontal' })
+      h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
+      expect(directionRows(h)).toEqual([
+        'New Tab to the Right',
+        'Close Tabs to the Left',
+        'Close Tabs to the Right',
+        'Close Other Tabs'
+      ])
+      expect(labels(h.shown())).not.toContain('New Tab Below')
+      // The rows run the commands their vertical twins run: a new tab after this one, the
+      // tabs after it closed.
+      const before = h.win.activeSpace().tabIds
+      item(h, 'New Tab to the Right').click!()
+      const ids = h.win.activeSpace().tabIds
+      expect(ids).toHaveLength(before.length + 1)
+      const after = ids[ids.indexOf(h.tabId) + 1]!
+      expect(before).not.toContain(after)
+      h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
+      expect(enabled(h, 'Close Tabs to the Right')).toBe(true)
+      item(h, 'Close Tabs to the Right').click!()
+      expect(tabs.tab(after)).toBeUndefined()
+      expect(tabs.tab(h.tabId)).toBeDefined()
+      for (const layout of ['multiple', 'collapsed', 'single'] as const) {
+        h.browser.handleCommand(h.win, 'settings.update', { toolbarLayout: layout })
+        h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
+        expect(directionRows(h)).toEqual([
+          'New Tab Below',
+          'Close Tabs Above',
+          'Close Tabs Below',
+          'Close Other Tabs'
+        ])
+      }
+    })
+
+    it('a phone or tablet window keeps Below / Above whatever the layout setting says: its strip runs down (the horizontal layout is the desktop shell’s alone)', () => {
+      for (const formFactor of ['phone', 'tablet'] as const) {
+        const h = pageHarness(ANDROID, { formFactor })
+        h.browser.handleCommand(h.win, 'settings.update', { toolbarLayout: 'horizontal' })
+        h.browser.menus.showTabContextMenu(h.tabId, h.win)
+        expect(directionRows(h)).toEqual([
+          'New Tab Below',
+          'Close Tabs Above',
+          'Close Tabs Below',
+          'Close Other Tabs'
+        ])
+        expect(labels(h.shown())).not.toContain('New Tab to the Right')
+      }
+    })
+  })
+
   it("the phone row's Remove Bookmark (the drawer's hold menu) is told as the desktop's: bookmark.deleted for the toast with Undo, no bare word (#357 G2)", () => {
     const h = pageHarness(ANDROID, { formFactor: 'phone' })
     h.browser.menus.showTabContextMenu(h.tabId, h.win)

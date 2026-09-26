@@ -13,6 +13,7 @@ import { BOOKMARKS_BAR_ID } from '../shared/bookmarks'
 import { HELP_URL, ISSUES_URL } from '../shared/links'
 import { isHorizontalTabs } from '../shared/toolbarLayout'
 import { displayUrl } from '../shared/url'
+import { openHelp, openReportUnsafeSite, reportUnsafeSiteUrl } from './help'
 import { clipLabel } from './menus'
 import { isPrivateFolder, orderedTabsForSpace } from './model'
 import { permissionSite } from './permissions'
@@ -410,18 +411,34 @@ export function applicationMenu(browser: Browser): Template {
   // is the application menu's (where Chrome keeps About on macOS): this build's group – its
   // release notes – over the hairline, then the help (shortcuts-menus-152, -162). The two
   // surfaces read the same, so the eye that learned one finds the other. The `help` role gives
-  // the menu macOS's Search field. Chrome's Report Unsafe Site is Google's Safe Browsing report
-  // form, which Zenium has no path to (services PS-01), so there is no such row; Chrome's Help
-  // chords (⌥⇧⌘I, ⇧⌘/) name no action of the key table, so the rows show none.
+  // the menu macOS's Search field. Chrome's Help menu (`BuildHelpMenu`) is Report an Issue…,
+  // Report an Unsafe Site…, then "Google Chrome Help", its help a tab (`ShowHelp` opens a
+  // singleton tab): Zenium Help opens `HELP_URL` in a new tab in front too (`openHelp`, the
+  // lead's ruling on #578), in a window opened for it when none is up. Report an Issue… shows
+  // Chrome's ⌥⇧⌘I, the key table's `help.reportIssue`, and opens the tracker in the system
+  // browser with or without a window. Report an Unsafe Site… is Google's Safe Browsing report
+  // form for the front window's page in a new tab (`openReportUnsafeSite`, services' word on
+  // #578: shown whether Safe Browsing is on), greyed when the page is not one the form takes –
+  // a `zen://` page, a blank tab, no tab – where the ⋯ menu hides its row: a menu bar greys
+  // rather than hides (§9.30). Chrome's ⇧⌘/ names no action of the key table: no chord there.
   const help: MenuItemTemplate = {
     label: 'Help',
     role: 'help',
     submenu: [
       { label: "What's New", click: withWindow((w) => browser.updates.openWhatsNew(w), true) },
       { type: 'separator' },
-      { label: 'Zenium Help', click: () => browser.platform.shell.openExternal(HELP_URL) },
+      { label: 'Zenium Help', click: withWindow((w) => openHelp(browser, w), true) },
       { label: 'Keyboard Shortcuts', click: settings('shortcuts') },
-      { label: 'Report an Issue…', click: () => browser.platform.shell.openExternal(ISSUES_URL) }
+      {
+        label: 'Report an Issue…',
+        action: 'help.reportIssue',
+        click: () => browser.platform.shell.openExternal(ISSUES_URL)
+      },
+      {
+        label: 'Report an Unsafe Site…',
+        enabled: reportUnsafeSiteUrl(active?.url) !== null,
+        click: withWindow((w) => void openReportUnsafeSite(browser, w))
+      }
     ]
   }
 

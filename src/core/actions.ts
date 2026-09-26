@@ -2,6 +2,7 @@ import type { SavePageFormat, ShortcutAction } from '../shared/types'
 import { screenshotFileName } from '../shared/capture'
 import { resolveDownloadSettings } from '../shared/downloads'
 import { pathToFileUrl } from '../shared/launchArgs'
+import { ISSUES_URL } from '../shared/links'
 import { savePageMimeType, suggestedSavePageName } from '../shared/savePage'
 import { BLANK_URL } from '../shared/url'
 import type { Browser } from './browser'
@@ -406,6 +407,11 @@ export class Actions {
         return
       case 'addons.open':
         return this.browser.emit('overlay.open', { kind: 'addons' }, win)
+      // Chrome's Help › Report an issue…: the issue tracker in the system browser, the Help
+      // rows' command (`ISSUES_URL`).
+      case 'help.reportIssue':
+        this.browser.platform.shell.openExternal(ISSUES_URL)
+        return
       case 'passwords.open':
         if (!state.capabilities.passwords) return
         return this.browser.emit('overlay.open', { kind: 'passwords' }, win)
