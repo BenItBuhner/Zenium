@@ -3,6 +3,7 @@ package app.zen.chromium
 import android.app.PendingIntent
 import android.app.PictureInPictureParams
 import android.content.ClipData
+import android.content.ContentValues
 import android.content.ClipboardManager
 import android.content.ComponentCallbacks2
 import android.content.Context
@@ -15,6 +16,8 @@ import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
 import android.util.Rational
 import android.view.Gravity
 import android.view.View
@@ -35,6 +38,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import org.json.JSONObject
+import java.io.File
 import kotlin.math.abs
 
 /**
@@ -78,6 +82,11 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
     private var currentUrl = ""
     /** The page is between `startLoading` and its end: the icon row's Reload reads Stop (§9.13). */
     private var pageLoading = false
+    /** The profile's documents, read for the star and written for the inbox and nothing else ([CustomTabBookmarks]). */
+    private val storage by lazy { Storage(this) }
+    /** The core's bookmarks as last read (`state.json`), and the taps this tab filed for the browser. */
+    private var bookmarkedUrls: Set<String> = emptySet()
+    private var pendingBookmarks: List<CustomTabBookmarks.Entry> = emptyList()
     /** The caller's `PendingIntent` for a swipe up on the bottom toolbar; the caller can set it later. */
     private var swipeUpIntent: PendingIntent? = null
     /** The intent that hears the bottom toolbar's RemoteViews clicks; replaced by the caller's later views. */
@@ -453,25 +462,114 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
         // The page's state is read once, as the menu opens (§9.13): the row does not flip under a finger.
         val state = CustomTabMenu.PageState(
             canGoForward = page?.canGoForward() == true,
-            bookmarked = false,
+            bookmarked = CustomTabBookmarks.isBookmarked(currentUrl.ifEmpty { config.url }, bookmarkedUrls, pendingBookmarks),
             loading = pageLoading,
             desktopSite = host.desktopSite
         )
         CustomTabMenuSheet(
             this, config.scheme.dark,
             CustomTabMenu.groups(titles, config.share, host.desktopSite), ::onMenuPick,
-            CustomTabMenu.iconRow(state, bookmarks = false, download = false), ::onIconPick
+            CustomTabMenu.iconRow(state, config.bookmarksButton, config.downloadButton), ::onIconPick
         ).show()
     }
 
-    /** The icon row's five (§9.13); the star and Download take their place in the next commit. */
+    /** The icon row's five (§9.13). */
     private fun onIconPick(icon: CustomTabMenu.Icon) {
         when (icon) {
             CustomTabMenu.Icon.Forward -> page?.goForward()
-            CustomTabMenu.Icon.Reload -> if (pageLoading) page?.stopLoading() else page?.reload()
+            CustomTabMenu.Icon.Bookmark -> toggleBookmark()
+            CustomTabMenu.Icon.Download -> downloadPage()
             CustomTabMenu.Icon.Info -> showPageInfo()
-            CustomTabMenu.Icon.Bookmark, CustomTabMenu.Icon.Download -> Unit
+            CustomTabMenu.Icon.Reload -> if (pageLoading) page?.stopLoading() else page?.reload()
         }
+    }
+
+    // --- the star and Download (CCT-03) -------------------------------------------------------------
+
+    /** The core's bookmarks and this tab's inbox, read off the main thread; the star reads them at the next open. */
+    private fun readBookmarks() {
+        storage.execute {
+            val bookmarked = CustomTabBookmarks.bookmarkedUrls(storage.read(CustomTabBookmarks.STATE))
+            val pending = CustomTabBookmarks.entries(storage.read(CustomTabBookmarks.INBOX))
+            runOnUiThread {
+                bookmarkedUrls = bookmarked
+                pendingBookmarks = pending
+            }
+        }
+    }
+
+    /**
+     * The star: a page the browser holds as a bookmark reads `Edit Bookmark` and opens in Zenium,
+     * whose bar has the editor a custom tab has not; any other page is filed in the inbox for the
+     * browser to take into its bookmarks (a second tap withdraws the filing). Nothing here writes
+     * the core's model ([CustomTabBookmarks]).
+     */
+    private fun toggleBookmark() {
+        val url = currentUrl.ifEmpty { config.url }
+        if (url in bookmarkedUrls) {
+            openInZenium()
+            return
+        }
+        val filed = pendingBookmarks.any { it.url == url }
+        pendingBookmarks = if (filed) {
+            CustomTabBookmarks.withoutEntry(pendingBookmarks, url)
+        } else {
+            val title = page?.title?.trim()?.ifEmpty { null } ?: Uri.parse(url).host ?: url
+            CustomTabBookmarks.withEntry(pendingBookmarks, CustomTabBookmarks.Entry(url, title, System.currentTimeMillis()))
+        }
+        storage.write(CustomTabBookmarks.INBOX, CustomTabBookmarks.serialize(pendingBookmarks)) { }
+        Toast.makeText(this, if (filed) R.string.cct_bookmark_removed else R.string.cct_bookmarked, Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * Download Page: the page as an MHTML archive in Downloads – the browser's Save Page path
+     * without its core (`Host.savePage`): written to a scratch file, then a MediaStore Downloads
+     * row on Q+; below Q, the app's own Downloads folder (the public one wants a runtime
+     * permission a custom tab does not ask for).
+     */
+    private fun downloadPage() {
+        val current = page ?: return
+        val url = currentUrl.ifEmpty { config.url }
+        val name = SavePageLogic.archiveName(current.title?.trim()?.ifEmpty { null } ?: Uri.parse(url).host ?: "page")
+        val scratch = File(File(cacheDir, "savepage").apply { mkdirs() }, "${System.nanoTime()}.${SavePageLogic.EXTENSION}")
+        current.saveWebArchive(scratch.absolutePath, false) { written ->
+            if (written == null) {
+                scratch.delete()
+                Toast.makeText(this, R.string.cct_download_failed, Toast.LENGTH_SHORT).show()
+                return@saveWebArchive
+            }
+            storage.execute {
+                val saved = runCatching { publishArchive(scratch, name) }.getOrNull()
+                scratch.delete()
+                runOnUiThread {
+                    val text = if (saved != null) getString(R.string.cct_page_saved, saved) else getString(R.string.cct_download_failed)
+                    Toast.makeText(this, text, Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    /** The archive into Downloads; the name the file got, or null when nothing was written. */
+    private fun publishArchive(scratch: File, name: String): String? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, name)
+                put(MediaStore.Downloads.MIME_TYPE, SavePageLogic.MIME_TYPE)
+                put(MediaStore.Downloads.IS_PENDING, 1)
+            }
+            val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return null
+            contentResolver.openOutputStream(uri)?.use { out -> scratch.inputStream().use { it.copyTo(out) } } ?: return null
+            values.clear()
+            values.put(MediaStore.Downloads.IS_PENDING, 0)
+            contentResolver.update(uri, values, null, null)
+            return contentResolver.query(uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst()) c.getString(0) else null
+            } ?: name
+        }
+        val dir = (getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: File(filesDir, "Download")).apply { mkdirs() }
+        val file = File(dir, SavePageLogic.uniqueArchiveName(name) { File(dir, it).exists() })
+        scratch.copyTo(file, overwrite = false)
+        return file.name
     }
 
     /**
@@ -667,6 +765,7 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
     override fun onStart() {
         super.onStart()
         CustomTabSessions.navigationEvent(config.session, CustomTabsCallback.TAB_SHOWN)
+        readBookmarks()
     }
 
     override fun onStop() {
@@ -678,6 +777,7 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
         CustomTabSessions.detach(config.session, this)
         bottomBar.stopSettling()
         host.destroy()
+        storage.close()
         super.onDestroy()
     }
 

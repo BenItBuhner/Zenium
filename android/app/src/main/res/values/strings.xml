@@ -52,6 +52,10 @@
     <string name="cct_download_page">Download Page</string>
     <string name="cct_page_info">Page Info</string>
     <string name="cct_stop">Stop</string>
+    <string name="cct_bookmarked">Bookmarked</string>
+    <string name="cct_bookmark_removed">Bookmark removed</string>
+    <string name="cct_page_saved">Saved %1$s</string>
+    <string name="cct_download_failed">Couldn’t save the page</string>
     <string name="cct_powered_by">Powered by Zenium</string>
     <string name="cct_link_copied">Link copied</string>
     <string name="cct_find_hint">Find in page</string>
