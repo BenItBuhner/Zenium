@@ -1,16 +1,29 @@
 import { describe, expect, it } from 'vitest'
-import type { BookmarkNode, Boost, KeyBinding, Settings, SyncScope } from '../../../shared/types'
+import type {
+  BookmarkNode,
+  Boost,
+  KeyBinding,
+  ReadingListEntry,
+  Settings,
+  SyncScope
+} from '../../../shared/types'
 import type { Model } from '../../model'
 import { decryptJson, deriveKey, encryptJson } from '../crypto'
 import {
   DEVICE_LOCAL_SETTINGS,
   SETTINGS_RECORD_ID,
   collectLocal,
+  defaultScope,
   diffLocal,
+  fullScope,
   hashData,
+  inScope,
+  metaFromRemote,
+  newestByRecord,
   settingsKeyTime,
   winningRemote,
   type MetaMap,
+  type RecordType,
   type SyncRecord
 } from '../records'
 import { sha1Hex } from '../sha1'
@@ -149,6 +162,127 @@ describe('the moved engine on a fixed record set', () => {
     const local = collectLocal(sources, goldenFixture.scope)
     expect([...local.values()].some((r) => r.type === 'credential')).toBe(false)
     expect(local.size).toBe(Object.keys(goldenFixture.hashes).length)
+  })
+
+  it('keeps the reading list out of a pre-move scope object, and its record type out of the pinned payload (services pass 11, ID-48)', () => {
+    // The golden scope predates `readingList` as it predates `passwords`: it says nothing for
+    // the type, so a device holding a reading list publishes no entry under it and the payload
+    // is the pinned bytes still. With the toggle on (this build's default) the same sources
+    // publish the entries – as `reading-list-entry` records – and nothing else changes.
+    expect(goldenFixture.scope).not.toHaveProperty('readingList')
+    expect(defaultScope().readingList).toBe(true)
+    const readingList: ReadingListEntry[] = [
+      {
+        id: 'rl_1',
+        url: 'https://later.example/',
+        title: 'Later',
+        addedAt: 100,
+        updatedAt: 100,
+        favicon: 'data:image/png;base64,AA=='
+      }
+    ]
+    const local = collectLocal({ ...sources, readingList }, goldenFixture.scope)
+    expect([...local.values()].some((r) => r.type === 'reading-list-entry')).toBe(false)
+    const diff = diffLocal({}, local, goldenFixture.now)
+    expect(JSON.stringify({ v: 1, records: diff.records })).toBe(goldenAsWritten().plaintext)
+
+    const withList = collectLocal(
+      { ...sources, readingList },
+      { ...goldenFixture.scope, readingList: true }
+    )
+    expect(withList.size).toBe(local.size + 1)
+    expect(withList.get('rl_1')).toEqual({
+      type: 'reading-list-entry',
+      data: {
+        id: 'rl_1',
+        url: 'https://later.example/',
+        title: 'Later',
+        addedAt: 100,
+        updatedAt: 100
+      }
+    })
+    withList.delete('rl_1')
+    expect(
+      JSON.stringify({ v: 1, records: diffLocal({}, withList, goldenFixture.now).records })
+    ).toBe(goldenAsWritten().plaintext)
+  })
+})
+
+/**
+ * The wire is additive: a record type a build does not know goes through its file format, parser
+ * and cipher intact and then falls out of every scope – `inScope` names no case for it, so the
+ * round's filter drops it, a declined merge tombstones nothing for it, and it is never applied
+ * nor written to the metadata (it wins again next round and is dropped again). That is what
+ * `reading-list-entry` is to every build before this one, and what the next type will be to
+ * this build: an old device on the folder keeps syncing everything it knows, with no error.
+ */
+describe('the wire across builds: a record type the build does not know', () => {
+  const sources = {
+    model: goldenFixture.model,
+    settings: goldenFixture.settings,
+    shortcutOverrides: goldenFixture.shortcutOverrides,
+    bookmarks: goldenFixture.bookmarks,
+    boosts: goldenFixture.boosts
+  }
+
+  it('comes through the format and the cipher intact and is dropped by the round, not an error', async () => {
+    const stranger: SyncRecord = {
+      id: 'future_1',
+      type: 'future-type' as RecordType,
+      data: { anything: true, nested: [1, { two: 2 }], text: 'a later build wrote this' },
+      modified: goldenFixture.now + 10,
+      deleted: false
+    }
+    const strangerGone: SyncRecord = {
+      id: 'future_2',
+      type: 'future-type' as RecordType,
+      data: null,
+      modified: goldenFixture.now + 10,
+      deleted: true
+    }
+    // This device's copy of the golden set, at its first diff.
+    const local = collectLocal(sources, goldenFixture.scope)
+    const mine = diffLocal({}, local, goldenFixture.now)
+
+    // The peer's file: the golden records, the stranger among them.
+    const key = unhex(legacyFixture.keyHex)
+    const theirs = [...mine.records, stranger, strangerGone]
+    const file = {
+      deviceId: 'peer',
+      deviceName: 'Phone (a later build)',
+      updatedAt: goldenFixture.now + 10,
+      envelope: await encryptJson(key, legacyFixture.salt, { v: 1, records: theirs })
+    }
+    const parsed = parseDeviceFile(serializeDeviceFile(file))
+    expect(parsed).toBeTruthy()
+    const payload = await decryptJson<{ v: 1; records: SyncRecord[] }>(key, parsed!.envelope)
+    expect(payload.records).toEqual(theirs)
+
+    // The round as the engine runs it (`SyncEngine.run`): newest copy per record, the winners
+    // against this device's metadata, then the scope filter. The stranger is a winner (this
+    // device holds no copy) and is out of every scope, the pre-move one and the full one alike.
+    const remote = newestByRecord([payload.records])
+    expect(remote.get('future_1')).toEqual(stranger)
+    const winners = winningRemote(mine.meta, remote)
+    expect(winners).toEqual([stranger])
+    for (const scope of [goldenFixture.scope, defaultScope(), fullScope()]) {
+      expect(inScope(stranger, scope)).toBeFalsy()
+      expect(inScope(strangerGone, scope)).toBeFalsy()
+      expect(winners.filter((r) => inScope(r, scope))).toEqual([])
+    }
+    // Nothing applied, nothing written to the metadata: the next round finds the same and does
+    // the same. A merge declined (`confirmMerge(false)`) tombstones the remote-only records it
+    // knows and skips the ones it does not: `r.type === 'credential' || !inScope(r, scope)`.
+    expect(metaFromRemote(winners.filter((r) => inScope(r, fullScope())))).toEqual({})
+    const declined = [...remote.values()].filter(
+      (r) => !local.has(r.id) && !r.deleted && r.type !== 'credential' && inScope(r, fullScope())
+    )
+    expect(declined).toEqual([])
+
+    // The metadata this device keeps is its own records' and nothing of the stranger's, so the
+    // pinned bytes are what it writes back to the folder.
+    expect(Object.keys(mine.meta)).not.toContain('future_1')
+    expect(JSON.stringify({ v: 1, records: mine.records })).toBe(goldenAsWritten().plaintext)
   })
 })
 
