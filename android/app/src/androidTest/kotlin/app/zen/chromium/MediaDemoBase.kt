@@ -466,25 +466,58 @@ abstract class MediaDemoBase(private val shotPrefix: String) : DemoHarness("medi
 
     protected fun awaitPip(active: Boolean, timeoutMs: Long): Boolean = poll(timeoutMs) { inPip() == active }
 
+    /** When a finger last touched the small window or its menu (uptime ms): what [settleMenu] waits from. */
+    private var lastWindowTouchAt = 0L
+
+    /** A finger on the small window at `point`, the moment kept for [settleMenu]. */
+    private fun tapWindow(point: PointF) {
+        Finger().tap(point.x, point.y)
+        lastWindowTouchAt = SystemClock.uptimeMillis()
+    }
+
+    /**
+     * The menu down before the next tap on the window, by the clock and not by a read: SystemUI
+     * hides the menu 3.5 s after it shows and 2 s after a touch on it, and its window can stand
+     * unread in UiAutomation's window list while it is plainly on screen (run 36170813974's
+     * recording has it up through three looks that found nothing), so a look that finds no menu
+     * proves nothing. A tap on the window while the menu is up is a tap on the menu – the expand
+     * button sits at the window's centre – which is what took that run's window out of the small
+     * state. The wait runs from the last touch on the window ([tapWindow], [touchPipMenu]).
+     */
+    protected fun settleMenu() {
+        val until = lastWindowTouchAt + MENU_SETTLE_MS
+        val now = SystemClock.uptimeMillis()
+        if (until > now) SystemClock.sleep(until - now)
+    }
+
+    /**
+     * Where a finger shows the menu without touching a button of it, should it be up: a quarter
+     * of the way in from the left edge at half height. SystemUI's menu has Close (and the gear)
+     * in the top-right corner, the actions along the bottom edge, the expand button (48 dp) at
+     * the centre and the resize handle at the top-left corner; at the demo's 16:9 window
+     * (398 x 224 px at density 1.75) the point is 99 px in and 112 px down, 58 px left of the
+     * expand button and 28 px clear of either row.
+     */
+    private fun menuRevealPoint(win: Rect): PointF = PointF(win.left + win.width() / 4f, win.exactCenterY())
+
     /**
      * The small window's menu (SystemUI's, over the window: the actions, Close and the expand
      * button) under a finger's tap on the window, and the node reading `label` in it. The menu
      * hides itself 3.5 seconds after it shows, so the look is at SystemUI's windows alone, every
      * 100 ms – the second run walked the app's own WebView tree first, a binder call a node, and
-     * the menu had gone by the time the walk reached it – and the tap is tried three times: a tap
-     * while the menu is still up hides it instead, and a menu SystemUI has detached and attached
-     * again can sit unread behind UiAutomation's window cache while it is plainly on screen (run
-     * 35935540371's recording has the menu up, its Play glyph in the row, through a whole look
-     * that found nothing), so each further tap waits the menu's 3.5 s out and clears the cache
-     * first; the windows on screen go to the notes after every look that missed.
+     * the menu had gone by the time the walk reached it – and the tap is tried three times, each
+     * after [settleMenu] (a tap while the menu is still up is a tap on the menu: the centre is the
+     * expand button, so the tap lands at [menuRevealPoint] and never at the centre), the cache
+     * cleared before the second and third; a menu SystemUI has detached and attached again can
+     * sit unread behind UiAutomation's window cache while it is plainly on screen (runs
+     * 35935540371 and 36170813974), and the windows on screen go to the notes after every look
+     * that missed. Null after three misses: [touchPipMenu] then falls back to the button's place.
      */
     protected fun openPipMenu(win: Rect, label: String): AccessibilityNodeInfo? {
         for (attempt in 1..3) {
-            if (attempt > 1) {
-                SystemClock.sleep(4_000)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) runCatching { ui.clearCache() }
-            }
-            Finger().tap(win.exactCenterX(), win.exactCenterY())
+            settleMenu()
+            if (attempt > 1 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) runCatching { ui.clearCache() }
+            tapWindow(menuRevealPoint(win))
             val deadline = SystemClock.uptimeMillis() + 3_000
             while (SystemClock.uptimeMillis() < deadline) {
                 findInWindows(SYSTEM_UI) { it == label }?.let { return it }
@@ -496,30 +529,73 @@ abstract class MediaDemoBase(private val shotPrefix: String) : DemoHarness("medi
     }
 
     /**
+     * Where SystemUI lays the menu button `label` in a window at `win`, for a finger when the
+     * button is on screen but not in UiAutomation's window list: Close is the 48 dp square in
+     * the top-right corner; the actions are 48 dp squares along the bottom edge, centred as a
+     * row at a 56 dp pitch, and the demo's pages declare one (Pause) or three (Previous track,
+     * Pause, Next track), so Pause – or Play – is the centre one. Read off run 36170813974's
+     * notes (density 1.75): Close `608,1138-692,1222` in a window whose right edge is 692 and
+     * top 1138; Pause `451,1404-535,1488` and Next track `548,1404-632,1488` in the window
+     * `294,1264-692,1488`. Null for a label this driver does not know the place of.
+     */
+    private fun menuButtonByGeometry(win: Rect, label: String): PointF? {
+        val half = 24 * density
+        val pitch = 56 * density
+        return when (label) {
+            "Close" -> PointF(win.right - half, win.top + half)
+            "Pause", "Play" -> PointF(win.exactCenterX(), win.bottom - half)
+            "Next track" -> PointF(win.exactCenterX() + pitch, win.bottom - half)
+            "Previous track" -> PointF(win.exactCenterX() - pitch, win.bottom - half)
+            else -> null
+        }
+    }
+
+    /**
      * A real finger on the small window's menu button `label` (the menu opened by [openPipMenu]
-     * and the button touched at once, before the menu hides itself), then up to `timeoutMs` for
-     * `took`, the step's claim named by `effect`; `shotAfter` names a still of the menu right
-     * after the touch – a touch keeps it up two more seconds, so the still shows the menu with
-     * the button's new state, and no still comes between finding the button and touching it.
+     * and the button touched at once, before the menu hides itself, though never within the
+     * double-tap window of the tap that opened it – a double tap on the window expands it), then
+     * up to `timeoutMs` for `took`, the step's claim named by `effect`; `shotAfter` names a still
+     * of the menu right after the touch – a touch keeps it up two more seconds, so the still shows
+     * the menu with the button's new state, and no still comes between finding the button and
+     * touching it. When three taps showed the menu to nobody's window list, the button is touched
+     * where SystemUI lays it ([menuButtonByGeometry]) after a fresh tap opens the menu, and the
+     * notes say so: `took` is the proof of the touch either way.
      */
     protected fun touchPipMenu(win: Rect, label: String, effect: String, timeoutMs: Long = 8_000, shotAfter: String? = null, took: () -> Boolean): Boolean {
-        val node = openPipMenu(win, label) ?: run {
-            note("  the small window's menu never showed '$label' (three taps on the window)")
-            touchFault("the picture-in-picture window's menu never showed '$label'")
-            return false
+        val node = openPipMenu(win, label)
+        val point: PointF
+        val how: String
+        if (node != null) {
+            note("  pip menu: '$label' at ${bounds(node)}")
+            val sinceReveal = SystemClock.uptimeMillis() - lastWindowTouchAt
+            if (sinceReveal < MENU_TAP_GAP_MS) SystemClock.sleep(MENU_TAP_GAP_MS - sinceReveal)
+            point = touchTapPoint(node) ?: run {
+                note("  '$label' has no bounds a finger can reach")
+                return false
+            }
+            how = "read from SystemUI's tree"
+        } else {
+            val place = menuButtonByGeometry(win, label) ?: run {
+                note("  the small window's menu never showed '$label' (three taps on the window), and this driver knows no place for it")
+                touchFault("the picture-in-picture window's menu never showed '$label'")
+                return false
+            }
+            note("  UiAutomation's window list carried no '$label' after three taps on the window (the recording shows whether the menu stood); by geometry, '$label' at ${place.x.toInt()},${place.y.toInt()} in $win")
+            settleMenu()
+            tapWindow(menuRevealPoint(win))
+            SystemClock.sleep(MENU_TAP_GAP_MS)
+            Finger().tap(place.x, place.y)
+            point = place
+            how = "by geometry: UiAutomation's window list carried no menu"
         }
-        note("  pip menu: '$label' at ${bounds(node)}")
-        val point = touchTapPoint(node) ?: run {
-            note("  '$label' has no bounds a finger can reach")
-            return false
-        }
+        lastWindowTouchAt = SystemClock.uptimeMillis()
         if (shotAfter != null) shot(shotAfter)
         if (poll(timeoutMs, took)) {
-            note("  finger on the small window's '$label' at ${point.x.toInt()},${point.y.toInt()}: $effect")
+            note("  finger on the small window's '$label' at ${point.x.toInt()},${point.y.toInt()} ($how): $effect")
             return true
         }
         touchFault("a touch on the small window's '$label' did not take: not $effect within $timeoutMs ms")
-        note("  TOUCH FAULT: the small window's '$label' did not $effect (page: ${title()})")
+        note("  TOUCH FAULT: the small window's '$label' did not $effect (page: ${title()}; the button $how)")
         return false
     }
 
@@ -648,5 +724,9 @@ abstract class MediaDemoBase(private val shotPrefix: String) : DemoHarness("medi
         const val TAB = "tab_demo"
         /** SystemUI, whose windows hold the shade, the lock screen and the picture-in-picture menu. */
         const val SYSTEM_UI = "com.android.systemui"
+        /** From a touch on the small window to the next: SystemUI's menu hides 3.5 s after it shows (2 s after a touch on it), plus its fade. */
+        const val MENU_SETTLE_MS = 4_500L
+        /** From the tap that shows the menu to the tap on a button of it: past SystemUI's double-tap window (a double tap on the window expands it). */
+        const val MENU_TAP_GAP_MS = 600L
     }
 }

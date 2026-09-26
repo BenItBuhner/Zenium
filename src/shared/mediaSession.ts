@@ -212,6 +212,13 @@ export interface MediaSessionSourceHandle {
 /** The stylesheet id / attribute the page script uses for `fill` (a test hook as much as a marker). */
 export const PIP_FILL_ATTRIBUTE = 'data-zenium-pip'
 
+/**
+ * Set on a filled video that had `controls` when the fill began: the attribute comes off while the
+ * small window stands (its buttons are the window's own, drawn by the system; the engine's bar
+ * would sit under them at thumbnail size) and goes back the moment the fill ends.
+ */
+export const PIP_CONTROLS_ATTRIBUTE = 'data-zenium-pip-controls'
+
 /** Chrome's seek buttons move by this much when the page gives no offset. */
 export const DEFAULT_SEEK_OFFSET_S = 10
 

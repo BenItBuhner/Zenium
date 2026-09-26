@@ -745,8 +745,13 @@ export interface HostEventPayloads {
     seekTime?: number
     seekOffset?: number
   }
-  /** The window entered (`active`) or left picture-in-picture, showing `tabId`'s page (`MediaSessions.kt`). */
-  'media.pip': { tabId: string; active: boolean; dismissed?: boolean }
+  /**
+   * The window entered (`active`) or left picture-in-picture, showing `tabId`'s page
+   * (`MediaSessions.kt`). Out: `dismissed` when the window was closed with its X (or by the host)
+   * rather than expanded; `reason` when the host ended it itself – the tab closed, its renderer
+   * gone, another tab shown, the fullscreen left, a new document (`PictureInPictureRule.End`).
+   */
+  'media.pip': { tabId: string; active: boolean; dismissed?: boolean; reason?: string }
   /** A tap on the media notification: the session's tab comes to the front (`MediaSessions.kt`). */
   'media.reveal': { tabId: string }
   /** A tap on the "is using your microphone" card: the capturing tab comes to the front (`CaptureNotifications.kt`, NOT-13). */

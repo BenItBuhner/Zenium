@@ -2381,6 +2381,7 @@ class TabWebView(
             lastProgressAt = 0L
             failPendingEvals("the page navigated away before the script finished")
             host.extensions?.onDocumentGone(this@TabWebView, url, pdfDocumentUrl())
+            host.documentStarted(this@TabWebView)
             host.viewEvent(tabId, "startLoading", null)
             if (muted) setMuted(true)
             // An extension page the runtime refused: the empty document it answered with is

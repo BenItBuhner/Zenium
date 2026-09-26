@@ -1253,6 +1253,16 @@
       "estimate": 5
     },
     {
+      "id": "pip",
+      "class": "PipDemo",
+      "shard": "webview",
+      "mirrors": "android-media-demo.yml:driver=pip",
+      "dir": "media-demo",
+      "timeout": 1200,
+      "estimate": 7,
+      "note": "Home during fullscreen video into the picture-in-picture window in both themes: bounds and the page's fill read, the menu's Pause, Play and Next track driven through to the page, expand back inline, the requested window's X; a new document, another tab and the tab's close each end the window; a page without a video and an inline video give Home nothing new (MOT-30, MED-06)."
+    },
+    {
       "id": "fullscreen",
       "class": "FullscreenDemo",
       "shard": "webview",
