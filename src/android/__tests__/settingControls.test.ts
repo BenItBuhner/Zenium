@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, type Mock } from 'vitest'
 import type { LayeredFonts } from '@core/extensions/api/fontSettings'
-import type { State } from '@core/state'
+import type { BrowserState } from '@core/state'
 import type { ExtensionControl } from '@shared/types'
 import { SettingControls, fontControlsOf, type SettingControlsSink } from '../settingControls'
 
@@ -12,8 +12,8 @@ import { SettingControls, fontControlsOf, type SettingControlsSink } from '../se
  * pinned here for that bridge to meet.
  */
 
-// The core's `State` is the sink: `setExtensionControls` as #500 gave it (a compile-time pin).
-const stateIsASink = (state: State): SettingControlsSink => state
+// The core's `BrowserState` is the sink: `setExtensionControls` as #500 gave it (a compile-time pin).
+const stateIsASink = (state: BrowserState): SettingControlsSink => state
 void stateIsASink
 
 const held = (
@@ -22,8 +22,10 @@ const held = (
   value?: string | number | boolean
 ): ExtensionControl => ({ extensionId, name, ...(value === undefined ? {} : { value }) })
 
-function sink(): SettingControlsSink & { setExtensionControls: ReturnType<typeof vi.fn> } {
-  return { setExtensionControls: vi.fn() }
+type Sink = { setExtensionControls: Mock<SettingControlsSink['setExtensionControls']> }
+
+function sink(): Sink {
+  return { setExtensionControls: vi.fn<SettingControlsSink['setExtensionControls']>() }
 }
 
 const USER_FONTS: LayeredFonts['fonts'] = {
@@ -148,7 +150,7 @@ describe('SettingControls', () => {
     const s = sink()
     const controls = new SettingControls(s)
     controls.publish('fontSettings', { 'fonts.size': held('afs', 'Advanced Font Settings', 18) })
-    const first = s.setExtensionControls.mock.calls[0]?.[0] as Record<string, ExtensionControl>
+    const first = s.setExtensionControls.mock.calls[0]?.[0]
     controls.publish('privacy', { 'privacy.doNotTrack': held('dr', 'Dark Reader', true) })
     expect(Object.keys(first)).toEqual(['fonts.size'])
   })
