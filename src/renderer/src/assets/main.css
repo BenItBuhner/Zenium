@@ -7742,6 +7742,14 @@
 .zen-v2-section:first-child > .zen-v2-heading {
   margin-top: 8px;
 }
+/*
+ * The new tab page's sheet seats its Cards row at the head, above Layout, with a hairline after
+ * it (NTP-16; §9.13): the first heading then follows the hairline, and keeps the primitive's 20
+ * from the line – the hairline's own 8 and 12 of the heading's. Unlayered, as the rule above.
+ */
+.zen-ntp-customize > .zen-sheet-sep + .zen-v2-section > .zen-v2-heading {
+  margin-top: 12px;
+}
 
 @layer components {
   /*
