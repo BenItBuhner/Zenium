@@ -56,8 +56,17 @@ class UnitCompiler(
         /** Whether the script came from the cache rather than being assembled now. */
         val cached: Boolean,
         /** Why the unit was not assembled, when it was not: its size against the budget. The script is then empty. */
-        val refused: Refused? = null
-    )
+        val refused: Refused? = null,
+        /**
+         * The size the script's builder was made with ([ExtensionScripts.Assembled.presized]);
+         * `script.length` over it means an append grew the builder, which the assembly's count
+         * is written not to allow. Kept with a cached unit, zero for a refused one.
+         */
+        val presized: Int = script.length
+    ) {
+        /** Whether the assembly's builder grew past its size (never, when the count is right). */
+        val grown: Boolean get() = script.length > presized
+    }
 
     /** A unit over the budget: what it would have run to (from the files' sizes), over how many groups, against what. */
     class Refused(val chars: Long, val groups: Int, val budgetChars: Int)
@@ -111,7 +120,7 @@ class UnitCompiler(
             val hash = sha256("$config\u0000$groupsJson\u0000$cssJson\u0000$debug\u0000${world ?: ""}\u0000$shape")
             val previous = entry.units[key]
             if (previous != null && previous.hash == hash) {
-                val kept = Compiled(id, key, origins, world, shape, previous.script, hash, cached = true, refused = previous.refused)
+                val kept = Compiled(id, key, origins, world, shape, previous.script, hash, cached = true, refused = previous.refused, presized = previous.presized)
                 entry.units[key] = kept
                 out.add(kept)
                 continue
@@ -120,7 +129,7 @@ class UnitCompiler(
             if (estimate > budgetChars) {
                 // Refused the way a compiled unit is kept: the same plan sent again answers from
                 // the cache, so the extension's console hears of it once per plan.
-                val refused = Compiled(id, key, origins, world, shape, "", hash, cached = false, refused = Refused(estimate, groupsJson.length(), budgetChars))
+                val refused = Compiled(id, key, origins, world, shape, "", hash, cached = false, refused = Refused(estimate, groupsJson.length(), budgetChars), presized = 0)
                 entry.units[key] = refused
                 out.add(refused)
                 continue
@@ -145,8 +154,8 @@ class UnitCompiler(
                 val text = text(entry, path, read) ?: continue
                 css["${c.optString("ext", id)}/${path.trimStart('/')}"] = text
             }
-            val script = ExtensionScripts.documentStart(bootstrap(), config, groups, css, debug, shape)
-            val compiled = Compiled(id, key, origins, world, shape, script, hash, cached = false)
+            val assembled = ExtensionScripts.documentStartSized(bootstrap(), config, groups, css, debug, shape)
+            val compiled = Compiled(id, key, origins, world, shape, assembled.script, hash, cached = false, presized = assembled.presized)
             entry.units[key] = compiled
             out.add(compiled)
         }
@@ -212,9 +221,10 @@ class UnitCompiler(
      * What the unit's script would run to, in characters, from what is known without reading a
      * file: the sizes on disk (a file listed in several groups counts once per group, as the
      * script copies it), an inline entry's own length, a source already held in the cache by
-     * its real length, and the fixed parts ([ExtensionScripts.documentStart] sizes its builder
-     * the same way; the bootstrap by the unit's shape, [ExtensionScripts.bootstrapChars]). A file
-     * that is not there costs its console stub.
+     * its real length, and room for the fixed parts (the bootstrap by the unit's shape,
+     * [ExtensionScripts.bootstrapChars]). A file that is not there costs its console stub. This
+     * is the refusal's measure, not the builder's: the builder is sized by an exact count of the
+     * text once the files are in hand ([ExtensionScripts.documentStartSized]).
      */
     private fun estimateChars(entry: ExtensionCache, config: String, groupsJson: JSONArray, cssJson: JSONArray, size: (String) -> Long?, shape: String): Long {
         var total = ExtensionScripts.bootstrapChars(bootstrap().length, shape).toLong() + config.length + 4096

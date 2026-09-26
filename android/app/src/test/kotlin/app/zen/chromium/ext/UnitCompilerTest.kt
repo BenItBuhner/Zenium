@@ -257,6 +257,38 @@ class UnitCompilerTest {
     }
 
     @Test
+    fun `a compiled unit carries the size its builder was made with - the script's length exactly - kept through the cache, none for a refusal`() {
+        // A CSS text with `/` and a control character, a source with a relative import (its
+        // rewritten length is its length) and a character over U+00FF: the count is still the text.
+        files["style.css"] = "body{background:url(/img/x.png)}\t/* </style> */"
+        files["cs.js"] = """import("./chunk.js"); const mark = '✓'; var top = 1"""
+        val compiler = UnitCompiler(budgetChars = 10_000) { "/*boot*/" }
+        val plan = units("k" to listOf("cs.js", "extra.js"), "k2" to listOf("cs.js"))
+        plan.put(
+            org.json.JSONObject().put("key", "big:*").put("origins", JSONArray(listOf("*"))).put("world", org.json.JSONObject.NULL)
+                .put("config", "{}").put("groups", JSONArray().put(org.json.JSONObject().put("ext", id).put("index", 0).put("js", JSONArray(listOf(UnitCompiler.INLINE_CODE + "x".repeat(20_000)))).put("isolation", "with"))).put("css", JSONArray())
+        )
+        val compiled = compiler.compile(id, "1.0.0", plan, true, read, size)
+        assertEquals(3, compiled.size)
+        for (unit in compiled.take(2)) {
+            assertNull(unit.refused)
+            assertTrue(unit.script.contains("""import("https://$id.ext.zenium.invalid/chunk.js")"""))
+            // The public org.json leaves `/` alone where Android's escapes it; the count covers both, so it may sit over the JVM's text by the CSS's slashes alone.
+            assertTrue("${unit.key}: presized ${unit.presized} for ${unit.script.length}", unit.presized >= unit.script.length)
+            assertTrue(unit.presized - unit.script.length <= files["style.css"]!!.count { it == '/' })
+            assertFalse(unit.grown)
+        }
+        val refused = compiled[2]
+        assertEquals(0, refused.presized)
+        assertFalse(refused.grown)
+        // The same plan again: the cached units keep their builder's size.
+        val again = compiler.compile(id, "1.0.0", plan, true, read, size)
+        assertEquals(listOf(true, true, true), again.map { it.cached })
+        assertEquals(compiled.map { it.presized }, again.map { it.presized })
+        assertEquals(compiled.map { it.script.length }, again.map { it.script.length })
+    }
+
+    @Test
     fun `a unit under the budget compiles as before, its measure taken from the sizes and the held texts`() {
         val compiler = UnitCompiler(budgetChars = 10_000) { "/*boot*/" }
         val compiled = compiler.compile(id, "1.0.0", units("k" to listOf("cs.js", "extra.js")), true, read, size)

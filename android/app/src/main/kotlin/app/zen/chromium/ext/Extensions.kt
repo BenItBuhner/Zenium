@@ -769,13 +769,19 @@ class Extensions(private val host: Host) {
                     if (!unit.cached) unitRefusedLine(id, name, refused)
                 }
                 // The shapes (`ExtensionScripts.SHAPE_*`) name what the chars are: a world's
-                // bootstrap once in a carrier or a holder, its other rule sets thin.
-                val shapes = compiled.filter { it.refused == null }.groupingBy { it.shape }.eachCount()
+                // bootstrap once in a carrier or a holder, its other rule sets thin. The
+                // builders' pre-size against the chars, and how many grew: the assembly counts
+                // its text exactly so that none does (compat round 21b – one that grew by
+                // doubling at 10.6 million characters was the allocation that took the app down).
+                val assembled = compiled.filter { it.refused == null }
+                val shapes = assembled.groupingBy { it.shape }.eachCount()
                 Log.i(
                     TAG,
                     "configured ${id.take(8)} ${servedNow.version}: ${unitsNow.size} unit(s), " +
                         "${unitsNow.sumOf { it.script.length }} chars (${compiled.count { it.cached }} cached, " +
                         "${compiled.count { it.refused != null }} refused) in $ms ms, " +
+                        "builders presized ${assembled.sumOf { it.presized.toLong() }} for ${assembled.sumOf { it.script.length.toLong() }} chars " +
+                        "(${assembled.count { it.grown }} grown), " +
                         "shapes ${shapes.entries.joinToString(" ") { (shape, n) -> "$n $shape" }}, " +
                         "worlds ${unitsNow.mapNotNull { u -> u.world?.let(worldSlots::slot) }.toSet()}, " +
                         "heap ${(runtime.totalMemory() - runtime.freeMemory()) shr 20}/${runtime.maxMemory() shr 20} MB"
