@@ -137,13 +137,12 @@ function harness(
     },
     popups: { activation: (tabId: string) => ({ hasBeenActive: () => activated.has(tabId) }) },
     permissions: {
-      resolve: (permission: string, url: string) => {
-        // The auto-PiP row's default is allow: a site is denied by the site card's write alone.
-        if (permission === AUTO_PIP_SETTING) return denied.has(url) ? 'deny' : 'allow'
-        return permission === 'background-video' && backgroundVideoSites.has(new URL(url).origin)
+      resolve: (permission: string, url: string) =>
+        permission === 'background-video' && backgroundVideoSites.has(new URL(url).origin)
           ? 'allow'
-          : 'deny'
-      },
+          : 'deny',
+      // The auto-PiP row's read, the desktop's `eligibleForAuto`'s and the session's carry alike:
+      // the row's default is allow, a site denied by the site card's write alone.
       check: (permission: string, url: string) => {
         checks.push([permission, url])
         return !denied.has(url)
@@ -1039,7 +1038,15 @@ describe('automatic picture-in-picture (MW-28)', () => {
     )
     // The tab left the screen: no question about the document's visibility on this path.
     expect(h.views.get('film')!.scripts[0]).not.toContain('visibilityState')
-    expect(h.checks).toEqual([[AUTO_PIP_SETTING, 'https://video.example/watch']])
+    // The row asked for the film's site alone, never the docs' (the session's own carry of the
+    // answer to the host asks the same question on every push, so the count is not pinned).
+    expect(h.checks).toContainEqual([AUTO_PIP_SETTING, 'https://video.example/watch'])
+    expect(
+      h.checks.every(
+        ([permission, url]) =>
+          permission === AUTO_PIP_SETTING && url === 'https://video.example/watch'
+      )
+    ).toBe(true)
     // The page confirms; the user's own close later would end the claim (below).
     h.service.onPagePictureInPicture('film', true)
     h.show(win, ['film'])

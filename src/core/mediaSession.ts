@@ -381,13 +381,14 @@ export class MediaSessionService {
 
   /**
    * Whether the page's site may go into picture-in-picture of its own accord when the user leaves
-   * it: its `auto-picture-in-picture` setting does not resolve to deny (allow by default; the
-   * Android host reads it for its auto-enter from a fullscreen video on Home, as the desktop's
-   * {@link eligibleForAuto} reads the same row). A page without a site gets the row's default.
+   * it: its `auto-picture-in-picture` setting allows (allow by default; the Android host reads it
+   * for its auto-enter from a fullscreen video on Home) – the same `permissions.check` the
+   * desktop's {@link eligibleForAuto} asks, so the two readings cannot diverge should the row ever
+   * gain a choice beyond allow and deny. A page without a site gets the row's default.
    */
   private autoPictureInPictureAllowed(url: string | undefined): boolean {
     if (!url) return true
-    return this.browser.permissions.resolve(AUTO_PIP_SETTING, url) !== 'deny'
+    return this.browser.permissions.check(AUTO_PIP_SETTING, url)
   }
 
   /** A `background-video` decision changed: the session carries the site's new answer to the host. */
