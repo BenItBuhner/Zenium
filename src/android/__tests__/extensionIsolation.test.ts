@@ -121,7 +121,9 @@ describe('the scope proxy of the with-fallback', () => {
       readonly bubbles: boolean
       constructor(type: string, init: { view?: unknown; bubbles?: boolean } = {}) {
         if (init.view !== undefined && init.view !== null && init.view !== win)
-          throw new TypeError("Failed to construct 'MouseEvent': Failed to convert value to 'Window'.")
+          throw new TypeError(
+            "Failed to construct 'MouseEvent': Failed to convert value to 'Window'."
+          )
         this.type = type
         this.view = init.view ?? null
         this.bubbles = init.bubbles ?? false

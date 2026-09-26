@@ -195,7 +195,8 @@ export class BackgroundLifecycle {
     entry.state = 'stopped'
     const expected = entry.stopping
     entry.stopping = false
-    if (entry.queue.length > 0 || (!expected && entry.kind === 'persistent')) this.ensureStarted(id, 'restart')
+    if (entry.queue.length > 0 || (!expected && entry.kind === 'persistent'))
+      this.ensureStarted(id, 'restart')
   }
 
   /** Something happened on the background's bridge: it is busy, the idle clock restarts. */
