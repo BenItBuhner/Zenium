@@ -4257,7 +4257,9 @@ export interface UIState {
   /**
    * The reading list (W6-1, bookmarks-33), unread first and newest first within each half
    * (`sortReadingList`): the `zen://reading-list` page's rows and the bookmarks bar control's
-   * unread count (`unreadReadingCount`), at most `READING_LIST_CAP` entries.
+   * unread count (`unreadReadingCount`). At most `READING_LIST_CAP` of the entries are READ
+   * (`trimReadingList` drops the oldest by `readAt` past it); the unread half is unbounded – an
+   * unread entry is never trimmed.
    */
   readingList: ReadingListEntry[]
   /** The new tab page's shortcuts on this device, in grid order (Settings and the phone's page). */

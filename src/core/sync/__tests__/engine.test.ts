@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ReadingListEntry, Settings } from '../../../shared/types'
 import { DEFAULT_SETTINGS } from '../../../shared/defaults'
-import { READING_LIST_CAP } from '../../../shared/readingList'
+import { READING_LIST_CAP, compareReadAge, isUnread } from '../../../shared/readingList'
 import { FOLDER_LOST_MESSAGE } from '../engine'
 import {
   SETTINGS_RECORD_ID,
@@ -1489,56 +1489,166 @@ describe('the reading list across two devices', () => {
     ])
   }, 30_000)
 
-  it('the cap after a round is a deliberate deletion: the entries the cap takes out are tombstoned and the peers drop them too', async () => {
+  /**
+   * The cap under sync (services pass 11, item 4; the root's ruling, the mechanism agreed with
+   * desktop): `READING_LIST_CAP` bounds the READ half of the fleet's union alone – the oldest by
+   * `readAt` go, a tie by the id, the same on every device – and an unread entry is never
+   * trimmed, so no sync round ever deletes a page the user has not read.
+   */
+  const tombstoned = async (d: Device): Promise<string[]> =>
+    (await readingRecords(d))
+      .filter((r) => r.deleted)
+      .map((r) => r.id)
+      .sort()
+  const unreadIds = (d: Device): string[] =>
+    d.browser.state.readingList
+      .filter(isUnread)
+      .map((e) => e.id)
+      .sort()
+  const readIds = (d: Device): string[] =>
+    d.browser.state.readingList
+      .filter((e) => !isUnread(e))
+      .map((e) => e.id)
+      .sort()
+
+  it('2 × 600 unread: zero unread lost – both devices converge on all 1 200, no reading-list tombstone in either file, a further round changes nothing', async () => {
     const a = device('Desk (Linux)')
     const b = device('Pixel 9')
-    // In sync at two under the cap, two of the shared entries read (the cap's first to go).
-    const shared: ReadingListEntry[] = []
-    for (let i = 1; i <= READING_LIST_CAP - 2; i++) {
-      shared.push(a.browser.readingList.add(`https://shared.example/${i}`, `Shared ${i}`)!)
+    const mine: string[] = []
+    const theirs: string[] = []
+    for (let i = 1; i <= 600; i++) {
+      mine.push(a.browser.readingList.add(`https://desk.example/${i}`, `Desk ${i}`)!.id)
+      theirs.push(b.browser.readingList.add(`https://phone.example/${i}`, `Phone ${i}`)!.id)
     }
-    expect(a.browser.readingList.setRead(shared[0]!.id, true)).toBe(true)
-    expect(a.browser.readingList.setRead(shared[1]!.id, true)).toBe(true)
+    const all = [...mine, ...theirs].sort()
+    expect(all).toHaveLength(2 * 600)
+    expect(2 * 600).toBeGreaterThan(READING_LIST_CAP)
+
+    // The phone joins the desktop's folder and merges: the union runs over the old cap, and
+    // nothing goes – every one of the 1 200 is unread.
     await setup(a)
     await setup(b)
     await b.engine.confirmMerge(true)
-    expect(b.browser.state.readingList).toHaveLength(READING_LIST_CAP - 2)
+    expect(ids(b)).toEqual(all)
+    expect(b.browser.readingList.unreadCount).toBe(1200)
+    await a.engine.syncNow()
+    expect(ids(a)).toEqual(all)
+    expect(a.browser.readingList.unreadCount).toBe(1200)
+    await b.engine.syncNow()
+    expect(ids(b)).toEqual(all)
 
-    // Apart, each device saves two pages: both lists sit at the cap, nothing trimmed yet.
-    await settle()
-    const a1 = a.browser.readingList.add('https://desk.example/1', 'Desk 1')!
-    const a2 = a.browser.readingList.add('https://desk.example/2', 'Desk 2')!
-    const b1 = b.browser.readingList.add('https://phone.example/1', 'Phone 1')!
-    const b2 = b.browser.readingList.add('https://phone.example/2', 'Phone 2')!
-    await settle()
-    expect(a.browser.state.readingList).toHaveLength(READING_LIST_CAP)
-    expect(b.browser.state.readingList).toHaveLength(READING_LIST_CAP)
+    // No reading-list tombstone in either device's file: nothing was deleted anywhere.
+    expect(await tombstoned(a)).toEqual([])
+    expect(await tombstoned(b)).toEqual([])
+    expect((await readingRecords(a)).map((r) => r.id).sort()).toEqual(all)
+    expect((await readingRecords(b)).map((r) => r.id).sort()).toEqual(all)
 
-    // The desktop's two land on the phone, which runs over the cap: the two read entries go,
-    // and the phone's round tombstones them at now – a deletion the whole fleet follows.
+    // A further round each changes nothing: the same 1 200, the same records.
+    const aBefore = await readingRecords(a)
+    const bBefore = await readingRecords(b)
     await a.engine.syncNow()
     await b.engine.syncNow()
-    expect(b.browser.state.readingList).toHaveLength(READING_LIST_CAP)
-    expect(b.browser.readingList.get(a1.id)).not.toBeNull()
-    expect(b.browser.readingList.get(a2.id)).not.toBeNull()
-    expect(b.browser.readingList.get(shared[0]!.id)).toBeNull()
-    expect(b.browser.readingList.get(shared[1]!.id)).toBeNull()
-    const bRecords = await readingRecords(b)
-    for (const id of [shared[0]!.id, shared[1]!.id]) {
-      const tomb = bRecords.find((r) => r.id === id)!
-      expect(tomb).toMatchObject({ deleted: true })
-      expect(tomb.modified).toBeGreaterThan(0)
+    await a.engine.syncNow()
+    expect(ids(a)).toEqual(all)
+    expect(ids(b)).toEqual(all)
+    expect(a.browser.readingList.unreadCount).toBe(1200)
+    expect(b.browser.readingList.unreadCount).toBe(1200)
+    expect(await readingRecords(a)).toEqual(aBefore)
+    expect(await readingRecords(b)).toEqual(bBefore)
+    expect(await tombstoned(a)).toEqual([])
+    expect(await tombstoned(b)).toEqual([])
+  }, 60_000)
+
+  it('1 200 read + 100 unread: 1 000 read, the oldest readAt gone, every unread kept – the same set on both, tombstones for exactly those 200', async () => {
+    const a = device('Desk (Linux)')
+    const b = device('Pixel 9')
+    // 600 read pages on each device (their `readAt`s interleave: each service's clock is its
+    // own, strictly increasing) and 50 unread on each – 1 200 read + 100 unread across the two.
+    const readOn = (d: Device, host: string): ReadingListEntry[] => {
+      const out: ReadingListEntry[] = []
+      for (let i = 1; i <= 600; i++) {
+        const e = d.browser.readingList.add(`https://${host}/${i}`, `${host} ${i}`)!
+        expect(d.browser.readingList.setRead(e.id, true)).toBe(true)
+        out.push(d.browser.readingList.get(e.id)!)
+      }
+      return out
     }
-    // The desktop takes the phone's two and the two tombstones: the removals land first, so the
-    // list is exactly at the cap with nothing more to trim – the same thousand on both.
+    const aRead = readOn(a, 'desk.example')
+    const bRead = readOn(b, 'phone.example')
+    const aUnread = Array.from(
+      { length: 50 },
+      (_, i) => a.browser.readingList.add(`https://desk-later.example/${i}`, `Later ${i}`)!.id
+    )
+    const bUnread = Array.from(
+      { length: 50 },
+      (_, i) => b.browser.readingList.add(`https://phone-later.example/${i}`, `Later ${i}`)!.id
+    )
+    const everyUnread = [...aUnread, ...bUnread].sort()
+    // The 200 the cap must take: the earliest `readAt` across BOTH devices' read entries, a tie
+    // by the id – the shared trim's order, computed here on the union before any sync.
+    const byAge = [...aRead, ...bRead].sort(compareReadAge)
+    const expectedGone = byAge
+      .slice(0, 200)
+      .map((e) => e.id)
+      .sort()
+    const expectedRead = byAge
+      .slice(200)
+      .map((e) => e.id)
+      .sort()
+    expect(expectedRead).toHaveLength(READING_LIST_CAP)
+
+    // The phone merges the desktop's list: 1 200 read land on it, the 200 oldest by `readAt` go
+    // and its round tombstones them; the desktop takes the tombstones and the phone's entries.
+    await setup(a)
+    await setup(b)
+    await b.engine.confirmMerge(true)
+    expect(readIds(b)).toEqual(expectedRead)
+    expect(unreadIds(b)).toEqual(everyUnread)
     await a.engine.syncNow()
-    expect(a.browser.state.readingList).toHaveLength(READING_LIST_CAP)
-    expect(a.browser.readingList.get(shared[0]!.id)).toBeNull()
-    expect(a.browser.readingList.get(shared[1]!.id)).toBeNull()
-    expect(a.browser.readingList.get(b1.id)).not.toBeNull()
-    expect(a.browser.readingList.get(b2.id)).not.toBeNull()
-    expect(ids(a)).toEqual(ids(b))
+    expect(readIds(a)).toEqual(expectedRead)
+    expect(unreadIds(a)).toEqual(everyUnread)
     await b.engine.syncNow()
+    await a.engine.syncNow()
+
+    // Converged: 1 000 read + 100 unread on both, the same set by id; the 200 gone are the
+    // oldest by `readAt`; every unread entry kept.
     expect(ids(a)).toEqual(ids(b))
+    expect(readIds(a)).toEqual(expectedRead)
+    expect(readIds(b)).toEqual(expectedRead)
+    expect(unreadIds(a)).toEqual(everyUnread)
+    expect(unreadIds(b)).toEqual(everyUnread)
+    expect(a.browser.state.readingList).toHaveLength(READING_LIST_CAP + 100)
+    expect(b.browser.state.readingList).toHaveLength(READING_LIST_CAP + 100)
+    for (const id of expectedGone) {
+      expect(a.browser.readingList.get(id)).toBeNull()
+      expect(b.browser.readingList.get(id)).toBeNull()
+    }
+    // Tombstones for exactly those 200 and nothing else: the phone's file, which made the trim,
+    // carries all 200; the desktop's carries those of the 200 it held – its own read entries the
+    // phone's tombstones took out (a tombstone for an id a device never held is no winner there,
+    // `winningRemote`, so it is not echoed). The two files' tombstones together are the 200, and
+    // no other id is tombstoned anywhere; a live record for every survivor.
+    const aOwn = new Set(aRead.map((e) => e.id))
+    expect(await tombstoned(b)).toEqual(expectedGone)
+    expect(await tombstoned(a)).toEqual(expectedGone.filter((id) => aOwn.has(id)))
+    expect([...new Set([...(await tombstoned(a)), ...(await tombstoned(b))])].sort()).toEqual(
+      expectedGone
+    )
+    for (const d of [a, b]) {
+      const live = (await readingRecords(d))
+        .filter((r) => !r.deleted)
+        .map((r) => r.id)
+        .sort()
+      expect(live).toEqual([...expectedRead, ...everyUnread].sort())
+    }
+    // Steady state: another round each changes nothing.
+    const aTombs = await tombstoned(a)
+    await b.engine.syncNow()
+    await a.engine.syncNow()
+    expect(ids(a)).toEqual(ids(b))
+    expect(readIds(a)).toEqual(expectedRead)
+    expect(unreadIds(a)).toEqual(everyUnread)
+    expect(await tombstoned(a)).toEqual(aTombs)
+    expect(await tombstoned(b)).toEqual(expectedGone)
   }, 60_000)
 })

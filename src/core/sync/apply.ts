@@ -397,9 +397,14 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
   }
 
   // The reading list, once: the peers' removals, then their entries through the URL dedupe and
-  // the cap (`ReadingListService.applySynced`). The engine's `applying` guard covers this whole
-  // call, so an entry the dedupe or the cap takes out is no edit of this device's: the round's
-  // re-snapshot tombstones its record at `now`.
+  // the cap (`ReadingListService.applySynced`; the cap bounds READ entries only, the oldest by
+  // `readAt` first – an unread entry is never trimmed). An entry the dedupe or the cap takes out
+  // is no edit of this device's – not because of the engine's `applying` guard (the commit
+  // below broadcasts a macrotask later, `BrowserState.schedule`, when the guard is already
+  // down) but because the engine re-snapshots SYNCHRONOUSLY right after this call (`run()`,
+  // `stamp: null`) and tombstones the vanished record at `now`, and because
+  // `readReadingListData ∘ readingListEntryData` is idempotent: a landed entry re-collects to
+  // the same bytes, so the deferred `onLocalChange` diff finds nothing to stamp.
   if (readingListGone.length) browser.readingList.removeSynced(readingListGone)
   if (readingListLanded.length) browser.readingList.applySynced(readingListLanded)
 

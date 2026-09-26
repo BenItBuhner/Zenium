@@ -32,9 +32,11 @@ export interface ReadingListStore {
 }
 
 /**
- * The reading list lives in the main state file (`state.readingList`, at most `READING_LIST_CAP`
- * entries, one per URL). This service is the mutation surface: every write goes through here,
- * keeps the list within its cap (the oldest read entry drops first) and commits the state, so
+ * The reading list lives in the main state file (`state.readingList`, one entry per URL, at
+ * most `READING_LIST_CAP` of them READ – the unread half is unbounded, as Chrome's list is).
+ * This service is the mutation surface: every write goes through here, keeps the read half
+ * within its cap (`trimReadingList`, the one trim every path takes: the oldest by `readAt`
+ * goes, an unread entry never) and commits the state, so
  * the chrome's `UIState.readingList` and the disk follow in the same tick – and the sync
  * engine's state subscriber diffs the record set at that commit and stamps the changed entry's
  * `reading-list-entry` record there (`SyncEngine.onLocalChange`; `sync/records.ts`). Every
@@ -186,13 +188,19 @@ export class ReadingListService implements ReadingListStore {
    * carry (a favicon is the device's own; the chrome resolves one from its cache by `url`). One
    * URL keeps one entry: when a landed entry's URL is another entry's, `readingListSurvivor`
    * says which stays – the later `addedAt`, a tie the lexically greater `id` – a pure function of
-   * the two, so every device picks the same one. The loser goes here, under the engine's
-   * `applying` guard, so its going is no edit of this device's; the round's re-snapshot finds
-   * its record vanished and tombstones it at `now`, and that tombstone reaches the peers – the
-   * fleet converges on the survivor. The cap then (`trimReadingList`, the oldest read entry
-   * first): a trim is a deliberate fleet-wide deletion whose tombstones win over the peers' live
-   * copies. Nothing is committed or announced here: the engine commits once per batch and the
-   * chrome reads the state.
+   * the two, so every device picks the same one. The loser goes here, and its going is no edit
+   * of this device's – not by the engine's `applying` guard (the batch's commit broadcast is
+   * deferred a macrotask, `BrowserState.schedule`, so the guard is already down when
+   * `onLocalChange` fires) but by the engine's SYNCHRONOUS re-snapshot right after `applyRemote`
+   * (`SyncEngine.run`, `stamp: null`), which finds the record vanished and tombstones it at
+   * `now`, and by the idempotence of `readReadingListData ∘ readingListEntryData` (a landed
+   * entry re-collects to the same bytes, so the later diff finds nothing); the tombstone reaches
+   * the peers and the fleet converges on the survivor. The cap then (`trimReadingList`): of
+   * READ entries only, the oldest by `readAt` first, a tie by the id; an unread entry is never
+   * trimmed, so a trim never deletes a page the user has not read – a trim is a deliberate
+   * fleet-wide deletion of read entries whose tombstones win over the peers' live copies.
+   * Nothing is committed or announced here: the engine commits once per batch and the chrome
+   * reads the state.
    */
   applySynced(entries: readonly ReadingListEntry[]): void {
     let list = this.state.readingList
@@ -219,7 +227,11 @@ export class ReadingListService implements ReadingListStore {
 
   // ---------------------------------------------------------------------------
 
-  /** The cap's rule is applied on every write; the state commits and the listeners hear of it. */
+  /**
+   * The cap's rule is applied on every write – the shared `trimReadingList`, the same trim the
+   * load and the apply paths take: read entries past the cap go, oldest `readAt` first, an
+   * unread entry never; the state commits and the listeners hear of it.
+   */
   private write(entries: ReadingListEntry[]): void {
     this.state.readingList = trimReadingList(entries, READING_LIST_CAP)
     this.state.commit()
