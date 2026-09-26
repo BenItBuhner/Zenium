@@ -133,19 +133,54 @@ class ContentRules(private val rows: Map<String, Row>) {
 
         /**
          * The referrer a navigation the WebView held for the core's answer is resumed with
-         * ([TabWebView] re-issues it as a load of its own, which carries none by itself): Chrome's
-         * default policy, `strict-origin-when-cross-origin` – the page's address without its
-         * fragment for a destination of the same origin, the origin alone across origins, nothing
-         * from HTTPS down to HTTP or for a page or a destination without a web origin. A page's
-         * own stricter policy is not read here.
+         * ([TabWebView] re-issues it as a load of its own, which carries none by itself), under
+         * `policy` – the referrer policy the page's document-start script read for that navigation
+         * (the tapped anchor's `rel=noreferrer` / `referrerpolicy`, else the document's
+         * `<meta name=referrer>`), one of the eight tokens of the Referrer Policy spec; an empty or
+         * unknown token is Chrome's default, `strict-origin-when-cross-origin`. Nothing is sent
+         * under any policy for a page or a destination without a web origin. "Full" is the page's
+         * address without its fragment and credentials; "downgrade" is HTTPS to HTTP. This is
+         * what the policy says; the WebView sends at most what its default policy allows of it
+         * (the view's hold in [TabWebView] says where).
          */
-        fun resumeReferer(from: String?, to: String): String? {
+        fun resumeReferer(from: String?, to: String, policy: String = ""): String? {
             if (from == null) return null
             val fromSite = siteOf(from) ?: return null
             val toSite = siteOf(to) ?: return null
             if (!fromSite.startsWith("http") || !toSite.startsWith("http")) return null
-            if (fromSite.startsWith("https://") && toSite.startsWith("http://")) return null
-            return if (fromSite == toSite) from.substringBefore('#') else "$fromSite/"
+            val sameOrigin = fromSite == toSite
+            val downgrade = fromSite.startsWith("https://") && toSite.startsWith("http://")
+            val full = fullReferer(from, fromSite)
+            val origin = "$fromSite/"
+            return when (policy.trim().lowercase()) {
+                "no-referrer" -> null
+                "same-origin" -> if (sameOrigin) full else null
+                "origin" -> origin
+                "strict-origin" -> if (downgrade) null else origin
+                "origin-when-cross-origin" -> if (sameOrigin) full else origin
+                "no-referrer-when-downgrade" -> if (downgrade) null else full
+                "unsafe-url" -> full
+                else -> if (downgrade) null else if (sameOrigin) full else origin
+            }
+        }
+
+        /** `from` stripped for use as a referrer: no fragment, no credentials in its authority. */
+        private fun fullReferer(from: String, fromSite: String): String {
+            val noFragment = from.substringBefore('#')
+            val scheme = fromSite.substringBefore("://")
+            val start = scheme.length + 3
+            var end = noFragment.length
+            for (i in start until noFragment.length) {
+                val c = noFragment[i]
+                if (c == '/' || c == '?' || c == '\\') {
+                    end = i
+                    break
+                }
+            }
+            val authority = noFragment.substring(start, end)
+            val at = authority.lastIndexOf('@')
+            if (at < 0) return noFragment
+            return noFragment.substring(0, start) + authority.substring(at + 1) + noFragment.substring(end)
         }
 
         private fun asciiHost(host: String): String? {

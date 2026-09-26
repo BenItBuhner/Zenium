@@ -22,6 +22,7 @@ import { downloadNameOf, rememberDownloadName, type DownloadNames } from './down
 import { rememberClearedSelection } from './selectionMemory'
 import { installViewportController, type PageRulesConfig } from './viewport'
 import { installRequestObserver, type RequestObserver } from './requestObserver'
+import { installReferrerPolicyReporter } from './referrerPolicy'
 
 /**
  * Injected by Kotlin into every page WebView (document-start). Transport is the
@@ -306,6 +307,17 @@ function installGuards(
       up({ type: 'formEdited' })
     }
     document.addEventListener('input', onInput, true)
+    // The page's own referrer policy (W6-S9): the document's `<meta name=referrer>` as it
+    // appears, and the tapped anchor's `rel=noreferrer` / `referrerpolicy` at the capture
+    // phase of the click, told to the view before the navigation reaches its hook – the
+    // navigation it holds for the core's content-settings answer is re-issued under that
+    // policy (`TabWebView.holdForContentRules`, `ReferrerPolicyWord`). The top document's:
+    // the view holds main-frame navigations alone.
+    try {
+      installReferrerPolicyReporter(w, (word) => up({ type: 'referrerPolicy', ...word }))
+    } catch {
+      /* a document whose world lacks the observer keeps the default policy on its held hop */
+    }
   }
 
   // This script runs in the page's own world, so the WebAuthn observer installs directly.
