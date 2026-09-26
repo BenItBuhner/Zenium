@@ -209,7 +209,7 @@ describe('the star’s menu', () => {
     const menu = await f.starMenu(tab)
     expect(labels(menu)).toEqual([
       'Bookmark This Page',
-      'Add Tab to Reading List',
+      'Add to Reading List',
       '-',
       'Show Reading List'
     ])
@@ -220,14 +220,14 @@ describe('the star’s menu', () => {
       'row.readingListShow'
     ])
     expect(item(menu, 'Bookmark This Page').action).toBe('bookmark.add')
-    item(menu, 'Add Tab to Reading List').click!()
+    item(menu, 'Add to Reading List').click!()
     const [entry] = f.browser.readingList.list()
     expect(entry).toMatchObject({ url: URL, title: 'Long Read' })
     expect(entry.readAt).toBeUndefined()
     expect(f.browser.state.snapshot(f.win).readingList).toHaveLength(1)
   })
 
-  it('flips to Remove Tab from Reading List once the page is in it, and Remove Bookmark once starred', async () => {
+  it('flips to Remove from Reading List once the page is in it, and Remove Bookmark once starred', async () => {
     const f = fixture()
     const tab = f.open(URL)
     f.browser.readingList.add(URL, 'Long Read')
@@ -235,16 +235,37 @@ describe('the star’s menu', () => {
     const menu = await f.starMenu(tab)
     expect(labels(menu)).toEqual([
       'Remove Bookmark',
-      'Remove Tab from Reading List',
+      'Remove from Reading List',
       '-',
       'Show Reading List'
     ])
-    expect(item(menu, 'Remove Tab from Reading List').key).toBe('row.readingListRemove')
-    item(menu, 'Remove Tab from Reading List').click!()
+    expect(item(menu, 'Remove from Reading List').key).toBe('row.readingListRemove')
+    item(menu, 'Remove from Reading List').click!()
     expect(f.browser.readingList.list()).toEqual([])
     // The bookmark row is the app menu's toggle: Remove Bookmark takes the bookmark away.
     item(menu, 'Remove Bookmark').click!()
     expect(f.browser.bookmarks.has(URL)).toBe(false)
+  })
+
+  it('words both rows for the page (the lead’s C5 on #511) while the tab row and the app menu keep the tab’s', async () => {
+    const f = fixture()
+    const tab = f.open(URL, 'Long Read')
+    const readingRows = (): string[] =>
+      labels(item(item(f.appMenu(), 'Bookmarks').submenu!, 'Reading List').submenu!)
+    // Unlisted: the star says "Add to Reading List"; the tab row and Reading List ▸ say "Tab".
+    expect(labels(await f.starMenu(tab))[1]).toBe('Add to Reading List')
+    expect(labels(f.tabMenu(tab))).toContain('Add Tab to Reading List')
+    expect(readingRows()[0]).toBe('Add Tab to Reading List')
+    // Listed: the same three seats, the same one act, each in its subject's words.
+    item(await f.starMenu(tab), 'Add to Reading List').click!()
+    expect(labels(await f.starMenu(tab))[1]).toBe('Remove from Reading List')
+    expect(labels(f.tabMenu(tab))).toContain('Remove Tab from Reading List')
+    expect(readingRows()[0]).toBe('Remove Tab from Reading List')
+    // No star row ever carries the tab's wording, and the link row keeps its own subject.
+    for (const l of labels(await f.starMenu(tab))) expect(l).not.toMatch(/\bTab\b/)
+    expect(labels(f.linkMenu(tab, 'https://other.test/x', 'Other'))).toContain(
+      'Add Link to Reading List'
+    )
   })
 
   it('reads the bookmark row in the app menu’s words: one pair for the page across both menus', async () => {
@@ -263,7 +284,7 @@ describe('the star’s menu', () => {
     const f = fixture()
     const tab = f.open('zen://settings', 'Settings')
     const menu = await f.starMenu(tab)
-    expect(item(menu, 'Add Tab to Reading List').enabled).toBe(false)
+    expect(item(menu, 'Add to Reading List').enabled).toBe(false)
     item(menu, 'Show Reading List').click!()
     const urls = Object.values(f.browser.state.model.tabs).map((t) => t.url)
     expect(urls).toContain('zen://reading-list')
@@ -350,7 +371,7 @@ describe('one feedback rule for one action', () => {
   it('toasts "Added to reading list" from every add – the star’s, the tab’s, the link’s, the app menu’s, the command', async () => {
     const f = fixture()
     const tab = f.open(URL, 'Long Read')
-    item(await f.starMenu(tab), 'Add Tab to Reading List').click!()
+    item(await f.starMenu(tab), 'Add to Reading List').click!()
     expect(f.toasts()).toEqual(['Added to reading list'])
     // The link row's add is the same act from where the list cannot be seen: the same word.
     item(f.linkMenu(tab, 'https://other.test/x', 'Other'), 'Add Link to Reading List').click!()
@@ -369,7 +390,7 @@ describe('one feedback rule for one action', () => {
     const f = fixture()
     const tab = f.open(URL, 'Long Read')
     f.browser.readingList.add(URL, 'Long Read')
-    item(await f.starMenu(tab), 'Remove Tab from Reading List').click!()
+    item(await f.starMenu(tab), 'Remove from Reading List').click!()
     expect(f.toasts()).toEqual(['Removed from reading list'])
     // Nothing to remove: no toast – the row is not offered, and the command reports false.
     expect(f.browser.handleCommand(f.win, 'readingList.removeTab', { tabId: tab })).toBe(false)

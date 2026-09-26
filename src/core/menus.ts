@@ -208,6 +208,18 @@ export function bookmarkPageLabel(bookmarked: boolean): string {
 }
 
 /**
+ * The reading list's add/remove in the words of its subject (§9.1). The star's context menu is
+ * the page's control and reads "Add to Reading List" / "Remove from Reading List" beside the
+ * app menu's page verbs (the lead's C5 on #511); the tab row and the app menu's Reading List ▸
+ * keep Chrome's "Add Tab to Reading List" / "Remove Tab from Reading List", their subject being
+ * the tab. (The link row's "Add Link to Reading List" names its subject the same way.)
+ */
+export function readingListLabel(listed: boolean, subject: 'page' | 'tab'): string {
+  if (subject === 'page') return listed ? 'Remove from Reading List' : 'Add to Reading List'
+  return listed ? 'Remove Tab from Reading List' : 'Add Tab to Reading List'
+}
+
+/**
  * Context menus. Zen (Firefox) uses native-styled menus everywhere; the core builds the templates
  * and the host shows them – Electron as native popups (the only thing that can draw above the tab
  * views), Android inside the chrome as sheets / popovers.
@@ -1532,11 +1544,12 @@ export class Menus {
   /**
    * The star's menu (a right-click or the Menu key on the pill's star; Chrome M89's star menu
    * had these two): the bookmark row beside the reading list's – Add to Reading List, or Remove
-   * from Reading List once the page is in it – and the way to the list. The bookmark row is the
-   * app menu's (`bookmarkPageLabel`, the same toggle): the star is the page's control, so its
-   * menu says what the app menu says of the page (§9.1, one vocabulary); the star's own click
-   * keeps the bubble that names and files the bookmark. Keys: `row.bookmark`,
-   * `row.readingListAdd` / `row.readingListRemove`, `row.readingListShow`.
+   * from Reading List once the page is in it – and the way to the list. Both rows are the app
+   * menu's page verbs (`bookmarkPageLabel`, `readingListLabel(…, 'page')`; the same toggles):
+   * the star is the page's control, so its menu says what the app menu says of the page (§9.1,
+   * one vocabulary), where the tab row says "Tab"; the star's own click keeps the bubble that
+   * names and files the bookmark. Keys: `row.bookmark`, `row.readingListAdd` /
+   * `row.readingListRemove`, `row.readingListShow`.
    */
   starItems(tab: Tab, win: ZenWindow): Template {
     return [
@@ -1547,7 +1560,7 @@ export class Menus {
         enabled: this.browser.bookmarkable(tab.url),
         click: () => this.browser.toggleBookmark(tab.id, win)
       },
-      this.readingListTabItem(tab, win),
+      this.readingListTabItem(tab, win, 'page'),
       { type: 'separator' },
       this.showReadingListItem(win)
     ]
@@ -1556,20 +1569,21 @@ export class Menus {
   /**
    * "Add Tab to Reading List" for the tab's page – or "Remove Tab from Reading List" once the
    * page is in the list (bookmarks-33: Chrome's row flips the same way in its Bookmarks and
-   * lists ▸ Reading list ▸). Greyed for a page the list does not hold (`zen://`, a blank tab).
-   * Keys: `row.readingListAdd` / `row.readingListRemove`.
+   * lists ▸ Reading list ▸); in the star's menu the same row in the page's words, "Add to
+   * Reading List" / "Remove from Reading List" (`readingListLabel`). Greyed for a page the list
+   * does not hold (`zen://`, a blank tab). Keys: `row.readingListAdd` / `row.readingListRemove`.
    */
-  readingListTabItem(tab: Tab, win: ZenWindow): MenuItemTemplate {
+  readingListTabItem(tab: Tab, win: ZenWindow, subject: 'page' | 'tab' = 'tab'): MenuItemTemplate {
     const { readingList } = this.browser
     const listed = readingList.has(tab.url)
     return listed
       ? {
-          label: 'Remove Tab from Reading List',
+          label: readingListLabel(true, subject),
           key: 'row.readingListRemove',
           click: () => this.browser.removeTabFromReadingList(tab.id, win)
         }
       : {
-          label: 'Add Tab to Reading List',
+          label: readingListLabel(false, subject),
           key: 'row.readingListAdd',
           enabled: readingList.canAdd(tab.url),
           click: () => this.browser.addTabToReadingList(tab.id, win)

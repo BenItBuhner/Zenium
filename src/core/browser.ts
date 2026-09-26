@@ -1948,9 +1948,10 @@ export class Browser {
   }
 
   /**
-   * The tab's page out of the list (the Remove Tab from Reading List row of the star's, the
-   * tab's and the app menu's): the toast is the add's other half, since from a menu the user
-   * cannot see the entry go. The page's own rows say nothing – the row leaves in view.
+   * The tab's page out of the list (the star's Remove from Reading List row, the tab row's and
+   * the app menu's Remove Tab from Reading List): the toast is the add's other half, since from
+   * a menu the user cannot see the entry go. The page's own rows say nothing – the row leaves
+   * in view.
    */
   removeTabFromReadingList(tabId: string, win: ZenWindow = this.tabs.windowFor(tabId)): boolean {
     const tab = this.tabs.tab(tabId)
