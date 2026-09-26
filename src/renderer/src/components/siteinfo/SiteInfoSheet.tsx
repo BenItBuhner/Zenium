@@ -651,14 +651,23 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
   // (`showsBackgroundVideoRow`), and kept for the life of the sheet once earned – turning it
   // off on a page without video takes the stored answer away, and the row must not leave under
   // the finger that did it (Chrome's page info keeps a row through its reset until the bubble
-  // closes). The sheet is keyed by the tab, so the hold ends with it.
+  // closes). The hold is the ORIGIN's, not the tab's: the sheet stays up through a same-tab
+  // navigation, and a page of another origin under it has to earn the row itself – the hold
+  // drops the moment the origin under the sheet changes. Only a reading OF the site under the
+  // sheet can earn it: the last origin's reading stays up while the new one is read.
   const media = mediaOf(state, tab.id)
   const earnsBackgroundVideo =
-    info !== null && showsBackgroundVideoRow(info.permissions, media, state.platform)
-  const [backgroundVideoEarned, setBackgroundVideoEarned] = useState(false)
-  // Stored from the render that earned it (React's "adjusting state while rendering").
-  if (earnsBackgroundVideo && !backgroundVideoEarned) setBackgroundVideoEarned(true)
-  const backgroundVideo = earnsBackgroundVideo || backgroundVideoEarned
+    info !== null &&
+    info.origin === site.origin &&
+    showsBackgroundVideoRow(info.permissions, media, state.platform)
+  const [backgroundVideoOrigin, setBackgroundVideoOrigin] = useState<string | null>(null)
+  // The origin the hold names after this render: the site's while it earns or keeps the row,
+  // none once another origin is under the sheet. Stored from the render that decides it
+  // (React's "adjusting state while rendering"); the same value twice is no store.
+  const heldOrigin =
+    earnsBackgroundVideo || backgroundVideoOrigin === site.origin ? site.origin : null
+  if (heldOrigin !== backgroundVideoOrigin) setBackgroundVideoOrigin(heldOrigin)
+  const backgroundVideo = heldOrigin !== null
   // The chassis measures its detents again when this changes: a level, the reading arriving,
   // the pill's rows changing under it, or the Background video row arriving.
   const contentKey = `${tab.id}:${level}:${info ? 'ready' : 'reading'}:${allCookies ? 'all' : 'fold'}:${pillChips.length}:${lockMasking ? 'masked' : ''}:${backgroundVideo ? 'video' : ''}`

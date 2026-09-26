@@ -12,18 +12,24 @@ import { contentSetting } from '@shared/contentSettings'
  * earned by a stored `background-video` answer or a media session that reports video, on Android
  * alone (the catalogue's `support.desktop` is `n-a`); on writes `permissions.set allow`, off takes
  * the stored answer away with `permissions.forget`; the words under it are the catalogue's; and
- * a row once earned stays for the life of the sheet, so it never leaves under the finger.
+ * a row once earned stays while its origin is under the sheet, so it never leaves under the
+ * finger – the hold is the origin's, not the tab's: another origin navigated to under the open
+ * sheet has to earn the row itself, and only a reading of that origin can earn it.
  */
 
 const ORIGIN = 'https://clips.example'
+/** Another origin the same tab can be taken to under the open sheet. */
+const ELSEWHERE = 'https://elsewhere.example'
 
-function info(permissions: SitePermission[]): SiteInfo {
+/** The core's reading of the page at `url` (the site's origin as `describeSite` derives it). */
+function info(permissions: SitePermission[], url = `${ORIGIN}/watch`): SiteInfo {
+  const parsed = new URL(url)
   return {
     tabId: 't1',
-    url: `${ORIGIN}/watch`,
-    host: 'clips.example',
-    site: 'clips.example',
-    origin: ORIGIN,
+    url,
+    host: parsed.hostname,
+    site: parsed.hostname,
+    origin: parsed.origin,
     containerId: 'default',
     security: { state: 'secure', certificate: null, mixedContent: null },
     cookies: { items: [], thirdParty: [] },
@@ -36,14 +42,19 @@ function info(permissions: SitePermission[]): SiteInfo {
       serviceWorkers: null
     },
     permissions,
-    siteData: { state: 'default', pattern: null, addable: '[*.]clips.example', default: 'allow' }
+    siteData: {
+      state: 'default',
+      pattern: null,
+      addable: `[*.]${parsed.hostname}`,
+      default: 'allow'
+    }
   }
 }
 
 let reading: SiteInfo = info([])
-const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(async (name) =>
-  name === 'site.info' ? reading : null
-)
+/** The stand-in host: `site.info` answers with the reading of the moment, everything else with nothing. */
+const answer = async (name: string): Promise<unknown> => (name === 'site.info' ? reading : null)
+const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(answer)
 Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -166,15 +177,37 @@ async function settle(): Promise<void> {
   })
 }
 
+/**
+ * The browser state given as a phone's: the viewport re-derives itself from the window on
+ * every snapshot, and happy-dom's window is a desktop's, so the phone is set after each.
+ */
+function snapshot(state: UIState): void {
+  browserStore.set({ state })
+  viewportStore.set({ ...viewportStore.get(), coarse: true, hover: false, formFactor: 'phone' })
+}
+
 /** The sheet up for the page, its reading of the site in. */
 async function open(state: UIState): Promise<void> {
-  browserStore.set({ state })
-  // A phone, set after the browser state: the viewport re-derives itself from the window on
-  // every snapshot, and happy-dom's window is a desktop's.
-  viewportStore.set({ ...viewportStore.get(), coarse: true, hover: false, formFactor: 'phone' })
+  snapshot(state)
   uiStore.set({ siteInfoOpen: true })
   siteInfoStore.set({ tabId: 't1', anchor: null, revision: 0 })
   render(<SiteInfoLayer />)
+  await settle()
+  await settle()
+}
+
+/**
+ * The same tab taken to `url` under the open sheet, the way a page's navigation reaches the
+ * chrome: the core's next reading is of the new page, then the state carries the tab's new
+ * address (the sheet re-reads on it) and the tab's media as the new page reports it.
+ */
+async function navigate(
+  url: string,
+  permissions: SitePermission[],
+  media: MediaState[] = []
+): Promise<void> {
+  reading = info(permissions, url)
+  act(() => snapshot(stateWith('android', tab({ url }), media)))
   await settle()
   await settle()
 }
@@ -188,6 +221,7 @@ const SETTING = contentSetting('background-video')!
 
 beforeEach(() => {
   invoke.mockClear()
+  invoke.mockImplementation(answer)
   reading = info([])
   // happy-dom lays nothing out: the layer 800 tall, the sheet's content 300 – the chassis
   // measures its detents from these, and a sheet measuring nothing takes itself for dismissed.
@@ -284,6 +318,97 @@ describe('the phone sheet (siteinfo/SiteInfoSheet.tsx): the Background video row
       permission: 'background-video',
       decision: 'allow'
     })
+  })
+
+  it('keeps the row through a same-origin navigation once earned there, and drops it when another origin comes under the sheet unless that origin earns it', async () => {
+    // Earned on clips.example by its stored allow; the sheet stays up.
+    reading = info([{ permission: 'background-video', decision: 'allow' }])
+    await open(stateWith('android', tab(), []))
+    expect(row()).not.toBeNull()
+    // Turned off there: the answer forgotten, the row standing (the hold).
+    reading = info([])
+    click(row())
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('permissions.forget', {
+      origin: ORIGIN,
+      permission: 'background-video'
+    })
+    await settle()
+    await settle()
+    expect(row()).not.toBeNull()
+    // Another page of the same origin, nothing earning the row there either: it stays – the hold
+    // is the origin's for the life of the sheet.
+    await navigate(`${ORIGIN}/another-clip`, [])
+    expect(row()).not.toBeNull()
+    expect(row()!.getAttribute('aria-checked')).toBe('false')
+    // Another origin under the sheet, with no answer and no video: the hold does not carry; the
+    // row goes.
+    await navigate(`${ELSEWHERE}/page`, [])
+    expect(row()).toBeNull()
+    // A third origin with its own stored allow earns the row afresh, reading that origin's answer
+    // – and a press writes that origin, not the one that earned the hold before.
+    await navigate('https://third.example/', [
+      { permission: 'background-video', decision: 'allow' }
+    ])
+    expect(row()).not.toBeNull()
+    expect(row()!.getAttribute('aria-checked')).toBe('true')
+    invoke.mockClear()
+    reading = info([], 'https://third.example/')
+    click(row())
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('permissions.forget', {
+      origin: 'https://third.example',
+      permission: 'background-video'
+    })
+  })
+
+  it('does not park the hold for an origin left behind: back on it with nothing earning the row, the row is absent until earned again', async () => {
+    // Earned on clips.example by its video alone.
+    await open(stateWith('android', tab(), VIDEO))
+    expect(row()).not.toBeNull()
+    // Elsewhere, nothing: the row goes.
+    await navigate(`${ELSEWHERE}/page`, [])
+    expect(row()).toBeNull()
+    // Back on clips.example with the video stopped and no answer: the earlier hold dropped with
+    // the origin change; nothing shows.
+    await navigate(`${ORIGIN}/watch`, [])
+    expect(row()).toBeNull()
+    // Its video playing again earns the row again.
+    await navigate(`${ORIGIN}/watch?t=2`, [], VIDEO)
+    expect(row()).not.toBeNull()
+    expect(row()!.getAttribute('aria-checked')).toBe('false')
+  })
+
+  it('lets only a reading of the site under the sheet earn the row: the last origin’s reading, still up while the new page is read, earns nothing for the new origin', async () => {
+    // clips.example earned by its stored allow.
+    reading = info([{ permission: 'background-video', decision: 'allow' }])
+    await open(stateWith('android', tab(), []))
+    expect(row()).not.toBeNull()
+    // The tab moves to another origin, but the core's reading of it never lands: the sheet holds
+    // the last reading (clips.example's allow) with the new address under it.
+    const pending: { release: (() => void) | null } = { release: null }
+    invoke.mockImplementation(
+      (name) =>
+        new Promise((resolve) => {
+          if (name !== 'site.info') {
+            resolve(null)
+            return
+          }
+          pending.release = () => resolve(info([], `${ELSEWHERE}/page`))
+        })
+    )
+    act(() => snapshot(stateWith('android', tab({ url: `${ELSEWHERE}/page` }), [])))
+    await settle()
+    await settle()
+    // The stale reading earns nothing for elsewhere.example: no row.
+    expect(row()).toBeNull()
+    expect(pending.release).not.toBeNull()
+    // The new page's reading lands, with nothing in it: still no row.
+    act(() => pending.release?.())
+    await settle()
+    await settle()
+    expect(row()).toBeNull()
+    invoke.mockImplementation(async (name) => (name === 'site.info' ? reading : null))
   })
 
   it('is absent on a page with no video and no stored answer', async () => {
