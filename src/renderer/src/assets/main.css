@@ -10446,9 +10446,13 @@
  * paints, its New private tab follow-up the note's own secondary button (§9.17: 16 beneath, 88
  * minimum at 40), which `.zen-overview .zen-v2-button` above already reads to the window fill –
  * never a message card (§9.34). One rule for both panes, the Groups pane's selector last where
- * its test pins it.
+ * its test pins it. The Tabs pane at none (TAB-34, `TabsEmpty`; `.zen-overview-tabs-empty`) is
+ * the same note under the same two rules – "No open tabs" with New tab as its follow-up – in
+ * place of the grid inside the Space's slot; it comes up on the 120 ms fade a state change in
+ * place takes (§11.4), which reduced motion keeps (§11.3), as the panes' own entrance does.
  */
 .zen-overview-private-empty,
+.zen-overview-tabs-empty,
 .zen-overview-groups {
   --v2-text: var(--v2-control-text);
   --v2-text-deemphasized: var(--v2-control-text-deemphasized);
@@ -10479,8 +10483,17 @@
   line-height: var(--v2-line-body);
 }
 .zen-overview-private-empty > .zen-phone-empty,
+.zen-overview-tabs-empty > .zen-phone-empty,
 .zen-overview-groups > .zen-phone-empty {
   padding-top: 48px;
+}
+.zen-overview-tabs-empty {
+  animation: zen-fade 120ms var(--zen-ease);
+}
+@media (prefers-reduced-motion: reduce) {
+  .zen-overview-tabs-empty {
+    animation: zen-fade 120ms var(--zen-ease) !important;
+  }
 }
 
 /* The shared image radio card (§6, §10.4): a card that wears the 2 px accent outline when picked. */

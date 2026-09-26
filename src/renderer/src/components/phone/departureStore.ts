@@ -22,11 +22,16 @@ import { createStore } from '@renderer/lib/store'
  * that exit too is the grid's to release. A `flown` group's last card was swiped off the grid
  * and is out of sight already: the frame leaves as it stands, its slot empty, the count as it
  * read.
+ *
+ * The New Tab card also leaves `with` the cards of a close that empties the Tabs pane (TAB-34):
+ * §9.17's sentence takes the grid's place in the commit those tabs are gone, and the card leaves
+ * on that commit as they do – released by the browser's close, like a card's exit, and standing
+ * while a page among them is asked "Leave site?"; not the grid's to drop while the card is drawn.
  */
 export type Departure =
   | { key: string; kind: 'tab'; tab: Tab; rect: Rect; filtered?: true }
   | GroupDeparture
-  | { key: string; kind: 'new-tab'; isPrivate: boolean; rect: Rect }
+  | { key: string; kind: 'new-tab'; isPrivate: boolean; rect: Rect; with?: readonly string[] }
 
 /** A group's exit, its cards drawn inside it. */
 export interface GroupDeparture {

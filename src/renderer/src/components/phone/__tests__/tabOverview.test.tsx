@@ -1843,6 +1843,73 @@ describe('the New Tab card', () => {
     expect(departStore.get().items).toEqual([])
     expect(cellOf(NEW_TAB_CELL)).toBe(plus)
   })
+
+  /*
+   * The one close it leaves on: the last card's, which empties the pane (TAB-34). §9.17's
+   * sentence takes the grid's place in the commit the tab is gone, so the card leaves on that
+   * commit as the card does – in place, never a cut (v2 §11.4) – and its exit is the close's:
+   * it stands while the card is drawn and the close is in flight (a re-render drops it no more
+   * than it drops the card's), and is released with the card's.
+   */
+  it('leaves with the last card when its close empties the pane, on the commit the sentence takes the grid’s place (TAB-34)', () => {
+    place('a', 0, 0)
+    place(NEW_TAB_CELL, 110, 0)
+    render(stateOf([tab('a', 'https://a.example/')], []))
+    const plus = cellOf(NEW_TAB_CELL)
+    const close = cellOf('a').querySelector<HTMLElement>('[aria-label^="Close "]')!
+    act(() => close.click())
+    expect(commands()).toEqual([['tab.close', { tabId: 'a' }]])
+    expect(departStore.get().items).toMatchObject([
+      { key: 'a', kind: 'tab', rect: { x: 0, y: 0, width: 100, height: 130 } },
+      {
+        key: NEW_TAB_CELL,
+        kind: 'new-tab',
+        isPrivate: false,
+        with: ['a'],
+        rect: { x: 110, y: 0, width: 100, height: 130 }
+      }
+    ])
+    expect(departStore.get().released.size).toBe(0)
+    // The close is in flight: the grid stands with both cards, and a commit of its own (the
+    // sheet leaving, say) drops neither exit.
+    render(stateOf([tab('a', 'https://a.example/')], []))
+    expect(departStore.get().items.map((i) => i.key)).toEqual(['a', NEW_TAB_CELL])
+    expect(cellOf(NEW_TAB_CELL)).toBe(plus)
+    expect(host!.querySelector('[data-testid="overview-tabs-empty"]')).toBeNull()
+    // The browser shows the close: the sentence stands where the grid was, and both exits run
+    // from this commit, the New Tab card's ghost fading where the card stood.
+    render(stateOf([], []))
+    expect(host!.querySelector('.zen-overview-grid')).toBeNull()
+    expect(host!.querySelector('[data-testid="overview-tabs-empty"]')).not.toBeNull()
+    expect(departStore.get().released.has('a')).toBe(true)
+    expect(departStore.get().released.has(NEW_TAB_CELL)).toBe(true)
+    const ghost = document.querySelector<HTMLElement>('.zen-overview-new.fixed')!
+    expect(ghost).not.toBeNull()
+    expect(ghost.style.left).toBe('110px')
+    act(() => settleSprings())
+    expect(departStore.get().items).toEqual([])
+    expect(document.querySelector('.zen-overview-new.fixed')).toBeNull()
+  })
+
+  it('stays when a close leaves another card on the pane, or a pinned card that only unloads', () => {
+    place('a', 0, 0)
+    place('b', 110, 0)
+    place(NEW_TAB_CELL, 0, 140)
+    render(stateOf([tab('a', 'https://a.example/'), tab('b', 'https://b.example/')], []))
+    act(() => cellOf('a').querySelector<HTMLElement>('[aria-label^="Close "]')!.click())
+    expect(departStore.get().items.map((i) => i.key)).toEqual(['a'])
+    act(() => clearDepartures())
+    invoke.mockClear()
+    // A pinned tab closes by unloading (the default): its card stays, and so does the New Tab card.
+    render(
+      stateOf(
+        [tab('p', 'https://pinned.example/', { pinned: true }), tab('b', 'https://b.example/')],
+        []
+      )
+    )
+    act(() => cellOf('b').querySelector<HTMLElement>('[aria-label^="Close "]')!.click())
+    expect(departStore.get().items.map((i) => i.key)).toEqual(['b'])
+  })
 })
 
 // --- (E) reduced motion (v2 §11.3) ---------------------------------------------------------------
@@ -2757,6 +2824,118 @@ describe('the private pane', () => {
       expect(fades).toEqual([])
     } finally {
       restore()
+    }
+  })
+})
+
+// --- (H) the Tabs pane with nothing on it (TAB-34) -----------------------------------------------
+
+/*
+ * The Tabs pane at none is the Private pane's chassis (TAB-03) with this pane's words: §9.17's
+ * one sentence, "No open tabs", on the phone panels' note in place of the grid – no card, not
+ * the New Tab card – with New tab as its one follow-up, the note's secondary button (sentence
+ * case, §9.1). Chrome's grid at none says the same. It stands inside the Space's slot, so a Space
+ * with no tab slides in as a grid would (MOT-05), and comes up on the 120 ms fade a state change
+ * in place takes (§11.4), kept under reduced motion (§11.3). One tab of any kind is a card.
+ */
+describe('the Tabs pane with no tab', () => {
+  const countShown = (): string =>
+    host!.querySelector<HTMLElement>('[data-testid="overview-count"]')!.textContent!
+  const note = (): HTMLElement | null =>
+    host!.querySelector<HTMLElement>('[data-testid="overview-tabs-empty"]')
+  const cellKeys = (): string[] => [...collectCells(grid()).keys()]
+  /** The `zen-new-tab` requests the overview makes while `during` runs: their details. */
+  const newTabRequests = (during: () => void): unknown[] => {
+    const asked: unknown[] = []
+    const hear = (e: Event): void => {
+      asked.push((e as CustomEvent).detail)
+    }
+    window.addEventListener('zen-new-tab', hear)
+    during()
+    window.removeEventListener('zen-new-tab', hear)
+    return asked
+  }
+
+  it('is §9.17’s sentence with New tab as its one follow-up, in place of the grid and its New Tab card', () => {
+    render(stateOf([], []))
+    expect(host!.querySelector('.zen-overview-grid')).toBeNull()
+    expect(host!.querySelector('.zen-overview-new')).toBeNull()
+    const empty = note()!
+    expect(empty).not.toBeNull()
+    expect(empty.classList.contains('zen-overview-tabs-empty')).toBe(true)
+    expect(empty.dataset.pane).toBe('tabs')
+    // The Private pane's note, word for word its form: the sentence in a paragraph, no title,
+    // no glyph, no message card; nothing but it and its follow-up.
+    const sentence = empty.querySelector<HTMLElement>(':scope > .zen-phone-empty')!
+    expect(sentence).not.toBeNull()
+    expect(sentence.querySelector('p')!.textContent).toBe('No open tabs')
+    expect(empty.querySelector('h2')).toBeNull()
+    expect(empty.querySelector('svg')).toBeNull()
+    expect(empty.querySelector('[data-surface="page"]')).toBeNull()
+    expect(empty.textContent).toBe('No open tabsNew tab')
+    expect(countShown()).toBe('0 tabs')
+    // Inside the Space's slot, where the grid stands (MOT-05).
+    expect(empty.parentElement!.classList.contains('zen-overview-space')).toBe(true)
+    // The follow-up is the note's secondary button (§9.17: never primary), a button in sentence
+    // case, and asks the pane's own new tab – a regular one, no container.
+    const buttons = Array.from(empty.querySelectorAll<HTMLElement>('button'))
+    expect(buttons).toHaveLength(1)
+    const button = buttons[0]!
+    expect(button.classList.contains('zen-v2-button')).toBe(true)
+    expect(button.classList.contains('zen-phone-empty-action')).toBe(true)
+    expect(button.hasAttribute('data-primary')).toBe(false)
+    expect(button.textContent).toBe('New tab')
+    expect(newTabRequests(() => act(() => button.click()))).toEqual([{}])
+    expect(commands()).toEqual([])
+  })
+
+  it('one tab – a page or a blank one – is a card beside the New Tab card, and no sentence', () => {
+    render(stateOf([tab('a', 'https://a.example/')], []))
+    expect(note()).toBeNull()
+    expect(cellKeys()).toEqual(['a', NEW_TAB_CELL])
+    render(stateOf([tab('n', BLANK_URL)], []))
+    expect(note()).toBeNull()
+    expect(cellKeys()).toEqual(['n', NEW_TAB_CELL])
+    // The last tab gone: the sentence; a tab opened: the grid again.
+    render(stateOf([], []))
+    expect(note()).not.toBeNull()
+    render(stateOf([tab('a', 'https://a.example/')], []))
+    expect(note()).toBeNull()
+    expect(cellKeys()).toEqual(['a', NEW_TAB_CELL])
+  })
+
+  it('takes the Private pane’s two rules and comes up on the 120 ms fade, kept under reduced motion (main.css)', () => {
+    const rules = rulesOf(readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8'))
+    // The window family's inks read to the note, one rule for the three panes…
+    const family = rules.find(
+      (r) => r.selectors.includes('.zen-overview-tabs-empty') && r.declarations.has('--v2-text')
+    )!
+    expect(family).toBeDefined()
+    expect(family.selectors).toContain('.zen-overview-private-empty')
+    expect(family.selectors).toContain('.zen-overview-groups')
+    expect(family.declarations.get('--v2-text')?.value).toBe('var(--v2-control-text)')
+    // …and the first line 48 under the segment, the same rule as theirs.
+    const top = rules.find((r) =>
+      r.selectors.includes('.zen-overview-tabs-empty > .zen-phone-empty')
+    )!
+    expect(top).toBeDefined()
+    expect(top.selectors).toContain('.zen-overview-private-empty > .zen-phone-empty')
+    expect(top.declarations.get('padding-top')?.value).toBe('48px')
+    // The fade in place (§11.4): opacity alone, 120 ms, written out again `!important` under
+    // reduced motion past the sheet's closing rule that removes every other animation (§11.3).
+    const own = rules.filter(
+      (r) => r.selectors.join() === '.zen-overview-tabs-empty' && r.declarations.has('animation')
+    )
+    expect(own.find((r) => !r.reduced)?.declarations.get('animation')).toEqual({
+      value: 'zen-fade 120ms var(--zen-ease)',
+      important: false
+    })
+    expect(own.find((r) => r.reduced)?.declarations.get('animation')).toEqual({
+      value: 'zen-fade 120ms var(--zen-ease)',
+      important: true
+    })
+    for (const rule of own) {
+      expect([...rule.declarations.keys()]).toEqual(['animation'])
     }
   })
 })
