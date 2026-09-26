@@ -177,6 +177,19 @@ function generate(count: number): { rules: Rule[]; domainRefs: number; lists: nu
     hostsAt = 0
     requestDomains[0] = 1
   }
+  // A rule with neither a urlFilter nor requestDomains keeps a positive scope (initiatorDomains),
+  // the mark taken from a rule that has a urlFilter so the census count holds – as the Kotlin
+  // generator does; without it such a rule matches every URL.
+  const urlFilterMarks = has['urlFilter']!
+  const initiatorMarks = has['initiatorDomains']!
+  let donor = 0
+  for (let k = 0; k < count; k++) {
+    if (urlFilterMarks[k] || requestDomains[k] || initiatorMarks[k]) continue
+    while (donor < count && !(initiatorMarks[donor] && urlFilterMarks[donor])) donor++
+    if (donor >= count) break
+    initiatorMarks[donor] = 0
+    initiatorMarks[k] = 1
+  }
   let megaLeft = MEGA_LISTS.length
   let nextFolded = 1_000_000
   const rules: Rule[] = []

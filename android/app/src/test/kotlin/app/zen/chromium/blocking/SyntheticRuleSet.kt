@@ -190,6 +190,20 @@ internal object SyntheticRuleSet {
             hostsAt = 0
             requestDomains[0] = true
         }
+        // A rule with neither a `urlFilter` nor `requestDomains` keeps a positive scope, as every
+        // real one does: `initiatorDomains` (the "everything from these sites" rules), the mark
+        // taken from a rule that has a `urlFilter` so the census count holds. Without it such a
+        // rule matches every URL – Chrome's semantics – and one catch-all decides the whole set.
+        val urlFilter = has.getValue("urlFilter")
+        val initiatorDomains = has.getValue("initiatorDomains")
+        var donor = 0
+        for (k in 0 until count) {
+            if (urlFilter[k] || requestDomains[k] || initiatorDomains[k]) continue
+            while (donor < count && !(initiatorDomains[donor] && urlFilter[donor])) donor++
+            if (donor >= count) break
+            initiatorDomains[donor] = false
+            initiatorDomains[k] = true
+        }
         var megaLeft = MEGA_LISTS
         var nextFolded = FOLDED_FROM
         for (k in 0 until count) {

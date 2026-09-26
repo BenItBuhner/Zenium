@@ -149,6 +149,7 @@ class RuleMemoryTest {
         val n = compiled.rules.size
         assertTrue(n > count * 9 / 10)
         out.append("read from the file: retained CompiledRules ${mb(retained)} = ${perRule(retained, n)} for $n rules\n")
+        out.append("decisions on the sample requests: ${decisions(sets!!)}\n")
 
         // --- Rules against index ---
         var rules: List<DnrRule>? = compiled.rules
