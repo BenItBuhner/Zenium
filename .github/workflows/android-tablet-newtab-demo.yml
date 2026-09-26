@@ -10,18 +10,23 @@ name: Android tablet new tab page demo
 # first tab, placed and loaded before READY, and its empty state ("Sites you visit often will
 # appear here") in light and dark; eight loopback sites visited off camera and a new tab from the
 # sidebar's row under a finger – the served page with the most visited tiles, in the page's DOM
-# and in the accessibility tree; a REAL HOLD on a tile raising the tablet's anchored menu with the
-# touch template's five rows (Open in New Tab · Open in Private Tab · Copy Link · a separator ·
-# Remove), Open in Private Tab opening the site in a private tab in front; the hold again and
-# Copy Link putting the tile's URL on the clipboard; the dark scheme in place, the page and the
-# menu in dark, Remove taking the tile off the page through the core's command down the same
-# bridge. The driver judges every step from the core's state, the chrome's DOM and the served
-# page's own DOM and fails the run when a claim does not hold; see TabletNewTabDemo.kt. On a
-# build whose host has no new tab page (main's tree before NTP-35) the same driver records the
-# cold start and the sidebar's New Tab row opening the URL bar bound to no tab (no tab is made):
-# the boot path's 'before'. The fresh tab's reveal on the tablet is the desktop's – the URL bar
-# in new-tab mode over the served page, the live view hidden under its cover until a back – and
-# the driver reads it as a claim and puts the bar away before it reads the tree or holds a tile.
+# and in the accessibility tree, every tile's icon the real one (`zen://favicon/<hash>` answered
+# on the served view from the chrome's favicon store) and the page at the coarse pointer's
+# numbers (the field 56, Customise 40, a tile 64); a REAL HOLD on a tile raising the tablet's
+# anchored menu with the touch template's five rows (Open in New Tab · Open in Private Tab ·
+# Copy Link · a separator · Remove) hung from the tile's box – start-aligned, flush under it –
+# not from the finger, Open in Private Tab opening the site in a private tab in front; the hold
+# again and Copy Link putting the tile's URL on the clipboard; the dark scheme in place, the page
+# and the menu in dark, Remove taking the tile off the page through the core's command down the
+# same bridge. The driver judges every step from the core's state, the chrome's DOM and the
+# served page's own DOM and fails the run when a claim does not hold; see TabletNewTabDemo.kt.
+# On a build whose host has no new tab page (main's tree before NTP-35) the same driver records
+# the cold start and the sidebar's New Tab row opening the URL bar bound to no tab (no tab is
+# made): the boot path's 'before'. On the tablet the fresh tab and the row's new tab come up
+# BARE – the served page in view, its own field at rest, no URL bar over a cover, no keyboard –
+# and a real tap on the page's field hands off to the pill's omnibox popup (over the tab's cover
+# picture on this chassis); the driver claims both and puts the popup away with a back before it
+# reads the tree or holds a tile.
 #
 # The engine, as the tablet private mode demo: Open in Private Tab runs on a WebView profile of
 # its own, which needs WebViewFeature.MULTI_PROFILE, and the API 34 images' WebView 113 does not
