@@ -21,10 +21,12 @@ class NotificationsTest {
 
     /**
      * The ids the posters carried as their own literals before the registry (`DownloadNotifications`,
-     * `MediaSessions`, `CaptureLedger`, `UpdateNotifications`, `PrivateSession`, `SharingChannel`,
-     * `SitesChannels`, `WebAppChannels`, `ExtensionNotifications`), spelled out here as literals
-     * so that a rename fails this test: Android keeps the user's per-channel settings by id, and a
-     * renamed id would orphan them. The two new ids are the Browser channel and the General group.
+     * `MediaSessions`, `CaptureLedger`, `UpdateNotifications`, `PrivateSession`, `SitesChannels`,
+     * `WebAppChannels`, `ExtensionNotifications`), spelled out here as literals so that a rename
+     * fails this test: Android keeps the user's per-channel settings by id, and a renamed id would
+     * orphan them. The one exception is the Sharing channel, re-made under a new id so it could go
+     * high ([theLegacySharingIdIsDeletedOnUpgradeAndNeverReused]); the two new ids besides it are
+     * the Browser channel and the General group.
      */
     @Test
     fun theIdsAreTheOnesThePostersUsedBeforeTheRegistry() {
@@ -34,7 +36,6 @@ class NotificationsTest {
         assertEquals("zenium.capture", Notifications.CAPTURE.id)
         assertEquals("zenium.updates", Notifications.UPDATES.id)
         assertEquals("zenium.private", Notifications.PRIVATE.id)
-        assertEquals("zenium.sharing", Notifications.SHARING.id)
         assertEquals("zenium.sites", Notifications.SITES.id)
         assertEquals("zenium.site:", Notifications.SITE_PREFIX)
         assertEquals("zenium.site:https://a.example;1700000000000", Notifications.site("https://a.example", 1_700_000_000_000L).id)
@@ -46,6 +47,33 @@ class NotificationsTest {
         // New with the registry.
         assertEquals("zenium.browser", Notifications.BROWSER.id)
         assertEquals("zenium.general", Notifications.GENERAL.id)
+        assertEquals("zenium.sharing.tabs", Notifications.SHARING.id)
+    }
+
+    /**
+     * The Sharing channel went from the default importance to Chrome's high (a sent tab is
+     * something the user is waiting to see), and Android never raises an existing channel's
+     * importance – so the channel is re-made under a new id and the old `zenium.sharing` is in the
+     * registry's legacy list, deleted at the first registration in a process, as Chrome deletes its
+     * `LEGACY_CHANNEL_IDS`. A deleted id must never be given out again (Android un-deletes it with
+     * its old settings), so the old literal may appear in the registry alone: no poster, no test
+     * helper, no driver builds on it.
+     */
+    @Test
+    fun theLegacySharingIdIsDeletedOnUpgradeAndNeverReused() {
+        assertEquals(listOf("zenium.sharing"), Notifications.legacy)
+        assertEquals(NotificationManager.IMPORTANCE_HIGH, Notifications.SHARING.importance)
+        val current = Notifications.fixed.map { it.id } + Notifications.groups.map { it.id }
+        for (id in Notifications.legacy) assertFalse(id, id in current)
+        val root = repoRoot()
+        val sources = File(root, "android/app/src").walkTopDown().filter { it.isFile && it.extension == "kt" && it.name != "NotificationsTest.kt" }.toList()
+        assertTrue(sources.size > 50)
+        for (file in sources) {
+            val code = file.readText().replace(Regex("""/\*[\s\S]*?\*/"""), "").lines().filterNot { it.trim().startsWith("//") }.joinToString("\n")
+            for (id in Notifications.legacy) {
+                if (file.name != "Notifications.kt") assertFalse("${file.name} carries the deleted channel id $id", code.contains("\"$id\""))
+            }
+        }
     }
 
     @Test
@@ -57,8 +85,10 @@ class NotificationsTest {
         assertEquals(channelIds.size, channelIds.toSet().size)
         val groupIds = Notifications.groups.map { it.id } + Notifications.webAppGroupId(sketch.shortcutId)
         assertEquals(groupIds.size, groupIds.toSet().size)
-        // A group's id is never a channel's, and no fixed channel sits under a dynamic family's prefix.
+        // A group's id is never a channel's, a legacy id is neither, and no fixed channel sits under a dynamic family's prefix.
         assertTrue((channelIds.toSet() intersect groupIds.toSet()).isEmpty())
+        val everyId = channelIds + groupIds + Notifications.legacy
+        assertEquals(everyId.size, everyId.toSet().size)
         for (channel in Notifications.fixed) {
             assertFalse(channel.id, channel.id.startsWith(Notifications.SITE_PREFIX))
             assertFalse(channel.id, channel.id.startsWith(Notifications.WEBAPP_PREFIX))
@@ -135,8 +165,8 @@ class NotificationsTest {
      * (low), Active downloads (low), Completed downloads (low, badged), Incognito → Private
      * browsing (low), Playing media (low), Camera and microphone use (low), Updates (Chrome high;
      * Zenium's stays low – a silent reminder, and Android never raises an existing channel),
-     * Sharing (Chrome high; Zenium's stays default for the same reason). Chrome shows a badge
-     * only for completed downloads and announcements.
+     * Sharing (high, Chrome's – a sent tab must arrive as a heads-up; the channel was re-made
+     * under a new id for it). Chrome shows a badge only for completed downloads and announcements.
      */
     @Test
     fun theNamesAndImportancesAreChromesInZeniumsVoice() {
@@ -149,7 +179,7 @@ class NotificationsTest {
             Triple(Notifications.MEDIA, "Playing media", low),
             Triple(Notifications.CAPTURE, "Camera and microphone use", low),
             Triple(Notifications.UPDATES, "Updates", low),
-            Triple(Notifications.SHARING, "Sharing", NotificationManager.IMPORTANCE_DEFAULT)
+            Triple(Notifications.SHARING, "Sharing", NotificationManager.IMPORTANCE_HIGH)
         )
         assertEquals(Notifications.fixed, table.map { it.first })
         for ((channel, name, importance) in table) {

@@ -424,7 +424,7 @@ class SyncHistoryDemo : SyncDemoBase("sync-demo-state.json", "services-sync-hist
      * (`<thisDevice>.inbox.<sendId>.zenpage`), Sync now with a finger on Settings › Sync, and the
      * claims – the document consumed (gone from the tree), NO tab opened by the sync itself, the
      * card on the shade under the Sharing channel (`dumpsys notification`, the app's package and
-     * `zenium.sharing` and the title in one record).
+     * the channel's id (`Notifications.SHARING.id`) and the title in one record).
      */
     private fun inboxArrives(sendId: String, url: String, title: String): Arrival {
         val myId = syncStatus().getString("deviceId")
