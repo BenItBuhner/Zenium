@@ -148,6 +148,13 @@ export interface AndroidCapabilityInputs {
    * default profile, so none is offered. Absent from an older boot payload: taken as supported.
    */
   profiles?: boolean
+  /**
+   * The device booted in the tablet class (`ScreenClass.large`: smallest width sw600dp and up,
+   * the class Chrome for Android gates its layouts on). The tablet's new tab is the served
+   * `zen://newtab` page (NTP-35); the phone keeps its chrome-drawn new tab over `zen://blank`.
+   * Absent from an older boot payload: the phone's shape.
+   */
+  largeScreen?: boolean
 }
 
 /** What the Android host can do for the chrome; a few points depend on the OS release. */
@@ -155,7 +162,8 @@ export function androidCapabilities({
   sdkInt,
   extensions,
   isolatedWorlds,
-  profiles = true
+  profiles = true,
+  largeScreen = false
 }: AndroidCapabilityInputs): HostCapabilities {
   return {
     windowControls: false,
@@ -203,8 +211,10 @@ export function androidCapabilities({
     secureDns: false,
     quitsThroughCore: false,
     lookalikeHolds: false,
-    // The WebView has no preload bridge for `zen://newtab` yet; new tabs stay URL-bar-only.
-    newTabPage: false,
+    // The tablet's new tab is the served `zen://newtab` document, its state and actions carried
+    // over the page script's bridge (`pageScript.ts`, `views.ts`). The phone's new tab stays the
+    // chrome-drawn page over `zen://blank`: its value is unchanged, so is its start path.
+    newTabPage: largeScreen,
     pageTabs: true,
     pinShortcuts: false,
     translate: true,
@@ -1431,7 +1441,8 @@ export class AndroidPlatform implements Platform {
         sdkInt: boot.sdkInt,
         extensions: this.extensionsRoot !== null,
         isolatedWorlds: boot.isolatedWorlds === true,
-        profiles: boot.profiles
+        profiles: boot.profiles,
+        largeScreen: boot.environment?.largeScreen === true
       }),
       pinShortcuts: boot.pinShortcuts === true,
       voiceSearch: boot.voiceSearch === true,

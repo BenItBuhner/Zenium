@@ -1,6 +1,8 @@
 import { installPageScript, type PageScriptFlags, type WebAppHostMessage } from '@shared/pageScript'
 import type { PageHint } from '@shared/fullscreenHint'
-import type { PageRules } from '@shared/types'
+import type { NewTabPageCommand, NewTabPageState, PageRules } from '@shared/types'
+import { installNewTabPage } from '@shared/newTabPageScript'
+import { isNewTabUrl } from '@shared/url'
 import { installFormsScript } from '@shared/formsScript'
 import { installPasskeyObserver } from '@shared/passkeyObserver'
 import type { FormsCommand } from '@shared/forms'
@@ -175,6 +177,8 @@ function installGuards(
   let onHint: ((hint: PageHint | null) => void) | null = null
   let onShareResult: ((id: string, result: ShareOutcome) => void) | null = null
   let onTextFragment: ((message: TextFragmentHostMessage) => void) | null = null
+  let onNewTabState: ((state: NewTabPageState) => void) | null = null
+  let onNewTabCommand: ((command: NewTabPageCommand) => void) | null = null
   // The extension runtime's observer of the page's fetch / XHR responses (`requestObserver.ts`,
   // blocking-rule-interface.md 7.10): laid over `fetch` and `XMLHttpRequest` only once the host
   // says a response-stage `webRequest` listener exists (`extObserve`: the hello reply carries
@@ -200,8 +204,14 @@ function installGuards(
         hint?: PageHint | null
         result?: string
         edge?: string
+        state?: NewTabPageState
       }
       if (data.type === 'flags' && data.flags) onFlags?.(data.flags)
+      // `zen://newtab`'s state and commands (NTP-35; `views.ts` `sendNewTabState` /
+      // `sendNewTabCommand`), heard only where the page installed (below).
+      else if (data.type === 'newtab-state' && data.state) onNewTabState?.(data.state)
+      else if (data.type === 'newtab-command' && data.command)
+        onNewTabCommand?.(data.command as unknown as NewTabPageCommand)
       else if (data.type === 'zap') onZap?.(Boolean(data.on))
       else if (data.type === 'extObserve') {
         if (data.on) {
@@ -439,6 +449,29 @@ function installGuards(
       })
     } catch {
       /* a page without a body yet, or one that sealed `document`: no link to its text */
+    }
+    // The new tab page (NTP-35): the document the core served as `zen://newtab` (the tablet's
+    // new tab; `views.ts` `loadURL`) is filled by the shared page script over this bridge, the
+    // way the desktop's preload fills it over its IPC (`preload/page.ts`). Its actions ride up
+    // as `{ type: 'newtab', action }` (`views.ts` routes them to `onNewTabAction`); the state
+    // and the tile menu's commands come down through `onmessage` above. No state is known before
+    // the first paint here (the desktop fetches it synchronously): the page's `ready` action has
+    // the core push it at once.
+    if (isNewTabUrl(w.location.href)) {
+      try {
+        installNewTabPage({
+          initialState: () => null,
+          onState: (listener) => {
+            onNewTabState = listener
+          },
+          onCommand: (listener) => {
+            onNewTabCommand = listener
+          },
+          send: (action) => up({ type: 'newtab', action })
+        })
+      } catch {
+        /* the served document without its shell: the URL bar is the new tab */
+      }
     }
   }
 })()

@@ -1186,6 +1186,8 @@ class TabWebView(
 
     /** Long-press on links/images opens Zen's page menu; text selection stays native. */
     private fun onLongPress(): Boolean {
+        // The served new tab page's tiles hold their own menu (NTP-35): the renderer gets the gesture.
+        if (LinkHits.holdIsThePages(currentDocument)) return false
         val result = hitTestResult
         val density = resources.displayMetrics.density
         val anchorX = (left + lastTouchX) / density
