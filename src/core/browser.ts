@@ -153,6 +153,7 @@ import { sanitizeNewTabSettings } from '../shared/newTab'
 import { sanitizePhoneBar } from '../shared/phoneBar'
 import { sanitizeMenuOrder } from '../shared/menuOrder'
 import { sanitizeHomepage } from '../shared/homepage'
+import { effectiveStartup, sanitizeStartupSettings, type EffectiveStartup } from './startup'
 import { PRIVATE_THEME, captionColors, editedTheme, resolveTheme, rgbToHex } from '../shared/theme'
 import { newId } from '../shared/ids'
 import { sanitizeAppIcon } from '../shared/appIcon'
@@ -384,6 +385,11 @@ export class Browser {
   private startupWindowsPending = false
   /** `start({ restoreLastSession: true })`: the last session comes back over the setting. */
   private restoreLastSessionForced = false
+  /**
+   * The startup this launch follows (`startupPlan`), settled once in `start()` so the windows
+   * that open later (`startupWindowsPending`) do what the boot's forgetting of the session did.
+   */
+  private launchStartup: EffectiveStartup | null = null
 
   constructor(readonly platform: Platform) {
     this.state = new BrowserState(
@@ -1432,9 +1438,11 @@ export class Browser {
     // restored tabs' first requests and layouts carry the settings (CT-41, CT-25).
     this.languages.start()
     this.pageFonts.start()
-    // With "restore previous session" off, the last session's tabs are forgotten at once, whether
-    // or not a window opens now.
-    if (!this.restoreSessionAtStartup()) this.state.forgetSession()
+    // Unless the startup continues where the last session left off, its tabs are forgotten at
+    // once, whether or not a window opens now (the New Tab page, or the startup pages, come up
+    // in the one window kept – Settings › On startup).
+    this.launchStartup = this.startupPlan()
+    if (this.launchStartup.mode !== 'continue') this.state.forgetSession()
     if (options.windows === false) this.startupWindowsPending = true
     else this.openStartupWindows()
     // The host may have come up under another icon (a fresh install with a restored profile,
@@ -1460,16 +1468,18 @@ export class Browser {
   }
 
   /**
-   * The session's browser windows: Zen restores every synced window (and the space each one was
-   * in). With "restore previous session" off one window starts fresh. Either way no window comes
-   * up without a tab (`ensureFirstTab`): a first boot, or a restored window whose space has no
-   * tabs, opens on the new tab page, as Chrome never presents a normal window with none (the
-   * extensions that read `tabs.query({ active: true })[0]` at their first breath count on it).
-   * Returns the windows opened.
+   * The session's browser windows, as Settings › On startup says (`startupPlan`): "Continue
+   * where you left off" restores every synced window (and the space each one was in); the other
+   * two choices keep one window, which starts on the New Tab page or on the startup pages. Either
+   * way no window comes up without a tab (`ensureFirstTab`): a first boot, or a restored window
+   * whose space has no tabs, opens on the new tab page, as Chrome never presents a normal window
+   * with none (the extensions that read `tabs.query({ active: true })[0]` at their first breath
+   * count on it). Returns the windows opened.
    */
   private openStartupWindows(): ZenWindow[] {
     this.startupWindowsPending = false
-    const restoreSession = this.restoreSessionAtStartup()
+    const startup = this.launchStartup ?? this.startupPlan()
+    const restoreSession = startup.mode === 'continue'
     const restore =
       restoreSession && this.state.capabilities.windows
         ? this.state.restoredWindows
@@ -1480,7 +1490,9 @@ export class Browser {
     if (restore.length === 0) opened.push(this.createWindow({ kind: 'synced', empty: true }))
     for (const persisted of restore)
       opened.push(this.createWindow({ kind: 'synced', persisted, empty: true }))
-    if (!restoreSession) {
+    if (startup.mode === 'pages') {
+      this.openStartupPages(opened[0], startup.pages)
+    } else if (!restoreSession) {
       this.openFreshTab(opened[0])
     } else if (this.state.uncleanExit && this.state.platform !== 'android') {
       // The last run crashed (or was killed): its pages are offered, not loaded. Android ends
@@ -1491,9 +1503,37 @@ export class Browser {
     return opened
   }
 
-  /** "Restore previous session", or the launch's `--restore-last-session` over it. */
-  private restoreSessionAtStartup(): boolean {
-    return this.restoreLastSessionForced || this.state.settings.restoreSession
+  /**
+   * `win` comes up on the startup pages ("Open a specific page or set of pages", or an enabled
+   * extension's `startup_pages`): one tab per page in the list's order after any pinned tabs the
+   * profile kept, the first active and loading, the rest loading behind it under the governor's
+   * concurrency, as Chrome's `StartupBrowserCreator` opens them. Each tab is placed after the one
+   * before it, so the order holds whatever the new-tab position setting says.
+   */
+  private openStartupPages(win: ZenWindow, pages: readonly string[]): void {
+    let previous: Tab | null = null
+    for (const url of pages) {
+      previous = this.tabs.createTab(
+        { url, active: previous === null, afterTabId: previous?.id, joinGroup: false },
+        win
+      )
+    }
+  }
+
+  /**
+   * What this launch opens on (`effectiveStartup`): the launch's `--restore-last-session` over
+   * everything, as Chrome's switch overrides the startup setting; else an enabled extension's
+   * `startup_pages` over the user's own choice, when the host lets extensions hold it. A host
+   * without windows (the phone) knows two boots alone, the last session back or one fresh tab:
+   * `pages` reads as `continue` there – the boot a 0.4.x "Restore previous session" on gave it.
+   */
+  startupPlan(): EffectiveStartup {
+    if (this.restoreLastSessionForced) return { mode: 'continue', pages: [], control: null }
+    const windows = this.state.capabilities.windows
+    const override = windows ? (this.extensions.startupPagesOverride?.() ?? null) : null
+    const plan = effectiveStartup(this.state.settings, override)
+    if (plan.mode === 'pages' && !windows) return { mode: 'continue', pages: [], control: null }
+    return plan
   }
 
   // ---------------------------------------------------------------------------
@@ -3994,6 +4034,13 @@ export class Browser {
         s.homepage = sanitizeHomepage({
           ...s.homepage,
           ...(value as Partial<Settings['homepage']>)
+        })
+      } else if (key === 'startup' && value && typeof value === 'object') {
+        // A one-key patch (the mode choice) keeps the pages; the pages come back web addresses
+        // alone, each once, capped (`core/startup.ts`) – the list rows' edits included.
+        s.startup = sanitizeStartupSettings({
+          ...s.startup,
+          ...(value as Partial<Settings['startup']>)
         })
       } else if (key === 'passwords' && value && typeof value === 'object') {
         s.passwords = sanitizePasswordSettings({

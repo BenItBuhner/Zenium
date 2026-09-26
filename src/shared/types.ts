@@ -2123,9 +2123,10 @@ export interface ExtensionControl {
   /**
    * The extension's value, the one in effect: the disabled control shows it, as Chrome's
    * shows the preference's effective value (a family's name, a size in px, a toggle's state),
-   * over the user's own kept in the setting. Absent, the row keeps to the setting's value.
+   * over the user's own kept in the setting. Absent, the row keeps to the setting's value. A
+   * list for a setting that is one (an extension's `startup_pages`).
    */
-  value?: string | number | boolean
+  value?: string | number | boolean | string[]
 }
 
 export interface SearchEngine {
@@ -2422,6 +2423,21 @@ export interface TabDevtools {
   dock: DevtoolsDock
 }
 export type NewTabPosition = 'end' | 'after-current'
+/**
+ * Settings › On startup, Chrome's three choices: "Open the New Tab page", "Continue where you
+ * left off", "Open a specific page or set of pages".
+ */
+export type StartupMode = 'newTab' | 'continue' | 'pages'
+export interface StartupSettings {
+  mode: StartupMode
+  /**
+   * "Open a specific page or set of pages": the web (http(s)) addresses opened as the first
+   * window's tabs, in this order, the first active. Kept whatever `mode` says – Chrome keeps the
+   * list under the other two choices, so switching back finds it – deduplicated and capped at
+   * `MAX_STARTUP_PAGES` (`core/startup.ts`). An empty list under `pages` starts as `newTab`.
+   */
+  pages: string[]
+}
 /** Screen edge the phone layout docks its address bar to. */
 export type PhoneBarPosition = 'top' | 'bottom'
 /**
@@ -2784,7 +2800,13 @@ export interface Settings {
   containerSpecificEssentials: boolean
   essentialsMax: number
   newTabPosition: NewTabPosition
-  restoreSession: boolean
+  /**
+   * Chrome's Settings › On startup (settings-47): what the first window of a run opens on – the
+   * New Tab page, the last session's pages ("Continue where you left off"), or a fixed set of
+   * pages. Replaces the 0.4.x `restoreSession` switch, folded in on load (`applyPersisted`:
+   * true → `continue`, false → `newTab`). Sanitised by `core/startup.ts`.
+   */
+  startup: StartupSettings
   /** Ask before a window with more than one tab closes (Firefox's warning; Edge has the setting). */
   warnOnCloseWindow: boolean
   /**

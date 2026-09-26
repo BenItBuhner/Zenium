@@ -115,7 +115,7 @@ const only = (browser: Browser): ZenWindow => {
 describe('a window always has a tab from its creation (W5-F2)', () => {
   it('a first boot with "Restore previous session" on opens the window on one new tab page', () => {
     const browser = fresh()
-    expect(browser.state.settings.restoreSession).toBe(true)
+    expect(browser.state.settings.startup.mode).toBe('continue')
     browser.start()
     expect(browser.allWindows()).toHaveLength(1)
     expect(urls(browser)).toEqual([NEW_TAB_URL])
@@ -130,9 +130,9 @@ describe('a window always has a tab from its creation (W5-F2)', () => {
     expect(activeUrl(browser, only(browser))).toBe(NEW_TAB_URL)
   })
 
-  it('with the setting off one fresh tab, as before', () => {
+  it('with "Open the New Tab page" one fresh tab, as before', () => {
     const browser = fresh()
-    browser.state.settings.restoreSession = false
+    browser.state.settings.startup.mode = 'newTab'
     browser.start()
     expect(urls(browser)).toEqual([NEW_TAB_URL])
   })

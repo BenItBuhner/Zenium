@@ -105,6 +105,7 @@ import type { ZenWindow } from './window'
 import type { AgentHttpRequest, AgentHttpResponse } from './agent/http'
 import type { BackgroundWorkerHandle } from './background/work'
 import type { RuleSet } from './blocking/rules'
+import type { StartupOverride } from './startup'
 
 export interface PlatformInfo {
   os: PlatformOs
@@ -1943,6 +1944,13 @@ export interface ExtensionHost {
   setNewTabOverride(id: string, enabled: boolean): void
   /** The page new tabs open with while an enabled extension holds the override, else null. */
   newTabUrl(): string | null
+  /**
+   * An enabled extension's `chrome_settings_overrides.startup_pages` (the newest-installed of
+   * several, `resolveStartupOverride`), read from the registry alone so the boot – which opens
+   * its windows before the extensions load – can follow it; null while none holds the setting.
+   * Hosts without it (the phone) never let an extension set the startup.
+   */
+  startupPagesOverride?(): StartupOverride | null
   /** Chrome's "Allow in Incognito": whether the extension's request rules reach private windows. */
   setAllowPrivate(id: string, allowed: boolean): void
   /** Chrome's "Allow user scripts": whether `chrome.userScripts` works for the extension. */

@@ -830,6 +830,8 @@ describe('the section model', () => {
     const phone = section('tabs')
     expect(findRow(phone.groups, 'crash-restore')).toBeNull()
     expect(findRow(phone.groups, 'warn-close-window')).toBeNull()
+    // The phone's startup row is the switch it was (W6-3): the windowed hosts have On startup.
+    expect(findRow(phone.groups, 'restore-session')?.kind).toBe('switch')
 
     const c = context(state({ platform: 'linux', capabilities: { ...ANDROID, windows: true } }))
     const tabs = buildSection(
@@ -837,11 +839,8 @@ describe('the section model', () => {
       c.ctx
     )
     const ids = tabs.groups.find((g) => g.id === 'tabs')?.rows.map((r) => r.id) ?? []
-    expect(ids.slice(ids.indexOf('restore-session'))).toEqual([
-      'restore-session',
-      'crash-restore',
-      'warn-close-window'
-    ])
+    expect(findRow(tabs.groups, 'restore-session')).toBeNull()
+    expect(ids.slice(ids.indexOf('crash-restore'))).toEqual(['crash-restore', 'warn-close-window'])
     const crash = row(tabs, 'crash-restore')
     if (crash.kind !== 'value') throw new Error('not a value row')
     expect(crash.value).toBe(DEFAULT_SETTINGS.crashRestore)

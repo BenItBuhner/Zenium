@@ -74,9 +74,9 @@ export interface RowControl {
   /**
    * The extension's value, in effect over the user's own: the held row shows it in its
    * disabled control, as Chrome's Settings shows the preference's effective value. Absent,
-   * the row keeps to the setting's value.
+   * the row keeps to the setting's value. A list for a setting that is one (startup pages).
    */
-  value?: string | number | boolean
+  value?: string | number | boolean | string[]
   /** Disable the extension: the desktop indicator row's button (§10.5). */
   onDisable(): void
   /**

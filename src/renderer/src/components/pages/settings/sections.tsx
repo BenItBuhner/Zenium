@@ -151,6 +151,7 @@ import {
 } from '../../overlays/settingsCopy'
 import { ModelPickList, PickList } from '../../translate/pickers'
 import { fontsGroups } from './fonts'
+import { startupGroup } from './startup'
 import type { FontsDraft } from './fontsDraft'
 import {
   addLanguageRow,
@@ -1572,6 +1573,21 @@ function tabsSection({ state, tab, set }: SectionContext): RowGroup[] {
           onChange: (v) => set({ confirmCloseAll: v })
         }
       ]
+  // The startup on a host without windows: the phone's boot knows two – the last session back,
+  // or one fresh tab – so its row stays the switch it was (`startup.mode` underneath: on is
+  // "Continue where you left off", off "Open the New Tab page"; a synced `pages` reads as on,
+  // the boot it gets there). The windowed hosts have Settings › On startup (`startupGroup`).
+  const startupRows: SettingsRow[] = windows
+    ? []
+    : [
+        {
+          kind: 'switch',
+          id: 'restore-session',
+          label: 'Restore previous session on startup',
+          checked: s.startup.mode !== 'newTab',
+          onChange: (v) => set({ startup: { ...s.startup, mode: v ? 'continue' : 'newTab' } })
+        }
+      ]
   const groups: RowGroup[] = [
     {
       id: 'tabs',
@@ -1602,17 +1618,12 @@ function tabsSection({ state, tab, set }: SectionContext): RowGroup[] {
           onChange: (v) => set({ ctrlTabCyclesWithinSection: v })
         },
         ...overviewRows,
-        {
-          kind: 'switch',
-          id: 'restore-session',
-          label: 'Restore previous session on startup',
-          checked: s.restoreSession,
-          onChange: (v) => set({ restoreSession: v })
-        },
+        ...startupRows,
         ...sessionRows
       ]
     }
   ]
+  if (windows) groups.push(startupGroup({ state, set }))
   if (state.capabilities.windows) {
     groups.push({
       id: 'window-sync',
