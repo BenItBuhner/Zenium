@@ -19,11 +19,6 @@ name: Android cold start pair
 # correct, only that the two builds' cold starts measured within the gate on the recipe's
 # emulator. The build, the emulator and the Gradle cache live in android-emulator-demo.yml.
 on:
-  # TEMPORARY (W6-13): a push trigger for this branch's one pair – the agent's gh is read-only, so
-  # the dispatch cannot be sent; the base is pinned to the main tip this head contains. Reverted
-  # before review.
-  push:
-    branches: [cursor/android-eea-search-choice-9271]
   workflow_dispatch:
     inputs:
       base-ref:
@@ -63,7 +58,7 @@ concurrency:
 
 jobs:
   pair:
-    name: Cold start pair (before ${{ inputs.base-ref || '6af728c30b5ac99f5a5ba64873a8ae0b03d06f4a' }} / after this commit)
+    name: Cold start pair (before ${{ inputs.base-ref || 'main' }} / after this commit)
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-cold-start-pair.sh
@@ -71,7 +66,7 @@ jobs:
       # The base APK: the base ref in a worktree, its web build, then assembleDebug -PskipWeb as the
       # head's own step ran it. The labels are the two commits, for the table.
       script-env: |
-        P0_BASE_REF=${{ inputs.base-ref || '6af728c30b5ac99f5a5ba64873a8ae0b03d06f4a' }}
+        P0_BASE_REF=${{ inputs.base-ref || 'main' }}
         P0_BASE_APK=artifacts/cold-start-base/app-base.apk
         P0_RUNS=${{ inputs.runs || 15 }}
         P0_STARTS=${{ inputs.starts || 2 }}
