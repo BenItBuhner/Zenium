@@ -308,9 +308,10 @@ describe('the Home button (settings-32; Chrome’s HomeButton under "Show home b
       .slice(0, at)
       .filter((c): c is HTMLButtonElement => c.tagName === 'BUTTON')
     expect(before.map((b) => nameOf(b).split(' (')[0])).toEqual(['Back', 'Forward', 'Reload'])
-    expect(
-      children[at + 1]?.querySelector('[data-zen-url-pill]') ?? children[at + 1]
-    ).not.toBeNull()
+    // What follows is the address pill itself (the `group` named Address), nothing between.
+    const next = children[at + 1] as HTMLElement | undefined
+    expect(next?.getAttribute('role')).toBe('group')
+    expect(next?.getAttribute('aria-label')).toBe('Address')
     // Right-clicked it is a pinned control (W8-1's menu: Unpin, Customise Toolbar…).
     expect(home!.dataset.zenMenu).toBe('toolbar')
     expect(home!.dataset.zenMenuControl).toBe('home')

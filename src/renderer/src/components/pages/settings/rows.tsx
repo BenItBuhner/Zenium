@@ -1076,6 +1076,11 @@ function InlineField({
     setSeen(row.value)
     if (!editing) setValue(row.value)
   }
+  // Escape leaves the field through `blur()`, whose commit would otherwise run over the value
+  // this render's closure still holds – the text the key just put away – and, for a refused
+  // one, raise the error the key just cleared (the W8-3 drive's Address field: the row's value
+  // back in the field with `aria-invalid` still on it). The flag tells that one blur to leave.
+  const cancelling = useRef(false)
   const settle = (message: string | undefined): void => {
     setError(message ?? null)
     if (message) setEditing(true)
@@ -1121,7 +1126,10 @@ function InlineField({
           setValue(e.target.value)
           setError(null)
         }}
-        onBlur={commit}
+        onBlur={() => {
+          if (cancelling.current) return
+          commit()
+        }}
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
             e.preventDefault()
@@ -1132,7 +1140,10 @@ function InlineField({
             setValue(row.value)
             setError(null)
             setEditing(false)
+            // The blur is dispatched within `blur()` itself, so the flag is up for it alone.
+            cancelling.current = true
             e.currentTarget.blur()
+            cancelling.current = false
           }
         }}
       />
