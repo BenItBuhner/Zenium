@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import type { HostCapabilities, Platform as PlatformOs } from '../../../shared/types'
+import type {
+  HostCapabilities,
+  Platform as PlatformOs,
+  ReadingListEntry
+} from '../../../shared/types'
 import { DEFAULT_SETTINGS } from '../../../shared/defaults'
 import { DEFAULT_NEW_TAB_SETTINGS } from '../../../shared/newTab'
 import { matchKeywordWord } from '../../../shared/search'
@@ -12,9 +16,11 @@ import {
   SITE_DATA_RECORD_ID,
   collectLocal,
   defaultScope,
+  readingListEntryData,
   withoutDeviceLocalSettings,
   type SyncRecord
 } from '../records'
+import { READING_LIST_CAP } from '../../../shared/readingList'
 
 function memoryIo(files: Record<string, string> = {}): StoreIO {
   return {
@@ -573,5 +579,187 @@ describe("applyRemote: the agents' mark on space and folder records", () => {
     expect(group.agent).toEqual({ name: 'A', createdAt: 5 })
     expect(m.spaces.find((s) => s.id === 'space_odd')).not.toHaveProperty('agent')
     expect(m.folders.folder_odd).not.toHaveProperty('agent')
+  })
+})
+
+/** An entry as a device holds it, in the normal form's order; `readAt` only when read. */
+function rl(
+  id: string,
+  url: string,
+  addedAt: number,
+  extra: Partial<ReadingListEntry> = {}
+): ReadingListEntry {
+  const entry: ReadingListEntry = { id, url, title: `Page ${id}`, addedAt, updatedAt: addedAt }
+  if (extra.favicon) entry.favicon = extra.favicon
+  if (extra.readAt !== undefined) entry.readAt = extra.readAt
+  return entry
+}
+
+/** A peer's live `reading-list-entry` record for the entry (plus whatever its build appended). */
+function rlRecord(
+  entry: ReadingListEntry,
+  modified = 2000,
+  extra: Record<string, unknown> = {}
+): SyncRecord {
+  return {
+    id: entry.id,
+    type: 'reading-list-entry',
+    data: { ...readingListEntryData(entry), ...extra },
+    modified,
+    deleted: false
+  }
+}
+
+function rlTombstone(id: string, modified = 2000): SyncRecord {
+  return { id, type: 'reading-list-entry', data: null, modified, deleted: true }
+}
+
+describe('applyRemote: the reading list (services pass 11, ID-48)', () => {
+  it("a won live record lands under its id – this device's favicon kept, the peer's dropped – and a tombstone removes", () => {
+    const b = browser()
+    const mine = b.readingList.add('https://a.example/', 'A', 'data:fav-mine')
+    expect(mine).not.toBeNull()
+    const readOnPhone = mine!.addedAt + 5
+    applyRemote(b, [
+      rlRecord(
+        { ...mine!, title: 'A (read on the phone)', updatedAt: readOnPhone, readAt: readOnPhone },
+        2000,
+        { favicon: 'data:fav-phone', extra: 'a field of a later build' }
+      ),
+      rlRecord(rl('rl_new', 'https://n.example/', 10), 2000, { favicon: 'data:fav-phone' })
+    ])
+    // The peer's fields under the id, in the normal form's order, this device's favicon in its slot.
+    const landed = b.readingList.get(mine!.id)
+    expect(landed).toEqual({
+      id: mine!.id,
+      url: 'https://a.example/',
+      title: 'A (read on the phone)',
+      addedAt: mine!.addedAt,
+      updatedAt: readOnPhone,
+      favicon: 'data:fav-mine',
+      readAt: readOnPhone
+    })
+    expect(Object.keys(landed!)).toEqual([
+      'id',
+      'url',
+      'title',
+      'addedAt',
+      'updatedAt',
+      'favicon',
+      'readAt'
+    ])
+    // An entry this device never had lands without a favicon: the record carries none it keeps.
+    expect(b.readingList.get('rl_new')).toEqual(rl('rl_new', 'https://n.example/', 10))
+    expect('favicon' in b.readingList.get('rl_new')!).toBe(false)
+    expect(b.readingList.unreadCount).toBe(1)
+    expect(b.state.readingList.every((e) => !('extra' in e))).toBe(true)
+
+    // The tombstone takes the entry out; one for an id this device never held is nothing.
+    applyRemote(b, [rlTombstone('rl_new', 3000), rlTombstone('rl_unknown', 3000)])
+    expect(b.readingList.get('rl_new')).toBeNull()
+    expect(b.state.readingList.map((e) => e.id)).toEqual([mine!.id])
+
+    // What the peers get back is the entry without the favicon: the sanitiser is idempotent on
+    // it, so the landed record hashes as the peer sent it and the round stamps nothing.
+    const published = collectLocal(
+      {
+        model: b.state.model,
+        settings: b.state.settings,
+        shortcutOverrides: {},
+        bookmarks: [],
+        boosts: [],
+        readingList: b.state.readingList
+      },
+      defaultScope()
+    ).get(mine!.id)
+    expect(published).toEqual({
+      type: 'reading-list-entry',
+      data: {
+        id: mine!.id,
+        url: 'https://a.example/',
+        title: 'A (read on the phone)',
+        addedAt: mine!.addedAt,
+        updatedAt: readOnPhone,
+        readAt: readOnPhone
+      }
+    })
+  })
+
+  it('a record the sanitiser rejects – no web address, no data, a string, no addedAt – lands nothing', () => {
+    const b = browser()
+    applyRemote(b, [
+      rlRecord(rl('rl_zen', 'zen://settings', 10)),
+      rlRecord(rl('rl_file', 'file:///etc/hosts', 10)),
+      { id: 'rl_null', type: 'reading-list-entry', data: null, modified: 2000, deleted: false },
+      { id: 'rl_str', type: 'reading-list-entry', data: 'x', modified: 2000, deleted: false },
+      {
+        id: 'rl_noadd',
+        type: 'reading-list-entry',
+        data: { url: 'https://x.example/', title: 'X' },
+        modified: 2000,
+        deleted: false
+      },
+      // The record's id is the entry's, whatever the data says.
+      rlRecord(rl('rl_ok', 'https://ok.example/', 10), 2000, { id: 'rl_other' })
+    ])
+    expect(b.state.readingList.map((e) => e.id)).toEqual(['rl_ok'])
+  })
+
+  it('the URL dedupe both directions: the later addedAt survives, a tie the greater id, the loser out of the list', () => {
+    const b = browser()
+    b.state.readingList = [
+      rl('rl_local_old', 'https://one.example/', 100, { favicon: 'data:one' }),
+      rl('rl_local_new', 'https://two.example/', 300),
+      rl('rl_a', 'https://tie-a.example/', 500),
+      rl('rl_z', 'https://tie-z.example/', 500)
+    ]
+    applyRemote(b, [
+      // The peer's entry is the later one: it stays, the local one goes.
+      rlRecord(rl('rl_peer_new', 'https://one.example/', 200)),
+      // The local entry is the later one: the peer's never lands.
+      rlRecord(rl('rl_peer_old', 'https://two.example/', 200)),
+      // Ties: the lexically greater id, whichever side holds it.
+      rlRecord(rl('rl_b', 'https://tie-a.example/', 500)),
+      rlRecord(rl('rl_y', 'https://tie-z.example/', 500))
+    ])
+    expect(b.state.readingList.map((e) => e.id).sort()).toEqual([
+      'rl_b',
+      'rl_local_new',
+      'rl_peer_new',
+      'rl_z'
+    ])
+    // The survivor's bytes are the peer's, not a merge: nothing of the loser (its favicon) moves over.
+    expect(b.readingList.get('rl_peer_new')).toEqual(rl('rl_peer_new', 'https://one.example/', 200))
+    expect(b.readingList.findByUrl('https://one.example/')?.id).toBe('rl_peer_new')
+    expect(b.readingList.findByUrl('https://two.example/')?.id).toBe('rl_local_new')
+    expect(b.readingList.findByUrl('https://tie-a.example/')?.id).toBe('rl_b')
+    expect(b.readingList.findByUrl('https://tie-z.example/')?.id).toBe('rl_z')
+  })
+
+  it('the removals land before the entries: a page removed and saved again under a new id on a slower clock keeps the new entry', () => {
+    const b = browser()
+    b.state.readingList = [rl('rl_old', 'https://again.example/', 500)]
+    // The peer removed rl_old and saved the page anew as rl_new; its clock ran behind, so the
+    // new entry's addedAt is the earlier one. Were the entries applied first, rl_new would lose
+    // the URL dedupe to rl_old, whose tombstone then empties the list: the page lost everywhere.
+    applyRemote(b, [rlRecord(rl('rl_new', 'https://again.example/', 400)), rlTombstone('rl_old')])
+    expect(b.state.readingList).toEqual([rl('rl_new', 'https://again.example/', 400)])
+  })
+
+  it('the cap after apply: the list stays within READING_LIST_CAP, the oldest read entry dropping first', () => {
+    const b = browser()
+    const entries: ReadingListEntry[] = []
+    for (let i = 1; i <= READING_LIST_CAP; i++) {
+      const id = `rl_${String(i).padStart(4, '0')}`
+      entries.push(rl(id, `https://p${i}.example/`, 10_000 + i, i === 7 ? { readAt: 20_000 } : {}))
+    }
+    b.state.readingList = entries
+    applyRemote(b, [rlRecord(rl('rl_landed', 'https://landed.example/', 5))])
+    expect(b.state.readingList).toHaveLength(READING_LIST_CAP)
+    expect(b.readingList.get('rl_landed')).not.toBeNull()
+    // The one read entry went, however new; every unread one stayed, the landed one among them.
+    expect(b.readingList.get('rl_0007')).toBeNull()
+    expect(b.readingList.get('rl_0001')).not.toBeNull()
+    expect(b.readingList.unreadCount).toBe(READING_LIST_CAP)
   })
 })
