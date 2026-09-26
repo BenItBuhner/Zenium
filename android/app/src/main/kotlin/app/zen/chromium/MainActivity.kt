@@ -12,6 +12,7 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebView
@@ -487,6 +488,20 @@ class MainActivity : BrowserActivity() {
             return true
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    // --- mouse -----------------------------------------------------------------------------------
+
+    /**
+     * On Android 14 a mouse's button and wheel events are hit-tested at (x, x) by every
+     * ViewGroup on the way down (see [MouseRouting]); those events are routed here from the
+     * decor with the point read right, ahead of the framework's walk. Hover, touch and every
+     * other release go the framework's way, as before.
+     */
+    override fun dispatchGenericMotionEvent(ev: MotionEvent): Boolean {
+        if (!MouseRouting.misrouted(ev)) return super.dispatchGenericMotionEvent(ev)
+        val decor = window.decorView as? ViewGroup ?: return super.dispatchGenericMotionEvent(ev)
+        return MouseRouting.dispatch(decor, ev) || onGenericMotionEvent(ev)
     }
 
     // --- helpers for the core ---------------------------------------------------------------------

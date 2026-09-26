@@ -1769,10 +1769,14 @@ export function openZoom(tabId: string): void {
   uiStore.set({ zoomTabId: tabId, findOpen: false, findTabId: null, findRequest: null })
 }
 
-export function closeZoom(): void {
+/**
+ * Put the sheet away. Focus goes back to the page unless the caller keeps it in the chrome
+ * (`keepFocus`: the pill's zoom chip that closed it keeps the keyboard, §9.22).
+ */
+export function closeZoom(opts: { keepFocus?: boolean } = {}): void {
   if (!uiStore.get().zoomTabId) return
   uiStore.set({ zoomTabId: null })
-  returnFocusToPage()
+  if (!opts.keepFocus) returnFocusToPage()
 }
 
 // ---------------------------------------------------------------------------

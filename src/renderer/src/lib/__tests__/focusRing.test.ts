@@ -112,9 +112,10 @@ describe('the chrome focus ring (§1, a11y-10)', () => {
       expect(selector, 'reads the mark without :focus-visible beside it').toMatch(/:focus-visible/)
     }
     // The toolbar glyph's full ink under the keyboard (a11y-10: the ring is not drawn at the
-    // resting 85 %) lists the mark beside `:focus-visible` in its `:is()`.
+    // resting 85 %) lists the mark beside `:focus-visible` in its `:is()`; the hover branch is
+    // the same rule's second selector, gated on the root's live `data-hover` (OS-12).
     expect(css.replace(/\s+/g, ' ')).toContain(
-      ".zen-toolbar-button:is( :hover:not(:disabled), :focus-visible, [data-keyboard-focus]:focus, [aria-expanded='true'], :disabled, [data-disabled] ) > :is(svg:not(.zen-dl-ring), .zen-glyph-swap, .zen-dl-glyph-body) { opacity: 1; }"
+      ".zen-toolbar-button:is( :focus-visible, [data-keyboard-focus]:focus, [aria-expanded='true'], :disabled, [data-disabled] ) > :is(svg:not(.zen-dl-ring), .zen-glyph-swap, .zen-dl-glyph-body), :where(:root[data-hover='hover']) .zen-toolbar-button:hover:not(:disabled) > :is(svg:not(.zen-dl-ring), .zen-glyph-swap, .zen-dl-glyph-body) { opacity: 1; }"
     )
   })
 
