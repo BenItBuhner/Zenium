@@ -10,6 +10,9 @@ import type { MenuItemTemplate } from '../../../core/platform'
  * `menu.show` descriptor through `RendererMenuHost`, and a pick comes back by id. The macOS
  * menu bar is set from the same templates: at once, and again with the favicons its rows carry
  * once those the cache lacked are fetched (History › Recently Visited's, shortcuts-menus-157).
+ * On Windows and Linux every native template's labels carry an Alt mnemonic (`&`), chosen in
+ * `platform/menuMnemonics.ts` – the table has its own suite; here, that the marker reaches
+ * Electron and that macOS gets none.
  */
 
 interface FakeImage {
@@ -80,10 +83,21 @@ async function popup(items: MenuItemTemplate[]): Promise<Electron.MenuItemConstr
 const icon = (item: Electron.MenuItemConstructorOptions): FakeImage =>
   item.icon as unknown as FakeImage
 
+const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+/** The desktop the host believes it is on; the suites read as Linux unless they say otherwise. */
+const onPlatform = (value: NodeJS.Platform): void => {
+  Object.defineProperty(process, 'platform', { value, configurable: true })
+}
+
 beforeEach(() => {
   built.length = 0
   decoded.clear()
   remote.clear()
+  onPlatform('linux')
+})
+
+afterEach(() => {
+  if (platform) Object.defineProperty(process, 'platform', platform)
 })
 
 describe('the app menu is the renderer’s', () => {
@@ -142,11 +156,11 @@ describe('the app menu is the renderer’s', () => {
     expect(send).toHaveBeenCalledWith('menu.show', expect.objectContaining({ source: 'app' }))
   })
 
-  it('a context menu stays native', async () => {
+  it('a context menu stays native, its label carrying the row’s Alt mnemonic', async () => {
     const items = await popup([{ label: 'Reload', accelerator: 'Ctrl+R', hint: 'Ctrl+R' }])
     expect(items).toEqual([
       {
-        label: 'Reload',
+        label: '&Reload',
         enabled: undefined,
         type: 'normal',
         accelerator: 'Ctrl+R',
@@ -162,7 +176,54 @@ describe('the app menu is the renderer’s', () => {
     menus.popup([{ label: 'Options', click: vi.fn() }], { source: 'extension', win, x: 300, y: 44 })
     expect(send).not.toHaveBeenCalled()
     expect(built).toHaveLength(1)
-    expect(built[0][0]).toMatchObject({ label: 'Options' })
+    expect(built[0][0]).toMatchObject({ label: '&Options' })
+  })
+})
+
+describe('Alt mnemonics on the way to Electron (context-menus-118)', () => {
+  const template: MenuItemTemplate[] = [
+    { label: 'Back' },
+    { label: 'Forward' },
+    { type: 'separator' },
+    { label: 'Tom & Jerry', submenu: [{ label: 'Cut' }, { label: 'Copy' }] }
+  ]
+  const labels = (items: Electron.MenuItemConstructorOptions[]): (string | undefined)[] =>
+    items.map((item) => item.label)
+
+  it('Windows and Linux: one marked letter per row at every level, a literal & doubled', async () => {
+    for (const os of ['linux', 'win32'] as const) {
+      onPlatform(os)
+      const items = await popup(template)
+      expect(labels(items)).toEqual(['&Back', '&Forward', undefined, '&Tom && Jerry'])
+      expect(labels(items[3].submenu as Electron.MenuItemConstructorOptions[])).toEqual([
+        'Cu&t',
+        '&Copy'
+      ])
+    }
+  })
+
+  it('macOS: no marker – Electron’s Cocoa menus drop a lone & and read && as & – but the & is still doubled', async () => {
+    onPlatform('darwin')
+    const items = await popup(template)
+    expect(labels(items)).toEqual(['Back', 'Forward', undefined, 'Tom && Jerry'])
+    expect(labels(items[3].submenu as Electron.MenuItemConstructorOptions[])).toEqual([
+      'Cut',
+      'Copy'
+    ])
+  })
+
+  it('the macOS menu bar is escaped the same way and marked no more than the popups', () => {
+    onPlatform('darwin')
+    const menus = new ElectronMenus()
+    menus.setApplicationMenu!([
+      { label: 'File', submenu: [{ label: 'Save & Share' }, { label: 'Quit' }] }
+    ])
+    const [file] = built.at(-1)!
+    expect(file.label).toBe('File')
+    expect(labels(file.submenu as Electron.MenuItemConstructorOptions[])).toEqual([
+      'Save && Share',
+      'Quit'
+    ])
   })
 })
 
@@ -203,19 +264,14 @@ describe('native menu icons', () => {
 })
 
 describe('the macOS menu bar’s favicons (History › Recently Visited, shortcuts-menus-157)', () => {
-  const platform = Object.getOwnPropertyDescriptor(process, 'platform')
   let setApplicationMenu: ReturnType<typeof vi.fn>
 
   beforeEach(async () => {
-    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+    onPlatform('darwin')
     setApplicationMenu = (await import('electron')).Menu.setApplicationMenu as ReturnType<
       typeof vi.fn
     >
     setApplicationMenu.mockClear()
-  })
-
-  afterEach(() => {
-    if (platform) Object.defineProperty(process, 'platform', platform)
   })
 
   /** The fetches behind a set bar have landed. */
@@ -307,7 +363,7 @@ describe('the macOS menu bar’s favicons (History › Recently Visited, shortcu
   })
 
   it('exists on macOS alone: the other desktops have no menu bar to set', () => {
-    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
+    onPlatform('linux')
     expect(new ElectronMenus().setApplicationMenu).toBeUndefined()
   })
 })
