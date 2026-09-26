@@ -52,9 +52,10 @@
 //                tolerated ones on surfaces the chrome does not own), Ctrl+F (the field takes
 //                the keyboard, Escape closes the bar and hands it back to the page),
 //                Ctrl+plus/minus/0 with the zoom bubble, Ctrl+Shift+S's Web capture overlay
-//                over the page's picture (its toolbar, the chrome inert, the view hidden) and
-//                Escape taking it down whole, F11, Ctrl+N, Ctrl+Shift+N,
-//                Ctrl+H, Ctrl+Shift+O, Settings from the toolbar menu with its Layout card
+//                over the page's picture (its toolbar, the chrome inert, the view out of its
+//                box – parked in a corner or hidden) and Escape taking it down whole, F11,
+//                Ctrl+N, Ctrl+Shift+N, Ctrl+H, Ctrl+Shift+O, Settings from the toolbar menu
+//                with its Layout card
 //                flipping the rows into the horizontal strip, a tab put in a new folder from
 //                its row's menu, the folder closed into a SAVED group with its page listed and
 //                opened again, the page context menu, a
@@ -275,6 +276,7 @@ import {
   withOwedClear
 } from './site-data.mjs'
 import { startVideoFixture } from './video-fixture.mjs'
+import { viewInBox } from './views.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const IS_WIN = process.platform === 'win32'
@@ -1722,13 +1724,15 @@ class Session {
    * (urlbarCaret's `facts.main`): whether the window has the system's focus, Electron's focused
    * webContents and every webContents that says it is focused (`claimants`, each with whether
    * it is in a window – a view off the window says so on macOS, keyboardOwner), the chrome's,
-   * and each view in the window's content view – its webContents, whether it is shown, whether
-   * it holds the keyboard, its address and bounds.
+   * the window's content size (`content`, the box a parked view stands one pixel inside of;
+   * views.mjs) and each view in the window's content view – its webContents, whether it is
+   * shown, whether it holds the keyboard, its address and bounds.
    */
   keyboardFacts(windowId = this.mainWindowId) {
     return this.app.evaluate(({ BrowserWindow, webContents }, wid) => {
       const w = (wid && BrowserWindow.fromId(wid)) || BrowserWindow.getAllWindows()[0]
       if (!w || w.isDestroyed()) return null
+      const contentBounds = w.getContentBounds()
       const focused = webContents.getFocusedWebContents()
       const inWindow = new Set()
       const collect = (view) => {
@@ -1764,6 +1768,7 @@ class Session {
         claimants,
         chrome: w.webContents.id,
         chromeFocused: w.webContents.isFocused(),
+        content: { width: contentBounds.width, height: contentBounds.height },
         views
       }
     }, windowId)
@@ -3691,26 +3696,31 @@ async function scenarioWalkthrough() {
 
     // Web capture (Edge's; the desktop's overlay of components/capture/CaptureOverlay.tsx over
     // services' engine): the Chrome preset's Ctrl+Shift+S puts the overlay over the active tab –
-    // the page's picture standing in for the live view, which the chrome hides under it, the
-    // toolbar with the hint that the page's geometry is known and the two whole-page captures
-    // beside Cancel, a field for the marquee's drag, the keyboard on the overlay and the window
-    // chrome inert around it (§9.5, §9.22) – and Escape takes it down whole (capture-16: no half
-    // state): the overlay gone, the chrome free, the view shown again. The paint itself is the
-    // engine's (shared/capture.ts, its own tests); this is the surface's way in and out.
+    // the page's picture standing in for the live view, which the chrome takes out of its box
+    // under the overlay (parked in a window corner with one pixel inside so the engine keeps it
+    // visible and its prefetches running, W6-F5 platform/views.ts, or hidden), the toolbar with
+    // the hint that the page's geometry is known and the two whole-page captures beside Cancel,
+    // a field for the marquee's drag, the keyboard on the overlay and the window chrome inert
+    // around it (§9.5, §9.22) – and Escape takes it down whole (capture-16: no half state): the
+    // overlay gone, the chrome free, the view back in its box. The paint itself is the engine's
+    // (shared/capture.ts, its own tests); this is the surface's way in and out.
     await s.step('web-capture', async () => {
       await s.reset()
       const tab = (await s.tabs()).find((t) => t.url.startsWith(page.url))
       if (!tab) throw new Error('the fixture tab is missing')
       const overlay = s.chrome.locator(CAPTURE_OVERLAY).first()
       const inertChrome = s.chrome.locator('[data-surface="window"][inert]')
-      /** Whether the window shows the fixture tab's view (null: no such view in the window). */
+      /**
+       * Whether the window shows the fixture tab's view in its box – shown and not parked in a
+       * corner (views.mjs viewInBox; null: no such view in the window).
+       */
       const viewShown = async () => {
         const facts = await s.keyboardFacts()
         const view = (facts?.views ?? []).find((v) => v.wc === tab.id)
-        return view ? view.visible : null
+        return viewInBox(view, facts?.content)
       }
       if ((await viewShown()) !== true) {
-        throw new Error("the fixture tab's view is not shown before the capture")
+        throw new Error("the fixture tab's view is not shown in its box before the capture")
       }
       if (await overlay.count()) throw new Error('the capture overlay is up before the chord')
       if (await inertChrome.count()) throw new Error('window chrome inert before the chord')
@@ -3759,7 +3769,7 @@ async function scenarioWalkthrough() {
       await waitFor(
         async () => ((await viewShown()) === false ? true : null),
         5000,
-        "the page's view hidden behind its picture"
+        "the page's view out of its box behind its picture (parked in a corner or hidden)"
       )
       await s.shot('03c-web-capture')
       await s.press('Escape')
@@ -3772,7 +3782,7 @@ async function scenarioWalkthrough() {
       await waitFor(
         async () => ((await viewShown()) === true ? true : null),
         8000,
-        "the page's view shown again"
+        "the page's view back in its box"
       )
       return { phase, hint, controls, inertRoots: inert, keyboard: await s.keyboardOwner() }
     })
