@@ -11,15 +11,13 @@ name: Android custom tabs menu demo
 # browser already holds as a bookmark opens with the star filled from the core's state and its tap
 # opens the page in Zenium; Desktop Site switches the user agent and back; Page Info and Add to
 # Home Screen come up on the v2 prompt sheet; Download Page lands the archive in Downloads; and the
-# frames after the caller's button are sampled for the caller's two-second slide. Dispatch-only,
-# like the custom tabs demo: it takes about eight minutes and says nothing about a change being
-# correct. The build, the emulator and the Gradle cache live in android-emulator-demo.yml; this
-# file only picks the driver and the demo it runs.
+# caller's two-second start slide is read from WindowManager's own account of the tab's OPEN
+# transition (the frames after the caller's button the second witness). Dispatch-only, like the
+# custom tabs demo: it takes about ten minutes (the driver a little over three after the boot) and
+# says nothing about a change being correct. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml; this file only picks the driver and the demo it runs.
 on:
   workflow_dispatch:
-  # TEMPORARY (W6-11, PR #520): the one run + one retry on this branch; removed before READY.
-  push:
-    branches: [cursor/android-cct-menu-rest-9271]
 
 permissions:
   contents: read

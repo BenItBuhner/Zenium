@@ -352,9 +352,9 @@ class CustomTabMenuDemo : DemoHarness("customtabs-demo-state.json", "customtabs-
      * sent=Xms finished=Yms` line whose two stamps bound the animation – the caller's slide is
      * two seconds, the theme's own slide-up 300 ms, the platform's default open under half a
      * second ([readStartTransition]). The frames sampled meanwhile ([toolbarLeftEdge]) are the
-     * second witness: run 1 showed a display screenshot does not render the transition's leash
-     * (the toolbar was in none of the frames taken while the recording shows it sliding), so
-     * they say where the toolbar stands once the transition is over, not how it moved.
+     * second witness, not the first: run 36217489467's frames held no toolbar while its recording
+     * shows the slide (a display screenshot can miss a window mid-transition), run 36219852544's
+     * caught it at 534 → 228 → 0 px. The landing after the transition is read from a screenshot.
      */
     private fun openCustomTabReadingStart() {
         startFrames.clear()
@@ -423,7 +423,8 @@ class CustomTabMenuDemo : DemoHarness("customtabs-demo-state.json", "customtabs-
             val found = id
             if (found != null) {
                 lines.firstOrNull { "Finish Transition #$found:" in it }?.let { finish ->
-                    val sent = Regex("sent=([\\d.]+)ms").find(finish)?.groupValues?.get(1)?.toDoubleOrNull()
+                    // The line also carries `request-sent=`; the animation's stamp is the bare `sent=`.
+                    val sent = Regex("(?:^|\\s)sent=([\\d.]+)ms").find(finish)?.groupValues?.get(1)?.toDoubleOrNull()
                     val finished = Regex("finished=([\\d.]+)ms").find(finish)?.groupValues?.get(1)?.toDoubleOrNull()
                     val ms = if (sent != null && finished != null) (finished - sent).toLong() else null
                     return StartTransition(found, ms, finish.substringAfter("WindowManager:").trim())
@@ -864,10 +865,12 @@ class CustomTabMenuDemo : DemoHarness("customtabs-demo-state.json", "customtabs-
         /**
          * Whether the run fails when the caller's start animation is not seen. Off for the first
          * reading (what the platform does with the caller's options across the provider's
-         * trampoline is the question the run answers); on once a run has read it honoured, so a
-         * change of the provider's that clobbers it fails the nightly.
+         * trampoline was the question the run answered); on since runs 36217489467 and
+         * 36219852544 read it honoured (the OPEN transition animated about 2050 ms both times,
+         * the caller's slide through the trampoline), so a change of the provider's that
+         * clobbers it fails the nightly.
          */
-        private const val PIN_START_ANIMATION = false
+        private const val PIN_START_ANIMATION = true
         private const val ACTION_SAVE = "app.zen.chromium.demo.SAVE"
         private const val ACTION_OPEN_IN_APP = "app.zen.chromium.demo.OPEN_IN_APP"
 
