@@ -44,6 +44,22 @@ export function onboardingCovers(state: Pick<UIState, 'settings' | 'window'>): b
 }
 
 /**
+ * Whether the phone's first run stands over the window – the one term `PhoneShell.tsx` mounts
+ * its flow on (`PhoneOnboarding`): the profile before the tour is done, whatever the window (the
+ * phone has one). The flow is the whole window, drawn in the chrome, and on Android the pages
+ * lie ABOVE the chrome's WebView: a page view placed while it stands covers it – a fresh
+ * profile's first launch from a link (a VIEW intent's tab, active and loaded, is a page to
+ * place). So the layout reporter reads this and reports the content hidden while it holds
+ * (`useLayoutReporter`: no placement, the view stays hidden under the tour), and the boot's
+ * READY waits for no placement under it (`src/android/startup.ts`, `bootNeedsPlacement`, on the
+ * core's copy of the same flag). The tour's end puts the flag up (`onboarding.complete`), and
+ * the first layout after it places whatever the state then shows, by the ordinary path.
+ */
+export function phoneOnboardingCovers(state: Pick<UIState, 'settings'>): boolean {
+  return !state.settings.onboardingDone
+}
+
+/**
  * The desktop tour: seven steps, minus sync without the capability, minus shortcuts on touch;
  * plus Chrome's first-run import offer after the search engine when another browser's profile
  * was found on this computer (`importable`; the probe is `import.sources`, so the step joins

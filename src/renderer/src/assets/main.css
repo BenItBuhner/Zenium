@@ -927,11 +927,68 @@
   line-height: var(--v2-line-small);
   color: var(--v2-text-deemphasized);
 }
+/*
+ * Chrome's suggestions (ERR-05; `localized_error.cc`'s summary list): between the reason and
+ * the code line, the standalone sentence where the code has one, and the list – "Try:" as a body
+ * line, the lines under it as a plain list in the body type, its markers 20 in from the text
+ * edge – where it has lines. Body ink throughout: these are the page's words, not an aside.
+ */
+.zen-error-suggestions {
+  margin: 0 0 8px;
+}
+.zen-error-suggestions p {
+  margin: 0;
+}
+.zen-error-suggestions ul {
+  margin: 0;
+  padding: 0 0 0 20px;
+}
+.zen-error-suggestions li {
+  overflow-wrap: anywhere;
+}
 .zen-error-page button {
   margin: 0;
   border: 0;
   font-family: inherit;
   cursor: pointer;
+}
+/*
+ * "Search <engine> for <term>" (ERR-05): a link drawn as the v2 secondary beside Reload, the
+ * primary, in the action row below. Its label carries the engine's name and the typed word, so
+ * it is the label that decides the row's shape (§9.11's clause for a pair whose label would
+ * wrap): the pair splits the row at 8 only while both labels fit on one line; when a label would
+ * wrap beside its peer, the pair stacks full width, the primary first – Reload on top, the search
+ * action beneath, each the control height. The fit is the rule, not a width or an engine: a
+ * two-line "Google" at 412 stacks too. In flex terms, on the phone each of the pair takes its
+ * one-line label as its base size (`width: max-content`), never less than a half-row
+ * (`min-width`), so two labels that fit their halves sum to the row and share one flex line,
+ * and a label that does not pushes the sum past the row, which breaks the line – `wrap-reverse`,
+ * so the second line (Reload, last in the document) lands on top; both then grow to the full
+ * width. On desktop the buttons hug as before; the same `wrap-reverse` puts Reload on top there
+ * too should the pair ever wrap. A label wider than the whole row still wraps inside its control,
+ * which grows from the control height.
+ */
+.zen-error-search {
+  box-sizing: border-box;
+  text-decoration: none;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.zen-error-actions:has(> .zen-error-search) {
+  flex-wrap: wrap-reverse;
+}
+.zen-error-actions:has(> .zen-error-search) > * {
+  box-sizing: border-box;
+  height: auto;
+  min-height: var(--v2-control);
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+:root[data-form-factor='phone'] .zen-error-actions:has(> .zen-error-search) > * {
+  flex: 1 1 auto;
+  width: max-content;
+  min-width: calc(50% - 5px);
 }
 /*
  * The certificate interstitial (the page's ERR_CERT_* variant): the row of Advanced and Back to

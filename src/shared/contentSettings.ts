@@ -15,7 +15,9 @@ export type ContentDefault = ContentDecision | 'ask'
 /**
  * How a host honours the setting: `enforced` (the engine asks or obeys), `stored` (remembered
  * and listed, but nothing in the engine acts on it yet), `n-a` (the platform has no such
- * feature, e.g. background sync in the Android WebView).
+ * feature, e.g. background sync in the Android WebView, or no path that could act on the row
+ * per site, e.g. insecure content on Electron). An `n-a` row is not offered on that host; a
+ * value stored for it stays in the store untouched.
  */
 export type ContentSupport = 'enforced' | 'stored' | 'n-a'
 
@@ -122,18 +124,23 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     choices: ['allow', 'deny'],
     promptLabel: null,
     allowOnce: false,
-    support: { desktop: 'stored', android: 'stored' }
+    // A page-world guard at document start on both hosts (`contentGuards.ts`): a blocked site's
+    // sensors refuse to `start()` and its motion and orientation listeners hear nothing. Neither
+    // engine prompts for sensors (Chrome does not either), so the row has no "ask".
+    support: { desktop: 'enforced', android: 'enforced' }
   },
   {
     id: 'automatic-downloads',
     label: 'Automatic downloads',
-    description: 'Sites can ask to download several files at once',
+    description: 'Sites can ask to automatically download multiple files',
     group: 'permissions',
     builtInDefault: 'ask',
     choices: ['ask', 'allow', 'deny'],
-    promptLabel: 'download several files',
+    promptLabel: 'download multiple files',
     allowOnce: false,
-    support: { desktop: 'stored', android: 'stored' }
+    // Chrome's DownloadRequestLimiter in the core's downloads service (`core/downloadLimiter.ts`):
+    // one download per gesture is free, the next asks this row on both hosts.
+    support: { desktop: 'enforced', android: 'enforced' }
   },
   {
     id: 'midi',
@@ -224,7 +231,13 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     choices: ['allow', 'deny'],
     promptLabel: null,
     allowOnce: false,
-    support: { desktop: 'stored', android: 'stored' }
+    // Desktop: a page-world guard at document start (`contentGuards.ts`) refuses a blocked site's
+    // `PaymentRequest` (`show`, `canMakePayment`, `hasEnrolledInstrument`). Android: the system
+    // WebView ships no `PaymentRequest` unless the app turns it on
+    // (`WebSettingsCompat.setPaymentRequestEnabled`, androidx.webkit 1.14+), which Zenium does
+    // not; the row would govern nothing there, so it is not offered. The same guard is wired in
+    // the Android page script and acts the day the API is enabled.
+    support: { desktop: 'enforced', android: 'n-a' }
   },
   {
     id: 'insecure-content',
@@ -235,7 +248,12 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     choices: ['allow', 'deny'],
     promptLabel: null,
     allowOnce: false,
-    support: { desktop: 'stored', android: 'stored' }
+    // Android: an allowed site's document runs with `MIXED_CONTENT_ALWAYS_ALLOW`
+    // (`TabWebView.applyMixedContentPolicy`), every other one with the engine's block. Desktop:
+    // Electron fixes `allowRunningInsecureContent` per WebContents as it is created and Chromium's
+    // renderer-side content-settings agent (the per-site allow) is not in Electron, so no path
+    // acts per site – the row is not offered there, the engine's block being the built-in Block.
+    support: { desktop: 'n-a', android: 'enforced' }
   },
   {
     id: 'xr',
@@ -291,7 +309,9 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     choices: ['allow', 'deny'],
     promptLabel: null,
     allowOnce: false,
-    support: { desktop: 'stored', android: 'stored' }
+    // Desktop: the request engine cancels a blocked page's image requests (`ContentRulesHandler`);
+    // Android: `loadsImagesAutomatically` per navigation (`TabWebView.applyContentRules`).
+    support: { desktop: 'enforced', android: 'enforced' }
   },
   {
     id: 'javascript',
@@ -302,7 +322,10 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     choices: ['allow', 'deny'],
     promptLabel: null,
     allowOnce: false,
-    support: { desktop: 'stored', android: 'stored' }
+    // Desktop: `Emulation.setScriptExecutionDisabled` on the page's session as a blocked
+    // site's navigation starts (`ElectronTabView.refreshScripts`); Android: `javaScriptEnabled`
+    // per navigation (`TabWebView.applyContentRules`).
+    support: { desktop: 'enforced', android: 'enforced' }
   },
   {
     id: 'popups',
@@ -379,8 +402,10 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     choices: ['allow', 'deny'],
     promptLabel: null,
     allowOnce: false,
-    // The Android WebView has no PDF viewer; PDFs are downloaded.
-    support: { desktop: 'stored', android: 'n-a' }
+    // Desktop: a "download" site's PDF document gets `Content-Disposition: attachment` at
+    // `onHeadersReceived` (`ContentRulesHandler`), so the downloads service takes it instead of
+    // the viewer. The Android WebView has no PDF viewer of its own; PDFs are downloaded first.
+    support: { desktop: 'enforced', android: 'n-a' }
   },
   {
     id: 'mediaKeySystem',
@@ -402,7 +427,12 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     choices: ['allow', 'deny'],
     promptLabel: null,
     allowOnce: false,
-    support: { desktop: 'stored', android: 'stored' }
+    // Desktop: a page-world guard at document start (`contentGuards.ts`) rejects a blocked site's
+    // `navigator.credentials.get({ identity })` (FedCM) with NotAllowedError; passwords and
+    // passkeys are untouched. Android: the system WebView has no FedCM at all (no
+    // `IdentityCredential`, no WebSettings switch), so the row would govern nothing and is not
+    // offered; the guard is wired in the page script for the day it does.
+    support: { desktop: 'enforced', android: 'n-a' }
   },
   {
     id: 'on-device-site-data',
@@ -413,7 +443,12 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     choices: ['allow', 'deny'],
     promptLabel: null,
     allowOnce: false,
-    support: { desktop: 'stored', android: 'stored' }
+    // Folded into the cookie and site-data policy both hosts apply (`ProtectionService.
+    // effectiveSiteData`): a blocked site's cookies are withheld both ways and its `Set-Cookie`
+    // dropped at the header stages, an allowed site's kept past the third-party rule, the
+    // default Block is block-all. "Delete when you close" is the clear-on-exit list of
+    // Settings › Cookies and site data.
+    support: { desktop: 'enforced', android: 'enforced' }
   },
   // ---- Additional permissions: what Zenium's engines ask about beyond Chrome's rows ------
   {
@@ -474,9 +509,9 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
   // Chrome's row of the same name, without its prompt: the desktop enters of its own accord
   // when the video's tab leaves the screen (`MediaSessionService.onVisibleTabsChanged`, MW-28)
   // and says so once per site with a toast carrying "Turn off for this site" (the row's deny).
-  // Hidden on the phone until Android's own hook (#223, a fullscreen video's tab left behind)
-  // reads it – a row is a promise, and a stored answer nothing honours is a dead control
-  // (the root's ruling of 04:43Z on #506); `android` flips to `enforced` with that hook.
+  // Android's own hook (#223: a fullscreen video's tab left behind on Home) reads the site's
+  // answer off the media session (`MediaSessionInfo.autoPictureInPicture`) and enters for an
+  // allowed site alone; the user's own picture-in-picture request is not the row's to refuse.
   {
     id: 'auto-picture-in-picture',
     label: 'Automatic picture-in-picture',
@@ -486,7 +521,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     choices: ['allow', 'deny'],
     promptLabel: null,
     allowOnce: false,
-    support: { desktop: 'enforced', android: 'n-a' }
+    support: { desktop: 'enforced', android: 'enforced' }
   },
   {
     id: 'pointerLock',

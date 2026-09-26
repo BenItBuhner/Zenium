@@ -29,6 +29,12 @@ import {
 } from '../../shared/url'
 import { LOOKALIKE_PERMISSION, type LookalikeVerdict } from '../../shared/privacy'
 import { BLOCKED_BY_CLIENT_CODE } from '../../shared/zenPages'
+import {
+  ON_DEVICE_SITE_DATA_PERMISSION,
+  sanitizeSiteDataPolicy,
+  type SiteDataPolicy
+} from '../../shared/siteData'
+import { normalizeSitePattern } from '../../shared/sitePatterns'
 
 /**
  * A site is engaged – the user knows it by name – once its pages hold this many typed visits, or
@@ -99,7 +105,11 @@ export class ProtectionService {
       }),
       this.browser.downloads.addVerdictProvider(this.safeBrowsing.verdictProvider()),
       this.browser.permissions.subscribe((change) => {
-        if (change.permission !== HTTPS_ONLY_PERMISSION) return
+        if (
+          change.permission !== HTTPS_ONLY_PERMISSION &&
+          change.permission !== ON_DEVICE_SITE_DATA_PERMISSION
+        )
+          return
         this.refresh()
         this.browser.state.commitVolatile()
       }),
@@ -226,8 +236,36 @@ export class ProtectionService {
       dnt: s.dnt,
       secureDnsMode: dns.mode,
       secureDnsServers: dns.servers,
-      siteData: this.browser.siteData.policy()
+      siteData: this.effectiveSiteData()
     }
+  }
+
+  /**
+   * The site-data policy the hosts apply: the Cookies-and-site-data lists with the On-device
+   * site data row (Settings › Site settings, the site-information card; the permission store)
+   * folded in. A site the row blocks joins the never list – its cookies withheld both ways and
+   * `Set-Cookie` dropped by both hosts' header stages, the desktop's jar dropping what lands – a
+   * site it allows the allow list, and the row's default Block is the policy's block-all. The
+   * row's origins are exact patterns (`https://example.com`), so they outrank the lists' host
+   * patterns for their own URLs; a local file has no pattern and stays with the default. The
+   * site-information card and the viewer read a site's state from this policy too.
+   */
+  effectiveSiteData(): SiteDataPolicy {
+    const policy = this.browser.siteData.policy()
+    const rows = this.browser.permissions.listForPermission(ON_DEVICE_SITE_DATA_PERMISSION)
+    const blockAll =
+      policy.blockAll ||
+      this.browser.permissions.effectiveDefault(ON_DEVICE_SITE_DATA_PERMISSION) === 'deny'
+    if (rows.length === 0 && blockAll === policy.blockAll) return policy
+    const allow = [...policy.allow]
+    const block = [...policy.block]
+    for (const { origin, decision } of rows) {
+      const pattern = normalizeSitePattern(origin)
+      if (!pattern) continue
+      if (decision === 'deny') block.push(pattern)
+      else if (decision === 'allow') allow.push(pattern)
+    }
+    return sanitizeSiteDataPolicy({ blockAll, allow, clearOnExit: policy.clearOnExit, block })
   }
 
   /** A provider mode without a usable template falls back to automatic rather than to nothing. */

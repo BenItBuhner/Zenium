@@ -43,7 +43,9 @@ const constructed: Array<Record<string, unknown>> = []
  * Which page has the keyboard. `takeKeyboard` moves it the way Chromium does: the holder gets
  * `blur`, the taker `focus`.
  */
-const { keyboard, takeKeyboard } = vi.hoisted(() => {
+const { keyboard, takeKeyboard, cursor } = vi.hoisted(() => {
+  /** Where the OS pointer stands on the screen (`screen.getCursorScreenPoint`); a test moves it. */
+  const cursor = { x: -100, y: -100 }
   const keyboard = { current: null as { emit(event: string): unknown } | null }
   const takeKeyboard = (taker: { emit(event: string): unknown }): void => {
     const previous = keyboard.current
@@ -52,7 +54,7 @@ const { keyboard, takeKeyboard } = vi.hoisted(() => {
     previous?.emit('blur')
     taker.emit('focus')
   }
-  return { keyboard, takeKeyboard }
+  return { keyboard, takeKeyboard, cursor }
 })
 
 vi.mock('electron', async () => {
@@ -307,20 +309,28 @@ vi.mock('electron', async () => {
   const nativeTheme = Object.assign(new EventEmitter().setMaxListeners(0), {
     shouldUseDarkColors: false
   })
-  /** One plain display: a full-page paint's cut is the CSS-pixel one. */
-  const screen = { getAllDisplays: () => [{ scaleFactor: 1 }] }
+  /** One plain display: a full-page paint's cut is the CSS-pixel one. The pointer is `cursor`'s. */
+  const screen = {
+    getAllDisplays: () => [{ scaleFactor: 1 }],
+    getCursorScreenPoint: () => ({ ...cursor })
+  }
   return { WebContentsView: FakeWebContentsView, nativeTheme, screen }
 })
 
 /** A window's chrome page: the keyboard's home when no page on screen has it. */
 class FakeChrome extends EventEmitter {
   focusCalls = 0
+  /** The pointer events the host tells the chrome page of (`sendInputEvent`). */
+  readonly inputEvents: Array<Record<string, unknown>> = []
   isDestroyed(): boolean {
     return false
   }
   focus(): void {
     this.focusCalls++
     takeKeyboard(this)
+  }
+  sendInputEvent(event: Record<string, unknown>): void {
+    this.inputEvents.push(event)
   }
 }
 
@@ -352,12 +362,43 @@ class FakeBrowserWindow extends EventEmitter {
   isFocused(): boolean {
     return this.focused
   }
+  /** The window's content, in DIP: what a parked view's pixel is kept inside. */
+  contentSize: [number, number] = [1280, 820]
+  getContentSize(): [number, number] {
+    return this.contentSize
+  }
+  /** The content's place on the screen: at (100, 60), for the pointer's screen point to map. */
+  getContentBounds(): { x: number; y: number; width: number; height: number } {
+    return { x: 100, y: 60, width: this.contentSize[0], height: this.contentSize[1] }
+  }
 }
 
-function fakeWindow(): WindowHost & { win: FakeBrowserWindow; chrome: FakeChrome } {
+/**
+ * A window host as the view sees it: its `BrowserWindow`, its chrome page, its core window's
+ * word on whether chrome UI covers the content (`ZenWindow.contentHidden`, off to begin with),
+ * and whether a mouse button is down on the chrome (`buttonHeld`, up to begin with).
+ */
+function fakeWindow(): WindowHost & {
+  win: FakeBrowserWindow
+  chrome: FakeChrome
+  zen: { contentHidden: boolean }
+  buttonHeld: boolean
+} {
   const chrome = new FakeChrome()
   const win = new FakeBrowserWindow(chrome)
-  return { win, chrome } as unknown as WindowHost & { win: FakeBrowserWindow; chrome: FakeChrome }
+  const host = {
+    win,
+    chrome,
+    zen: { contentHidden: false },
+    buttonHeld: false,
+    pointerButtonHeld: (): boolean => host.buttonHeld
+  }
+  return host as unknown as WindowHost & {
+    win: FakeBrowserWindow
+    chrome: FakeChrome
+    zen: { contentHidden: boolean }
+    buttonHeld: boolean
+  }
 }
 
 /** A page Chromium made for a script `window.open`, before any tab adopted it. */
@@ -372,6 +413,7 @@ async function guestWebContents(): Promise<Electron.WebContents> {
 const sessionHooks: Array<(ses: object, containerId: string) => void> = []
 const sessions = {
   get: () => ({}),
+  containerOf: () => 'default',
   configure: (hook: (ses: object, containerId: string) => void) => {
     sessionHooks.push(hook)
   }
@@ -588,6 +630,81 @@ describe('the layout’s visibility and the page’s shared session', () => {
     } finally {
       theme.shouldUseDarkColors = false
     }
+  })
+
+  it('switches JavaScript off on the page’s session for a blocked site’s document as its navigation starts, and back on for the next site (PS-64)', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    const asked: Array<[string, string, string | undefined]> = []
+    host.contentRules = {
+      allows: (id, url, details) => {
+        asked.push([id, url, details?.privateContainerId])
+        return !(id === 'javascript' && url.startsWith('https://noscript.example'))
+      },
+      blockedGuards: () => []
+    }
+    const { view, dbg } = make(host, 'tab_scripts')
+    const wc = view.webContents as unknown as EventEmitter
+    const commands = (): Array<{ method: string; params: Record<string, unknown> | undefined }> =>
+      (
+        dbg as unknown as {
+          commands: Array<{ method: string; params: Record<string, unknown> | undefined }>
+        }
+      ).commands
+    // An allowed site: nothing goes on the session (no attach for nothing).
+    wc.emit('did-start-navigation', {
+      url: 'https://fine.example/',
+      isMainFrame: true,
+      isSameDocument: false
+    })
+    await settle()
+    expect(dbg.log).toEqual([])
+    expect(asked).toEqual([['javascript', 'https://fine.example/', undefined]])
+    // A blocked site's document: the switch goes on before the response is read.
+    wc.emit('did-start-navigation', {
+      url: 'https://noscript.example/a',
+      isMainFrame: true,
+      isSameDocument: false
+    })
+    await settle()
+    expect(dbg.log).toEqual(['attach', 'Emulation.setScriptExecutionDisabled'])
+    expect(commands()[0]).toEqual({
+      method: 'Emulation.setScriptExecutionDisabled',
+      params: { value: true }
+    })
+    // A same-document navigation and a frame's are no document of the page's: left alone.
+    wc.emit('did-start-navigation', {
+      url: 'https://noscript.example/a#x',
+      isMainFrame: true,
+      isSameDocument: true
+    })
+    wc.emit('did-start-navigation', {
+      url: 'https://fine.example/frame',
+      isMainFrame: false,
+      isSameDocument: false
+    })
+    await settle()
+    expect(dbg.log).toHaveLength(2)
+    // A redirect hop to an allowed site takes it off, and the hold's session with it.
+    wc.emit('did-redirect-navigation', {
+      url: 'https://fine.example/landing',
+      isMainFrame: true,
+      isSameDocument: false
+    })
+    await settle()
+    expect(dbg.log.slice(2)).toEqual(['Emulation.setScriptExecutionDisabled', 'detach'])
+    expect(commands()[1]).toEqual({
+      method: 'Emulation.setScriptExecutionDisabled',
+      params: { value: false }
+    })
+    expect(dbg.attached).toBe(false)
+    // The chrome's own documents are never asked about.
+    wc.emit('did-start-navigation', {
+      url: 'zen://settings',
+      isMainFrame: true,
+      isSameDocument: false
+    })
+    await settle()
+    expect(asked.map(([, url]) => url)).not.toContain('zen://settings')
   })
 })
 
@@ -1145,6 +1262,9 @@ describe('a hidden tab page and the window', () => {
     create: (window?: ReturnType<typeof fakeWindow>) => ElectronTabView
   } => {
     keyboard.current = null
+    // The pointer off every window, unless a test puts it somewhere.
+    cursor.x = -100
+    cursor.y = -100
     const host = new ElectronTabViewHost(sessions)
     const window = fakeWindow()
     let n = 0
@@ -1262,6 +1382,224 @@ describe('a hidden tab page and the window', () => {
     // Attaching to the window it is already attached to changes nothing.
     view.attachTo(other)
     expect(other.win.children).toEqual([view.view])
+  })
+
+  /** The engine's view as the fakes record it: shown or not, and where. */
+  const engine = (view: ElectronTabView): { visible: boolean; bounds: unknown } => {
+    const v = view.view as unknown as { getVisible(): boolean; bounds: unknown }
+    return { visible: v.getVisible(), bounds: v.bounds }
+  }
+  /**
+   * Where a parked view stands: its box, moved so only one corner pixel of it is inside the
+   * window, in the window content's corner (0 bottom-right, 1 bottom-left, 2 top-right, 3
+   * top-left; the fake window's content is 1280×820).
+   */
+  const parkedAt = (b: typeof box, corner = 0, content = [1280, 820]): typeof box => ({
+    x: corner % 2 === 0 ? content[0] - 1 : -(b.width - 1),
+    y: corner < 2 ? content[1] - 1 : -(b.height - 1),
+    width: b.width,
+    height: b.height
+  })
+
+  it('is parked, not hidden, when chrome UI covers the page: shown to the engine at its size, one pixel inside the window’s corner (W6-F5)', () => {
+    const { host, window, create } = setup()
+    const view = create()
+    const flips: boolean[] = []
+    host.onVisibilityChanged((v) => flips.push(v.isVisible()))
+    view.setBounds(box)
+    view.setVisible(true)
+    // The omnibox dropdown opens over the page: the core's layout hides the view.
+    window.zen.contentHidden = true
+    view.setVisible(false)
+    // Hidden to the core – the chrome shows its picture, the snapshot logic and the governor
+    // read a page behind – but on screen to Chromium, which keeps prefetching for it.
+    expect(view.isVisible()).toBe(false)
+    expect(engine(view)).toEqual({ visible: true, bounds: parkedAt(box) })
+    expect(flips).toEqual([true, false])
+    // The dropdown closes: the layout places the view again, and it is back where it was.
+    window.zen.contentHidden = false
+    view.setBounds(box)
+    view.setVisible(true)
+    expect(engine(view)).toEqual({ visible: true, bounds: box })
+    expect(flips).toEqual([true, false, true])
+  })
+
+  it('takes a new box parked, at the new box’s size in the window’s corner, until the layout shows it', () => {
+    const { window, create } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setVisible(true)
+    window.zen.contentHidden = true
+    view.setVisible(false)
+    // The window shrinks under the cover: the layout speaks of a new box, and the pixel moves
+    // with the window's corner.
+    window.win.contentSize = [1000, 760]
+    const smaller = { x: 0, y: 40, width: 1000, height: 700 }
+    view.setBounds(smaller)
+    expect(engine(view).bounds).toEqual(parkedAt(smaller, 0, [1000, 760]))
+    window.zen.contentHidden = false
+    view.setVisible(true)
+    expect(engine(view).bounds).toEqual(smaller)
+  })
+
+  it('gives each pane of a split parked under the cover its own window corner, so none stands under another’s pixel', () => {
+    const { window, create } = setup()
+    const panes = [create(), create(), create(), create(), create()]
+    const boxes = panes.map((_, i) => ({ x: i * 250, y: 40, width: 240, height: 700 }))
+    panes.forEach((pane, i) => {
+      pane.setBounds(boxes[i])
+      pane.setVisible(true)
+    })
+    window.zen.contentHidden = true
+    for (const pane of panes) pane.setVisible(false)
+    // Four corners for four panes; a fifth shares the last.
+    expect(panes.map((p) => p.parkedCorner())).toEqual([0, 1, 2, 3, 3])
+    expect(engine(panes[1]).bounds).toEqual(parkedAt(boxes[1], 1))
+    expect(engine(panes[2]).bounds).toEqual(parkedAt(boxes[2], 2))
+    expect(engine(panes[3]).bounds).toEqual(parkedAt(boxes[3], 3))
+    // The cover lifts with the first pane closed meanwhile: its corner is free for the next.
+    window.zen.contentHidden = false
+    panes[0].coverLifted()
+    expect(panes[0].parkedCorner()).toBeNull()
+    panes.slice(1).forEach((pane, i) => {
+      pane.setBounds(boxes[i + 1])
+      pane.setVisible(true)
+    })
+    expect(panes.map((p) => p.parkedCorner())).toEqual([null, null, null, null, null])
+    window.zen.contentHidden = true
+    panes[4].setVisible(false)
+    expect(panes[4].parkedCorner()).toBe(0)
+    // Another window's parked view takes no corner of this one's.
+    const other = fakeWindow()
+    const elsewhere = create(other)
+    elsewhere.setBounds(box)
+    elsewhere.setVisible(true)
+    other.zen.contentHidden = true
+    elsewhere.setVisible(false)
+    expect(elsewhere.parkedCorner()).toBe(0)
+  })
+
+  it('hides the view as before when no chrome covers the page: a tab switch, a chrome page tab, a move between windows', () => {
+    const { window, create } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setVisible(true)
+    view.setVisible(false)
+    expect(engine(view)).toEqual({ visible: false, bounds: box })
+    // A cover on, but this view was never on screen in the window: nothing to keep visible.
+    window.zen.contentHidden = true
+    const behind = create()
+    behind.setBounds(box)
+    behind.setVisible(false)
+    expect(engine(behind).visible).toBe(false)
+    expect(window.win.children).toEqual([view.view])
+  })
+
+  it('ends the parking when the cover lifts without the layout showing it (a tab switched away from under the cover), and on detach', () => {
+    const { window, create } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setVisible(true)
+    window.zen.contentHidden = true
+    view.setVisible(false)
+    expect(engine(view).visible).toBe(true)
+    // The uncovered layout placed another tab; the window host tells the rest.
+    window.zen.contentHidden = false
+    view.coverLifted()
+    expect(engine(view)).toEqual({ visible: false, bounds: box })
+    // Nothing for a view not parked.
+    view.coverLifted()
+    expect(engine(view).visible).toBe(false)
+    view.setVisible(true)
+    expect(engine(view)).toEqual({ visible: true, bounds: box })
+
+    // Parked, then taken to another window (`TabManager.claim`): it leaves hidden, so entering
+    // the other window for the keyboard does not put a shown view on its screen.
+    window.zen.contentHidden = true
+    view.setVisible(false)
+    expect(engine(view).visible).toBe(true)
+    view.detach()
+    expect(engine(view)).toEqual({ visible: false, bounds: box })
+    const other = fakeWindow()
+    view.setVisible(false)
+    view.attachTo(other)
+    view.focus()
+    expect(other.win.children).toEqual([view.view])
+    expect(engine(view).visible).toBe(false)
+  })
+
+  it('hides a parked view for good when the hide comes with the cover already off', () => {
+    const { window, create } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setVisible(true)
+    window.zen.contentHidden = true
+    view.setVisible(false)
+    // Still covered: hidden again (a `refreshVisibility` pass) stays parked.
+    view.setVisible(false)
+    expect(engine(view)).toEqual({ visible: true, bounds: parkedAt(box) })
+    window.zen.contentHidden = false
+    view.setVisible(false)
+    expect(engine(view)).toEqual({ visible: false, bounds: box })
+  })
+
+  /**
+   * Aura tells whatever lies under the pointer of a view hidden or shown under it with a
+   * synthesized mouse move, and says nothing of a view moved: the host says it instead. The fake
+   * window's content sits at (100, 60) on the screen; the box is 800×560 at (0, 40) in it.
+   */
+  it('tells the chrome where the pointer is when the view under it is parked, and hands the pointer back to the page when it returns', () => {
+    const { window, create } = setup()
+    const view = create()
+    const page = view.webContents as unknown as { widgetEvents: Array<Record<string, unknown>> }
+    view.setBounds(box)
+    view.setVisible(true)
+    // The pointer over the page, at (300, 200) of the window's content – (300, 160) of the box.
+    cursor.x = 400
+    cursor.y = 260
+    window.zen.contentHidden = true
+    view.setVisible(false)
+    expect(engine(view).bounds).toEqual(parkedAt(box))
+    // The chrome, under the pointer now: a move at the pointer's place, in its own coordinates.
+    expect(window.chrome.inputEvents).toEqual([{ type: 'mouseMove', x: 300, y: 200 }])
+    expect(page.widgetEvents).toEqual([])
+    // The cover lifts: the view is back under the pointer – the chrome hears the pointer leave,
+    // the page hears where it stands, in the page's own coordinates.
+    window.zen.contentHidden = false
+    view.setVisible(true)
+    expect(window.chrome.inputEvents).toEqual([
+      { type: 'mouseMove', x: 300, y: 200 },
+      { type: 'mouseLeave', x: 300, y: 200 }
+    ])
+    expect(page.widgetEvents).toEqual([{ type: 'mouseMove', x: 300, y: 160 }])
+  })
+
+  it('says nothing of the pointer when it is off the page’s box, or a chrome mouse button is down (a tab drag is a cover)', () => {
+    const { window, create } = setup()
+    const view = create()
+    const page = view.webContents as unknown as { widgetEvents: Array<Record<string, unknown>> }
+    view.setBounds(box)
+    view.setVisible(true)
+    // Over the chrome's strip above the box (the box starts 40 down): nothing to say.
+    cursor.x = 400
+    cursor.y = 80
+    window.zen.contentHidden = true
+    view.setVisible(false)
+    window.zen.contentHidden = false
+    view.setVisible(true)
+    expect(window.chrome.inputEvents).toEqual([])
+    expect(page.widgetEvents).toEqual([])
+    // Over the page, but a tab row is being dragged (the button down, the chrome holding the
+    // pointer's capture): the moves would have no button in them, so none are sent.
+    cursor.y = 260
+    window.buttonHeld = true
+    window.zen.contentHidden = true
+    view.setVisible(false)
+    expect(engine(view).bounds).toEqual(parkedAt(box))
+    window.zen.contentHidden = false
+    view.setVisible(true)
+    expect(window.chrome.inputEvents).toEqual([])
+    expect(page.widgetEvents).toEqual([])
   })
 
   it('is quiet for a view whose window is gone', () => {

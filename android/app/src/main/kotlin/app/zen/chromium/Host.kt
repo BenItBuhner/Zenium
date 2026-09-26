@@ -190,6 +190,14 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     /** The same rules as the core sent them, handed to every page's document-start script. */
     override var pageRulesJson: JSONObject = JSONObject()
         private set
+    /** The core's per-site content settings (images, JavaScript, insecure content, the page guards), mirrored per navigation. */
+    override var contentRules: ContentRules = ContentRules.NONE
+        private set
+    override var contentRulesJson: JSONObject = JSONObject()
+        private set
+    /** True from the core's first push: its rules service has started and answers `resolveRules`. */
+    override var contentRulesResolvable: Boolean = false
+        private set
     /**
      * Rotate-to-fullscreen is the phone's alone (§9.36, Chrome's `device_is_phone`): the screen
      * under Android's tablet line ([ScreenClass.rotateToFullscreen], read live from the same
@@ -949,6 +957,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             // (`deliverRendererExit`): the crash page's word follows the reply and supersedes it.
             "view.load" -> {
                 val url = args.str("url")
+                // The core's content-settings answer for the destination rides with the load
+                // (`rules`; absent before its rules service started): the view sets the page's
+                // WebSettings and document-start guards from it, not from the pushed document.
+                tab?.presetResolvedRules(url, args.optJSONObject("rules"))
                 tab?.loadUrl(url)
                 reply(null)
                 if (tab != null) {
@@ -1003,8 +1015,18 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 }
             }
             "view.reload" -> {
+                // The reloaded page's answer comes along too (`url`, `rules`): the reload's
+                // document reads what the core resolves now, an extension's rule included.
+                args.strOrNull("url")?.let { tab?.presetResolvedRules(it, args.optJSONObject("rules")) }
                 if (args.bool("ignoreCache")) tab?.clearCache(false)
                 tab?.reload()
+                reply(null)
+            }
+            // The core's answer to a view's `resolveRules` question (TabWebView.onRulesResolved):
+            // `rules` is every row's word for `url`'s site, or null when the core could not tell
+            // (its rules service not started) – the view then reads the pushed document.
+            "view.rulesResolved" -> {
+                tab?.onRulesResolved(args.optInt("token"), args.str("url"), args.optJSONObject("rules"))
                 reply(null)
             }
             "view.stop" -> { tab?.stopLoading(); reply(null) }
@@ -1018,6 +1040,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.setDesktopMode" -> { tab?.setDesktopMode(args.bool("on")); reply(null) }
             "view.setDarkening" -> { tab?.setDarkening(args.bool("on")); reply(null) }
             "view.setPageRules" -> { setPageRules(args); reply(null) }
+            "view.setContentRules" -> { setContentRules(args); reply(null) }
             "view.find" -> { tab?.find(args.str("text"), args.bool("forward", true), args.bool("newSession", true)); reply(null) }
             "view.stopFind" -> { tab?.stopFind(); reply(null) }
             "view.eval" -> {
@@ -1957,6 +1980,17 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         pageRulesJson = rules
         pageRules = PageRules.fromJson(rules)
         for (tab in tabs.all()) tab.onPageRulesChanged()
+    }
+
+    /**
+     * The core's per-site content settings changed (or an extension's rules did, the document
+     * unchanged): every open page drops the answers it remembered and re-reads its document's.
+     */
+    private fun setContentRules(rules: JSONObject) {
+        contentRulesJson = rules
+        contentRules = ContentRules.fromJson(rules)
+        contentRulesResolvable = true
+        for (tab in tabs.all()) tab.onContentRulesChanged()
     }
 
     private fun print(tab: TabWebView) {

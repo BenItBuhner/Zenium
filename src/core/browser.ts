@@ -42,6 +42,7 @@ import { BookmarkService } from './bookmarks'
 import { ReadingListService } from './readingList'
 import { BookmarkUndoStack, type BookmarkUndone } from './bookmarkUndo'
 import { DownloadService, isQuarantined } from './downloads'
+import { AUTOMATIC_DOWNLOADS_PERMISSION, DownloadLimiter } from './downloadLimiter'
 import { resolveDownloadSettings } from '../shared/downloads'
 import { PermissionService } from './permissions'
 import { PermissionPromptService } from './permissionPrompts'
@@ -74,6 +75,7 @@ import { TranslateService } from './translate/service'
 import { PrintService } from './print'
 import { CaptureService } from './capture'
 import { PdfViewerService } from './pdf'
+import { ContentRulesService } from './contentRules'
 import { PageControls } from './pageControls'
 import { SpellcheckService } from './spellcheck'
 import { LanguagesService } from './languages'
@@ -332,6 +334,8 @@ export class Browser {
   readonly blocking: BlockingService
   /** Safe Browsing, HTTPS-only mode, secure DNS, third-party cookies and the GPC / DNT signals. */
   readonly protection: ProtectionService
+  /** The per-site content settings the hosts enforce at the load path (images, JavaScript, …). */
+  readonly contentRules: ContentRulesService
   /** Offline page translation: detection, offers, the engine and its models. */
   readonly translate: TranslateService
   /** The print preview (`zen://print`) on hosts whose engine has none of its own. */
@@ -466,7 +470,24 @@ export class Browser {
         settings: () => resolveDownloadSettings(this.state.settings),
         referrerFamiliar: (referrer) => this.history.visitedBeforeToday(referrer),
         onDanger: (item) => this.emitDownload('download.danger', { id: item.id }, item.private),
-        onBegin: (item, init) => this.pdf.onDownloadBegin(item, init)
+        onBegin: (item, init) => this.pdf.onDownloadBegin(item, init),
+        // The `automatic-downloads` row (PS-71) over the tab's page, the pop-up blocker's
+        // activation clock and the permission store (read as transfers start: the services it
+        // names are built below).
+        limiter: new DownloadLimiter({
+          page: (tabId) => {
+            const tab = this.tabs.tab(tabId)
+            if (!tab) return null
+            return tab.containerId === PRIVATE_CONTAINER_ID
+              ? { url: tab.url, privateContainerId: tab.containerId }
+              : { url: tab.url }
+          },
+          activatedAt: (tabId) => this.popups.activation(tabId).lastActivatedAt(),
+          setting: (url, details) =>
+            this.permissions.resolve(AUTOMATIC_DOWNLOADS_PERMISSION, url, details),
+          ask: (url, details) =>
+            this.permissions.decide(AUTOMATIC_DOWNLOADS_PERMISSION, url, details)
+        })
       }
     )
     this.state.downloadsFor = (win) => ({
@@ -496,6 +517,9 @@ export class Browser {
       // The session carries the site's `background-video` answer to the Android host: a change
       // reaches it at once, before the next background transition.
       if (change.permission === 'background-video') this.mediaSession.followBackgroundVideoSetting()
+      // Likewise the site's `auto-picture-in-picture` answer, which Android's auto-enter obeys.
+      if (change.permission === 'auto-picture-in-picture')
+        this.mediaSession.followAutoPictureInPictureSetting()
     })
     this.tabs.migrateMutedHosts()
     this.tabDrag = new TabDragController(this)
@@ -540,6 +564,7 @@ export class Browser {
     this.imports = new ImportService(this)
     this.blocking = new BlockingService(this)
     this.protection = new ProtectionService(this)
+    this.contentRules = new ContentRulesService(this)
     this.translate = new TranslateService(this)
     this.spellcheck = new SpellcheckService(this)
     this.languages = new LanguagesService(this)
@@ -1456,6 +1481,9 @@ export class Browser {
     this.blocking.start()
     // After the blocking store is attached: HTTPS-only mode's set is persisted like the others.
     this.protection.start()
+    // The load-path content rules reach the host before the first page view is made, so a
+    // restored tab's first navigation already has its site's answers (PS-63, PS-64).
+    this.contentRules.start()
     // A clear on exit the last close left owed runs now, off the boot path.
     this.siteData.start()
     // The pages' languages and fonts reach the host before the first page view is made, so the
@@ -2644,6 +2672,7 @@ export class Browser {
     this.updates.stop()
     this.downloads.shutdown()
     this.protection.stop()
+    this.contentRules.stop()
     this.blocking.stop()
     this.inactiveTabs.stop()
     this.background.stop()

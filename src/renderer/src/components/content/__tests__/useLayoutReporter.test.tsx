@@ -3,8 +3,9 @@ import { act, useRef, type JSX, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
-import type { Rect, Space, Tab, UIState } from '@shared/types'
+import type { LayoutReport, Rect, Space, Tab, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
+import { viewportStore, type FormFactor } from '@renderer/lib/formFactor'
 import { landingStore } from '@renderer/lib/fullscreenLanding'
 import { registerRecedeLayer, recedeScale, type RecedeHandle } from '@renderer/lib/motion/recede'
 import { contentAreaStore, uiStore } from '@renderer/lib/ui'
@@ -315,13 +316,11 @@ describe('useLayoutReporter under the recede', () => {
    * chrome's twin of the notice is seen over a frame the hung renderer keeps painted – the host
    * hears it as `contentHidden`, the same word the "Page unresponsive" prompt hides the view by.
    */
-  const lastReport = (): { contentHidden: boolean } =>
+  const lastReport = (): LayoutReport =>
     vi
       .mocked(run)
       .mock.calls.filter(([c]) => c === 'layout.report')
-      .at(-1)![1] as {
-      contentHidden: boolean
-    }
+      .at(-1)![1] as LayoutReport
 
   it('the hold’s cover over a hung page reports the views hidden, and their return with its close', () => {
     vi.mocked(run).mockClear()
@@ -390,5 +389,73 @@ describe('useLayoutReporter under the recede', () => {
     expect(lastReport().contentHidden).toBe(true)
     rerender(<Probe state={eeaFirstRun(true, false)} />)
     expect(lastReport().contentHidden).toBe(false)
+  })
+
+  /*
+   * The phone's first-run tour (W6-HF2, hole 2), which `firstRunCovers` leaves out: the tour is
+   * the whole window, drawn in the chrome, and the pages lie above the chrome on Android – a page
+   * placed while it stands covers it (a fresh profile's first launch from a link: the VIEW
+   * intent's tab is active and loaded). The reporter reads the shell's own term for the tour
+   * (`phoneOnboardingCovers`, the phone's one window whatever its kind) and reports the content
+   * hidden from the FIRST report – the core applies none of a hidden report's placements
+   * (`Window.applyLayout`) – and the first layout after the tour's end places the page by the
+   * ordinary path. The tablet's tour is the desktop's: `firstRunCovers` hides the page under it
+   * (#528), and the phone's term stays out of it.
+   */
+  const fresh = (s: UIState): UIState =>
+    ({ ...s, settings: { ...s.settings, onboardingDone: false } }) as UIState
+  const done = (s: UIState): UIState =>
+    ({ ...s, settings: { ...s.settings, onboardingDone: true } }) as UIState
+  const layoutAs = (formFactor: FormFactor): void =>
+    viewportStore.set({ ...viewportStore.get(), formFactor })
+
+  it("reports the content hidden under the phone's tour from the first report, and places the page once the tour has ended", () => {
+    vi.mocked(run).mockClear()
+    const before = viewportStore.get()
+    layoutAs('phone')
+    try {
+      const { rerender } = render(<Probe state={fresh(state('bottom'))} />)
+      expect(reports()).toBe(1)
+      expect(lastReport().contentHidden).toBe(true)
+      // The tour's end (`onboarding.complete` puts the flag up): the next report shows the page.
+      rerender(<Probe state={done(state('bottom'))} />)
+      expect(reports()).toBe(2)
+      expect(lastReport().contentHidden).toBe(false)
+      expect(lastReport().placements.map((p) => p.tabId)).toEqual(['t1'])
+    } finally {
+      viewportStore.set(before)
+    }
+  })
+
+  it('a phone past its first run places the page as before', () => {
+    vi.mocked(run).mockClear()
+    const before = viewportStore.get()
+    layoutAs('phone')
+    try {
+      render(<Probe state={done(state('bottom'))} />)
+      expect(reports()).toBe(1)
+      expect(lastReport().contentHidden).toBe(false)
+      expect(lastReport().placements.map((p) => p.tabId)).toEqual(['t1'])
+    } finally {
+      viewportStore.set(before)
+    }
+  })
+
+  it("the tablet's tour is the desktop's: firstRunCovers hides the page under it (#528), the phone's term out of it", () => {
+    vi.mocked(run).mockClear()
+    const before = viewportStore.get()
+    layoutAs('tablet')
+    try {
+      // The synced window's tour (`onboardingCovers`, the term TabletShell mounts it on).
+      const { rerender } = render(<Probe state={firstRun(false)} />)
+      expect(reports()).toBe(1)
+      expect(lastReport().contentHidden).toBe(true)
+      // A window that never shows the tour: the page is placed, the phone's term not in play.
+      rerender(<Probe state={firstRun(false, 'normal')} />)
+      expect(lastReport().contentHidden).toBe(false)
+      expect(lastReport().placements.map((p) => p.tabId)).toEqual(['t1'])
+    } finally {
+      viewportStore.set(before)
+    }
   })
 })

@@ -329,7 +329,7 @@ describe('the device kinds (Permissions)', () => {
 })
 
 describe('Automatic picture-in-picture (Additional permissions, MW-28)', () => {
-  it('is the desktop’s row after Fullscreen, and not on the phone until Android’s hook reads it', () => {
+  it('is the row after Fullscreen on the desktop and on the phone, whose auto-enter reads it', () => {
     const desktop = groups()
       .find((g) => g.id === 'sites-additional')!
       .rows.map((r) => r.id)
@@ -342,7 +342,49 @@ describe('Automatic picture-in-picture (Additional permissions, MW-28)', () => {
       description: 'A playing video moves to a small window when you leave its tab'
     })
     const phone = groups({}, 'android')
-    expect(findRow(phone, 'sites:auto-picture-in-picture')).toBeNull()
-    expect(findRow(phone, 'sites:fullscreen')).not.toBeNull()
+      .find((g) => g.id === 'sites-additional')!
+      .rows.map((r) => r.id)
+    expect(phone.indexOf('sites:auto-picture-in-picture')).toBe(
+      phone.indexOf('sites:fullscreen') + 1
+    )
+    expect(row(groups({}, 'android'), 'sites:auto-picture-in-picture')).toMatchObject({
+      kind: 'item',
+      label: 'Automatic picture-in-picture',
+      description: 'A playing video moves to a small window when you leave its tab'
+    })
+  })
+
+  it('reads a Block default plainly on the phone (no "without asking": the site never asks)', () => {
+    const blocked = row(
+      groups(
+        { permissionDefaults: { 'auto-picture-in-picture': 'deny' } } as Partial<UIState>,
+        'android'
+      ),
+      'sites:auto-picture-in-picture'
+    )
+    expect(blocked).toMatchObject({
+      description: 'Sites cannot use automatic picture-in-picture'
+    })
+    // The site card's own write for a site lists under the row on the phone as on the desktop.
+    const withRule = groups(
+      {
+        permissionRules: [
+          {
+            origin: 'https://video.example',
+            permission: 'auto-picture-in-picture',
+            decision: 'deny'
+          }
+        ]
+      } as Partial<UIState>,
+      'android'
+    )
+    const item = row(withRule, 'sites:auto-picture-in-picture')
+    if (item.kind !== 'item') throw new Error('not an item row')
+    expect(
+      findRow(
+        item.sheet.groups,
+        'sites:auto-picture-in-picture:https://video.example:auto-picture-in-picture'
+      )
+    ).toMatchObject({ kind: 'item', label: 'video.example', description: 'Blocked' })
   })
 })

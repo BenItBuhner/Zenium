@@ -339,6 +339,11 @@ export function buildSearchUrl(engine: SearchEngine, query: string): string {
   return fillTemplate(engine.searchUrl, query)
 }
 
+/** The results' address for `query` on a bare `%s` template (the error page carries an engine's template alone). */
+export function fillSearchTemplate(template: string, query: string): string {
+  return fillTemplate(template, query)
+}
+
 export function buildSuggestUrl(engine: SearchEngine, query: string): string | null {
   if (!engine.suggestUrl) return null
   return fillTemplate(engine.suggestUrl, query)

@@ -109,6 +109,7 @@ import type {
   WindowOpenTicket
 } from '../../core/platform'
 import type { SessionManager } from './sessions'
+import { requestDetails, type ContentRulesLookup } from './contentRules'
 import { downloadDir } from './downloads'
 import { savePageDialogOptions, savePageTarget } from './savePage'
 import { uniquePath } from './uniquePath'
@@ -152,6 +153,20 @@ const SNAPSHOT_MAX_PIXELS = 6_200_000
 const SNAPSHOT_TARGET_PIXELS = 3_700_000
 /** The stand-in's JPEG quality (`snapshot`: the numbers behind it). */
 const SNAPSHOT_JPEG_QUALITY = 90
+
+/**
+ * The window corners a parked view can keep its pixel in (`park`): 0 the window's bottom-right
+ * (the box's top-left pixel inside), 1 bottom-left (the box's top-right pixel), 2 top-right (its
+ * bottom-left), 3 top-left (its bottom-right). Each parked view of a window takes its own, so no
+ * view's pixel sits under another's – a view whose whole inside lies under another view is
+ * OCCLUDED to Chromium, as good as hidden. A fifth parked view shares a corner.
+ *
+ * That pixel is on screen: the layer's rounded-corner mask (`setBorderRadius`) is laid over the
+ * view's clipped rect, not its box, so at any radius the one pixel shows a circle inscribed in it
+ * (measured: about 78% of the page's colour) – no radius hides it, and none is tried. Windows 11
+ * and macOS round the window's own corners over that pixel; a frameless X11 window shows it.
+ */
+const PARK_CORNERS = 4
 
 /** Keys that never count as a gesture in Chromium's user-activation model. */
 const NON_ACTIVATING_KEYS = new Set(['Escape', 'Shift', 'Control', 'Alt', 'Meta', 'AltGr'])
@@ -264,10 +279,11 @@ function fontsKey(fonts: EffectiveFonts): string {
 
 /**
  * The emulation overrides a page view keeps on the page's shared session
- * (`ElectronTabView.setEmulation`): the dark theme for sites' auto dark mode, and the Appearance
- * setting's `prefers-color-scheme` where the engine does not carry it to pages itself.
+ * (`ElectronTabView.setEmulation`): the dark theme for sites' auto dark mode, the Appearance
+ * setting's `prefers-color-scheme` where the engine does not carry it to pages itself, and the
+ * JavaScript site setting's switch (`refreshScripts`).
  */
-type EmulationOverride = 'autoDark' | 'colorScheme'
+type EmulationOverride = 'autoDark' | 'colorScheme' | 'scripts'
 
 /** A DevTools protocol command as the view sends it. */
 interface CdpCommand {
@@ -280,10 +296,23 @@ const AUTO_DARK_MODE_ON: CdpCommand = {
   params: { enabled: true }
 }
 
+/**
+ * The JavaScript site setting's block (PS-64): the browser-side emulation handler takes
+ * `javascript_enabled` out of the page's web preferences, which the renderer reads at every
+ * script's execution – a document that starts under it runs none of its own, as under Chrome's
+ * JAVASCRIPT content setting. One difference, measured on the real build (services pass 10): the
+ * parser still sees scripting as on, so `<noscript>` content stays hidden where Chrome shows it.
+ */
+const SCRIPTS_OFF: CdpCommand = {
+  method: 'Emulation.setScriptExecutionDisabled',
+  params: { value: true }
+}
+
 /** What takes each override off a session that stays. */
 const EMULATION_RELEASE: Record<EmulationOverride, CdpCommand> = {
   autoDark: { method: 'Emulation.setAutoDarkModeOverride', params: {} },
-  colorScheme: { method: 'Emulation.setEmulatedMedia', params: emulatedMediaParams(null) }
+  colorScheme: { method: 'Emulation.setEmulatedMedia', params: emulatedMediaParams(null) },
+  scripts: { method: 'Emulation.setScriptExecutionDisabled', params: { value: false } }
 }
 
 function sameCommand(a: CdpCommand | null, b: CdpCommand | null): boolean {
@@ -414,6 +443,12 @@ export class ElectronTabView implements TabView {
   private devtoolsPageBounds: Rect | null = null
   /** The view's box as the chrome last laid it out (`setBounds`), in DIP; null before the first. */
   private bounds: Rect | null = null
+  /**
+   * The window corner the engine's view stands parked in under a chrome cover rather than hidden
+   * (`park`): shown, at its size, with one pixel still inside the window; null when not parked.
+   * Never set while `visible` is.
+   */
+  private parked: number | null = null
   /** The user chose to leave: the next `beforeunload` objection is overruled. */
   private leaveApproved = false
   /** The last navigation this host started, for the "Leave site?" replay. */
@@ -646,6 +681,8 @@ export class ElectronTabView implements TabView {
       this.pageIntent = null
       // A refused certificate belongs to the navigation it happened in (which asks after this).
       this.refusedCertificate = null
+      // The JavaScript site setting for the document on its way, before its response is read.
+      this.refreshScripts(details.url)
     })
     // A server redirect inside the navigation under way (Chromium's `DidRedirectNavigation`):
     // the core keeps the hop and records the chain with the commit (history-23).
@@ -654,6 +691,7 @@ export class ElectronTabView implements TabView {
       const from = this.navigatingUrl
       this.navigatingUrl = details.url
       if (from && from !== details.url) ev.onRedirected?.(from, details.url)
+      this.refreshScripts(details.url)
     })
     wc.on('dom-ready', () => ev.onDomReady())
     // By the time this fires `this.view.webContents` no longer returns the object (Electron drops
@@ -1241,6 +1279,9 @@ export class ElectronTabView implements TabView {
   }
 
   detach(): void {
+    // A view parked under this window's cover leaves it hidden: the engine's view must not be
+    // a shown one when another window takes it in (`enterWindow` from `focus`, `bringToFront`).
+    this.coverLifted()
     const win = this.win
     if (win && this.inWindow) win.contentView.removeChildView(this.view)
     this.inWindow = false
@@ -1257,7 +1298,9 @@ export class ElectronTabView implements TabView {
 
   setBounds(rect: Rect): void {
     this.bounds = rect
-    this.view.setBounds(rect)
+    // A parked view takes its new box parked: the layout that shows it again sets the box first
+    // and `setVisible(true)` puts the view in it.
+    this.view.setBounds(this.parked === null ? rect : this.parkedBox(rect, this.parked))
   }
 
   setBorderRadius(radius: number): void {
@@ -1268,6 +1311,26 @@ export class ElectronTabView implements TabView {
    * Show or hide the page. Always passed on to the engine's view (a shown page has its visibility
    * re-asserted this way after a thaw); the owner hears of a flip, so the resource governor can
    * put its CPU clamp on a page that went behind and take it off one that came in front.
+   *
+   * A page taken down because chrome UI covers it – the window's `contentHidden` at the time of
+   * the call: the omnibox dropdown, a menu, a sheet or dialog, the first-run tour, a drag – is
+   * parked rather than hidden (`park`). The views composite above the chrome, so the chrome
+   * cannot draw over a page and asks for it to go away instead; but a `WebContentsView` hidden,
+   * detached, sized to nothing or moved wholly off the window is HIDDEN to Chromium (its aura
+   * occlusion tracker), and Chromium starts a page's speculation-rules prefetches only while the
+   * page's `WebContents` is VISIBLE (`PrefetchDocumentManager::CanPrefetchNow`) – a prefetch the
+   * page asked for meanwhile waits in `PrefetchScheduler`'s queue, and nothing re-runs that queue
+   * when the page is shown again: it starts only once the page next changes its candidates, which
+   * for most pages is never. Chrome keeps the page visible under its own popups, and a
+   * speculation rule in a page loaded under Zenium's omnibox dropdown (the address on the command
+   * line, a fresh profile) never prefetched at all. A parked view keeps its size and stays shown
+   * with one corner pixel in a corner of the window (`PARK_CORNERS`: the one pixel of it on
+   * screen), which Chromium counts as VISIBLE: the page keeps painting,
+   * `document.visibilityState` stays `visible`, its prefetches run, and the view comes back with
+   * `setVisible(true)` untouched, as Chrome's pages do from under a popup. The window's host ends
+   * the parking of a view the next uncovered layout leaves out (`coverLifted`: a tab switched
+   * under the cover). The page hidden by a tab switch, a chrome page tab or a move between
+   * windows (no cover on) is hidden as before.
    */
   setVisible(visible: boolean): void {
     const flipped = this.visible !== visible
@@ -1277,12 +1340,139 @@ export class ElectronTabView implements TabView {
       // before (`setBounds`), as the popup surface is placed: added, then shown.
       const win = this.win
       if (win) this.enterWindow(win)
+      const parked = this.parked !== null
+      if (parked) this.unpark()
+      this.view.setVisible(true)
+      if (parked) this.pointerBack()
+    } else if (this.coverable()) {
+      this.park()
+    } else {
+      if (this.parked !== null) this.unpark()
+      this.view.setVisible(false)
     }
-    this.view.setVisible(visible)
     if (flipped) {
       this.refreshHangWatch()
       this.owner.visibilityChanged(this)
     }
+  }
+
+  /**
+   * Whether a hide asked for now is a chrome cover's: the window's chrome covers the content and
+   * the engine's view is on screen in it (a page never shown, or shown in no window, has nothing
+   * to keep visible).
+   */
+  private coverable(): boolean {
+    const host = this.host
+    return (
+      host !== null &&
+      this.win !== null &&
+      this.inWindow &&
+      this.bounds !== null &&
+      this.view.getVisible() &&
+      host.zen.contentHidden
+    )
+  }
+
+  /**
+   * The box a parked view stands in: its own size, moved so that only one of its corner pixels
+   * is still inside the window, in the window content's corner `corner` (`PARK_CORNERS`). The
+   * page's box ends short of the window's edge (the frame around it), so it is the window's
+   * corner pixel and not the box's that the view keeps – anything more of the view inside the
+   * window would show beside the frame.
+   */
+  private parkedBox(rect: Rect, corner: number): Rect {
+    const win = this.win
+    const [width, height] = win ? win.getContentSize() : [rect.x + rect.width, rect.y + rect.height]
+    const right = corner % 2 === 0
+    const bottom = corner < 2
+    return {
+      x: right ? width - 1 : -(rect.width - 1),
+      y: bottom ? height - 1 : -(rect.height - 1),
+      width: rect.width,
+      height: rect.height
+    }
+  }
+
+  /**
+   * The pointer's moves are told where hiding would have told them. Aura synthesizes a mouse
+   * move to whatever lies under the pointer when a view under it is hidden or shown, and none
+   * when one is moved: parked by a bounds change alone, the view leaves the chrome under the
+   * pointer with the pointer's last position over the chrome itself – wherever it last moved
+   * over a strip or a bar – and its hover state stays there, so a bubble opening under that
+   * spot counted as hovered and never closed (the zoom bubble waits under the pointer). The
+   * chrome hears a move at the pointer's place as the view goes (`park`), and when the view
+   * comes back under the pointer the chrome hears the pointer leave and the page hears where it
+   * stands (`pointerBack`), as aura's exit and move would say. Nothing while a chrome mouse
+   * button is down (a tab row's drag is a cover): aura's synthesized moves wait for the release
+   * too, and the chrome holds the pointer's capture through the drag anyway.
+   */
+  private park(): void {
+    const rect = this.bounds
+    if (!rect) return
+    if (this.parked === null) this.parked = this.owner.claimParkingCorner(this)
+    const pointer = this.pointerOver(rect)
+    this.view.setBounds(this.parkedBox(rect, this.parked))
+    if (pointer) {
+      this.host?.win.webContents.sendInputEvent({ type: 'mouseMove', x: pointer.x, y: pointer.y })
+    }
+  }
+
+  private unpark(): void {
+    this.parked = null
+    this.owner.releaseParkingCorner(this)
+    if (this.bounds) this.view.setBounds(this.bounds)
+  }
+
+  /** The view is back in its box from parking, shown: the pointer over it is the page's again. */
+  private pointerBack(): void {
+    const rect = this.bounds
+    const host = this.host
+    if (!rect || !host) return
+    const pointer = this.pointerOver(rect)
+    if (!pointer) return
+    host.win.webContents.sendInputEvent({ type: 'mouseLeave', x: pointer.x, y: pointer.y })
+    this.wc.sendInputEvent({ type: 'mouseMove', x: pointer.x - rect.x, y: pointer.y - rect.y })
+  }
+
+  /**
+   * Where the pointer stands over the view's box `rect`, in DIP from the window content's
+   * top-left corner (the chrome page's own coordinates); null with the pointer elsewhere, a
+   * chrome mouse button down, or no window to measure against.
+   */
+  private pointerOver(rect: Rect): { x: number; y: number } | null {
+    const host = this.host
+    if (!host || host.pointerButtonHeld()) return null
+    try {
+      const cursor = screen.getCursorScreenPoint()
+      const content = host.win.getContentBounds()
+      const x = cursor.x - content.x
+      const y = cursor.y - content.y
+      const over = x >= rect.x && y >= rect.y && x < rect.x + rect.width && y < rect.y + rect.height
+      return over ? { x, y } : null
+    } catch {
+      return null
+    }
+  }
+
+  /** Whether the engine's view stands parked under a chrome cover, and in which corner. */
+  parkedCorner(): number | null {
+    return this.parked
+  }
+
+  /** The window the view is parked in, for the owner's handing out of corners. */
+  windowOf(): BrowserWindow | null {
+    return this.win
+  }
+
+  /**
+   * The chrome's cover lifted (a layout applied with `contentHidden` off) without the layout
+   * showing this view: it was switched away from under the cover, and is hidden now the way a
+   * tab switch hides a page. Nothing for a view that is not parked.
+   */
+  coverLifted(): void {
+    if (this.parked === null) return
+    this.unpark()
+    this.view.setVisible(false)
   }
 
   isVisible(): boolean {
@@ -2031,6 +2221,28 @@ export class ElectronTabView implements TabView {
     )
   }
 
+  // --- the JavaScript site setting (PS-64) --------------------------------------------
+
+  /**
+   * JavaScript for the document about to load at `url`: the site setting's block goes on the
+   * page's session as `Emulation.setScriptExecutionDisabled` (`SCRIPTS_OFF`) as the navigation
+   * starts – and again at each redirect hop, for the address the page ends at – and comes off
+   * the same way for a document the setting allows, so a blocked site's answer never outlives
+   * its document. Electron 44 has no per-view switch of its own: a page's web preferences are
+   * fixed at creation, and the emulation override is the one runtime path (the same primitive
+   * as the dark theme for sites). What it does not reach: a page an extension's `chrome.debugger`
+   * or DevTools already holds when the hold attaches keeps its scripts until the next load
+   * (`setEmulation` drops the override then); the preload's isolated world still runs (Blink
+   * lets isolated worlds execute under the block, as Chrome's content scripts do), the page's
+   * own scripts, `javascript:` URLs and `webContents.executeJavaScript` in the main world do
+   * not. Same-document navigations change no document and are left alone.
+   */
+  private refreshScripts(url: string): void {
+    if (this.wc.isDestroyed()) return
+    const blocked = this.owner.scriptsBlocked(url, this.wc.session)
+    this.setEmulation('scripts', blocked ? SCRIPTS_OFF : null)
+  }
+
   setBackgroundThrottling(allowed: boolean): void {
     if (!this.wc.isDestroyed()) this.wc.setBackgroundThrottling(allowed)
   }
@@ -2615,6 +2827,8 @@ export class ElectronTabViewHost implements TabViewHost {
   private readonly tabIds = new Map<number, string>()
   private readonly viewListeners = new Set<(view: ElectronTabView) => void>()
   private readonly visibilityListeners = new Set<(view: ElectronTabView) => void>()
+  /** The window corners the views parked under a chrome cover hold (`claimParkingCorner`). */
+  private readonly parkingCorners = new Map<ElectronTabView, number>()
   /** Per window, the page or chrome that last lost the keyboard – a hidden page gives it back there. */
   private readonly lastKeyboard = new WeakMap<BrowserWindow, WebContents>()
   private readonly keyboardWatched = new WeakSet<BrowserWindow>()
@@ -2713,6 +2927,24 @@ export class ElectronTabViewHost implements TabViewHost {
   /** The page fonts every new page view is made with right now (for the tests). */
   static currentFonts(): PageFontSettings {
     return userFontSettings
+  }
+
+  /**
+   * The core's per-site content settings the views enforce themselves (the JavaScript switch,
+   * `ElectronTabView.refreshScripts`); the platform sets it once the core is up. Null: nothing
+   * is blocked (the views made before the core answers, and the tests).
+   */
+  contentRules: ContentRulesLookup | null = null
+
+  /** Whether the JavaScript site setting blocks a document at `url` in `ses`'s container. */
+  scriptsBlocked(url: string, ses: Session): boolean {
+    if (!this.contentRules || !/^(https?|file):/i.test(url)) return false
+    const containerId = this.sessions.containerOf(ses)
+    return !this.contentRules.allows(
+      'javascript',
+      url,
+      containerId ? requestDetails(containerId) : undefined
+    )
   }
 
   /** Follow the window's own chrome for the keyboard, as every tab page in it is followed. */
@@ -2863,6 +3095,31 @@ export class ElectronTabViewHost implements TabViewHost {
     this.byWebContentsId.delete(webContentsId)
     this.tabIds.delete(webContentsId)
     if (tabId !== undefined && this.byTabId.get(tabId) === view) this.byTabId.delete(tabId)
+    if (view) this.parkingCorners.delete(view)
+  }
+
+  /**
+   * The window corner for a view parking under a chrome cover (`ElectronTabView.park`): the
+   * lowest no other view parked in the same window holds, and the last one when all are held. A
+   * view already parked keeps its corner.
+   */
+  claimParkingCorner(view: ElectronTabView): number {
+    const held = this.parkingCorners.get(view)
+    if (held !== undefined) return held
+    const win = view.windowOf()
+    const taken = new Set<number>()
+    for (const [other, at] of this.parkingCorners) {
+      if (other !== view && other.windowOf() === win) taken.add(at)
+    }
+    let free = 0
+    while (free < PARK_CORNERS - 1 && taken.has(free)) free++
+    this.parkingCorners.set(view, free)
+    return free
+  }
+
+  /** The view left its parking corner (`ElectronTabView.unpark`). */
+  releaseParkingCorner(view: ElectronTabView): void {
+    this.parkingCorners.delete(view)
   }
 
   /**

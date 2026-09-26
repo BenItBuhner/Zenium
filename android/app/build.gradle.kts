@@ -18,6 +18,7 @@ val buildWeb = tasks.register<Exec>("buildWeb") {
     inputs.dir(webRoot.resolve("src"))
     outputs.dir(projectDir.resolve("src/main/assets/www"))
     outputs.file(projectDir.resolve("src/main/assets/page.js"))
+    outputs.file(projectDir.resolve("src/main/assets/webapp.js"))
     outputs.file(projectDir.resolve("src/main/assets/ext.js"))
     outputs.file(projectDir.resolve("src/main/assets/ext-janitor.js"))
     outputs.dir(projectDir.resolve("src/main/assets/pdf"))

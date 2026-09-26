@@ -171,6 +171,14 @@ export interface MediaSessionInfo {
    * false for a chrome player's session and for every site under the default).
    */
   backgroundVideo: boolean
+  /**
+   * The tab's site may go into picture-in-picture without a click when the user leaves it: its
+   * `auto-picture-in-picture` content setting does not resolve to deny (allow is the default;
+   * Android reads it for its auto-enter from a fullscreen video on Home, Chrome's rule that the
+   * setting governs the automatic entry alone – the user's own `media.pip` request stays). False
+   * for a chrome player's session.
+   */
+  autoPictureInPicture: boolean
   /** A page's media, or a chrome player's (`video` false, no PiP: hosts skip their PiP paths). */
   source: MediaSessionSourceKind
   /** The chrome player's id (`read-aloud`) when `source` is `chrome`. */

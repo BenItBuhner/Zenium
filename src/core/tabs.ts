@@ -56,6 +56,7 @@ import {
   crashPageUrl,
   type CrashPageVariant,
   type ErrorPageAccent,
+  type ErrorPageSearch,
   errorPageCertificate,
   errorPageUrl,
   extensionPageOf,
@@ -88,7 +89,8 @@ import {
   CRASH_ERROR_CODE,
   crashCodeName,
   describeNetError,
-  HTTP_FALLBACK_CODES
+  HTTP_FALLBACK_CODES,
+  NAME_NOT_RESOLVED_CODE
 } from '../shared/zenPages'
 import { isCertificateError } from '../shared/siteInfo'
 import type { InterstitialAction } from '../shared/interstitial'
@@ -778,7 +780,8 @@ export class TabManager {
           description || describeNetError(code, ''),
           url,
           certificateError?.certificate,
-          this.errorPageAccent(tabId)
+          this.errorPageAccent(tabId),
+          this.errorPageSearch(code)
         )
         if (certificateError && v.showErrorPage) this.showInterstitial(tabId, v, url, page)
         else v.loadURL(page)
@@ -1063,6 +1066,18 @@ export class TabManager {
       light: rgbToHex(resolveTheme(theme, false).accent),
       dark: rgbToHex(resolveTheme(theme, true).accent)
     }
+  }
+
+  /**
+   * The engine the error page may offer to search with (ERR-05, "Search <engine> for <term>"):
+   * the profile's default – the Settings pick, or the one an extension holds – for a name that
+   * did not resolve, the one failure a typed word ends in; null for every other failure, whose
+   * page offers no search and carries no engine.
+   */
+  errorPageSearch(code: number): ErrorPageSearch | null {
+    if (code !== NAME_NOT_RESOLVED_CODE) return null
+    const engine = this.browser.defaultSearchEngine()
+    return { engine: engine.name, template: engine.searchUrl }
   }
 
   /**
@@ -1546,6 +1561,7 @@ export class TabManager {
     this.pendingRedirects.delete(tabId)
     this.crashPagePending.delete(tabId)
     this.browser.popups.onTabGone(tabId)
+    this.browser.downloads.onTabGone(tabId)
     this.browser.security.cancelForTab(tabId)
     this.browser.permissionPrompts.cancelForTab(tabId)
     this.browser.devices.cancelForTab(tabId)
@@ -1832,6 +1848,7 @@ export class TabManager {
     this.crashPagePending.delete(tabId)
     this.browser.externalProtocols.cancelForTab(tabId)
     this.browser.popups.onTabGone(tabId)
+    this.browser.downloads.onTabGone(tabId)
     this.browser.security.cancelForTab(tabId)
     this.browser.devices.cancelForTab(tabId)
     this.browser.pageDialogs.cancelForTab(tabId)

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { TabViewEvents } from '@core/platform'
 import type { Bridge } from '../bridge'
-import { AndroidTabView } from '../views'
+import { AndroidTabView, type ContentRulesResolver } from '../views'
+import type { ResolvedContentRules } from '@shared/contentRules'
 
 /** Core-side view events that only record which of them Kotlin's events reached. */
 function fakeEvents(): { events: TabViewEvents; reached: string[] } {
@@ -230,5 +231,133 @@ describe('AndroidTabView.sendFormsCommand', () => {
         }
       }
     ])
+  })
+})
+
+describe('AndroidTabView and the per-navigation content rules (the core decides, Kotlin applies)', () => {
+  const answers: Record<string, boolean> = {
+    images: false,
+    javascript: true,
+    'insecure-content': false,
+    sensors: true,
+    'third-party-sign-in': true,
+    'payment-handler': false
+  }
+  function resolver(started: boolean): {
+    resolver: ContentRulesResolver
+    asked: Array<{ url: string; details: unknown }>
+  } {
+    const asked: Array<{ url: string; details: unknown }> = []
+    const resolver: ContentRulesResolver = {
+      started,
+      resolveAll: (url, details) => {
+        asked.push({ url, details })
+        return { ...answers } as ResolvedContentRules
+      }
+    }
+    return { resolver, asked }
+  }
+
+  it('sends the destination’s resolved rules with a load and a reload, in the tab’s container', () => {
+    const { bridge, calls } = fakeBridge()
+    const { resolver: rules, asked } = resolver(true)
+    const view = new AndroidTabView(
+      'tab_1',
+      bridge,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => rules
+    )
+    view.events = fakeEvents().events
+    view.loadURL('https://a.example/page')
+    expect(calls[0]).toEqual({
+      method: 'view.load',
+      args: { tabId: 'tab_1', url: 'https://a.example/page', rules: answers }
+    })
+    expect(asked[0]).toEqual({ url: 'https://a.example/page', details: undefined })
+    view.containerId = 'private'
+    view.dispatch('navigated', {
+      url: 'https://a.example/page',
+      title: 'a',
+      canGoBack: false,
+      canGoForward: false,
+      inPage: false
+    })
+    view.reload(false)
+    expect(calls[1]).toEqual({
+      method: 'view.reload',
+      args: { tabId: 'tab_1', ignoreCache: false, url: 'https://a.example/page', rules: answers }
+    })
+    expect(asked[1]).toEqual({
+      url: 'https://a.example/page',
+      details: { privateContainerId: 'private' }
+    })
+  })
+
+  it('answers Kotlin’s question for a navigation it did not start, with the token it holds the navigation by', () => {
+    const { bridge, calls } = fakeBridge()
+    const { resolver: rules } = resolver(true)
+    const view = new AndroidTabView(
+      'tab_1',
+      bridge,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => rules
+    )
+    view.events = fakeEvents().events
+    view.dispatch('resolveRules', { token: 7, url: 'https://b.example/x' })
+    expect(calls[0]).toEqual({
+      method: 'view.rulesResolved',
+      args: { tabId: 'tab_1', token: 7, url: 'https://b.example/x', rules: answers }
+    })
+  })
+
+  it('sends a load and a reload without rules before the core’s rules service has started (Kotlin reads the pushed document) and for a page without a site, and answers a question with null', () => {
+    const { bridge, calls } = fakeBridge()
+    const { resolver: rules, asked } = resolver(false)
+    const view = new AndroidTabView(
+      'tab_1',
+      bridge,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => rules
+    )
+    view.events = fakeEvents().events
+    view.loadURL('https://a.example/')
+    view.reload(true)
+    view.dispatch('resolveRules', { token: 1, url: 'https://a.example/' })
+    expect(calls).toEqual([
+      { method: 'view.load', args: { tabId: 'tab_1', url: 'https://a.example/' } },
+      { method: 'view.reload', args: { tabId: 'tab_1', ignoreCache: true } },
+      {
+        method: 'view.rulesResolved',
+        args: { tabId: 'tab_1', token: 1, url: 'https://a.example/', rules: null }
+      }
+    ])
+    expect(asked).toEqual([])
+    const unbound = new AndroidTabView('tab_2', bridge)
+    unbound.loadURL('https://a.example/')
+    expect(calls[3]).toEqual({
+      method: 'view.load',
+      args: { tabId: 'tab_2', url: 'https://a.example/' }
+    })
+    const { resolver: started } = resolver(true)
+    const siteless = new AndroidTabView(
+      'tab_3',
+      bridge,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => started
+    )
+    siteless.loadURL('about:blank')
+    expect(calls[4]).toEqual({ method: 'view.load', args: { tabId: 'tab_3', url: 'about:blank' } })
   })
 })

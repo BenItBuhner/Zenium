@@ -14,6 +14,8 @@ import type { DownloadHost, StoreIO } from '../platform'
 import { DangerVerdictRegistry, type DangerVerdictProvider } from '../downloads/danger'
 import { PRIVATE_CONTAINER_ID, type DownloadItem, type DownloadSettings } from '../../shared/types'
 import { DEFAULT_DOWNLOAD_SETTINGS } from '../../shared/downloads'
+import { DownloadLimiter } from '../downloadLimiter'
+import type { ContentDefault } from '../../shared/contentSettings'
 
 class MemoryIO implements StoreIO {
   files = new Map<string, string>()
@@ -1766,5 +1768,124 @@ describe('RateEstimator and ETA', () => {
     expect(
       estimateEta({ ...base, totalBytes: 100, bytesPerSecond: 10, state: 'paused' })
     ).toBeNull()
+  })
+})
+
+describe('the automatic-downloads rule at begin (PS-71)', () => {
+  interface Limited {
+    h: Harness
+    setting: { value: ContentDefault }
+    answers: Array<(allowed: boolean) => void>
+  }
+
+  function limited(): Limited {
+    const setting = { value: 'ask' as ContentDefault }
+    const answers: Limited['answers'] = []
+    const limiter = new DownloadLimiter({
+      page: (tabId) => (tabId === 't1' ? { url: 'https://example.com/page' } : null),
+      activatedAt: () => -Infinity,
+      setting: () => setting.value,
+      ask: () => new Promise<boolean>((resolve) => answers.push(resolve))
+    })
+    return { h: harness({ limiter }), setting, answers }
+  }
+
+  it('lets the first download run and drops the second of a blocked site: cancelled, unlisted, unannounced', () => {
+    const { h, setting } = limited()
+    setting.value = 'deny'
+    const first = begin(h)
+    expect(first.state).toBe('progressing')
+    const second = begin(h, { url: 'https://cdn.example.com/second.pdf', filename: 'second.pdf' })
+    expect(second.state).toBe('cancelled')
+    expect(h.service.items.map((i) => i.id)).toEqual([first.id])
+    expect(h.changes).toEqual([{ id: first.id, kind: 'started' }])
+    expect(stored(h).items.map((i) => i.id)).toEqual([first.id])
+    expect(h.host.calls).toEqual([])
+  })
+
+  it('holds the second download for the prompt – paused, out of the list – and lists it on Allow', async () => {
+    const { h, answers } = limited()
+    const first = begin(h)
+    const second = begin(h, { url: 'https://cdn.example.com/second.pdf', filename: 'second.pdf' })
+    expect(second.state).toBe('paused')
+    expect(h.service.items.map((i) => i.id)).toEqual([first.id])
+    expect(h.changes).toHaveLength(1)
+    await flush()
+    // The engine's item is paused once the host has mapped the record to it.
+    expect(h.host.ids('pause')).toEqual([second.id])
+    expect(answers).toHaveLength(1)
+    answers[0]!(true)
+    await flush()
+    expect(second.state).toBe('progressing')
+    expect(h.service.items.map((i) => i.id)).toEqual([second.id, first.id])
+    expect(h.changes).toEqual([
+      { id: first.id, kind: 'started' },
+      { id: second.id, kind: 'started' }
+    ])
+    expect(h.host.ids('resume')).toEqual([second.id])
+    expect(stored(h).items.map((i) => i.id)).toEqual([second.id, first.id])
+  })
+
+  it('drops a held download on Block: the engine item is cancelled and no row ever shows', async () => {
+    const { h, answers } = limited()
+    const first = begin(h)
+    const second = begin(h, { url: 'https://cdn.example.com/second.pdf', filename: 'second.pdf' })
+    answers[0]!(false)
+    await flush()
+    expect(h.host.ids('cancel')).toEqual([second.id])
+    expect(h.host.count('resume')).toBe(0)
+    expect(h.service.items.map((i) => i.id)).toEqual([first.id])
+    expect(h.changes).toHaveLength(1)
+    // The engine's late word on the dropped item changes nothing.
+    h.service.finish(second.id, 'cancelled')
+    expect(h.changes).toHaveLength(1)
+  })
+
+  it('replays a transfer that finished while held: completed on Allow, its file deleted on Block', async () => {
+    const { h, answers } = limited()
+    begin(h)
+    const second = begin(h, { url: 'https://cdn.example.com/second.pdf', filename: 'second.pdf' })
+    h.service.finish(second.id, 'completed', {
+      receivedBytes: 1000,
+      savePath: '/dl/second.pdf.zeniumdownload'
+    })
+    expect(second.state).toBe('paused')
+    answers[0]!(true)
+    await flush()
+    await flush()
+    expect(second.state).toBe('completed')
+    expect(h.host.ids('release')).toEqual([second.id])
+
+    const again = limited()
+    begin(again.h)
+    const third = begin(again.h, {
+      url: 'https://cdn.example.com/third.pdf',
+      filename: 'third.pdf'
+    })
+    again.h.service.finish(third.id, 'completed', {
+      receivedBytes: 1000,
+      savePath: '/dl/third.pdf.zeniumdownload'
+    })
+    again.answers[0]!(false)
+    await flush()
+    expect(again.h.host.ids('cancel')).toEqual([third.id])
+    expect(again.h.host.ids('deletePartial')).toEqual([third.id])
+    expect(again.h.service.items).toHaveLength(1)
+  })
+
+  it('never counts a resume or a retry, nor a transfer without a page', () => {
+    const { h, setting } = limited()
+    setting.value = 'deny'
+    const first = begin(h)
+    h.service.finish(first.id, 'interrupted', { canResume: true })
+    const resumed = begin(h, { resumes: first.id })
+    expect(resumed).toBe(first)
+    expect(resumed.state).toBe('progressing')
+    const pageless = begin(h, {
+      url: 'https://cdn.example.com/second.pdf',
+      filename: 'second.pdf',
+      sourceTabId: null
+    })
+    expect(pageless.state).toBe('progressing')
   })
 })
