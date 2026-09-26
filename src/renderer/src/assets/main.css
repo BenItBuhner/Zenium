@@ -12491,13 +12491,20 @@
 /*
  * The radio-form value row (`ValueRow.radios`, `rows.tsx`'s `RadioListRow`; §9.14, §10.5): the
  * stacked row's column with the picker's radio rows (`RadioOption`) under the text block, each
- * its own `.zen-v2-row` – 44 on `--v2-row`, 64 with the option's description – whose 16 gutter
- * indents the circle under the label, as Chrome's `cr-row continuation` indents its radios under
- * their toggle; the options touch, the row's own fill stays off (`data-static`). The block's 4
- * stands between the text and the first option. A disabled group's options keep the dependent
- * row's one .4 (`.zen-settings-row-disabled` on the row, not compounded here) and take no press
- * or fill.
+ * its own `.zen-v2-row` – 44 on `--v2-row`, 64 with the option's description – on the PAGE's
+ * row chassis (pr-584 R2): the option bleeds 16 past the text column's two edges as every page
+ * row does (the form's rule above, `margin: 0 -16px`, here for the page's list), so its box is
+ * the page row's 696 and its 16 gutter puts the circle on the column edge where the switch rows'
+ * checkbox stands and the label on the switch labels' edge – one left edge down the group
+ * (§10.4 "Dependent rows: no indent"; Chrome's `cr-row continuation` indent is Chrome's). The
+ * options touch, the row's own fill stays off (`data-static`). The block's 4 stands between the
+ * text and the first option. A disabled group's options keep the dependent row's one .4
+ * (`.zen-settings-row-disabled` on the row, not compounded here) and take no press or fill.
  */
+.zen-settings-radios > .zen-settings-radio-row {
+  margin: 0 -16px;
+  width: calc(100% + 32px);
+}
 .zen-settings-radios > .zen-settings-radio-row:disabled {
   cursor: default;
   opacity: 1;

@@ -1811,6 +1811,28 @@ describe('the Settings drill-in pane (§10.2)', () => {
   })
 })
 
+describe('the Settings page’s radio rows (§9.14, §10.4; pr-584 R2)', () => {
+  it('bleed 16 past the text column like every page row, so the circle stands on the column edge and the label on the switch labels’ edge', () => {
+    // The form's rule and the page's are one geometry: `margin: 0 -16px` and the row grown by
+    // both gutters, the row's own 16 padding then putting the circle where a check row's box is.
+    const bleed = (selector: string): string[] =>
+      block(selector).match(/^ {2}[a-z-]+:[^;]+;/gm) ?? []
+    expect(bleed('.zen-settings-radios > .zen-settings-radio-row')).toEqual([
+      '  margin: 0 -16px;',
+      '  width: calc(100% + 32px);'
+    ])
+    expect(
+      bleed('.zen-settings-form .zen-settings-radio-row,\n.zen-settings-form .zen-v2-check-row')
+    ).toEqual(['  margin: 0 -16px;', '  width: calc(100% + 32px);'])
+    // The page's list carries the class the rule keys on (rows.tsx's `RadioListRow`).
+    const rows = readFileSync(
+      fileURLToPath(new URL('../../components/pages/settings/rows.tsx', import.meta.url)),
+      'utf8'
+    )
+    expect(rows).toMatch(/className="zen-settings-radio-list zen-settings-radios"/)
+  })
+})
+
 describe('the fullscreen hint palette', () => {
   /** The value a token is declared with in the first `selector {` block after `from`. */
   const value = (selector: string, from: number, name: string): string => {
