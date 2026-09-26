@@ -14,13 +14,17 @@ import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.HandlerThread
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Log
 import android.view.Choreographer
 import android.view.InputDevice
+import android.view.InputEvent
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.PixelCopy
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityManager
 import android.view.accessibility.AccessibilityNodeInfo
@@ -78,7 +82,7 @@ abstract class DemoHarness(
     private val stateAsset: String?,
     private val shotPrefix: String,
     handshakeDir: String,
-    uiAutomationFlags: Int = UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES,
+    private val uiAutomationFlags: Int = UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES,
     private val keepProfile: Boolean = false
 ) {
     protected val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -526,6 +530,10 @@ abstract class DemoHarness(
      * must wait for that itself (poll for the change, or [settle]), not lean on the still.
      */
     protected fun shot(name: String) {
+        if (accessibilityDetached) {
+            windowShot(name)
+            return
+        }
         // The screenshot service answers null now and then while the display is busy (a window
         // mid-resize, a heavy frame): a moment and a second and third ask before the still is
         // given up (three of a run's fourteen were lost to one null each, DexWindowingDemo #494).
@@ -1261,6 +1269,114 @@ abstract class DemoHarness(
             }
         }
         return if (counts.isEmpty()) "none" else counts.entries.joinToString(", ") { "${it.key} x${it.value}" }
+    }
+
+    /**
+     * `block` with the instrumentation's UiAutomation DISCONNECTED from the system – no
+     * accessibility service on the device for its duration, the way the app runs outside a test.
+     * UiAutomation is itself an enabled accessibility service, and while one is enabled the
+     * WebView hands a mouse's hover to accessibility exploration instead of Blink
+     * (`WebContentsViewAndroid::OnMouseEvent` → `WebContentsAccessibilityImpl.onHoverEvent`,
+     * which consumes every hover while `AccessibilityManager.isEnabled()`), so a driver proving
+     * hover on the chrome (`DexWindowingDemo`) runs its mouse inside this. Connecting under
+     * [UiAutomation.FLAG_DONT_USE_ACCESSIBILITY] is not enough: Android 14's
+     * `UiAutomationManager.isUiAutomationRunningLocked` counts a UiAutomation connected under
+     * that flag as running, and the accessibility-enabled state every app reads derives from it
+     * (`AccessibilityUserState.getClientStateLocked`), so the app would still see accessibility
+     * on. Hence the disconnect (`UiAutomation.disconnect`, then `connectWithTimeout` with the
+     * harness's flags on the way out – hidden methods, reached by reflection under
+     * `--no-hidden-api-checks`; where they are not reachable the block runs connected and the
+     * caller's findings say so through [accessibilityDetached]). While detached nothing of
+     * UiAutomation works – not the tree, not the screenshot service, not the shell, not its
+     * injection – so [injectInput] goes through the instrumentation's own injection into the app's
+     * windows (`Instrumentation.sendPointerSync` / `sendKeySync`: the shell that started the run
+     * holds INJECT_EVENTS, the target is the app's uid, and a point outside the app's window is
+     * refused) and [shot] copies the window's own pixels ([windowShot]). The reconnect brings
+     * the tree and the accessibility state back.
+     */
+    protected fun <T> withoutAccessibility(block: () -> T): T {
+        val disconnect = hidden("disconnect")
+        val connect = hidden("connectWithTimeout", Int::class.javaPrimitiveType!!, Long::class.javaPrimitiveType!!)
+            ?: hidden("connect", Int::class.javaPrimitiveType!!)
+        if (disconnect == null || connect == null) {
+            Log.w(tag, "UiAutomation.disconnect / connect are not reachable (the instrumentation needs --no-hidden-api-checks): running with accessibility on")
+            return block()
+        }
+        awaitShots()
+        disconnect.invoke(ui)
+        accessibilityDetached = true
+        try {
+            return block()
+        } finally {
+            accessibilityDetached = false
+            if (connect.parameterTypes.size == 2) {
+                connect.invoke(ui, uiAutomationFlags, RECONNECT_TIMEOUT_MS)
+            } else {
+                connect.invoke(ui, uiAutomationFlags)
+            }
+        }
+    }
+
+    private fun hidden(name: String, vararg types: Class<*>): java.lang.reflect.Method? =
+        runCatching { UiAutomation::class.java.getMethod(name, *types) }.getOrNull()
+
+    /** Inside [withoutAccessibility]: UiAutomation is disconnected; input and stills take the app's own paths. */
+    protected var accessibilityDetached = false
+        private set
+
+    /**
+     * An input event into the system: UiAutomation's injection (any window, the dispatcher's
+     * trusted path) while it is connected; inside [withoutAccessibility] the instrumentation's own,
+     * which only reaches windows of the app's uid. Whether the event was taken.
+     */
+    protected fun injectInput(event: InputEvent, sync: Boolean): Boolean {
+        if (!accessibilityDetached) return ui.injectInputEvent(event, sync)
+        return runCatching {
+            when (event) {
+                is MotionEvent -> instrumentation.sendPointerSync(event)
+                is KeyEvent -> instrumentation.sendKeySync(event)
+                else -> throw IllegalArgumentException("not a pointer or key event: $event")
+            }
+        }.onFailure { Log.w(tag, "the instrumentation's injection refused $event: $it") }.isSuccess
+    }
+
+    /**
+     * A still of the app's window through PixelCopy – its own surface at the window's size, the
+     * WebViews' pixels included – named like [shot]'s: the way inside [withoutAccessibility],
+     * where the screenshot service is not reachable.
+     */
+    protected fun windowShot(name: String) {
+        val window = activity.window
+        val decor = window.decorView
+        val width = decor.width
+        val height = decor.height
+        if (width <= 0 || height <= 0) {
+            Log.w(tag, "no window to copy for $shotPrefix-$name")
+            return
+        }
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val latch = CountDownLatch(1)
+        var result = -1
+        val thread = HandlerThread("window-shot").apply { start() }
+        try {
+            PixelCopy.request(window, bitmap, { code ->
+                result = code
+                latch.countDown()
+            }, Handler(thread.looper))
+            if (!latch.await(5, TimeUnit.SECONDS)) result = -2
+        } finally {
+            thread.quitSafely()
+        }
+        if (result != PixelCopy.SUCCESS) {
+            Log.w(tag, "PixelCopy of the window failed for $shotPrefix-$name ($result)")
+            bitmap.recycle()
+            return
+        }
+        val file = File(out, "$shotPrefix-$name.png")
+        shotEncoder.execute {
+            file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            bitmap.recycle()
+        }
     }
 
     /**
@@ -2731,7 +2847,7 @@ abstract class DemoHarness(
                 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0
             )
             try {
-                ui.injectInputEvent(event, false)
+                injectInput(event, false)
             } finally {
                 event.recycle()
             }
@@ -2824,7 +2940,7 @@ abstract class DemoHarness(
                 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0
             )
             try {
-                ui.injectInputEvent(event, false)
+                injectInput(event, false)
             } finally {
                 event.recycle()
             }
@@ -2958,7 +3074,7 @@ abstract class DemoHarness(
                     }
                     setter.invoke(event, actionButton)
                 }
-                if (!ui.injectInputEvent(event, true)) {
+                if (!injectInput(event, true)) {
                     refused += "${MotionEvent.actionToString(action)} at ${x.roundToInt()},${y.roundToInt()}"
                 }
             } finally {
@@ -3109,6 +3225,8 @@ abstract class DemoHarness(
          */
         private const val STARTUP_SWEEP_ALLOWANCE_MS = 90_000L
         private const val STEP_MS = 8L
+        /** UiAutomation's own connect timeout (`CONNECT_TIMEOUT_MILLIS`), for the reconnect after [withoutAccessibility]. */
+        private const val RECONNECT_TIMEOUT_MS = 60_000L
         /** Two reads of a node's bounds this far apart agreeing count as settled ([steadyBounds]). */
         private const val BOUNDS_SETTLE_MS = 350L
         /**

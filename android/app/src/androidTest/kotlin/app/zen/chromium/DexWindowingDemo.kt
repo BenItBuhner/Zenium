@@ -1,5 +1,6 @@
 package app.zen.chromium
 
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.ActivityOptions
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -8,6 +9,7 @@ import android.graphics.PointF
 import android.graphics.Rect
 import android.os.Bundle
 import android.os.SystemClock
+import android.provider.Settings
 import android.util.Log
 import android.view.InputDevice
 import android.view.KeyEvent
@@ -15,6 +17,8 @@ import android.view.MotionEvent
 import android.view.PointerIcon
 import android.view.View
 import android.view.Window
+import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityManager
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONArray
@@ -22,6 +26,7 @@ import org.json.JSONObject
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.util.Collections
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -53,13 +58,27 @@ import kotlin.math.roundToInt
  *     fill; a FINGER on a row flips the root back to `none` and no hover fill follows the tap
  *     (Chromium's sticky `:hover` after a touch, which used to light the row); the mouse back
  *     brings the fill back. Cursor shapes as the WebView sets them on its view
- *     (`View.getPointerIcon`): the hand over the page's link, the text beam in the URL field;
+ *     (`View.getPointerIcon`): the hand over the page's link, the text beam in the URL field.
+ *     The hover acts run with the harness's UiAutomation DISCONNECTED
+ *     ([DemoHarness.withoutAccessibility]): UiAutomation is an accessibility service, and while
+ *     one is enabled the WebView hands every mouse hover to accessibility exploration –
+ *     `WebContentsViewAndroid::OnMouseEvent` → `WebContentsAccessibilityImpl.onHoverEvent`
+ *     (true while `AccessibilityManager.isEnabled()`) – and Blink never sees a mousemove (runs
+ *     1 and 2 of #494); a pass under the connection first records that as findings (the
+ *     tree's HOVER_ENTER / EXIT for the row, the document hearing nothing), then the claims
+ *     run the way the app runs under DeX, with no service on the device. Stills inside that
+ *     phase are the window's own pixels (PixelCopy), not the display's;
  *  3. RIGHT-CLICK menus: the mouse's secondary button on a sidebar row opens the tab's menu
  *     (`tab.contextMenu`, the row's own `contextmenu` handler – `TabItem.tsx`, shared with the
- *     desktop unchanged), a menu row under the pointer takes the menu's hover fill; on the
- *     page the button reaches the document as a `contextmenu` event with `button` 2 (the
- *     page's own menus are the page's); on the URL field the system's floating toolbar with
- *     the chrome's "Paste and go" beside Paste, a link on the clipboard (`FieldActionMode`);
+ *     desktop unchanged), a menu row under the pointer takes the menu's hover fill (inside the
+ *     same detached phase); on the page the button reaches the document as a `contextmenu`
+ *     event with `button` 2 (the page's own menus are the page's); on the URL field the
+ *     system's floating toolbar with the chrome's "Paste and go" beside Paste, a link on the
+ *     clipboard (`FieldActionMode`). A left click on the address pill – the toolbar's middle,
+ *     over the page view's x range – is the act Android 14's `dispatchGenericPointerEvent`
+ *     (hit-testing at (x, x)) sent to the page in runs 1 and 2; `MouseRouting` routes it right,
+ *     and the click is its proof on device. No bookmark row is on the tablet chrome to
+ *     right-click: `TabletShell` mounts no bookmarks bar;
  *  4. CTRL+WHEEL over the page: one notch away zooms the page a step along the core's ladder
  *     (1 → 1.1 → 1.25; back down 1.1 → 1 → 0.9), read off the core (`tab.zoom`) and off the
  *     page's own layout viewport, which narrows by the factor; Ctrl+0 resets; the plain wheel
@@ -205,11 +224,11 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
         insetClaims("the tablet pose")
         val swBefore = activity.resources.configuration.smallestScreenWidthDp
         chromeJs(FRAME_PROBE_START)
+        // No still inside the measured drag: the screenshot service answers null while the window
+        // is mid-resize (run 2 asked three times for one), and the asking stretched the scene's
+        // frame record. The mid-drag frames are read off the run's recording instead.
         val shrink = measureFrames("freeform-resize-tablet-to-phone") {
-            resizeTo(PHONE_BOUNDS) { step ->
-                // The seventh step is the first under 600 px wide: the chrome's swap mid-drag.
-                if (step == 7) still("resize-mid")
-            }
+            resizeTo(PHONE_BOUNDS)
             awaitUntil(6_000) { jsText(FORM_FACTOR) == "phone" }
             SystemClock.sleep(600)
         }
@@ -329,15 +348,14 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
         )
     }
 
-    /** The window from (`window` as it stands) to `target` in [RESIZE_STEPS] steps of the shell's resize, `atStep` after each. */
-    private fun resizeTo(target: Rect, atStep: (Int) -> Unit = {}) {
+    /** The window from (`window` as it stands) to `target` in [RESIZE_STEPS] steps of the shell's resize. */
+    private fun resizeTo(target: Rect) {
         val from = Rect(window)
         for (step in 1..RESIZE_STEPS) {
             val t = step.toFloat() / RESIZE_STEPS
             val r = Rect(lerp(from.left, target.left, t), lerp(from.top, target.top, t), lerp(from.right, target.right, t), lerp(from.bottom, target.bottom, t))
             val said = shellCommand("am task resize $taskId ${r.left} ${r.top} ${r.right} ${r.bottom}").trim()
             if (said.isNotEmpty()) finding("  (am task resize $r: $said)")
-            atStep(step)
             SystemClock.sleep(RESIZE_STEP_MS)
         }
     }
@@ -390,16 +408,83 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
         val trace = HoverTrace()
         trace.install(pageView(ALPHA))
         try {
-            hoverActs(page, gamma, hoverFill, activeFill, trace)
+            hoverUnderTheHarness(page, gamma, trace)
+            withoutAccessibility {
+                val off = awaitUntil(6_000) { !accessibilityEnabled() }
+                accessibilityState("UiAutomation disconnected")
+                check(
+                    "with UiAutomation disconnected the app sees accessibility off – no service on the device, as under DeX",
+                    accessibilityDetached && off,
+                    "detached $accessibilityDetached, AccessibilityManager.isEnabled ${accessibilityEnabled()}"
+                )
+                SystemClock.sleep(400)
+                hoverActs(page, gamma, hoverFill, activeFill, trace)
+            }
         } finally {
             trace.remove()
         }
+        val on = awaitUntil(6_000) { accessibilityEnabled() }
+        finding("  UiAutomation back: accessibility enabled again $on; ${accessibilityState("the reconnect")}")
         coreInvoke("tab.activate", JSONObject().put("tabId", ALPHA).toString())
         awaitUntil(5_000) { activeTabId() == ALPHA }
     }
 
+    /**
+     * The diagnosis of runs 1 and 2, kept as findings: under the harness's own accessibility
+     * connection a mouse's hover over the chrome is taken by the WebView for accessibility
+     * exploration – `WebContentsViewAndroid::OnMouseEvent` hands HOVER_MOVE to
+     * `WebContentsAccessibilityImpl.onHoverEvent`, which returns true whenever
+     * `AccessibilityManager.isEnabled()`, and the hit test that follows announces the node under
+     * the pointer as TYPE_VIEW_HOVER_ENTER / EXIT instead of a mousemove to Blink. The
+     * announcements are read off UiAutomation's own event stream while the pointer crosses onto
+     * the Gamma row; the document's probe and the root's `data-hover` say what Blink heard.
+     */
+    private fun hoverUnderTheHarness(page: PointF, gamma: PointF, trace: HoverTrace) {
+        finding("  ${accessibilityState("the harness's connection")}")
+        val announced = Collections.synchronizedList(ArrayList<String>())
+        ui.setOnAccessibilityEventListener { event ->
+            if (event.eventType == AccessibilityEvent.TYPE_VIEW_HOVER_ENTER || event.eventType == AccessibilityEvent.TYPE_VIEW_HOVER_EXIT) {
+                val text = event.text.joinToString("/").take(28)
+                announced += "${AccessibilityEvent.eventTypeToString(event.eventType).removePrefix("TYPE_VIEW_")}:${event.className?.toString()?.substringAfterLast('.') ?: "?"}${if (text.isEmpty()) "" else ":$text"}"
+            }
+        }
+        chromeJs(POINTER_PROBE_START)
+        trace.reset()
+        mouse.moveTo(page.x, page.y)
+        SystemClock.sleep(300)
+        mouse.moveTo(gamma.x, gamma.y, 400)
+        val flipped = awaitJs("$DATA_HOVER==='hover'", true, 2_500)
+        SystemClock.sleep(400)
+        ui.setOnAccessibilityEventListener(null)
+        val events = synchronized(announced) { announced.toList() }
+        finding(
+            "  under the harness's connection: data-hover '${jsText(DATA_HOVER)}' (flipped $flipped), Gamma :hover ${gammaHover()}; " +
+                "the chrome document heard ${jsText(POINTER_PROBE_COUNTS)}; ${trace.report()}; " +
+                "accessibility announced ${events.size} hover event(s): ${events.take(8).joinToString(", ")}"
+        )
+        // The pointer back over the page: the acts start from the same place, the row left alone.
+        mouse.moveTo(page.x, page.y, 300)
+        SystemClock.sleep(300)
+    }
+
+    private fun accessibilityManager(): AccessibilityManager = app.getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
+
+    /** What the WebView keys its hover handling on: the app's own `AccessibilityManager.isEnabled()`. */
+    private fun accessibilityEnabled(): Boolean = accessibilityManager().isEnabled
+
+    /** The accessibility state as the app sees it under `state`, one line. */
+    private fun accessibilityState(state: String): String {
+        val manager = accessibilityManager()
+        val services = manager.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK).map { it.id.substringAfterLast('/') }
+        val setting = Settings.Secure.getInt(app.contentResolver, Settings.Secure.ACCESSIBILITY_ENABLED, -1)
+        return "accessibility under $state: enabled ${manager.isEnabled}, touch exploration ${manager.isTouchExplorationEnabled}, " +
+            "enabled services ${services.size}${if (services.isEmpty()) "" else " [${services.joinToString(", ")}]"}, accessibility_enabled setting $setting, harness detached $accessibilityDetached"
+    }
+
     private fun hoverActs(page: PointF, gamma: PointF, hoverFill: String, activeFill: String, trace: HoverTrace) {
         // The pointer appears over the page, then crosses onto the sidebar's Gamma row.
+        chromeJs(POINTER_PROBE_START)
+        trace.reset()
         mouse.moveTo(page.x, page.y)
         SystemClock.sleep(300)
         finding("  cursor over the page's text: ${cursorOf(pageView(ALPHA))}")
@@ -496,10 +581,23 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
             SystemClock.sleep(400)
             finding("  cursor over the address pill: ${cursorOf(host.chrome)}")
             chromeJs("window.__dexPtr=[];'ok'")
+            trace.reset()
             mouse.click()
-            val opened = awaitUntil(6_000) { urlbarOpen() }
-            finding("  the click on the pill: urlbar open $opened; the chrome document's events ${jsText(POINTER_PROBE_LAST)}; ${trace.report()}")
-            check("a left click on the address pill opens the URL field", opened, "urlbar open ${urlbarOpen()}, focus ${focusName()}")
+            var opened = awaitUntil(6_000) { urlbarOpen() }
+            finding(
+                "  the click on the pill's centre (window x ${(pill.x - content.left).roundToInt()}, over the page view's x range – Android 14's (x, x) hit test would send it to the page): " +
+                    "urlbar open $opened; the chrome document's events ${jsText(POINTER_PROBE_LAST)}; ${trace.report()}"
+            )
+            check(
+                "a left click on the address pill opens the URL field (MouseRouting: the button events reach the chrome, not the page under (x, x))",
+                opened,
+                "urlbar open ${urlbarOpen()}, focus ${focusName()}, page view heard ${trace.pageButtons()} button event(s)"
+            )
+            if (!opened) {
+                // The cursor read below still wants the field: a finger opens it, and the finding says the mouse did not.
+                touch(domRect(ADDRESS_PILL), "the address pill (a finger, the mouse's click having missed)")
+                opened = awaitUntil(6_000) { urlbarOpen() }
+            }
             if (opened && awaitDom(FIELD, 4_000)) {
                 val field = at(FIELD)
                 if (field != null) {
@@ -509,7 +607,7 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
                     check("the cursor over the URL field is the text beam", cursor == "text", cursor)
                 }
                 key(KeyEvent.KEYCODE_ESCAPE)
-                if (!awaitUntil(3_000) { !urlbarOpen() }) back()
+                if (!awaitUntil(3_000) { !urlbarOpen() }) key(KeyEvent.KEYCODE_BACK)
                 awaitUntil(3_000) { !urlbarOpen() }
             }
         }
@@ -532,13 +630,18 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
      * hop the injected stream is lost at.
      */
     private fun hoverLadder(gamma: PointF, trace: HoverTrace) {
-        val dump = shellCommand("dumpsys input")
-        File(out, "dumpsys-input-hover.txt").writeText(dump)
-        finding("  dumpsys input with the pointer over the Gamma row (${dump.length} chars, in dumpsys-input-hover.txt); the trace so far: ${trace.report()}")
-        for (marker in listOf("TouchStatesByDisplay", "RecentQueue")) {
-            excerpt(dump, marker, 12).forEach { finding("    | $it") }
+        if (accessibilityDetached) {
+            // The shell is UiAutomation's, and it is disconnected here: the rungs alone.
+            finding("  (no dumpsys input while UiAutomation is disconnected); the trace so far: ${trace.report()}")
+        } else {
+            val dump = shellCommand("dumpsys input")
+            File(out, "dumpsys-input-hover.txt").writeText(dump)
+            finding("  dumpsys input with the pointer over the Gamma row (${dump.length} chars, in dumpsys-input-hover.txt); the trace so far: ${trace.report()}")
+            for (marker in listOf("TouchStatesByDisplay", "RecentQueue")) {
+                excerpt(dump, marker, 12).forEach { finding("    | $it") }
+            }
+            dump.lineSequence().filter { it.contains(app.packageName) }.take(14).forEach { finding("    | ${it.trim().take(240)}") }
         }
-        dump.lineSequence().filter { it.contains(app.packageName) }.take(14).forEach { finding("    | ${it.trim().take(240)}") }
         val decor = activity.window.decorView
         val decorAt = onMain { IntArray(2).also { decor.getLocationOnScreen(it) } }
         val chromeAt = onMain { IntArray(2).also { host.chrome.getLocationOnScreen(it) } }
@@ -606,30 +709,35 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
             check("the Alpha row is on screen for the right click", false, "")
             return
         }
-        mouse.rightClick(alpha.x, alpha.y)
-        val opened = awaitJs(MENU_OPEN, true, 5_000)
-        awaitDom("$MENU [role=\"menuitem\"]", 3_000)
-        val items = textsOf("$MENU [role=\"menuitem\"]")
-        check("a right click on a sidebar row opens the tab's menu", opened && items.isNotEmpty(), "menu open $opened, rows: ${items.joinToString(" | ")}")
-        val menuFill = probeColor("--v2-fill", MENU)
-        val second = domRect("$MENU [role=\"menuitem\"]:nth-of-type(2)") ?: domRect("$MENU [role=\"menuitem\"]")
-        val target = screen(second)
-        if (target != null) {
-            mouse.moveTo(target.exactCenterX(), target.exactCenterY(), 300)
-            check(
-                "a menu row under the pointer takes the menu's hover fill",
-                awaitUntil(2_500) { menuRowsWith(menuFill) > 0 },
-                "rows with $menuFill: ${menuRowsWith(menuFill)}"
-            )
+        // The row's menu and the hover on its rows: with no accessibility service, as the hover acts.
+        withoutAccessibility {
+            awaitUntil(6_000) { !accessibilityEnabled() }
+            mouse.rightClick(alpha.x, alpha.y)
+            val opened = awaitJs(MENU_OPEN, true, 5_000)
+            awaitDom("$MENU [role=\"menuitem\"]", 3_000)
+            val items = textsOf("$MENU [role=\"menuitem\"]")
+            check("a right click on a sidebar row opens the tab's menu", opened && items.isNotEmpty(), "menu open $opened, rows: ${items.joinToString(" | ")}")
+            val menuFill = probeColor("--v2-fill", MENU)
+            val second = domRect("$MENU [role=\"menuitem\"]:nth-of-type(2)") ?: domRect("$MENU [role=\"menuitem\"]")
+            val target = screen(second)
+            if (target != null) {
+                mouse.moveTo(target.exactCenterX(), target.exactCenterY(), 300)
+                check(
+                    "a menu row under the pointer takes the menu's hover fill",
+                    awaitUntil(2_500) { menuRowsWith(menuFill) > 0 },
+                    "rows with $menuFill: ${menuRowsWith(menuFill)}"
+                )
+            }
+            SystemClock.sleep(400)
+            still("tab-menu")
+            key(KeyEvent.KEYCODE_ESCAPE)
+            if (!awaitJs(MENU_OPEN, false, 3_000)) {
+                key(KeyEvent.KEYCODE_BACK)
+                awaitJs(MENU_OPEN, false, 3_000)
+            }
+            check("Escape closes the menu", !jsBoolean(MENU_OPEN), "")
         }
-        SystemClock.sleep(400)
-        still("tab-menu")
-        key(KeyEvent.KEYCODE_ESCAPE)
-        if (!awaitJs(MENU_OPEN, false, 3_000)) {
-            back()
-            awaitJs(MENU_OPEN, false, 3_000)
-        }
-        check("Escape closes the menu", !jsBoolean(MENU_OPEN), "")
+        awaitUntil(6_000) { accessibilityEnabled() }
 
         // The page: the button reaches the document as a contextmenu event.
         pageJs(ALPHA, "window.__ctx=0;window.__ctxButton=-1;document.addEventListener('contextmenu',function(e){window.__ctx++;window.__ctxButton=e.button},true);'ok'")
@@ -658,13 +766,19 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
         val pill = at(ADDRESS_PILL)
         if (pill != null) {
             mouse.click(pill.x, pill.y)
-            if (awaitUntil(6_000) { urlbarOpen() } && awaitDom(FIELD, 4_000)) {
+            var opened = awaitUntil(6_000) { urlbarOpen() }
+            if (!opened) {
+                finding("  (the mouse's click on the pill opened nothing this time; a finger opens the field for the right click)")
+                touch(domRect(ADDRESS_PILL), "the address pill (a finger)")
+                opened = awaitUntil(6_000) { urlbarOpen() }
+            }
+            if (opened && awaitDom(FIELD, 4_000)) {
                 val field = at(FIELD)
                 if (field != null) {
                     mouse.rightClick(field.x, field.y)
                     val pasteAndGo = awaitUntil(5_000) { findInWindows { it == PASTE_AND_GO } != null }
                     val paste = findInWindows { it == "Paste" || it == app.getString(android.R.string.paste) } != null
-                    finding("  the field's right click: '$PASTE_AND_GO' in the windows $pasteAndGo, Paste $paste")
+                    finding("  the field's right click at window x ${(field.x - content.left).roundToInt()}: '$PASTE_AND_GO' in the windows $pasteAndGo, Paste $paste")
                     check("a right click on the URL field offers Paste and go beside the system's Paste", pasteAndGo, "Paste and go $pasteAndGo, Paste $paste")
                     still("omnibox-right-click")
                 }
@@ -692,8 +806,9 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
         SystemClock.sleep(300)
         val width0 = pageWidth(ALPHA)
         val zoom0 = zoomOf(ALPHA)
-        // The view's width in the page's CSS px at scale 1: what innerWidth × the engine's scale must stay.
-        val viewCss = onMain { (pageView(ALPHA)?.width ?: 0) / activity.resources.displayMetrics.density }.toDouble()
+        // The view's width in the page's CSS px at scale 1: what innerWidth × the engine's scale must
+        // stay. One main-thread hop: pageView() is its own, and runOnMainSync does not nest (run 2).
+        val viewCss = onMain { (host.tabs.get(ALPHA)?.width ?: 0) / activity.resources.displayMetrics.density }.toDouble()
         finding("  before the wheel: zoom $zoom0, the page's innerWidth $width0, visual scale ${pageScale(ALPHA)}, the view ${viewCss.roundToInt()} CSS px wide")
         mouse.wheel(1, ctrl = true)
         check("one Ctrl+notch away zooms the page a step, 1 -> 1.1 (the core's ladder)", awaitUntil(5_000) { near(zoomOf(ALPHA), 1.1) }, "zoom ${zoomOf(ALPHA)}")
@@ -939,13 +1054,13 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
     private fun near(value: Double, expected: Double, tolerance: Double = 0.001): Boolean =
         value.isFinite() && abs(value - expected) <= tolerance
 
-    /** A key press (down and up) with Ctrl held when `ctrl`, through the input dispatcher. */
+    /** A key press (down and up) with Ctrl held when `ctrl`, through the input dispatcher (the instrumentation's own injection while UiAutomation is disconnected). */
     private fun key(keyCode: Int, ctrl: Boolean = false) {
         val meta = if (ctrl) KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON else 0
         val down = SystemClock.uptimeMillis()
-        ui.injectInputEvent(KeyEvent(down, down, KeyEvent.ACTION_DOWN, keyCode, 0, meta), true)
+        injectInput(KeyEvent(down, down, KeyEvent.ACTION_DOWN, keyCode, 0, meta), true)
         SystemClock.sleep(40)
-        ui.injectInputEvent(KeyEvent(down, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, keyCode, 0, meta), true)
+        injectInput(KeyEvent(down, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, keyCode, 0, meta), true)
     }
 
     private fun setClipboard(text: String) {
@@ -1043,6 +1158,11 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
 
         fun report(): String =
             "window [${tally(window)}], root unhandled [${tally(root)}], chrome view [${tally(chrome)}], page view [${tally(page)}]"
+
+        /** The button presses and releases the PAGE view saw since the last [reset]: a click meant for the chrome that got there is Android 14's (x, x) routing. */
+        fun pageButtons(): Int = synchronized(page) {
+            page.count { it.startsWith("ACTION_BUTTON_PRESS@") || it.startsWith("ACTION_BUTTON_RELEASE@") }
+        }
 
         private fun note(into: ArrayList<String>, event: MotionEvent) {
             if (!event.isFromSource(InputDevice.SOURCE_MOUSE)) return
