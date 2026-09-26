@@ -1110,3 +1110,53 @@ describe('unknown-argument note with the new arguments', () => {
     expect(textOf(page)).toBe('Clicked.')
   })
 })
+
+/**
+ * The host hears which pages an agent drives while they may be off the user's screen
+ * (`TabView.setAgentDriven`): on when the session prepares a tab – after its background
+ * throttling is turned off, the order the host's stage wants – and off when the agent lets the
+ * tab go: the session's end, the user taking the tab back.
+ */
+describe('the host hears which pages an agent drives', () => {
+  it('is told on prepare, after background throttling is turned off', async () => {
+    const fake = fakeBrowser()
+    const A = await fake.connect('A', { mode: 'background' })
+    const opened = await fake.call(A, 'browser_tabs', { action: 'new', url: 'https://a.example/1' })
+    const tab = fake.openedTab(opened)
+    expect(fake.hostCalls.get(tab)).toEqual(['throttling:false', 'agentDriven:true'])
+    // Every call prepares the tab again, in the same order; the host takes a repeat as nothing new.
+    await fake.call(A, 'browser_snapshot', { tabId: tab })
+    expect(fake.hostCalls.get(tab)).toEqual([
+      'throttling:false',
+      'agentDriven:true',
+      'throttling:false',
+      'agentDriven:true'
+    ])
+  })
+
+  it('is told off when the session ends leaving its tabs behind, and when the user takes a tab back', async () => {
+    const fake = fakeBrowser()
+    const A = await fake.connect('A', { mode: 'background' })
+    const kept = fake.openedTab(
+      await fake.call(A, 'browser_tabs', { action: 'new', url: 'https://a.example/1' })
+    )
+    const taken = fake.openedTab(
+      await fake.call(A, 'browser_tabs', { action: 'new', url: 'https://a.example/2' })
+    )
+    fake.service.releaseTab(taken)
+    expect(fake.hostCalls.get(taken)).toEqual([
+      'throttling:false',
+      'agentDriven:true',
+      'throttling:true',
+      'agentDriven:false'
+    ])
+    expect(fake.hostCalls.get(kept)).toEqual(['throttling:false', 'agentDriven:true'])
+    await fake.call(A, 'zen_session', { action: 'end' })
+    expect(fake.hostCalls.get(kept)).toEqual([
+      'throttling:false',
+      'agentDriven:true',
+      'throttling:true',
+      'agentDriven:false'
+    ])
+  })
+})
