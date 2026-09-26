@@ -5716,6 +5716,13 @@ export interface Commands {
       section?: string | null
       openerTabId?: string | null
       query?: InternalPageQuery
+      /**
+       * The chrome's hand-back of a page the window's class change closed (a tablet's page tab
+       * narrowed into the phone class became the page's overlay, `PageService.reconcileLayout`;
+       * the window widening again, the overlay becomes the tab): the tab comes back at the slot
+       * it had while that still fits, else beside the active tab as any page opens.
+       */
+      handedBack?: boolean
     }
     result: string | null
   }

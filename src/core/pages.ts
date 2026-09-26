@@ -47,7 +47,7 @@ import {
 } from '../shared/internalPages'
 import { DEFAULT_CONTAINER_ID, type OverlayKind, type Tab } from '../shared/types'
 import { BLANK_URL, titleForUrl } from '../shared/url'
-import { orderedTabsForSpace, tabVisibleIn } from './model'
+import { orderedTabsForSpace, regularTabs, sectionIndexOf, tabVisibleIn } from './model'
 
 /** The section addresses a chrome page tab visited, and which one it shows. */
 interface PageHistory {
@@ -213,15 +213,22 @@ export class PageService {
    * (`InternalPageQuery`: History's `q`, the manager's `folder`); given with a reused tab it
    * moves the tab there, as a section does. `reveal` marks an opening the browser makes for
    * something that happened rather than one the user asked for: an overlay already up stays
-   * up (the chrome toggles a user's repeat request closed). Returns the tab id; null for an
-   * overlay or an unregistered page.
+   * up (the chrome toggles a user's repeat request closed). `handedBack` is the chrome's
+   * hand-back of a page the class change closed ({@link reconcileLayout}): the tab comes back
+   * at the slot it had while that still fits ({@link handedSlot}). Returns the tab id; null for
+   * an overlay or an unregistered page.
    */
   open(
     id: string,
     section: string | null | undefined,
     win: ZenWindow = this.browser.focusedWindow(),
     openerTabId?: string | null,
-    opts: { fromIntent?: boolean; query?: InternalPageQuery; reveal?: boolean } = {}
+    opts: {
+      fromIntent?: boolean
+      query?: InternalPageQuery
+      reveal?: boolean
+      handedBack?: boolean
+    } = {}
   ): string | null {
     const page = Object.prototype.hasOwnProperty.call(this.pages, id) ? this.pages[id] : undefined
     if (!page || !this.available(page)) return null
@@ -261,6 +268,8 @@ export class PageService {
     const tabs = this.browser.tabs
     const opener =
       openerTabId === undefined ? tabs.activeTabFor(win) : tabs.tab(openerTabId ?? undefined)
+    // Taken whatever comes of the open: a hand-back that finds its tab standing uses no slot.
+    const slot = opts.handedBack ? this.handedSlot(page, win) : undefined
     const existing = page.singleton ? this.findInWindow(page, win) : undefined
     if (existing) {
       // A section moves the tab there; a query alone moves it within the section it shows.
@@ -282,6 +291,7 @@ export class PageService {
         url,
         active: true,
         afterTabId: opener && !opener.essential ? opener.id : undefined,
+        index: slot,
         // Never the private container (Chrome keeps chrome:// pages out of Incognito): from a
         // private tab the page is a regular-container tab, the private tab left as it is.
         containerId: opener && tabs.isPrivate(opener) ? DEFAULT_CONTAINER_ID : opener?.containerId,
@@ -489,13 +499,28 @@ export class PageService {
     })
     if (handed.length === 0) return
     let overlay: { kind: OverlayKind; folderId?: string } | null = null
-    for (const tab of handed) {
-      const page = this.pageOf(tab)
-      if (tab.id === activeId && page?.overlay) {
+    // A hand-over before this one left a slot: the tab in front now is the one that comes back.
+    win.handedPage = null
+    const front = handed.find((t) => t.id === activeId)
+    for (const tab of handed) if (tab !== front) this.closeHandedOver(tab, win)
+    if (front) {
+      const page = this.pageOf(front)
+      if (page?.overlay) {
         // The overlay's contract, as `open` writes it: the manager's `folder` is its `folderId`.
-        overlay = { kind: page.overlay, folderId: this.parse(tab.url)?.query?.folder }
+        overlay = { kind: page.overlay, folderId: this.parse(front.url)?.query?.folder }
+        // Where the tab stood, for the chrome's hand-back when the window widens again (`open`
+        // with `handedBack`): its slot among its space's regular tabs, read once the others
+        // handed over are gone – they do not come back, so the row it returns to is this one.
+        // A pinned one is unpinned to go and comes back where a page opens.
+        if (!front.pinned && front.spaceId !== null) {
+          win.handedPage = {
+            pageId: page.id,
+            spaceId: front.spaceId,
+            index: sectionIndexOf(this.browser.state.model, front)
+          }
+        }
       }
-      this.closeHandedOver(tab, win)
+      this.closeHandedOver(front, win)
     }
     if (overlay) {
       this.browser.emit(
@@ -533,6 +558,23 @@ export class PageService {
     }
     if (tab.pinned || tab.essential) tabs.togglePin(tab.id, win)
     tabs.archiveTab(tab.id, win)
+  }
+
+  /**
+   * The slot a handed-back page's tab comes back to ({@link reconcileLayout} kept it on the
+   * window), taken – whatever the answer – by the one hand-back that asks. Fits while it is the
+   * same page in the space the window shows, at a slot its regular tabs still reach (the tabs
+   * closed meanwhile leave a shorter row, and a slot past its end would be a guess): otherwise
+   * undefined, and the tab opens beside the active tab as any page does.
+   */
+  private handedSlot(page: InternalPageDefinition, win: ZenWindow): number | undefined {
+    const handed = win.handedPage
+    if (!handed) return undefined
+    win.handedPage = null
+    const space = win.activeSpace()
+    if (handed.pageId !== page.id || handed.spaceId !== space.id) return undefined
+    const count = regularTabs(this.browser.state.model, space).length
+    return handed.index <= count ? handed.index : undefined
   }
 
   /**

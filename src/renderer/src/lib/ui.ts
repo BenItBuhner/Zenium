@@ -1164,12 +1164,21 @@ export async function openOverlay(
   activeTabId: string | null,
   spaceId: string | null = null,
   folderId: string | null = null,
-  section: string | null = null
+  section: string | null = null,
+  {
+    handedBack = false
+  }: {
+    /**
+     * The overlay is a page tab's the class change closed, going back to its tab as the window
+     * widens (`useStageContinuity`): the core re-opens it at the slot the tab had.
+     */
+    handedBack?: boolean
+  } = {}
 ): Promise<void> {
   const page = pageForOverlay(kind, folderId, section)
   if (page) {
     // The page's tab, through the core's one route (a Settings section for Shortcuts / Sync).
-    run('page.open', page)
+    run('page.open', handedBack ? { ...page, handedBack } : page)
     return
   }
   await captureActiveTab(activeTabId)
@@ -2051,9 +2060,13 @@ export async function openSharePanel(request: SharePanelRequest): Promise<void> 
     uiStore.set({ sharePanel: request, shareSeam: step.seam, drawerOpen: false })
     return
   }
-  // A menu still waiting for a request that is not its own leaves as a pick would have had it.
+  // A menu still waiting for a request that is not its own leaves as a pick would have had it. A
+  // panel the menu was hosting goes in the same set as the seam: the host has let that share go
+  // already (a newer share supersedes the older one on its side), and `SharePanelLayer` must not
+  // find the older request standing on its own for the frame the page's cover takes to capture.
   if (state.shareSeam) {
-    uiStore.set({ shareSeam: null })
+    if (state.shareSeam.phase === 'hosting') uiStore.set({ shareSeam: null, sharePanel: null })
+    else uiStore.set({ shareSeam: null })
     closeMenu(false)
   }
   await captureActiveTab(request.tabId)
