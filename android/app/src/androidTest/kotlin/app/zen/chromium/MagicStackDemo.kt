@@ -14,34 +14,41 @@ import java.io.File
 import kotlin.math.abs
 
 /**
- * The new tab page's Magic Stack on a device (NTP-16, W6-4), every act a finger's:
+ * The new tab page's cards on a device (NTP-16, W6-4; Chrome's Magic Stack, "Cards" to the
+ * user), every act a finger's:
  *
  *  1. The stack under a seeded profile: a recently closed tab, a completed download whose file
  *     is on the device, two bookmarks – three cards in the stack's fixed order (Continue where
  *     you left off, Downloads, Bookmarks), and the Default browser reminder as a fourth where the
  *     host says the browser is not the default (the emulator's answer; the driver reads it and
- *     expects the count it implies). The cards are page surfaces named for TalkBack, the strip a
- *     carousel with a dot per page, each card's ⋮ the shared 44 icon button named for its module;
- *     at the bottom dock the stack stands above the shortcut tiles, each card the strip's width
- *     less the 24 the next one peeks by.
+ *     expects the count it implies). The cards are page surfaces named for TalkBack, the section
+ *     named "Cards", the strip a carousel with a page indicator under it – a dot per card, none
+ *     of them a control, and a status line reading the page – each card's ⋮ the shared 44 icon
+ *     button named for its module; one action a card and only one its rows do not already do
+ *     (See all on Downloads and Bookmarks, Set as default on the reminder, none on Continue), the
+ *     Continue card's detail the host then the time; at the bottom dock the stack stands above
+ *     the shortcut tiles, each card the strip's width less the 24 the next one peeks by.
  *  2. Paging by a real swipe on the strip (a measured scene, `magic-stack-swipe`): the strip
- *     snaps to the second card and the second dot is selected; a finger on the first dot pages
- *     back.
+ *     snaps to the second card and the indicator reads "Page 2 of N" with the second dot
+ *     current; a swipe back returns it to the first card.
  *  3. A card's ⋮ opens the shared local menu titled by the module, Hide This and Customise its
  *     rows; Hide This (a measured scene, `magic-stack-hide`) writes the device's hidden set,
  *     fades the card out over 120 ms and glides the cards after it into the gap on the FLIP
  *     spring – a probe on the strip records the fade's start and end, the card's removal and the
  *     siblings' transform frames while the finger's act runs.
- *  4. Customise from the ⋮ opens the stack's sheet of switch rows, the hidden card's switch off;
+ *  4. Customise from the ⋮ opens the "Cards" sheet of switch rows, the hidden card's switch off;
  *     a finger on it re-enables the card, which is back in its seat behind the sheet.
  *  5. Every switch off: the stack is gone from the page altogether (the page keeps its field and
  *     tiles); the sheet closed, the empty state.
- *  6. The way back with no ⋮ left: the page's gear sheet carries a Magic Stack row; a finger on
- *     it swaps the sheets (one sheet over the page, §9.24) and the stack's sheet comes up; a
- *     switch on brings one card back, alone at the strip's full width and without dots; another
- *     brings the dots back.
- *  7. The Continue card's Reopen restores the closed tab (`session.restoreClosed`): the tab comes
- *     back on its loopback page.
+ *  6. The way back with no ⋮ left: the page's gear sheet carries a Cards row; a finger on it
+ *     swaps the sheets (one sheet over the page, §9.24) and the stack's sheet comes up; a switch
+ *     on brings one card back, alone at the strip's full width and without dots; another brings
+ *     the dots back.
+ *  7. The Continue card's row restores the closed tab (`session.restoreClosed`; the row is the
+ *     card's whole act, there is no Reopen button): the tab comes back on its loopback page. A
+ *     card brought back ahead of the one in view leaves that one in view (Chrome keeps the
+ *     snapped card through a layout change), so the strip is swiped back to the first card first
+ *     when it is not there.
  *
  * The sites are loopback pages served from this process ([DemoServer]); the seeded state names
  * them at this driver's port. Every claim is a line in `magic-stack-findings.txt` next to the
@@ -231,14 +238,31 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
             )
             expect("every card is a page surface (data-surface page)", chromeValue("String(${ALL_PAGE_SURFACES_JS})") == "true", "stack-card-surface")
             expect(
-                "the strip is a list with the carousel role description, the stack named 'Magic Stack'",
+                "the strip is a list with the carousel role description, the section named 'Cards'",
                 chromeValue("(($STRIP_JS)||{getAttribute:function(){return ''}}).getAttribute('role')") == "list" &&
                     chromeValue("(($STRIP_JS)||{getAttribute:function(){return ''}}).getAttribute('aria-roledescription')") == "carousel" &&
-                    chromeValue("(($STACK_JS)||{getAttribute:function(){return ''}}).getAttribute('aria-label')") == "Magic Stack",
+                    chromeValue("(($STACK_JS)||{getAttribute:function(){return ''}}).getAttribute('aria-label')") == "Cards",
                 "stack-carousel-roles"
             )
             val dots = geometry.optInt("dots")
-            expect("a dot per page (${dots} of ${expected.size}), the first selected, named 'Page 1 of ${expected.size}: Continue where you left off'", dots == expected.size && geometry.optInt("selected") == 0 && geometry.optString("firstDot") == "Page 1 of ${expected.size}: Continue where you left off", "stack-dots")
+            expect(
+                "the indicator: a dot per card (${dots} of ${expected.size}), the first current, a status line reading 'Page 1 of ${expected.size}' (role '${geometry.optString("role")}', status '${geometry.optString("status")}')",
+                dots == expected.size && geometry.optInt("selected") == 0 && geometry.optString("role") == "status" && geometry.optString("status") == "Page 1 of ${expected.size}",
+                "stack-dots"
+            )
+            expect(
+                "the dots are indicators, not controls: no button, tab or focusable thing among them (${geometry.optInt("controls")}), every dot hidden from the reader, each a ${geometry.optInt("dotSize")} px disc",
+                geometry.optInt("controls") == 0 && geometry.optBoolean("dotsHidden") && geometry.optInt("dotSize") in 5..7,
+                "stack-dots-indicators"
+            )
+            val actions = chromeValue(ACTIONS_JS)
+            val actionsExpected = JSONArray().also { list ->
+                for (id in expected) list.put(JSONArray().put(id).put(JSONArray(actionsFor(id))))
+            }.toString()
+            finding("  the cards' actions: $actions")
+            expect("one action a card and only one its rows do not already do – none on Continue, See all on Downloads and Bookmarks, Set as default on the reminder", actions == actionsExpected, "stack-actions")
+            val detail = chromeValue(CONTINUE_DETAIL_JS)
+            expect("the Continue card's detail reads the host then the time ('$detail'; the seed closed the tab an hour ago)", detail == "127.0.0.1 · 1 h ago", "stack-continue-detail")
             val mores = chromeValue(MORE_LABELS_JS)
             finding("  the ⋮ buttons: $mores")
             expect("each ⋮ is the shared 44 icon button named for its module", mores == JSONArray(expected.map { "More options for ${moduleTitle(it)}" }).toString() && chromeValue("String(${ALL_MORE_ICON_BUTTONS_JS})") == "true", "stack-more-buttons")
@@ -267,49 +291,74 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
     // --- 2. paging by a swipe ---------------------------------------------------------------------
 
     private fun pageBySwipe() {
-        step("2. Paging: a real swipe on the strip snaps to the second card and selects its dot; a finger on the first dot pages back") {
-            val strip = domBox(STRIP_JS) ?: error("no strip on the page")
+        step("2. Paging: a real swipe on the strip snaps to the second card and the indicator reads page 2; a swipe back returns to the first card") {
+            val expected = expectedCards()
             val pitch = geometry().optInt("cardWidth") + 8
-            // The finger starts nine tenths of the way across the strip, on the first card's body
-            // near its right edge (not its ⋮ or an action). It settles in first, as the pill
-            // gestures do: a nudge past the touch slop and a hold, so the strip has the finger
-            // before the swipe – the compositor asks the main thread which scroller a touch is on,
-            // and in the first run the moves of that first frame went with the answer (the strip
-            // stopped 58 CSS px short of a 207 px swipe, under half a pitch, and snapped back).
-            // Then most of the strip's width left in 240 ms and off: a fling, which the cards'
-            // `scroll-snap-stop: always` holds to the second card, and a travel that lands there
-            // by nearness alone should the fling not register. A probe samples the strip's
-            // scrollLeft every animation frame to record the trajectory.
-            val start = Rect(strip.left + strip.width() * 9 / 10, strip.top + strip.height() / 2, strip.left + strip.width() * 9 / 10 + 2, strip.top + strip.height() / 2 + 2)
-            val from = touchPoint(start) ?: error("the strip lies outside the touchable window ($strip)")
-            val nudge = -SWIPE_NUDGE_DP * density
-            val travel = -(strip.width() * 0.85f) - nudge
-            noteLine("  swipe from ${from.x.toInt()},${from.y.toInt()}: a nudge of ${nudge.toInt()} px and a ${SWIPE_SETTLE_MS} ms hold, then ${travel.toInt()} px over 240 ms (pitch $pitch); the probe ${chromeValue(SWIPE_PROBE_ARM_JS)}")
+            val swipe = planSwipe(forward = true)
             measureFrames("magic-stack-swipe", JankBudget.Kind.GESTURE, trace = true) {
-                Finger().apply {
-                    down(from.x, from.y)
-                    moveBy(nudge, 0f, 60)
-                    hold(SWIPE_SETTLE_MS)
-                    moveBy(travel, 0f, 240)
-                    up()
-                }
+                swipe.run()
                 SystemClock.sleep(900)
             }
-            val paged = awaitChrome("(document.querySelectorAll('.zen-mstack-dot')[1]||{getAttribute:function(){return ''}}).getAttribute('aria-selected')==='true'", 4_000)
+            val paged = awaitChrome(dotCurrentJs(1), 4_000)
             SystemClock.sleep(400)
             val after = geometry()
             finding("  the strip's scrollLeft over the swipe (ms, px): ${chromeValue(SWIPE_PROBE_READ_JS)}")
             finding("  after the swipe: $after")
             expect("the strip snapped to the second card (scrollLeft ${after.optInt("scrollLeft")} within 12 of the pitch $pitch)", abs(after.optInt("scrollLeft") - pitch) <= 12, "stack-swipe-snap")
-            expect("the second dot is selected (index ${after.optInt("selected")})", paged && after.optInt("selected") == 1, "stack-swipe-dot")
+            expect("the indicator reads 'Page 2 of ${expected.size}' with the second dot current (status '${after.optString("status")}', current ${after.optInt("selected")})", paged && after.optInt("selected") == 1 && after.optString("status") == "Page 2 of ${expected.size}", "stack-swipe-status")
             still("stack-second-card")
-            // Back by the dots: the first page's dot under a finger.
-            val back = touchDomExpecting("the first page's dot", "document.querySelectorAll('.zen-mstack-dot')[0]", "the strip is back at the first card", 5_000) {
-                geometry().let { it.optInt("selected") == 0 && it.optInt("scrollLeft") <= 4 }
-            }
-            expect("a finger on the first dot pages back to the first card", back, "stack-dot-tap")
+            // Back the way it came: the dots take no tap, so a swipe to the right pages back.
+            swipeStrip(forward = false)
+            SystemClock.sleep(900)
+            val back = awaitChrome(dotCurrentJs(0), 4_000)
+            SystemClock.sleep(400)
+            val home = geometry()
+            finding("  the strip's scrollLeft over the swipe back (ms, px): ${chromeValue(SWIPE_PROBE_READ_JS)}")
+            finding("  after the swipe back: $home")
+            expect("a swipe back returns the strip to the first card (scrollLeft ${home.optInt("scrollLeft")}, status '${home.optString("status")}')", back && home.optInt("selected") == 0 && home.optInt("scrollLeft") <= 4, "stack-swipe-back")
             SystemClock.sleep(600)
         }
+    }
+
+    /**
+     * A real swipe on the strip, a card's worth: to the left (`forward`) for the next card, to
+     * the right for the one before. The finger starts on a card's body – nine tenths of the way
+     * across the strip for a swipe left, a quarter of the way for a swipe right (clear of the
+     * screen's edge, where the system's own gesture lives) – on the strip's middle line, off the
+     * ⋮ and the action. It settles in first, as the pill gestures do: a nudge past the touch slop
+     * and a hold, so the strip has the finger before the swipe – the compositor asks the main
+     * thread which scroller a touch is on, and in the first run the moves of that first frame
+     * went with the answer (the strip stopped 58 CSS px short of a 207 px swipe, under half a
+     * pitch, and snapped back). Then most of the strip's width in 240 ms and off: a fling, which
+     * the cards' `scroll-snap-stop: always` holds to the next card, and a travel that lands there
+     * by nearness alone should the fling not register. A probe samples the strip's scrollLeft
+     * every animation frame to record the trajectory ([SWIPE_PROBE_READ_JS] after).
+     */
+    private fun swipeStrip(forward: Boolean) = planSwipe(forward).run()
+
+    /** A swipe planned and its probe armed (the chrome asked nothing more once the finger is down): [run] is the finger alone. */
+    private inner class Swipe(private val x: Float, private val y: Float, private val nudge: Float, private val travel: Float) {
+        fun run() {
+            Finger().apply {
+                down(x, y)
+                moveBy(nudge, 0f, 60)
+                hold(SWIPE_SETTLE_MS)
+                moveBy(travel, 0f, 240)
+                up()
+            }
+        }
+    }
+
+    private fun planSwipe(forward: Boolean): Swipe {
+        val strip = domBox(STRIP_JS) ?: error("no strip on the page")
+        val sign = if (forward) -1f else 1f
+        val startX = if (forward) strip.left + strip.width() * 9 / 10 else strip.left + strip.width() / 4
+        val start = Rect(startX, strip.top + strip.height() / 2, startX + 2, strip.top + strip.height() / 2 + 2)
+        val from = touchPoint(start) ?: error("the strip lies outside the touchable window ($strip)")
+        val nudge = sign * SWIPE_NUDGE_DP * density
+        val travel = sign * strip.width() * (if (forward) 0.85f else 0.7f) - nudge
+        noteLine("  swipe ${if (forward) "left" else "right"} from ${from.x.toInt()},${from.y.toInt()}: a nudge of ${nudge.toInt()} px and a ${SWIPE_SETTLE_MS} ms hold, then ${travel.toInt()} px over 240 ms; the probe ${chromeValue(SWIPE_PROBE_ARM_JS)}")
+        return Swipe(from.x, from.y, nudge, travel)
     }
 
     // --- 3. Hide This -----------------------------------------------------------------------------
@@ -362,11 +411,14 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
             if (!touchControl("More options for $title", moreJs(first))) error("no ⋮ on the $title card")
             if (!awaitSheet(title, 8_000)) error("the $title menu did not open")
             awaitSheetAtRest(6_000)
-            val swapped = touchDomExpecting("the menu's Customise row", menuItemJs("Customise"), "the stack's sheet 'Magic Stack' is up and the menu gone", 8_000) {
+            val swapped = touchDomExpecting("the menu's Customise row", menuItemJs("Customise"), "the stack's sheet '$SHEET_TITLE' is up and the menu gone", 8_000) {
                 sheetPresented(SHEET_TITLE) && !sheetPresented(title)
             }
             expect("Customise swaps the menu for the stack's sheet '$SHEET_TITLE'", swapped, "customise-opens")
             awaitSheetAtRest(6_000)
+            val heading = chromeValue("((document.querySelector('.zen-sheet .zen-v2-heading')||{}).textContent||'').trim()")
+            val stray = chromeValue("String(document.body.textContent.indexOf('Magic Stack')>=0)")
+            expect("the sheet's one section is 'Show' ('$heading'), and Chrome's name for the feature is nowhere on screen (stray 'Magic Stack': $stray)", heading == "Show" && stray == "false", "customise-name")
             val switches = switchStates()
             finding("  the sheet's switches: $switches; sheets ${sheetsPresented()}")
             val expected = JSONObject().also { for (id in MODULES) it.put(moduleTitle(id), id != "continue") }
@@ -411,22 +463,22 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
     // --- 6. the way back through the gear ---------------------------------------------------------
 
     private fun theWayBack() {
-        step("6. With no ⋮ left, the page's gear sheet carries a Magic Stack row; it swaps the sheets, a switch brings one card back alone at full width, another brings the dots back") {
+        step("6. With no ⋮ left, the page's gear sheet carries a Cards row; it swaps the sheets, a switch brings one card back alone at full width, another brings the dots back") {
             if (!touchControl(GEAR_LABEL, GEAR_JS)) error("no gear on the page")
             val gear = awaitSheet(GEAR_TITLE, 8_000)
             awaitSheetAtRest(6_000)
             val row = chromeValue("((${GEAR_ROW_JS})||{}).textContent||''")
-            finding("  the gear sheet ${verdict(gear)}; its Magic Stack row: '$row'")
-            expect("the gear opens the page's sheet '$GEAR_TITLE' with a 'Magic Stack' row", gear && row.contains("Magic Stack") && row.contains("Choose which cards show under the shortcuts"), "gear-row")
+            finding("  the gear sheet ${verdict(gear)}; its Cards row: '$row'")
+            expect("the gear opens the page's sheet '$GEAR_TITLE' with a 'Cards' row", gear && row.startsWith("Cards") && row.contains("Choose which cards show under the shortcuts") && !row.contains("Magic Stack"), "gear-row")
             still("gear-sheet-row")
-            val swapped = touchDomExpecting("the gear sheet's Magic Stack row", GEAR_ROW_JS, "the gear sheet has left and the stack's is up", 8_000, reveal = true) {
+            val swapped = touchDomExpecting("the gear sheet's Cards row", GEAR_ROW_JS, "the gear sheet has left and the stack's is up", 8_000, reveal = true) {
                 sheetPresented(SHEET_TITLE) && !sheetPresented(GEAR_TITLE)
             }
             expect("the row swaps the sheets: the gear's leaves first, the stack's comes up (sheets ${sheetsPresented()})", swapped, "gear-swap")
             awaitSheetAtRest(6_000)
             val states = switchStates()
             expect("every switch is off on the stack's sheet: $states", states.length() == MODULES.size && states.keys().asSequence().all { !states.optBoolean(it) }, "gear-switches-off")
-            still("magic-stack-from-gear")
+            still("cards-sheet-from-gear")
             val lone = touchDomExpecting("the 'Bookmarks' switch", switchJs("bookmarks"), "the Bookmarks card is back alone", 6_000, reveal = true) {
                 cardIds() == listOf("bookmarks")
             }
@@ -447,16 +499,27 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         }
     }
 
-    // --- 7. Reopen --------------------------------------------------------------------------------
+    // --- 7. the Continue card's row --------------------------------------------------------------
 
     private fun reopenFromContinue() {
-        step("7. The Continue card's Reopen restores the closed tab on its page") {
+        step("7. The Continue card's row restores the closed tab on its page (the row is the card's whole act; there is no Reopen button)") {
+            // Step 6 brought Bookmarks back first and Continue after it, ahead of it in the order:
+            // Chrome keeps the snapped card through the layout change, so the strip can stand on
+            // Bookmarks with the Continue card a page to the left. The dots take no tap; a swipe
+            // back brings it into view.
+            if (geometry().optInt("selected") != 0) {
+                val was = geometry()
+                swipeStrip(forward = false)
+                SystemClock.sleep(900)
+                val home = awaitChrome(dotCurrentJs(0), 4_000)
+                finding("  the Continue card stood a page to the left ($was): swiped back ${verdict(home)}, now ${geometry()}")
+            }
             val before = tabCount()
-            val reopened = touchDomExpecting("the Continue card's Reopen", actionJs("continue", "Reopen"), "the closed tab is back as the active tab", 10_000) {
+            val reopened = touchDomExpecting("the Continue card's row", CONTINUE_ROW_JS, "the closed tab is back as the active tab", 10_000) {
                 activeUrl() == url(tides) && tabCount() == before + 1
             }
             finding("  ${describeActive()} (tabs were $before); recentlyClosed ${coreState().optJSONArray("recentlyClosed")?.length()}")
-            expect("Reopen restores the closed tab (${url(tides)}) as the active tab", reopened, "reopen")
+            expect("the row restores the closed tab (${url(tides)}) as the active tab", reopened, "reopen")
             awaitLoaded(url(tides), 8_000)
             SystemClock.sleep(1_200)
             still("reopened")
@@ -470,7 +533,7 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         (0 until list.length()).map { list.getString(it) }
     }.getOrElse { emptyList() }
 
-    /** The strip's geometry as JSON: card count, the first card's width, the strip's inner width, scrollLeft, the dots and the selected one. */
+    /** The strip's geometry as JSON: card count, the first card's width, the strip's inner width, scrollLeft, and the indicator's dots, current one, role, status and controls ([GEOMETRY_JS]). */
     private fun geometry(): JSONObject = runCatching { JSONObject(chromeValue(GEOMETRY_JS)) }.getOrElse { JSONObject() }
 
     /** The Customise sheet's switches: label -> checked. */
@@ -681,7 +744,7 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
             "header{background:${site.hex};color:#fff;padding:56px 24px 40px}h1{margin:0;font-size:32px}" +
             "p{padding:24px;font-size:19px;line-height:1.5;color:#3c3c43}</style></head>" +
             "<body><header><h1>${site.caption}</h1></header>" +
-            "<p>${site.title.substringAfter(" - ")}. One of the loopback pages the Magic Stack demo's closed tab and bookmarks point at.</p>" +
+            "<p>${site.title.substringAfter(" - ")}. One of the loopback pages the Cards demo's closed tab and bookmarks point at.</p>" +
             "</body></html>"
 
     companion object {
@@ -689,7 +752,7 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         private const val BLANK_URL = "zen://blank"
         private const val NEW_TAB_LABEL = "New tab"
         private const val GEAR_LABEL = "Customise the new tab page"
-        private const val SHEET_TITLE = "Magic Stack"
+        private const val SHEET_TITLE = "Cards"
         private const val GEAR_TITLE = "New tab page"
         /** The modules in the stack's fixed order (`magicStackPlan.ts`); the sheet lists all four on Android, which can ask to be the default. */
         private val MODULES = listOf("continue", "downloads", "bookmarks", "default-browser")
@@ -735,15 +798,39 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
             "if(l>p.peak)p.peak=l;if(performance.now()-p.t0<2500)requestAnimationFrame(f)}requestAnimationFrame(f);return 'armed'})()"
         private const val SWIPE_PROBE_READ_JS = "(function(){var p=window.__mstackSwipe;if(!p)return 'no probe';var s=document.querySelector('.zen-ntp .zen-mstack-strip');" +
             "return JSON.stringify({peak:Math.round(p.peak),now:s?s.scrollLeft:null,path:p.path})})()"
+        /**
+         * The strip's geometry and its indicator: the card count, the first card's width, the
+         * strip's inner width and scrollLeft; the dots' count, the current one (`data-current`),
+         * the indicator's role and its status text, how many controls stand among the dots (none:
+         * they are indicators), whether every dot is hidden from the reader, and a dot's width.
+         */
         private const val GEOMETRY_JS = "(function(){var s=document.querySelector('.zen-ntp .zen-mstack-strip');if(!s)return JSON.stringify({cards:0});" +
             "var c=s.firstElementChild;var cs=getComputedStyle(s);var inner=s.clientWidth-parseFloat(cs.paddingLeft)-parseFloat(cs.paddingRight);" +
-            "var dots=document.querySelectorAll('.zen-mstack-dot');var sel=-1;for(var i=0;i<dots.length;i++){if(dots[i].getAttribute('aria-selected')==='true')sel=i}" +
-            "return JSON.stringify({cards:s.children.length,cardWidth:c?c.offsetWidth:0,stripInner:Math.round(inner),scrollLeft:Math.round(s.scrollLeft),dots:dots.length,selected:sel,firstDot:dots.length?dots[0].getAttribute('aria-label'):''})})()"
+            "var box=document.querySelector('.zen-ntp .zen-mstack-dots');var dots=box?box.querySelectorAll('.zen-mstack-dot'):[];var sel=-1;var hidden=dots.length>0;" +
+            "for(var i=0;i<dots.length;i++){if(dots[i].hasAttribute('data-current'))sel=i;if(dots[i].getAttribute('aria-hidden')!=='true')hidden=false}" +
+            "return JSON.stringify({cards:s.children.length,cardWidth:c?c.offsetWidth:0,stripInner:Math.round(inner),scrollLeft:Math.round(s.scrollLeft)," +
+            "dots:dots.length,selected:sel,role:box?(box.getAttribute('role')||''):'',status:box?(box.textContent||'').trim():''," +
+            "controls:box?box.querySelectorAll('button,[role=\"tab\"],[role=\"tablist\"],[tabindex]').length:0,dotsHidden:hidden,dotSize:dots.length?dots[0].offsetWidth:0})})()"
+        /** Every card's id with the labels of its action buttons: `[[id, [label, ...]], ...]` in the strip's order. */
+        private const val ACTIONS_JS = "JSON.stringify(Array.prototype.map.call(document.querySelectorAll('.zen-mstack-card'),function(e){" +
+            "return [e.dataset.cell,Array.prototype.map.call(e.querySelectorAll('.zen-mstack-action'),function(b){return b.textContent.trim()})]}))"
+        /** The Continue card's row detail: the host, then the time. */
+        private const val CONTINUE_DETAIL_JS = "((document.querySelector('.zen-mstack-card[data-cell=\"continue\"] .zen-mstack-row-detail')||{}).textContent||'').trim()"
+        /** The Continue card's row – the card's whole act (`session.restoreClosed`). */
+        private const val CONTINUE_ROW_JS = "document.querySelector('.zen-mstack-card[data-cell=\"continue\"] .zen-mstack-row')"
 
         private fun moreJs(id: String) = "document.querySelector('.zen-mstack-card[data-cell=\"$id\"] .zen-mstack-more')"
 
-        private fun actionJs(id: String, label: String) =
-            "Array.prototype.find.call(document.querySelectorAll('.zen-mstack-card[data-cell=\"$id\"] .zen-mstack-action'),function(e){return e.textContent.trim()===${JSONObject.quote(label)}})"
+        /** Whether the `i`th dot is the current one (`data-current`; the dots are indicators and carry no `aria-selected`). */
+        private fun dotCurrentJs(i: Int) =
+            "(document.querySelectorAll('.zen-ntp .zen-mstack-dot')[$i]||{hasAttribute:function(){return false}}).hasAttribute('data-current')"
+
+        /** The one action a card carries, by module: only what its rows do not already do (§9.29). */
+        private fun actionsFor(id: String): List<String> = when (id) {
+            "downloads", "bookmarks" -> listOf("See all")
+            "default-browser" -> listOf("Set as default")
+            else -> emptyList()
+        }
 
         /** The open menu sheet's row reading `label` (`MenuSheet`: a `.zen-sheet-item` whose text is the label). */
         private fun menuItemJs(label: String) =
