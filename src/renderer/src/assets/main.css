@@ -819,12 +819,16 @@
  */
 .zen-firstrun-radio:focus-visible,
 .zen-firstrun-tile:focus-visible,
+.zen-firstrun-choice:focus-visible,
 :root[data-pointer='coarse'] .zen-firstrun-radio:focus-visible,
 :root[data-pointer='coarse'] .zen-firstrun-tile:focus-visible,
+:root[data-pointer='coarse'] .zen-firstrun-choice:focus-visible,
 .zen-firstrun-radio[data-keyboard-focus]:focus,
 .zen-firstrun-tile[data-keyboard-focus]:focus,
+.zen-firstrun-choice[data-keyboard-focus]:focus,
 :root[data-pointer='coarse'] .zen-firstrun-radio[data-keyboard-focus]:focus,
-:root[data-pointer='coarse'] .zen-firstrun-tile[data-keyboard-focus]:focus {
+:root[data-pointer='coarse'] .zen-firstrun-tile[data-keyboard-focus]:focus,
+:root[data-pointer='coarse'] .zen-firstrun-choice[data-keyboard-focus]:focus {
   outline: 2px solid var(--v2-control-accent);
   outline-offset: -2px;
 }
@@ -6541,6 +6545,98 @@
   .zen-firstrun-tile[aria-checked='true'] .zen-firstrun-tile-image {
     outline: 2px solid var(--v2-control-accent);
     outline-offset: 2px;
+  }
+  /*
+   * The EEA's search-engine choice screen in the phone's pose (W6-2 / OMN-26, §9.39 through
+   * §10.4; `PhoneSearchChoiceStep` in overlays/PhoneOnboarding.tsx, for the tour's search step
+   * and the standalone `PhoneSearchChoiceScreen`). Each engine is one two-line row (§9.2:
+   * 12 + 20 + 20 + 12 = 64 on `--v2-row-two-line`), edge to edge with its text at the 16 gutter,
+   * rows touching (§9.21), so every tile is the same height whatever its engine – the DMA reads
+   * any distinction as favour. The engine's mark is 24 in a 32 box on the first text line
+   * (content, exempt from the token rule as favicons are, §9.29), the name on the body line at
+   * the button weight over the engine's own line at 13 in the deemphasised ink, whole – no
+   * clamp, no ellipsis – and the tour's radio mark (`.zen-firstrun-radio-mark`, 20 on the phone)
+   * trailing, centred on the row since the row is one tile. The phone's text column (412 − the
+   * gutters, the mark's box, the radio and the gaps: 304) is narrower than the desktop panel's,
+   * so a line chosen to fit the panel at 13 may not fit here (Qwant's on the DE list): the line
+   * wraps rather than being cut, and the list is a grid whose rows share the tallest row's height
+   * (`grid-auto-rows: 1fr`), so every tile stays the same height whatever its engine's line. The
+   * picked row takes the window's accent at .12 (§9.39; never `--v2-selected`, the page family's)
+   * bleeding to the edges as the press fill does (§9.25).
+   */
+  .zen-firstrun-choices {
+    display: grid;
+    grid-auto-rows: 1fr;
+  }
+  .zen-firstrun-choice {
+    display: flex;
+    width: 100%;
+    min-height: var(--v2-row-two-line);
+    flex-shrink: 0;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    color: inherit;
+    text-align: left;
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-firstrun-choice:active {
+    background: var(--v2-control-fill);
+  }
+  .zen-firstrun-choice[aria-checked='true'] {
+    background: rgb(var(--zen-accent-rgb) / 0.12);
+  }
+  .zen-firstrun-choice > .zen-firstrun-radio-mark {
+    align-self: center;
+    margin-top: 0;
+  }
+  /* Checked: the tour's radio's mark (above), the picked tile carrying the state (§9.14). */
+  .zen-firstrun-choice[aria-checked='true'] > .zen-firstrun-radio-mark {
+    border-color: var(--v2-control-accent);
+    background: var(--zen-on-accent);
+    box-shadow: inset 0 0 0 calc((var(--v2-checkbox) - 6px) / 2 - 1px) var(--v2-control-accent);
+  }
+  .zen-firstrun-choice-mark {
+    display: inline-flex;
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+  }
+  .zen-firstrun-choice-mark > img {
+    width: 24px;
+    height: 24px;
+    object-fit: contain;
+  }
+  .zen-firstrun-choice-letter {
+    display: inline-flex;
+    width: 24px;
+    height: 24px;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--v2-radius-inner);
+    background: var(--v2-control-fill);
+    font-size: var(--v2-font-small);
+    font-weight: var(--v2-weight-heading);
+    line-height: 1;
+  }
+  .zen-firstrun-choice-text {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+  }
+  .zen-firstrun-choice-name {
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-button);
+    line-height: var(--v2-line-body);
+  }
+  .zen-firstrun-choice-line {
+    color: var(--v2-control-text-deemphasized);
+    font-size: var(--v2-font-small);
+    font-weight: var(--v2-weight-body);
+    line-height: var(--v2-line-small);
   }
 }
 

@@ -264,8 +264,23 @@ export type PreviewAutofillSurface = (typeof PREVIEW_AUTOFILL)[number]
 export const PREVIEW_MEDIA = ['audio', 'paused', 'video', 'elsewhere'] as const
 export type PreviewMediaVariant = (typeof PREVIEW_MEDIA)[number]
 
+/**
+ * The phone's first-run tour at one of its steps (`firstrun=<step>`; `overlays/PhoneOnboarding.tsx`):
+ * a profile seeded with `onboardingDone: false` has the tour up at its welcome, and the state
+ * presses through the steps before the one asked for. With `region=<EEA code>` on the host the
+ * search step is the EEA's search-engine choice screen (OMN-26).
+ */
+export const PREVIEW_FIRSTRUN_STEPS = ['welcome', 'look', 'search', 'default'] as const
+export type PreviewFirstRunStep = (typeof PREVIEW_FIRSTRUN_STEPS)[number]
+
 export type PreviewState =
   | { kind: 'idle' }
+  | {
+      /** The phone's first-run tour at `step`; `then` steps are taken once it is there. */
+      kind: 'firstrun'
+      step: PreviewFirstRunStep
+      then?: PreviewStep[]
+    }
   | {
       kind: 'autofill'
       surface: PreviewAutofillSurface
@@ -712,7 +727,9 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
 }
 
 /**
- * A preview state spec is a query string: `idle` (or anything unrecognised), `page=<id>` for an
+ * A preview state spec is a query string: `idle` (or anything unrecognised), `firstrun=<step>`
+ * for the phone's first-run tour at one of PREVIEW_FIRSTRUN_STEPS (on a profile seeded with
+ * `onboardingDone: false`; `then=<steps>` takes steps on the step), `page=<id>` for an
  * internal page opened in its tab (`section=<id>` for one of its sections, `search=<text>` types
  * into its search field, `show=<text>` scrolls a row into view, `then=<steps>` takes steps on it
  * afterwards, `;`-separated: `tap:<text>`, `hold:<text>`, `type:<id>=<text>`, `back`,
@@ -818,6 +835,16 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  */
 export function parsePreviewSpec(spec: string): PreviewState {
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
+  const firstrun = params.get('firstrun')
+  if (firstrun !== null && (PREVIEW_FIRSTRUN_STEPS as readonly string[]).includes(firstrun)) {
+    const state: Extract<PreviewState, { kind: 'firstrun' }> = {
+      kind: 'firstrun',
+      step: firstrun as PreviewFirstRunStep
+    }
+    const then = parsePreviewSteps(params.get('then'))
+    if (then.length > 0) state.then = then
+    return state
+  }
   const page = params.get('page')
   if (page !== null && (INTERNAL_PAGE_IDS as readonly string[]).includes(page)) {
     const state: Extract<PreviewState, { kind: 'page' }> = {
