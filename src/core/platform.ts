@@ -1036,6 +1036,15 @@ export interface TabView {
   /** Let a hidden page keep running at full speed while an agent drives it. */
   setBackgroundThrottling?(allowed: boolean): void
   /**
+   * An agent drives this page while it may be off the user's screen. On, the host keeps the
+   * page laid out at its window's page area (so `innerWidth`/`innerHeight`, element boxes and
+   * snapshots come out as they would on screen) and able to produce frames for `capture`, all
+   * without showing the view, focusing it or changing the page's `visibilityState`. Off again
+   * when the agent lets the tab go. Hosts whose hidden pages keep their size anyway (Android)
+   * leave it out.
+   */
+  setAgentDriven?(on: boolean): void
+  /**
    * Screenshot for agents: the viewport, the full page or a region. Hosts without it fall back
    * to `snapshot()` (viewport only).
    */
