@@ -44,6 +44,7 @@ import { installBannerShown, presentInstallBanner } from '@renderer/lib/installB
 import { isInternalPageUrl } from '@shared/internalPages'
 import { isEmptyTabUrl } from '@shared/url'
 import { closeCustomize, openCustomize } from '@renderer/lib/newtab'
+import { closeMagicStackCustomize } from '@renderer/components/newtab/magicStackCustomize'
 import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
 import { BLANK_URL, ERROR_URL_PREFIX, EXTENSION_SCHEME, crashPageOptionsOf } from '@shared/url'
 import { DEFAULT_FOLDER_ICON } from '@renderer/lib/groups'
@@ -304,6 +305,8 @@ function apply(browser: Browser, spec: string): void {
     dismissOverview()
     closeReaderPreferences({ keepFocus: true })
     closeCustomize()
+    // The Magic Stack's Customise sheet a card menu's step opened (NTP-16) goes with the page.
+    closeMagicStackCustomize()
     uiStore.set({
       findOpen: false,
       findTabId: null,

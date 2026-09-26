@@ -75,6 +75,9 @@ const state = {
   searchEngines: DEFAULT_SEARCH_ENGINES,
   newTabShortcuts: [],
   newTabHiddenHosts: [],
+  newTabHiddenModules: [],
+  recentlyClosed: [],
+  downloads: [],
   bookmarks: [],
   privacy: emptyPrivacyStatus()
 } as unknown as UIState

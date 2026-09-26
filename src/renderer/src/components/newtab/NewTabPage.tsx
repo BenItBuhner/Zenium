@@ -46,6 +46,7 @@ import { cn } from '@renderer/lib/utils'
 import { startVoiceSearch } from '@renderer/lib/voiceSearch'
 import { useLongPress } from '../phone/useLongPress'
 import { EngineFieldGlyph } from '../urlbar/EngineFieldGlyph'
+import { MagicStack } from './MagicStack'
 import { useTileFlip, useTileReorder, type TileReorder } from './tileReorder'
 
 interface Props {
@@ -154,8 +155,11 @@ function SpaceNewTabPage({ state, tab, hidden }: Props): JSX.Element {
       >
         {dock === 'bottom' ? (
           // The top layout's spacers the other way round: 5 parts above the block, 3 below it.
+          // The Magic Stack keeps to the block's far side from the bar (NTP-16): under the tiles
+          // at a top dock, above them here, so the field stays the bar's neighbour (§11.8).
           <>
             <div className="min-h-6" style={{ flex: 5 }} />
+            <MagicStack state={state} tab={tab} dock={dock} />
             {sections.shortcuts && <TopSites state={state} tab={tab} dock={dock} />}
             {sections.searchBox && <SearchField state={state} tab={tab} dock={dock} />}
             <div className="min-h-6" style={{ flex: 3 }} />
@@ -165,6 +169,7 @@ function SpaceNewTabPage({ state, tab, hidden }: Props): JSX.Element {
             <div className="min-h-6" style={{ flex: 3 }} />
             {sections.searchBox && <SearchField state={state} tab={tab} dock={dock} />}
             {sections.shortcuts && <TopSites state={state} tab={tab} dock={dock} />}
+            <MagicStack state={state} tab={tab} dock={dock} />
             <div className="min-h-6" style={{ flex: 5 }} />
           </>
         )}
