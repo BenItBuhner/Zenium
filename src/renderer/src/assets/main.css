@@ -10267,16 +10267,14 @@
   text-align: left;
   transition: background 120ms var(--zen-ease);
 }
-@media (hover: hover) {
-  .zen-search-choice-row:hover {
-    background: var(--zen-element-bg);
-  }
+:where(:root[data-hover='hover']) .zen-search-choice-row:hover {
+  background: var(--zen-element-bg);
 }
 .zen-search-choice-row:active {
   background: var(--zen-element-bg-active);
 }
 .zen-search-choice-row[aria-checked='true'],
-.zen-search-choice-row[aria-checked='true']:hover {
+:where(:root[data-hover='hover']) .zen-search-choice-row[aria-checked='true']:hover {
   background: var(--v2-selected);
 }
 .zen-search-choice-icon {
@@ -10351,7 +10349,7 @@
 :root[data-pointer='coarse'] .zen-search-choice-row:focus-visible,
 .zen-search-choice-row[data-keyboard-focus]:focus,
 :root[data-pointer='coarse'] .zen-search-choice-row[data-keyboard-focus]:focus {
-  outline: 2px solid var(--zen-accent);
+  outline: 2px solid var(--v2-ring);
   outline-offset: var(--v2-ring-offset);
 }
 
