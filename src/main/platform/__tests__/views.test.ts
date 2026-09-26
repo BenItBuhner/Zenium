@@ -246,10 +246,12 @@ vi.mock('electron', async () => {
       /** The frame's identity, which `did-start-navigation`'s `initiator` is matched against. */
       processId: this.id,
       routingId: 1,
-      /** The page's frame tree: the main frame alone. */
+      /** The page's frame tree: the main frame, then every sub-frame a test gave the page. */
       get framesInSubtree(): Array<{ processId: number; routingId: number }> {
-        return [this]
+        return [this, ...this.subFrames]
       },
+      /** Sub-frames of the page (`frameById` finds them by `frameTreeNodeId`); none unless a test adds one. */
+      subFrames: [] as Array<{ processId: number; routingId: number }>,
       scripts: [] as string[],
       executeJavaScript: (code: string): Promise<unknown> => {
         if (code === PAINT_STATE_SCRIPT) {
@@ -4150,7 +4152,11 @@ describe('ElectronTabView.executeJavaScriptInPrivateWorld (CT-32, the world the 
   interface WorldWc {
     scripts: string[]
     isolatedScripts: Array<{ worldId: number; code: string }>
-    mainFrame: { scripts: string[] } & Record<string, unknown>
+    mainFrame: {
+      scripts: string[]
+      framesInSubtree: Array<{ processId: number; routingId: number }>
+      subFrames: Array<{ processId: number; routingId: number }>
+    }
   }
   const page = (host: ElectronTabViewHost, id: string): { view: ElectronTabView; wc: WorldWc } => {
     const view = host.createView(
@@ -4187,7 +4193,8 @@ describe('ElectronTabView.executeJavaScriptInPrivateWorld (CT-32, the world the 
       send: (channel: string, payload: unknown) => void sent.push({ channel, payload }),
       executeJavaScript: () => Promise.reject(new Error('the main world was reached'))
     }
-    Object.assign(wc.mainFrame, { parent: null, framesInSubtree: [wc.mainFrame, child] })
+    wc.mainFrame.subFrames.push(child)
+    expect(wc.mainFrame.framesInSubtree).toEqual([wc.mainFrame, child])
     const done = view.executeJavaScriptInPrivateWorld('(async () => 2)()', 7)
     expect(sent).toEqual([
       {
@@ -4208,7 +4215,7 @@ describe('ElectronTabView.executeJavaScriptInPrivateWorld (CT-32, the world the 
   it('rejects for a frame the page no longer has, running nothing anywhere', async () => {
     const host = new ElectronTabViewHost(sessions)
     const { view, wc } = page(host, 'tab_world_gone')
-    Object.assign(wc.mainFrame, { parent: null, framesInSubtree: [wc.mainFrame] })
+    expect(wc.mainFrame.framesInSubtree).toEqual([wc.mainFrame])
     await expect(view.executeJavaScriptInPrivateWorld('1', 7)).rejects.toThrow(
       'Frame 7 is no longer part of the page'
     )
