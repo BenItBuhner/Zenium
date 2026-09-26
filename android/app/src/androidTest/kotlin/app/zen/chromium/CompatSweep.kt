@@ -781,9 +781,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     private fun popup(row: Row, entry: JSONObject, manifest: JSONObject, slug: String) {
         val action = manifest.optJSONObject("action") ?: manifest.optJSONObject("browser_action")
         val declared = action?.optString("default_popup", "")?.ifEmpty { null }
-        val ext = extensions().firstOrNull { it.getString("id") == row.id }
         // The runtime's word on the popup after `action.setPopup` (null: clicks fire onClicked).
-        val runtimePopup = ext?.let { if (it.isNull("popup")) null else it.optString("popup") }
+        fun runtimePopupNow(): String? = extensions().firstOrNull { it.getString("id") == row.id }?.let { if (it.isNull("popup")) null else it.optString("popup") }
+        var runtimePopup = runtimePopupNow()
+        if (declared == null && runtimePopup == null && action != null && manifest.has("background")) {
+            // A popup the worker sets at its start (Search by Image's `action.setPopup(src/action/
+            // index.html)`, its manifest declaring none) lands after the background's `ready` on
+            // a slow lane – round 19's 156 lane read `-` where 113 read P – so the runtime's word
+            // is waited for a moment, scaled, before the action is taken for a popup-less one.
+            runtimePopup = poll(scaled(5_000, speedFactor(entry)), 250) { runtimePopupNow() }
+        }
         if (declared == null && runtimePopup == null) {
             stage(entry, "popup", "-", "no default_popup")
             return
