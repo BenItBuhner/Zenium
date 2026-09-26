@@ -35,7 +35,7 @@ import type { PopoverAlignment } from './portals'
 import { cmd, run } from './api'
 import { browserStore } from './browserStore'
 import { devtoolsDockOf } from './contentRadius'
-import { isPhone, viewportStore } from './formFactor'
+import { isPhone, isTouchLayout, viewportStore } from './formFactor'
 import { afterKeyRelease } from './keyRelease'
 import { onboardingCovers } from './onboarding'
 import { searchChoiceCovers } from './searchChoice'
@@ -1621,6 +1621,20 @@ export async function openUrlbar(
  * nothing typed between Ctrl+T and the first paint of the bar is lost.
  */
 let typeahead: { tabId: string; text: string } | null = null
+
+/**
+ * Whether the core's `newtab.opened` opens the bar here. Without `text` it announces a new tab's
+ * arrival (the boot's first tab, Ctrl+T, the sidebar's New Tab row – `Browser.revealFreshTab`,
+ * `NewTabService.open`): the desktop's reveal is the bar in new-tab mode over the page. On the
+ * touch layouts the served page comes up bare instead (NTP-35, Chrome's tablet new tab): the page
+ * in view, its own field at rest, no bar over a cover and no keyboard rising unasked. Its bar
+ * opens on the user's tap on the page's field – the page's `search` action, whose `text` is a
+ * string ('' for the tap) – or on what the page's field received. The phone's chrome draws its
+ * own page and never sends the announcement (`bootFirstTab.test.ts`).
+ */
+export function newTabRevealOpensUrlbar(text: string | undefined): boolean {
+  return text !== undefined || !isTouchLayout()
+}
 
 /**
  * The URL bar over a new tab page: `new-tab` mode bound to that tab, so what is typed navigates

@@ -93,6 +93,11 @@ function reducedMotion(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches
 }
 
+/** A finger drives the page (the tablet's served page): the touch layouts' sizes and hand-off. */
+function coarsePointer(): boolean {
+  return window.matchMedia('(pointer: coarse)').matches
+}
+
 function greetingFor(hour: number): string {
   if (hour >= 5 && hour < 12) return 'Good morning'
   if (hour >= 12 && hour < 18) return 'Good afternoon'
@@ -361,6 +366,11 @@ class NewTabPage {
   // ---------------------------------------------------------------------------
 
   private wireSearch(): void {
+    // Under a finger the field is a hand-off control, not a live input (NTP-35): the tap opens
+    // the chrome's own omnibox over the page, so no keyboard rises for this field first – the
+    // page comes up with the field at rest and the chrome's field takes the keyboard on the tap.
+    // A hardware keyboard's first character still hands off through `keydown` below.
+    if (coarsePointer()) this.input.inputMode = 'none'
     this.search.addEventListener('submit', (e) => {
       e.preventDefault()
       this.handOff(this.input.value)
