@@ -5,5 +5,5 @@
   "shard": "phone-a",
   "mirrors": "android-errors-demo.yml",
   "dir": "errors-demo",
-  "estimate": 3
+  "estimate": 4
 }

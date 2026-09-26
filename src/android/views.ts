@@ -350,7 +350,15 @@ export class AndroidTabView implements TabView {
       this.bridge.send('view.loadHtml', {
         tabId: this.tabId,
         url,
-        html: zenPageHtml(url, this.pages.reader, this.pages.image, this.pages.pdf),
+        // The error page lists Chrome Android's suggestions on this host (`ErrorPageHost`).
+        html: zenPageHtml(
+          url,
+          this.pages.reader,
+          this.pages.image,
+          this.pages.pdf,
+          'system',
+          'android'
+        ),
         // The PDF viewer's document runs under the PDF's own URL, as Chrome's viewer presents
         // its tab (`pdfViewerBaseUrl`: the viewer's origin for a PDF with none); pdf.js fetches
         // its worker and the document from the viewer's origin, which Kotlin serves
