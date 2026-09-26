@@ -29,6 +29,7 @@ import {
 } from '@renderer/lib/menuPath'
 import { sourceTitle } from '@renderer/lib/menuTitle'
 import { useSheetLeave } from '@renderer/lib/motion/presence'
+import { reducedMotion } from '@renderer/lib/motion/spring'
 import { holdExpanded, openedFromKeyboard } from '@renderer/lib/popover'
 import {
   ChromePortal,
@@ -42,12 +43,26 @@ import {
   viewportSize,
   type PopoverBox
 } from '@renderer/lib/portals'
-import { closeMenu, lastPointer, pickMenuItem } from '@renderer/lib/ui'
+import {
+  SHARE_SEAM_BUSY_MS,
+  SHARE_SEAM_OUT_MS,
+  handsOverToSharePanel
+} from '@renderer/lib/shareSeam'
+import {
+  beginShareSeam,
+  browserStore,
+  closeMenu,
+  lastPointer,
+  pickMenuItem,
+  uiStore
+} from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { DeviceGlyph, anyDeviceKind } from '../DeviceGlyph'
 import { GroupGlyph } from '../GroupGlyph'
 import { RowFavicon } from '../phone/PhoneList'
 import { useLongPress } from '../phone/useLongPress'
+import { SharePanelContent, SharePanelPreview } from '../share/SharePanelSheet'
+import { Spinner } from '../siteControls/primitives'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import { TabletMenu } from '../tablet/TabletMenu'
 import { MenuEditor } from './MenuEditor'
@@ -123,6 +138,19 @@ interface MenuNav {
  * from then on, ahead of the core's next composition. A pose that ends on the order last saved
  * writes nothing (`sameMenuOrder`), so the empty list and an absent setting never trade places
  * over an opening that changed nothing.
+ *
+ * The app menu's Share row, below Android 14, is the one pick the sheet does not leave for
+ * (`lib/shareSeam.ts`, v2 draft §9.38's hand-off): the host gathers the share panel's row while
+ * the menu stands, its rows inert – the tapped row taking §9.30's spinner in its trailing slot
+ * once the gather has run 150 ms, the others as they were – and the request that comes back
+ * takes this very chassis –
+ * the header becomes the share's preview, the body the panel's chips and apps, the two contents
+ * crossfading (the rows out over §11's 120 ms, the panel in over 250 ms) while the sheet
+ * re-detents to the panel's height on its own spring (`contentKey`); one sheet, no bare page
+ * between the two. From then on the sheet is the panel's: back and Escape dismiss it to the
+ * page (Chrome's share sheet closes to the page too), the handle reads "Dismiss", an answer
+ * closes the sheet with the panel, and a dismissal releases the share (`closeMenu`). Under
+ * reduced motion the contents cut (`main.css`).
  */
 function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
   const [nav, setNav] = useState<MenuNav>({ path: [], direction: 0 })
@@ -150,6 +178,45 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
   const iconsAsList = useMenuAsList()
   const sheet = useRef<BottomSheetHandle>(null)
   const titleId = useId()
+
+  // The share seam (§9.38): `gathering` while the host puts the panel's row together for this
+  // menu's Share row, `hosted` the panel's request once this sheet draws it.
+  const sharePanelStandsIn = browserStore.use((s) => s.state?.capabilities.sharePanel === true)
+  const seam = uiStore.use((s) => s.shareSeam)
+  const panel = uiStore.use((s) => s.sharePanel)
+  const gatheringRow = seam?.phase === 'gathering' && seam.menuId === menu.id ? seam.itemId : null
+  const gathering = gatheringRow !== null
+  const hosted =
+    seam?.phase === 'hosting' && seam.menuId === menu.id && panel?.id === seam.panelId
+      ? panel
+      : null
+  // The gather's sign of life (§9.30): a gather still running after 150 ms puts the spinner in
+  // the tapped row's trailing slot – the row at full opacity, `aria-busy`, the other rows as
+  // they are. A fast host's request is in before it and nothing shows. The sign stands for the
+  // gather it belongs to, rides the rows' fading copy through the hand-off, and goes when the
+  // seam does, not before.
+  const [busyRow, setBusyRow] = useState<string | null>(null)
+  useEffect(() => {
+    if (gatheringRow === null) return
+    const timer = window.setTimeout(() => setBusyRow(gatheringRow), SHARE_SEAM_BUSY_MS)
+    return () => window.clearTimeout(timer)
+  }, [gatheringRow])
+  const busy = busyRow !== null && (busyRow === gatheringRow || hosted !== null) ? busyRow : null
+  // The rows fade out over the panel as it rises – drawn once more, inert, for the fade's
+  // length, from the hand-off's first frame – unless motion is reduced, when the panel simply
+  // stands where the rows were.
+  const [faded, setFaded] = useState<string | null>(null)
+  const hostedId = hosted?.id ?? null
+  const outgoing = hostedId !== null && faded !== hostedId && !reducedMotion()
+  useEffect(() => {
+    if (hostedId === null) return
+    const timer = window.setTimeout(() => setFaded(hostedId), SHARE_SEAM_OUT_MS)
+    return () => window.clearTimeout(timer)
+  }, [hostedId])
+  const pickShare = (then: () => void): void => sheet.current?.dismiss(then)
+  // Where the list stood when Share was tapped: the chassis starts new content at its top, so
+  // the fading copy of the rows is drawn shifted by the offset, where the user was looking.
+  const [seamScroll, setSeamScroll] = useState(0)
 
   const keyOf = (item: MenuItemDescriptor): string | undefined => item.key
   const defaultOrder = menu.defaultOrder
@@ -194,9 +261,10 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
   // slides it away, cancel springs it back; the back button and Escape slide it away too. On
   // its way out with its request gone (the chassis's leave) the sheet absorbs the gesture and
   // the menu lets Escape by. In the edit pose the gesture ends the pose instead (the sheet stays
-  // where it is while the finger is down), as Escape does.
+  // where it is while the finger is down), as Escape does. Hosting the share panel the sheet is
+  // the panel's surface: the gesture dismisses it to the page, as the panel's own sheet does.
   useBackSurface({
-    name: 'menu',
+    name: hosted ? 'share-panel' : 'menu',
     onProgress: (progress) => {
       if (!editing) sheet.current?.backProgress(progress)
     },
@@ -213,141 +281,194 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
     else sheet.current?.dismiss()
   }, useSheetLeave()?.leaving)
 
+  const rows = editing ? (
+    <div key="edit" className="zen-animate-fade">
+      <MenuEditor
+        sections={sections}
+        onChange={changeDraft}
+        onReset={resetDraft}
+        canReset={defaultOrder !== undefined && !atDefault(sections)}
+      />
+    </div>
+  ) : (
+    <div
+      key={path.length}
+      className={cn(
+        'flex flex-col pb-2',
+        nav.direction > 0 && 'zen-drawer-right',
+        nav.direction < 0 && 'zen-drawer-left',
+        nav.direction === 0 && draft !== null && 'zen-animate-fade'
+      )}
+    >
+      {groups.map((group, index) =>
+        isIconRow(group) ? (
+          <ul
+            key={index}
+            className={iconsAsList ? 'zen-menu-icon-list' : 'zen-menu-icon-row'}
+            aria-label="Page actions"
+          >
+            {group.map((item) => (
+              <li key={item.id} className={iconsAsList ? undefined : 'flex'}>
+                <IconRowButton
+                  item={item}
+                  list={iconsAsList}
+                  onPick={() => {
+                    if (!gathering) sheet.current?.dismiss(() => pickMenuItem(item.id))
+                  }}
+                />
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <ul key={index} className="flex flex-col">
+            {index > 0 && <li aria-hidden className="zen-sheet-sep" />}
+            {group.map((item) => (
+              <li key={item.id}>
+                {item.note ? (
+                  // An empty state's sentence (§9.17): a row of the group, not a command.
+                  <p className="zen-sheet-note">{item.label}</p>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={!item.enabled}
+                    className={cn('zen-sheet-item', item.danger && 'text-[var(--zen-danger)]')}
+                    // A checked row draws a check; the tree carries the state (A11Y-01), as the
+                    // extensions sheet's rows do.
+                    role={
+                      item.type === 'checkbox'
+                        ? 'menuitemcheckbox'
+                        : item.type === 'radio'
+                          ? 'menuitemradio'
+                          : undefined
+                    }
+                    aria-checked={
+                      item.type === 'checkbox' || item.type === 'radio' ? item.checked : undefined
+                    }
+                    // The Share row at work (§9.30): busy, not disabled – its opacity and its
+                    // width kept, the spinner in its trailing slot.
+                    aria-busy={busy === item.id || undefined}
+                    onClick={(e) => {
+                      // The rows stand inert while the host gathers the share panel's row.
+                      if (gathering) return
+                      // The Change Menu row opens the edit pose in place: the sheet stays.
+                      if (isChangeMenuItem(item)) beginEditing()
+                      else if (item.submenu)
+                        setNav((n) => ({ path: [...n.path, item], direction: 1 }))
+                      // The Share row hands the sheet to the panel (§9.38): the pick runs with
+                      // the sheet standing, and the panel's request takes the chassis over.
+                      else if (handsOverToSharePanel(item, { sharePanel: sharePanelStandsIn })) {
+                        setSeamScroll(e.currentTarget.closest('.zen-sheet-scroll')?.scrollTop ?? 0)
+                        beginShareSeam(menu.id, item.id)
+                      } else sheet.current?.dismiss(() => pickMenuItem(item.id))
+                    }}
+                  >
+                    <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                    {(item.type === 'checkbox' || item.type === 'radio') && item.checked && (
+                      <Check className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />
+                    )}
+                    {item.submenu && (
+                      <ChevronRight
+                        className="zen-sheet-item-secondary h-5 w-5 shrink-0"
+                        strokeWidth={1.75}
+                        aria-hidden
+                      />
+                    )}
+                    {busy === item.id && <Spinner className="h-4 w-4" />}
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )
+      )}
+    </div>
+  )
+
   return (
     <BottomSheet
       ref={sheet}
       onDismissed={() => {
         latest.current.saveDraft()
-        closeMenu()
+        // Past the Share row's pick the host has heard of the menu already (`menu.click`):
+        // the sheet's leave is the panel's dismissal or the gather's end, not a menu's close.
+        closeMenu(!gathering && !hosted)
       }}
-      contentKey={`${menu.id}:${editing ? 'edit' : path.map((item) => item.id).join('/')}`}
-      handleLabel="Resize menu"
+      contentKey={
+        hosted
+          ? hosted.id
+          : `${menu.id}:${editing ? 'edit' : path.map((item) => item.id).join('/')}`
+      }
+      handleLabel={hosted ? 'Dismiss' : 'Resize menu'}
       labelledBy={titleId}
+      className={hosted ? 'zen-share-panel' : undefined}
       header={
-        <>
-          {path.length > 0 && !editing && (
-            <button
-              type="button"
-              className="zen-sheet-header-control"
-              data-side="leading"
-              onClick={() => setNav((n) => ({ path: n.path.slice(0, -1), direction: -1 }))}
-              aria-label="Back"
-            >
-              <ChevronLeft className="h-5 w-5" strokeWidth={1.75} aria-hidden />
-            </button>
-          )}
-          {menu.header && path.length === 0 && !editing ? (
-            <LinkHeader header={menu.header} titleId={titleId} />
-          ) : (
-            <h2 id={titleId} className="zen-sheet-title">
-              {title}
-            </h2>
-          )}
-          {editing && (
-            <button
-              type="button"
-              className="zen-sheet-header-control"
-              data-side="trailing"
-              data-text
-              data-menu-done
-              onClick={finishEditing}
-            >
-              Done
-            </button>
-          )}
-        </>
+        hosted ? (
+          // The menu's title fades where it stood as the share's preview rises in the header's
+          // place (the preview a direct child of the header, as a link's header is).
+          <>
+            {outgoing && (
+              <div className="zen-share-seam-out" data-title aria-hidden inert>
+                <span className="zen-sheet-title">{title}</span>
+              </div>
+            )}
+            <SharePanelPreview request={hosted} titleId={titleId} className="zen-share-seam-in" />
+          </>
+        ) : (
+          <>
+            {path.length > 0 && !editing && (
+              <button
+                type="button"
+                className="zen-sheet-header-control"
+                data-side="leading"
+                onClick={() => setNav((n) => ({ path: n.path.slice(0, -1), direction: -1 }))}
+                aria-label="Back"
+              >
+                <ChevronLeft className="h-5 w-5" strokeWidth={1.75} aria-hidden />
+              </button>
+            )}
+            {menu.header && path.length === 0 && !editing ? (
+              <LinkHeader header={menu.header} titleId={titleId} />
+            ) : (
+              <h2 id={titleId} className="zen-sheet-title">
+                {title}
+              </h2>
+            )}
+            {editing && (
+              <button
+                type="button"
+                className="zen-sheet-header-control"
+                data-side="trailing"
+                data-text
+                data-menu-done
+                onClick={finishEditing}
+              >
+                Done
+              </button>
+            )}
+          </>
+        )
       }
     >
-      {editing ? (
-        <div key="edit" className="zen-animate-fade">
-          <MenuEditor
-            sections={sections}
-            onChange={changeDraft}
-            onReset={resetDraft}
-            canReset={defaultOrder !== undefined && !atDefault(sections)}
-          />
+      {hosted ? (
+        // The hand-off: the rows once more, inert and fading, over the panel rising in their
+        // place – one chassis, its height following the panel's on the sheet's spring.
+        <div className="zen-share-seam" data-seam="share-panel">
+          {outgoing && (
+            <div className="zen-share-seam-out" aria-hidden inert>
+              <div
+                className="zen-share-seam-scrolled"
+                style={seamScroll > 0 ? { transform: `translateY(${-seamScroll}px)` } : undefined}
+              >
+                {rows}
+              </div>
+            </div>
+          )}
+          <div className="zen-share-seam-in">
+            <SharePanelContent request={hosted} pick={pickShare} />
+          </div>
         </div>
       ) : (
-        <div
-          key={path.length}
-          className={cn(
-            'flex flex-col pb-2',
-            nav.direction > 0 && 'zen-drawer-right',
-            nav.direction < 0 && 'zen-drawer-left',
-            nav.direction === 0 && draft !== null && 'zen-animate-fade'
-          )}
-        >
-          {groups.map((group, index) =>
-            isIconRow(group) ? (
-              <ul
-                key={index}
-                className={iconsAsList ? 'zen-menu-icon-list' : 'zen-menu-icon-row'}
-                aria-label="Page actions"
-              >
-                {group.map((item) => (
-                  <li key={item.id} className={iconsAsList ? undefined : 'flex'}>
-                    <IconRowButton
-                      item={item}
-                      list={iconsAsList}
-                      onPick={() => sheet.current?.dismiss(() => pickMenuItem(item.id))}
-                    />
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <ul key={index} className="flex flex-col">
-                {index > 0 && <li aria-hidden className="zen-sheet-sep" />}
-                {group.map((item) => (
-                  <li key={item.id}>
-                    {item.note ? (
-                      // An empty state's sentence (§9.17): a row of the group, not a command.
-                      <p className="zen-sheet-note">{item.label}</p>
-                    ) : (
-                      <button
-                        type="button"
-                        disabled={!item.enabled}
-                        className={cn('zen-sheet-item', item.danger && 'text-[var(--zen-danger)]')}
-                        // A checked row draws a check; the tree carries the state (A11Y-01), as the
-                        // extensions sheet's rows do.
-                        role={
-                          item.type === 'checkbox'
-                            ? 'menuitemcheckbox'
-                            : item.type === 'radio'
-                              ? 'menuitemradio'
-                              : undefined
-                        }
-                        aria-checked={
-                          item.type === 'checkbox' || item.type === 'radio'
-                            ? item.checked
-                            : undefined
-                        }
-                        onClick={() => {
-                          // The Change Menu row opens the edit pose in place: the sheet stays.
-                          if (isChangeMenuItem(item)) beginEditing()
-                          else if (item.submenu)
-                            setNav((n) => ({ path: [...n.path, item], direction: 1 }))
-                          else sheet.current?.dismiss(() => pickMenuItem(item.id))
-                        }}
-                      >
-                        <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                        {(item.type === 'checkbox' || item.type === 'radio') && item.checked && (
-                          <Check className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />
-                        )}
-                        {item.submenu && (
-                          <ChevronRight
-                            className="zen-sheet-item-secondary h-5 w-5 shrink-0"
-                            strokeWidth={1.75}
-                            aria-hidden
-                          />
-                        )}
-                      </button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )
-          )}
-        </div>
+        rows
       )}
     </BottomSheet>
   )
