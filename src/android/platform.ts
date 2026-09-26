@@ -91,6 +91,7 @@ import type { PrivacyFlags, SafeBrowsingHit, SafeBrowsingThreat } from '@shared/
 import readabilityJs from '@mozilla/readability/Readability.js?raw'
 import readabilityReaderableJs from '@mozilla/readability/Readability-readerable.js?raw'
 import type { AgentHttpRequest, AgentHttpResponse } from '@core/agent/http'
+import { BOOKMARKS_INBOX_FILE, BookmarkInboxDrain } from './bookmarkInbox'
 import type { Bridge } from './bridge'
 import type { AndroidExtensions } from './extensionHost'
 import {
@@ -1273,6 +1274,14 @@ export class AndroidConnectivity implements ConnectivityHost {
 }
 
 /**
+ * How long after the window is created (`Browser.start`, past READY) the first pass over the
+ * custom tab's bookmark inbox runs: after the first page has its frame, well before the other
+ * startup sweeps (20 s and later), so a page starred in a custom tab before the browser was
+ * launched is a bookmark soon after it is.
+ */
+export const BOOKMARK_INBOX_SWEEP_DELAY_MS = 5_000
+
+/**
  * Zen's browser core running inside the chrome WebView on Android. Kotlin owns the tab
  * WebViews, downloads, permissions and dialogs; this class turns the `Platform` contract into
  * bridge calls and routes Kotlin's events back into the core.
@@ -1348,6 +1357,15 @@ export class AndroidPlatform implements Platform {
   browser!: Browser
   private windowHost: AndroidWindowHost | null = null
   private zenWindow: ZenWindow | null = null
+  /**
+   * The custom tab's bookmark inbox (`bookmarkInbox.ts`): drained into the tree once the core
+   * is up – a startup sweep armed as the window is created, off the boot path and under the
+   * demo harness's hold like the others – and whenever the app comes back to the front, a
+   * custom tab in front being the one that files. A return to the front before that first
+   * pass (the cold start's own `focus`) folds into it: nothing runs before READY.
+   */
+  private readonly bookmarkInbox: BookmarkInboxDrain
+  private bookmarkInboxSwept = false
   private readonly downloadTokens = new Map<string, string>()
   /**
    * Announced transfers the automatic-downloads prompt holds (PS-71), by record id: Kotlin
@@ -1403,6 +1421,21 @@ export class AndroidPlatform implements Platform {
     }
     this.bootEnvironment = boot.environment ?? null
     this.io = io
+    this.bookmarkInbox = new BookmarkInboxDrain({
+      // The store hands the boot copy once and asks the host after (`storeIo.ts`): each pass
+      // reads the disk as the custom tab left it.
+      readInbox: () => this.io.readSync(BOOKMARKS_INBOX_FILE),
+      writeInbox: (text) => this.io.write(BOOKMARKS_INBOX_FILE, text),
+      has: (url) => this.browser.bookmarks.has(url),
+      // The core's public command, as the star's own `browser.starTab` creates: no parent named,
+      // so the star's default folder (the last used one, else Mobile bookmarks).
+      create: ({ title, url }) =>
+        this.browser.handleCommand(this.window, 'bookmark.create', {
+          title,
+          url,
+          type: 'url'
+        }) !== null
+    })
     this.newTabBackground = new AndroidNewTabBackground(this.io)
     this.sync = new AndroidSyncHost(
       bridge,
@@ -1441,6 +1474,10 @@ export class AndroidPlatform implements Platform {
         this.zenWindow = win
         // The chrome document is already running; report it ready once the core has the host.
         queueMicrotask(() => win.onChromeReady())
+        // The core is up and has its window: the inbox's first pass, a startup sweep.
+        this.browser.background.armStartup(BOOKMARK_INBOX_SWEEP_DELAY_MS, () =>
+          this.drainBookmarkInbox('sweep')
+        )
         return host
       }
     }
@@ -1732,6 +1769,21 @@ export class AndroidPlatform implements Platform {
     if (this.bootEnvironment) browser.pageControls.setEnvironment(this.bootEnvironment)
   }
 
+  /**
+   * A pass over the custom tab's bookmark inbox (`bookmarkInbox.ts`): the startup sweep's, or
+   * a return to the front's. The latter counts only once the sweep has run – the cold start's
+   * own `focus` arrives before READY and folds into the sweep – and the sweep needs the window
+   * the creates go through.
+   */
+  private drainBookmarkInbox(cue: 'sweep' | 'focus'): void {
+    if (cue === 'focus' && !this.bookmarkInboxSwept) return
+    if (!this.zenWindow) return
+    this.bookmarkInboxSwept = true
+    this.bookmarkInbox.request().catch((error: unknown) => {
+      console.warn('[zen] the custom tab’s bookmark inbox could not be drained', error)
+    })
+  }
+
   createAgentTransport(): AgentTransport {
     return this.agentTransport
   }
@@ -1857,6 +1909,8 @@ export class AndroidPlatform implements Platform {
         if (focused) this.autofill.refresh()
         // Sync polls only in front; a resume is its cue to look at the folder again.
         this.sync.signal.setFocused(focused)
+        // Back in front – from a custom tab, whose star files pages into the inbox.
+        if (focused) this.drainBookmarkInbox('focus')
         if (!this.windowHost) return
         this.windowHost.focused = focused
         if (focused) this.window.onFocused()
