@@ -119,6 +119,7 @@ class ExternalProtocolsNoHandlerTest {
         assertEquals("a-zA-Z0-9_.", coreClassOf(grouped))
         assertEquals("a-zA-Z0-9_.", coreClassOf(wholeToken))
         assertEquals("a-z0-9", coreClassOf(wholeToken.replace("[a-zA-Z0-9_.]", "[a-z0-9]")))
+        assertEquals("the identifier the core tests is its own to name", "a-zA-Z0-9_.", coreClassOf(wholeToken.replace("pkg", "candidate")))
         assertEquals("the shared source on disk is in one of the two shapes and names the class the engine applies", "a-zA-Z0-9_.", coreClassOf(shared))
         assertTrue("a body in neither shape is an error, not a silent pass", runCatching { coreClassOf("export function intentPackage(url: string): string | null {\n  return null\n}") }.isFailure)
     }
@@ -126,14 +127,15 @@ class ExternalProtocolsNoHandlerTest {
     /**
      * The character class the core's `intentPackage` (`src/shared/externalProtocols.ts`) accepts a package name
      * with, read out of the function's body in whichever shape it has: a `package=([…]+)` capture inside a regex
-     * (the parser before #576), or a whole-token `/^[…]+$/.test(pkg)` (the parser from #576 on). The parser's
-     * shape is the core's business; the class is what the engine's [ExternalProtocols.Fallback.PACKAGE] must agree with.
+     * (the parser before #576), or a whole-token `/^[…]+$/.test(pkg)` (the parser from #576 on; the identifier
+     * tested is the core's to name, any one word). The parser's shape is the core's business; the class is what
+     * the engine's [ExternalProtocols.Fallback.PACKAGE] must agree with.
      */
     private fun coreClassOf(sharedSource: String): String {
         assertTrue("the shared source has intentPackage", sharedSource.contains("export function intentPackage("))
         val intentPackage = body(sharedSource, "export function intentPackage(")
         val grouped = Regex("""package=\(\[([^\]]+)\]\+\)""").find(intentPackage)?.groupValues?.get(1)
-        val wholeToken = Regex("""/\^\[([^\]]+)\]\+\$/\.test\(pkg\)""").find(intentPackage)?.groupValues?.get(1)
+        val wholeToken = Regex("""/\^\[([^\]]+)\]\+\$/\.test\(\w+\)""").find(intentPackage)?.groupValues?.get(1)
         return grouped ?: wholeToken ?: error("intentPackage has no package class to read, in either shape")
     }
 
