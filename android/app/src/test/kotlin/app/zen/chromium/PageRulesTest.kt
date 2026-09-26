@@ -24,10 +24,38 @@ class PageRulesTest {
         assertEquals("en.wikipedia.org", PageRules.hostOf("https://en.wikipedia.org/wiki/Zen"))
         assertEquals("example.com", PageRules.hostOf("HTTP://user:pw@Example.COM:8080/x?y#z"))
         assertEquals("example.com", PageRules.hostOf("https://example.com."))
-        assertEquals("::1", PageRules.hostOf("http://[::1]:3000/"))
+        assertEquals("127.0.0.1", PageRules.hostOf("http://127.0.0.1:8137/fallback.html"))
         assertNull(PageRules.hostOf("zen://settings"))
         assertNull(PageRules.hostOf("about:blank"))
         assertNull(PageRules.hostOf("https:///nohost"))
+    }
+
+    /**
+     * An IPv6 host keeps its brackets, as the core spells the key it stores a rule under (`siteKey`
+     * / `zoomSiteKey` in `src/shared/pageControls.ts`, `new URL(url).hostname` = `[::1]`): the mirror
+     * used to read `::1` and never found the rule. An address whose bracket never closes is no host
+     * to the core (`new URL` throws) and none here.
+     */
+    @Test
+    fun anIpv6HostKeepsItsBracketsAsTheCoresKeyDoes() {
+        assertEquals("[::1]", PageRules.hostOf("http://[::1]:3000/"))
+        assertEquals("[fe80::1]", PageRules.hostOf("HTTP://user:pw@[FE80::1]/x?y#z"))
+        assertNull(PageRules.hostOf("http://[::1/"))
+        val ipRules = PageRules(
+            desktopDefault = false,
+            desktopSites = mapOf("[::1]" to true),
+            darkenDefault = true,
+            darkenSites = mapOf("[::1]" to false, "127.0.0.1" to false),
+            zoomDefault = 1.0,
+            zoomSites = mapOf("[::1]" to 1.5),
+            zoomScale = 1.0,
+            forceZoom = false
+        )
+        assertTrue("a desktop-site rule stored under the core's key reaches the page", ipRules.desktop("http://[::1]:3000/"))
+        assertFalse("a darkening exception stored under the core's key reaches the page", ipRules.darken("http://[::1]:3000/index.html"))
+        assertFalse(ipRules.darken("http://127.0.0.1:8137/"))
+        assertEquals("a zoom stored under the core's key reaches the page", 1.5, ipRules.zoom("http://[::1]/"), 0.0)
+        assertTrue("another address is another site", ipRules.darken("http://[::2]:3000/"))
     }
 
     @Test

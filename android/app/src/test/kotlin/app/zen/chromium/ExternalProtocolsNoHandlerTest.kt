@@ -66,7 +66,7 @@ class ExternalProtocolsNoHandlerTest {
         }
     }
 
-    /** A well-formed package still yields its listing with the package verbatim – well-formed by the core's rule, read from the shared source, which the engine quotes and applies. */
+    /** A well-formed package still yields its listing with the package verbatim – well-formed by the core's rule, read from the shared source, whose class the engine names and applies. */
     @Test
     fun aWellFormedPackageYieldsItsListingVerbatimByTheCoresRule() {
         assertEquals(
@@ -77,10 +77,8 @@ class ExternalProtocolsNoHandlerTest {
             ExternalProtocols.Fallback.StoreListing("market://details?id=a_b.c1"),
             ExternalProtocols.Fallback.of(null, "a_b.c1")
         )
-        // The rule is the core's: the regex `intentPackage` reads a package with, taken from the shared source.
-        val intentPackage = shared.substring(shared.indexOf("export function intentPackage(").also { assertTrue("the shared source has intentPackage", it >= 0) })
-        val coreRegex = Regex("""const match = (/\S+/)\.exec\(url\)""").find(intentPackage)?.groupValues?.get(1) ?: error("intentPackage has no regex to read")
-        val coreClass = Regex("""package=\(\[([^\]]+)\]\+\)""").find(coreRegex)?.groupValues?.get(1) ?: error("the core's regex has no package class to read")
+        // The rule is the core's: the character class `intentPackage` accepts a package with, taken from the shared source.
+        val coreClass = coreClassOf(shared)
         // The plan names a package exactly when the core would: the same samples through the core's class, whole-token.
         val core = Regex("[$coreClass]+")
         val samples = listOf("com.example.app", "a_b.c1", "a", "com.evil/../x", "com.example app", "https://play.google.com/store/apps/details?id=com.example.app", "", "com.example.app;end", "com.example.app#Intent", "com.example.app?x=1", "com.example.app&y=2", "com-example")
@@ -88,11 +86,57 @@ class ExternalProtocolsNoHandlerTest {
             val listing = ExternalProtocols.Fallback.of(null, pkg) is ExternalProtocols.Fallback.StoreListing
             assertEquals("`$pkg`: a listing exactly when the core would name the package", core.matches(pkg), listing)
         }
-        // And the engine says so: the core's regex quoted verbatim, its class the check, the check on the store step.
-        assertTrue("the core's regex is quoted verbatim in the engine", engine.contains(coreRegex))
-        assertTrue("the engine's check is the core's class, whole-token", engine.contains("val PACKAGE = Regex(\"[$coreClass]+\")"))
+        // And the engine says so: the core's class the check, named (not the core's parser quoted) in its KDoc, the check on the store step.
+        val declaration = engine.indexOf("val PACKAGE = Regex(\"[$coreClass]+\")")
+        assertTrue("the engine's check is the core's class, whole-token", declaration >= 0)
+        val kdoc = engine.substring(engine.lastIndexOf("/**", declaration), declaration)
+        assertTrue("the engine's KDoc names the core's class", kdoc.contains("`[$coreClass]+`"))
+        assertFalse("the KDoc quotes no parser of the core's – its shape is the core's business", kdoc.contains("package=(") || kdoc.contains(".exec(") || kdoc.contains(".test("))
         val body = body(engine, "fun of(fallbackUrl: String?, pkg: String?): Fallback")
         assertTrue("the check guards the store step", body.contains("pkg != null && PACKAGE.matches(pkg) -> StoreListing(\"market://details?id=\$pkg\")"))
+    }
+
+    /**
+     * The class is read from either shape `intentPackage` has had, so the pin holds across the core's
+     * parser change (services' #576): the `package=([…]+)` group of the one regex `exec`ed over the whole URL,
+     * or the whole-token `/^[…]+$/.test(pkg)` over the `package` extra an `#Intent;…;end` walk yields.
+     */
+    @Test
+    fun theCoresClassIsReadFromEitherParserShape() {
+        val grouped = """
+            export function intentPackage(url: string): string | null {
+              if (schemeOf(url) !== 'intent') return null
+              const match = /[;#]package=([a-zA-Z0-9_.]+)(?=[;#]|$)/.exec(url)
+              return match ? match[1] : null
+            }
+        """.trimIndent()
+        val wholeToken = """
+            export function intentPackage(url: string): string | null {
+              const pkg = intentExtras(url)?.get('package')
+              return pkg && /^[a-zA-Z0-9_.]+$/.test(pkg) ? pkg : null
+            }
+        """.trimIndent()
+        assertEquals("a-zA-Z0-9_.", coreClassOf(grouped))
+        assertEquals("a-zA-Z0-9_.", coreClassOf(wholeToken))
+        assertEquals("a-z0-9", coreClassOf(wholeToken.replace("[a-zA-Z0-9_.]", "[a-z0-9]")))
+        assertEquals("the identifier the core tests is its own to name", "a-zA-Z0-9_.", coreClassOf(wholeToken.replace("pkg", "candidate")))
+        assertEquals("the shared source on disk is in one of the two shapes and names the class the engine applies", "a-zA-Z0-9_.", coreClassOf(shared))
+        assertTrue("a body in neither shape is an error, not a silent pass", runCatching { coreClassOf("export function intentPackage(url: string): string | null {\n  return null\n}") }.isFailure)
+    }
+
+    /**
+     * The character class the core's `intentPackage` (`src/shared/externalProtocols.ts`) accepts a package name
+     * with, read out of the function's body in whichever shape it has: a `package=([…]+)` capture inside a regex
+     * (the parser before #576), or a whole-token `/^[…]+$/.test(pkg)` (the parser from #576 on; the identifier
+     * tested is the core's to name, any one word). The parser's shape is the core's business; the class is what
+     * the engine's [ExternalProtocols.Fallback.PACKAGE] must agree with.
+     */
+    private fun coreClassOf(sharedSource: String): String {
+        assertTrue("the shared source has intentPackage", sharedSource.contains("export function intentPackage("))
+        val intentPackage = body(sharedSource, "export function intentPackage(")
+        val grouped = Regex("""package=\(\[([^\]]+)\]\+\)""").find(intentPackage)?.groupValues?.get(1)
+        val wholeToken = Regex("""/\^\[([^\]]+)\]\+\$/\.test\(\w+\)""").find(intentPackage)?.groupValues?.get(1)
+        return grouped ?: wholeToken ?: error("intentPackage has no package class to read, in either shape")
     }
 
     /** The web address still wins, over a malformed package as over a well-formed one: the check stands behind the URL, never ahead of it. */
@@ -123,7 +167,8 @@ class ExternalProtocolsNoHandlerTest {
         val noHandler = Regex("""private noHandler\(request: HostExternalRequest, win: ZenWindow\): void \{([\s\S]*?)\n  \}""").find(core)?.groupValues?.get(1) ?: error("the core has no noHandler")
         assertTrue(noHandler.indexOf("intentFallbackUrl(request.url)") < noHandler.indexOf("intentPackage(request.url)"))
         assertTrue(noHandler.indexOf("intentPackage(request.url)") < noHandler.indexOf("this.browser.toast('No app can open this link'"))
-        assertTrue("the fallback the engine reads is the one the core reads", engine.contains("const val EXTRA_FALLBACK_URL = \"browser_fallback_url\"") && File(root, "src/shared/externalProtocols.ts").readText().contains("S\\.browser_fallback_url="))
+        // The core's `intentFallbackUrl` names the extra in either parser shape: `S\.browser_fallback_url=` inside its regex, or `'S.browser_fallback_url'` looked up in the extras.
+        assertTrue("the fallback the engine reads is the one the core reads", engine.contains("const val EXTRA_FALLBACK_URL = \"browser_fallback_url\"") && Regex("""S\\?\.browser_fallback_url""").containsMatchIn(body(shared, "export function intentFallbackUrl(")))
     }
 
     /** `refuseWithFallback` takes the request off the ledger, starts nothing, remembers no declined site and runs the fallback. */

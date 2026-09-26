@@ -70,13 +70,19 @@ class PageRules(
 
         /**
          * The lower-cased host of an http(s) URL without credentials, port or trailing dot; null
-         * for anything else. Hand-rolled so the JVM unit tests need no Android `Uri`.
+         * for anything else. An IPv6 address keeps its brackets (`[::1]`), the spelling the core's
+         * `siteKey` and `zoomSiteKey` store a rule under (`new URL(url).hostname`), so a rule for
+         * an IP-host page (services' #576) is found here too. Hand-rolled so the JVM unit tests
+         * need no Android `Uri`.
          */
         fun hostOf(url: String): String? {
             if (!isWebPage(url)) return null
             val authority = authorityOf(url)
-            val host = if (authority.startsWith("[")) authority.substringBefore(']').removePrefix("[")
-            else authority.substringBefore(':')
+            val host = if (authority.startsWith("[")) {
+                val close = authority.indexOf(']')
+                if (close < 0) return null
+                authority.substring(0, close + 1)
+            } else authority.substringBefore(':')
             return host.lowercase().trimEnd('.').takeIf { it.isNotEmpty() }
         }
 
