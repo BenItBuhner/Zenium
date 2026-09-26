@@ -48,15 +48,6 @@ on:
         required: false
         type: number
         default: 150
-  # TEMPORARY (W6-9, PWA-02): the pair on this branch's product head; the inputs take their
-  # defaults (main / 34 / 15 × 2 / 150). Driver and workflow files are not the product: a push
-  # touching only those leaves the running pair alone. Removed before review.
-  push:
-    branches:
-      - cursor/android-pwa-app-identity-9271
-    paths-ignore:
-      - 'android/app/src/androidTest/**'
-      - '.github/**'
 
 permissions:
   contents: read

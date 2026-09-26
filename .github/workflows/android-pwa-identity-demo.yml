@@ -27,10 +27,6 @@ name: Android installed web app identity demo
 # the runner.
 on:
   workflow_dispatch:
-  # TEMPORARY (W6-9): the branch's own runs while the driver is proved; removed before review.
-  push:
-    branches:
-      - cursor/android-pwa-app-identity-9271
 
 permissions:
   contents: read
