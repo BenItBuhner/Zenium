@@ -8,8 +8,10 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PointF
+import android.graphics.Rect
 import android.os.Process
 import android.os.SystemClock
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.webkit.WebViewCompat
 import org.json.JSONArray
@@ -35,12 +37,19 @@ import java.io.ByteArrayOutputStream
  *     a host with the new tab page the window's first tab is the served page, placed and loaded
  *     before READY, and its own `performance.timing` says what the document cost; on main's tree
  *     (`newTabPage` off: `Browser.ensureFirstTab` opens no tab) the window comes up with no tab
- *     and the chrome's own surface, so the same driver on main is the 'before' run. The page's
- *     EMPTY state at a fresh boot ("Sites you visit often will appear here"), light and dark;
+ *     and the chrome's own surface, so the same driver on main is the 'before' run. The fresh
+ *     tab's reveal is the desktop's (`Browser.revealFreshTab` → `newtab.opened`): the URL bar in
+ *     new-tab mode stands over the served page, and on this chassis – the pages composite above
+ *     the chrome – the bar's cover takes the page's picture while the live view is hidden under
+ *     it (`overlayCoversContent`); a back puts the bar away and the view comes back. Then the
+ *     page's EMPTY state at a fresh boot ("Sites you visit often will appear here"), light and
+ *     dark;
  *  1. eight loopback sites visited off camera, a new tab from the sidebar's row under a finger:
- *     the served page with the most visited tiles – the tab's URL `zen://newtab`, the page view
- *     placed and shown, the tiles in the page's DOM AND in the accessibility tree, the pill
- *     reading the empty tab's words;
+ *     the served page with the most visited tiles, the bar over it as at boot
+ *     (`NewTabService.open` → `newtab.opened`), then – the bar away – the tab's URL
+ *     `zen://newtab`, the page view placed and shown, the tiles in the page's DOM AND in the
+ *     accessibility tree, the pill reading the empty tab's words. On main's tree the same row
+ *     opens the bar bound to no tab and makes no tab at all (`urlbar.toggle`);
  *  2. a REAL HOLD on a tile (the finger down past the long press, on the tile's own box read off
  *     the page's DOM): the tablet's anchored menu with the touch template's FIVE rows – Open in
  *     New Tab · Open in Private Tab · Copy Link · a separator · Remove (the desktop's template is
@@ -177,7 +186,16 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
             check("the fresh profile's window boots into the served new tab page as its first tab (Browser.ensureFirstTab on newTabPage)", url == NEW_TAB_URL, "active url '$url'")
             val id = active?.optString("id")
             if (id != null) {
-                check("the served page is placed as a page view and loaded before the recording", awaitServedPage(id) && onMain { host.tabs.get(id)?.isShown == true }, "document ${pageJson(id, "[document.readyState,location.href]")}, shown ${onMain { host.tabs.get(id)?.isShown }}")
+                check("the served page is loaded before the recording, by the document's own word (readyState complete at zen://newtab)", awaitServedPage(id), "document ${pageJson(id, "[document.readyState,location.href]")}")
+                // The fresh tab's reveal (Browser.revealFreshTab → newtab.opened, the desktop's
+                // rule): the URL bar in new-tab mode stands over the page – on this chassis the
+                // pages composite above the chrome, so the bar's cover takes the page's picture
+                // and the live view is hidden under it (overlayCoversContent) until the bar goes.
+                val barUp = awaitUntil(8_000) { urlbarOpen() && !pageShown(id) }
+                check("the fresh tab comes up with the URL bar in new-tab mode over the served page, the live view under the bar's cover (revealFreshTab → newtab.opened)", barUp, "urlbar.open ${urlbarOpen()}, shown ${pageShown(id)}")
+                SystemClock.sleep(800)
+                still("boot-opened-light")
+                dismissBar(id, "the fresh tab's URL bar")
                 val timing = pageJson(id, "(function(){var t=performance.timing;return [t.domContentLoadedEventEnd-t.navigationStart,t.loadEventEnd-t.navigationStart,document.querySelectorAll('.zen-tile:not(.zen-tile-add)').length,!document.getElementById('zen-empty').hidden]})()")
                 finding("  the served page's own clock (performance.timing): navigationStart→DOMContentLoaded ${timing?.opt(0)} ms, →load ${timing?.opt(1)} ms; tiles ${timing?.opt(2)}, the empty line shown ${timing?.opt(3)}")
                 check("a fresh profile's page shows the empty state – no tile, the line 'Sites you visit often will appear here'", timing?.optInt(2) == 0 && timing?.optBoolean(3) == true, "tiles ${timing?.opt(2)}, empty ${timing?.opt(3)}")
@@ -223,16 +241,26 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
 
     // --- main's tree: the 'before' run --------------------------------------------------------------
 
-    /** On main's tree the new tab is the blank page in a bare view: recorded, nothing of the served page claimed. */
+    /**
+     * On main's tree the sidebar's row asks the core for a new tab (`tab.new`) and, the page off,
+     * `NewTabService.open` toggles the URL bar in new-tab mode bound to no tab instead: no tab is
+     * made until a submit. Recorded as it is; nothing of the served page claimed.
+     */
     private fun mainsNewTab() {
-        section("1. Main's tree: the new tab from the sidebar's row is zen://blank (no served page on this host)")
+        section("1. Main's tree: the sidebar's New Tab row opens the URL bar bound to no tab (no served page on this host)")
         val before = activeTabId()
-        val opened = touchUntil("New Tab", { domRect(NEW_TAB_ROW) }, { activeTabId() != null && activeTabId() != before }, waitMs = 8_000)
-        check("a touch on the sidebar's New Tab row opens a tab", opened, "active ${activeTabId()}")
+        val opened = touchUntil("New Tab", { domRect(NEW_TAB_ROW) }, { urlbarOpen() }, waitMs = 8_000)
+        check(
+            "a touch on the sidebar's New Tab row opens the URL bar in new-tab mode bound to no tab, and no tab is made (NewTabService.open without the page: urlbar.toggle)",
+            opened && activeTabId() == before,
+            "urlbar.open ${urlbarOpen()}, active ${activeTabId()} (was $before)"
+        )
         val url = activeCoreTab()?.optString("url").orEmpty()
-        finding("  the new tab's URL on this host: '$url' (the served page's scenes need newTabPage on; skipped here)")
+        finding("  the active tab stays at '$url'; the served page's scenes need newTabPage on and are skipped here")
         SystemClock.sleep(1_200)
         still("new-tab-main")
+        val close = closeUrlField()
+        check("a back puts the bar away, the page kept", close.ok, close.describe())
     }
 
     // --- 1. the served page with its tiles --------------------------------------------------------
@@ -245,13 +273,21 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
         val id = activeTabId() ?: return
         pageTab = id
         check("the new tab is the served page: its URL is zen://newtab", awaitCore { it.getJSONObject("tabs").optJSONObject(id)?.optString("url") == NEW_TAB_URL }, "url ${tabUrl(id)}")
-        check("the page view is placed, shown and loaded: the document's own location is zen://newtab", awaitServedPage(id) && onMain { host.tabs.get(id)?.isShown == true }, "document ${pageJson(id, "[document.readyState,location.href]")}, shown ${onMain { host.tabs.get(id)?.isShown }}")
-        check("the page's state came down the bridge: the tiles are in the page's DOM (the sites visited)", awaitUntil(15_000) { tileCount(id) >= 4 }, "tiles ${tileCaptions(id)}")
+        // NewTabService.open: the tab made and activated, then `newtab.opened` – the bar in
+        // new-tab mode bound to the tab over the page, the live view under its cover (as at boot).
+        val barUp = awaitUntil(8_000) { urlbarOpen() && !pageShown(id) }
+        check("the new tab comes up with the URL bar in new-tab mode over the served page, the live view under the bar's cover (NewTabService.open → newtab.opened)", barUp, "urlbar.open ${urlbarOpen()}, shown ${pageShown(id)}")
+        check("the page's state came down the bridge, bar or no bar: the tiles are in the page's DOM (the sites visited)", awaitUntil(15_000) { tileCount(id) >= 4 }, "tiles ${tileCaptions(id)}")
+        SystemClock.sleep(1_200)
+        still("opened-light")
+        dismissBar(id, "the new tab's URL bar")
+        check("the page view is placed, shown and loaded: the document's own location is zen://newtab", awaitServedPage(id) && pageShown(id), "document ${pageJson(id, "[document.readyState,location.href]")}, shown ${pageShown(id)}")
         val captions = tileCaptions(id)
         finding("  tiles in the page's order: $captions")
         check("the tiles are the visited sites, every caption a site's title", captions.isNotEmpty() && captions.all { c -> sites.any { it.title == c } }, "captions $captions")
         val first = captions.firstOrNull()
-        check("the tiles stand in the accessibility tree (the first tile, by its caption)", first != null && awaitUntil(15_000) { tileInTree(first) }, "first '$first'")
+        check("the tiles stand in the accessibility tree once the view is shown (the first tile, by its caption, inside the page view's box)", first != null && awaitUntil(15_000) { tileInTree(id, first) }, "first '$first': ${first?.let { describeTileNode(id, it) }}")
+        if (first != null) finding("  the first tile's node: ${describeTileNode(id, first)}")
         check("the empty line is hidden once there are tiles", pageJson(id, "[!!document.getElementById('zen-empty').hidden]")?.optBoolean(0) == true, "")
         check("the pill reads the empty tab's words, not an address", pillText().startsWith("Search"), "pill '${pillText()}'")
         check("the page is on the light scheme", pageTheme(id) == "light", "theme '${pageTheme(id)}'")
@@ -345,10 +381,13 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
      */
     private fun holdTile(tabId: String, index: Int, caption: String): List<String> {
         for (attempt in 1..3) {
-            val point = tileOnScreen(tabId, index) ?: run {
-                finding("  (the tile '$caption' is not on the screen to hold)")
+            // The live view comes back a beat after a menu or the bar goes (the chrome's layout
+            // report, then the host's placement): the tile is waited for on the screen.
+            if (!awaitUntil(6_000) { tileOnScreen(tabId, index) != null }) {
+                finding("  (the tile '$caption' is not on the screen to hold: page shown ${pageShown(tabId)}, urlbar ${urlbarOpen()}, menu ${jsText(MENU_OPEN)})")
                 return emptyList()
             }
+            val point = tileOnScreen(tabId, index) ?: return emptyList()
             finding("  hold at ${point.x.toInt()},${point.y.toInt()} on the tile '$caption'")
             Finger().apply {
                 press(point.x, point.y)
@@ -422,12 +461,76 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
         return PointF(origin[0] + a.getDouble(0).toFloat(), origin[1] + a.getDouble(1).toFloat())
     }
 
-    /** The tile with `caption` in the accessibility tree: a clickable node named by the caption (the link's text). */
-    private fun tileInTree(caption: String): Boolean = findNodeWhere { node ->
-        node.isClickable && (node.text?.toString()?.trim() == caption || node.contentDescription?.toString()?.trim() == caption)
-    } != null
+    /**
+     * The tile with `caption` in the accessibility tree: a node named by the caption (the link's
+     * text – Chromium names the link node itself or its text child, so the click is read off the
+     * node or one above it, not asked of the named one) whose centre lies inside the page view's
+     * box on the screen (the sidebar names a tab after its page, so the box is what tells a tile
+     * from a tab row). Null while the view is hidden: a hidden view has no nodes.
+     */
+    private fun tileNode(tabId: String, caption: String): AccessibilityNodeInfo? {
+        val box = pageBox(tabId) ?: return null
+        val bounds = Rect()
+        return findNodeWhere { node ->
+            val named = node.text?.toString()?.trim() == caption || node.contentDescription?.toString()?.trim() == caption
+            named && run {
+                node.getBoundsInScreen(bounds)
+                box.contains(bounds.centerX(), bounds.centerY())
+            }
+        }
+    }
+
+    private fun tileInTree(tabId: String, caption: String): Boolean = tileNode(tabId, caption) != null
+
+    /** The named node for the finding: its class, its name, and where the click is (itself, a node above it, or nowhere within four). */
+    private fun describeTileNode(tabId: String, caption: String): String {
+        val node = tileNode(tabId, caption) ?: return "no node named '$caption' inside the page view (shown ${pageShown(tabId)})"
+        var clickable = if (node.isClickable) "itself" else "no"
+        var up = node.parent
+        var hops = 0
+        while (clickable == "no" && up != null && hops < 4) {
+            hops++
+            if (up.isClickable) clickable = "$hops up"
+            up = up.parent
+        }
+        val bounds = Rect().also { node.getBoundsInScreen(it) }
+        return "${node.className} '${node.text ?: node.contentDescription}' at $bounds, clickable $clickable"
+    }
+
+    /** The page view's box on the screen; null while it is not shown. */
+    private fun pageBox(tabId: String): Rect? = onMain {
+        val view = host.tabs.get(tabId)
+        if (view == null || !view.isShown) {
+            null
+        } else {
+            val origin = IntArray(2)
+            view.getLocationOnScreen(origin)
+            Rect(origin[0], origin[1], origin[0] + view.width, origin[1] + view.height)
+        }
+    }
 
     // --- the chrome and the core ---------------------------------------------------------------------
+
+    /**
+     * Whether the tab's page view is placed and shown (VISIBLE up its tree): the host hides every
+     * page view while a chrome surface covers the content (`overlayCoversContent` – the URL bar
+     * in new-tab mode, a menu), and shows the tab's cover picture in its place.
+     */
+    private fun pageShown(tabId: String): Boolean = onMain { host.tabs.get(tabId)?.isShown == true }
+
+    /**
+     * The URL bar away with a back ([closeUrlField]: the keyboard first when it is up, never a
+     * second back blind, the page read before and after) and the tab's live view back on the
+     * screen once the bar's cover is gone – the claim each scene makes before it reads the page's
+     * tree or holds a tile.
+     */
+    private fun dismissBar(tabId: String, what: String) {
+        val close = closeUrlField()
+        val shown = close.ok && awaitUntil(8_000) { pageShown(tabId) }
+        check("a back dismisses $what and the live page view comes back, placed and shown", shown, "${close.describe()}; shown ${pageShown(tabId)}")
+        awaitIme(false)
+        SystemClock.sleep(600)
+    }
 
     /**
      * The colour scheme through the core's setting, as Settings would set it; true once the
