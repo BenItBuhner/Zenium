@@ -2074,8 +2074,8 @@ function siteHost(raw: string): string {
  *   while the switch is off (§10.4).
  * - Always keep these sites active: `unloadExcludedDomains`, the governor's exceptions (a host,
  *   a subdomain or a registrable domain matches, `isExcluded`), as §10.5 item rows each with
- *   the trailing 32 Remove in the danger ink, "No sites yet" while empty (§9.17), an Add form
- *   (a URL cut to its host, the phone sheet's rule) and Chrome's Add current site.
+ *   the trailing 32 Remove in plain ink, "No sites yet" while empty (§9.17), an Add form (a
+ *   URL cut to its host, the phone sheet's rule) and Chrome's Add current site.
  * - Energy Saver: `energySaver` as switch + Chrome's two conditions as a radio, and its effect
  *   – the budget factor the governor applies while the mode is on (`resources.batteryFactor`,
  *   the row moved here from Resources › Budgets; one setting, one place).
@@ -2143,9 +2143,11 @@ function performanceSection({ state, tab, set }: SectionContext): RowGroup[] {
       id: 'keep-active',
       heading: 'Always keep these sites active',
       description: 'Sites you add will always stay active and memory won’t be freed up from them.',
-      // Each site an item row whose one action is Remove: the mouse's trailing 32 button in the
-      // danger ink, running at once with no dialog (§10.5); the finger's sheet (the tablet)
-      // holds the same action as its row, as the site permission rows do.
+      // Each site an item row whose one action is Remove: the mouse's trailing 32 button, a plain
+      // secondary running at once with no dialog (§10.5) – a preference removed is plain ink
+      // (§10.4), the danger ink being for what destroys the user's data (§10.5), and the site is
+      // one the user adds again in a press, as the permission rows' Forget is (pr-584 R1); the
+      // finger's sheet (the tablet) holds the same action as its row, as those rows do.
       rows: sites.map((domain) => {
         const remove = (): void =>
           set({ unloadExcludedDomains: s.unloadExcludedDomains.filter((d) => d !== domain) })
@@ -2160,14 +2162,13 @@ function performanceSection({ state, tab, set }: SectionContext): RowGroup[] {
               label: 'Remove',
               description: 'Pages on the site are unloaded like any other.',
               button: 'Remove',
-              destructive: true,
               onPress: remove
             }
           ],
           {
             keywords: siteKeywords,
             disabled: off,
-            action: { label: 'Remove', destructive: true, onPress: remove }
+            action: { label: 'Remove', onPress: remove }
           }
         )
       }),

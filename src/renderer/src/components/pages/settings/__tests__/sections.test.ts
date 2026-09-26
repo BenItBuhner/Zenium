@@ -5941,7 +5941,7 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
     expect(row(model, 'energy-saver-mode').disabled).toBe(false)
   })
 
-  it('lists the sites kept active alphabetically as item rows with a trailing destructive Remove, and says "No sites yet" when there are none (§10.5, §9.17)', () => {
+  it('lists the sites kept active alphabetically as item rows with a trailing plain Remove – a preference removed, not data destroyed (§10.4, §10.5; R1) – and says "No sites yet" when there are none (§9.17)', () => {
     const { model, patches } = perf(
       DESKTOP_STATE({ unloadExcludedDomains: ['mail.example.com', 'chat.example'] })
     )
@@ -5955,9 +5955,14 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
     ])
     const site = list.rows[0] as ItemRow
     expect(site.label).toBe('chat.example')
-    expect(site.action).toMatchObject({ label: 'Remove', destructive: true })
+    // Plain ink on the row's button and on the tablet sheet's row alike, as the permission
+    // rows' Forget is: the danger ink is for what destroys the user's data.
+    expect(site.action).toEqual({ label: 'Remove', onPress: expect.any(Function) })
+    expect(site.action?.destructive).toBeUndefined()
     const remove = row(model, 'keep-active:chat.example:remove')
     if (remove.kind !== 'action') throw new Error('not an action')
+    expect(remove.button).toBe('Remove')
+    expect(remove.destructive).toBeUndefined()
     remove.onPress?.()
     expect(patches).toEqual([{ unloadExcludedDomains: ['mail.example.com'] }])
 
