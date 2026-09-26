@@ -1292,7 +1292,9 @@ abstract class DemoHarness(
      * windows (`Instrumentation.sendPointerSync` / `sendKeySync`: the shell that started the run
      * holds INJECT_EVENTS, the target is the app's uid, and a point outside the app's window is
      * refused) and [shot] copies the window's own pixels ([windowShot]). The reconnect brings
-     * the tree and the accessibility state back.
+     * the tree and the accessibility state back. A driver using this runs [runDemo] with
+     * `holdEvents = false`: the hold's own service ([holdEventsOpen]) is an enabled one too, and
+     * it stays enabled across the disconnect.
      */
     protected fun <T> withoutAccessibility(block: () -> T): T {
         val disconnect = hidden("disconnect")
