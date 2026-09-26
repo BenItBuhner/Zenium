@@ -440,6 +440,11 @@ export class BrowserState {
    * exactly when `settings.colorScheme` is `system` – the one case the chrome reads it for.
    */
   systemDark: boolean | null = null
+  /**
+   * The OS accent colour as the host reads it, `#rrggbb` (`ThemeHost.systemAccent`); null where
+   * the host reads none. Volatile: the chrome's accent follows it under `useSystemAccent`.
+   */
+  systemAccent: string | null = null
   windowBounds: Rect | null = null
   /** Windows to restore on startup (from the previous session). */
   restoredWindows: PersistedWindow[] = []
@@ -801,6 +806,9 @@ export class BrowserState {
     // From v6 on the stored value is the user's, off only where the profile says so.
     this.settings.sidebarExpandOnHover =
       data.version >= 6 ? data.settings?.sidebarExpandOnHover !== false : true
+    // On only when the profile says so (settings-116): an older profile, or anything but a
+    // boolean, reads off – Chrome's default.
+    this.settings.useSystemAccent = data.settings?.useSystemAccent === true
     if (!BOOKMARKS_BAR_MODES.includes(this.settings.bookmarksBar)) {
       this.settings.bookmarksBar = DEFAULT_SETTINGS.bookmarksBar
     }
@@ -1149,6 +1157,7 @@ export class BrowserState {
       capabilities: this.capabilities,
       version: this.version,
       systemDark: this.systemDark,
+      systemAccent: this.systemAccent,
       tabs,
       essentialTabIds,
       spaces,

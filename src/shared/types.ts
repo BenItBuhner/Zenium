@@ -2799,15 +2799,26 @@ export type NewTabHideableSection = 'greeting' | 'shortcuts'
 
 export interface Settings {
   colorScheme: ColorScheme
+  /**
+   * Desktop: the chrome's accent follows the OS accent colour where a space has no theme of its
+   * own (Settings › Appearance › Use system accent colour, settings-116; Chrome's
+   * `browser.theme.follows_system_colors`, off by default on Windows as here). The colour
+   * itself is the host's reading (`UIState.systemAccent`, Electron's
+   * `systemPreferences.getAccentColor`); a host that reads none (Linux) holds the row at .4.
+   * Device-local (`core/sync/records.ts`): Chrome's pref is not in its syncable database –
+   * each device's accent is its own. Absent in profiles from before it existed (read as off).
+   */
+  useSystemAccent: boolean
   /** Colour of the app icon (launcher alias on Android, window / Dock icon on desktop). */
   appIcon: AppIconId
   toolbarLayout: ToolbarLayout
   /**
-   * The desktop toolbar's optional controls that are folded into the app menu (Look and Feel ›
-   * Customise toolbar, `shared/toolbarPins.ts`): the departures from the default bar alone, a
-   * key absent reading pinned. Read by the desktop chrome's toolbar row and the desktop app
-   * menu; inert on the phone and the tablet, which keep their own bars. Absent in profiles from
-   * before it existed.
+   * The desktop toolbar's optional controls that depart from the default bar (Look and Feel ›
+   * Customise toolbar, `shared/toolbarPins.ts`): a key absent reads the control's default –
+   * pinned for every control but Home, which `home: true` shows (Settings › Appearance › Show
+   * home button, settings-32; Chrome's synced `browser.show_home_button`). Read by the desktop
+   * chrome's toolbar row and the desktop app menu; inert on the phone and the tablet, which
+   * keep their own bars. Absent in profiles from before it existed.
    */
   toolbarPins?: ToolbarPins
   sidebarSide: SidebarSide
@@ -2846,8 +2857,13 @@ export interface Settings {
    * The homepage (SET-36 / NTP-30): what the phone's Home button – the bar's optional item, the
    * app menu's icon-row glyph otherwise – opens, or that there is none. Absent in profiles from
    * before it existed (`sanitizeHomepage` reads the new tab page, Chrome's default). Synced
-   * with the settings; the desktop shells have no row for it yet and their Home (`nav.home`)
-   * keeps its own destination.
+   * with the settings, as Chrome syncs `homepage` and `homepage_is_newtabpage`. The desktop's
+   * Home – the toolbar's Home button (`toolbarPins.home`, settings-32), Alt+Home and the menu
+   * bar's Home (`nav.home`) – reads the same setting for its destination (`NewTabService.
+   * homeDestination`): a `url` homepage's page, else the new tab page; the phone's `off` is the
+   * phone's Home button gone and reads as the new tab page on the desktop, whose button has a
+   * pin of its own – Chrome's `show_home_button` – and whose Alt+Home has a destination whatever
+   * the button's state, as Chrome's IDC_HOME does.
    */
   homepage: HomepageSettings
   /** Touch hosts: drag down from the top of a page to reload it. */
@@ -4228,6 +4244,14 @@ export interface UIState {
    * host has no say and the chrome reads `prefers-color-scheme` itself.
    */
   systemDark: boolean | null
+  /**
+   * The OS accent colour as the host reads it, `#rrggbb` (Electron's `systemPreferences.
+   * getAccentColor` on Windows and macOS, followed as it changes); null where the OS has none
+   * the host can read (Linux) or the host has no reading at all (Android). What Settings ›
+   * Appearance › Use system accent colour (`Settings.useSystemAccent`, settings-116) puts in
+   * the chrome's accent for a space without a theme of its own (`hooks/useTheme.ts`).
+   */
+  systemAccent: string | null
   tabs: Record<string, Tab>
   /** Ordered essential tab ids (all containers – the UI filters by container). */
   essentialTabIds: string[]
@@ -4822,6 +4846,12 @@ export interface Commands {
    * page, or the new tab page at rest. Nothing with the homepage off.
    */
   'tab.home': { args: { tabId: string }; result: void }
+  /**
+   * The desktop toolbar's Home button (settings-32; Chrome's IDC_HOME): the window's active
+   * tab goes where Alt+Home and the menu bar's Home go – the `nav.home` action, whose
+   * destination is the homepage setting's (`NewTabService.homeDestination`).
+   */
+  'nav.home': { args: void; result: void }
   'tab.back': { args: { tabId: string }; result: void }
   'tab.forward': { args: { tabId: string }; result: void }
   /**

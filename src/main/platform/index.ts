@@ -55,6 +55,12 @@ import type {
 import type { ZenWindow } from '../../core/window'
 import type { WindowSwitches } from '../cli'
 import { MediaAccessGate, mediaRefusedMessage } from './mediaAccess'
+import {
+  readSystemAccent,
+  systemAccentReadable,
+  watchSystemAccent,
+  type SystemAccentSource
+} from './accent'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../../shared/types'
 import { resolveDownloadSettings } from '../../shared/downloads'
 import {
@@ -302,6 +308,11 @@ export class ElectronPlatform implements Platform {
        * OS's place, for the EEA's search-engine choice screen (W6-2); a normal launch has none.
        */
       regionOverride?: string | null
+      /**
+       * `--test-system-accent=<hex>` (`accent.ts`): the drives' OS accent where the X server has
+       * none (settings-116); a normal launch carries none and the OS's accent stands.
+       */
+      systemAccentOverride?: string | null
     } = {}
   ) {
     this.info = {
@@ -550,6 +561,18 @@ export class ElectronPlatform implements Platform {
       // only when the launch asked, so a normal launch's host holds on macOS alone.
       ...(options.quitHoldEverywhere === true ? { quitHoldEverywhere: () => true } : {})
     }
+    // The OS accent (settings-116): Windows' and macOS's through `systemPreferences`, the
+    // drives' override anywhere; Linux has no reading, so the host offers none and the
+    // Settings row is held.
+    const accentOverride = options.systemAccentOverride ?? null
+    const accentSource = systemPreferences as SystemAccentSource
+    const accent = systemAccentReadable(accentSource, process.platform, accentOverride)
+      ? {
+          systemAccent: () => readSystemAccent(accentSource, process.platform, accentOverride),
+          onAccentChanged: (listener: () => void) =>
+            watchSystemAccent(accentSource, process.platform, listener)
+        }
+      : {}
     this.theme = {
       systemDark: () => nativeTheme.shouldUseDarkColors,
       onChanged: (listener) => void nativeTheme.on('updated', listener),
@@ -558,7 +581,8 @@ export class ElectronPlatform implements Platform {
         // The setting itself, for the `zen://` documents and the page views on a platform whose
         // engine does not carry the source to pages (Linux: `emulatedColorScheme`).
         this.views.applyColorScheme(scheme)
-      }
+      },
+      ...accent
     }
     this.languages = {
       apply: (languages) => this.sessions.setAcceptLanguages(acceptLanguageList(languages))

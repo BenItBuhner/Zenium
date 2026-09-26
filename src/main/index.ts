@@ -13,6 +13,7 @@ import { runStdioShim } from './agent/shim'
 import { LINUX_DESKTOP_ID } from './platform/defaultBrowser'
 import { parseLaunchArgs, pathToFileUrl, type LaunchArgs } from '../shared/launchArgs'
 import { holdBackgroundWorkRequested, quitHoldEverywhereRequested } from './platform/backgroundWork'
+import { systemAccentOverride } from './platform/accent'
 import {
   describeSwitches,
   droppedSecondInstanceSwitches,
@@ -211,7 +212,10 @@ function main(): void {
       windowSwitches: windowSwitchesOf(switches, userDataDir),
       // The drives' and testers' region for the search engine choice screen (W6-2); a normal
       // launch carries none and the OS's region stands.
-      regionOverride: regionOverride(switches, process.env)
+      regionOverride: regionOverride(switches, process.env),
+      // The drives' OS accent where the X server has none (settings-116); a normal launch
+      // carries none and the OS's accent stands (Windows, macOS; Linux has none to read).
+      systemAccentOverride: systemAccentOverride(process.argv)
     })
     // Launched for an app alone (`zenium --app=<url>`, an installed app's launcher): the app's
     // window comes up by itself, as Chrome's does; the browser windows wait for the first thing

@@ -231,15 +231,25 @@ describe('collectLocal', () => {
     src.settings.sidebarExpandOnHover = false
     src.settings.onboardingDone = true
     src.settings.searchChoice = { engineId: 'duckduckgo', region: 'DE', madeAt: 1, version: 1 }
+    // …and took the OS accent (W8-3): this machine's OS, so the record carries none of it.
+    src.settings.useSystemAccent = true
     const data = collectLocal(src, defaultScope()).get('settings')?.data as Record<string, unknown>
     expect(DEVICE_LOCAL_SETTINGS).toEqual([
       'onboardingDone',
       'sidebarExpandOnHover',
-      'searchChoice'
+      'searchChoice',
+      'useSystemAccent'
     ])
     expect(data).not.toHaveProperty('sidebarExpandOnHover')
     expect(data).not.toHaveProperty('onboardingDone')
     expect(data).not.toHaveProperty('searchChoice')
+    expect(data).not.toHaveProperty('useSystemAccent')
+    // The Home pin syncs with the rest of the pins, as Chrome's `show_home_button` does.
+    src.settings.toolbarPins = { home: true }
+    expect(
+      (collectLocal(src, defaultScope()).get('settings')?.data as Record<string, unknown>)
+        .toolbarPins
+    ).toEqual({ home: true })
     const local = new Set<string>(DEVICE_LOCAL_SETTINGS)
     // Every other key, plus the retired switch mirrored beside `startup` for a release.
     expect(Object.keys(data)).toEqual([

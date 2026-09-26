@@ -313,11 +313,16 @@ export function readReadingListData(id: string, data: unknown): ReadingListEntry
  *   since profile v6; a peer on v5 still stores that build's default `false`, no choice.
  * - `searchChoice`: the EEA's search-engine choice screen's record (W6-2) – each device's to
  *   answer once, as Chrome's; the engine it set travels as `searchEngineId`, the record does not.
+ * - `useSystemAccent`: whether the chrome follows this device's OS accent colour (settings-116,
+ *   W8-3) – the accent is the device's, and Chrome's `browser.theme.follows_system_colors` is
+ *   not in its syncable database either. (The Home button's pin, `toolbarPins.home`, syncs with
+ *   the record, as Chrome's `browser.show_home_button` does.)
  */
 export const DEVICE_LOCAL_SETTINGS = [
   'onboardingDone',
   'sidebarExpandOnHover',
-  'searchChoice'
+  'searchChoice',
+  'useSystemAccent'
 ] as const
 export type DeviceLocalSetting = (typeof DEVICE_LOCAL_SETTINGS)[number]
 const DEVICE_LOCAL = new Set<string>(DEVICE_LOCAL_SETTINGS)

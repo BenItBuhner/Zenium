@@ -222,6 +222,14 @@ export class Actions {
         if (target) tabs.stop(target.id)
         return
       case 'nav.home': {
+        // Chrome's IDC_HOME (settings-32): the homepage's own page when the setting names one,
+        // else the new tab page – the served page with its field ready where it is on, the
+        // blank tab with the bar open elsewhere (`NewTabService.homeDestination`).
+        const { page } = this.browser.newTab.homeDestination()
+        if (page && active) {
+          tabs.navigate(active.id, page)
+          return
+        }
         const home = this.browser.newTab.homeUrl()
         if (active) tabs.navigate(active.id, home ?? BLANK_URL)
         if (home && active) {
