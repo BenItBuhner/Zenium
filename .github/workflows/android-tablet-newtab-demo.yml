@@ -30,6 +30,8 @@ name: Android tablet new tab page demo
 # `tablet-webview` shard (.github/nightly-drivers/tablet-newtab.json).
 on:
   workflow_dispatch:
+  push:
+    branches: [cursor/android-tablet-newtab-page-9271]
 
 permissions:
   contents: read
