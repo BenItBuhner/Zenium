@@ -1684,8 +1684,7 @@ function useActions(
     setSwitch: (permission: SwitchPermission, on: boolean) =>
       act(`permission:${permission}`, async () => {
         const write = switchWrite(on, defaultInForce(permission, defaults))
-        if ('forget' in write)
-          await cmd('permissions.forget', { origin: site.origin, permission })
+        if ('forget' in write) await cmd('permissions.forget', { origin: site.origin, permission })
         else
           await cmd('permissions.set', {
             origin: site.origin,
