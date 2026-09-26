@@ -13,6 +13,7 @@ import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Rect
+import android.graphics.drawable.BitmapDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -573,33 +574,63 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
     }
 
     /**
-     * Page Info, the icon row's (i): the page's host and its connection, natively (a custom tab has
-     * no chrome to draw the browser's site-info sheet; the connection is what the tab knows).
+     * Page Info, the icon row's (i): the page's host and its connection on the v2 prompt sheet
+     * (§9.23) – the host on one line with the page's favicon (the globe without one), the
+     * browser's site-info sheet's Connection row and its sentence under the title, Done. A custom
+     * tab has no chrome to draw the browser's sheet; the connection is what the tab knows: https
+     * secure, anything else not (a load the tab refused for its certificate never lands as https).
      */
     private fun showPageInfo() {
         val url = currentUrl.ifEmpty { config.url }
         val host = Uri.parse(url).host ?: url
         val secure = url.startsWith("https://", ignoreCase = true)
-        MaterialAlertDialogBuilder(this)
-            .setTitle(host)
-            .setMessage(getString(if (secure) R.string.cct_secure else R.string.cct_not_secure))
-            .setPositiveButton(android.R.string.ok, null)
-            .show()
+        val ink = V2Ink(this, config.scheme.dark)
+        val favicon = page?.favicon
+        val content = NativePromptSheet.Content(
+            title = host,
+            titleOneLine = true,
+            glyph = if (favicon != null) BitmapDrawable(resources, favicon) else ink.glyph(R.drawable.ic_globe),
+            description = getString(if (secure) R.string.cct_secure_detail else R.string.cct_not_secure_detail),
+            rows = listOf(
+                NativePromptSheet.Row(
+                    getString(if (secure) R.string.cct_secure else R.string.cct_not_secure),
+                    ink.glyph(if (secure) R.drawable.ic_cct_lock else R.drawable.ic_cct_lock_open, ink.textDeemphasized)
+                )
+            ),
+            primary = NativePromptSheet.Peer(getString(R.string.cct_done))
+        )
+        NativePromptSheet(this, ink, content) { }.show()
     }
 
     /**
-     * Add to Home Screen (CCT-03): the page as a pinned shortcut that opens a tab of the browser –
-     * the browser's own pin path's tile (its title's first letter on the app's colour, `Shortcuts`'
-     * letter tile) and launch intent, requested of the launcher, whose dialog names it.
+     * Add to Home Screen (CCT-03): the page as a pinned shortcut that opens a tab of the browser.
+     * The v2 prompt sheet asks its name first (§9.22's form sheet: the field prefilled with the
+     * page's title, selected; Cancel, Add), then the browser's own pin path's tile (the name's
+     * first letter on the toolbar's colour, `Shortcuts`' letter tile) and launch intent are
+     * requested of the launcher, which confirms the pin its own way.
      */
     private fun addToHomeScreen() {
         if (!ShortcutManagerCompat.isRequestPinShortcutSupported(this)) return
         val url = currentUrl.ifEmpty { config.url }
         val title = page?.title?.trim()?.ifEmpty { null } ?: Uri.parse(url).host ?: url
-        val tile = Shortcuts.letterTile(this, title, config.scheme.toolbar)
+        val ink = V2Ink(this, config.scheme.dark)
+        val content = NativePromptSheet.Content(
+            title = getString(R.string.cct_add_to_home_screen),
+            field = NativePromptSheet.Field(text = title, label = getString(R.string.cct_shortcut_name)),
+            secondary = getString(R.string.cct_cancel),
+            primary = NativePromptSheet.Peer(getString(R.string.cct_add))
+        )
+        NativePromptSheet(this, ink, content) { answer ->
+            if (!answer.accepted) return@NativePromptSheet
+            pinShortcut(url, answer.text?.trim()?.ifEmpty { null } ?: title)
+        }.show()
+    }
+
+    private fun pinShortcut(url: String, name: String) {
+        val tile = Shortcuts.letterTile(this, name, config.scheme.toolbar)
         val info = ShortcutInfoCompat.Builder(this, Shortcuts.shortcutId(url))
-            .setShortLabel(title.take(Shortcuts.SHORT_LABEL_MAX))
-            .setLongLabel(title)
+            .setShortLabel(name.take(Shortcuts.SHORT_LABEL_MAX))
+            .setLongLabel(name)
             .setIcon(IconCompat.createWithAdaptiveBitmap(tile))
             .setIntent(Shortcuts.launchIntent(this, url, null))
             .build()
