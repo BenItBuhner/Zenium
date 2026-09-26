@@ -77,11 +77,13 @@ export function TabletMenu({ menu }: { menu: MenuDescriptor }): JSX.Element {
       el.removeAttribute('data-menu-open')
     }
   }, [anchor])
+  // The pop grows out of what the menu hangs from: the control's box, the tile's box (NTP-35),
+  // or the pointer's point.
   const origin = !box
     ? undefined
-    : anchor.kind === 'control'
-      ? popOrigin(anchor.box, box)
-      : popOrigin({ x: anchor.x, y: anchor.y, width: 0, height: 0 }, box)
+    : anchor.kind === 'point'
+      ? popOrigin({ x: anchor.x, y: anchor.y, width: 0, height: 0 }, box)
+      : popOrigin(anchor.box, box)
   return (
     <ChromePortal>
       <MenuPanel
