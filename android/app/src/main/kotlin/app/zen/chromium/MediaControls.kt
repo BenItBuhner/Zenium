@@ -39,7 +39,13 @@ class MediaSessionInfo(
     /** What plays: a page's media ([SOURCE_PAGE], what an older core sends without the field) or a chrome player ([SOURCE_CHROME]). */
     val source: String = SOURCE_PAGE,
     /** The chrome player's id (`read-aloud`) when [source] is [SOURCE_CHROME]. */
-    val sourceId: String? = null
+    val sourceId: String? = null,
+    /**
+     * The tab's site may keep its video playing in the background – its `background-video` content
+     * setting is allow, as the core resolved it (false under the default, for a chrome player, and
+     * from an older core without the field); what [BackgroundVideoRule] reads.
+     */
+    val backgroundVideo: Boolean = false
 ) {
     /** Whether the controls may move playback: a known, finite duration (Chrome offers no seek on a live stream). */
     val seekable: Boolean get() = hasPosition && duration > 0 && duration.isFinite()
@@ -86,7 +92,8 @@ class MediaSessionInfo(
                 fullscreen = json.bool("fullscreen"),
                 private = json.bool("private"),
                 source = json.strOrNull("source")?.takeIf { it.isNotEmpty() } ?: SOURCE_PAGE,
-                sourceId = json.strOrNull("sourceId")?.takeIf { it.isNotEmpty() }
+                sourceId = json.strOrNull("sourceId")?.takeIf { it.isNotEmpty() },
+                backgroundVideo = json.bool("backgroundVideo")
             )
         }
     }

@@ -472,6 +472,9 @@ export class Browser {
     // A site's mute is its `sound` setting: tabs follow every change of it, from wherever it came.
     this.permissions.subscribe((change) => {
       if (change.permission === 'sound') this.tabs.followSoundSetting(change.origin)
+      // The session carries the site's `background-video` answer to the Android host: a change
+      // reaches it at once, before the next background transition.
+      if (change.permission === 'background-video') this.mediaSession.followBackgroundVideoSetting()
     })
     this.tabs.migrateMutedHosts()
     this.tabDrag = new TabDragController(this)
