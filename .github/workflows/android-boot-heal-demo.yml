@@ -30,18 +30,6 @@ on:
         options:
           - '34'
           - '35'
-  # TEMPORARY (W6-HF2, PR #505): the worker's run budget of one run and one retry on its branch,
-  # fired by the pushes that touch the scene; removed before the PR is ready for review.
-  push:
-    branches:
-      - cursor/android-hotfix-boot-followups-9271
-    paths:
-      - .github/workflows/android-boot-heal-demo.yml
-      - .github/scripts/android-boot-heal-demo.sh
-      - android/app/src/androidTest/kotlin/app/zen/chromium/BootHealDemo.kt
-      - src/android/**
-      - src/renderer/src/components/content/useLayoutReporter.ts
-      - src/renderer/src/lib/onboarding.ts
 
 permissions:
   contents: read
