@@ -81,8 +81,8 @@ import {
   stepBackSiteInfo
 } from '@renderer/lib/siteInfo'
 import {
+  BACKGROUND_VIDEO_LINE,
   backgroundVideoChoice,
-  backgroundVideoLine,
   showsBackgroundVideoRow,
   showsSoundRow,
   soundChoice
@@ -1132,13 +1132,13 @@ function SoundSwitchRow({
  * The Background video row as a switch (MED-08 / EDGE-32; the lead's ruling on services' #523:
  * a per-site quick toggle belongs among the sheet's permission rows, in the Sound row's form,
  * nothing on the media notification): the §9.2 two-line chassis row – the catalogue's label,
- * and under it the catalogue's line for the state, the same words the Settings row reads
- * (`backgroundVideoLine`: "Sites cannot play video in the background" / "Sites can keep playing
- * video in the background") – with the shared `.zen-v2-switch` trailing, the whole row the
- * target. The inverse of Sound: off is the default (Block), on stores an `allow` for the site,
- * which the core carries to the host on the media session before the next background
- * transition. Busy while the core writes (§9.30): `aria-busy`, a second press does nothing, the
- * switch shows the value the core still holds.
+ * and under it one line, the same in both states, naming what the switch does for this site
+ * (`BACKGROUND_VIDEO_LINE`: "Keeps playing video in the background"; the state is the switch's
+ * alone, so the line never tells it twice – the lead's ruling on #531) – with the shared
+ * `.zen-v2-switch` trailing, the whole row the target. The inverse of Sound: off is the default
+ * (Block), on stores an `allow` for the site, which the core carries to the host on the media
+ * session before the next background transition. Busy while the core writes (§9.30):
+ * `aria-busy`, a second press does nothing, the switch shows the value the core still holds.
  */
 function BackgroundVideoSwitchRow({
   allowed,
@@ -1149,7 +1149,6 @@ function BackgroundVideoSwitchRow({
   busy: boolean
   onChange: (allowed: boolean) => void
 }): JSX.Element {
-  const line = backgroundVideoLine(allowed)
   return (
     <button
       type="button"
@@ -1157,8 +1156,9 @@ function BackgroundVideoSwitchRow({
       aria-checked={allowed}
       aria-busy={busy || undefined}
       // The row's name is its label and its line, as `SheetRow` composes a two-line row's: the
-      // line carries what on and off mean here, which the name would otherwise drop.
-      aria-label={`Background video, ${line}`}
+      // line says what the switch does here, which the name would otherwise drop; the state is
+      // the switch's (`aria-checked`), read as on or off after the name.
+      aria-label={`Background video, ${BACKGROUND_VIDEO_LINE}`}
       className="zen-sheet-item zen-sheet-item-two-line"
       data-permission="background-video"
       onClick={busy ? undefined : () => onChange(!allowed)}
@@ -1169,7 +1169,7 @@ function BackgroundVideoSwitchRow({
       <span className="min-w-0 flex-1">
         <span className="block truncate">Background video</span>
         <span className="zen-sheet-item-secondary block text-[13px] leading-[var(--v2-line-small)] [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden">
-          {line}
+          {BACKGROUND_VIDEO_LINE}
         </span>
       </span>
       <span className="zen-v2-switch" aria-hidden />

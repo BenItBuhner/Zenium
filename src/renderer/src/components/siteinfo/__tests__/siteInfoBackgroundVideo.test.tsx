@@ -11,7 +11,8 @@ import { contentSetting } from '@shared/contentSettings'
  * lead's ruling on services' #523): a switch row in the Sound row's form, seated after Sound,
  * earned by a stored `background-video` answer or a media session that reports video, on Android
  * alone (the catalogue's `support.desktop` is `n-a`); on writes `permissions.set allow`, off takes
- * the stored answer away with `permissions.forget`; the words under it are the catalogue's; and
+ * the stored answer away with `permissions.forget`; the line under the label is the sheet's own,
+ * one and constant in both states (the lead's ruling on #531: the switch carries the state); and
  * a row once earned stays while its origin is under the sheet, so it never leaves under the
  * finger – the hold is the origin's, not the tab's: another origin navigated to under the open
  * sheet has to earn the row itself, and only a reading of that origin can earn it.
@@ -62,6 +63,7 @@ const { SiteInfoLayer } = await import('../SiteInfoSheet')
 const { browserStore, uiStore } = await import('@renderer/lib/ui')
 const { viewportStore } = await import('@renderer/lib/formFactor')
 const { siteInfoStore } = await import('@renderer/lib/siteInfo')
+const { BACKGROUND_VIDEO_LINE } = await import('@renderer/lib/siteInfoCopy')
 const { defaultShortcuts } = await import('@shared/shortcuts')
 
 function tab(patch: Partial<Tab> = {}): Tab {
@@ -261,9 +263,11 @@ describe('the phone sheet (siteinfo/SiteInfoSheet.tsx): the Background video row
     expect(switchRow.getAttribute('aria-checked')).toBe('false')
     expect(switchRow.textContent).toContain('Background video')
     expect(switchRow.querySelector('.zen-v2-switch')).not.toBeNull()
-    // The catalogue's words for off, under the label and in the row's name.
-    expect(switchRow.textContent).toContain(SETTING.description)
-    expect(switchRow.getAttribute('aria-label')).toBe(`Background video, ${SETTING.description}`)
+    // The sheet's own line under the label and in the row's name – this site's, constant, and not
+    // the catalogue's Settings sentence: the switch alone says off.
+    expect(switchRow.textContent).toContain(BACKGROUND_VIDEO_LINE)
+    expect(switchRow.textContent).not.toContain(SETTING.description)
+    expect(switchRow.getAttribute('aria-label')).toBe(`Background video, ${BACKGROUND_VIDEO_LINE}`)
     // Seated right after the Sound row, its media neighbour.
     const sound = soundRow()!
     expect(sound).not.toBeNull()
@@ -277,16 +281,16 @@ describe('the phone sheet (siteinfo/SiteInfoSheet.tsx): the Background video row
     })
   })
 
-  it('reads a stored allow as on with the catalogue’s allow line, and turning it off forgets the answer; the row stays for the sheet’s life', async () => {
+  it('reads a stored allow as on under the same constant line, and turning it off forgets the answer; the row stays for the sheet’s life', async () => {
     reading = info([{ permission: 'background-video', decision: 'allow' }])
     await open(stateWith('android', tab(), []))
     const switchRow = row()!
     expect(switchRow).not.toBeNull()
     expect(switchRow.getAttribute('aria-checked')).toBe('true')
-    expect(switchRow.textContent).toContain(SETTING.descriptions?.allow)
-    expect(switchRow.getAttribute('aria-label')).toBe(
-      `Background video, ${SETTING.descriptions?.allow}`
-    )
+    // On, the line is the same: the state is the switch's, never told again under the label.
+    expect(switchRow.textContent).toContain(BACKGROUND_VIDEO_LINE)
+    expect(switchRow.textContent).not.toContain(SETTING.descriptions?.allow)
+    expect(switchRow.getAttribute('aria-label')).toBe(`Background video, ${BACKGROUND_VIDEO_LINE}`)
     // The next reading has no answer: what `permissions.forget` leaves.
     reading = info([])
     click(switchRow)
@@ -298,11 +302,13 @@ describe('the phone sheet (siteinfo/SiteInfoSheet.tsx): the Background video row
     expect(invoke).not.toHaveBeenCalledWith('permissions.set', expect.anything())
     await settle()
     await settle()
-    // Nothing earns the row now – no answer, no video – yet it stands, reading off.
+    // Nothing earns the row now – no answer, no video – yet it stands, reading off under the
+    // same line.
     const after = row()!
     expect(after).not.toBeNull()
     expect(after.getAttribute('aria-checked')).toBe('false')
-    expect(after.textContent).toContain(SETTING.description)
+    expect(after.textContent).toContain(BACKGROUND_VIDEO_LINE)
+    expect(after.getAttribute('aria-label')).toBe(`Background video, ${BACKGROUND_VIDEO_LINE}`)
   })
 
   it('reads a stored deny as off, like the default', async () => {

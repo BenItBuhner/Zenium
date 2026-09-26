@@ -15,7 +15,6 @@ import {
 } from '@shared/siteInfo'
 import type { MenulistOption } from '@renderer/components/siteControls/primitives'
 import { DEVICE_KIND_ORDER, DEVICE_KIND_WORDS, grantsByKind } from '@renderer/lib/devices'
-import { defaultDescription } from '@renderer/lib/siteSettings'
 
 /**
  * The words of the desktop site-information popover (`components/siteControls/SiteInfoPopover`):
@@ -254,14 +253,15 @@ export function backgroundVideoChoice(permissions: readonly SitePermission[]): P
 }
 
 /**
- * The row's second line for its state, in the catalogue's own words – the lines the Settings
- * row reads through `defaultDescription` (`descriptions.allow` for on, `description` for off),
- * never a copy of them: "Sites can keep playing video in the background" / "Sites cannot play
- * video in the background".
+ * The row's second line, one and the same in both states (the lead's ruling on #531): the sheet
+ * is this site's, so the line names what the switch does for it, and the switch alone carries
+ * the state (§10.4's switch rows carry one constant line saying what on does). The catalogue's
+ * two sentences – "Sites can keep playing video in the background" / "Sites cannot play video in
+ * the background" – are Settings › Site settings' and stay there: their subject is sites in
+ * general, and a line that flips with the switch tells the state twice; on a per-site row both
+ * would be wrong.
  */
-export function backgroundVideoLine(allowed: boolean): string {
-  return BACKGROUND_VIDEO ? defaultDescription(BACKGROUND_VIDEO, allowed ? 'allow' : 'deny') : ''
-}
+export const BACKGROUND_VIDEO_LINE = 'Keeps playing video in the background'
 
 /**
  * The permission rows of the Permissions level in order: the stored decisions as the engine

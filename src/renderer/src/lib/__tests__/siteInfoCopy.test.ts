@@ -3,8 +3,8 @@ import type { SiteInfoSnapshot, SiteSecurity } from '@shared/siteInfo'
 import { DEFAULT_CONTAINER_ID, type CertificateError, type Tab, type UIState } from '@shared/types'
 import { contentSetting } from '@shared/contentSettings'
 import {
+  BACKGROUND_VIDEO_LINE,
   backgroundVideoChoice,
-  backgroundVideoLine,
   connectionDetail,
   connectionFault,
   connectionHeadline,
@@ -238,12 +238,18 @@ describe('the Background video row (W6-S8, #523)', () => {
     expect(backgroundVideoChoice([]) === 'allow').toBe(false)
   })
 
-  it('says what on and off mean in the catalogue’s own words, the lines the Settings row reads', () => {
+  it('carries one constant line, this site’s, in both states – not the catalogue’s two Settings sentences', () => {
+    // The lead's ruling on #531: the row is a per-site switch row, so its line names what the
+    // switch does for this site and the switch carries the state; the catalogue's sentences are
+    // about sites in general and flip with the switch – Settings › Site settings' words, not
+    // this row's.
+    expect(BACKGROUND_VIDEO_LINE).toBe('Keeps playing video in the background')
     const setting = contentSetting('background-video')!
-    expect(backgroundVideoLine(true)).toBe(setting.descriptions?.allow)
-    expect(backgroundVideoLine(true)).toBe('Sites can keep playing video in the background')
-    expect(backgroundVideoLine(false)).toBe(setting.description)
-    expect(backgroundVideoLine(false)).toBe('Sites cannot play video in the background')
+    expect(BACKGROUND_VIDEO_LINE).not.toBe(setting.description)
+    expect(BACKGROUND_VIDEO_LINE).not.toBe(setting.descriptions?.allow)
+    // The catalogue's own words stay where they were.
+    expect(setting.description).toBe('Sites cannot play video in the background')
+    expect(setting.descriptions?.allow).toBe('Sites can keep playing video in the background')
   })
 
   it('leaves the desktop popover’s permission rows as they were: no Background video row is added to them', () => {
