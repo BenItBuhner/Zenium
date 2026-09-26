@@ -9,6 +9,8 @@ import seznam from '@renderer/assets/search-engines/seznam.png?no-inline'
 import startpage from '@renderer/assets/search-engines/startpage.png?no-inline'
 import yahoo from '@renderer/assets/search-engines/yahoo.png?no-inline'
 import yep from '@renderer/assets/search-engines/yep.png?no-inline'
+import type { SearchEngine } from '@shared/types'
+import { DEFAULT_SEARCH_ENGINES, engineFieldFavicon } from '@shared/search'
 
 /*
  * The search-engine choice screen's icons (W6-2), bundled with the chrome as Chrome bundles
@@ -38,4 +40,21 @@ const ICONS: Readonly<Record<string, string>> = {
 export function bundledSearchEngineIcon(engineId: string): string | null {
   if (engineId.startsWith('yahoo_')) return yahoo
   return ICONS[engineId] ?? null
+}
+
+/**
+ * The address the chrome draws an engine's mark from wherever it shows one (the field's leading
+ * glyph, Settings › Search's rows): for an engine of the choice screen's that Zenium does not
+ * ship, the picture bundled for its id – the profile carries only the engine's documented icon
+ * address (`favicon`, the reference `choose` stores), and an engine may refuse another origin's
+ * `<img>` that address (Qwant answers it with `Cross-Origin-Resource-Policy: same-origin`);
+ * for every other engine its `favicon` as it always was – the shipped ones' live or cached
+ * address (`engineFieldFavicon`), a discovered or hand-added engine's own.
+ */
+export function searchEngineIconSrc(engine: Pick<SearchEngine, 'id' | 'favicon'>): string | null {
+  if (!DEFAULT_SEARCH_ENGINES.some((e) => e.id === engine.id)) {
+    const bundled = bundledSearchEngineIcon(engine.id)
+    if (bundled) return bundled
+  }
+  return engineFieldFavicon(engine)
 }
