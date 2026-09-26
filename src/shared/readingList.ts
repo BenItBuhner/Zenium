@@ -1,4 +1,5 @@
 import type { ReadingListEntry } from './types'
+import { displayHost } from './url'
 
 /**
  * The reading list's pure rules (W6-1, bookmarks-33; Chrome's `chrome.readingList`), shared by
@@ -113,4 +114,20 @@ function finiteTime(value: unknown): number | null {
 /** A page the list can hold: a web address; the browser's own pages and blank tabs are not saved. */
 export function isReadingListUrl(url: string): boolean {
   return /^https?:\/\//i.test(url)
+}
+
+/**
+ * The entries whose title, host or address holds every word of `text` (case-folded), in the
+ * order handed in – the page's search (§9.12); a blank search is every entry.
+ */
+export function filterReadingList(
+  entries: readonly ReadingListEntry[],
+  text: string
+): ReadingListEntry[] {
+  const words = text.toLowerCase().split(/\s+/).filter(Boolean)
+  if (words.length === 0) return [...entries]
+  return entries.filter((entry) => {
+    const hay = `${entry.title} ${displayHost(entry.url)} ${entry.url}`.toLowerCase()
+    return words.every((w) => hay.includes(w))
+  })
 }

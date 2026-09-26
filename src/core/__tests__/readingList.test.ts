@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { HostCapabilities, Platform, ReadingListEntry } from '../../shared/types'
 import {
   READING_LIST_CAP,
+  filterReadingList,
   isReadingListUrl,
   sanitizeReadingList,
   sortReadingList,
@@ -273,5 +274,27 @@ describe('ReadingListService: persistence', () => {
     expect(state['readingListFor']()).toBe(first)
     service.setRead(a.id, true)
     expect(state['readingListFor']()).not.toBe(first)
+  })
+})
+
+describe('the page search (filterReadingList)', () => {
+  const list = [
+    entry({ id: 'essay', url: 'https://long.read/essay', title: 'A long essay' }),
+    entry({ id: 'guide', url: 'https://docs.example.org/guide', title: 'The guide' }),
+    entry({ id: 'story', url: 'https://news.example.com/story', title: 'Yesterday’s story' })
+  ]
+
+  it('matches every word against the title, the host and the address, case-folded, in the order given', () => {
+    expect(filterReadingList(list, '').map((e) => e.id)).toEqual(['essay', 'guide', 'story'])
+    expect(filterReadingList(list, '  ').map((e) => e.id)).toEqual(['essay', 'guide', 'story'])
+    expect(filterReadingList(list, 'GUIDE').map((e) => e.id)).toEqual(['guide'])
+    expect(filterReadingList(list, 'example').map((e) => e.id)).toEqual(['guide', 'story'])
+    expect(filterReadingList(list, 'example news').map((e) => e.id)).toEqual(['story'])
+    expect(filterReadingList(list, 'long.read').map((e) => e.id)).toEqual(['essay'])
+    expect(filterReadingList(list, 'nothing here')).toEqual([])
+  })
+
+  it('hands back a copy, never the list itself', () => {
+    expect(filterReadingList(list, '')).not.toBe(list)
   })
 })
