@@ -29,6 +29,7 @@ import { getHost } from '@shared/url'
 import { run } from '@renderer/lib/api'
 import { fileGlyphFor, type FileGlyph } from '@renderer/lib/downloadsView'
 import { useFaviconSrc } from '@renderer/lib/favicons'
+import { layoutRectUnder } from '@renderer/lib/layoutRect'
 import { collectCells, FlipTracker } from '@renderer/lib/motion/flip'
 import { reducedMotion, SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
 import { openPage } from '@renderer/lib/pages'
@@ -312,7 +313,11 @@ function sameIds(a: readonly MagicStackModuleId[], b: readonly MagicStackModuleI
  * leave out; the last offset is read after each commit and on every scroll.
  */
 function useStackFlip(stripRef: RefObject<HTMLElement | null>, mounted: boolean): void {
-  const tracker = useMemo(() => new FlipTracker(), [])
+  // The cards are measured in layout space: the page stands inside the content frame, which
+  // recedes 3 % under a sheet (§11.1) – and a switch's act comes from under one, where a painted
+  // box against the baseline of a commit taken before the sheet rose would read the recede as
+  // every card moving by it (a 6 px lift and a scale about the page's centre, glided).
+  const tracker = useMemo(() => new FlipTracker(layoutBox), [])
   const last = useRef({ keys: '', scrollLeft: 0 })
   useLayoutEffect(() => {
     const el = stripRef.current
@@ -340,6 +345,15 @@ function useStackFlip(stripRef: RefObject<HTMLElement | null>, mounted: boolean)
     tracker.listen()
     return () => tracker.dispose()
   }, [tracker])
+}
+
+/**
+ * A card's layout box: its painted one run back through the content frame's recede
+ * (`.zen-content-frame`, `ContentArea`; the page has no frame in a test and is measured as painted).
+ */
+function layoutBox(el: HTMLElement): DOMRectReadOnly {
+  const r = layoutRectUnder(el, el.closest('.zen-content-frame'))
+  return new DOMRect(r.x, r.y, r.width, r.height)
 }
 
 /**

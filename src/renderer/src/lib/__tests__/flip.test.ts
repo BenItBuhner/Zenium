@@ -462,4 +462,49 @@ describe('FlipTracker', () => {
     expect(flip.layoutRect('b')).toMatchObject({ x: 0 })
     flip.dispose()
   })
+
+  it('a grid hands in its own measure: cells painted under a receded frame between two commits are measured in layout space and nothing glides for the recede, while a cell that did move still does (NTP-16, v2 §11.1)', () => {
+    // The painted box is what `getBoundingClientRect` says; each cell's layout box is kept on
+    // it as the frame would lay it out, and the measure reads that – the way `layoutRectUnder`
+    // runs a painted box back through the frame's transform.
+    const layout = new Map<HTMLElement, { x: number; y: number }>()
+    const measure = (el: HTMLElement): DOMRectReadOnly => {
+      const at = layout.get(el)!
+      return new DOMRect(at.x, at.y, 100, 130)
+    }
+    const flip = new FlipTracker(measure)
+    flip.listen()
+    trackers.push(flip)
+    const a = cell('a', 0, 200)
+    const b = cell('b', 110, 200)
+    layout.set(a, { x: 0, y: 200 })
+    layout.set(b, { x: 110, y: 200 })
+    const cells = new Map<string, HTMLElement>([
+      ['a', a],
+      ['b', b]
+    ])
+    flip.commit(cells, null, true)
+    expect(flip.layoutRect('a')).toMatchObject({ x: 0, y: 200, width: 100, height: 130 })
+
+    // A sheet rises and the frame recedes 3 % about its centre: every painted box moves and
+    // shrinks, no layout box does – and the commit that follows glides nothing.
+    a.moveTo(6, 206)
+    b.moveTo(113, 206)
+    flip.commit(cells, null, true)
+    expect(a.style.transform).toBe('')
+    expect(b.style.transform).toBe('')
+    expect(frames).toHaveLength(0)
+    expect(flip.layoutRect('b')).toMatchObject({ x: 110, y: 200 })
+
+    // a leaves under the sheet still: b's layout box moves to a's slot, and b glides the layout
+    // distance – 110, not the 107 its painted box moved.
+    cells.delete('a')
+    layout.set(b, { x: 0, y: 200 })
+    b.moveTo(6, 206)
+    flip.commit(cells, null, true)
+    expect(translate(b)).toEqual({ x: 110, y: 0 })
+    settle()
+    expect(b.style.transform).toBe('')
+    flip.dispose()
+  })
 })

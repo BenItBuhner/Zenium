@@ -151,6 +151,17 @@ interface Tracked {
  * Under reduced motion a glide is a 120 ms fade in at the new slot (v2 §11.3).
  */
 export class FlipTracker {
+  /**
+   * How a cell is measured: its painted box, unless the grid hands in its own measure. A grid
+   * under a transformed ancestor – the phone's content frame, receded 3 % under a sheet (v2
+   * §11.1) – measures in layout space (`layoutRectUnder`), else the recede that came between
+   * one commit and the next reads as every cell having moved by it.
+   */
+  constructor(
+    private readonly measure: (el: HTMLElement) => DOMRectReadOnly = (el) =>
+      el.getBoundingClientRect()
+  ) {}
+
   private tracked = new Map<string, Tracked>()
   private elements = new Map<string, HTMLElement>()
   private scroller: HTMLElement | null = null
@@ -238,8 +249,8 @@ export class FlipTracker {
     // Layout positions: every transform out of the way first (a parent's moves its children),
     // then one measurement each – never a write between two reads.
     for (const el of elements.values()) el.style.transform = ''
-    const rects = new Map<string, DOMRect>()
-    for (const [id, el] of elements) rects.set(id, el.getBoundingClientRect())
+    const rects = new Map<string, DOMRectReadOnly>()
+    for (const [id, el] of elements) rects.set(id, this.measure(el))
     const parents = new Map<string, string | null>()
     for (const [id, el] of elements) {
       const key = el.parentElement?.closest<HTMLElement>(`[${CELL_ATTR}]`)?.getAttribute(CELL_ATTR)
