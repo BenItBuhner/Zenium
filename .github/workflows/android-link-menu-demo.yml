@@ -2,15 +2,18 @@ name: Android link menu demo
 
 # Records the phone's link menu on a tab in NO group (parity row PUI-17, Chrome for Android 152's
 # link context menu): the tab-group drivers' seeded profile, a real hold on a loose tab's link, the
-# sheet's rows read by name off the chrome's DOM and each of Chrome 152's rows looked up in
-# Chrome's order (Add to reading list a stated limit: no reading list), then a real touch on "Open
-# Link in New Tab in Group" – a row Chrome keeps on a loose tab – making the group: a new folder
-# around the opener with the link's tab behind it, the two a group of two, the seeded group
-# untouched; light on Home, dark on Gamma, the two design stills `link-menu-design-rows-
-# {light,dark}.png`. The driver writes `link-menu-findings.txt` with an OK or FAIL per claim and
-# fails when any did. Dispatch-only, like the other demos: it takes about four minutes. The build,
-# the emulator and the Gradle cache live in android-emulator-demo.yml; this file only picks the
-# driver and the demo it runs.
+# sheet's rows read by name off the chrome's DOM, checked against the design lead's order (Chrome
+# 152's rows in Chrome's order within Zenium's three groups: New Tab · New Tab in Group · Private
+# Tab where the host offers it · Glance · Container | Copy Link Address · Copy Link Text · Save Link
+# As… · Share Link… | Boosts) with each of Chrome 152's rows looked up (Add to reading list a stated
+# limit: no reading list), then a real touch on "Open Link in New Tab in Group" – a row Chrome
+# keeps on a loose tab – making the group: a new folder around the opener with the link's tab
+# behind it, the two a group of two, the seeded group untouched; light on Home, dark on Gamma, the
+# two design stills `link-menu-design-rows-{light,dark}.png`. The driver writes
+# `link-menu-findings.txt` with an OK or FAIL per claim and fails when any did. Dispatch-only, like
+# the other demos: it takes about four minutes; the nightly sweep runs the same driver on its
+# phone-f shard (.github/nightly-drivers.json). The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml; this file only picks the driver and the demo it runs.
 on:
   workflow_dispatch:
 

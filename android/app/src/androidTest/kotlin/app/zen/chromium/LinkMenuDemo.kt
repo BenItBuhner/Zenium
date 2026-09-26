@@ -16,31 +16,37 @@ import kotlin.math.roundToInt
  *
  *  A. LIGHT, on Home (the active tab, loose): a hold on the page's link raises the sheet with
  *     the link's header (the link's text over its address); the rows are read by name and
- *     written down in Zenium's order, then each of Chrome 152's rows is looked up, in CHROME'S
+ *     written down in the sheet's order, then each of Chrome 152's rows is looked up, in CHROME'S
  *     order (`ChromeContextMenuPopulator.java` at 152.0.7977.89 – the plain row BEFORE the
  *     group row since Chrome 140's swap, permanent by 144) – Open in new tab, Open in new tab in
  *     group, Open in Incognito tab (Open Link in Private Tab), Open in new window (multi-window
  *     devices; Zenium Android is one window, no row), Preview page (Open Link in Glance), Copy
  *     link address, Copy link text, Download link (Save Link As…), Add to reading list (no row, a
- *     stated limit: no reading list), Share link (Share Link…). Zenium's order is its own –
- *     the group row first, then the plain – and stays as found: the design lead's (b). The
- *     private row is the host's to offer: the core draws it under `capabilities.privateTabs`,
- *     which Android sets only on a WebView with profiles (Chrome 111+); the shared recipe's
- *     Google APIs image ships WebView 113 without them, so there the row is absent, by design –
- *     the driver reads the capability and expects the row exactly where it is on. The
- *     still `link-menu-design-rows-light.png` is the sheet. Then the touch on Open Link in New
- *     Tab in Group: a NEW folder (not the seeded Research) holds Home and the new tab, the new tab
- *     right behind Home in the background, Home still active, Research's two untouched, the
- *     folder named as the tab menu's Add Tab to New Folder names its own with a colour of the
- *     set, no rename editor over it; the strip's chips as found.
+ *     stated limit: no reading list), Share link (Share Link…). The phone's order is the design
+ *     lead's ruling on #492's (b) – Chrome 152's within Zenium's three groups, the hairlines
+ *     kept: Open Link in New Tab · Open Link in New Tab in Group · Open Link in Private Tab
+ *     (where the host offers it) · Open Link in Glance · Open Link in New Container Tab | Copy
+ *     Link Address · Copy Link Text · Save Link As… · Share Link… | Boosts – and the rows are
+ *     checked against it. The private row is the host's to offer: the core draws it under
+ *     `capabilities.privateTabs`, which Android sets only on a WebView with profiles (Chrome
+ *     111+); the shared recipe's Google APIs image ships WebView 113 without them, so there the
+ *     row is absent, by design – the driver reads the capability and expects the row exactly
+ *     where it is on. The still `link-menu-design-rows-light.png` is the sheet. Then the touch on
+ *     Open Link in New Tab in Group: a NEW folder (not the seeded Research) holds Home and the new
+ *     tab, the new tab right behind Home in the background, Home still active, Research's two
+ *     untouched, the folder named as the tab menu's Add Tab to New Folder names its own with a
+ *     colour of the set, no rename editor over it; the strip's chips as found.
  *  B. DARK, on Gamma (loose, activated by the core): the same rows, byte for byte the light
- *     list; `link-menu-design-rows-dark.png`; the touch makes a second group around Gamma.
+ *     list; `link-menu-design-rows-dark.png`; the touch makes a second group around Gamma. The
+ *     device is put back to the light scheme at the end: the nightly runs its drivers back to
+ *     back on one boot.
  *
  * Findings in `link-menu-findings.txt` (one `OK` or `FAIL` per claim; a claim that does not hold
  * fails the run at the end). The seeded profile is the tab-group drivers' (`tab-groups-demo-
  * state.json`: Research [Alpha, Beta]; Home, Gamma, Delta loose), the pages the driver's own
  * loopback server's – Home's and Gamma's pages carry the link here. Driven by
- * `android-link-menu-demo.yml`. See [GroupsDemoBase] and [DemoHarness].
+ * `android-link-menu-demo.yml` and by the nightly sweep's phone-f shard
+ * (`.github/nightly-drivers.json`). See [GroupsDemoBase] and [DemoHarness].
  */
 @RunWith(AndroidJUnit4::class)
 class LinkMenuDemo : GroupsDemoBase("link-menu", "link-menu-demo") {
@@ -84,6 +90,7 @@ class LinkMenuDemo : GroupsDemoBase("link-menu", "link-menu-demo") {
             makesGroup("B", GAMMA, "dark")
         }
         still("end")
+        light()
         tail()
     }
 
@@ -137,10 +144,14 @@ class LinkMenuDemo : GroupsDemoBase("link-menu", "link-menu-demo") {
         val mapped = CHROME_152.mapNotNull { it.ours }
         val own = items.filter { it !in mapped }
         finding("  Zenium's own rows, not in Chrome's list: $own")
-        // Zenium's order as found – the group row, then the plain; Chrome 152 has the pair the
-        // other way round (plain first since 140's swap). Recorded here as Zenium's; not judged.
-        check("$act: Open Link in New Tab in Group is the first row on a tab in no group (Zenium's order as found; Chrome 152 puts it second)", items.indexOf(GROUP_ROW) == 0, "rows $items")
-        check("$act: Open Link in New Tab is second (Zenium's order as found; Chrome 152's first)", items.indexOf(PLAIN_ROW) == 1, "rows $items")
+        // The phone's order is the design lead's ruling on #492's (b): Chrome 152's rows in
+        // Chrome's order within Zenium's three groups – the plain row, then the group row, the
+        // private row where the host offers it, Glance, Container | the two copies, Save Link As…,
+        // Share Link… | Boosts. Judged here, row by row and as a whole.
+        val ruled = listOf(PLAIN_ROW, GROUP_ROW) + (if (privateTabs) listOf(PRIVATE_ROW) else emptyList()) + RULED_TAIL
+        check("$act: the rows the ruling names stand in the lead's order – ${ruled.joinToString(" · ")}", items.filter { it in ruled } == ruled, "rows $items")
+        check("$act: Open Link in New Tab is the first row (Chrome 152's first)", items.indexOf(PLAIN_ROW) == 0, "rows $items")
+        check("$act: Open Link in New Tab in Group is the second row on a tab in no group (Chrome 152's second; the row that makes the group)", items.indexOf(GROUP_ROW) == 1, "rows $items")
         check(
             "$act: Open Link in Private Tab (Chrome's Incognito, third in both lists) is on the sheet exactly where capabilities.privateTabs is on" +
                 if (privateTabs) ", third" else " – off on this WebView, so no row",
@@ -148,9 +159,11 @@ class LinkMenuDemo : GroupsDemoBase("link-menu", "link-menu-demo") {
             "privateTabs $privateTabs, rows $items"
         )
         check("$act: every Chrome 152 row the host offers has its Zenium row (Add to reading list the stated limit; Open in new window the multi-window devices')", missing == 0, "$missing missing")
-        check("$act: Open Link in Glance (Chrome's Preview page) is on the sheet, among the open rows before the copies as in Chrome 152", "Open Link in Glance" in items && items.indexOf("Open Link in Glance") < items.indexOf("Copy Link Address"))
+        check("$act: Open Link in Glance (Chrome's Preview page) follows the open pair${if (privateTabs) " and the private row" else ""}, Open Link in New Container Tab right after it", items.indexOf("Open Link in Glance") == (if (privateTabs) 3 else 2) && items.indexOf("Open Link in New Container Tab") == items.indexOf("Open Link in Glance") + 1, "rows $items")
+        check("$act: the two copies stand before Save Link As… (Chrome 152's Download link after its copies), Share Link… last of the group", items.indexOf("Copy Link Address") < items.indexOf("Copy Link Text") && items.indexOf("Copy Link Text") < items.indexOf("Save Link As…") && items.indexOf("Save Link As…") < items.indexOf("Share Link…"), "rows $items")
+        check("$act: Boosts closes the list (the developer group last, as the ruling has it)", items.lastOrNull() == "Boosts", "rows $items")
         check("$act: no reading-list row (the stated limit)", items.none { it.contains("Read later", ignoreCase = true) || it.contains("Reading list", ignoreCase = true) })
-        finding("  the rows' order against Chrome 152's is the design lead's (b): recorded, not judged here – Chrome's differs in the plain/group pair, Download after the copies, Share last")
+        finding("  the rows' order is the design lead's ruling on (b) (#492): Chrome 152's within Zenium's three groups, the hairlines kept; Zenium's own rows – Open Link in New Container Tab among the open rows, Boosts last – where they were")
         shot("design-rows-$scheme")
         return items
     }
@@ -205,6 +218,15 @@ class LinkMenuDemo : GroupsDemoBase("link-menu", "link-menu-demo") {
         SystemClock.sleep(4_000)
         ensureForeground()
         finding("  the chrome's scheme now: ${chromeScheme()}")
+    }
+
+    /**
+     * The device's scheme as it was found: the nightly sweep runs its drivers back to back on one
+     * boot, and its reset between two puts the app's data back but not the device's night mode.
+     */
+    private fun light() {
+        shellCommand("cmd uimode night no")
+        finding("  the device's night mode put back off for the next driver")
     }
 
     /** The core activates [tabId] (a touch on its card is the overview drivers' business), its page loaded. */
@@ -264,6 +286,19 @@ class LinkMenuDemo : GroupsDemoBase("link-menu", "link-menu-demo") {
             ChromeRow("Download link", "Save Link As…"),
             ChromeRow("Add to reading list", null, "a STATED LIMIT (no reading list)"),
             ChromeRow("Share link", "Share Link…")
+        )
+
+        /**
+         * The ruled order's rows after the open pair and the private row (the design lead's ruling
+         * on #492's (b): Chrome 152's within Zenium's groups; the hairlines are not sheet items).
+         */
+        private val RULED_TAIL: List<String> = listOf(
+            "Open Link in Glance",
+            "Open Link in New Container Tab",
+            "Copy Link Address",
+            "Copy Link Text",
+            "Save Link As…",
+            "Share Link…"
         )
 
         /** A page with the link the menu is held on, its colours following the device's scheme. */
