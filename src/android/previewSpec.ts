@@ -43,6 +43,8 @@ export type PreviewStep =
   | { kind: 'back' }
   | { kind: 'overview' }
   | { kind: 'urlbar' }
+  /** The new tab page's cards strip (NTP-16) at its nth card, 1-based (`cards:<n>`). */
+  | { kind: 'cards'; page: number }
 
 /**
  * The chrome's own sheets a preview state may open by name (`sheet=<name>`): the Extensions
@@ -371,7 +373,8 @@ export type PreviewState =
       /**
        * Steps taken on the page once it is at its pose (`then=`): `press:<tile>` rests a finger
        * on a tile and lifts it, so its hold menu comes up (NTP-06); `tap:Edit Shortcut…` after
-       * it opens the edit sheet.
+       * it opens the edit sheet; `cards:<n>` puts the cards strip (NTP-16) on its nth card, the
+       * strip's own scroll set to the card's snap position – the dots take no tap.
        */
       then?: PreviewStep[]
       /**
@@ -1142,6 +1145,9 @@ export function parsePreviewSteps(list: string | null): PreviewStep[] {
       if (id) steps.push({ kind: 'type', id, text: step.slice(at + 1) })
     } else if (step === 'back' || step === 'overview' || step === 'urlbar') {
       steps.push({ kind: step })
+    } else if (step.startsWith('cards:')) {
+      const page = Number(step.slice('cards:'.length))
+      if (Number.isInteger(page) && page >= 1) steps.push({ kind: 'cards', page })
     }
   }
   return steps
