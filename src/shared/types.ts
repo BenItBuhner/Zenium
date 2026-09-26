@@ -613,6 +613,18 @@ export interface Tab {
    */
   unresponsive?: true
   /**
+   * The hang monitor's own reading of the renderer, kept apart from the prompt's mark above
+   * (session-08's C4 on #486, the first line's R3): set with `unresponsive` when the host
+   * reports the page hung, and standing until the renderer answers again (`onResponsive`), a
+   * navigation commits, or the renderer goes – NOT cleared by the prompt's Wait, which takes the
+   * prompt down and nothing else: the page is as hung as it was until the host reports it again.
+   * Read where the chrome must know whether the page can paint what is posted to it: "Hold ⌘Q to
+   * quit" over a hung page is the chrome's own to draw (`lib/quitHoldRoute.ts`), and the page's
+   * view gives way to its picture for the hold. A session's own (not persisted); absent on hosts
+   * without a hang monitor and on records older than the field.
+   */
+  hung?: true
+  /**
    * The user typed into a form field of the current document (OS-37; Chrome's
    * `kHasFormInteraction` protection): the sleep policies leave the page loaded, timer and
    * memory pressure alike – a discard would lose what was typed. Set by the page script's
@@ -2769,6 +2781,14 @@ export interface Settings {
   /** Ask before a window with more than one tab closes (Firefox's warning; Edge has the setting). */
   warnOnCloseWindow: boolean
   /**
+   * Chrome's "Warn Before Quitting (⌘Q)" (session-08), the macOS menu bar's checkbox: the quit
+   * chord asks to be held for a moment – "Hold ⌘Q to Quit" over the front window – and quits
+   * only once it was (`QuitHoldService`); off, the chord quits at once. On by default, as
+   * Chrome's is. Read by the macOS host alone (the menu bar is its; other hosts' quit chords
+   * never hold); absent in profiles from before it existed (read as true).
+   */
+  warnBeforeQuitting: boolean
+  /**
    * Phone: the tab overview's "Close all tabs" asks first ("Close N tabs?"); its "Don't ask
    * again" turns this off. Absent in profiles from before it existed (read as true).
    */
@@ -3441,6 +3461,18 @@ export type OverlayKind =
   /** The print preview (`zen://print`) on a host without page tabs: a tab-modal dialog over the page. */
   | 'print'
 
+/**
+ * A quit chord held down (`QuitHoldService`): when the hold began (the host's clock, epoch ms),
+ * how long it must last before the app quits, and the chord as the platform spells it ("⌘Q";
+ * the key cap in "Hold ⌘Q to quit"). The panel draws the hold's progress from the first two;
+ * the hold ends – the state goes null – when a key comes up or the time is reached.
+ */
+export interface QuitHoldState {
+  startedAt: number
+  durationMs: number
+  chord: string
+}
+
 export interface WindowState {
   id: string
   kind: WindowKind
@@ -3454,6 +3486,12 @@ export interface WindowState {
   htmlFullscreenTabId: string | null
   /** A window-modal question waiting for an answer ("Close N tabs?"), if any. */
   prompt: WindowPrompt | null
+  /**
+   * The quit chord being held in this window (session-08, the macOS hold): the chrome shows
+   * "Hold ⌘Q to Quit" with the hold's progress; null while no hold runs. Desktop hosts alone
+   * ever set it (the phone has no quit chord).
+   */
+  quitHold: QuitHoldState | null
   /** The web app a standalone window shows (`chrome` `app`); null for browser windows. */
   app: AppWindowInfo | null
   /**

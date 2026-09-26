@@ -327,6 +327,12 @@ export interface UiState {
    * picture of a page whose renderer stopped answering: a frame dialog, so it dims.
    */
   unresponsivePromptOpen: boolean
+  /**
+   * "Hold ⌘Q to quit" (session-08) runs over a page whose renderer is hung, and the page's view
+   * has given way to its picture for the hold (`lib/quitHoldCover.ts`; the chrome's twin of the
+   * notice draws over the picture, no dim – the notice over a live page has no scrim either).
+   */
+  quitHoldCover: boolean
   /** A page's `getDisplayMedia` picker ("Choose what to share") is up (the page waits for it). */
   screenPickerOpen: boolean
   /**
@@ -630,6 +636,7 @@ export const uiStore = createStore<UiState>(
     credentialLeakOpen: false,
     pageDialogOpen: false,
     unresponsivePromptOpen: false,
+    quitHoldCover: false,
     screenPickerOpen: false,
     deviceChooserOpen: false,
     windowPromptOpen: false,
@@ -1278,6 +1285,7 @@ export function invalidateSnapshot(): void {
     !ui.permissionPromptOpen &&
     !ui.pageDialogOpen &&
     !ui.unresponsivePromptOpen &&
+    !ui.quitHoldCover &&
     !ui.screenPickerOpen &&
     !ui.deviceChooserOpen &&
     !ui.windowPromptOpen &&
@@ -2068,6 +2076,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.permissionPromptOpen ||
     ui.pageDialogOpen ||
     ui.unresponsivePromptOpen ||
+    ui.quitHoldCover ||
     ui.screenPickerOpen ||
     ui.deviceChooserOpen ||
     ui.windowPromptOpen ||
@@ -2474,6 +2483,10 @@ export function panelAloneOverContent(ui: UiState): boolean {
       // reduced check needs no clearing of them either.
       ui.compactHover ||
       ui.toolbarHover ||
+      // "Hold ⌘Q to quit" over a hung page's picture (session-08, `lib/quitHoldCover.ts`): the
+      // chrome's twin of the notice, a status block with no scrim as the page-drawn one has
+      // none – the page under the notice looks as it did.
+      ui.quitHoldCover ||
       popover) &&
     !overlayCoversContent({
       ...ui,
@@ -2491,6 +2504,7 @@ export function panelAloneOverContent(ui: UiState): boolean {
       credentialLeakOpen: false,
       menu: null,
       floatingChrome: 0,
+      quitHoldCover: false,
       autofillPrompt: popover ? null : ui.autofillPrompt
     })
   )

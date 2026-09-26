@@ -541,6 +541,100 @@
   background: var(--v2-control-fill-hover);
 }
 /*
+ * "Hold ⌘Q to quit" (components/overlays/QuitHold.tsx; session-08, §9.23, §11): the chrome's
+ * own copy of the notice the page script paints over a live page (shared/quitHoldPanel.ts, the
+ * same numbers by value), drawn in the content frame's box where no live page is in it. A title
+ * block standing alone – padding 16, the 16 glyph slot holding the hold's ring 8 before the
+ * title's 17/600 on 22, the chord a 22-tall key cap – on the v2 panel at the card radius, no
+ * scrim and no pointer. In on §11's 180 ms pop, out on the 120 ms fade; both the 120 ms fade
+ * under reduced motion (§11.3), the ring's sweep untouched by it – a readout of the key held,
+ * not an animation. The type is the chrome's own tokens, whose values the page-drawn copy
+ * carries (`QUIT_HOLD_FONT`, `titleWeight`; v2Tokens.test.ts holds them to `--font-sans` and
+ * `--v2-weight-heading`). Unlayered, beside the confirmation it is kin to. Mounted last
+ * in the frame's wrapper and ranked over the frame's dialogs (z-50) and the overlay shell
+ * (z-30): the page-drawn one stands over everything in the page, and this one over everything
+ * in the frame.
+ */
+.zen-quit-hold {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.zen-quit-hold-panel {
+  display: flex;
+  box-sizing: border-box;
+  max-width: calc(100% - 48px);
+  align-items: center;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--v2-border);
+  border-radius: var(--v2-radius-card);
+  background: var(--v2-panel);
+  color: var(--v2-text);
+  box-shadow: var(--v2-shadow-panel);
+  font: var(--v2-weight-heading) var(--v2-font-heading) / var(--v2-line-heading) var(--font-sans);
+  animation: zen-quit-hold-in 180ms var(--zen-ease);
+}
+.zen-quit-hold-panel[data-leaving] {
+  animation: zen-fade-out 120ms ease forwards;
+}
+.zen-quit-hold-ring {
+  display: block;
+  flex: none;
+  transform: rotate(-90deg);
+}
+.zen-quit-hold-ring [data-track] {
+  stroke: var(--v2-border);
+}
+.zen-quit-hold-ring [data-sweep] {
+  stroke: var(--v2-accent);
+}
+.zen-quit-hold-title {
+  display: flex;
+  min-height: var(--v2-line-heading);
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+.zen-quit-hold-key {
+  display: inline-flex;
+  box-sizing: border-box;
+  height: 22px;
+  align-items: center;
+  padding: 0 8px;
+  border: 1px solid var(--v2-border);
+  border-radius: 6px;
+  background: var(--v2-fill);
+  font: var(--v2-weight-heading) 13px / 1 var(--font-sans);
+  white-space: nowrap;
+}
+@keyframes zen-quit-hold-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/*
+ * Under reduced motion the pop's scale goes and the 120 ms fade stays, both ways (§11.3):
+ * declared here, `!important`, past the global rule at the sheet's end that removes the rest.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .zen-quit-hold-panel {
+    animation: zen-fade 120ms ease !important;
+  }
+  .zen-quit-hold-panel[data-leaving] {
+    animation: zen-fade-out 120ms ease forwards !important;
+  }
+}
+/*
  * The confirmation prompt (components/dialogs/ConfirmDialog.tsx; §9.23, §9.20, §9.11, §9.22):
  * a notice at 320 on the frame's dialog host – the `.zen-v2-dialog` chrome and the shared title
  * block (16, the title's 22, 4, 20 a description line, 16 to the body) – then its body: the

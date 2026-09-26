@@ -650,6 +650,7 @@ export class TabManager {
           update((t) => {
             t.waiting = false
             if (t.unresponsive) delete t.unresponsive
+            if (t.hung) delete t.hung
             // The typed-into form was the old document's.
             if (t.formEdited) delete t.formEdited
           }, true)
@@ -788,14 +789,19 @@ export class TabManager {
       // The page stopped answering (tabs-45, Chrome's "Page unresponsive"): the row is marked
       // and the chrome asks whether to wait or exit the page; the mark goes when the page answers
       // again, when the user waits (`waitUnresponsive` – the next report asks again), when a
-      // navigation commits, or with the renderer. The session's own, never written to disk.
+      // navigation commits, or with the renderer. Beside it the monitor's own reading (`hung`),
+      // which Wait leaves standing: the page is as hung as it was, and the chrome must know it
+      // for what it posts to the page (session-08's hold notice). The session's own, never
+      // written to disk.
       onUnresponsive: () =>
         update((t) => {
           t.unresponsive = true
+          t.hung = true
         }, true),
       onResponsive: () =>
         update((t) => {
           if (t.unresponsive) delete t.unresponsive
+          if (t.hung) delete t.hung
         }, true),
       onCrashed: (reason, exitCode, details) => {
         if (reason === 'clean-exit') return
@@ -809,6 +815,7 @@ export class TabManager {
         // with the renderer.
         const hungExit = this.hungExits.delete(tabId)
         if (tab.unresponsive) delete tab.unresponsive
+        if (tab.hung) delete tab.hung
         const title = tab.customTitle ?? tab.title
         const outOfMemory = reason === 'oom' || reason === 'memory-eviction'
         // The OS took the memory back from a page in front of the user (Android's
@@ -1578,9 +1585,10 @@ export class TabManager {
     tab.cpuThrottle = 1
     tab.loading = false
     tab.waiting = false
-    // A sleeping page has no renderer to be hung (tabs-45): the prompt's mark goes with it, and
-    // any pending word that the user ended it.
+    // A sleeping page has no renderer to be hung (tabs-45): the prompt's mark goes with it, the
+    // monitor's reading, and any pending word that the user ended it.
     if (tab.unresponsive) delete tab.unresponsive
+    if (tab.hung) delete tab.hung
     this.hungExits.delete(tabId)
     tab.progress = 0
     tab.audible = false
@@ -2538,7 +2546,8 @@ export class TabManager {
   /**
    * The prompt's Wait: the mark goes and the prompt with it; the host's hang monitor reports the
    * page again should it stay unresponsive, and the chrome asks again (Chrome's dialog returns
-   * the same way).
+   * the same way). The monitor's own reading (`hung`) stands: waiting un-hangs nothing, and the
+   * chrome keeps drawing what a hung page cannot (the hold notice) until the page answers.
    */
   waitUnresponsive(tabIds: readonly string[]): void {
     let changed = false

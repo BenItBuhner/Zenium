@@ -13,6 +13,8 @@ import { SPLIT_GAP, SPLIT_GAP_TOUCH, splitPaneRects } from '@renderer/lib/layout
 import { isPageTab } from '@renderer/lib/pages'
 import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
 import { usePrivateCoverUp } from '@renderer/lib/privateLock'
+import { closeQuitHoldCover, openQuitHoldCover } from '@renderer/lib/quitHoldCover'
+import { holdCoversPage, pageCanPaint } from '@renderer/lib/quitHoldRoute'
 import { readerCrossingOf, readerCrossingStore } from '@renderer/lib/readerTransition'
 import { activeTab, isEmptySplitPane, isForeignTab } from '@renderer/lib/selectors'
 import { useChord } from '@renderer/lib/shortcuts'
@@ -35,6 +37,7 @@ import { PickerStrip } from '../autofill/PickerStrip'
 import { Urlbar } from '../urlbar/Urlbar'
 import { NewTabPage } from '../newtab/NewTabPage'
 import { OverlayHost } from '../overlays/OverlayHost'
+import { QuitHoldNotice } from '../overlays/QuitHold'
 import { InternalPageHost } from '../pages/InternalPageHost'
 import { PdfViewerBar } from '../pdf/PdfViewerBar'
 import { PrivateLockCover } from '../phone/PrivateLockCover'
@@ -196,6 +199,34 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
     !(phone && ui.urlbar.open) &&
     !newTabPage &&
     !lockCover
+  // "Hold ⌘Q to quit" (session-08): over a live page the page script paints the notice itself
+  // (`shared/quitHoldPanel`; the view lies over the chrome, and hiding it would drop the key up
+  // the hold waits for), so the chrome draws its own copy only where no live page is in the
+  // frame – a chrome page, the empty frame, a page under its cover (the URL bar, a menu, a
+  // dialog), a page shown in another window, the phone's new tab page or its gesture stage –
+  // or where the page cannot paint: its renderer gone or hung (`lib/quitHoldRoute.ts`).
+  const pageLive =
+    tab !== null &&
+    !pageTab &&
+    !foreign &&
+    !newTabPage &&
+    !staged &&
+    !contentHidden &&
+    pageCanPaint(tab)
+  // A hold over a HUNG page (C4 after the prompt's Wait): the twin is drawn, but the view over
+  // the chrome keeps the hung renderer's last frame painted above it – so the view gives way to
+  // its picture for the hold, as under the "Page unresponsive" prompt, and comes back with the
+  // hold's cancel or end (`lib/quitHoldCover.ts`). A page shown in another window has no view
+  // here to give way; a chrome page has no renderer to hang.
+  const holdCoverTabId =
+    tab !== null && !pageTab && !foreign && holdCoversPage(state.window.quitHold, tab)
+      ? tab.id
+      : null
+  useEffect(() => {
+    if (!holdCoverTabId) return
+    void openQuitHoldCover(holdCoverTabId)
+    return () => closeQuitHoldCover()
+  }, [holdCoverTabId])
   const dropKey = dropStore.use((s) => s.key)
   const dropOverPage = dropStore.use((s) => s.page)
   // The translate bar shares the frame with the live page, under the strips and directly above
@@ -440,6 +471,8 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
         />
       )}
       {ui.overlay !== 'none' && <OverlayHost state={state} ui={ui} />}
+      {/* Above the frame's overlays and dialogs, as the page-drawn one stands over the page. */}
+      <QuitHoldNotice hold={state.window.quitHold} show={!pageLive} />
     </div>
   )
 }

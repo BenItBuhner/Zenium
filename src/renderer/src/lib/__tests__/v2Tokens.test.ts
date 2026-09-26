@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { HINT_PALETTE } from '@shared/fullscreenHint'
+import { QUIT_HOLD_FONT, QUIT_HOLD_PANEL } from '@shared/quitHoldPanel'
 import { REDUCED_FADE_MS, TOAST_CARD, TOAST_SHOW_MS } from '@shared/toastCard'
 import { MESSAGE_INSET } from '../../components/messages/stack'
 import { FULLSCREEN_RETURN_MS } from '../../components/phone/useFullscreenReturn'
@@ -47,6 +48,10 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ],
   // The v2 badge (§9.19): site information's Private badge (components/siteinfo/SiteInfoSheet.tsx).
   ['.zen-v2-badge {', '/* Safe-area insets pushed by mobile hosts'],
+  // "Hold ⌘Q to quit" (components/overlays/QuitHold.tsx; session-08, §9.23): the chrome's copy
+  // of the page-drawn notice, unlayered right before the confirmation it is kin to. Inside the
+  // button's span, so it is cut first.
+  ['.zen-quit-hold {', '/*\n * The confirmation prompt (components/dialogs/ConfirmDialog.tsx'],
   // The confirmation prompt (components/dialogs/ConfirmDialog.tsx; §9.23, §9.22): the notice's
   // body and footer on the card padding, unlayered beside the button so its check row can reach
   // past the gutter of the unlayered row primitive. Inside the button's span, so it is cut first.
@@ -1769,6 +1774,38 @@ describe('the fullscreen hint palette', () => {
     expect(TOAST_DURATION).toBe(TOAST_SHOW_MS)
     expect(MESSAGE_INSET).toBe(TOAST_CARD.insetPx)
     expect(FULLSCREEN_RETURN_MS).toBe(REDUCED_FADE_MS)
+  })
+
+  it("is the quit hold's type by value: the page-drawn notice carries the chrome's family and heading weight, which its chrome twin reads as the tokens (session-08, review F5)", () => {
+    // The family: `--font-sans` as the theme block declares it (across its line break).
+    const family = css.match(/--font-sans:\s*([^;]+);/)
+    expect(family).not.toBeNull()
+    expect(family![1]!.replace(/\s+/g, ' ').trim()).toBe(QUIT_HOLD_FONT)
+    // The weight: the heading token's base. The token adds the bold-text adjustment (A11Y-05),
+    // 0 on the desktop, where the page-drawn notice lives; the twin reads the token.
+    expect(value(':root', lightBlockStart, '--v2-weight-heading')).toBe(
+      `min(900, calc(${QUIT_HOLD_PANEL.titleWeight} + var(--zen-font-weight-adjustment)))`
+    )
+    expect(`${QUIT_HOLD_PANEL.titlePx}px`).toBe(
+      value(':root', lightBlockStart, '--v2-font-heading')
+    )
+    expect(`${QUIT_HOLD_PANEL.titleLinePx}px`).toBe(
+      value(':root', lightBlockStart, '--v2-line-heading')
+    )
+    const panel = block('.zen-quit-hold-panel')
+    expect(panel).toMatch(
+      /^ {2}font: var\(--v2-weight-heading\) var\(--v2-font-heading\) \/ var\(--v2-line-heading\) var\(--font-sans\);$/m
+    )
+    expect(block('.zen-quit-hold-key')).toMatch(
+      new RegExp(
+        `^ {2}font: var\\(--v2-weight-heading\\) ${QUIT_HOLD_PANEL.keycapFontPx}px / 1 var\\(--font-sans\\);$`,
+        'm'
+      )
+    )
+    // The title is a flex row (the key cap the line tall, no baseline slack): `text-wrap:
+    // balance` has no line boxes to act on there and is not declared (review F6).
+    expect(block('.zen-quit-hold-title')).toMatch(/^ {2}display: flex;$/m)
+    expect(block('.zen-quit-hold-title')).not.toMatch(/text-wrap/)
   })
 })
 

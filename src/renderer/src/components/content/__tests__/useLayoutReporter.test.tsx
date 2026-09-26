@@ -308,4 +308,34 @@ describe('useLayoutReporter under the recede', () => {
     rerender(<Probe state={fullscreen(state('bottom'), null)} />)
     expect(reports()).toBe(2)
   })
+
+  /*
+   * "Hold ⌘Q to quit" over a hung page (session-08; the design lead's C4 on #486): the view
+   * gives way to its picture for the hold (`lib/quitHoldCover.ts` sets `quitHoldCover`), so the
+   * chrome's twin of the notice is seen over a frame the hung renderer keeps painted – the host
+   * hears it as `contentHidden`, the same word the "Page unresponsive" prompt hides the view by.
+   */
+  const lastReport = (): { contentHidden: boolean } =>
+    vi
+      .mocked(run)
+      .mock.calls.filter(([c]) => c === 'layout.report')
+      .at(-1)![1] as {
+      contentHidden: boolean
+    }
+
+  it('the hold’s cover over a hung page reports the views hidden, and their return with its close', () => {
+    vi.mocked(run).mockClear()
+    const desktop = { ...state('bottom'), platform: 'linux' } as UIState
+    const { rerender } = render(<Probe state={desktop} />)
+    expect(lastReport().contentHidden).toBe(false)
+    // A hold begins over the hung page: the cover stands (no picture to wait for here, so the
+    // hide is at once).
+    uiStore.set({ quitHoldCover: true })
+    rerender(<Probe state={{ ...desktop }} />)
+    expect(lastReport().contentHidden).toBe(true)
+    // The key is released: the cover goes and the live view comes back.
+    uiStore.set({ quitHoldCover: false })
+    rerender(<Probe state={{ ...desktop }} />)
+    expect(lastReport().contentHidden).toBe(false)
+  })
 })

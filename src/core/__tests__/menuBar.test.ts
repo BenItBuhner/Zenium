@@ -381,7 +381,7 @@ describe('the macOS menu bar', () => {
       expect(h.sent.map((s) => s.name)).toEqual(['import.open'])
     })
 
-    it('Warn Before Quitting is a checkbox on the quit warning’s setting: on by default, flipped by a pick, the bar redrawn to match', () => {
+    it('Warn Before Quitting is a checkbox on its own setting (session-08): on by default, flipped by a pick, the bar redrawn to match', () => {
       vi.useFakeTimers()
       try {
         const h = harness()
@@ -389,23 +389,31 @@ describe('the macOS menu bar', () => {
           item(submenu(last(h), 'Zenium'), 'Warn Before Quitting (⌘Q)')
         expect(row().type).toBe('checkbox')
         expect(row().checked).toBe(true)
-        expect(h.browser.state.settings.warnOnCloseWindow).toBe(true)
+        expect(h.browser.state.settings.warnBeforeQuitting).toBe(true)
         row().click?.()
-        expect(h.browser.state.settings.warnOnCloseWindow).toBe(false)
+        expect(h.browser.state.settings.warnBeforeQuitting).toBe(false)
+        // The tab-count warning is another setting: the pick leaves it alone.
+        expect(h.browser.state.settings.warnOnCloseWindow).toBe(true)
         vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
         expect(row().checked).toBe(false)
         // Back on from the redrawn bar; a pick with every window closed still flips it.
         h.win.onClosing()
         h.win.onClosed()
         row().click?.()
-        expect(h.browser.state.settings.warnOnCloseWindow).toBe(true)
+        expect(h.browser.state.settings.warnBeforeQuitting).toBe(true)
         expect(h.browser.allWindows()).toHaveLength(0)
-        // Settings' own switch and the bar agree: the one setting.
         vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
         expect(row().checked).toBe(true)
       } finally {
         vi.useRealTimers()
       }
+    })
+
+    it('Quit Zenium keeps the host’s quit role, whose registered chord quits with every window closed', () => {
+      const h = harness()
+      const row = item(submenu(last(h), 'Zenium'), 'Quit Zenium')
+      expect(row.role).toBe('quit')
+      expect(row.click).toBeUndefined()
     })
   })
 

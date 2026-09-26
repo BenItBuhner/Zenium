@@ -29,6 +29,10 @@ export class KeyboardHandler {
   handle(input: KeyEventInput, sourceTabId: string | null, win: ZenWindow): boolean {
     // Esc held in a fullscreen window leaves it (both edges of the key are needed for that).
     if (input.key === 'Escape') this.browser.fullscreen.onEscape(input, win)
+    // The quit chord held quits (session-08): any key coming up while the hold runs releases it
+    // – Chrome's panel waits for the next key up, whichever key – so the release is read here,
+    // before the table, which sees key downs alone.
+    if (input.type === 'keyUp') this.browser.quitHold.keyUp()
     if (input.type !== 'keyDown') return false
     if (isModifierKey(input.key)) return false
     // The Settings recorder owns the chrome's keys while it listens: the chord it records must
@@ -55,6 +59,17 @@ export class KeyboardHandler {
         (sourceTabId === null || this.editing.has(sourceTabId))
       )
         return false
+      // The quit chord on a host that holds (macOS with Warn Before Quitting on): the press arms
+      // the hold in this window instead of quitting, and the key is NOT consumed – nor are its
+      // repeats while the hold runs. Chromium drops the key up (and char) that follow a key
+      // down the browser handled (`RenderWidgetHostImpl`'s `suppress_events_until_keydown_`), so
+      // a consumed chord's release would never reach `before-input-event`, and the release is
+      // what the hold waits for (measured on Electron 44.4.5: a consumed key down's key up
+      // reaches neither `before-input-event` nor `input-event`; an unconsumed one's does). The
+      // chord goes on to the page as a plain key – no page action is bound to it – and, on
+      // macOS, on to the menu bar's Quit, whose quit request yields to the running hold
+      // (`Browser.requestQuit`). Off, the chord quits at once and is consumed as before.
+      if (shortcut.action === 'app.quit' && this.browser.quitHold.keyDown(win)) return false
       if (input.isAutoRepeat && !REPEATABLE.has(shortcut.action)) return true
       if (shortcut.unsupported) {
         this.browser.toast(`"${shortcut.label}" is not available in this build yet.`, 'info', win)

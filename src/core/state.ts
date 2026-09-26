@@ -1144,6 +1144,7 @@ export class BrowserState {
           attention: undefined,
           // A hung renderer is the session's; the page is a fresh one after a restart.
           unresponsive: undefined,
+          hung: undefined,
           // A form in progress died with the page's document (OS-37).
           formEdited: undefined,
           // So is a wake from sleep: the leaf's number is this session's (`Tabs.load`).

@@ -21,6 +21,7 @@ import type {
   CertificateDetails,
   ColorScheme,
   DevtoolsDock,
+  KeyBinding,
   NavigationSnapshot,
   NavigationSnapshotEntry,
   NewTabPageCommand,
@@ -39,6 +40,7 @@ import {
   dockFromConsoleMessage,
   pageBoundsFromConsoleMessage
 } from './devtoolsFrontend'
+import { relayDevtoolsQuitChord } from './devtoolsKeys'
 import { isDockedInFrame } from '../../shared/devtoolsDock'
 import { refusedFromDocument } from '../../shared/internalPages'
 import { PAGE_HOST_CHANNEL } from '../../shared/pageScript'
@@ -47,6 +49,7 @@ import { isCertificateError, type SiteCertificate } from '../../shared/siteInfo'
 import { inPlaceErrorPageScript } from '../../shared/zenPages'
 import { certificateSiteOf } from '../../core/security'
 import type { PageHint } from '../../shared/fullscreenHint'
+import { QUIT_HOLD_CHANNEL, type QuitHoldPanel } from '../../shared/quitHoldPanel'
 import {
   DISMISSED_ANSWER,
   LEAVE_SITE_CHANNEL,
@@ -1124,6 +1127,11 @@ export class ElectronTabView implements TabView {
     if (!this.wc.isDestroyed()) this.wc.send('zen:page-hint', hint)
   }
 
+  /** "Hold ⌘Q to quit" over the page, or its way down (`preload/page.ts` listens on `zen:quit-hold`). */
+  showQuitHold(panel: QuitHoldPanel | null): void {
+    if (!this.wc.isDestroyed()) this.wc.send(QUIT_HOLD_CHANNEL, panel)
+  }
+
   /** Fresh `NewTabPageState` for a `zen://newtab` page (its preload listens on this channel). */
   sendNewTabState(state: NewTabPageState): void {
     if (!this.wc.isDestroyed()) this.wc.send('zen:newtab-state', state)
@@ -1356,6 +1364,12 @@ export class ElectronTabView implements TabView {
     const frontend = this.wc.devToolsWebContents
     if (!frontend || frontend.isDestroyed() || this.dressedFrontends.has(frontend)) return
     this.dressedFrontends.add(frontend)
+    // The quit chord typed into the toolbox (session-08, review F3): the frontend's keys raise
+    // `before-input-event` on nothing – its delegate is Electron's `InspectableWebContents`,
+    // which hands only the keys the frontend left unhandled on, to the menu bar – so the
+    // frontend says the chord's key down and the key up after it on its console, and they go to
+    // the key table for this page's window as the page's own keys do (`devtoolsKeys.ts`).
+    relayDevtoolsQuitChord(frontend, this.owner.quitChord, (key) => void this.events?.onKey(key))
     frontend.on('console-message', (event) => {
       const hole = pageBoundsFromConsoleMessage(event.message)
       if (hole) {
@@ -2587,6 +2601,11 @@ export class ElectronTabViewHost implements TabViewHost {
   private readonly focusWatched = new WeakSet<BrowserWindow>()
   /** The certificates the sessions verified, by host, for the site-information card (`certificate`). */
   readonly certificates = new SiteCertificates()
+  /**
+   * The chord bound to `app.quit` as the key table has it now, for a toolbox's quit-chord relay
+   * (`devtoolsKeys.ts`); the platform supplies it once the core is up (`ElectronPlatform.start`).
+   */
+  quitChord: () => KeyBinding | null = () => null
 
   constructor(
     private readonly sessions: SessionManager,
