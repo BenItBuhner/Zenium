@@ -349,7 +349,7 @@ describe('the link menu', () => {
     expect(again.readAt).toBeUndefined()
   })
 
-  it('greys the row for a link the list does not hold and gives the touch hosts no row', () => {
+  it('greys the row for a link the list does not hold', () => {
     const f = fixture()
     const tab = f.open('https://page.test/')
     // A file link opens in a tab but is nothing the list keeps; a mail link has no row at all,
@@ -358,11 +358,23 @@ describe('the link menu', () => {
       item(f.linkMenu(tab, 'file:///tmp/notes.html'), 'Add Link to Reading List').enabled
     ).toBe(false)
     expect(labels(f.linkMenu(tab, 'mailto:a@b.test'))).not.toContain('Add Link to Reading List')
+  })
+
+  it('closes the touch hosts’ transfer group with the same row since the phone has its panel (HB-20)', () => {
+    // One link menu on both touch hosts (the lead's ruling after #492): the row is the last of
+    // the transfer group on each, after Share Link…, saving the link under its text as the
+    // desktop's does; a mail link has no row, as on the desktop.
     for (const layout of ['tablet', 'phone'] as const) {
       const t = fixture(layout)
-      expect(labels(t.linkMenu(t.open('https://page.test/'), URL))).not.toContain(
-        'Add Link to Reading List'
-      )
+      const tab = t.open('https://page.test/')
+      const top = labels(t.linkMenu(tab, URL, 'Read this later'))
+      const at = top.indexOf('Add Link to Reading List')
+      expect(at).toBe(top.indexOf('Share Link…') + 1)
+      expect(top[at + 1]).toBe('-')
+      item(t.linkMenu(tab, URL, 'Read this later'), 'Add Link to Reading List').click!()
+      expect(t.browser.readingList.list()[0]).toMatchObject({ url: URL, title: 'Read this later' })
+      expect(t.toasts()).toContain('Added to reading list')
+      expect(labels(t.linkMenu(tab, 'mailto:a@b.test'))).not.toContain('Add Link to Reading List')
     }
   })
 })
@@ -426,13 +438,63 @@ describe('the app menu', () => {
     f.browser.tabs.closeTab(tab, false, f.win)
   })
 
-  it('is the sidebar layouts’: the tablet has it, the phone does not', () => {
+  it('is the sidebar layouts’ submenu: the tablet has it, the phone’s Bookmarks ▸ does not', () => {
     const tablet = fixture('tablet')
     tablet.open(URL)
     expect(labels(item(tablet.appMenu(), 'Bookmarks').submenu!)).toContain('Reading List')
     const phone = fixture('phone')
     phone.open(URL)
     expect(labels(item(phone.appMenu(), 'Bookmarks').submenu!)).not.toContain('Reading List')
+  })
+
+  it('on the phone is two flat rows (HB-20): Reading List after Bookmarks, and the page’s verb among the saves', () => {
+    const phone = fixture('phone')
+    const tab = phone.open(URL, 'Long Read')
+    let menu = phone.appMenu()
+    let top = labels(menu)
+    // The list, a library row after Bookmarks in the page's noun (History and Downloads are
+    // nouns there too), keyed as the desktop's Show Reading List is.
+    expect(top.indexOf('Reading List')).toBe(top.indexOf('Bookmarks') + 1)
+    expect(item(menu, 'Reading List').key).toBe('row.readingListShow')
+    // The verb in the star's words, seated among the page's saves – after Share… (the harness
+    // has no devices and no home screen, so Print… follows it here) – under one key for both
+    // of its states so the user's menu order names one row.
+    expect(top.indexOf('Add to Reading List')).toBe(top.indexOf('Share…') + 1)
+    expect(top.indexOf('Add to Reading List')).toBe(top.indexOf('Print…') - 1)
+    expect(item(menu, 'Add to Reading List').key).toBe('row.readingList')
+    expect(item(menu, 'Add to Reading List').enabled).not.toBe(false)
+    item(menu, 'Add to Reading List').click!()
+    expect(phone.browser.readingList.has(URL)).toBe(true)
+    expect(phone.toasts()).toContain('Added to reading list')
+    menu = phone.appMenu()
+    top = labels(menu)
+    expect(top).not.toContain('Add to Reading List')
+    expect(top.indexOf('Remove from Reading List')).toBe(top.indexOf('Share…') + 1)
+    expect(item(menu, 'Remove from Reading List').key).toBe('row.readingList')
+    item(menu, 'Remove from Reading List').click!()
+    expect(phone.browser.readingList.has(URL)).toBe(false)
+    expect(phone.toasts()).toContain('Removed from reading list')
+    // The tab's words never reach the phone's list.
+    expect(top).not.toContain('Add Tab to Reading List')
+    expect(top).not.toContain('Remove Tab from Reading List')
+    // A page the list does not hold greys the verb rather than dropping it (§9.17).
+    phone.browser.tabs.closeTab(tab, false, phone.win)
+    phone.open('zen://settings')
+    expect(item(phone.appMenu(), 'Add to Reading List').enabled).toBe(false)
+  })
+
+  it('on the phone Reading List opens the list from the menu row', () => {
+    const phone = fixture('phone')
+    phone.open(URL)
+    const opened: string[] = []
+    const { pages } = phone.browser
+    const original = pages.open.bind(pages)
+    pages.open = (id, section, win, ...rest) => {
+      opened.push(id)
+      return original(id, section, win, ...rest)
+    }
+    item(phone.appMenu(), 'Reading List').click!()
+    expect(opened).toEqual(['reading-list'])
   })
 })
 

@@ -793,13 +793,12 @@ export class Menus {
         click: () => void this.browser.share({ url, tabId: tab.id }, win)
       })
     }
-    // The reading list's row (W6-1) closes the desktop's transfer group – after the copies and
-    // the share, where the link leaves the page for a list of the browser's. The desktop's
-    // alone: the touch hosts' link menus are pinned whole by the lead's ruling after #492
-    // (`savedGroups.test.ts`), and the phone has no list to read the page from yet.
-    if (win.formFactor === 'desktop' && navigable) {
-      transfer.push(this.readingListLinkItem(url, linkText, win))
-    }
+    // The reading list's row (W6-1) closes the transfer group – after the copies and the share,
+    // where the link leaves the page for a list of the browser's. Every layout since HB-20
+    // (W6-D1): the phone reads the list from its panel, the tablet from its page; the touch
+    // hosts' link menus stay one menu (the lead's ruling after #492, `savedGroups.test.ts`),
+    // this row their last transfer row on both.
+    if (navigable) transfer.push(this.readingListLinkItem(url, linkText, win))
     return [open, transfer]
   }
 
@@ -3694,7 +3693,8 @@ export class Menus {
         ...desktop({ label: 'Show Bookmarks Bar', submenu: this.bookmarksBarSubmenu(win) }),
         // Chrome's Reading list ▸ (sidepanel-54, W6-1), seated after Show Bookmarks as Chrome's
         // Bookmarks and lists ▸ seats it: the tab's add (or its remove) and the list itself.
-        // The sidebar layouts' (the page is theirs); the phone has no form of the list yet.
+        // The sidebar layouts' (the page is theirs); the phone's flat list carries the two as
+        // rows of its own (`readingListShow`, `readingListVerb`; HB-20).
         ...sidebar({
           label: 'Reading List',
           submenu: [
@@ -3747,6 +3747,24 @@ export class Menus {
       action: 'downloads.open',
       click: () => this.browser.pages.open('downloads', undefined, win)
     }
+    // The phone's reading list (HB-20, W6-D1), on the desktop's shared model: the list itself
+    // as a library row – the noun, as the phone's History and Downloads rows are, where the
+    // sidebar layouts fold Show Reading List into Bookmarks ▸ Reading List ▸ – and the page's
+    // verb, Add to Reading List or Remove from Reading List (`readingListLabel(…, 'page')`, the
+    // star's words: the phone's bookmark control is the icon row's star, so the verb stands
+    // among the page's saves, before Add to Home Screen). The two alternatives of the verb
+    // never stand together and share one key for the user's order (`homeScreenItems`' rule);
+    // the row is greyed, not gone, for a page the list does not hold (`zen://`, a blank tab),
+    // so the menu keeps its shape (§9.17).
+    const readingListShow = phone
+      ? [{ ...this.showReadingListItem(win), label: 'Reading List' }]
+      : []
+    const readingListVerb = when(
+      phone,
+      active
+        ? { ...this.readingListTabItem(active, win, 'page'), key: 'row.readingList' }
+        : { label: readingListLabel(false, 'page'), key: 'row.readingList', enabled: false }
+    )
     const passwords = when(caps.passwords, {
       label: 'Passwords',
       click: () => this.browser.emit('overlay.open', { kind: 'passwords' }, win)
@@ -4042,6 +4060,7 @@ export class Menus {
         ...keyed('row.newPrivateWindow', ...newPrivateWindow),
         ...hairline(),
         ...keyed('row.bookmarks', bookmarks),
+        ...keyed('row.readingListShow', ...readingListShow),
         ...keyed('row.history', showHistory('History')),
         ...keyed('row.downloads', downloads),
         ...keyed('row.passwords', ...passwords),
@@ -4059,6 +4078,7 @@ export class Menus {
         ...keyed('row.translate', ...translate),
         ...keyed('row.share', ...share),
         ...keyed('row.sendToDevices', ...sendToDevices),
+        ...keyed('row.readingList', ...readingListVerb),
         ...keyed('row.homeScreen', ...homeScreen),
         ...keyed('row.print', ...print),
         ...keyed('row.screenshot', screenshot),
