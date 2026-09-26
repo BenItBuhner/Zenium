@@ -1295,7 +1295,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
    * leaving whole, so its card needs no exit of its own.
    */
   const newTabExit = (tabs: Tab[]): Departure | null => {
-    if (privatePane || !emptiesPane(tabs)) return null
+    if (privatePane || tabs.length === 0 || !emptiesPane(tabs)) return null
     const rect = rectOf(flip.element(NEW_TAB_CELL))
     if (!rect) return null
     return {
