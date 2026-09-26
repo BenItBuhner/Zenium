@@ -496,6 +496,9 @@ export class Browser {
       // The session carries the site's `background-video` answer to the Android host: a change
       // reaches it at once, before the next background transition.
       if (change.permission === 'background-video') this.mediaSession.followBackgroundVideoSetting()
+      // Likewise the site's `auto-picture-in-picture` answer, which Android's auto-enter obeys.
+      if (change.permission === 'auto-picture-in-picture')
+        this.mediaSession.followAutoPictureInPictureSetting()
     })
     this.tabs.migrateMutedHosts()
     this.tabDrag = new TabDragController(this)

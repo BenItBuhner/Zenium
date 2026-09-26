@@ -22,6 +22,7 @@ const SESSION: MediaSessionInfo = {
   fullscreen: false,
   private: false,
   backgroundVideo: false,
+  autoPictureInPicture: true,
   source: 'page'
 }
 const TAB = {

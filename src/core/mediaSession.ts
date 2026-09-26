@@ -364,6 +364,7 @@ export class MediaSessionService {
       fullscreen: report.fullscreen,
       private: isPrivate,
       backgroundVideo: this.backgroundVideoAllowed(tab?.url),
+      autoPictureInPicture: this.autoPictureInPictureAllowed(tab?.url),
       source: 'page'
     }
   }
@@ -378,8 +379,24 @@ export class MediaSessionService {
     return this.browser.permissions.resolve('background-video', url) === 'allow'
   }
 
+  /**
+   * Whether the page's site may go into picture-in-picture of its own accord when the user leaves
+   * it: its `auto-picture-in-picture` setting does not resolve to deny (allow by default; the
+   * Android host reads it for its auto-enter from a fullscreen video on Home, as the desktop's
+   * {@link eligibleForAuto} reads the same row). A page without a site gets the row's default.
+   */
+  private autoPictureInPictureAllowed(url: string | undefined): boolean {
+    if (!url) return true
+    return this.browser.permissions.resolve(AUTO_PIP_SETTING, url) !== 'deny'
+  }
+
   /** A `background-video` decision changed: the session carries the site's new answer to the host. */
   followBackgroundVideoSetting(): void {
+    this.push()
+  }
+
+  /** An `auto-picture-in-picture` decision changed: the session carries the site's new answer to the host. */
+  followAutoPictureInPictureSetting(): void {
     this.push()
   }
 
@@ -406,6 +423,7 @@ export class MediaSessionService {
       fullscreen: false,
       private: isPrivate,
       backgroundVideo: false,
+      autoPictureInPicture: false,
       source: 'chrome',
       sourceId: source.id
     }
@@ -528,6 +546,7 @@ export class MediaSessionService {
       fullscreen: report.fullscreen,
       private: isPrivate,
       backgroundVideo: this.backgroundVideoAllowed(tab?.url),
+      autoPictureInPicture: this.autoPictureInPictureAllowed(tab?.url),
       source: 'page'
     })
   }
