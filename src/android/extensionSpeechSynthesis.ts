@@ -343,6 +343,54 @@ export function installSpeechSynthesis(target: Any, link: SpeechLink): SpeechSyn
   return synthesis
 }
 
+/**
+ * The same API installed on first touch: the six names are accessors on `target` until a
+ * script reads one of them, and that read builds the shim over `link()` (an engine of the
+ * extension's, made then) and puts the real properties in their place. For a web page under a
+ * `world: "MAIN"` content script (`scopeFor`'s `none` scope), whose window Chrome would have
+ * given the API natively and the WebView gives nothing: Speak Subtitles' page bundle dies at
+ * `speechSynthesis.getVoices()` on every subtitle otherwise, and a page that never speaks pays
+ * nothing – no engine, no hello, no `getVoices` to the host. The presence check reads no
+ * accessor (`in`), so a window with the platform's own, or a shim already, is left alone.
+ * Returns whether the accessors went on.
+ */
+export function installSpeechSynthesisLazily(target: Any, link: () => SpeechLink): boolean {
+  if ('speechSynthesis' in target) return false
+  const lazy = new Map<string, () => unknown>()
+  let materializing = false
+  const materialize = (): void => {
+    if (materializing) return
+    materializing = true
+    // Only the names still lazy come off: one the page replaced through the setter is its own.
+    for (const name of SPEECH_SYNTHESIS_GLOBALS) {
+      const descriptor = Object.getOwnPropertyDescriptor(target, name)
+      if (descriptor && descriptor.get === lazy.get(name)) delete target[name]
+    }
+    installSpeechSynthesis(target, link())
+  }
+  for (const name of SPEECH_SYNTHESIS_GLOBALS) {
+    const get = (): unknown => {
+      materialize()
+      return target[name]
+    }
+    lazy.set(name, get)
+    Object.defineProperty(target, name, {
+      configurable: true,
+      enumerable: name === 'speechSynthesis',
+      get,
+      set(this: Any, value: unknown) {
+        Object.defineProperty(this, name, {
+          value,
+          writable: true,
+          configurable: true,
+          enumerable: name === 'speechSynthesis'
+        })
+      }
+    })
+  }
+  return true
+}
+
 /** The `speechSynthesis` object's shape, for the bootstrap and the tests. */
 export interface SpeechSynthesisLike extends EventTarget {
   readonly pending: boolean

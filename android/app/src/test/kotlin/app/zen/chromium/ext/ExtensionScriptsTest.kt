@@ -101,15 +101,57 @@ class ExtensionScriptsTest {
     fun `assembled script keeps its braces balanced around every embedded text`() {
         // Sources and CSS with unbalanced braces travel as JSON strings, never as raw text.
         val hostile = ExtensionScripts.Group.of(group.extensionId, 2, listOf("var s = '}}}'; // {"), "shadow")
-        val script = ExtensionScripts.documentStart("void 0;", "{}", listOf(group, hostile), mapOf("a/b.css" to "a{{{"), false)
-        val stripped = script.replace(Regex("\"(?:[^\"\\\\]|\\\\.)*\""), "\"\"").replace(Regex("'(?:[^'\\\\]|\\\\.)*'"), "''").replace(Regex("//[^\n]*"), "")
-        var depth = 0
-        for (ch in stripped) {
-            if (ch == '{') depth++
-            if (ch == '}') depth--
-            assertTrue(depth >= 0)
+        for (shape in listOf(ExtensionScripts.SHAPE_WHOLE, ExtensionScripts.SHAPE_CARRIER, ExtensionScripts.SHAPE_HOLDER, ExtensionScripts.SHAPE_THIN)) {
+            val script = ExtensionScripts.documentStart("void 0;", "{}", listOf(group, hostile), mapOf("a/b.css" to "a{{{"), false, shape)
+            val stripped = script.replace(Regex("\"(?:[^\"\\\\]|\\\\.)*\""), "\"\"").replace(Regex("'(?:[^'\\\\]|\\\\.)*'"), "''").replace(Regex("//[^\n]*"), "")
+            var depth = 0
+            for (ch in stripped) {
+                if (ch == '{') depth++
+                if (ch == '}') depth--
+                assertTrue(shape, depth >= 0)
+            }
+            assertEquals(shape, 0, depth)
         }
-        assertEquals(0, depth)
+    }
+
+    @Test
+    fun `a carrier wraps the bootstrap as the world's function of the boot and runs its own, a holder only defines it, a thin unit only calls it`() {
+        // The unit's head (config, CSS, sources) is the same in every shape; the tail is the shape.
+        val head = """(function(){var __zenExtBoot={config:{"kind":"content","token":"t"},debug:false,css:{},sources:{"abcdefghijklmnopabcdefghijklmnop/0":function(window,self,globalThis,chrome,browser,__zenMirror){"""
+        val tail = "\n})();\n//# sourceURL=zenium-ext://content-scripts/boot.js"
+        val config = """{"kind":"content","token":"t"}"""
+        val whole = ExtensionScripts.documentStart("/*bootstrap*/", config, listOf(group), emptyMap(), false)
+        val carrier = ExtensionScripts.documentStart("/*bootstrap*/", config, listOf(group), emptyMap(), false, ExtensionScripts.SHAPE_CARRIER)
+        val holder = ExtensionScripts.documentStart("/*bootstrap*/", config, listOf(group), emptyMap(), false, ExtensionScripts.SHAPE_HOLDER)
+        val thin = ExtensionScripts.documentStart("/*bootstrap*/", config, listOf(group), emptyMap(), false, ExtensionScripts.SHAPE_THIN)
+        for (script in listOf(whole, carrier, holder, thin)) {
+            assertTrue(script.startsWith(head))
+            assertTrue(script.endsWith(tail))
+        }
+        val sources = whole.indexOf("}};\n") + 4
+        assertEquals("/*bootstrap*/", whole.substring(sources, whole.length - tail.length))
+        assertEquals(
+            "var __zenExtCarry=globalThis.__zenExtCarrier=function(__zenExtBoot){\n/*bootstrap*/\n};\n__zenExtCarry(__zenExtBoot);",
+            carrier.substring(sources, carrier.length - tail.length)
+        )
+        assertEquals(
+            "var __zenExtCarry=globalThis.__zenExtCarrier=function(__zenExtBoot){\n/*bootstrap*/\n};\n",
+            holder.substring(sources, holder.length - tail.length)
+        )
+        val thinTail = thin.substring(sources, thin.length - tail.length)
+        assertFalse(thinTail.contains("/*bootstrap*/"))
+        assertTrue(thinTail.startsWith("var __zenExtCarry=globalThis.__zenExtCarrier;if(typeof __zenExtCarry===\"function\")__zenExtCarry(__zenExtBoot);else console.error("))
+        assertTrue(thinTail.contains("a set of its content scripts found no bootstrap in its world"))
+        // The shapes' measure, the one the compiler's budget uses: the bootstrap once or not at
+        // all, and the shape's own room, which covers the shape's fixed text.
+        assertTrue(thinTail.length < ExtensionScripts.bootstrapChars(0, ExtensionScripts.SHAPE_THIN))
+        assertTrue(carrier.length - whole.length < ExtensionScripts.bootstrapChars(0, ExtensionScripts.SHAPE_CARRIER))
+        assertEquals(13 + 512, ExtensionScripts.bootstrapChars(13, ExtensionScripts.SHAPE_WHOLE))
+        assertEquals(13 + 512, ExtensionScripts.bootstrapChars(13, ExtensionScripts.SHAPE_CARRIER))
+        assertEquals(13 + 512, ExtensionScripts.bootstrapChars(13, ExtensionScripts.SHAPE_HOLDER))
+        assertEquals(512, ExtensionScripts.bootstrapChars(13, ExtensionScripts.SHAPE_THIN))
+        // An unknown shape is assembled whole.
+        assertEquals(whole, ExtensionScripts.documentStart("/*bootstrap*/", config, listOf(group), emptyMap(), false, "later"))
     }
 
     @Test

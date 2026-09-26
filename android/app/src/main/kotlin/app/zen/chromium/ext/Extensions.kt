@@ -28,11 +28,15 @@ import app.zen.chromium.blocking.Decision
 import app.zen.chromium.blocking.DecisionObserver
 import app.zen.chromium.blocking.Domains
 import app.zen.chromium.blocking.HeaderStage
+import app.zen.chromium.blocking.ListenerOptions
 import app.zen.chromium.blocking.ProfileCookieStore
 import app.zen.chromium.blocking.RedirectExecutor
 import app.zen.chromium.blocking.RelayedResponse
 import app.zen.chromium.blocking.Request
 import app.zen.chromium.blocking.ResourceType
+import app.zen.chromium.blocking.WebRequestDetails
+import app.zen.chromium.blocking.WebRequestEvent
+import app.zen.chromium.blocking.WebRequestListener
 import app.zen.chromium.bool
 import app.zen.chromium.json
 import app.zen.chromium.obj
@@ -76,18 +80,21 @@ import java.util.concurrent.atomic.AtomicLong
  *    the core's translator writing `ext:` rule sets into the persisted index the engine
  *    compiles, scoped to the partitions the extension runs in; this class hears the engine's
  *    decisions ([DecisionObserver]) and reports the ones an extension's rule took – and, while
- *    an extension listens for `webRequest`, every one – as `ext.request`, the response stage of
- *    the media requests the engine relays for it while an extension listens for that
- *    (`ext.observeResponses`) as `ext.response`, and substitutes the response of a redirected
- *    subresource ([RedirectExecutor], see [redirect]).
+ *    an extension listens for `webRequest`, every one – as `ext.request`, the headers WebView
+ *    sends with a request that goes out while an extension listens for the request-header
+ *    stage (`ext.observeRequestHeaders`, one observing listener of ours on the engine's
+ *    `onSendHeaders` seam) as `ext.requestHeaders`, the response stage of the media requests
+ *    the engine relays for it while an extension listens for that (`ext.observeResponses`) as
+ *    `ext.response`, and substitutes the response of a redirected subresource
+ *    ([RedirectExecutor], see [redirect]).
  *
  * Protocol (the core → here), keyed by extension id where it applies: `ext.env`, `ext.open`,
  * `ext.configure`, `ext.detach`, `ext.background.start` / `stop`, `ext.popup.open` / `close`,
  * `ext.send`, `ext.exec`, `ext.readFile`, `ext.cookies.get` / `set`, `ext.observeRequests`,
- * `ext.observeResponses`, `ext.proxy.set` / `clear` (`chrome.proxy.settings` over the WebView's
- * proxy override, [ExtensionProxy]).
+ * `ext.observeRequestHeaders`, `ext.observeResponses`, `ext.proxy.set` / `clear`
+ * (`chrome.proxy.settings` over the WebView's proxy override, [ExtensionProxy]).
  * Here → the core (host events): `ext.message`, `ext.gone`, `ext.popupClosed`, `ext.request`,
- * `ext.response`.
+ * `ext.requestHeaders`, `ext.response`.
  */
 class Extensions(private val host: Host) {
     /** Every bridge message carries this; pages never see it (it lives in closures only). */
@@ -185,6 +192,11 @@ class Extensions(private val host: Host) {
      * when it is not coming (see [HeldPages]).
      */
     private val heldPages = HeldPages<TabWebView>()
+    /**
+     * The extension frame documents each tab's page holds, for [intercept] to tell a frame's
+     * own Referer-less requests from the page's (see [FrameOwnership]); network threads.
+     */
+    private val frames = FrameOwnership<TabWebView>()
     /** Per extension, the units currently installed on every tab (main thread). */
     private val units = LinkedHashMap<String, List<ScriptUnit>>()
     /**
@@ -192,6 +204,23 @@ class Extensions(private val host: Host) {
      * decision of the engine is reported, not only those an extension's rule took.
      */
     @Volatile private var observeRequests = false
+    /**
+     * The request-header stage (`ext.observeRequestHeaders`): while an extension listens for
+     * `webRequest.onBeforeSendHeaders` / `onSendHeaders`, one observing listener of ours on the
+     * engine's `onSendHeaders` seam ([WebRequestEvent.ON_SEND_HEADERS]) reports the headers
+     * WebView is about to send ([onSendHeaders]); none otherwise, since the seam costs every
+     * request a record while anyone listens. Its remover while registered; main thread.
+     */
+    private var requestHeadersListener: (() -> Unit)? = null
+    /**
+     * The `ext.request` payload [onDecision] built last on this intercept thread, for
+     * [onSendHeaders] to pair the header stage with. The engine decides a request and then runs
+     * the listeners of the same request on one thread, one after the other
+     * (`Blocking.evaluate`), so the pairing rides on the thread; the URL is checked besides
+     * ([RequestHeadersReport.build]) – a request the engine never decided (an extension page's
+     * own, off the web) would find the thread's last one, stale.
+     */
+    private val lastDecision = ThreadLocal<JSONObject?>()
     /** `ext.request` ids: one sequence per process, like Chrome's request ids. */
     private val requestIds = AtomicLong(1)
     /** The `identity.launchWebAuthFlow` sheets open right now, by the runtime's view id (`ext.auth.*`). */
@@ -219,6 +248,13 @@ class Extensions(private val host: Host) {
     private val workerScriptGate = WorkerScriptGate()
     private val endpoints = HashMap<String, Endpoint>()
     private val backgrounds = HashMap<String, ExtensionWebView>()
+    /**
+     * How many times each extension's background has been started here since the process came
+     * up (instrumentation): a worker with no view and a start on record has idled out – an MV3
+     * worker stops half a minute after its last traffic, as Chrome's does – where one with no
+     * start never ran.
+     */
+    private val backgroundStarts = HashMap<String, Int>()
     /** `chrome.offscreen`'s hidden page per extension: a background-like view on the URL the extension named. */
     private val offscreens = HashMap<String, ExtensionWebView>()
     private var popup: ExtensionPopup? = null
@@ -280,6 +316,8 @@ class Extensions(private val host: Host) {
      */
     val callStats = HashMap<String, IntArray>()
     private val pendingCalls = HashMap<String, String>()
+    /** While `debug`: the wall clock at each pending call's receipt (`"<ep>:<id>"`), for its reply's legs ([ReplyTiming]). */
+    private val pendingWall = HashMap<String, Long>()
     /** While `debug`: the last few hundred bridge messages, one line each (see [trace]). */
     private val bridgeTrace = ArrayDeque<String>()
     /**
@@ -431,12 +469,13 @@ class Extensions(private val host: Host) {
                 reply(null)
             }
             "ext.observeRequests" -> { observeRequests = args.bool("on"); reply(null) }
+            "ext.observeRequestHeaders" -> { setObserveRequestHeaders(args.bool("on")); reply(null) }
             // The engine's switch (contract 7.1): the process's engine relays media requests for
             // their response stage while it is on; this runtime hears them through [observer].
             // The pages' observer of their own fetch / XHR responses (7.10) follows the same
             // word: every live document is told now, a new one learns it at its hello.
             "ext.observeResponses" -> { setObserveResponses(args.bool("on")); reply(null) }
-            "ext.send" -> { send(args.str("ep"), args.str("message")); reply(null) }
+            "ext.send" -> { send(args.str("ep"), args.str("message"), args.optJSONArray("at")); reply(null) }
             "ext.background.start" -> { startBackground(args.str("id")); reply(null) }
             "ext.background.stop" -> { stopBackground(args.str("id")); reply(null) }
             "ext.popup.open" -> { openPopup(args.str("id"), args.str("url"), args.str("context", "popup"), args.str("title", "")); reply(null) }
@@ -648,11 +687,15 @@ class Extensions(private val host: Host) {
                     val refused = unit.refused ?: continue
                     if (!unit.cached) unitRefusedLine(id, name, refused)
                 }
+                // The shapes (`ExtensionScripts.SHAPE_*`) name what the chars are: a world's
+                // bootstrap once in a carrier or a holder, its other rule sets thin.
+                val shapes = compiled.filter { it.refused == null }.groupingBy { it.shape }.eachCount()
                 Log.i(
                     TAG,
                     "configured ${id.take(8)} ${servedNow.version}: ${unitsNow.size} unit(s), " +
                         "${unitsNow.sumOf { it.script.length }} chars (${compiled.count { it.cached }} cached, " +
                         "${compiled.count { it.refused != null }} refused) in $ms ms, " +
+                        "shapes ${shapes.entries.joinToString(" ") { (shape, n) -> "$n $shape" }}, " +
                         "worlds ${unitsNow.mapNotNull { u -> u.world?.let(worldSlots::slot) }.toSet()}"
                 )
                 reply(stats)
@@ -752,10 +795,12 @@ class Extensions(private val host: Host) {
         }
         units.clear()
         served = emptyMap()
+        frames.clear()
         endpoints.clear()
         worldSlots.clear()
         configureStats.clear()
         observeRequests = false
+        setObserveRequestHeaders(false)
         // The engine's switch is the runtime's that set it: off with the runtime that goes, when
         // this one still owns the seams (a newer window's may have taken them over).
         if (host.blocking.observer === observer) setObserveResponses(false)
@@ -776,11 +821,37 @@ class Extensions(private val host: Host) {
         for (view in host.tabs.all()) view.setExtObserve(on)
     }
 
-    /** Host → endpoint: the reply proxy of the frame that said hello. A dead frame reports `ext.gone`. */
-    private fun send(ep: String, message: String) {
+    /**
+     * The request-header switch (`ext.observeRequestHeaders`): the runtime turns it on while an
+     * extension holds an `onBeforeSendHeaders` / `onSendHeaders` listener (Speak Subtitles for
+     * YouTube reads the player's `/api/timedtext` URL off one) and off with the last of them.
+     * On, one observing listener of ours joins the engine's `onSendHeaders` seam under the
+     * registrant [REQUEST_HEADERS_REGISTRANT]; off, it leaves. Main thread.
+     */
+    private fun setObserveRequestHeaders(on: Boolean) {
+        if (on == (requestHeadersListener != null)) return
+        if (on) {
+            requestHeadersListener = host.blocking.addListener(
+                WebRequestEvent.ON_SEND_HEADERS,
+                WebRequestListener { details -> onSendHeaders(details); null },
+                ListenerOptions(registrant = REQUEST_HEADERS_REGISTRANT)
+            )
+        } else {
+            requestHeadersListener?.invoke()
+            requestHeadersListener = null
+        }
+    }
+
+    /**
+     * Host → endpoint: the reply proxy of the frame that said hello. A dead frame reports
+     * `ext.gone`. [at] is a call reply's two runtime stamps while `debug` (`ext.send`'s `at`:
+     * when the runtime saw the call, when it posted the reply), for the trace line's legs
+     * ([ReplyTiming]); null for everything else.
+     */
+    private fun send(ep: String, message: String, at: JSONArray? = null) {
         val endpoint = endpoints[ep] ?: return
         bridgeCounters[2]++
-        if (debug) recordReply(ep, message)
+        if (debug) recordReply(ep, message, at)
         val ok = runCatching { endpoint.proxy.postMessage(message) }.isSuccess
         if (!ok) gone(listOf(ep))
     }
@@ -804,17 +875,32 @@ class Extensions(private val host: Host) {
         }
         synchronized(callStats) {
             callStats.getOrPut(key) { IntArray(3) }[0]++
-            if (message.has("id")) pendingCalls["$ep:${message.opt("id")}"] = key
-            if (pendingCalls.size > 4000) pendingCalls.clear()
+            if (message.has("id")) {
+                val slot = "$ep:${message.opt("id")}"
+                pendingCalls[slot] = key
+                pendingWall[slot] = System.currentTimeMillis()
+            }
+            if (pendingCalls.size > 4000) {
+                pendingCalls.clear()
+                pendingWall.clear()
+            }
         }
     }
 
-    private fun recordReply(ep: String, message: String) {
+    /**
+     * A message to a frame while `debug`: its trace line, and a reply's account in the call
+     * statistics. [at] is the runtime's two stamps for a call reply ([send]); with the wall
+     * clock at the call's receipt ([recordCall]) and now, the trace line places the round
+     * trip's time in its legs ([ReplyTiming.legs]).
+     */
+    private fun recordReply(ep: String, message: String, at: JSONArray? = null) {
         val reply = BridgeEnvelope.read(message) ?: return
-        trace("<", ep, endpoints[ep]?.extensionId ?: "", reply, message.length)
-        if (reply.optString("t") != "reply") return
+        val slot = if (reply.optString("t") == "reply") "$ep:${reply.opt("id")}" else null
+        val legs = if (slot == null) "" else synchronized(callStats) { ReplyTiming.legs(pendingWall.remove(slot), at, System.currentTimeMillis()) }
+        trace("<", ep, endpoints[ep]?.extensionId ?: "", reply, message.length, legs)
+        if (slot == null) return
         synchronized(callStats) {
-            val key = pendingCalls.remove("$ep:${reply.opt("id")}") ?: return
+            val key = pendingCalls.remove(slot) ?: return
             if (!reply.optBoolean("ok", true)) {
                 val counts = callStats.getOrPut(key) { IntArray(3) }
                 // The two outcomes Chrome itself reports through runtime.lastError in normal
@@ -828,13 +914,16 @@ class Extensions(private val host: Host) {
     /**
      * One line per bridge message while `debug`: direction, extension, endpoint context, message
      * type and the little that tells messages apart (a call's method, a message's `type` field,
-     * a reply's outcome). Instrumentation reads it to see where a handshake stopped.
+     * a reply's outcome), then `id=<n>` on a call and its reply (the sweep's storage round-trip
+     * reading pairs the two by it, `ext-compat-storage-latency.mjs`) and a call reply's legs
+     * ([legs], `hop= run= back=`). Instrumentation reads it to see where a handshake stopped.
      */
-    private fun trace(direction: String, ep: String, ext: String, message: JSONObject, chars: Int = 0) {
+    private fun trace(direction: String, ep: String, ext: String, message: JSONObject, chars: Int = 0, legs: String = "") {
         val context = endpoints[ep]?.context ?: message.str("ctx", "?")
         val t = message.str("t")
         // A big message is an envelope here (its nested values unread): its size stands in for them.
         val size = if (chars >= BridgeEnvelope.BIG_MESSAGE) " chars=$chars" else ""
+        val id = if ((t == "call" || t == "reply") && message.has("id")) " id=${message.opt("id")}" else ""
         val detail = when (t) {
             "call" -> "${message.str("ns")}.${message.str("method")}"
             "msg", "deliver" -> {
@@ -871,7 +960,7 @@ class Extensions(private val host: Host) {
         }
         synchronized(bridgeTrace) {
             if (bridgeTrace.size >= TRACE_LINES) bridgeTrace.removeFirst()
-            bridgeTrace.addLast("${SystemClock.uptimeMillis()} $direction ${ext.take(8)}/$context $t $detail$size".trimEnd())
+            bridgeTrace.addLast("${SystemClock.uptimeMillis()} $direction ${ext.take(8)}/$context $t $detail$id$legs$size".trimEnd())
         }
     }
 
@@ -1465,7 +1554,10 @@ class Extensions(private val host: Host) {
     /**
      * Every WebView's `shouldInterceptRequest` (background thread), ahead of the request engine.
      * Tab pages: a top-level navigation to an extension origin gets any file (Chrome lets any
-     * extension page open as a tab), other frames only its web-accessible resources; a fetch of
+     * extension page open as a tab), other frames only its web-accessible resources – and the
+     * extension's own frame in the tab, once such a document is in it, any file again, told by
+     * its Referer, its CORS requests' `Origin`, or the frame document served before where the
+     * frame sends no Referer ([FrameOwnership]); a fetch of
      * an extension page to a permitted host goes through the CORS proxy. Extension WebViews: any
      * file of their own extension, another extension's web-accessible resources only, and the
      * background view's document is the generated background page wherever the
@@ -1485,6 +1577,8 @@ class Extensions(private val host: Host) {
         backgroundDocument: Boolean = false
     ): WebResourceResponse? {
         val url = request.url
+        // The tab's page is going with a main-frame request, and its frames with it.
+        if (tab != null && request.isForMainFrame) frames.forget(tab)
         val hostName = url.host ?: return null
         if (hostName.endsWith(ORIGIN_SUFFIX)) {
             val id = hostName.removeSuffix(ORIGIN_SUFFIX)
@@ -1496,10 +1590,17 @@ class Extensions(private val host: Host) {
             if (tab?.isPrivateTab == true && !ext.allowPrivate) return if (request.isForMainFrame) refusedPage(tab, url.toString()) else notFound()
             val path = (url.path ?: "/").trimStart('/')
             val origin = "https://$hostName/"
+            val referer = request.requestHeaders?.get("Referer")
+            val originHeader = request.requestHeaders?.entries?.firstOrNull { it.key.equals("Origin", ignoreCase = true) }?.value
+            val document = ExtensionScripts.mimeType(path) == "text/html"
+            // The extension's own frame in a web tab is told by its Referer – or, where the
+            // frame's document sends none (`no-referrer`), by its CORS requests' `Origin` and by
+            // the frame document served into the tab before (FrameOwnership).
             val ownPage = tab != null && (
                 request.isForMainFrame ||
-                    request.requestHeaders?.get("Referer")?.startsWith(origin) == true ||
-                    tab.currentUrl?.startsWith(origin) == true
+                    referer?.startsWith(origin) == true ||
+                    tab.currentUrl?.startsWith(origin) == true ||
+                    frames.ownRequest(tab, id, "https://$hostName", referer, originHeader, document)
                 )
             // A foreign page (a web page, or another extension's own view asking for this one's
             // files: `chrome-extension://<other>/...` spelled out in Read&Write's offscreen
@@ -1507,6 +1608,8 @@ class Extensions(private val host: Host) {
             // only, as Chrome serves them; the extension's own pages get any file.
             val foreign = if (extensionPage != null) extensionPage.id != id else !ownPage
             if (foreign && !ext.webAccessible.any { it.matches(path) }) return notFound()
+            // A web-accessible document going into a frame of the tab's page: its own requests follow.
+            if (foreign && tab != null && !request.isForMainFrame && document) frames.framed(tab, id)
             if (backgroundDocument && ext.backgroundHtml != null && "$origin$path" == ext.backgroundUrl) {
                 if (request.isForMainFrame) {
                     workerScriptGate.documentServed(id)
@@ -1540,13 +1643,15 @@ class Extensions(private val host: Host) {
             // graph is told by the document, not the Referer (ExtensionScripts.isPageModuleGraph:
             // a dependency's referrer is the module that imports it). A webpack chunk of the graph
             // is served as the stub that runs it in the content script's scope, unless this is the
-            // stub's own plain request for it (ExtensionScripts.chunkStub).
+            // stub's own plain request for it (ExtensionScripts.chunkStub). A CORS request naming
+            // the extension's own origin is an extension document's (a frame's module script or
+            // font), not a graph of the page's.
             val moduleGraph = tab != null && extensionPage == null && ExtensionScripts.isPageModuleGraph(
                 path,
                 request.isForMainFrame,
                 tab.currentUrl,
                 origin,
-                request.requestHeaders?.keys?.any { it.equals("Origin", ignoreCase = true) } == true,
+                originHeader != null && originHeader != "https://$hostName",
                 isolatedWorlds
             )
             val chunkStubUrl = if (moduleGraph && url.getQueryParameter(ExtensionScripts.PLAIN_QUERY) == null) url.toString() else null
@@ -1619,6 +1724,8 @@ class Extensions(private val host: Host) {
      * new page's first decisions.
      */
     private fun onDecision(tab: BlockingTab, request: Request, decision: Decision, elapsedNanos: Long, cpuNanos: Long) {
+        // A decision not reported leaves nothing for the header stage to pair with.
+        lastDecision.remove()
         val micros = elapsedNanos / 1_000
         val cpuMicros = if (cpuNanos < 0) null else cpuNanos / 1_000
         val action = when (decision.action) {
@@ -1656,7 +1763,25 @@ class Extensions(private val host: Host) {
             "micros" to micros,
             "cpuMicros" to cpuMicros
         )
+        lastDecision.set(payload)
         main.post { chromeEvent("ext.request", payload) }
+    }
+
+    /**
+     * The engine's `onSendHeaders` seam ([requestHeadersListener], on the intercept thread right
+     * after [onDecision] for a request that goes out): the headers WebView is about to send,
+     * reported as `ext.requestHeaders` under the `ext.request` id the same request's decision
+     * carried ([lastDecision]) – the material of the runtime's `onBeforeSendHeaders` and
+     * `onSendHeaders`, which Chrome fires with the same headers for an observer (WebView's
+     * headers are read-only, so no blocking variant is offered). A request whose decision was
+     * not reported (the requests switch off; an extension page's own request, which the engine
+     * never decides) reports nothing.
+     */
+    private fun onSendHeaders(details: WebRequestDetails) {
+        val decided = lastDecision.get()
+        lastDecision.remove()
+        val payload = RequestHeadersReport.build(decided, details.url, details.requestHeaders) ?: return
+        main.post { chromeEvent("ext.requestHeaders", payload) }
     }
 
     /**
@@ -1881,6 +2006,9 @@ class Extensions(private val host: Host) {
     /** The hidden background WebView of an attached extension (instrumentation reads its console). */
     fun backgroundView(id: String): ExtensionWebView? = backgrounds[id]
 
+    /** How many times the extension's background has been started here (instrumentation; see [backgroundStarts]). */
+    fun backgroundStarts(id: String): Int = backgroundStarts[id] ?: 0
+
     /**
      * Ask the runtime to run an extension's stopped background (an MV3 worker idles out half a
      * minute after its last traffic), as Chrome's management page starts an inactive worker when
@@ -1935,6 +2063,7 @@ class Extensions(private val host: Host) {
         stopBackground(id)
         val view = ExtensionWebView(host, this, ext, "background")
         backgrounds[id] = view
+        backgroundStarts[id] = backgroundStarts(id) + 1
         host.attachHidden(view)
         view.loadUrl(url)
     }
@@ -2056,7 +2185,8 @@ class Extensions(private val host: Host) {
         notifications.destroy()
         io.shutdownNow()
         // The engine outlives the window; a runtime that is gone must not be called (a newer
-        // window's runtime may already have taken the seams over). Its switch goes with it.
+        // window's runtime may already have taken the seams over). Its switches go with it.
+        setObserveRequestHeaders(false)
         if (host.blocking.observer === observer) {
             host.blocking.observeResponses = false
             host.blocking.observer = null
@@ -2077,6 +2207,8 @@ class Extensions(private val host: Host) {
         const val WORLD_SLOTS = 16
         /** Bridge trace lines kept for instrumentation (one line per message, all extensions together). */
         const val TRACE_LINES = 2400
+        /** The registrant of this runtime's own `onSendHeaders` listener on the engine's registry (no extension's id). */
+        const val REQUEST_HEADERS_REGISTRANT = "zenium:webRequest"
         /** Reply errors Chrome raises in normal operation: a message to a tab without a listener, a listener that never answered. */
         val UNANSWERED = setOf(
             "Could not establish connection. Receiving end does not exist.",

@@ -34,6 +34,27 @@ export interface UnitCss {
   path: string
 }
 
+/**
+ * How the host assembles a unit's script (`ExtensionScripts.documentStart`). The WebView keeps
+ * every registered script whole once per tab view in the app process and once per live frame in
+ * the renderer, whatever its origin rules, so a bootstrap copy per rule set is that many copies of
+ * 163 K chars per view and per frame (compat round 19: 21 units across the frame budget's six
+ * extensions, 3.4 M of their 17.6 M chars). In an isolated world of the extension's own, one unit
+ * carries the bootstrap and the world's other rule sets attach to it:
+ *
+ *  - `whole`: config, CSS, sources and the bootstrap, run at once (the main world's shape, and a
+ *    world with one unit);
+ *  - `carrier`: the same, and the bootstrap also left on the world's global as
+ *    `__zenExtCarrier(boot)` for the thin units after it (the world's `*`-rule unit, first in
+ *    registration order, so it has run before any of them);
+ *  - `holder`: the carrier alone – defined, never run – added where the world has several rule
+ *    sets and none over every origin, so a frame no set matches boots nothing;
+ *  - `thin`: config, CSS and sources without the bootstrap: the unit attaches to the world's
+ *    runtime (`__zenExtRuntime.attach`, the bootstrap's own hand-off, token-checked) or boots
+ *    through the carrier when it is the first of the world to match the frame.
+ */
+export type UnitShape = 'whole' | 'carrier' | 'holder' | 'thin'
+
 export interface ContentUnit {
   /** Stable within the extension: the world and the sorted origin rules. */
   key: string
@@ -43,6 +64,7 @@ export interface ContentUnit {
   /** `addDocumentStartJavaScript` origin rules (`*` for every origin). */
   origins: string[]
   isolation: IsolationMode
+  shape: UnitShape
   config: ContentBootConfig
   groups: UnitGroup[]
   css: UnitCss[]
@@ -125,20 +147,66 @@ export function injectsProgrammatically(manifest: RuntimeManifest): boolean {
   )
 }
 
+/**
+ * Groups alike in everything but their `matches` – the same files, world, `run_at`, frame and
+ * exclusion rules – become one group over the union of their patterns. An extension that lists
+ * the same bundle under several `content_scripts` entries, one per site family (Grammarly's
+ * 2.67 M-char pair under its Outlook set and its classroom set), otherwise embeds it once per
+ * rule set, and every tab view and live frame holds each copy. Chrome would inject such a pair
+ * twice into a frame both entries match; the merged group runs once there – the one difference,
+ * in the overlap alone. The first group of a kind keeps its index (the stats' and the console's
+ * name for it); the others' patterns join it in order.
+ */
+export function mergeAlikeGroups(groups: readonly BootGroup[]): BootGroup[] {
+  const kept = new Map<string, BootGroup>()
+  const out: BootGroup[] = []
+  for (const group of groups) {
+    if (group.js.length === 0 && group.css.length === 0) {
+      out.push(group)
+      continue
+    }
+    const alike = JSON.stringify([
+      group.runAt,
+      group.world,
+      group.js,
+      group.css,
+      group.excludeMatches,
+      group.includeGlobs,
+      group.excludeGlobs,
+      group.allFrames,
+      group.matchAboutBlank,
+      group.matchOriginAsFallback
+    ])
+    const first = kept.get(alike)
+    if (!first) {
+      const copy = { ...group, matches: [...group.matches] }
+      kept.set(alike, copy)
+      out.push(copy)
+      continue
+    }
+    for (const pattern of group.matches)
+      if (!first.matches.includes(pattern)) first.matches.push(pattern)
+  }
+  return out
+}
+
 /** Plan the units and served files of one extension from its boot record. */
 export function planUnits(
   boot: ExtensionBoot,
   manifest: RuntimeManifest,
   env: UnitEnvironment
 ): ExtensionUnits {
-  const drafts = new Map<string, { world: UnitWorld; origins: string[]; groups: BootGroup[] }>()
+  const drafts = new Map<
+    string,
+    { world: UnitWorld; origins: string[]; groups: BootGroup[]; shape: UnitShape }
+  >()
   const add = (world: UnitWorld, origins: string[], groups: BootGroup[]): void => {
     const key = unitKey(world, origins)
     const draft = drafts.get(key)
     if (draft) draft.groups.push(...groups)
-    else drafts.set(key, { world, origins, groups: [...groups] })
+    else drafts.set(key, { world, origins, groups: [...groups], shape: 'whole' })
   }
-  for (const group of boot.groups) {
+  for (const group of mergeAlikeGroups(boot.groups)) {
     add(worldOf(group), sortedOrigins(originRulesFor(group.matches)), [group])
   }
   // The pages `externally_connectable.matches` lets speak to the extension need a main-world
@@ -188,8 +256,27 @@ export function planUnits(
       drafts.delete(key)
     }
   }
+  // The extension's isolated world with several rule sets: one bootstrap for the world (see
+  // `UnitShape`). Its `*`-rule unit carries it and runs as before; a world without one gets a
+  // holder that only defines it; the other sets attach. The main world keeps whole units: its
+  // global is the page's, and a carrier there would be a name the page can see.
+  if (env.isolatedWorlds) {
+    const isolated = [...drafts.values()].filter((draft) => draft.world === 'isolated')
+    if (isolated.length >= 2) {
+      const everywhereKey = unitKey('isolated', ['*'])
+      let everywhere = drafts.get(everywhereKey)
+      if (everywhere) everywhere.shape = 'carrier'
+      else {
+        everywhere = { world: 'isolated', origins: ['*'], groups: [], shape: 'holder' }
+        drafts.set(everywhereKey, everywhere)
+      }
+      for (const draft of isolated) if (draft !== everywhere) draft.shape = 'thin'
+    }
+  }
   const isolationFor = (world: UnitWorld): IsolationMode =>
     world === 'main' ? 'none' : env.isolatedWorlds ? 'world' : 'with'
+  const bootstrapsFirst = (shape: UnitShape): number =>
+    shape === 'carrier' || shape === 'holder' ? 0 : 1
   const units: ContentUnit[] = [...drafts.values()]
     .map((draft) => {
       const isolation = isolationFor(draft.world)
@@ -212,6 +299,7 @@ export function planUnits(
             : null,
         origins: draft.origins,
         isolation,
+        shape: draft.shape,
         config,
         groups: groups
           .filter((group) => group.js.length > 0)
@@ -219,7 +307,14 @@ export function planUnits(
         css: groups.flatMap((group) => group.css.map((path) => ({ ext: boot.id, path })))
       }
     })
-    .sort((a, b) => a.key.localeCompare(b.key))
+    // The host registers the units in this order and the WebView runs them in it: a world's
+    // carrier or holder ahead of the units that attach to it.
+    .sort(
+      (a, b) =>
+        a.world.localeCompare(b.world) ||
+        bootstrapsFirst(a.shape) - bootstrapsFirst(b.shape) ||
+        a.key.localeCompare(b.key)
+    )
   const background = manifest.background
   const page: Omit<PageBootConfig, 'context'> = {
     kind: 'page',

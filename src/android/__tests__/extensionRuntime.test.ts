@@ -3,7 +3,12 @@ import type { Space } from '@shared/types'
 import { WARN_FLOW_DROPPED } from '@core/extensions/api/engine'
 import type { ExtensionErrorReport } from '@core/extensions/errorConsole'
 import { languageCodeOf, offscreenUrl, tabUrlFrom } from '../extensionApi'
-import { packageRelativePath, pickMessages, type ExtRequestEvent } from '../extensionRuntime'
+import {
+  packageRelativePath,
+  pickMessages,
+  type ExtRequestEvent,
+  type ExtRequestHeadersEvent
+} from '../extensionRuntime'
 import type { ScriptRequestObservation } from '../relaySelection'
 import {
   type FakeAuthSheet,
@@ -205,10 +210,15 @@ describe('AndroidExtensionRuntime: attaching records', () => {
     const plans = h.kt.calledWith('ext.configure')
     expect(plans).toHaveLength(2)
     const units = plans[1].units as Array<Record<string, unknown>>
-    expect(units.map((u) => u.key)).toEqual([
-      'isolated:https://example.com',
-      'isolated:https://other.example'
+    // The second rule set in the world brings the one bootstrap's holder ahead of both; the
+    // wire carries each unit's shape for the host's assembly.
+    expect(units.map((u) => [u.key, u.shape])).toEqual([
+      ['isolated:*', 'holder'],
+      ['isolated:https://example.com', 'thin'],
+      ['isolated:https://other.example', 'thin']
     ])
+    const first = plans[0].units as Array<Record<string, unknown>>
+    expect(first.map((u) => u.shape)).toEqual(['whole'])
     const saved = h.saved('extensions-runtime.json')
     expect((saved.registered as Record<string, unknown[]>)[ID]).toHaveLength(1)
   })
@@ -355,6 +365,27 @@ describe('AndroidExtensionRuntime: the background lifecycle', () => {
     expect(created).toHaveLength(1)
     expect((created[0].args as Array<Record<string, unknown>>)[0].url).toBe('https://two.example/')
     expect(h.runtime.backgroundStats(ID)).toMatchObject({ starts: 2, idleStops: 1, queued: 1 })
+  })
+
+  it("a page's message to a running worker resets its idle clock, as every message dispatched to a worker does in Chrome", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    // 25 s of quiet, then the options page opens and asks the worker for its config (SingleFile
+    // on the slow lane: its worker's listener answers late, or never, and the stop must not land
+    // on the message).
+    h.tick(25_000)
+    hello(h, 'opt1', 'options', { url: `https://${ID}.ext.zenium.invalid/options.html` })
+    message(h, 'opt1', { t: 'msg', id: 3, target: {}, data: { method: 'config.get' } })
+    expect(h.kt.to('bg1').filter((m) => m.t === 'deliver')).toHaveLength(1)
+    // 30 s from the worker's own last frame pass with the message still unanswered: it stays.
+    h.tick(10_000)
+    expect(h.kt.calledWith('ext.background.stop')).toEqual([])
+    expect(h.runtime.background.state(ID)).toBe('running')
+    // 30 s of quiet after the message: now it idles out.
+    h.tick(20_000)
+    expect(h.kt.calledWith('ext.background.stop')).toEqual([{ id: ID }])
+    expect(h.runtime.backgroundStats(ID)).toMatchObject({ starts: 1, idleStops: 1, queued: 0 })
   })
 
   it('remembers listeners across sessions so the first event of the next start wakes the worker', async () => {
@@ -1353,6 +1384,150 @@ describe('AndroidExtensionRuntime: tab and navigation events', () => {
     await h.runtime.detach(ID)
     expect(h.kt.calledWith('ext.observeRequests').at(-1)).toEqual({ on: false })
     expect(h.kt.calledWith('ext.observeResponses').at(-1)).toEqual({ on: false })
+  })
+
+  it("the request-header stage: onBeforeSendHeaders then onSendHeaders with the headers WebView sends, each listener's cut per its spec, while a header listener exists (Speak Subtitles' /api/timedtext listener)", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['webRequest'] })))
+    backgroundUp(h, 'bg1')
+    const chromeTab = h.runtime.api.tabs.chromeIdFor('t1')
+    const timedtext = 'https://www.youtube.com/api/timedtext?v=jNQXAC9IVRw&lang=en&fmt=json3'
+    const headers = [
+      { name: 'Accept', value: '*/*' },
+      { name: 'X-Youtube-Client-Name', value: '1' },
+      { name: 'Referer', value: 'https://www.youtube.com/watch?v=jNQXAC9IVRw' },
+      { name: 'Accept-Language', value: 'en-US,en;q=0.9' }
+    ]
+    const report = (over: Partial<ExtRequestHeadersEvent> = {}): ExtRequestHeadersEvent => ({
+      tabId: 't1',
+      requestId: '412',
+      url: timedtext,
+      type: 'xmlhttprequest',
+      method: 'GET',
+      initiator: 'https://www.youtube.com',
+      mainFrame: false,
+      document: 3,
+      requestHeaders: headers,
+      ...over
+    })
+    const first = (list: Record<string, unknown>[]): Record<string, unknown> =>
+      (list[0].args as Array<Record<string, unknown>>)[0]
+    // No header listener yet: the switch was never sent and a report is dropped.
+    h.runtime.onRequestHeaders(report())
+    expect(h.kt.calledWith('ext.observeRequestHeaders')).toEqual([])
+    expect(events(h, 'bg1', 'webRequest.onBeforeSendHeaders')).toHaveLength(0)
+    // Speak Subtitles' listener: the player's subtitle fetch, with requestHeaders and extraHeaders.
+    await call(h, 'bg1', 'webRequest', 'addListener', [
+      'onBeforeSendHeaders',
+      { urls: ['*://*.youtube.com/api/timedtext*'] },
+      ['requestHeaders', 'extraHeaders'],
+      1
+    ])
+    expect(h.kt.calledWith('ext.observeRequests')).toEqual([{ on: true }])
+    expect(h.kt.calledWith('ext.observeRequestHeaders')).toEqual([{ on: true }])
+    expect(h.kt.calledWith('ext.observeResponses')).toEqual([])
+    // Two more on onSendHeaders – one without extraHeaders, one without requestHeaders – change nothing at the switch.
+    await call(h, 'bg1', 'webRequest', 'addListener', [
+      'onSendHeaders',
+      { urls: ['<all_urls>'] },
+      ['requestHeaders'],
+      2
+    ])
+    await call(h, 'bg1', 'webRequest', 'addListener', [
+      'onSendHeaders',
+      { urls: ['<all_urls>'] },
+      [],
+      3
+    ])
+    expect(h.kt.calledWith('ext.observeRequestHeaders')).toEqual([{ on: true }])
+    h.runtime.onRequestHeaders(report())
+    const before = events(h, 'bg1', 'webRequest.onBeforeSendHeaders')
+    expect(before).toHaveLength(1)
+    expect(before[0].delivery).toEqual({ unfiltered: false, matched: [1] })
+    expect(first(before)).toEqual({
+      requestId: '412',
+      url: timedtext,
+      method: 'GET',
+      frameId: 0,
+      parentFrameId: -1,
+      tabId: chromeTab,
+      type: 'xmlhttprequest',
+      timeStamp: h.clock.now,
+      initiator: 'https://www.youtube.com',
+      requestHeaders: headers
+    })
+    // onSendHeaders follows with the same headers, each listener seeing its spec's cut: without
+    // extraHeaders the referer and accept-language lines are withheld (Chrome's rule since 72),
+    // without requestHeaders none come.
+    const sent = events(h, 'bg1', 'webRequest.onSendHeaders')
+    expect(sent).toHaveLength(2)
+    const seen = new Map(
+      sent.map((e) => [
+        (e.delivery as { matched: number[] }).matched[0],
+        (e.args as Array<Record<string, unknown>>)[0]
+      ])
+    )
+    expect(seen.get(2)).toMatchObject({ requestId: '412', url: timedtext })
+    expect(seen.get(2)?.requestHeaders).toEqual([
+      { name: 'Accept', value: '*/*' },
+      { name: 'X-Youtube-Client-Name', value: '1' }
+    ])
+    expect(seen.get(3)).toMatchObject({ requestId: '412', url: timedtext })
+    expect(seen.get(3)).not.toHaveProperty('requestHeaders')
+    // A request off Speak Subtitles' filter: nothing for its listener, a line for the other two.
+    h.runtime.onRequestHeaders(
+      report({
+        requestId: '413',
+        url: 'https://www.youtube.com/youtubei/v1/player?prettyPrint=false',
+        method: 'POST',
+        requestHeaders: [{ name: 'Cookie', value: 'a=b' }]
+      })
+    )
+    expect(events(h, 'bg1', 'webRequest.onBeforeSendHeaders')).toHaveLength(1)
+    expect(events(h, 'bg1', 'webRequest.onSendHeaders')).toHaveLength(4)
+    // Off with the last header listener; the requests switch goes with the last listener of all.
+    await call(h, 'bg1', 'webRequest', 'removeListener', ['onBeforeSendHeaders', 1])
+    await call(h, 'bg1', 'webRequest', 'removeListener', ['onSendHeaders', 2])
+    expect(h.kt.calledWith('ext.observeRequestHeaders')).toEqual([{ on: true }])
+    await call(h, 'bg1', 'webRequest', 'removeListener', ['onSendHeaders', 3])
+    expect(h.kt.calledWith('ext.observeRequestHeaders')).toEqual([{ on: true }, { on: false }])
+    expect(h.kt.calledWith('ext.observeRequests')).toEqual([{ on: true }, { on: false }])
+    // A report that lands after the switch went off is dropped.
+    h.runtime.onRequestHeaders(report({ requestId: '414' }))
+    expect(events(h, 'bg1', 'webRequest.onSendHeaders')).toHaveLength(4)
+    // A stopped worker that persisted a header listener keeps the switch on: the report wakes it
+    // (Speak Subtitles' worker, idle between subtitle fetches).
+    await call(h, 'bg1', 'webRequest', 'addListener', [
+      'onBeforeSendHeaders',
+      { urls: ['*://*.youtube.com/api/timedtext*'] },
+      ['requestHeaders', 'extraHeaders'],
+      4
+    ])
+    expect(h.kt.calledWith('ext.observeRequestHeaders').at(-1)).toEqual({ on: true })
+    h.tick(30_000)
+    h.runtime.onGone(['bg1'])
+    expect(h.runtime.background.state(ID)).toBe('stopped')
+    expect(h.kt.calledWith('ext.observeRequestHeaders').at(-1)).toEqual({ on: true })
+    h.runtime.onRequestHeaders(report({ requestId: '415' }))
+    expect(h.runtime.background.state(ID)).toBe('starting')
+    hello(h, 'bg2', 'background')
+    await call(h, 'bg2', 'webRequest', 'addListener', [
+      'onBeforeSendHeaders',
+      { urls: ['*://*.youtube.com/api/timedtext*'] },
+      ['requestHeaders', 'extraHeaders'],
+      1
+    ])
+    message(h, 'bg2', { t: 'ready' })
+    const woken = events(h, 'bg2', 'webRequest.onBeforeSendHeaders')
+    expect(woken).toHaveLength(1)
+    expect(first(woken)).toMatchObject({
+      requestId: '415',
+      url: timedtext,
+      requestHeaders: headers
+    })
+    // Gone for good: the switch ends with the extension.
+    await h.runtime.detach(ID)
+    expect(h.kt.calledWith('ext.observeRequestHeaders').at(-1)).toEqual({ on: false })
   })
 
   it("an ext.response reaches the runtime's seam under the ext.request id its onBeforeRequest carried, and is dropped when malformed or after the switch went off (blocking-rule-interface.md §7.5)", async () => {
@@ -3252,6 +3427,63 @@ describe('AndroidExtensionRuntime: the bridge under a message storm', () => {
     expect(h.kt.posted.filter((m) => m === 'ext.send')).toHaveLength(
       h.kt.calledWith('ext.send').length
     )
+  })
+})
+
+describe('AndroidExtensionRuntime: a call reply carries the runtime stamps for the host trace', () => {
+  /** The `ext.send` posts that carried the reply to call `id`, with their arguments as Kotlin sees them. */
+  const sendsOf = (h: ReturnType<typeof harness>, id: unknown): Record<string, unknown>[] =>
+    h.kt
+      .calledWith('ext.send')
+      .filter((args) => (JSON.parse(String(args.message)) as { id?: unknown }).id === id)
+
+  it('stamps when the runtime saw the call and when it posted the reply (ext.send `at`), the frame envelope untouched', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['storage'] })))
+    backgroundUp(h, 'bg1')
+    const before = Date.now()
+    const reply = await call(h, 'bg1', 'storage', 'get', ['local', null])
+    const after = Date.now()
+    const sends = sendsOf(h, reply.id)
+    expect(sends).toHaveLength(1)
+    const at = sends[0].at as [number, number]
+    expect(at).toHaveLength(2)
+    expect(at[0]).toBeGreaterThanOrEqual(before)
+    expect(at[1]).toBeGreaterThanOrEqual(at[0])
+    expect(at[1]).toBeLessThanOrEqual(after)
+    // The stamps ride in `ext.send`'s arguments for the host's trace line; the reply the frame
+    // gets is the same as ever.
+    expect(Object.keys(reply).sort()).toEqual(['ep', 'id', 'ok', 'result', 't'])
+    // A failed call's reply carries them too.
+    const failed = await call(h, 'bg1', 'storage', 'get', ['nowhere', null])
+    expect(failed.ok).toBe(false)
+    expect((sendsOf(h, failed.id)[0].at as number[]).length).toBe(2)
+    // An event to the endpoint is not a reply: no stamps on it.
+    h.runtime.onMessage({
+      ep: 'bg1',
+      tabId: null,
+      top: true,
+      origin: `https://${ID}.ext.zenium.invalid`,
+      message: { t: 'listen', event: 'storage.onChanged', on: true }
+    })
+    await call(h, 'bg1', 'storage', 'set', ['local', { k: 1 }])
+    const eventSends = h.kt
+      .calledWith('ext.send')
+      .filter((args) => (JSON.parse(String(args.message)) as { t?: unknown }).t === 'event')
+    expect(eventSends.length).toBeGreaterThan(0)
+    expect(eventSends.every((args) => args.at === undefined)).toBe(true)
+  })
+
+  it('stamps nothing while debug is off', async () => {
+    const h = harness({ debug: false })
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['storage'] })))
+    backgroundUp(h, 'bg1')
+    const reply = await call(h, 'bg1', 'storage', 'get', ['local', null])
+    expect(reply.ok).toBe(true)
+    const sends = sendsOf(h, reply.id)
+    expect(sends).toHaveLength(1)
+    expect(sends[0].at).toBeUndefined()
+    expect(Object.keys(sends[0]).sort()).toEqual(['ep', 'message'])
   })
 })
 

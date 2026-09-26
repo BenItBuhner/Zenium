@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { createScopeProxy } from '../extensionIsolation'
-import { installSpeechSynthesis, type SpeechLink } from '../extensionSpeechSynthesis'
+import {
+  installSpeechSynthesis,
+  installSpeechSynthesisLazily,
+  type SpeechLink
+} from '../extensionSpeechSynthesis'
 
 interface FakeLink extends SpeechLink {
   calls: Array<{ method: string; args: unknown[] }>
@@ -188,5 +192,80 @@ describe('extension pages: window.speechSynthesis over the host engine', () => {
     const win: Win = {}
     const synthesis = installSpeechSynthesis(win, link())!
     expect(() => synthesis.speak('text')).toThrow(TypeError)
+  })
+})
+
+describe('a web page under a world: "MAIN" script: the API installed on first touch', () => {
+  it('puts accessors for the six names on the window and builds the shim, and its link, on the first read alone', async () => {
+    const win: Win = {}
+    let links = 0
+    const l = link()
+    expect(
+      installSpeechSynthesisLazily(win, () => {
+        links++
+        return l
+      })
+    ).toBe(true)
+    // Present to a feature check, nothing built yet: no engine, no call to the host.
+    expect('speechSynthesis' in win).toBe(true)
+    expect(Object.getOwnPropertyDescriptor(win, 'speechSynthesis')?.get).toBeTypeOf('function')
+    expect(Object.getOwnPropertyDescriptor(win, 'SpeechSynthesisUtterance')?.get).toBeTypeOf(
+      'function'
+    )
+    expect(Object.keys(win)).toEqual(['speechSynthesis'])
+    expect(links).toBe(0)
+    expect(l.calls).toEqual([])
+    // The first read, of any of the names, builds the whole API once.
+    const Utterance = win.SpeechSynthesisUtterance!
+    expect(links).toBe(1)
+    expect(typeof Utterance).toBe('function')
+    const synthesis = win.speechSynthesis!
+    expect(links).toBe(1)
+    expect(Object.getOwnPropertyDescriptor(win, 'SpeechSynthesisUtterance')?.value).toBe(Utterance)
+    expect(l.listens).toEqual(['onVoicesChanged'])
+    await tick()
+    expect(l.calls.map((c) => c.method)).toEqual(['getVoices'])
+    expect((synthesis.getVoices() as unknown[]).length).toBe(1)
+    // Speaking goes through the link as it would from an extension page.
+    synthesis.speak(new Utterance('hello') as never)
+    expect(l.calls.at(-1)).toMatchObject({
+      method: 'speak',
+      args: ['hello', expect.anything(), 'ws1']
+    })
+    expect(win.speechSynthesis).toBe(synthesis)
+  })
+
+  it('leaves a window that has the platform\u2019s own, or a shim already, alone without reading it', () => {
+    const own = {}
+    const win: Win = { speechSynthesis: own as never }
+    expect(installSpeechSynthesisLazily(win, () => link())).toBe(false)
+    expect(win.speechSynthesis).toBe(own)
+    let reads = 0
+    const lazyFirst: Win = {}
+    expect(installSpeechSynthesisLazily(lazyFirst, () => link())).toBe(true)
+    const descriptor = Object.getOwnPropertyDescriptor(lazyFirst, 'speechSynthesis')!
+    Object.defineProperty(lazyFirst, 'speechSynthesis', {
+      ...descriptor,
+      get: () => {
+        reads++
+        return descriptor.get!.call(lazyFirst)
+      }
+    })
+    expect(installSpeechSynthesisLazily(lazyFirst, () => link())).toBe(false)
+    expect(reads).toBe(0)
+  })
+
+  it('is replaceable, as the IDL attribute is: a value the page assigns stays, and the other names still build on their first read', () => {
+    const win: Win = {}
+    const l = link()
+    installSpeechSynthesisLazily(win, () => l)
+    const mine = { speak: () => undefined }
+    win.speechSynthesis = mine as never
+    expect(win.speechSynthesis).toBe(mine)
+    expect(l.calls).toEqual([])
+    // The page's own object stands, so the shim installs nothing over it; the lazy names it did
+    // not replace come off rather than answer with a shim the page declined.
+    expect(win.SpeechSynthesisUtterance).toBeUndefined()
+    expect(win.speechSynthesis).toBe(mine)
   })
 })
