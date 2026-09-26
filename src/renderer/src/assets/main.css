@@ -10259,6 +10259,10 @@
   display: flex;
   width: 100%;
   min-height: var(--v2-row-two-line);
+  /* A row keeps its natural height in the scrolling column: past the list's ceiling the column's
+     flex would otherwise shrink every row to its 52 minimum, and a two-line tagline's row (Google's
+     at 640) would spill its text 10 px into the neighbouring gaps instead of growing to 72. */
+  flex-shrink: 0;
   align-items: center;
   gap: 12px;
   padding: 6px 12px;

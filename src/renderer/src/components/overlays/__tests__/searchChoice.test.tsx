@@ -390,3 +390,39 @@ describe('the form factor', () => {
     expect(read('../PhoneOnboarding.tsx')).not.toMatch(/SearchChoice/)
   })
 })
+
+describe('the stylesheet: the list scrolls, a row keeps its natural height', () => {
+  const css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8').replace(
+    /\/\*[\s\S]*?\*\//g,
+    ''
+  )
+  /** The declarations of the rule `selector {`, as `[property, value]` pairs. */
+  const declarations = (selector: string): Array<[string, string]> => {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const m = new RegExp(`(?<=^|\\n) *${escaped} \\{`).exec(css)
+    expect(m, `rule "${selector}"`).not.toBeNull()
+    const start = m!.index
+    const body = css.slice(css.indexOf('{', start) + 1, css.indexOf('}', start))
+    return [...body.matchAll(/([a-z-]+)\s*:\s*([^;]+);/g)].map((x) => [x[1]!, x[2]!.trim()])
+  }
+  const value = (selector: string, property: string): string | undefined =>
+    declarations(selector).find(([p]) => p === property)?.[1]
+
+  it('the list is a column that scrolls past six two-line rows in its own box', () => {
+    expect(value('.zen-search-choice-list', 'display')).toBe('flex')
+    expect(value('.zen-search-choice-list', 'flex-direction')).toBe('column')
+    expect(value('.zen-search-choice-list', 'overflow-y')).toBe('auto')
+    expect(value('.zen-search-choice-list', 'max-height')).toBe(
+      'calc(6 * var(--v2-row-two-line) + 5 * 4px)'
+    )
+  })
+
+  it('a row never shrinks below its content when the column is over its ceiling – a two-line tagline grows its row (72) instead of spilling into the gaps', () => {
+    // Eight rows are taller than the list's ceiling; without this a column flexbox squeezes every
+    // row to its 52 minimum and Google's two-line row overflows 10 px above and below.
+    expect(value('.zen-search-choice-row', 'min-height')).toBe('var(--v2-row-two-line)')
+    expect(value('.zen-search-choice-row', 'flex-shrink')).toBe('0')
+    expect(value('.zen-search-choice-row', 'height')).toBeUndefined()
+    expect(value('.zen-search-choice-tagline', '-webkit-line-clamp')).toBe('2')
+  })
+})
