@@ -3590,6 +3590,8 @@ export class Browser {
       'resources.snapshot': () => this.governor.sample(),
       'resources.trim': () => this.governor.trim(),
       'resources.relaunch': () => this.governor.relaunch(),
+      'resources.energySaverSession': ({ disabled }) =>
+        this.governor.setEnergySaverDisabledForSession?.(disabled),
 
       'tasks.list': () => this.tasks.list(),
       'tasks.end': ({ pid }) => this.tasks.end(pid),

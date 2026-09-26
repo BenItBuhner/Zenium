@@ -4,6 +4,7 @@ import type { Governor, TabView } from '../../../core/platform'
 import { ElectronTabView, ElectronTabViewHost } from '../views'
 import type { ElectronWindow } from '../window'
 import type {
+  EnergySaverMode,
   GovernorAction,
   GovernorActionKind,
   ResourceSettings,
@@ -18,6 +19,8 @@ import type { ZenWindow } from '../../../core/window'
 import { TabLifecycle } from './lifecycle'
 import { ConcurrencyClamp } from './clamp'
 import { hostMetrics } from './hostMetrics'
+import { BatteryLevel } from './battery'
+import { energySaverActive } from '../../../core/resources/energySaver'
 import { LoadScheduler } from '../../../core/resources/scheduler'
 import {
   MAX_RECENT_ACTIONS,
@@ -83,6 +86,17 @@ export class ResourceGovernor implements Governor {
   private lastPressureToastAt = 0
   private readonly startupProfile = appliedStartupProfile()
   private readonly cleanups: Array<() => void> = []
+  /** The charge where the host can read it (`battery.ts`); Energy Saver's `low-battery` mode reads it. */
+  private readonly battery = new BatteryLevel()
+  /**
+   * Energy Saver's "Turn off now" (the toolbar leaf's bubble; Chrome's
+   * `SetTemporaryBatterySaverDisabledForSession`): the mode stands but is not on until the
+   * charger is plugged in (`on-ac` clears it) or the mode itself is changed (Chrome's
+   * `OnBatterySaverModePrefChanged` clears it too).
+   */
+  private energySaverDisabledForSession = false
+  private lastEnergySaverMode: EnergySaverMode | null = null
+  private batteryPercent: number | null = null
 
   /** Windows whose minimise / restore events already feed the governor. */
   private readonly watched = new WeakSet<ZenWindow>()
@@ -161,8 +175,16 @@ export class ResourceGovernor implements Governor {
     listen('lock-screen', () => void this.sleepAll('screen locked'))
     listen('resume', () => this.wakeVisible())
     listen('unlock-screen', () => this.wakeVisible())
-    listen('on-battery', () => this.sampleSoon())
-    listen('on-ac', () => this.sampleSoon())
+    listen('on-battery', () => {
+      void this.battery.refresh()
+      this.sampleSoon()
+    })
+    listen('on-ac', () => {
+      this.energySaverDisabledForSession = false
+      void this.battery.refresh()
+      this.sampleSoon()
+    })
+    void this.battery.refresh()
     // Every page shown or hidden by a window's layout: the clamp goes on or comes off.
     const views = this.viewHost()
     if (views) this.cleanups.push(views.onVisibilityChanged((view) => this.clamp.touch(view)))
@@ -298,11 +320,29 @@ export class ResourceGovernor implements Governor {
   }
 
   onSettingsChanged(): void {
-    const { tabs } = this.browser
+    const { tabs, state } = this.browser
     for (const [, view] of tabs.allViews()) {
       if (view instanceof ElectronTabView) this.clamp.touch(view)
     }
+    // A new Energy Saver mode ends a "Turn off now" (Chrome's `OnBatterySaverModePrefChanged`).
+    if (
+      this.lastEnergySaverMode !== null &&
+      state.settings.energySaver !== this.lastEnergySaverMode
+    )
+      this.energySaverDisabledForSession = false
+    this.lastEnergySaverMode = state.settings.energySaver
     this.scheduler.pump()
+    this.sampleSoon()
+  }
+
+  /**
+   * Energy Saver's "Turn off now" (the toolbar leaf's bubble): off for this battery session –
+   * until the charger is plugged in or the mode is changed – the setting itself untouched, as
+   * Chrome's `SetTemporaryBatterySaverDisabledForSession`. Re-samples so the leaf goes at once.
+   */
+  setEnergySaverDisabledForSession(disabled: boolean): void {
+    if (this.energySaverDisabledForSession === disabled) return
+    this.energySaverDisabledForSession = disabled
     this.sampleSoon()
   }
 
@@ -441,6 +481,8 @@ export class ResourceGovernor implements Governor {
       if (visible.has(tab.id)) this.lastVisibleAt.set(tab.id, now)
       samples.push(this.sampleTab(tab, this.wc(tab.id), visible, activeId))
     }
+    const onBattery = safe(() => powerMonitor.isOnBatteryPower(), false)
+    this.batteryPercent = safe(() => this.battery.read(now), null)
     return {
       now,
       settings: this.settings,
@@ -451,7 +493,13 @@ export class ResourceGovernor implements Governor {
       system: {
         totalMemoryMb: totalmem() / 1_048_576,
         cpuCount: cpuCount(),
-        onBattery: safe(() => powerMonitor.isOnBatteryPower(), false),
+        onBattery,
+        energySaver: energySaverActive({
+          mode: state.settings.energySaver,
+          onBattery,
+          percent: this.batteryPercent,
+          disabledForSession: this.energySaverDisabledForSession
+        }),
         idleSeconds: safe(() => powerMonitor.getSystemIdleTime(), 0),
         windowMinimized: this.windowMinimized()
       },
@@ -704,6 +752,8 @@ export class ResourceGovernor implements Governor {
         totalMemoryMb: Math.round(input.system.totalMemoryMb),
         cpuCount: input.system.cpuCount,
         onBattery: input.system.onBattery,
+        batteryPercent: this.batteryPercent,
+        energySaver: input.system.energySaver,
         idle: result.idle
       },
       tabs: result.attribution.usage

@@ -1982,6 +1982,12 @@ export interface Governor {
   trim(): Promise<void>
   relaunch(): void
   /**
+   * Energy Saver's "Turn off now" (W8-2, the toolbar leaf's bubble; Chrome's
+   * `SetTemporaryBatterySaverDisabledForSession`): off until the charger is plugged in or the
+   * mode is changed, the setting untouched. Hosts without a battery to read leave this out.
+   */
+  setEnergySaverDisabledForSession?(disabled: boolean): void
+  /**
    * Memory (MB) attributed to a tab's page at the last sample, for the "memory saved" line of a
    * tab put to sleep; null when the governor has no figure for it. Hosts that do not measure
    * leave this out.

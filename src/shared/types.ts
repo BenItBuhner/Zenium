@@ -5346,6 +5346,12 @@ export interface Commands {
   'resources.trim': { args: void; result: void }
   /** Restart the browser so changed startup switches take effect. */
   'resources.relaunch': { args: void; result: void }
+  /**
+   * Energy Saver's "Turn off now" (W8-2, the toolbar leaf's bubble; Chrome's
+   * `SetTemporaryBatterySaverDisabledForSession`): off until the charger is plugged in or the
+   * mode is changed, `Settings.energySaver` untouched. `disabled: false` puts it back.
+   */
+  'resources.energySaverSession': { args: { disabled: boolean }; result: void }
 
   // ---- The task manager (`zen://tasks`, `core/tasks.ts`) --------------------------------------
   /**
