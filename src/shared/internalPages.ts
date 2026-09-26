@@ -527,6 +527,10 @@ export const INTERNAL_PAGES: Readonly<Record<InternalPageId, InternalPageDefinit
     glyph: 'book-open',
     pill: { showStar: false },
     splittable: false,
+    // The phone's panel (HB-20, `PhoneReadingListPanel`): a `page.open` on a layout the page is
+    // no tab in opens it, and a tablet's tab narrowed into the phone class is handed to it
+    // (`reconcileLayout`, W6-S1's seam), as History's and the manager's are.
+    overlay: 'reading-list',
     layouts: TAB_LAYOUTS,
     sections: []
   },
