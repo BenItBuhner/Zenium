@@ -124,6 +124,12 @@ const CLIPBOARD_CHIP_SDK = 33
 /** Android 8 (Oreo): `Activity.enterPictureInPictureMode` with parameters. */
 const PICTURE_IN_PICTURE_SDK = 26
 
+/**
+ * Android 14 (Upside Down Cake): the first release whose share sheet carries the sharing app's
+ * own actions (`EXTRA_CHOOSER_CUSTOM_ACTIONS`); below it the browser's panel stands in (SH-03).
+ */
+const SHARE_PANEL_SDK = 34
+
 export interface AndroidCapabilityInputs {
   /** `Build.VERSION.SDK_INT`. */
   sdkInt: number
@@ -177,6 +183,8 @@ export function androidCapabilities({
     agentSkills: false,
     updates: true,
     share: true,
+    // Below 14 the system sheet has no row for the sharing app's actions: Zenium's panel stands in (`Share.kt`).
+    sharePanel: sdkInt < SHARE_PANEL_SDK,
     clipboardChip: sdkInt >= CLIPBOARD_CHIP_SDK,
     appLinkSettings: true,
     pullToRefresh: true,

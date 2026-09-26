@@ -369,8 +369,8 @@
       "shard": "api33",
       "mirrors": "android-share-demo.yml:record-api33",
       "dir": "share-demo",
-      "estimate": 5,
-      "note": "The same driver below Android 14, where it runs the share panel's scenes (SH-03) instead of the system sheet's: the panel from the app menu, its chips, the apps row with the instrumentation APK's fixture share target, the ranking, More, back, dark, a private tab's share."
+      "estimate": 6.5,
+      "note": "The same driver below Android 14, where it runs the share panel's scenes (SH-03) instead of the system sheet's: the panel from the app menu, its chips, the apps row with the instrumentation APK's fixture share target, the ranking, More, back, dark, a private tab's share; since #501 the menu-to-panel seam read on the device and a page's navigator.share acts, each panel open waiting for the sheet's rest (6.0 min of instrumentation on #501's run 3; 4.4 before the rest waits)."
     },
     {
       "id": "pwa",

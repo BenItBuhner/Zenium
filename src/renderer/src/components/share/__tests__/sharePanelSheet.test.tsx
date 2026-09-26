@@ -87,6 +87,7 @@ function request(over: Partial<SharePanelRequest> = {}): SharePanelRequest {
     image: null,
     tabId: 'tab-1',
     private: false,
+    source: 'menu',
     targets: [...TARGETS],
     ...over
   }
@@ -325,5 +326,42 @@ describe("the share panel's sheet (SH-03)", () => {
       'share.panelAction',
       { id: 'share-panel-4', kind: 'more' }
     ])
+  })
+
+  it("reports a chip the chrome runs itself as `chip` – a page's awaited share hears `shared` for it, as Chrome's hub answers a first-party tap – and then runs it", () => {
+    show(request({ id: 'share-panel-6', source: 'page', targets: [] }))
+    expect(captions('chips')).toEqual(['Copy link', 'QR code'])
+    const copy = cells('chips')[0]
+    expect(copy.dataset.kind).toBe('copy')
+    act(() => {
+      copy.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    })
+    rest()
+    const names = run.mock.calls.map(([name]) => name)
+    expect(names.indexOf('share.panelAction')).toBeLessThan(names.indexOf('clipboard.writeText'))
+    expect(run.mock.calls.filter(([name]) => name === 'share.panelAction')).toEqual([
+      ['share.panelAction', { id: 'share-panel-6', kind: 'chip', chip: 'copy' }]
+    ])
+    expect(run.mock.calls.filter(([name]) => name === 'clipboard.writeText')).toEqual([
+      ['clipboard.writeText', { text: 'https://example.com/', confirmation: 'Link copied' }]
+    ])
+    expect(uiStore.get().sharePanel).toBeNull()
+  })
+
+  it("previews a page's share of text and a link as the text over the link, and its chips as Copy and QR code", () => {
+    show(
+      request({
+        id: 'share-panel-7',
+        source: 'page',
+        kind: 'text',
+        title: 'A title',
+        text: 'a message',
+        url: 'https://example.com/'
+      })
+    )
+    expect(preview().dataset.kind).toBe('text')
+    expect(title()).toBe('a message')
+    expect(detail()).toBe('https://example.com/')
+    expect(captions('chips')).toEqual(['Copy', 'QR code'])
   })
 })
