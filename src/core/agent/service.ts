@@ -9,6 +9,7 @@ import type {
   Tab
 } from '../../shared/types'
 import { emptyAgentServerStatus, emptyAgentSkillStatus } from '../../shared/defaults'
+import { isBlankTabUrl } from '../../shared/url'
 import type { Browser } from '../browser'
 import {
   createFolder,
@@ -1967,7 +1968,8 @@ export class AgentService implements SessionStore, McpHandlers {
     if (!view) {
       view = tabs.ensureLoaded(tabId, win)
       if (!view) throw new RpcError(-32002, `Tab ${tabId} could not be loaded`)
-      await this.waitForLoad(tabId, 15_000, { expectNavigation: true })
+      // A blank tab has nothing to navigate to: waiting for a navigation to start would only cost the grace.
+      await this.waitForLoad(tabId, 15_000, { expectNavigation: hasPageToLoad(tab.url) })
     }
     if (tab.frozen) await this.browser.governor.thaw(tabId, true)
     view.setBackgroundThrottling?.(false)
@@ -1977,9 +1979,11 @@ export class AgentService implements SessionStore, McpHandlers {
   /**
    * Wait until the tab's main frame finished loading (or the timeout passed). With
    * `expectNavigation` a navigation was just requested: hosts report its start asynchronously –
-   * Android's WebView on a slow device well after the 120 ms below – so an idle tab whose URL has
-   * not changed yet is given a moment to begin before it counts as loaded, or the caller would
-   * snapshot the previous page.
+   * Android's WebView on a slow device well after the 120 ms below – so an idle tab that shows no
+   * sign of it yet is given a moment to begin before it counts as loaded, or the caller would
+   * snapshot the previous page. The grace ends at the first sign: `loading` seen on, the tab's
+   * URL moved, or the view committed another document (a tab created with its URL never changes
+   * it, so the view's own URL is what tells a fresh view's load from an idle tab).
    */
   async waitForLoad(
     tabId: string,
@@ -1988,15 +1992,17 @@ export class AgentService implements SessionStore, McpHandlers {
   ): Promise<boolean> {
     const started = Date.now()
     const before = this.browser.tabs.tab(tabId)?.url
-    const graceUntil = opts.expectNavigation ? started + NAVIGATION_START_GRACE_MS : started
+    const viewBefore = this.browser.tabs.view(tabId)?.getURL() ?? ''
+    let graceUntil = opts.expectNavigation ? started + NAVIGATION_START_GRACE_MS : started
     // Navigation starts asynchronously: give `loading` a moment to flip on before we look at it.
     await sleep(120)
     for (;;) {
       const tab = this.browser.tabs.tab(tabId)
       const view = this.browser.tabs.view(tabId)
       if (!tab || !view || view.isDestroyed()) return false
+      if (tab.loading || tab.url !== before || view.getURL() !== viewBefore) graceUntil = started
       if (!tab.loading) {
-        if (Date.now() < graceUntil && tab.url === before) {
+        if (Date.now() < graceUntil) {
           await sleep(50)
           continue
         }
@@ -2121,6 +2127,11 @@ function splitQuery(uri: string): [string, URLSearchParams] {
   const q = uri.indexOf('?')
   if (q === -1) return [uri, new URLSearchParams()]
   return [uri.slice(0, q), new URLSearchParams(uri.slice(q + 1))]
+}
+
+/** A page a fresh view has to load, as opposed to a blank tab (`zen://blank`, `about:blank`, no URL). */
+function hasPageToLoad(url: string | undefined): boolean {
+  return Boolean(url) && !isBlankTabUrl(url) && url !== 'about:blank'
 }
 
 function isTruthy(v: string | null): boolean {
