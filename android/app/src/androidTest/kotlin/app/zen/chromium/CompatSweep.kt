@@ -8730,30 +8730,47 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * Fonts probe A – the sizes, `clearFont` and the reverts (the round's second proof row, a
      * fixture of the sweep's own with the `fontSettings` permission and a probe page). From its
      * page: `setDefaultFontSize` 20, `setMinimumFontSize` 12, `setDefaultFixedFontSize` 18 and
-     * the standard face to `monospace`, each read back with its level of control. The fixture
-     * read after (`r1`): the body at 20 px in `monospace`, the `<code>` at 18 px (the fixed
-     * default size, through the monospace quirk), the six-pixel span's box grown to the minimum
-     * (the computed value keeps the specified size; the box shows the rendered one), a fresh
-     * tab the same (`r2`). Then the four clears, each read back as `controllable_by_this_extension`
-     * with the browser's own value, and the open tab back to the baseline (`r3`). The four
-     * events counted on the page (armed at its load). `P` on all of it; `PARTIAL` with the
-     * sizes and face applied and a later reading off; `F` when they never reached the fixture.
+     * the standard face to the first of [FONTS_PROBE_A_PICKS] `getFontList` carries (Cutive
+     * Mono's `serif-monospace` on the emulator images), each read back with its level of
+     * control. The fixture read after (`r1`): the body at 20 px in the picked face, the
+     * `<code>` at 18 px (the fixed default size, through the monospace quirk), the six-pixel
+     * span's box grown to the minimum (the computed value keeps the specified size; the box
+     * shows the rendered one), a fresh tab the same (`r2`). Then THE `monospace` CASE, read
+     * apart (R21-10): the standard face set to the generic name and the body's size read
+     * against the engine's own mapping – from Chromium 124 (`FontDescription::IsMonospace`
+     * reading the family's `FamilyIsGeneric()` in place of the description's generic slot,
+     * which the initial font never sets to monospace) a standard face NAMED `monospace` is
+     * monospace to `FontBuilder::CheckForGenericFamilyChange`, so keyword-sized text takes
+     * `defaultFixedFontSize`: 18 px where 20 was set on the 156 snapshot, 20 on WebView 113,
+     * and desktop Chrome from 124 the same – the bridge hands `WebSettings` the values asked
+     * (`ExtensionFontLayer.over` → `PageFonts.applyTo`), the mapping is Blink's. Then the four
+     * clears, each read back as `controllable_by_this_extension` with the browser's own value,
+     * and the open tab back to the baseline (`r3`). The four events counted on the page (armed
+     * at its load). `P` on all of it; `PARTIAL` with the sizes and face applied and a later
+     * reading off (the `monospace` case off the engine's mapping among them); `F` when they
+     * never reached the fixture. When no non-generic face is listed the pick falls back to
+     * `monospace` and the size proof reads the engine's mapping itself.
      */
     private fun fontsProbeSizes(row: Row, entry: JSONObject): Grade {
         val factor = speedFactor(entry)
         val slug = entry.optString("slug")
         val extra = JSONObject()
+        val major = webViewMajor()
+        val monospaceKeywordSize = if ((major ?: 0) >= MONOSPACE_KEYWORD_SIZE_FROM) "18px" else "20px"
+        extra.put("webViewMajor", major ?: JSONObject.NULL).put("monospaceKeywordSize", monospaceKeywordSize)
         val (fixture1, fixtureView) = fixture("fonts-lang.html", factor, 1_500)
         val r0 = fontReadings(fixtureView)
         extra.put("r0", r0)
         val page = createTab("chrome-extension://${row.id}/probe.html")
         val pageView = waitForView(page)
-        val ready = poll(scaled(15_000, factor), 400) { if (tabEval(pageView, "String(!!(window.__zenEv&&typeof chrome!=='undefined'&&chrome.fontSettings))") == "true") true else null }
+        val ready = poll(scaled(15_000, factor), 400) { if (tabEval(pageView, FONTS_PAGE_READY) == "true") true else null }
         extra.put("pageReady", ready == true)
         val set = probe(pageView, FONTS_PROBE_A_SET, "__zenA", scaled(15_000, factor))
         extra.put("set", set)
+        val picked = set.optString("picked").ifEmpty { FONTS_PROBE_A_PICKS.last() }
+        val bodySize = if (picked == "monospace") monospaceKeywordSize else "20px"
         showTab(fixture1)
-        val r1 = pollFonts(fixtureView, scaled(15_000, factor)) { familyOf(it, "body") == "monospace" && sizeOf(it, "body") == "20px" && sizeOf(it, "fixed") == "18px" }
+        val r1 = pollFonts(fixtureView, scaled(15_000, factor)) { familyOf(it, "body") == picked && sizeOf(it, "body") == bodySize && sizeOf(it, "fixed") == "18px" }
         extra.put("r1", r1)
         snap("$slug-sizes")
         val (fixture2, view2) = fixture("fonts-lang.html", factor, 1_500)
@@ -8761,6 +8778,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         extra.put("r2", r2)
         closeTab(fixture2)
         showTab(page)
+        val rMono = if (picked == "monospace") r1 else {
+            val monoSet = probe(pageView, fontsProbeSet("monospace"), "__zenSet", scaled(15_000, factor))
+            extra.put("monospaceSet", monoSet)
+            showTab(fixture1)
+            pollFonts(fixtureView, scaled(15_000, factor)) { familyOf(it, "body") == "monospace" && sizeOf(it, "body") == monospaceKeywordSize }.also {
+                snap("$slug-monospace")
+                showTab(page)
+            }
+        }
+        extra.put("monospaceCase", JSONObject().put("body", familyOf(rMono, "body")).put("size", sizeOf(rMono, "body")).put("engine", monospaceKeywordSize))
         val clear = probe(pageView, FONTS_PROBE_A_CLEAR, "__zenAClear", scaled(15_000, factor))
         extra.put("clear", clear)
         showTab(fixture1)
@@ -8772,26 +8799,30 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         closeTab(page)
         closeTab(fixture1)
         showTab(fixtureTab)
-        val sizesOn = familyOf(r1, "body") == "monospace" && sizeOf(r1, "body") == "20px" && sizeOf(r1, "fixed") == "18px"
+        val sizesOn = familyOf(r1, "body") == picked && sizeOf(r1, "body") == bodySize && sizeOf(r1, "fixed") == "18px"
         val minimumOn = widthOf(r1, "tiny") > widthOf(r0, "tiny") * 1.5
         val sizeRead = stepOf(set, "getDefaultFontSize")?.optJSONObject("r")
         val levelsOn = sizeRead != null && sizeRead.optInt("pixelSize") == 20 && sizeRead.optString("levelOfControl") == "controlled_by_this_extension" &&
             stepOf(set, "getMinimumFontSize")?.optJSONObject("r")?.optInt("pixelSize") == 12 &&
             stepOf(set, "getDefaultFixedFontSize")?.optJSONObject("r")?.optInt("pixelSize") == 18 &&
-            stepOf(set, "getFont")?.optJSONObject("r")?.optString("fontId") == "monospace"
+            stepOf(set, "getFont")?.optJSONObject("r")?.optString("fontId") == picked
         val newTabSame = sameFonts(r1, r2) && near(widthOf(r1, "tiny"), widthOf(r2, "tiny"))
+        val monospaceAsEngine = familyOf(rMono, "body") == "monospace" && sizeOf(rMono, "body") == monospaceKeywordSize
         val clearedLevel = stepOf(clear, "getDefaultFontSize")?.optJSONObject("r")?.optString("levelOfControl")
         val reverted = sameFonts(r3, r0) && near(widthOf(r3, "tiny"), widthOf(r0, "tiny")) && clearedLevel == "controllable_by_this_extension"
         val eventsOk = events.optInt("font") >= 1 && events.optInt("size") >= 1 && events.optInt("fixed") >= 1 && events.optInt("min") >= 1
-        val note = "body ${familyOf(r0, "body")} ${sizeOf(r0, "body")} → ${familyOf(r1, "body")} ${sizeOf(r1, "body")}; code ${sizeOf(r0, "fixed")} → ${sizeOf(r1, "fixed")}; " +
+        val note = "body ${familyOf(r0, "body")} ${sizeOf(r0, "body")} → ${familyOf(r1, "body")} ${sizeOf(r1, "body")} (the face picked `$picked` of ${set.optInt("fonts")} listed); code ${sizeOf(r0, "fixed")} → ${sizeOf(r1, "fixed")}; " +
             "the six-pixel span ${widthOf(r0, "tiny")} → ${widthOf(r1, "tiny")} px wide (${if (minimumOn) "the minimum applied" else "the minimum NOT applied"}); " +
             "read back: default size ${sizeRead?.toString() ?: "no answer"}, minimum ${stepOf(set, "getMinimumFontSize")?.optJSONObject("r")?.optInt("pixelSize")}, fixed ${stepOf(set, "getDefaultFixedFontSize")?.optJSONObject("r")?.optInt("pixelSize")}, standard ${stepOf(set, "getFont")?.optJSONObject("r")?.optString("fontId")}; " +
-            "a new tab ${if (newTabSame) "reads the same" else "reads differently"}; after the clears ${if (reverted) "back to the baseline, the level $clearedLevel" else "NOT back: body ${familyOf(r3, "body")} ${sizeOf(r3, "body")}, code ${sizeOf(r3, "fixed")}, the six-pixel span ${widthOf(r3, "tiny")} px, the level $clearedLevel"}; " +
+            "a new tab ${if (newTabSame) "reads the same" else "reads differently"}; " +
+            "the `monospace` case: body ${familyOf(rMono, "body")} ${sizeOf(rMono, "body")} where 20 was set – ${if (monospaceAsEngine) "the engine's own mapping" else "NOT the engine's mapping"} (WebView $major: keyword sizes of a standard face named `monospace` ${if ((major ?: 0) >= MONOSPACE_KEYWORD_SIZE_FROM) "off the fixed size 18 since Chromium $MONOSPACE_KEYWORD_SIZE_FROM" else "off the default size 20 before Chromium $MONOSPACE_KEYWORD_SIZE_FROM"}); " +
+            "after the clears ${if (reverted) "back to the baseline, the level $clearedLevel" else "NOT back: body ${familyOf(r3, "body")} ${sizeOf(r3, "body")}, code ${sizeOf(r3, "fixed")}, the six-pixel span ${widthOf(r3, "tiny")} px, the level $clearedLevel"}; " +
             "events font ${events.optInt("font")} size ${events.optInt("size")} fixed ${events.optInt("fixed")} min ${events.optInt("min")}"
         val off = listOfNotNull(
             if (!minimumOn) "the minimum size" else null,
             if (!levelsOn) "the reads' levels" else null,
             if (!newTabSame) "the new tab" else null,
+            if (!monospaceAsEngine) "the monospace case" else null,
             if (!reverted) "the revert" else null,
             if (!eventsOk) "the events" else null
         )
@@ -8800,6 +8831,29 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             off.isEmpty() -> Grade("P", "fonts probe A: $note", extra)
             else -> Grade("PARTIAL", "fonts probe A: the sizes and the face applied; off: ${off.joinToString(", ")}: $note", extra)
         }
+    }
+
+    /** The WebView's Chromium major (its package's `versionName` up to the first dot); null when unreadable. */
+    private fun webViewMajor(): Int? = WebViewCompat.getCurrentWebViewPackage(app)?.versionName?.substringBefore('.')?.toIntOrNull()
+
+    /**
+     * A fonts probe page ready again after its extension was disabled and enabled (the seam
+     * row): the disable took the document's endpoint away (the runtime's `detach` unregisters
+     * the extension's endpoints, Kotlin's `ext.detach` its contexts), so a call from the open
+     * document never answers – round 20's seam cleanup read "no answer within 15 s". The
+     * document is reloaded (the new one hellos again, the old marked so the poll does not read
+     * it) and, when the tab is gone or stays silent, the page is opened in a new tab. The tab
+     * and its view, ready or not (the caller's probe times out then).
+     */
+    private fun reopenedFontsProbePage(tab: String, view: WebView, extensionId: String, factor: Double): Pair<String, WebView> {
+        runCatching { tabEval(view, "(function(){window.__zenReloading=true;location.reload();return 'reloading'})()") }
+        val reloaded = poll(scaled(8_000, factor), 400) { if (tabEval(view, "String(!window.__zenReloading&&$FONTS_PAGE_READY_EXPR)") == "true") true else null }
+        if (reloaded == true) return tab to view
+        closeTab(tab)
+        val fresh = createTab("chrome-extension://$extensionId/probe.html")
+        val freshView = waitForView(fresh)
+        poll(scaled(15_000, factor), 400) { if (tabEval(freshView, FONTS_PAGE_READY) == "true") true else null }
+        return fresh to freshView
     }
 
     /**
@@ -8812,10 +8866,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * "Controlled by <name>" row after the run; that row's press opens Settings › Extensions
      * with the probe's details – its Enabled switch – which, pressed, disables the probe: the
      * layer drops, the fixture reads its baseline fonts again and the Fonts page its user's
-     * rows with no indicator. The probe is enabled again and cleared at the end, as every row's
-     * extension is disabled by the row's cleanup. `P` on all of it; `PARTIAL` with the held rows
-     * shown and a later step off (named); `F` when the page never showed the rows held (the seam
-     * not reached); `n/m` when the Settings page did not open on this lane.
+     * rows with no indicator. The probe is enabled again and cleared at the end from its page
+     * reloaded ([reopenedFontsProbePage]: the disable took the open document's endpoint away),
+     * as every row's extension is disabled by the row's cleanup. The face stays `monospace`, the
+     * name the Fonts page labels; its size proof is probe A's ([fontsProbeSizes], R21-10). `P`
+     * on all of it; `PARTIAL` with the held rows shown and a later step off (named); `F` when
+     * the page never showed the rows held (the seam not reached); `n/m` when the Settings page
+     * did not open on this lane.
      */
     private fun fontsPageSeam(row: Row, entry: JSONObject): Grade {
         val factor = speedFactor(entry)
@@ -8836,12 +8893,14 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // 2. The probe's layer from its page.
         val page = createTab("chrome-extension://${row.id}/probe.html")
         val pageView = waitForView(page)
-        val ready = poll(scaled(15_000, factor), 400) { if (tabEval(pageView, "String(!!(window.__zenEv&&typeof chrome!=='undefined'&&chrome.fontSettings))") == "true") true else null }
+        val ready = poll(scaled(15_000, factor), 400) { if (tabEval(pageView, FONTS_PAGE_READY) == "true") true else null }
         extra.put("pageReady", ready == true)
-        val set = probe(pageView, FONTS_PROBE_A_SET, "__zenA", scaled(15_000, factor))
+        val set = probe(pageView, FONTS_PAGE_PROBE_SET, "__zenA", scaled(15_000, factor))
         extra.put("set", set)
         showTab(fixture1)
-        val r1 = pollFonts(fixtureView, scaled(15_000, factor)) { familyOf(it, "body") == "monospace" && sizeOf(it, "body") == "20px" }
+        // The face alone: the body's size under a standard face named `monospace` is the engine's
+        // mapping (18 px from Chromium 124, 20 before), probe A's reading, not this row's.
+        val r1 = pollFonts(fixtureView, scaled(15_000, factor)) { familyOf(it, "body") == "monospace" }
         extra.put("r1", r1)
         // 3. The Fonts page held.
         val opened = openSettingsSection(LOOK_SECTION, scaled(12_000, factor))
@@ -8889,13 +8948,18 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             released.optString("size") == user.optString("size") && released.optString("standard") == user.optString("standard") &&
             released.optString("sizeThumb") != "true"
         leaveSettingsTab()
-        // The probe enabled again and cleared; the row's cleanup disables it as every row's.
+        // The probe enabled again and cleared from its page reloaded (the disable took the open
+        // document's endpoint away); the row's cleanup disables it as every row's.
         coreCall("extension.setEnabled", JSONObject().put("id", row.id).put("enabled", true).toString())
         SystemClock.sleep(scaled(1_500, factor))
         showTab(page)
-        val clear = runCatching { probe(pageView, FONTS_PROBE_A_CLEAR, "__zenAClear", scaled(15_000, factor)) }.getOrElse { JSONObject().put("error", it.toString()) }
+        val (clearTab, clearView) = reopenedFontsProbePage(page, pageView, row.id, factor)
+        extra.put("clearPage", if (clearTab == page) "reloaded" else "reopened")
+        val clear = runCatching { probe(clearView, FONTS_PROBE_A_CLEAR, "__zenAClear", scaled(15_000, factor)) }.getOrElse { JSONObject().put("error", it.toString()) }
         extra.put("clear", clear)
-        closeTab(page)
+        val clearedLevel = stepOf(clear, "getDefaultFontSize")?.optJSONObject("r")?.optString("levelOfControl")
+        val clearOk = clearedLevel == "controllable_by_this_extension"
+        closeTab(clearTab)
         closeTab(fixture1)
         showTab(fixtureTab)
         val note = "the page at the user's values: size '${user.optString("size")}', minimum '${user.optString("minimum")}', standard '${user.optString("standard")}', indicators ${user.optJSONArray("held")?.length() ?: 0}; " +
@@ -8903,12 +8967,14 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "indicators ${indicators.length()} [${indicatorTexts.joinToString(" | ") { it.take(90) }}]; " +
             "the indicator's press ${if (manageOk) "opened the probe's details (section '${extra.optJSONObject("manage")?.optString("section")}', switch ${extra.optJSONObject("manage")?.optString("switchChecked")})" else "did not open the details (section '${extra.optJSONObject("manage")?.optString("section")}')"}; " +
             "the switch ${if (switchOk) "disabled the probe" else "did not disable the probe"}; the fixture ${if (fixtureBack) "back to its baseline (body ${familyOf(r2, "body")} ${sizeOf(r2, "body")})" else "NOT back (body ${familyOf(r2, "body")} ${sizeOf(r2, "body")})"}; " +
-            "the page released: size '${released.optString("size")}', standard '${released.optString("standard")}', indicators ${released.optJSONArray("held")?.length() ?: 0}"
+            "the page released: size '${released.optString("size")}', standard '${released.optString("standard")}', indicators ${released.optJSONArray("held")?.length() ?: 0}; " +
+            "the clear after the re-enable (the page ${extra.optString("clearPage")}): ${if (clearOk) "answered, the level $clearedLevel" else "off – ${clear.optString("error").ifEmpty { "the level $clearedLevel" }}"}"
         val off = listOfNotNull(
             if (!manageOk) "the indicator's press" else null,
             if (!switchOk) "the switch" else null,
             if (!fixtureBack) "the fixture's revert" else null,
-            if (!pageBack) "the page's release" else null
+            if (!pageBack) "the page's release" else null,
+            if (!clearOk) "the clear after the re-enable" else null
         )
         return when {
             !heldOk -> Grade("F", "fonts page seam: the phone's Fonts page never showed the rows held at the probe's values: $note", extra)
@@ -13464,20 +13530,48 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "Promise.resolve()$chain.then(function(){p.events=window.__zenEv||null;p.done=true},function(e){p.error=String(e&&e.message||e);p.done=true});return 'asked'})()"
         }
 
-        /** Fonts probe A's sets: the three sizes and the standard face to `monospace`, each read back. */
-        private val FONTS_PROBE_A_SET = fontsProbeSteps(
+        /** A fonts probe page's readiness: its event counters armed at load and `chrome.fontSettings` present. */
+        private const val FONTS_PAGE_READY_EXPR = "!!(window.__zenEv&&typeof chrome!=='undefined'&&chrome.fontSettings)"
+        private const val FONTS_PAGE_READY = "String($FONTS_PAGE_READY_EXPR)"
+
+        /**
+         * Chromium's first major whose `FontDescription::IsMonospace` reads the family's own
+         * `FamilyIsGeneric()` in place of the description's generic slot (the 124.0.6367.0 tag
+         * has it, 123.0.6312.0 the older predicate): from here a standard face NAMED
+         * `monospace` (generic by `FontFamily::InferredTypeFor`) is monospace to
+         * `FontBuilder::CheckForGenericFamilyChange`, and keyword-sized text under it – a
+         * page's unstyled body – takes `defaultFixedFontSize`. WebView 113 sizes it off
+         * `defaultFontSize`; the 156 snapshot and desktop Chrome off the fixed size (R21-10).
+         */
+        private const val MONOSPACE_KEYWORD_SIZE_FROM = 124
+
+        /**
+         * Fonts probe A's sets: the standard face picked off `getFontList` (the first of `picks`
+         * the list carries, else the last of `picks`), the three sizes and the face, each read
+         * back. The size proof wants a face whose name is no CSS generic keyword (see
+         * [MONOSPACE_KEYWORD_SIZE_FROM]); the seam row keeps `monospace`.
+         */
+        private fun fontsProbeASet(picks: List<String>): String = fontsProbeSteps(
             "__zenA",
             listOf(
+                "getFontList" to "f.getFontList(function(list){var ids=(list||[]).map(function(x){return x.fontId});var picks=${JSONArray(picks)};p.picked=picks.filter(function(x){return ids.indexOf(x)>=0})[0]||picks[picks.length-1];p.fonts=ids.length;cb(ids.slice(0,12))})",
                 "setDefaultFontSize" to "f.setDefaultFontSize({pixelSize:20},cb)",
                 "setMinimumFontSize" to "f.setMinimumFontSize({pixelSize:12},cb)",
                 "setDefaultFixedFontSize" to "f.setDefaultFixedFontSize({pixelSize:18},cb)",
-                "setFont" to "f.setFont({genericFamily:'standard',fontId:'monospace'},cb)",
+                "setFont" to "f.setFont({genericFamily:'standard',fontId:p.picked},cb)",
                 "getDefaultFontSize" to "f.getDefaultFontSize({},cb)",
                 "getMinimumFontSize" to "f.getMinimumFontSize({},cb)",
                 "getDefaultFixedFontSize" to "f.getDefaultFixedFontSize({},cb)",
                 "getFont" to "f.getFont({genericFamily:'standard'},cb)"
             )
         )
+
+        /** Probe A's faces for the size proof: `fonts.xml` names that are no generic keyword first (Cutive Mono, Coming Soon), `monospace` the fallback that reads the engine's mapping itself. */
+        private val FONTS_PROBE_A_PICKS = listOf("serif-monospace", "casual", "monospace")
+        private val FONTS_PROBE_A_SET = fontsProbeASet(FONTS_PROBE_A_PICKS)
+
+        /** The Fonts page seam's set ([fontsPageSeam]): the face `monospace`, the name W6-C6's page labels; its size proof is probe A's. */
+        private val FONTS_PAGE_PROBE_SET = fontsProbeASet(listOf("monospace"))
 
         /** Fonts probe A's clears, each read back (the browser's own value, `controllable_by_this_extension`). */
         private val FONTS_PROBE_A_CLEAR = fontsProbeSteps(
