@@ -576,27 +576,26 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
     /**
      * Page Info, the icon row's (i): the page's host and its connection on the v2 prompt sheet
      * (§9.23) – the host on one line with the page's favicon (the globe without one), the
-     * browser's site-info sheet's Connection row and its sentence under the title, Done. A custom
-     * tab has no chrome to draw the browser's sheet; the connection is what the tab knows: https
-     * secure, anything else not (a load the tab refused for its certificate never lands as https).
+     * browser's site-info sheet's Connection row (secure, local, not secure: [CustomTabPageInfo])
+     * with its sentence under the title, Done. A custom tab has no chrome to draw the browser's
+     * sheet; the connection is what the tab knows from the URL.
      */
     private fun showPageInfo() {
         val url = currentUrl.ifEmpty { config.url }
         val host = Uri.parse(url).host ?: url
-        val secure = url.startsWith("https://", ignoreCase = true)
         val ink = V2Ink(this, config.scheme.dark)
         val favicon = page?.favicon
+        val (headline, detail, glyph) = when (CustomTabPageInfo.connectionOf(url)) {
+            CustomTabPageInfo.Connection.SECURE -> Triple(R.string.cct_secure, R.string.cct_secure_detail, R.drawable.ic_cct_lock)
+            CustomTabPageInfo.Connection.LOCAL -> Triple(R.string.cct_local_site, R.string.cct_local_site_detail, R.drawable.ic_globe)
+            CustomTabPageInfo.Connection.INSECURE -> Triple(R.string.cct_not_secure, R.string.cct_not_secure_detail, R.drawable.ic_cct_lock_open)
+        }
         val content = NativePromptSheet.Content(
             title = host,
             titleOneLine = true,
             glyph = if (favicon != null) BitmapDrawable(resources, favicon) else ink.glyph(R.drawable.ic_globe),
-            description = getString(if (secure) R.string.cct_secure_detail else R.string.cct_not_secure_detail),
-            rows = listOf(
-                NativePromptSheet.Row(
-                    getString(if (secure) R.string.cct_secure else R.string.cct_not_secure),
-                    ink.glyph(if (secure) R.drawable.ic_cct_lock else R.drawable.ic_cct_lock_open, ink.textDeemphasized)
-                )
-            ),
+            description = getString(detail),
+            rows = listOf(NativePromptSheet.Row(getString(headline), ink.glyph(glyph, ink.textDeemphasized))),
             primary = NativePromptSheet.Peer(getString(R.string.cct_done))
         )
         NativePromptSheet(this, ink, content) { }.show()

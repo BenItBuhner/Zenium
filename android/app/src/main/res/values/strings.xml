@@ -41,6 +41,8 @@
     <string name="cct_not_secure">Connection is not secure</string>
     <string name="cct_secure_detail">Everything you send to this site is encrypted on the way.</string>
     <string name="cct_not_secure_detail">Anyone on the way can read what you send to this site. Don’t enter passwords or card details here.</string>
+    <string name="cct_local_site">Local site</string>
+    <string name="cct_local_site_detail">Served from this device; nothing crosses the network.</string>
     <string name="cct_done">Done</string>
     <string name="cct_cancel">Cancel</string>
     <string name="cct_add">Add</string>
