@@ -502,10 +502,13 @@ describe('entering the mode', () => {
   it("from a card's hold sheet: the mode opens with that card picked and counted", async () => {
     show(five())
     await holdCard('b')
-    // The hold sheet leads with the mode's row (a menu item: Title Case, §9.1).
+    // The hold sheet leads with the mode's row (a menu item: Title Case, §9.1); the page's own
+    // rows (Share…, Add to Bookmarks, TAB-28) sit between the group row and the closes.
     expect(sheetRows().map((r) => r.textContent?.trim())).toEqual([
       'Select Tabs',
       'New Group',
+      'Share…',
+      'Add to Bookmarks',
       'Close Other Tabs (3)',
       'Close Tab'
     ])

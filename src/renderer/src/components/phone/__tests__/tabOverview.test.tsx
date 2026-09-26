@@ -507,17 +507,33 @@ describe('the card and group menus', () => {
       tab('b', 'https://b.example/')
     ])
 
-  it("a held card's rows are menu items in Title Case, the group's own name as given; Select Tabs leads (TAB-08)", () => {
-    render(grouped())
-    pickUp('a')
-    const p = at('a', 0.5, 0.5)
+  /** Hold the card `key` until its sheet is up. */
+  const hold = (key: string): void => {
+    pickUp(key)
+    const p = at(key, 0.5, 0.5)
     letGo(p.x, p.y)
     act(() => elapse(300))
     act(() => settleSprings())
+  }
+  /** Pick the row `label` of the sheet that is up: the sheet leaves, then the row acts. */
+  const pick = (label: string): void => {
+    const row = [...document.querySelectorAll<HTMLElement>('.zen-sheet-item')].find(
+      (el) => el.textContent === label
+    )
+    expect(row, label).toBeDefined()
+    act(() => row!.click())
+    act(() => settleSprings())
+  }
+
+  it("a held card's rows are menu items in Title Case, the group's own name as given; Select Tabs leads (TAB-08), Share… and Add to Bookmarks sit between the group rows and the closes (TAB-28)", () => {
+    render(grouped())
+    hold('a')
     expect(sheetLabels()).toEqual([
       'Select Tabs',
       'New Group',
       'Add to Research',
+      'Share…',
+      'Add to Bookmarks',
       'Close Other Tabs (3)',
       'Close Tab'
     ])
@@ -525,18 +541,87 @@ describe('the card and group menus', () => {
 
   it("a held member's rows offer the move out of its group in Title Case", () => {
     render(grouped())
-    pickUp('m1')
-    const p = at('m1', 0.5, 0.5)
-    letGo(p.x, p.y)
-    act(() => elapse(300))
-    act(() => settleSprings())
+    hold('m1')
     expect(sheetLabels()).toEqual([
       'Select Tabs',
       'New Group',
       'Remove from Group',
+      'Share…',
+      'Add to Bookmarks',
       'Close Other Tabs (3)',
       'Close Tab'
     ])
+  })
+
+  /*
+   * TAB-28: Chrome's card hold offers Share and Add to bookmarks; here the two rows send the
+   * card's tab to the core's own commands – `share.open` (the share panel, or the system sheet
+   * from Android 14) and `bookmark.toggle` (the toast names the folder, or offers Undo on the
+   * removal) – once the sheet has left, as every row acts. Menu items, so Title Case (§9.1);
+   * Share… takes the ellipsis since a sheet follows, the bookmark row none since nothing opens.
+   */
+  it('Share… sends the held tab to share.open as the sheet leaves, in the plain ink (TAB-28)', () => {
+    render(grouped())
+    hold('a')
+    const row = [...document.querySelectorAll<HTMLElement>('.zen-sheet-item')].find(
+      (el) => el.textContent === 'Share…'
+    )!
+    expect(row.style.color).toBe('')
+    expect(row.hasAttribute('disabled')).toBe(false)
+    act(() => row.click())
+    act(() => settleSprings())
+    // The tab, and nothing else: the core reads its title and address for the share.
+    expect(commands().filter(([name]) => name === 'share.open')).toEqual([
+      ['share.open', { tabId: 'a' }]
+    ])
+    expect(commands().map(([name]) => name)).not.toContain('bookmark.toggle')
+    expect(document.querySelector('.zen-sheet-item')).toBeNull()
+  })
+
+  it('Add to Bookmarks toggles the held tab’s bookmark; a bookmarked tab’s row reads Remove Bookmark and toggles it back (TAB-28)', () => {
+    render(grouped())
+    hold('b')
+    pick('Add to Bookmarks')
+    expect(commands().filter(([name]) => name === 'bookmark.toggle')).toEqual([
+      ['bookmark.toggle', { tabId: 'b' }]
+    ])
+    // The core files it and says so on the tab; the row reads the tab's state.
+    render(
+      stateOf([
+        tab('m1', 'https://one.example/', { folderId: GROUP }),
+        tab('m2', 'https://two.example/', { folderId: GROUP }),
+        tab('a', 'https://a.example/'),
+        tab('b', 'https://b.example/', { bookmarked: true })
+      ])
+    )
+    hold('b')
+    expect(sheetLabels()).toContain('Remove Bookmark')
+    expect(sheetLabels()).not.toContain('Add to Bookmarks')
+    pick('Remove Bookmark')
+    expect(commands().filter(([name]) => name === 'bookmark.toggle')).toEqual([
+      ['bookmark.toggle', { tabId: 'b' }],
+      ['bookmark.toggle', { tabId: 'b' }]
+    ])
+  })
+
+  it('a blank tab and one of the browser’s own pages have nothing to share or file: neither row (TAB-28)', () => {
+    // The select-tabs bar's rule (`pageTabs`): a bookmark or a share has nothing to say of them.
+    place('n', 110, 180)
+    for (const url of [BLANK_URL, SETTINGS_URL]) {
+      render(stateOf([tab('a', 'https://a.example/'), tab('n', url)], []))
+      hold('n')
+      const labels = sheetLabels()
+      expect(labels, url).not.toContain('Share…')
+      expect(labels, url).not.toContain('Add to Bookmarks')
+      expect(labels, url).toEqual(['Select Tabs', 'New Group', 'Close Other Tabs (1)', 'Close Tab'])
+      // Escape dismisses the sheet; nothing was sent for it.
+      act(() => {
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
+      })
+      act(() => settleSprings())
+      expect(document.querySelector('.zen-sheet-item')).toBeNull()
+    }
+    expect(commands()).toEqual([])
   })
 
   it("a held group's rows are menu items in Title Case, the count with its unit", () => {
