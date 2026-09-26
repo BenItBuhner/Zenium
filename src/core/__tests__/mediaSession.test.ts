@@ -141,6 +141,8 @@ function harness(
         permission === 'background-video' && backgroundVideoSites.has(new URL(url).origin)
           ? 'allow'
           : 'deny',
+      // The auto-PiP row's read, the desktop's `eligibleForAuto`'s and the session's carry alike:
+      // the row's default is allow, a site denied by the site card's write alone.
       check: (permission: string, url: string) => {
         checks.push([permission, url])
         return !denied.has(url)
@@ -604,6 +606,54 @@ describe('MediaSessionService', () => {
     })
   })
 
+  describe("the site's auto-picture-in-picture setting (Android's auto-enter from a fullscreen video on Home obeys it)", () => {
+    it('is carried on the session: allow by default, deny once the site is blocked', () => {
+      play(h, 't2', report({ video: true, width: 1280, height: 720, fullscreen: true }))
+      expect(h.updates.at(-1)).toMatchObject({
+        tabId: 't2',
+        video: true,
+        autoPictureInPicture: true
+      })
+      h.denied.add('https://video.example/watch')
+      h.service.followAutoPictureInPictureSetting()
+      expect(h.updates.at(-1)).toMatchObject({
+        tabId: 't2',
+        video: true,
+        autoPictureInPicture: false
+      })
+      expect(h.updates).toHaveLength(2)
+    })
+
+    it('reaches the host at once when the setting changes, and not when it resolves the same', () => {
+      h.denied.add('https://video.example/watch')
+      play(h, 't2', report({ video: true, fullscreen: true }))
+      expect(h.updates.at(-1)).toMatchObject({ autoPictureInPicture: false })
+      h.service.followAutoPictureInPictureSetting()
+      expect(h.updates).toHaveLength(1)
+      h.denied.delete('https://video.example/watch')
+      h.service.followAutoPictureInPictureSetting()
+      expect(h.updates.at(-1)).toMatchObject({ tabId: 't2', autoPictureInPicture: true })
+      expect(h.updates).toHaveLength(2)
+    })
+
+    it("is the session tab's site's answer, not another site's", () => {
+      h.denied.add('https://video.example/watch')
+      play(h, 't2', report({ video: true, fullscreen: true }))
+      expect(h.updates.at(-1)).toMatchObject({ tabId: 't2', autoPictureInPicture: false })
+      h.now.value += 1000
+      play(h, 't1')
+      expect(h.updates.at(-1)).toMatchObject({ tabId: 't1', autoPictureInPicture: true })
+    })
+
+    it("goes with the user's own picture-in-picture request, which a deny does not refuse", async () => {
+      h.denied.add('https://video.example/watch')
+      play(h, 't2', report({ video: true, width: 1280, height: 720 }))
+      // Chrome's rule: the setting governs the automatic entry alone; the host is still asked.
+      await expect(h.service.enterPictureInPicture('t2')).resolves.toBe(true)
+      expect(h.pipRequests.at(-1)).toMatchObject({ tabId: 't2', autoPictureInPicture: false })
+    })
+  })
+
   describe('a chrome source (registerSource: the read-aloud player)', () => {
     it('registers as the session with its own metadata, no video and no PiP, and the host hears source: chrome', () => {
       const source = readAloud('t1')
@@ -627,6 +677,7 @@ describe('MediaSessionService', () => {
         fullscreen: false,
         private: false,
         backgroundVideo: false,
+        autoPictureInPicture: false,
         source: 'chrome',
         sourceId: 'read-aloud'
       })
@@ -987,7 +1038,15 @@ describe('automatic picture-in-picture (MW-28)', () => {
     )
     // The tab left the screen: no question about the document's visibility on this path.
     expect(h.views.get('film')!.scripts[0]).not.toContain('visibilityState')
-    expect(h.checks).toEqual([[AUTO_PIP_SETTING, 'https://video.example/watch']])
+    // The row asked for the film's site alone, never the docs' (the session's own carry of the
+    // answer to the host asks the same question on every push, so the count is not pinned).
+    expect(h.checks).toContainEqual([AUTO_PIP_SETTING, 'https://video.example/watch'])
+    expect(
+      h.checks.every(
+        ([permission, url]) =>
+          permission === AUTO_PIP_SETTING && url === 'https://video.example/watch'
+      )
+    ).toBe(true)
     // The page confirms; the user's own close later would end the claim (below).
     h.service.onPagePictureInPicture('film', true)
     h.show(win, ['film'])

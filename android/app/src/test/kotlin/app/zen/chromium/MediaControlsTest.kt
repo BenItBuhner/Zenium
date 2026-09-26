@@ -26,7 +26,8 @@ class MediaControlsTest {
         width: Int = 0,
         height: Int = 0,
         source: String = MediaSessionInfo.SOURCE_PAGE,
-        sourceId: String? = null
+        sourceId: String? = null,
+        autoPictureInPicture: Boolean = true
     ) = MediaSessionInfo(
         tabId = "t1",
         title = title,
@@ -46,7 +47,8 @@ class MediaControlsTest {
         fullscreen = fullscreen,
         private = private,
         source = source,
-        sourceId = sourceId
+        sourceId = sourceId,
+        autoPictureInPicture = autoPictureInPicture
     )
 
     /** The read-aloud player's session as the core sends it: a chrome source on the tab it reads, no video, no position. */
@@ -109,6 +111,11 @@ class MediaControlsTest {
         assertFalse(info.backgroundVideo)
         assertTrue(MediaSessionInfo.parse(json.put("backgroundVideo", true))!!.backgroundVideo)
         assertFalse(MediaSessionInfo.parse(json.put("backgroundVideo", JSONObject.NULL))!!.backgroundVideo)
+        // The site's auto-picture-in-picture setting is allow (the row's default) unless the core said deny; an older core says nothing.
+        assertTrue(info.autoPictureInPicture)
+        assertFalse(MediaSessionInfo.parse(json.put("autoPictureInPicture", false))!!.autoPictureInPicture)
+        assertTrue(MediaSessionInfo.parse(json.put("autoPictureInPicture", true))!!.autoPictureInPicture)
+        assertTrue(MediaSessionInfo.parse(json.put("autoPictureInPicture", JSONObject.NULL))!!.autoPictureInPicture)
     }
 
     @Test
@@ -329,6 +336,18 @@ class MediaControlsTest {
         assertFalse(MediaControls.autoEnterPictureInPicture(session(video = true, playing = false, fullscreen = true)))
         assertFalse(MediaControls.autoEnterPictureInPicture(session(video = false, playing = true, fullscreen = true)))
         assertFalse(MediaControls.autoEnterPictureInPicture(null))
+    }
+
+    @Test
+    fun aSiteThatDeniesAutomaticPictureInPictureNeverEntersOnHome() {
+        // The site's `auto-picture-in-picture` setting (the core's resolution on the session): a deny
+        // holds the automatic entry back on both ways in, and nothing else about the session changes.
+        val denied = session(video = true, playing = true, fullscreen = true, autoPictureInPicture = false)
+        assertFalse(MediaControls.autoEnterPictureInPicture(denied))
+        assertTrue(MediaControls.autoEnterPictureInPicture(session(video = true, playing = true, fullscreen = true, autoPictureInPicture = true)))
+        // The user's own request is not the setting's to refuse: the window stays the session's to have.
+        assertTrue(MediaControls.pictureInPictureEligible(denied))
+        assertEquals(listOf(MediaControl.PAUSE), MediaControls.pictureInPictureControls(denied))
     }
 
     @Test

@@ -11,11 +11,13 @@ import android.view.ViewGroup
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.lifecycle.LifecycleOwner
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.net.URL
 import kotlin.math.abs
 
 /**
@@ -46,7 +48,11 @@ import kotlin.math.abs
  *     consumed once by the host's own log, though `KeyguardManager` still calls the keyguard locked
  *     as the activity starts (the platform's unlock order; the review's REQUIRED 1 at `2341ec967`);
  *  4. Home with no fullscreen video – a page without one, and the clip playing inline – does
- *     nothing new: no window (Chrome's auto-enter is the fullscreen video's alone).
+ *     nothing new: no window (Chrome's auto-enter is the fullscreen video's alone);
+ *  5. the site's `auto-picture-in-picture` setting governs the auto-enter (Chrome's rule, the
+ *     row's Android support): set to Block through the core's `permissions.set`, the clip
+ *     fullscreen and Home opens no window, while the user's own `media.pictureInPicture` still
+ *     gets one; the rule forgotten (Allow, the default), the same Home enters the window again.
  *
  * The page is the media demos' (`media-demo-page.html`'s `/video`), read through its title.
  * Every check goes to `android-pip-notes.txt`; one that did not hold fails the run at its end.
@@ -100,6 +106,7 @@ class PipDemo : MediaDemoBase("android-pip") {
         declaredSkipsOnly()
         theXPausesTheWindowsTabAlone()
         noFullscreenVideoNoWindow()
+        theSitesSettingGovernsTheAutoEnter()
         screenOffEndingFinishesAtTheUnlock()
         note("\nend: pip=${inPip()} pip tab=${host.media.pictureInPictureTab} filling=${host.tabs.filling} fullscreenTab=${host.fullscreenTab?.tabId}; ${describeTab(TAB)}")
     }
@@ -542,6 +549,122 @@ class PipDemo : MediaDemoBase("android-pip") {
         bringToFront()
         frontApp()
         note("  back: pip=${inPip()} state=${field("state")} filling=${host.tabs.filling}; ${describeTab(TAB)}")
+    }
+
+    // --- 5. the site's auto-picture-in-picture setting governs the auto-enter ---------------------
+
+    /**
+     * 5. The site's `auto-picture-in-picture` content setting (the catalogue's row, Allow by
+     * default) governs the automatic entry alone, Chrome's rule. The site set to Block through the
+     * core's `permissions.set` (no UI): the answer rides the session to the host
+     * (`MediaSessionInfo.autoPictureInPicture`, the core's re-push on the change), and Home with the
+     * clip playing fullscreen opens NO window – the activity's `isInPictureInPictureMode` false
+     * after the transition (`setAutoEnterEnabled(false)` in its params); the user's own request
+     * (`media.pictureInPicture`) still gets the window under Block – not the row's to refuse. The
+     * site's rule forgotten (the default, Allow, again), the same Home enters the window as in 1.
+     */
+    private fun theSitesSettingGovernsTheAutoEnter() {
+        note("\n5. the site's auto-picture-in-picture setting governs the auto-enter (Chrome's rule): Block, fullscreen, Home: no window; the request still answered; Allow again: the window")
+        frontApp()
+        onTheClip()
+        val origin = tabOrigin(TAB)
+        if (origin == null) {
+            check("the clip tab's site is readable for the rule", false)
+            return
+        }
+        if (field("state") != "playing") tapPageButton("play", "Play video", "the clip plays inline", 15_000) { field("state") == "playing" }
+        note("  the site: $origin; auto-picture-in-picture resolves ${autoPipResolution(origin)}; the session's autoPictureInPicture=${host.media.current?.autoPictureInPicture} (tab ${host.media.current?.tabId})")
+        val set = coreInvoke("permissions.set", """{"origin":${JSONObject.quote(origin)},"permission":"auto-picture-in-picture","decision":"deny"}""")
+        val carried = poll(8_000) { host.media.current?.let { it.tabId == TAB && !it.autoPictureInPicture } == true }
+        note("  permissions.set deny -> $set; resolves ${autoPipResolution(origin)}; the session's autoPictureInPicture=${host.media.current?.autoPictureInPicture} (carried to the host: $carried)")
+        check("the site's Block rides the session to the host (autoPictureInPicture=false: the core's re-push on the change)", carried)
+        tapPageButton("fullscreen", "Play fullscreen", "the clip goes fullscreen under the site's Block", 15_000) {
+            field("fs") == "1" || host.fullscreenTab?.tabId == TAB
+        }
+        SystemClock.sleep(2_500)
+        if (field("state") != "playing") ensurePlaying()
+        note("  fullscreen under Block: page fs=${field("fs")} state=${field("state")} host fullscreenTab=${host.fullscreenTab?.tabId}")
+        check("Block: the clip plays fullscreen before Home", field("state") == "playing" && host.fullscreenTab?.tabId == TAB)
+        shot("20-blocked-fullscreen")
+        beat()
+        ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
+        val windowed = awaitPip(true, 4_000)
+        SystemClock.sleep(1_000)
+        val front = ui.rootInActiveWindow?.packageName?.toString()
+        note("  Home under Block: windowed=$windowed isInPictureInPictureMode=${inPip()} pip tab=${host.media.pictureInPictureTab} filling=${host.tabs.filling} fullscreenTab=${host.fullscreenTab?.tabId}; in front: $front; state=${field("state")}")
+        check("Block: Home with the clip playing fullscreen opens NO window – the auto-enter obeys the site's setting (isInPictureInPictureMode false after the transition)", !windowed && !inPip() && host.media.pictureInPictureTab == null && front != app.packageName)
+        shot("21-blocked-home-no-window")
+        beat()
+        bringToFront()
+        frontApp()
+        leaveFullscreen()
+        if (field("state") != "playing") tapPageButton("play", "Play video", "the clip plays inline again", 15_000) { field("state") == "playing" }
+        val asked = coreInvoke("media.pictureInPicture", """{"tabId":"$TAB"}""")
+        val requested = awaitPip(true, 10_000)
+        poll(5_000) { host.tabs.filling == TAB }
+        SystemClock.sleep(SETTLE_MS)
+        note("  under Block, media.pictureInPicture -> $asked; in the window: $requested (pip tab=${host.media.pictureInPictureTab} filling=${host.tabs.filling}; the session's autoPictureInPicture=${host.media.current?.autoPictureInPicture})")
+        check("Block: the user's own request still gets the window (the setting governs the automatic entry alone)", requested && host.media.pictureInPictureTab == TAB)
+        shot("22-blocked-requested-window")
+        beat()
+        bringToFront()
+        awaitPip(false, 8_000)
+        frontApp()
+        val forgot = coreInvoke("permissions.forget", """{"origin":${JSONObject.quote(origin)},"permission":"auto-picture-in-picture"}""")
+        if (field("state") != "playing") tapPageButton("play", "Play video", "the clip plays inline for the Allow half", 15_000) { field("state") == "playing" }
+        val restored = poll(8_000) { host.media.current?.let { it.tabId == TAB && it.autoPictureInPicture } == true }
+        note("  permissions.forget -> $forgot; resolves ${autoPipResolution(origin)}; the session's autoPictureInPicture=${host.media.current?.autoPictureInPicture} (restored: $restored)")
+        check("the site's rule forgotten (Allow, the default, again) rides the session to the host", restored)
+        tapPageButton("fullscreen", "Play fullscreen", "the clip goes fullscreen on Allow again", 15_000) {
+            field("fs") == "1" || host.fullscreenTab?.tabId == TAB
+        }
+        SystemClock.sleep(2_500)
+        if (field("state") != "playing") ensurePlaying()
+        check("Allow again: the clip plays fullscreen before Home", field("state") == "playing" && host.fullscreenTab?.tabId == TAB)
+        ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
+        val entered = awaitPip(true, 10_000)
+        poll(8_000) { host.tabs.filling == TAB }
+        SystemClock.sleep(SETTLE_MS)
+        note("  Home on Allow again: pip=$entered pip tab=${host.media.pictureInPictureTab} filling=${host.tabs.filling}; state=${field("state")}")
+        check("Allow again: the same Home enters the window as before", entered && host.media.pictureInPictureTab == TAB)
+        shot("23-allowed-home-window")
+        beat()
+        bringToFront()
+        awaitPip(false, 8_000)
+        frontApp()
+        SystemClock.sleep(1_000)
+        note("  back: pip=${inPip()} state=${field("state")} fs=${field("fs")} filling=${host.tabs.filling}; resolves ${autoPipResolution(origin)}; ${describeTab(TAB)}")
+    }
+
+    /** `tabId`'s site as the core's rules name it (`protocol://host:port`, the URL's origin), or null. */
+    private fun tabOrigin(tabId: String): String? {
+        val url = coreState().getJSONObject("tabs").optJSONObject(tabId)?.optString("url").orEmpty()
+        val parsed = runCatching { URL(url) }.getOrNull() ?: return null
+        return "${parsed.protocol}://${parsed.host}${if (parsed.port >= 0) ":${parsed.port}" else ""}"
+    }
+
+    /** The site's stored `auto-picture-in-picture` decision as the core lists it (`permissions.listForPermission`), or the default, allow. */
+    private fun autoPipResolution(origin: String): String {
+        val rules = runCatching { JSONArray(coreInvoke("permissions.listForPermission", """{"permission":"auto-picture-in-picture"}""")) }.getOrNull()
+            ?: return "allow (default; no list)"
+        for (i in 0 until rules.length()) {
+            val rule = rules.getJSONObject(i)
+            if (rule.optString("origin") == origin) return rule.optString("decision")
+        }
+        return "allow (default)"
+    }
+
+    /** The element's fullscreen ended from the page (Home without a window leaves the app fullscreen behind the launcher). */
+    private fun leaveFullscreen() {
+        if (host.fullscreenTab == null && field("fs") != "1") return
+        pageJs("(function(){if(document.fullscreenElement)document.exitFullscreen();return 'exit'})()")
+        val left = poll(8_000) { host.fullscreenTab == null && field("fs") != "1" }
+        if (!left) {
+            ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+            poll(5_000) { host.fullscreenTab == null }
+        }
+        SystemClock.sleep(1_000)
+        note("  the element's fullscreen left (from the page: $left): fullscreenTab=${host.fullscreenTab?.tabId} fs=${field("fs")}")
     }
 
     // --- helpers ----------------------------------------------------------------------------------

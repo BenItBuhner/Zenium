@@ -576,12 +576,18 @@ class MediaSessions(private val host: Host, private val io: Executor) {
     /**
      * Chrome's rule for going into the small window by itself when the user leaves: a video
      * playing fullscreen – by the page's own word ([MediaSessionInfo.fullscreen]) or the
-     * WebView's (the tab's element is in the host's fullscreen layer). Never for a chrome player.
+     * WebView's (the tab's element is in the host's fullscreen layer). Never for a chrome player,
+     * and never for a site whose `auto-picture-in-picture` setting is deny (the core resolves the
+     * session tab's answer onto [MediaSessionInfo.autoPictureInPicture] and pushes the session
+     * again when it changes, so the params follow within the session's next [publish]); the
+     * user's own `media.pip` request ([enterPictureInPicture]) is not the setting's to refuse.
+     * Read by both ways in: Android 12+'s `setAutoEnterEnabled` through [paramsOf] and Android
+     * 8-11's [onUserLeaveHint].
      */
     private fun autoEnter(info: MediaSessionInfo?): Boolean {
         // Never from a private tab (Chrome withholds PiP from Incognito): the window that left for
         // the small video would never stop, and the private tab lock would never arm.
-        if (info == null || info.chrome || info.private) return false
+        if (info == null || info.chrome || info.private || !info.autoPictureInPicture) return false
         return MediaControls.autoEnterPictureInPicture(info) ||
             (info.video && info.playing && host.fullscreenTab?.tabId == info.tabId)
     }
