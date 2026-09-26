@@ -16,12 +16,10 @@
 export type ContentGuardId = 'sensors' | 'third-party-sign-in' | 'payment-handler'
 
 /**
- * The page preload's synchronous document-start question to the desktop main process: which
- * guards this document gets (`ipcRenderer.sendSync`, answered with a `ContentGuardId[]`).
+ * Refuse the blocked APIs in this document; safe to call with an empty list (does nothing). The
+ * desktop page preload gets the list as the `guards` field of its one document-start ask
+ * (`documentStart.ts`); the Android page script reads it from its document-start literals.
  */
-export const CONTENT_GUARDS_CHANNEL = 'zen:content-guards'
-
-/** Refuse the blocked APIs in this document; safe to call with an empty list (does nothing). */
 export function installContentGuards(blocked: readonly string[]): void {
   if (!blocked || blocked.length === 0) return
   const w = window as unknown as Record<string, unknown>
