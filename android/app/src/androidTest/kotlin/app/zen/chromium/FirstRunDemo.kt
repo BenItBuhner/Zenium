@@ -17,11 +17,12 @@ import java.io.File
  * the rules in `shared/defaultBrowser.ts` run unchanged, nothing is lowered), "Not now", the
  * banner (#72's top banner carrying the default-browser message) in the session after, swiped
  * away, and Settings > About with the row still offering the role (the row's labels are the
- * shared names in [DemoHarness] – `DEFAULT_BROWSER_OFFER`, `OPEN_BY_DEFAULT_ROW` – read as
- * Settings rows, `settingsRow`, whose node runs the label and its description together). Only asserts
- * that it could run; what the chrome does is what the recording shows, with one PASS or FAIL per surface in
- * `firstrun-findings.txt` next to the screenshots. The role dialog itself is on record from the
- * functional half's run (#46).
+ * shared names in [DemoHarness] – `DEFAULT_BROWSER_OFFER`, `DEFAULT_BROWSER_HELD`,
+ * `OPEN_BY_DEFAULT_ROW` – read through the harness's Settings readers: the document's word for
+ * the row, its accessible name and that it is exposed, the tree's node for it on record beside
+ * them). Only asserts that it could run; what the chrome does is what the recording shows, with
+ * one PASS or FAIL per surface in `firstrun-findings.txt` next to the screenshots. The role dialog
+ * itself is on record from the functional half's run (#46).
  *
  * Handshake with the workflow through files under `files/firstrun-demo/` as in GestureDemo;
  * screenshots land next to them as `firstrun-*.png`.
@@ -126,18 +127,30 @@ class FirstRunDemo : DemoHarness(stateAsset = null, shotPrefix = "firstrun", han
         }
 
         // 6. Settings > About: the row still offers the role – the shared names for the row's two
-        // states, matched as Settings rows (DemoHarness.settingsRow: the tree runs the label and
-        // the line under it together, so the bare label is never a node), the offering one
-        // expected after the tour's Skip.
+        // states, the offering one expected after the tour's Skip. The claim is the document's,
+        // through the harness's Settings readers (settingsRowListed: the row whose label reads the
+        // name; settingsRowName: what it is named for assistive technology, the label and the line
+        // under it as one; settingsRowExposed: laid out, visible, not inert): the tree read the
+        // two runs before made (a 5 s wait, then findNode) listed neither row while both stood on
+        // screen (11-settings-set-as-default of 36216598268 and 36221053673) – the emulator's tree
+        // trails the screen by seconds (TREE_WINDOW_MS), so the tree's node is the record beside
+        // the claim, waited for the harness's way (awaitSettingsRowInTree, with its nudges), never
+        // the verdict.
         openAbout(f)
         shot("11-settings-set-as-default")
-        val role = findNode(defaultBrowserRow())
-        val reads = role?.let { it.text ?: it.contentDescription }?.toString() ?: "no browser-role row"
-        val offers = reads.startsWith(DEFAULT_BROWSER_OFFER)
+        val roleLabel = listOf(DEFAULT_BROWSER_OFFER, DEFAULT_BROWSER_HELD).firstOrNull { settingsRowListed(it) }
+        val name = roleLabel?.let { settingsRowName(it) } ?: "no browser-role row"
+        val exposed = roleLabel?.let { settingsRowExposed(it) } == true
+        val openByDefault = settingsRowListed(OPEN_BY_DEFAULT_ROW)
+        val tree = when (roleLabel) {
+            null -> "not awaited (the document lists no such row)"
+            else -> awaitSettingsRowInTree(roleLabel)?.let { "reads '${it.text ?: it.contentDescription}'" }
+                ?: "did not come within ${TREE_WINDOW_MS / 1_000} s (the record, not the claim)"
+        }
         finding(
-            "Settings > About row: the browser-role row ${verdict(role != null)} (reads '$reads'), " +
-                "still offers the role ('$DEFAULT_BROWSER_OFFER') ${verdict(offers)}, " +
-                "Open by default beside it ${verdict(findByLabel(settingsRow(OPEN_BY_DEFAULT_ROW)) != null)}"
+            "Settings > About row: the browser-role row ${verdict(roleLabel != null)} (named '$name', exposed ${verdict(exposed)}), " +
+                "still offers the role ('$DEFAULT_BROWSER_OFFER') ${verdict(roleLabel == DEFAULT_BROWSER_OFFER)}, " +
+                "Open by default beside it ${verdict(openByDefault)}; the tree's node for it $tree"
         )
         SystemClock.sleep(1_500)
     }
@@ -149,9 +162,13 @@ class FirstRunDemo : DemoHarness(stateAsset = null, shotPrefix = "firstrun", han
     private fun hintShown(): Boolean = findNode { it.startsWith("Swipe the address bar") } != null
 
     /**
-     * Menu, expanded, scrolled to its end, Settings, then the About section. Rows are picked
-     * through the accessibility tree, as MenuSheetDemo does. Settings takes seconds to come up on
-     * the emulator, so its tabs and the row are waited for, not slept for.
+     * Menu, expanded, scrolled to its end, Settings (its row under a finger, the landing proven
+     * by the document's `data-section`), then the About section the harness's way
+     * ([openSettingsSection]: its category row under a finger, the section proven by the
+     * document, the tree's click when the touch never took). Settings takes seconds to come up on
+     * the emulator, so the landing, the section and the row are waited for, not slept for – by
+     * the document, which lists a row the moment it is laid out (the tree trails it by seconds:
+     * [TREE_WINDOW_MS]).
      */
     private fun openAbout(f: Finger) {
         ensureForeground()
@@ -173,28 +190,36 @@ class FirstRunDemo : DemoHarness(stateAsset = null, shotPrefix = "firstrun", han
         f.moveBy(0f, -0.6f * height, 500)
         f.up()
         beat()
-        // A finger on the row (the menu flow's injected touch): the Settings tab comes up with its
-        // section chips. The tree's click when the row is not on screen to touch.
-        if (!touchTapLabelExpecting("Settings", "the Settings tab is up with its About section", timeoutMs = 10_000) { findByLabel("About") != null } &&
-            findByLabel("About") == null && !clickByLabel("Settings")
+        // A finger on the row (the menu flow's injected touch): the Settings tab comes up on its
+        // landing, the document's word (the About category the tree's sign when the chrome does
+        // not answer). The tree's click when the row is not on screen to touch.
+        val landing = { settingsSectionIs(SETTINGS_LANDING, treeSign = "About") }
+        if (!touchTapLabelExpecting("Settings", "the Settings tab is up on its landing", timeoutMs = 10_000, took = landing) &&
+            !landing() && !(clickByLabel("Settings") && awaitTrue(10_000, landing))
         ) {
-            Log.w(tag, "no Settings row")
+            Log.w(tag, "no Settings row (section '${settingsSection()}')")
             back()
             return
         }
-        if (waitFor("About", 10_000) == null || !clickByLabel("About")) {
+        if (!openSettingsSection("about", timeoutMs = 10_000)) {
             Log.w(tag, "no About section")
             return
         }
-        if (waitFor(defaultBrowserRow(), 5_000) == null) Log.w(tag, "no browser-role row ($DEFAULT_BROWSER_OFFER / $DEFAULT_BROWSER_HELD)")
+        if (!awaitTrue(8_000) { settingsRowListed(DEFAULT_BROWSER_OFFER) || settingsRowListed(DEFAULT_BROWSER_HELD) }) {
+            Log.w(tag, "the document lists no browser-role row ($DEFAULT_BROWSER_OFFER / $DEFAULT_BROWSER_HELD)")
+        }
         SystemClock.sleep(1_500)
     }
 
+    /** The shared helpers' notes (how long the tree took to list the row) go to the findings too. */
+    override fun noteLine(line: String) = finding(line)
+
     private fun verdict(ok: Boolean) = if (ok) "PASS" else "FAIL"
 
+    /** A line of the findings: the log, and the file once [warmUp] has opened it (a shared helper's note may come before). */
     private fun finding(line: String) {
         Log.i(tag, line.trim())
-        findings.appendText(line + "\n")
+        if (::findings.isInitialized) findings.appendText(line + "\n")
     }
 
     companion object {

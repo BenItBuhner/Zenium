@@ -1818,10 +1818,10 @@ abstract class DemoHarness(
      */
     protected fun revealSettingsRow(label: String): Rect? {
         settingsRowRect(label)?.let { return it }
-        val node = findNode { it.startsWith(label) } ?: return null
+        val node = findNode(settingsRow(label)) ?: return null
         node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
         SystemClock.sleep(1_500)
-        return findNode { it.startsWith(label) }?.let { row -> Rect().also { row.getBoundsInScreen(it) } }
+        return findNode(settingsRow(label))?.let { row -> Rect().also { row.getBoundsInScreen(it) } }
     }
 
     /**
@@ -1888,7 +1888,7 @@ abstract class DemoHarness(
         val start = SystemClock.uptimeMillis()
         val nudges = ArrayDeque(listOf(2_000L, 8_000L))
         while (true) {
-            val node = freshNodes { it.startsWith(label) }.firstOrNull { boundsOnScreen(Rect().also { r -> it.getBoundsInScreen(r) }) }
+            val node = freshNodes(settingsRow(label)).firstOrNull { boundsOnScreen(Rect().also { r -> it.getBoundsInScreen(r) }) }
             val took = SystemClock.uptimeMillis() - start
             if (node != null) {
                 if (took > 1_000) noteLine("  (the tree listed '$label' after $took ms)")
@@ -1978,7 +1978,7 @@ abstract class DemoHarness(
 
     /** Click the Settings row whose text starts with `label` through the tree (the nearest clickable ancestor): a way to a state, never the claim. */
     protected fun clickSettingsRow(label: String): Boolean {
-        var node = findNode { it.startsWith(label) }
+        var node = findNode(settingsRow(label))
         while (node != null && !node.isClickable) node = node.parent
         return node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
     }
@@ -3173,31 +3173,32 @@ abstract class DemoHarness(
          * role is open ("Open links from other apps in Zenium." under it; the first run's Skip
          * leaves it so), an info row reading [DEFAULT_BROWSER_HELD] once Zenium holds it ("Zenium
          * is your default browser."). [OPEN_BY_DEFAULT_ROW] is the row under it on Android 12+
-         * (DEF-06), the system's link-handling screen. A driver reads the role row through
-         * [defaultBrowserRow] – either state, matched as a Settings row ([settingsRow]) – and names
-         * the state it found. FirstRunDemo read "Default browser" / "Set as default" (the labels
-         * before the About page took Chrome's words) and failed its step 6 on every run of
-         * W6-HF1's (run 36200834282); with the words right it still failed (run 36216598268),
-         * because it asked for a node EQUAL to the label and a Settings row's node never is.
+         * (DEF-06), the system's link-handling screen. A driver reads the role row by the
+         * DOCUMENT, the harness's Settings readers – [settingsRowListed] for either label,
+         * [settingsRowName] for what it is named, [settingsRowExposed] – and names the state it
+         * found; the tree's node for it ([awaitSettingsRowInTree]) is the record beside that, not
+         * the claim. FirstRunDemo read "Default browser" / "Set as default" (the labels before the
+         * About page took Chrome's words) and failed its step 6 on every run of W6-HF1's (run
+         * 36200834282); with the words right it still failed (run 36216598268), asking for a node
+         * EQUAL to the label when a Settings row's node never is ([settingsRow]); matched as a
+         * row it failed once more (run 36221053673), the tree listing neither row within a 5 s
+         * wait while both stood on screen – the emulator's tree trails the screen by seconds
+         * ([TREE_WINDOW_MS]), which the document does not.
          */
         const val DEFAULT_BROWSER_OFFER = "Set as default browser"
         const val DEFAULT_BROWSER_HELD = "Default browser"
         const val OPEN_BY_DEFAULT_ROW = "Open by default"
 
         /**
-         * A Settings row by its label. The tree runs a row's label and what stands under it
-         * together in one node – "Colour scheme Dark", "Set as default browser Open links from
-         * other apps in Zenium." (rows.tsx: a `<button>` named from its contents) – so the row is
-         * the node whose text STARTS with the label, never one equal to it; [rowReads],
-         * [revealSettingsRow] and [clickSettingsRow] read it the same way. A driver that asks
-         * [findByLabel] for a row's bare label finds nothing and reads FAIL against a row on screen.
+         * A Settings row's node in the tree, by its label. The tree runs a row's label and what
+         * stands under it together in one node – "Colour scheme Dark", "Set as default browser
+         * Open links from other apps in Zenium." (rows.tsx: a `<button>` named from its contents)
+         * – so the row is the node whose text STARTS with the label, never one equal to it:
+         * [revealSettingsRow], [awaitSettingsRowInTree] and [clickSettingsRow] read it through
+         * this ([rowReads] the same way, with the value's end). A driver that asks [findByLabel]
+         * for a row's bare label finds nothing and reads FAIL against a row on screen.
          */
         fun settingsRow(label: String): (String) -> Boolean = { it.startsWith(label) }
-
-        /** The About section's browser-role row in either state: [DEFAULT_BROWSER_OFFER] or [DEFAULT_BROWSER_HELD], as a [settingsRow]. */
-        fun defaultBrowserRow(): (String) -> Boolean = {
-            settingsRow(DEFAULT_BROWSER_OFFER)(it) || settingsRow(DEFAULT_BROWSER_HELD)(it)
-        }
 
         /** Settings section ids to the labels of their landing rows (`internalPages.ts`), for [openSettingsSection]. */
         val SETTINGS_SECTIONS: Map<String, String> = mapOf(
