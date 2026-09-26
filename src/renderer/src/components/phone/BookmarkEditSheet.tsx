@@ -6,15 +6,18 @@ import { inputToUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
 import { closeBookmarkEditor, type BookmarkEditRequest } from '@renderer/lib/bookmarkEdit'
 import type { BottomSheetHandle } from '../sheet/BottomSheet'
+import { SwitchRow } from '../siteControls/primitives'
 import { PhoneSheet } from './PhoneSheet'
 import { removeWithUndo, useBookmarkTree } from './phonePanel'
+import { readingListToggle } from './readingListToggle'
 
 /**
  * The bookmark editor on a phone (HB-16): a sheet in the frame's dialog host (`PhoneSheet`, the
  * 48 header naming it) with the name and the address as two fields, Save as the one primary
  * button and Delete beside it in the danger ink, the two splitting the footer (v2 draft §9.11).
  * It also names a folder (no address field) and creates either when the request has no id.
- * Every way out – Save, Delete, the scrim, the back gesture, Escape – slides the sheet away
+ * Under a bookmark's fields stands the page's Reading list switch (HB-20, `readingListToggle`),
+ * the star's second save, flipped in place. Every way out – Save, Delete, the scrim, the back gesture, Escape – slides the sheet away
  * first and clears the request once it is gone. Focus moves to the dialog itself as it opens,
  * not into a field (§9.22: the keyboard would come up with the sheet).
  *
@@ -73,6 +76,7 @@ export function BookmarkEditSheet({
         parentId={node?.parentId ?? edit.parentId}
         folder={folder}
         waiting={waiting}
+        readingList={readingListToggle(state, node)}
         dismiss={(then) => sheet.current?.dismiss(then)}
       />
     </PhoneSheet>
@@ -84,6 +88,7 @@ function EditorForm({
   parentId,
   folder,
   waiting,
+  readingList,
   dismiss
 }: {
   node: BookmarkNode | null
@@ -91,6 +96,8 @@ function EditorForm({
   folder: boolean
   /** The node was asked for but is not here yet. */
   waiting: boolean
+  /** The page's Reading list switch (`readingListToggle`); none for a folder or a node not here. */
+  readingList: ReturnType<typeof readingListToggle>
   dismiss: (then?: () => void) => void
 }): JSX.Element {
   const [name, setName] = useState(node?.title ?? '')
@@ -129,6 +136,18 @@ function EditorForm({
         run('bookmark.remove', { ids: [id], quiet: true })
       )
     )
+  }
+
+  // The Reading list switch takes effect as it is flipped (§10.4), the sheet staying up: the
+  // page into the list by its tab (the core's toast says so), or its entry out by id. The
+  // switch's state is the list's as the core last pushed it – an entry that goes elsewhere
+  // turns the switch off on the next state.
+  const listed = readingList?.entry ?? null
+  const canAdd = readingList?.tabId !== null && readingList?.tabId !== undefined
+  const toggleReadingList = (): void => {
+    if (!readingList) return
+    if (listed) run('readingList.remove', { id: listed.id })
+    else if (readingList.tabId) run('readingList.add', { tabId: readingList.tabId })
   }
 
   return (
@@ -177,6 +196,21 @@ function EditorForm({
             />
           </span>
         </div>
+      )}
+      {readingList && (
+        // The star sheet's Reading list row (HB-20): the toggle for this page, on while the
+        // list holds it. Disabled – laid out, at §9.30's one number – when nothing shows the
+        // page and the list lacks it, with the reason under the label.
+        <SwitchRow
+          label="Reading list"
+          description={
+            !listed && !canAdd ? 'Open the page to add it to your reading list' : undefined
+          }
+          checked={listed !== null}
+          disabled={!listed && !canAdd}
+          onChange={toggleReadingList}
+          data-testid="bookmark-reading-list"
+        />
       )}
       {/* §9.11: two peers split the width at an 8 gap, the primary trailing. */}
       <div className="zen-sheet-footer">
