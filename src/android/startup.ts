@@ -24,20 +24,24 @@ import type { Bridge } from './bridge'
  * pre-#490 empty space stands in for it. Returns whether a tab was closed. A healed profile has
  * no such tab and heals no further.
  *
- * Two tabs that look the same are not #490's and stay. With "Restore previous session" off
- * (`settings.restoreSession` – the whole of `Browser.restoreSessionAtStartup` on Android, where
- * `bootAndroid` starts the core without the desktop's `--restore-last-session`), the start
- * forgets the session, #490's tab with it, and opens one fresh `zen://blank` tab on purpose
- * (`openStartupWindows` → `openFreshTab`) – at EVERY such boot, pre-#490 and since; that tab
- * is the restore-off boot's own, and closing it would take that cohort's new tab page and
- * omnibox away for an empty space. And a pinned blank tab is the user's (`forgetSession` keeps
- * it too); `closeTab` would not close it (`pinnedCloseBehavior`) and this reports nothing done.
+ * Two tabs that look the same are not #490's and stay. A boot that does not continue where the
+ * last session left off (Settings › On startup, #525: `Browser.startupPlan()`, the decision the
+ * boot itself followed – "Open the New Tab page", which the profile's load also folds the 0.4.x
+ * "Restore previous session" switch's off into; the desktop's `--restore-last-session` is that
+ * plan's too, and `bootAndroid` passes none) forgets the session, #490's tab with it, and opens
+ * one fresh `zen://blank` tab on purpose (`openStartupWindows` → `openFreshTab`) – at EVERY such
+ * boot, pre-#490 and since; that tab is that boot's own, and closing it would take that cohort's
+ * new tab page and omnibox away for an empty space. The plan is read, not the raw setting: on
+ * the phone (a host without windows) "Open a specific page or set of pages" reads as continue,
+ * so the session comes back, #490's tab with it, and the heal runs. And a pinned blank tab is
+ * the user's (`forgetSession` keeps it too); `closeTab` would not close it
+ * (`pinnedCloseBehavior`) and this reports nothing done.
  */
 export function healRestoredBlankTab(browser: Browser, win: ZenWindow, phone: boolean): boolean {
   if (!phone) return false
   const active = browser.tabs.activeTabFor(win)
   if (active === undefined || active.url !== BLANK_URL) return false
-  if (!browser.state.settings.restoreSession || active.pinned) return false
+  if (browser.startupPlan().mode !== 'continue' || active.pinned) return false
   if (!lonelyIn(browser, win, active) || hasHistory(browser, active)) return false
   browser.tabs.closeTab(active.id, false, win)
   return true
