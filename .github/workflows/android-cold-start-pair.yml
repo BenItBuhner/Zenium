@@ -19,21 +19,6 @@ name: Android cold start pair
 # correct, only that the two builds' cold starts measured within the gate on the recipe's
 # emulator. The build, the emulator and the Gradle cache live in android-emulator-demo.yml.
 on:
-  # TEMPORARY (W6-HF2, PR #505): the P0 pair on the boot follow-ups' product head – main's tip
-  # against this head (boot.ts and startup.ts touched) – fired by the pushes that change what the
-  # APK carries, not by the scene's tooling (a run cancelled by a tooling push would have to start
-  # over); removed before the PR is ready.
-  push:
-    branches: [cursor/android-hotfix-boot-followups-9271]
-    paths:
-      - .github/workflows/android-cold-start-pair.yml
-      - .github/scripts/android-cold-start-pair.sh
-      - src/**
-      - '!src/**/__tests__/**'
-      - android/app/src/main/**
-      - android/app/build.gradle*
-      - package.json
-      - package-lock.json
   workflow_dispatch:
     inputs:
       base-ref:
