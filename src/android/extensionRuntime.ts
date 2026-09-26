@@ -149,7 +149,8 @@ import type { ViewEventPayloads } from './views'
  *                                           → { units: [{ key, chars, cached, refused? }], ms, dropped? }
  *  ext.detach { id }
  *  ext.expect { ids }                       the extensions about to be attached (a restored tab's page on one is held, not 404'd)
- *  ext.background.start / stop { id }, ext.popup.open { id, url, context, title }, ext.popup.close,
+ *  ext.background.start / stop { id, reason }   the lifecycle's reason (attach | wake | message | event:<name> | restart; idle | remove) for the host's log
+ *  ext.popup.open { id, url, context, title }, ext.popup.close,
  *  ext.offscreen.open { id, url } / close { id }   chrome.offscreen's one hidden page per extension
  *  ext.hosts { id, hosts } (optional host permissions granted at runtime)
  *  ext.send { ep, message }, ext.exec {…}, ext.readFile { id, path }, ext.cookies.read / write
@@ -881,13 +882,13 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     this.api = new ExtensionApi(this)
     this.background = new BackgroundLifecycle(
       {
-        start: (id) => {
+        start: (id, reason) => {
           // The page this start replaces (a stop whose gone has not arrived yet) is history: its
           // gone must not be read as the new page's.
           this.backgroundEps.delete(id)
-          this.bridge.send('ext.background.start', { id })
+          this.bridge.send('ext.background.start', { id, reason })
         },
-        stop: (id) => this.bridge.send('ext.background.stop', { id }),
+        stop: (id, reason) => this.bridge.send('ext.background.stop', { id, reason }),
         setTimeout: (fn, ms) => this.timers.setTimeout(fn, ms),
         clearTimeout: (handle) => this.timers.clearTimeout(handle)
       },
@@ -2507,7 +2508,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
   wakeBackground(id: string): void {
     const ext = this.attached(id)
     if (!ext || !ext.manifest.background || !this.isEnabled(id)) return
-    this.background.ensureStarted(id)
+    this.background.ensureStarted(id, 'wake')
   }
 
   /** An auth sheet's navigation (the way back ends the flow), load, failure or dismissal. */

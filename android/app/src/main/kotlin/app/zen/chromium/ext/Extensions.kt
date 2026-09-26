@@ -505,8 +505,8 @@ class Extensions(private val host: Host) {
             // word: every live document is told now, a new one learns it at its hello.
             "ext.observeResponses" -> { setObserveResponses(args.bool("on")); reply(null) }
             "ext.send" -> { send(args.str("ep"), args.str("message"), args.optJSONArray("at")); reply(null) }
-            "ext.background.start" -> { startBackground(args.str("id")); reply(null) }
-            "ext.background.stop" -> { stopBackground(args.str("id")); reply(null) }
+            "ext.background.start" -> { startBackground(args.str("id"), args.str("reason", "unsaid")); reply(null) }
+            "ext.background.stop" -> { stopBackground(args.str("id"), args.str("reason", "unsaid")); reply(null) }
             "ext.popup.open" -> { openPopup(args.str("id"), args.str("url"), args.str("context", "popup"), args.str("title", "")); reply(null) }
             "ext.popup.close" -> { closePopup(); reply(null) }
             "ext.offscreen.open" -> { openOffscreen(args.str("id"), args.str("url")); reply(null) }
@@ -803,7 +803,7 @@ class Extensions(private val host: Host) {
         served = served - id
         for (held in heldPages.dropped(id)) failHeld(held)
         for (view in handlers.keys.toList()) removeExtension(view, id)
-        stopBackground(id)
+        stopBackground(id, "detach")
         closeOffscreen(id)
         if (popup?.extensionId == id) closePopup()
         // The core dropped these endpoints already; the frames keep running what was injected.
@@ -825,7 +825,7 @@ class Extensions(private val host: Host) {
     private fun reset() {
         attachEpochs.reset()
         closePopup()
-        for (id in backgrounds.keys.toList()) stopBackground(id)
+        for (id in backgrounds.keys.toList()) stopBackground(id, "reset")
         workerScriptGate.reset()
         for (id in units.keys.toList()) {
             for (view in handlers.keys.toList()) removeExtension(view, id)
@@ -2180,20 +2180,26 @@ class Extensions(private val host: Host) {
      * The core's lifecycle policy (`runtime/background.ts`) asks for a start only when it holds
      * no page: whatever runs here under that id is a leftover it cannot see (a start whose stop
      * has not reported gone yet, or an earlier runtime's page), so the page is always fresh.
+     * `reason` is the policy's (`attach`, `wake`, `message`, `event:<name>`, `restart`), for the
+     * log: the `I/ZenExt background start` / `stop` lines are the lifecycle's one trace in a
+     * lane's logcat (an idle stop is otherwise visible only as the refused replies it leaves).
      */
-    private fun startBackground(id: String) {
+    private fun startBackground(id: String, reason: String) {
         val ext = served[id] ?: return
         val url = ext.backgroundUrl ?: return
-        stopBackground(id)
+        if (backgrounds.containsKey(id)) stopBackground(id, "replaced")
         val view = ExtensionWebView(host, this, ext, "background")
         backgrounds[id] = view
         backgroundStarts[id] = backgroundStarts(id) + 1
         host.attachHidden(view)
         view.loadUrl(url)
+        Log.i(TAG, "background start ${id.take(8)} ${ext.version} on $reason, start #${backgroundStarts(id)}")
     }
 
-    private fun stopBackground(id: String) {
+    /** `reason`: the core's (`idle`, `remove`) or this host's own (`replaced`, `detach`, `reset`, `renderer gone`, `destroy`). */
+    private fun stopBackground(id: String, reason: String) {
         val view = backgrounds.remove(id) ?: return
+        Log.i(TAG, "background stop ${id.take(8)} on $reason")
         // The document's count of refused requests for its own script, once, as it goes: Blink
         // reports a failed sub-resource to the console from the network source, which WebView's
         // onConsoleMessage never sees, so this line is the only count of them in the log.
@@ -2284,7 +2290,7 @@ class Extensions(private val host: Host) {
      */
     fun onRendererGone(view: ExtensionWebView) {
         val id = backgrounds.entries.firstOrNull { it.value === view }?.key
-        if (id != null) stopBackground(id)
+        if (id != null) stopBackground(id, "renderer gone")
         // A dead offscreen page goes the same way; `hasDocument` says false once its endpoint is gone.
         val offscreen = offscreens.entries.firstOrNull { it.value === view }?.key
         if (offscreen != null) closeOffscreen(offscreen)
@@ -2304,7 +2310,7 @@ class Extensions(private val host: Host) {
         closePopup()
         closeAuthSheets()
         releaseKeepAwake()
-        for (id in backgrounds.keys.toList()) stopBackground(id)
+        for (id in backgrounds.keys.toList()) stopBackground(id, "destroy")
         for (id in offscreens.keys.toList()) closeOffscreen(id)
         notifications.destroy()
         io.shutdownNow()

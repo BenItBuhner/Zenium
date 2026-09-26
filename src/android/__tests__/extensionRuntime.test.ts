@@ -56,7 +56,7 @@ describe('AndroidExtensionRuntime: attaching records', () => {
     // Chrome's renderer does for a `chrome-extension://` stylesheet: the predefined names with
     // the extension's id, the locale spelled as a `_locales` directory is.
     expect(served.cssMessages).toMatchObject({ '@@extension_id': ID, '@@ui_locale': 'en_US' })
-    expect(h.kt.calledWith('ext.background.start')).toEqual([{ id: ID }])
+    expect(h.kt.calledWith('ext.background.start')).toEqual([{ id: ID, reason: 'attach' }])
     expect(h.runtime.configureStats(ID)?.units[0].key).toBe('isolated:https://example.com')
   })
 
@@ -352,13 +352,16 @@ describe('AndroidExtensionRuntime: the background lifecycle', () => {
     backgroundUp(h, 'bg1', ['tabs.onCreated'])
     expect(h.kt.backgrounds.has(ID)).toBe(true)
     h.tick(30_000)
-    expect(h.kt.calledWith('ext.background.stop')).toEqual([{ id: ID }])
+    expect(h.kt.calledWith('ext.background.stop')).toEqual([{ id: ID, reason: 'idle' }])
     h.runtime.onGone(['bg1'])
     expect(h.runtime.background.state(ID)).toBe('stopped')
     // A tab appears: the persisted listener wakes the worker and the event waits for ready.
     h.tabs.t2 = makeTab('t2', 'https://two.example/')
     h.notifyState()
-    expect(h.kt.calledWith('ext.background.start')).toHaveLength(2)
+    expect(h.kt.calledWith('ext.background.start')).toEqual([
+      { id: ID, reason: 'attach' },
+      { id: ID, reason: 'event:tabs.onCreated' }
+    ])
     expect(h.runtime.background.state(ID)).toBe('starting')
     backgroundUp(h, 'bg2', ['tabs.onCreated'])
     const created = events(h, 'bg2', 'tabs.onCreated')
@@ -384,8 +387,38 @@ describe('AndroidExtensionRuntime: the background lifecycle', () => {
     expect(h.runtime.background.state(ID)).toBe('running')
     // 30 s of quiet after the message: now it idles out.
     h.tick(20_000)
-    expect(h.kt.calledWith('ext.background.stop')).toEqual([{ id: ID }])
+    expect(h.kt.calledWith('ext.background.stop')).toEqual([{ id: ID, reason: 'idle' }])
     expect(h.runtime.backgroundStats(ID)).toMatchObject({ starts: 1, idleStops: 1, queued: 0 })
+  })
+
+  it("names the reason of each start and stop to the host, for its log: an inspection's wake, a message, a detach", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    h.tick(30_000)
+    h.runtime.onGone(['bg1'])
+    h.runtime.wakeBackground(ID)
+    expect(h.kt.calledWith('ext.background.start')).toEqual([
+      { id: ID, reason: 'attach' },
+      { id: ID, reason: 'wake' }
+    ])
+    // A wake of a starting or running background asks for nothing.
+    h.runtime.wakeBackground(ID)
+    backgroundUp(h, 'bg2')
+    h.runtime.wakeBackground(ID)
+    expect(h.kt.calledWith('ext.background.start')).toHaveLength(2)
+    h.tick(30_000)
+    h.runtime.onGone(['bg2'])
+    hello(h, 'opt1', 'options', { url: `https://${ID}.ext.zenium.invalid/options.html` })
+    message(h, 'opt1', { t: 'msg', id: 3, target: {}, data: { method: 'config.get' } })
+    expect(h.kt.calledWith('ext.background.start')[2]).toEqual({ id: ID, reason: 'message' })
+    backgroundUp(h, 'bg3')
+    await h.runtime.detach(ID)
+    expect(h.kt.calledWith('ext.background.stop')).toEqual([
+      { id: ID, reason: 'idle' },
+      { id: ID, reason: 'idle' },
+      { id: ID, reason: 'remove' }
+    ])
   })
 
   it('remembers listeners across sessions so the first event of the next start wakes the worker', async () => {
