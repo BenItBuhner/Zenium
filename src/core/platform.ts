@@ -487,8 +487,13 @@ export interface ChromeContextParams {
   /** Click position in chrome CSS pixels (the caret or the focused element's middle for the keyboard). */
   x: number
   y: number
-  /** Raised by Shift+F10 or the Menu key: the menu opens at `x`,`y` with its first item selected. */
+  /** Raised by Shift+F10 or the Menu key: the menu opens with its first item selected. */
   keyboard?: boolean
+  /**
+   * The focused element's box (chrome CSS pixels, window coordinates) when the keyboard asked,
+   * for a host that hangs the menu from the element rather than at the caret (§9.23).
+   */
+  rect?: Rect
   /** `data-zen-menu` of the innermost marked element under the pointer, or null. */
   target: ChromeMenuTarget | null
   /** Tab the marked element acts on (`data-zen-menu-tab`); null for a new-tab URL bar. */
@@ -1148,6 +1153,12 @@ export interface WindowHost {
    */
   menuTargetAt?(x: number, y: number): Promise<{ target: string; tabId: string | null } | null>
   /**
+   * The box of the chrome document's focused element (chrome CSS pixels, window coordinates),
+   * where a menu the keyboard asked for hangs (§9.23); null when nothing but the document has
+   * the focus. Hosts whose chrome draws its menus itself leave it out.
+   */
+  focusedRect?(): Promise<Rect | null>
+  /**
    * Show the popup surface – a second chrome document (`index.html?surface=autofill`) floated
    * above the page views – at `bounds` (window CSS pixels), or take it down with null. It never
    * takes the keyboard when shown; the page the picker hangs from keeps it. Hosts without a
@@ -1345,6 +1356,13 @@ export interface MenuPopupOptions {
   y?: number
   /** Opened by the keyboard: the first item starts selected so the arrow keys take over at once. */
   keyboard?: boolean
+  /**
+   * The box of the element the menu belongs to (chrome CSS pixels, window coordinates): the
+   * focused element for Shift+F10 and the Menu key, a "⋯" button for its press. A native host
+   * hangs the menu from its bottom-left (§9.23) in preference to `x`,`y`; the phone's sheets
+   * have no position to read.
+   */
+  rect?: Rect
   /**
    * The link's or image's header (PUI-18) for the phone's sheet: the renderer-drawn host carries
    * it to the sheet; hosts with native menus have no header to draw and leave it be.

@@ -1,17 +1,21 @@
 // @vitest-environment happy-dom
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { UIState } from '@shared/types'
 
 vi.mock('../api', () => ({ cmd: vi.fn(), run: vi.fn(), onEvent: vi.fn(() => () => undefined) }))
 
 import {
   contextMenuAnchor,
+  controlMenuAnchor,
+  focusedRect,
   handleMenuKey,
   menuItemLabel,
   menuKeyIntent,
   mnemonicActivates,
   mnemonicKey,
   mnemonicMatch,
+  returnKeyboardMenuFocus,
+  trackKeyboardMenuSource,
   type MenuKeyLike
 } from '../menuKeys'
 import { browserStore } from '../ui'
@@ -76,6 +80,222 @@ describe('contextMenuAnchor', () => {
     expect(
       contextMenuAnchor(event({ button: 0, clientX: 10, clientY: 20, firesTouchEvents: true }))
     ).toEqual({ x: 10, y: 20 })
+  })
+
+  it("a keyboard menu carries the focused element's box, for a host that hangs the menu from it (§9.23)", () => {
+    const row = boxed('button', { left: 12, top: 40, width: 200, height: 28 })
+    row.focus()
+    expect(document.activeElement).toBe(row)
+    // Chromium's point is the element's middle; the box says where its bottom-left is.
+    expect(contextMenuAnchor(event({ button: -1, clientX: 112, clientY: 54 }))).toEqual({
+      x: 112,
+      y: 54,
+      keyboard: true,
+      rect: { x: 12, y: 40, width: 200, height: 28 }
+    })
+  })
+
+  it("a pointer's menu never carries a box, whatever has the focus", () => {
+    boxed('button', { left: 12, top: 40, width: 200, height: 28 }).focus()
+    expect(contextMenuAnchor(event({ button: 2, clientX: 400, clientY: 300 }))).toEqual({
+      x: 400,
+      y: 300
+    })
+  })
+})
+
+/** An element in the document with a measured box – happy-dom lays nothing out by itself. */
+function boxed(
+  tag: string,
+  box: { left: number; top: number; width: number; height: number }
+): HTMLElement {
+  const el = document.createElement(tag)
+  document.body.append(el)
+  el.getBoundingClientRect = () =>
+    ({
+      ...box,
+      x: box.left,
+      y: box.top,
+      right: box.left + box.width,
+      bottom: box.top + box.height,
+      toJSON: () => box
+    }) as DOMRect
+  return el
+}
+
+describe('focusedRect', () => {
+  it('is nothing while the document itself has the focus', () => {
+    expect(document.activeElement).toBe(document.body)
+    expect(focusedRect()).toBeUndefined()
+  })
+
+  it("is the focused element's box in window pixels", () => {
+    boxed('input', { left: 300.5, top: 8, width: 600, height: 32 }).focus()
+    expect(focusedRect()).toEqual({ x: 300.5, y: 8, width: 600, height: 32 })
+  })
+
+  it('is nothing for a focused element without a box – display: none, or not laid out', () => {
+    boxed('button', { left: 0, top: 0, width: 0, height: 0 }).focus()
+    expect(focusedRect()).toBeUndefined()
+  })
+})
+
+describe('controlMenuAnchor', () => {
+  it("a pointer's click on a row's ⋯ hangs the menu from the control: its bottom-left, the box along", () => {
+    const more = boxed('button', { left: 700.4, top: 4, width: 19.6, height: 16.6 })
+    expect(controlMenuAnchor({ currentTarget: more, detail: 1 })).toEqual({
+      x: 700,
+      y: 21,
+      keyboard: false,
+      rect: { x: 700.4, y: 4, width: 19.6, height: 16.6 }
+    })
+  })
+
+  it('Enter or Space on the control – a click with a `detail` of 0 – opens it in keyboard mode', () => {
+    const more = boxed('button', { left: 700, top: 4, width: 20, height: 16 })
+    expect(controlMenuAnchor({ currentTarget: more, detail: 0 })).toEqual({
+      x: 700,
+      y: 20,
+      keyboard: true,
+      rect: { x: 700, y: 4, width: 20, height: 16 }
+    })
+  })
+
+  it('a control with no box still names a point, the origin, and no box', () => {
+    expect(controlMenuAnchor({ currentTarget: null, detail: 1 })).toEqual({
+      x: 0,
+      y: 0,
+      keyboard: false
+    })
+    const bare = boxed('button', { left: 0, top: 0, width: 0, height: 0 })
+    expect(controlMenuAnchor({ currentTarget: bare, detail: 0 })).toEqual({
+      x: 0,
+      y: 0,
+      keyboard: true
+    })
+  })
+})
+
+describe('returning the keyboard when a menu closes (§9.23)', () => {
+  /*
+   * Measured on Electron 44.4.5/Linux: a native popup takes the chrome document's focus while it
+   * stands – the element blurs, `activeElement` falls to the body – and the document gets its
+   * focus back on close with no element in it. The renderer therefore remembers the element a
+   * keyboard-invoked menu hung from and refocuses it when the main process reports the close.
+   */
+  let off: () => void = () => undefined
+  beforeEach(() => {
+    off = trackKeyboardMenuSource()
+  })
+  afterEach(() => {
+    off()
+    vi.restoreAllMocks()
+    // Whatever a test armed and did not use, cleared for the next.
+    vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+    returnKeyboardMenuFocus()
+    vi.restoreAllMocks()
+  })
+
+  /** The menu Chromium raises for Shift+F10 or the Menu key: at the focused element, no button. */
+  const askFromKeyboard = (el: HTMLElement, init: MouseEventInit = {}): void => {
+    el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, button: -1, ...init }))
+  }
+  /** The native menu standing: the element blurred, the document's focus fallen to the body. */
+  const menuTakesFocus = (el: HTMLElement): void => {
+    el.blur()
+    expect(document.activeElement).toBe(document.body)
+  }
+
+  it('Shift+F10 on a row: the row loses the keyboard to the menu and has it back when the menu closes', () => {
+    const row = boxed('button', { left: 8, top: 144, width: 200, height: 28 })
+    row.focus()
+    askFromKeyboard(row)
+    menuTakesFocus(row)
+    returnKeyboardMenuFocus()
+    expect(document.activeElement).toBe(row)
+  })
+
+  it('Enter or Space on a "⋯" arms the return through its anchor; a pointer’s click on it does not', () => {
+    const more = boxed('button', { left: 700, top: 4, width: 20, height: 16 })
+    more.focus()
+    controlMenuAnchor({ currentTarget: more, detail: 0 })
+    menuTakesFocus(more)
+    returnKeyboardMenuFocus()
+    expect(document.activeElement).toBe(more)
+
+    controlMenuAnchor({ currentTarget: more, detail: 1 })
+    menuTakesFocus(more)
+    returnKeyboardMenuFocus()
+    expect(document.activeElement).toBe(document.body)
+  })
+
+  it("a right-click's menu and a long-press's are a pointer's: nothing to return to", () => {
+    const row = boxed('button', { left: 8, top: 144, width: 200, height: 28 })
+    row.focus()
+    askFromKeyboard(row, { button: 2 })
+    menuTakesFocus(row)
+    returnKeyboardMenuFocus()
+    expect(document.activeElement).toBe(document.body)
+
+    row.focus()
+    const touch = new MouseEvent('contextmenu', { bubbles: true, button: -1 })
+    Object.defineProperty(touch, 'sourceCapabilities', { value: { firesTouchEvents: true } })
+    row.dispatchEvent(touch)
+    menuTakesFocus(row)
+    returnKeyboardMenuFocus()
+    expect(document.activeElement).toBe(document.body)
+  })
+
+  it('a pick that moved the keyboard itself – to a rename field, a dialog – keeps it there', () => {
+    const row = boxed('button', { left: 8, top: 144, width: 200, height: 28 })
+    row.focus()
+    askFromKeyboard(row)
+    menuTakesFocus(row)
+    const field = boxed('input', { left: 8, top: 144, width: 200, height: 28 })
+    field.focus()
+    returnKeyboardMenuFocus()
+    expect(document.activeElement).toBe(field)
+  })
+
+  it('a pick that opened another window – this document no longer focused – is left alone', () => {
+    const row = boxed('button', { left: 8, top: 144, width: 200, height: 28 })
+    row.focus()
+    askFromKeyboard(row)
+    menuTakesFocus(row)
+    vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+    returnKeyboardMenuFocus()
+    expect(document.activeElement).toBe(document.body)
+  })
+
+  it('an element the pick removed, and a menu already returned from, give nothing back', () => {
+    const row = boxed('button', { left: 8, top: 144, width: 200, height: 28 })
+    row.focus()
+    askFromKeyboard(row)
+    menuTakesFocus(row)
+    row.remove()
+    expect(() => returnKeyboardMenuFocus()).not.toThrow()
+    expect(document.activeElement).toBe(document.body)
+
+    const other = boxed('button', { left: 8, top: 172, width: 200, height: 28 })
+    other.focus()
+    askFromKeyboard(other)
+    menuTakesFocus(other)
+    returnKeyboardMenuFocus()
+    expect(document.activeElement).toBe(other)
+    // The same close reported twice, or a later pointer menu's: the element is not refocused again.
+    menuTakesFocus(other)
+    returnKeyboardMenuFocus()
+    expect(document.activeElement).toBe(document.body)
+  })
+
+  it('the listener comes off with its remover', () => {
+    off()
+    const row = boxed('button', { left: 8, top: 144, width: 200, height: 28 })
+    row.focus()
+    askFromKeyboard(row)
+    menuTakesFocus(row)
+    returnKeyboardMenuFocus()
+    expect(document.activeElement).toBe(document.body)
   })
 })
 

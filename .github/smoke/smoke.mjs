@@ -939,9 +939,13 @@ function hookMain({ app, webContents, BrowserWindow, Menu, dialog, session, ipcM
 
   // Native popup menus (page context menu, the toolbar "Menu" button) would wait for a real user:
   // record their items, close them after a delay, or pick one item by label for the harness.
+  // A label on Windows and Linux carries its Alt mnemonic's marker (`&Delete`, `Cu&t`; W7-2) and
+  // a literal `&` doubled: the harness reads it as the menu draws it – the marker gone, `&&` an
+  // `&` – and matches a pick on that reading.
+  const readLabel = (label) => (typeof label === 'string' ? label.replace(/&(&?)/g, '$1') : label)
   const describe = (items) =>
     (items || []).map((i) => ({
-      label: i.label,
+      label: readLabel(i.label),
       type: i.type,
       role: i.role,
       enabled: i.enabled,
@@ -949,7 +953,7 @@ function hookMain({ app, webContents, BrowserWindow, Menu, dialog, session, ipcM
     }))
   const findItem = (items, label) => {
     for (const i of items || []) {
-      if (i.label === label) return i
+      if (readLabel(i.label) === label) return i
       const sub = i.submenu ? findItem(i.submenu.items, label) : null
       if (sub) return sub
     }
