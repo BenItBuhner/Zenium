@@ -37,6 +37,7 @@ import type {
   PageWindowsDeviceState,
   PasswordsDeviceState,
   PrivateDeviceState,
+  ReadingListEntry,
   ScreenCaptureRequest,
   ShareRequest,
   PasswordsStatus,
@@ -113,8 +114,10 @@ import {
   migrateLegacyBookmarks,
   normalizeBookmarkNodes
 } from '../shared/bookmarks'
+import { emptyReadingList, sanitizeReadingList, sortReadingList } from '../shared/readingList'
 import { JsonStore } from './store/JsonStore'
 import { createSpace, createTabRecord, emptyModel, tabVisibleIn, type Model } from './model'
+import { newSearchChoiceSeed, sanitizeSearchChoice, searchChoiceState } from './searchChoice'
 import { sanitizeResourceSettings } from './resources/switches'
 import { sanitizeAgentSettings } from './agent/settings'
 import {
@@ -254,6 +257,13 @@ export interface Persisted {
    * before the task manager had a window.
    */
   pageWindowsDevice?: PageWindowsDeviceState
+  /**
+   * The reading list (W6-1): every page saved for later, one entry per URL, at most
+   * `READING_LIST_CAP`. The profile's, independent of the session (a restart keeps it, a window
+   * closing leaves it alone); additive – a profile without it has none. Not in the sync record
+   * yet: the services slice replicates it as `reading-list-entry` records.
+   */
+  readingList?: ReadingListEntry[]
 }
 
 /**
@@ -402,6 +412,12 @@ export class BrowserState {
    * does. Written by the window's bounds report, persisted with the profile, never synced.
    */
   pageWindowsDevice: PageWindowsDeviceState = emptyPageWindows()
+  /**
+   * The reading list (W6-1), one entry per URL in no particular order (`sortReadingList` puts
+   * the unread first for the chrome). Written by the `ReadingListService` alone, replaced whole
+   * and committed; persisted with the profile, not synced yet.
+   */
+  readingList: ReadingListEntry[] = emptyReadingList()
   media: MediaState[] = []
   devtoolsOpenFor = new Set<string>()
   resources: ResourceSnapshot = emptyResourceSnapshot()
@@ -580,6 +596,21 @@ export class BrowserState {
    * CT-41): the translate service folds the languages its own document listed into it, once.
    */
   languagesDefaulted = false
+  /**
+   * The OS's region (`PlatformInfo.region`; a tester's override in its place), set by the
+   * browser before `load()`: the EEA's search-engine choice screen is gated on it (W6-2).
+   */
+  searchChoiceRegion: string | null = null
+  /**
+   * The choice screen's run-only terms (`core/searchChoice.ts`): the list's order for this
+   * session, whether "Skip for now" put the screen off until the next run, and whether Settings
+   * asked for it again. Volatile – broadcast, never written; the record itself is a setting.
+   */
+  searchChoiceSession: { seed: number; skipped: boolean; askAgain: boolean } = {
+    seed: newSearchChoiceSeed(),
+    skipped: false,
+    askAgain: false
+  }
 
   constructor(
     io: StoreIO,
@@ -719,6 +750,9 @@ export class BrowserState {
       data.settings?.searchEngines,
       typeof data.settings?.searchEngineId === 'string' ? data.settings.searchEngineId : undefined
     )
+    // The choice screen's record (W6-2): a profile from before it, or one that skipped, reads
+    // null – the screen is owed again in the EEA.
+    this.settings.searchChoice = sanitizeSearchChoice(data.settings?.searchChoice)
     this.settings.privacy = sanitizePrivacySettings(data.settings?.privacy)
     this.settings.spellcheck = sanitizeSpellcheck(data.settings?.spellcheck)
     this.settings.reader = sanitizeReaderPreferences(data.settings?.reader)
@@ -753,6 +787,7 @@ export class BrowserState {
     this.privateDevice = sanitizePrivateDevice(data.privateDevice)
     this.passwordsDevice = sanitizePasswordsDevice(data.passwordsDevice)
     this.pageWindowsDevice = sanitizePageWindows(data.pageWindowsDevice)
+    this.readingList = sanitizeReadingList(data.readingList)
     if (Array.isArray(data.windows) && data.windows.length) {
       this.restoredWindows = data.windows.filter((w) => w && typeof w.id === 'string')
     } else {
@@ -1050,12 +1085,20 @@ export class BrowserState {
       shortcuts: this.shortcuts,
       searchEngines: this.searchEngines,
       searchEngineControl: this.extensionSearch.control,
+      searchChoice: searchChoiceState({
+        region: this.searchChoiceRegion,
+        record: settings.searchChoice,
+        skipped: this.searchChoiceSession.skipped,
+        askAgain: this.searchChoiceSession.askAgain,
+        seed: this.searchChoiceSession.seed
+      }),
       extensionControls: this.extensionControls,
       glance: win.glance,
       compactSidebarRevealed: win.compactSidebarRevealed,
       window: win.windowState(),
       ...this.downloadsFor(win),
       bookmarks: this.bookmarks,
+      readingList: this.readingListFor(),
       newTabShortcuts: this.newTabDevice.shortcuts,
       newTabHiddenHosts: this.newTabDevice.hiddenHosts,
       privateLockOnLeave: this.privateDevice.lockOnLeave,
@@ -1072,6 +1115,18 @@ export class BrowserState {
       resources: this.resources,
       pageEnvironment: this.pageEnvironment
     }
+  }
+
+  private sortedReadingList: ReadingListEntry[] = []
+  private sortedReadingListFor: ReadingListEntry[] | null = null
+
+  /** The list in the chrome's order, sorted once per write (every window's snapshot shares it). */
+  private readingListFor(): ReadingListEntry[] {
+    if (this.sortedReadingListFor !== this.readingList) {
+      this.sortedReadingList = sortReadingList(this.readingList)
+      this.sortedReadingListFor = this.readingList
+    }
+    return this.sortedReadingList
   }
 
   /** Broadcast + persist, coalesced to once per tick. */
@@ -1186,7 +1241,8 @@ export class BrowserState {
       newTabDevice: this.newTabDevice,
       privateDevice: this.privateDevice,
       passwordsDevice: this.passwordsDevice,
-      pageWindowsDevice: this.pageWindowsDevice
+      pageWindowsDevice: this.pageWindowsDevice,
+      readingList: this.readingList
     }
   }
 

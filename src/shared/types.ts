@@ -317,6 +317,13 @@ export interface HostCapabilities {
    */
   genericFontFamilies: boolean
   /**
+   * The host can switch Chromium's caret browsing on for a page (`TabView.setCaretBrowsingEnabled`,
+   * Electron's `webContents.setCaretBrowsingEnabled`, CT-34): a text cursor in the page that the
+   * arrow keys move and Shift selects with, F7's toggle in Chrome and Edge. Off on the Android
+   * host, whose WebView has no such call: F7 does nothing there and Settings hides the row.
+   */
+  caretBrowsing: boolean
+  /**
    * The host answers a placement (Q1, the observable landing – the §11 stand-in rule): after
    * the batch that places a page view and brings it back (`view.setBounds`, `view.setRadius`,
    * `view.setVisible`), the platform asks `view.shown` and the host replies once the placement
@@ -1770,6 +1777,41 @@ export interface Bookmark {
 
 export type BookmarkNodeType = 'url' | 'folder'
 
+/**
+ * One page saved for later (Chrome's reading list, bookmarks-33; W6-1). Kept in the profile's
+ * state as `readingList` (`BrowserState.readingList`, `shared/readingList.ts` for the pure
+ * helpers, `core/readingList.ts` for the writes), one entry per URL: re-adding a page marks it
+ * unread and brings it to the top. Local to the profile until the services slice replicates it
+ * as one `reading-list-entry` record per entry carrying every field but `favicon`
+ * (`internal/desktop-parity/reading-list-interface.md`, services' read beside it). The shape is
+ * frozen: the field order below is the normal form every write and `sanitizeReadingEntry`
+ * produce, so a load rewrites nothing the sync engine could take for an edit.
+ */
+export interface ReadingListEntry {
+  /** `rl_<uuid>`, stable across renames and read/unread flips; the sync record's key. */
+  id: string
+  /** The page's address as it was added; the dedupe key (exact string, as `chrome.readingList`). */
+  url: string
+  /** The page's title at the time it was added (the URL's host when the page had none). */
+  title: string
+  /** When the page was added, or added again (an add of a page already in the list refreshes it). */
+  addedAt: number
+  /**
+   * The last write to the entry of any kind: information for the chrome and the record's
+   * payload. The conflict clock is the sync engine's own `modified` stamp, set at the same
+   * commit (the two agree to the millisecond); nothing reads this field to resolve a conflict.
+   */
+  updatedAt: number
+  /**
+   * The page's favicon (a data URL or an address) when the tab had one. This device's alone,
+   * never in the sync record: a data URL is bytes across the boundary and an address may be
+   * host-local; the receiving side resolves the icon from its favicon cache by `url`.
+   */
+  favicon?: string
+  /** When the entry was last marked read; absent while it is unread. */
+  readAt?: number
+}
+
 /** When the bookmarks bar shows above the content frame (Edge's "Show favorites bar"). */
 export type BookmarksBarMode = 'always' | 'newtab' | 'never'
 
@@ -2156,6 +2198,47 @@ export interface SearchEngine {
   favicon?: string | null
   /** A discovered engine: when its site was last visited (orders "Recently visited"). */
   visitedAt?: number
+  /**
+   * The engine's reverse image search (Chrome's `image_url`, CT-32): the product the image
+   * menu's "Search Image with <name>" row names and its template. Absent on an engine without
+   * one – DuckDuckGo, Ecosia, Wikipedia, a hand-added or discovered engine (OpenSearch declares
+   * none) – and the menu has no row. Additive: a build from before it ignores the field, a
+   * record from before it gets no row.
+   */
+  imageSearch?: ImageSearchTemplate
+}
+
+/** An engine's reverse image search: the product's name and the URL template (`%s` takes the image's encoded address). */
+export interface ImageSearchTemplate {
+  name: string
+  url: string
+}
+
+/**
+ * The search-engine choice screen's record (W6-2; DMA Art. 6(3), Chrome's choice screen): the
+ * engine the user set as the default on this device's screen, the OS region the screen was shown
+ * for (ISO 3166-1 alpha-2, `''` when the OS did not say), when, and the screen's version (the
+ * eligible list's revision). Device-local, never synced (`DEVICE_LOCAL_SETTINGS`): as Chrome's,
+ * the screen is each device's to show once; a synced default engine does not stand in for it.
+ */
+export interface SearchChoiceRecord {
+  engineId: string
+  region: string
+  madeAt: number
+  version: number
+}
+
+/**
+ * What the chrome reads to show the choice screen (`core/searchChoice.ts`): the region the host
+ * reported, whether it is in the EEA, whether the screen is owed right now – EEA and no record,
+ * not skipped this run; or Settings' "Choose your search engine again" asked for it – and the
+ * run's shuffle seed, one per session, so the list keeps its order while the app is open.
+ */
+export interface SearchChoiceState {
+  region: string | null
+  eea: boolean
+  required: boolean
+  seed: number
 }
 
 /** What the clipboard holds, read from its description only (never its content). */
@@ -2323,6 +2406,12 @@ export type ShortcutAction =
   | 'page.fullscreen'
   | 'page.readerMode'
   | 'page.pip'
+  /**
+   * Chrome's and Edge's F7 (CT-34): caret browsing on for every page after the one-time
+   * "Turn on caret browsing?" confirm, off again silently. Hosts without the engine call
+   * (`HostCapabilities.caretBrowsing`) ignore it.
+   */
+  | 'page.caretBrowsing'
   | 'page.screenshot'
   /** Edge's "Capture full page": the whole page, beyond the viewport, saved like a screenshot. */
   | 'page.captureFullPage'
@@ -2767,6 +2856,13 @@ export interface Settings {
    * synced with the settings. Absent in profiles from before it existed (read as none).
    */
   searchEngines?: SearchEngine[]
+  /**
+   * The EEA's search-engine choice screen's record (W6-2): the engine set as the default on it,
+   * or null while the screen has not been answered on this device (it is shown at the first run
+   * in the EEA and re-asked each run until answered; "Skip for now" records nothing). Absent in
+   * profiles from before it existed (read as null). Device-local, never synced.
+   */
+  searchChoice: SearchChoiceRecord | null
   searchSuggestions: boolean
   /**
    * Suggestion privacy (omnibox-45, Chrome's "Autocomplete searches and URLs", Edge's per-source
@@ -2795,6 +2891,18 @@ export interface Settings {
    * never hold); absent in profiles from before it existed (read as true).
    */
   warnBeforeQuitting: boolean
+  /**
+   * Caret browsing is on (CT-34): every page shows a text cursor the arrow keys move, as Chrome's
+   * `settings.a11y.enable_caret_browsing` – one state for the profile, kept across runs, F7
+   * toggling it. Absent in profiles from before it existed (read as false).
+   */
+  caretBrowsing?: boolean
+  /**
+   * F7 asks "Turn on caret browsing?" before it turns caret browsing on (Chrome's one-time
+   * dialog); the dialog's "Don't ask again" turns this off. Absent in profiles from before it
+   * existed (read as true).
+   */
+  caretBrowsingConfirm?: boolean
   /**
    * Phone: the tab overview's "Close all tabs" asks first ("Close N tabs?"); its "Don't ask
    * again" turns this off. Absent in profiles from before it existed (read as true).
@@ -3980,12 +4088,13 @@ export interface PageDialogResponse {
 
 /**
  * A question the chrome asks about a window as a whole (window-modal): whether to close the
- * window with its tabs, to quit Zenium with every open tab, or to open a bookmark folder's many
- * pages at once (`open-bookmarks`: the desktop's form of Chrome's "Open all bookmarks?").
+ * window with its tabs, to quit Zenium with every open tab, to open a bookmark folder's many
+ * pages at once (`open-bookmarks`: the desktop's form of Chrome's "Open all bookmarks?"), or to
+ * turn caret browsing on (`caret-browsing`: Chrome's one-time F7 confirm, CT-34; `count` is 0).
  */
 export interface WindowPrompt {
   id: string
-  kind: 'close-tabs' | 'quit' | 'open-bookmarks'
+  kind: 'close-tabs' | 'quit' | 'open-bookmarks' | 'caret-browsing'
   /**
    * How many tabs close, for the warning about them ("You are about to quit with N tabs open");
    * 0 when that warning is not part of the question – a single tab, or the setting off – and the
@@ -4054,6 +4163,8 @@ export interface UIState {
   searchEngines: SearchEngine[]
   /** The extension holding the default search engine, if one does (`defaultSearchEngineOf`). */
   searchEngineControl: SearchEngineControl | null
+  /** The EEA's search-engine choice screen: whether it is owed, and the run's list order (W6-2). */
+  searchChoice: SearchChoiceState
   /**
    * The settings an extension holds, keyed by the setting's path in `Settings` (`fonts.
    * standard`, `fonts.size`, `fonts.minimumSize`) or by a name for a setting kept elsewhere
@@ -4069,6 +4180,12 @@ export interface UIState {
   downloadsProgress: DownloadsProgress
   /** Every bookmark node (roots included), ordered parent-first, then by index. */
   bookmarks: BookmarkNode[]
+  /**
+   * The reading list (W6-1, bookmarks-33), unread first and newest first within each half
+   * (`sortReadingList`): the `zen://reading-list` page's rows and the bookmarks bar control's
+   * unread count (`unreadReadingCount`), at most `READING_LIST_CAP` entries.
+   */
+  readingList: ReadingListEntry[]
   /** The new tab page's shortcuts on this device, in grid order (Settings and the phone's page). */
   newTabShortcuts: NewTabShortcut[]
   /** Hosts removed from the new tab page's most-visited tiles on this device (the phone filters). */
@@ -4278,6 +4395,8 @@ export interface CommandDescriptor {
     | 'space.new'
     | 'history.open'
     | 'bookmarks.open'
+    | 'readingList.add'
+    | 'readingList.open'
     | 'downloads.open'
     | 'tab.freezeOthers'
     | 'tab.wakeAll'
@@ -4441,6 +4560,7 @@ export interface MenuDescriptor {
     | 'bookmark'
     | 'history'
     | 'download'
+    | 'readingList'
     | 'urlbar'
     | 'translate'
   /** What the phone sheet calls the menu (a bookmark's name, "3 selected"); the source's generic name when absent. */
@@ -4849,6 +4969,12 @@ export interface Commands {
   }
   /** Picture-in-picture of the tab's video through the OS (`capabilities.pictureInPicture`); false when refused. */
   'media.pictureInPicture': { args: { tabId: string }; result: boolean }
+  /**
+   * "Turn off for this site", the first automatic picture-in-picture toast's action (MW-28): the
+   * site of the tab's page gets `auto-picture-in-picture` = deny (the site card's own write) and
+   * the video the desktop just put in the small window comes back to its tab, playing on.
+   */
+  'media.autoPipOptOut': { args: { tabId: string }; result: void }
   /** The screen-capture picker's answer: the picked source (null cancels) and whether to add system audio. */
   'screenCapture.respond': {
     args: { id: string; sourceId: string | null; audio?: boolean }
@@ -5424,6 +5550,34 @@ export interface Commands {
   /** Netscape bookmark HTML export through the host's save dialog. */
   'bookmark.export': { args: void; result: boolean }
 
+  // --- reading list (W6-1; `core/readingList.ts`) ---------------------------------------------
+  /**
+   * Save the tab's page for later (the star's menu, the tab's menu, the app menu's row); a page
+   * already listed is marked unread and brought to the top. Null when the tab has no page the
+   * list holds (`zen://`, blank).
+   */
+  'readingList.add': { args: { tabId: string | null }; result: ReadingListEntry | null }
+  /** The tab's page out of the list (the star menu's Remove row); false when it was not in it. */
+  'readingList.removeTab': { args: { tabId: string }; result: boolean }
+  'readingList.remove': { args: { id: string }; result: boolean }
+  'readingList.setRead': { args: { id: string; read: boolean }; result: boolean }
+  /** Every unread entry read; how many changed. */
+  'readingList.markAllRead': { args: void; result: number }
+  /**
+   * Open an entry's page and mark it read: a tab of this window already showing the page is
+   * brought forward; otherwise the page loads in `tabId` (the window's active tab when null) or,
+   * with `newTab`, in a new tab – behind this one with `background` (§10.1's middle click).
+   */
+  'readingList.open': {
+    args: { id: string; tabId: string | null; newTab?: boolean; background?: boolean }
+    result: void
+  }
+  /** The row's menu (Mark as read / unread, Open in New Tab, Copy Link, Remove) at a point. */
+  'readingList.contextMenu': {
+    args: { id: string; x?: number; y?: number; keyboard?: boolean }
+    result: void
+  }
+
   /** The browsers and files an import can come from, freshly probed (profiles, locks). */
   'import.sources': { args: void; result: ImportSource[] }
   /**
@@ -5562,6 +5716,13 @@ export interface Commands {
       section?: string | null
       openerTabId?: string | null
       query?: InternalPageQuery
+      /**
+       * The chrome's hand-back of a page the window's class change closed (a tablet's page tab
+       * narrowed into the phone class became the page's overlay, `PageService.reconcileLayout`;
+       * the window widening again, the overlay becomes the tab): the tab comes back at the slot
+       * it had while that still fits, else beside the active tab as any page opens.
+       */
+      handedBack?: boolean
     }
     result: string | null
   }
@@ -5677,6 +5838,16 @@ export interface Commands {
     args: { searchEngineId: string; colorScheme: ColorScheme; essentials: string[] }
     result: void
   }
+
+  /**
+   * The EEA's search-engine choice screen (W6-2). `choose`: the picked engine becomes the
+   * default (copied into the user's list when it is one of the EEA set) and the device's record
+   * is written; `skip`: "Skip for now" – nothing is written, the screen waits for the next run;
+   * `askAgain`: Settings › Search › "Choose your search engine again" puts the screen up.
+   */
+  'searchChoice.choose': { args: { engineId: string }; result: void }
+  'searchChoice.skip': { args: void; result: void }
+  'searchChoice.askAgain': { args: void; result: void }
 
   /**
    * Ask the system to make Zenium the default browser (Android's role dialog, or the default-apps
@@ -6200,6 +6371,16 @@ export type CommandName = keyof Commands
 export type CommandArgs<K extends CommandName> = Commands[K]['args']
 export type CommandResult<K extends CommandName> = Commands[K]['result']
 
+/**
+ * The one trailing action a core toast may carry (`Events['toast']`, §9.33): the label the
+ * chrome shows after the message and the command it runs on the pick, on the ordinary
+ * `zen:cmd` path – typed per command, so the args are the command's own. A toast without one
+ * is what it always was.
+ */
+export type ToastAction = {
+  [K in CommandName]: { label: string; command: K; args: CommandArgs<K> }
+}[CommandName]
+
 export type UrlbarOpenMode = 'new-tab' | 'edit' | 'search'
 
 export interface Events {
@@ -6354,7 +6535,12 @@ export interface Events {
    * chrome draws it and answers with `share.panelAction`.
    */
   'share.panel': SharePanelRequest
-  toast: { message: string; kind?: 'info' | 'error' }
+  /**
+   * A message in the chrome's toast slot; `action`, when the core sends one, is the toast's
+   * trailing action and the command the chrome runs when it is picked (the action clock,
+   * §9.33). Absent for every toast that has none, as before.
+   */
+  toast: { message: string; kind?: 'info' | 'error'; action?: ToastAction }
   /**
    * Take Screenshot put the visible page in the gallery (SH-07): the chrome shows the preview
    * card in the toast's slot – the thumbnail, Share | Delete, Capture more – for `tabId`'s page.

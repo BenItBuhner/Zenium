@@ -23,6 +23,12 @@ interface Persisted {
   decisions: Record<string, PermissionDecision>
   /** The devices sites are connected to (`DeviceGrant`); absent in files from before them. */
   devices?: DeviceGrant[]
+  /**
+   * Sites told once about a permission that acts without asking (`origin|permission` keys, the
+   * oldest first): the desktop's first automatic picture-in-picture toast (MW-28). Absent in
+   * files from before it.
+   */
+  noticed?: string[]
 }
 
 /** What the host knows of a device when it asks whether a site is connected to it, or connects it. */
@@ -135,6 +141,13 @@ const ONE_SHOT_DENY = new Set(['openExternal'])
  */
 export const DISMISSALS_BEFORE_BLOCK = 3
 
+/**
+ * First-use notices remembered at most (the oldest go first when the cap is reached), as the
+ * install banner's engagement records are capped: a bounded file, and a site told long ago is
+ * told once more at worst.
+ */
+export const MAX_NOTICES = 200
+
 /** Longest URL or path shown inside a prompt. */
 const MAX_SHOWN = 80
 
@@ -185,6 +198,11 @@ export class PermissionService {
   private readonly dismissals = new Map<string, number>()
   /** Requests answered from a stored allow this session, per key (the notification review). */
   private readonly hits = new Map<string, number>()
+  /**
+   * Sites told once about a permission that acts without asking (`noticed`), the oldest first:
+   * kept with the answers, device-local as they are, gone with the site's reset as they are.
+   */
+  private notices: string[] = []
   private override: PermissionOverride | null = null
 
   constructor(
@@ -197,6 +215,10 @@ export class PermissionService {
     if (data?.version === 1 && data.decisions) this.decisions = data.decisions
     if (data?.version === 1 && Array.isArray(data.devices))
       this.devices = data.devices.filter(isDeviceGrant).map(sanitizeGrant)
+    if (data?.version === 1 && Array.isArray(data.noticed))
+      this.notices = data.noticed
+        .filter((key): key is string => typeof key === 'string' && key.includes('|'))
+        .slice(-MAX_NOTICES)
   }
 
   /**
@@ -354,11 +376,54 @@ export class PermissionService {
     this.notify(change)
   }
 
-  /** The file's shape; a profile without device grants keeps the shape it had before them. */
+  /**
+   * The file's shape; a profile without device grants or notices keeps the shape it had before
+   * them.
+   */
   private persisted(): Persisted {
-    return this.devices.length > 0
-      ? { version: 1, decisions: this.decisions, devices: this.devices }
-      : { version: 1, decisions: this.decisions }
+    const out: Persisted = { version: 1, decisions: this.decisions }
+    if (this.devices.length > 0) out.devices = this.devices
+    if (this.notices.length > 0) out.noticed = this.notices
+    return out
+  }
+
+  // ---------------------------------------------------------------------------
+  // First-use notices: a permission that acts without asking says so once per site
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Whether the site of `url` has been told about `permission` once – the desktop's first
+   * automatic picture-in-picture toast (MW-28) asks before it speaks. The memory is the
+   * answers' own (`permissions.json`, device-local, never synced) and goes with them: a site
+   * reset in Settings or the site card is told again, as it is asked again.
+   */
+  noticed(permission: string, url: string): boolean {
+    const origin = permissionSite(url)
+    return origin !== null && this.notices.includes(`${origin}|${permission}`)
+  }
+
+  /** The site of `url` has been told about `permission`: nothing is said again. */
+  markNoticed(permission: string, url: string): void {
+    const origin = permissionSite(url)
+    if (!origin) return
+    const key = `${origin}|${permission}`
+    if (this.notices.includes(key)) return
+    this.notices.push(key)
+    if (this.notices.length > MAX_NOTICES)
+      this.notices = this.notices.slice(this.notices.length - MAX_NOTICES)
+    this.store.write(this.persisted())
+  }
+
+  /** Forget the notices of `origin` (one permission, or all of them); true when any went. */
+  private forgetNotices(origin: string, permission?: string): boolean {
+    const left = this.notices.filter((key) => {
+      const split = key.lastIndexOf('|')
+      if (key.slice(0, split) !== origin) return true
+      return permission !== undefined && key.slice(split + 1) !== permission
+    })
+    if (left.length === this.notices.length) return false
+    this.notices = left
+    return true
   }
 
   /**
@@ -679,6 +744,7 @@ export class PermissionService {
     const goodbyes = [...this.devices.map((g) => grantChange(g)), ...this.privateGrantChanges()]
     this.decisions = {}
     this.devices = []
+    this.notices = []
     this.savedFiles.clear()
     this.sessionAllows.clear()
     this.privateDecisions.clear()
@@ -713,6 +779,7 @@ export class PermissionService {
     if (
       removed.length === 0 &&
       goodbyes.length === 0 &&
+      this.notices.length === 0 &&
       this.savedFiles.size === 0 &&
       this.sessionAllows.size === 0 &&
       this.privateDecisions.size === 0
@@ -720,6 +787,7 @@ export class PermissionService {
       return
     for (const key of removed) delete this.decisions[key]
     this.devices = []
+    this.notices = []
     this.savedFiles.clear()
     this.sessionAllows.clear()
     this.privateDecisions.clear()
@@ -883,7 +951,8 @@ export class PermissionService {
       (g) => g.origin === origin && (permission === undefined || g.kind === permission)
     )
     if (dropped.length > 0) this.devices = this.devices.filter((g) => !dropped.includes(g))
-    if (removed.length === 0 && dropped.length === 0) return
+    const forgotten = this.forgetNotices(origin, permission)
+    if (removed.length === 0 && dropped.length === 0 && !forgotten) return
     this.store.write(this.persisted())
     for (const key of removed) this.notify(changeFor(key))
     for (const grant of dropped)

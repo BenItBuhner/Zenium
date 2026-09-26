@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PermissionPromptHost, StoreIO } from '../platform'
 import type { PermissionPrompt, PermissionPromptAnswer } from '../../shared/types'
 import {
+  MAX_NOTICES,
   PermissionService,
   decisionKey,
   displayOrigin,
@@ -527,6 +528,95 @@ describe('PermissionService: persistence and rules', () => {
     expect(p.rules()).toEqual([
       { origin: 'https://example.com', permission: 'ads', decision: 'deny' }
     ])
+  })
+})
+
+describe('PermissionService: first-use notices (the automatic picture-in-picture toast, MW-28)', () => {
+  const PIP = 'auto-picture-in-picture'
+
+  it('remembers a site told once, per site, in the store the answers share, and holds it across a restart', () => {
+    const { permissions, io } = service()
+    expect(permissions.noticed(PIP, 'https://video.example/watch')).toBe(false)
+    permissions.markNoticed(PIP, 'https://video.example/watch')
+    expect(permissions.noticed(PIP, 'https://video.example/watch')).toBe(true)
+    // Per site: another page of the site is told; another site and another permission are not.
+    expect(permissions.noticed(PIP, 'https://video.example/other?x=1')).toBe(true)
+    expect(permissions.noticed(PIP, 'https://clips.example/1')).toBe(false)
+    expect(permissions.noticed('camera', 'https://video.example/watch')).toBe(false)
+    // Not a rule: the site card and Settings list only decisions.
+    expect(permissions.rules()).toEqual([])
+    expect(permissions.listForOrigin('https://video.example')).toEqual([])
+    permissions.flushSync()
+    const doc = JSON.parse(io.files.get('permissions.json')!)
+    expect(doc).toEqual({ version: 1, decisions: {}, noticed: [`https://video.example|${PIP}`] })
+    // The restart: the memory holds.
+    const again = new PermissionService(io, prompts(true))
+    expect(again.noticed(PIP, 'https://video.example/watch')).toBe(true)
+    expect(again.noticed(PIP, 'https://clips.example/1')).toBe(false)
+  })
+
+  it('remembers nothing for a page without a site, and writes nothing twice for a site told', () => {
+    const { permissions, io } = service()
+    permissions.markNoticed(PIP, 'zen://newtab')
+    permissions.markNoticed(PIP, 'not a url')
+    expect(permissions.noticed(PIP, 'zen://newtab')).toBe(false)
+    permissions.flushSync()
+    expect(io.files.has('permissions.json')).toBe(false)
+    permissions.markNoticed(PIP, 'https://video.example/watch')
+    permissions.flushSync()
+    const written = io.files.get('permissions.json')
+    permissions.markNoticed(PIP, 'https://video.example/again')
+    permissions.flushSync()
+    expect(io.files.get('permissions.json')).toBe(written)
+  })
+
+  it('forgets a notice with the site’s reset, one permission or all, and with every reset of the store', () => {
+    const { permissions } = service()
+    permissions.markNoticed(PIP, 'https://video.example/watch')
+    permissions.markNoticed(PIP, 'https://clips.example/1')
+    permissions.resetOrigin('https://video.example/watch', PIP)
+    expect(permissions.noticed(PIP, 'https://video.example/watch')).toBe(false)
+    expect(permissions.noticed(PIP, 'https://clips.example/1')).toBe(true)
+    permissions.markNoticed(PIP, 'https://video.example/watch')
+    permissions.resetOrigin('https://video.example/watch', 'camera')
+    expect(permissions.noticed(PIP, 'https://video.example/watch')).toBe(true)
+    permissions.resetOrigin('https://video.example/watch')
+    expect(permissions.noticed(PIP, 'https://video.example/watch')).toBe(false)
+    permissions.resetSites()
+    expect(permissions.noticed(PIP, 'https://clips.example/1')).toBe(false)
+    permissions.markNoticed(PIP, 'https://clips.example/1')
+    permissions.reset()
+    expect(permissions.noticed(PIP, 'https://clips.example/1')).toBe(false)
+  })
+
+  it('keeps the file bounded: the oldest notices go first past the cap, on write and on read', () => {
+    const { permissions, io } = service()
+    for (let i = 0; i < MAX_NOTICES + 5; i++) permissions.markNoticed(PIP, `https://s${i}.example/`)
+    expect(permissions.noticed(PIP, 'https://s0.example/')).toBe(false)
+    expect(permissions.noticed(PIP, 'https://s4.example/')).toBe(false)
+    expect(permissions.noticed(PIP, 'https://s5.example/')).toBe(true)
+    expect(permissions.noticed(PIP, `https://s${MAX_NOTICES + 4}.example/`)).toBe(true)
+    permissions.flushSync()
+    expect(JSON.parse(io.files.get('permissions.json')!).noticed).toHaveLength(MAX_NOTICES)
+    // A file with too many (or with junk among them) is read to the cap, the newest kept.
+    const many = Array.from({ length: MAX_NOTICES + 10 }, (_, i) => `https://t${i}.example|${PIP}`)
+    const p = new PermissionService(
+      fakeIo(JSON.stringify({ version: 1, decisions: {}, noticed: [...many, 7, 'no-bar'] })),
+      prompts(true)
+    )
+    expect(p.noticed(PIP, 'https://t0.example/')).toBe(false)
+    expect(p.noticed(PIP, 'https://t9.example/')).toBe(false)
+    expect(p.noticed(PIP, 'https://t10.example/')).toBe(true)
+    expect(p.noticed(PIP, `https://t${MAX_NOTICES + 9}.example/`)).toBe(true)
+  })
+
+  it('reads a file from before the notices as it always did', () => {
+    const p = new PermissionService(
+      fakeIo(JSON.stringify({ version: 1, decisions: { 'https://a.example|camera': 'deny' } })),
+      prompts(true)
+    )
+    expect(p.noticed(PIP, 'https://a.example/')).toBe(false)
+    expect(p.check('camera', 'https://a.example')).toBe(false)
   })
 })
 

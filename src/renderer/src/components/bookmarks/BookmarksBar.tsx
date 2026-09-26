@@ -1,8 +1,9 @@
 import type { JSX } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ChevronsRight } from 'lucide-react'
+import { BookOpen, ChevronsRight } from 'lucide-react'
 import type { BookmarkNode, Rect, Tab, UIState } from '@shared/types'
 import { BOOKMARKS_BAR_ID, MOBILE_BOOKMARKS_ID, OTHER_BOOKMARKS_ID } from '@shared/bookmarks'
+import { unreadReadingCount } from '@shared/readingList'
 import {
   bookmarkDragOf,
   carriesBookmark,
@@ -27,6 +28,8 @@ import { nodeLabel, useBookmarkTree } from './tree'
 import { HOLD_TO_OPEN_MS, useBarDrag } from './useBarDrag'
 
 const OVERFLOW_ANCHOR = 'overflow'
+/** The Reading list control's stop id (W6-1): the bar's last roving stop, after the ». */
+const READING_LIST_ANCHOR = 'reading-list'
 
 /** An outside drag (a sidebar tab, a link from a page) hovering the bar. */
 type ExternalHover = { kind: 'slot'; index: number } | { kind: 'folder'; folderId: string }
@@ -57,6 +60,12 @@ type ExternalHover = { kind: 'slot'; index: number } | { kind: 'folder'; folderI
  * a chip; the menus carry no editing row (the core's `showBookmarkContextMenu`). A chip still
  * drags out as a link (an opening), and Ctrl+D still files the page – through the star bubble,
  * which names it as a private window's.
+ *
+ * The bar's trailing end carries the Reading list control (W6-1, bookmarks-33; Chrome M89's
+ * seat, before the pinned roots): a chip like the others – the book glyph and its label – with
+ * the unread count as §9.19's badge after the label while anything waits, opening the
+ * `zen://reading-list` page tab. It is the strip's last roving stop, after the », so the arrows,
+ * Home and End reach it; it is no drop target and has no panel.
  */
 export function BookmarksBar({
   state,
@@ -82,6 +91,8 @@ export function BookmarksBar({
   const tabId = tab?.id ?? null
   /** A private window's bar takes no edit (bookmarks-43); opening is all it does. */
   const readOnly = isPrivateWindow(state)
+  /** How many reading list entries wait: the Reading list control's badge. */
+  const unread = unreadReadingCount(state.readingList ?? [])
   const stripRef = useRef<HTMLDivElement>(null)
   const [motion] = useState(() => new ChipMotion())
   useEffect(() => () => motion.dispose(), [motion])
@@ -218,12 +229,18 @@ export function BookmarksBar({
     else openMenu(anchorId)
   }
 
-  /** The roving stops of the strip in order: the visible chips, then the » when chips hide. */
+  /**
+   * The roving stops of the strip in order: the visible chips, then the » when chips hide, then
+   * the Reading list control.
+   */
   const stopIds = (): string[] => {
     const ids = items.slice(0, visibleCount).map((n) => n.id)
     if (hidden.length) ids.push(OVERFLOW_ANCHOR)
+    ids.push(READING_LIST_ANCHOR)
     return ids
   }
+  /** The Reading list control's place in the stops: after the visible chips and the ». */
+  const readingStop = visibleCount + (hidden.length ? 1 : 0)
   /** Whether the stop opens a panel: a folder chip or the ». */
   const opensPanel = (id: string): boolean =>
     id === OVERFLOW_ANCHOR || items.some((n) => n.id === id && n.type === 'folder')
@@ -483,9 +500,10 @@ export function BookmarksBar({
   const [focusId, setFocusId] = useState<string | null>(null)
   const focusIndex = useMemo(() => {
     if (focusId === OVERFLOW_ANCHOR) return hidden.length ? visibleCount : 0
+    if (focusId === READING_LIST_ANCHOR) return readingStop
     const at = focusId ? items.findIndex((n) => n.id === focusId) : -1
     return at >= 0 && at < visibleCount ? at : 0
-  }, [focusId, hidden.length, items, visibleCount])
+  }, [focusId, hidden.length, items, readingStop, visibleCount])
   const focusChip = (index: number): void => {
     const ids = stopIds()
     if (!ids.length) return
@@ -523,7 +541,7 @@ export function BookmarksBar({
   // the bar). The panel's own keys – Up from its first row, Escape, Left and Right along the bar
   // – are `BarMenu`'s.
   const onStripKeyDown = (e: React.KeyboardEvent): void => {
-    const total = visibleCount + (hidden.length ? 1 : 0)
+    const total = stopIds().length
     switch (e.key) {
       case 'ArrowRight':
         focusChip(focusIndex + 1)
@@ -777,6 +795,28 @@ export function BookmarksBar({
           <ChevronsRight className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
         </button>
       )}
+      {/* The Reading list control (W6-1): Chrome M89's seat, the badge its unread count. */}
+      <button
+        ref={attach}
+        type="button"
+        data-bm-id={READING_LIST_ANCHOR}
+        data-testid="bookmarks-bar-reading-list"
+        data-unread={unread || undefined}
+        tabIndex={focusIndex === readingStop ? 0 : -1}
+        aria-label={unread ? `Reading list, ${unread} unread` : 'Reading list'}
+        className="zen-bm-chip zen-bm-reading-list"
+        onFocus={() => setFocusId(READING_LIST_ANCHOR)}
+        onKeyDown={onStripKeyDown}
+        onClick={() => run('page.open', { id: 'reading-list', openerTabId: tabId })}
+      >
+        <BookOpen className="zen-bm-chip-icon" strokeWidth={TOOLBAR_STROKE} aria-hidden />
+        <span className="zen-bm-chip-label">Reading list</span>
+        {unread > 0 && (
+          <span className="zen-v2-badge" data-testid="bookmarks-bar-reading-list-count">
+            {unread}
+          </span>
+        )}
+      </button>
       {pinned.map((node) => (
         <button
           key={node.id}

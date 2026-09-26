@@ -4,6 +4,7 @@ import {
   describeSwitches,
   droppedSecondInstanceSwitches,
   parseCliSwitches,
+  regionOverride,
   windowLaunchState,
   windowSwitchesOf
 } from '../cli'
@@ -15,7 +16,8 @@ describe('parseCliSwitches', () => {
       userDataDir: null,
       restoreLastSession: false,
       startMaximized: false,
-      profileDirectory: null
+      profileDirectory: null,
+      region: null
     })
     expect(
       parseCliSwitches(['https://example.com', '--no-sandbox', '--disable-gpu', '-psn_0_1', '--'])
@@ -29,15 +31,28 @@ describe('parseCliSwitches', () => {
       '--KIOSK',
       '--restore-last-session',
       '--user-data-dir=/tmp/profile one',
-      '--profile-directory=Profile 2'
+      '--profile-directory=Profile 2',
+      '--zen-region=de'
     ])
     expect(switches).toEqual({
       kiosk: true,
       userDataDir: '/tmp/profile one',
       restoreLastSession: true,
       startMaximized: true,
-      profileDirectory: 'Profile 2'
+      profileDirectory: 'Profile 2',
+      region: 'de'
     })
+  })
+
+  it('the region override (W6-2): the switch first, else ZEN_REGION, else none; an empty value is none', () => {
+    expect(regionOverride(parseCliSwitches(['--zen-region=DE']), {})).toBe('DE')
+    expect(regionOverride(parseCliSwitches(['--zen-region=DE']), { ZEN_REGION: 'US' })).toBe('DE')
+    expect(regionOverride(parseCliSwitches([]), { ZEN_REGION: 'US' })).toBe('US')
+    expect(regionOverride(parseCliSwitches(['--zen-region=']), { ZEN_REGION: ' ' })).toBeNull()
+    expect(regionOverride(parseCliSwitches([]), {})).toBeNull()
+    expect(describeSwitches(parseCliSwitches(['--zen-region=DE']), '/p')).toEqual([
+      '--zen-region=DE: the search engine choice reads this region'
+    ])
   })
 
   it('takes the last value of a repeated switch and drops the quotes a shell may leave', () => {

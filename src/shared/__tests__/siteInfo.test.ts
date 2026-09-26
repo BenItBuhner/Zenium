@@ -9,6 +9,7 @@ import {
   inferHttpOnly,
   isCertificateError,
   otherSites,
+  PERMISSION_LABELS,
   permissionLabel,
   refusedCertificate,
   securityIndicator,
@@ -312,5 +313,23 @@ describe('formatting', () => {
     )
     expect(permissionLabel('fileSystem')).toBe('Write to files you picked')
     expect(permissionLabel('fileSystem:read')).toBe('View folders you picked')
+    // The answer "Turn off for this site" stores (MW-28) reads as its Site settings row does.
+    expect(permissionLabel('auto-picture-in-picture')).toBe('Automatic picture-in-picture')
+  })
+
+  it("names a stored answer the map does not carry by its catalogue row's label, never the raw id (#523 review)", () => {
+    // Every per-site answer is a catalogue id; the site-information sheet and the desktop
+    // popover print this label, so a row the map above never learnt must not read as its id.
+    expect(PERMISSION_LABELS['background-video']).toBeUndefined()
+    expect(permissionLabel('background-video')).toBe('Background video')
+    expect(PERMISSION_LABELS['automatic-downloads']).toBeUndefined()
+    expect(permissionLabel('automatic-downloads')).toBe('Automatic downloads')
+    // The map keeps precedence where it has its own words for a catalogue row.
+    expect(permissionLabel('popups')).toBe('Pop-up windows')
+    // A qualified name still resolves on its base and keeps its qualifier's form.
+    expect(permissionLabel('openExternal:tel')).toBe('Open tel: links')
+    // A name neither the map nor the catalogue knows reads as itself.
+    expect(permissionLabel('something-new')).toBe('something-new')
+    expect(permissionLabel('something-new:qualified')).toBe('something-new (qualified)')
   })
 })

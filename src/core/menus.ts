@@ -9,7 +9,7 @@ import {
   type PageContextParams,
   type TabView
 } from './platform'
-import { buildSearchUrl } from '../shared/search'
+import { buildSearchUrl, imageSearchFor } from '../shared/search'
 import { copyConfirmation } from '../shared/clipboard'
 import { internalPageOf } from '../shared/internalPages'
 import { bindingFor, formatChord, toAccelerator } from '../shared/shortcuts'
@@ -196,6 +196,28 @@ const SPELLCHECK_MENU_LANGUAGES_MAX = 8
 const REMOTE_TABS_MENU_MAX = 10
 /** The name a device with none reads under; the engine fills one in, a seeded list may not. */
 const UNNAMED_DEVICE = 'Another device'
+
+/**
+ * The page's bookmark toggle in one pair of words (§9.1): the app menu's row and the star's
+ * context menu read it – the page is their subject; the tab's row keeps "Bookmark Tab", its
+ * subject being the tab. The lead's ruling on the star's pair (design review of #511, F1 / Q5)
+ * changes this one line.
+ */
+export function bookmarkPageLabel(bookmarked: boolean): string {
+  return bookmarked ? 'Remove Bookmark' : 'Bookmark This Page'
+}
+
+/**
+ * The reading list's add/remove in the words of its subject (§9.1). The star's context menu is
+ * the page's control and reads "Add to Reading List" / "Remove from Reading List" beside the
+ * app menu's page verbs (the lead's C5 on #511); the tab row and the app menu's Reading List ▸
+ * keep Chrome's "Add Tab to Reading List" / "Remove Tab from Reading List", their subject being
+ * the tab. (The link row's "Add Link to Reading List" names its subject the same way.)
+ */
+export function readingListLabel(listed: boolean, subject: 'page' | 'tab'): string {
+  if (subject === 'page') return listed ? 'Remove from Reading List' : 'Add to Reading List'
+  return listed ? 'Remove Tab from Reading List' : 'Add Tab to Reading List'
+}
 
 /**
  * Context menus. Zen (Firefox) uses native-styled menus everywhere; the core builds the templates
@@ -752,6 +774,13 @@ export class Menus {
         click: () => void this.browser.share({ url, tabId: tab.id }, win)
       })
     }
+    // The reading list's row (W6-1) closes the desktop's transfer group – after the copies and
+    // the share, where the link leaves the page for a list of the browser's. The desktop's
+    // alone: the touch hosts' link menus are pinned whole by the lead's ruling after #492
+    // (`savedGroups.test.ts`), and the phone has no list to read the page from yet.
+    if (win.formFactor === 'desktop' && navigable) {
+      transfer.push(this.readingListLinkItem(url, linkText, win))
+    }
     return [open, transfer]
   }
 
@@ -802,6 +831,7 @@ export class Menus {
   private imageGroup(tab: Tab, view: TabView, params: PageContextParams, win: ZenWindow): Template {
     const { tabs, state } = this.browser
     const src = params.srcURL
+    const search = imageSearchFor(state.defaultSearchEngine(), src)
     return [
       {
         label: 'Open Image in New Tab',
@@ -831,6 +861,27 @@ export class Menus {
         label: 'Copy Image Address',
         click: () => this.browser.copyText(src, 'Link copied', win)
       },
+      // Chrome's "Search image with …" (CT-32): the default engine's reverse image search, in a
+      // tab beside this one and in front, as the menu's text search opens. An address only an
+      // engine can fetch – a `data:` or `blob:` image gets no row (`imageSearchFor`).
+      ...(search
+        ? [
+            {
+              label: `Search Image with ${search.engine}`,
+              click: () =>
+                tabs.createTab(
+                  {
+                    url: search.url,
+                    active: true,
+                    afterTabId: tab.id,
+                    containerId: tab.containerId,
+                    openerTabId: tab.id
+                  },
+                  win
+                )
+            }
+          ]
+        : []),
       ...(state.capabilities.share
         ? [
             {
@@ -1455,6 +1506,10 @@ export class Menus {
       this.popup(this.reloadItems(tab), win, 'urlbar', anchor)
       return
     }
+    if (params.target === 'star') {
+      if (tab) this.popup(this.starItems(tab, win), win, 'urlbar', anchor)
+      return
+    }
     if (params.target === 'urlbar' || params.target === 'urlpill') {
       const clipboard = (await this.browser.platform.clipboard.readText?.().catch(() => '')) ?? ''
       const pasted = clipboard.trim()
@@ -1502,6 +1557,120 @@ export class Menus {
     }
     if (params.selectionText.trim())
       this.popup([{ label: 'Copy', role: 'copy' }], win, 'urlbar', anchor)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Reading list (W6-1)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The star's menu (a right-click or the Menu key on the pill's star; Chrome M89's star menu
+   * had these two): the bookmark row beside the reading list's – Add to Reading List, or Remove
+   * from Reading List once the page is in it – and the way to the list. Both rows are the app
+   * menu's page verbs (`bookmarkPageLabel`, `readingListLabel(…, 'page')`; the same toggles):
+   * the star is the page's control, so its menu says what the app menu says of the page (§9.1,
+   * one vocabulary), where the tab row says "Tab"; the star's own click keeps the bubble that
+   * names and files the bookmark. Keys: `row.bookmark`, `row.readingListAdd` /
+   * `row.readingListRemove`, `row.readingListShow`.
+   */
+  starItems(tab: Tab, win: ZenWindow): Template {
+    return [
+      {
+        label: bookmarkPageLabel(tab.bookmarked),
+        key: 'row.bookmark',
+        action: 'bookmark.add',
+        enabled: this.browser.bookmarkable(tab.url),
+        click: () => this.browser.toggleBookmark(tab.id, win)
+      },
+      this.readingListTabItem(tab, win, 'page'),
+      { type: 'separator' },
+      this.showReadingListItem(win)
+    ]
+  }
+
+  /**
+   * "Add Tab to Reading List" for the tab's page – or "Remove Tab from Reading List" once the
+   * page is in the list (bookmarks-33: Chrome's row flips the same way in its Bookmarks and
+   * lists ▸ Reading list ▸); in the star's menu the same row in the page's words, "Add to
+   * Reading List" / "Remove from Reading List" (`readingListLabel`). Greyed for a page the list
+   * does not hold (`zen://`, a blank tab). Keys: `row.readingListAdd` / `row.readingListRemove`.
+   */
+  readingListTabItem(tab: Tab, win: ZenWindow, subject: 'page' | 'tab' = 'tab'): MenuItemTemplate {
+    const { readingList } = this.browser
+    const listed = readingList.has(tab.url)
+    return listed
+      ? {
+          label: readingListLabel(true, subject),
+          key: 'row.readingListRemove',
+          click: () => this.browser.removeTabFromReadingList(tab.id, win)
+        }
+      : {
+          label: readingListLabel(false, subject),
+          key: 'row.readingListAdd',
+          enabled: readingList.canAdd(tab.url),
+          click: () => this.browser.addTabToReadingList(tab.id, win)
+        }
+  }
+
+  /** "Show Reading List": the `zen://reading-list` page (key `row.readingListShow`). */
+  showReadingListItem(win: ZenWindow): MenuItemTemplate {
+    return {
+      label: 'Show Reading List',
+      key: 'row.readingListShow',
+      click: () => this.browser.pages.open('reading-list', undefined, win)
+    }
+  }
+
+  /**
+   * The link menu's "Add Link to Reading List" (context-menus-98; Safari's row – Chrome's link
+   * menu has none, its reading list takes tabs alone): the link's address under its text, or
+   * its host when the link has no text, through the browser's one add path, so it toasts as the
+   * tab's add does. Greyed for a link the list does not hold. Key: `row.readingListAddLink`.
+   */
+  readingListLinkItem(url: string, text: string, win: ZenWindow): MenuItemTemplate {
+    return {
+      label: 'Add Link to Reading List',
+      key: 'row.readingListAddLink',
+      enabled: this.browser.readingList.canAdd(url),
+      click: () => {
+        this.browser.addLinkToReadingList(url, text, win)
+      }
+    }
+  }
+
+  /**
+   * A reading list row's menu (the page's ⋮ and right-click): Open and Open in New Tab, the
+   * read flip, Copy Link, Remove – the Downloads page's row menu's shape.
+   */
+  showReadingListContextMenu(
+    id: string,
+    anchor: { x?: number; y?: number; keyboard?: boolean },
+    win: ZenWindow
+  ): void {
+    const { readingList, platform } = this.browser
+    const entry = readingList.get(id)
+    if (!entry) return
+    const unread = entry.readAt === undefined
+    this.popup(
+      [
+        { label: 'Open', click: () => this.browser.openReadingEntry(id, null, win) },
+        {
+          label: 'Open in New Tab',
+          click: () => this.browser.openReadingEntry(id, null, win, { newTab: true })
+        },
+        { type: 'separator' },
+        {
+          label: unread ? 'Mark as Read' : 'Mark as Unread',
+          click: () => readingList.setRead(id, unread)
+        },
+        { type: 'separator' },
+        { label: 'Copy Link', click: () => platform.clipboard.writeText(entry.url) },
+        { label: 'Remove', click: () => readingList.remove(id) }
+      ],
+      win,
+      'readingList',
+      anchor
+    )
   }
 
   /** Chrome's "Always show full URLs": the address pill's elision setting (`showFullUrls`). */
@@ -1929,6 +2098,10 @@ export class Menus {
         action: 'bookmark.allTabs',
         click: () => this.browser.bookmarkTabs(win)
       },
+      // Chrome's "Add tab to reading list" (tabs-36, W6-1), under the bookmark rows as Chrome
+      // seats it; a page already listed offers the way out instead. The sidebar layouts' alone
+      // until the phone has a list to read it from.
+      ...when(panes, this.readingListTabItem(tab, win)),
       { label: 'Move Tab', submenu: moveTab },
       // The split rows are the desktop's and the tablet's (the phone draws no panes). Add Tab
       // to Split View (context-menus-92, Vivaldi's row) is offered while a split is on screen
@@ -3439,7 +3612,7 @@ export class Menus {
         // The phone's bookmark entry is the icon row's star (TB-16), with Chrome's star flow;
         // the sidebar layouts keep the toggle here, whose star bubble names and files it.
         ...sidebar({
-          label: active?.bookmarked ? 'Remove Bookmark' : 'Bookmark This Page',
+          label: bookmarkPageLabel(Boolean(active?.bookmarked)),
           action: 'bookmark.add',
           enabled: Boolean(active && !active.url.startsWith('zen://')),
           click: () => active && this.browser.toggleBookmark(active.id, win)
@@ -3457,6 +3630,18 @@ export class Menus {
         },
         // The desktop's alone: the tablet has no bookmarks bar.
         ...desktop({ label: 'Show Bookmarks Bar', submenu: this.bookmarksBarSubmenu(win) }),
+        // Chrome's Reading list ▸ (sidepanel-54, W6-1), seated after Show Bookmarks as Chrome's
+        // Bookmarks and lists ▸ seats it: the tab's add (or its remove) and the list itself.
+        // The sidebar layouts' (the page is theirs); the phone has no form of the list yet.
+        ...sidebar({
+          label: 'Reading List',
+          submenu: [
+            ...(active
+              ? [this.readingListTabItem(active, win)]
+              : [{ label: 'Add Tab to Reading List', key: 'row.readingListAdd', enabled: false }]),
+            this.showReadingListItem(win)
+          ]
+        }),
         separator,
         // Chrome's entry opens Settings > Import with the dialog up; a phone has no other
         // browser's profile to read and keeps the bookmarks-file pick (Edge Android's).

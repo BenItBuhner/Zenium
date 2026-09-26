@@ -361,11 +361,10 @@ export function NavRow({
       ? siteBlockingState(tab, state.blocking, state.settings.blocking)
       : 'no-site'
   const savePrompt = tab && isWebPage ? chipPrompt(state) : null
+  // The zoom chip stands on every host while the page's zoom deviates (§9.29's tier; §9.36's
+  // tablet pill takes it) – what it opens is the host's panel (`ZoomChip`).
   const zoomed = Boolean(
-    tab &&
-    !masked &&
-    !state.capabilities.pageControls &&
-    isZoomed(tab, state.settings.pageControls, state.pageEnvironment)
+    tab && !masked && isZoomed(tab, state.settings.pageControls, state.pageEnvironment)
   )
   // The address dragged out of the pill (omnibox-43, dnd-11): the slot is the drag's handle,
   // as Chrome's location icon is. A press that moves past Chromium's drag threshold lifts the

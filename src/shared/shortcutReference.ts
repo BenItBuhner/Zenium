@@ -148,7 +148,7 @@ export function chromeReference(platform: Platform): ReferenceBinding[] {
     ref('F11', NONE, 'Full screen', ['page.fullscreen']),
     ref('Escape', SHIFT, 'Task manager', ['tasks.open']),
     ref('F1', NONE, 'Help'),
-    ref('F7', NONE, 'Caret browsing'),
+    ref('F7', NONE, 'Caret browsing', ['page.caretBrowsing']),
     ref('f', ALT, 'Open the browser menu', ['menu.app']),
     ref('e', ALT, 'Open the browser menu', ['menu.app']),
     ref('F10', NONE, 'Focus the browser menu', ['menu.app']),

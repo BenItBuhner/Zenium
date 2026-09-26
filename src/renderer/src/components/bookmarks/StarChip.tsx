@@ -63,6 +63,10 @@ export function StarChip({
       data-bm-star=""
       data-filled={filled}
       data-open={open}
+      // A right-click or the Menu key on the star opens the core's star menu (W6-1): the
+      // bookmark row beside Add to Reading List and the way to the list.
+      data-zen-menu="star"
+      data-zen-menu-tab={tab.id}
       className="zen-pill-chip zen-bm-star -mr-2 flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px]"
       onActivate={() => {
         // The bubble commits its pending name as it goes; the chip that put it away keeps the

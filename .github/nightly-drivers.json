@@ -1093,6 +1093,16 @@
       "note": "The link menu on a tab in no group (PUI-17, W6-8): the tab-group drivers' seeded profile, a real hold on a loose tab's link, the sheet's rows read by name and checked against the design lead's order (Chrome 152's within Zenium's groups) with each Chrome 152 row looked up, then a real touch on Open Link in New Tab in Group making the group of two; light on Home, dark on Gamma, the two design stills. Its nightly stills are the device record of the ruled order (the dispatch runs 36196152105 and 36198125137 recorded the order before the ruling). About two and a half minutes of driver after the boot; the driver puts the device's night mode back at its end."
     },
     {
+      "id": "background-video",
+      "class": "BackgroundVideoDemo",
+      "shard": "phone-f",
+      "mirrors": "android-background-video-demo.yml",
+      "dir": "media-demo",
+      "timeout": 1200,
+      "estimate": 5,
+      "note": "Background video per site (MED-08 / EDGE-32, services pass 10) on the image's own WebView 113: the loopback clip with sound under the default (block) – a plain <video> paused by the engine itself on Home, the site pausing itself on visibilitychange – then the site allowed through permissions.set: Home with the audio on for thirty seconds (page visible to itself, no visibilitychange, notification with Pause, the foreground service up), the screen locked and still playing, the return with nothing heard; the same with picture-in-picture denied; Pause from the notification while away letting the held hide through. Stills services-pass-10-media-android-*. The driver turns the lock screen on for one scene and off again at its end."
+    },
+    {
       "id": "sheet-leave",
       "class": "SheetLeaveDemo",
       "shard": "api35",
@@ -1357,6 +1367,21 @@
       "dir": "page-class-seam-demo",
       "estimate": 3,
       "note": "The class-change seam of the page tabs (W6-S1, #499): the tablet's zen://history tab handed to the phone's History panel at wm size 1280x590 and back, five scenes in each scheme. The driver sets the dark scheme itself (the core's setting and the system's night mode), so DEMO_THEME is not read. The estimate is the dispatch run's measure: 125 s of instrumentation on this recipe."
+    },
+    {
+      "id": "dex-windowing",
+      "class": "DexWindowingDemo",
+      "shard": "tablet",
+      "mirrors": "android-dex-windowing-demo.yml",
+      "dir": "dex-windowing-demo",
+      "env": {
+        "DEMO_THEME": "light",
+        "DEMO_DISPLAY": "1600x1000@160",
+        "DEMO_INSTRUMENT_FLAGS": "--no-hidden-api-checks"
+      },
+      "timeout": 900,
+      "estimate": 10,
+      "note": "Desktop windowing / Samsung DeX (OS-12) on the tablet image laid out as a 1600 x 1000 desktop: the browser in a freeform window (the driver turns enable_freeform_support and force_resizable_activities on for the run and puts both back after), the live resize across the 600 px threshold with the chrome's frame probe, hover by a mouse then a finger, right-click menus, Ctrl+wheel zoom, Ctrl+T / W / L / Tab, a density change. The hover acts run with UiAutomation disconnected (a hidden method, hence --no-hidden-api-checks) and with no accessibility service held open (runDemo(holdEvents = false)), because a WebView hands a mouse's hover to accessibility exploration while any service is enabled. The workflow's light job measured 8 min (run 36204077567) before the held-width stills joined it; the nightly runs the light scheme."
     },
     {
       "id": "tablet-private",

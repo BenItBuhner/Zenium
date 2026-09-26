@@ -338,4 +338,57 @@ describe('useLayoutReporter under the recede', () => {
     rerender(<Probe state={{ ...desktop }} />)
     expect(lastReport().contentHidden).toBe(false)
   })
+
+  /*
+   * The first-run tour stands opaque over the whole window, and the page views composite above
+   * the chrome: the New Tab's view the window has from creation (#490) stood over the tour's
+   * panel once the bar stopped opening under the tour (#347) and its cover no longer hid the
+   * page. The tour reports the views hidden for as long as it stands (`firstRunCovers`; nothing
+   * to wait for – no picture is taken), and its end brings them back with the layout that follows.
+   */
+  const firstRun = (done: boolean, kind = 'synced'): UIState =>
+    ({
+      ...state('bottom'),
+      platform: 'linux',
+      settings: { ...DEFAULT_SETTINGS, onboardingDone: done },
+      window: { kind, chrome: 'full', fullscreen: false, htmlFullscreenTabId: null }
+    }) as unknown as UIState
+
+  it('the tour reports the views hidden until it ends, and their return with its end', () => {
+    vi.mocked(run).mockClear()
+    const { rerender } = render(<Probe state={firstRun(false)} />)
+    expect(lastReport().contentHidden).toBe(true)
+    // The tour's last click: the views come back with the layout that follows.
+    rerender(<Probe state={firstRun(true)} />)
+    expect(lastReport().contentHidden).toBe(false)
+  })
+
+  it('a window that never shows the tour (a blank or private one) reports its views as before', () => {
+    vi.mocked(run).mockClear()
+    render(<Probe state={firstRun(false, 'normal')} />)
+    expect(lastReport().contentHidden).toBe(false)
+  })
+
+  /*
+   * The EEA's search-engine choice screen (W6-2) stands where the tour stood: opaque over the
+   * whole window, so it reports the views hidden the same way (`firstRunCovers` counts
+   * `searchChoiceCovers`), until the choice is made or skipped.
+   */
+  const eeaFirstRun = (done: boolean, required: boolean): UIState =>
+    ({
+      ...firstRun(done),
+      searchChoice: { region: required ? 'DE' : 'US', eea: required, required, seed: 7 }
+    }) as unknown as UIState
+
+  it('the choice screen owed after the tour keeps the views hidden until the choice', () => {
+    vi.mocked(run).mockClear()
+    // In the EEA the tour's end leaves the choice screen standing: the views stay hidden until
+    // the choice is made or skipped, and return then.
+    const { rerender } = render(<Probe state={eeaFirstRun(false, true)} />)
+    expect(lastReport().contentHidden).toBe(true)
+    rerender(<Probe state={eeaFirstRun(true, true)} />)
+    expect(lastReport().contentHidden).toBe(true)
+    rerender(<Probe state={eeaFirstRun(true, false)} />)
+    expect(lastReport().contentHidden).toBe(false)
+  })
 })

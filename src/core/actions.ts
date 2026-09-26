@@ -17,6 +17,11 @@ export type AnyAction =
   | 'theme.open'
   | 'history.open'
   | 'bookmarks.open'
+  | 'readingList.add'
+  | 'readingList.remove'
+  | 'readingList.toggleRead'
+  | 'readingList.markAllRead'
+  | 'readingList.open'
   | 'downloads.open'
   | 'tab.freezeOthers'
   | 'tab.wakeAll'
@@ -306,6 +311,9 @@ export class Actions {
       case 'page.pip':
         if (target) void this.browser.mediaSession.togglePictureInPicture(target.id, win)
         return
+      case 'page.caretBrowsing':
+        void this.browser.caretBrowsing.toggle(win)
+        return
       case 'page.screenshot':
         if (target) void this.screenshot(target.id, win)
         return
@@ -360,6 +368,25 @@ export class Actions {
       case 'history.sidebar':
       case 'history.open':
         this.browser.pages.open('history', undefined, win)
+        return
+      // The reading list (W6-1): the row actions act on the page in front – the one the star's
+      // menu and the tab's menu name – and the list itself is a page like the manager's.
+      case 'readingList.add':
+        if (target) this.browser.addTabToReadingList(target.id, win)
+        return
+      case 'readingList.remove':
+        if (target) this.browser.readingList.removeUrl(target.url)
+        return
+      case 'readingList.toggleRead': {
+        const entry = target ? this.browser.readingList.findByUrl(target.url) : null
+        if (entry) this.browser.readingList.toggleRead(entry.id)
+        return
+      }
+      case 'readingList.markAllRead':
+        this.browser.readingList.markAllRead()
+        return
+      case 'readingList.open':
+        this.browser.pages.open('reading-list', undefined, win)
         return
       case 'downloads.open':
         this.browser.pages.open('downloads', undefined, win)

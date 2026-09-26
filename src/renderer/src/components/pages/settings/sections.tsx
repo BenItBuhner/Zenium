@@ -1054,7 +1054,40 @@ function accessibilitySection(ctx: SectionContext): RowGroup[] {
   const groups: RowGroup[] = []
   if (ctx.state.capabilities.pageControls) groups.push(...pageZoomGroups(ctx))
   if (ctx.state.capabilities.readAloud) groups.push(...readAloudGroups(ctx))
+  if (ctx.state.capabilities.caretBrowsing) groups.push(caretBrowsingGroup(ctx))
   return groups
+}
+
+/**
+ * Caret browsing (CT-34) on a host whose engine has the switch (the desktop): the state F7
+ * toggles, as a row too – Chrome keeps it in Settings › Accessibility – and whether F7 asks
+ * first, the setting the dialog's "Don't ask again" clears, so it can be turned back on.
+ */
+function caretBrowsingGroup({ state, set }: SectionContext): RowGroup {
+  const s = state.settings
+  return {
+    id: 'caret-browsing',
+    heading: 'Keyboard',
+    rows: [
+      {
+        kind: 'switch',
+        id: 'caret-browsing',
+        label: 'Caret browsing',
+        description:
+          "Move through a page's text with the arrow keys and select it with Shift. F7 turns it on and off.",
+        checked: s.caretBrowsing === true,
+        onChange: (v) => set({ caretBrowsing: v })
+      },
+      {
+        kind: 'switch',
+        id: 'caret-browsing-confirm',
+        label: 'Ask before turning on caret browsing',
+        description: 'F7 asks "Turn on caret browsing?" first.',
+        checked: s.caretBrowsingConfirm !== false,
+        onChange: (v) => set({ caretBrowsingConfirm: v })
+      }
+    ]
+  }
 }
 
 function pageZoomGroups({ state, set }: SectionContext): RowGroup[] {
@@ -2766,6 +2799,25 @@ function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
           })),
           onChange: (v) => set({ searchEngineId: v })
         }),
+        // The EEA's choice screen again (W6-2; Chrome's chrome://search-engine-choice can be
+        // reopened from its Search engine settings): on a device in the EEA, or one that
+        // answered the screen once (a record) wherever it is now. The screen is the desktop's
+        // and the tablet's; the phone draws none yet, so it keeps no row for it.
+        ...(state.searchChoice?.eea || s.searchChoice !== null
+          ? [
+              {
+                kind: 'action',
+                id: 'search-choice-again',
+                label: 'Choose your search engine again',
+                description:
+                  'Shows the search engines again, in a random order, to set the default.',
+                keywords: ['choice', 'default', 'eea', 'dma'],
+                layouts: ['desktop', 'tablet'],
+                button: 'Choose…',
+                onPress: () => run('searchChoice.askAgain', undefined)
+              } satisfies SettingsRow
+            ]
+          : []),
         {
           kind: 'switch',
           id: 'search-suggestions',

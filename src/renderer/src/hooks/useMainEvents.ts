@@ -331,7 +331,17 @@ export function useMainEvents(): void {
         closeUrlbar()
         void openReaderPreferences(tabId)
       }),
-      onEvent('toast', ({ message, kind }) => pushToast(message, kind)),
+      // A core toast; one that carries an action gets it as its trailing action (the action
+      // clock, §9.33), the pick running the command the core named on the ordinary path.
+      onEvent('toast', ({ message, kind, action }) =>
+        pushToast(
+          message,
+          kind,
+          action
+            ? { action: { label: action.label, onPick: () => run(action.command, action.args) } }
+            : undefined
+        )
+      ),
       // A delete's toast with Undo (bookmarks-31), on every layout – the phone's tab row's Remove
       // Bookmark speaks through it too. The phone's panels keep their own: the delete itself
       // waits out the toast there (`removeWithUndo`) and commits `quiet`, so the core says nothing.

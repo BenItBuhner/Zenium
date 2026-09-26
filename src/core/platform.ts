@@ -115,6 +115,13 @@ export interface PlatformInfo {
    * start such a profile from English.
    */
   locales?: readonly string[]
+  /**
+   * The OS's region (ISO 3166-1 alpha-2, upper case; Electron's `app.getLocaleCountryCode()`),
+   * null when the OS does not say: what the EEA's search-engine choice screen is gated on
+   * (`core/searchChoice.ts`, W6-2). A host may put a tester's override here (`--zen-region=DE`,
+   * `ZEN_REGION`) in the OS's place. Hosts that leave it out are never in the EEA.
+   */
+  region?: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -437,11 +444,17 @@ export interface MediaContextFlags {
 
 /**
  * Chrome elements with a context menu of their own, marked `data-zen-menu` in the renderer: the
- * URL bar's field and pill, the reload button.
+ * URL bar's field and pill, the reload button, the pill's star (its bookmark and reading list
+ * rows, W6-1).
  */
-export type ChromeMenuTarget = 'urlbar' | 'urlpill' | 'reload'
+export type ChromeMenuTarget = 'urlbar' | 'urlpill' | 'reload' | 'star'
 
-export const CHROME_MENU_TARGETS: readonly ChromeMenuTarget[] = ['urlbar', 'urlpill', 'reload']
+export const CHROME_MENU_TARGETS: readonly ChromeMenuTarget[] = [
+  'urlbar',
+  'urlpill',
+  'reload',
+  'star'
+]
 
 /**
  * A right-click inside the chrome document (URL bar, toolbar, overlays): what the host's own
@@ -800,6 +813,12 @@ export interface TabView {
   setPopupsAllowed?(allowed: boolean): void
   /** Boost "zap element" picker on/off. */
   setZapMode(on: boolean): void
+  /**
+   * Chromium's caret browsing for this page (CT-34): a text cursor the arrow keys move and Shift
+   * selects with. Electron's `webContents.setCaretBrowsingEnabled`; hosts without the call
+   * (`HostCapabilities.caretBrowsing` off) leave it out and the core never asks.
+   */
+  setCaretBrowsingEnabled?(enabled: boolean): void
   /** Autofill: fill values into the page's form, or reconfigure the forms script. */
   sendFormsCommand?(command: FormsCommand): void
 
@@ -1273,6 +1292,8 @@ export type MenuSource =
   | 'bookmark'
   | 'history'
   | 'download'
+  /** A reading list row's menu (W6-1). */
+  | 'readingList'
   | 'urlbar'
   | 'translate'
 

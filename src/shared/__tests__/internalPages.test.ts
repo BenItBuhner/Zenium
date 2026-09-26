@@ -31,6 +31,7 @@ describe('the page registry', () => {
       'settings',
       'history',
       'bookmarks',
+      'reading-list',
       'downloads',
       'licences',
       'whats-new',
