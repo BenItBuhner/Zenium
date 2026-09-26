@@ -178,7 +178,10 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
         // and the page's link under it. Download, a real touch, closes the sheet first – Chrome's
         // dialog closes on Download – and the picture lands in MediaStore.Downloads as
         // `zenium_qrcode_<millis>.png` with the chrome's toast saying so. Then the sheet once more,
-        // left by Close.
+        // left by Close. Each touch waits on the sheet's REST first (its top the same over two
+        // readings, as the editor's still does): the code is in the tree from the sheet's first
+        // frame, while its footer is still below the viewport on the spring up – run 36269709292
+        // found Close at y 1601 on a 1516 window and refused the finger.
         if (reopen("QR code")) {
             expect("QR code dismisses the panel", tapCell(QR_LABEL))
             val sheet = waitFor(QR_IMAGE_LABEL, 10_000) != null
@@ -187,7 +190,7 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
                 val shown = chromeJsString(QR_URL_JS)
                 finding("  the sheet's link reads '$shown'")
                 expect("the link under the code is the page's URL", shown == PAGE_URL)
-                SystemClock.sleep(1_000)
+                finding("  the code sheet ${if (awaitSheetRest(QR_SHEET_TOP_JS)) "came to rest" else "had not come to rest within 6 s"}")
                 shot("04-qr-code")
                 val before = qrPicturesInDownloads()
                 val downloaded = touchTapLabelExpecting(QR_DOWNLOAD, "the sheet left", timeoutMs = 8_000) {
@@ -208,6 +211,7 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
         if (reopen("QR code, then Close")) {
             expect("QR code dismisses the panel", tapCell(QR_LABEL))
             if (waitFor(QR_IMAGE_LABEL, 10_000) != null) {
+                finding("  the code sheet ${if (awaitSheetRest(QR_SHEET_TOP_JS)) "came to rest" else "had not come to rest within 6 s"}")
                 val closed = touchTapLabelExpecting(QR_CLOSE, "the sheet left", timeoutMs = 8_000) {
                     findByLabel(QR_IMAGE_LABEL) == null
                 }
@@ -1588,6 +1592,9 @@ ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({from:P.from,fromWa
         /** `QrCodeLogic.fileName`: the prefix and the wall-clock millis. */
         private val QR_FILE_NAME = Regex("zenium_qrcode_\\d+\\.png")
         private const val QR_URL_JS = "(document.querySelector('[data-testid=\"qr-code-url\"]')||{}).textContent||''"
+        /** The code sheet's body's top on the viewport (`awaitSheetRest`): it rides the sheet's spring. */
+        private const val QR_SHEET_TOP_JS =
+            "(function(){var s=document.querySelector('[data-testid=\"qr-code-sheet\"]');if(!s)return null;var t=s.getBoundingClientRect().top;return t<innerHeight?Math.round(t):null})()"
         private const val EDGE_LABEL = "Top edge"
         /** The stitched capture's budget on a software GPU (`ShareScreenshotDemo` allows its Capture more 40 s). */
         private const val LONG_CAPTURE_WAIT_MS = 30_000L
