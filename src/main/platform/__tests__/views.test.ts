@@ -2819,6 +2819,32 @@ describe('page fonts (CT-25)', () => {
     }
   })
 
+  it('joins the session the resource governor holds for the read, never disabling Page on it nor letting it go (nothing of the view’s stood on it)', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    const { view, dbg } = page(host, 'tab_fonts_image_governed')
+    // The governor's session stands on the page (its clamp is the session's), attached by the
+    // governor alone: the view holds nothing on it, and the read must not take it for its own.
+    dbg.attached = true
+    dbg.respond = imageAnswers(PIC)
+    await expect(view.readImageResource(PIC, 20_000_000)).resolves.toEqual({
+      base64: 'AAAA',
+      mimeType: 'image/png'
+    })
+    // Neither attached nor detached by the read, and no `Page.disable`: the agent's state on the
+    // governor's session (the fonts CT-25 may have set there) is not the read's to clear. What
+    // the read leaves is `Page` enabled for that session's life – event traffic alone.
+    expect(dbg.log).toEqual(['Page.enable', 'Page.getResourceTree', 'Page.getResourceContent'])
+    expect(dbg.attached).toBe(true)
+    // A second read joins the same way.
+    await view.readImageResource(PIC, 20_000_000)
+    expect(dbg.log.slice(3)).toEqual([
+      'Page.enable',
+      'Page.getResourceTree',
+      'Page.getResourceContent'
+    ])
+    expect(dbg.attached).toBe(true)
+  })
+
   it('shares the session the resource governor holds, and recycles it for a second family change', async () => {
     const recycled: number[] = []
     // The governor's lifecycle: drop the session, put its own overrides back on a new one.

@@ -897,7 +897,8 @@ const MAX_THUMBNAIL_SIDE = 8192
 /**
  * A stored engine's thumbnail bounds (`ImageThumbnailBounds`), kept when they are whole
  * positive integers within reason – a side at most `MAX_THUMBNAIL_SIDE`, an area at most that
- * squared – and otherwise Chrome's bounds for an engine that is not Google
+ * side squared (a larger area would let an image over the side travel at its own size, the
+ * pair contradicting itself) – and otherwise Chrome's bounds for an engine that is not Google
  * (`GENERIC_IMAGE_THUMBNAIL`): a record from before the field, or a broken one, downscales as
  * Chrome would for such an engine.
  */
@@ -906,10 +907,7 @@ function sanitizeImageThumbnail(raw: unknown): ImageThumbnailBounds {
     const { maxSide, minArea } = raw as Record<string, unknown>
     const whole = (n: unknown, min: number, max: number): n is number =>
       typeof n === 'number' && Number.isInteger(n) && n >= min && n <= max
-    if (
-      whole(maxSide, 1, MAX_THUMBNAIL_SIDE) &&
-      whole(minArea, 0, MAX_THUMBNAIL_SIDE * MAX_THUMBNAIL_SIDE)
-    )
+    if (whole(maxSide, 1, MAX_THUMBNAIL_SIDE) && whole(minArea, 0, maxSide * maxSide))
       return { maxSide, minArea }
   }
   return { ...GENERIC_IMAGE_THUMBNAIL }

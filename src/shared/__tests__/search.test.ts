@@ -288,7 +288,14 @@ describe('search engines', () => {
         maxSide: 8192,
         minArea: 250_000
       })
-      // A record from before the field, or one no canvas could honour: Chrome's generic numbers.
+      // The area may reach the side squared: the pair still says "within the side".
+      expect(withBounds({ maxSide: 600, minArea: 360_000 }).imageSearch!.post!.thumbnail).toEqual({
+        maxSide: 600,
+        minArea: 360_000
+      })
+      // A record from before the field, or one no canvas could honour, or a pair that contradicts
+      // itself (an area above the side squared would carry an image over the side at its own
+      // size): Chrome's generic numbers.
       for (const broken of [
         undefined,
         null,
@@ -298,6 +305,8 @@ describe('search engines', () => {
         { maxSide: 600.5, minArea: 0 },
         { maxSide: 600, minArea: -1 },
         { maxSide: 600, minArea: 'none' },
+        { maxSide: 600, minArea: 360_001 },
+        { maxSide: 1000, minArea: 8192 * 8192 },
         { maxSide: 600 },
         { minArea: 0 }
       ]) {

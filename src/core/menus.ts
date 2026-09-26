@@ -1917,10 +1917,11 @@ export class Menus {
    * image in place – and downscaled in the page to the engine's thumbnail bounds
    * (`imageThumbnail`, Chrome's numbers for the engine's path: `post.thumbnail`); then the
    * engine's params expand to the body's fields and a new tab beside the page POSTs them
-   * (`createTab`'s `post`). An image above the cap is refused with a toast; an image no path
-   * could read falls back to the address form for an http(s) address (today's row) and says
-   * so otherwise. The bytes leave the device to the engine the user chose – as Chrome's row
-   * sends them – and the address travels only for an http(s) image.
+   * (`createTab`'s `post`). An image above the cap, or one no path could read, falls back to
+   * the address form for an http(s) address (today's row, silently) and is refused with a
+   * toast otherwise – a `data:`/`blob:` image has no address to take. The bytes leave the
+   * device to the engine the user chose – as Chrome's row sends them – and the address
+   * travels only for an http(s) image.
    */
   private async searchImageByUpload(
     tab: Tab,
@@ -1932,14 +1933,14 @@ export class Menus {
     const { state, platform } = this.browser
     const src = params.srcURL
     const thumbnail = await this.imageThumbnail(view, src, search.post.thumbnail, params.frameId)
-    if (thumbnail === 'too-large') {
-      this.browser.toast('This image is too large to search', 'info', win)
-      return
-    }
-    if (!thumbnail) {
+    if (!thumbnail || thumbnail === 'too-large') {
+      // A refusal is owed only where nothing else can be done: an http(s) image over the cap
+      // or unread takes the address route; a `data:`/`blob:` image has none to take.
       const address = imageSearchByAddress(state.defaultSearchEngine(), src)
       if (address) this.openImageSearch(tab, address.url, win)
-      else this.browser.toast("Couldn't read this image", 'error', win)
+      else if (thumbnail === 'too-large')
+        this.browser.toast('This image is too large to search', 'info', win)
+      else this.browser.toast('This image cannot be read', 'error', win)
       return
     }
     const post = expandImagePost(search.post, {

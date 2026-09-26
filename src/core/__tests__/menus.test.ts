@@ -2805,9 +2805,23 @@ describe('the page context menu', () => {
       )
     })
 
-    it('refuses an image above the cap with a toast, opening nothing', async () => {
+    it('takes the address route, silently, for an http(s) image above the cap (a refusal is owed only where nothing else can be done): no POST, no toast', async () => {
       const h = pageHarness(DESKTOP, { pageScript: () => ({ ok: false, reason: 'too-large' }) })
       imageMenu(h, IMAGE)
+      h.click('Search Image with Google Lens')
+      await settle()
+      const opened = openedBeside(h)
+      expect(opened?.url).toBe(
+        `https://lens.google.com/uploadbyurl?url=${encodeURIComponent(IMAGE)}`
+      )
+      expect(opened?.openerTabId).toBe(h.tabId)
+      expect(posted(h)).toBeNull()
+      expect(h.toasts).toEqual([])
+    })
+
+    it('refuses a data: image above the cap with a toast (no address to fall back to), opening nothing', async () => {
+      const h = pageHarness(DESKTOP, { pageScript: () => ({ ok: false, reason: 'too-large' }) })
+      imageMenu(h, 'data:image/png;base64,iVBORw0KGgo=')
       const before = h.win.activeSpace().tabIds.length
       h.click('Search Image with Google Lens')
       await settle()
@@ -2943,18 +2957,20 @@ describe('the page context menu', () => {
       expect(posted(h)).not.toBeNull()
     })
 
-    it('refuses an image the host lists above the cap with the toast, fetching nothing from the page', async () => {
+    it('takes the address route for an http(s) image the host lists above the cap, fetching nothing from the page and toasting nothing', async () => {
       const h = pageHarness(DESKTOP, {
         pageScript: () => FETCHED,
         view: { readImageResource: () => Promise.resolve('too-large' as const) }
       })
       imageMenu(h, IMAGE)
-      const before = h.win.activeSpace().tabIds.length
       h.click('Search Image with Google Lens')
       await settle()
-      expect(h.toasts).toEqual([{ message: 'This image is too large to search', kind: 'info' }])
-      expect(h.win.activeSpace().tabIds.length).toBe(before)
+      expect(openedBeside(h)?.url).toBe(
+        `https://lens.google.com/uploadbyurl?url=${encodeURIComponent(IMAGE)}`
+      )
+      expect(h.toasts).toEqual([])
       expect(posted(h)).toBeNull()
+      // The listing refused it before any transfer: the page's script never ran.
       expect(h.viewCalls.some((c) => /^executeJavaScript(InPrivateWorld)?\(/.test(c))).toBe(false)
     })
 
@@ -2981,8 +2997,9 @@ describe('the page context menu', () => {
       const before = h.win.activeSpace().tabIds.length
       h.click('Search Image with Google Lens')
       await settle()
-      // A failure: the error kind, the contraction of "Couldn't make a link to this text" (§9.1).
-      expect(h.toasts).toEqual([{ message: "Couldn't read this image", kind: 'error' }])
+      // A failure: the error kind; the product's refusals are uncontracted and stated of the thing
+      // ("This page cannot be shared"), the pair reading as a pair (§9.1, §9.33).
+      expect(h.toasts).toEqual([{ message: 'This image cannot be read', kind: 'error' }])
       expect(h.win.activeSpace().tabIds.length).toBe(before)
       // The host's read is for an http(s) image's response; a data: image has none.
       expect(h.viewCalls.some((c) => c.startsWith('readImageResource('))).toBe(false)
