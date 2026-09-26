@@ -41,8 +41,9 @@
 // A hard check that has nothing to act on (no orphaned group to adopt) is counted as skipped.
 //
 // Output: a compact table on stdout and <out>/soak.json – counts (sessions, calls, hard and soft
-// failures by check), client latency p50 / p95 / max per tool and leg, the server's diagnostics.
-// Progress goes to stderr. Exit codes: 0 no hard failure, 1 a hard failure (or a soft one under
+// failures by check), client latency p50 / p95 / max per tool and leg, the server's diagnostics
+// (with --restart, read before the restart, which starts the counters over; the restarted
+// server's are `diagnosticsAfterRestart`). Progress goes to stderr. Exit codes: 0 no hard failure, 1 a hard failure (or a soft one under
 // --strict), 2 usage. The token is never printed: anything quoted from the server has it redacted.
 //
 // On a headless Linux box run it under `xvfb-run -a` (the shim and --exe start Electron processes).
@@ -605,6 +606,8 @@ export function formatTable(summary) {
     lines.push('', ...tabulate(latency))
   }
   lines.push('', `server: ${summarizeDiagnostics(summary.diagnostics)}`)
+  if (summary.diagnosticsAfterRestart !== undefined)
+    lines.push(`server after the restart: ${summarizeDiagnostics(summary.diagnosticsAfterRestart)}`)
   const c = summary.counts ?? {}
   const soft = Object.entries(summary.checks ?? {})
     .filter(([, x]) => x.kind === 'soft' && x.fail > 0)
@@ -1555,6 +1558,7 @@ export async function main(argv) {
   const ctx = { endpoint, fixture, verdict, latencies, log, verbose, extraArgs: opts.extraArgs }
   const legs = ['http']
   let diagnostics = null
+  let diagnosticsAfterRestart = null
   try {
     await soakMainLeg(ctx, opts)
     if (shimExe && opts.shimSessions > 0) {
@@ -1574,14 +1578,22 @@ export async function main(argv) {
     if (opts.restart) {
       legs.push('restart')
       const carry = await restartCarry(ctx, { exe: shimExe, userDataDir: opts.userDataDir })
+      // The restart starts the server's counters over: what the soak did is read before it.
+      // Tidied first, so the quit has no orphaned tabs to ask about (the open-tabs prompt would
+      // hold the SIGTERM up until the SIGKILL, and a killed browser leaves no clean exit).
+      await tidy(ctx)
+      diagnostics = await readDiagnostics(ctx)
       await browser.quit()
       browser.launch()
       ctx.endpoint = endpoint = await waitForEndpoint(opts.userDataDir, 90_000)
       log(`server back at ${endpoint.url}`)
       await restartVerify(ctx, carry)
+      await tidy(ctx)
+      diagnosticsAfterRestart = await readDiagnostics(ctx)
+    } else {
+      await tidy(ctx)
+      diagnostics = await readDiagnostics(ctx)
     }
-    await tidy(ctx)
-    diagnostics = await readDiagnostics(ctx)
   } finally {
     process.off('SIGINT', onSignal)
     process.off('SIGTERM', onSignal)
@@ -1600,7 +1612,8 @@ export async function main(argv) {
       strict: opts.strict
     },
     latency: latencies.summary(),
-    diagnostics
+    diagnostics,
+    ...(opts.restart ? { diagnosticsAfterRestart } : {})
   })
   const file = path.join(out, 'soak.json')
   fs.writeFileSync(file, JSON.stringify(summary, null, 2) + '\n')

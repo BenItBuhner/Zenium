@@ -388,10 +388,21 @@ describe('Latencies and the table', () => {
     expect(table).toContain('server: sessions 1 live (0 parked), 3 created, 2 ended')
     expect(table).toContain('1 resurrected, 2 closed, 1 unknown; calls 40 (2 errors, 0 running)')
     expect(table).toContain('slowest: zen_status p95 2 ms')
+    expect(table).not.toContain('server after the restart')
     expect(table).toMatch(
       /1 sessions, 4 calls, 0 hard failure\(s\), 1 soft failure\(s\) \(background-screenshot \(until B\) ×1\) in \d+\.\d s – PASS$/
     )
     expect(summarizeDiagnostics(null)).toBe('no diagnostics read')
+  })
+
+  it('prints the restarted server’s line only when a restart was part of the run', () => {
+    const v = new Verdict()
+    v.hard('restart-resume', true)
+    const withRestart = formatTable(
+      v.summary({ latency: {}, diagnostics: null, diagnosticsAfterRestart: null })
+    )
+    expect(withRestart).toContain('server: no diagnostics read')
+    expect(withRestart).toContain('server after the restart: no diagnostics read')
   })
 })
 

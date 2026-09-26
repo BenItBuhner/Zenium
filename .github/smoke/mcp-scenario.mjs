@@ -20,13 +20,18 @@
 //                           it with force: true (soft until E), and after the DELETE for real
 //     resurrection          a made-up session id with the token is 200 + "resumed"; without, 404
 //     carry-across-restart  an HTTP session and a shim process that the restart must not lose
+//     tidy                  what the sessions left orphaned is adopted and closed (the quit
+//                           would otherwise ask about tabs the harness does not see: the app
+//                           counts every space's, the sidebar shows the user's), and
+//                           `zenium://diagnostics` is read while its counters still count the
+//                           soak (the restart starts them over)
 //     quit                  the graceful quit (the profile's server stops with it)
 //   mcp-restart
 //     server-up             the same profile's server back (the same token: agent.json keeps it)
 //     old-session-resumes   the HTTP session id from before the quit is answered with the
 //                           "resumed" notice; the shim process from before answers a call too
-//     diagnostics           what the soak left is adopted and closed; `zenium://diagnostics` read
-//                           into the verdict
+//     diagnostics           what the restart's leg left is adopted and closed; the restarted
+//                           server's `zenium://diagnostics` read into the verdict
 //     quit
 //
 // A step FAILS on a hard check that failed during it (the checks scripts/mcp-soak.mjs names:
@@ -157,6 +162,7 @@ export async function scenarioMcp(h) {
   const legs = []
   let carry = { sessionId: null, shim: null }
   let diagnostics = null
+  let diagnosticsAfterRestart = null
 
   /** A step whose pass or fail is the soak's hard checks during it; the soft ones its detail. */
   const judged = (s, name, fn, opts) =>
@@ -189,7 +195,8 @@ export async function scenarioMcp(h) {
     verdict.summary({
       options: { ...MCP_SOAK, legs, fixture: 'built-in', strict: false },
       latency: latencies.summary(),
-      diagnostics
+      diagnostics,
+      diagnosticsAfterRestart
     })
 
   try {
@@ -219,6 +226,15 @@ export async function scenarioMcp(h) {
         carry = await restartCarry(ctx, { exe, userDataDir: userData })
         return { httpSession: Boolean(carry.sessionId), shimProcess: Boolean(carry.shim) }
       })
+      await judged(s, 'tidy', async () => {
+        const before = verdict.counters.tidiedGroups ?? 0
+        await tidy(ctx)
+        diagnostics = await readDiagnostics(ctx)
+        return {
+          groupsClosed: (verdict.counters.tidiedGroups ?? 0) - before,
+          server: summarizeDiagnostics(diagnostics)
+        }
+      })
       await s.step('quit', () => s.quitGracefully())
     })
     if (first.fatal) return first
@@ -232,8 +248,8 @@ export async function scenarioMcp(h) {
       carry = { sessionId: null, shim: null }
       await judged(s, 'diagnostics', async () => {
         await tidy(ctx)
-        diagnostics = await readDiagnostics(ctx)
-        return { server: summarizeDiagnostics(diagnostics) }
+        diagnosticsAfterRestart = await readDiagnostics(ctx)
+        return { server: summarizeDiagnostics(diagnosticsAfterRestart) }
       })
       out.soak = summary().counts
       await s.step('quit', () => s.quitGracefully())
