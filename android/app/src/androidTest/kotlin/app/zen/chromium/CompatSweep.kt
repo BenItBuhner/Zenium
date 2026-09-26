@@ -7172,13 +7172,30 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("ppfadpgpccljindldolejmgkhgaficka", "Ad Block Ninja", "ad-block-ninja", core = ::adBlocker),
         Row("nnajoiemfpldioamchanognpjmocgkbg", "Draftback", "draftback", core = attachedGate("Draftback", "https://docs.google.com/document/d/1/edit", "a Google account with a Google Doc open (its playback mounts in Docs' toolbar; docs.google.com sends a fresh browser to its sign-in)")),
         Row("oppflpnigmhkldmdmmbnopidlhahanji", "Snake", "snake", core = popupMarker("Snake", SNAKE_CANVAS, settleMs = 25_000)),
-        // These two rows each cost the API 34 Google image's emulator its host side once in compat
-        // round 19's BEFORE run (qemu-system-x86_64-headless 37.1.11, SIGSEGV on a libvk_swiftshader.so
-        // thread, the guest's logcat clean): axe DevTools 5 s after its install, Augmented Steam 8 s
-        // after its options page while the Steam store page painted. The round's trigger keeps them
-        // for last on that lane (`SWEEP_LAST`); two boots are too few for `notOnGoogleImage`.
-        Row("lhdoppojpmngadmnindnejefpokejbdd", "axe DevTools - Web Accessibility Testing", "axe-devtools", core = notOnThePhone("axe DevTools: its scans run from its devtools panel (`devtools_page`) over chrome.debugger; the phone has no DevTools panel to host it (WebView limit); its popup is the panel's front door")),
-        Row("dnhpnfgdlenaccegplpojghhmaamnnfp", "Augmented Steam", "augmented-steam", core = liveMarker("Augmented Steam", "https://store.steampowered.com/app/440/", injectedAny("\\bes_"), settleMs = 45_000, desktop = true, mirrors = listOf("https://steamcommunity.com/id/gaben"))),
+        // These two rows cost the API 34 Google image's emulator its host side on every boot of
+        // compat round 19 that reached them – four of four across the round's BEFORE and AFTER
+        // runs (qemu-system-x86_64-headless 37.1.11 dead in its software GPU's threads, the guest's
+        // logcat clean every time, the app's memory flat: round 16 §7.0's HOST-SIDE class). axe
+        // DevTools three of three: 5 s after its install in the BEFORE's first boot (SIGSEGV in
+        // tcmalloc's free list under a libvk_swiftshader.so thread), 5 s after its install in the
+        // AFTER's first boot (SIGSEGV in the GL translator's GL_DrawArrays on a gfxstream render
+        // thread), 4 s after its background step in the AFTER's second boot (SIGABRT in tcmalloc's
+        // heap check under a libvk_swiftshader.so free). Augmented Steam one of one: 8 s after its
+        // options page in the BEFORE's second boot while the Steam store page painted (SIGSEGV on a
+        // libvk_swiftshader.so thread). Round 19's trigger kept them for last on that lane so the
+        // other 44 rows read first; the coordinator's ruling on the round's question 3 marks both
+        // `notOnGoogleImage` as Buyhatke's and AdGuard VPN's rows are marked. Read on the AOSP lane
+        // (156), where each read the same in the round's BEFORE and AFTER.
+        Row(
+            "lhdoppojpmngadmnindnejefpokejbdd", "axe DevTools - Web Accessibility Testing", "axe-devtools",
+            notOnGoogleImage = "the emulator's host side (qemu-system-x86_64-headless 37.1.11, gfxstream over SwiftShader on the API 34 Google image) died under this row on every boot of compat round 19 that reached it – three of three: 5 s after its install in the BEFORE run's first boot (SIGSEGV in tcmalloc's SLL_Next under a libvk_swiftshader.so thread, 21:29:23 UTC 2026-09-25), 5 s after its install in the AFTER run's first boot (SIGSEGV in the GL translator's GL_DrawArrays on a gfxstream RenderThread, 01:35:31 UTC 2026-09-26) and 4 s after its background step in the workflow's second boot of the AFTER (SIGABRT in tcmalloc's heap check under a libvk_swiftshader.so free, 01:44:09 UTC) – the guest's logcat clean every time, no chromium crash, no tombstone; the row is read on the AOSP lane (156): P/PARTIAL/-/n/a in both runs (its core notOnThePhone by design)",
+            core = notOnThePhone("axe DevTools: its scans run from its devtools panel (`devtools_page`) over chrome.debugger; the phone has no DevTools panel to host it (WebView limit); its popup is the panel's front door")
+        ),
+        Row(
+            "dnhpnfgdlenaccegplpojghhmaamnnfp", "Augmented Steam", "augmented-steam",
+            notOnGoogleImage = "the emulator's host side (qemu-system-x86_64-headless 37.1.11, gfxstream over SwiftShader on the API 34 Google image) died under this row on the one boot of compat round 19 that reached it – the BEFORE run's second boot, 8 s after its options page while the Steam store page (store.steampowered.com/app/440/) painted through EGL_emulation at 700-1,050 ms frames: SIGSEGV on a libvk_swiftshader.so thread at 21:37:32 UTC 2026-09-25, the guest's logcat clean, the app's memory flat (peak RSS 439 MB, the renderer 397 MB); the row's other three boots on that image died under axe DevTools before reaching it; the row is read on the AOSP lane (156): P/-/P/P in both runs",
+            core = liveMarker("Augmented Steam", "https://store.steampowered.com/app/440/", injectedAny("\\bes_"), settleMs = 45_000, desktop = true, mirrors = listOf("https://steamcommunity.com/id/gaben"))
+        ),
         Row("mmcblfncjaclajmegihojiekebofjcen", "Plugins", "plugins", core = popupMarker("Plugins", PLUGINS_POPUP, settleMs = 30_000)),
         Row("kaibcgikagnkfgjnibflebpldakfhfih", "CS2 Trader - Steam Trading Enhancer", "cs2-trader", core = liveMarker("CS2 Trader", "https://steamcommunity.com/market/listings/730/AK-47%20%7C%20Redline%20%28Field-Tested%29", injectedAny("realMoneySite|copy_profile_perma_link|copy_trade_link|show_offer_history"), settleMs = 45_000, desktop = true, mirrors = listOf("https://steamcommunity.com/id/gaben"))),
         Row("blgcbajigpdfohpgcmbbfnphcgifjopc", "ExpressKeys: Password Manager", "expresskeys", core = accountGate("ExpressKeys", Regex("expressvpn\\.com|expresskeys", RegexOption.IGNORE_CASE), gate = "an ExpressVPN Keys account (its popup, a Flutter app, signs in; its vault syncs through ExpressVPN's service and its desktop app is reached over native messaging)")),
