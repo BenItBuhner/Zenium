@@ -10,12 +10,12 @@ import org.junit.Test
 
 class UpdateNotificationsTest {
     @Test
-    fun theChannelIsZeniumsUpdatesInSentenceCase() {
-        assertEquals("zenium.updates", UpdateNotifications.CHANNEL_ID)
-        assertEquals("Updates", UpdateNotifications.CHANNEL_NAME)
-        assertEquals(NotificationManager.IMPORTANCE_LOW, UpdateNotifications.CHANNEL_IMPORTANCE)
+    fun theChannelIsTheRegistrysUpdatesChannel() {
+        // The channel itself (id, name, group) is pinned in NotificationsTest; the low importance is NOT-17's silent reminder.
+        assertEquals("zenium.updates", Notifications.UPDATES.id)
+        assertEquals(NotificationManager.IMPORTANCE_LOW, Notifications.UPDATES.importance)
         // §9.1: a description is a sentence, capitalised once and without a full stop.
-        assertEquals("Tells you when a new version of Zenium is available and when it is ready to install", UpdateNotifications.CHANNEL_DESCRIPTION)
+        assertEquals("Tells you when a new version of Zenium is available and when it is ready to install", Notifications.UPDATES.description)
         assertEquals("zenium://settings/updates", UpdateNotifications.OPEN_URL)
     }
 
@@ -33,7 +33,7 @@ class UpdateNotificationsTest {
         assertEquals("Update ready", ready.title)
         assertEquals("Zenium 0.4.36 is downloaded and ready to install", ready.text)
         for (card in listOf(available, ready)) {
-            assertEquals(UpdateNotifications.CHANNEL_ID, card.channelId)
+            assertEquals(Notifications.UPDATES.id, card.channelId)
             assertTrue(card.autoCancel)
             assertFalse(card.ongoing)
             assertTrue(card.silent)

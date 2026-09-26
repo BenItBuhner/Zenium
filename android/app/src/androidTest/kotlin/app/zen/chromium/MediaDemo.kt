@@ -490,7 +490,7 @@ class MediaDemo : MediaDemoBase("services-android-media-android") {
         if (awaitSystemWindow(8_000)) {
             SystemClock.sleep(3_000)
             val site = awaitInWindows(6_000) { it == SitesChannels.displayName(server.origin) }
-            note("  system notification settings: the site's channel \"${SitesChannels.displayName(server.origin)}\" ${if (site != null) "listed" else "not in the tree (may be below the fold)"}; Sites group ${if (findInWindows { it == SitesChannels.GROUP_NAME } != null) "listed" else "not in the tree"}")
+            note("  system notification settings: the site's channel \"${SitesChannels.displayName(server.origin)}\" ${if (site != null) "listed" else "not in the tree (may be below the fold)"}; Sites group ${if (findInWindows { it == Notifications.SITES.name } != null) "listed" else "not in the tree"}")
             shot("23-system-notification-channels")
             beat()
             back()
