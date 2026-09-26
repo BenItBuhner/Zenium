@@ -1,0 +1,81 @@
+name: Android boot heal demo
+
+# The device proof of the phone's boot follow-ups after #490 and #503 (W6-HF2): the heal – a
+# profile as v0.4.71–v0.4.76 wrote it, #490's blank tab the space's one tab, cold-started with
+# `am start -W` and read for `Fully drawn`, the splash lifted by READY, the core's heal line, no
+# page view in the window (the space empty again) and no tab on disk, then started again with
+# nothing left to heal – and the tour: a fresh profile's first launch through a link (a VIEW
+# intent at LinkDispatchActivity), `Fully drawn` before the splash's watchdog with the intent's
+# page view hidden under the first-run tour, then the driver (BootHealDemo) on the same profile
+# walking the tour to its end, the omnibox up over the page and the page placed. The claims fail
+# the run under `assert`. Dispatch-only, like the other demos; the build, the emulator and the
+# Gradle cache live in android-emulator-demo.yml.
+on:
+  workflow_dispatch:
+    inputs:
+      assert:
+        description: Fail when a claim does not hold
+        type: boolean
+        default: true
+      themes:
+        description: Colour schemes to record, space separated (light, dark)
+        type: string
+        default: light dark
+      api-level:
+        description: System image (34 is the phone shards' image, the P0 pair's default; 35 is Android 15 with the current WebView)
+        type: choice
+        default: '34'
+        options:
+          - '34'
+          - '35'
+  # TEMPORARY (W6-HF2, PR #505): the worker's run budget of one run and one retry on its branch,
+  # fired by the pushes that touch the scene; removed before the PR is ready for review.
+  push:
+    branches:
+      - cursor/android-hotfix-boot-followups-9271
+    paths:
+      - .github/workflows/android-boot-heal-demo.yml
+      - .github/scripts/android-boot-heal-demo.sh
+      - android/app/src/androidTest/kotlin/app/zen/chromium/BootHealDemo.kt
+      - src/android/**
+      - src/renderer/src/components/content/useLayoutReporter.ts
+      - src/renderer/src/lib/onboarding.ts
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-boot-heal-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Boot heal demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-boot-heal-demo.sh
+      api-level: ${{ inputs.api-level || '34' }}
+      script-env: |
+        BOOT_HEAL_ASSERT=${{ (github.event_name != 'workflow_dispatch' || inputs.assert) && 'true' || 'false' }}
+        BOOT_HEAL_THEMES=${{ inputs.themes || 'light dark' }}
+        DEMO_OUT=artifacts/android-boot-heal-demo
+      timeout-minutes: 40
+      artifact-name: android-boot-heal-demo
+      artifact-path: artifacts/android-boot-heal-demo/
+
+  # One more boot when the emulator itself went away under the driver, never when the driver failed.
+  record-again:
+    name: Boot heal demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-boot-heal-demo.sh
+      api-level: ${{ inputs.api-level || '34' }}
+      script-env: |
+        BOOT_HEAL_ASSERT=${{ (github.event_name != 'workflow_dispatch' || inputs.assert) && 'true' || 'false' }}
+        BOOT_HEAL_THEMES=${{ inputs.themes || 'light dark' }}
+        DEMO_OUT=artifacts/android-boot-heal-demo
+      timeout-minutes: 40
+      artifact-name: android-boot-heal-demo-second-boot
+      artifact-path: artifacts/android-boot-heal-demo/
