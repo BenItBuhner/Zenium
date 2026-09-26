@@ -170,7 +170,12 @@ export class MediaSessionService {
       at,
       startedAt: playing && !wasPlaying ? at : (before?.startedAt ?? 0)
     })
-    this.followLinger(tabId, report, before?.report ?? null)
+    // A seek while the clock runs restarts it (Chrome's `OnSessionInteractedWith` for a position
+    // change while paused); the clock's start and stop are {@link refresh}'s, where the entry's
+    // playing state is decided.
+    if (before && this.lingers.has(tabId) && positionMoved(before.report, report)) {
+      this.startLinger(tabId)
+    }
   }
 
   /** The tab's media is gone (its element removed, its page unloaded): nothing of it stays. */
@@ -182,25 +187,27 @@ export class MediaSessionService {
   }
 
   /**
-   * The hub's linger after a report, Chrome's `Session::MediaSessionInfoChanged` in short: a
-   * playback wakes the tab's entry and stops the clock; a pause or an end starts it (once – a
-   * clock already running runs on), and a seek while paused restarts it, as Chrome's
-   * `OnSessionInteractedWith` does for a position change. A muted element is not paused – its
-   * report says `playing: false` for the speaker glyph's sake and `muted` why – so muting never
-   * starts the clock and stops one that runs: the entry stays as long as the element does, as
-   * it did before the linger. Hosts without the hub (`Platform.mediaHub` absent: Android, whose
-   * mini player shows a paused session until it is dismissed or its tab goes) have no clock.
+   * The hub's linger, Chrome's `Session::MediaSessionInfoChanged` in short: a playback wakes the
+   * tab's entry and stops the clock; a pause or an end starts it (once – a clock already
+   * running runs on). Decided on every {@link refresh}, from the view's audibility together
+   * with the page's report, not on the report alone: the engine's `isCurrentlyAudible()` trails
+   * the element by a moment (Chromium holds a stream's audible word for a while after its last
+   * audible frame – a pause's report finds the view still audible, an end's too), so a clock
+   * started on the report would be stopped by the refresh that followed it and never started
+   * again once the view fell quiet. Here the clock starts with the `audio-state-changed` that
+   * follows the pause, and a play's report wakes the entry before the view is heard. A muted
+   * element is not paused – its report says `playing: false` for the speaker glyph's sake and
+   * `muted` why – so muting never starts the clock and stops one that runs: the entry stays as
+   * long as the element does, as it did before the linger. Hosts without the hub
+   * (`Platform.mediaHub` absent: Android, whose mini player shows a paused session until it is
+   * dismissed or its tab goes) have no clock.
    */
-  private followLinger(tabId: string, report: MediaReport, before: MediaReport | null): void {
-    if (reportIsPlaying(report) || report.muted) {
+  private followLinger(tabId: string, report: MediaReport, audible: boolean): void {
+    if (audible || reportIsPlaying(report) || report.muted) {
       this.wake(tabId)
       return
     }
-    if (this.lingers.has(tabId)) {
-      if (before && positionMoved(before, report)) this.startLinger(tabId)
-      return
-    }
-    if (this.inactive.has(tabId)) return
+    if (this.lingers.has(tabId) || this.inactive.has(tabId)) return
     this.startLinger(tabId)
   }
 
@@ -331,8 +338,10 @@ export class MediaSessionService {
       const tracked = this.reports.get(tabId)
       const playing = view.isCurrentlyAudible()
       if (!tracked && !playing) continue
-      if (playing) this.wake(tabId)
-      else if (this.inactive.has(tabId)) continue
+      if (tracked) {
+        this.followLinger(tabId, tracked.report, playing)
+        if (this.inactive.has(tabId)) continue
+      }
       const state: MediaState = { tabId, playing }
       if (tracked) {
         const { report } = tracked

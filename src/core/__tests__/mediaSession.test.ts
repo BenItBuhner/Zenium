@@ -1459,6 +1459,41 @@ describe("the hub's linger for a paused session (W7-5: Chrome's inactivity dismi
     expect(h.service.isInactive('t1')).toBe(false)
   })
 
+  it("starts the clock when the view falls quiet, not on the pause's report: the engine's audible word trails the element", () => {
+    const h = harness({ mediaHub: LINGER_MS })
+    h.addTab('t1', 'https://music.example/a', 'Music')
+    play(h, 't1')
+    const view = h.views.get('t1')!
+    // The pause's report arrives while `isCurrentlyAudible()` still says audible (Chromium holds
+    // the stream's word for a moment after its last audible frame; the W7-5 drive's probe read
+    // two seconds): the entry keeps the engine's word, and no clock starts yet – one started
+    // here would be stopped by this very refresh and never started again.
+    h.service.onReport('t1', report({ playing: false }))
+    expect(entry(h, 't1')).toMatchObject({ tabId: 't1', playing: true })
+    expect(vi.getTimerCount()).toBe(0)
+    // The view falls quiet (`audio-state-changed` → `updateMedia` → refresh): the clock starts.
+    view.audible = false
+    expect(entry(h, 't1')).toMatchObject({ tabId: 't1', playing: false })
+    expect(vi.getTimerCount()).toBe(1)
+    vi.advanceTimersByTime(LINGER_MS - 1)
+    expect(entry(h, 't1')).toMatchObject({ playing: false })
+    vi.advanceTimersByTime(1)
+    expect(entry(h, 't1')).toBeUndefined()
+    // The play's report wakes the entry before the view is heard again (the mirror lag).
+    h.service.onReport('t1', report({ playing: true }))
+    expect(entry(h, 't1')).toMatchObject({ tabId: 't1', playing: false })
+    expect(h.service.isInactive('t1')).toBe(false)
+    expect(vi.getTimerCount()).toBe(0)
+    // Heard: the entry plays by the engine's word; a later pause runs the whole path again.
+    view.audible = true
+    expect(entry(h, 't1')).toMatchObject({ tabId: 't1', playing: true })
+    h.service.onReport('t1', report({ playing: false }))
+    view.audible = false
+    expect(entry(h, 't1')).toMatchObject({ tabId: 't1', playing: false })
+    vi.advanceTimersByTime(LINGER_MS)
+    expect(entry(h, 't1')).toBeUndefined()
+  })
+
   it('treats an ended track as a pause: it lingers the same way, and its entry can replay it', () => {
     const h = harness({ mediaHub: LINGER_MS })
     h.addTab('t1', 'https://music.example/a', 'Music')
