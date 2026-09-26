@@ -470,7 +470,10 @@ describe('planUnits', () => {
       js: [`${s}.js`],
       ...(world ? { world } : {})
     }))
-  const sized = (chars: number, except: Record<string, number | null> = {}): Record<string, number> =>
+  const sized = (
+    chars: number,
+    except: Record<string, number | null> = {}
+  ): Record<string, number> =>
     Object.fromEntries(
       SITES.flatMap((s) => {
         const own = except[`${s}.js`]
@@ -487,7 +490,9 @@ describe('planUnits', () => {
     expect(foldFilesFor(boot, manifest, without)).toEqual(SITES.map((s) => `${s}.js`))
     // 100 K each: five to a bucket under the 512 K cap; equal sizes pack in key order.
     const planned = planUnits(boot, manifest, { ...without, fileChars: sized(100_000) })
-    expect(planned.units.map((u) => [u.origins.length, u.groups.length, u.shape, u.isolation])).toEqual([
+    expect(
+      planned.units.map((u) => [u.origins.length, u.groups.length, u.shape, u.isolation])
+    ).toEqual([
       [5, 5, 'whole', 'with'],
       [5, 5, 'whole', 'with'],
       [2, 2, 'whole', 'with']
@@ -504,7 +509,9 @@ describe('planUnits', () => {
     expect(first.groups.map((g) => g.js)).toEqual(SITES.slice(0, 5).map((s) => [`${s}.js`]))
     expect(planned.units[2].origins).toEqual(['https://s10.example', 'https://s11.example'])
     // The plan is stable: the same sizes make the same units.
-    expect(sameUnits(planned, planUnits(boot, manifest, { ...without, fileChars: sized(100_000) }))).toBe(true)
+    expect(
+      sameUnits(planned, planUnits(boot, manifest, { ...without, fileChars: sized(100_000) }))
+    ).toBe(true)
     // Smallest first: the eleven 100 K files pack five, five and one, and the 300 K one joins
     // the bucket with room rather than opening its own.
     const uneven = planUnits(boot, manifest, {
@@ -551,7 +558,9 @@ describe('planUnits', () => {
       'holder',
       ...Array<string>(12).fill('thin')
     ])
-    expect(worlds.units.filter((u) => u.world === 'main').map((u) => [u.shape, u.origins.length])).toEqual([
+    expect(
+      worlds.units.filter((u) => u.world === 'main').map((u) => [u.shape, u.origins.length])
+    ).toEqual([
       ['whole', 5],
       ['whole', 5],
       ['whole', 2]

@@ -282,6 +282,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 entry.put("ms", SystemClock.uptimeMillis() - started)
                 entry.put("pssKbAfter", Debug.getPss())
                 entry.put("heapAfterKb", heapKb())
+                // The split's last reading ([heapSplit]): what the disable took is the rules' and the rest's.
+                entry.optJSONObject("heapSplit")?.let { split ->
+                    split.put("afterKb", entry.optLong("heapAfterKb")).put("rulesAndRestKb", split.optLong("unitsReleasedKb") - entry.optLong("heapAfterKb"))
+                }
                 // Calls the chrome's bridge refused at its queue limit during the row (`JsBridge`): 0 unless
                 // an extension's message storm outran the main thread.
                 entry.put("bridgeRefused", host.chrome.bridge.refused.get() - refusedBefore)
@@ -304,7 +308,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                     "ROW ${row.name}: install=${entry.optJSONObject("install")?.optString("verdict")} ${entry.optString("grade")}; " +
                         "heap enabled ${entry.optLong("heapEnabledKb", -1) / 1024} MB, after ${entry.optLong("heapAfterKb") / 1024} MB, " +
                         "bridge refused ${entry.optInt("bridgeRefused")}; flood guard ${entry.optJSONObject("floodGuard")}" +
-                        (entry.optJSONObject("coreStall")?.let { "; core stall $it" } ?: "")
+                        (entry.optJSONObject("coreStall")?.let { "; core stall $it" } ?: "") +
+                        (entry.optJSONObject("heapSplit")?.let { "; heap split: the runtime's units ${it.optLong("runtimeUnitsKb") / 1024} MB, the rules and the rest ${it.optLong("rulesAndRestKb") / 1024} MB" } ?: "")
                 )
                 rowEntry = null
                 write()
@@ -456,8 +461,38 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         evidence(row, entry)
         // What the extension costs the Java heap while it runs (its units, its rules in the
         // Kotlin engine), against `heapAfterKb` once it is disabled, and the engine's snapshot.
-        entry.put("heapEnabledKb", heapKb())
+        val enabledKb = heapKb()
+        entry.put("heapEnabledKb", enabledKb)
         entry.put("blockingEnabled", runCatching { Blocking.shared(app).stats() }.getOrNull() ?: JSONObject.NULL)
+        if (enabledKb >= heapSplitFromKb) heapSplit(row, entry, enabledKb)
+    }
+
+    /** A row whose live heap with the extension enabled reaches half the process's limit has its heap split ([heapSplit]). */
+    private val heapSplitFromKb: Long = Runtime.getRuntime().maxMemory() / 2048
+
+    /**
+     * Where a heavy extension's Java heap is (round 21's OOM class – Adblock Ad Blocker Pro's
+     * row: 144 MB live with the extension enabled against 34 MB after it, on a 192 MB limit):
+     * the runtime's units against the DNR engine's rules and the rest, MEASURED rather than
+     * summed. The compiler's own count of what it holds first ([Extensions.unitMemory]: the
+     * scripts' characters and the bytes ART keeps them in, the soft-held sources), then the
+     * runtime lets its units go ([Extensions.releaseUnitsForInstrumentation]) and the heap is
+     * read again after a full collection; what is left goes with the row's disable
+     * (`heapAfterKb`, read in the row's `finally`, which completes the split). Only for a row
+     * whose live heap reached [heapSplitFromKb]: the readings cost two more full collections.
+     */
+    private fun heapSplit(row: Row, entry: JSONObject, enabledKb: Long) {
+        var compiler: JSONObject? = null
+        instrumentation.runOnMainSync {
+            compiler = host.extensions.unitMemory(row.id)
+            host.extensions.releaseUnitsForInstrumentation(row.id)
+        }
+        val releasedKb = heapKb()
+        entry.put(
+            "heapSplit",
+            JSONObject().put("enabledKb", enabledKb).put("unitsReleasedKb", releasedKb).put("runtimeUnitsKb", enabledKb - releasedKb).put("compiler", compiler ?: JSONObject.NULL)
+        )
+        Log.i(TAG, "HEAP SPLIT ${row.name}: enabled ${enabledKb / 1024} MB, units released ${releasedKb / 1024} MB (the runtime's units ${(enabledKb - releasedKb) / 1024} MB; compiler $compiler)")
     }
 
     /**
@@ -1118,20 +1153,65 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         )
         var trace: List<String> = emptyList()
         var calls: Map<String, IntArray> = emptyMap()
+        var configure: JSONObject? = null
+        var ruleSets: JSONArray? = null
         instrumentation.runOnMainSync {
             trace = host.extensions.traceSnapshot(row.id)
             calls = host.extensions.callStatsSnapshot().filterKeys { it.startsWith("${row.id} ") }
+            configure = host.extensions.configureStats[row.id]
+            ruleSets = host.extensions.ruleSetStats()
         }
         entry.put("bridgeErrors", JSONArray(trace.filter { it.contains(" reply error=") }.takeLast(20)))
         val table = JSONObject()
         for ((key, counts) in calls.toSortedMap()) table.put(key.substringAfter(' '), JSONArray().put(counts[0]).put(counts[1]).put(counts[2]))
         entry.put("calls", table)
+        // The row's LAST `ext.configure` (the background step read the attach-time one; a
+        // `scripting.registerContentScripts` re-plans after it – Adblock Ad Blocker Pro's 1 unit
+        // at attach, 11 (113) or 91 (156) once its rulesets' scripts are registered): the units
+        // with their keys shortened to the world and the origin count, the chars summed.
+        configure?.let { c -> entry.put("configureAtEnd", configureSummary(c)) }
+        // The engine's sets of this extension in the current snapshot (`ext:<id>:…`): how many,
+        // their rules, the rules the index cannot bucket, the hosts it keys.
+        ruleSets?.let { sets ->
+            val mine = (0 until sets.length()).mapNotNull { sets.optJSONObject(it) }.filter { it.optString("id").startsWith("ext:${row.id}:") }
+            if (mine.isNotEmpty()) {
+                entry.put(
+                    "ruleSetsAtEnd",
+                    JSONObject().put("sets", mine.size).put("rules", mine.sumOf { it.optInt("rules") })
+                        .put("wildcard", mine.sumOf { it.optInt("wildcard") }).put("hosts", mine.sumOf { it.optInt("hosts") })
+                        .put("largest", mine.sortedByDescending { it.optInt("rules") }.take(5).map { "${it.optString("id").substringAfterLast(':')} ${it.optInt("rules")}" })
+                )
+            }
+        }
         backgroundView(row.id)?.let { bg ->
             entry.put("backgroundConsoleAtEnd", JSONArray(consoleOf(bg).takeLast(30)))
             // The background's sender-side flow counters (Trust Wallet's store broadcasts to its
             // popup go this way): what its bursts met at the page, before the Java side.
             entry.put("backgroundFlow", json(tabEval(bg, FLOW_REPORT)))
+            // What the extension registered over its manifest (`scripting.registerContentScripts`),
+            // the plan's other source: the count, the files, the matches by their reach.
+            tabEval(bg, REGISTERED_SCRIPTS_ASK, 5)
+            poll(3_000, 250) { val v = tabEval(bg, "window.__zenRegistered", 5); if (v == "null") null else v }?.let { entry.put("registeredScripts", json(it)) }
         }
+    }
+
+    /** One `ext.configure` outcome (`Extensions.configureStats`) summed: the units, their chars, the cached and refused, each unit as its world and origin count. */
+    private fun configureSummary(c: JSONObject): JSONObject {
+        val units = c.optJSONArray("units") ?: JSONArray()
+        val list = JSONArray()
+        var chars = 0L
+        var cached = 0
+        var refused = 0
+        for (i in 0 until units.length()) {
+            val u = units.optJSONObject(i) ?: continue
+            chars += u.optLong("chars")
+            if (u.optBoolean("cached")) cached++
+            if (!u.isNull("refused")) refused++
+            val key = u.optString("key")
+            val origins = key.substringAfter(':', "").split(' ').count { it.isNotEmpty() }
+            list.put(JSONObject().put("world", key.substringBefore(':')).put("origins", origins).put("chars", u.optLong("chars")))
+        }
+        return JSONObject().put("units", units.length()).put("chars", chars).put("cached", cached).put("refused", refused).put("ms", c.optLong("ms")).put("list", list)
     }
 
     /**
@@ -1511,7 +1591,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     private inner class StepEvidence(private val row: Row) {
         private val consoleFrom = backgroundView(row.id)?.let { consoleOf(it).size } ?: 0
         /** Trace lines start with `uptimeMillis`; the ring drops old lines, so the time, not the index, marks the step's start. */
-        private val startedAt = SystemClock.uptimeMillis()
+        val startedAt = SystemClock.uptimeMillis()
 
         private fun traceLines(): List<String> {
             var list: List<String> = emptyList()
@@ -7695,10 +7775,18 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val extra = JSONObject()
         val offset = System.currentTimeMillis() - SystemClock.uptimeMillis()
         extra.put("wallMinusUptimeMs", offset)
+        // The trace window opens BEFORE the fixture loads: the content script's first ticks run
+        // between its mount and the popup (one tick on 113, eight on the slower 156 in round 21's
+        // `[lane]` run), and with the window opened after them their frame stamps had no host
+        // lines – the counts disagreed, the by-time pairing shifted every content call one host
+        // line late, and 21 / 27 "inversions after receipt" were that shift. A call issued
+        // before the window is dropped from the analysis ([orderAnalysis]'s `preWindowCalls`).
+        val since = StepEvidence(row)
+        val windowStartWall = since.startedAt + offset
+        extra.put("windowStartWall", windowStartWall)
         val (_, view) = fixture("page-a.html?order", factor, 2_000)
         val mounted = poll(scaled(15_000, factor), 400) { if (tabEval(view, ORDER_CS_MOUNTED) == "true") true else null } == true
         extra.put("contentScriptMounted", mounted)
-        val since = StepEvidence(row)
         val popup = openPopup(row, factor)
         if (popup == null || !mounted) {
             extra.put("page", json(tabEval(view, DOM_REPORT))).put("console", JSONArray(consoleOf(view).takeLast(10)))
@@ -7764,7 +7852,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val csLog = json(tabEval(view, ORDER_CS_LOG))
         val workerLog = backgroundView(row.id)?.let { bg -> runCatching { json(tabEval(bg, "JSON.stringify(window.__zenOrder||null)", 5)) }.getOrNull() } ?: JSONObject().put("error", "no background view")
         val trace = since.trace()
-        val analysis = orderAnalysis(popupLog, csLog, workerLog, trace, offset)
+        val analysis = orderAnalysis(popupLog, csLog, workerLog, trace, offset, windowStartWall)
         extra.put("analysis", analysis).put("popupLog", popupLog).put("contentLog", csLog)
             .put("workerLog", JSONObject().put("changes", workerLog.optJSONArray("changes")?.length() ?: -1).put("msgs", workerLog.optInt("msgs", -1)).put("err", workerLog.opt("err") ?: workerLog.opt("error") ?: JSONObject.NULL))
             .put("traceLines", trace.size).put("popupConsole", JSONArray(consoleOf(popup).takeLast(8))).put("pageConsole", JSONArray(consoleOf(view).takeLast(8)))
@@ -7808,9 +7896,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * The order probe's reading ([storageOrderProbe]): the frames' logs and the host's trace
      * paired, the store's commit history read for stale writes and each one attributed – the
      * runtime's or the extension's own race –, the order leg's inversions, the legs' medians per
-     * context, the cross-source receipt skews, the page's events around the finger taps.
+     * context, the cross-source receipt skews, the page's events around the finger taps. A frame
+     * call issued before `windowStartWall` (the trace window's start on the wall clock) has no
+     * host line to pair with and is left out, counted in `preWindowCalls`.
      */
-    private fun orderAnalysis(popupLog: JSONObject, csLog: JSONObject, workerLog: JSONObject, trace: List<String>, offset: Long): JSONObject {
+    private fun orderAnalysis(popupLog: JSONObject, csLog: JSONObject, workerLog: JSONObject, trace: List<String>, offset: Long, windowStartWall: Long = 0L): JSONObject {
         val out = JSONObject()
         fun arr(o: JSONObject, key: String): List<JSONObject> = o.optJSONArray(key)?.let { a -> (0 until a.length()).mapNotNull { a.optJSONObject(it) } } ?: emptyList()
         fun norm(v: Any?): String? = when (v) { null, JSONObject.NULL -> null; is Number -> v.toDouble().toString(); else -> v.toString() }
@@ -7842,6 +7932,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         addRmw("popup", burst) { r -> "burst#${r.optInt("i")}" }
         addRmw("content", rmw) { r -> "${r.optString("tag")}#${r.optInt("i")}" }
         for (r in reads) if (r.optLong("t") > 0) calls.add(OrderCall("content", "get", r.optLong("t"), r.optLong("tReply"), "read#${r.opt("seq")}"))
+        // A call the frame issued before the trace window opened (the frames' `Date.now()` and the
+        // host's wall clock are the device's one clock) has no host line: out, and counted.
+        val preWindow = calls.count { it.issued < windowStartWall }
+        if (preWindow > 0) calls.removeAll { it.issued < windowStartWall }
+        out.put("preWindowCalls", preWindow)
         // 2. The host's lines.
         val callLine = Regex("""^(\d+) > \S+/(\w+) call storage\.(\w+) id=(\S+)""")
         val replyLine = Regex("""^(\d+) < \S+/(\w+) reply (ok|error=\S*) id=(\S+)(?: hop=(-?\d+) run=(-?\d+) back=(-?\d+))?""")
@@ -12297,6 +12392,19 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          */
         private const val FLOW_REPORT =
             "JSON.stringify((window.__zenExtStats&&window.__zenExtStats.flow)||{})"
+        /**
+         * The content scripts the extension registered at run time (`scripting.registerContentScripts`),
+         * asked of its background and left in `window.__zenRegistered` for a poll: their count,
+         * their files, their `matches` split into the wide ones (`<all_urls>`, every scheme's every
+         * host) and the hostname ones, the first ids. An extension without `chrome.scripting`
+         * answers an error.
+         */
+        private const val REGISTERED_SCRIPTS_ASK =
+            "(function(){window.__zenRegistered=null;try{Promise.resolve().then(function(){return chrome.scripting.getRegisteredContentScripts()})" +
+                ".then(function(s){var files=0,wide=0,hosts=0;s.forEach(function(r){files+=(r.js||[]).length+(r.css||[]).length;(r.matches||[]).forEach(function(m){" +
+                "if(m==='<all_urls>'||/^\\*:\\/\\/\\*\\//.test(m)||/^https?:\\/\\/\\*\\//.test(m))wide++;else hosts++})});" +
+                "window.__zenRegistered=JSON.stringify({count:s.length,files:files,wideMatches:wide,hostMatches:hosts,ids:s.slice(0,12).map(function(r){return r.id})})}," +
+                "function(e){window.__zenRegistered=JSON.stringify({error:String(e&&e.message||e)})})}catch(e){window.__zenRegistered=JSON.stringify({error:'threw: '+String(e&&e.message||e)})}})()"
         /**
          * The engine builtins the bootstrap gave an extension realm because the WebView lacked
          * them (`BootStats.polyfills`), and whether `Promise.withResolvers` is a function there

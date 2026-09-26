@@ -96,7 +96,9 @@ describe('AndroidExtensionRuntime: attaching records', () => {
     const groups = (first.extension as Record<string, unknown>).groups as Array<
       Record<string, unknown>
     >
-    expect(groups.map((g) => g.matches)).toEqual(sites.slice(0, 5).map((s) => [`https://${s}.example/*`]))
+    expect(groups.map((g) => g.matches)).toEqual(
+      sites.slice(0, 5).map((s) => [`https://${s}.example/*`])
+    )
     expect(h.runtime.configureStats(ID)?.units).toHaveLength(3)
 
     // A host without the call, or one whose answer fails, leaves the units unfolded: the plan

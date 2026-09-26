@@ -2188,6 +2188,28 @@ class Extensions(private val host: Host) {
     fun scriptUnits(): List<ScriptUnit> = units.values.flatten()
 
     /**
+     * The Java heap the runtime holds for one extension's content-script units, for
+     * instrumentation ([UnitCompiler.memoryOf]: the compiled scripts – the one copy the
+     * compiler's cache and the tabs' [ScriptUnit]s share – and the soft-held sources), with the
+     * units installed on the tabs counted. Main thread.
+     */
+    fun unitMemory(id: String): JSONObject = compiler.memoryOf(id).put("installed", units[id]?.size ?: 0)
+
+    /**
+     * Let the runtime's share of an extension's heap go while the extension stays attached, for
+     * instrumentation: the sweep reads the heap before and after this, then once more after the
+     * disable, so the units' bytes stand against the rules' and the rest's measured rather than
+     * summed. The compiled units and their sources are dropped and no new tab receives them; the
+     * tabs that have them keep them (the WebView holds its copy off this heap); the next
+     * `ext.configure` compiles them again. Main thread; the compiler's lock is brief unless a
+     * compile of the extension's is in flight.
+     */
+    fun releaseUnitsForInstrumentation(id: String) {
+        units.remove(id)
+        compiler.forget(id)
+    }
+
+    /**
      * The extensions' rule sets in the engine's current snapshot, for instrumentation: per set,
      * its rule count and how many of its rules the index cannot bucket (`wildcard`), with the
      * partitions it is scoped to.
