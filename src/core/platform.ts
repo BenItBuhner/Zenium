@@ -1003,6 +1003,15 @@ export interface TabView {
   /** Let a hidden page keep running at full speed while an agent drives it. */
   setBackgroundThrottling?(allowed: boolean): void
   /**
+   * An agent drives this page (`AgentService.prepare` says so, `detach` takes it back): a host
+   * whose hidden pages have no size may give the page one out of the user's sight – laid out
+   * and painting at the window's page area, on screen nowhere – so `browser_snapshot` has boxes
+   * to report and `capture` a frame while the page stays hidden (the desktop's stage,
+   * `main/platform/stage.ts`). Nothing changes for a page the layout shows. Hosts whose hidden
+   * pages lay out anyway leave it out.
+   */
+  setAgentDriven?(driven: boolean): void
+  /**
    * Screenshot for agents: the viewport, the full page or a region. Hosts without it fall back
    * to `snapshot()` (viewport only).
    */
