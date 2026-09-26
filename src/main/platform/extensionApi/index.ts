@@ -94,6 +94,7 @@ import { ProxyApi } from './proxy'
 import { ContentSettingsApi } from './contentSettings'
 import { RuntimeApi } from './runtime'
 import { SearchProviderApi } from './searchProvider'
+import { StartupPagesApi } from './startupPages'
 import { SessionsApi } from './sessions'
 import { SidePanelApi } from './sidePanel'
 import { DebuggerApi } from './debugger'
@@ -235,6 +236,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly omnibox: OmniboxApi
   /** `chrome_settings_overrides.search_provider`: manifest-driven, no namespace of its own. */
   readonly searchProvider: SearchProviderApi
+  readonly startupPages: StartupPagesApi
   readonly browsingData: BrowsingDataApi
   readonly tts: TtsApi
   readonly userScripts: UserScriptsApi
@@ -340,6 +342,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.identity = new IdentityApi(electronAuthWindowHost(this.model))
     this.omnibox = new OmniboxApi(this)
     this.searchProvider = new SearchProviderApi(this)
+    this.startupPages = new StartupPagesApi(this)
     this.browsingData = new BrowsingDataApi(this, electronDataClearer)
     this.tts = new TtsApi(this, sharedSpeechEngine())
     this.userScripts = new UserScriptsApi(this, this.webNavigation)
@@ -704,6 +707,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.sidePanel.load(loaded)
     this.omnibox.load(loaded)
     this.searchProvider.load(loaded)
+    this.startupPages.load(loaded)
     // After the permissions: the state exists only for extensions holding the permission.
     this.declarativeNetRequest.load(loaded)
     this.privacy.load(ext.id)
@@ -749,6 +753,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.identity.unload(ext.id)
     this.omnibox.unload(ext.id)
     this.searchProvider.unload(ext.id)
+    this.startupPages.unload(ext.id)
     this.tts.unload(ext.id)
     this.declarativeNetRequest.unload(ext.id)
     this.webRequest.unload(ext.id)

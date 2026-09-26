@@ -70,6 +70,7 @@ import {
   type ExtensionRegistry
 } from '../../core/extensions/registry'
 import { STORE_UPDATE_URLS, isExtensionId, type StoreId } from '../../core/extensions/store'
+import { resolveStartupOverride, type StartupOverride } from '../../core/startup'
 import {
   NO_PREVIOUS_BEGIN_INSTALL_ERROR,
   USER_CANCELLED_ERROR,
@@ -423,6 +424,7 @@ export class ExtensionService implements ExtensionHost {
         // Electron derives the id itself (from `manifest.key` or the path); trust what it says.
         if (ext.id !== record.id) this.rekey(record, ext.id)
         this.backfillNewTabPage(record, ext.manifest)
+        this.backfillStartupPages(record, ext.manifest)
         if (!this.loadedById.has(ext.id)) this.loadedById.set(ext.id, ext)
         for (const listener of this.loadedListeners) listener(ext, ses)
       } catch (error) {
@@ -561,6 +563,17 @@ export class ExtensionService implements ExtensionHost {
     const page = manifestFields(manifest).newTabPage
     if (!page) return
     record.newTabPage = page
+    this.persist()
+  }
+
+  /**
+   * Records written before `startupPages` existed learn theirs from the manifest Electron
+   * loaded, so the next boot – which reads the registry before any extension loads – can follow
+   * an enabled extension's `chrome_settings_overrides.startup_pages` (`startupPagesOverride`).
+   */
+  private backfillStartupPages(record: ExtensionRecord, manifest: unknown): void {
+    if (record.startupPages !== undefined) return
+    record.startupPages = manifestFields(manifest).startupPages
     this.persist()
   }
 
@@ -1074,6 +1087,31 @@ export class ExtensionService implements ExtensionHost {
       if (url && this.loadedById.has(record.id)) return url
     }
     return null
+  }
+
+  /**
+   * The enabled extension whose `chrome_settings_overrides.startup_pages` the boot follows
+   * (`ExtensionHost.startupPagesOverride`): from the registry alone, as Chrome reads the
+   * preference from `ExtensionPrefs` before the extensions load – the boot opens its windows
+   * first (`Browser.start`) – the newest-installed of several (`resolveStartupOverride`). The
+   * Settings page's indicator comes from the loaded extensions instead (`StartupPagesApi`), and
+   * agrees with this once they have loaded.
+   */
+  startupPagesOverride(): StartupOverride | null {
+    return resolveStartupOverride(
+      this.registry.extensions.flatMap((record) =>
+        record.enabled && record.startupPages && record.startupPages.length > 0
+          ? [
+              {
+                extensionId: record.id,
+                name: record.name,
+                pages: record.startupPages,
+                installedAt: record.installedAt
+              }
+            ]
+          : []
+      )
+    )
   }
 
   /**

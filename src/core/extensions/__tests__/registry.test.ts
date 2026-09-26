@@ -64,7 +64,8 @@ describe('manifestFields', () => {
       optionsPage: 'ui/options/index.html',
       popup: 'ui/popup/index.html',
       newTabPage: null,
-      updateUrl: 'https://clients2.google.com/service/update2/crx'
+      updateUrl: 'https://clients2.google.com/service/update2/crx',
+      startupPages: null
     })
   })
 
@@ -91,9 +92,30 @@ describe('manifestFields', () => {
       optionsPage: null,
       popup: null,
       newTabPage: null,
-      updateUrl: null
+      updateUrl: null,
+      startupPages: null
     })
     expect(manifestFields({ permissions: ['tabs', 7, null] }).permissions).toEqual(['tabs'])
+  })
+
+  it('reads chrome_settings_overrides.startup_pages as http(s) URLs, deduped', () => {
+    expect(
+      manifestFields({
+        chrome_settings_overrides: {
+          startup_pages: [
+            'https://example.com/',
+            'example.org',
+            'https://example.com',
+            7,
+            'ftp://x'
+          ]
+        }
+      }).startupPages
+    ).toEqual(['https://example.com/', 'https://example.org/'])
+    expect(
+      manifestFields({ chrome_settings_overrides: { startup_pages: [] } }).startupPages
+    ).toBeNull()
+    expect(manifestFields({ chrome_settings_overrides: { homepage: 'h' } }).startupPages).toBeNull()
   })
 
   it('reads the new-tab override page without a leading slash', () => {
