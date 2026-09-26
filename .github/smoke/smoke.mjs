@@ -3,7 +3,7 @@
 // blocking dialog, takes OS-level screenshots at each step and writes one JSON result per step.
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
-//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,features,recaptcha,downloads,notifications,restart-registration,private-taskbar,quit-hold,visibility,default-browser]
+//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,features,recaptcha,downloads,notifications,restart-registration,private-taskbar,quit-hold,visibility,default-browser,menu-bar]
 //        [--extra-args="--no-sandbox --disable-gpu"]   (space-separated, passed to the app)
 //        [--sandbox]             (the run is a sandboxed leg: Chromium's sandbox stays on, so
 //                                 --no-sandbox in --extra-args is refused and ELECTRON_DISABLE_SANDBOX
@@ -226,12 +226,23 @@
 //                otherwise) and resolve the request true once LaunchServices reports http
 //                held; LaunchServices' LSHandlers are read before and after for the record
 //                (macOS jobs)
+//   menu-bar     the macOS menu bar as the main process holds it (shortcuts-menus-160, -162,
+//                -123; menu-bar-scenario.mjs): Menu.getApplicationMenu() read through the
+//                harness – Chrome's menus in Chrome's order with the Tab menu between Bookmarks
+//                and Window; the Tab menu's rows, order, the Chrome preset's chords and the
+//                enabled states with a new tab page in front and then a site page with a tab
+//                below it; Pin Tab / Unpin Tab and Mute Site / Unmute Site picked through the
+//                items' own click and read back; the Help menu's rows under the help role; About
+//                Zenium an enabled row of the application menu opening Settings › About. Off
+//                macOS the one step reads that no application menu is set (macOS jobs judge
+//                the bar; the Windows unpacked leg and the Linux job the absence)
 //
 // Windows and macOS run boot, restore, scale, dark and visibility (the installed Windows build
 // boot and restore), Windows notifications, restart-registration and private-taskbar too and
-// macOS quit-hold and default-browser too; the walkthrough, the crash pair, clear-on-exit, the
-// two mv3-worker legs, pip, the split pair, features and recaptcha run on Linux under Xvfb only
-// (visibility runs there too, on its own step).
+// macOS quit-hold, default-browser and menu-bar too (menu-bar's no-bar step runs on the Windows
+// unpacked leg as well); the walkthrough, the crash pair, clear-on-exit, the two mv3-worker legs,
+// pip, the split pair, features and recaptcha run on Linux under Xvfb only (visibility runs
+// there too, on its own step, and menu-bar's no-bar step with the boot set).
 //
 // Zero tolerated JS errors: a chrome console error, a chrome page error, a preload or Electron-side
 // error in a tab view, a main-process exception, a crashed process, a blocking native dialog or a
@@ -265,6 +276,7 @@ import { FIND_MATCHES, FIND_WORD, isWebPage, startBootFixture } from './boot-fix
 import { DEFAULT_BROWSER_SCENARIO, scenarioDefaultBrowser } from './default-browser-scenario.mjs'
 import { DOWNLOADS_SCENARIO, scenarioDownloads } from './downloads-scenario.mjs'
 import { classifyFailures, formatFailure, loadKnownFailures } from './known-failures.mjs'
+import { MENU_BAR_SCENARIO, scenarioMenuBar } from './menu-bar-scenario.mjs'
 import { NOTIFICATIONS_SCENARIO, scenarioNotifications } from './notifications-scenario.mjs'
 import { RESTART_SCENARIO, scenarioRestartRegistration } from './restart-scenario.mjs'
 import { PRIVATE_TASKBAR_SCENARIO, scenarioPrivateTaskbar } from './private-taskbar-scenario.mjs'
@@ -7552,6 +7564,16 @@ async function main() {
           log,
           fixture: bootSite,
           platform: process.platform
+        }),
+      [MENU_BAR_SCENARIO]: () =>
+        scenarioMenuBar({
+          freshProfile,
+          runScenario,
+          waitFor,
+          delay,
+          log,
+          fixture: bootSite,
+          isMac: IS_MAC
         }),
       [DEFAULT_BROWSER_SCENARIO]: () =>
         scenarioDefaultBrowser({

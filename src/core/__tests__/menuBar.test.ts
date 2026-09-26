@@ -798,9 +798,7 @@ describe('the macOS menu bar', () => {
         ['Pin Tab', 'tab.togglePin'],
         ['Search Tabs…', 'tab.search']
       ] as Array<[string, ShortcutAction]>)
-        expect(item(menu, label).accelerator ?? null).toBe(
-          toAccelerator(bindingFor(table, action))
-        )
+        expect(item(menu, label).accelerator ?? null).toBe(toAccelerator(bindingFor(table, action)))
     })
 
     it('greys with the active tab: a page without a site cannot be muted, one tab leaves nothing to close, a tab in no folder has none to leave; a site tab among others enables them; every row greys with every window closed', () => {
@@ -811,9 +809,11 @@ describe('the macOS menu bar', () => {
         // about a tab greys; Search Tabs… wants a window alone.
         const none = enabled(h)
         expect(none['Search Tabs…']).toBe(true)
-        expect(Object.entries(none).filter(([, on]) => on).map(([l]) => l)).toEqual([
-          'Search Tabs…'
-        ])
+        expect(
+          Object.entries(none)
+            .filter(([, on]) => on)
+            .map(([l]) => l)
+        ).toEqual(['Search Tabs…'])
         // A new tab page: no site to mute, nothing else to close, no folder to leave.
         h.browser.tabs.createTab({ url: NEW_TAB_URL, active: true }, h.win)
         vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
@@ -904,11 +904,7 @@ describe('the macOS menu bar', () => {
         const move = item(tabMenu(h), 'Move to Folder')
         expect(move.enabled).toBe(true)
         const folder = h.browser.state.model.folders[folderId!]!
-        expect(labels(move.submenu!)).toEqual([
-          'New Folder…',
-          '-',
-          `${folder.icon} ${folder.name}`
-        ])
+        expect(labels(move.submenu!)).toEqual(['New Folder…', '-', `${folder.icon} ${folder.name}`])
         expect(move.submenu![2]).toMatchObject({ type: 'checkbox', checked: true })
         const remove = item(tabMenu(h), 'Remove from Folder')
         expect(remove.enabled).toBe(true)

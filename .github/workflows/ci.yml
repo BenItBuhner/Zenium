@@ -106,11 +106,12 @@ jobs:
         # software compositor it ends up as: the same rendering path, a 47 MB GPU process instead
         # of 261 MB, and the first paint 31 ms after the DOM instead of 3.5 s on a disk throttled
         # to 6 MB/s locally. No effect on what the smokes check (chrome, tabs, restore, quit,
-        # cookies); the sign-in smoke below runs without it, as before.
+        # cookies); the sign-in smoke below runs without it, as before. menu-bar (W7-4): Zenium
+        # draws no menu bar off macOS – its one step here reads that no application menu is set.
         run: >
           xvfb-run -a -s '-screen 0 1600x1000x24'
           node .github/smoke/smoke.mjs --exe dist/linux-unpacked/zenium --label unpacked
-          --out "$SMOKE_OUT" --scenarios boot,restore,crash,walkthrough,pip,split
+          --out "$SMOKE_OUT" --scenarios boot,restore,crash,walkthrough,pip,split,menu-bar
           --extra-args="--no-sandbox --disable-gpu"
       - name: Clear browsing data on exit under Xvfb (the quit run, the owed clear at launch)
         # The clear-on-exit scenario (#310) on its own run of the harness, so its four launches

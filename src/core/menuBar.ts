@@ -484,16 +484,14 @@ function tabMenu(
           submenu: [
             { label: 'New Folder…', click: newFolder },
             { type: 'separator' },
-            ...folders.map(
-              (f): MenuItemTemplate => ({
-                label: `${f.icon} ${f.name}`,
-                type: 'checkbox',
-                checked: active!.folderId === f.id,
-                click: withActiveTab((t) =>
-                  tabs.moveToFolder(t.id, t.folderId === f.id ? null : f.id)
-                )
-              })
-            )
+            ...folders.map((f): MenuItemTemplate => ({
+              label: `${f.icon} ${f.name}`,
+              type: 'checkbox',
+              checked: active!.folderId === f.id,
+              click: withActiveTab((t) =>
+                tabs.moveToFolder(t.id, t.folderId === f.id ? null : f.id)
+              )
+            }))
           ]
         },
     {
