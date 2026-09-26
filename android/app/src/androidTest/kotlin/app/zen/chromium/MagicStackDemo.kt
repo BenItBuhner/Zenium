@@ -470,7 +470,9 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
             val row = chromeValue("((${GEAR_ROW_JS})||{}).textContent||''")
             finding("  the gear sheet ${verdict(gear)}; its Cards row: '$row'")
             expect("the gear opens the page's sheet '$GEAR_TITLE' with a 'Cards' row", gear && row.startsWith("Cards") && row.contains("Choose which cards show under the shortcuts") && !row.contains("Magic Stack"), "gear-row")
-            still("gear-sheet-row")
+            // The still is the sheet at its rest height: the Layout section fills it and the Cards
+            // row lies below the fold (the tap below reveals it). The row's act is the next still.
+            still("gear-sheet")
             val swapped = touchDomExpecting("the gear sheet's Cards row", GEAR_ROW_JS, "the gear sheet has left and the stack's is up", 8_000, reveal = true) {
                 sheetPresented(SHEET_TITLE) && !sheetPresented(GEAR_TITLE)
             }
