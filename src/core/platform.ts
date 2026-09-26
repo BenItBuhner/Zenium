@@ -2518,6 +2518,24 @@ export interface MediaSessionHost {
   enterPictureInPicture?(session: MediaSessionInfo): Promise<boolean>
 }
 
+/**
+ * The chrome's media hub on a host whose chrome has one (the windowed desktop: the sidebar's
+ * control and its popover, the ⋯ menu's Now Playing… row at narrow widths). The one thing the
+ * core asks of it is Chrome's linger: how long a session whose media paused or ended stays in
+ * the hub, with Play, before the hub lets it go (Chrome's global media controls dismiss an
+ * inactive item after `kAutoDismissTimerInMinutesDefault`, 60 minutes without an interaction;
+ * `MEDIA_HUB_INACTIVE_MS`). A host without one (Android, whose mini player and notification
+ * stay until dismissed or the tab goes) leaves it out, and no session ever lingers or expires.
+ */
+export interface MediaHubHost {
+  /**
+   * The linger (ms): the time without an interaction – a playback, a seek, a control pressed in
+   * the hub – after which a paused or ended session leaves the hub. Production hosts pass
+   * `MEDIA_HUB_INACTIVE_MS`; a drive shortens it through the host's test hook alone.
+   */
+  readonly inactiveAfterMs: number
+}
+
 /** What the read-aloud core asks the speech host to say an utterance with. */
 export interface SpeechUtteranceOptions {
   /** The voice's id (`ReadAloudVoice.id`), or null for the engine's default for `lang`. */
@@ -2867,6 +2885,8 @@ export interface Platform {
   readonly qrScan?: QrScanHost
   /** OS media controls fed by the core (Android); hosts whose engine feeds them itself leave it out. */
   readonly mediaSession?: MediaSessionHost
+  /** The chrome's media hub and its linger for a paused session (desktop); hosts without the hub leave it out. */
+  readonly mediaHub?: MediaHubHost
   /** The speech engine behind read aloud (`capabilities.readAloud`); hosts without one leave it out. */
   readonly speech?: SpeechHost
   /** Web Notifications for pages of a host whose engine lacks the API (Android). */

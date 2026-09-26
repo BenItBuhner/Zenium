@@ -32,6 +32,7 @@ import {
 } from '../../shared/notifications'
 import { Browser } from '../../core/browser'
 import { macTitleBarDoubleClickAction } from '../../core/captionDoubleClick'
+import { MEDIA_HUB_INACTIVE_MS } from '../../core/mediaSession'
 import { isStorageAccessPermission, permissionSite } from '../../core/permissions'
 import type {
   AppHost,
@@ -39,6 +40,7 @@ import type {
   ConfirmOptions,
   DialogHost,
   LanguagesHost,
+  MediaHubHost,
   NetHost,
   PageFontsHost,
   PageMessage,
@@ -263,6 +265,8 @@ export class ElectronPlatform implements Platform {
   readonly agentSkills: SkillInstaller
   /** Linux: Zenium as an MPRIS player on the session bus (MW-18). */
   readonly mediaSession?: ElectronMpris
+  /** The media hub's linger for a paused session: Chrome's 60 minutes, or a drive's `ZEN_MEDIA_LINGER_MS`. */
+  readonly mediaHub: MediaHubHost = { inactiveAfterMs: mediaHubLingerMs() }
   /** Read aloud's voices and utterances over the hidden `speechSynthesis` page (CT-12 / CT-13). */
   readonly speech: ElectronSpeechHost = new ElectronSpeechHost(sharedSpeechEngine())
   readonly newTabBackground: ElectronNewTabBackground
@@ -1041,6 +1045,18 @@ export class ElectronPlatform implements Platform {
       }
     })
   }
+}
+
+/**
+ * Test hook: `ZEN_MEDIA_LINGER_MS=3000` shortens the media hub's linger for a paused session
+ * (`MEDIA_HUB_INACTIVE_MS`, Chrome's 60 minutes) so a drive can watch it run out within its
+ * budget. Unset in normal runs; anything but a positive whole number of milliseconds is ignored.
+ */
+function mediaHubLingerMs(): number {
+  const override = process.env['ZEN_MEDIA_LINGER_MS']
+  if (!override) return MEDIA_HUB_INACTIVE_MS
+  const ms = Number(override)
+  return Number.isInteger(ms) && ms > 0 ? ms : MEDIA_HUB_INACTIVE_MS
 }
 
 /**
