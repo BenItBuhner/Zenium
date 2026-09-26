@@ -24,11 +24,7 @@ object LinkHits {
      * left to the renderer instead of the link menu: the embedder is offered the gesture first,
      * and a handled one never reaches the page (`GestureListenerManagerImpl.filterTapOrPressEvent`).
      */
-    fun holdIsThePages(document: String?): Boolean =
-        document != null && (document == NEW_TAB_URL || document.startsWith("$NEW_TAB_URL/") || document.startsWith("$NEW_TAB_URL?"))
-
-    /** The served new tab page, as the core spells it (`NEW_TAB_URL` in `shared/url.ts`). */
-    private const val NEW_TAB_URL = "zen://newtab"
+    fun holdIsThePages(document: String?): Boolean = NewTabPage.isDocument(document)
 
     /**
      * The address the menu opens on: the anchor's href when the WebView gave one, else the

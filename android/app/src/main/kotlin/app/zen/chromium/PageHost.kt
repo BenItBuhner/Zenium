@@ -69,6 +69,12 @@ interface PageHost {
     val snapshots: HistorySnapshots
     /** The tab cards' pictures on disk ([Thumbnails]); a host without cards (a custom tab) keeps none. */
     val thumbnails: Thumbnails? get() = null
+    /**
+     * The file-backed handoffs to the chrome ([BootHandoff]), whose favicon store the served new
+     * tab page's tile icons are answered from ([TabWebView.shouldInterceptRequest], NTP-35); a
+     * host without a chrome (a custom tab) serves no such page and has none.
+     */
+    val handoff: BootHandoff? get() = null
     val tabs: TabHost
     val fullscreenTab: TabWebView?
     /** Whether the host is in its own fullscreen (Menu > Fullscreen: the bars hidden, no element fullscreen). */
