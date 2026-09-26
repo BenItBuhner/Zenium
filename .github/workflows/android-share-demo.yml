@@ -14,10 +14,6 @@ name: Android share demo
 # file only picks the driver and the demo it runs.
 on:
   workflow_dispatch:
-  # TEMPORARY (F1, #501): the page-share and seam acts' first runs; removed before READY.
-  push:
-    branches:
-      - cursor/android-share-panel-seam-d6a2
 
 permissions:
   contents: read
