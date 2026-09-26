@@ -9,6 +9,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PointF
 import android.graphics.Rect
+import android.graphics.RectF
 import android.os.Process
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
@@ -20,6 +21,7 @@ import org.json.JSONTokener
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.ByteArrayOutputStream
+import kotlin.math.abs
 
 /**
  * Drives the TABLET's new tab page (NTP-35: the served `zen://newtab` document – the desktop's,
@@ -38,22 +40,33 @@ import java.io.ByteArrayOutputStream
  *     before READY, and its own `performance.timing` says what the document cost; on main's tree
  *     (`newTabPage` off: `Browser.ensureFirstTab` opens no tab) the window comes up with no tab
  *     and the chrome's own surface, so the same driver on main is the 'before' run. The fresh
- *     tab's reveal is the desktop's (`Browser.revealFreshTab` → `newtab.opened`): the URL bar in
- *     new-tab mode stands over the served page, and on this chassis – the pages composite above
- *     the chrome – the bar's cover takes the page's picture while the live view is hidden under
- *     it (`overlayCoversContent`); a back puts the bar away and the view comes back. Then the
- *     page's EMPTY state at a fresh boot ("Sites you visit often will appear here"), light and
- *     dark;
+ *     tab COMES UP BARE on the tablet: the served page in view, its own field at rest – no URL
+ *     bar in new-tab mode over a cover, no keyboard rising unasked – where the desktop's rule
+ *     (`Browser.revealFreshTab` → `newtab.opened` → the bar) still holds on the desktop: the
+ *     renderer's `newTabRevealOpensUrlbar` lets the arrival's announcement (no `text`) open no
+ *     bar on a touch layout. A REAL TAP on the page's field HANDS OFF to the pill's omnibox
+ *     popup (the page's `search` action, `text` ''): on this chassis the pages composite above
+ *     the chrome, so the popup stands over the tab's cover picture while the live view is hidden
+ *     under it (`overlayCoversContent`); a back puts the popup away and the view comes back.
+ *     Then the page's EMPTY state at a fresh boot ("Sites you visit often will appear here"),
+ *     light and dark;
  *  1. eight loopback sites visited off camera, a new tab from the sidebar's row under a finger:
- *     the served page with the most visited tiles, the bar over it as at boot
- *     (`NewTabService.open` → `newtab.opened`), then – the bar away – the tab's URL
- *     `zen://newtab`, the page view placed and shown, the tiles in the page's DOM AND in the
- *     accessibility tree, the pill reading the empty tab's words. On main's tree the same row
- *     opens the bar bound to no tab and makes no tab at all (`urlbar.toggle`);
+ *     the served page with the most visited tiles, bare as at boot (`NewTabService.open` →
+ *     `newtab.opened`), the tab's URL `zen://newtab`, the page view placed and shown, the tiles
+ *     in the page's DOM AND in the accessibility tree, the pill reading the empty tab's words;
+ *     the tiles' ICONS REAL: every tile's `<img>` loaded from `zen://favicon/<hash>`, answered
+ *     at the head of the view's intercept chain on the served view alone from the chrome's
+ *     favicon store (`TabWebView.newTabFavicon` → `BootHandoff.favicon`), not the letter it
+ *     falls back to; the coarse pointer's numbers: the field 56, Customise 40, a tile 64 in the
+ *     page's CSS px; the tap on the field → the omnibox popup, and a back. On main's tree the
+ *     same row opens the bar bound to no tab and makes no tab at all (`urlbar.toggle`);
  *  2. a REAL HOLD on a tile (the finger down past the long press, on the tile's own box read off
  *     the page's DOM): the tablet's anchored menu with the touch template's FIVE rows – Open in
  *     New Tab · Open in Private Tab · Copy Link · a separator · Remove (the desktop's template is
- *     not this one; a most-visited tile has no Edit Shortcut) – and Open in Private Tab under a
+ *     not this one; a most-visited tile has no Edit Shortcut) – HUNG FROM THE TILE's BOX: the
+ *     `tile-menu` action carries the tile's rect up the bridge (`MenuAnchor.rect`), the menu's
+ *     start edge level with the tile's and its top flush at the box's bottom (above the box when
+ *     the room below runs out), not at the finger's point – and Open in Private Tab under a
  *     finger opening the site in a private tab in front, the private session closed after;
  *  3. the hold again and Copy Link under a finger: the tile's URL on the system clipboard;
  *  4. the dark scheme through the core's setting (the chrome and the served page re-ink in
@@ -82,6 +95,9 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
 
     /** The tab the recording's served page is in, once the sidebar's row opened it. */
     private var pageTab: String? = null
+
+    /** Where the last hold's finger was on the screen ([holdTile]): the point the menu must NOT hang from. */
+    private var lastHold: PointF? = null
 
     /** The sites: a host each, the page's title (the tile's caption) and an icon colour. */
     private class Site(val n: Int, val title: String, val color: Int) {
@@ -187,15 +203,15 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
             val id = active?.optString("id")
             if (id != null) {
                 check("the served page is loaded before the recording, by the document's own word (readyState complete at zen://newtab)", awaitServedPage(id), "document ${pageJson(id, "[document.readyState,location.href]")}")
-                // The fresh tab's reveal (Browser.revealFreshTab → newtab.opened, the desktop's
-                // rule): the URL bar in new-tab mode stands over the page – on this chassis the
-                // pages composite above the chrome, so the bar's cover takes the page's picture
-                // and the live view is hidden under it (overlayCoversContent) until the bar goes.
-                val barUp = awaitUntil(8_000) { urlbarOpen() && !pageShown(id) }
-                check("the fresh tab comes up with the URL bar in new-tab mode over the served page, the live view under the bar's cover (revealFreshTab → newtab.opened)", barUp, "urlbar.open ${urlbarOpen()}, shown ${pageShown(id)}")
+                // The fresh tab's reveal on the tablet (Browser.revealFreshTab → newtab.opened
+                // with no text): the page comes up BARE – in view, its own field at rest, no URL
+                // bar over a cover, no keyboard – where the desktop's rule opens the bar in
+                // new-tab mode (newTabRevealOpensUrlbar: the announcement opens none on a touch
+                // layout). Then the tap on the page's field: the hand-off to the omnibox popup.
+                bareComeUp(id, "the fresh tab")
                 SystemClock.sleep(800)
                 still("boot-opened-light")
-                dismissBar(id, "the fresh tab's URL bar")
+                handOff(id, "the fresh tab's field", frame = null)
                 val timing = pageJson(id, "(function(){var t=performance.timing;return [t.domContentLoadedEventEnd-t.navigationStart,t.loadEventEnd-t.navigationStart,document.querySelectorAll('.zen-tile:not(.zen-tile-add)').length,!document.getElementById('zen-empty').hidden]})()")
                 finding("  the served page's own clock (performance.timing): navigationStart→DOMContentLoaded ${timing?.opt(0)} ms, →load ${timing?.opt(1)} ms; tiles ${timing?.opt(2)}, the empty line shown ${timing?.opt(3)}")
                 check("a fresh profile's page shows the empty state – no tile, the line 'Sites you visit often will appear here'", timing?.optInt(2) == 0 && timing?.optBoolean(3) == true, "tiles ${timing?.opt(2)}, empty ${timing?.opt(3)}")
@@ -273,18 +289,19 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
         val id = activeTabId() ?: return
         pageTab = id
         check("the new tab is the served page: its URL is zen://newtab", awaitCore { it.getJSONObject("tabs").optJSONObject(id)?.optString("url") == NEW_TAB_URL }, "url ${tabUrl(id)}")
-        // NewTabService.open: the tab made and activated, then `newtab.opened` – the bar in
-        // new-tab mode bound to the tab over the page, the live view under its cover (as at boot).
-        val barUp = awaitUntil(8_000) { urlbarOpen() && !pageShown(id) }
-        check("the new tab comes up with the URL bar in new-tab mode over the served page, the live view under the bar's cover (NewTabService.open → newtab.opened)", barUp, "urlbar.open ${urlbarOpen()}, shown ${pageShown(id)}")
-        check("the page's state came down the bridge, bar or no bar: the tiles are in the page's DOM (the sites visited)", awaitUntil(15_000) { tileCount(id) >= 4 }, "tiles ${tileCaptions(id)}")
-        SystemClock.sleep(1_200)
-        still("opened-light")
-        dismissBar(id, "the new tab's URL bar")
+        // NewTabService.open: the tab made and activated, then `newtab.opened` with no text – on
+        // the tablet no bar comes of it: the page is up bare, its field at rest (as at boot).
+        check("the page's state came down the bridge: the tiles are in the page's DOM (the sites visited)", awaitUntil(15_000) { tileCount(id) >= 4 }, "tiles ${tileCaptions(id)}")
+        bareComeUp(id, "the new tab")
         check("the page view is placed, shown and loaded: the document's own location is zen://newtab", awaitServedPage(id) && pageShown(id), "document ${pageJson(id, "[document.readyState,location.href]")}, shown ${pageShown(id)}")
         val captions = tileCaptions(id)
         finding("  tiles in the page's order: $captions")
         check("the tiles are the visited sites, every caption a site's title", captions.isNotEmpty() && captions.all { c -> sites.any { it.title == c } }, "captions $captions")
+        icons(id)
+        coarseNumbers(id)
+        SystemClock.sleep(1_200)
+        still("opened-light")
+        handOff(id, "the new tab's field", frame = "handoff-light")
         val first = captions.firstOrNull()
         check("the tiles stand in the accessibility tree once the view is shown (the first tile, by its caption, inside the page view's box)", first != null && awaitUntil(15_000) { tileInTree(id, first) }, "first '$first': ${first?.let { describeTileNode(id, it) }}")
         if (first != null) finding("  the first tile's node: ${describeTileNode(id, first)}")
@@ -309,6 +326,7 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
         check("one separator stands between the open rows and Remove: five rows in all", rows.size == 4 && jsNumber("document.querySelectorAll('$MENU_SEPARATOR').length") == 1.0, "separators ${jsNumber("document.querySelectorAll('$MENU_SEPARATOR').length")}")
         check("no Edit Shortcut on a most-visited tile; the desktop's window rows are not here", rows.none { it.startsWith("Edit") || it.contains("Window") }, "rows $rows")
         check("the menu is the tablet's anchored popover (`.zen-v2-menu`), not a sheet", inDom(MENU) && !inDom(SHEET), "")
+        menuHangsFromTile(id, TILE, lastHold)
         SystemClock.sleep(1_200)
         still("tile-menu-light")
         val before = privateTabIds().toSet()
@@ -388,6 +406,7 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
                 return emptyList()
             }
             val point = tileOnScreen(tabId, index) ?: return emptyList()
+            lastHold = point
             finding("  hold at ${point.x.toInt()},${point.y.toInt()} on the tile '$caption'")
             Finger().apply {
                 press(point.x, point.y)
@@ -405,6 +424,179 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
     }
 
     private fun menuRow(prefix: String) = textRect(MENU_ITEM, prefix)
+
+    // --- the bare come-up, the hand-off, the icons, the numbers, the anchor --------------------------
+
+    /**
+     * The bare come-up: `what` (the fresh tab at boot, the new tab from the row) arrives with the
+     * served page IN VIEW – the view placed and shown, no URL bar in new-tab mode over a cover –
+     * its own field AT REST (not focused) and NO KEYBOARD rising unasked. The arrival's
+     * `newtab.opened` carries no `text`, and the renderer's `newTabRevealOpensUrlbar` opens no bar
+     * for it on a touch layout (the desktop's reveal – the bar – unchanged). Watched for two
+     * seconds past the view's placement, the window in which the desktop's rule brought the bar.
+     */
+    private fun bareComeUp(tabId: String, what: String) {
+        val shown = awaitUntil(8_000) { pageShown(tabId) && !urlbarOpen() }
+        var barCame = false
+        var covered = false
+        val until = SystemClock.uptimeMillis() + 2_000
+        while (SystemClock.uptimeMillis() < until) {
+            if (urlbarOpen()) barCame = true
+            if (!pageShown(tabId)) covered = true
+            SystemClock.sleep(150)
+        }
+        val rest = pageJson(
+            tabId,
+            "(function(){var i=document.getElementById('zen-search-input');return [document.activeElement===i,document.hasFocus(),i?i.inputMode:'?',window.matchMedia('(pointer: coarse)').matches]})()"
+        )
+        finding(
+            "  $what's come-up: view shown ${pageShown(tabId)}, urlbar.open ${urlbarOpen()} (a bar within 2 s: $barCame; the view covered: $covered), " +
+                "the field focused ${rest?.opt(0)} (document focused ${rest?.opt(1)}, inputmode '${rest?.opt(2)}', pointer coarse ${rest?.opt(3)}), keyboard inset ${imeInset()}"
+        )
+        check(
+            "$what comes up BARE: the served page in view – placed and shown, no URL bar in new-tab mode over a cover, none within two seconds (the arrival's newtab.opened opens no bar on the tablet)",
+            shown && !barCame && !covered && pageShown(tabId) && !urlbarOpen(),
+            "shown ${pageShown(tabId)}, urlbar.open ${urlbarOpen()}, a bar came $barCame, covered $covered"
+        )
+        check(
+            "the page's own field is at rest on arrival – not focused, inputmode none under the coarse pointer – and no keyboard rose unasked",
+            rest != null && !rest.optBoolean(0) && rest.optString(2) == "none" && !imeShown(),
+            "focused ${rest?.opt(0)}, inputmode '${rest?.opt(2)}', keyboard inset ${imeInset()}"
+        )
+    }
+
+    /**
+     * The served page's field is a hand-off control on the tablet: a REAL TAP on it sends the
+     * page's `search` action (`text` '') and the chrome opens the pill's omnibox popup in new-tab
+     * mode bound to the tab (`openNewTabPageUrlbar` – on the user's tap now, not on the arrival).
+     * On this chassis the pages composite above the chrome, so the popup stands over the tab's
+     * cover picture and the live view is hidden under it (`overlayCoversContent`); the chrome's
+     * field takes the keyboard. Then a back puts the popup away and the view comes back
+     * ([dismissBar]). `frame` names the still of the popup over the cover, when one is wanted.
+     */
+    private fun handOff(tabId: String, what: String, frame: String?) {
+        val point = pagePointOnScreen(tabId, "document.getElementById('zen-search')") ?: run {
+            check("$what is on the screen to tap", false, "page shown ${pageShown(tabId)}")
+            return
+        }
+        finding("  tap at ${point.x.toInt()},${point.y.toInt()} on $what")
+        Finger().tap(point.x, point.y)
+        val opened = awaitUntil(8_000) { urlbarOpen() }
+        check(
+            "a tap on $what hands off to the pill's omnibox popup: the URL bar opens in new-tab mode bound to the tab (the page's search action → openNewTabPageUrlbar)",
+            opened && urlbarMode() == "new-tab" && urlbarTab() == tabId,
+            "urlbar.open ${urlbarOpen()}, mode '${urlbarMode()}', tab ${urlbarTab()} (the page's $tabId)"
+        )
+        check("the popup stands over the tab's cover picture on this chassis, the live view hidden under it (overlayCoversContent)", awaitUntil(4_000) { !pageShown(tabId) }, "shown ${pageShown(tabId)}")
+        finding("  the keyboard after the hand-off: ${if (awaitIme(true, 4_000)) "up (the chrome's field took it), inset ${imeInset()}" else "not up within 4 s (inset ${imeInset()})"}")
+        if (frame != null) {
+            SystemClock.sleep(1_000)
+            still(frame)
+        }
+        dismissBar(tabId, "the omnibox popup")
+    }
+
+    /**
+     * The tiles' icons are real: every tile's `<img class="zen-ntp-icon">` – its `src` the core's
+     * `zen://favicon/<hash>`, answered on the served view alone by `TabWebView.newTabFavicon` from
+     * the chrome's favicon store – decoded (`complete`, a `naturalWidth`), and no tile fallen back
+     * to its letter (`.zen-ntp-letter`, what an errored `<img>` is replaced with). Every loopback
+     * site serves a 64 px PNG at `/icon.png`, so every tile has one to show.
+     */
+    private fun icons(tabId: String) {
+        val loaded = awaitUntil(15_000) { iconRead(tabId)?.let { it.optInt(0) > 0 && it.optInt(1) == it.optInt(0) && it.optInt(2) == 0 } == true }
+        val read = iconRead(tabId)
+        finding("  the tiles' icons: ${read?.opt(1)} of ${read?.opt(0)} <img> decoded (naturalWidth > 0), ${read?.opt(2)} letter fallbacks; sources ${read?.optJSONArray(3)}; naturalWidths ${read?.optJSONArray(4)}")
+        check(
+            "every tile's icon is the real one – the <img> loaded from zen://favicon/<hash> through the served view's intercept (complete, naturalWidth > 0) – and no tile fell back to its letter",
+            loaded,
+            "tiles ${read?.opt(0)}, decoded ${read?.opt(1)}, letters ${read?.opt(2)}, widths ${read?.optJSONArray(4)}"
+        )
+        check("the icons' sources are the core's zen://favicon/<hash> (the desktop's protocol, answered on this view)", read != null && read.optInt(0) > 0 && read.optBoolean(5), "sources ${read?.optJSONArray(3)}")
+    }
+
+    /** `[tiles, decoded, letters, sources (the scheme and path head), naturalWidths, every source zen://favicon/]` off the page. */
+    private fun iconRead(tabId: String): JSONArray? = pageJson(
+        tabId,
+        "(function(){var t=document.querySelectorAll('.zen-tile:not(.zen-tile-add)');var n=t.length,ok=0,letters=0,src=[],w=[],all=n>0;" +
+            "for(var i=0;i<n;i++){var img=t[i].querySelector('img.zen-ntp-icon');if(t[i].querySelector('.zen-ntp-letter'))letters++;" +
+            "if(img){src.push(img.src.slice(0,14));w.push(img.naturalWidth);if(img.complete&&img.naturalWidth>0)ok++;if(img.src.indexOf('zen://favicon/')!==0)all=false}" +
+            "else{src.push('');w.push(-1);all=false}}return [n,ok,letters,src,w,all]})()"
+    )
+
+    /**
+     * The served page under a coarse pointer takes the touch layouts' numbers: the field 56, the
+     * Customise button 40, a tile 64 – read as the page's own CSS px (`getBoundingClientRect`;
+     * the boxes are `border-box`), the `(pointer: coarse)` query true on the tablet.
+     */
+    private fun coarseNumbers(tabId: String) {
+        val a = pageJson(
+            tabId,
+            "(function(){var f=document.getElementById('zen-search'),c=document.getElementById('zen-customize'),t=document.querySelector('.zen-tile:not(.zen-tile-add) .zen-ntp-tile');" +
+                "var h=function(e){return e?Math.round(e.getBoundingClientRect().height*100)/100:-1},w=function(e){return e?Math.round(e.getBoundingClientRect().width*100)/100:-1};" +
+                "var tops={};Array.prototype.forEach.call(document.querySelectorAll('.zen-tile'),function(e){tops[Math.round(e.getBoundingClientRect().top)]=1});" +
+                "return [window.matchMedia('(pointer: coarse)').matches,h(f),h(c),w(t),h(t),window.devicePixelRatio,Object.keys(tops).length,document.querySelectorAll('.zen-tile').length]})()"
+        )
+        finding("  the page's measures (CSS px, ratio ${a?.opt(5)}): (pointer: coarse) ${a?.opt(0)}, the field ${a?.opt(1)}, Customise ${a?.opt(2)}, a tile ${a?.opt(3)} x ${a?.opt(4)}; ${a?.opt(7)} tiles (the add tile counted) in ${a?.opt(6)} rows")
+        check(
+            "the tablet's page is under a coarse pointer and takes its numbers: the field 56, Customise 40, a tile 64 x 64",
+            a != null && a.optBoolean(0) && a.optDouble(1) == 56.0 && a.optDouble(2) == 40.0 && a.optDouble(3) == 64.0 && a.optDouble(4) == 64.0,
+            "coarse ${a?.opt(0)}, field ${a?.opt(1)}, Customise ${a?.opt(2)}, tile ${a?.opt(3)} x ${a?.opt(4)}"
+        )
+    }
+
+    /**
+     * The hold menu hangs from the TILE's BOX, not from the finger: the `tile-menu` action carries
+     * the tile's rect (`.zen-tile`: the square and its caption) up the bridge, the core puts it on
+     * the anchor's `rect` on a touch layout and the tablet's `placeRootMenu` sets the popover
+     * flush under it, start-aligned, above it when the room below runs out (§9.20). Read as
+     * screen px on both sides once they hold still: the tile's box off the page (its CSS px by
+     * the page's ratio, from the view's origin), the menu's off the chrome ([screen]). `hold` is
+     * where the finger was: the tile's middle, which no edge of the menu may sit at.
+     */
+    private fun menuHangsFromTile(tabId: String, index: Int, hold: PointF?) {
+        val tile = steady { tileBoxOnScreen(tabId, index) }
+        val menu = steady { screen(domRect(MENU))?.let { RectF(it) } }
+        if (tile == null || menu == null) {
+            check("the tile's box and the menu are both on the screen to compare", false, "tile $tile, menu $menu")
+            return
+        }
+        val startAligned = abs(menu.left - tile.left) <= SLACK
+        val below = abs(menu.top - tile.bottom) <= SLACK
+        val above = abs(menu.bottom - tile.top) <= SLACK
+        finding(
+            "  the tile's box on the screen ${tile.toShortString()}, the menu's ${menu.toShortString()} (${menu.width().toInt()} wide), the finger at ${hold?.x?.toInt()},${hold?.y?.toInt()}: " +
+                "start edges ${menu.left} / ${tile.left}, the menu's top ${menu.top} at the box's bottom ${tile.bottom}${if (above) " (flipped above: its bottom ${menu.bottom} at the box's top ${tile.top})" else ""}"
+        )
+        check(
+            "the menu hangs from the tile's box: its start edge level with the tile's (start-aligned) and its top flush at the box's bottom – or its bottom at the box's top when the room below ran out",
+            startAligned && (below || above),
+            "start ${menu.left} vs ${tile.left}; top ${menu.top} vs the box's bottom ${tile.bottom}; bottom ${menu.bottom} vs the box's top ${tile.top}"
+        )
+        check(
+            "the menu is not at the finger's point: no edge of it sits at the hold (the tile's middle)",
+            hold != null && abs(menu.left - hold.x) > SLACK && abs(menu.right - hold.x) > SLACK && abs(menu.top - hold.y) > SLACK && abs(menu.bottom - hold.y) > SLACK,
+            "menu ${menu.toShortString()}, finger ${hold?.x},${hold?.y}"
+        )
+        check("the menu carries the page as its source (`data-source=\"page\"`: the tile's menu, the one the box anchor is for)", inDom("$MENU[data-source=\"page\"]"), "")
+    }
+
+    /** A box read twice 300 ms apart that agrees (a popover popping in moves on each frame); the last read when three seconds pass without one. */
+    private fun steady(read: () -> RectF?): RectF? {
+        var last = read()
+        val deadline = SystemClock.uptimeMillis() + 3_000
+        while (SystemClock.uptimeMillis() < deadline) {
+            SystemClock.sleep(300)
+            val next = read()
+            if (last != null && next != null && abs(next.left - last.left) < 0.5f && abs(next.top - last.top) < 0.5f && abs(next.right - last.right) < 0.5f && abs(next.bottom - last.bottom) < 0.5f) return next
+            last = next
+        }
+        return last
+    }
+
+    private fun urlbarMode(): String = jsText("((((window.__zenStores||{}).ui||{get:function(){return {}}}).get()||{}).urlbar||{}).mode||''")
+
+    private fun urlbarTab(): String = jsText("((((window.__zenStores||{}).ui||{get:function(){return {}}}).get()||{}).urlbar||{}).tabId||''")
 
     // --- the served page's DOM -------------------------------------------------------------------
 
@@ -440,25 +632,37 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
 
     private fun pageTheme(tabId: String): String = pageJson(tabId, "[document.documentElement.dataset.theme||'']")?.optString(0).orEmpty()
 
-    /** Where the tile at `index` is on the screen: its box in the page's CSS px scaled by the page's ratio, from the view's origin. */
-    private fun tileOnScreen(tabId: String, index: Int): PointF? {
+    /** Where the tile at `index` is on the screen: the middle of its link's box in the page's CSS px scaled by the page's ratio, from the view's origin. */
+    private fun tileOnScreen(tabId: String, index: Int): PointF? = pagePointOnScreen(tabId, "document.querySelectorAll('$TILE_SELECTOR')[$index]")
+
+    /** Where the middle of the element the JS expression `element` names is on the screen; null when there is none or the view is not shown. */
+    private fun pagePointOnScreen(tabId: String, element: String): PointF? {
         val a = pageJson(
             tabId,
-            "(function(){var t=document.querySelectorAll('$TILE_SELECTOR')[$index];if(!t)return null;var r=t.getBoundingClientRect();" +
+            "(function(){var t=$element;if(!t)return null;var r=t.getBoundingClientRect();" +
                 "var d=window.devicePixelRatio;return [(r.left+r.width/2)*d,(r.top+r.height/2)*d]})()"
         ) ?: return null
         if (a.length() < 2) return null
-        val origin = IntArray(2)
-        var shown = false
-        instrumentation.runOnMainSync {
-            val view = host.tabs.get(tabId)
-            if (view != null) {
-                view.getLocationOnScreen(origin)
-                shown = view.isShown
-            }
-        }
-        if (!shown) return null
+        val origin = viewOrigin(tabId) ?: return null
         return PointF(origin[0] + a.getDouble(0).toFloat(), origin[1] + a.getDouble(1).toFloat())
+    }
+
+    /** The box of the tile at `index` – `.zen-tile`, the square and its caption: the rect the page sends with `tile-menu` – on the screen. */
+    private fun tileBoxOnScreen(tabId: String, index: Int): RectF? {
+        val a = pageJson(
+            tabId,
+            "(function(){var t=document.querySelectorAll('$TILE_SELECTOR')[$index];var b=t&&t.closest('.zen-tile');if(!b)return null;var r=b.getBoundingClientRect();" +
+                "var d=window.devicePixelRatio;return [r.left*d,r.top*d,r.right*d,r.bottom*d]})()"
+        ) ?: return null
+        if (a.length() < 4) return null
+        val origin = viewOrigin(tabId) ?: return null
+        return RectF(origin[0] + a.getDouble(0).toFloat(), origin[1] + a.getDouble(1).toFloat(), origin[0] + a.getDouble(2).toFloat(), origin[1] + a.getDouble(3).toFloat())
+    }
+
+    /** The page view's origin on the screen; null while the view is not placed and shown (a hidden view is not there to touch). */
+    private fun viewOrigin(tabId: String): IntArray? = onMain {
+        val view = host.tabs.get(tabId)
+        if (view == null || !view.isShown) null else IntArray(2).also(view::getLocationOnScreen)
     }
 
     /**
@@ -519,10 +723,10 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
     private fun pageShown(tabId: String): Boolean = onMain { host.tabs.get(tabId)?.isShown == true }
 
     /**
-     * The URL bar away with a back ([closeUrlField]: the keyboard first when it is up, never a
-     * second back blind, the page read before and after) and the tab's live view back on the
-     * screen once the bar's cover is gone – the claim each scene makes before it reads the page's
-     * tree or holds a tile.
+     * The omnibox popup away with a back ([closeUrlField]: the keyboard first when it is up, never
+     * a second back blind, the page read before and after) and the tab's live view back on the
+     * screen once the popup's cover is gone – the claim each hand-off ends on, before the scene
+     * reads the page's tree or holds a tile.
      */
     private fun dismissBar(tabId: String, what: String) {
         val close = closeUrlField()
@@ -617,8 +821,10 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
         /** The tile the holds land on: the third, as the phone's demo holds its third. */
         private const val TILE = 2
         private const val TILE_SELECTOR = ".zen-tile:not(.zen-tile-add) a.zen-v2-shortcut"
-        /** The touch template's rows (`Menus.showNewTabTileMenu` on `privateTabs && !windows`), the separator between them not a row. */
+        /** The touch template's rows (`Menus.showNewTabTileMenu`: Open in Private Tab on `privateTabs && !windows`, Copy Link on `!windows`), the separator between them not a row. */
         private val TOUCH_ROWS = listOf("Open in New Tab", "Open in Private Tab", "Copy Link", "Remove")
+        /** How far (screen px) a menu's edge may sit from the tile box's it is read against: a rounding each side. */
+        private const val SLACK = 3f
 
         private const val CHROME_ROOT = "[data-testid=\"chrome-root\"]"
         private const val SIDEBAR = ".zen-tablet-sidebar"
