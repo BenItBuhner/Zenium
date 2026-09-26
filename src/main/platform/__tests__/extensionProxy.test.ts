@@ -5,7 +5,9 @@ import {
   type ScopedValues
 } from '../../../core/extensions/api/privacy'
 import { PROXY_PERMISSION_ERROR, type SessionProxyConfig } from '../../../core/extensions/api/proxy'
-import { ProxyApi, type ProxySession } from '../extensionApi/proxy'
+import type { ExtensionControl } from '../../../shared/types'
+import { ExtensionControls } from '../extensionApi/controls'
+import { PROXY_CONTROL_KEY, ProxyApi, type ProxySession } from '../extensionApi/proxy'
 import type { ApiContext, ApiHost } from '../extensionApi/types'
 
 const OLD = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
@@ -38,6 +40,8 @@ interface World {
   container: FakeSession
   privateSession: FakeSession | null
   dispatched: Dispatched[]
+  /** Every map published to the Settings page (`UIState.extensionControls`), in order. */
+  controls: Array<Record<string, ExtensionControl>>
   loaded: Set<string>
   privateAllowed: Set<string>
   privateWindows: number
@@ -49,6 +53,7 @@ interface World {
 
 function world(persisted = new Map<string, ScopedValues>()): World {
   const dispatched: Dispatched[] = []
+  const controls: Array<Record<string, ExtensionControl>> = []
   const hooks: Array<(session: ProxySession, incognito: boolean) => void> = []
   const state: World = {
     api: undefined as unknown as ProxyApi,
@@ -56,6 +61,7 @@ function world(persisted = new Map<string, ScopedValues>()): World {
     container: new FakeSession(),
     privateSession: null,
     dispatched,
+    controls,
     loaded: new Set([OLD, NEW, NO_PERMISSION]),
     privateAllowed: new Set(),
     privateWindows: 0,
@@ -70,6 +76,11 @@ function world(persisted = new Map<string, ScopedValues>()): World {
     ctx: (extensionId) => ({ extensionId }) as unknown as ApiContext
   }
   const host = {
+    controls: new ExtensionControls({
+      setExtensionControls: (map) => {
+        controls.push(map)
+      }
+    }),
     grants: (extensionId: string) => ({
       permissions: extensionId === NO_PERMISSION ? ['storage'] : ['proxy'],
       origins: []
@@ -92,9 +103,9 @@ function world(persisted = new Map<string, ScopedValues>()): World {
     browser: {
       extensions: {
         list: () => [
-          { id: OLD, installedAt: 1000 },
-          { id: NEW, installedAt: 2000 },
-          { id: NO_PERMISSION, installedAt: 3000 }
+          { id: OLD, name: 'Older Proxy', installedAt: 1000 },
+          { id: NEW, name: 'Newer Proxy', installedAt: 2000 },
+          { id: NO_PERMISSION, name: 'Bystander', installedAt: 3000 }
         ]
       },
       allWindows: () => Array.from({ length: state.privateWindows }, () => ({ isPrivate: true }))
@@ -309,5 +320,49 @@ describe('ProxyApi: lifecycle', () => {
     expect(w.api.controller(false)).toBe(NEW)
     w.api.installOrderChanged()
     expect(w.api.controller(false)).toBe(NEW)
+  })
+})
+
+describe('ProxyApi: the Settings page', () => {
+  it("publishes the extension holding the normal windows' configuration, with its mode, and drops it as the setting returns to the system's", () => {
+    const w = world()
+    expect(w.controls).toEqual([])
+    set(w, OLD, { value: FIXED })
+    expect(w.controls.at(-1)).toEqual({
+      [PROXY_CONTROL_KEY]: { extensionId: OLD, name: 'Older Proxy', value: 'fixed_servers' }
+    })
+    // The newer extension's configuration takes the key; the same extension moving to another
+    // mode is a change the row sees too.
+    set(w, NEW, { value: PAC })
+    expect(w.controls.at(-1)).toEqual({
+      proxy: { extensionId: NEW, name: 'Newer Proxy', value: 'pac_script' }
+    })
+    set(w, NEW, { value: { mode: 'direct' } })
+    expect(w.controls.at(-1)).toEqual({
+      proxy: { extensionId: NEW, name: 'Newer Proxy', value: 'direct' }
+    })
+    clear(w, NEW)
+    expect(w.controls.at(-1)).toEqual({
+      proxy: { extensionId: OLD, name: 'Older Proxy', value: 'fixed_servers' }
+    })
+    w.api.unload(OLD)
+    expect(w.controls.at(-1)).toEqual({})
+    // Back from disabled: the persisted configuration marks the row again; uninstalled, nothing.
+    w.api.load(OLD)
+    expect(w.controls.at(-1)).toEqual({
+      proxy: { extensionId: OLD, name: 'Older Proxy', value: 'fixed_servers' }
+    })
+    w.api.forget(OLD)
+    expect(w.controls.at(-1)).toEqual({})
+  })
+
+  it('publishes nothing for a private-window value alone: the Settings rows are the regular profile\u2019s', () => {
+    const w = world()
+    w.privateAllowed.add(OLD)
+    w.api.privateAccessChanged()
+    set(w, OLD, { value: PAC, scope: 'incognito_persistent' })
+    expect(w.api.effectiveConfig(true).mode).toBe('pac_script')
+    expect(w.api.controller(false)).toBeNull()
+    expect(w.controls).toEqual([])
   })
 })

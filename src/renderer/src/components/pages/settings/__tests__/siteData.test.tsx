@@ -45,13 +45,19 @@ function status(over: Partial<SiteDataStatus> = {}): SiteDataStatus {
   return { ...emptySiteDataStatus(), ...over }
 }
 
-/** The slice of the state the builder reads: the policy, the host's windows, the privacy settings. */
+/**
+ * The slice of the state the builder reads: the policy, the host's windows, the privacy settings,
+ * and the extensions' holds over them – none here, and none from the host today: the cookie rows
+ * are wired to `privacy.thirdPartyCookies` but the key is stored-only, no mark until the service
+ * applies it (F3; `sections.test.ts` pins both the absence and the wiring).
+ */
 function state(siteData: SiteDataStatus, windows = false): UIState {
   return {
     platform: windows ? 'linux' : 'android',
     capabilities: { windows },
     settings: DEFAULT_SETTINGS,
-    siteData
+    siteData,
+    extensionControls: {}
   } as unknown as UIState
 }
 
