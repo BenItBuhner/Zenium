@@ -62,6 +62,7 @@ const ELECTRON: HostCapabilities = {
   agentSkills: true,
   updates: true,
   share: false,
+  sharePanel: false,
   clipboardChip: false,
   appLinkSettings: false,
   pullToRefresh: false,

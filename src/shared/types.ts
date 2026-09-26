@@ -171,6 +171,13 @@ export interface HostCapabilities {
   /** The host has a system share sheet (`app.share`); menus offer Share items when true. */
   share: boolean
   /**
+   * The browser's own share panel stands in for the system sheet (Android below 14, SH-03): a
+   * share the menu starts comes back to the chrome as `share.panel`, so the menu's Share row
+   * holds its sheet for the panel to take over (§9.38's hand-off) instead of leaving first.
+   * False wherever the share sheet is the system's alone.
+   */
+  sharePanel: boolean
+  /**
    * The OS itself confirms copies with a clipboard chip (Android 13+); the chrome then stays
    * quiet instead of toasting "Link copied" a second time.
    */
@@ -2981,6 +2988,14 @@ export interface SharePanelRequest {
   tabId: string | null
   /** A private tab's share: the host records nothing of where it went. */
   private: boolean
+  /**
+   * Where the share came from: the browser's own menu (`menu`), or a page's `navigator.share`
+   * (`page`, Android below 14 – Chrome's hub takes a Web Share the same way). A page's share is
+   * of what the page handed over, not of the page: its chips follow the payload (Copy text for
+   * text, Copy link and QR for a link), never Long screenshot or Print. The host holds the
+   * page's promise until the panel is answered.
+   */
+  source: 'menu' | 'page'
   targets: SharePanelTarget[]
 }
 
@@ -2989,11 +3004,15 @@ export interface SharePanelAction {
   id: string
   /**
    * `target`: send to `component`; `more`: the system sheet; `qr`: the link as a QR code;
-   * `copyImage`: the image onto the clipboard; `dismiss`: nothing more – the intent is released
-   * (the chrome's own chips – Copy link, Long screenshot, Print – ran in the chrome and end so).
+   * `copyImage`: the image onto the clipboard; `chip`: one of the chrome's own chips (Copy link,
+   * Copy text, Long screenshot, Print) ran in the chrome – the share is done (a page's promise
+   * resolves, as Chrome's does on a first-party tap); `dismiss`: nothing more – the intent is
+   * released (a page's promise rejects).
    */
-  kind: 'target' | 'more' | 'qr' | 'copyImage' | 'dismiss'
+  kind: 'target' | 'more' | 'qr' | 'copyImage' | 'chip' | 'dismiss'
   component?: string
+  /** The chip that ran, for `chip`. */
+  chip?: string
 }
 
 // ---------------------------------------------------------------------------

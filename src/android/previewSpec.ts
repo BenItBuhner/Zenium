@@ -123,9 +123,20 @@ export const PREVIEW_PRIVATE_MAX = 6
 
 /**
  * What the browser's own share panel is up for (`share=<kind>`; Android below 14, SH-03): the
- * active page and its link, a selection's text, or an image (`previewShare.ts`).
+ * active page and its link, a selection's text, or an image from the browser's menu; a page's
+ * `navigator.share` of a link, of text, or of the two (`page-*`) (`previewShare.ts`); or the
+ * app menu standing for the panel's request with its Share row busy (`gathering`: the seam's
+ * first half held past §9.30's 150 ms, the request withheld so the pose holds; `lib/shareSeam.ts`).
  */
-export const PREVIEW_SHARE_KINDS = ['link', 'text', 'image'] as const
+export const PREVIEW_SHARE_KINDS = [
+  'link',
+  'text',
+  'image',
+  'page-link',
+  'page-text',
+  'page-text-link',
+  'gathering'
+] as const
 export type PreviewShareKind = (typeof PREVIEW_SHARE_KINDS)[number]
 
 /**
@@ -574,8 +585,12 @@ export type PreviewState =
       /**
        * The browser's own share panel (Android below 14; SH-03) up for a share from the active
        * tab: the page (`share=link`), a selection's text (`share=text`) or an image
-       * (`share=image`), with a stand-in row of apps (`previewShare.ts`). `&private` makes it a
-       * private tab's share, over a private tab on the page.
+       * (`share=image`) from the browser's menu, or the page's own `navigator.share` of a link
+       * (`share=page-link`), text (`share=page-text`) or the two (`share=page-text-link`), with
+       * a stand-in row of apps (`previewShare.ts`); or the app menu standing for the request
+       * with its Share row busy (`share=gathering`, §9.30's spinner 150 ms into the gather; the
+       * request withheld). `&private` makes it a private tab's share, over a private tab on the
+       * page.
        */
       kind: 'share'
       share: PreviewShareKind
