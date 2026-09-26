@@ -328,6 +328,16 @@ const footerButton = (label: string): HTMLButtonElement =>
   [
     ...document.querySelectorAll<HTMLButtonElement>('.zen-frame-dialogs .zen-sheet-footer button')
   ].find((b) => b.textContent?.trim() === label)!
+// A footer's buttons in reading order (§9.11: peers, the primary trailing). The picker's footer is
+// the sheet's own; the New folder sheet's stands inside its form, over the picker's while it is up.
+const footerOrder = (footer: HTMLElement | null): string[] =>
+  [...(footer?.querySelectorAll('button') ?? [])].map((b) => b.textContent?.trim() ?? '')
+const pickerFooter = (): HTMLElement | null =>
+  [...document.querySelectorAll<HTMLElement>('.zen-frame-dialogs .zen-sheet-footer')].find(
+    (f) => f.closest('form') === null
+  ) ?? null
+const newFolderFooter = (): HTMLElement | null =>
+  document.querySelector<HTMLElement>('.zen-frame-dialogs form .zen-sheet-footer')
 const newFolder = (): HTMLButtonElement =>
   document.querySelector<HTMLButtonElement>(
     '.zen-frame-dialogs .zen-sheet-header-control[data-side="trailing"]'
@@ -523,6 +533,8 @@ describe('Move to… and its folder picker', () => {
       { title: 'Other bookmarks', depth: 0, checked: false, current: false }
     ])
     // The empty Bookmarks bar stands nowhere in the list, as the panel's top level leaves it out.
+    // Cancel then Move: the primary trailing (§9.11).
+    expect(footerOrder(pickerFooter())).toEqual(['Cancel', 'Move'])
     expect(footerButton('Move').disabled).toBe(true)
     expect(footerButton('Cancel').disabled).toBe(false)
     expect(newFolder().textContent?.trim()).toBe('New folder')
@@ -650,6 +662,9 @@ describe('Move to… and its folder picker', () => {
     expect(field.placeholder).toBe('Folder in Work')
     // No autofocus on a phone (§9.22).
     expect(document.activeElement).not.toBe(field)
+    // Cancel then Create on this sheet's own footer, the picker's Cancel · Move standing under it.
+    expect(footerOrder(newFolderFooter())).toEqual(['Cancel', 'Create'])
+    expect(footerOrder(pickerFooter())).toEqual(['Cancel', 'Move'])
     expect(footerButton('Create').disabled).toBe(true)
     act(() => {
       const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
