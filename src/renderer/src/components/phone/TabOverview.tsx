@@ -1,5 +1,5 @@
 import type { CSSProperties, JSX, ReactNode } from 'react'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Archive,
   Ellipsis,
@@ -47,6 +47,13 @@ import { inactiveTabsAdapter } from '@renderer/lib/inactiveTabs'
 import { overviewColumns, tabletCardAspect } from '@renderer/lib/layout'
 import { FRAME_SHADOW, cardShadow, lerpShadow, shadowCss } from '@renderer/lib/motion/elevation'
 import { REDUCED_FADE_MS } from '@renderer/lib/motion/flip'
+import {
+  indicatorFrame,
+  planSpaceSwitch,
+  SPACE_SLIDE_ID,
+  switchDirection,
+  type StripBox
+} from '@renderer/lib/motion/spaceSwitch'
 import {
   reducedMotion,
   SPRING_GENTLE,
@@ -245,6 +252,12 @@ interface HeldGroup {
 interface ShownGroups {
   /** The pane the grid showed: its groups are that pane's, and the other pane has none. */
   pane: OverviewPane
+  /**
+   * The Space the grid showed: its groups are that Space's. Another Space's grid (a switch in
+   * the strip, MOT-05) is a fresh one in the same component – the last Space's groups did not
+   * lose their cards, they are simply not there.
+   */
+  spaceId: string
   /** The groups holding cards after the last render, by folder id. */
   held: ReadonlyMap<string, HeldGroup>
   /**
@@ -424,6 +437,33 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   const heroRef = useRef<HTMLDivElement>(null)
   const heroHeaderRef = useRef<HTMLDivElement>(null)
   const fadeGrid = useFadeEdges<HTMLDivElement>({ axis: 'y' })
+  /**
+   * The grid's ref: the scroller, and its edge fades. One function for the grid's life – a ref
+   * callback made anew each render is called again each render (the last one's cleanup first),
+   * and with it `attachFadeEdges` measured the scroller again: a forced layout on every render
+   * of the overview, at every commit of a Space switch, a page's load or an idle fill's step
+   * (PERF-5, ruling 5: `useFadeEdges.ts`'s `update` was the switch scenes' largest self time).
+   * The fades attach once the commit is over: `attachFadeEdges` measures the scroller as it
+   * attaches, and in the commit that swaps the grids at a Space switch that read was a forced
+   * layout in the middle of the commit, with the commit's other writes still to come. After the
+   * commit the same read is done once, before anything is drawn – no edge is seen unfaded.
+   */
+  const gridRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      scrollRef.current = el
+      if (!el) return
+      let detach: (() => void) | undefined
+      let gone = false
+      queueMicrotask(() => {
+        if (!gone) detach = fadeGrid(el) ?? undefined
+      })
+      return () => {
+        gone = true
+        detach?.()
+      }
+    },
+    [fadeGrid]
+  )
   // Where the hero's own card sits (measured below): a ref, not state – the morph's writer reads
   // it as it writes, and a measurement is not a render of the grid (each phase change, each
   // scroll of the grid re-measures; as state each one rendered every card again, PERF-5).
@@ -476,9 +516,62 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     enabled: interactive && !selecting,
     onPick: pickOverviewPane
   })
+  // The grid's slot is the SPACE's on the Tabs pane (MOT-05, v2 §11.4 / §11.6): a Space switch
+  // brings the next Space's grid up in a slot of its own (`PaneSlot` keyed by `gridKey`, inside
+  // the pane's) – the strip above stays and its indicator glides – while a still of the grid
+  // that left fades over 120 ms (`PaneStills`, the pane switch's mechanism) and the new grid
+  // SLIDES in over 250 ms from the side the new Space stands on in the strip's order
+  // (`planSpaceSwitch`: later, from the trailing edge; earlier, from the leading), the window's
+  // theme blending meanwhile (`useTheme`). Under reduced motion nothing travels (§11.3): the
+  // new grid fades in place over 120 ms and the indicator jumps; the blend stays, a colour blend
+  // being a fade and not travel (§11.6 as amended). The Private pane's grid is one slot for the
+  // pane's life (its key the pane's), so it never slides.
+  const gridKey = pane === 'tabs' ? space.id : `#${pane}`
+  // The slot in its slide, for as long as it slides – the FLIP tracker measures the cells with
+  // its transform held off (`useFlip`'s `frame`), so nothing reads the slide as a move.
+  const spaceSlotRef = useRef<HTMLDivElement | null>(null)
+  const slideRef = useRef<Animation | null>(null)
+  const endSlide = (): void => {
+    const slide = slideRef.current
+    slideRef.current = null
+    spaceSlotRef.current = null
+    slide?.finish()
+  }
+  const enterSpace = (el: HTMLDivElement, from: string): void => {
+    endSlide()
+    const direction = switchDirection(
+      state.spaces.map((s) => s.id),
+      from,
+      space.id
+    )
+    const plan = planSpaceSwitch(direction, {
+      reduced: reducedMotion(),
+      rtl: getComputedStyle(el).direction === 'rtl'
+    })
+    const slide = el.animate?.(plan.incoming.keyframes, {
+      duration: plan.incoming.duration,
+      easing: plan.incoming.easing,
+      id: SPACE_SLIDE_ID
+    })
+    if (!slide) return
+    // A cancelled animation rejects its `finished` promise, which nobody awaits.
+    slide.finished.catch(() => undefined)
+    slideRef.current = slide
+    spaceSlotRef.current = plan.slide === 0 ? null : el
+    slide.onfinish = () => {
+      if (slideRef.current === slide) endSlide()
+    }
+  }
   // Every `data-cell` under the grid – page and blank-tab cards, group cards, the New Tab card –
   // is one set on one spring; the same set answers where a card is for the morph and the exits.
-  const flip = useFlip(scrollRef, settled)
+  // A new Space's grid is a new set (`epoch`): nothing glides from the grid that left.
+  const flip = useFlip(scrollRef, settled, { frame: spaceSlotRef, epoch: gridKey })
+  // The overview leaving mid-slide (a card picked, the back gesture) lands the grid at rest
+  // first: the morph's and the exits' measurements below read the cards where they will stand,
+  // not a frame of the slide. Declared before them, so it runs before them in the same commit.
+  useLayoutEffect(() => {
+    if (!settled) endSlide()
+  }, [settled])
   /**
    * A group's card leaving the grid visibly, with its cards, where it stands: the one exit
    * `Departures` draws over it (the Groups pane has no card, and nothing to leave from). A group
@@ -699,12 +792,26 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   // built beyond its guess, placeholders in view for a frame. The release touches only a window
   // still this grid's, whatever the order. The close keeps the overview mounted while the
   // landing is held (`PhoneStage`, `landOverview`), its hero at the page's frame: the window
-  // stands until the grid goes, and not before.
-  const [windowToken] = useState(newOverviewWindowToken)
+  // stands until the grid goes, and not before. A SPACE SWITCH is a new grid in the same
+  // overview (MOT-05, `gridKey` above): the token is minted afresh with the key, so the render
+  // that brings the next Space's cells reads the store under a token it does not own yet –
+  // placeholders but for the guess – and this effect's cleanup releases the grid that left (its
+  // idle fill cancelled, `all` reset: a grid that had built every card must not hand thirty
+  // built cards to the next) and its body claims for the one that came, in the one commit,
+  // before the fills below: the guess recorded, the window read and built, ahead of the slide's
+  // first frame. The claim, the guess and the read are THIS component's effects, in this order –
+  // a claim in a child of its own ran before them by React's child-first order, and ran again
+  // after them wherever a new mount's effects are replayed (StrictMode's development check), the
+  // window wiped with nothing left to rebuild it.
+  const token = useMemo(
+    () => newOverviewWindowToken(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- a token per grid: minted afresh with the grid's key
+    [gridKey]
+  )
   useLayoutEffect(() => {
-    claimOverviewWindow(windowToken)
-    return () => releaseOverviewWindow(windowToken)
-  }, [windowToken])
+    claimOverviewWindow(token)
+    return () => releaseOverviewWindow(token)
+  }, [token])
   // The guess is the store's from the commit it is rendered in: `eager` builds a guessed card
   // whatever the store says, and a render that guesses differently with no read between – a
   // drag's stand-in moving through the grid re-orders the cards under the finger (`shown`,
@@ -748,7 +855,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   useLayoutEffect(() => {
     rewindow()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-read when the layout inputs change
-  }, [cardsKey, foldKey, columns, area.width, area.height, pane])
+  }, [cardsKey, foldKey, columns, area.width, area.height, pane, gridKey])
   useEffect(() => {
     if (settled) scheduleFill(restRef.current)
     else cancelFill()
@@ -885,6 +992,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   // is found here, from the last render's groups, not in an effect after it.
   const [shownGroups, setShownGroups] = useState<ShownGroups>(() => ({
     pane,
+    spaceId: space.id,
     held: new Map(),
     lingering: new Map()
   }))
@@ -894,8 +1002,10 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     const count = members.get(folder.id)?.length ?? 0
     if (count) held.set(folder.id, { folder, count })
   }
-  // The other pane's grid is a fresh one: its groups did not dissolve, they are simply not here.
-  const samePane = shownGroups.pane === pane
+  // The other pane's grid, or another Space's, is a fresh one: its groups did not dissolve, they
+  // are simply not here (the Space switch draws the last grid as a still over this one, the
+  // group's card among what it shows, see `PaneSlot`).
+  const samePane = shownGroups.pane === pane && shownGroups.spaceId === space.id
   // A group with an exit standing for it leaves whole, and does not linger. Read off the store
   // here, in the render that finds the group empty, not subscribed: the exit was drawn before
   // the close was asked, or in the same turn as the query, and stands until the grid has
@@ -919,7 +1029,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     held.size !== shownGroups.held.size ||
     [...held].some(([id, h]) => shownGroups.held.get(id)?.count !== h.count)
   ) {
-    setShownGroups({ pane, held, lingering })
+    setShownGroups({ pane, spaceId: space.id, held, lingering })
   }
   const dissolvedGroup = (folder: Folder): void =>
     setShownGroups((shown) => {
@@ -1972,111 +2082,119 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
             ) : privatePane && count === 0 ? (
               <PrivateEmpty />
             ) : (
-              <div
-                ref={(el) => {
-                  scrollRef.current = el
-                  return fadeGrid(el)
-                }}
-                className="zen-overview-grid min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-3 pb-4 pt-1"
-                data-pane={pane}
-                // The Private pane under the lock cover (INC-05): its grid is out of reach – no
-                // focus, no touch, nothing for a screen reader – until the cover lifts; the
-                // cards read the placeholder meanwhile (`CardBody`), in case a reader reaches one.
-                inert={(privatePane && locked) || undefined}
-                aria-hidden={(privatePane && locked) || undefined}
-                // The card the page morphs into is scrolled into view: keep it clear of the fades.
-                style={{
-                  touchAction: 'pan-y',
-                  overscrollBehavior: 'contain',
-                  scrollPaddingBlock: 16
-                }}
-                onScroll={(e) => {
-                  noteOverviewScroll(pane, e.currentTarget.scrollTop)
-                  measure()
-                  rewindow(true)
-                }}
+              <PaneSlot
+                // The Space's slot (MOT-05): the grid comes up fresh per Space, sliding in from
+                // the side the Space stands on while the still of the last grid fades over it;
+                // the strip above is the pane's and stays. See `gridKey`.
+                pane={gridKey}
+                root={rootRef}
+                onLeave={leavePane}
+                onEnter={enterSpace}
+                className="zen-overview-space relative flex min-h-0 flex-1 flex-col"
               >
-                {searching && found === 0 && (
-                  // No card matches (§9.34): §9.17's sentence where the grid was, the reach's
-                  // lists beneath it when they have rows – then the sentence names what is
-                  // missing, since the rows under it are tabs too.
-                  <p className="zen-overview-search-empty" data-testid="overview-search-empty">
-                    {foundAll === 0 ? 'No tabs found' : 'No open tabs found'}
-                  </p>
-                )}
-                {essentials.length > 0 && (
-                  <div className="mb-3 flex flex-wrap gap-2">
-                    {essentials.map((tab) => (
-                      <button
-                        key={tab.id}
-                        type="button"
-                        className="zen-essential h-12 w-12"
-                        data-active={tab.id === active?.id}
-                        data-discarded={tab.discarded}
-                        aria-label={tabCardLabel(
-                          tabTitle(tab),
-                          placeOf(tab),
-                          ordered.length,
-                          tab.id === active?.id
-                        )}
-                        // An essential is no card: while tabs are being selected it takes no
-                        // pick and no tap (§9.30, laid out as it was).
-                        disabled={selecting}
-                        onClick={() => pick(tab)}
-                      >
-                        <Favicon tab={tab} size={22} />
-                      </button>
-                    ))}
-                  </div>
-                )}
                 <div
-                  // Positioned: the box a dissolving group's shell is placed in. `GroupCard`
-                  // takes the shell out of the flow at its `offsetTop`, which is read against
-                  // the nearest positioned ancestor and ignores the scroller's scroll – against
-                  // this grid, which scrolls with the cells, the shell stands where the card
-                  // stood; against the pane outside the scroller it landed `scrollTop` px too
-                  // low, and the tracker held only the cells drawn under that lower box (#355's
-                  // finding, seed 49).
-                  className="relative grid gap-3"
-                  style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+                  ref={gridRef}
+                  className="zen-overview-grid min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-3 pb-4 pt-1"
+                  data-pane={pane}
+                  // The Private pane under the lock cover (INC-05): its grid is out of reach – no
+                  // focus, no touch, nothing for a screen reader – until the cover lifts; the
+                  // cards read the placeholder meanwhile (`CardBody`), in case a reader reaches one.
+                  inert={(privatePane && locked) || undefined}
+                  aria-hidden={(privatePane && locked) || undefined}
+                  // The card the page morphs into is scrolled into view: keep it clear of the fades.
+                  style={{
+                    touchAction: 'pan-y',
+                    overscrollBehavior: 'contain',
+                    scrollPaddingBlock: 16
+                  }}
+                  onScroll={(e) => {
+                    noteOverviewScroll(pane, e.currentTarget.scrollTop)
+                    measure()
+                    rewindow(true)
+                  }}
                 >
-                  {/*
+                  {searching && found === 0 && (
+                    // No card matches (§9.34): §9.17's sentence where the grid was, the reach's
+                    // lists beneath it when they have rows – then the sentence names what is
+                    // missing, since the rows under it are tabs too.
+                    <p className="zen-overview-search-empty" data-testid="overview-search-empty">
+                      {foundAll === 0 ? 'No tabs found' : 'No open tabs found'}
+                    </p>
+                  )}
+                  {essentials.length > 0 && (
+                    <div className="mb-3 flex flex-wrap gap-2">
+                      {essentials.map((tab) => (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          className="zen-essential h-12 w-12"
+                          data-active={tab.id === active?.id}
+                          data-discarded={tab.discarded}
+                          aria-label={tabCardLabel(
+                            tabTitle(tab),
+                            placeOf(tab),
+                            ordered.length,
+                            tab.id === active?.id
+                          )}
+                          // An essential is no card: while tabs are being selected it takes no
+                          // pick and no tap (§9.30, laid out as it was).
+                          disabled={selecting}
+                          onClick={() => pick(tab)}
+                        >
+                          <Favicon tab={tab} size={22} />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <div
+                    // Positioned: the box a dissolving group's shell is placed in. `GroupCard`
+                    // takes the shell out of the flow at its `offsetTop`, which is read against
+                    // the nearest positioned ancestor and ignores the scroller's scroll – against
+                    // this grid, which scrolls with the cells, the shell stands where the card
+                    // stood; against the pane outside the scroller it landed `scrollTop` px too
+                    // low, and the tracker held only the cells drawn under that lower box (#355's
+                    // finding, seed 49).
+                    className="relative grid gap-3"
+                    style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+                  >
+                    {/*
                     The cards under here are WINDOWED (`lib/overviewWindow.ts`, W6-0): a cell
                     is a card when this grid's window – the token's – holds it, a sized
                     placeholder until then. The group cards' members are the same cells, through
                     `card`.
                   */}
-                  <OverviewWindowContext.Provider value={windowToken}>
-                    {pinned.map(card)}
-                    {groupCards.map(({ folder, tabs, gone }) => (
-                      <GroupCard
-                        key={folder.id}
-                        folder={folder}
-                        tabs={tabs}
-                        card={card}
-                        columns={columns}
-                        onMenu={(f) => setSheet({ kind: 'group', folderId: f.id })}
-                        onCloseGroup={closeGroup}
-                        onDelete={deleteGroupOf}
-                        forming={tabs.length > 0 && forming(folder, tabs)}
-                        dissolving={tabs.length === 0}
-                        held={gone?.count}
-                        onDissolved={dissolvedGroup}
-                        onRelease={subscribeRelease}
-                      />
-                    ))}
-                    {loose.map(card)}
-                  </OverviewWindowContext.Provider>
-                  {!searching && <NewTabCard pane={pane} disabled={selecting} />}
+                    <OverviewWindowContext.Provider value={token}>
+                      {pinned.map(card)}
+                      {groupCards.map(({ folder, tabs, gone }) => (
+                        <GroupCard
+                          key={folder.id}
+                          folder={folder}
+                          tabs={tabs}
+                          card={card}
+                          columns={columns}
+                          onMenu={(f) => setSheet({ kind: 'group', folderId: f.id })}
+                          onCloseGroup={closeGroup}
+                          onDelete={deleteGroupOf}
+                          forming={tabs.length > 0 && forming(folder, tabs)}
+                          dissolving={tabs.length === 0}
+                          held={gone?.count}
+                          onDissolved={dissolvedGroup}
+                          onRelease={subscribeRelease}
+                        />
+                      ))}
+                      {loose.map(card)}
+                    </OverviewWindowContext.Provider>
+                    {!searching && <NewTabCard pane={pane} disabled={selecting} />}
+                  </div>
+                  {searching && !privatePane && (
+                    <OverviewSearchReach
+                      reach={reach}
+                      onRestore={restoreClosed}
+                      onOpenTab={openRemote}
+                    />
+                  )}
                 </div>
-                {searching && !privatePane && (
-                  <OverviewSearchReach
-                    reach={reach}
-                    onRestore={restoreClosed}
-                    onOpenTab={openRemote}
-                  />
-                )}
-              </div>
+              </PaneSlot>
             )}
             {privatePane && count > 0 && <PrivateLockCover shown={locked} />}
           </PaneSlot>
@@ -2705,14 +2823,128 @@ function PrivateEmpty(): JSX.Element {
   )
 }
 
-/** The spaces as chips: pills, the current one in the accent tint, edges fading into the gutter. */
+/** The indicator's `scaleX` this frame, for its ends to keep their radius under it (`main.css`). */
+const STRIP_SCALE_VAR = '--zen-strip-indicator-scale'
+
+/**
+ * The spaces as chips: pills, the current one in the accent tint, edges fading into the gutter.
+ * The tint is the strip's INDICATOR (MOT-05, v2 §11.4): one pill under the chips – the current
+ * chip draws no fill of its own, the others their element fill, each fill a 120 ms state change
+ * – that GLIDES from the chip that was current to the one that is on `SPRING_SNAPPY`: a FLIP on
+ * `transform` alone (`indicatorFrame`: laid out at the new chip's box, drawn from the old one's
+ * by a translation and a `scaleX`, its radius held round under the scale), the new chip
+ * scrolled into the strip's view. Under reduced motion the indicator jumps and the strip scrolls
+ * at once (§11.3).
+ */
 function SpaceStrip({ spaces, activeId }: { spaces: Space[]; activeId: string }): JSX.Element {
   const fade = useFadeEdges<HTMLDivElement>({ axis: 'x', size: 24 })
+  const stripRef = useRef<HTMLDivElement | null>(null)
+  const indicatorRef = useRef<HTMLDivElement>(null)
+  // Where the indicator rests: the current chip's box, as of the last commit.
+  const lastBox = useRef<StripBox | null>(null)
+  // The glide in flight: from the box it left to the one it rests on, over `travel` px (the
+  // spring runs in px, `travel` → 0, as the grid's FLIP does; the frame is its progress).
+  const glide = useRef<{ from: StripBox; to: StripBox; travel: number } | null>(null)
+  const spring = useRef<SpringAnimation | null>(null)
+  const paintIndicator = (p: number): void => {
+    const el = indicatorRef.current
+    const g = glide.current
+    if (!el) return
+    const { dx, scale } = g ? indicatorFrame(g.from, g.to, p) : { dx: 0, scale: 1 }
+    el.style.transform = `translate3d(${dx}px, 0, 0) scaleX(${scale})`
+    // The ends stay round under the horizontal scale: the sheet divides the radius' x by it
+    // (`--zen-strip-indicator-scale`, `main.css`).
+    if (scale === 1) el.style.removeProperty(STRIP_SCALE_VAR)
+    else el.style.setProperty(STRIP_SCALE_VAR, String(scale))
+  }
+  /** The box the indicator is drawn at this frame, when a glide is in flight. */
+  const drawnBox = (): StripBox | null => {
+    const g = glide.current
+    const s = spring.current
+    if (!g || !s?.running) return null
+    const { dx, scale } = indicatorFrame(g.from, g.to, 1 - s.current.x / g.travel)
+    return { left: g.to.left + dx, width: g.to.width * scale }
+  }
+  const chipsKey = spaces.map((s) => `${s.id}:${s.name}`).join('|')
+  useLayoutEffect(() => {
+    const strip = stripRef.current
+    const el = indicatorRef.current
+    const chip = strip?.querySelector<HTMLElement>('[aria-current="true"]') ?? null
+    if (!strip || !el) return
+    if (!chip) {
+      // No current chip in the strip: nothing to mark.
+      el.style.opacity = '0'
+      lastBox.current = null
+      return
+    }
+    const to: StripBox = { left: chip.offsetLeft, width: chip.offsetWidth }
+    el.style.opacity = ''
+    el.style.left = `${to.left}px`
+    el.style.width = `${to.width}px`
+    el.style.top = `${chip.offsetTop}px`
+    el.style.height = `${chip.offsetHeight}px`
+    // A glide in flight (a third Space picked before the indicator rested) goes on from where
+    // it is drawn; otherwise from the chip that was current.
+    const from = drawnBox() ?? lastBox.current
+    lastBox.current = to
+    const reduced = reducedMotion()
+    const travel = from
+      ? Math.max(Math.abs(from.left - to.left), Math.abs(from.width - to.width))
+      : 0
+    const still = !from || reduced || travel < 0.5
+    // The current chip in the strip's view: the strip opens on it (no motion on the mount), and
+    // scrolls to a picked one off its edge as the indicator glides there.
+    chip.scrollIntoView({
+      inline: 'nearest',
+      block: 'nearest',
+      behavior: still ? 'auto' : 'smooth'
+    })
+    spring.current?.stop()
+    if (still) {
+      // The strip's first chip, a chip re-laid out in place, or reduced motion: at rest at once.
+      glide.current = null
+      paintIndicator(1)
+      return
+    }
+    glide.current = { from, to, travel }
+    // Drawn at the old chip before this commit paints: the spring's first frame is the next one.
+    paintIndicator(0)
+    spring.current ??= new SpringAnimation(
+      SPRING_SNAPPY,
+      (x) => paintIndicator(glide.current ? 1 - x / glide.current.travel : 1),
+      () => {
+        glide.current = null
+        paintIndicator(1)
+      }
+    )
+    spring.current.start(travel, 0, 0)
+  }, [activeId, chipsKey])
+  useEffect(
+    () => () => {
+      spring.current?.stop()
+    },
+    []
+  )
+  // One ref for the strip's life: made anew each render it would be called again each render,
+  // the fades measuring the strip again each time (a forced layout; see `gridRef`).
+  const stripFade = useCallback(
+    (el: HTMLDivElement | null) => {
+      stripRef.current = el
+      return fade(el)
+    },
+    [fade]
+  )
   return (
     <div
-      ref={fade}
-      className="zen-overview-strip flex shrink-0 gap-1.5 overflow-x-auto px-3 pb-2 pt-0.5"
+      ref={stripFade}
+      className="zen-overview-strip relative flex shrink-0 gap-1.5 overflow-x-auto px-3 pb-2 pt-0.5"
     >
+      <div
+        ref={indicatorRef}
+        className="zen-overview-strip-indicator pointer-events-none absolute"
+        aria-hidden
+        data-testid="overview-strip-indicator"
+      />
       {spaces.map((s) => {
         const active = s.id === activeId
         return (
@@ -2720,12 +2952,11 @@ function SpaceStrip({ spaces, activeId }: { spaces: Space[]; activeId: string })
             key={s.id}
             type="button"
             className={cn(
-              'flex h-9 shrink-0 snap-start items-center gap-2 rounded-full px-3.5 text-[13px] font-medium transition-[background] duration-150 active:scale-[0.98]',
-              active
-                ? 'bg-[rgb(var(--zen-accent-rgb)/0.16)]'
-                : 'bg-[var(--zen-element-bg)] active:bg-[var(--zen-element-bg-hover)]'
+              'zen-overview-strip-chip relative flex h-9 shrink-0 snap-start items-center gap-2 rounded-full px-3.5 text-[13px] font-medium active:scale-[0.98]',
+              !active && 'bg-[var(--zen-element-bg)] active:bg-[var(--zen-element-bg-hover)]'
             )}
             aria-current={active || undefined}
+            data-space-id={s.id}
             onClick={() => run('space.activate', { spaceId: s.id })}
           >
             <SpaceGlyph icon={s.icon} size={14} />

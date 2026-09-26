@@ -344,6 +344,24 @@ describe('reduced motion removes, never shortens (v2 §11.3)', () => {
     }
   })
 
+  it('keeps the theme blend, the fade in colour the hook runs frame by frame (§11.6 as amended)', () => {
+    // The phone's window family changing colour as a whole – a Space switch, a private tab
+    // coming into view or going – runs the root's tokens to the new theme over 240 ms
+    // (`useTheme.ts`), not in a stylesheet but by rAF, so the walk above cannot see it. It stays
+    // under reduced motion (#497's design gate, amending §11.6): §11.3 removes springs and
+    // travel, not fades, and a colour blend is a fade in colour that moves no pixel, where a
+    // whole window cutting from one Space's colour to another's – the scheme flipping with it –
+    // is a flash. So the hook reads no reduced-motion preference at all; its own suite
+    // (`hooks/__tests__/useTheme.test.tsx`) pins the run under the preference.
+    const source = readFileSync(
+      fileURLToPath(new URL('../../hooks/useTheme.ts', import.meta.url)),
+      'utf8'
+    )
+    expect(source).toMatch(/export const THEME_BLEND_MS = 240\b/)
+    const code = stripComments(source).replace(/\/\/.*$/gm, '')
+    expect(code).not.toMatch(/\breducedMotion\b|prefers-reduced-motion/)
+  })
+
   it('has the shared new tab page keep the Undo toast alone', () => {
     const kept = reducedRules(NEW_TAB_PAGE_STYLE).filter((r) => !isRemover(r))
     expect(kept.map((r) => r.selector)).toEqual(['.zen-toast'])

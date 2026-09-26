@@ -12,7 +12,6 @@ import {
 } from '@shared/theme'
 import { contentRadius } from '@renderer/lib/contentRadius'
 import { isTouchLayout, type FormFactor } from '@renderer/lib/formFactor'
-import { reducedMotion } from '@renderer/lib/motion/spring'
 import { usePrivateSurface } from '@renderer/lib/privateSurface'
 import { activeSpace, isDarkScheme } from '@renderer/lib/selectors'
 
@@ -23,12 +22,14 @@ import { activeSpace, isDarkScheme } from '@renderer/lib/selectors'
  * blend over 240 ms on one value, linear, so that the midpoint of the colours is the midpoint of
  * the time: there the colour scheme flips (`blendResolvedThemes`) and the status bar follows
  * (`zen-theme-painted`). Every window surface reads the tokens, so nothing tweens per element
- * (the phone window's own background transition is off, `main.css`). Under reduced motion the
- * blend is a cut, and so is one the document cannot show: a blend has no frames while the
- * document is hidden (the app in the background), so it settles at its end as the document
- * hides, and one still pending on return settles as the document shows again – the colours it
- * froze on are never the first thing seen back. The desktop paints its theme at once, as it
- * always has.
+ * (the phone window's own background transition is off, `main.css`). The blend runs under
+ * reduced motion too: §11.3 removes springs and travel, not fades, and a colour blend is a fade
+ * in colour – it moves no pixel – where a whole window cutting from one Space's colour to
+ * another's, the scheme flipping with it, is a flash (§11.6 as amended at #497's gate). The one
+ * cut is a blend the document cannot show: a blend has no frames while the document is hidden
+ * (the app in the background), so it settles at its end as the document hides, and one still
+ * pending on return settles as the document shows again – the colours it froze on are never the
+ * first thing seen back. The desktop paints its theme at once, as it always has.
  */
 export const THEME_BLEND_MS = 240
 
@@ -182,14 +183,14 @@ export function useTheme(state: UIState, formFactor: FormFactor = 'desktop'): Re
   )
 
   // The theme to paint changed. The first paint is at once (a chrome mounting on a private tab
-  // is private from its first frame), and so is the desktop's; under reduced motion the phone
-  // cuts as well (§11.6), and so does a hidden document (nothing would show the blend, and its
-  // rAF would not run: the app in the background as the private session ends from services'
-  // notification). Otherwise the phone blends – unless the root already shows the theme, or a
-  // blend is already heading there.
+  // is private from its first frame), and so is the desktop's, and so is a hidden document's
+  // (nothing would show the blend, and its rAF would not run: the app in the background as the
+  // private session ends from services' notification). Otherwise the phone blends – reduced
+  // motion included, a colour blend being a fade and not travel (§11.6 as amended) – unless the
+  // root already shows the theme, or a blend is already heading there.
   useEffect(() => {
     const before = painted.current
-    if (before === null || !blends || reducedMotion() || document.visibilityState === 'hidden') {
+    if (before === null || !blends || document.visibilityState === 'hidden') {
       cancel()
       paint(target, true)
       return
