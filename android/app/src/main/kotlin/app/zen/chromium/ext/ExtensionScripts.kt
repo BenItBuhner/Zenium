@@ -17,7 +17,9 @@ import java.io.File
 object ExtensionScripts {
     /**
      * One content-script file's text as the assembly consumes it: [length] characters, written
-     * into the builder by [appendTo] exactly once. A held string ([Source] of a text) stays
+     * into the builder by [appendTo] exactly once – [length] is a contract, exactly what
+     * [appendTo] writes (a rewritten file reports its rewritten length, `RelativeImports.source`),
+     * since [documentStartSized] sizes its builder from it. A held string ([Source] of a text) stays
      * around – the compiler keeps small files softly for the next re-plan. A [transient] one lets
      * go of its text the moment it is copied in, so that while a large file (Monica's 28 million
      * characters of `content.js`) is being assembled the heap holds the text and the builder, and
@@ -123,6 +125,28 @@ object ExtensionScripts {
     /** The most a shape's fixed text adds around the bootstrap (or in its place). */
     private const val SHAPE_ROOM = 512
 
+    /** The document-start script's fixed text, in the order it is written; counted before the builder is made. */
+    private const val BOOT_HEAD = "(function(){var __zenExtBoot={config:"
+    private const val BOOT_DEBUG = ",debug:"
+    private const val BOOT_CSS = ",css:{"
+    private const val BOOT_SOURCES = "},sources:{"
+    private const val BOOT_END = "}};\n"
+    private const val BOOT_CLOSE = "\n})();"
+    private const val WITH_HEAD = "with(window){"
+    private const val SOURCE_JOIN_HEAD = "\n"
+    private const val SOURCE_JOIN_TAIL = "\n;"
+    private const val FUNCTION_TAIL = "\n}"
+
+    /**
+     * A document-start script and the size its builder was made with. [presized] is the count
+     * of the script's text before the builder was allocated; the builder grows only when
+     * `script.length` is over it, which the count is written not to allow ([documentStartSized]).
+     */
+    class Assembled(val script: String, val presized: Int) {
+        /** Whether an append grew the builder past its size – what the compat lanes' `configured` line counts. */
+        val grown: Boolean get() = script.length > presized
+    }
+
     /**
      * The document-start script, named [SOURCE_URL]. Assembled in one builder sized for the whole
      * text and copied out once: an extension's units can run to ten million characters (Grammarly)
@@ -143,42 +167,115 @@ object ExtensionScripts {
         css: Map<String, String>,
         debug: Boolean,
         shape: String = SHAPE_WHOLE
-    ): String {
-        val sb = StringBuilder(
-            bootstrapChars(bootstrap.length, shape) + configJson.length + groups.sumOf { g -> g.sources.sumOf { it.length } + mirrorOf(g).length + 96 } +
-                css.entries.sumOf { (key, text) -> key.length + text.length + 8 } + SOURCE_URL_TAIL.length + 4096
-        )
-        sb.append("(function(){var __zenExtBoot={config:").append(configJson).append(",debug:").append(debug)
-        sb.append(",css:{")
+    ): String = documentStartSized(bootstrap, configJson, groups, css, debug, shape).script
+
+    /**
+     * [documentStart] with the size its builder was made with ([Assembled.presized]).
+     *
+     * The builder is sized by counting the text EXACTLY before it is allocated – every literal,
+     * `debug`'s spelling, the quoted CSS keys and texts (bounded from above, [quotedChars]), each
+     * group's quoted key, function head, `with` block, per-source joins, mirror and close (the
+     * key quoted and the mirror computed once here and handed to the append), the shape's
+     * bootstrap part, the close and the name – so that no append ever grows it. The builder that
+     * grows doubles: a 10.6 million character carrier (Adblock Ad Blocker Pro's 650 registered
+     * scriptlets, one group each) was pre-sized from the sources' lengths plus an estimate of the
+     * groups' fixed text that came out 22,601 characters short, and the last append asked for a
+     * 21 million character `char[]` – 42 MB, on a 192 MB heap that held the old runtime and the
+     * new (compat round 21b, the class's second trigger). A count that is exact has no last
+     * append to fail: the builder's `char[]` is the script's size once, and the string copied out
+     * of it is the second and last allocation of the size.
+     */
+    fun documentStartSized(
+        bootstrap: String,
+        configJson: String,
+        groups: List<Group>,
+        css: Map<String, String>,
+        debug: Boolean,
+        shape: String = SHAPE_WHOLE
+    ): Assembled {
+        val debugText = debug.toString()
+        val keys = Array(groups.size) { JSONObject.quote("${groups[it].extensionId}/${groups[it].index}") }
+        val mirrors = Array(groups.size) { mirrorOf(groups[it]) }
+        var count = BOOT_HEAD.length + configJson.length + BOOT_DEBUG.length + debugText.length + BOOT_CSS.length
         var first = true
+        for ((key, text) in css) {
+            if (!first) count++
+            first = false
+            count += quotedChars(key) + 1 + quotedChars(text)
+        }
+        count += BOOT_SOURCES.length
+        for (i in groups.indices) {
+            if (i > 0) count++
+            count += keys[i].length + 1 + groupFunctionChars(groups[i], mirrors[i])
+        }
+        count += BOOT_END.length + shapeChars(bootstrap.length, shape) + BOOT_CLOSE.length + SOURCE_URL_TAIL.length
+        val sb = StringBuilder(count)
+        sb.append(BOOT_HEAD).append(configJson).append(BOOT_DEBUG).append(debugText)
+        sb.append(BOOT_CSS)
+        first = true
         for ((key, text) in css) {
             if (!first) sb.append(',')
             first = false
             sb.append(JSONObject.quote(key)).append(':').append(JSONObject.quote(text))
         }
-        sb.append("},sources:{")
-        first = true
-        for (group in groups) {
-            if (!first) sb.append(',')
-            first = false
-            sb.append(JSONObject.quote("${group.extensionId}/${group.index}")).append(':')
-            appendGroupFunction(sb, group)
+        sb.append(BOOT_SOURCES)
+        for (i in groups.indices) {
+            if (i > 0) sb.append(',')
+            sb.append(keys[i]).append(':')
+            appendGroupFunction(sb, groups[i], mirrors[i])
         }
-        sb.append("}};\n")
+        sb.append(BOOT_END)
         when (shape) {
             SHAPE_CARRIER -> sb.append(CARRIER_HEAD).append(bootstrap).append(CARRIER_TAIL).append(CARRIER_RUN)
             SHAPE_HOLDER -> sb.append(CARRIER_HEAD).append(bootstrap).append(CARRIER_TAIL)
             SHAPE_THIN -> sb.append(THIN_RUN)
             else -> sb.append(bootstrap)
         }
-        sb.append("\n})();").append(SOURCE_URL_TAIL)
-        return sb.toString()
+        sb.append(BOOT_CLOSE).append(SOURCE_URL_TAIL)
+        return Assembled(sb.toString(), count)
+    }
+
+    /** Exactly what the shape's bootstrap part of [documentStartSized] writes, in characters. */
+    private fun shapeChars(bootstrapLength: Int, shape: String): Int = when (shape) {
+        SHAPE_CARRIER -> CARRIER_HEAD.length + bootstrapLength + CARRIER_TAIL.length + CARRIER_RUN.length
+        SHAPE_HOLDER -> CARRIER_HEAD.length + bootstrapLength + CARRIER_TAIL.length
+        SHAPE_THIN -> THIN_RUN.length
+        else -> bootstrapLength
+    }
+
+    /** Exactly what [appendGroupFunction] writes for `group` with `mirror` as its mirror tail, in characters. */
+    fun groupFunctionChars(group: Group, mirror: String): Int {
+        var count = FUNCTION_HEAD.length + mirror.length + FUNCTION_TAIL.length
+        if (group.isolation == "with") count += WITH_HEAD.length + 1
+        for (source in group.sources) count += SOURCE_JOIN_HEAD.length + source.length + SOURCE_JOIN_TAIL.length
+        return count
     }
 
     /**
-     * What a shape's bootstrap part comes to, in characters, from the bootstrap's length alone:
-     * how [documentStart] sizes its builder and how `UnitCompiler` measures a unit against its
-     * budget before reading a file.
+     * An upper bound on `JSONObject.quote(text).length`, for sizing a builder the quoted text is
+     * appended to, that holds for both org.json implementations the code runs over: Android's
+     * (which escapes `/` always, and every control character) and the public one the JVM tests
+     * use (which escapes `/` after `<` only, and the U+0080-U+009F and U+2000-U+20FF ranges as
+     * `\uXXXX` besides the controls). Two for the quotes; two for a character either escapes
+     * with a backslash; six for one either writes as `\uXXXX`; one otherwise.
+     */
+    fun quotedChars(text: String): Int {
+        var count = 2
+        for (c in text) {
+            count += when {
+                c == '"' || c == '\\' || c == '/' -> 2
+                c == '\t' || c == '\b' || c == '\n' || c == '\r' || c == '\u000C' -> 2
+                c < ' ' || (c >= '\u0080' && c < '\u00A0') || (c >= '\u2000' && c < '\u2100') -> 6
+                else -> 1
+            }
+        }
+        return count
+    }
+
+    /**
+     * What a shape's bootstrap part comes to, in characters, from the bootstrap's length alone
+     * (with room over the exact figure): how `UnitCompiler` measures a unit against its budget
+     * before reading a file. The builder itself is sized by the exact count ([documentStartSized]).
      */
     fun bootstrapChars(bootstrapLength: Int, shape: String): Int =
         if (shape == SHAPE_THIN) SHAPE_ROOM else bootstrapLength + SHAPE_ROOM
@@ -190,17 +287,20 @@ object ExtensionScripts {
      * parenthesis). The mirror ([TopLevelDeclarations.mirror]) hands the files' top-level
      * declarations to the extension's scope, where Chrome's world would have had them as globals.
      */
-    fun appendGroupFunction(sb: StringBuilder, group: Group) {
+    fun appendGroupFunction(sb: StringBuilder, group: Group) = appendGroupFunction(sb, group, mirrorOf(group))
+
+    /** [appendGroupFunction] with the group's mirror ([mirrorOf]) computed by the caller – [documentStartSized] counts it first. */
+    fun appendGroupFunction(sb: StringBuilder, group: Group, mirror: String) {
         sb.append(FUNCTION_HEAD)
-        if (group.isolation == "with") sb.append("with(window){")
+        if (group.isolation == "with") sb.append(WITH_HEAD)
         for (source in group.sources) {
-            sb.append('\n')
+            sb.append(SOURCE_JOIN_HEAD)
             source.appendTo(sb)
-            sb.append("\n;")
+            sb.append(SOURCE_JOIN_TAIL)
         }
-        sb.append(mirrorOf(group))
+        sb.append(mirror)
         if (group.isolation == "with") sb.append('}')
-        sb.append("\n}")
+        sb.append(FUNCTION_TAIL)
     }
 
     /** The mirror tail of a group: its files' top-level names, each once, in order. */
