@@ -411,3 +411,20 @@
 .zen-phone-list > :first-child > .zen-v2-heading.zen-list-heading {
   margin-top: 0;
 }
+/*
+ * A heading with an aside (the reading list's Unread and its count, HB-20; the desktop page's
+ * `.zen-page-heading-aside`, §9.27): the heading's line shared with the small deemphasised
+ * figure at the gutter, on the heading's own padding and beat.
+ */
+.zen-v2-heading.zen-list-heading[data-aside] {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.zen-list-heading-aside {
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-small);
+  font-variant-numeric: tabular-nums;
+}

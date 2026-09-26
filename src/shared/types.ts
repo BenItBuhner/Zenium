@@ -3652,6 +3652,8 @@ export type OverlayKind =
   | 'history'
   | 'bookmarks'
   | 'downloads'
+  /** The reading list (`zen://reading-list`) as the phone's panel (HB-20). */
+  | 'reading-list'
   | 'theme'
   | 'onboarding'
   | 'shortcuts'

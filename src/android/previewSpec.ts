@@ -12,6 +12,7 @@ import { isPreviewSiteDataOrigins, type PreviewSiteDataOrigins } from './preview
 export const PREVIEW_OVERLAYS: readonly OverlayKind[] = [
   'history',
   'bookmarks',
+  'reading-list',
   'downloads',
   'theme',
   'onboarding',

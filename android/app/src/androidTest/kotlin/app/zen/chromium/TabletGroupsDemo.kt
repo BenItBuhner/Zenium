@@ -49,8 +49,9 @@ import kotlin.math.roundToInt
  *     rows read in order with their hairlines against the ruled order (#509: the phone's on
  *     the tablet too – Open Link in New Tab · New Tab in Group · Private Tab where the host
  *     offers it · Glance · Split View · New Container Tab | Copy Link Address · Copy Link Text ·
- *     Save Link As… · Share Link… | Boosts), on the light scheme and on the dark, the two byte
- *     for byte; a touch on Open Link in New Tab opens the page loose behind Alpha in the
+ *     Save Link As… · Add Link to Reading List · Share Link… | Boosts – the reading list's row
+ *     since HB-20, W6-D1, seated before the share by the design gate on #551), on the light
+ *     scheme and on the dark, the two byte for byte; a touch on Open Link in New Tab opens the page loose behind Alpha in the
  *     background, a touch on Copy Link Address closes the menu.
  *
  * Findings in `tablet-groups-findings.txt`, stills `tablet-groups-NN-<state>.png` (the link
@@ -430,7 +431,7 @@ class TabletGroupsDemo : GroupsDemoBase("tablet-groups", "tablet-groups-demo") {
         finding("  rows ($scheme): $rows; $PRIVATE_ROW ${if (offered) "offered" else "not offered (the host keeps no profiles)"}")
         val expected = RULED_LINK_ROWS.filter { it != PRIVATE_ROW || offered }
         check(
-            "the rows stand in #509's ruled order ($scheme): New Tab · New Tab in Group${if (offered) " · Private Tab" else ""} · Glance · Split View · Container | Copy Link Address · Copy Link Text · Save Link As… · Share Link… | Boosts",
+            "the rows stand in #509's ruled order ($scheme): New Tab · New Tab in Group${if (offered) " · Private Tab" else ""} · Glance · Split View · Container | Copy Link Address · Copy Link Text · Save Link As… · Add Link to Reading List · Share Link… | Boosts",
             rows == expected,
             "rows $rows"
         )
@@ -551,7 +552,8 @@ class TabletGroupsDemo : GroupsDemoBase("tablet-groups", "tablet-groups-demo") {
         /**
          * #509's ruled order for the link menu on the touch hosts (pinned for the desktop's model in
          * savedGroups.test.ts): Chrome 152's pair, the private row where the host keeps profiles,
-         * Glance, Split View (the tablet's own row), Container, then the copies and the saves, then
+         * Glance, Split View (the tablet's own row), Container, then the copies and the saves – the
+         * reading list's row (HB-20, W6-D1) before the share, the design gate on #551's seat – then
          * Boosts, the hairlines between the three groups. Copy Link Text is there because the link
          * has its own text.
          */
@@ -566,6 +568,7 @@ class TabletGroupsDemo : GroupsDemoBase("tablet-groups", "tablet-groups-demo") {
             "Copy Link Address",
             "Copy Link Text",
             "Save Link As…",
+            "Add Link to Reading List",
             "Share Link…",
             "-",
             "Boosts"

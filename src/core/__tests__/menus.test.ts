@@ -1428,6 +1428,9 @@ describe('the app menu', () => {
       'Bookmarks > -',
       'Bookmarks > Import Bookmarks…',
       'Bookmarks > Export Bookmarks…',
+      // The phone's reading list (HB-20): the list as a library row after Bookmarks, the page's
+      // verb among the saves after Share… (before Add to Home Screen where the host has it).
+      'Reading List',
       'History',
       'Downloads',
       'Passwords',
@@ -1438,6 +1441,7 @@ describe('the app menu', () => {
       'Find in Page…',
       'Reader View',
       'Share…',
+      'Add to Reading List',
       'Print…',
       'Take Screenshot',
       'Capture Full Page',
