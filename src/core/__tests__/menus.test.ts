@@ -1588,7 +1588,9 @@ describe('the app menu', () => {
     expect(appMenu(h)).toContain('Help > Keyboard Shortcuts')
     h.browser.handleCommand(h.win, 'window.formFactor', { formFactor: 'phone' })
     expect(appMenu(h)).not.toContain('Help > Keyboard Shortcuts')
-    expect(appMenu(h)).not.toContain('Help')
+    // The phone's Help is Chrome's flat row (TB-07), not the submenu.
+    expect(appMenu(h)).toContain('Help')
+    expect(item(h.shown(), 'Help').submenu).toBeUndefined()
   })
 
   it('opens Keyboard Shortcuts through page.open: the Settings overlay on its Shortcuts section on the desktop (a tablet with page tabs gets the tab)', () => {
@@ -1723,11 +1725,15 @@ describe('the app menu', () => {
       'Fullscreen',
       'Name Window…',
       'Quit',
-      // Chrome's phone menu is one flat list: the desktop's submenus are not folded into it.
+      // Chrome's phone menu is one flat list: the desktop's submenus are not folded into it –
+      // Help is a row of its own there (TB-07), not the desktop's Help submenu with its children.
       'More Tools',
-      'Help'
+      'Zenium Help',
+      "What's New",
+      'Report an Issue…'
     ])
       expect(everywhere).not.toContain(label)
+    expect(item(h.shown(), 'Help').submenu).toBeUndefined()
     // The host has no windows, extensions, devtools or resource governor.
     for (const label of [
       'New Window',
@@ -1780,11 +1786,54 @@ describe('the app menu', () => {
       'Desktop Site',
       '-',
       'Settings',
+      'Help',
       '-',
       'About Zenium 1.2.3',
       '-',
       'Change Menu'
     ])
+  })
+
+  it('on a phone Help is Chrome’s "Help & feedback" row (TB-07): after Settings, no submenu, and it opens the help page in a new tab in front, a child of the page the menu was over, in that page’s container', () => {
+    const h = harness(ANDROID, 'phone')
+    h.browser.handleCommand(h.win, 'urlbar.submit', {
+      input: 'https://example.com/a',
+      newTab: true,
+      background: false
+    })
+    const opener = h.browser.tabs.activeTabFor(h.win)!
+    const items = appMenu(h)
+    expect(items.indexOf('Help')).toBe(items.indexOf('Settings') + 1)
+    expect(items.filter((l) => l === 'Help')).toHaveLength(1)
+    const help = item(h.shown(), 'Help')
+    expect(help.submenu).toBeUndefined()
+    expect(help.key).toBe('row.help')
+    expect(help.enabled).not.toBe(false)
+    help.click?.()
+    const opened = h.browser.tabs.activeTabFor(h.win)!
+    expect(opened.id).not.toBe(opener.id)
+    expect(opened.url).toBe(HELP_URL)
+    // The page the menu was over is not left: a back from the help page's first entry returns
+    // to its opener (the renderer's `rootBackAction`), as Chrome's help returns to the tab.
+    expect(opened.openerTabId).toBe(opener.id)
+    expect(opened.containerId).toBe(opener.containerId)
+    // From a private page the help page is private too – the tab's own container.
+    const privatePage = h.browser.tabs.createTab(
+      { url: 'https://example.com/p', active: true, containerId: PRIVATE_CONTAINER_ID },
+      h.win
+    )
+    appMenu(h)
+    item(h.shown(), 'Help').click?.()
+    const fromPrivate = h.browser.tabs.activeTabFor(h.win)!
+    expect(fromPrivate.url).toBe(HELP_URL)
+    expect(fromPrivate.containerId).toBe(PRIVATE_CONTAINER_ID)
+    expect(fromPrivate.openerTabId).toBe(privatePage.id)
+    // The sidebar layouts keep Chrome desktop's Help submenu: no flat row there.
+    for (const other of [harness(DESKTOP), harness(ANDROID, 'tablet')]) {
+      appMenu(other)
+      expect(item(other.shown(), 'Help').submenu?.length).toBeGreaterThan(0)
+      expect(labels(other.shown()).filter((l) => l === 'Help')).toHaveLength(1)
+    }
   })
 
   describe('the phone menu’s order (Edge’s Change menu, TB-22)', () => {
@@ -2233,11 +2282,12 @@ describe('the app menu', () => {
     const h = harness(ANDROID, 'phone')
     expect(appMenu(h)).not.toContain('Dark Theme for This Site')
     h.browser.pageControls.update({ darkenSites: true })
-    expect(appMenu(h).slice(-8)).toEqual([
+    expect(appMenu(h).slice(-9)).toEqual([
       'Desktop Site',
       'Dark Theme for This Site',
       '-',
       'Settings',
+      'Help',
       '-',
       'About Zenium 1.2.3',
       '-',
@@ -3858,11 +3908,12 @@ describe("the phone's new tab tile menu (NTP-06)", () => {
     return topLabels(h.shown())
   }
 
-  it('a pinned tile: Open in New Tab, Copy Link, then Edit Shortcut…, Move Left, Move Right, Unpin Shortcut and Remove', () => {
+  it('a pinned tile: Open in New Tab, Open in Private Tab, Copy Link, then Edit Shortcut…, Move Left, Move Right, Unpin Shortcut and Remove', () => {
     const h = pageHarness(ANDROID, { formFactor: 'phone' })
     const id = h.browser.newTab.addShortcut('Docs', 'https://docs.example/')!
     expect(tileMenu(h, 'https://docs.example/', 'Docs')).toEqual([
       'Open in New Tab',
+      'Open in Private Tab',
       'Copy Link',
       '-',
       'Edit Shortcut…',
@@ -3910,6 +3961,7 @@ describe("the phone's new tab tile menu (NTP-06)", () => {
     const h = pageHarness(ANDROID, { formFactor: 'phone' })
     expect(tileMenu(h, 'https://often.example/', 'Often')).toEqual([
       'Open in New Tab',
+      'Open in Private Tab',
       'Copy Link',
       '-',
       'Pin Shortcut',
@@ -3921,6 +3973,42 @@ describe("the phone's new tab tile menu (NTP-06)", () => {
     ])
     h.click('Remove')
     expect(h.browser.state.newTabDevice.hiddenHosts).toContain('often.example')
+  })
+
+  it('offers Open in Private Tab second – Chrome’s "Open in Incognito tab" (GN-11) – only where private browsing is a tab: the site opens in the window’s private container, in front; the rest of the menu is as it was', () => {
+    const h = pageHarness(ANDROID, { formFactor: 'phone' })
+    const menu = tileMenu(h, 'https://often.example/', 'Often')
+    expect(menu.indexOf('Open in Private Tab')).toBe(menu.indexOf('Open in New Tab') + 1)
+    const before = Object.keys(h.browser.state.model.tabs).length
+    h.click('Open in Private Tab')
+    const opened = Object.values(h.browser.state.model.tabs).find(
+      (t) => t.url === 'https://often.example/'
+    )
+    expect(Object.keys(h.browser.state.model.tabs).length).toBe(before + 1)
+    expect(opened?.containerId).toBe(PRIVATE_CONTAINER_ID)
+    expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(opened?.id)
+    // Open in New Tab is still the background open it was.
+    tileMenu(h, 'https://often.example/', 'Often')
+    h.click('Open in New Tab')
+    const plain = Object.values(h.browser.state.model.tabs).filter(
+      (t) => t.url === 'https://often.example/' && t.containerId !== PRIVATE_CONTAINER_ID
+    )
+    expect(plain).toHaveLength(1)
+    expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(opened?.id)
+    // Without the capability (WebView 113 on API 34: no profiles) the row stays out, not
+    // greyed – the menu as it was before the row.
+    const bare = pageHarness({ ...ANDROID, privateTabs: false }, { formFactor: 'phone' })
+    expect(tileMenu(bare, 'https://often.example/', 'Often')).toEqual([
+      'Open in New Tab',
+      'Copy Link',
+      '-',
+      'Pin Shortcut',
+      'Remove'
+    ])
+    // The desktop's tile menu never had one.
+    expect(tileMenu(pageHarness(DESKTOP), 'https://often.example/', 'Often')).not.toContain(
+      'Open in Private Tab'
+    )
   })
 })
 

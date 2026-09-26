@@ -641,13 +641,13 @@ export class Menus {
     // outside the group, after the group's last member. The desktop keeps Chrome desktop's one
     // item, whose tab joins the group as it always has.
     const group =
-      win.formFactor !== 'desktop' && tab.folderId ? state.model.folders[tab.folderId] : undefined
+      touchLayout(win.formFactor) && tab.folderId ? state.model.folders[tab.folderId] : undefined
     // On a tab in no group Chrome for Android keeps the row and MAKES the group (PUI-17): the
     // opener and the link's tab become a group of two. Not for a tab the groups skip – an
     // essential, a pinned or a private one – nor in a window with no space of its own (a
     // private or blank window), where there is no group to make. The desktop menu is untouched.
     const groupable =
-      win.formFactor !== 'desktop' &&
+      touchLayout(win.formFactor) &&
       !win.localSpace &&
       !tab.essential &&
       !tab.pinned &&
@@ -2453,6 +2453,18 @@ export class Menus {
           label: 'Open in New Tab',
           click: () => tabs.createTab({ url, active: false }, win)
         },
+        // Chrome's "Open in Incognito tab" on the tile (GN-11), second as on its link menu: on
+        // a host that keeps private browsing in tabs, the site opens in this window's private
+        // container, in front (`newPrivateTab`, the link menu's row). Left out, not greyed,
+        // where the host has no private tabs (`caps`).
+        ...(state.capabilities.privateTabs
+          ? [
+              {
+                label: 'Open in Private Tab',
+                click: () => tabs.newPrivateTab(url, win)
+              }
+            ]
+          : []),
         {
           label: 'Copy Link',
           click: () => this.browser.platform.clipboard.writeText(url)
@@ -3914,6 +3926,23 @@ export class Menus {
       }))
     )
     const about: MenuItemTemplate = { label: `About Zenium ${state.version}`, enabled: false }
+    // Chrome's "Help & feedback", the phone menu's last row (TB-07): one flat row where the
+    // sidebar layouts fold a Help submenu (a phone's list folds nothing in). Its pick opens the
+    // help page (`HELP_URL`, the one address the desktop's Zenium Help row and Settings › About's
+    // Get help open) in a new tab in front, a child of the page the menu was opened over – back
+    // returns there (the renderer's `rootBackAction`), as Chrome's help activity returns to the
+    // tab – in the tab's own container, so a private page's help stays private. The feedback
+    // half is Settings › About's Report an issue row, and no `zen://help` page exists to open
+    // instead. The desktop opens the same address outside (`shell.openExternal`); the phone IS
+    // the browser.
+    const help: MenuItemTemplate = {
+      label: 'Help',
+      click: () =>
+        tabs.createTab(
+          { url: HELP_URL, active: true, openerTabId: active?.id, containerId: active?.containerId },
+          win
+        )
+    }
     // An Android app is left, not quit: the system owns its lifetime – on a tablet as on a
     // phone. Hosts with windows of their own (the desktop, at any layout) quit.
     const quit = when(caps.windows, {
@@ -3984,6 +4013,7 @@ export class Menus {
         ...keyed('row.resources', ...resources),
         ...keyed('row.settings', settings),
         ...keyed('row.devtools', ...devtools),
+        ...keyed('row.help', help),
         ...hairline(),
         ...keyed('row.about', about),
         ...keyed('row.quit', ...quit)
