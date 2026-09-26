@@ -14,6 +14,7 @@ import { PRIVATE_CONTAINER_ID } from '../../shared/types'
 import { searchCommands, type CommandContext } from '../../shared/commands'
 import { resolveDownloadSettings } from '../../shared/downloads'
 import { buildSearchUrl } from '../../shared/search'
+import type { ImagePost, ImagePostField } from '../../shared/imageUpload'
 import { Browser } from '../browser'
 import type { MenuItemTemplate } from '../platform'
 import type { ZenWindow } from '../window'
@@ -2654,51 +2655,378 @@ describe('the page context menu', () => {
       expect(hasRow(imageMenu(h, IMAGE))).toBe(false)
     })
 
+    /** The page script's answer: a 2×1 JPEG thumbnail of a 1600×800 image, within the Lens bounds. */
+    const THUMB = {
+      base64: '/9j/2wBDAAM=',
+      contentType: 'image/jpeg',
+      width: 1000,
+      height: 500,
+      originalWidth: 1600,
+      originalHeight: 800
+    }
+    const FETCHED = { ok: true, thumbnail: THUMB }
+    const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+    const openedBeside = (h: ReturnType<typeof pageHarness>): Tab | undefined => {
+      const tabIds = h.win.activeSpace().tabIds
+      return h.browser.tabs.tab(tabIds[tabIds.indexOf(h.tabId) + 1] ?? '')
+    }
+    /** The `postURL` the opened tab's view received, parsed. */
+    const posted = (h: ReturnType<typeof pageHarness>): { url: string; post: ImagePost } | null => {
+      const call = h.viewCalls.find((c) => c.startsWith('postURL('))
+      if (!call) return null
+      const [url, post] = JSON.parse(`[${call.slice('postURL('.length, -1)}]`) as [
+        string,
+        ImagePost
+      ]
+      return { url, post }
+    }
+    const field = (post: ImagePost, name: string): ImagePostField | undefined =>
+      post.fields.find((f) => f.name === name)
+
     it.each([
       ['a data: image', 'data:image/png;base64,iVBORw0KGgo='],
-      ['a blob: image', 'blob:https://example.com/1d2c3b4a'],
+      ['a blob: image', 'blob:https://example.com/1d2c3b4a']
+    ])(
+      'has the row for %s with an engine that takes the bytes (Google Lens): the bytes are what travels',
+      (_name, src) => {
+        const h = pageHarness()
+        expect(imageMenu(h, src)).toContain('Search Image with Google Lens')
+        h.browser.handleCommand(h.win, 'settings.update', { searchEngineId: 'bing' })
+        expect(imageMenu(h, src)).toContain('Search Image with Bing')
+      }
+    )
+
+    it.each([
+      ['a data: image', 'data:image/png;base64,iVBORw0KGgo='],
+      ['a blob: image', 'blob:https://example.com/1d2c3b4a']
+    ])('has no row for %s with an engine that takes the address alone (Yandex)', (_name, src) => {
+      const h = pageHarness()
+      h.browser.handleCommand(h.win, 'settings.update', {
+        searchEngines: [YANDEX],
+        searchEngineId: YANDEX.id
+      })
+      expect(hasRow(imageMenu(h, src))).toBe(false)
+      expect(hasRow(imageMenu(h, IMAGE))).toBe(true)
+    })
+
+    it.each([
       ['a file', 'file:///home/me/a.png'],
       ['an extension resource', 'chrome-extension://abcdef/icon.png'],
       ['a blank source', '']
     ])('has no row for %s', (_name, src) => {
       const h = pageHarness()
-      // A blank source is no image at all; the others are images no engine can fetch.
+      // A blank source is no image at all; the others no page can read back nor engine fetch.
       const menu = h.menu(pageParams({ mediaType: 'image', srcURL: src }))
       expect(menu.some((label) => label.startsWith('Search Image with'))).toBe(false)
     })
 
-    it('opens the engine’s lookup of the address in a tab beside this one, in front, with this tab as the opener', () => {
-      const h = pageHarness()
+    it('uploads the bytes to Google Lens: the page’s script reads the thumbnail, a tab beside this one and in front POSTs Chrome’s multipart fields, this tab its opener', async () => {
+      const h = pageHarness(DESKTOP, { pageScript: () => FETCHED })
       imageMenu(h, IMAGE)
       h.click('Search Image with Google Lens')
-      const tabIds = h.win.activeSpace().tabIds
-      const opened = h.browser.tabs.tab(tabIds[tabIds.indexOf(h.tabId) + 1] ?? '')
+      await settle()
+      // The script ran in the browser's private world of the clicked frame (the desktop; the
+      // page's own built-ins never see it), on the clicked image, with the page's cookies.
+      const script = h.viewCalls.find((c) => c.startsWith('executeJavaScriptInPrivateWorld('))!
+      expect(script).toContain(JSON.stringify(IMAGE))
+      expect(script).toContain("read('include')")
+      // The engine's own bounds: Google's is Chrome's Lens path (1000 px, 300 × 300, JPEG 40).
+      expect(script).toContain('const maxSide = 1000, minArea = 90000, quality = 0.4, maxBytes =')
+      expect(h.viewCalls.some((c) => c.startsWith('executeJavaScript('))).toBe(false)
+      const opened = openedBeside(h)
+      expect(opened?.url).toBe('https://lens.google.com/v3/upload')
+      expect(opened?.openerTabId).toBe(h.tabId)
+      expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(opened?.id)
+      const { url, post } = posted(h)!
+      expect(url).toBe('https://lens.google.com/v3/upload')
+      expect(post.encoding).toBe('multipart')
+      expect(post.fields.map((f) => f.name)).toEqual([
+        'encoded_image',
+        'image_url',
+        'sbisrc',
+        'original_width',
+        'original_height',
+        'processed_image_dimensions'
+      ])
+      // The file part with no filename, as Chrome's (net::AddMultipartValueForUpload).
+      expect(field(post, 'encoded_image')).toEqual({
+        name: 'encoded_image',
+        file: { base64: THUMB.base64, contentType: 'image/jpeg' }
+      })
+      expect(field(post, 'image_url')).toEqual({ name: 'image_url', value: IMAGE })
+      expect(field(post, 'sbisrc')).toEqual({ name: 'sbisrc', value: 'Zenium 1.2.3 Linux' })
+      expect(field(post, 'original_width')).toEqual({ name: 'original_width', value: '1600' })
+      expect(field(post, 'original_height')).toEqual({ name: 'original_height', value: '800' })
+      expect(field(post, 'processed_image_dimensions')).toEqual({
+        name: 'processed_image_dimensions',
+        value: '1000,500'
+      })
+      // The POST is the tab's first load; nothing loads the address by GET beside it.
+      expect(h.viewCalls.filter((c) => c.startsWith('loadURL('))).toEqual([])
+    })
+
+    it('uploads a data: image with no image_url field (Chrome sends no address for one), the thumbnail alone', async () => {
+      const h = pageHarness(DESKTOP, { pageScript: () => FETCHED })
+      imageMenu(h, 'data:image/png;base64,iVBORw0KGgo=')
+      h.click('Search Image with Google Lens')
+      await settle()
+      const { post } = posted(h)!
+      expect(field(post, 'image_url')).toBeUndefined()
+      expect(field(post, 'encoded_image')).toBeDefined()
+      expect(openedBeside(h)?.url).toBe('https://lens.google.com/v3/upload')
+    })
+
+    it('uploads to Bing urlencoded: imageBin carries the thumbnail base64', async () => {
+      const h = pageHarness(DESKTOP, { pageScript: () => FETCHED })
+      h.browser.handleCommand(h.win, 'settings.update', { searchEngineId: 'bing' })
+      imageMenu(h, IMAGE)
+      h.click('Search Image with Bing')
+      await settle()
+      const { url, post } = posted(h)!
+      expect(url).toBe(
+        'https://www.bing.com/images/detail/search?iss=sbiupload&FORM=CHROMI#enterInsights'
+      )
+      expect(post).toEqual({
+        encoding: 'urlencoded',
+        fields: [{ name: 'imageBin', value: THUMB.base64 }]
+      })
+      // Bing's bounds are Chrome's for any engine but Google's: 600 px on the longest side.
+      const script = h.viewCalls.find((c) => c.startsWith('executeJavaScriptInPrivateWorld('))!
+      expect(script).toContain('const maxSide = 600, minArea = 90000, quality = 0.4, maxBytes =')
+    })
+
+    it('runs the script in the clicked frame (an image in a sub-frame reads with that frame’s cookies)', async () => {
+      const h = pageHarness(DESKTOP, { pageScript: () => FETCHED })
+      h.menu(pageParams({ mediaType: 'image', srcURL: IMAGE, frameId: 7 }))
+      h.click('Search Image with Google Lens')
+      await settle()
+      expect(h.viewCalls.find((c) => c.startsWith('executeJavaScriptInPrivateWorld('))).toMatch(
+        /^executeJavaScriptInPrivateWorld\(7:/
+      )
+    })
+
+    it('refuses an image above the cap with a toast, opening nothing', async () => {
+      const h = pageHarness(DESKTOP, { pageScript: () => ({ ok: false, reason: 'too-large' }) })
+      imageMenu(h, IMAGE)
+      const before = h.win.activeSpace().tabIds.length
+      h.click('Search Image with Google Lens')
+      await settle()
+      // A limit, not a failure: the info kind, sentence case, no trailing period (§9.1).
+      expect(h.toasts).toEqual([{ message: 'This image is too large to search', kind: 'info' }])
+      expect(h.win.activeSpace().tabIds.length).toBe(before)
+      expect(posted(h)).toBeNull()
+    })
+
+    it('reads the renderer’s bytes through the host first (a cross-origin image without CORS: the page’s fetch would fail and evict them) and hands them to the page’s canvas as a data: address', async () => {
+      const held = { base64: 'iVBORw0KGgo=', mimeType: 'image/png' }
+      const h = pageHarness(DESKTOP, {
+        pageScript: (code) =>
+          code.includes(`"data:image/png;base64,${held.base64}"`)
+            ? FETCHED
+            : { ok: false, reason: 'fetch-failed' },
+        view: { readImageResource: () => Promise.resolve(held) }
+      })
+      imageMenu(h, IMAGE)
+      h.click('Search Image with Google Lens')
+      await settle()
+      expect(openedBeside(h)?.url).toBe('https://lens.google.com/v3/upload')
+      expect(field(posted(h)!.post, 'encoded_image')).toMatchObject({
+        file: { base64: THUMB.base64 }
+      })
+      // The host's copy is read before any fetch from the page, and the page fetched nothing else.
+      const scripts = h.viewCalls.filter((c) => c.startsWith('executeJavaScriptInPrivateWorld('))
+      expect(scripts).toHaveLength(1)
+      expect(scripts[0]).toContain(`"data:image/png;base64,${held.base64}"`)
+      // The copy is decoded in the script (base64 → Blob), no fetch of the data: address: a page
+      // CSP without `data:` in `connect-src` has no say, and the page's report-uri hears nothing.
+      expect(scripts[0]).toContain('atob(')
+      expect(scripts[0]).not.toContain('fetch("data:')
+    })
+
+    it('asks the page to fetch the address when the host holds no copy (evicted, or a host without the read)', async () => {
+      const h = pageHarness(DESKTOP, {
+        pageScript: (code) => (code.includes(JSON.stringify(IMAGE)) ? FETCHED : null),
+        view: { readImageResource: () => Promise.resolve(null) }
+      })
+      imageMenu(h, IMAGE)
+      h.click('Search Image with Google Lens')
+      await settle()
+      expect(openedBeside(h)?.url).toBe('https://lens.google.com/v3/upload')
+      expect(field(posted(h)!.post, 'encoded_image')).toMatchObject({
+        file: { base64: THUMB.base64 }
+      })
+    })
+
+    it('runs every thumbnail script in the browser’s private world where the host has one – the host’s copy handed over as a data: address and the page’s own fetch alike – and never in the page’s main world', async () => {
+      const held = { base64: 'iVBORw0KGgo=', mimeType: 'image/png' }
+      const worlds: Array<{ frameId: number | undefined; code: string }> = []
+      const privateWorld = (code: string, frameId?: number): Promise<unknown> => {
+        worlds.push({ frameId, code })
+        return Promise.resolve(
+          code.includes(`"data:image/png;base64,${held.base64}"`) ||
+            code.includes(JSON.stringify(IMAGE))
+            ? FETCHED
+            : { ok: false, reason: 'fetch-failed' }
+        )
+      }
+      // The host holds the image: the script gets the copy, in the private world.
+      const h = pageHarness(DESKTOP, {
+        pageScript: () => {
+          throw new Error('the main world was reached')
+        },
+        view: {
+          readImageResource: () => Promise.resolve(held),
+          executeJavaScriptInPrivateWorld: privateWorld
+        }
+      })
+      imageMenu(h, IMAGE)
+      h.click('Search Image with Google Lens')
+      await settle()
+      expect(openedBeside(h)?.url).toBe('https://lens.google.com/v3/upload')
+      expect(field(posted(h)!.post, 'encoded_image')).toMatchObject({
+        file: { base64: THUMB.base64 }
+      })
+      expect(worlds).toHaveLength(1)
+      expect(worlds[0]!.code).toContain(`"data:image/png;base64,${held.base64}"`)
+      expect(h.viewCalls.some((c) => c.startsWith('executeJavaScript('))).toBe(false)
+      // The host holds nothing: the page's own fetch of the address, in the private world too.
+      worlds.length = 0
+      const h2 = pageHarness(DESKTOP, {
+        pageScript: () => {
+          throw new Error('the main world was reached')
+        },
+        view: {
+          readImageResource: () => Promise.resolve(null),
+          executeJavaScriptInPrivateWorld: privateWorld
+        }
+      })
+      imageMenu(h2, IMAGE)
+      h2.click('Search Image with Google Lens')
+      await settle()
+      expect(openedBeside(h2)?.url).toBe('https://lens.google.com/v3/upload')
+      expect(worlds).toHaveLength(1)
+      expect(worlds[0]!.code).toContain(JSON.stringify(IMAGE))
+      expect(worlds[0]!.code).toContain('OffscreenCanvas')
+      expect(h2.viewCalls.some((c) => c.startsWith('executeJavaScript('))).toBe(false)
+    })
+
+    it('carries the clicked frame into the private world (a sub-frame’s image runs in that frame’s world) and reads a data: image there too', async () => {
+      const worlds: Array<{ frameId: number | undefined; code: string }> = []
+      const h = pageHarness(DESKTOP, {
+        view: {
+          executeJavaScriptInPrivateWorld: (code: string, frameId?: number) => {
+            worlds.push({ frameId, code })
+            return Promise.resolve(FETCHED)
+          }
+        }
+      })
+      h.menu(pageParams({ mediaType: 'image', srcURL: IMAGE, frameId: 7 }))
+      h.click('Search Image with Google Lens')
+      await settle()
+      expect(worlds.map((w) => w.frameId)).toEqual([7])
+      expect(posted(h)).not.toBeNull()
+      h.menu(pageParams({ mediaType: 'image', srcURL: 'data:image/png;base64,iVBORw0KGgo=' }))
+      h.click('Search Image with Google Lens')
+      await settle()
+      expect(worlds).toHaveLength(2)
+      expect(worlds[1]!.frameId).toBeUndefined()
+      expect(worlds[1]!.code).toContain('"data:image/png;base64,iVBORw0KGgo="')
+      expect(h.viewCalls.some((c) => c.startsWith('executeJavaScript('))).toBe(false)
+    })
+
+    it('runs the script through executeJavaScript on a host without a private world (the phone’s WebView evaluates in the main world only)', async () => {
+      const h = pageHarness(ANDROID, { formFactor: 'phone', pageScript: () => FETCHED })
+      imageMenu(h, IMAGE)
+      h.click('Search Image with Google Lens')
+      await settle()
+      expect(h.viewCalls.filter((c) => c.startsWith('executeJavaScript('))).toHaveLength(1)
+      expect(posted(h)).not.toBeNull()
+    })
+
+    it('refuses an image the host lists above the cap with the toast, fetching nothing from the page', async () => {
+      const h = pageHarness(DESKTOP, {
+        pageScript: () => FETCHED,
+        view: { readImageResource: () => Promise.resolve('too-large' as const) }
+      })
+      imageMenu(h, IMAGE)
+      const before = h.win.activeSpace().tabIds.length
+      h.click('Search Image with Google Lens')
+      await settle()
+      expect(h.toasts).toEqual([{ message: 'This image is too large to search', kind: 'info' }])
+      expect(h.win.activeSpace().tabIds.length).toBe(before)
+      expect(posted(h)).toBeNull()
+      expect(h.viewCalls.some((c) => /^executeJavaScript(InPrivateWorld)?\(/.test(c))).toBe(false)
+    })
+
+    it('falls back to the address form for an http(s) image no path could read (today’s row), with no POST', async () => {
+      const h = pageHarness(DESKTOP, {
+        pageScript: () => ({ ok: false, reason: 'fetch-failed' }),
+        view: { readImageResource: () => Promise.resolve(null) }
+      })
+      imageMenu(h, IMAGE)
+      h.click('Search Image with Google Lens')
+      await settle()
+      const opened = openedBeside(h)
       expect(opened?.url).toBe(
         `https://lens.google.com/uploadbyurl?url=${encodeURIComponent(IMAGE)}`
       )
       expect(opened?.openerTabId).toBe(h.tabId)
-      expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(opened?.id)
-      h.browser.handleCommand(h.win, 'settings.update', { searchEngineId: 'bing' })
-      h.browser.tabs.activateTab(h.tabId, h.win)
-      imageMenu(h, IMAGE)
-      h.click('Search Image with Bing')
-      const ids = h.win.activeSpace().tabIds
-      expect(h.browser.tabs.tab(ids[ids.indexOf(h.tabId) + 1] ?? '')?.url).toBe(
-        `https://www.bing.com/images/search?view=detailv2&iss=sbi&q=imgurl:${encodeURIComponent(IMAGE)}`
-      )
+      expect(posted(h)).toBeNull()
+      expect(h.viewCalls).toContain(`loadURL(${JSON.stringify(opened?.url)})`)
     })
 
-    it('reaches the phone’s image sheet through the same template: after Copy Image Address, before Share Image…', () => {
-      const h = pageHarness(ANDROID, { formFactor: 'phone' })
+    it('says so for a data: image no path could read: no address to fall back to, a toast, no tab', async () => {
+      const h = pageHarness(DESKTOP, { pageScript: () => ({ ok: false, reason: 'decode-failed' }) })
+      imageMenu(h, 'data:image/png;base64,iVBORw0KGgo=')
+      const before = h.win.activeSpace().tabIds.length
+      h.click('Search Image with Google Lens')
+      await settle()
+      // A failure: the error kind, the contraction of "Couldn't make a link to this text" (§9.1).
+      expect(h.toasts).toEqual([{ message: "Couldn't read this image", kind: 'error' }])
+      expect(h.win.activeSpace().tabIds.length).toBe(before)
+      // The host's read is for an http(s) image's response; a data: image has none.
+      expect(h.viewCalls.some((c) => c.startsWith('readImageResource('))).toBe(false)
+    })
+
+    it('opens the address form for an engine with a template alone (Yandex), as before', () => {
+      const h = pageHarness()
+      h.browser.handleCommand(h.win, 'settings.update', {
+        searchEngines: [YANDEX],
+        searchEngineId: YANDEX.id
+      })
+      imageMenu(h, IMAGE)
+      h.click('Search Image with Yandex')
+      const opened = openedBeside(h)
+      expect(opened?.url).toBe(
+        `https://yandex.com/images/search?rpt=imageview&url=${encodeURIComponent(IMAGE)}`
+      )
+      expect(opened?.openerTabId).toBe(h.tabId)
+      expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(opened?.id)
+      expect(h.viewCalls.some((c) => /^executeJavaScript(InPrivateWorld)?\(/.test(c))).toBe(false)
+    })
+
+    it('reaches the phone’s image sheet through the same template: after Copy Image Address, before Share Image…, the data: image included', async () => {
+      const h = pageHarness(ANDROID, { formFactor: 'phone', pageScript: () => FETCHED })
       const menu = imageMenu(h, IMAGE)
       expect(menu.indexOf('Search Image with Google Lens')).toBe(
         menu.indexOf('Copy Image Address') + 1
       )
       expect(menu.indexOf('Share Image…')).toBe(menu.indexOf('Search Image with Google Lens') + 1)
-      expect(imageMenu(h, 'data:image/gif;base64,R0lGOD')).not.toContain(
-        'Search Image with Google Lens'
+      const data = imageMenu(h, 'data:image/gif;base64,R0lGOD')
+      expect(data.indexOf('Search Image with Google Lens')).toBe(
+        data.indexOf('Copy Image Address') + 1
       )
+      // The phone's pick goes the same way: the script, the POST tab beside the page.
+      h.click('Search Image with Google Lens')
+      await settle()
+      expect(posted(h)?.url).toBe('https://lens.google.com/v3/upload')
+      expect(field(posted(h)!.post, 'sbisrc')).toEqual({
+        name: 'sbisrc',
+        value: 'Zenium 1.2.3 Android'
+      })
+      expect(field(posted(h)!.post, 'image_url')).toBeUndefined()
       // Bing as the engine: its own product, in the same seat.
+      h.browser.tabs.activateTab(h.tabId, h.win)
       h.browser.handleCommand(h.win, 'settings.update', { searchEngineId: 'bing' })
       const bing = imageMenu(h, IMAGE)
       expect(bing.indexOf('Search Image with Bing')).toBe(bing.indexOf('Copy Image Address') + 1)

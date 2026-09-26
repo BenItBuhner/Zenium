@@ -25,6 +25,7 @@ import type {
 import { isNewTabUrl } from '../../shared/url'
 import { contentSettingId } from '../../shared/contentSettings'
 import { SCREEN_CAPTURE_INTENT_CHANNEL } from '../../shared/screenCapture'
+import { PRIVATE_WORLD_CHANNELS } from '../../shared/privateWorld'
 import {
   NOTIFICATION_PERMISSION_CHANNEL,
   NOTIFICATION_REQUEST_CHANNEL,
@@ -942,6 +943,13 @@ export class ElectronPlatform implements Platform {
     })
     ipcMain.on('zen:page', (event, message: PageMessage) => {
       this.views.viewForWebContents(event.sender)?.dispatchPageMessage(message)
+    })
+    // A page frame's answer to a script the host ran in the browser's private world of that
+    // frame (`shared/privateWorld.ts`: the image-search thumbnail in a sub-frame). Only a tab
+    // page's frame is heard, and the relay takes the answer from the frame it asked alone.
+    ipcMain.on(PRIVATE_WORLD_CHANNELS.answer, (event, raw: unknown) => {
+      if (!this.views.viewForWebContents(event.sender)) return
+      this.views.privateWorld.answer(event.senderFrame, raw)
     })
     // A page's `alert` / `confirm` / `prompt`: the renderer blocks on `sendSync` until
     // `returnValue` is set, which happens once the chrome's dialog is answered. Every path must

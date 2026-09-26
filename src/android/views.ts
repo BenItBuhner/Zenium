@@ -19,6 +19,7 @@ import { certificateDetailsFrom } from '@shared/url'
 import type { NavigationReport } from './extensionWebNavigation'
 import { zenPageHtml, type ImagePageLookup, type ReaderPageLookup } from '@shared/zenPages'
 import { pdfPageDownloadId, pdfViewerBaseUrl, type PdfPageLookup } from '@shared/pdfPage'
+import { imageUploadFormDoc, urlencodeImagePost, type ImagePost } from '@shared/imageUpload'
 import type {
   AgentCapture,
   AgentCaptureOptions,
@@ -430,6 +431,24 @@ export class AndroidTabView implements TabView {
     // so Kotlin sets the WebSettings and the document's guards from the core's own word; the
     // key is absent while the core has none (Kotlin reads the pushed document then).
     this.bridge.send('view.load', { tabId: this.tabId, url, ...this.rulesFor(url) })
+  }
+
+  /**
+   * The image-search upload (CT-32): an urlencoded body goes to `WebView.postUrl` as it is
+   * (`body`; the WebView sends it `application/x-www-form-urlencoded`, the one type `postUrl`
+   * knows), a multipart one as a self-submitting form document (`html`, `imageUploadFormDoc`:
+   * the WebView has no multipart POST navigation of its own, and a form's submission is the
+   * navigation Chrome's `UploadRawData` POST is on the desktop). Kotlin loads the document under
+   * an opaque origin and the form submits before its load event, so the submission replaces
+   * the document's own entry. The destination's content rules ride along as with a load.
+   */
+  postURL(url: string, post: ImagePost): void {
+    this.pendingHtml = false
+    const wire =
+      post.encoding === 'urlencoded'
+        ? { body: urlencodeImagePost(post) }
+        : { html: imageUploadFormDoc(url, post) }
+    this.bridge.send('view.post', { tabId: this.tabId, url, ...wire, ...this.rulesFor(url) })
   }
 
   /** `{ rules }` for a load's wire when the core has an answer for `url`, nothing otherwise. */

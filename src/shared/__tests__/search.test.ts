@@ -9,6 +9,7 @@ import {
   engineFieldFavicon,
   engineKeywordProblem,
   engineKeywords,
+  imageSearchByAddress,
   imageSearchFor,
   isActiveSearchEngine,
   matchEngineKeyword,
@@ -40,7 +41,7 @@ describe('search engines', () => {
     )
   })
 
-  describe('the image search an engine defines (CT-32, Chrome’s image_url)', () => {
+  describe('the image search an engine defines (CT-32, Chrome’s image_url + image_url_post_params)', () => {
     const image = 'https://pics.example/a b.png?v=2&s=l'
     const bing = DEFAULT_SEARCH_ENGINES.find((e) => e.id === 'bing')!
     const yandex: SearchEngine = {
@@ -53,30 +54,76 @@ describe('search engines', () => {
       source: 'custom',
       imageSearch: { name: 'Yandex', url: 'https://yandex.com/images/search?rpt=imageview&url=%s' }
     }
+    const uploader: SearchEngine = {
+      ...yandex,
+      id: 'custom:uploader',
+      name: 'Uploader',
+      imageSearch: {
+        name: 'Uploader',
+        url: 'https://up.example/?url=%s',
+        post: {
+          url: 'https://up.example/upload',
+          params: 'img={imageThumbnail}',
+          encoding: 'multipart',
+          thumbnail: { maxSide: 640, minArea: 0 }
+        }
+      }
+    }
 
-    it('sends the address to Google Lens for Google', () => {
+    it('uploads the bytes to Google Lens for Google: Chrome’s image_url and multipart post params, the Lens path’s 1000 px thumbnail', () => {
       expect(imageSearchFor(google, image)).toEqual({
+        kind: 'upload',
         engine: 'Google Lens',
-        url: 'https://lens.google.com/uploadbyurl?url=https%3A%2F%2Fpics.example%2Fa%20b.png%3Fv%3D2%26s%3Dl'
+        imageUrl: image,
+        post: {
+          url: 'https://lens.google.com/v3/upload',
+          params:
+            'encoded_image={imageThumbnail},image_url={imageURL},sbisrc={imageSearchSource},original_width={imageOriginalWidth},original_height={imageOriginalHeight},processed_image_dimensions={processedImageDimensions}',
+          encoding: 'multipart',
+          // lens::kMaxPixelsForImageSearch and kImageSearchThumbnailMinSize (300 × 300).
+          thumbnail: { maxSide: 1000, minArea: 90_000 }
+        }
       })
     })
 
-    it('sends the address to Bing’s visual search for Bing', () => {
+    it('uploads the thumbnail base64 to Bing’s visual search for Bing, urlencoded, the generic 600 px thumbnail', () => {
       expect(imageSearchFor(bing, 'http://pics.example/a.png')).toEqual({
+        kind: 'upload',
+        engine: 'Bing',
+        imageUrl: 'http://pics.example/a.png',
+        post: {
+          url: 'https://www.bing.com/images/detail/search?iss=sbiupload&FORM=CHROMI#enterInsights',
+          params: 'imageBin={imageThumbnailBase64}',
+          encoding: 'urlencoded',
+          // kImageSearchThumbnailMaxWidth/Height and kImageSearchThumbnailMinSize.
+          thumbnail: { maxSide: 600, minArea: 90_000 }
+        }
+      })
+    })
+
+    it('keeps the address form for Google and Bing too (a record from before the upload)', () => {
+      expect(imageSearchByAddress(google, image)).toEqual({
+        kind: 'address',
+        engine: 'Google Lens',
+        url: 'https://lens.google.com/uploadbyurl?url=https%3A%2F%2Fpics.example%2Fa%20b.png%3Fv%3D2%26s%3Dl'
+      })
+      expect(imageSearchByAddress(bing, 'http://pics.example/a.png')).toEqual({
+        kind: 'address',
         engine: 'Bing',
         url: 'https://www.bing.com/images/search?view=detailv2&iss=sbi&q=imgurl:http%3A%2F%2Fpics.example%2Fa.png'
       })
     })
 
-    it('names the product of any engine that defines an image search, not only Google’s or Bing’s', () => {
+    it('sends the address for an engine with a template and no post (Yandex), naming its product', () => {
       expect(imageSearchFor(yandex, 'https://pics.example/a.png')).toEqual({
+        kind: 'address',
         engine: 'Yandex',
         url: 'https://yandex.com/images/search?rpt=imageview&url=https%3A%2F%2Fpics.example%2Fa.png'
       })
     })
 
     it('encodes the address once: ? and & inside it survive as %3F and %26, the template’s own stay', () => {
-      const url = imageSearchFor(bing, image)!.url
+      const url = imageSearchByAddress(bing, image)!.url
       expect(url).toBe(
         'https://www.bing.com/images/search?view=detailv2&iss=sbi&q=imgurl:https%3A%2F%2Fpics.example%2Fa%20b.png%3Fv%3D2%26s%3Dl'
       )
@@ -88,6 +135,7 @@ describe('search engines', () => {
       const engine = DEFAULT_SEARCH_ENGINES.find((e) => e.id === id)!
       expect(engine.imageSearch).toBeUndefined()
       expect(imageSearchFor(engine, image)).toBeNull()
+      expect(imageSearchByAddress(engine, image)).toBeNull()
     })
 
     it('has none for a hand-added engine (the Search form defines none)', () => {
@@ -100,11 +148,23 @@ describe('search engines', () => {
       expect(imageSearchFor(custom, image)).toBeNull()
     })
 
-    it.each(['data:image/png;base64,AAAA', 'blob:https://x.example/1', 'file:///a.png', ''])(
-      'has none for an address no engine can fetch (%s)',
+    it.each(['data:image/png;base64,AAAA', 'blob:https://x.example/1'])(
+      'uploads a %s image for an engine with a post – the bytes are what travels – with no address',
+      (src) => {
+        expect(imageSearchFor(google, src)).toMatchObject({ kind: 'upload', imageUrl: '' })
+        expect(imageSearchFor(bing, src)).toMatchObject({ kind: 'upload', imageUrl: '' })
+        expect(imageSearchFor(uploader, src)).toMatchObject({ kind: 'upload', imageUrl: '' })
+        expect(imageSearchFor(yandex, src)).toBeNull()
+        expect(imageSearchByAddress(google, src)).toBeNull()
+      }
+    )
+
+    it.each(['file:///a.png', 'about:blank', ''])(
+      'has none for an address no page can read back and no engine can fetch (%s)',
       (src) => {
         expect(imageSearchFor(google, src)).toBeNull()
         expect(imageSearchFor(bing, src)).toBeNull()
+        expect(imageSearchFor(yandex, src)).toBeNull()
       }
     )
 
@@ -130,6 +190,126 @@ describe('search engines', () => {
         [kept]
       )
       expect(edited.imageSearch).toEqual(yandex.imageSearch)
+    })
+
+    it('keeps a stored engine’s valid post (an https endpoint, params, one of the two encodings) and drops a broken one', () => {
+      const [kept] = sanitizeSearchEngines([uploader])
+      expect(kept.imageSearch).toEqual(uploader.imageSearch)
+      expect(imageSearchFor(kept, 'data:image/png;base64,AAAA')).toMatchObject({ kind: 'upload' })
+      // Plain http only on the user's own machine (a loopback host: the bytes and the engine's
+      // cookies never reach a wire); anywhere else the row searches by address.
+      for (const url of [
+        'http://127.0.0.1:8080/upload',
+        'http://localhost/upload',
+        'http://dev.localhost:3000/upload',
+        'http://[::1]/upload'
+      ]) {
+        const [local] = sanitizeSearchEngines([
+          {
+            ...uploader,
+            imageSearch: { ...uploader.imageSearch, post: { ...uploader.imageSearch!.post!, url } }
+          }
+        ])
+        expect(local.imageSearch!.post?.url, url).toBe(url)
+      }
+      const [clear] = sanitizeSearchEngines([
+        {
+          ...uploader,
+          imageSearch: {
+            ...uploader.imageSearch,
+            post: { ...uploader.imageSearch!.post!, url: 'http://up.example/upload' }
+          }
+        }
+      ])
+      expect(clear.imageSearch).toEqual({ name: 'Uploader', url: 'https://up.example/?url=%s' })
+      expect(imageSearchFor(clear, image)).toMatchObject({ kind: 'address' })
+      const trimmed = sanitizeSearchEngines([
+        {
+          ...uploader,
+          imageSearch: {
+            ...uploader.imageSearch,
+            post: {
+              url: ' https://up.example/upload ',
+              params: ' img={imageThumbnail} ',
+              encoding: 'urlencoded',
+              thumbnail: { maxSide: 640, minArea: 0 }
+            }
+          }
+        }
+      ])[0]
+      expect(trimmed.imageSearch!.post).toEqual({
+        url: 'https://up.example/upload',
+        params: 'img={imageThumbnail}',
+        encoding: 'urlencoded',
+        thumbnail: { maxSide: 640, minArea: 0 }
+      })
+      const base = uploader.imageSearch!.post!
+      const broken = [
+        { ...base, url: 'ftp://up.example/upload' },
+        { ...base, url: 'not a url' },
+        { ...base, url: '' },
+        { ...base, params: '' },
+        { ...base, params: '   ' },
+        { ...base, encoding: 'json' },
+        { ...base, encoding: undefined },
+        'https://up.example/upload',
+        42
+      ]
+      broken.forEach((post, i) => {
+        const [engine] = sanitizeSearchEngines([
+          { ...uploader, id: `custom:p${i}`, imageSearch: { ...uploader.imageSearch, post } }
+        ])
+        // The template survives, the row searches by address.
+        expect(engine.imageSearch, String(i)).toEqual({
+          name: 'Uploader',
+          url: 'https://up.example/?url=%s'
+        })
+        expect(imageSearchFor(engine, image), String(i)).toMatchObject({ kind: 'address' })
+        expect(imageSearchFor(engine, 'data:image/png;base64,AAAA'), String(i)).toBeNull()
+      })
+    })
+
+    it('keeps a stored engine’s own thumbnail bounds, and gives one without (or with broken ones) the generic engine’s', () => {
+      const withBounds = (thumbnail: unknown): SearchEngine =>
+        sanitizeSearchEngines([
+          {
+            ...uploader,
+            imageSearch: {
+              ...uploader.imageSearch,
+              post: { ...uploader.imageSearch!.post!, thumbnail }
+            }
+          }
+        ])[0]!
+      expect(withBounds({ maxSide: 640, minArea: 0 }).imageSearch!.post!.thumbnail).toEqual({
+        maxSide: 640,
+        minArea: 0
+      })
+      expect(withBounds({ maxSide: 8192, minArea: 250_000 }).imageSearch!.post!.thumbnail).toEqual({
+        maxSide: 8192,
+        minArea: 250_000
+      })
+      // A record from before the field, or one no canvas could honour: Chrome's generic numbers.
+      for (const broken of [
+        undefined,
+        null,
+        'big',
+        { maxSide: 0, minArea: 0 },
+        { maxSide: 8193, minArea: 0 },
+        { maxSide: 600.5, minArea: 0 },
+        { maxSide: 600, minArea: -1 },
+        { maxSide: 600, minArea: 'none' },
+        { maxSide: 600 },
+        { minArea: 0 }
+      ]) {
+        expect(withBounds(broken).imageSearch!.post!.thumbnail, JSON.stringify(broken)).toEqual({
+          maxSide: 600,
+          minArea: 90_000
+        })
+      }
+    })
+
+    it('never stores the shipped engines, so their post never syncs (the definition is the build’s)', () => {
+      expect(sanitizeSearchEngines([google, bing])).toEqual([])
     })
   })
 
