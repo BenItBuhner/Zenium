@@ -402,3 +402,115 @@ describe('the page search (filterReadingList)', () => {
     expect(filterReadingList(list, '')).not.toBe(list)
   })
 })
+
+/**
+ * The sync seam (services pass 11, ID-48): `applySynced` / `removeSynced` land the other
+ * devices' records (`sync/apply.ts`), commit nothing themselves and keep one entry per URL by
+ * the pure rule `readingListSurvivor` – the later `addedAt`, a tie the greater id – so every
+ * device picks the same survivor.
+ */
+describe('ReadingListService: sync (applySynced / removeSynced)', () => {
+  it('lands an entry under its id – new, or over the local copy keeping this device’s favicon – and commits nothing', () => {
+    const { service, state, io } = setup()
+    const local = service.add('https://a.example/', 'A here', 'data:,mine')!
+    const writes = io.writes.length
+    const listeners = vi.fn()
+    service.subscribe(listeners)
+    // The peer marked A read (its record carries no favicon) and saved a page of its own.
+    service.applySynced([
+      normal({ id: local.id, url: local.url, title: 'A there', addedAt: 50, readAt: 60 }),
+      normal({ id: 'rl_peer', url: 'https://p.example/', title: 'P', addedAt: 70 })
+    ])
+    expect(service.get(local.id)).toEqual(
+      normal({
+        id: local.id,
+        url: local.url,
+        title: 'A there',
+        addedAt: 50,
+        readAt: 60,
+        favicon: 'data:,mine'
+      })
+    )
+    expect(bytes(service.get(local.id))).toBe(
+      bytes(
+        normal({
+          id: local.id,
+          url: local.url,
+          title: 'A there',
+          addedAt: 50,
+          readAt: 60,
+          favicon: 'data:,mine'
+        })
+      )
+    )
+    expect(service.get('rl_peer')).toEqual(
+      normal({ id: 'rl_peer', url: 'https://p.example/', title: 'P', addedAt: 70 })
+    )
+    expect(service.get('rl_peer')).not.toHaveProperty('favicon')
+    // A batch is the engine's to commit and the chrome reads the state: no write, no listener.
+    expect(io.writes.length).toBe(writes)
+    expect(listeners).not.toHaveBeenCalled()
+    expect(state.readingList).toHaveLength(2)
+  })
+
+  it('one URL, one entry: the later addedAt survives whichever side it is on, a tie the lexically greater id, and the loser leaves the list', () => {
+    const { service, state } = setup()
+    // The same page saved on both devices while apart, the peer's later: the peer's stays.
+    state.readingList = [normal({ id: 'rl_here1', url: 'https://same.example/', addedAt: 100 })]
+    service.applySynced([normal({ id: 'rl_there1', url: 'https://same.example/', addedAt: 200 })])
+    expect(state.readingList.map((e) => e.id)).toEqual(['rl_there1'])
+    // This device's later: the peer's entry never joins.
+    state.readingList = [normal({ id: 'rl_here2', url: 'https://other.example/', addedAt: 300 })]
+    service.applySynced([normal({ id: 'rl_there2', url: 'https://other.example/', addedAt: 250 })])
+    expect(state.readingList.map((e) => e.id)).toEqual(['rl_here2'])
+    // A tie: the lexically greater id, from either side.
+    state.readingList = [normal({ id: 'rl_aaa', url: 'https://tie.example/', addedAt: 400 })]
+    service.applySynced([normal({ id: 'rl_zzz', url: 'https://tie.example/', addedAt: 400 })])
+    expect(state.readingList.map((e) => e.id)).toEqual(['rl_zzz'])
+    state.readingList = [normal({ id: 'rl_zzz', url: 'https://tie.example/', addedAt: 400 })]
+    service.applySynced([normal({ id: 'rl_aaa', url: 'https://tie.example/', addedAt: 400 })])
+    expect(state.readingList.map((e) => e.id)).toEqual(['rl_zzz'])
+    // A record for an id this device holds under the same URL is that entry's newer state, not
+    // a rival: it replaces the copy.
+    state.readingList = [normal({ id: 'rl_x', url: 'https://x.example/', addedAt: 10 })]
+    service.applySynced([
+      normal({ id: 'rl_x', url: 'https://x.example/', addedAt: 20, readAt: 30 })
+    ])
+    expect(state.readingList).toEqual([
+      normal({ id: 'rl_x', url: 'https://x.example/', addedAt: 20, readAt: 30 })
+    ])
+    // Two peers' entries for one URL in one batch: the rule holds across the batch.
+    state.readingList = []
+    service.applySynced([
+      normal({ id: 'rl_p1', url: 'https://batch.example/', addedAt: 5 }),
+      normal({ id: 'rl_p2', url: 'https://batch.example/', addedAt: 9 }),
+      normal({ id: 'rl_p3', url: 'https://batch.example/', addedAt: 7 })
+    ])
+    expect(state.readingList.map((e) => e.id)).toEqual(['rl_p2'])
+  })
+
+  it('removeSynced takes the tombstoned ids out and ignores the rest; the cap trims after a batch', () => {
+    const { service, state } = setup()
+    const a = service.add('https://a.example/', 'A')!
+    const b = service.add('https://b.example/', 'B')!
+    const before = state.readingList
+    service.removeSynced(['rl_unknown'])
+    expect(state.readingList).toBe(before)
+    service.removeSynced([a.id, 'rl_unknown'])
+    expect(state.readingList.map((e) => e.id)).toEqual([b.id])
+    // At the cap, a landed entry pushes the oldest read one out (`trimReadingList`'s rule): a
+    // deletion made here, on purpose, which the engine's re-snapshot tombstones for the fleet.
+    state.readingList = Array.from({ length: READING_LIST_CAP }, (_, i) =>
+      normal({
+        id: `rl_${String(i).padStart(4, '0')}`,
+        url: `https://cap.example/${i}`,
+        addedAt: 1000 + i,
+        readAt: i === 3 ? 1000 + i : undefined
+      })
+    )
+    service.applySynced([normal({ id: 'rl_new', url: 'https://cap.example/new', addedAt: 5000 })])
+    expect(state.readingList).toHaveLength(READING_LIST_CAP)
+    expect(state.readingList.some((e) => e.id === 'rl_new')).toBe(true)
+    expect(state.readingList.some((e) => e.id === 'rl_0003')).toBe(false)
+  })
+})

@@ -123,6 +123,19 @@ function finiteTime(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
 }
 
+/**
+ * Of two entries for the same URL – one added on each of two devices while apart – the one the
+ * list keeps: the later `addedAt`, and on a tie the lexically greater `id`. A pure function of
+ * the two entries and nothing else (no device id: the apply side has no provenance), so every
+ * device that sees both picks the same survivor and the fleet converges on one entry per URL
+ * (`ReadingListService.applySynced`; `sanitizeReadingList`'s "the later element wins" is the
+ * load-time form for a profile written with a duplicate, this the sync-time rule).
+ */
+export function readingListSurvivor(a: ReadingListEntry, b: ReadingListEntry): ReadingListEntry {
+  if (a.addedAt !== b.addedAt) return a.addedAt > b.addedAt ? a : b
+  return a.id > b.id ? a : b
+}
+
 /** A page the list can hold: a web address; the browser's own pages and blank tabs are not saved. */
 export function isReadingListUrl(url: string): boolean {
   return /^https?:\/\//i.test(url)

@@ -5,6 +5,7 @@ import {
   dayKeyOf,
   groupByDay,
   HistoryService,
+  type HistoryVisitsEvent,
   type ImportedVisit,
   isHttpsUpgrade,
   isRecordableUrl,
@@ -1316,6 +1317,210 @@ describe('HistoryService', () => {
       const all = h.visits({ limit: 10, includeRedirectSources: true })
       expect(all).toHaveLength(2)
       expect(all.every((v) => v.transition === 'link' && !v.redirectedFrom)).toBe(true)
+    })
+
+    describe('client redirects (a page that replaced itself, Chrome’s PAGE_TRANSITION_CLIENT_REDIRECT with did_replace_entry)', () => {
+      const GATE = 'https://example.test/gate'
+      const HOME = 'https://example.test/home'
+
+      /** Every visit as stored, oldest first, hops included: `[url, transition, redirectSource, redirectedFrom, at]`. */
+      function all(h: HistoryService): unknown[] {
+        return h
+          .exportVisits({ since: 0 })
+          .visits.map((v) => [v.url, v.transition, v.redirectSource, v.redirectedFrom, v.at])
+      }
+
+      it('folds the page into the landing’s chain: one row, the landing’s, the page a hop that keeps its typed credit, title and favicon', () => {
+        const h = new HistoryService(fakeIo(), now)
+        h.visit(GATE, 'Gate', 'https://example.test/gate.png', { transition: 'typed', tabId: 't1' })
+        const events: unknown[] = []
+        h.onVisits((e) => events.push(e))
+        clock += 400
+        h.visit(HOME, 'Home', null, { transition: 'link', tabId: 't1', clientRedirectFrom: GATE })
+        expect(all(h)).toEqual([
+          [GATE, 'typed', true, undefined, NOW + 400],
+          [HOME, 'redirect', undefined, [GATE], NOW + 400]
+        ])
+        expect(h.visits({ limit: 10 }).map((v) => v.url)).toEqual([HOME])
+        expect(h.count(0, Infinity)).toBe(1)
+        expect(h.redirectChainOf(GATE)).toEqual([GATE, HOME])
+        // The typed credit stays with the address the user asked for; the landing earns none.
+        const entries = new Map(h.recent(5).map((e) => [e.url, e]))
+        expect(entries.get(GATE)).toMatchObject({
+          visitCount: 1,
+          typedCount: 1,
+          title: 'Gate',
+          favicon: 'https://example.test/gate.png'
+        })
+        expect(entries.get(HOME)).toMatchObject({ visitCount: 1, typedCount: 0, title: 'Home' })
+        // The wire sees the page's visit go and come back as a hop, then the landing: a peer
+        // replaying the two ends where this store is.
+        expect(events).toEqual([
+          { type: 'removed', keys: [{ url: GATE, at: NOW }] },
+          {
+            type: 'added',
+            visits: [
+              {
+                url: GATE,
+                at: NOW + 400,
+                title: 'Gate',
+                transition: 'typed',
+                redirectSource: true
+              },
+              {
+                url: HOME,
+                at: NOW + 400,
+                title: 'Home',
+                transition: 'redirect',
+                redirectedFrom: [GATE]
+              }
+            ]
+          }
+        ])
+        // The landing's late title reaches the page it replaced, as the chain's title (Chrome's).
+        h.updateTitle(HOME, 'Example Home')
+        expect(h.titleFor(GATE)).toBe('Example Home')
+      })
+
+      it('carries the chain the page came by and the server hops of the new navigation; the landing takes them all with it when removed', () => {
+        const h = new HistoryService(fakeIo(), now)
+        chained(h)
+        clock += 500
+        h.visit(HOME, 'Home', null, {
+          tabId: 't1',
+          clientRedirectFrom: LANDING,
+          redirectedFrom: [GATE]
+        })
+        expect(all(h)).toEqual([
+          [SHORT, 'typed', true, undefined, NOW + 500],
+          [HTTP, 'redirect', true, undefined, NOW + 500],
+          [LANDING, 'redirect', true, undefined, NOW + 500],
+          [GATE, 'redirect', true, undefined, NOW + 500],
+          [HOME, 'redirect', undefined, [SHORT, HTTP, LANDING, GATE], NOW + 500]
+        ])
+        expect(h.visits({ limit: 10 }).map((v) => v.url)).toEqual([HOME])
+        expect(h.redirectChainOf(SHORT)).toEqual([SHORT, HTTP, LANDING, GATE, HOME])
+        expect(h.recent(9).find((e) => e.url === SHORT)?.typedCount).toBe(1)
+        // Search offers the chain once, by its best member.
+        h.updateTitle(HOME, 'Example Home')
+        expect(h.search('example', 5).map((e) => e.url)).toEqual([HOME])
+        const events: unknown[] = []
+        h.onVisits((e) => events.push(e))
+        h.deleteVisits([h.visits({ limit: 1 })[0].id])
+        expect(h.visits({ limit: 10, includeRedirectSources: true })).toEqual([])
+        expect(events).toEqual([
+          {
+            type: 'removed',
+            keys: [SHORT, HTTP, LANDING, GATE, HOME].map((url) => ({ url, at: NOW + 500 }))
+          }
+        ])
+      })
+
+      it('dates the landing a millisecond after a page it replaced within the same one, so the moved visit never meets its own tombstone', () => {
+        const h = new HistoryService(fakeIo(), now)
+        h.visit(GATE, 'Gate', null, { transition: 'typed', tabId: 't1' })
+        const events: HistoryVisitsEvent[] = []
+        h.onVisits((e) => events.push(e))
+        h.visit(HOME, 'Home', null, { tabId: 't1', clientRedirectFrom: GATE })
+        expect(all(h)).toEqual([
+          [GATE, 'typed', true, undefined, NOW + 1],
+          [HOME, 'redirect', undefined, [GATE], NOW + 1]
+        ])
+        // A peer that held the page's visit replays the events (later, as a peer does: an
+        // import takes no visit from the future): the tombstone takes the old visit, the import
+        // brings the chain – one row, the credit where it was.
+        clock += 1
+        const peer = new HistoryService(fakeIo(), now)
+        vi.spyOn(console, 'info').mockImplementation(() => undefined)
+        peer.importVisits([{ url: GATE, at: NOW, title: 'Gate', transition: 'typed' }], {
+          source: 'sync'
+        })
+        for (const e of events) {
+          if (e.type === 'removed') peer.deleteByKeys(e.keys)
+          if (e.type === 'added') peer.importVisits(e.visits, { source: 'sync' })
+        }
+        vi.restoreAllMocks()
+        expect(peer.visits({ limit: 10 }).map((v) => v.url)).toEqual([HOME])
+        expect(peer.redirectChainOf(GATE)).toEqual([GATE, HOME])
+        expect(peer.recent(5).find((e) => e.url === GATE)?.typedCount).toBe(1)
+      })
+
+      it('keeps the https twin’s transferred credit and a linked page’s link transition; the new navigation earns nothing', () => {
+        const h = new HistoryService(fakeIo(), now)
+        h.visit('https://www.example.test/', 'Example', null, {
+          transition: 'typed',
+          tabId: 't1',
+          redirectedFrom: ['http://example.test/']
+        })
+        clock += 300
+        h.visit(HOME, 'Home', null, {
+          transition: 'typed',
+          tabId: 't1',
+          clientRedirectFrom: 'https://www.example.test/'
+        })
+        const counts = new Map(h.recent(9).map((e) => [e.url, e.typedCount]))
+        expect(counts.get('http://example.test/')).toBe(0)
+        expect(counts.get('https://www.example.test/')).toBe(1)
+        expect(counts.get(HOME)).toBe(0)
+        expect(all(h)).toEqual([
+          ['http://example.test/', 'redirect', true, undefined, NOW + 300],
+          ['https://www.example.test/', 'typed', true, undefined, NOW + 300],
+          [
+            HOME,
+            'redirect',
+            undefined,
+            ['http://example.test/', 'https://www.example.test/'],
+            NOW + 300
+          ]
+        ])
+        clock += 300
+        h.visit(GATE, 'Gate', null, { transition: 'link', tabId: 't2' })
+        clock += 300
+        h.visit('https://other.test/', 'Other', null, { tabId: 't2', clientRedirectFrom: GATE })
+        expect(all(h).slice(-2)).toEqual([
+          [GATE, 'link', true, undefined, NOW + 900],
+          ['https://other.test/', 'redirect', undefined, [GATE], NOW + 900]
+        ])
+      })
+
+      it('folds nothing without a visit of the page in the tab, for the page’s own address, or for an address history never records', () => {
+        const h = new HistoryService(fakeIo(), now)
+        h.visit(GATE, 'Gate', null, { transition: 'typed', tabId: 't1' })
+        clock += 100
+        // Another tab's commit: the page it shows is not this one.
+        h.visit(HOME, 'Home', null, { tabId: 't2', clientRedirectFrom: GATE })
+        clock += 100
+        // A page never visited (an error page stood there).
+        h.visit('https://b.test/', 'B', null, {
+          tabId: 't1',
+          clientRedirectFrom: 'https://c.test/'
+        })
+        clock += 100
+        // A chrome page cannot be a hop.
+        h.visit('https://d.test/', 'D', null, { tabId: 't1', clientRedirectFrom: 'zen://newtab' })
+        clock += 100
+        // The page came back to its own address (a reload reads the same to the host).
+        h.visit(GATE, 'Gate', null, { tabId: 't1', clientRedirectFrom: GATE })
+        expect(all(h)).toEqual([
+          [GATE, 'typed', undefined, undefined, NOW],
+          [HOME, 'link', undefined, undefined, NOW + 100],
+          ['https://b.test/', 'link', undefined, undefined, NOW + 200],
+          ['https://d.test/', 'link', undefined, undefined, NOW + 300],
+          [GATE, 'link', undefined, undefined, NOW + 400]
+        ])
+        expect(h.count(0, Infinity)).toBe(5)
+        // Without a tab, the page's most recent visit anywhere is the one.
+        clock += 100
+        h.visit(HOME, 'Home', null, { clientRedirectFrom: GATE })
+        expect(all(h).slice(-2)).toEqual([
+          [GATE, 'link', true, undefined, NOW + 500],
+          [HOME, 'redirect', undefined, [GATE], NOW + 500]
+        ])
+        expect(h.recent(9).find((e) => e.url === GATE)).toMatchObject({
+          visitCount: 2,
+          typedCount: 1
+        })
+      })
     })
   })
 })

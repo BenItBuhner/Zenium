@@ -1105,6 +1105,15 @@ export interface SyncScope {
    * publishes its visits nor takes the others' in. Absent on a `sync.json` older than the key.
    */
   history: boolean
+  /**
+   * The reading list (Chrome's "Reading list" type; W6-1's model, one `reading-list-entry`
+   * record per entry carrying every field but `favicon`), on by default as the bookmarks are.
+   * Off, a device neither publishes its entries nor takes the others' in, and deletes nothing
+   * anywhere (`frozenRecords`). Absent on a `sync.json` older than the key, where the engine
+   * completes it with the default; a scope object from an older build says nothing for it, so
+   * `collectLocal` under one publishes no entry (`__tests__/compat.test.ts`).
+   */
+  readingList: boolean
 }
 
 /** One open tab of another device, as its `open-tabs` record carries it (ID-28). */

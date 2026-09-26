@@ -9,6 +9,7 @@ import type {
   FolderColor,
   KeyBinding,
   PasskeyEntry,
+  ReadingListEntry,
   Settings,
   Space,
   SpaceAgentMark,
@@ -18,6 +19,7 @@ import type {
 } from '../../shared/types'
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
 import { OTHER_BOOKMARKS_ID, isBookmarkRoot } from '../../shared/bookmarks'
+import { isReadingListUrl, sanitizeReadingEntry } from '../../shared/readingList'
 import type { Model } from '../model'
 import type { SiteDataPolicy } from '../../shared/siteData'
 import { sha1Hex } from './sha1'
@@ -48,6 +50,14 @@ export type RecordType =
    * for a type it does not know, and neither tombstones nor applies it.
    */
   | 'site-data'
+  /**
+   * One entry of the reading list (W6-1's `ReadingListEntry`; Chrome's "Reading list" type),
+   * under the entry's own id, carrying every field but `favicon` (`ReadingListEntryData`); the
+   * `readingList` scope's. Additive on the wire like `site-data`: a peer on a build without the
+   * type leaves the record alone (`__tests__/compat.test.ts` pins how this build treats a type it
+   * does not know, which is how the builds before it treat this one).
+   */
+  | 'reading-list-entry'
 
 export interface SyncRecord {
   id: string
@@ -242,6 +252,56 @@ export function readBookmarkData(data: unknown): BookmarkData | null {
 }
 
 /**
+ * A reading-list entry as its record carries it (services pass 11; the interface doc §1–§3 in
+ * `internal/desktop-parity/reading-list-interface.md` as services' read amended it): the
+ * entry's six fields – `id`, `url`, `title`, `addedAt`, `updatedAt`, `readAt` while read – and
+ * never `favicon`, which is the device's own (a data URL is bytes across the boundary, an
+ * address may be host-local; the receiving device resolves the icon from its cache by `url`).
+ * `readAt` absent while unread serialises as absence and the hash sees it. `updatedAt` rides as
+ * information, set in the commit the engine stamps: the conflict clock is the record's
+ * `modified` – the engine's stamp at the commit that changed the entry (`SyncEngine.onLocalChange`)
+ * – and `winningRemote` reads no payload field. Last writer per entry; ties keep the local copy;
+ * no field-level merge (an entry is already one record per item). A removal is the engine's
+ * tombstone, from absence (`diffLocal`, at `now`, kept `TOMBSTONE_TTL_MS`); a later add of the
+ * same page makes a new id that wins by its own clock while the tombstone runs out.
+ */
+export type ReadingListEntryData = Omit<ReadingListEntry, 'favicon'>
+
+/** The record's payload for an entry: the six fields in the normal form's order, `favicon` left home. */
+export function readingListEntryData(entry: ReadingListEntry): ReadingListEntryData {
+  const data: ReadingListEntryData = {
+    id: entry.id,
+    url: entry.url,
+    title: entry.title,
+    addedAt: entry.addedAt,
+    updatedAt: entry.updatedAt
+  }
+  if (entry.readAt !== undefined) data.readAt = entry.readAt
+  return data
+}
+
+/**
+ * Read a reading-list record from another device – the apply side's sanitiser, before the entry
+ * joins the list (`ReadingListService.applySynced`): the model's own `sanitizeReadingEntry`
+ * under the record's id (a string URL, a finite `addedAt`, a title or the URL for one,
+ * `updatedAt` or the latest time the entry has, `readAt` while finite, unknown fields dropped;
+ * the field order the model's writes leave), a web address only (`isReadingListUrl`: the list
+ * never holds `zen://`, `about:blank` or a file, whatever a peer sends), and never a `favicon` –
+ * a peer's build that sends one sends its own device's. The model caps no title, so none is
+ * applied here: a cap the model lacks would rewrite a peer's bytes at apply. Null for garbage.
+ * Idempotent – what it returns, it returns again unchanged (`__tests__/records.test.ts`) – so
+ * a record this device re-publishes after applying it hashes as the entry it holds, and two
+ * builds never bounce an entry back and forth.
+ */
+export function readReadingListData(id: string, data: unknown): ReadingListEntry | null {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null
+  const entry = sanitizeReadingEntry({ ...(data as Record<string, unknown>), id })
+  if (!entry || !isReadingListUrl(entry.url)) return null
+  delete entry.favicon
+  return entry
+}
+
+/**
  * The settings that are one device's own and travel in neither direction: this device's record
  * carries none of them, and a peer's record carrying one (a build from before a key joined the
  * list still sends it) leaves this device's value standing – the settings record is otherwise
@@ -409,7 +469,8 @@ export function defaultScope(): SyncScope {
     shortcuts: true,
     boosts: true,
     passwords: true,
-    history: true
+    history: true,
+    readingList: true
   }
 }
 
@@ -427,7 +488,8 @@ export function fullScope(): SyncScope {
     shortcuts: true,
     boosts: true,
     passwords: true,
-    history: true
+    history: true,
+    readingList: true
   }
 }
 
@@ -446,6 +508,8 @@ export function inScope(record: SyncRecord, scope: SyncScope): boolean {
       return scope.containers
     case 'bookmark':
       return scope.bookmarks
+    case 'reading-list-entry':
+      return scope.readingList
     case 'settings':
     case 'site-data':
       return scope.settings
@@ -829,6 +893,12 @@ export interface LocalSources {
   credentials?: CredentialSources | null
   /** The per-site cookie policy (`SiteDataService.policy()`); published with the settings. */
   siteData?: SiteDataPolicy
+  /**
+   * The reading list (`BrowserState.readingList`), one `reading-list-entry` record per entry
+   * under the `readingList` scope; a source without the field (a record set from before the
+   * type, `__tests__/compat.test.ts`'s golden sources) publishes none.
+   */
+  readingList?: readonly ReadingListEntry[]
 }
 
 /** Snapshot of everything in scope as `{ id → { type, data } }`. */
@@ -936,6 +1006,10 @@ export function collectLocal(
       }
       out.set(b.id, { type: 'bookmark', data })
     }
+  }
+  if (scope.readingList && src.readingList) {
+    for (const entry of src.readingList)
+      out.set(entry.id, { type: 'reading-list-entry', data: readingListEntryData(entry) })
   }
   if (scope.settings) {
     // The record carries the settings as they are and never a key they lack: a key invented here
