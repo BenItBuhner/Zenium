@@ -578,7 +578,11 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
             hold != null && abs(menu.left - hold.x) > SLACK && abs(menu.right - hold.x) > SLACK && abs(menu.top - hold.y) > SLACK && abs(menu.bottom - hold.y) > SLACK,
             "menu ${menu.toShortString()}, finger ${hold?.x},${hold?.y}"
         )
-        check("the menu carries the page as its source (`data-source=\"page\"`: the tile's menu, the one the box anchor is for)", inDom("$MENU[data-source=\"page\"]"), "")
+        check(
+            "the menu carries the page as its source and the box as its anchor (`data-source=\"page\"`, `data-anchor=\"box\"`: the tile's menu, hung from the rect the page sent)",
+            inDom("$MENU[data-source=\"page\"][data-anchor=\"box\"]"),
+            "source / anchor: ${jsText("(function(){var m=document.querySelector('$MENU');return m?m.getAttribute('data-source')+' / '+m.getAttribute('data-anchor'):'no menu'})()")}"
+        )
     }
 
     /** A box read twice 300 ms apart that agrees (a popover popping in moves on each frame); the last read when three seconds pass without one. */
