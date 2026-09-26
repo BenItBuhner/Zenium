@@ -575,7 +575,15 @@ export class Menus {
    */
   showNewTabTileMenu(
     tabId: string,
-    tile: { id: string; url: string; title: string; x: number; y: number; keyboard: boolean },
+    tile: {
+      id: string
+      url: string
+      title: string
+      x: number
+      y: number
+      keyboard: boolean
+      rect?: Rect
+    },
     win: ZenWindow
   ): void {
     const { tabs, state } = this.browser
@@ -607,10 +615,15 @@ export class Menus {
             {
               label: 'Open in Private Tab',
               click: () => tabs.newPrivateTab(tile.url, win)
-            },
-            // Chrome's third row on the tile's hold menu (NTP-35), the phone's own hold menu's
-            // third (`showTopSiteContextMenu`): a touch host has no address to drag off the tile.
-            // The desktop template is unchanged.
+            }
+          ]
+        : []),
+      // Chrome's third row on the tile's hold menu (NTP-35), the phone's own hold menu's third
+      // (`showTopSiteContextMenu`): a touch host has no address to drag off the tile, which has
+      // nothing to do with private browsing – a host without profiles gets the row too. Gated on
+      // the windows alone; the desktop template is unchanged.
+      ...(!caps.windows
+        ? [
             {
               label: 'Copy Link',
               click: () => this.browser.platform.clipboard.writeText(tile.url)
@@ -645,9 +658,20 @@ export class Menus {
       click: () => this.browser.newTab.removeTileFromPage(tabId, tile.id)
     })
     const rect = win.contentRect()
-    const anchor = rect
+    const anchor: MenuAnchor = rect
       ? { x: rect.x + tile.x, y: rect.y + tile.y, keyboard: tile.keyboard }
       : { keyboard: tile.keyboard }
+    // The touch layouts hang the menu from the tile's box – the square and its caption, in the
+    // window's pixels – flush under it and start-aligned with it, not at the finger (NTP-35;
+    // `MenuAnchor.rect`). The desktop's menu opens at the pointer as it always has.
+    if (rect && tile.rect && touchLayout(win.formFactor)) {
+      anchor.rect = {
+        x: rect.x + tile.rect.x,
+        y: rect.y + tile.rect.y,
+        width: tile.rect.width,
+        height: tile.rect.height
+      }
+    }
     this.popup(joinGroups([open, manage]), win, 'page', anchor)
   }
 

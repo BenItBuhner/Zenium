@@ -83,6 +83,31 @@ describe('resolveMenuAnchor', () => {
     })
   })
 
+  it("hangs a page's menu from the box it names (the served new tab page's tile), and the chrome's menus from the point or the opener as before", () => {
+    const tile = { x: 420, y: 260, width: 104, height: 96 }
+    expect(resolveMenuAnchor({ x: 450, y: 310, rect: tile, source: 'page' }, null)).toEqual({
+      kind: 'box',
+      box: tile
+    })
+    // A chrome menu's descriptor may carry the control's box for the native hosts
+    // (`controlMenuAnchor`): the tablet reads the point and the opener as it did.
+    expect(resolveMenuAnchor({ x: 450, y: 310, rect: tile, source: 'history' }, null)).toEqual({
+      kind: 'point',
+      x: 450,
+      y: 310
+    })
+    const { control } = toolbarControl({ x: 1200, y: 8, width: 40, height: 40 })
+    expect(resolveMenuAnchor({ x: 1200, y: 48, rect: tile, source: 'app' }, control).kind).toBe(
+      'control'
+    )
+    // A page menu without a box – a pointer's on the desktop's tree, an older page – is the point.
+    expect(resolveMenuAnchor({ x: 450, y: 310, source: 'page' }, null)).toEqual({
+      kind: 'point',
+      x: 450,
+      y: 310
+    })
+  })
+
   it('opens at the last press when the descriptor carries no point', () => {
     expect(resolveMenuAnchor({ x: null, y: null }, null, { x: 300, y: 400 })).toEqual({
       kind: 'point',
@@ -165,6 +190,40 @@ describe('placeRootMenu', () => {
     expect(box.left + box.width).toBeLessThanOrEqual(SPLIT.width - POPOVER_MARGIN)
     // The finger in the trailing half: end edges on the point.
     expect(box.left + box.width).toBe(500)
+  })
+
+  // The served new tab page's tile menu (NTP-35): the tile's box – the 64 square and its
+  // caption – in the window's pixels, whatever half of the window it stands in.
+  it("hangs a page's box menu flush under the box, start edges level with it – a tile in the trailing half too", () => {
+    const tile = { x: 720, y: 300, width: 104, height: 96 }
+    const box = placeRootMenu({ kind: 'box', box: tile }, 240, LANDSCAPE)
+    expect(box.side).toBe('below')
+    if (box.side !== 'below') return
+    expect(box.left).toBe(720)
+    expect(box.top).toBe(396)
+    expect(box.width).toBe(TABLET_MENU_WIDTH)
+    expect(box.maxHeight).toBe(240)
+    // The finger's point in the same tile would have ended the menu on the point instead.
+    const finger = placeRootMenu({ kind: 'point', x: 760, y: 340 }, 240, LANDSCAPE)
+    expect(finger.left + finger.width).toBe(760)
+  })
+
+  it("ends a page's box menu on the box when its start alignment would cross the trailing margin (§9.20's flip)", () => {
+    const tile = { x: 1100, y: 300, width: 104, height: 96 }
+    const box = placeRootMenu({ kind: 'box', box: tile }, 240, LANDSCAPE)
+    expect(box.left + box.width).toBe(1204)
+    expect(box.left + box.width).toBeLessThanOrEqual(LANDSCAPE.width - POPOVER_MARGIN)
+    expect(box.side).toBe('below')
+  })
+
+  it("flips a page's box menu above the box when the room below runs out, its bottom flush with the box's top", () => {
+    const tile = { x: 120, y: 660, width: 104, height: 96 }
+    const box = placeRootMenu({ kind: 'box', box: tile }, 240, LANDSCAPE)
+    expect(box.side).toBe('above')
+    if (box.side !== 'above') return
+    expect(box.left).toBe(120)
+    expect(box.bottom).toBe(800 - 660)
+    expect(box.maxHeight).toBe(240)
   })
 })
 

@@ -139,6 +139,19 @@ describe('zen://newtab tokens', () => {
     expect(resolveTheme(PRIVATE_THEME, true).isDark).toBe(true)
   })
 
+  it("takes the touch layouts' numbers under a coarse pointer (NTP-35): the field 56, Customise the 40 control, the tiles 64", () => {
+    // The desktop's numbers stand outside the query: the field 48, the button the 32 control.
+    expect(NEW_TAB_PAGE_STYLE).toMatch(/\.zen-ntp-field \{[^}]*height: 48px;/)
+    expect(NEW_TAB_PAGE_STYLE).toMatch(/\.zen-v2-button \{[^}]*height: var\(--v2-control\);/)
+    expect(NEW_TAB_PAGE_STYLE).toMatch(
+      /@media \(pointer: coarse\) \{\s*\.zen-ntp-field \{ height: 56px; \}\s*\.zen-customize \{ height: 40px; border-radius: 6px; \}\s*\}/
+    )
+    // The tile is the 64 square on every pointer: no coarse rule touches it.
+    expect(NEW_TAB_PAGE_STYLE).toMatch(/\.zen-ntp-tile \{[^}]*width: 64px; height: 64px; \}/)
+    const coarse = NEW_TAB_PAGE_STYLE.slice(NEW_TAB_PAGE_STYLE.indexOf('@media (pointer: coarse)'))
+    expect(coarse.slice(0, coarse.indexOf('\n  }'))).not.toContain('zen-ntp-tile')
+  })
+
   it('hides with the attribute whatever display a class sets (the grid is a grid)', () => {
     expect(NEW_TAB_PAGE_STYLE).toMatch(/^\s*\[hidden\] \{ display: none !important; \}$/m)
     expect(NEW_TAB_PAGE_STYLE).toMatch(/\.zen-grid \{\s*display: grid;/)

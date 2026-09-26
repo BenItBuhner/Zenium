@@ -4652,9 +4652,12 @@ describe("the served new tab page's tile menu (GN-11's row per host shape)", () 
       '-',
       'Remove'
     ])
+    // Copy Link is gated on the windows alone (a touch host cannot drag the address, whichever
+    // way it keeps private browsing): a host without profiles still carries it, and not the
+    // private open.
     expect(
       tileMenu(pageHarness({ ...ANDROID, privateTabs: false }, { formFactor: 'tablet' }))
-    ).toEqual(['Open in New Tab', '-', 'Remove'])
+    ).toEqual(['Open in New Tab', 'Copy Link', '-', 'Remove'])
     expect(tileMenu(pageHarness({ ...ANDROID, windows: true }, { formFactor: 'tablet' }))).toEqual([
       'Open in New Tab',
       'Open in New Window',
@@ -4662,6 +4665,63 @@ describe("the served new tab page's tile menu (GN-11's row per host shape)", () 
       '-',
       'Remove'
     ])
+  })
+
+  describe("where the menu hangs (NTP-35): the tile's box on the touch layouts, the pointer on the desktop", () => {
+    // The page sits to the right of the sidebar: its CSS pixels are offset in the window's.
+    const CONTENT = { x: 300, y: 60, width: 900, height: 700 }
+    const BOX = { x: 120, y: 200, width: 104, height: 96 }
+    const menuFor = (h: PageHarness, keyboard = false): void => {
+      h.win.applyLayout({
+        placements: [{ tabId: h.tabId, rect: CONTENT, radius: 8 }],
+        glance: null,
+        contentHidden: false
+      })
+      h.browser.menus.showNewTabTileMenu(
+        h.tabId,
+        { ...TILE, x: 150, y: 250, keyboard, rect: BOX },
+        h.win
+      )
+    }
+
+    it("the tablet's menu carries the tile's box in the window's pixels beside the finger's point", () => {
+      const h = pageHarness(ANDROID, { formFactor: 'tablet' })
+      menuFor(h)
+      expect(h.where()).toMatchObject({
+        source: 'page',
+        x: 450,
+        y: 310,
+        keyboard: false,
+        rect: { x: 420, y: 260, width: 104, height: 96 }
+      })
+    })
+
+    it("the desktop's menu opens at the pointer as it always has: no box, whatever the page sent", () => {
+      const h = pageHarness(DESKTOP)
+      menuFor(h)
+      expect(h.where()).toMatchObject({ source: 'page', x: 450, y: 310, keyboard: false })
+      expect(h.where()).not.toHaveProperty('rect')
+      // The keyboard's menu too: the page already points it at the square's bottom-left corner.
+      menuFor(h, true)
+      expect(h.where()).toMatchObject({ x: 450, y: 310, keyboard: true })
+      expect(h.where()).not.toHaveProperty('rect')
+    })
+
+    it('a page that sent no box (an older page script) hangs the menu at the point on every host', () => {
+      const h = pageHarness(ANDROID, { formFactor: 'tablet' })
+      h.win.applyLayout({
+        placements: [{ tabId: h.tabId, rect: CONTENT, radius: 8 }],
+        glance: null,
+        contentHidden: false
+      })
+      h.browser.menus.showNewTabTileMenu(
+        h.tabId,
+        { ...TILE, x: 150, y: 250, keyboard: false },
+        h.win
+      )
+      expect(h.where()).toMatchObject({ x: 450, y: 310, keyboard: false })
+      expect(h.where()).not.toHaveProperty('rect')
+    })
   })
 })
 

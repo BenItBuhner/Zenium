@@ -446,7 +446,10 @@ class NewTabPage {
         item,
         fromKeyboard ? rect.left : e.clientX,
         fromKeyboard ? rect.bottom : e.clientY,
-        fromKeyboard
+        fromKeyboard,
+        // The tile's box – the square and its caption – for the touch layouts' menu to hang from
+        // (NTP-35: flush under the tile, start-aligned with it, not at the finger).
+        tile.getBoundingClientRect()
       )
     })
     this.grid.addEventListener('click', (e) => {
@@ -612,7 +615,7 @@ class NewTabPage {
    * Shortcut (custom tiles) and Remove. Remove comes back as a `remove-tile` command so Undo is
    * the page's.
    */
-  private openMenu(tile: Tile, x: number, y: number, keyboard: boolean): void {
+  private openMenu(tile: Tile, x: number, y: number, keyboard: boolean, box: DOMRect): void {
     this.transport.send({
       type: 'tile-menu',
       id: tile.id,
@@ -620,7 +623,13 @@ class NewTabPage {
       title: tile.title,
       x: Math.round(x),
       y: Math.round(y),
-      keyboard
+      keyboard,
+      rect: {
+        x: Math.round(box.left),
+        y: Math.round(box.top),
+        width: Math.round(box.width),
+        height: Math.round(box.height)
+      }
     })
   }
 

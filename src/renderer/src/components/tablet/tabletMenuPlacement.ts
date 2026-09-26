@@ -21,26 +21,34 @@ export const TABLET_MENU_WIDTH = 332
 
 /**
  * Where a tablet menu hangs from (v2 §9.36): the chrome control that opened it – the toolbar's
- * ⋯ – with the bar it sits in, or the finger's point for a context menu.
+ * ⋯ – with the bar it sits in, the finger's point for a context menu, or a box of the page's
+ * own that the chrome cannot read itself – the served new tab page's tile (NTP-35).
  */
 export type TabletMenuAnchor =
   | { kind: 'control'; box: Rect; bar: Rect; element: HTMLElement }
   | { kind: 'point'; x: number; y: number }
+  | { kind: 'box'; box: Rect }
 
 /**
- * The anchor a `menu.show` descriptor resolves to. The core echoes a point alone – for the app
- * menu the button's bottom start corner (`showAppMenu`), for a context menu the pointer or the
- * finger (`contextMenuAnchor`, `useTabTouch`) – so the control's box comes from the opener
- * (`menuAnchor`, set by `openAppMenu`), taken when its box still meets the point: the bar it
- * sits in is the tablet toolbar row, whose bottom edge the popover's top sits flush with, or
- * the nearest `[data-bar]`, or the control's own box. A point with no control is the point;
- * a descriptor with no point at all opens at the last press.
+ * The anchor a `menu.show` descriptor resolves to. A page's menu that names the box it belongs
+ * to – the served new tab page's tile menu under a finger (NTP-35): the tile's square and
+ * caption, which stand in the page's view where the chrome cannot read them – hangs from that
+ * box. Otherwise the core echoes a point alone – for the app menu the button's bottom start
+ * corner (`showAppMenu`), for a context menu the pointer or the finger (`contextMenuAnchor`,
+ * `useTabTouch`) – so the control's box comes from the opener (`menuAnchor`, set by
+ * `openAppMenu`), taken when its box still meets the point: the bar it sits in is the tablet
+ * toolbar row, whose bottom edge the popover's top sits flush with, or the nearest `[data-bar]`,
+ * or the control's own box. A point with no control is the point; a descriptor with no point
+ * at all opens at the last press. The chrome's own menus keep to that reading of the point and
+ * the opener whatever box their descriptor carries (`controlMenuAnchor` sends one for the
+ * native hosts).
  */
 export function resolveMenuAnchor(
-  menu: Pick<MenuDescriptor, 'x' | 'y'>,
+  menu: Pick<MenuDescriptor, 'x' | 'y'> & Partial<Pick<MenuDescriptor, 'rect' | 'source'>>,
   control: HTMLElement | null = menuAnchor.element,
   pointer: { x: number; y: number } = lastPointer
 ): TabletMenuAnchor {
+  if (menu.rect && menu.source === 'page') return { kind: 'box', box: menu.rect }
   const x = menu.x ?? pointer.x
   const y = menu.y ?? pointer.y
   if (control && control.isConnected) {
@@ -58,10 +66,12 @@ export function resolveMenuAnchor(
 
 /**
  * The root panel's box for `anchor` (§9.20's order – flip, slide, shrink – against the window
- * at the 8 margin): under the control's bar, aligned by the control's half of it, or at the
- * finger – start edges at the point, end edges when the finger is in the window's trailing
- * half, below the point when the menu fits there and above it otherwise. `height` is the
- * panel's own, once measured; the 60% cap and the window minus 16 hold either way.
+ * at the 8 margin): under the control's bar, aligned by the control's half of it; from a page's
+ * box – the tile's – flush under it with start edges level, end edges when the start alignment
+ * would cross the window's margin, above it when the room below runs out; or at the finger –
+ * start edges at the point, end edges when the finger is in the window's trailing half, below
+ * the point when the menu fits there and above it otherwise. `height` is the panel's own, once
+ * measured; the 60% cap and the window minus 16 hold either way.
  */
 export function placeRootMenu(
   anchor: TabletMenuAnchor,
@@ -70,6 +80,16 @@ export function placeRootMenu(
 ): PopoverBox {
   if (anchor.kind === 'control') {
     return placePopover(anchor.box, anchor.bar, viewport, { measured: TABLET_MENU_WIDTH }, height)
+  }
+  if (anchor.kind === 'box') {
+    return placePopover(
+      anchor.box,
+      anchor.box,
+      viewport,
+      { measured: TABLET_MENU_WIDTH },
+      height,
+      'start'
+    )
   }
   const point: Rect = { x: anchor.x, y: anchor.y, width: 0, height: 0 }
   const column: Rect = { x: 0, y: 0, ...viewport }
