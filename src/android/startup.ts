@@ -60,10 +60,19 @@ function hasHistory(browser: Browser, tab: Tab): boolean {
  * that tab out of every layout report (`useLayoutReporter`), so its view is never placed – a
  * profile restored on it (one #490's first tab left behind, v0.4.71–v0.4.74) would hold READY to
  * the host's watchdog. The tablet places the blank view and waits for it as for any page.
+ *
+ * Nor is a page placed on the phone while its first-run tour stands: the tour is the whole
+ * window, drawn in the chrome, and the chrome reports the content hidden under it
+ * (`useLayoutReporter`, on the same `onboardingDone` the phone shell mounts the tour on –
+ * `lib/onboarding.ts` `phoneOnboardingCovers`), so a fresh profile's first launch from a link
+ * (a VIEW intent's page, active and loaded before the arm) has no placement coming until the
+ * tour ends: READY on the theme's paint and the insets, the splash lifting to the tour. The
+ * tablet's tour is the desktop's, over pages the tablet places; it is left as it is.
  */
 export function bootNeedsPlacement(browser: Browser, win: ZenWindow, phone: boolean): boolean {
   const active = browser.tabs.activeTabFor(win)
   if (active === undefined || browser.pages.isChromePage(active)) return false
+  if (phone && !browser.state.settings.onboardingDone) return false
   return !(phone && active.url === BLANK_URL)
 }
 

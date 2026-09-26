@@ -221,7 +221,8 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
   // Started, restored, flushed: READY once the chrome has painted its theme under the insets and
   // placed the page slot – when there is a page to place (the active tab restored as a page;
   // a window without a tab, on a chrome page, or on the blank page the phone draws itself has
-  // no view and nothing to wait for).
+  // no view and nothing to wait for, and under the phone's first-run tour no page is placed
+  // until the tour ends – a fresh profile's first launch from a link, startup.ts).
   ready.arm(bootNeedsPlacement(browser, platform.window, phone))
 
   // Shortcuts typed into the chrome itself go through the same table as page keys.

@@ -382,3 +382,87 @@ describe("the heal of #490's restored blank tab on the phone", () => {
     expect(bootNeedsPlacement(browser, win, true)).toBe(false)
   })
 })
+
+/*
+ * The tour (W6-HF2, hole 2): a fresh profile's first launch from a link. The VIEW intent's page
+ * is opened in `bootAndroid`'s flush, before the arm – a page tab, active and loaded – and the
+ * arm read it as a page to place; but the phone's first-run tour stands over the whole window
+ * and the chrome reports the content hidden under it (`useLayoutReporter`, on the same
+ * `onboardingDone` the shell mounts the tour on), so no placement comes until the tour ends.
+ * The arm reads the tour off the core's copy of the flag and waits for nothing: READY on the
+ * theme's paint and the insets, the splash lifting to the tour. Nothing else reads the arm
+ * (`ChromeReady.arm` is its one consumer). The tablet's tour is the desktop's, over pages the
+ * tablet places; its arm is unchanged.
+ */
+describe("READY under the phone's first-run tour", () => {
+  /** A fresh phone profile launched from a link: the intent's page opened as the boot's flush does. */
+  function launchedFromLink(): {
+    browser: Browser
+    win: ZenWindow
+    tabId: string
+    sent: Array<{ name: EventName; payload: unknown }>
+  } {
+    const { browser, sent } = phone(phoneCapabilities())
+    browser.start()
+    const win = only(browser)
+    browser.openExternalUrl('https://linked.example/', win, { fromIntent: true })
+    const active = browser.tabs.activeTabFor(win)
+    if (!active) throw new Error('the intent opened no tab')
+    return { browser, win, tabId: active.id, sent }
+  }
+
+  it("a fresh profile's first launch from a link arms READY without a placement to wait for", () => {
+    const { browser, win, tabId } = launchedFromLink()
+    expect(browser.state.settings.onboardingDone).toBe(false)
+    const tab = browser.state.model.tabs[tabId]
+    expect(tab.url).toBe('https://linked.example/')
+    expect(tab.fromIntent).toBe(true)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([tabId])
+    expect(bootNeedsPlacement(browser, win, true)).toBe(false)
+  })
+
+  it('past the first run the same launch waits for the page, as before', () => {
+    const { browser } = phone(phoneCapabilities())
+    browser.state.settings.onboardingDone = true
+    browser.start()
+    const win = only(browser)
+    browser.openExternalUrl('https://linked.example/', win, { fromIntent: true })
+    expect(browser.tabs.activeTabFor(win)?.url).toBe('https://linked.example/')
+    expect(bootNeedsPlacement(browser, win, true)).toBe(true)
+  })
+
+  it("the tablet's arm is unchanged under its tour: it places the page and waits for it", () => {
+    const { browser, win } = launchedFromLink()
+    expect(bootNeedsPlacement(browser, win, false)).toBe(true)
+  })
+
+  it('a fresh profile with no link keeps arming without a placement (no tab)', () => {
+    const { browser } = phone(phoneCapabilities())
+    browser.start()
+    expect(bootNeedsPlacement(browser, only(browser), true)).toBe(false)
+  })
+
+  it("the tour's end leaves the intent's page active, to be placed by the first layout after it – with the omnibox over it, the core's rule", () => {
+    // `onboarding.complete` ends the tour "in a new tab" (core/browser.ts): on a host without
+    // the new tab page that is the omnibox alone in new-tab mode (`NewTabService.open`), no tab
+    // made – so the intent's page stays the active tab, the chrome's next layout report places
+    // it (`useLayoutReporter`, the tour gone), and the omnibox rises over it. What the tour ends
+    // on is that rule's, not this seam's; pinned so the phone's first launch from a link reads
+    // as it is.
+    const { browser, win, tabId, sent } = launchedFromLink()
+    sent.length = 0
+    browser.handleCommand(win, 'onboarding.complete', {
+      searchEngineId: browser.state.settings.searchEngineId,
+      colorScheme: 'system',
+      essentials: []
+    })
+    expect(browser.state.settings.onboardingDone).toBe(true)
+    expect(browser.tabs.activeTabFor(win)?.id).toBe(tabId)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([tabId])
+    expect(sent.filter((e) => e.name === 'urlbar.toggle').map((e) => e.payload)).toEqual([
+      { mode: 'new-tab' }
+    ])
+    // With the tour gone the page is a page to place, as on any boot past the first run.
+    expect(bootNeedsPlacement(browser, win, true)).toBe(true)
+  })
+})

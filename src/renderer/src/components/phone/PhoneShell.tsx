@@ -34,6 +34,7 @@ import { closeSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import { mediaSession } from '@renderer/lib/media'
 import { barFade } from '@renderer/lib/motion/recede'
 import { focusHoldsChrome, focusOmnibox, omniboxFocusStore } from '@renderer/lib/omniboxFocus'
+import { phoneOnboardingCovers } from '@renderer/lib/onboarding'
 import { useFakeboxSurface } from '@renderer/hooks/useFakeboxSurface'
 import { useRecedeSurface } from '@renderer/hooks/useRecedeSurface'
 import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
@@ -108,7 +109,8 @@ interface Props {
 export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   const tab = activeTab(state)
   const edge = state.settings.phoneBarPosition
-  const onboarding = !state.settings.onboardingDone
+  // The first run over the window: the same term hides the page views under it (`useLayoutReporter`).
+  const onboarding = phoneOnboardingCovers(state)
   const htmlFullscreen = state.window.htmlFullscreenTabId !== null
   const activeTabId = tab?.id ?? null
   const dock = dockStore.use()
