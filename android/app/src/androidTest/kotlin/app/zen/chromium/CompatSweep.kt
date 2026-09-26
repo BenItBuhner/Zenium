@@ -7268,6 +7268,88 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("dlcobpjiigpikoobohmabehhmhfoodbb", "Ready X", "ready-x", core = domMarker("Ready X's Starknet provider injected into the page world", "wallet.html?readyx", READY_PROVIDER, settleMs = 30_000)),
         Row("nnnkddnnlpamobajfibfdgfnbcnkgngh", "Infinity New Tab (Pro)", "infinity-new-tab-pro", core = newTabOverride("Infinity New Tab (Pro)")),
         Row("abpdnfjocnmdomablahdcfnoggeeiedb", "Save All Resources", "save-all-resources", feasible = false, core = notOnThePhone("Save All Resources: its saver is a DevTools panel (`devtools_page`) reading the inspected page's resources through `chrome.devtools`; the phone has no DevTools panel to host it (WebView limit); its popup is the panel's instruction sheet")),
+        // --- compat round 21 (ranks 511-540 by installs; `.github/scripts/ext-compat/next30-round18.json`) ---
+        // Each core rule read off the unpacked bundle: PureVPN's and ZoogVPN's popups are their
+        // sign-in forms (`ui/popup/login.html`; "Login to your account") ahead of any connect;
+        // Magical's action has no popup – `onClicked` on an http(s) tab tells its content UI to
+        // open the panel (`panel.hasOpenedViaBrowserAction`), whose features sign in through
+        // getmagical.com; Night Eye's content script marks `<html nighteye="dark|filtered|
+        // normal|disabled|passive">` and injects `#nighteyedefaultcss` (a trial that starts on
+        // install); Toby is a new-tab override (`newtab.html`); Adblock for YouTube ships 49
+        // `easylist_rules` all with `initiatorDomains: ["youtube.com"]` (doubleclick,
+        // googlesyndication, …) and a `skip-ad.js` that clicks `.ytp-ad-skip-button`; L.O.C's
+        // whole surface is its worker answering loc.dev / lnmai.com over `externally_connectable`
+        // (no popup, no options, no content script); Trancy's three content scripts draw its
+        // reader and subtitles UI (`trancy-slider`, `trancy-menuitem`) and its AI runs through
+        // trancy.com; Gradient Sentry Node's popup connects a Gradient account
+        // (app.gradient.network); Temp Mail's popup draws the mailbox address into `#email` from
+        // `web2.temp-mail.org/api/v1`; Checker Plus for Google Calendar signs in with `identity`
+        // (its popup `popup.html?source=toolbar`); Chrome Capture's worker records with
+        // `tabCapture.getMediaStreamId` / `desktopCapture.chooseDesktopMedia` and its offscreen
+        // document's `getDisplayMedia` (the WebView has neither); Save as PDF's popup offers
+        // `.convert`, which has its worker POST the tab's address to pdfcrowd.com (the fixture
+        // is the runner's own address, which that service cannot fetch); Extensity's popup lists
+        // `management.getAll` as `<li class="item">` rows under its search box ("No Extensions or
+        // Apps found." when none); Requestly's popup is a React app in `#root`; Zoom for Google
+        // Chrome has no default popup – its `openactiondoubleclick` default has `onClicked` call
+        // `action.setPopup({tabId, popup: "popup.html"})` and `action.openPopup()`, and the popup's
+        // `#plus` / `#minus` drive `tabs.setZoom` on the tab; Bookmark Sidebar's worker sets
+        // `sidePanel.setPanelBehavior({openPanelOnActionClick: true})` (its `html/sidepanel.html`
+        // draws the bookmark tree); Image Downloader's popup lists the tab's pictures from its
+        // `js/common.js` content script; Petra injects `window.aptos` and `window.petra` from
+        // `static/js/inpage.js`; Custom Cursor Trails' content script draws `.jso-cursor-trail-
+        // shape`s into a `.jso-cursor-trail-wrapper` on `mousemove` / `touchmove`; Go Back With
+        // Backspace's content script (`document_start`, all pages) hears `keydown` Backspace
+        // outside an editable, asks its worker over `runtime.sendMessage('')` that it is alive,
+        // and calls `history.back()` (`history.length < 2` returns early); TinEye's one image
+        // menu item ("Search Image on TinEye") opens `tineye.com/search/?…&url=<src>` next to the
+        // tab; Vidyard's action starts a recording (`tabCapture`; its content scripts run on
+        // Gmail, LinkedIn, Salesforce, Eloqua and Gong; its sign-in is auth.vidyard.com);
+        // Docusign's popup `shell.html` signs in to a Docusign account; Adblock Ad Blocker Pro
+        // blocks with `declarativeNetRequest` rulesets and a `webRequest` observer (its
+        // `js/content.js` on every page); Popup Blocker (strict) registers a MAIN-world script
+        // (`data/inject/block/`) that refuses `window.open` and a UI script that toasts
+        // (`data/ui/index.html`), as Popup Blocker Pro's does; Reader View's action runs
+        // Readability in the tab (`scripting.executeScript`, `data/inject/wrapper.js`) and its
+        // worker rewrites the tab to `data/reader/index.html?id=<tab>&url=<page>`
+        // (`tabs.update`, not a new tab); chrome lock's `onInstalled` opens `options.html` (a
+        // password in `#new`, saved to `storage.local.key`) and its `onStartup` closes every tab
+        // and opens `options-1.html` (the lock) while a key is set – the restart leg is the
+        // Chrono-style relaunch the sweep does not do per row; Social Blade's content script on
+        // youtube.com logs `[SB] Extension loaded!` at document start and POSTs the channel id
+        // to socialblade.com/api/tmp/ping on a watch page, and its action opens socialblade.com;
+        // Banrisul's whole surface is `nativeMessaging` to the bank's desktop host.
+        Row("bfidboloedlamgdmenmlbipfnccokknp", "PureVPN Proxy - Best VPN for Chrome", "purevpn", account = true, core = popupLogin("PureVPN")),
+        Row("alncdjedloppbablonallfbkeiknmkdi", "Dark Mode - Night Eye", "night-eye", core = domMarker("Night Eye's dark mode on the light fixture", "styled-light.html?nighteye", NIGHT_EYE_DARK, settleMs = 30_000)),
+        Row("hddnkoipeenegfoeaoibdmnaalmgkpip", "Toby: Tab Management Tool", "toby", core = newTabOverride("Toby")),
+        Row("jpefmbpcbebpjpmelobfakahfdcgcmkl", "Adblock for YouTube", "adblock-for-youtube-easylist", core = youtubeAdRules("Adblock for YouTube", Regex("doubleclick\\.net|googlesyndication\\.com|googleadservices\\.com|google-analytics\\.com|yieldlove|adnxs", RegexOption.IGNORE_CASE))),
+        Row("eojdckfcadamkapabechhbnkleligand", "L.O.C", "loc", core = serviceBacked("L.O.C", "its worker's whole reachable surface is the `externally_connectable` channel loc.dev / lnmai.com's pages open to it (`runtime.onMessageExternal`; Facebook and Messenger host access for their requests); no popup, no options, no content script")),
+        Row("caacbgbklghmpodbdafajbgdnegacfmo", "Gradient Sentry Node", "gradient-sentry-node", account = true, core = popupLogin("Gradient Sentry Node")),
+        Row("inojafojbhdpnehkhhfjalgjjobnhomj", "Temp Mail - Disposable Temporary Email", "temp-mail", core = popupMarker("Temp Mail", TEMP_MAIL_ADDRESS, settleMs = 30_000, notMeasurable = Regex("error|failed|try again|unavailable|offline|something went wrong|network", RegexOption.IGNORE_CASE), gate = "temp-mail.org's mailbox API (web2.temp-mail.org)")),
+        Row("hkhggnncdpfibdhinjiegagmopldibha", "Checker Plus for Google Calendar", "checker-plus-calendar", account = true, core = popupLogin("Checker Plus for Google Calendar")),
+        Row("ggaabchcecdbomdcnbahdfddfikjmphe", "Chrome Capture - Screenshot & GIF", "chrome-capture", core = captureLimit("Chrome Capture", "/record|capture|screenshot|gif|start|full ?page|visible|area/i")),
+        Row("kpdjmbiefanbdgnkcikhllpmjnnllbbc", "Save as PDF", "save-as-pdf", core = popupMarker("Save as PDF", SAVE_AS_PDF_POPUP, settleMs = 30_000, notMeasurable = Regex("error|could not|failed|unable|timed? ?out|not (be )?(reach|fetch|download)|refused|unreachable", RegexOption.IGNORE_CASE), gate = "pdfcrowd.com's conversion service (the fixture is the runner's own address, which the service cannot fetch)")),
+        Row("jjmflmamggggndanpgfnpelongoepncg", "Extensity", "extensity", core = popupMarker("Extensity", EXTENSITY_LIST, settleMs = 25_000)),
+        Row("mdnleldcmiljblolnjhpnblkcekpdkpa", "Requestly", "requestly", core = popupMarker("Requestly", REQUESTLY_POPUP, settleMs = 30_000)),
+        Row("lajondecmobodlejlcjllhojikagldgd", "Zoom for Google Chrome", "zoom-for-google-chrome", core = zoomPopup("Zoom for Google Chrome")),
+        Row("jdbnofccmhefkmjbkkdkfiicjkgofkdh", "Bookmark Sidebar", "bookmark-sidebar", core = panelMarker("Bookmark Sidebar", "page-a.html?bookmarksidebar", BOOKMARK_SIDEBAR_PANEL, settleMs = 30_000)),
+        Row("daeljdgmllhgmbdkpgnaojldjkdgkbjg", "Image Downloader - Save pictures", "image-downloader-save-pictures", core = imageList("Image Downloader - Save pictures")),
+        Row("immngomjofcbflgcckkfddnbpmjokbjh", "ZoogVPN - Free VPN for Chrome & Proxy", "zoogvpn", account = true, core = popupLogin("ZoogVPN")),
+        Row("cpofhfeclnhnhodbcabgcihloffdpgpd", "Custom Cursor Trails", "custom-cursor-trails", core = domMarker("Custom Cursor Trails' shapes after pointer motion", "page-a.html?trails", CURSOR_TRAILS_DRAWN, settleMs = 20_000, prepare = { view -> tabEval(view, POINTER_MOTION) })),
+        Row("eekailopagacbcdloonjhbiecobagjci", "Go Back With Backspace", "go-back-with-backspace", core = backspaceGoesBack("Go Back With Backspace")),
+        Row("haebnnbpedcbhciplfhjjkbafijpncjl", "TinEye Reverse Image Search", "tineye", core = menuItemOpens("TinEye", "gallery.html?tineye", ".grid img", Regex("TinEye", RegexOption.IGNORE_CASE), Regex("tineye\\.com/search", RegexOption.IGNORE_CASE))),
+        Row("blkboeaihdlecgdjjgkcabbacndbjibc", "Docusign eSignature for Chrome", "docusign", account = true, core = popupLogin("Docusign")),
+        Row("aefkmifgmaafnojlojpnekbpbmjiiogg", "Popup Blocker (strict)", "popup-blocker-strict", core = popupBlocker("Popup Blocker (strict)")),
+        Row("ecabifbgmdmgdllomnfinbmaellmclnh", "Reader View", "reader-view", core = readerRewrites("Reader View")),
+        Row("cjmjgijhapgicbhmniemjkjeaedanank", "Set password for your browser ( chrome lock )", "chrome-lock", core = ownPage("chrome lock", "options.html", CHROME_LOCK_FORM, gate = "a relaunch with the key set (its `runtime.onStartup` closes every tab and opens `options-1.html`, the lock screen – the restart leg the sweep does not run per row)")),
+        Row("cfidkbgamfhdgmedldkagjopnbobdmdn", "Social Blade", "social-blade", core = ::socialBlade),
+        Row("mgapcljibnhkigclmbmdhgehflhljbdd", "Banrisul Internet Banking", "banrisul", core = serviceBacked("Banrisul Internet Banking", "its every feature is the bank's desktop host over native messaging (`Bjess2hm_ContentScript.js` on banrisul.com.br relays to it); the phone has no host to install", native = true)),
+        // The five largest bundles last (Adblock Ad Blocker Pro 25.0 MB, Vidyard 21.2, Petra 13.7, Magical 8.4, Trancy 6.0), as rounds 19 and 20 ordered their own.
+        Row("dgjbaljgolmlcmmklmmeafecikidmjpi", "Adblock Ad Blocker Pro", "adblock-ad-blocker-pro", core = ::adBlocker),
+        Row("jiihcciniecimeajcniapbngjjbonjan", "Vidyard - Screen Recorder & Screen Capture", "vidyard", core = accountGate("Vidyard", Regex("vidyard\\.com", RegexOption.IGNORE_CASE), gate = "a Vidyard account (its recorder signs in at auth.vidyard.com; its content scripts run on Gmail, LinkedIn, Salesforce, Eloqua and Gong) and a tab capture the WebView has not")),
+        Row("ejjladinnckdgjemekebdpeokbikhfci", "Petra Aptos Wallet", "petra", core = domMarker("Petra's Aptos provider injected into the page world", "wallet.html?petra", PETRA_PROVIDER, settleMs = 30_000)),
+        Row("iibninhmiggehlcdolcilmhacighjamp", "Magical: Text Expander & Autofill", "magical", core = accountGate("Magical", Regex("getmagical\\.com", RegexOption.IGNORE_CASE), injects = "[id*=\"magical\" i], [class*=\"magical\" i], magical-root, magical-fab", gate = "a Magical account (its panel and templates sign in through getmagical.com)")),
+        Row("mjdbhokoopacimoekfgkcoogikbfgngb", "Trancy - AI Translator & Dual Subtitles", "trancy", core = accountGate("Trancy", Regex("trancy\\.com", RegexOption.IGNORE_CASE), injects = "[class*=\"trancy-\"], [id*=\"trancy\"]", gate = "a Trancy account (its AI translation and dual subtitles run through trancy.com)")),
         // Round 15's proof row (5.11), the #448 exemption read on both WebViews: not a store
         // extension but two fixtures of the sweep's own, sideloaded as a file manager hands
         // Zenium a package. Run alone by id (the trigger's `[proof]` lanes); a full sweep reads it
@@ -7294,6 +7376,286 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // switch dropping the layer. A `[lane]` row (the trigger's SWEEP_ONLY names it).
         Row(FONTS_PAGE_PROBE_ID, FONTS_PAGE_PROBE_NAME, "proof-fonts-page-probe", fixture = FONTS_PAGE_PROBE_FILES, core = ::fontsPageSeam)
     )
+
+    // --- the core checks of compat round 21 (ranks 511-540 by installs) --------------------------
+
+    /**
+     * A YouTube-scoped ad ruleset (Adblock for YouTube 2.9: 49 `easylist_rules`, every one
+     * `initiatorDomains: ["youtube.com"]`, so the sweep's own ad fixture on 10.0.2.2 matches
+     * nothing of it): a watch page opens and settles, and the runtime's request decisions made
+     * while it loaded are read for the ad hosts (`hosts`). A `block` decision on one of them is
+     * the pass; the page loading without a request to any of them is `PARTIAL` – the ruleset
+     * enabled in the worker (`DNR_RULESETS_PROBE`) and nothing for it to stop, as the mobile
+     * watch page often serves no ad slot to a fresh profile –; an ad host request answered
+     * `allow` with the ruleset enabled is `F`, the rules not applied. The page not serving the
+     * runner (a consent wall, an empty document) is `n/m` with what it showed.
+     */
+    private fun youtubeAdRules(label: String, hosts: Regex): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val seen = decisions().toHashSet()
+        val tab = createTab(YOUTUBE_URL)
+        val view = waitForView(tab)
+        poll(scaled(45_000, factor), 500) { if (tabEval(view, "String(document.readyState === 'complete')") == "true") true else null }
+        SystemClock.sleep(scaled(15_000, factor))
+        val page = json(tabEval(view, DOM_REPORT))
+        extra.put("page", page)
+        val fresh = decisions().filter { it !in seen }
+        val adLines = fresh.filter { hosts.containsMatchIn(it.substringAfterLast(' ')) }
+        val blocked = adLines.filter { it.startsWith("block") }
+        val allowed = adLines.filter { it.startsWith("allow") }
+        extra.put("decisions", fresh.size).put("adRequests", adLines.size).put("blocked", JSONArray(blocked.take(8))).put("allowed", JSONArray(allowed.take(8)))
+        backgroundView(row.id)?.let { bg ->
+            extra.put("rulesets", probe(bg, DNR_RULESETS_PROBE, "__zenRulesets", scaled(8_000, factor)))
+            extra.put("workerConsole", JSONArray(consoleOf(bg).takeLast(8)))
+        }
+        extra.put("console", JSONArray(consoleOf(view).takeLast(10)))
+        showTab(tab)
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-watch")
+        val enabled = extra.optJSONObject("rulesets")?.optJSONArray("enabled")?.length() ?: 0
+        val text = page.optString("text")
+        when {
+            blocked.isNotEmpty() -> Grade("P", "$label: ${blocked.size} ad request(s) from the watch page blocked by its rules (${allowed.size} allowed; e.g. ${blocked.first().substringAfterLast(' ').take(80)}); $enabled ruleset(s) enabled", extra)
+            CHALLENGE_WORDS.containsMatchIn(text) || text.isEmpty() -> Grade("n/m", "$label: youtube.com did not serve its watch page to the runner (\"${text.take(80)}\", ${page.optInt("els")} elements); nothing for the rules to act on (not measurable here)", extra)
+            allowed.isNotEmpty() && enabled > 0 -> Grade("F", "$label: ${allowed.size} ad request(s) from the watch page were allowed with $enabled ruleset(s) enabled (e.g. ${allowed.first().substringAfterLast(' ').take(80)}); the rules did not apply", extra)
+            enabled > 0 -> Grade("PARTIAL", "$label: the watch page made no request to an ad host in ${fresh.size} decisions (nothing for its $enabled enabled ruleset(s) to stop); the skip-ad script's leg needs an ad slot the page did not serve", extra)
+            else -> Grade("F", "$label: no ruleset enabled in the worker (${extra.optJSONObject("rulesets")?.toString()?.take(160)}) and ${adLines.size} ad request(s) seen", extra)
+        }
+    }
+
+    /**
+     * Zoom for Google Chrome: no default popup – its `onClicked` (the `openactiondoubleclick`
+     * default) sets `popup.html` for the tab and calls `action.openPopup()`; the popup's `#plus`
+     * steps `tabs.setZoom` up on the tab. The fixture opens and its layout width is read; the
+     * action is clicked once (the popup set, recorded), the popup is opened and `#plus` tapped
+     * twice; the page is polled for a narrower layout viewport (the phone's page zoom lays the
+     * page out from the viewport meta, `pageScript.ts`'s controller) and the worker is asked
+     * `tabs.getZoom` for the tab. `P` when the zoom read back is above 1 and the layout
+     * followed; `PARTIAL` when the value changed and the layout did not (or the reverse); `F`
+     * when the popup never came or nothing moved. The zoom is reset with `#minus` taps at the end.
+     */
+    private fun zoomPopup(label: String): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (tab, view) = fixture("page-a.html?zoom", factor, 2_000)
+        val before = json(tabEval(view, ZOOM_LAYOUT))
+        extra.put("before", before)
+        val since = StepEvidence(row)
+        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        SystemClock.sleep(scaled(2_500, factor))
+        extra.put("popupAfterFirstClick", extensionAction(row.id)?.opt("popup"))
+        var popup = popupView()?.takeIf { it.context == "popup" && rendered(it) }
+        if (popup == null) {
+            runCatching { coreCall("extension.closePopup", "null") }
+            SystemClock.sleep(scaled(800, factor))
+            popup = openPopup(row, factor)
+        }
+        val taps = JSONArray()
+        if (popup != null) {
+            SystemClock.sleep(scaled(2_000, factor))
+            extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(160))
+            for (i in 0 until 2) {
+                val centre = json(tabEval(popup, ELEMENT_CENTRE.replace("%SELECTOR%", "#plus")))
+                val point = screenPoint(popup, centre)
+                taps.put(JSONObject().put("centre", centre).put("tapped", point != null))
+                if (point != null) tap(point.first, point.second)
+                SystemClock.sleep(scaled(1_200, factor))
+            }
+            extra.put("popupConsole", JSONArray(consoleOf(popup).takeLast(8)))
+        }
+        extra.put("taps", taps)
+        val after = pollExpr(view, ZOOM_LAYOUT.replace("pass:false", "pass:Math.abs(document.documentElement.clientWidth-${before.optInt("width", 0)})>4"), scaled(12_000, factor))
+        extra.put("after", after)
+        val zoom = backgroundView(row.id)?.let { bg ->
+            probe(bg, "(function(){window.__zenZoomProbe={done:false};try{chrome.tabs.query({active:true,currentWindow:true},function(tabs){var t=tabs&&tabs[0];if(!t){window.__zenZoomProbe={done:true,error:'no active tab'};return}chrome.tabs.getZoom(t.id,function(z){window.__zenZoomProbe={done:true,tabId:t.id,zoom:z,lastError:chrome.runtime.lastError?String(chrome.runtime.lastError.message):null}})})}catch(e){window.__zenZoomProbe={done:true,error:String(e&&e.message||e)}}})()", "__zenZoomProbe", scaled(8_000, factor))
+        } ?: JSONObject().put("error", "no background view")
+        extra.put("getZoom", zoom)
+        since.record(extra, "atEnd")
+        showTab(tab)
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-zoomed")
+        if (popup != null) {
+            for (i in 0 until 2) {
+                val centre = json(tabEval(popup, ELEMENT_CENTRE.replace("%SELECTOR%", "#minus")))
+                screenPoint(popup, centre)?.let { tap(it.first, it.second) }
+                SystemClock.sleep(scaled(800, factor))
+            }
+        }
+        runCatching { coreCall("extension.closePopup", "null") }
+        val value = zoom.optDouble("zoom", 1.0)
+        val laidOut = after.optBoolean("pass")
+        val note = "popup ${if (popup == null) "never rendered (action popup after the first click: ${extra.opt("popupAfterFirstClick")})" else "up (\"${extra.optString("popupText").take(60)}\")"}; tabs.getZoom ${zoom.toString().take(120)}; layout width ${before.optInt("width")} -> ${after.optInt("width")} (viewport \"${after.optString("viewport").take(60)}\")"
+        when {
+            popup == null -> Grade("F", "$label: $note", extra)
+            value > 1.01 && laidOut -> Grade("P", "$label: two #plus taps zoomed the tab to $value and the page laid out narrower: $note", extra)
+            value > 1.01 || laidOut -> Grade("PARTIAL", "$label: ${if (value > 1.01) "tabs.setZoom took ($value) but the page did not lay out again" else "the page laid out again but tabs.getZoom still reads $value"}: $note", extra)
+            else -> Grade("F", "$label: two #plus taps changed nothing: $note", extra)
+        }
+    }
+
+    /**
+     * A row whose action opens the side panel (Bookmark Sidebar's `sidePanel.setPanelBehavior
+     * ({openPanelOnActionClick: true})`, `html/sidepanel.html`) or a popup, and whose core is
+     * what that surface draws: the fixture settles, the action is clicked, the sheet or the
+     * popup is waited for and `expr` polled in it. `F` when no surface rendered or the
+     * expression never passed (the surface's text and console recorded).
+     */
+    private fun panelMarker(label: String, page: String, expr: String, settleMs: Long = 25_000): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        fixture(page, factor, 2_000)
+        val since = StepEvidence(row)
+        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        val surface = poll(scaled(POPUP_TIMEOUT_MS, factor), 400) { popupView()?.takeIf { (it.context == "popup" || it.context == "sidePanel") && rendered(it) } }
+        var found = JSONObject()
+        if (surface != null) {
+            found = pollExpr(surface, expr, scaled(settleMs, factor))
+            found.put("console", JSONArray(consoleOf(surface).takeLast(10)))
+            extra.put("surface", surface.context).put("surfaceText", json(tabEval(surface, DEEP_TEXT)).optString("text").take(200))
+        }
+        extra.put("panel", found)
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-panel")
+        runCatching { coreCall("extension.closePopup", "null") }
+        when {
+            found.optBoolean("pass") -> Grade("P", "$label: its ${extra.optString("surface")} ${found.toString().take(240)}", extra)
+            surface != null -> Grade("F", "$label: its ${extra.optString("surface")} rendered without the reading: ${found.toString().take(240)}", extra)
+            else -> Grade("F", "$label: the action click opened no popup or side panel within ${scaled(POPUP_TIMEOUT_MS, factor) / 1000} s", extra)
+        }
+    }
+
+    /**
+     * Go Back With Backspace: its content script hears `keydown` Backspace on `window` outside
+     * an editable, asks its worker over `runtime.sendMessage('')` that the extension is alive
+     * and calls `history.back()` (`history.length < 2` returns early). Page A opens and
+     * navigates itself to page B (two entries); a Backspace `keydown` dispatched on a focused
+     * `<input>` must leave the tab on B (the editable gate), and one dispatched on the body must
+     * take it back to A within the wait. Both from the page world: the isolated world's listener
+     * sees the same DOM event, as the extension's own `composedPath()[0]` reading assumes.
+     * `P` on both; `PARTIAL` when the body's key went back but the input's did too (the gate
+     * missed); `F` when the body's key left the tab on B (the worker's reply or the listener),
+     * with the worker's console.
+     */
+    private fun backspaceGoesBack(label: String): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (tab, _) = fixture("page-a.html?backspace", factor, 1_500)
+        tabEval(waitForView(tab), "location.assign('$BASE/page-b.html?backspace')")
+        val onB = poll(scaled(15_000, factor), 400) { tabUrls()[tab]?.takeIf { it.contains("page-b.html") } }
+        val view = waitForView(tab)
+        poll(scaled(15_000, factor), 400) { if (tabEval(view, "String(document.readyState === 'complete')") == "true") true else null }
+        SystemClock.sleep(scaled(3_000, factor))
+        extra.put("history", tabEval(view, "String(history.length)")).put("onB", onB != null)
+        val since = StepEvidence(row)
+        // The editable gate first: the key in an input is typing, not navigation.
+        extra.put("inputKey", tabEval(view, BACKSPACE_KEY.replace("__TARGET__", "input")))
+        SystemClock.sleep(scaled(3_000, factor))
+        val stayed = tabUrls()[tab]?.contains("page-b.html") == true
+        extra.put("stayedAfterInputKey", stayed)
+        extra.put("bodyKey", tabEval(view, BACKSPACE_KEY.replace("__TARGET__", "body")))
+        val backOnA = poll(scaled(12_000, factor), 400) { tabUrls()[tab]?.takeIf { it.contains("page-a.html") } }
+        extra.put("urlAtEnd", tabUrls()[tab] ?: "").put("console", JSONArray(consoleOf(view).takeLast(10)))
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        since.record(extra, "atEnd")
+        showTab(tab)
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-back")
+        when {
+            onB == null -> Grade("F", "$label: the fixture never reached page B (${tabUrls()[tab]?.take(80)}); the driver's navigation, not the row's", extra)
+            backOnA != null && stayed -> Grade("P", "$label: Backspace on the body took the tab back to page A (history ${extra.optString("history")}); the same key in an input left it on page B", extra)
+            backOnA != null -> Grade("PARTIAL", "$label: Backspace on the body went back, but the key in an input navigated as well (its editable gate missed)", extra)
+            else -> Grade("F", "$label: Backspace on the body left the tab on ${(tabUrls()[tab] ?: "").take(80)} within ${scaled(12_000, factor) / 1000} s (history ${extra.optString("history")}; the worker's reply to sendMessage('') or the listener)", extra)
+        }
+    }
+
+    /**
+     * Reader View: the action click runs Readability in the tab (`scripting.executeScript`,
+     * `data/inject/wrapper.js`) and the worker rewrites the SAME tab to
+     * `data/reader/index.html?id=<tab>&url=<page>` (`tabs.update`). The article fixture opens,
+     * the action is clicked, the tab's address is polled for the reader page and the article's
+     * title and body are read in it. `P` when the reader page carries the fixture's title and
+     * over 300 characters of its text; `PARTIAL` when the tab was rewritten but the article did
+     * not come through; `F` when the tab stayed on the fixture (the worker's console and any
+     * popup the click opened instead recorded).
+     */
+    private fun readerRewrites(label: String): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (tab, view) = fixture("article.html?reader", factor, 2_500)
+        val since = StepEvidence(row)
+        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        val reader = poll(scaled(30_000, factor), 500) { tabUrls()[tab]?.takeIf { Regex("data/reader/index\\.html", RegexOption.IGNORE_CASE).containsMatchIn(it) } }
+        var article = JSONObject()
+        if (reader != null) {
+            val readerView = waitForView(tab)
+            article = pollExpr(readerView, READER_VIEW_ARTICLE, scaled(25_000, factor))
+            article.put("console", JSONArray(consoleOf(readerView).takeLast(10)))
+        } else {
+            extra.put("fixtureConsole", JSONArray(consoleOf(view).takeLast(10)))
+            popupView()?.let { extra.put("popupInstead", json(tabEval(it, DEEP_TEXT)).optString("text").take(160)) }
+        }
+        extra.put("reader", (reader ?: "").take(200)).put("article", article).put("tabsAtEnd", JSONArray(tabUrls().values.toList()))
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        since.record(extra, "atEnd")
+        showTab(tab)
+        SystemClock.sleep(800)
+        snap("${entry.optString("slug")}-reader")
+        runCatching { coreCall("extension.closePopup", "null") }
+        when {
+            article.optBoolean("pass") -> Grade("P", "$label: the action rewrote the tab to ${extensionPath(reader!!).take(60)} and the reader carries the article (\"${article.optString("title").take(60)}\", ${article.optInt("chars")} characters)", extra)
+            reader != null -> Grade("PARTIAL", "$label: the tab was rewritten to ${extensionPath(reader).take(60)} but the article did not come through: ${article.toString().take(200)}", extra)
+            else -> Grade("F", "$label: the action click left the tab on ${(tabUrls()[tab] ?: "").take(80)} for ${scaled(30_000, factor) / 1000} s (no reader page)", extra)
+        }
+    }
+
+    /**
+     * Social Blade: its youtube.com content script (`document_start`, all frames) draws
+     * nothing – it logs `[SB] Extension loaded!` and, on a watch page, reads the channel link
+     * (`#upload-info .ytd-channel-name a`, the desktop page's) and POSTs the channel id to
+     * socialblade.com/api/tmp/ping; its action opens socialblade.com in a new tab. The watch
+     * page opens as the desktop site (the selector's page), and the marker is read off the
+     * tab's console (the script's line) and the runtime's request decisions (the ping); then
+     * the action is clicked and a tab on socialblade.com is waited for. `P` when the script
+     * showed (its line or its ping) and the action opened its site; `PARTIAL` on one of the
+     * two; `F` on neither; the page not serving the runner is `n/m`.
+     */
+    private fun socialBlade(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val seen = decisions().toHashSet()
+        val tab = createTab(YOUTUBE_URL)
+        coreCall("tab.setDesktopSite", JSONObject().put("tabId", tab).put("on", true).toString())
+        SystemClock.sleep(1_000)
+        val view = waitForView(tab)
+        poll(scaled(45_000, factor), 500) { if (tabEval(view, "String(document.readyState === 'complete')") == "true") true else null }
+        val ping = poll(scaled(30_000, factor), 1_000) {
+            decisions().firstOrNull { it !in seen && it.contains("socialblade.com/api/tmp/ping") }
+        }
+        val console = consoleOf(view)
+        val lines = console.filter { it.contains("[SB]") }
+        val page = json(tabEval(view, DOM_REPORT))
+        extra.put("page", page).put("sbLines", JSONArray(lines.take(6))).put("ping", ping ?: JSONObject.NULL).put("console", JSONArray(console.takeLast(10)))
+        val before = tabUrls().keys
+        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        val opened = poll(scaled(20_000, factor), 500) { tabUrls().entries.firstOrNull { it.key !in before && it.value.contains("socialblade.com") } }
+        extra.put("actionOpened", opened?.value ?: JSONObject.NULL)
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        showTab(tab)
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-watch")
+        runCatching { coreCall("extension.closePopup", "null") }
+        val text = page.optString("text")
+        val script = lines.isNotEmpty() || ping != null
+        return when {
+            !script && (CHALLENGE_WORDS.containsMatchIn(text) || text.isEmpty()) -> Grade("n/m", "Social Blade: youtube.com did not serve its watch page to the runner (\"${text.take(80)}\"); nothing for its script to read (not measurable here)", extra)
+            script && opened != null -> Grade("P", "Social Blade: its script showed on the watch page (${lines.size} `[SB]` line(s); ping ${if (ping != null) "sent" else "not seen"}) and the action opened ${opened.value.take(60)}", extra)
+            script -> Grade("PARTIAL", "Social Blade: its script showed on the watch page (${lines.size} `[SB]` line(s); ping ${if (ping != null) "sent" else "not seen"}) but the action opened no socialblade.com tab within ${scaled(20_000, factor) / 1000} s", extra)
+            opened != null -> Grade("PARTIAL", "Social Blade: the action opened ${opened.value.take(60)} but the watch page showed no line or ping of its script (console ${console.size} lines)", extra)
+            else -> Grade("F", "Social Blade: no `[SB]` line and no ping on the watch page, and the action opened nothing", extra)
+        }
+    }
 
     // --- the core checks of compat round 20 (ranks 481-510 by installs) --------------------------
 
@@ -12827,6 +13189,94 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "(function(){var p=document.querySelector('.PlayBackRatePanelYPSC, .PlayBackRatePanelYPSCFullScreen');var v=document.querySelector('video');var buttons=document.querySelectorAll('.btnYPSC');var faster=document.querySelector('.btnYPSC-right, .btnYPSC[class*=\"right\"], .btnYPSC[class*=\"faster\"], .btnYPSC[class*=\"plus\"]');" +
                 "if(p&&v&&faster&&v.playbackRate===1){try{faster.click()}catch(e){}}var rate=v?v.playbackRate:null;" +
                 "return JSON.stringify({pass:!!p&&!!v&&rate!==null&&rate>1,panel:!!p,video:!!v,buttons:buttons.length,faster:!!faster,rate:rate,panelText:p?(p.innerText||'').replace(/\\s+/g,' ').trim().slice(0,40):null})})()"
+
+        // --- the expressions of compat round 21 (ranks 511-540) --------------------------------------
+
+        /**
+         * Night Eye's dark mode on the light fixture: `<html nighteye="dark|filtered|normal|
+         * disabled|passive">` (its content script's mode word) and its `#nighteyedefaultcss`
+         * style, with the body's computed background luminance. The pass is a darkening mode
+         * (`dark` or `filtered`) on the element, or the style in the page with the background
+         * read dark (luminance under 100); `disabled` and a page it left `normal` are the
+         * extension's own decision, recorded as the mode.
+         */
+        private const val NIGHT_EYE_DARK =
+            "(function(){var h=document.documentElement;var mode=h.getAttribute('nighteye');var css=!!document.getElementById('nighteyedefaultcss');var bg=document.body?getComputedStyle(document.body).backgroundColor:'';var m=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/.exec(bg);var lum=m?Math.round(0.2126*m[1]+0.7152*m[2]+0.0722*m[3]):255;" +
+                "return JSON.stringify({pass:mode==='dark'||mode==='filtered'||(css&&mode!=='disabled'&&lum<100),mode:mode,css:css,bg:bg,lum:lum,styles:document.querySelectorAll('style[id*=\"nighteye\"], link[id*=\"nighteye\"]').length})})()"
+
+        /** Temp Mail's popup: the mailbox address drawn into `#email` (an `@` in it, from web2.temp-mail.org's API), the `#workplace` around it. */
+        private const val TEMP_MAIL_ADDRESS =
+            "(function(){var e=document.getElementById('email');var v=e?(e.value||e.textContent||e.innerText||'').trim():'';var w=document.getElementById('workplace');" +
+                "return JSON.stringify({pass:/@/.test(v),email:v.slice(0,60),workplace:!!w,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,120)})})()"
+
+        /**
+         * Save as PDF's popup states: `.convert` (the button for a page not yet converted),
+         * `.in-progress` (its worker's request to pdfcrowd.com in flight), `.download` / `.open`
+         * (a conversion done) and `.error` (the service's refusal); the pass is any of the four
+         * working states shown – the popup read the tab's address and reached its worker –, the
+         * `.nothing-to-do` state (an address it refuses) is F with the text.
+         */
+        private const val SAVE_AS_PDF_POPUP =
+            "(function(){function shown(s){var e=document.querySelector(s);if(!e)return false;var r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).display!=='none'}var states={convert:shown('.convert'),inProgress:shown('.in-progress'),download:shown('.download'),open:shown('.open'),error:shown('.error'),nothing:shown('.nothing-to-do')};" +
+                "return JSON.stringify({pass:states.convert||states.inProgress||states.download||states.open||states.error,states:states,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,120)})})()"
+
+        /**
+         * Extensity's popup: the `management.getAll` listing as `li` rows under its sections
+         * (`listedExtensions`, `listedApps`, the favourites), or its `.empty` "No Extensions or
+         * Apps found." when the API answered an empty list; the pass is one or more rows – the
+         * sweep's own row is installed, so a working `management.getAll` lists at least it – with
+         * the header's switch (`.switch`) drawn.
+         */
+        private const val EXTENSITY_LIST =
+            "(function(){var items=document.querySelectorAll('ul li');var empty=document.querySelector('.empty');var emptyShown=empty&&empty.getBoundingClientRect().height>0;var sw=!!document.querySelector('.switch');var names=[];for(var i=0;i<items.length&&names.length<6;i++){var t=(items[i].innerText||'').replace(/\\s+/g,' ').trim();if(t)names.push(t.slice(0,30))}" +
+                "return JSON.stringify({pass:items.length>0,items:items.length,names:names,empty:!!emptyShown,switch:sw,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,120)})})()"
+
+        /** Requestly's popup: its React app mounted in `#root` with its text (rules, sessions, sign-in or the onboarding), over 20 characters and 5 elements. */
+        private const val REQUESTLY_POPUP =
+            "(function(){var root=document.getElementById('root');var text=root?(root.innerText||'').replace(/\\s+/g,' ').trim():'';var els=root?root.querySelectorAll('*').length:0;" +
+                "return JSON.stringify({pass:text.length>20&&els>5,chars:text.length,els:els,text:text.slice(0,120)})})()"
+
+        /** Bookmark Sidebar's side panel (`html/sidepanel.html`): its bookmark tree or list rendered – a search box, list items or its empty-state text, over 3 elements with text. */
+        private const val BOOKMARK_SIDEBAR_PANEL =
+            "(function(){var text=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var items=document.querySelectorAll('li, a[href], [class*=\"bookmark\"], [class*=\"entry\"]').length;var search=document.querySelectorAll('input[type=text], input[type=search], [class*=\"search\"]').length;var els=document.body?document.body.querySelectorAll('*').length:0;" +
+                "return JSON.stringify({pass:els>3&&(items>0||search>0||text.length>10),items:items,search:search,els:els,text:text.slice(0,120)})})()"
+
+        /** Pointer motion for a trail: a run of `mousemove` and `touchmove` events across the fixture from the page world (the content script's listeners on `document`). */
+        private const val POINTER_MOTION =
+            "(function(){var n=0;for(var i=0;i<12;i++){var x=40+i*20,y=80+i*12;try{document.dispatchEvent(new MouseEvent('mousemove',{clientX:x,clientY:y,bubbles:true}))}catch(e){}try{var t=new Touch({identifier:1,target:document.body,clientX:x,clientY:y,pageX:x,pageY:y});document.dispatchEvent(new TouchEvent('touchmove',{touches:[t],changedTouches:[t],bubbles:true}))}catch(e){}n++}return String(n)})()"
+
+        /** Custom Cursor Trails' drawing: the `.jso-cursor-trail-wrapper` in the page with one or more `.jso-cursor-trail-shape`s (or any child) after the motion. */
+        private const val CURSOR_TRAILS_DRAWN =
+            "(function(){for(var i=0;i<4;i++){try{document.dispatchEvent(new MouseEvent('mousemove',{clientX:60+i*30,clientY:120+i*20,bubbles:true}))}catch(e){}}var w=document.querySelector('.jso-cursor-trail-wrapper');var shapes=w?w.querySelectorAll('.jso-cursor-trail-shape, *').length:0;" +
+                "return JSON.stringify({pass:!!w&&shapes>0,wrapper:!!w,shapes:shapes,wrapperChildren:w?w.children.length:0})})()"
+
+        /**
+         * A Backspace `keydown` dispatched from the page world on `__TARGET__` (`body`, or an
+         * `input` appended and focused for the editable gate): bubbling and cancelable, `key`
+         * and `keyCode` as the physical key's, so the content script's `e.key !== 'Backspace'`
+         * and `composedPath()[0]` readings see the key.
+         */
+        private const val BACKSPACE_KEY =
+            "(function(){var target;if('__TARGET__'==='input'){target=document.getElementById('zen-backspace-input');if(!target){target=document.createElement('input');target.id='zen-backspace-input';target.type='text';target.value='abc';document.body.appendChild(target)}target.focus()}else{target=document.body;if(document.activeElement&&document.activeElement.blur)document.activeElement.blur()}" +
+                "var ev=new KeyboardEvent('keydown',{key:'Backspace',code:'Backspace',keyCode:8,which:8,bubbles:true,cancelable:true,composed:true});var sent=target.dispatchEvent(ev);return JSON.stringify({target:target.tagName,dispatched:true,defaultPrevented:!sent,history:history.length})})()"
+
+        /** Reader View's reader page (`data/reader/index.html`): the article's title and over 300 characters of its text (the fixture's own words), in the document or its reader frame. */
+        private const val READER_VIEW_ARTICLE =
+            "(function(){function textOf(d){try{return (d.body?d.body.innerText:'').replace(/\\s+/g,' ').trim()}catch(e){return ''}}var text=textOf(document);var frames=document.querySelectorAll('iframe');for(var i=0;i<frames.length;i++){try{var d=frames[i].contentDocument;if(d)text+=' '+textOf(d)}catch(e){}}var title=/tramway that outlived its river/i.test(text)||/tramway/i.test(document.title);var words=/embankment|preservation society|gasworks/i.test(text);" +
+                "return JSON.stringify({pass:title&&words&&text.length>300,title:document.title.slice(0,80),chars:text.length,frames:frames.length,text:text.slice(0,120)})})()"
+
+        /** The fixture's layout under the phone's page zoom: the layout viewport's width and the viewport meta the page script wrote (`pass` set by the caller). */
+        private const val ZOOM_LAYOUT =
+            "(function(){var m=document.querySelector('meta[name=viewport]');return JSON.stringify({pass:false,width:document.documentElement.clientWidth,inner:window.innerWidth,dpr:window.devicePixelRatio,scale:window.visualViewport?window.visualViewport.scale:null,viewport:m?m.getAttribute('content'):null})})()"
+
+        /** chrome lock's options page: the password form (`#new`, `#old`, `#save`) drawn – a fresh install offers the new password. */
+        private const val CHROME_LOCK_FORM =
+            "(function(){var n=document.getElementById('new');var o=document.getElementById('old');var s=document.getElementById('save');var pw=document.querySelectorAll('input[type=password]').length;" +
+                "return JSON.stringify({pass:!!n&&!!s&&pw>=1,newField:!!n,oldField:!!o,save:!!s,passwordInputs:pw,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,120)})})()"
+
+        /** Petra's Aptos provider in the page world: `window.aptos` (and its `window.petra` alias) with `connect` and `signAndSubmitTransaction` functions. */
+        private const val PETRA_PROVIDER =
+            "(function(){var p=window.aptos||window.petra||null;return JSON.stringify({pass:!!p&&typeof p.connect==='function',aptos:typeof window.aptos,petra:typeof window.petra,connect:typeof (p&&p.connect),sign:typeof (p&&p.signAndSubmitTransaction),network:typeof (p&&p.network),keys:p?Object.keys(p).slice(0,8):[]})})()"
 
         /**
          * SAML-tracer's trace window: its toolbar buttons (`#button-clear`, `#button-pause`,

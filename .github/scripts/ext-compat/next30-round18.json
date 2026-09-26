@@ -1,0 +1,847 @@
+{
+ "$comment": "Compatibility sweep round 18 list (compiled by Android compat round 21): the next 30 Chrome Web Store extensions by install count after the top 30 of round 1, the 30 of next30.json and the 30 of each of next30-round3.json to next30-round17.json (ranks 511-540; manifests under the project store internal/extensions/next30-round18/). Counts are the store detail pages' rounded figures read 2026-09-26; ties inside one rounded bucket are ordered by the page's rating count, equal rounded rating counts by name. Candidates came from the store's category listings and keyword searches, about 26,590 detail pages probed across rounds 3 to 18 (this round read the store's 20 listings and round 17's 548 search terms again - 3,273 ids, 37 new detail pages, the largest of them at 50,000 users, none at the bucket). Every unlisted candidate at or above the rounded 300,000 bucket (131 detail pages) was read again on 2026-09-26, the day of this list's read; seven user counts had moved since their last read and the list ranks the re-read figures - five organisation-managed items up one bucket (ClassLink OneClick Extension 17,000,000 to 18,000,000, Mobility Print 10,000,000 to 11,000,000, LearnPlatform for Students 4,000,000 to 5,000,000, Britannica School Insights 900,000 to 1,000,000, Securly for Chromebooks 600,000 to 700,000), two down from 300,000 to 200,000 (Link Grabber, Web Highlights - both below round 17's cut already). The buckets above 300,000 hold no unlisted rankable item (the themes, Chrome Apps and organisation-managed items named below). Ranks 511-540 are the rounded 300,000 bucket's next 30 items by rating count after the 13 of next30-round17.json - PureVPN Proxy - Best VPN for Chrome (4K), Magical: Text Expander & Autofill (3.5K), Dark Mode - Night Eye and Toby: Tab Management Tool (3.3K each, ordered by name), Adblock for YouTube (3K), L.O.C (2.9K), Trancy - AI Translator & Dual Subtitles (2.8K), Gradient Sentry Node (2.6K), Temp Mail - Disposable Temporary Email (2.2K), Checker Plus for Google Calendar (2.1K), Chrome Capture - Screenshot & GIF and Save as PDF (2K each, by name), Extensity, Requestly: Intercept & Modify HTTP Requests and Zoom for Google Chrome (1.8K each, by name), Bookmark Sidebar (1.7K), Image Downloader - Save pictures, Petra Aptos Wallet and ZoogVPN - Free VPN for Chrome & Proxy (1.6K each, by name), Custom Cursor Trails, Go Back With Backspace and TinEye Reverse Image Search (1.4K each, by name), Vidyard - Screen Recorder & Screen Capture (1.3K), Docusign eSignature for Chrome (1.2K), Adblock Ad Blocker Pro, Popup Blocker (strict), Reader View, Set password for your browser ( chrome lock ) and Social Blade (1.1K each, by name) and Banrisul Internet Banking (950) - and the cut falls between Banrisul Internet Banking at 950 ratings and Control Panel for Twitter at 944. Banrisul Internet Banking is the bank's native-messaging companion (a 7 KB bundle with the nativeMessaging permission alone), ranked as earlier lists ranked the native-messaging companions (Plasma Integration; its core check stops at the host's absence). PureVPN and ZoogVPN are proxy services and Gradient Sentry Node a bandwidth-sharing node, ranked as earlier lists ranked anonymoX; Petra Aptos Wallet is a wallet, ranked as Ready X; Magical, Toby, Checker Plus for Google Calendar, Chrome Capture, Vidyard, Docusign, Requestly and Temp Mail ask for an identity or their services - ranked as earlier lists ranked Grammarly and HubSpot Sales. Go Back With Backspace is Google-published with a user count on its detail page, so it ranks (the Google items left out are those whose pages publish none). One row replaces the new-tab page (chrome_url_overrides.newtab: Toby); none carries chrome_settings_overrides. The rows carry the manifests' names, which match the store's listings for all 30. Not ranked: themes (Morpheon Dark, Dark Theme for Google Chrome, Sea Foam), Chrome Apps (Google Classroom, Postman), organisation-managed or organisation-login-only items (the list of round 17's comment - ClassLink OneClick, Clever, Mobility Print, Endpoint Verification, Lightspeed Insight Agent, Okta Browser Plugin, Trellix Endpoint Security Web Control, LearnPlatform for Students, OpenText Content Server Browser Web Extension, My Apps Secure Sign-in Extension, MasteryConnect LockDown Browser, HID Credential Management Extension, Snow Web Application Metering, iboss Cloud Connector, LanSchool Web Helper, Browser Security Plus, Browser Redirection Extension, ActivID CMS extension, Britannica School Insights, Securly for Chromebooks, Idira Identity Browser Extension, Citrix Web Extension, Cegid Peoplenet ClickOnce launcher, iboss Classroom Management for Students, RapidIdentity, Omnissa Horizon URL Content Redirection Helper, CXone Agent WebRTC Extension, Chrome Reporting Extension - and Pix Companion) and Google items whose detail pages publish no user count.",
+ "measuredAt": "2026-09-26",
+ "baseline": "a318e2b6",
+ "rows": [
+  {
+   "rank": 511,
+   "id": "bfidboloedlamgdmenmlbipfnccokknp",
+   "name": "PureVPN Proxy - Best VPN for Chrome",
+   "version": "4.37.11",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/purevpn-proxy-best-vpn-fo/bfidboloedlamgdmenmlbipfnccokknp), \"300,000 users\", read 2026-09-26; 4K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "ui/popup/template.html",
+   "options": null,
+   "permissions": [
+    "alarms",
+    "tabs",
+    "webRequest",
+    "webNavigation",
+    "proxy",
+    "privacy",
+    "storage",
+    "management",
+    "webRequestAuthProvider",
+    "identity"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "http://*/*",
+    "https://*/*"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 5646049,
+   "minimumChromeVersion": "108.0"
+  },
+  {
+   "rank": 512,
+   "id": "iibninhmiggehlcdolcilmhacighjamp",
+   "name": "Magical: Text Expander & Autofill",
+   "version": "3.119.1",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/magical-text-expander-aut/iibninhmiggehlcdolcilmhacighjamp), \"300,000 users\", read 2026-09-26; 3.5K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": "options.html",
+   "permissions": [
+    "alarms",
+    "clipboardRead",
+    "contextMenus",
+    "cookies",
+    "notifications",
+    "offscreen",
+    "scripting",
+    "search",
+    "storage",
+    "tabs",
+    "unlimitedStorage",
+    "webNavigation",
+    "windows"
+   ],
+   "optionalPermissions": [
+    "downloads",
+    "webRequest"
+   ],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 6,
+   "nativeMessaging": false,
+   "crxBytes": 8595649,
+   "minimumChromeVersion": "105.0.0"
+  },
+  {
+   "rank": 513,
+   "id": "alncdjedloppbablonallfbkeiknmkdi",
+   "name": "Dark Mode - Night Eye",
+   "version": "6.1.1",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/dark-mode-night-eye/alncdjedloppbablonallfbkeiknmkdi), \"300,000 users\", read 2026-09-26; 3.3K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "html/browser-action/home.html",
+   "options": "html/browser-action/settings.html",
+   "permissions": [
+    "storage",
+    "contextMenus",
+    "activeTab",
+    "tabs",
+    "scripting",
+    "identity"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "*://*/*"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 1246889
+  },
+  {
+   "rank": 514,
+   "id": "hddnkoipeenegfoeaoibdmnaalmgkpip",
+   "name": "Toby: Tab Management Tool",
+   "version": "2.0.0.8",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/toby-tab-management-tool/hddnkoipeenegfoeaoibdmnaalmgkpip), \"300,000 users\", read 2026-09-26; 3.3K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": null,
+   "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "tabs",
+    "contextMenus",
+    "declarativeNetRequestWithHostAccess",
+    "cookies",
+    "sidePanel"
+   ],
+   "optionalPermissions": [
+    "tabGroups",
+    "history"
+   ],
+   "hostPermissions": [
+    "https://*.gettoby.com/*"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 1481755
+  },
+  {
+   "rank": 515,
+   "id": "jpefmbpcbebpjpmelobfakahfdcgcmkl",
+   "name": "Adblock for YouTube™",
+   "version": "2.9",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/adblock-for-youtube/jpefmbpcbebpjpmelobfakahfdcgcmkl), \"300,000 users\", read 2026-09-26; 3K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": "options.html",
+   "permissions": [
+    "storage",
+    "scripting",
+    "tabs",
+    "declarativeNetRequest"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 391433
+  },
+  {
+   "rank": 516,
+   "id": "eojdckfcadamkapabechhbnkleligand",
+   "name": "L.O.C",
+   "version": "40.5",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/loc/eojdckfcadamkapabechhbnkleligand), \"300,000 users\", read 2026-09-26; 2.9K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "notifications",
+    "cookies",
+    "storage",
+    "unlimitedStorage",
+    "declarativeNetRequest"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "https://*.messenger.com/*",
+    "https://*.facebook.com/*",
+    "https://loc.dev/*",
+    "https://lnmai.com/*",
+    "https://mtfb.lnmai.com/*"
+   ],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 10560
+  },
+  {
+   "rank": 517,
+   "id": "mjdbhokoopacimoekfgkcoogikbfgngb",
+   "name": "Trancy - AI Translator & Dual Subtitles",
+   "version": "7.9.4",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/trancy-ai-translator-dual/mjdbhokoopacimoekfgkcoogikbfgngb), \"300,000 users\", read 2026-09-26; 2.8K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "storage",
+    "contextMenus",
+    "unlimitedStorage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 2,
+   "nativeMessaging": false,
+   "crxBytes": 6135128
+  },
+  {
+   "rank": 518,
+   "id": "caacbgbklghmpodbdafajbgdnegacfmo",
+   "name": "Gradient Sentry Node",
+   "version": "1.1.9",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/gradient-sentry-node/caacbgbklghmpodbdafajbgdnegacfmo), \"300,000 users\", read 2026-09-26; 2.6K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": null,
+   "permissions": [
+    "storage",
+    "offscreen"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 4796844
+  },
+  {
+   "rank": 519,
+   "id": "inojafojbhdpnehkhhfjalgjjobnhomj",
+   "name": "Temp Mail - Disposable Temporary Email",
+   "version": "0.1.0",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/temp-mail-disposable-temp/inojafojbhdpnehkhhfjalgjjobnhomj), \"300,000 users\", read 2026-09-26; 2.2K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": null,
+   "permissions": [
+    "storage",
+    "notifications",
+    "tabs",
+    "contextMenus",
+    "alarms"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "*://*.temp-mail.org/*"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 399259
+  },
+  {
+   "rank": 520,
+   "id": "hkhggnncdpfibdhinjiegagmopldibha",
+   "name": "Checker Plus for Google Calendar™",
+   "version": "46.2.2",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/checker-plus-for-google-c/hkhggnncdpfibdhinjiegagmopldibha), \"300,000 users\", read 2026-09-26; 2.1K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html?source=toolbar",
+   "options": "options.html",
+   "permissions": [
+    "alarms",
+    "storage",
+    "tts",
+    "idle",
+    "contextMenus",
+    "notifications",
+    "activeTab",
+    "gcm",
+    "identity",
+    "unlimitedStorage",
+    "system.display",
+    "offscreen",
+    "scripting",
+    "sidePanel"
+   ],
+   "optionalPermissions": [
+    "background"
+   ],
+   "hostPermissions": [],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 1557610
+  },
+  {
+   "rank": 521,
+   "id": "ggaabchcecdbomdcnbahdfddfikjmphe",
+   "name": "Chrome Capture - Screenshot & GIF",
+   "version": "3.3.8",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/chrome-capture-screenshot/ggaabchcecdbomdcnbahdfddfikjmphe), \"300,000 users\", read 2026-09-26; 2K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "./layout/popup.html",
+   "options": "./layout/options.html",
+   "permissions": [
+    "activeTab",
+    "storage",
+    "tabCapture",
+    "contextMenus",
+    "desktopCapture",
+    "identity",
+    "scripting",
+    "offscreen"
+   ],
+   "optionalPermissions": [
+    "tabs",
+    "notifications",
+    "downloads"
+   ],
+   "hostPermissions": [
+    "*://us-central1-chrome-capture.cloudfunctions.net/*",
+    "https://www.googleapis.com/",
+    "https://apis.google.com/",
+    "https://checkout.paddle.com/*",
+    "https://y.clarity.ms/*"
+   ],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 3167885,
+   "minimumChromeVersion": "116"
+  },
+  {
+   "rank": 522,
+   "id": "kpdjmbiefanbdgnkcikhllpmjnnllbbc",
+   "name": "Save as PDF",
+   "version": "2.2",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/save-as-pdf/kpdjmbiefanbdgnkcikhllpmjnnllbbc), \"300,000 users\", read 2026-09-26; 2K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": "options.html",
+   "permissions": [
+    "tabs",
+    "storage",
+    "downloads"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "https://pdfcrowd.com/"
+   ],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 33289,
+   "minimumChromeVersion": "100"
+  },
+  {
+   "rank": 523,
+   "id": "jjmflmamggggndanpgfnpelongoepncg",
+   "name": "Extensity",
+   "version": "1.14.0",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/extensity/jjmflmamggggndanpgfnpelongoepncg), \"300,000 users\", read 2026-09-26; 1.8K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "index.html",
+   "options": "options.html",
+   "permissions": [
+    "management",
+    "storage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 175182
+  },
+  {
+   "rank": 524,
+   "id": "mdnleldcmiljblolnjhpnblkcekpdkpa",
+   "name": "Requestly: Intercept & Modify HTTP Requests",
+   "version": "26.7.27",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/requestly-intercept-modif/mdnleldcmiljblolnjhpnblkcekpdkpa), \"300,000 users\", read 2026-09-26; 1.8K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup/popup.html",
+   "options": null,
+   "permissions": [
+    "browsingData",
+    "contextMenus",
+    "declarativeNetRequest",
+    "proxy",
+    "scripting",
+    "sidePanel",
+    "storage",
+    "tabs",
+    "unlimitedStorage",
+    "webNavigation",
+    "webRequest"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 2,
+   "nativeMessaging": false,
+   "crxBytes": 1342584
+  },
+  {
+   "rank": 525,
+   "id": "lajondecmobodlejlcjllhojikagldgd",
+   "name": "Zoom for Google Chrome",
+   "version": "2.8.28",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/zoom-for-google-chrome/lajondecmobodlejlcjllhojikagldgd), \"300,000 users\", read 2026-09-26; 1.8K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": "options.html",
+   "permissions": [
+    "tabs",
+    "contextMenus",
+    "storage",
+    "scripting",
+    "webNavigation",
+    "system.display",
+    "unlimitedStorage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 410388,
+   "minimumChromeVersion": "103"
+  },
+  {
+   "rank": 526,
+   "id": "jdbnofccmhefkmjbkkdkfiicjkgofkdh",
+   "name": "Bookmark Sidebar",
+   "version": "2.5.7",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/bookmark-sidebar/jdbnofccmhefkmjbkkdkfiicjkgofkdh), \"300,000 users\", read 2026-09-26; 1.7K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": "html/settings.html",
+   "permissions": [
+    "bookmarks",
+    "storage",
+    "favicon",
+    "contextMenus",
+    "scripting",
+    "unlimitedStorage",
+    "fontSettings",
+    "sidePanel"
+   ],
+   "optionalPermissions": [
+    "tabs",
+    "history",
+    "topSites"
+   ],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 867515,
+   "minimumChromeVersion": "140"
+  },
+  {
+   "rank": 527,
+   "id": "daeljdgmllhgmbdkpgnaojldjkdgkbjg",
+   "name": "Image Downloader - Save pictures",
+   "version": "1.2.9",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/image-downloader-save-pic/daeljdgmllhgmbdkpgnaojldjkdgkbjg), \"300,000 users\", read 2026-09-26; 1.6K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "html/popup.html",
+   "options": null,
+   "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "downloads",
+    "webRequest",
+    "webNavigation",
+    "declarativeNetRequest"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "http://*/*",
+    "https://*/*",
+    "<all_urls>"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 153464
+  },
+  {
+   "rank": 528,
+   "id": "ejjladinnckdgjemekebdpeokbikhfci",
+   "name": "Petra Aptos Wallet",
+   "version": "2.7.0",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/petra-aptos-wallet/ejjladinnckdgjemekebdpeokbikhfci), \"300,000 users\", read 2026-09-26; 1.6K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "index.html",
+   "options": null,
+   "permissions": [
+    "storage",
+    "tabs",
+    "alarms",
+    "identity"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "file://*/*",
+    "http://*/*",
+    "https://*/*",
+    "https://*.sentry.io/*"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 13992617
+  },
+  {
+   "rank": 529,
+   "id": "immngomjofcbflgcckkfddnbpmjokbjh",
+   "name": "ZoogVPN - Free VPN for Chrome & Proxy",
+   "version": "2.0.18",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/zoogvpn-free-vpn-for-chro/immngomjofcbflgcckkfddnbpmjokbjh), \"300,000 users\", read 2026-09-26; 1.6K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": null,
+   "permissions": [
+    "proxy",
+    "tabs",
+    "webRequest",
+    "webRequestAuthProvider",
+    "offscreen",
+    "browsingData",
+    "storage",
+    "management",
+    "alarms"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "http://*/*",
+    "https://*/*"
+   ],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 4096303
+  },
+  {
+   "rank": 530,
+   "id": "cpofhfeclnhnhodbcabgcihloffdpgpd",
+   "name": "Custom Cursor Trails",
+   "version": "1.1.0",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/custom-cursor-trails/cpofhfeclnhnhodbcabgcihloffdpgpd), \"300,000 users\", read 2026-09-26; 1.4K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "index.html",
+   "options": "index.html",
+   "permissions": [
+    "scripting",
+    "storage",
+    "unlimitedStorage",
+    "notifications",
+    "alarms"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "*://*/*",
+    "<all_urls>"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 424120
+  },
+  {
+   "rank": 531,
+   "id": "eekailopagacbcdloonjhbiecobagjci",
+   "name": "Go Back With Backspace",
+   "version": "3.0",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/go-back-with-backspace/eekailopagacbcdloonjhbiecobagjci), \"300,000 users\", read 2026-09-26; 1.4K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "pages/popup.html",
+   "options": "pages/options.html",
+   "permissions": [
+    "management",
+    "scripting",
+    "storage",
+    "tabs"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 22417,
+   "minimumChromeVersion": "102"
+  },
+  {
+   "rank": 532,
+   "id": "haebnnbpedcbhciplfhjjkbafijpncjl",
+   "name": "TinEye Reverse Image Search",
+   "version": "2.0.4",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/tineye-reverse-image-sear/haebnnbpedcbhciplfhjjkbafijpncjl), \"300,000 users\", read 2026-09-26; 1.4K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": "options.html",
+   "permissions": [
+    "contextMenus",
+    "storage",
+    "scripting",
+    "activeTab"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 29985,
+   "minimumChromeVersion": "88"
+  },
+  {
+   "rank": 533,
+   "id": "jiihcciniecimeajcniapbngjjbonjan",
+   "name": "Vidyard - Screen Recorder & Screen Capture",
+   "version": "5.1.2",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/vidyard-screen-recorder-s/jiihcciniecimeajcniapbngjjbonjan), \"300,000 users\", read 2026-09-26; 1.3K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "storage",
+    "tabs",
+    "webNavigation",
+    "scripting",
+    "notifications",
+    "activeTab",
+    "offscreen",
+    "system.display",
+    "alarms",
+    "tabGroups"
+   ],
+   "optionalPermissions": [
+    "downloads"
+   ],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 5,
+   "nativeMessaging": false,
+   "crxBytes": 21753983,
+   "minimumChromeVersion": "109"
+  },
+  {
+   "rank": 534,
+   "id": "blkboeaihdlecgdjjgkcabbacndbjibc",
+   "name": "Docusign eSignature for Chrome",
+   "version": "4.4.27",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/docusign-esignature-for-c/blkboeaihdlecgdjjgkcabbacndbjibc), \"300,000 users\", read 2026-09-26; 1.2K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "shell.html",
+   "options": null,
+   "permissions": [
+    "storage",
+    "contextMenus"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "https://www.dropbox.com/home*",
+    "https://dl-web.dropbox.com/get*",
+    "https://*.docusign.com/*",
+    "https://*.docusign.net/Member/*",
+    "https://chromeext/*"
+   ],
+   "contentScripts": 7,
+   "nativeMessaging": false,
+   "crxBytes": 158317
+  },
+  {
+   "rank": 535,
+   "id": "dgjbaljgolmlcmmklmmeafecikidmjpi",
+   "name": "Adblock Ad Blocker Pro",
+   "version": "2.0.17",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/adblock-ad-blocker-pro/dgjbaljgolmlcmmklmmeafecikidmjpi), \"300,000 users\", read 2026-09-26; 1.1K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": "options.html",
+   "permissions": [
+    "activeTab",
+    "declarativeNetRequest",
+    "webRequest",
+    "scripting",
+    "storage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "*://*/*"
+   ],
+   "contentScripts": 2,
+   "nativeMessaging": false,
+   "crxBytes": 25565816
+  },
+  {
+   "rank": 536,
+   "id": "aefkmifgmaafnojlojpnekbpbmjiiogg",
+   "name": "Popup Blocker (strict)",
+   "version": "0.9.1",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/popup-blocker-strict/aefkmifgmaafnojlojpnekbpbmjiiogg), \"300,000 users\", read 2026-09-26; 1.1K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "/data/popup/index.html",
+   "options": "/data/options/index.html",
+   "permissions": [
+    "storage",
+    "scripting"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 145201
+  },
+  {
+   "rank": 537,
+   "id": "ecabifbgmdmgdllomnfinbmaellmclnh",
+   "name": "Reader View",
+   "version": "0.8.6",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/reader-view/ecabifbgmdmgdllomnfinbmaellmclnh), \"300,000 users\", read 2026-09-26; 1.1K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": "/data/options/index.html",
+   "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "contextMenus",
+    "notifications",
+    "declarativeNetRequestWithHostAccess"
+   ],
+   "optionalPermissions": [
+    "favicon"
+   ],
+   "hostPermissions": [],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 310854
+  },
+  {
+   "rank": 538,
+   "id": "cjmjgijhapgicbhmniemjkjeaedanank",
+   "name": "Set password for your browser ( chrome lock )",
+   "version": "9.1",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/set-password-for-your-bro/cjmjgijhapgicbhmniemjkjeaedanank), \"300,000 users\", read 2026-09-26; 1.1K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": "options.html",
+   "permissions": [
+    "storage",
+    "tabs"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 26039
+  },
+  {
+   "rank": 539,
+   "id": "cfidkbgamfhdgmedldkagjopnbobdmdn",
+   "name": "Social Blade",
+   "version": "3.0.0",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/social-blade/cfidkbgamfhdgmedldkagjopnbobdmdn), \"300,000 users\", read 2026-09-26; 1.1K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "storage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "*://*.socialblade.com/*",
+    "*://*.youtube.com/*",
+    "*://*.twitch.tv/*",
+    "*://*.instagram.com/*",
+    "*://*.facebook.com/*"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 20297
+  },
+  {
+   "rank": 540,
+   "id": "mgapcljibnhkigclmbmdhgehflhljbdd",
+   "name": "Banrisul Internet Banking",
+   "version": "1.0.25",
+   "mv": 3,
+   "users": 300000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/banrisul-internet-banking/mgapcljibnhkigclmbmdhgehflhljbdd), \"300,000 users\", read 2026-09-26; 950 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "nativeMessaging"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 1,
+   "nativeMessaging": true,
+   "crxBytes": 7476,
+   "minimumChromeVersion": "88"
+  }
+ ]
+}
