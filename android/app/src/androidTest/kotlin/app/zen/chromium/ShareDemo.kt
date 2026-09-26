@@ -672,12 +672,17 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
         val touchAt = SystemClock.uptimeMillis()
         Finger().tap(point.x, point.y)
         val up = awaitTrue(12_000) { panelUp() }
-        val wall = SystemClock.uptimeMillis() - touchAt
-        if (frames != null && burst != null) {
+        val seenAt = SystemClock.uptimeMillis()
+        val grabbed = burst?.let {
             SystemClock.sleep(700)
-            frameSheet(frames, burst.halt(touchAt), "navigator.share → the share panel ($frames), API ${Build.VERSION.SDK_INT}, ${width}x$height")
+            it.halt()
         }
-        noteOpen(frames ?: "page again", wall, up)
+        // The click's wall time: the landing, read from the page (a touch on the page leaves no mark in the chrome).
+        val clickEpoch = evalJs(web, "String(window.__zenShareClickAt||0)")?.toLongOrNull()
+        val open = noteOpen(frames ?: "page again", touchAt, seenAt, up, clickEpoch)
+        if (frames != null && grabbed != null) {
+            frameSheet(frames, sinceLanding(grabbed, open.landing ?: touchAt), "navigator.share → the share panel ($frames), API ${Build.VERSION.SDK_INT}, ${width}x$height, from ${zeroWord(open)}")
+        }
         if (!up) finding("  no panel for the page's share; the page reads its call as '${pageOutcome(web)}' (a touch at ${point.x.toInt()},${point.y.toInt()})")
         return up
     }
@@ -773,20 +778,26 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
         chromeJs("window.__zenShare&&window.__zenShare.begin()")
         val touchAt = SystemClock.uptimeMillis()
         if (!touchTap(node)) {
-            burst?.halt(touchAt)
+            burst?.halt()?.forEach { it.second.recycle() }
             finding("  the touch on $SHARE_LABEL did not go in")
             return false
         }
         val up = awaitTrue(10_000) { panelUp() }
-        val wall = SystemClock.uptimeMillis() - touchAt
-        if (frames != null && burst != null) {
+        val seenAt = SystemClock.uptimeMillis()
+        val grabbed = burst?.let {
             SystemClock.sleep(700)
-            frameSheet(frames, burst.halt(touchAt), "Share… → the share panel ($frames), API ${Build.VERSION.SDK_INT}, ${width}x$height")
+            it.halt()
         }
-        val record = noteOpen(frames ?: "again", wall, up)
-        if (frames != null && up) expectSeam(frames, record)
+        val open = noteOpen(frames ?: "again", touchAt, seenAt, up)
+        if (frames != null && grabbed != null) {
+            frameSheet(frames, sinceLanding(grabbed, open.landing ?: touchAt), "Share… → the share panel ($frames), API ${Build.VERSION.SDK_INT}, ${width}x$height, from ${zeroWord(open)}")
+        }
+        if (frames != null && up) expectSeam(frames, open.record)
         return up
     }
+
+    /** What a frame sheet's times count from ([sinceLanding]). */
+    private fun zeroWord(open: Open): String = if (open.landing != null) "the touch's landing" else "the touch as sent"
 
     /**
      * The seam's evidence in the probe's record of a recorded open (§9.38's hand-off,
@@ -948,23 +959,24 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
      * (the seam's `.zen-share-seam` drawn in it), its outgoing rows' copy removed at the fade's end,
      * a menu sheet removed – and, from `begin()` to `end()`, a count of the sheets in the DOM on
      * every animation frame (a gap frame between the sheets would read 0, a sheet over a sheet 2),
-     * all on the chrome's clock. Reads nothing that forces a style pass; nothing is written into
-     * the product.
+     * all on the chrome's clock; with them the wall clock at `begin()` and at the first pointerup,
+     * so a landing can be carried between the chrome's clock, the page's, and the harness's.
+     * Reads nothing that forces a style pass; nothing is written into the product.
      */
     private fun installProbe() {
         chromeJs(
-            """(function(){if(window.__zenShare)return;var P=window.__zenShare={long:[],marks:[],frames:[],from:0,raf:0};
+            """(function(){if(window.__zenShare)return;var P=window.__zenShare={long:[],marks:[],frames:[],from:0,fromWall:0,landed:0,raf:0};
 try{new PerformanceObserver(function(l){l.getEntries().forEach(function(e){P.long.push({t:e.startTime,d:e.duration})})}).observe({type:'longtask'})}catch(_){}
 function has(n,s){return n.matches(s)||!!n.querySelector(s)}
 function mark(n){P.marks.push({t:performance.now(),n:n})}
 try{new MutationObserver(function(ms){for(var i=0;i<ms.length;i++){var a=ms[i].addedNodes;for(var j=0;j<a.length;j++){var n=a[j];if(n.nodeType!==1)continue;if(has(n,'.zen-share-panel'))mark('$MARK_PANEL_MOUNTED');if(has(n,'.zen-share-seam'))mark('$MARK_SEAM_HOSTING')}
 var r=ms[i].removedNodes;for(var k=0;k<r.length;k++){var m=r[k];if(m.nodeType!==1)continue;if(has(m,'.zen-sheet')&&!has(m,'.zen-share-panel'))mark('$MARK_MENU_GONE');if(has(m,'.zen-share-seam-out'))mark('$MARK_SEAM_FADED')}}}).observe(document.body,{childList:true,subtree:true})}catch(_){}
-document.addEventListener('pointerup',function(){mark('pointerup')},{capture:true,passive:true});
+document.addEventListener('pointerup',function(){mark('pointerup');if(!P.landed)P.landed=Date.now()},{capture:true,passive:true});
 function sample(){if(!P.raf)return;var t=performance.now();P.frames.push({t:t,s:document.querySelectorAll('.zen-sheet').length,p:!!document.querySelector('.zen-share-panel'),o:!!document.querySelector('.zen-share-seam-out')});
 if(t-P.from<$PROBE_FRAMES_MS&&P.frames.length<$PROBE_FRAMES_MAX)P.raf=requestAnimationFrame(sample);else P.raf=0}
-P.begin=function(){P.long=[];P.marks=[];P.frames=[];P.from=performance.now();if(P.raf)cancelAnimationFrame(P.raf);P.raf=requestAnimationFrame(sample)};
+P.begin=function(){P.long=[];P.marks=[];P.frames=[];P.from=performance.now();P.fromWall=Date.now();P.landed=0;if(P.raf)cancelAnimationFrame(P.raf);P.raf=requestAnimationFrame(sample)};
 P.end=function(){if(P.raf){cancelAnimationFrame(P.raf);P.raf=0}var ms=P.marks.slice();try{performance.getEntriesByType('mark').forEach(function(e){if(e.startTime>=P.from&&(e.name==='share.panel'||e.name==='share.panel.set'))ms.push({t:e.startTime,n:e.name})})}catch(_){}
-ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({from:P.from,long:P.long,marks:ms,frames:P.frames})}})()"""
+ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({from:P.from,fromWall:P.fromWall,landed:P.landed,long:P.long,marks:ms,frames:P.frames})}})()"""
         )
     }
 
@@ -987,28 +999,50 @@ ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({from:P.from,long:P
     }
 
     /**
-     * The open's numbers into the findings: the wall time, and on the chrome's clock – from the
-     * tap's pointerup, or from the probe's start for a touch that landed on the page and left
-     * no mark in the chrome – the marks on the way: the host's request in (`share.panel`,
-     * `openSharePanel`), the sheet asked for (`share.panel.set`; once the page's cover is
-     * captured, or at once for the menu's chassis, which covers the page already), the panel
-     * shown – the menu's sheet handed over to it (the seam) or a sheet of the panel's own mounted
-     * (a page's share) – and the outgoing rows' fade done; the frames sampled with the sheets on
-     * each; with the long tasks from the tap and those within the panel's own open (the request
-     * in to the panel shown), which is the panel's number: what comes before it is the core's and
-     * the host's. The record, for the seam's checks; null without one.
+     * The open's numbers into the findings, and the probe's record for the seam's checks. The
+     * touch goes into the emulator's input queue, which takes it when it gets to it – under the
+     * frame burst as much as a second after it was sent – so the times count from the finger's
+     * landing where the chrome or the page recorded it: the chrome's pointerup for a tap on the
+     * menu, the page's click (`clickEpoch`, `Date.now()` in the page) for a tap on its share
+     * button, the device's wall clock being one clock for the chrome, the page and the harness;
+     * from the touch as sent when neither did. The wall time is the landing to the panel as the
+     * harness saw it (a poll every 200 ms). On the chrome's clock the marks on the way: the host's
+     * request in (`share.panel`, `openSharePanel`), the sheet asked for (`share.panel.set`; once
+     * the page's cover is captured, or at once for the menu's chassis, which covers the page
+     * already), the panel shown – the menu's sheet handed over to it (the seam) or a sheet of the
+     * panel's own mounted (a page's share) – and the outgoing rows' fade done; the frames sampled
+     * with the sheets on each; with the long tasks from the landing and those within the panel's
+     * own open (the request in to the panel shown), which is the panel's number: what comes
+     * before it is the core's and the host's.
      */
-    private fun noteOpen(scene: String, wallMs: Long, up: Boolean): JSONObject? {
+    private fun noteOpen(scene: String, touchAt: Long, seenAt: Long, up: Boolean, clickEpoch: Long? = null): Open {
         val raw = panelString("window.__zenShare?window.__zenShare.end():''")
         val json = runCatching { JSONObject(raw) }.getOrNull()
+        val sent = seenAt - touchAt
         if (json == null) {
-            finding("  open ($scene): ${if (up) "$wallMs ms from the touch to the panel (wall)" else "no panel within $wallMs ms"}; no probe record")
-            return null
+            finding("  open ($scene): ${if (up) "$sent ms from the touch as sent to the panel (wall)" else "no panel within $sent ms of the touch as sent"}; no probe record")
+            return Open(null, null)
         }
         val first = firstMarks(json)
         val tap = first["pointerup"]
-        val origin = tap ?: json.optDouble("from").takeIf { !it.isNaN() }
-        val originWord = if (tap != null) "the tap's pointerup" else "the probe's start (a touch on the page leaves no mark in the chrome)"
+        val from = json.optDouble("from").takeIf { !it.isNaN() }
+        val fromWall = json.optLong("fromWall")
+        // The page's click on the chrome's clock: the probe took both clocks at its start.
+        val click = clickEpoch?.takeIf { it > 0 && fromWall > 0 && from != null }?.let { from!! + (it - fromWall) }
+        val origin = tap ?: click ?: from
+        val originWord = when {
+            tap != null -> "the tap's pointerup"
+            click != null -> "the page's click"
+            else -> "the probe's start (the touch's landing was not recorded)"
+        }
+        val landedEpoch = json.optLong("landed").takeIf { it > 0 } ?: clickEpoch?.takeIf { it > 0 }
+        // A landing the clocks put outside the touch's window is no landing.
+        val landing = landedEpoch?.let { uptimeOf(it) }?.takeIf { it in touchAt..seenAt }
+        val wall = when {
+            !up -> "no panel within $sent ms of the touch as sent"
+            landing != null -> "${seenAt - landing} ms from the touch's landing to the panel as the harness saw it (wall; the emulator took the touch ${landing - touchAt} ms after it was sent)"
+            else -> "$sent ms from the touch as sent to the panel (wall; the landing not recorded)"
+        }
         val menuGone = first[MARK_MENU_GONE]
         val request = first["share.panel"]
         val asked = first["share.panel.set"]
@@ -1048,55 +1082,67 @@ ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({from:P.from,long:P
             else -> "a sheet of the panel's own mounted at ${since(mounted)}"
         } + if (menuGone != null) ", a menu sheet gone at ${since(menuGone)}" else ""
         finding(
-            "  open ($scene): ${if (up) "$wallMs ms from the touch to the panel (wall)" else "no panel within $wallMs ms"}; " +
+            "  open ($scene): $wall; " +
                 "on the chrome's clock from $originWord: the host's request in at ${since(request)}, the sheet asked for at ${since(asked)}, $way; " +
                 "${sheets.size} frames sampled, sheets per frame ${sheets.minOrNull() ?: "-"}..${sheets.maxOrNull() ?: "-"}; " +
                 "the panel's own open (request to shown): $own, long tasks in it: $ownCount (longest ${ownLongest.roundToInt()} ms, together ${ownTotal.roundToInt()} ms); " +
-                "long tasks from the touch: $count (longest ${longest.roundToInt()} ms, together ${total.roundToInt()} ms)"
+                "long tasks from $originWord on: $count (longest ${longest.roundToInt()} ms, together ${total.roundToInt()} ms)"
         )
-        return json
+        return Open(json, landing)
     }
+
+    /** A recorded open: the probe's record (null without one) and the touch's landing on the harness's clock (null when not recorded). */
+    private class Open(val record: JSONObject?, val landing: Long?)
+
+    /** A wall-clock moment (`Date.now()` in a WebView) on the harness's uptime clock. */
+    private fun uptimeOf(epochMs: Long): Long = epochMs - (System.currentTimeMillis() - SystemClock.uptimeMillis())
 
     /**
      * Screenshots as fast as the emulator hands them out, from [start] until [halt]: the open of
-     * the panel frame by frame for the sheet ([frameSheet]), each stamped with its time since the
-     * touch (a frame before it reads negative).
+     * the panel frame by frame for the sheet ([frameSheet]), each stamped with the harness's
+     * uptime when its capture began (the pixels are the display's then; the copy out takes the
+     * rest of the capture). The sheet counts them from the touch's landing ([sinceLanding]).
      */
     private inner class FrameBurst : Thread("share-frame-burst") {
         private val frames = ArrayList<Pair<Long, Bitmap>>()
         @Volatile private var running = true
-        private var t0 = 0L
-
-        override fun start() {
-            t0 = SystemClock.uptimeMillis()
-            super.start()
-        }
 
         override fun run() {
             while (running && frames.size < MAX_FRAMES) {
                 val began = SystemClock.uptimeMillis()
                 val grab = runCatching { ui.takeScreenshot() }.getOrNull()
                 if (grab != null) {
-                    val at = SystemClock.uptimeMillis() - t0
                     val thumb = Bitmap.createScaledBitmap(grab, max(1, grab.width / THUMB_SCALE), max(1, grab.height / THUMB_SCALE), true)
                     if (thumb !== grab) grab.recycle()
-                    synchronized(frames) { frames += at to thumb }
+                    synchronized(frames) { frames += began to thumb }
                 }
                 val spent = SystemClock.uptimeMillis() - began
                 if (spent < FRAME_PERIOD_MS) SystemClock.sleep(FRAME_PERIOD_MS - spent)
             }
         }
 
-        /** Stop, and the frames with their times relative to `touchAt`. */
-        fun halt(touchAt: Long): List<Pair<Long, Bitmap>> {
+        /** Stop, and the frames with the uptime each capture began at. */
+        fun halt(): List<Pair<Long, Bitmap>> {
             running = false
             join(8_000)
-            val shift = touchAt - t0
-            return synchronized(frames) { frames.map { (it.first - shift) to it.second } }
+            return synchronized(frames) { frames.toList() }
         }
     }
 
-    /** `share-frames-open-<scene>.png`: the burst's thumbnails in rows, each captioned with its time since the touch. */
+    /**
+     * The burst's frames timed from `zero` – the touch's landing, or the touch as sent when the
+     * landing was not recorded – keeping one frame from before it (the sheet as the finger
+     * landed; it reads negative) and dropping the rest of the wait for the emulator's input queue.
+     */
+    private fun sinceLanding(frames: List<Pair<Long, Bitmap>>, zero: Long): List<Pair<Long, Bitmap>> {
+        val timed = frames.map { (it.first - zero) to it.second }
+        val lastBefore = timed.indexOfLast { it.first < 0 }
+        if (lastBefore <= 0) return timed
+        for (i in 0 until lastBefore) timed[i].second.recycle()
+        return timed.drop(lastBefore)
+    }
+
+    /** `share-frames-open-<scene>.png`: the burst's thumbnails in rows, each captioned with its time since the touch's landing ([sinceLanding]). */
     private fun frameSheet(scene: String, frames: List<Pair<Long, Bitmap>>, caption: String) {
         if (frames.isEmpty()) {
             finding("  no frames were grabbed for $scene")
@@ -1555,8 +1601,10 @@ ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({from:P.from,long:P
         private const val PROBE_FRAMES_MS = 8_000
         private const val PROBE_FRAMES_MAX = 600
 
-        // The frame bursts: a screenshot as often as the emulator gives one, at most this many, a fifth the size, eight to a row.
-        private const val MAX_FRAMES = 24
+        // The frame bursts: a screenshot as often as the emulator gives one, at most this many (the wait for the
+        // input queue to take the touch spends some of them; those are dropped from the sheet), a fifth the size,
+        // eight to a row.
+        private const val MAX_FRAMES = 32
         private const val FRAME_PERIOD_MS = 60L
         private const val THUMB_SCALE = 5
         private const val SHEET_COLUMNS = 8
@@ -1633,6 +1681,7 @@ ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({from:P.from,long:P
                   'background:#1a73e8;color:#fff;font:600 18px/1.2 system-ui,sans-serif;z-index:2147483647;box-shadow:0 2px 10px rgba(0,0,0,.2)';
                 b.addEventListener('click', function () {
                   var data = window.__zenDemoShare || {};
+                  window.__zenShareClickAt = Date.now();
                   window.__zenShareOutcome = 'pending';
                   try {
                     var p = navigator.share(data);
