@@ -99,7 +99,7 @@ import { MediaHubButton, MediaLiveDot } from '../media/MediaHubButton'
 import { downloadButtonVisible, downloadsUi } from '@renderer/lib/downloads'
 import { actionable } from '@renderer/lib/extensions/toolbar'
 import { useViewport } from '@renderer/lib/formFactor'
-import { pinsFor, publishToolbarTiering } from '@renderer/lib/toolbarPins'
+import { foldingButtonFits, pinsFor, publishToolbarTiering } from '@renderer/lib/toolbarPins'
 import {
   mediaHubButtonFits,
   mediaHubFoldedAt,
@@ -111,8 +111,10 @@ import {
 /**
  * Back, forward, reload, the puzzle piece and the menu: in the row at every width, never folded
  * by the tier. Forward alone can leave it by a setting (Look and Feel › Customise toolbar,
- * `fixedButtons` below), Home joins it by one (Appearance › Show home button, off by default),
- * and the puzzle piece stands only while there are extensions.
+ * `fixedButtons` below), and the puzzle piece stands only while there are extensions. Home
+ * (Appearance › Show home button, off by default) is not of this set: shown by its pin it is
+ * tiered by the row's width as the media hub's button is (§9.29's hub-button rule,
+ * `foldingButtonFits`), folded at the 240 sidebar and back where the pill holds its floor.
  */
 const FIXED_BUTTONS = 5
 
@@ -278,8 +280,9 @@ export function NavRow({
   const pins = pinsFor(state, formFactor)
   const forwardUp = toolbarPinned(pins, 'forward')
   // Home is the one control folded by default (settings-32; Chrome's `show_home_button`): shown,
-  // it joins the fixed set after Reload, as Chrome's `HomeButton` sits before the location bar.
-  const homeUp = toolbarPinned(pins, 'home')
+  // it seats after Reload, as Chrome's `HomeButton` sits before the location bar – where the
+  // row's width has room for it (`homeUp` below).
+  const homePinned = toolbarPinned(pins, 'home')
   const readerPinned = toolbarPinned(pins, 'reader')
   const translatePinned = toolbarPinned(pins, 'translate')
   const starPinned = toolbarPinned(pins, 'star')
@@ -290,25 +293,31 @@ export function NavRow({
   const starUp = starred && starPinned
   const readerUp = Boolean(tab && !masked && !extension && tab.readerable) && readerPinned
   const menuButton = useRef<HTMLButtonElement>(null)
-  // The hub's toolbar button is tiered by the row's width, as the pill's chips are (§9.29,
-  // `mediaHubButtonFits`): at the 240 sidebar it is unmounted – never hidden with an opacity or
-  // a `visibility` that would keep its box laid out – and the hub folds into the app menu's
-  // "Media Controls…" row; it returns where the pill, with the button's own slot back in the row,
+  // Home's button and the hub's are tiered by the row's width, as the pill's chips are (§9.29's
+  // hub-button rule, `foldingButtonFits` / `mediaHubButtonFits`): at the 240 sidebar each is
+  // unmounted – never hidden with an opacity or a `visibility` that would keep its box laid out
+  // – Home folded away (its Customise toolbar row says "Hidden at this width."; there is no
+  // app-menu row for it, the lead's word on #572), the hub folded into the app menu's "Media
+  // Controls…" row; each returns where the pill, with the button's own slot back in the row,
   // still holds the box the star returned at (126 / 110: the 302 sidebar with the always-there
-  // buttons), so the pill reads the same on either side of the return. The buttons it makes
-  // room against are the ones always in the row (back, forward, reload, ⋯), the puzzle piece
-  // while there are extensions and the downloads button while it is up; the compact column has
-  // no pill to keep, so there the button stays whenever there is media.
+  // buttons), so the pill reads the same on either side of the return. Home at the 240 sidebar
+  // had taken the pill from 96 to 64 and the Settings tab's title to "S…" (the FIRST LINE's F1
+  // on #572; §9.29, §10.1). The buttons each makes room against are the ones always in the row
+  // (back, forward, reload, ⋯), the puzzle piece while there are extensions and the downloads
+  // button while it is up – and, for the hub, Home while Home's own tier has it up: Home seats
+  // first in the row and is the first back, so with both pinned the hub returns one slot (32)
+  // after Home (the 334 sidebar). The compact column has no pill to keep, so there both stay.
   const downloadsUp = downloadButtonVisible(state, downloadsUiState)
   const puzzleUp = actionable(state.extensions).length > 0
-  // Forward folded by its pin leaves the fixed set (the hub's tier and the extensions' overflow
-  // count the buttons actually in the row); Home shown by its pin and a trailing control join it.
-  const fixedButtons = FIXED_BUTTONS - (forwardUp ? 0 : 1) + (homeUp ? 1 : 0) + (trailing ? 1 : 0)
+  // Forward folded by its pin leaves the fixed set (the tiers and the extensions' overflow count
+  // the buttons actually in the row); a trailing control joins it.
+  const fixedButtons = FIXED_BUTTONS - (forwardUp ? 0 : 1) + (trailing ? 1 : 0)
+  const otherButtons = fixedButtons - (puzzleUp ? 0 : 1) + (downloadsUp ? 1 : 0)
+  const homeUp = homePinned && (compact || foldingButtonFits(rowWidth, otherButtons))
   const hubUp =
     mediaPinned &&
     mediaHubVisible(state) &&
-    (compact ||
-      mediaHubButtonFits(rowWidth, fixedButtons - (puzzleUp ? 0 : 1) + (downloadsUp ? 1 : 0)))
+    (compact || mediaHubButtonFits(rowWidth, otherButtons + (homeUp ? 1 : 0)))
   // The hub's toolbar button off the row (§9.29's fold): the ⋯ button then wears the hub's dot.
   // Decided here, from the same width the button is mounted by, so the dot and the button move
   // in one commit as the sidebar crosses 270 ↔ 240 – never both in a frame, never neither.
@@ -450,22 +459,25 @@ export function NavRow({
   }
   const fits = fittingChips(pillInner, chipsPresent)
   // What the width tier hid of the pinned controls, for the Customise toolbar dialog's "Hidden
-  // at this width" (settings-36): the chips present in the pill that did not fit, and the hub's
-  // button while media plays and the row has no room for it – never a control the pins folded,
-  // and never one the page has no chip for. From the layout phase, as the hub's own word is.
+  // at this width" (settings-36): Home while its pin shows it and the row has no room for it,
+  // the chips present in the pill that did not fit, and the hub's button while media plays and
+  // the row has no room for it – never a control the pins folded, and never one the page has no
+  // chip for. In the bar's order, Home first. From the layout phase, as the hub's own word is.
+  const hiddenHome = homePinned && !homeUp
   const hiddenStar = Boolean(tab && starUp && !fits.has('star'))
   const hiddenTranslate = Boolean(translation && !fits.has('translate'))
   const hiddenReader = Boolean(tab && readerUp && !isReader && !fits.has('reader'))
   const hiddenMedia = mediaPinned && mediaHubVisible(state) && !hubUp
   useLayoutEffect(() => {
     const hidden: ToolbarControl[] = []
+    if (hiddenHome) hidden.push('home')
     if (hiddenReader) hidden.push('reader')
     if (hiddenTranslate) hidden.push('translate')
     if (hiddenStar) hidden.push('star')
     if (hiddenMedia) hidden.push('media')
     publishToolbarTiering(hidden)
     return () => publishToolbarTiering([])
-  }, [hiddenReader, hiddenTranslate, hiddenStar, hiddenMedia])
+  }, [hiddenHome, hiddenReader, hiddenTranslate, hiddenStar, hiddenMedia])
   return (
     // The row's buttons sit 4 apart (Firefox's 32 pitch: the 28 box plus its 2 px outer
     // padding each side, `TOOLBAR_GAP`); the pill takes the rest between them.
@@ -528,14 +540,16 @@ export function NavRow({
       {homeUp && (
         /*
           Chrome's Home button (settings-32; `HomeButton`, seated after Reload and before the
-          location bar), shown by Appearance's "Show home button" – the `home` pin – and running
-          `nav.home`, the one Home with Alt+Home and the menu bar's row: the home page set under
-          Appearance (a page of the user's or the new tab page). Chrome's names: the accessible
-          name "Home", the tooltip "Open the home page" – each carrying the chord, as the row's
-          names and tooltips do (a11y-26). Right-clicked it is one of the pinned
-          controls (`data-zen-menu="toolbar"` with its control, W8-1's pinned-button menu –
-          Unpin, Customise Toolbar…; before that menu lands the mark reads as no target and the
-          bar's own menu shows, as on Back). Desktop layout alone, as the pins are.
+          location bar), shown by Appearance's "Show home button" – the `home` pin – where the
+          row's width tier has room for it (`homeUp`: §9.29's hub-button rule; at the 240 sidebar
+          it is folded, back at 302 with the always-there buttons), and running `nav.home`, the
+          one Home with Alt+Home and the menu bar's row: the home page set under Appearance (a
+          page of the user's or the new tab page). Chrome's names: the accessible name "Home",
+          the tooltip "Open the home page" – each carrying the chord, as the row's names and
+          tooltips do (a11y-26). Right-clicked it is one of the pinned controls
+          (`data-zen-menu="toolbar"` with its control, W8-1's pinned-button menu – Unpin,
+          Customise Toolbar…; before that menu lands the mark reads as no target and the bar's
+          own menu shows, as on Back). Desktop layout alone, as the pins are.
         */
         <button
           type="button"
@@ -995,9 +1009,9 @@ export function NavRow({
       <ToolbarActions
         state={state}
         rowWidth={compact ? null : rowWidth}
-        // The media and downloads buttons join the fixed set while they are in the row – the
-        // hub's only while the tier has it up, not while it has folded into the menu.
-        fixedButtons={fixedButtons + (hubUp ? 1 : 0) + (downloadsUp ? 1 : 0)}
+        // Home, the media and the downloads buttons join the fixed set while they are in the
+        // row – Home's and the hub's only while the tier has them up, not while they have folded.
+        fixedButtons={fixedButtons + (homeUp ? 1 : 0) + (hubUp ? 1 : 0) + (downloadsUp ? 1 : 0)}
         compact={compact}
       />
       {trailing}

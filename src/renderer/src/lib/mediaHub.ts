@@ -2,9 +2,12 @@ import type { MediaState, Tab, UIState } from '@shared/types'
 import { orderMediaEntries } from '@shared/mediaHub'
 import { displayHost } from '@shared/url'
 import { run } from '@renderer/lib/api'
-import { TOOLBAR_BUTTON, TOOLBAR_GAP } from '@renderer/lib/extensions/toolbar'
 import { createStore } from '@renderer/lib/store'
-import { PILL_PADDING, PILL_TOOLS_TIER } from '@renderer/components/urlbar/pillChipTiers'
+import {
+  FOLDING_BUTTON_PILL,
+  foldingButtonFits,
+  foldingButtonReturnRow
+} from '@renderer/lib/toolbarPins'
 
 /**
  * What the desktop's media hub (MW-16: Chrome's global media controls, a toolbar button with a
@@ -55,42 +58,35 @@ export function mediaHubVisible(state: UIState): boolean {
  * The pill the hub's toolbar button must leave standing (design language v2 §9.29): the button
  * is tiered by the row's width exactly as the pill's chips are, never by the active tab – at
  * the 240 sidebar it folds into the app menu's "Media Controls…" row, the accent dot on ⋯
- * while something plays – and a folding button returns where the pill, with the button's own
- * slot back in the row, still holds the box the star and the tools return at: the tier's
- * `PILL_TOOLS_TIER` content box (110, the stylesheet's `@container (width < 110px)`; §9.29's
- * "130 px pill"), 126 in the row's `PILL_PADDING`. Never where the pill first reaches that box
- * without the button: a button returning there took the pill straight back under the tier it
- * had just met (270 gave 125 → 94, and the address gave way to the title) and flipped its
- * reading.
+ * while something plays – and returns where the pill, with the button's own slot back in the
+ * row, still holds the box the star and the tools return at (126 / 110). The rule is the
+ * toolbar tier's, one for every button the width folds (`lib/toolbarPins.ts`'s
+ * `foldingButtonFits`; Home folds by the same rule since #572's first line): these are the
+ * hub's names for it.
  */
-export const MEDIA_HUB_PILL = PILL_PADDING + PILL_TOOLS_TIER
-
-/** A toolbar button's pitch in the row: its box and the gap before it (§5, 28 + 4). */
-const TOOLBAR_SLOT = TOOLBAR_BUTTON + TOOLBAR_GAP
+export const MEDIA_HUB_PILL = FOLDING_BUTTON_PILL
 
 /**
- * The row width at which the hub's button returns, given the count of the row's other buttons:
- * the pill's tier box, the other buttons' slots and the hub's own. With the four always-there
- * buttons (back, forward, reload, ⋯) that is 286 – the 302 sidebar, its 8 px gutters aside –
- * where the pill with the button is 126 and the star is up with it; at 301 it would be 125.
+ * The row width at which the hub's button returns, given the count of the row's other buttons
+ * (`foldingButtonReturnRow`): with the four always-there buttons (back, forward, reload, ⋯) that
+ * is 286 – the 302 sidebar, its 8 px gutters aside – where the pill with the button is 126 and
+ * the star is up with it; at 301 it would be 125.
  */
 export function mediaHubReturnRow(otherButtons: number): number {
-  return MEDIA_HUB_PILL + (otherButtons + 1) * TOOLBAR_SLOT
+  return foldingButtonReturnRow(otherButtons)
 }
 
 /**
- * Whether the row is wide enough for the hub's button: the pill the row would give its other
- * buttons – back, forward, reload, ⋯, the puzzle piece and the downloads button while they are
- * up; not the pinned actions, which fold by the pill's own floor – and the hub's own slot still
- * holds `MEDIA_HUB_PILL`. The hub's slot is in the sum, so the pill reads the same on either
- * side of the return: at 302 the button arrives over a 126 pill, the star up; at 270, where the
- * star returned over the same 126, the button leaves it so. An unmeasured row (0) shows the
- * button, as the pinned actions show before the row has a width. Pure, for the unit tests; the
- * row measures itself and asks.
+ * Whether the row is wide enough for the hub's button (`foldingButtonFits`): the pill the row
+ * would give its other buttons – back, forward, reload, ⋯, the puzzle piece and the downloads
+ * button while they are up, Home while its own tier has it up; not the pinned actions, which
+ * fold by the pill's own floor – and the hub's own slot still holds `MEDIA_HUB_PILL`. Home
+ * comes before the hub in the row and is counted as one of its others, so where both are
+ * pinned the hub folds first and returns one slot (32) after Home does. An unmeasured row (0)
+ * shows the button. Pure, for the unit tests; the row measures itself and asks.
  */
 export function mediaHubButtonFits(rowWidth: number, otherButtons: number): boolean {
-  if (rowWidth <= 0) return true
-  return rowWidth >= mediaHubReturnRow(otherButtons)
+  return foldingButtonFits(rowWidth, otherButtons)
 }
 
 /**

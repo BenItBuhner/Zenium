@@ -495,6 +495,32 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
     expect(description('media')).toBe('Shows while media plays.')
   })
 
+  it('Home, checked but folded by the width tier (§9.29’s hub-button rule at the 240 sidebar), says "Hidden at this width." and stays checked; unchecked it says what it opens whatever the width', () => {
+    const { h } = openDialog(state({ toolbarPins: { home: true } }))
+    const description = (): string | null =>
+      h.querySelector('[data-row="toolbar-control:home"] .zen-settings-description')?.textContent ??
+      null
+    expect(box(h, 'home').checked).toBe(true)
+    expect(description()).toBe(HOME_UNCHECKED)
+    act(() => toolbarTiering.set({ hidden: ['home'] }))
+    expect(description()).toBe(HIDDEN_AT_THIS_WIDTH)
+    expect(box(h, 'home').checked).toBe(true)
+    expect(box(h, 'home').disabled).toBe(false)
+    // Widened to where Home returns (302), the row's own line is back with the tier's word.
+    act(() => toolbarTiering.set({ hidden: [] }))
+    expect(description()).toBe(HOME_UNCHECKED)
+    act(() => root?.unmount())
+    host?.remove()
+    // Unchecked, Home is folded by its pin: its own line, never the width's.
+    const rest = openDialog(state())
+    act(() => toolbarTiering.set({ hidden: ['home'] }))
+    expect(box(rest.h, 'home').checked).toBe(false)
+    expect(
+      rest.h.querySelector('[data-row="toolbar-control:home"] .zen-settings-description')
+        ?.textContent
+    ).toBe(HOME_UNCHECKED)
+  })
+
   it('the footer is Done alone – a secondary, no Cancel – and Done closes the dialog', () => {
     const { h, closeTop } = openDialog(state())
     const footer = h.querySelector<HTMLElement>('.zen-settings-dialog-footer')!

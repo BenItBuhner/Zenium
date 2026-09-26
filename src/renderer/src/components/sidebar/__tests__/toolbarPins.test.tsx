@@ -13,8 +13,13 @@ vi.mock('@renderer/lib/api', () => ({
 import { defaultShortcuts } from '@shared/shortcuts'
 import { run } from '@renderer/lib/api'
 import { viewportStore } from '@renderer/lib/formFactor'
-import { mediaHubFolded } from '@renderer/lib/mediaHub'
-import { toolbarTiering } from '@renderer/lib/toolbarPins'
+import { mediaHubFolded, mediaHubReturnRow } from '@renderer/lib/mediaHub'
+import {
+  FOLDING_BUTTON_PILL,
+  foldingButtonFits,
+  foldingButtonReturnRow,
+  toolbarTiering
+} from '@renderer/lib/toolbarPins'
 import { NavRow } from '../SidebarTop'
 
 /*
@@ -327,5 +332,81 @@ describe('the Home button (settings-32; Chrome’s HomeButton under "Show home b
       <NavRow state={state(page, { toolbarPins: { home: true } })} tab={null} compact={false} />
     )
     expect(homeButton()!.disabled).toBe(true)
+  })
+
+  it('folds by the row’s width under §9.29’s hub-button rule, the one rule the hub folds by: gone below the 302 sidebar, back where the pill with its slot holds 126', () => {
+    // The always-there buttons: back, forward, reload, ⋯ (no extensions, no downloads).
+    const always = 4
+    expect(FOLDING_BUTTON_PILL).toBe(126)
+    expect(foldingButtonReturnRow(always)).toBe(286)
+    expect(foldingButtonReturnRow(always) + 16).toBe(302)
+    expect(foldingButtonFits(240 - 16, always)).toBe(false)
+    expect(foldingButtonFits(302 - 16 - 1, always)).toBe(false)
+    expect(foldingButtonFits(302 - 16, always)).toBe(true)
+    // An unmeasured row shows the button, as the pinned actions show before a width.
+    expect(foldingButtonFits(0, always)).toBe(true)
+    // The hub's rule is this rule by its own name.
+    expect(mediaHubReturnRow(always)).toBe(foldingButtonReturnRow(always))
+    expect(mediaHubReturnRow(always + 1) - mediaHubReturnRow(always)).toBe(32)
+  })
+
+  it('shown by its pin at the 240 sidebar it is folded – the pill keeps its 96 and the title reads whole (the FIRST LINE’s F1 on #572) – with "home" published for Customise toolbar’s "Hidden at this width."; at 302 it returns, and the hub returns one slot after it', () => {
+    const widths = { row: 240 - 16 }
+    const rects = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: Element
+    ) {
+      const width = this.hasAttribute('data-zen-nav-row') ? widths.row : 0
+      return { x: 0, y: 0, top: 0, left: 0, right: width, bottom: 0, width, height: 0 } as DOMRect
+    })
+    try {
+      const shown = { toolbarPins: { home: true } }
+      render(<NavRow key="narrow" state={state(page, shown)} tab={page} compact={false} />)
+      expect(homeButton()).toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual(['home'])
+      // Back, Forward, Reload, then the pill: the seat Home would take is not held open.
+      const row = q('[data-zen-nav-row]')!
+      const pill = row.querySelector('[role="group"][aria-label="Address"]')!
+      const before = [...row.children]
+        .slice(0, [...row.children].indexOf(pill))
+        .filter((c): c is HTMLButtonElement => c.tagName === 'BUTTON')
+      expect(before.map((b) => nameOf(b).split(' (')[0])).toEqual(['Back', 'Forward', 'Reload'])
+      // One short of the return: still folded.
+      widths.row = 302 - 16 - 1
+      render(<NavRow key="short" state={state(page, shown)} tab={page} compact={false} />)
+      expect(homeButton()).toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual(['home'])
+      // The 302 sidebar: with Home's slot back in the row the pill holds its 126.
+      widths.row = 302 - 16
+      render(<NavRow key="wide" state={state(page, shown)} tab={page} compact={false} />)
+      expect(homeButton()).not.toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual([])
+      // Home and the hub both pinned, media playing: at 302 Home is back and the hub – which
+      // makes room against Home too – waits; both published at 240, in the bar's order.
+      const both = (): UIState => state(page, shown, [media()])
+      render(<NavRow key="both-302" state={both()} tab={page} compact={false} />)
+      expect(homeButton()).not.toBeNull()
+      expect(q('[data-zen-media-hub-button]')).toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual(['media'])
+      widths.row = 302 - 16 + 32
+      render(<NavRow key="both-334" state={both()} tab={page} compact={false} />)
+      expect(homeButton()).not.toBeNull()
+      expect(q('[data-zen-media-hub-button]')).not.toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual([])
+      widths.row = 240 - 16
+      render(<NavRow key="both-240" state={both()} tab={page} compact={false} />)
+      expect(homeButton()).toBeNull()
+      expect(q('[data-zen-media-hub-button]')).toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual(['home', 'media'])
+      // The compact rail has no pill to keep: Home stays at any width.
+      render(<NavRow key="compact" state={state(page, shown)} tab={page} compact />)
+      expect(homeButton()).not.toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual([])
+      // Unpinned, Home is the pin's to fold, not the width's: nothing published for it.
+      render(<NavRow key="unpinned" state={state(page)} tab={page} compact={false} />)
+      expect(homeButton()).toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual([])
+    } finally {
+      rects.mockRestore()
+    }
   })
 })
