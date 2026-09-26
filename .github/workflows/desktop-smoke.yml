@@ -121,7 +121,9 @@ jobs:
           # whole of it reads hidden through Chromium's native occlusion tracking (judged here and
           # on macOS; recorded on Linux), one over a quarter of it leaves the page visible; the
           # same moves on a throwaway window record what Electron forwards natively on Windows.
-          node "$env:SMOKE\smoke.mjs" --exe "$exe" --label unpacked --out "$env:SMOKE_OUT" --scenarios notifications,boot,restore,scale,dark,visibility,restart-registration,private-taskbar,default-browser
+          # menu-bar (W7-4): Zenium draws no menu bar off macOS – the one step reads that the
+          # main process has no application menu set.
+          node "$env:SMOKE\smoke.mjs" --exe "$exe" --label unpacked --out "$env:SMOKE_OUT" --scenarios notifications,boot,restore,scale,dark,visibility,restart-registration,private-taskbar,default-browser,menu-bar
       - name: Windows and processes left behind by the unpacked build
         if: always()
         run: |
@@ -248,7 +250,12 @@ jobs:
         # whole of it reads hidden through NSWindow's occlusion state (judged here and on
         # Windows; recorded on Linux), one over a quarter of it leaves the page visible; the same
         # moves on a throwaway window record what Electron forwards natively on macOS.
-        run: node "$SMOKE/smoke.mjs" --exe "${{ steps.app.outputs.app }}/Contents/MacOS/Zenium" --label unpacked --out "$SMOKE_OUT" --scenarios boot,restore,scale,dark,visibility,quit-hold,default-browser
+        # menu-bar (W7-4; shortcuts-menus-160, -162, -123): the menu bar as the main process
+        # holds it – Chrome's menus in Chrome's order with the Tab menu between Bookmarks and
+        # Window; the Tab menu's rows, chords and enabled states on a new tab page and on a site
+        # page with a tab below it, its toggles picked and read back; the Help menu's rows under
+        # the help role; About Zenium enabled and opening Settings › About.
+        run: node "$SMOKE/smoke.mjs" --exe "${{ steps.app.outputs.app }}/Contents/MacOS/Zenium" --label unpacked --out "$SMOKE_OUT" --scenarios boot,restore,scale,dark,visibility,quit-hold,default-browser,menu-bar
       - name: Bundle facts and crash reports after the run
         if: always()
         run: bash "$SMOKE/mac-facts.sh" "${{ steps.app.outputs.app }}" "$SMOKE_OUT" after-run
