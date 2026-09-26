@@ -13,6 +13,8 @@ import { ExternalProtocolLayer } from '../ExternalProtocolSheet'
  * on the mouse panel alike, never the one-line `truncate` cut §9.23 names as the deviation the
  * Custom Tab's twin corrects; the row grows with the second line; the whole sentence is the
  * element's `title`. The title above it and the decoded address below it stay one line each.
+ * The remember row's caption is one string on both chassis, "Without asking again" – the title
+ * already names the app, so the caption never repeats it.
  * Rendered for real in happy-dom, judged on the classes (happy-dom lays nothing out). The phone
  * sheet is given a layout to stand in – an 800 px layer, a 300 px sheet – as the chassis's own
  * suite does (bottomSheetLeave.test.tsx): at happy-dom's zero heights its travel is 0, so it
@@ -134,6 +136,10 @@ describe('the phone sheet (a title block, §9.23)', () => {
     expect(address!.textContent).toBe('tel:+1 555 0100')
     expect(classes(address)).toContain('truncate')
     expect(classes(address)).not.toContain('line-clamp-2')
+
+    // The remember row's caption: one string, the app named by the title alone.
+    const caption = document.querySelector('.zen-sheet-item-secondary')
+    expect(caption?.textContent).toBe('Without asking again')
   })
 })
 
@@ -165,5 +171,9 @@ describe('the mouse panel (a centred dialog)', () => {
     const title = row!.querySelector('.font-semibold')
     expect(title?.textContent).toBe(`Open in ${LONG_APP}?`)
     expect(classes(title)).toContain('truncate')
+
+    // The remember row's caption: the same one string as the phone's.
+    const caption = dialog!.querySelector('.zen-sheet-item-secondary')
+    expect(caption?.textContent).toBe('Without asking again')
   })
 })

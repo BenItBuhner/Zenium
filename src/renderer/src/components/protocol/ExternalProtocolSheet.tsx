@@ -197,7 +197,7 @@ function Body({
           <span className="min-w-0 flex-1">
             <span className="block truncate">Always open {words.plural}</span>
             <span className="zen-sheet-item-secondary block truncate text-[13px] leading-[var(--v2-line-small)]">
-              {request.appName ? `In ${request.appName}, without asking` : 'Without asking again'}
+              Without asking again
             </span>
           </span>
           <Switch checked={always} onCheckedChange={onAlways} aria-label="Always allow" />
