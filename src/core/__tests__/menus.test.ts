@@ -1126,12 +1126,18 @@ describe('the app menu', () => {
       const find = item(submenu, 'Find in Page…')
       expect(find.action).toBe('find.open')
       expect(find.enabled).toBe(true)
-      for (const label of ['Cut', 'Copy', 'Paste']) {
+      for (const [label, key] of [
+        ['Cut', 'X'],
+        ['Copy', 'C'],
+        ['Paste', 'V']
+      ] as const) {
         const row = item(submenu, label)
         expect(row.enabled).toBe(true)
-        // No key of its own: the page's Ctrl+X/C/V are the page's, as Chrome's rows show none the
-        // chrome would swallow.
+        // No key-table action of its own – the page's Ctrl+X/C/V are Blink's – but Chrome's chord
+        // shown after the label (its accelerator table's), display alone.
         expect(row.action).toBeUndefined()
+        expect(row.accelerator).toBe(`Ctrl+${key}`)
+        expect(row.hint).toBe(`Ctrl+${key}`)
       }
       h.viewCalls.length = 0
       item(submenu, 'Cut').click?.()
@@ -1142,6 +1148,12 @@ describe('the app menu', () => {
         'editCommand("copy")',
         'editCommand("paste")'
       ])
+      // macOS spells the chord with the command glyph, as every other hint there.
+      const mac = pageHarness(DESKTOP, { os: 'darwin' })
+      appMenu(mac)
+      const macRows = deepItem(mac.shown(), 'Find and Edit').submenu ?? []
+      expect(item(macRows, 'Cut').hint).toBe('⌘X')
+      expect(item(macRows, 'Cut').accelerator).toBe('Cmd+X')
     })
 
     it('greys the editing rows with no page to act on, the submenu keeping its shape (§9.17); the find row greys with them', () => {

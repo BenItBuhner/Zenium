@@ -35,6 +35,7 @@ import {
   type BookmarksBarMode,
   type DownloadDeleteFileResult,
   type Folder,
+  type KeyBinding,
   type MenuAnchor,
   type MenuHeader,
   type MenuItemDescriptor,
@@ -3928,22 +3929,36 @@ export class Menus {
     // enabled as Chrome's do (Chrome never reads the selection for its app menu; a pick with
     // nothing to act on does nothing) wherever there is a page to act on; with no page, or on a
     // host whose views take no such command, they are greyed, and the submenu keeps its shape
-    // (§9.17). The desktop's alone: the tablet's menu keeps the flat find row, its editing being
-    // the touch selection's own.
+    // (§9.17). The chord after each label is Chrome's (its accelerator table's Ctrl+X / C / V,
+    // ⌘ on macOS), shown as the key table's chords are; display alone – the page's editing keys
+    // are Blink's own, not the key table's, so the rows name no action. The desktop's alone: the
+    // tablet's menu keeps the flat find row, its editing being the touch selection's own.
     const activeView = active ? tabs.view(active.id) : undefined
-    const editCommand = (command: EditCommand): MenuItemTemplate => ({
-      label: command === 'cut' ? 'Cut' : command === 'copy' ? 'Copy' : 'Paste',
-      enabled: Boolean(activeView?.editCommand),
-      click: () => activeView?.editCommand?.(command)
-    })
+    const os = this.browser.platform.info.os
+    const editCommand = (command: EditCommand, key: string): MenuItemTemplate => {
+      const chord: KeyBinding = {
+        key,
+        ctrl: os !== 'darwin',
+        meta: os === 'darwin',
+        alt: false,
+        shift: false
+      }
+      return {
+        label: command === 'cut' ? 'Cut' : command === 'copy' ? 'Copy' : 'Paste',
+        accelerator: toAccelerator(chord) ?? undefined,
+        hint: formatChord(chord, os),
+        enabled: Boolean(activeView?.editCommand),
+        click: () => activeView?.editCommand?.(command)
+      }
+    }
     const findAndEdit: MenuItemTemplate = {
       label: 'Find and Edit',
       submenu: [
         findInPage,
         { type: 'separator' },
-        editCommand('cut'),
-        editCommand('copy'),
-        editCommand('paste')
+        editCommand('cut', 'x'),
+        editCommand('copy', 'c'),
+        editCommand('paste', 'v')
       ]
     }
     const readerView: MenuItemTemplate = {
