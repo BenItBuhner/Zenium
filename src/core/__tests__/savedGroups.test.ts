@@ -647,28 +647,65 @@ describe('the link menu’s group item (TAB-15)', () => {
     ])
   })
 
-  it('is the tablet’s too, a touch host – whose rows keep their order as they were, the group row first, byte for byte', () => {
-    // The ruling names the phone; the tablet's list is pinned whole so a change to it is a
-    // deliberate one (the desktop's nod on the shared hunks holds under this order).
+  it('lists the tablet’s rows in the lead’s order too – one link menu on both touch hosts: New Tab · New Tab in Group · Private Tab · Glance · Split View · Container | Copy Link Address · Copy Link Text · Save Link As… · Share Link… | Boosts', () => {
+    // The design lead's ruling after #492: the tablet's link menu takes the phone's ruled order,
+    // the hairlines kept. Split View is the tablet's own row (the phone draws no panes) and
+    // keeps its seat between Glance and Container. Pinned whole.
     const t = harness('tablet')
     const onTablet = t.open('https://loose.test/')
     t.browser.menus.showPageContextMenu(onTablet, { ...linkParams(url), linkText: 'Linked' }, t.win)
     expect(labels(t.shown())).toEqual([
-      'Open Link in New Tab in Group',
       'Open Link in New Tab',
+      'Open Link in New Tab in Group',
       'Open Link in Private Tab',
       'Open Link in Glance',
       'Open Link in Split View',
       'Open Link in New Container Tab',
       '-',
-      'Save Link As…',
       'Copy Link Address',
       'Copy Link Text',
+      'Save Link As…',
       'Share Link…',
       '-',
       'Boosts',
       'Inspect Element'
     ])
+    // A tablet whose WebView keeps no profiles leaves the private row out, the rest as they
+    // are; a link whose text is its address has no Copy Link Text.
+    const g = harness('tablet', false)
+    const onG = g.open('https://loose.test/')
+    g.browser.menus.showPageContextMenu(onG, linkParams(url), g.win)
+    expect(labels(g.shown())).toEqual([
+      'Open Link in New Tab',
+      'Open Link in New Tab in Group',
+      'Open Link in Glance',
+      'Open Link in Split View',
+      'Open Link in New Container Tab',
+      '-',
+      'Copy Link Address',
+      'Save Link As…',
+      'Share Link…',
+      '-',
+      'Boosts',
+      'Inspect Element'
+    ])
+  })
+
+  it('on the tablet a private opener gets no group row (#492’s limit) and a tab in a group gets the pair in the ruled order', () => {
+    // A private tab on the tablet: the plain row leads, no group row is made for it.
+    const t = harness('tablet')
+    const priv = t.browser.tabs.newPrivateTab('https://priv.test/', t.win)!
+    t.browser.menus.showPageContextMenu(priv, linkParams(url), t.win)
+    const menu = labels(t.shown())
+    expect(menu.indexOf('Open Link in New Tab')).toBe(0)
+    expect(menu).not.toContain('Open Link in New Tab in Group')
+    // A tablet tab in a group: the pair in the ruled order, the group row right under the plain.
+    const folder = t.group('Trip')
+    const a = t.open('https://a.test/', { folderId: folder })
+    t.browser.menus.showPageContextMenu(a, linkParams(url), t.win)
+    const grouped = labels(t.shown())
+    expect(grouped.indexOf('Open Link in New Tab')).toBe(0)
+    expect(grouped.indexOf('Open Link in New Tab in Group')).toBe(1)
   })
 
   it('leaves the desktop menu for a tab in no group as it was: Chrome desktop’s one item, byte for byte', () => {
