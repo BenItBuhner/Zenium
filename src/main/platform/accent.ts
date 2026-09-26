@@ -3,15 +3,17 @@
  * settings-116; Chrome's `browser.theme.follows_system_colors`, whose Windows reading is
  * `ui/color/win/accent_color_observer.cc`): Electron's `systemPreferences.getAccentColor()`
  * gives it on Windows (the DWM accent, `RRGGBBAA`) and macOS (the Appearance pane's accent);
- * Linux has no reading through Electron and the method is absent there. Windows reports a
- * change through `accent-color-changed`; macOS through the system colours notification.
+ * Linux has no reading through Electron – the method is there in Electron 44 but returns ""
+ * (measured by the W8-3 drive), so the guard is the platform's, not the method's presence.
+ * Windows reports a change through `accent-color-changed`; macOS through the system colours
+ * notification.
  *
  * Pure apart from the system object handed in: the tests drive it with a fake. The drives'
  * `--test-system-accent=<hex>` (`systemAccentOverride`) stands in for an OS accent where the X
  * server has none.
  */
 
-/** The slice of Electron's `systemPreferences` the accent uses; each member absent off its OS. */
+/** The slice of Electron's `systemPreferences` the accent uses; a member may be absent off its OS. */
 export interface SystemAccentSource {
   getAccentColor?(): string
   on?(event: 'accent-color-changed', listener: (event: unknown, newColor: string) => void): unknown

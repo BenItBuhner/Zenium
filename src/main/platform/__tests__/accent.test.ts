@@ -74,7 +74,7 @@ describe('readSystemAccent / systemAccentReadable', () => {
     expect(subscribed).toEqual([MAC_SYSTEM_COLORS_NOTIFICATION])
   })
 
-  it('Linux: nothing to read (the method is absent there) and nothing to watch – even were the method present', () => {
+  it('Linux: nothing to read and nothing to watch – the guard is the platform’s, whether the method is absent or present (Electron 44 exposes it there and returns "")', () => {
     const bare = system()
     expect(systemAccentReadable(bare, 'linux')).toBe(false)
     expect(readSystemAccent(bare, 'linux')).toBeNull()
