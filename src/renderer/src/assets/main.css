@@ -8251,8 +8251,9 @@
   }
   /*
    * The page indicator under the strip, in the window's ink: 6 px discs 8 apart, the current
-   * page at full ink and the rest at 30 %. Indicators, not controls (§9.3, §9.9): no touch box,
-   * no press – the discs sit 11 under the cards in a 20 row, where the strip's dots have stood.
+   * page at full ink and the rest at 40 % – §9.30's one dimmed number, no third alpha (§9.29).
+   * Indicators, not controls (§9.3, §9.9): no touch box, no press – the discs sit 11 under the
+   * cards in a 20 row, where the strip's dots have stood.
    */
   :root[data-form-factor='phone'] .zen-mstack-dots {
     display: flex;
@@ -8266,7 +8267,7 @@
     height: 6px;
     border-radius: 3px;
     background: var(--v2-control-text);
-    opacity: 0.3;
+    opacity: 0.4;
     transition: opacity 120ms var(--zen-ease);
   }
   :root[data-form-factor='phone'] .zen-mstack-dot[data-current] {
