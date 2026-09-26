@@ -6,6 +6,7 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.webkit.WebViewCompat
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Test
@@ -25,7 +26,9 @@ import java.util.concurrent.TimeUnit
  * and Security section (`pages/settings/tracking.tsx`: the master switch, the level as a picker
  * sheet, the counter, the filter lists as item rows with a sheet each, the sites without
  * blocking), a level change the Kotlin engine follows, the current site excepted from its switch
- * row and blocked again from its item's sheet, and the master switch off and on.
+ * row and blocked again from its item's sheet, and the master switch off and on. Last, Preload
+ * pages at the request engine (PS-43): a fixture page's `<link rel=prefetch>` refused under
+ * `none` and let go under `standard`, read on the loopback server ([preloadScene]).
  *
  * Every row is found through the chrome's accessibility tree the way a screen reader would (a
  * row is one button whose text runs its label and description together) and pressed with a real
@@ -337,8 +340,125 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
         s = waitForTitle("9/9", 25_000)
         note("  ${describeTab(s)}")
         shot("17-page-blocked-again")
+
+        // 11. Preload pages at the request engine (PS-43, W6-S10): the fixture page asks for
+        //     `/prefetched.txt` through `<link rel=prefetch>` and `/speculated.html` through a
+        //     speculation-rules prefetch block; under `none` the server must see no prefetch while
+        //     the page's own resources load, and under `standard` the same prefetch must arrive.
+        note("\n11. Preload pages: none refuses the prefetch, standard lets it go")
+        preloadScene()
         note("\ndone")
     }
+
+    // --- Preload pages at the request engine ----------------------------------------------------
+
+    /**
+     * Preload pages `none` at the request engine (PS-43; W6-S10). The level goes through the
+     * core's own setting (`settings.update {preloadPages}`), which pushes the flags to `Privacy`
+     * live – no relaunch – and the scene waits for the phone's copy (`Privacy.flags`) to carry it
+     * before it navigates. Under `none` the fixture's `<link rel=prefetch>` request is answered
+     * empty in `TabWebView.Client.shouldInterceptRequest` before it leaves the device, so the
+     * server sees no `/prefetched.txt` within 5 s of the page's own resources loading; under
+     * `standard` the same page's prefetch reaches the server, the `Sec-Purpose` / `Purpose` mark
+     * on it – the control that the mechanism is live on this WebView and that the mark the engine
+     * reads is what the request carries. The speculation-rules prefetch is recorded on both
+     * sides and REPORTED, not asserted: whether this WebView issues one at all, and whether it
+     * passes the proxying loader factory the engine sits on, is the run's reading. Either
+     * assertion failing fails the run – after both halves are in the notes.
+     */
+    private fun preloadScene() {
+        val failures = mutableListOf<String>()
+        ensureDemoTab()
+        note("  WebView ${webViewVersion()}")
+
+        // none: the refusal.
+        coreInvoke("settings.update", """{"preloadPages":"none"}""")
+        note("  none: ${awaitPreloadLevel("none")}")
+        val none = "none-${SystemClock.uptimeMillis()}"
+        coreInvoke("tab.navigate", """{"tabId":"$DEMO_TAB","input":"$DEMO_ORIGIN/preload.html?n=$none"}""")
+        val ownUnderNone = waitForPreloadPage(none)
+        note("  ${describePreloadPage(none, ownUnderNone)}")
+        SystemClock.sleep(5_000)
+        val prefetchedUnderNone = server.hits("/prefetched.txt?n=$none")
+        val speculatedUnderNone = server.hits("/speculated.html?n=$none")
+        note("  5 s after the page's own resources: /prefetched.txt ${describeHits(prefetchedUnderNone)}; /speculated.html ${describeHits(speculatedUnderNone)}")
+        if (!ownUnderNone) failures += "under none the page's own resources did not load (${describePreloadPage(none, false)})"
+        if (prefetchedUnderNone.isNotEmpty()) failures += "under none the server saw the <link rel=prefetch> request: ${prefetchedUnderNone.first()}"
+        shot("18-preload-none-no-prefetch")
+        beat()
+
+        // standard: the control.
+        coreInvoke("settings.update", """{"preloadPages":"standard"}""")
+        note("  standard: ${awaitPreloadLevel("standard")}")
+        val standard = "standard-${SystemClock.uptimeMillis()}"
+        coreInvoke("tab.navigate", """{"tabId":"$DEMO_TAB","input":"$DEMO_ORIGIN/preload.html?n=$standard"}""")
+        val ownUnderStandard = waitForPreloadPage(standard)
+        note("  ${describePreloadPage(standard, ownUnderStandard)}")
+        val prefetchedUnderStandard = server.awaitHit("/prefetched.txt?n=$standard", 15_000)
+        SystemClock.sleep(2_000)
+        val speculatedUnderStandard = server.hits("/speculated.html?n=$standard")
+        note("  /prefetched.txt ${describeHits(server.hits("/prefetched.txt?n=$standard"))}; /speculated.html ${describeHits(speculatedUnderStandard)}")
+        if (!ownUnderStandard) failures += "under standard the page's own resources did not load (${describePreloadPage(standard, false)})"
+        if (prefetchedUnderStandard == null) {
+            failures += "under standard no <link rel=prefetch> request reached the server within 15 s (the control)"
+        } else {
+            note("  the prefetch's mark: ${prefetchedUnderStandard.mark()}")
+        }
+        when {
+            speculatedUnderStandard.isEmpty() ->
+                note("  speculation rules: this WebView issued no prefetch for the rules' URL (none to refuse; the <link rel=prefetch> is the phone's prefetch here)")
+            speculatedUnderNone.isEmpty() ->
+                note("  speculation rules: the prefetch reached the server under standard (${speculatedUnderStandard.first().mark()}) and not under none: refused at the engine too")
+            else ->
+                note("  FINDING: the speculation-rules prefetch reached the server under none too (${speculatedUnderNone.first()}): it did not pass the engine, or carried no mark – a limit to state, not the engine's to close")
+        }
+        shot("19-preload-standard-prefetch")
+        beat()
+        if (failures.isNotEmpty()) error("Preload pages: ${failures.joinToString("; ")}")
+    }
+
+    /** The core's `Settings.preloadPages` as `app.getState` carries it. */
+    private fun corePreloadLevel(): String = coreState().getJSONObject("settings").optString("preloadPages")
+
+    /**
+     * Wait up to 8 s for the phone's flags to carry `level` (the core's `privacy.apply` push after
+     * `settings.update`), then describe both copies; the phone's is the one the engine reads.
+     */
+    private fun awaitPreloadLevel(level: String): String {
+        val started = SystemClock.uptimeMillis()
+        val deadline = started + 8_000
+        while (SystemClock.uptimeMillis() < deadline && host.privacy.flags.preloadPages != level) SystemClock.sleep(100)
+        val took = SystemClock.uptimeMillis() - started
+        return "settings.preloadPages=${corePreloadLevel()} host.privacy.flags.preloadPages=${host.privacy.flags.preloadPages}" +
+            (if (host.privacy.flags.preloadPages == level) " (the phone carried it after $took ms)" else " (the phone did NOT carry '$level' within 8 s)")
+    }
+
+    /**
+     * The fixture page with `nonce` up with its own script run (it writes `preload own-ok <nonce>`
+     * into its title once `/ok.js` executed) and the tab no longer loading; true when it did within 15 s.
+     */
+    private fun waitForPreloadPage(nonce: String): Boolean {
+        val deadline = SystemClock.uptimeMillis() + 15_000
+        while (SystemClock.uptimeMillis() < deadline) {
+            val tab = coreState().getJSONObject("tabs").optJSONObject(DEMO_TAB)
+            if (tab != null && tab.optString("title") == "preload own-ok $nonce" && !tab.optBoolean("loading")) return true
+            SystemClock.sleep(300)
+        }
+        return false
+    }
+
+    private fun describePreloadPage(nonce: String, own: Boolean): String {
+        val tab = coreState().getJSONObject("tabs").optJSONObject(DEMO_TAB)
+        return "page ?n=$nonce: own resources ${if (own) "loaded" else "did NOT load"} " +
+            "(title=\"${tab?.optString("title")}\" loading=${tab?.optBoolean("loading")}; " +
+            "server: /preload.html ${describeHits(server.hits("/preload.html?n=$nonce"))}, /ok.js ${describeHits(server.hits("/ok.js?n=$nonce"))}, /ok.png ${describeHits(server.hits("/ok.png?n=$nonce"))})"
+    }
+
+    private fun describeHits(hits: List<Seen>): String =
+        if (hits.isEmpty()) "0 requests" else "${hits.size} request(s) [${hits.first().mark()}]"
+
+    private fun webViewVersion(): String =
+        runCatching { WebViewCompat.getCurrentWebViewPackage(app)?.let { "${it.packageName} ${it.versionName}" } }.getOrNull() ?: "(unknown)"
 
     // --- the Settings tab through the accessibility tree ------------------------------------------
 
@@ -781,10 +901,41 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
 
     // --- the page's server ----------------------------------------------------------------------
 
-    /** Serves the demo page on the IPv4 loopback: `/` is the page, `/ok.js` and `/ok.png` its own resources. */
+    /** One request the server answered: its path with the query, and its headers (names lower-cased). */
+    private class Seen(val path: String, val headers: Map<String, String>) {
+        /** The prefetch mark as it arrived, or its absence: what the engine's `PreloadRules` read. */
+        fun mark(): String {
+            val marks = listOf("sec-purpose", "purpose").mapNotNull { name -> headers[name]?.let { "${name}: $it" } }
+            return if (marks.isEmpty()) "no Sec-Purpose / Purpose header" else marks.joinToString(", ")
+        }
+
+        override fun toString(): String = "$path (${mark()})"
+    }
+
+    /**
+     * Serves the demo page on the IPv4 loopback: `/` is the page, `/ok.js` and `/ok.png` its own
+     * resources; `/preload.html` is the Preload pages fixture (`PRELOAD_PAGE`, its `?n=` nonce
+     * templated in), `/prefetched.txt` what its `<link rel=prefetch>` asks for and
+     * `/speculated.html` what its speculation rules name. Every request is recorded with its
+     * headers ([hits], [awaitHit]) so a scene can say what did and did not reach the network.
+     */
     private class LoopbackPage(private val page: String, port: Int) : Thread("blocking-ui-demo-server") {
         private val socket = ServerSocket(port, 16, InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)))
         @Volatile private var closed = false
+        private val seen = mutableListOf<Seen>()
+
+        /** The requests for exactly `path` (query included), in arrival order. */
+        fun hits(path: String): List<Seen> = synchronized(seen) { seen.filter { it.path == path } }
+
+        /** The first request for `path` within `timeoutMs`, or null. */
+        fun awaitHit(path: String, timeoutMs: Long): Seen? {
+            val deadline = SystemClock.uptimeMillis() + timeoutMs
+            while (SystemClock.uptimeMillis() < deadline) {
+                hits(path).firstOrNull()?.let { return it }
+                SystemClock.sleep(200)
+            }
+            return hits(path).firstOrNull()
+        }
 
         fun selfCheck(): String = runCatching {
             Socket("127.0.0.1", socket.localPort).use { s ->
@@ -810,14 +961,22 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
             client.use {
                 val request = it.getInputStream().bufferedReader()
                 val line = request.readLine() ?: return
+                val headers = mutableMapOf<String, String>()
                 while (true) {
                     val header = request.readLine()
                     if (header.isNullOrEmpty()) break
+                    val colon = header.indexOf(':')
+                    if (colon > 0) headers[header.substring(0, colon).trim().lowercase()] = header.substring(colon + 1).trim()
                 }
                 val path = line.split(' ').getOrNull(1) ?: "/"
+                synchronized(seen) { seen += Seen(path, headers) }
+                val nonce = path.substringAfter("?n=", "").substringBefore('&')
                 val (type, body) = when (path.substringBefore('?')) {
                     "/ok.js" -> "text/javascript" to "window.__ok = true\n".toByteArray()
                     "/ok.png" -> "image/png" to PIXEL
+                    "/preload.html" -> "text/html; charset=utf-8" to PRELOAD_PAGE.replace("NONCE", nonce).toByteArray()
+                    "/prefetched.txt" -> "text/plain" to "prefetched $nonce\n".toByteArray()
+                    "/speculated.html" -> "text/html; charset=utf-8" to "<!doctype html><title>speculated $nonce</title>".toByteArray()
                     else -> "text/html; charset=utf-8" to page.toByteArray()
                 }
                 val out = it.getOutputStream()
@@ -841,6 +1000,33 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
                 "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
                 android.util.Base64.DEFAULT
             )
+
+            /**
+             * The Preload pages fixture: a `<link rel=prefetch>` for `/prefetched.txt` and a
+             * speculation-rules `prefetch` of `/speculated.html`, both carrying the visit's
+             * `NONCE` so the two visits (under `none`, under `standard`) tell apart on the server;
+             * its own `/ok.js` and `/ok.png` load in the ordinary way, and the title turns to
+             * `preload own-ok NONCE` once `/ok.js` has run – the scene's mark that the page's own
+             * resources came while the prefetch was refused.
+             */
+            private val PRELOAD_PAGE = """
+                <!doctype html>
+                <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+                <title>preload NONCE</title>
+                <link rel="prefetch" href="/prefetched.txt?n=NONCE">
+                <script type="speculationrules">{"prefetch":[{"source":"list","urls":["/speculated.html?n=NONCE"]}]}</script>
+                <style>body{font:18px/1.5 sans-serif;margin:24px;color:#222}code{background:#eee;padding:2px 4px}</style>
+                </head><body>
+                <h1>Preload pages</h1>
+                <p>This page asks for <code>/prefetched.txt</code> through <code>&lt;link rel=prefetch&gt;</code> and for
+                <code>/speculated.html</code> through a speculation-rules prefetch. Its own resources are <code>/ok.js</code>
+                and <code>/ok.png</code>.</p>
+                <p>visit <code>NONCE</code></p>
+                <img src="/ok.png?n=NONCE" width="1" height="1" alt="">
+                <script src="/ok.js?n=NONCE"></script>
+                <script>document.title = 'preload ' + (window.__ok ? 'own-ok' : 'own-missing') + ' NONCE'</script>
+                </body></html>
+            """.trimIndent()
         }
     }
 

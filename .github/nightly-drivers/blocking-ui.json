@@ -5,5 +5,6 @@
   "shard": "phone-c",
   "mirrors": "android-blocking-ui-demo.yml",
   "dir": "blocking-ui-demo",
-  "estimate": 3.5
+  "estimate": 4,
+  "note": "Step 11 (W6-S10, PS-43) is the Preload pages scene: two visits to a fixture page on the loopback server, a 5 s wait under none for the prefetch that must not come, up to 15 s under standard for the one that must - about half a minute more than the ten steps measured at 3.5."
 }
