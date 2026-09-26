@@ -6464,7 +6464,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("lpcaedmchfhocbbapmcbpinfpgnhiddi", "Google Keep Chrome Extension", "google-keep", core = accountGate("Google Keep", Regex("keep\\.google|accounts\\.google", RegexOption.IGNORE_CASE), page = "index.html")),
         Row("gmbmikajjgmnabiglmofipeabaddhgne", "Save to Google Drive", "save-to-google-drive", core = accountGate("Save to Google Drive", Regex("accounts\\.google|drive\\.google", RegexOption.IGNORE_CASE), gate = "a Google account signed into the browser (identity.getAuthToken)", gateLog = Regex("getAuthToken|signed-in browser account|launchWebAuthFlow", RegexOption.IGNORE_CASE))),
         Row("fkepacicchenbjecpbpbclokcabebhah", "iCloud Bookmarks", "icloud-bookmarks", feasible = false, core = notOnThePhone("nativeMessaging to iCloud for Windows: a Windows-only host (n/a on the phone, as on every other platform); the popup shows Apple's Windows notice")),
-        Row("pejdijmoenmkgeppbflobdenhhabjlaj", "iCloud Passwords", "icloud-passwords", feasible = false, core = notOnThePhone("nativeMessaging to iCloud for Windows: a Windows-only host (n/a on the phone, as on every other platform); the popup shows Apple's Windows notice")),
+        // Round 20 (the ADDENDUM's `chrome.privacy` proof): the `n/a` stands; the three services
+        // settings its background sets at start are read back and off the published controls.
+        Row("pejdijmoenmkgeppbflobdenhhabjlaj", "iCloud Passwords", "icloud-passwords", feasible = false, core = privacyHolder(notOnThePhone("nativeMessaging to iCloud for Windows: a Windows-only host (n/a on the phone, as on every other platform); the popup shows Apple's Windows notice"), ICLOUD_PRIVACY_SETTINGS)),
         Row("kdpelmjpfafjppnhbloffcjpeomlnpah", "WPS PDF", "wps-pdf", core = pdfTool("WPS PDF", Regex("wps"), missing = "F")),
         Row("ogdlpmhglpejoiomcodnpjnfgcpmgale", "Custom Cursor for Chrome", "custom-cursor", core = ::customCursor),
         Row("lmjnegcaeklhafolokijcfjliaokphfk", "Video DownloadHelper", "video-downloadhelper", core = ::videoDownloadHelper),
@@ -7267,7 +7269,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // [fixtureId]'s of the names, not the desktop's #500 probes' (those were unpacked
         // fixtures of the desktop worker's, never in the repository).
         Row(FONTS_PROBE_A_ID, FONTS_PROBE_A_NAME, "proof-fonts-probe-a", fixture = FONTS_PROBE_A_FILES, core = ::fontsProbeSizes),
-        Row(FONTS_PROBE_B_ID, FONTS_PROBE_B_NAME, "proof-fonts-probe-b", fixture = FONTS_PROBE_B_FILES, core = ::fontsProbePrecedence)
+        Row(FONTS_PROBE_B_ID, FONTS_PROBE_B_NAME, "proof-fonts-probe-b", fixture = FONTS_PROBE_B_FILES, core = ::fontsProbePrecedence),
+        // Round 20's `chrome.privacy` proof (the coordinator's ADDENDUM item 2d): a fixture of the
+        // sweep's own with the `privacy` permission and a probe page – the sets read back, the
+        // controls core publishes, `navigator.doNotTrack`, the `DNT` header and the `Referer`
+        // drop on a document request, a disable and an enable, the clears. iCloud Passwords' row
+        // (the desktop's thirty, above) reads the three services values its background takes.
+        Row(PRIVACY_PROBE_ID, PRIVACY_PROBE_NAME, "proof-privacy-probe", fixture = PRIVACY_PROBE_FILES, core = ::privacyProbe)
     )
 
     // --- the core checks of compat round 20 (ranks 481-510 by installs) --------------------------
@@ -8100,6 +8108,197 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             else -> Grade("PARTIAL", "fonts probe B: the later-installed extension's face applied; off: ${off.joinToString(", ")}: $note", extra)
         }
     }
+
+    /**
+     * The `chrome.privacy` probe (round 20's proof of the coordinator's ADDENDUM item 2d; a
+     * fixture of the sweep's own with the `privacy` permission and a probe page). The baseline
+     * first (`r0`): a same-origin navigation of an echo tab (`/echo-headers`, the request headers
+     * the server received on `window.__headers`) carries a `Referer` and no `DNT`, and
+     * `navigator.doNotTrack` is null. From the probe page: the password prompt off, Do Not Track
+     * on, referrers and hyperlink auditing off, each read back as `controlled_by_this_extension`
+     * (`webRTCIPHandlingPolicy` and the third-party cookies setting read as the browser answers
+     * them). Then the controls core publishes (`UIState.extensionControls`: the desktop's keys
+     * `passwords.offerToSave` and `privacy.dnt` naming the probe), `navigator.doNotTrack` `'1'` in
+     * the open echo document (the layer's script run in it) and in a fresh tab (registered at
+     * document start), and the echo navigation repeated until the request the server received
+     * carries `DNT: 1` and no `Referer` (`r1`: the runtime's rule set reaches the Kotlin engine
+     * through the blocking index, a rebuild behind it). A disable takes the layer and the rules
+     * away (`r2`, the map without the probe) and an enable brings the store's values back (`r3`,
+     * the reads `controlled_by_this_extension` again). The clears, each read back
+     * (`controllable_by_this_extension`, the browser's value), the echo back to the baseline
+     * (`r4`), the map empty of the probe; the `onChange` counters read on both probe pages. `P`
+     * on all of it; `PARTIAL` with the sets stored and read back and a later reading off; `F`
+     * when the sets never took (the stub's `not_controllable`, an error).
+     */
+    private fun privacyProbe(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val slug = entry.optString("slug")
+        val extra = JSONObject()
+        val (echoTab, echoView) = fixture("echo-headers?p=0", factor, 1_000)
+        val r0 = echoReading(echoView, factor, 1)
+        extra.put("r0", r0)
+        val page = createTab("chrome-extension://${row.id}/probe.html")
+        val pageView = waitForView(page)
+        val ready = poll(scaled(15_000, factor), 400) { if (tabEval(pageView, PRIVACY_PAGE_READY) == "true") true else null }
+        extra.put("pageReady", ready == true)
+        val set = probe(pageView, PRIVACY_PROBE_SET, "__zenP", scaled(15_000, factor))
+        extra.put("set", set)
+        val published = poll(scaled(15_000, factor), 400) { publishedControls().takeIf { c -> c.optJSONObject("privacy.dnt")?.optString("extensionId") == row.id && c.optJSONObject("passwords.offerToSave")?.optString("extensionId") == row.id } } ?: publishedControls()
+        extra.put("published", published)
+        val events1 = poll(scaled(5_000, factor), 300) { json(tabEval(pageView, "JSON.stringify(window.__zenEv||null)")).takeIf { it.optInt("dnt") >= 1 && it.optInt("passwords") >= 1 } }
+            ?: json(tabEval(pageView, "JSON.stringify(window.__zenEv||null)"))
+        extra.put("events", events1).put("pageConsole", JSONArray(consoleOf(pageView).takeLast(8)))
+        showTab(echoTab)
+        val openDnt = poll(scaled(10_000, factor), 300) { tabEval(echoView, "String(navigator.doNotTrack)").takeIf { it == "1" } } ?: tabEval(echoView, "String(navigator.doNotTrack)")
+        extra.put("openDocumentDoNotTrack", openDnt)
+        val r1 = echoUntil(echoView, factor, 2, scaled(20_000, factor)) { dntOf(it) == "1" && refererOf(it) == null }
+        extra.put("r1", r1)
+        snap("$slug-dnt")
+        val (fresh, freshView) = fixture("echo-headers?p=fresh", factor, 800)
+        val freshDnt = tabEval(freshView, "String(navigator.doNotTrack)")
+        extra.put("freshTabDoNotTrack", freshDnt)
+        closeTab(fresh)
+        closeTab(page)
+        coreCall("extension.setEnabled", JSONObject().put("id", row.id).put("enabled", false).toString())
+        val off = poll(scaled(20_000, factor), 400) { extensions().firstOrNull { it.getString("id") == row.id }?.takeIf { !it.getBoolean("enabled") } } != null
+        val goneFromMap = poll(scaled(10_000, factor), 400) { publishedControls().takeIf { !it.has("privacy.dnt") && !it.has("passwords.offerToSave") } } != null
+        showTab(echoTab)
+        val r2 = echoUntil(echoView, factor, 20, scaled(20_000, factor)) { dntOf(it) == null && refererOf(it) != null }
+        extra.put("disabled", off).put("goneFromMapWhenDisabled", goneFromMap).put("r2", r2)
+        coreCall("extension.setEnabled", JSONObject().put("id", row.id).put("enabled", true).toString())
+        val on = poll(scaled(20_000, factor), 400) { extensions().firstOrNull { it.getString("id") == row.id }?.takeIf { it.getBoolean("enabled") } } != null
+        val backInMap = poll(scaled(15_000, factor), 400) { publishedControls().takeIf { it.optJSONObject("privacy.dnt")?.optString("extensionId") == row.id } } != null
+        val r3 = echoUntil(echoView, factor, 40, scaled(20_000, factor)) { dntOf(it) == "1" && refererOf(it) == null }
+        extra.put("enabledAgain", on).put("backInMapWhenEnabled", backInMap).put("r3", r3)
+        val page2 = createTab("chrome-extension://${row.id}/probe.html")
+        val page2View = waitForView(page2)
+        poll(scaled(15_000, factor), 400) { if (tabEval(page2View, PRIVACY_PAGE_READY) == "true") true else null }
+        val kept = probe(page2View, PRIVACY_PROBE_KEPT, "__zenPKept", scaled(10_000, factor))
+        extra.put("keptAfterEnable", kept)
+        val clear = probe(page2View, PRIVACY_PROBE_CLEAR, "__zenPClear", scaled(15_000, factor))
+        extra.put("clear", clear)
+        val events2 = poll(scaled(5_000, factor), 300) { json(tabEval(page2View, "JSON.stringify(window.__zenEv||null)")).takeIf { it.optInt("dnt") >= 1 } }
+            ?: json(tabEval(page2View, "JSON.stringify(window.__zenEv||null)"))
+        extra.put("eventsAfterClears", events2)
+        showTab(echoTab)
+        val r4 = echoUntil(echoView, factor, 60, scaled(20_000, factor)) { dntOf(it) == null && refererOf(it) != null }
+        extra.put("r4", r4)
+        val clearedFromMap = poll(scaled(10_000, factor), 400) { publishedControls().takeIf { !it.has("privacy.dnt") && !it.has("passwords.offerToSave") } } != null
+        extra.put("clearedFromMap", clearedFromMap)
+        snap("$slug-cleared")
+        closeTab(page2)
+        closeTab(echoTab)
+        showTab(fixtureTab)
+        val wanted = mapOf("services.passwordSavingEnabled" to false, "websites.doNotTrackEnabled" to true, "websites.referrersEnabled" to false, "websites.hyperlinkAuditingEnabled" to false)
+        fun readOf(probe: JSONObject, path: String): JSONObject? = stepOf(probe, "get $path")?.optJSONObject("r")
+        fun held(probe: JSONObject): Boolean = wanted.all { (path, value) -> readOf(probe, path)?.let { it.optString("levelOfControl") == "controlled_by_this_extension" && it.has("value") && it.optBoolean("value", !value) == value } == true }
+        val setsTook = wanted.keys.all { path -> stepOf(set, "set $path")?.let { it.isNull("err") && !it.has("threw") } == true } && held(set)
+        val baselineOk = dntOf(r0) == null && refererOf(r0) != null
+        val publishedOk = published.optJSONObject("privacy.dnt")?.let { it.optString("extensionId") == row.id && it.optBoolean("value", false) } == true &&
+            published.optJSONObject("passwords.offerToSave")?.let { it.optString("extensionId") == row.id && !it.optBoolean("value", true) } == true
+        val headerOk = dntOf(r1) == "1" && refererOf(r1) == null
+        val navigatorOk = openDnt == "1" && freshDnt == "1"
+        val disableOk = off && goneFromMap && dntOf(r2) == null && refererOf(r2) != null
+        val enableOk = on && backInMap && dntOf(r3) == "1" && refererOf(r3) == null && held(kept)
+        val clearsOk = wanted.keys.all { path -> readOf(clear, path)?.optString("levelOfControl") == "controllable_by_this_extension" } && dntOf(r4) == null && refererOf(r4) != null && clearedFromMap
+        val eventsOk = events1.optInt("dnt") >= 1 && events1.optInt("passwords") >= 1 && events1.optInt("referrers") >= 1 && events1.optInt("pings") >= 1 && events2.optInt("dnt") >= 1
+        val webRtc = readOf(set, "network.webRTCIPHandlingPolicy")
+        val note = "baseline: Referer ${if (refererOf(r0) != null) "present" else "MISSING"}, DNT ${dntOf(r0) ?: "absent"}, navigator.doNotTrack ${r0.optString("navigatorDoNotTrack")}; " +
+            "sets: " + wanted.keys.joinToString(", ") { path -> "${path.substringAfter('.')} → ${readOf(set, path)?.toString() ?: stepOf(set, "set $path")?.toString() ?: "no answer"}" } + "; " +
+            "webRTCIPHandlingPolicy reads ${webRtc?.toString() ?: "no answer"} (stored and published only: WebView has no policy API); " +
+            "published: privacy.dnt ${published.optJSONObject("privacy.dnt")?.toString() ?: "absent"}, passwords.offerToSave ${published.optJSONObject("passwords.offerToSave")?.toString() ?: "absent"}; " +
+            "navigator.doNotTrack in the open document $openDnt, in a fresh tab $freshDnt; " +
+            "a document request then carries DNT ${dntOf(r1) ?: "absent"} and Referer ${refererOf(r1)?.let { "present" } ?: "absent"} (p=${r1.optInt("p")}); " +
+            "disabled: DNT ${dntOf(r2) ?: "absent"}, Referer ${refererOf(r2)?.let { "present" } ?: "absent"}, the map ${if (goneFromMap) "without the probe" else "STILL naming it"}; " +
+            "enabled again: DNT ${dntOf(r3) ?: "absent"}, Referer ${refererOf(r3)?.let { "present" } ?: "absent"}, the map ${if (backInMap) "naming it again" else "NOT naming it"}, the values ${if (held(kept)) "kept" else "NOT kept: ${kept.toString().take(300)}"}; " +
+            "cleared: levels ${wanted.keys.joinToString("/") { readOf(clear, it)?.optString("levelOfControl") ?: "none" }}, DNT ${dntOf(r4) ?: "absent"}, Referer ${refererOf(r4)?.let { "present" } ?: "absent"}, the map ${if (clearedFromMap) "empty of the probe" else "STILL naming it"}; " +
+            "events passwords ${events1.optInt("passwords")} dnt ${events1.optInt("dnt")} referrers ${events1.optInt("referrers")} pings ${events1.optInt("pings")}, after the clears dnt ${events2.optInt("dnt")}"
+        val off2 = listOfNotNull(
+            if (!baselineOk) "the baseline (no Referer on a same-origin navigation, or a DNT already there)" else null,
+            if (!publishedOk) "the published controls" else null,
+            if (!headerOk) "the DNT header and the Referer drop" else null,
+            if (!navigatorOk) "navigator.doNotTrack" else null,
+            if (!disableOk) "the disable" else null,
+            if (!enableOk) "the enable" else null,
+            if (!clearsOk) "the clears" else null,
+            if (!eventsOk) "the events" else null
+        )
+        return when {
+            !setsTook -> Grade("F", "privacy probe: the sets never took: $note", extra)
+            off2.isEmpty() -> Grade("P", "privacy probe: $note", extra)
+            else -> Grade("PARTIAL", "privacy probe: the sets stored and read back; off: ${off2.joinToString(", ")}: $note", extra)
+        }
+    }
+
+    /**
+     * A row whose extension takes `chrome.privacy` settings by itself when its background starts
+     * (iCloud Passwords' `ExtensionSettings`: `services.passwordSavingEnabled`,
+     * `autofillCreditCardEnabled` and `autofillAddressEnabled` set `false` while its
+     * `allowExtensionToControlAutoFillSettings` default stands; it throws `Cannot control …`
+     * on a `not_controllable` read, so a stub's answer keeps the sets from ever being asked). The
+     * inner grade's verdict stands – the row's core is the inner's – and the ADDENDUM's proof is
+     * added to the note: each setting as the background reads it back (its level and value) and
+     * as core publishes it (`UIState.extensionControls` under the desktop's key, naming the row).
+     */
+    private fun privacyHolder(inner: (Row, JSONObject) -> Grade, settings: List<Pair<String, String>>): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val grade = inner(row, entry)
+        val extra = grade.extra ?: JSONObject()
+        val bg = awakeBackground(row.id, factor)
+        val slot = "__zenHolder"
+        val reads = if (bg != null) probe(bg, privacyProbeSteps(slot, privacyGets(settings.map { it.first })), slot, scaled(10_000, factor)) else JSONObject().put("error", "no background view")
+        extra.put("privacyReads", reads)
+        val published = poll(scaled(10_000, factor), 400) { publishedControls().takeIf { c -> settings.all { (_, key) -> c.optJSONObject(key)?.optString("extensionId") == row.id } } } ?: publishedControls()
+        val mine = JSONObject()
+        for ((_, key) in settings) published.optJSONObject(key)?.let { mine.put(key, it) }
+        extra.put("privacyPublished", mine)
+        fun readOf(path: String): JSONObject? = stepOf(reads, "get $path")?.optJSONObject("r")
+        val held = settings.count { (path, key) ->
+            readOf(path)?.let { it.optString("levelOfControl") == "controlled_by_this_extension" && it.has("value") && !it.optBoolean("value", true) } == true &&
+                mine.optJSONObject(key)?.let { it.optString("extensionId") == row.id && !it.optBoolean("value", true) } == true
+        }
+        val note = "chrome.privacy: $held/${settings.size} settings held false and published (" +
+            settings.joinToString("; ") { (path, key) -> "$path reads ${readOf(path)?.toString() ?: stepOf(reads, "get $path")?.toString() ?: reads.optString("error", "no answer")}, published as $key ${mine.optJSONObject(key)?.let { "${it.opt("value")} by ${it.optString("name")}" } ?: "absent"}" } + ")"
+        Grade(grade.verdict, "${grade.note}; $note", extra)
+    }
+
+    /** The controls map core publishes (`UIState.extensionControls`): the setting's key → `{extensionId, name, value}`. */
+    private fun publishedControls(): JSONObject = coreSnapshot().optJSONObject("extensionControls") ?: JSONObject()
+
+    /**
+     * A same-origin navigation of the echo tab to `/echo-headers?p=<n>` (so the request carries
+     * a `Referer`, the page it left), then the request headers the server received (their names
+     * lower-cased) and `navigator.doNotTrack` in the new document; an error after 15 s.
+     */
+    private fun echoReading(view: TabWebView, factor: Double, n: Int): JSONObject {
+        tabEval(view, "(function(){location.assign('$BASE/echo-headers?p=$n');return 'asked'})()")
+        return poll(scaled(15_000, factor), 300) {
+            val r = tabEval(
+                view,
+                "(function(){if(location.search!=='?p=$n'||document.readyState!=='complete'||!window.__headers)return null;var h=window.__headers,o={};for(var k in h){o[k.toLowerCase()]=h[k]}" +
+                    "return JSON.stringify({p:$n,dnt:o['dnt']===undefined?null:o['dnt'],referer:o['referer']===undefined?null:o['referer'],navigatorDoNotTrack:navigator.doNotTrack===undefined?'undefined':navigator.doNotTrack,headers:Object.keys(o).length})})()"
+            )
+            if (r == "null") null else json(r)
+        } ?: JSONObject().put("p", n).put("error", "no reading within ${scaled(15_000, factor) / 1000} s")
+    }
+
+    /** [echoReading] repeated (`p` counting up from `from`) until `until` holds or `timeoutMs` pass; the last reading. */
+    private fun echoUntil(view: TabWebView, factor: Double, from: Int, timeoutMs: Long, until: (JSONObject) -> Boolean): JSONObject {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        var n = from
+        var last = echoReading(view, factor, n)
+        while (!until(last) && SystemClock.elapsedRealtime() < deadline) {
+            SystemClock.sleep(scaled(700, factor))
+            last = echoReading(view, factor, ++n)
+        }
+        return last
+    }
+
+    /** The `DNT` header the server received in an [echoReading], or null without one. */
+    private fun dntOf(reading: JSONObject): String? = if (reading.isNull("dnt")) null else reading.optString("dnt")
+
+    /** The `Referer` header the server received in an [echoReading], or null without one. */
+    private fun refererOf(reading: JSONObject): String? = if (reading.isNull("referer")) null else reading.optString("referer")
 
     /**
      * Search by Image: its action opens its popup – the engine list ("All search engines",
@@ -10868,6 +11067,37 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         )
         private val FONTS_PROBE_A_FILES = fontsProbeFiles(FONTS_PROBE_A_NAME)
         private val FONTS_PROBE_B_FILES = fontsProbeFiles(FONTS_PROBE_B_NAME)
+
+        /**
+         * The `chrome.privacy` probe ([privacyProbe]; round 20's proof of the coordinator's
+         * ADDENDUM item 2d): an extension with the `privacy` permission and one page
+         * (`probe.html`, its `options_ui` in a tab) that arms `onChange` counters at load for the
+         * four settings the driver sets (`window.__zenEv`); the calls themselves come from the
+         * driver ([PRIVACY_PROBE_SET], [PRIVACY_PROBE_CLEAR]). Its id comes out as
+         * `pkjmmekkikdhpoegdhnbnoopodjfmdck` (the trigger's lists name it).
+         */
+        private const val PRIVACY_PROBE_NAME = "Zenium compat proof: privacy probe"
+        private val PRIVACY_PROBE_ID = fixtureId(PRIVACY_PROBE_NAME)
+        private val PRIVACY_PROBE_FILES: Map<String, String> = mapOf(
+            "manifest.json" to """{"manifest_version":3,"name":"$PRIVACY_PROBE_NAME","version":"1.0","description":"A fixture of the Zenium compat sweep: a page with the privacy permission, driven by the sweep.","permissions":["privacy"],"options_ui":{"page":"probe.html","open_in_tab":true}}""",
+            "probe.html" to
+                "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>$PRIVACY_PROBE_NAME</title><script src=\"probe.js\"></script></head>" +
+                "<body style=\"font:16px system-ui,sans-serif;margin:24px\"><h1 style=\"font-size:20px\">$PRIVACY_PROBE_NAME</h1><p id=\"status\">A page with the privacy permission; the sweep drives the calls.</p></body></html>",
+            "probe.js" to
+                "(function(){var e=window.__zenEv={passwords:0,dnt:0,referrers:0,pings:0,last:null};var v=chrome.privacy;if(!v||!v.services||!v.websites){document.addEventListener('DOMContentLoaded',function(){document.getElementById('status').textContent='chrome.privacy is missing'});return}" +
+                "v.services.passwordSavingEnabled.onChange.addListener(function(d){e.passwords++;e.last=d||null});v.websites.doNotTrackEnabled.onChange.addListener(function(d){e.dnt++;e.last=d||null});" +
+                "v.websites.referrersEnabled.onChange.addListener(function(){e.referrers++});v.websites.hyperlinkAuditingEnabled.onChange.addListener(function(){e.pings++})})();\n"
+        )
+
+        /** The privacy probe page's readiness: its counters armed and `chrome.privacy` there. */
+        private const val PRIVACY_PAGE_READY = "String(!!(window.__zenEv&&typeof chrome!=='undefined'&&chrome.privacy&&chrome.privacy.websites))"
+
+        /** iCloud Passwords' three `chrome.privacy` settings ([privacyHolder]): the setting's path → the key core publishes it under (the desktop's keys). */
+        private val ICLOUD_PRIVACY_SETTINGS = listOf(
+            "services.passwordSavingEnabled" to "passwords.offerToSave",
+            "services.autofillCreditCardEnabled" to "autofill.cards",
+            "services.autofillAddressEnabled" to "autofill.addresses"
+        )
         private const val YOUTUBE_URL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
         private const val INSTALL_TIMEOUT_MS = 240_000L
         /** uBlock Origin (MV2) on Edge Add-ons: the heaviest row, run last by default. */
@@ -12206,9 +12436,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * counted so far beside them; lands on `window.<slot>`. `p` is the slot object, `f` the
          * `chrome.fontSettings` namespace, for the calls' code.
          */
-        private fun fontsProbeSteps(slot: String, calls: List<Pair<String, String>>): String {
+        private fun fontsProbeSteps(slot: String, calls: List<Pair<String, String>>): String = probeSteps(slot, "chrome.fontSettings", calls)
+
+        /** [fontsProbeSteps]'s runner over any namespace expression: `f` is `namespace` in the calls' code. */
+        private fun probeSteps(slot: String, namespace: String, calls: List<Pair<String, String>>): String {
             val chain = calls.joinToString("") { (name, code) -> ".then(function(){return step('$name',function(cb){$code})})" }
-            return "(function(){var p=window.$slot={done:false,steps:[],error:null};var f=chrome.fontSettings;" +
+            return "(function(){var p=window.$slot={done:false,steps:[],error:null};var f=$namespace;" +
                 "function step(name,fn){return new Promise(function(res){try{fn(function(r){p.steps.push({name:name,r:r===undefined?null:r,err:chrome.runtime.lastError?String(chrome.runtime.lastError.message):null});res()})}catch(e){p.steps.push({name:name,threw:String(e&&e.message||e)});res()}})}" +
                 "Promise.resolve()$chain.then(function(){p.events=window.__zenEv||null;p.done=true},function(e){p.error=String(e&&e.message||e);p.done=true});return 'asked'})()"
         }
@@ -12273,6 +12506,40 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "getFont" to "f.getFont({genericFamily:'standard'},cb)"
             )
         )
+
+        /** [probeSteps] over `chrome.privacy`: a step reads `f.websites.doNotTrackEnabled.set({value:true},cb)`. */
+        private fun privacyProbeSteps(slot: String, calls: List<Pair<String, String>>): String = probeSteps(slot, "chrome.privacy", calls)
+
+        /** A `chrome.privacy` setting read per path (`services.passwordSavingEnabled`), the step named `get <path>`. */
+        private fun privacyGets(paths: List<String>): List<Pair<String, String>> = paths.map { "get $it" to "f.$it.get({},cb)" }
+
+        /** The four settings the privacy probe sets ([PRIVACY_PROBE_SET]) and clears ([PRIVACY_PROBE_CLEAR]). */
+        private val PRIVACY_PROBE_PATHS = listOf("services.passwordSavingEnabled", "websites.doNotTrackEnabled", "websites.referrersEnabled", "websites.hyperlinkAuditingEnabled")
+
+        /**
+         * The privacy probe's sets – the password prompt off, Do Not Track on, referrers and
+         * hyperlink auditing off – each read back; `webRTCIPHandlingPolicy` and the third-party
+         * cookies setting read as the browser answers them (stored and published only, the
+         * WebView has no policy API for the first).
+         */
+        private val PRIVACY_PROBE_SET = privacyProbeSteps(
+            "__zenP",
+            listOf(
+                "set services.passwordSavingEnabled" to "f.services.passwordSavingEnabled.set({value:false},cb)",
+                "set websites.doNotTrackEnabled" to "f.websites.doNotTrackEnabled.set({value:true},cb)",
+                "set websites.referrersEnabled" to "f.websites.referrersEnabled.set({value:false},cb)",
+                "set websites.hyperlinkAuditingEnabled" to "f.websites.hyperlinkAuditingEnabled.set({value:false},cb)"
+            ) + privacyGets(PRIVACY_PROBE_PATHS + listOf("network.webRTCIPHandlingPolicy", "websites.thirdPartyCookiesAllowed"))
+        )
+
+        /** The privacy probe's clears, each read back (the browser's own value, `controllable_by_this_extension`). */
+        private val PRIVACY_PROBE_CLEAR = privacyProbeSteps(
+            "__zenPClear",
+            PRIVACY_PROBE_PATHS.map { "clear $it" to "f.$it.clear({},cb)" } + privacyGets(PRIVACY_PROBE_PATHS)
+        )
+
+        /** The three set values read again from a fresh probe page after a disable and an enable. */
+        private val PRIVACY_PROBE_KEPT = privacyProbeSteps("__zenPKept", privacyGets(PRIVACY_PROBE_PATHS))
 
         /**
          * Search by Image's image-pick mode on the page: its `src/select/script.js` (run through
