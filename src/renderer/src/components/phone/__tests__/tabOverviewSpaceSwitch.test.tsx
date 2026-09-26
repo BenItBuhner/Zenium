@@ -658,6 +658,40 @@ describe('a Space switch in the overview', () => {
     })
   })
 
+  it('a Space left on its note – its last card closed there – is kept in view as a still that sheds the mark, so the still’s fade out is the note’s one move (TAB-34)', () => {
+    // Home down to one tab, then to none: the note takes the grid's place in Home's own slot
+    // and carries the mark (the 120 ms fade in, §11.1's one move).
+    const homeWith = (active: string, keep: string[]): UIState => {
+      const state = stateOf(active)
+      const tabs = Object.fromEntries(
+        Object.entries(state.tabs).filter(([id]) => !id.startsWith('h') || keep.includes(id))
+      )
+      const spaces = state.spaces.map((s) =>
+        s.id === HOME ? { ...s, tabIds: keep, activeTabId: keep[0] ?? null } : s
+      )
+      return { ...state, tabs, spaces }
+    }
+    render(homeWith(HOME, ['h0']))
+    expect(cardIds()).toEqual(['h0'])
+    render(homeWith(HOME, []))
+    const note = host!.querySelector<HTMLElement>('[data-testid="overview-tabs-empty"]')!
+    expect(note.hasAttribute('data-in-place')).toBe(true)
+    // Work picked: Home's slot leaves as a still while Work's grid slides in. The still's copy
+    // of the note carries no mark – put back in the document it would run the fade in afresh
+    // under the still's fade out, a blink where §11.4 asks one move.
+    animations = []
+    render(homeWith(WORK, []))
+    expect(cardIds()).toEqual(ids('w', 0, 7))
+    expect(slides()).toHaveLength(1)
+    expect(stills()).toHaveLength(1)
+    const copy = stills()[0]!.querySelector<HTMLElement>('.zen-overview-tabs-empty')!
+    expect(copy).not.toBeNull()
+    expect(copy.textContent).toContain('No open tabs')
+    expect(copy.hasAttribute('data-in-place')).toBe(false)
+    expect(stills()[0]!.querySelector('[data-in-place]')).toBeNull()
+    expect(host!.querySelector('[data-testid="overview-tabs-empty"]')).toBeNull()
+  })
+
   it('the FLIP tracker measures the new grid with the slot held at rest, and glides nothing from the grid that left', () => {
     render(stateOf(WORK))
     // Work's New Tab card is the thirty-first cell, row 15; Home's the thirteenth, row 6: the

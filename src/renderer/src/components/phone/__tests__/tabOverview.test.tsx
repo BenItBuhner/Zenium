@@ -1912,6 +1912,38 @@ describe('the New Tab card', () => {
     act(() => cellOf('b').querySelector<HTMLElement>('[aria-label^="Close "]')!.click())
     expect(departStore.get().items.map((i) => i.key)).toEqual(['b'])
   })
+
+  it('stays, the grid with it, when the X of the pane’s one card – pinned – only unloads it; the same X under "Close the tab" empties the pane (TAB-34)', () => {
+    // The pane's one card is pinned, and pinned tabs unload on close (the default): the X asks
+    // the core's close, which unloads the tab and keeps it. Nothing leaves – not the card, not
+    // the New Tab card – and the pane is not emptying, though every card of it was told to
+    // close: `emptiesPane` reads what closes for real, not what was asked.
+    place('p', 0, 0)
+    place(NEW_TAB_CELL, 110, 0)
+    const pinned = tab('p', 'https://pinned.example/', { pinned: true })
+    render(stateOf([pinned], []))
+    const plus = cellOf(NEW_TAB_CELL)
+    act(() => cellOf('p').querySelector<HTMLElement>('[aria-label^="Close "]')!.click())
+    expect(commands()).toEqual([['tab.close', { tabId: 'p' }]])
+    expect(departStore.get().items).toEqual([])
+    expect(departStore.get().hidden.has(NEW_TAB_CELL)).toBe(false)
+    // The browser shows the unload: the card stands, discarded, the grid and its New Tab card
+    // with it; the sentence has no place.
+    render(stateOf([{ ...pinned, discarded: true }], []))
+    expect(cellOf('p')).not.toBeNull()
+    expect(cellOf(NEW_TAB_CELL)).toBe(plus)
+    expect(host!.querySelector('[data-testid="overview-tabs-empty"]')).toBeNull()
+    expect(document.querySelector('.zen-overview-new.fixed')).toBeNull()
+    // Under "Close the tab" the same X closes the pinned tab for real: its card leaves and the
+    // New Tab card with it, the close's exit, as for any last card.
+    invoke.mockClear()
+    const closes = stateOf([pinned], [])
+    render({ ...closes, settings: { ...closes.settings, pinnedCloseBehavior: 'close' } })
+    act(() => cellOf('p').querySelector<HTMLElement>('[aria-label^="Close "]')!.click())
+    expect(commands()).toEqual([['tab.close', { tabId: 'p' }]])
+    expect(departStore.get().items.map((i) => i.key)).toEqual(['p', NEW_TAB_CELL])
+    expect(departStore.get().items[1]).toMatchObject({ kind: 'new-tab', with: ['p'] })
+  })
 })
 
 // --- (E) reduced motion (v2 §11.3) ---------------------------------------------------------------
@@ -2530,6 +2562,49 @@ describe('the private pane', () => {
     expect(labels).not.toContain('New Group')
   })
 
+  it('a held private card’s rows: Share… and Bookmark Tab between Select Tabs and the closes, no group row; Share… sends the private tab (TAB-28)', () => {
+    // The two rows are the card's whatever its pane (Chrome's incognito grid offers them too);
+    // the group rows alone are the Tabs pane's. Two private tabs: the other count is one.
+    render(
+      withPrivate(
+        stateOf(
+          [
+            privateTab('p1', 'https://one.example/'),
+            tab('a', 'https://a.example/'),
+            privateTab('p2', 'https://two.example/')
+          ],
+          []
+        )
+      )
+    )
+    expect(selected('private')).toBe(true)
+    place('p1', 0, 0)
+    pickUp('p1')
+    const p = at('p1', 0.5, 0.5)
+    letGo(p.x, p.y)
+    act(() => elapse(300))
+    act(() => settleSprings())
+    const rows = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('.zen-sheet-item')]
+    expect(rows().map((el) => el.textContent)).toEqual([
+      'Select Tabs',
+      'Share…',
+      'Bookmark Tab',
+      'Close Other Tabs (1)',
+      'Close Tab'
+    ])
+    // The row acts on the held private tab once the sheet has left, as on the Tabs pane.
+    act(() =>
+      rows()
+        .find((el) => el.textContent === 'Share…')!
+        .click()
+    )
+    act(() => settleSprings())
+    expect(commands().filter(([name]) => name === 'share.open')).toEqual([
+      ['share.open', { tabId: 'p1' }]
+    ])
+    expect(document.querySelector('.zen-sheet-item')).toBeNull()
+  })
+
   /*
    * A drag on the private pane rearranges its cards like the Tabs pane's (Chrome's incognito grid
    * allows it) and does nothing else: a card's middle is no merge target and no group is made.
@@ -2957,6 +3032,46 @@ describe('the Tabs pane with no tab', () => {
       render(privateHost([]))
       expect(note()!.hasAttribute('data-in-place')).toBe(false)
       expect(countShown()).toBe('0 tabs')
+    } finally {
+      act(() => resetOverviewPane())
+    }
+  })
+
+  /*
+   * The mark's other side (the first line's finding on #562): a pane leaving is kept in view as
+   * a still – its DOM copied and put back in the document (`PaneSlot`'s `takeStill`), where a
+   * copy starts its CSS animations afresh. A marked copy would run the 120 ms fade in again
+   * under the still's own fade out: a blink, a second move on the object (g) keyed to one
+   * (§11.1). So the still sheds `data-in-place` with the pane's other hooks.
+   */
+  it('a leaving empty pane’s still sheds the mark: the note that took the grid’s place is copied without data-in-place, so the still’s fade out is its one move', () => {
+    const stills = (): HTMLElement[] => [
+      ...host!.querySelectorAll<HTMLElement>('[data-testid="pane-still"]')
+    ]
+    const privateHost = (tabs: Tab[]): UIState => {
+      const state = stateOf(tabs, [])
+      return { ...state, capabilities: { ...state.capabilities, privateTabs: true } }
+    }
+    try {
+      // A tab, then its close: the note took the grid's place and carries the mark.
+      render(privateHost([tab('a', 'https://a.example/')]))
+      expect(note()).toBeNull()
+      render(privateHost([]))
+      expect(note()!.hasAttribute('data-in-place')).toBe(true)
+      // The Private segment: the Tabs pane leaves on the panes' cross-fade – a still of it,
+      // the note copied whole, its words with it – and the copy carries no mark, as it carries
+      // no hook.
+      act(() => host!.querySelector<HTMLElement>('[data-testid="overview-pane-private"]')!.click())
+      expect(note()).toBeNull()
+      expect(host!.querySelector('[data-testid="overview-private-empty"]')).not.toBeNull()
+      expect(stills()).toHaveLength(1)
+      const copy = stills()[0]!.querySelector<HTMLElement>('.zen-overview-tabs-empty')!
+      expect(copy).not.toBeNull()
+      expect(copy.textContent).toBe('No open tabsNew tab')
+      expect(copy.dataset.pane).toBe('tabs')
+      expect(copy.hasAttribute('data-in-place')).toBe(false)
+      expect(copy.hasAttribute('data-testid')).toBe(false)
+      expect(stills()[0]!.querySelector('[data-in-place]')).toBeNull()
     } finally {
       act(() => resetOverviewPane())
     }
