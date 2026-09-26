@@ -110,6 +110,83 @@ class RuleIndexTest {
         assertEquals(Decision.Action.ALLOW, snap.decide(req("https://other.example/a.js")).action)
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // Big lists: sorted arrays in the rule, the rule on its own in the index
+
+    @Test
+    fun aListOverTheThresholdIsASortedArrayAndAnswersAsTheHashSetDoes() {
+        val domains = (0 until 5_000).map { "H${it}.Example" } + listOf("ads.example", "ads.example", "Ads.Example")
+        val big = DnrRule.parse(JSONObject(rule(1, "block", """{"requestDomains":${JSONArray(domains)},"initiatorDomains":${JSONArray(domains.take(64))},"excludedRequestDomains":${JSONArray(domains.take(65))}}""")), 2999)!!
+        val sorted = big.requestDomains as SortedDomainSet
+        assertEquals(5_001, sorted.size) // lowercased, duplicates dropped
+        assertEquals(sorted.sorted.toList(), sorted.sorted.sorted())
+        assertTrue(big.initiatorDomains is HashSet<*>) // 64: the threshold itself stays a hash set
+        assertTrue(DnrRule.parse(JSONObject(rule(2, "block", """{"excludedRequestDomains":${JSONArray(domains.take(65))}}""")), 2999)!!.let { it.pattern == null && it.matches(req("https://x.example/a.js")) })
+        assertTrue(sorted.contains("h4999.example"))
+        assertTrue(sorted.contains("ads.example"))
+        assertFalse(sorted.contains("h5000.example"))
+        assertFalse(sorted.contains(""))
+        val hashed = HashSet(domains.map { it.lowercase() })
+        assertEquals(hashed, sorted) // content equality both ways: the interner keys sets by it
+        assertEquals(sorted, hashed)
+        assertEquals(hashed.hashCode(), sorted.hashCode())
+        for (host in listOf("ads.example", "x.ads.example", "xads.example", "ads.example.evil", "h5.example", "cdn.h5.example", "h5.example.net", "example", "")) {
+            assertEquals(host, DnrRule.hasDomainOf(host, hashed), DnrRule.hasDomainOf(host, sorted))
+        }
+    }
+
+    @Test
+    fun aRuleWithAHugeRequestDomainsListIsFoundWithoutAnEntryPerDomain() {
+        val n = RuleIndex.BIG_LIST + 100
+        val folded = JSONArray().also { arr -> for (i in 0 until n) arr.put("h$i.example"); arr.put("ads.example") }
+        val small = JSONArray().also { arr -> for (i in 0 until 300) arr.put("s$i.example") }
+        val set = set(
+            "ext:abc:static:hosts", 2999,
+            "[${rule(1, "block", """{"requestDomains":$folded,"resourceTypes":["script","image"]}""")}," +
+                "${rule(2, "allow", """{"requestDomains":["ads.example"],"resourceTypes":["image"]}""")}," +
+                "${rule(3, "block", """{"requestDomains":$small}""")}," +
+                "${rule(4, "block", """{"requestDomains":$folded,"urlFilter":"/pixel/"}""")}]" // with a token: token-indexed, never on its own
+        )
+        assertEquals(1, set.index.bigHostRuleCount)
+        assertEquals(301, set.index.hostCount) // the small list's 300 and rule 2's one
+        assertEquals(1, set.index.tokenIndexedCount)
+        assertEquals(0, set.index.wildcardCount)
+        fun visited(r: Request): List<Int> {
+            val out = ArrayList<Int>()
+            set.index.forEachCandidate(r) { out.add(it.id) }
+            return out.sorted()
+        }
+        // The map would have yielded rule 1 under h8291.example and under ads.example; the sidecar yields the same.
+        assertEquals(listOf(1), visited(req("https://h8291.example/a.js")))
+        assertEquals(listOf(1), visited(req("https://cdn.h0.example/a.js")))
+        assertEquals(listOf(1, 2), visited(req("https://sub.ads.example/a.png", ResourceType.IMAGE)))
+        assertEquals(listOf(3), visited(req("https://s299.example/a.js")))
+        assertEquals(emptyList<Int>(), visited(req("https://h${n}.example/a.js")))
+        assertEquals(emptyList<Int>(), visited(req("https://example/a.js")))
+        val snap = EngineSnapshot(listOf(set), null)
+        assertEquals(1, snap.decide(req("https://h4999.example/a.js")).matchedRule)
+        assertEquals(Decision.Action.BLOCK, snap.decide(req("https://sub.ads.example/a.js")).action)
+        assertEquals(Decision.Action.ALLOW, snap.decide(req("https://ads.example/a.png", ResourceType.IMAGE)).action)
+        assertEquals(Decision.Action.ALLOW, snap.decide(req("https://h4999.example/a.css", ResourceType.STYLESHEET)).action)
+        assertEquals(4, snap.decide(req("https://h4999.example/pixel/a.css", ResourceType.STYLESHEET)).matchedRule)
+        assertEquals(Decision.Action.ALLOW, snap.decide(req("https://other.example/a.js")).action)
+        // Against the linear scan, over hosts in and out of the list.
+        for (i in 0 until 3_000) {
+            val host = when (i % 4) {
+                0 -> "h${i * 7 % (n + 50)}.example"
+                1 -> "cdn.h${i}.example"
+                2 -> "s${i % 400}.example"
+                else -> "other$i.example"
+            }
+            val type = if (i % 5 == 0) ResourceType.IMAGE else ResourceType.SCRIPT
+            val request = req("https://$host/${if (i % 3 == 0) "pixel/" else ""}a.js", type)
+            val linear = snap.decideLinear(request)
+            val indexed = snap.decide(request)
+            assertEquals(host, linear.action, indexed.action)
+            assertEquals(host, linear.matchedRule, indexed.matchedRule)
+        }
+    }
+
     @Test
     fun rulesAreIndexedByHostnameTokenOrNotAtAll() {
         val set = set(
