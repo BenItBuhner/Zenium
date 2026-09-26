@@ -7,6 +7,10 @@ import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.webkit.WebViewCompat
+import app.zen.chromium.blocking.ListenerOptions
+import app.zen.chromium.blocking.WebRequestEvent
+import app.zen.chromium.blocking.WebRequestListener
+import app.zen.chromium.privacy.PreloadRules
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Test
@@ -15,6 +19,7 @@ import java.io.File
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -356,66 +361,95 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
      * Preload pages `none` at the request engine (PS-43; W6-S10). The level goes through the
      * core's own setting (`settings.update {preloadPages}`), which pushes the flags to `Privacy`
      * live – no relaunch – and the scene waits for the phone's copy (`Privacy.flags`) to carry it
-     * before it navigates. Under `none` the fixture's `<link rel=prefetch>` request is answered
-     * empty in `TabWebView.Client.shouldInterceptRequest` before it leaves the device, so the
-     * server sees no `/prefetched.txt` within 5 s of the page's own resources loading; under
-     * `standard` the same page's prefetch reaches the server, the `Sec-Purpose` / `Purpose` mark
-     * on it – the control that the mechanism is live on this WebView and that the mark the engine
-     * reads is what the request carries. The speculation-rules prefetch is recorded on both
-     * sides and REPORTED, not asserted: whether this WebView issues one at all, and whether it
-     * passes the proxying loader factory the engine sits on, is the run's reading. Either
-     * assertion failing fails the run – after both halves are in the notes.
+     * before it navigates. The fixture asks for `/prefetched.txt` through `<link rel=prefetch>`
+     * and for `/speculated.html` through a speculation-rules `prefetch`; the loopback server
+     * records what reached the network, and an observing `onSendHeaders` webRequest listener on
+     * the engine (`Blocking.addListener`, the extension platform's contract – dispatched with
+     * exactly the headers `shouldInterceptRequest` received, for every request the engine lets
+     * pass) records what the engine was shown. Under `standard` each prefetch must reach the
+     * server (the control that the mechanism is live on this WebView), and the listener says
+     * whether `shouldInterceptRequest` saw it and with which mark. The rule the scene asserts is
+     * then the engine's own: what `shouldInterceptRequest` is shown WITH the prefetch mark under
+     * `standard`, it must answer empty under `none` – the server sees nothing of it within 5 s
+     * of the page's own resources loading. A prefetch the engine is never shown, or is shown
+     * without a mark, is the WebView's limit, written as a FINDING and not failed on: the engine
+     * cannot refuse what it does not see (run 36242992489 on WebView 113: the link prefetch
+     * carries `Purpose: prefetch` on the wire and still reached the server under `none`, while
+     * the speculation-rules prefetch – `Sec-Purpose: prefetch` – was refused). Every reading is
+     * in the notes before a failed assertion fails the run.
      */
     private fun preloadScene() {
         val failures = mutableListOf<String>()
         ensureDemoTab()
         note("  WebView ${webViewVersion()}")
+        val engineSaw = ConcurrentHashMap<String, Map<String, String>>()
+        val stopListening = engine.addListener(
+            WebRequestEvent.ON_SEND_HEADERS,
+            WebRequestListener { details ->
+                engineSaw[details.url] = details.requestHeaders ?: emptyMap()
+                null
+            },
+            ListenerOptions(registrant = "blocking-ui-demo")
+        )
+        try {
+            // none: the refusal.
+            coreInvoke("settings.update", """{"preloadPages":"none"}""")
+            note("  none: ${awaitPreloadLevel("none")}")
+            val none = "none-${SystemClock.uptimeMillis()}"
+            coreInvoke("tab.navigate", """{"tabId":"$DEMO_TAB","input":"$DEMO_ORIGIN/preload.html?n=$none"}""")
+            val ownUnderNone = waitForPreloadPage(none)
+            note("  ${describePreloadPage(none, ownUnderNone)}")
+            SystemClock.sleep(5_000)
+            val prefetchedUnderNone = server.hits("/prefetched.txt?n=$none")
+            val speculatedUnderNone = server.hits("/speculated.html?n=$none")
+            note("  5 s after the page's own resources: /prefetched.txt ${describeHits(prefetchedUnderNone)}; /speculated.html ${describeHits(speculatedUnderNone)}")
+            note("  the engine under none: link prefetch ${describeEngineView(engineSaw["$DEMO_ORIGIN/prefetched.txt?n=$none"])}; speculation-rules prefetch ${describeEngineView(engineSaw["$DEMO_ORIGIN/speculated.html?n=$none"])}")
+            if (!ownUnderNone) failures += "under none the page's own resources did not load (${describePreloadPage(none, false)})"
+            shot("18-preload-none-no-prefetch")
+            beat()
 
-        // none: the refusal.
-        coreInvoke("settings.update", """{"preloadPages":"none"}""")
-        note("  none: ${awaitPreloadLevel("none")}")
-        val none = "none-${SystemClock.uptimeMillis()}"
-        coreInvoke("tab.navigate", """{"tabId":"$DEMO_TAB","input":"$DEMO_ORIGIN/preload.html?n=$none"}""")
-        val ownUnderNone = waitForPreloadPage(none)
-        note("  ${describePreloadPage(none, ownUnderNone)}")
-        SystemClock.sleep(5_000)
-        val prefetchedUnderNone = server.hits("/prefetched.txt?n=$none")
-        val speculatedUnderNone = server.hits("/speculated.html?n=$none")
-        note("  5 s after the page's own resources: /prefetched.txt ${describeHits(prefetchedUnderNone)}; /speculated.html ${describeHits(speculatedUnderNone)}")
-        if (!ownUnderNone) failures += "under none the page's own resources did not load (${describePreloadPage(none, false)})"
-        if (prefetchedUnderNone.isNotEmpty()) failures += "under none the server saw the <link rel=prefetch> request: ${prefetchedUnderNone.first()}"
-        shot("18-preload-none-no-prefetch")
-        beat()
+            // standard: the control, and the engine's view of each prefetch.
+            coreInvoke("settings.update", """{"preloadPages":"standard"}""")
+            note("  standard: ${awaitPreloadLevel("standard")}")
+            val standard = "standard-${SystemClock.uptimeMillis()}"
+            coreInvoke("tab.navigate", """{"tabId":"$DEMO_TAB","input":"$DEMO_ORIGIN/preload.html?n=$standard"}""")
+            val ownUnderStandard = waitForPreloadPage(standard)
+            note("  ${describePreloadPage(standard, ownUnderStandard)}")
+            val prefetchedUnderStandard = server.awaitHit("/prefetched.txt?n=$standard", 15_000)
+            server.awaitHit("/speculated.html?n=$standard", 5_000)
+            SystemClock.sleep(1_000)
+            val speculatedUnderStandard = server.hits("/speculated.html?n=$standard")
+            note("  /prefetched.txt ${describeHits(server.hits("/prefetched.txt?n=$standard"))}; /speculated.html ${describeHits(speculatedUnderStandard)}")
+            if (!ownUnderStandard) failures += "under standard the page's own resources did not load (${describePreloadPage(standard, false)})"
+            if (prefetchedUnderStandard == null) failures += "under standard no <link rel=prefetch> request reached the server within 15 s (the control)"
+            val linkSeen = engineSaw["$DEMO_ORIGIN/prefetched.txt?n=$standard"]
+            val speculatedSeen = engineSaw["$DEMO_ORIGIN/speculated.html?n=$standard"]
+            note("  the engine under standard: link prefetch ${describeEngineView(linkSeen)}; speculation-rules prefetch ${describeEngineView(speculatedSeen)}")
 
-        // standard: the control.
-        coreInvoke("settings.update", """{"preloadPages":"standard"}""")
-        note("  standard: ${awaitPreloadLevel("standard")}")
-        val standard = "standard-${SystemClock.uptimeMillis()}"
-        coreInvoke("tab.navigate", """{"tabId":"$DEMO_TAB","input":"$DEMO_ORIGIN/preload.html?n=$standard"}""")
-        val ownUnderStandard = waitForPreloadPage(standard)
-        note("  ${describePreloadPage(standard, ownUnderStandard)}")
-        val prefetchedUnderStandard = server.awaitHit("/prefetched.txt?n=$standard", 15_000)
-        SystemClock.sleep(2_000)
-        val speculatedUnderStandard = server.hits("/speculated.html?n=$standard")
-        note("  /prefetched.txt ${describeHits(server.hits("/prefetched.txt?n=$standard"))}; /speculated.html ${describeHits(speculatedUnderStandard)}")
-        if (!ownUnderStandard) failures += "under standard the page's own resources did not load (${describePreloadPage(standard, false)})"
-        if (prefetchedUnderStandard == null) {
-            failures += "under standard no <link rel=prefetch> request reached the server within 15 s (the control)"
-        } else {
-            note("  the prefetch's mark: ${prefetchedUnderStandard.mark()}")
+            // The rule: what shouldInterceptRequest was shown with the mark, it must have refused.
+            fun judge(kind: String, live: Seen?, seen: Map<String, String>?, underNone: List<Seen>) {
+                val reached = if (underNone.isEmpty()) "the server saw none of it (0 requests)" else "the server saw it: ${underNone.first()}"
+                when {
+                    live == null -> note("  $kind: not live on this WebView (nothing reached the server under standard) – nothing to refuse")
+                    seen == null -> note("  FINDING ($kind): shouldInterceptRequest never saw the request (on the wire: ${live.mark()}) – WebView loads it outside the proxied loader factory the engine sits on, so the engine cannot refuse it; under none $reached")
+                    !PreloadRules.isPreloadRequest(seen) -> note("  FINDING ($kind): shouldInterceptRequest saw the request WITHOUT the prefetch mark (its headers: ${seen.keys.sorted()}; on the wire: ${live.mark()}) – the mark is added downstream of the engine, and nothing the engine is shown tells this prefetch from a fetch; under none $reached")
+                    underNone.isNotEmpty() -> failures += "$kind: shouldInterceptRequest saw it with the mark (${markOf(seen)}) under standard, yet under none ${underNone.first()} reached the server"
+                    else -> note("  $kind: refused under none – the engine is shown it with ${markOf(seen)}, and $reached")
+                }
+            }
+            judge("<link rel=prefetch>", prefetchedUnderStandard, linkSeen, prefetchedUnderNone)
+            judge("speculation-rules prefetch", speculatedUnderStandard.firstOrNull(), speculatedSeen, speculatedUnderNone)
+            shot("19-preload-standard-prefetch")
+            beat()
+        } finally {
+            stopListening()
         }
-        when {
-            speculatedUnderStandard.isEmpty() ->
-                note("  speculation rules: this WebView issued no prefetch for the rules' URL (none to refuse; the <link rel=prefetch> is the phone's prefetch here)")
-            speculatedUnderNone.isEmpty() ->
-                note("  speculation rules: the prefetch reached the server under standard (${speculatedUnderStandard.first().mark()}) and not under none: refused at the engine too")
-            else ->
-                note("  FINDING: the speculation-rules prefetch reached the server under none too (${speculatedUnderNone.first()}): it did not pass the engine, or carried no mark – a limit to state, not the engine's to close")
-        }
-        shot("19-preload-standard-prefetch")
-        beat()
         if (failures.isNotEmpty()) error("Preload pages: ${failures.joinToString("; ")}")
     }
+
+    /** What `shouldInterceptRequest` was shown for a request, as the engine's listener recorded it. */
+    private fun describeEngineView(headers: Map<String, String>?): String =
+        if (headers == null) "NOT shown to shouldInterceptRequest" else "shown to shouldInterceptRequest with ${markOf(headers)} (headers ${headers.keys.sorted()})"
 
     /** The core's `Settings.preloadPages` as `app.getState` carries it. */
     private fun corePreloadLevel(): String = coreState().getJSONObject("settings").optString("preloadPages")
@@ -903,11 +937,8 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
 
     /** One request the server answered: its path with the query, and its headers (names lower-cased). */
     private class Seen(val path: String, val headers: Map<String, String>) {
-        /** The prefetch mark as it arrived, or its absence: what the engine's `PreloadRules` read. */
-        fun mark(): String {
-            val marks = listOf("sec-purpose", "purpose").mapNotNull { name -> headers[name]?.let { "${name}: $it" } }
-            return if (marks.isEmpty()) "no Sec-Purpose / Purpose header" else marks.joinToString(", ")
-        }
+        /** The prefetch mark as it arrived on the wire, or its absence. */
+        fun mark(): String = markOf(headers)
 
         override fun toString(): String = "$path (${mark()})"
     }
@@ -1033,6 +1064,14 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
     companion object {
         /** The port the seeded tab's URL names (`blocking-demo-state.json`). */
         private const val PORT = 18123
+
+        /** The `Sec-Purpose` / `Purpose` headers among `headers` (names in any case), or their absence. */
+        private fun markOf(headers: Map<String, String>): String {
+            val marks = headers.entries
+                .filter { it.key.equals("Sec-Purpose", ignoreCase = true) || it.key.equals("Purpose", ignoreCase = true) }
+                .map { "${it.key}: ${it.value}" }
+            return if (marks.isEmpty()) "no Sec-Purpose / Purpose header" else marks.joinToString(", ")
+        }
         private const val DEMO_ORIGIN = "http://127.0.0.1:$PORT"
         private const val DEMO_TAB = "tab_demo"
         /** How Settings names the site (`exceptionHost`: scheme and host for anything but https). */
