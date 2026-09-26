@@ -143,8 +143,9 @@ describe('the manifest directory', () => {
   it('generates the matrix main generated from the one-file manifest, byte for byte (the golden)', () => {
     // .github/scripts/fixtures/android-nightly-drivers-matrix.json is `node
     // .github/scripts/android-nightly-drivers.mjs matrix` from .github/nightly-drivers.json at
-    // 0abc7784 (the file this directory replaced; the same bytes at b360293e, v0.4.82, where the
-    // file last stood). A shard change regenerates it, on purpose.
+    // 0abc7784 (the file this directory replaced; the same bytes at b360293e, v0.4.82, and at
+    // bd47e39a, v0.4.83, where the file last stood - the matrix is the shards' alone, and the
+    // driver #523 added there changed no shard). A shard change regenerates it, on purpose.
     const golden = readFileSync(
       join(REPO_ROOT, '.github', 'scripts', 'fixtures', 'android-nightly-drivers-matrix.json'),
       'utf8'
