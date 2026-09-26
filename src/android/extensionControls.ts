@@ -31,7 +31,11 @@ export class ExtensionControlsMerge {
   }
 }
 
-/** Whether two maps name the same holder and value under every key (the rows would read the same). */
+/**
+ * Whether two maps name the same holder and value under every key (the rows would read the
+ * same): a same-extension change of the VALUE alone is a change – the held row shows the value
+ * in effect, so a new size or family republishes – the same value again is not.
+ */
 export function sameControls(
   a: Record<string, ExtensionControl>,
   b: Record<string, ExtensionControl>
@@ -45,7 +49,20 @@ export function sameControls(
       other !== undefined &&
       other.extensionId === own.extensionId &&
       other.name === own.name &&
-      other.value === own.value
+      sameValue(other.value, own.value)
     )
   })
+}
+
+/**
+ * The value in effect, a list compared by its entries (the desktop's `controls.ts` `sameValue`
+ * of #525: scalars by `===`, a list by its length and entries in order – an extension's
+ * startup pages; the phone's two publishing APIs hold scalars alone today).
+ */
+export function sameValue(a: ExtensionControl['value'], b: ExtensionControl['value']): boolean {
+  if (Array.isArray(a) || Array.isArray(b))
+    return (
+      Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => v === b[i])
+    )
+  return a === b
 }
