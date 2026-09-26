@@ -91,10 +91,8 @@ abstract class FakeboxMorphDemoBase(
         var fault: Throwable? = null
         try {
             // A perf reading (morphCost: measureFrames with the chrome WebView's trace): no events hold
-            // (DemoHarness.runDemo – the hold's service moves the WebView to its complete tree mode with
-            // every event, work inside what the frames and the traces measure; the scrub variants run on
-            // the webview shard, whose snapshot WebView is a current Chromium).
-            runDemo(holdEvents = false)
+            // (the rule at DemoHarness.runDemo).
+            runPerfDemo()
         } catch (e: Throwable) {
             fault = e
         } finally {

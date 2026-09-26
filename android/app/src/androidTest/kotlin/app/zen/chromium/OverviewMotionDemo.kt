@@ -86,9 +86,7 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
             )
         ).also { it.start() }
         try {
-            // A perf reading: no events hold (DemoHarness.runDemo – the hold's service moves the WebView to
-            // its complete tree mode with every event, work inside what the frames and the traces measure).
-            runDemo(holdEvents = false)
+            runPerfDemo() // a perf reading: no events hold (the rule at DemoHarness.runDemo)
         } finally {
             server.close()
         }

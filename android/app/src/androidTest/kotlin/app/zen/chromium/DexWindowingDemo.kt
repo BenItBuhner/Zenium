@@ -119,13 +119,14 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
      * `AccessibilityManager.isEnabled()` reads false (the WebView hands a hover to accessibility
      * exploration while any service is enabled – `WebContentsAccessibilityImpl.onHoverEvent`
      * behind `web_contents_view_android.cc`'s hover path – and Blink never sees a mousemove), and
-     * the harness's own service ([DemoHarness.runDemo]'s hold) would count as one. The recipe's
-     * API 34 image carries WebView 113, which sends its events without the hold anyway.
+     * the harness's own service ([DemoHarness.runDemo]'s hold) would count as one – so the run is
+     * [DemoHarness.runMouseDemo]. The recipe's API 34 image carries WebView 113, which sends its
+     * events without the hold anyway.
      */
     @Test
     fun record() {
         try {
-            recordDemo(holdEvents = false)
+            recordDemo(run = ::runMouseDemo)
         } finally {
             // After the recording: the two global settings as the device had them (the nightly's
             // reset between drivers covers the display, not these).
