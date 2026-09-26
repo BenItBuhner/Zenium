@@ -11,10 +11,10 @@ class CaptureLedgerTest {
     private val meet = "https://meet.example.test/room/7"
 
     @Test
-    fun theChannelReadsInSentenceCase() {
-        assertEquals("zenium.capture", CaptureLedger.CHANNEL_ID)
-        assertEquals("Camera and microphone", CaptureLedger.CHANNEL_NAME)
-        assertEquals("Shows while a site is using your camera or microphone", CaptureLedger.CHANNEL_DESCRIPTION)
+    fun theChannelIsTheRegistrysCaptureChannel() {
+        // The channel itself (id, name, importance, group) is pinned in NotificationsTest.
+        assertEquals("zenium.capture", Notifications.CAPTURE.id)
+        assertEquals("Shows while a site is using your camera or microphone", Notifications.CAPTURE.description)
         assertEquals("app.zen.chromium.CAPTURE_OPEN", CaptureNotifications.ACTION_OPEN)
     }
 
@@ -33,7 +33,7 @@ class CaptureLedgerTest {
             "meet.example.test is using your camera and microphone",
             CaptureLedger.card("t1", meet, CaptureUse.BOTH, false).title
         )
-        assertEquals(CaptureLedger.CHANNEL_ID, card.channelId)
+        assertEquals(Notifications.CAPTURE.id, card.channelId)
         assertEquals(NotificationCompat.VISIBILITY_PUBLIC, card.visibility)
         assertTrue(card.ongoing)
         assertTrue(card.silent)

@@ -17,14 +17,20 @@ class WebAppChannelsTest {
     @Test
     fun theAppsGroupAndChannelAreNamedByItsShortcutId() {
         val id = sketch.shortcutId
-        assertEquals("zenium.webapp:$id", WebAppChannels.groupId(id))
-        assertEquals("zenium.webapp:$id;1700000000000", WebAppChannels.channelId(id, 1700000000000L))
-        assertTrue(WebAppChannels.channelId(id, 1L).startsWith(WebAppChannels.channelPrefix(id)))
+        val channel = Notifications.webApp(sketch, 1700000000000L)
+        assertEquals("zenium.webapp:$id", Notifications.webAppGroupId(id))
+        assertEquals("zenium.webapp:$id;1700000000000", channel.id)
+        assertTrue(channel.id.startsWith(Notifications.webAppPrefix(id)))
+        // The channel and its group carry the app's name; the description names the app and its site.
+        assertEquals("Sketch", channel.name)
+        assertEquals(Notifications.webAppGroupId(id), channel.group?.id)
+        assertEquals("Sketch", channel.group?.name)
+        assertEquals("Notifications from Sketch (127.0.0.1:18131)", channel.description)
         // The group's id is no channel of the app's: `find` reads the channels by their prefix, and the group has none.
-        assertFalse(WebAppChannels.groupId(id).startsWith(WebAppChannels.channelPrefix(id)))
+        assertFalse(Notifications.webAppGroupId(id).startsWith(Notifications.webAppPrefix(id)))
         // Apart from the sites' channels and their one group.
-        assertFalse(WebAppChannels.groupId(id).startsWith(SitesChannels.PREFIX))
-        assertNotEquals(SitesChannels.GROUP_ID, WebAppChannels.groupId(id))
+        assertFalse(Notifications.webAppGroupId(id).startsWith(Notifications.SITE_PREFIX))
+        assertNotEquals(Notifications.SITES.id, Notifications.webAppGroupId(id))
     }
 
     @Test
@@ -32,12 +38,12 @@ class WebAppChannelsTest {
         // Android remembers a deleted channel's settings by id: an app blocked, uninstalled and
         // installed again comes back with a fresh channel, found by the prefix all the same.
         val id = sketch.shortcutId
-        val first = WebAppChannels.channelId(id, 1_000L)
-        val again = WebAppChannels.channelId(id, 2_000L)
+        val first = Notifications.webApp(sketch, 1_000L).id
+        val again = Notifications.webApp(sketch, 2_000L).id
         assertNotEquals(first, again)
-        assertTrue(first.startsWith(WebAppChannels.channelPrefix(id)) && again.startsWith(WebAppChannels.channelPrefix(id)))
+        assertTrue(first.startsWith(Notifications.webAppPrefix(id)) && again.startsWith(Notifications.webAppPrefix(id)))
         // Another app's prefix never matches: the shortcut id ends at the `;`.
-        assertFalse(first.startsWith(WebAppChannels.channelPrefix("$id-2")))
+        assertFalse(first.startsWith(Notifications.webAppPrefix("$id-2")))
     }
 
     @Test

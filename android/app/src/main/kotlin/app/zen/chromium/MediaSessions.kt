@@ -2,8 +2,6 @@ package app.zen.chromium
 
 import android.app.KeyguardManager
 import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.PictureInPictureParams
 import android.app.RemoteAction
@@ -306,9 +304,9 @@ class MediaSessions(private val host: Host, private val io: Executor) {
     }
 
     private fun notificationOf(info: MediaSessionInfo): Notification {
-        ensureChannel(context)
+        val channel = Notifications.ensure(context, Notifications.MEDIA)
         val controls = MediaControls.controls(info)
-        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_stat_zenium)
             .setContentTitle(MediaControls.title(info))
             .setContentText(MediaControls.text(info))
@@ -661,9 +659,6 @@ class MediaSessions(private val host: Host, private val io: Executor) {
 
     companion object {
         private const val TAG = "ZenMedia"
-        /** Chrome's channel for its media notification: "Media playback", silent. */
-        const val CHANNEL_ID = "zenium.media"
-        const val CHANNEL_NAME = "Media playback"
         /** The buttons' broadcasts (the notification's, the picture-in-picture window's). */
         const val ACTION_CONTROL = "app.zen.chromium.MEDIA_CONTROL"
         /** The notification's tap: `MainActivity.handleIntent` hands it to [onOpenIntent]. */
@@ -682,19 +677,6 @@ class MediaSessions(private val host: Host, private val io: Executor) {
         private const val FETCH_TIMEOUT_MS = 10_000
 
         fun customActionId(control: MediaControl): String = "zenium.media.${control.action}"
-
-        fun ensureChannel(context: Context) {
-            val system = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            if (system.getNotificationChannel(CHANNEL_ID) != null) return
-            system.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_LOW).apply {
-                    description = "Controls for audio and video playing in Zenium"
-                    setShowBadge(false)
-                    enableVibration(false)
-                    setSound(null, null)
-                }
-            )
-        }
 
         /** The picture at `url` (`https:`, `http:` or `data:`), decoded to at most [MAX_ART_PX] a side, or null. */
         fun fetchBitmap(url: String, maxPx: Int = MAX_ART_PX): Bitmap? {
