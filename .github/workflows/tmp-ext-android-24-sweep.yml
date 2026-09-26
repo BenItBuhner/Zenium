@@ -1,0 +1,69 @@
+name: TEMPORARY - compat round 19 SingleFile six-pass trigger (the fix (7) measure)
+
+# TEMPORARY, added back for ONE run and removed again before the PR is squashed. Worker tokens
+# cannot dispatch android-ext-compat-sweep.yml (HTTP 403 on the dispatches endpoint), and it stays
+# dispatch-only; this file runs its SingleFile six-pass lanes on a push to the branch whose commit
+# message carries `[singlefile]` – SingleFile's row alone, repeated six times on one boot per
+# WebView (SWEEP_REPEAT=6: the driver grades the row again after its disable, each reading its own
+# row in results.json), R5's measure (round 18 section 6.1 row 04). The run the coordinator granted
+# on compat round 19's question 2: the round's AFTER read the lane on the AOSP image (WebView 156)
+# with the options cell PARTIAL in four passes of six – the worker's 30 s idle stop landing on the
+# options page's first messages once the driver's popup wait moved the timing – and fix (7)
+# (a page's message to a running worker re-arms its idle clock) landed after that AFTER; this run
+# reads the cell six times on both WebViews at the head that carries the fix and the round's
+# question-3 marks. Every other commit on the branch is marker-free and runs no job here.
+on:
+  push:
+    branches:
+      - cursor/android-ext-compat-19-4435
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-ext-android-24-sweep-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  singlefile-system-webview:
+    if: contains(github.event.head_commit.message, '[singlefile]')
+    name: SingleFile's row six times - System WebView (API 34 image)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-compat-sweep-singlefile
+      artifact-path: artifacts/android-ext-compat-sweep/
+      script-env: |
+        SWEEP_ONLY=mpiodijhokgodhhofbcjdecpffjipkle
+        SWEEP_LAST=
+        SWEEP_REPEAT=6
+      timeout-minutes: 75
+
+  singlefile-modern-webview:
+    if: contains(github.event.head_commit.message, '[singlefile]')
+    name: SingleFile's row six times - Best effort - Chromium snapshot WebView on an AOSP image
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-compat-sweep-singlefile-modern-webview
+      artifact-path: artifacts/android-ext-compat-sweep/
+      target: default
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+        SOFT_FAIL=1
+        SWEEP_ONLY=mpiodijhokgodhhofbcjdecpffjipkle
+        SWEEP_LAST=
+        SWEEP_REPEAT=6
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      timeout-minutes: 75
