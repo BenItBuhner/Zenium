@@ -7,8 +7,9 @@ name: Android nightly drivers
 # environment its own workflow gives it (the theme, DEMO_KEEP, DEMO_REVOKE, DEMO_SCENES, DEMO_ARGS,
 # the display); android-nightly-drivers.mjs reads it and android-nightly-drivers.sh runs a shard's
 # drivers in sequence on one emulator boot, through the shared driver script or the wrapper the
-# driver's workflow names, a failed driver not stopping the ones after it. The manifest's check (vitest, and the plan job here) fails when a *Demo class
-# is neither a driver nor skipped with a reason.
+# driver's workflow names, a failed driver not stopping the ones after it. The manifest's check
+# (vitest, and the plan job here) fails when a *Demo class is neither a driver nor skipped with a
+# reason.
 #
 # The shards, each one job of the recipe in android-emulator-demo.yml and all in parallel: six
 # phone shards on the API 34 Google APIs image (phone-a to phone-f, the drivers by their weight so
