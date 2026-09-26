@@ -273,7 +273,13 @@ describe("the boot's first tab on the phone (no new tab page capability)", () =>
  * sw600dp, the class Chrome for Android gates its layouts on) has the new tab page capability,
  * so its new tab is the served `zen://newtab` document and its boot's first tab is that page.
  * The phone's capability table is the one above, byte for byte: `newTabPage` false, its start
- * path untouched.
+ * path untouched. The served page is a page view the first layout report places like any page,
+ * but the tablet's arm does not wait for it (`bootNeedsPlacement`'s last clause but one): it is
+ * the browser's own surface as the phone's blank is, and its first frame – a second WebView's in
+ * the renderer the chrome shares at boot – held READY for as long as that frame took. READY on
+ * the tablet's fresh profile is then what it is on a boot with no tab: the theme's paint and the
+ * insets. The tablet's blank view and any restored page are waited for as before, and the
+ * phone's clause is byte-identical: a `zen://newtab` tab on the phone is waited for, as it was.
  */
 describe("the tablet's new tab page capability (NTP-35)", () => {
   const inputs = { sdkInt: 34, extensions: false, isolatedWorlds: true }
@@ -289,14 +295,74 @@ describe("the tablet's new tab page capability (NTP-35)", () => {
     expect(tablet).toEqual({ ...androidCapabilities(inputs), newTabPage: true })
   })
 
-  it("a tablet's fresh profile boots with one served new tab page tab, placed like any page, so its arm waits for it", () => {
+  it("a tablet's fresh profile boots with one served new tab page tab, and its arm does not wait for that view's placement", () => {
     const { browser } = phone(phoneCapabilities({ newTabPage: true }))
     browser.state.settings.onboardingDone = true
     browser.start()
     const win = only(browser)
     expect(Object.values(browser.state.model.tabs).map((t) => t.url)).toEqual([NEW_TAB_URL])
-    expect(bootNeedsPlacement(browser, win, false)).toBe(true)
+    // A served document, not a registry chrome page: it is this clause that reads it, not the first.
+    const active = browser.tabs.activeTabFor(win)
+    expect(active !== undefined && browser.pages.isChromePage(active)).toBe(false)
+    expect(bootNeedsPlacement(browser, win, false)).toBe(false)
     expect(healRestoredBlankTab(browser, win, false)).toBe(false)
+  })
+
+  it('a tablet restored on the served page – its bare form, a query, a trailing slash – arms the same way', () => {
+    for (const url of [NEW_TAB_URL, `${NEW_TAB_URL}/`, `${NEW_TAB_URL}?private=1`]) {
+      const { browser } = phone(phoneCapabilities({ newTabPage: true }))
+      browser.state.settings.onboardingDone = true
+      seedTab(browser, url)
+      browser.start()
+      const win = only(browser)
+      expect(browser.tabs.activeTabFor(win)?.url).toBe(url)
+      expect(bootNeedsPlacement(browser, win, false)).toBe(false)
+    }
+  })
+
+  it('the tablet still waits for a restored page, and for its blank view, as before', () => {
+    const { browser } = phone(phoneCapabilities({ newTabPage: true }))
+    browser.state.settings.onboardingDone = true
+    seedTab(browser, 'https://open.example/')
+    browser.start()
+    expect(bootNeedsPlacement(browser, only(browser), false)).toBe(true)
+    const blank = phone(phoneCapabilities({ newTabPage: true }))
+    blank.browser.state.settings.onboardingDone = true
+    seedTab(blank.browser, BLANK_URL)
+    blank.browser.start()
+    expect(bootNeedsPlacement(blank.browser, only(blank.browser), false)).toBe(true)
+  })
+
+  it("the tablet's clause is the tablet's alone: the phone's branch reads a `zen://newtab` tab as a page to place, as it did", () => {
+    // The phone has no served new tab at boot (`newTabPage` false: `ensureFirstTab` opens no
+    // tab), so this is a restored `zen://newtab` tab the user navigated to – the rule the phone's
+    // clause exempts is exactly `zen://blank` (#503), and nothing here moves it.
+    const { browser } = phone(phoneCapabilities())
+    browser.state.settings.onboardingDone = true
+    seedTab(browser, NEW_TAB_URL)
+    browser.start()
+    const win = only(browser)
+    expect(browser.tabs.activeTabFor(win)?.url).toBe(NEW_TAB_URL)
+    expect(bootNeedsPlacement(browser, win, true)).toBe(true)
+    // And a phone-shaped host given the capability ("a host with the new tab page keeps #490"
+    // above) is the phone's still: its served tab is a page to place.
+    const given = phone(phoneCapabilities({ newTabPage: true }))
+    given.browser.state.settings.onboardingDone = true
+    given.browser.start()
+    expect(bootNeedsPlacement(given.browser, only(given.browser), true)).toBe(true)
+  })
+
+  it("under the tablet's tour or the EEA's choice screen the served page's arm is false as any page's", () => {
+    // The clauses ahead of it already say so; pinned so their order is not the pin.
+    const fresh = phone(phoneCapabilities({ newTabPage: true }))
+    fresh.browser.start()
+    expect(fresh.browser.state.settings.onboardingDone).toBe(false)
+    expect(bootNeedsPlacement(fresh.browser, only(fresh.browser), false)).toBe(false)
+    const eea = phone(phoneCapabilities({ newTabPage: true }), 'DE')
+    eea.browser.state.settings.onboardingDone = true
+    eea.browser.start()
+    expect(eea.browser.tabs.activeTabFor(only(eea.browser))?.url).toBe(NEW_TAB_URL)
+    expect(bootNeedsPlacement(eea.browser, only(eea.browser), false)).toBe(false)
   })
 })
 
