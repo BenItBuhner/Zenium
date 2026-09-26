@@ -1,6 +1,7 @@
 import {
   BaseWindow,
   ClipboardItem,
+  View,
   WebContentsView,
   app,
   clipboard,
@@ -408,6 +409,18 @@ export class ElectronTabView implements TabView {
    */
   private agentDriven = false
   private staged: BaseWindow | null = null
+  /**
+   * The engine's view left a window or the stage and is yet to join a window: the next
+   * `enterWindow`/`bringToFront` re-stacks it (`restack`). Chromium 152 (Electron 44) on Linux
+   * puts a `WebContentsView` arriving from another window at the BOTTOM of the new window's
+   * native z-order and never re-sorts it – `NativeViewHostAura::AddedToWidget` stacks the
+   * reparented aura window at the bottom without the `ReorderNativeViews` a first attach gets
+   * (`kNativeViewHostManagesLayers`, on by default there only) – so it sits under the window's
+   * chrome view: the page paints, reads `visible`, and the user sees the chrome's blank page area
+   * in its place (the stage's hand-off on the packaged build: 0 of 4 page-area pixels the page's
+   * colour 2 s after the switch; a tab moved between windows the same, since before the stage).
+   */
+  private arrivesFromElsewhere = false
   private navigationHint: ViewNavigationHint | null = null
   /**
    * The main-frame certificate the current navigation was refused over (`certificate-error`),
@@ -1364,7 +1377,10 @@ export class ElectronTabView implements TabView {
     this.coverLifted()
     this.leaveStage()
     const win = this.win
-    if (win && this.inWindow) win.contentView.removeChildView(this.view)
+    if (win && this.inWindow) {
+      win.contentView.removeChildView(this.view)
+      this.arrivesFromElsewhere = true
+    }
     this.inWindow = false
     this.host = null
     // Off a window, the view is concealed by none; the window it next joins sets this afresh.
@@ -1378,6 +1394,24 @@ export class ElectronTabView implements TabView {
     this.leaveStage()
     win.contentView.addChildView(this.view)
     this.inWindow = true
+    this.restack(win)
+  }
+
+  /**
+   * Re-sorts the window's native z-order after a view that stood elsewhere joined it
+   * (`arrivesFromElsewhere`): adding and removing a throwaway `View` runs the views tree's
+   * `ReorderLayers` → `Widget::ReorderNativeViews`, which puts the page's aura window back in
+   * child order (on top of the chrome's). Re-adding the view itself does not – Electron's
+   * `AddChildView` of a child already at its index returns before any reorder – and a layer of
+   * its own (`setBackgroundBlur`) would stay on the view for good. A view's first join, and a
+   * view hidden and shown within its window, are stacked right by Chromium and skip this.
+   */
+  private restack(win: BrowserWindow): void {
+    if (!this.arrivesFromElsewhere) return
+    this.arrivesFromElsewhere = false
+    const nudge = new View()
+    win.contentView.addChildView(nudge)
+    win.contentView.removeChildView(nudge)
   }
 
   /**
@@ -1409,6 +1443,7 @@ export class ElectronTabView implements TabView {
     const stage = this.staged
     if (!stage) return
     this.staged = null
+    this.arrivesFromElsewhere = true
     this.view.setVisible(false)
     if (!stage.isDestroyed()) stage.contentView.removeChildView(this.view)
     this.owner.stageLeft(this)
@@ -1667,6 +1702,7 @@ export class ElectronTabView implements TabView {
     this.leaveStage()
     win.contentView.addChildView(this.view)
     this.inWindow = true
+    this.restack(win)
   }
 
   // --- page operations -----------------------------------------------------------

@@ -378,7 +378,17 @@ vi.mock('electron', async () => {
     getAllDisplays: () => [{ scaleFactor: 1 }],
     getCursorScreenPoint: () => ({ ...cursor })
   }
-  return { BaseWindow: FakeBaseWindow, WebContentsView: FakeWebContentsView, nativeTheme, screen }
+  /** The plain `View` the host adds and removes to re-stack a window's children (`restack`). */
+  class FakeView {
+    readonly throwaway = true
+  }
+  return {
+    BaseWindow: FakeBaseWindow,
+    View: FakeView,
+    WebContentsView: FakeWebContentsView,
+    nativeTheme,
+    screen
+  }
 })
 
 /** A window's chrome page: the keyboard's home when no page on screen has it. */
@@ -405,14 +415,18 @@ class FakeChrome extends EventEmitter {
 class FakeBrowserWindow extends EventEmitter {
   focused = true
   readonly children: unknown[] = []
+  /** Every add and remove on the `contentView`, in order – the re-stacking's throwaway included. */
+  readonly childLog: Array<['add' | 'remove', unknown]> = []
   readonly contentView = {
     children: this.children,
     addChildView: (view: unknown): void => {
+      this.childLog.push(['add', view])
       const at = this.children.indexOf(view)
       if (at >= 0) this.children.splice(at, 1)
       this.children.push(view)
     },
     removeChildView: (view: unknown): void => {
+      this.childLog.push(['remove', view])
       const at = this.children.indexOf(view)
       if (at >= 0) this.children.splice(at, 1)
     }
@@ -2161,6 +2175,89 @@ describe('a hidden page an agent drives and the stage', () => {
     host.forget(gone.webContentsId)
     expect(staged()!.children).toEqual([])
     expect(staged()!.destroyed).toBe(true)
+  })
+
+  /**
+   * The window's `contentView` traffic, the re-stacking's throwaway `View` named: Chromium 152
+   * on Linux stacks a view arriving from another window (the stage, another window) at the
+   * bottom of the native z-order and does not re-sort it, so the host adds and removes a plain
+   * view right after such a join – and only then (`ElectronTabView.restack`).
+   */
+  const traffic = (window: ReturnType<typeof fakeWindow>): Array<[string, 'throwaway' | unknown]> =>
+    window.win.childLog.map(([op, child]) => [
+      op,
+      (child as { throwaway?: boolean }).throwaway ? 'throwaway' : child
+    ])
+
+  it('re-stacks a page coming off the stage into the window – shown by the layout, asked for the keyboard, or brought to the front – with a throwaway view added and removed after it', () => {
+    const { window, create } = setup()
+    const shown = create()
+    shown.setBounds(box)
+    shown.setAgentDriven(true)
+    expect(window.win.childLog).toEqual([])
+    shown.setVisible(true)
+    expect(traffic(window)).toEqual([
+      ['add', shown.view],
+      ['add', 'throwaway'],
+      ['remove', 'throwaway']
+    ])
+    expect(window.win.children).toEqual([shown.view])
+    window.win.childLog.length = 0
+    const focused = create()
+    focused.setAgentDriven(true)
+    focused.focus()
+    expect(traffic(window)).toEqual([
+      ['add', focused.view],
+      ['add', 'throwaway'],
+      ['remove', 'throwaway']
+    ])
+    window.win.childLog.length = 0
+    const glanced = create()
+    glanced.setAgentDriven(true)
+    glanced.bringToFront()
+    expect(traffic(window)).toEqual([
+      ['add', glanced.view],
+      ['add', 'throwaway'],
+      ['remove', 'throwaway']
+    ])
+    expect(window.win.children).toEqual([shown.view, focused.view, glanced.view])
+  })
+
+  it('re-stacks a page moved between windows once shown in the new one, and leaves alone a page joining its first window, hidden and shown within it, or re-added to the top', () => {
+    const { window, create } = setup()
+    const fresh = create()
+    fresh.setBounds(box)
+    fresh.setVisible(true)
+    expect(traffic(window)).toEqual([['add', fresh.view]])
+    fresh.setVisible(false)
+    fresh.setVisible(true)
+    fresh.bringToFront()
+    expect(traffic(window)).toEqual([
+      ['add', fresh.view],
+      ['add', fresh.view]
+    ])
+    // Moved the way the tab manager moves a tab: hidden, detached, shown in the other window.
+    fresh.setVisible(false)
+    fresh.detach()
+    expect(traffic(window)).toEqual([
+      ['add', fresh.view],
+      ['add', fresh.view],
+      ['remove', fresh.view]
+    ])
+    const other = fakeWindow()
+    fresh.attachTo(other)
+    expect(other.win.childLog).toEqual([])
+    fresh.setVisible(true)
+    expect(traffic(other)).toEqual([
+      ['add', fresh.view],
+      ['add', 'throwaway'],
+      ['remove', 'throwaway']
+    ])
+    // Once re-stacked, a further show or re-add in that window is stacked right by Chromium.
+    fresh.setVisible(false)
+    fresh.setVisible(true)
+    fresh.bringToFront()
+    expect(traffic(other).filter(([, child]) => child === 'throwaway')).toHaveLength(2)
   })
 })
 
