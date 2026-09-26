@@ -216,6 +216,7 @@ export class FakeKotlin implements RuntimeBridge {
         return undefined
       }
       case 'ext.observeRequests':
+      case 'ext.observeRequestHeaders':
       case 'ext.observeResponses':
       case 'ext.popup.open':
       case 'ext.popup.close':
@@ -530,6 +531,8 @@ export function harness(
     navigationListener?: boolean
     /** A device without a speech engine: `Platform.speech` is left out. */
     speech?: boolean
+    /** The runtime's `debug` (its default on): off, no reply carries the host trace's stamps. */
+    debug?: boolean
   } = {}
 ): Harness {
   const kt = new FakeKotlin()
@@ -644,6 +647,7 @@ export function harness(
   const screenListeners: Array<() => void> = []
   const runtime = new AndroidExtensionRuntime(kt, browser, () => win, {
     idleMs: 30_000,
+    debug: options.debug,
     now: () => clock.now,
     screen: () => ({ ...screen }),
     onScreenChange: (listener) => {

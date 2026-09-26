@@ -49,6 +49,8 @@ class UnitCompiler(
         val origins: List<String>,
         /** The isolated world to inject into, or null for the page's main world. */
         val world: String?,
+        /** How much of the bootstrap the script carries ([ExtensionScripts.SHAPE_WHOLE] and the others). */
+        val shape: String,
         val script: String,
         val hash: String,
         /** Whether the script came from the cache rather than being assembled now. */
@@ -69,12 +71,14 @@ class UnitCompiler(
     private val cache = HashMap<String, ExtensionCache>()
 
     /**
-     * Compile `units` (`[{ key, origins, world, config, groups: [{ ext, index, js, isolation }],
-     * css: [{ ext, path }] }]`) for one extension. `read` answers an extension-relative path with
-     * the file's text, or null; `size` with the file's length in bytes without reading it, or
-     * null. A unit is measured from the sizes before any of its files is read: a UTF-8 file has
-     * at most as many characters as bytes, so the sum bounds the script, and a unit over the
-     * budget is [Compiled.refused] with nothing of it allocated.
+     * Compile `units` (`[{ key, origins, world, shape, config, groups: [{ ext, index, js,
+     * isolation }], css: [{ ext, path }] }]`) for one extension. `read` answers an
+     * extension-relative path with the file's text, or null; `size` with the file's length in
+     * bytes without reading it, or null. A unit is measured from the sizes before any of its
+     * files is read: a UTF-8 file has at most as many characters as bytes, so the sum bounds the
+     * script, and a unit over the budget is [Compiled.refused] with nothing of it allocated. The
+     * shape (whole when the plan names none) is part of the unit's identity and of its measure:
+     * a thin unit is its sources without the bootstrap.
      */
     @Synchronized
     fun compile(
@@ -100,22 +104,23 @@ class UnitCompiler(
                 .toSet().ifEmpty { setOf("*") }.toList()
             // A main-world unit comes with `world: null`, which `optString` would read as "null".
             val world = u.strOrNull("world")?.takeIf { it.isNotEmpty() }
+            val shape = u.optString("shape", ExtensionScripts.SHAPE_WHOLE).ifEmpty { ExtensionScripts.SHAPE_WHOLE }
             val config = u.optString("config", "{}")
             val groupsJson = u.optJSONArray("groups") ?: JSONArray()
             val cssJson = u.optJSONArray("css") ?: JSONArray()
-            val hash = sha256("$config\u0000$groupsJson\u0000$cssJson\u0000$debug\u0000${world ?: ""}")
+            val hash = sha256("$config\u0000$groupsJson\u0000$cssJson\u0000$debug\u0000${world ?: ""}\u0000$shape")
             val previous = entry.units[key]
             if (previous != null && previous.hash == hash) {
-                val kept = Compiled(id, key, origins, world, previous.script, hash, cached = true, refused = previous.refused)
+                val kept = Compiled(id, key, origins, world, shape, previous.script, hash, cached = true, refused = previous.refused)
                 entry.units[key] = kept
                 out.add(kept)
                 continue
             }
-            val estimate = estimateChars(entry, config, groupsJson, cssJson, size)
+            val estimate = estimateChars(entry, config, groupsJson, cssJson, size, shape)
             if (estimate > budgetChars) {
                 // Refused the way a compiled unit is kept: the same plan sent again answers from
                 // the cache, so the extension's console hears of it once per plan.
-                val refused = Compiled(id, key, origins, world, "", hash, cached = false, refused = Refused(estimate, groupsJson.length(), budgetChars))
+                val refused = Compiled(id, key, origins, world, shape, "", hash, cached = false, refused = Refused(estimate, groupsJson.length(), budgetChars))
                 entry.units[key] = refused
                 out.add(refused)
                 continue
@@ -140,8 +145,8 @@ class UnitCompiler(
                 val text = text(entry, path, read) ?: continue
                 css["${c.optString("ext", id)}/${path.trimStart('/')}"] = text
             }
-            val script = ExtensionScripts.documentStart(bootstrap(), config, groups, css, debug)
-            val compiled = Compiled(id, key, origins, world, script, hash, cached = false)
+            val script = ExtensionScripts.documentStart(bootstrap(), config, groups, css, debug, shape)
+            val compiled = Compiled(id, key, origins, world, shape, script, hash, cached = false)
             entry.units[key] = compiled
             out.add(compiled)
         }
@@ -176,10 +181,11 @@ class UnitCompiler(
      * file: the sizes on disk (a file listed in several groups counts once per group, as the
      * script copies it), an inline entry's own length, a source already held in the cache by
      * its real length, and the fixed parts ([ExtensionScripts.documentStart] sizes its builder
-     * the same way). A file that is not there costs its console stub.
+     * the same way; the bootstrap by the unit's shape, [ExtensionScripts.bootstrapChars]). A file
+     * that is not there costs its console stub.
      */
-    private fun estimateChars(entry: ExtensionCache, config: String, groupsJson: JSONArray, cssJson: JSONArray, size: (String) -> Long?): Long {
-        var total = bootstrap().length.toLong() + config.length + 4096
+    private fun estimateChars(entry: ExtensionCache, config: String, groupsJson: JSONArray, cssJson: JSONArray, size: (String) -> Long?, shape: String): Long {
+        var total = ExtensionScripts.bootstrapChars(bootstrap().length, shape).toLong() + config.length + 4096
         for (j in 0 until groupsJson.length()) {
             val g = groupsJson.optJSONObject(j) ?: continue
             val files = g.optJSONArray("js") ?: JSONArray()

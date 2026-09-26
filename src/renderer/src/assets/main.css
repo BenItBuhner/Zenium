@@ -312,6 +312,23 @@
 :root[data-pointer='coarse'] {
   --v2-radius-control: 6px;
 }
+/*
+ * Hover is gated by the root's `data-hover` (`lib/formFactor.ts`, `lib/livePointer.ts`), not by
+ * `@media (hover: hover)`: every hover rule the media query gated in this file and the other
+ * stylesheets is written `:where(:root[data-hover='hover']) <selector>:hover` – `:where()` adds
+ * no specificity, so the cascade is the bare selector's. (A hover fill or reveal that stood bare
+ * before the gate – the split row's, the page heading's and page row's reveals among them –
+ * stands bare still, with the tap's sticky `:hover` it always had; gating those is a change of
+ * its own.) Two reasons the media query could not be the gate. Chromium keeps a tap's `:hover` on the element until the next touch, so on a
+ * phone or a touch tablet an ungated hover rule leaves a tapped button lit (the media query did
+ * gate that); and Android's WebView answers `(hover: hover)` from the primary pointer, which is
+ * the touch screen whenever there is one – a mouse on a tablet or under Samsung DeX never turns
+ * it on – so under the media query the mouse got no hover on the tablet chrome at all (OS-12).
+ * `data-hover` is the media query's answer where it says hover (the desktop) and the live
+ * pointer's elsewhere: `hover` after a mouse or a pen moved over the chrome, `none` after a
+ * finger touched it. Press (`:active`), expanded and selected states stay ungated. The one rule
+ * still on the media query is the new tab tile's, cut into the scriptless `zen://newtab` document.
+ */
 /* Phones scale hit targets, not the vocabulary (§5, §9.3); rows are the line box plus 24. */
 :root[data-form-factor='phone'] {
   --v2-row: calc(var(--v2-line-body-box) + 24px);
@@ -1430,7 +1447,7 @@
     opacity: 0.85;
     transition: opacity 120ms var(--zen-ease);
   }
-  .zen-toolbar-button:hover:not(:disabled) {
+  :where(:root[data-hover='hover']) .zen-toolbar-button:hover:not(:disabled) {
     background: var(--v2-window-fill-hover);
   }
   /*
@@ -1438,13 +1455,15 @@
    * – on a Tab landing and on a pane chord's marked landing alike (§1 as amended).
    */
   .zen-toolbar-button:is(
-      :hover:not(:disabled),
       :focus-visible,
       [data-keyboard-focus]:focus,
       [aria-expanded='true'],
       :disabled,
       [data-disabled]
     )
+    > :is(svg:not(.zen-dl-ring), .zen-glyph-swap, .zen-dl-glyph-body),
+  :where(:root[data-hover='hover'])
+    .zen-toolbar-button:hover:not(:disabled)
     > :is(svg:not(.zen-dl-ring), .zen-glyph-swap, .zen-dl-glyph-body) {
     opacity: 1;
   }
@@ -1529,12 +1548,12 @@
       background 120ms var(--zen-ease),
       opacity 120ms var(--zen-ease);
   }
-  .zen-tab:hover,
+  :where(:root[data-hover='hover']) .zen-tab:hover,
   .zen-tab[data-editing]:not([data-active='true']) {
     background: var(--v2-window-fill-hover);
   }
   /* The pinned section's header (`SpaceHeader`) takes the rows' hover fill. */
-  .zen-space-header:hover {
+  :where(:root[data-hover='hover']) .zen-space-header:hover {
     background: var(--v2-window-fill-hover);
   }
   .zen-tab[data-active='true'] {
@@ -1620,7 +1639,7 @@
   .zen-tab .zen-tab-close {
     opacity: 0;
   }
-  .zen-tab:hover .zen-tab-close {
+  :where(:root[data-hover='hover']) .zen-tab:hover .zen-tab-close {
     opacity: 1;
   }
 
@@ -1808,13 +1827,11 @@
    * .tab-close-button { display: none }` in `vertical-tabs.css`): out of the layout at rest, so
    * the title has the room after the favicon. The tab row's close at rest is opacity 0 in its
    * 24 + 8 slot, which in a segment would hold 32 of the title's room while showing nothing –
-   * the 270 still's "Left pa…" at 56.5 where the title had 88.5. A coarse pointer has no hover
-   * and keeps the row's always-shown close.
+   * the 270 still's "Left pa…" at 56.5 where the title had 88.5. A pointer that cannot hover
+   * (`data-hover='none'`) keeps the row's always-shown close.
    */
-  @media (hover: hover) {
-    .zen-split-row > .zen-tab:not(:hover) .zen-tab-close {
-      display: none;
-    }
+  :where(:root[data-hover='hover']) .zen-split-row > .zen-tab:not(:hover) .zen-tab-close {
+    display: none;
   }
   /*
    * A segment's title truncates from the end while it has 56 px of room after the favicon
@@ -1873,7 +1890,7 @@
       background 120ms var(--zen-ease),
       transform 120ms var(--zen-ease);
   }
-  .zen-essential:hover {
+  :where(:root[data-hover='hover']) .zen-essential:hover {
     background: var(--v2-window-fill-hover);
   }
   .zen-essential:active {
@@ -2907,7 +2924,7 @@
       background 120ms var(--zen-ease),
       transform 120ms var(--zen-ease);
   }
-  .zen-message-button:hover:not(:disabled) {
+  :where(:root[data-hover='hover']) .zen-message-button:hover:not(:disabled) {
     background: var(--v2-control-fill-hover);
   }
   .zen-message-button:active:not(:disabled) {
@@ -3058,7 +3075,7 @@
       background 120ms var(--zen-ease),
       transform 120ms var(--zen-ease);
   }
-  .zen-message-close:hover:not(:disabled) {
+  :where(:root[data-hover='hover']) .zen-message-close:hover:not(:disabled) {
     background: var(--v2-control-fill);
   }
   .zen-message-close:active:not(:disabled) {
@@ -3486,11 +3503,9 @@
     color: var(--zen-muted);
     transition: background 120ms var(--zen-ease);
   }
-  /* Hover only where a pointer hovers: a tap would otherwise leave the fill stuck on a phone. */
-  @media (hover: hover) {
-    .zen-app-icon:hover {
-      background: var(--zen-element-bg);
-    }
+  /* Hover only where the pointer hovers: a tap would otherwise leave the fill stuck on a phone. */
+  :where(:root[data-hover='hover']) .zen-app-icon:hover {
+    background: var(--zen-element-bg);
   }
   .zen-app-icon svg {
     width: 48px;
@@ -5040,7 +5055,7 @@
     text-align: left;
     transition: background 120ms var(--zen-ease);
   }
-  button.zen-siteinfo-row:hover:not(:disabled),
+  :where(:root[data-hover='hover']) button.zen-siteinfo-row:hover:not(:disabled),
   button.zen-siteinfo-row:focus-visible,
   button.zen-siteinfo-row[data-keyboard-focus]:focus {
     background: var(--v2-fill);
@@ -5753,7 +5768,7 @@
     font-size: 13px;
     outline: none;
   }
-  .zen-select:hover {
+  :where(:root[data-hover='hover']) .zen-select:hover {
     background: var(--v2-fill);
   }
   .zen-select:focus-visible,
@@ -5799,7 +5814,7 @@
     white-space: nowrap;
     outline: none;
   }
-  .zen-button:hover:not(:disabled) {
+  :where(:root[data-hover='hover']) .zen-button:hover:not(:disabled) {
     background: var(--v2-fill-hover);
   }
   .zen-button:active:not(:disabled) {
@@ -5825,7 +5840,7 @@
     background: var(--v2-accent);
     color: var(--v2-on-accent);
   }
-  .zen-button[data-variant='primary']:hover:not(:disabled) {
+  :where(:root[data-hover='hover']) .zen-button[data-variant='primary']:hover:not(:disabled) {
     filter: brightness(1.08);
   }
   .zen-button[data-variant='danger'] {
@@ -5834,7 +5849,7 @@
   .zen-button[data-variant='quiet'] {
     background: transparent;
   }
-  .zen-button[data-variant='quiet']:hover:not(:disabled) {
+  :where(:root[data-hover='hover']) .zen-button[data-variant='quiet']:hover:not(:disabled) {
     background: var(--v2-fill);
   }
 }
@@ -7377,10 +7392,8 @@
   .zen-mhub-text:active {
     background: var(--v2-fill);
   }
-  @media (hover: hover) {
-    .zen-mhub-text:hover {
-      background: var(--v2-fill);
-    }
+  :where(:root[data-hover='hover']) .zen-mhub-text:hover {
+    background: var(--v2-fill);
   }
   .zen-mhub-name {
     font-size: var(--v2-font-body);
@@ -7620,6 +7633,8 @@
       transform 120ms var(--zen-ease),
       box-shadow 200ms var(--zen-ease);
   }
+  /* The one hover left on the media query: `newTabSharedCss` cuts this rule into the scriptless
+     `zen://newtab` document, whose root never carries the chrome's live `data-hover`. */
   @media (hover: hover) {
     .zen-v2-shortcut:hover .zen-ntp-tile {
       background: var(--v2-control-fill-hover);
@@ -8839,10 +8854,14 @@
 :root[data-form-factor='tablet'] .zen-tab[data-active='true'] .zen-tab-close {
   opacity: 1;
 }
-@media (hover: hover) {
-  :root[data-form-factor='tablet'] .zen-tab:hover .zen-tab-close {
-    opacity: 1;
-  }
+/*
+ * The one hover rule whose gate is on the root's own selector, not in `:where()`: it carries the
+ * form-factor attribute already, so the hover gate joins it there and the rule weighs one
+ * attribute (0,1,0) more than its media-query form did – the only gated rule that gained any.
+ * A later `.zen-tab-close` rule meant to win over it on the tablet has to weigh as much.
+ */
+:root[data-hover='hover'][data-form-factor='tablet'] .zen-tab:hover .zen-tab-close {
+  opacity: 1;
 }
 /*
  * Narrower than the width at which the title keeps 100 px (the sidebar width setting turned
@@ -9521,10 +9540,8 @@
 .zen-v2-row:active:not([aria-disabled='true'], [data-static]) {
   background: var(--v2-fill);
 }
-@media (hover: hover) {
-  .zen-v2-row:hover:not([aria-disabled='true'], [data-static]) {
-    background: var(--v2-fill);
-  }
+:where(:root[data-hover='hover']) .zen-v2-row:hover:not([aria-disabled='true'], [data-static]) {
+  background: var(--v2-fill);
 }
 /*
  * The message row (§9.33's anatomy in §1's status ink only; pr-261): the row carries `data-tone`
@@ -9678,10 +9695,8 @@
 .zen-v2-icon-button:active:not(:disabled) {
   background: var(--v2-fill);
 }
-@media (hover: hover) {
-  .zen-v2-icon-button:hover:not(:disabled) {
-    background: var(--v2-fill);
-  }
+:where(:root[data-hover='hover']) .zen-v2-icon-button:hover:not(:disabled) {
+  background: var(--v2-fill);
 }
 /*
  * The app menu's edit pose (§9.34 modifier; `MenuEditor.tsx`, `.zen-menu-edit` in the components
@@ -9746,11 +9761,9 @@
   height: var(--v2-icon);
   stroke-width: var(--v2-icon-stroke);
 }
-@media (hover: hover) {
-  .zen-v2-link:hover {
-    color: var(--v2-control-accent, var(--v2-accent));
-    text-decoration-color: currentColor;
-  }
+:where(:root[data-hover='hover']) .zen-v2-link:hover {
+  color: var(--v2-control-accent, var(--v2-accent));
+  text-decoration-color: currentColor;
 }
 .zen-v2-link:focus-visible {
   color: var(--v2-control-accent, var(--v2-accent));
@@ -9978,10 +9991,8 @@
 .zen-device-heading-button:active {
   background: var(--v2-fill);
 }
-@media (hover: hover) {
-  .zen-device-heading-button:hover {
-    background: var(--v2-fill);
-  }
+:where(:root[data-hover='hover']) .zen-device-heading-button:hover {
+  background: var(--v2-fill);
 }
 .zen-device-heading-aside {
   color: var(--v2-text-deemphasized);
@@ -10111,10 +10122,8 @@
 .zen-v2-card-radio.zen-group-editor-swatch[aria-checked='true'] {
   --v2-ring-offset: 2px;
 }
-@media (hover: hover) {
-  .zen-v2-card-radio.zen-group-editor-swatch:hover {
-    background: var(--v2-fill);
-  }
+:where(:root[data-hover='hover']) .zen-v2-card-radio.zen-group-editor-swatch:hover {
+  background: var(--v2-fill);
 }
 /* Chrome's Close group: a destructive action row in the danger ink (§6); its count stays deemphasised. */
 .zen-v2-row.zen-group-editor-action[data-danger] {
@@ -10180,10 +10189,8 @@
 .zen-v2-row.zen-ntp-row:active:not([aria-disabled='true']) {
   background: var(--v2-control-fill);
 }
-@media (hover: hover) {
-  .zen-v2-row.zen-ntp-row:hover:not([aria-disabled='true']) {
-    background: var(--v2-control-fill);
-  }
+:where(:root[data-hover='hover']) .zen-v2-row.zen-ntp-row:hover:not([aria-disabled='true']) {
+  background: var(--v2-control-fill);
 }
 .zen-v2-row.zen-ntp-row[aria-disabled='true'] {
   opacity: 0.4;
@@ -10256,15 +10263,14 @@
     background 120ms var(--zen-ease),
     border-color 120ms var(--zen-ease);
 }
-@media (hover: hover) {
+:where(:root[data-hover='hover'])
   .zen-v2-checkbox:hover:not(
-      :disabled,
-      :checked,
-      [aria-checked='true'],
-      [aria-checked='true'] > *
-    ) {
-    background: var(--v2-fill);
-  }
+    :disabled,
+    :checked,
+    [aria-checked='true'],
+    [aria-checked='true'] > *
+  ) {
+  background: var(--v2-fill);
 }
 .zen-v2-checkbox:checked,
 .zen-v2-checkbox[aria-checked='true'],
@@ -10392,10 +10398,8 @@
 .zen-v2-menu-keyboard .zen-v2-menu-item:focus {
   background: var(--v2-fill);
 }
-@media (hover: hover) {
-  .zen-v2-menu-item:hover:not(:disabled) {
-    background: var(--v2-fill);
-  }
+:where(:root[data-hover='hover']) .zen-v2-menu-item:hover:not(:disabled) {
+  background: var(--v2-fill);
 }
 .zen-v2-menu-item:active:not(:disabled) {
   background: var(--v2-fill-hover);
@@ -10519,10 +10523,8 @@
 .zen-v2-menulist[aria-expanded='true'] {
   background: var(--v2-fill-hover);
 }
-@media (hover: hover) {
-  .zen-v2-menulist:hover:not(:disabled) {
-    background: var(--v2-fill-hover);
-  }
+:where(:root[data-hover='hover']) .zen-v2-menulist:hover:not(:disabled) {
+  background: var(--v2-fill-hover);
 }
 .zen-v2-menulist:active:not(:disabled) {
   background: var(--v2-fill-hover);
@@ -10583,10 +10585,8 @@
 .zen-v2-menulist-option[data-keyboard-focus]:focus {
   outline: none;
 }
-@media (hover: hover) {
-  .zen-v2-menulist-option:hover {
-    background: var(--v2-fill);
-  }
+:where(:root[data-hover='hover']) .zen-v2-menulist-option:hover {
+  background: var(--v2-fill);
 }
 .zen-v2-menulist-option > svg {
   width: var(--v2-icon);
@@ -11607,10 +11607,8 @@
   line-height: var(--v2-line-body);
   transition: background 120ms var(--zen-ease);
 }
-@media (hover: hover) {
-  .zen-settings-nav-item:hover {
-    background: var(--v2-fill);
-  }
+:where(:root[data-hover='hover']) .zen-settings-nav-item:hover {
+  background: var(--v2-fill);
 }
 .zen-settings-nav-item:active {
   background: var(--v2-fill);
@@ -12838,10 +12836,8 @@ ol.zen-page-prose-list {
     background 120ms var(--zen-ease),
     box-shadow 120ms var(--zen-ease);
 }
-@media (hover: hover) {
-  .zen-bm-tree-row:hover {
-    background: var(--v2-fill);
-  }
+:where(:root[data-hover='hover']) .zen-bm-tree-row:hover {
+  background: var(--v2-fill);
 }
 .zen-bm-tree-row:active {
   background: var(--v2-fill);
@@ -12940,11 +12936,9 @@ ol.zen-page-prose-list {
     box-shadow 120ms var(--zen-ease),
     color 120ms var(--zen-ease);
 }
-@media (hover: hover) {
-  button.zen-bm-crumb:hover {
-    background: var(--v2-fill);
-    color: var(--v2-text);
-  }
+:where(:root[data-hover='hover']) button.zen-bm-crumb:hover {
+  background: var(--v2-fill);
+  color: var(--v2-text);
 }
 .zen-bm-crumb[data-target] {
   background: var(--v2-fill);
@@ -13236,10 +13230,8 @@ ol.zen-page-prose-list {
 .zen-tasks-col[data-active] .zen-tasks-col-button {
   color: var(--v2-text);
 }
-@media (hover: hover) {
-  .zen-tasks-col-button:hover {
-    color: var(--v2-text);
-  }
+:where(:root[data-hover='hover']) .zen-tasks-col-button:hover {
+  color: var(--v2-text);
 }
 .zen-tasks-col-label {
   overflow: hidden;
@@ -13500,10 +13492,8 @@ ol.zen-page-prose-list {
 .zen-v2-row.zen-privacy-row:has(> :disabled):active {
   background: none;
 }
-@media (hover: hover) {
-  .zen-v2-row.zen-privacy-row:has(> :disabled):hover {
-    background: none;
-  }
+:where(:root[data-hover='hover']) .zen-v2-row.zen-privacy-row:has(> :disabled):hover {
+  background: none;
 }
 /* A leading checkbox sits on the first text line (§9.2); the shared box carries the offset. */
 .zen-privacy-row > .zen-v2-checkbox {
@@ -13678,11 +13668,9 @@ ol.zen-page-prose-list {
   background: var(--v2-control-fill-hover);
   color: var(--v2-control-text);
 }
-@media (hover: hover) {
-  .zen-v2-blocked-chip:hover {
-    background: var(--v2-control-fill-hover);
-    color: var(--v2-control-text);
-  }
+:where(:root[data-hover='hover']) .zen-v2-blocked-chip:hover {
+  background: var(--v2-control-fill-hover);
+  color: var(--v2-control-text);
 }
 .zen-v2-blocked-chip:active {
   background: var(--v2-control-fill-hover);
@@ -13830,10 +13818,8 @@ ol.zen-page-prose-list {
 .zen-protection-action-row:disabled {
   opacity: 0.4;
 }
-@media (hover: hover) {
-  .zen-v2-row.zen-protection-action-row:disabled:hover {
-    background: none;
-  }
+:where(:root[data-hover='hover']) .zen-v2-row.zen-protection-action-row:disabled:hover {
+  background: none;
 }
 .zen-protection-action-row > svg {
   width: var(--v2-icon);
@@ -14065,7 +14051,7 @@ ol.zen-page-prose-list {
   .zen-omnibox-keyword-chip {
     animation: zen-omnibox-chip-in 150ms var(--zen-ease);
   }
-  button.zen-omnibox-keyword-chip:hover {
+  :where(:root[data-hover='hover']) button.zen-omnibox-keyword-chip:hover {
     color: var(--v2-text);
   }
   /*
@@ -14165,13 +14151,13 @@ ol.zen-page-prose-list {
   visibility: hidden;
   color: var(--v2-text-deemphasized);
 }
-.zen-omnibox-row:hover .zen-v2-icon-button.zen-omnibox-remove,
+:where(:root[data-hover='hover']) .zen-omnibox-row:hover .zen-v2-icon-button.zen-omnibox-remove,
 .zen-omnibox-row[data-selected='true'] .zen-v2-icon-button.zen-omnibox-remove,
 .zen-omnibox-row[data-action-focused] .zen-v2-icon-button.zen-omnibox-remove,
 .zen-v2-icon-button.zen-omnibox-remove:focus-visible {
   visibility: visible;
 }
-.zen-v2-icon-button.zen-omnibox-remove:hover:not(:disabled),
+:where(:root[data-hover='hover']) .zen-v2-icon-button.zen-omnibox-remove:hover:not(:disabled),
 .zen-v2-icon-button.zen-omnibox-remove:active:not(:disabled) {
   color: var(--v2-text);
   background: color-mix(in srgb, var(--v2-text) 10%, transparent);
@@ -14403,10 +14389,8 @@ ol.zen-page-prose-list {
     transform 120ms var(--zen-ease);
 }
 /* Only where a pointer can hover: on a phone the emulated hover would stay lit on the button after its tap. */
-@media (hover: hover) {
-  .zen-zoom-reset:hover:not(:disabled) {
-    background: var(--v2-fill-hover);
-  }
+:where(:root[data-hover='hover']) .zen-zoom-reset:hover:not(:disabled) {
+  background: var(--v2-fill-hover);
 }
 .zen-zoom-reset:active:not(:disabled) {
   transform: scale(0.98);

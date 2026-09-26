@@ -299,6 +299,41 @@ class UnitCompilerTest {
     }
 
     @Test
+    fun `a unit's shape comes off the wire into its script, its identity and its measure, whole when the plan names none`() {
+        // A bootstrap the size of the real one against a budget a thin unit fits and a whole one does not.
+        val bootstrap = "/*" + "b".repeat(20_000) + "*/"
+        val compiler = UnitCompiler(budgetChars = 16_000) { bootstrap }
+        val plan = units("isolated:*" to listOf("cs.js"), "isolated:https://example.com" to listOf("extra.js"))
+        plan.getJSONObject(0).put("shape", "carrier")
+        plan.getJSONObject(1).put("shape", "thin")
+        val compiled = compiler.compile(id, "1.0.0", plan, true, read, size)
+        assertEquals(listOf("carrier", "thin"), compiled.map { it.shape })
+        // The carrier is over the budget by its bootstrap; the thin unit, measured without one, compiles.
+        assertTrue(compiled[0].refused != null && compiled[0].refused!!.chars > 20_000)
+        assertNull(compiled[1].refused)
+        assertTrue(compiled[1].script.contains("console.log('extra')"))
+        assertFalse(compiled[1].script.contains(bootstrap))
+        assertTrue(compiled[1].script.contains("globalThis.__zenExtCarrier;"))
+        // Room enough: the carrier carries the bootstrap once, wrapped, and runs it.
+        val roomy = UnitCompiler(budgetChars = 64_000) { bootstrap }
+        val both = roomy.compile(id, "1.0.0", plan, true, read, size)
+        assertTrue(both[0].script.contains("=function(__zenExtBoot){\n$bootstrap\n};\n__zenExtCarry(__zenExtBoot);"))
+        assertEquals(1, Regex(Regex.escape(bootstrap)).findAll(both[0].script).count())
+        // The same unit re-planned in another shape is compiled again: the shape is in the hash.
+        plan.getJSONObject(1).put("shape", "whole")
+        val reshaped = roomy.compile(id, "1.0.0", plan, true, read, size)
+        assertTrue(reshaped[0].cached)
+        assertFalse(reshaped[1].cached)
+        assertNotEquals(both[1].hash, reshaped[1].hash)
+        assertTrue(reshaped[1].script.contains(bootstrap))
+        // No shape on the wire (an older plan): whole, as ever.
+        plan.getJSONObject(1).remove("shape")
+        val plain = roomy.compile(id, "1.0.0", plan, true, read, size)
+        assertEquals("whole", plain[1].shape)
+        assertTrue(plain[1].cached)
+    }
+
+    @Test
     fun `a main-world unit (world null on the wire) has no world`() {
         val compiler = UnitCompiler { "/*boot*/" }
         val unit = org.json.JSONObject().put("key", "k").put("origins", JSONArray().put("https://userstyles.org"))

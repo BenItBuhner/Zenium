@@ -16,9 +16,10 @@
  * hairlines and bleed, the field's leading glyph, the icon button's expanded fill and pressed
  * ink, and the control the shared set does not have yet (the menulist).
  *
- * Every hover fill sits inside `@media (hover: hover)` (as main.css's app-icon grid): Chromium
- * keeps a tap's `:hover` on the element until the next touch, so on a phone an ungated rule
- * leaves a tapped button lit. Press (`:active`), expanded and pressed states stay ungated.
+ * Every hover fill is gated by the root's `data-hover` (`:where(:root[data-hover='hover'])`, as
+ * main.css's rules are; the note beside its `data-pointer` rules): Chromium keeps a tap's
+ * `:hover` on the element until the next touch, so on a phone an ungated rule leaves a tapped
+ * button lit. Press (`:active`), expanded and pressed states stay ungated.
  */
 
 /*
@@ -523,10 +524,8 @@
     padding: var(--v2-card-padding);
     transition: border-color 120ms var(--zen-ease);
   }
-  @media (hover: hover) {
-    .zen-ext-card:has(> .zen-ext-card-main:hover) {
-      border-color: rgb(var(--v2-text-rgb) / 0.3);
-    }
+  :where(:root[data-hover='hover']) .zen-ext-card:has(> .zen-ext-card-main:hover) {
+    border-color: rgb(var(--v2-text-rgb) / 0.3);
   }
   .zen-ext-card-main {
     display: flex;
@@ -808,10 +807,8 @@
   .zen-ext-panel-row > .zen-v2-icon-button {
     align-self: center;
   }
-  @media (hover: hover) {
-    .zen-ext-panel-row:hover {
-      background: var(--v2-fill);
-    }
+  :where(:root[data-hover='hover']) .zen-ext-panel-row:hover {
+    background: var(--v2-fill);
   }
   .zen-ext-panel-row:active {
     background: var(--v2-fill-hover);
@@ -955,13 +952,11 @@
   height: var(--v2-icon);
   flex-shrink: 0;
 }
-@media (hover: hover) {
-  .zen-v2-button:hover:not(:disabled) {
-    background: var(--v2-fill-hover);
-  }
-  .zen-v2-button[data-primary]:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--v2-accent) 88%, var(--v2-text));
-  }
+:where(:root[data-hover='hover']) .zen-v2-button:hover:not(:disabled) {
+  background: var(--v2-fill-hover);
+}
+:where(:root[data-hover='hover']) .zen-v2-button[data-primary]:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--v2-accent) 88%, var(--v2-text));
 }
 /* A field with a leading glyph (`.zen-v2-field-lead`, 16 at 10 in): the text starts 34 in. */
 .zen-v2-field[data-lead] {

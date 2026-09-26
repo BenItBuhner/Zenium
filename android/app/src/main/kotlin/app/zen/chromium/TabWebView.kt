@@ -877,6 +877,25 @@ class TabWebView(
     }
 
     /**
+     * Ctrl + the mouse wheel over the page zooms it (OS-12; see [WheelZoom]): the step goes to the
+     * core as the `zoomChanged` view event – `ViewEvents.onZoomChanged`, the same `adjustZoom` the
+     * keyboard's Ctrl+= and Ctrl+- run – and the event ends here, so the WebView neither scrolls
+     * under the zoom nor zooms on its own. Every other motion (a plain wheel, a mouse hover, a
+     * stylus) is the WebView's as ever.
+     */
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        val step = wheelZoom.step(
+            event.actionMasked == MotionEvent.ACTION_SCROLL,
+            event.metaState and KeyEvent.META_CTRL_ON != 0,
+            event.getAxisValue(MotionEvent.AXIS_VSCROLL)
+        )
+        step.direction?.let { host.viewEvent(tabId, "zoomChanged", json("direction" to it)) }
+        return step.consumed || super.onGenericMotionEvent(event)
+    }
+
+    private val wheelZoom = WheelZoom()
+
+    /**
      * A trusted tap or key reached the page: the core's user-activation model (pop-ups, app
      * launches) runs on it. Rate-limited so scrolling does not flood the bridge.
      */

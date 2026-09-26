@@ -1,0 +1,777 @@
+{
+ "$comment": "Compatibility sweep round 16 list (compiled by Android compat round 19; no desktop sweep ran for these ranks, the desktop sweep having moved to a per-release cadence after its round 7): the next 30 Chrome Web Store extensions by install count after the top 30 of round 1, the 30 of next30.json and the 30 of each of next30-round3.json to next30-round15.json (ranks 451-480; manifests under the project store internal/extensions/next30-round16/). Counts are the store detail pages' rounded figures read 2026-09-25; ties inside one rounded bucket are ordered by the page's rating count, equal rounded rating counts by name. Candidates came from the store's category listings and keyword searches, about 24,900 detail pages probed across rounds 3 to 16 (this round added 575 search terms and 2,062 new detail pages; eight of them read the rounded 400,000 bucket or above - Planet Search at 2,000,000 users and 189 ratings, RapidIdentity at 1,000,000 and 32, Connecteur Antidote at 1,000,000 and 164, Soda PDF Viewer at 800,000 and 7, Audio editor online X-Audacity at 600,000 and 192, MSN New Tab at 500,000 and 199, Sea Foam at 500,000 and 1.3K, Passbolt at 400,000 and 105 - counts that would have placed the rankable ones in earlier lists had the store's listings or the earlier rounds' terms surfaced them, so the five rankable ones above the 400,000 bucket are ranks 451-455 as the highest-count items not yet listed, the earlier lists standing as compiled, and Passbolt takes its place inside the bucket by its rating count; the other 2,054 are below the bucket). Every unlisted candidate at or above the rounded 400,000 bucket (71 detail pages) was read again on 2026-09-25, the same day as round 18's list's read; no user count and no rating count moved. Ranks 451-455 are the newly surfaced pages' rankable items above the 400,000 bucket in count order - Planet Search (2,000,000), Connecteur Antidote (1,000,000), Soda PDF Viewer (800,000), Audio editor online X-Audacity (600,000) and MSN New Tab (500,000); RapidIdentity is Identity Automation's form-fill SSO agent for its customers' deployments, organisation-managed as the earlier lists held Okta Browser Plugin and My Apps Secure Sign-in Extension, and Sea Foam is a theme; the rounded 700,000 bucket still holds no unlisted rankable item (Securly for Chromebooks, Idira Identity Browser Extension and Citrix Web Extension organisation-managed, Dark Theme for Google Chrome a theme), nor the 600,000 and 500,000 buckets beyond the two ranked here (Postman a Chrome App, Cegid Peoplenet ClickOnce launcher organisation-managed). Ranks 456-480 are the rounded 400,000 bucket's 25 items with the most ratings after the 18 of next30-round14.json and the 29 of next30-round15.json, and the cut falls between Passbolt - Open source password manager at 105 ratings and EditThisCookie (V3) at 94; no two of the 25 share a rounded rating count. Planet Search is a default-search override (chrome_settings_overrides.search_provider with a popup and a worker, no scripts). Connecteur Antidote is Druide's companion to the Antidote desktop application over native messaging, ranked as earlier lists ranked the native-messaging companions (its core check stops at the application's absence); ExpressKeys declares nativeMessaging beside its own vault. Passbolt signs in to a Passbolt server, Directo and Draftback ask for a Google identity, DocHub's scripts run in Gmail, CS2 Trader's on Steam's trade pages, Netflix Party's on Netflix, Affirm's popup and Perplexity's ask their services - ranked as earlier lists ranked Grammarly and HubSpot Sales. The rows carry the manifests' names, which match the store's listings for all 30. Not ranked: themes (Morpheon Dark, Dark Theme for Google Chrome, Sea Foam), Chrome Apps (Google Classroom, Postman), organisation-managed or organisation-login-only items (the list of round 13's comment - ClassLink OneClick, Clever, Mobility Print, Endpoint Verification, Lightspeed Insight Agent, Okta Browser Plugin, Trellix Endpoint Security Web Control, LearnPlatform for Students, OpenText Content Server Browser Web Extension, My Apps Secure Sign-in Extension, MasteryConnect LockDown Browser, HID Credential Management Extension, Snow Web Application Metering, iboss Cloud Connector, LanSchool Web Helper, Browser Security Plus, Browser Redirection Extension, ActivID CMS extension, Britannica School Insights, Securly for Chromebooks, Idira Identity Browser Extension, Citrix Web Extension, Cegid Peoplenet ClickOnce launcher, iboss Classroom Management for Students - and RapidIdentity) and Google items whose detail pages publish no user count.",
+ "measuredAt": "2026-09-25",
+ "baseline": "1678dc74",
+ "rows": [
+  {
+   "rank": 451,
+   "id": "kadaohckdkghfaclhjmkmplebcdcnfnp",
+   "name": "Planet Search",
+   "version": "2.0.1",
+   "mv": 3,
+   "users": 2000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/planet-search/kadaohckdkghfaclhjmkmplebcdcnfnp), \"2,000,000 users\", read 2026-09-25; 189 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": null,
+   "permissions": [],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 17886
+  },
+  {
+   "rank": 452,
+   "id": "lmbopdiikkamfphhgcckcjhojnokgfeo",
+   "name": "Connecteur Antidote",
+   "version": "12.4.4",
+   "mv": 3,
+   "users": 1000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/connecteur-antidote/lmbopdiikkamfphhgcckcjhojnokgfeo), \"1,000,000 users\", read 2026-09-25; 164 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": "options.html",
+   "permissions": [
+    "alarms",
+    "activeTab",
+    "contextMenus",
+    "cookies",
+    "nativeMessaging",
+    "management",
+    "storage",
+    "scripting",
+    "tabs"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 10,
+   "nativeMessaging": true,
+   "crxBytes": 3975903
+  },
+  {
+   "rank": 453,
+   "id": "achogidmbhmofkmpgamphmlebdhgkdhc",
+   "name": "Soda PDF Viewer: Edit, Convert, Compress PDF files",
+   "version": "1.0.2.92",
+   "mv": 3,
+   "users": 800000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/soda-pdf-viewer-edit-conv/achogidmbhmofkmpgamphmlebdhgkdhc), \"800,000 users\", read 2026-09-25; 7 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "index.html",
+   "options": null,
+   "permissions": [
+    "tabs",
+    "cookies",
+    "storage",
+    "webRequest",
+    "webNavigation",
+    "system.display"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "*://*/*"
+   ],
+   "contentScripts": 3,
+   "nativeMessaging": false,
+   "crxBytes": 1796910
+  },
+  {
+   "rank": 454,
+   "id": "jaembmdeobjibglbnnefpalabeohjpnj",
+   "name": "Audio editor online X-Audacity",
+   "version": "2.15.5",
+   "mv": 3,
+   "users": 600000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/audio-editor-online-x-aud/jaembmdeobjibglbnnefpalabeohjpnj), \"600,000 users\", read 2026-09-25; 192 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "index.html",
+   "options": "options.html",
+   "permissions": [
+    "storage",
+    "tabs"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 425746
+  },
+  {
+   "rank": 455,
+   "id": "lklfbkdigihjaaeamncibechhgalldgl",
+   "name": "MSN New Tab",
+   "version": "2.8.0.2",
+   "mv": 3,
+   "users": 500000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/msn-new-tab/lklfbkdigihjaaeamncibechhgalldgl), \"500,000 users\", read 2026-09-25; 199 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "cookies",
+    "storage",
+    "alarms"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "https://*.msn.com/*",
+    "https://*.microsoft.com/*"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 1299388
+  },
+  {
+   "rank": 456,
+   "id": "mbnbehikldjhnfehhnaidhjhoofhpehk",
+   "name": "CSS Peeper",
+   "version": "1.2.3",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/css-peeper/mbnbehikldjhnfehhnaidhjhoofhpehk), \"400,000 users\", read 2026-09-25; 475 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "storage",
+    "sidePanel",
+    "activeTab",
+    "tabs",
+    "alarms",
+    "scripting",
+    "unlimitedStorage",
+    "webRequest"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "http://*/*",
+    "https://*/*"
+   ],
+   "contentScripts": 3,
+   "nativeMessaging": false,
+   "crxBytes": 1877275
+  },
+  {
+   "rank": 457,
+   "id": "kpmbpdpbjjadabknommjfphilmecebab",
+   "name": "OP Auto Clicker",
+   "version": "0.1.4",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/op-auto-clicker/kpmbpdpbjjadabknommjfphilmecebab), \"400,000 users\", read 2026-09-25; 463 ratings (tie-break within the rounded bucket)",
+   "bg": null,
+   "popup": "popup.html",
+   "options": null,
+   "permissions": [
+    "storage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 11538
+  },
+  {
+   "rank": 458,
+   "id": "hlgbcneanomplepojfcnclggenpcoldo",
+   "name": "Perplexity - AI Companion",
+   "version": "1.0.21",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/perplexity-ai-companion/hlgbcneanomplepojfcnclggenpcoldo), \"400,000 users\", read 2026-09-25; 446 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "index.html",
+   "options": null,
+   "permissions": [
+    "activeTab",
+    "scripting"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "https://www.perplexity.ai/",
+    "wss://www.perplexity.ai/"
+   ],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 1349233
+  },
+  {
+   "rank": 459,
+   "id": "gmehookibnphigonphocphhcepbijeen",
+   "name": "Picture in Picture - floating video player",
+   "version": "1.0.6",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/picture-in-picture-floati/gmehookibnphigonphocphhcepbijeen), \"400,000 users\", read 2026-09-25; 436 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "scripting",
+    "storage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 35073
+  },
+  {
+   "rank": 460,
+   "id": "dnhpnfgdlenaccegplpojghhmaamnnfp",
+   "name": "Augmented Steam",
+   "version": "4.8.3",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/augmented-steam/dnhpnfgdlenaccegplpojghhmaamnnfp), \"400,000 users\", read 2026-09-25; 373 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": "html/options.html",
+   "permissions": [
+    "storage",
+    "contextMenus",
+    "webRequest",
+    "offscreen"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "*://*.steampowered.com/*",
+    "*://steamcommunity.com/*",
+    "*://*.isthereanydeal.com/"
+   ],
+   "contentScripts": 40,
+   "nativeMessaging": false,
+   "crxBytes": 15945448
+  },
+  {
+   "rank": 461,
+   "id": "mmnbenehknklpbendgmgngeaignppnbe",
+   "name": "Netflix Party",
+   "version": "3.9",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/netflix-party/mmnbenehknklpbendgmgngeaignppnbe), \"400,000 users\", read 2026-09-25; 357 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "index.html",
+   "options": null,
+   "permissions": [
+    "tabs",
+    "storage",
+    "scripting"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "*://*/*"
+   ],
+   "contentScripts": 2,
+   "nativeMessaging": false,
+   "crxBytes": 1019368
+  },
+  {
+   "rank": 462,
+   "id": "inmopeiepgfljkpkidclfgbgbmfcennb",
+   "name": "Responsive Viewer",
+   "version": "1.1.25",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/responsive-viewer/inmopeiepgfljkpkidclfgbgbmfcennb), \"400,000 users\", read 2026-09-25; 351 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "storage",
+    "activeTab",
+    "webNavigation",
+    "webRequest",
+    "declarativeNetRequest",
+    "scripting"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 798997
+  },
+  {
+   "rank": 463,
+   "id": "fonalplhodhnenmokepaijoemaednpjm",
+   "name": "Directo - Travel Deals - Save on Hotels",
+   "version": "2.104.3",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/directo-travel-deals-save/fonalplhodhnenmokepaijoemaednpjm), \"400,000 users\", read 2026-09-25; 349 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": "options.html",
+   "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "webRequest",
+    "identity",
+    "identity.email",
+    "activeTab",
+    "scripting",
+    "alarms"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "http://*/*",
+    "https://*/*"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 1004517
+  },
+  {
+   "rank": 464,
+   "id": "mjgcgnfikekladnkhnimljcalfibijha",
+   "name": "DocHub - Sign PDF from Gmail",
+   "version": "2.4.0",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/dochub-sign-pdf-from-gmai/mjgcgnfikekladnkhnimljcalfibijha), \"400,000 users\", read 2026-09-25; 318 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": null,
+   "permissions": [],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 3,
+   "nativeMessaging": false,
+   "crxBytes": 62879
+  },
+  {
+   "rank": 465,
+   "id": "mmcblfncjaclajmegihojiekebofjcen",
+   "name": "Plugins",
+   "version": "8.1.0.0",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/plugins/mmcblfncjaclajmegihojiekebofjcen), \"400,000 users\", read 2026-09-25; 300 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup/popup.html",
+   "options": "settings.html",
+   "permissions": [
+    "activeTab",
+    "contextMenus",
+    "storage"
+   ],
+   "optionalPermissions": [
+    "management"
+   ],
+   "hostPermissions": [],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 16323351
+  },
+  {
+   "rank": 466,
+   "id": "cmfijaapnnkcglahdngmjnhkfnkihkbg",
+   "name": "Affirm: Buy Now, Pay Later",
+   "version": "2.2.13",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/affirm-buy-now-pay-later/cmfijaapnnkcglahdngmjnhkfnkihkbg), \"400,000 users\", read 2026-09-25; 287 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": null,
+   "permissions": [
+    "storage",
+    "activeTab",
+    "cookies",
+    "webNavigation",
+    "declarativeNetRequest",
+    "alarms",
+    "tabs",
+    "offscreen",
+    "scripting"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "*://*.affirm.com/",
+    "<all_urls>"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 878614
+  },
+  {
+   "rank": 467,
+   "id": "bhchdcejhohfmigjafbampogmaanbfkg",
+   "name": "User-Agent Switcher and Manager",
+   "version": "0.7.1",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/user-agent-switcher-and-m/bhchdcejhohfmigjafbampogmaanbfkg), \"400,000 users\", read 2026-09-25; 274 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "data/popup/index.html",
+   "options": "data/options/index.html",
+   "permissions": [
+    "storage",
+    "contextMenus",
+    "scripting",
+    "declarativeNetRequestWithHostAccess",
+    "webRequest"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 840622
+  },
+  {
+   "rank": 468,
+   "id": "gnblbpbepfbfmoobegdogkglpbhcjofh",
+   "name": "Beyond 20",
+   "version": "2.21.0",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/beyond-20/gnblbpbepfbfmoobegdogkglpbhcjofh), \"400,000 users\", read 2026-09-25; 252 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "default_popup.html",
+   "options": "options.html",
+   "permissions": [
+    "activeTab",
+    "tabs",
+    "storage",
+    "scripting"
+   ],
+   "optionalPermissions": [
+    "webNavigation"
+   ],
+   "hostPermissions": [
+    "*://beyond20.kicks-ass.org/roll",
+    "*://app.roll20.net/editor/",
+    "*://*.dndbeyond.com/*",
+    "*://*.forge-vtt.com/game"
+   ],
+   "contentScripts": 9,
+   "nativeMessaging": false,
+   "crxBytes": 1481013
+  },
+  {
+   "rank": 469,
+   "id": "omebobahbkampglebglkoagddjnjbhle",
+   "name": "Gimp online - image editor and paint tool",
+   "version": "3.0.5",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/gimp-online-image-editor/omebobahbkampglebglkoagddjnjbhle), \"400,000 users\", read 2026-09-25; 244 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "index.html",
+   "options": "options.html",
+   "permissions": [
+    "storage",
+    "tabs"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 701582
+  },
+  {
+   "rank": 470,
+   "id": "bhiichidigehdgphoambhjbekalahgha",
+   "name": "Font Finder",
+   "version": "0.6.5",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/font-finder/bhiichidigehdgphoambhjbekalahgha), \"400,000 users\", read 2026-09-25; 228 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": "/data/options/index.html",
+   "permissions": [
+    "storage",
+    "contextMenus",
+    "notifications",
+    "scripting",
+    "activeTab"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 154556
+  },
+  {
+   "rank": 471,
+   "id": "lgknkdljklhkafjfekjjbldfcdnmdpkh",
+   "name": "VideoMirror",
+   "version": "3.2.0",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/videomirror/lgknkdljklhkafjfekjjbldfcdnmdpkh), \"400,000 users\", read 2026-09-25; 207 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": "options.html",
+   "permissions": [
+    "scripting",
+    "activeTab",
+    "storage",
+    "alarms",
+    "contextMenus"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 44569
+  },
+  {
+   "rank": 472,
+   "id": "blljobffcekcbopmkgfhpcjmbfnelkfg",
+   "name": "Mute Tab",
+   "version": "1.5",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/mute-tab/blljobffcekcbopmkgfhpcjmbfnelkfg), \"400,000 users\", read 2026-09-25; 190 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "activeTab",
+    "contextMenus",
+    "offscreen",
+    "storage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 44236
+  },
+  {
+   "rank": 473,
+   "id": "opmeopcambhfimffbomjgemehjkbbmji",
+   "name": "VideoPlayer MPD/M3U8/IPTV/EPG",
+   "version": "26.1.6.8388",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/videoplayer-mpdm3u8iptvep/opmeopcambhfimffbomjgemehjkbbmji), \"400,000 users\", read 2026-09-25; 179 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "pages/options.html",
+   "options": "pages/settings.html",
+   "permissions": [
+    "declarativeNetRequest",
+    "storage"
+   ],
+   "optionalPermissions": [
+    "notifications"
+   ],
+   "hostPermissions": [
+    "*://*/*.m3u*",
+    "*://*/*.mpd*",
+    "file:///*/*.m3u"
+   ],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 5799960,
+   "minimumChromeVersion": "100"
+  },
+  {
+   "rank": 474,
+   "id": "ppfadpgpccljindldolejmgkhgaficka",
+   "name": "Ad Block Ninja",
+   "version": "2.2",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/ad-block-ninja/ppfadpgpccljindldolejmgkhgaficka), \"400,000 users\", read 2026-09-25; 175 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": "options.html",
+   "permissions": [
+    "declarativeNetRequest",
+    "scripting",
+    "storage",
+    "activeTab",
+    "unlimitedStorage",
+    "webNavigation"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 3,
+   "nativeMessaging": false,
+   "crxBytes": 1927215
+  },
+  {
+   "rank": 475,
+   "id": "nnajoiemfpldioamchanognpjmocgkbg",
+   "name": "Draftback",
+   "version": "0.0.30",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/draftback/nnajoiemfpldioamchanognpjmocgkbg), \"400,000 users\", read 2026-09-25; 157 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "identity",
+    "identity.email",
+    "storage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "*://docs.google.com/*",
+    "https://accounts.draftback.com/*"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 963004
+  },
+  {
+   "rank": 476,
+   "id": "kaibcgikagnkfgjnibflebpldakfhfih",
+   "name": "CS2 Trader - Steam Trading Enhancer",
+   "version": "3.7",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/cs2-trader-steam-trading/kaibcgikagnkfgjnibflebpldakfhfih), \"400,000 users\", read 2026-09-25; 153 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "index.html?page=popup",
+   "options": "index.html",
+   "permissions": [
+    "storage",
+    "notifications",
+    "alarms",
+    "unlimitedStorage",
+    "offscreen"
+   ],
+   "optionalPermissions": [
+    "tabs"
+   ],
+   "hostPermissions": [
+    "*://steamcommunity.com/*",
+    "*://api.steampowered.com/*",
+    "*://api.csgotrader.app/*",
+    "*://prices.csgotrader.app/*"
+   ],
+   "contentScripts": 17,
+   "nativeMessaging": false,
+   "crxBytes": 7800883,
+   "minimumChromeVersion": "109"
+  },
+  {
+   "rank": 477,
+   "id": "blgcbajigpdfohpgcmbbfnphcgifjopc",
+   "name": "ExpressKeys: Password Manager",
+   "version": "3.2.0.8860",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/expresskeys-password-mana/blgcbajigpdfohpgcmbbfnphcgifjopc), \"400,000 users\", read 2026-09-25; 145 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "index.html",
+   "options": null,
+   "permissions": [
+    "webNavigation",
+    "webRequest",
+    "storage",
+    "unlimitedStorage",
+    "tabs",
+    "alarms",
+    "idle",
+    "notifications",
+    "clipboardWrite",
+    "nativeMessaging",
+    "offscreen",
+    "privacy"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 4,
+   "nativeMessaging": true,
+   "crxBytes": 21210284,
+   "minimumChromeVersion": "111"
+  },
+  {
+   "rank": 478,
+   "id": "oppflpnigmhkldmdmmbnopidlhahanji",
+   "name": "Snake",
+   "version": "2.2.40",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/snake/oppflpnigmhkldmdmmbnopidlhahanji), \"400,000 users\", read 2026-09-25; 133 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "index.html",
+   "options": null,
+   "permissions": [
+    "storage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 17552
+  },
+  {
+   "rank": 479,
+   "id": "lhdoppojpmngadmnindnejefpokejbdd",
+   "name": "axe DevTools - Web Accessibility Testing",
+   "version": "4.137.0",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/axe-devtools-web-accessib/lhdoppojpmngadmnindnejefpokejbdd), \"400,000 users\", read 2026-09-25; 129 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": null,
+   "permissions": [
+    "tabs",
+    "debugger",
+    "storage",
+    "unlimitedStorage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 5065963,
+   "minimumChromeVersion": "88"
+  },
+  {
+   "rank": 480,
+   "id": "didegimhafipceonhjepacocaffmoppf",
+   "name": "Passbolt - Open source password manager",
+   "version": "5.16.0",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/passbolt-open-source-pass/didegimhafipceonhjepacocaffmoppf), \"400,000 users\", read 2026-09-25; 105 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "webAccessibleResources/quickaccess.html?passbolt=quickaccess",
+   "options": null,
+   "permissions": [
+    "activeTab",
+    "unlimitedStorage",
+    "storage",
+    "tabs",
+    "scripting",
+    "alarms",
+    "downloads",
+    "cookies",
+    "clipboardWrite",
+    "background",
+    "offscreen"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "*://*/*"
+   ],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 5988389,
+   "minimumChromeVersion": "116"
+  }
+ ]
+}
