@@ -48,8 +48,8 @@ describe('judgeStep', () => {
     v.sessions += 2
     v.calls += 9
     v.hard('zen_status', true)
-    v.soft(SOFT_CHECKS.backgroundScreenshot, false, 'no image part in the result')
-    v.soft(SOFT_CHECKS.backgroundScreenshot, false, 'no image part in the result')
+    v.soft(SOFT_CHECKS.dropForceAdopt, false, 'still connected')
+    v.soft(SOFT_CHECKS.dropForceAdopt, false, 'still connected')
     const { detail, error } = judgeStep(v, before)
     expect(error).toBeNull()
     expect(detail).toEqual({
@@ -61,13 +61,27 @@ describe('judgeStep', () => {
         hard: [],
         soft: [
           {
-            name: SOFT_CHECKS.backgroundScreenshot,
+            name: SOFT_CHECKS.dropForceAdopt,
             failures: 2,
-            sample: 'no image part in the result'
+            sample: 'still connected'
           }
         ]
       }
     })
+  })
+
+  it('fails a step on a background snapshot or screenshot that failed during it (hard since B)', () => {
+    const v = new Verdict()
+    const before = mark(v)
+    v.hard('background-snapshot', false, 'viewport 0×0, headings [], 0 refs')
+    v.hard('background-screenshot', false, 'no image part in the result')
+    v.hard('foreground-screenshot', true)
+    const { detail, error } = judgeStep(v, before)
+    expect(error).toBe(
+      '2 hard check(s) failed: background-snapshot ×1 (viewport 0×0, headings [], 0 refs); background-screenshot ×1 (no image part in the result)'
+    )
+    expect(detail.hardFailures).toBe(2)
+    expect(detail.failed.soft).toEqual([])
   })
 
   it('fails a step on a hard check that failed during it, naming the check and what it quoted', () => {
