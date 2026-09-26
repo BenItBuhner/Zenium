@@ -175,6 +175,8 @@ class TabWebView(
     private class HeldNavigation(val token: Int, val url: String, val referer: String?, val letGo: Boolean)
     /** The user's Leave at a `beforeunload` objection, carried to the held navigation's re-issued load. */
     private val leaveCarry = LeaveCarry()
+    /** The page's own referrer policy, told by its script ahead of the navigation the view holds (`referrerPolicy.ts`). */
+    private val referrerPolicyWord = ReferrerPolicyWord()
     /** The privacy signals' document-start script (`navigator.globalPrivacyControl`, `doNotTrack`) and its registration. */
     private var signalScript: String? = null
     private var signalScriptHandler: ScriptHandler? = null
@@ -587,14 +589,18 @@ class TabWebView(
      * core's word arrives a round trip too late for the request about to leave). Nothing is held
      * when the core cannot be asked (a host without one, or its rules service not started: the
      * pushed document decides) or the site is already answered for. Returns whether it held. The
-     * re-issued load carries the page's referrer under Chrome's default policy; a redirect hop's
-     * is the original request's, which the view does not know, so it is resumed without one. A
-     * Leave the user gave the page's `beforeunload` objection for this navigation goes with it
+     * re-issued load carries the page's referrer under `policy`, the page's own referrer policy
+     * as its script read it for this navigation ([ReferrerPolicyWord]: the tapped anchor's
+     * `rel=noreferrer` / `referrerpolicy`, else the document's `<meta name=referrer>`; the empty
+     * word is Chrome's default) – a policy set by the `Referrer-Policy` response header alone
+     * is not readable from the page and is not followed here. A redirect hop's referrer is the
+     * original request's, which the view does not know, so it is resumed without one. A Leave
+     * the user gave the page's `beforeunload` objection for this navigation goes with it
      * ([LeaveCarry]: the re-issued load has the browser ask the page once more).
      */
-    private fun holdForContentRules(target: String, redirect: Boolean): Boolean {
+    private fun holdForContentRules(target: String, redirect: Boolean, policy: String): Boolean {
         if (!host.contentRulesResolvable || !governedByContentRules(target) || resolvedFor(target) != null) return false
-        val referer = if (redirect) null else ContentRules.resumeReferer(currentDocument, target)
+        val referer = if (redirect) null else ContentRules.resumeReferer(currentDocument, target, policy)
         val held = HeldNavigation(++rulesTokenSeq, target, referer, leaveCarry.holds(SystemClock.uptimeMillis()))
         heldNavigation = held
         askRules(target, held.token)
@@ -611,8 +617,8 @@ class TabWebView(
     }
 
     /**
-     * The held navigation goes on as this view's own load, its referrer restored (Chrome's
-     * default policy). The load is browser-initiated, so the browser has the page run its
+     * The held navigation goes on as this view's own load, its referrer restored (under the
+     * page's own policy, see [holdForContentRules]). The load is browser-initiated, so the browser has the page run its
      * `beforeunload` again; when the user already chose to leave for this navigation, its second
      * objection is answered with that word rather than a second sheet (`onJsBeforeUnload`).
      */
@@ -968,6 +974,12 @@ class TabWebView(
             PageMessageRoute.DomReady -> if (domReady.scriptReady()) host.viewEvent(tabId, "domReady", null)
             is PageMessageRoute.Fullscreen ->
                 host.fullscreenVideo(this, route.active, route.video, route.videoWidth, route.videoHeight, mainFrame = isMainFrame)
+            // The page's own referrer policy, for the navigation the view may hold next.
+            is PageMessageRoute.ReferrerPolicy -> {
+                route.next?.let { referrerPolicyWord.nextNavigation(it, SystemClock.uptimeMillis()) }
+                val origin = route.origin
+                if (route.document != null && origin != null) referrerPolicyWord.document(route.document, origin)
+            }
             is PageMessageRoute.Forward ->
                 if (route.message.optString("type") == "share") host.preparePageMessage(route.message) { host.viewEvent(tabId, "pageMessage", it) }
                 else host.viewEvent(tabId, "pageMessage", route.message)
@@ -2672,7 +2684,10 @@ class TabWebView(
         private fun holdOrApplyContentRules(request: WebResourceRequest): Boolean {
             if (!request.isForMainFrame) return false
             val target = request.url.toString()
-            if (holdForContentRules(target, request.isRedirect)) return true
+            // Every main-frame navigation through the hook spends the page's word for the one
+            // that follows the click, held or not: a later navigation is not the click's.
+            val policy = referrerPolicyWord.forNavigation(currentDocument?.let(ContentRules::siteOf), SystemClock.uptimeMillis())
+            if (holdForContentRules(target, request.isRedirect, policy)) return true
             applyCookiePolicy(host.privacy.flags, target)
             applyContentRules(target)
             currentDocument = target
@@ -2714,9 +2729,11 @@ class TabWebView(
             currentDocument = url
             startedDocument = url
             // A navigation held for the core's answer is superseded by the document starting,
-            // and the page that objected to it is on its way out: its Leave is spent.
+            // and the page that objected to it is on its way out: its Leave is spent, and so is
+            // its script's word on the next navigation's referrer policy.
             heldNavigation = null
             leaveCarry.reset()
+            referrerPolicyWord.documentStarted(ContentRules.siteOf(url))
             applyMixedContentPolicy(host.privacy.flags, url)
             applyCookiePolicy(host.privacy.flags, url)
             applyContentRules(url)
