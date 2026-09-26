@@ -142,8 +142,11 @@ export const PREVIEW_SHARE_KINDS = [
 ] as const
 export type PreviewShareKind = (typeof PREVIEW_SHARE_KINDS)[number]
 
-/** What the QR code sheet shows (`qrcode=<variant>`; SH-06): the code, the too-long message, or the toast after Download. */
-export const PREVIEW_QR_CODE_VARIANTS = ['link', 'too-long', 'saved'] as const
+/**
+ * What the QR code sheet shows (`qrcode=<variant>`; SH-06): the code, the too-long message, the
+ * toast after Download, or the code as the share panel's chip hands its chassis over.
+ */
+export const PREVIEW_QR_CODE_VARIANTS = ['link', 'too-long', 'saved', 'panel'] as const
 export type PreviewQrCodeVariant = (typeof PREVIEW_QR_CODE_VARIANTS)[number]
 
 /**
@@ -583,8 +586,9 @@ export type PreviewState =
       /**
        * The QR code sheet (SH-06) up as the share sheet's "QR code" opens it: with the code for
        * the preview's link (`qrcode=link`), with Chrome's too-long message in the code's place
-       * (`qrcode=too-long`), or after Download – the sheet gone and the host's "Saved to
-       * Downloads" toast up (`qrcode=saved`). The stand-in host's code is `previewShare.ts`'s.
+       * (`qrcode=too-long`), after Download – the sheet gone and the host's "Saved to Downloads"
+       * toast up (`qrcode=saved`) – or on the share panel's own chassis after its QR code chip's
+       * hand-off (`qrcode=panel`; §9.38). The stand-in host's code is `previewShare.ts`'s.
        */
       kind: 'qrcode'
       variant: PreviewQrCodeVariant

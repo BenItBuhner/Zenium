@@ -180,6 +180,14 @@ const QR_TOO_LONG_LENGTH = 2331
 /** `qrcode=saved`: the sheet's rise before Download is taken, then the toast's own entrance before the still. */
 const QR_SHEET_RISE_MS = 600
 const QR_TOAST_SETTLE_MS = 700
+/**
+ * `qrcode=panel`: the panel's rise before its chip is pressed; the beat the host's encode takes
+ * (past the busy sign's due time, so the chip's spinner shows); the hand-off's fade and the
+ * sheet's re-detent before the still.
+ */
+const QR_PANEL_RISE_MS = 600
+const QR_HAND_OFF_ENCODE_MS = 300
+const QR_HAND_OFF_SETTLE_MS = 700
 
 /**
  * Chrome states selectable from outside the preview host (`npm run dev:android`), so screenshots
@@ -326,8 +334,10 @@ function apply(browser: Browser, spec: string): void {
       sendTabSheet: null,
       barEditorOpen: false,
       bookmarkAllTabs: null,
-      // A share panel a `share=` state put up goes with it (its stand-in host holds nothing).
-      sharePanel: null
+      // A share panel a `share=` state put up goes with it (its stand-in host holds nothing), and
+      // a hand-off to the code sheet still under way (`qrcode=panel`) with the panel.
+      sharePanel: null,
+      qrCodeSeam: null
     })
     abortPull()
     cancelVoiceSearch()
@@ -1451,6 +1461,41 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
       whenStore(() => uiStore.get().qrScan !== null, spec, played + QR_EVENT_MARGIN_MS)
     } else {
       whenStore(() => uiStore.get().toasts.length > 0, spec)
+    }
+  } else if (target.kind === 'qrcode' && target.variant === 'panel' && state) {
+    // The chip's hand-off (§9.38, `beginQrCodeSeam`): the share panel up for the active tab on
+    // its own chassis, its QR code chip pressed once the sheet has risen – the panel stands, the
+    // chip busy – and the host's `qr.code` answered a beat later, as the Kotlin host's encode
+    // takes, so the code takes the panel's place on the same sheet. The state is reached once the
+    // code is hosted and the seam has faded; a panel without the chip is the state it got.
+    const now = browserStore.get().state ?? state
+    const request = previewShareRequest('link', activeTab(now) ?? null, false)
+    void openSharePanel(request)
+    const pressChip = (): void => {
+      window.setTimeout(() => {
+        const chip = document.querySelector<HTMLElement>('.zen-share-panel [data-kind="qr"]')
+        if (!chip) {
+          done(spec)
+          return
+        }
+        chip.click()
+        window.setTimeout(() => {
+          void showQrCode(previewQrCode(request.url ?? PREVIEW_QR_LINK, request.tabId))
+          whenStore(
+            () => uiStore.get().qrCodeSeam?.phase === 'hosting',
+            spec,
+            QR_HAND_OFF_SETTLE_MS
+          )
+        }, QR_HAND_OFF_ENCODE_MS)
+      }, QR_PANEL_RISE_MS)
+    }
+    if (uiStore.get().sharePanel?.id === request.id) pressChip()
+    else {
+      const unsubscribe = uiStore.subscribe(() => {
+        if (uiStore.get().sharePanel?.id !== request.id) return
+        unsubscribe()
+        pressChip()
+      })
     }
   } else if (target.kind === 'qrcode') {
     // The share sheet's "QR code" as the host answers it (`qr.code`): the code sheet goes up with
