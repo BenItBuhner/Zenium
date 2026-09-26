@@ -4012,6 +4012,61 @@ describe("the phone's new tab tile menu (NTP-06)", () => {
   })
 })
 
+describe("the served new tab page's tile menu (GN-11's row per host shape)", () => {
+  const TILE = { id: 'site:often.example', url: 'https://often.example/', title: 'Often' }
+  const tileMenu = (h: PageHarness): string[] => {
+    h.browser.menus.showNewTabTileMenu(h.tabId, { ...TILE, x: 10, y: 20, keyboard: false }, h.win)
+    return topLabels(h.shown())
+  }
+
+  it("the desktop's menu is as it was – Open in New Tab, Open in New Window, Open in New Private Window, then Remove: its private window is the private open", () => {
+    expect(tileMenu(pageHarness(DESKTOP))).toEqual([
+      'Open in New Tab',
+      'Open in New Window',
+      'Open in New Private Window',
+      '-',
+      'Remove'
+    ])
+  })
+
+  it('a tablet – private browsing in tabs, no windows – gains Open in Private Tab second: the site opens in the window’s private container, in front; Open in New Tab stays the background open', () => {
+    const h = pageHarness(ANDROID, { formFactor: 'tablet' })
+    expect(tileMenu(h)).toEqual(['Open in New Tab', 'Open in Private Tab', '-', 'Remove'])
+    const before = Object.keys(h.browser.state.model.tabs).length
+    h.click('Open in Private Tab')
+    const opened = Object.values(h.browser.state.model.tabs).find((t) => t.url === TILE.url)
+    expect(Object.keys(h.browser.state.model.tabs).length).toBe(before + 1)
+    expect(opened?.containerId).toBe(PRIVATE_CONTAINER_ID)
+    expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(opened?.id)
+    tileMenu(h)
+    h.click('Open in New Tab')
+    const plain = Object.values(h.browser.state.model.tabs).filter(
+      (t) => t.url === TILE.url && t.containerId !== PRIVATE_CONTAINER_ID
+    )
+    expect(plain).toHaveLength(1)
+    expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(opened?.id)
+  })
+
+  it('the phone, should the served page reach it, carries the same row; without private tabs, or with windows to open a private one in, the row stays out – not greyed', () => {
+    expect(tileMenu(pageHarness(ANDROID, { formFactor: 'phone' }))).toEqual([
+      'Open in New Tab',
+      'Open in Private Tab',
+      '-',
+      'Remove'
+    ])
+    expect(
+      tileMenu(pageHarness({ ...ANDROID, privateTabs: false }, { formFactor: 'tablet' }))
+    ).toEqual(['Open in New Tab', '-', 'Remove'])
+    expect(tileMenu(pageHarness({ ...ANDROID, windows: true }, { formFactor: 'tablet' }))).toEqual([
+      'Open in New Tab',
+      'Open in New Window',
+      'Open in New Private Window',
+      '-',
+      'Remove'
+    ])
+  })
+})
+
 describe('the chrome context menus', () => {
   const show = async (h: PageHarness, params: ChromeContextParams): Promise<string[]> => {
     await h.browser.menus.showChromeContextMenu(params, h.win)

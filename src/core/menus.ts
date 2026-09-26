@@ -545,7 +545,20 @@ export class Menus {
             },
             win
           )
-      }
+      },
+      // Chrome's "Open in Incognito tab" on the tile (GN-11), second as on the phone's hold menu
+      // (`showTopSiteContextMenu`): on a host that keeps private browsing in tabs, with no
+      // windows to open a private one in, the site opens in this window's private container,
+      // in front (`newPrivateTab`, the link menu's row). Left out, not greyed, elsewhere – the
+      // private window row below is the desktop's open.
+      ...(caps.privateTabs && !caps.windows
+        ? [
+            {
+              label: 'Open in Private Tab',
+              click: () => tabs.newPrivateTab(tile.url, win)
+            }
+          ]
+        : [])
     ]
     if (caps.windows) {
       open.push(

@@ -4119,6 +4119,13 @@ export class Browser {
         state.settings.colorScheme = colorScheme
         this.setThemeSource(colorScheme)
         state.settings.onboardingDone = true
+        // The pages the tour held back come in now. Under the tour a window loads nothing on
+        // its own (`onChromeReady`, `onWindowFocused`: the claim waits on this flag), and the
+        // tour's end below opens a tab only where the new tab page is served – on a host
+        // without it (the phone) a restored page tab stayed unloaded, no view to place, until
+        // the next focus. The desktop's boot tab was loaded and claimed at its activation, so
+        // this finds it owned and moves nothing; the crash offer's hold is kept as at boot.
+        if (!this.session.holdsPages()) tabs.claimVisible(win)
         for (const url of essentials) {
           const known = ONBOARDING_ESSENTIALS.find((e) => e.url === url)
           if (!known) continue
