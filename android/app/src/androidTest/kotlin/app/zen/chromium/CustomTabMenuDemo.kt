@@ -513,7 +513,7 @@ class CustomTabMenuDemo : DemoHarness("customtabs-demo-state.json", "customtabs-
 
     private fun note(line: String) {
         Log.i(tag, line)
-        findings.appendText(line + "\n")
+        if (::findings.isInitialized) findings.appendText(line + "\n")
     }
 
     override fun noteLine(line: String) = note(line)
