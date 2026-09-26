@@ -149,7 +149,9 @@ describe('errorPageContent', () => {
         }
       ).suggestions
     ).toEqual([
-      'Turning off airplane mode',
+      // §10.5: British on every surface ("aeroplane", Android's own en-GB setting), and no
+      // serial comma anywhere in the list.
+      'Turning off aeroplane mode',
       'Turning on mobile data or Wi-Fi',
       'Checking the signal in your area'
     ])
@@ -1160,6 +1162,47 @@ describe('errorPageStyle', () => {
       style.indexOf(":root[data-form-factor='phone'] .zen-error-actions > * {")
     )
     expect(phone.slice(0, phone.indexOf('}'))).toContain('flex: 1;')
+  })
+
+  it("stacks the search pair when a label would wrap, Reload on top (§9.11's clause; ERR-05)", () => {
+    // The fit is the rule: on the phone each of the pair takes its one-line label as its base
+    // size and never less than a half-row, so the two share a line only while both labels fit
+    // their halves (two halves and the 8 gap sum to the row – 5 off each half absorbs layout
+    // rounding); a longer label breaks the line, and `wrap-reverse` lands the second line –
+    // Reload, last in the document – on top, each grown to the full width at the control height.
+    const pair = style.slice(style.indexOf('.zen-error-actions:has(> .zen-error-search) {'))
+    expect(pair.slice(0, pair.indexOf('}'))).toContain('flex-wrap: wrap-reverse;')
+    const items = style.slice(style.indexOf('.zen-error-actions:has(> .zen-error-search) > * {'))
+    const itemRule = items.slice(0, items.indexOf('}'))
+    expect(itemRule).toContain('height: auto;')
+    expect(itemRule).toContain('min-height: var(--v2-control);')
+    const phone = style.slice(
+      style.indexOf(
+        ":root[data-form-factor='phone'] .zen-error-actions:has(> .zen-error-search) > * {"
+      )
+    )
+    const phoneRule = phone.slice(0, phone.indexOf('}'))
+    expect(phoneRule).toContain('flex: 1 1 auto;')
+    expect(phoneRule).toContain('width: max-content;')
+    expect(phoneRule).toContain('min-width: calc(50% - 5px);')
+    // The document order the rule relies on: the search action first, Reload last (the row reads
+    // secondary then primary; the stack, by the reversed wrap, primary then secondary).
+    const word = errorPageUrl(
+      -105,
+      'net::ERR_NAME_NOT_RESOLVED',
+      'http://zeniumm/',
+      null,
+      undefined,
+      {
+        engine: 'DuckDuckGo',
+        template: 'https://duckduckgo.com/?q=%s'
+      }
+    )
+    const html = errorPageHtml(parseZenUrl(word)!, 'system', 'android')
+    expect(html.indexOf('id="zen-error-search"')).toBeGreaterThan(-1)
+    expect(html.indexOf('id="zen-error-search"')).toBeLessThan(
+      html.indexOf('id="zen-error-reload"')
+    )
   })
 
   it('anchors the block at 30% of the page and right-aligns the warning pages’ action row', () => {

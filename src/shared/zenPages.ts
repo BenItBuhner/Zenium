@@ -392,9 +392,11 @@ export function suggestionsFor(code: number, host: ErrorPageHost): string[] {
     else if (has('proxy')) lines.push('Checking the proxy address')
   }
   if (has('offline')) {
+    // Chrome Android's three lines in the product's spelling (design language §10.5: British on
+    // every surface; Android's own en-GB setting is "Aeroplane mode").
     if (host === 'android')
       lines.push(
-        'Turning off airplane mode',
+        'Turning off aeroplane mode',
         'Turning on mobile data or Wi-Fi',
         'Checking the signal in your area'
       )
@@ -941,7 +943,11 @@ const RELOADING_SCRIPT =
  * page's repeat variant the way to the tab switcher (the phone's overview is what the switcher
  * is, so the control is the phone's: `.zen-error-show-tabs`); for a typed word that did not
  * resolve, "Search <engine> for <term>" (ERR-05) – a link drawn as the secondary, since it goes
- * to another page, which the browser also lets be held for its own menu.
+ * to another page, which the browser also lets be held for its own menu. The search label
+ * carries the engine's name and the word, so the row's shape is the stylesheet's to decide
+ * (§9.11's clause): the pair splits the row only while both labels fit on one line, and stacks
+ * full width with Reload on top when a label would wrap – which is why Reload stays last in the
+ * document (the reversed wrap lands the last line on top).
  */
 function reloadHtml(content: ErrorPageContent): string {
   const primary = content.showTabs || content.search !== null
