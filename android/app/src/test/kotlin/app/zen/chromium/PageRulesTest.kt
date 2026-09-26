@@ -3,7 +3,6 @@ package app.zen.chromium
 import app.zen.chromium.blocking.Decision
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -29,25 +28,6 @@ class PageRulesTest {
         assertNull(PageRules.hostOf("zen://settings"))
         assertNull(PageRules.hostOf("about:blank"))
         assertNull(PageRules.hostOf("https:///nohost"))
-    }
-
-    @Test
-    fun siteOfIsTheOriginWithTheDefaultPortLeftOut() {
-        assertEquals("https://en.wikipedia.org", PageRules.siteOf("https://en.wikipedia.org/wiki/Zen"))
-        assertEquals("https://example.com", PageRules.siteOf("HTTPS://user:pw@Example.COM:443/x?y#z"))
-        assertEquals("https://example.com:8443", PageRules.siteOf("https://example.com:8443/"))
-        assertEquals("http://example.com", PageRules.siteOf("http://example.com:80/"))
-        assertEquals("http://example.com:8080", PageRules.siteOf("http://example.com:8080"))
-        assertEquals("http://[::1]:3000", PageRules.siteOf("http://[::1]:3000/"))
-        assertEquals("http://[::1]", PageRules.siteOf("http://[::1]/"))
-        // The scheme and the port are the origin's: the same host is another site under either.
-        assertNotEquals(PageRules.siteOf("http://example.com/"), PageRules.siteOf("https://example.com/"))
-        assertNotEquals(PageRules.siteOf("https://example.com/"), PageRules.siteOf("https://example.com:444/"))
-        assertNull(PageRules.siteOf("zen://settings"))
-        assertNull(PageRules.siteOf("about:blank"))
-        assertNull(PageRules.siteOf("data:text/html,hi"))
-        assertNull(PageRules.siteOf("https:///nohost"))
-        assertNull(PageRules.siteOf("https://example.com:port/"))
     }
 
     @Test

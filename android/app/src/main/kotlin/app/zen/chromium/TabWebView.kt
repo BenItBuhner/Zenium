@@ -2599,15 +2599,16 @@ class TabWebView(
          * on – a Safe Browsing hit or a decision other than allow refuses the prerender in place
          * of the interstitial or the redirect load – and the view's own terms are read without
          * being changed: the target's site against the document's (one WebView, one set of
-         * WebSettings) and its desktop-site setting against the mode the view is in
-         * ([PageRules.prerenderVeto]). Nothing of the tab's is written either way.
+         * WebSettings; [ContentRules.siteOf], the site the content rules are kept by) and its
+         * desktop-site setting against the mode the view is in ([PageRules.prerenderVeto]).
+         * Nothing of the tab's is written either way.
          */
         private fun vetoPrerender(target: String): Boolean {
             val guardHit = host.blocking.guardNavigation(target) != null
             val action = host.blocking.decideNavigation(this@TabWebView, target).action
             val desktopDiffers = PageRules.isWebPage(target) && host.pageRules.desktop(target) != desktopMode
-            val currentSite = currentDocument?.let(PageRules::siteOf)
-            return PageRules.prerenderVeto(guardHit, action, PageRules.siteOf(target), currentSite, desktopDiffers)
+            val currentSite = currentDocument?.let(ContentRules::siteOf)
+            return PageRules.prerenderVeto(guardHit, action, ContentRules.siteOf(target), currentSite, desktopDiffers)
         }
 
         override fun onReceivedHttpAuthRequest(view: WebView, handler: HttpAuthHandler, host: String, realm: String) {

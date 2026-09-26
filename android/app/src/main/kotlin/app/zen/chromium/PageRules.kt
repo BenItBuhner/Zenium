@@ -81,34 +81,6 @@ class PageRules(
         }
 
         /**
-         * The origin of an http(s) URL – the scheme, the lower-cased host and the port when it is
-         * not the scheme's default – as `new URL(url).origin` spells it; null for any other URL,
-         * one without a host, or one whose port is not a number. The site one set of WebSettings
-         * answers for. (#507's `ContentRules.siteOf` is the permission store's spelling of the
-         * same origin; this one stands in until the two branches meet.)
-         */
-        fun siteOf(url: String): String? {
-            if (!isWebPage(url)) return null
-            val scheme = if (url.startsWith("https://", true)) "https" else "http"
-            val authority = authorityOf(url)
-            val host: String
-            val portText: String
-            if (authority.startsWith("[")) {
-                val close = authority.indexOf(']')
-                if (close < 1) return null
-                host = authority.substring(0, close + 1).lowercase()
-                portText = authority.substring(close + 1).removePrefix(":")
-            } else {
-                host = authority.substringBefore(':').lowercase()
-                portText = authority.substringAfter(':', "")
-            }
-            if (host.isEmpty() || host == "[]") return null
-            val port = if (portText.isEmpty()) null else portText.toIntOrNull() ?: return null
-            val defaultPort = if (scheme == "https") 443 else 80
-            return if (port == null || port == defaultPort) "$scheme://$host" else "$scheme://$host:$port"
-        }
-
-        /**
          * WebView asks `shouldOverrideUrlLoading` for a speculation-rules prerender as it asks
          * for a navigation, marking the request `Sec-Purpose: prefetch;prerender` (Chromium's
          * `AwContentBrowserClient::ShouldOverrideUrlLoading` under `is_prerendering`) – the one
@@ -131,7 +103,8 @@ class PageRules(
          * cancelled, nothing shown, loaded or recorded). Refused when the engine would not let it
          * go as it stands – Safe Browsing names the address, or the rule sets decide anything but
          * allow – and when it could not run under this view's settings: another site than the
-         * document's (one WebView, one set of WebSettings) or the other desktop-site setting. A
+         * document's (one WebView, one set of WebSettings; the sites as [ContentRules.siteOf]
+         * spells them, the permission store's origin) or the other desktop-site setting. A
          * target or a document without a web origin has no site to run under, and is refused
          * too. The real tap comes through the hook as itself and is decided then.
          */
