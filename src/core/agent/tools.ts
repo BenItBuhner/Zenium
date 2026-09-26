@@ -373,8 +373,24 @@ function cutName(name: string): string {
   return name.length > 60 ? name.slice(0, 59) + '…' : name
 }
 
+/**
+ * The result's text line. A full page or element the host could not paint as asked comes back
+ * as the visible viewport (`AgentCapture.fallback`): a tab worked off the user's screen lays out
+ * where nothing beyond its viewport paints, or DevTools or an extension holds the page's
+ * debugger. That picture must not be called a full page – the line says what it is, why, and
+ * what gets the rest.
+ */
 function describeCapture(kind: string, cap: AgentCapture, tab: Tab): string {
-  return `Screenshot (${kind}, ${cap.width}×${cap.height} px, ${cap.mimeType}) of ${JSON.stringify(tab.title)} – ${tab.url} (tab ${tab.id})`
+  const what = cap.fallback === 'viewport' ? viewportInsteadOf(kind) : kind
+  return `Screenshot (${what}, ${cap.width}×${cap.height} px, ${cap.mimeType}) of ${JSON.stringify(tab.title)} – ${tab.url} (tab ${tab.id})`
+}
+
+function viewportInsteadOf(kind: string): string {
+  const why =
+    "the page could not be painted beyond its visible area (a tab off the user's screen – background mode, or foreground without the screen – or DevTools or an extension holding its debugger)"
+  if (kind === 'full page')
+    return `viewport – not the full page: ${why}; browser_scroll and capture again for the rest`
+  return `${kind}, cut from the visible viewport – ${why}, so any part outside the viewport is missing; browser_scroll {"target":…} brings it into view first`
 }
 
 /** After an action, let a navigation (if one started) finish, else let the page react. */
@@ -1902,7 +1918,7 @@ const browserTakeScreenshot: AgentTool = {
   definition: {
     name: 'browser_take_screenshot',
     title: 'Screenshot',
-    description: `Take a screenshot and return it as an image. Default: the visible viewport. fullPage: true captures the whole scrollable page in one image; target captures just that element (a ref from browser_snapshot or a CSS selector). Use browser_snapshot to find elements to act on; screenshots are for checking layout and images. ${PAGE_CHANGED}`,
+    description: `Take a screenshot and return it as an image. Default: the visible viewport. fullPage: true captures the whole scrollable page in one image; target captures just that element (a ref from browser_snapshot or a CSS selector). On a tab off the user's screen (background mode, or foreground without the screen taken) fullPage and target return the visible viewport instead – the whole of it, or the element's part of it clipped at its edge – and the result's text line says so; browser_scroll brings what you need into view first. Use browser_snapshot to find elements to act on; screenshots are for checking layout and images. ${PAGE_CHANGED}`,
     inputSchema: pageSchema({
       fullPage: { type: 'boolean', description: 'Capture the entire page, not only the viewport' },
       target: { ...TARGET, description: 'Capture only this element (ref, CSS selector or text=…)' },
