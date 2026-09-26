@@ -360,6 +360,8 @@ describe('the two-pane Settings tab (§10.5)', () => {
       'Keyboard Shortcuts',
       'Default Browser',
       'Updates',
+      // settings-70: Chrome's "Reset settings" at the foot of its list (W7-6).
+      'Reset Settings',
       '|',
       'About'
     ])
@@ -1033,10 +1035,10 @@ describe('a landing reaches the top of the column at a 1000 px window (the deskt
    * 169 of scroll, the number the desktop measured – and Sync's Open tabs group (`sync-scope`)
    * starting 521 down the content, so that scrolled as far as the content allowed it stopped at
    * 352, mid-page. The desktop's column has the sticky find field's box as its scroll padding
-   * (`main.css`'s declaration, pinned below; the stylesheet in `layout` carries its value); the
-   * phone's column none.
-   * `scrollIntoView({ block: 'start' })` scrolls as Chrome would: to the group's top less the
-   * padding, and no further than the content allows.
+   * (`main.css`'s declaration, pinned below; the stylesheet in `layout` carries its value:
+   * 16 + 32 + 8 – a landed group lands flush under the field, the #553 lead check's N1); the
+   * phone's column none. `scrollIntoView({ block: 'start' })` scrolls as Chrome would: to the
+   * group's top less the padding, and no further than the content allows.
    */
   const VIEWPORT = 944
   const GROUP_TOP = 521
@@ -1110,7 +1112,7 @@ describe('a landing reaches the top of the column at a 1000 px window (the deskt
     }
   }
 
-  it('the desktop column pads its end by what the group lacks, and the group lands under the find field – the column’s top for scrolled content', () => {
+  it('the desktop column pads its end by what the group lacks, and the group lands flush under the find field – the column’s top for scrolled content (N1)', () => {
     const restore = layout(1113)
     try {
       viewport(TWO_PANE_MIN_WIDTH)
@@ -1167,12 +1169,14 @@ describe('a landing reaches the top of the column at a 1000 px window (the deskt
     }
   })
 
-  it('main.css: the pad is the column body’s padding-bottom only under `data-landing`, and the desktop column’s scroll padding is the find field’s box', () => {
+  it('main.css: the pad is the column body’s padding-bottom only under `data-landing`, and the desktop column’s scroll padding is the find field’s box – a landed group lands flush under it (N1)', () => {
     // The field's box: the control between the two paddings the column names and the field
-    // reads (`.zen-settings-find`), so the scroll padding and the field's padding cannot drift.
+    // reads (`.zen-settings-find`), so the scroll padding and the field's padding cannot drift;
+    // no air rides on it (the #553 lead check's N1 – the section's 32 stays its layout gap).
     const column = rule('.zen-settings-content').replace(/\s+/g, ' ')
     expect(column).toContain('--zen-settings-find-pad-top: 16px;')
     expect(column).toContain('--zen-settings-find-pad-bottom: 8px;')
+    expect(column).not.toContain('landing-air')
     expect(column).toContain(
       'scroll-padding-top: calc( var(--v2-control) + var(--zen-settings-find-pad-top) + var(--zen-settings-find-pad-bottom) );'
     )
@@ -1189,5 +1193,292 @@ describe('a landing reaches the top of the column at a 1000 px window (the deskt
     )
     // Nothing pads a body's end without the landing: the rule is the only one taking the pad.
     expect(css.match(/--zen-settings-landing-pad/g)).toHaveLength(1)
+  })
+})
+
+/* ---- W7-6: the Privacy and security hub cards land on their groups; Reset settings ---- */
+
+const { FrameDialogHost } = await import('@renderer/lib/portals')
+
+/** The page under the frame's dialog host, so a row's dialog has somewhere to portal to. */
+function mountHosted(s: UIState): HTMLElement {
+  mount = document.createElement('div')
+  document.body.appendChild(mount)
+  root = createRoot(mount)
+  act(() =>
+    root!.render(
+      createElement(
+        FrameDialogHost,
+        null,
+        createElement(SettingsPage, { state: s, tab: s.tabs.settings! })
+      )
+    )
+  )
+  return mount
+}
+
+/** A few microtasks: the primitive's focus effects and the stack's state settle. */
+async function settle(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+}
+
+/** A key press on `from`; the event comes back, `defaultPrevented` when a surface answered it. */
+function press(from: Element, key: string, init: KeyboardEventInit = {}): KeyboardEvent {
+  const e = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init })
+  act(() => {
+    from.dispatchEvent(e)
+  })
+  return e
+}
+
+describe('a section asked for one of its groups (zen://settings/<section>?group=<id>; the hub cards, W7-6)', () => {
+  it('the two-pane Privacy and security leads with the cards; the phone layout has none', () => {
+    const markup = render(state(DESKTOP, 'linux', {}, 'zen://settings/privacy'))
+    const cards = [...markup.matchAll(/data-row="(hub-[\w-]+)"/g)].map((m) => m[1])
+    expect(cards).toEqual([
+      'hub-clear-data',
+      'hub-cookies',
+      'hub-security',
+      'hub-site-settings',
+      'hub-safety-check'
+    ])
+    // The cards stand first in the column, before Safety check's own group.
+    expect(markup.indexOf('data-group="privacy-hub"')).toBeLessThan(
+      markup.indexOf('data-group="safety-check"')
+    )
+    viewport(TWO_PANE_MIN_WIDTH - 1, false)
+    const phone = render(state(ANDROID, 'android', {}, 'zen://settings/privacy'))
+    expect(phone).toContain('zen-settings-phone')
+    expect(phone).not.toContain('data-row="hub-')
+    expect(phone).not.toContain('data-group="privacy-hub"')
+  })
+
+  it('the four landing cards trail the chevron; the dialog card carries §9.1’s ellipsis and none (F1, Q5); Safety check draws list-checks (F3)', () => {
+    const el = mountPage(state(DESKTOP, 'linux', {}, 'zen://settings/privacy'))
+    const card = (id: string): HTMLButtonElement =>
+      el.querySelector<HTMLButtonElement>(`[data-row="${id}"]`)!
+    const chevron = (id: string): boolean =>
+      card(id).querySelector('.zen-settings-trailing svg.lucide-chevron-right') !== null
+    for (const id of ['hub-cookies', 'hub-security', 'hub-site-settings', 'hub-safety-check']) {
+      expect(chevron(id)).toBe(true)
+      expect(card(id).hasAttribute('aria-haspopup')).toBe(false)
+    }
+    expect(chevron('hub-clear-data')).toBe(false)
+    expect(card('hub-clear-data').querySelector('.zen-settings-trailing')).toBeNull()
+    expect(card('hub-clear-data').querySelector('.zen-settings-label')?.textContent).toBe(
+      'Clear browsing data…'
+    )
+    expect(card('hub-security').querySelector('.zen-settings-label')?.textContent).toBe(
+      'Safe Browsing'
+    )
+    // The glyphs: the shield stays on Safe Browsing; Safety check's is a check over a list.
+    expect(card('hub-security').querySelector('svg.zen-settings-glyph')?.classList).toContain(
+      'lucide-shield-half'
+    )
+    expect(card('hub-safety-check').querySelector('svg.zen-settings-glyph')?.classList).toContain(
+      'lucide-list-checks'
+    )
+    // The nav's Security category keeps its own shield-check.
+    const nav = el.querySelector<HTMLElement>('.zen-settings-nav-item[data-section="security"]')!
+    expect(nav.querySelector('svg')?.classList).toContain('lucide-shield-check')
+  })
+
+  it('a card asks the page for its group through page.navigate (`?group=`, the entry rewritten), and the group is scrolled to the top', () => {
+    const scrolled = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
+    const el = mountPage(state(DESKTOP, 'linux', {}, 'zen://settings/privacy'))
+    expect(scrolled).not.toHaveBeenCalled()
+    const card = el.querySelector<HTMLButtonElement>('[data-row="hub-security"]')!
+    expect(card.tagName).toBe('BUTTON')
+    expect(card.textContent).toContain('Safe Browsing')
+    act(() => card.click())
+    expect(invoke).toHaveBeenCalledWith('page.navigate', {
+      tabId: 'settings',
+      section: 'privacy',
+      query: { group: 'safe-browsing' },
+      replace: true
+    })
+    act(() => root!.unmount())
+    root = null
+    // The address the card asked for, as the core answers it: the group at the column's top.
+    mountPage(state(DESKTOP, 'linux', {}, 'zen://settings/privacy?group=safe-browsing'))
+    expect(scrolled).toHaveBeenCalledTimes(1)
+    const target = scrolled.mock.instances[0] as Element
+    expect(target.getAttribute('data-group')).toBe('safe-browsing')
+    expect(scrolled).toHaveBeenCalledWith({ block: 'start' })
+    expect(mount!.querySelector('.zen-settings-page')?.hasAttribute('data-landing')).toBe(true)
+    scrolled.mockRestore()
+  })
+
+  it('a group the section does not have, or an id that is not one, opens the section at the top', () => {
+    const scrolled = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
+    mountPage(state(DESKTOP, 'linux', {}, 'zen://settings/privacy?group=no-such-group'))
+    expect(scrolled).not.toHaveBeenCalled()
+    act(() => root!.unmount())
+    root = null
+    mountPage(state(DESKTOP, 'linux', {}, 'zen://settings/privacy?group=%22%5D%2C%20*'))
+    expect(scrolled).not.toHaveBeenCalled()
+    expect(mount!.querySelector('.zen-settings-page')?.hasAttribute('data-landing')).toBe(false)
+    scrolled.mockRestore()
+  })
+
+  it('Clear browsing data… opens the PS-13 dialog over the section instead of landing anywhere', () => {
+    const el = mountHosted(state(DESKTOP, 'linux', {}, 'zen://settings/privacy'))
+    const card = el.querySelector<HTMLButtonElement>('[data-row="hub-clear-data"]')!
+    expect(card.getAttribute('aria-haspopup')).toBe('dialog')
+    act(() => card.click())
+    expect(invoke).not.toHaveBeenCalledWith('page.navigate', expect.anything())
+    const dialog = el.querySelector<HTMLElement>('[data-dialog="form:hub-clear-data"]')
+    expect(dialog).not.toBeNull()
+    // One name for one thing: the card reads as the dialog it opens is titled today.
+    expect(dialog!.textContent).toContain('Clear browsing data')
+  })
+})
+
+describe('Reset settings (zen://settings/reset; W7-6, settings-70)', () => {
+  const DIALOG = '[data-dialog="confirm:reset-settings"]'
+  // The host keeps a closed prompt through its exit animation, `data-leaving` (#188): open is
+  // what is not leaving.
+  const open = (el: ParentNode): HTMLElement | null =>
+    el.querySelector<HTMLElement>(`${DIALOG}:not([data-leaving])`)
+  const resetButton = (el: ParentNode): HTMLButtonElement =>
+    el.querySelector<HTMLButtonElement>('[data-row="reset-settings"] button')!
+  /** The prompt opened from the keyboard: the Reset… button holds the focus and is pressed. */
+  async function opened(
+    el: HTMLElement
+  ): Promise<{ prompt: HTMLElement; cancel: HTMLButtonElement; verb: HTMLButtonElement }> {
+    const button = resetButton(el)
+    act(() => button.focus())
+    act(() => button.click())
+    await settle()
+    const prompt = open(el)!
+    expect(prompt).not.toBeNull()
+    const [cancel, verb] = [...prompt.querySelectorAll<HTMLButtonElement>('button')]
+    return { prompt, cancel: cancel!, verb: verb! }
+  }
+
+  it('is the last category before About with one row and its trailing danger button, under the 22 title with no sub-heading (F2)', () => {
+    const markup = render(state(DESKTOP, 'linux', {}, 'zen://settings/reset'))
+    const items = navItems(markup)
+    expect(items.indexOf('Reset Settings')).toBe(items.indexOf('|', items.indexOf('Sync')) - 1)
+    expect(items[items.length - 1]).toBe('About')
+    expect(markup).toContain('Restore settings to their original defaults')
+    expect(markup).toMatch(/data-row="reset-settings"[\s\S]*?aria-haspopup="dialog"[^>]*>Reset…</)
+    // Both panes one form: the row stands under the category's title as the hub's cards do.
+    const pane = markup.slice(markup.indexOf('class="zen-settings-pane'))
+    expect(pane).toMatch(/<h2[^>]*class="zen-settings-section-title">Reset Settings<\/h2>/)
+    expect(pane).not.toContain('zen-settings-heading')
+  })
+
+  it('confirms on §9.23’s prompt with Chrome’s copy – Cancel runs nothing, Reset settings runs settings.reset', () => {
+    const el = mountHosted(state(DESKTOP, 'linux', {}, 'zen://settings/reset'))
+    const button = resetButton(el)
+    expect(button.textContent).toBe('Reset…')
+    act(() => button.click())
+    let prompt = el.querySelector<HTMLElement>(DIALOG)!
+    expect(prompt).not.toBeNull()
+    expect(prompt.getAttribute('role')).toBe('alertdialog')
+    expect(document.getElementById(prompt.getAttribute('aria-labelledby')!)?.textContent).toBe(
+      'Reset settings?'
+    )
+    expect(document.getElementById(prompt.getAttribute('aria-describedby')!)?.textContent).toBe(
+      'This will reset your startup page, home page, new tab page, search engine, pinned tabs, and site permissions. It will also disable all extensions and clear temporary data like cookies. Your bookmarks, history, and saved passwords will not be cleared.'
+    )
+    let [cancel, verb] = [...prompt.querySelectorAll<HTMLButtonElement>('button')]
+    expect(cancel!.textContent).toBe('Cancel')
+    expect(verb!.textContent).toBe('Reset settings')
+    // A destructive prompt: the verb in the danger ink, no primary (§9.23).
+    expect(verb!.hasAttribute('data-danger')).toBe(true)
+    expect(verb!.hasAttribute('data-primary')).toBe(false)
+    act(() => cancel!.click())
+    expect(open(el)).toBeNull()
+    expect(invoke).not.toHaveBeenCalledWith('settings.reset', undefined)
+
+    act(() => button.click())
+    prompt = open(el)!
+    expect(prompt).not.toBeNull()
+    ;[cancel, verb] = [...prompt.querySelectorAll<HTMLButtonElement>('button')]
+    act(() => verb!.click())
+    expect(invoke).toHaveBeenCalledWith('settings.reset', undefined)
+    expect(open(el)).toBeNull()
+  })
+
+  it('holds its container, Tab reaches Cancel then the verb and wraps, and Enter from the container is inert on the destructive verb (§9.22 as amended on #392; Q2)', async () => {
+    const el = mountHosted(state(DESKTOP, 'linux', {}, 'zen://settings/reset'))
+    const { prompt, cancel, verb } = await opened(el)
+    // The container holds the focus as the prompt opens: neither button is preselected.
+    expect(document.activeElement).toBe(prompt)
+    // Tab from the container enters at Cancel; from Cancel the hop to the verb is the browser's
+    // own (not prevented); from the verb it wraps to Cancel; Shift+Tab from the container is the verb.
+    expect(press(prompt, 'Tab').defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(cancel)
+    expect(press(cancel, 'Tab').defaultPrevented).toBe(false)
+    act(() => verb.focus())
+    expect(press(verb, 'Tab').defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(cancel)
+    act(() => prompt.focus())
+    expect(press(prompt, 'Tab', { shiftKey: true }).defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(verb)
+    // Enter from the held container: swallowed, the prompt stands, nothing runs – a destructive
+    // prompt has no default, so a second Return can never be what resets the profile.
+    act(() => prompt.focus())
+    expect(press(prompt, 'Enter').defaultPrevented).toBe(true)
+    expect(open(el)).toBe(prompt)
+    expect(invoke).not.toHaveBeenCalledWith('settings.reset', undefined)
+    // A focused button answers its own Enter and Space as any button does: the prompt leaves
+    // the keys to it (not prevented) – the verb is reached by Tab and pressed, never defaulted.
+    act(() => verb.focus())
+    expect(press(verb, 'Enter').defaultPrevented).toBe(false)
+    expect(press(verb, ' ').defaultPrevented).toBe(false)
+    expect(open(el)).toBe(prompt)
+  })
+
+  it('Escape and Cancel return the focus to the Reset… button that opened it (§9.5, one hop; Q2)', async () => {
+    const el = mountHosted(state(DESKTOP, 'linux', {}, 'zen://settings/reset'))
+    const button = resetButton(el)
+    const first = await opened(el)
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    await settle()
+    expect(open(el)).toBeNull()
+    expect(invoke).not.toHaveBeenCalledWith('settings.reset', undefined)
+    expect(document.activeElement).toBe(button)
+    expect(first.prompt.isConnected ? first.prompt.hasAttribute('data-leaving') : true).toBe(true)
+
+    const second = await opened(el)
+    act(() => second.cancel.focus())
+    act(() => second.cancel.click())
+    await settle()
+    expect(open(el)).toBeNull()
+    expect(invoke).not.toHaveBeenCalledWith('settings.reset', undefined)
+    expect(document.activeElement).toBe(button)
+  })
+
+  it('after the verb runs the focus returns to the Reset… button, the row standing as it was; the toast is the core’s word (Q2)', async () => {
+    const el = mountHosted(state(DESKTOP, 'linux', {}, 'zen://settings/reset'))
+    const button = resetButton(el)
+    const { verb } = await opened(el)
+    act(() => verb.focus())
+    act(() => verb.click())
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('settings.reset', undefined)
+    expect(open(el)).toBeNull()
+    // The row stays – a reset leaves the page where it was – and its button takes the keyboard
+    // back, one hop from the prompt; "Settings reset" is the core's toast (`settingsReset.ts`),
+    // sent to the window as the run ends, not this page's to show.
+    expect(resetButton(el)).toBe(button)
+    expect(document.activeElement).toBe(button)
+    expect(el.textContent).not.toContain('Settings reset')
+  })
+
+  it('is not among the phone layout’s categories', () => {
+    viewport(TWO_PANE_MIN_WIDTH - 1, false)
+    const markup = render(state(ANDROID, 'android', {}, 'zen://settings'))
+    expect(markup).toContain('zen-settings-landing')
+    expect(markup).not.toContain('Reset Settings')
   })
 })
