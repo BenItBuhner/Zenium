@@ -6808,6 +6808,8 @@ describe('Reset settings (W7-6, settings-70)', () => {
     const restore = row(reset, 'reset-settings')
     if (restore.kind !== 'action') throw new Error('not an action row')
     expect(restore.label).toBe('Restore settings to their original defaults')
+    // Label alone, as Chrome's row is: the sentence that says what resets is the confirmation's.
+    expect(restore.description).toBeUndefined()
     // A destructive bulk act on the house's chassis: the desktop's trailing button, the danger
     // ink, the confirmation before anything runs.
     expect(restore.button).toBe('Reset…')

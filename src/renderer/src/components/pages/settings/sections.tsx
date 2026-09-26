@@ -5208,12 +5208,15 @@ export const RESET_SETTINGS_COPY = {
 
 /**
  * Reset Settings (settings-70; Chrome's `chrome://settings/reset`, the foot of its list): the
- * one row, "Restore settings to their original defaults", whose §9.23 confirmation carries
- * Chrome's sentence – Cancel and "Reset settings" in the danger ink, no primary, Enter inert
- * (§9.22): a bulk act that disables the extensions and clears the cookies – and whose act is
- * the core's `settings.reset` (`core/settingsReset.ts`), which does what the sentence says and
- * nothing else. The desktop trails its 32 px "Reset…" button (§10.5), the tablet's portrait
- * page presses the row. The category is the desktop and tablet shells' (`internalPages.ts`).
+ * one row, "Restore settings to their original defaults", label alone as Chrome's is – the
+ * sentence that says what resets is the confirmation's, read before anything runs, not a
+ * description that repeats it under the label – whose §9.23 confirmation carries Chrome's
+ * sentence: Cancel and "Reset settings" in the danger ink, no primary, Enter inert (§9.22): a
+ * bulk act that disables the extensions and clears the cookies – and whose act is the core's
+ * `settings.reset` (`core/settingsReset.ts`), which does what the sentence says and nothing
+ * else. The desktop trails its 32 px "Reset…" button on the 40 px control row (§10.5), the
+ * tablet's portrait page presses the row. The category is the desktop and tablet shells'
+ * (`internalPages.ts`).
  */
 function resetSection(): RowGroup[] {
   return [
@@ -5225,8 +5228,6 @@ function resetSection(): RowGroup[] {
           kind: 'action',
           id: 'reset-settings',
           label: RESET_SETTINGS_COPY.row,
-          description:
-            'Startup, new tab page, search engine and pinned tabs; extensions off; cookies and cache cleared. Bookmarks, history and passwords stay.',
           keywords: [
             'reset',
             'restore',
