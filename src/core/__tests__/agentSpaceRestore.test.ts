@@ -141,6 +141,9 @@ function agentWith(
     { transport: 'http', token: null, remoteAddress: '127.0.0.1', userAgent: 'test' },
     'session_1'
   )
+  // Approved, as a working agent is: the idle sweep parks an approved record and closes an
+  // unapproved one.
+  session.approved = true
   const space = browser.agents.createOwnSpace(session, { name: 'Agent' })
   const group = browser.agents.groupIn(session, space.id)
   const tabIds = tabs.map(
@@ -321,6 +324,53 @@ describe('an empty agents’ space never stays the window’s active space (W7-F
       // Zen's empty space: the window stays until the session is over.
       expect(win.activeSpaceId).toBe(space.id)
       browser.agents.close(session.id)
+      expect(win.activeSpaceId).toBe(user.id)
+    })
+
+    it('a park is not an end: the window the user stands on stays, and moves once the session ends', () => {
+      const browser = fresh()
+      browser.start()
+      const win = only(browser)
+      const user = browser.state.model.spaces[0]
+      const { session, space, tabIds } = agentWith(browser, win, ['https://agent.example/1'])
+      browser.tabs.activateTab(tabIds[0], win)
+      // The agent closed its tab itself and went quiet; the user stands on the empty space.
+      browser.tabs.closeTab(tabIds[0], true, win)
+      expect(win.activeSpaceId).toBe(space.id)
+      // Idle past the limit: the sweeper parks the record (as its minute timer would). The
+      // session may resume and its space refill – no window flips under the user for a timer.
+      session.lastActiveAt = Date.now() - 31 * 60 * 1000
+      ;(browser.agents as unknown as { sweep(): void }).sweep()
+      expect(session.parked).toBe(true)
+      expect(browser.agents.session(session.id)).toBe(session)
+      expect(win.activeSpaceId).toBe(space.id)
+      expect(win.lastUserSpaceId).toBe(user.id)
+      // The client's next request touches the session: it is back, and it ends for real.
+      browser.agents.touch(session)
+      expect(session.parked).toBe(false)
+      expect(win.activeSpaceId).toBe(space.id)
+      browser.agents.endSession(session, true)
+      expect(win.activeSpaceId).toBe(user.id)
+      expect(activeUrl(browser, win)).toBe(NEW_TAB_URL)
+    })
+
+    it('a parked record whose time runs out is closed: that is an end, and the window moves', () => {
+      const browser = fresh()
+      browser.start()
+      const win = only(browser)
+      const user = browser.state.model.spaces[0]
+      const { session, space, tabIds } = agentWith(browser, win, ['https://agent.example/1'])
+      browser.tabs.activateTab(tabIds[0], win)
+      browser.tabs.closeTab(tabIds[0], true, win)
+      session.lastActiveAt = Date.now() - 31 * 60 * 1000
+      const sweeper = browser.agents as unknown as { sweep(): void }
+      sweeper.sweep()
+      expect(session.parked).toBe(true)
+      expect(win.activeSpaceId).toBe(space.id)
+      // Parked long enough with nobody coming back, the record goes for good (`close`).
+      session.lastActiveAt = Date.now() - 25 * 60 * 60 * 1000
+      sweeper.sweep()
+      expect(browser.agents.session(session.id)).toBeUndefined()
       expect(win.activeSpaceId).toBe(user.id)
     })
 

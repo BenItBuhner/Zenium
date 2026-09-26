@@ -114,6 +114,13 @@ export const AGENTS_SPACE_NAME = 'Agents'
 export const AGENTS_SPACE_ICON = '🤖'
 const GROUP_ICON = '🤖'
 
+/**
+ * Why a session let go of what it held (`AgentService.onSessionReleased`): `end` – the agent's
+ * `zen_session end`; `park` – idle past the limit, the record kept for a resume; `close` – the
+ * record goes (DELETE, Disconnect, the parked limit, shutdown).
+ */
+export type SessionReleaseReason = 'end' | 'park' | 'close'
+
 /** One connected agent: its MCP session plus everything Zen knows about it. */
 export interface AgentSession extends McpSession {
   name: string
@@ -259,13 +266,15 @@ export class AgentService implements SessionStore, McpHandlers {
   /** The lease's clock; tests replace it to age a lease without waiting. */
   clock: () => number = () => Date.now()
   /**
-   * Called once a session has let go of everything it held in the browser (`release`: the
-   * agent's `zen_session end`, the idle park, the record's close – DELETE, Disconnect, the
-   * parked limit, shutdown), after its tabs are closed or orphaned. The browser's hook to hand
-   * the user's window back when the session's end left it on an empty agents' space
-   * (`Browser.leaveEmptyAgentSpace`); null in a harness that has no browser rule to run.
+   * Called once a session has let go of everything it held in the browser (`release`), after
+   * its tabs are closed or orphaned, with why: `end` – the agent's `zen_session end`; `park` –
+   * the idle sweep parked the record, which stays and may resume (`unpark`); `close` – the
+   * record goes (DELETE, Disconnect, the parked limit, shutdown). The browser's hook to hand the
+   * user's window back when a session's END left it on an empty agents' space
+   * (`Browser.leaveEmptyAgentSpace`; a park is not an end and moves nothing); null in a harness
+   * that has no browser rule to run.
    */
-  onSessionReleased: ((session: AgentSession) => void) | null = null
+  onSessionReleased: ((session: AgentSession, reason: SessionReleaseReason) => void) | null = null
 
   constructor(readonly browser: Browser) {
     this.transport = browser.platform.createAgentTransport?.(browser) ?? null
@@ -673,7 +682,7 @@ export class AgentService implements SessionStore, McpHandlers {
   close(id: string): void {
     const s = this.sessions.get(id)
     if (!s) return
-    this.release(s)
+    this.release(s, 'close')
     this.sessions.delete(id)
     this.memos.delete(id)
     this.callStates.delete(id)
@@ -686,9 +695,10 @@ export class AgentService implements SessionStore, McpHandlers {
   /**
    * Let go of everything the session holds in the browser – its tabs' cursors and page runtime,
    * its groups (orphaned, with its name on them), its screen lease – and leave the record as a
-   * fresh agent's: no home group, no notices, no frames. The connection is not touched.
+   * fresh agent's: no home group, no notices, no frames. The connection is not touched. `reason`
+   * goes to `onSessionReleased`, which fires last.
    */
-  private release(s: AgentSession): void {
+  private release(s: AgentSession, reason: SessionReleaseReason): void {
     for (const t of this.ownedTabs(s)) this.detach(s, t.id)
     const now = Date.now()
     for (const groupId of s.groupIds)
@@ -702,7 +712,7 @@ export class AgentService implements SessionStore, McpHandlers {
     this.memos.delete(s.id)
     this.callStates.delete(s.id)
     for (const [win, lease] of this.leases) if (lease.sessionId === s.id) this.leases.delete(win)
-    this.onSessionReleased?.(s)
+    this.onSessionReleased?.(s, reason)
   }
 
   /**
@@ -716,7 +726,7 @@ export class AgentService implements SessionStore, McpHandlers {
     const groups = this.groupsOf(s)
     const tabs = this.ownedTabs(s).length
     if (closeTabs) for (const g of groups) this.closeGroup(s, g)
-    this.release(s)
+    this.release(s, 'end')
     s.releasedGroupIds.clear()
     this.diagnostics.sessions.ended++
     this.log(
@@ -734,7 +744,7 @@ export class AgentService implements SessionStore, McpHandlers {
    */
   private park(s: AgentSession): void {
     const groups = [...s.groupIds].filter((id) => this.browser.state.model.folders[id])
-    this.release(s)
+    this.release(s, 'park')
     s.releasedGroupIds.clear()
     for (const id of groups) s.releasedGroupIds.add(id)
     s.parked = true

@@ -551,8 +551,13 @@ export class Browser {
     this.mods = new ModService(this)
     this.sync = platform.sync ? new SyncEngine(this, platform.sync) : new NoSync(this)
     this.agents = new AgentService(this)
-    // A session's end that emptied its space hands the user's window back (W7-F3).
-    this.agents.onSessionReleased = () => this.leaveEmptyAgentSpaces()
+    // A session's END that emptied its space hands the user's window back (W7-F3): the agent's
+    // `zen_session end` and the record's close (DELETE, Disconnect, the parked limit, shutdown).
+    // A park is not an end – the idle sweep's timer, no action of anyone's; the session may
+    // resume and its space refill – and a window the user stands on never flips under them.
+    this.agents.onSessionReleased = (_session, reason) => {
+      if (reason !== 'park') this.leaveEmptyAgentSpaces()
+    }
     this.updates = new UpdateService(
       this,
       platform.createUpdateHost?.(this) ?? new NoUpdateHost(platform)
@@ -1144,7 +1149,8 @@ export class Browser {
   /**
    * W7-F3: an empty agent-owned space (`AgentService.isAgentSpace`) never stays the window's
    * active space – when an agent session's end empties the space it had the user's window on
-   * (`onSessionReleased`), and when a window is restored onto one (`ensureFirstTab`;
+   * (`onSessionReleased` with an `end` or `close`; never a `park`, which is no end and may
+   * resume), and when a window is restored onto one (`ensureFirstTab`;
    * `ProfileState.ensureValid` already moved a remembered window), the window returns to the
    * last user space it was on (`userSpaceFor`). True when the window moved. Nothing moves while
    * the browser quits – the agents' `stop` releases every session on the way out, and the
