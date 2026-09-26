@@ -3974,6 +3974,19 @@ describe('the chrome context menus', () => {
 })
 
 describe('menu helpers', () => {
+  it('serialiseMenu carries an item’s shortcut action to the renderer, and no key for an item without one', () => {
+    const { items } = serialiseMenu(
+      [
+        { label: 'Reader View', action: 'page.readerMode', click: () => undefined },
+        { label: 'Text Preferences…', click: () => undefined }
+      ],
+      'm'
+    )
+    // The chrome recognises the row by what it does (the phone's reader crossing, MOT-36).
+    expect(items[0]).toMatchObject({ label: 'Reader View', action: 'page.readerMode' })
+    expect('action' in items[1]!).toBe(false)
+  })
+
   it('joinGroups puts one separator between non-empty groups', () => {
     const a: MenuItemTemplate = { label: 'a' }
     const b: MenuItemTemplate = { label: 'b' }

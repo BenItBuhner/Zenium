@@ -1544,15 +1544,71 @@ function samplePageTitle(url: string): string {
 }
 
 /**
+ * The stand-in article's text, the page's (`samplePageDocument`) and the reader's
+ * (`samplePageArticle`) alike, so a still of the page and one of Reader View on it show the same
+ * article.
+ */
+const SAMPLE_PAGE = {
+  kicker: 'Harbour notices',
+  byline: 'The harbour office',
+  paragraphs: {
+    tides:
+      'High water reaches the outer wall twice a day, and the second of the two runs higher through the spring months. Skippers leaving before dawn should plan on the ebb, which sets north along the breakwater until an hour after low water.',
+    note: 'The east light is unlit until further notice. Keep to the marked channel after dark.',
+    berths:
+      'Berths on the north quay are let by the week. The office keeps a waiting list for the summer; visiting boats may lie alongside for two nights without notice.',
+    services: [
+      'Fuel: weekdays 8 to 5, Saturdays to noon',
+      'Water on every pontoon',
+      'Showers by the slip, tokens at the office'
+    ],
+    tables:
+      'The tables below are corrected for the harbour datum. Heights are in metres above the sill of the inner basin, whose gate opens two hours either side of high water.',
+    charts:
+      'Charts are held at the office and may be consulted during opening hours. Corrections issued since the last edition are pinned beside the door.'
+  }
+} as const
+
+function escapeHtml(text: string): string {
+  return text.replace(
+    /[&<>"]/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!
+  )
+}
+
+/**
+ * The stand-in article as Readability would hand it to the reader (`reader.open`'s article):
+ * the page at `url` read – its title, byline and site, its paragraphs, note and list – for
+ * Reader View on the same page a still shows the chrome over (`readerEntry=landed`).
+ */
+export function samplePageArticle(url: string = PREVIEW_SAMPLE_ORIGIN): RawArticle {
+  const { paragraphs } = SAMPLE_PAGE
+  return {
+    title: samplePageTitle(url),
+    byline: SAMPLE_PAGE.byline,
+    siteName: SAMPLE_PAGE.kicker,
+    excerpt: paragraphs.tides,
+    lang: 'en',
+    dir: 'ltr',
+    content: [
+      `<p>${escapeHtml(paragraphs.tides)}</p>`,
+      `<blockquote><p>${escapeHtml(paragraphs.note)}</p></blockquote>`,
+      `<p>${escapeHtml(paragraphs.berths)}</p>`,
+      `<ul>${paragraphs.services.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`,
+      `<p>${escapeHtml(paragraphs.tables)}</p>`,
+      `<p>${escapeHtml(paragraphs.charts)}</p>`
+    ].join('\n')
+  }
+}
+
+/**
  * The stand-in page under `PREVIEW_SAMPLE_ORIGIN`: an article of a few paragraphs with a heading,
  * a picture block and a list, following the system colour scheme, enough for a blurred picture
  * of it to read as a page.
  */
 export function samplePageDocument(url: string = PREVIEW_SAMPLE_ORIGIN): string {
-  const title = samplePageTitle(url).replace(
-    /[&<>"]/g,
-    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!
-  )
+  const title = escapeHtml(samplePageTitle(url))
+  const { paragraphs } = SAMPLE_PAGE
   return (
     `<!doctype html><html><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width, initial-scale=1">` +
@@ -1568,16 +1624,16 @@ export function samplePageDocument(url: string = PREVIEW_SAMPLE_ORIGIN): string 
     `p{margin:0 20px 16px}ul{margin:0 20px 16px;padding-left:22px}li{margin:4px 0}` +
     `.note{margin:0 16px 16px;padding:14px 16px;background:var(--card);border-radius:12px;font:15px/1.5 system-ui,Roboto,sans-serif}` +
     `</style></head><body>` +
-    `<header>Harbour notices</header>` +
+    `<header>${SAMPLE_PAGE.kicker}</header>` +
     `<h1>${title}</h1>` +
     `<p class="by">Published by the harbour office · 4 min read</p>` +
     `<figure></figure>` +
-    `<p>High water reaches the outer wall twice a day, and the second of the two runs higher through the spring months. Skippers leaving before dawn should plan on the ebb, which sets north along the breakwater until an hour after low water.</p>` +
-    `<div class="note">The east light is unlit until further notice. Keep to the marked channel after dark.</div>` +
-    `<p>Berths on the north quay are let by the week. The office keeps a waiting list for the summer; visiting boats may lie alongside for two nights without notice.</p>` +
-    `<ul><li>Fuel: weekdays 8 to 5, Saturdays to noon</li><li>Water on every pontoon</li><li>Showers by the slip, tokens at the office</li></ul>` +
-    `<p>The tables below are corrected for the harbour datum. Heights are in metres above the sill of the inner basin, whose gate opens two hours either side of high water.</p>` +
-    `<p>Charts are held at the office and may be consulted during opening hours. Corrections issued since the last edition are pinned beside the door.</p>` +
+    `<p>${paragraphs.tides}</p>` +
+    `<div class="note">${paragraphs.note}</div>` +
+    `<p>${paragraphs.berths}</p>` +
+    `<ul>${paragraphs.services.map((item) => `<li>${item}</li>`).join('')}</ul>` +
+    `<p>${paragraphs.tables}</p>` +
+    `<p>${paragraphs.charts}</p>` +
     `</body></html>`
   )
 }

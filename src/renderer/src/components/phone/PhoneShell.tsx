@@ -12,6 +12,7 @@ import { chromeGutter } from '@renderer/hooks/useTheme'
 import { run } from '@renderer/lib/api'
 import { setBarHideContext, showBar } from '@renderer/lib/barHide'
 import { useConnectivityMessages } from '@renderer/lib/connectivityMessages'
+import { useReaderEntryMessage } from '@renderer/lib/readerEntryMessage'
 import { extensionPageChrome } from '@renderer/lib/extensions/pages'
 import { bringChromeBack, settleChromeAway, slideChromeAway } from '@renderer/lib/fullscreenMotion'
 import {
@@ -39,7 +40,12 @@ import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
 import { openSettings } from '@renderer/lib/pages'
 import { phoneAddressLabel } from '@renderer/lib/pillLabel'
 import { holdChromeInert } from '@renderer/lib/portals'
-import { privateLockStore, privateTabLocked, unlockPrivateTabs } from '@renderer/lib/privateLock'
+import {
+  privateLockStore,
+  privateTabLocked,
+  unlockPrivateTabs,
+  usePrivateTabLocked
+} from '@renderer/lib/privateLock'
 import { usePrivateSurface } from '@renderer/lib/privateSurface'
 import { isPrivateTab } from '@renderer/lib/privateTabs'
 import { activeSpace, activeTab } from '@renderer/lib/selectors'
@@ -161,6 +167,12 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
 
   // The device offline: "No internet connection" in the banner stack; back: a "Back online" toast (ERR-07).
   useConnectivityMessages(state.network.online)
+
+  // An article page in front: "Show Reader View?" on the same stack (PUI-14), refused per site
+  // for the session as Chrome's `ReaderModeManager` refuses (lib/readerEntryMessage.ts). It waits
+  // behind onboarding, a page's fullscreen and the private lock – none is a place for an offer.
+  const privateLocked = usePrivateTabLocked(state)
+  useReaderEntryMessage(tab, !onboarding && !htmlFullscreen && !privateLocked)
 
   // A hold on the Tabs button: its quick menu, anchored to the button; on Home, the homepage
   // setting (TB-15: Chrome's long-press on its Home button); on Back or Forward with history that

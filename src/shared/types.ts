@@ -4292,6 +4292,12 @@ export interface MenuItemDescriptor {
    * away by the host's focus move.
    */
   keepsKeyboard?: boolean
+  /**
+   * The shortcut action the item stands for, when its template named one: the chrome can then
+   * recognise a row by what it does rather than by its label – the phone's Reader View crossing
+   * takes the page under its picture before the core's toggle runs (`lib/readerTransition.ts`).
+   */
+  action?: ShortcutAction
 }
 
 /**
