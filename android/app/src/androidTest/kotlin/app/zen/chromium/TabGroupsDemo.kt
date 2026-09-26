@@ -27,8 +27,9 @@ import kotlin.math.roundToInt
  *     traced: `overview-group-fold`), then the Groups row's touch: the Tabs pane comes back with
  *     the group's card unfolded and in view;
  *  5. the link menu (TAB-15): Alpha's card picked, its link held – "Open Link in New Tab in
- *     Group" stands above "Open Link in New Tab"; the touch on it opens the page in the group
- *     right behind Alpha, Alpha staying active, Beta behind the new tab;
+ *     Group" stands right under "Open Link in New Tab" (Chrome 152's pair, the phone's order
+ *     since #492's ruling); the touch on it opens the page in the group right behind Alpha,
+ *     Alpha staying active, Beta behind the new tab;
  *  6. Close Group (3 Tabs) from the row's sheet: the tabs go (one toast with Undo), the group
  *     stays listed under SAVED with the ring glyph and "3 tabs", the core keeping the three
  *     pages in order;
@@ -205,7 +206,9 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
         val items = sheetItems()
         val inGroup = items.indexOf("Open Link in New Tab in Group")
         val plain = items.indexOf("Open Link in New Tab")
-        check("the menu offers Open Link in New Tab in Group above Open Link in New Tab", inGroup >= 0 && plain > inGroup, "items $items")
+        // The phone's pair in Chrome for Android 152's order (the design lead's ruling on #492):
+        // the plain row, then the group row right under it.
+        check("the menu offers Open Link in New Tab in Group right under Open Link in New Tab (Chrome 152's pair)", plain >= 0 && inGroup == plain + 1, "items $items")
         SystemClock.sleep(800)
         still("link-menu")
         val before = trackOrder()

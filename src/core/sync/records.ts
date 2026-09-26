@@ -25,7 +25,8 @@ import { sha1Hex } from './sha1'
 /**
  * Sync records: the unit of cross-device replication. Every syncable entity is flattened into
  * a small JSON payload with a stable id; conflicts are resolved last-writer-wins per record,
- * exactly like Firefox Sync's engines.
+ * exactly like Firefox Sync's engines – and, for the one settings record, per top-level key, as
+ * Chrome Sync treats each preference as its own item (`SyncRecord.keys`, `diffSettings`).
  */
 
 export type RecordType =
@@ -55,6 +56,23 @@ export interface SyncRecord {
   modified: number
   deleted: boolean
   data: unknown
+  /**
+   * The settings record only (`SETTINGS_RECORD_ID`): the `modified` of each top-level key of
+   * `data` whose time differs from the record's – the record's is the newest of them – so a
+   * reader on this build merges the record key by key, as Chrome Sync treats each preference as
+   * its own item, while a build before it reads the record whole at the time of its newest edit,
+   * exactly as it always did (`winningRemote`). Never on another record, and absent while every
+   * key shares the record's time, so a record set no one edited under this build serialises and
+   * hashes as before (`__tests__/compat.test.ts`); `hashData(data)` never sees it – it stands
+   * beside `data`, not in it. A key the map does not name is at the record's time.
+   */
+  keys?: Record<string, number>
+}
+
+/** One top-level key of the settings record in the metadata: its value's hash and its own time. */
+export interface KeyMeta {
+  hash: string
+  modified: number
 }
 
 export interface RecordMeta {
@@ -62,6 +80,14 @@ export interface RecordMeta {
   hash: string
   modified: number
   deleted: boolean
+  /**
+   * The settings record only: each top-level key's own hash and `modified` (`SyncRecord.keys`
+   * on the wire; `diffSettings` for the rules). Absent, the entry says what it always said –
+   * every key at `modified`, no hash finer than the record's: a metadata from before per-key
+   * merge, or a record first seen at the last diff – and the next diff that finds the record
+   * unchanged fills it in at that time, as the boot seed does (`seedSettingsMeta`).
+   */
+  keys?: Record<string, KeyMeta>
 }
 
 export type MetaMap = Record<string, RecordMeta>
@@ -219,13 +245,21 @@ export function readBookmarkData(data: unknown): BookmarkData | null {
  * The settings that are one device's own and travel in neither direction: this device's record
  * carries none of them, and a peer's record carrying one (a build from before a key joined the
  * list still sends it) leaves this device's value standing – the settings record is otherwise
- * taken whole, last writer wins, so a stray key would land as a choice made here.
+ * merged key by key, a peer's later key landing (`winningSettings`), so a stray key would land
+ * as a choice made here. Such a key is never a peer's to win, either: this device holds no entry
+ * for it, so its "later" time would beat nothing every round and the apply would land nothing.
  * - `onboardingDone`: the one-time flag.
  * - `sidebarExpandOnHover`: a pointer's hover preference for the rail (tabs-03), on by default
  *   since profile v6; a peer on v5 still stores that build's default `false`, no choice.
  */
 export const DEVICE_LOCAL_SETTINGS = ['onboardingDone', 'sidebarExpandOnHover'] as const
 export type DeviceLocalSetting = (typeof DEVICE_LOCAL_SETTINGS)[number]
+const DEVICE_LOCAL = new Set<string>(DEVICE_LOCAL_SETTINGS)
+
+/** Whether `key` is one of `DEVICE_LOCAL_SETTINGS`. */
+function isDeviceLocalSetting(key: string): boolean {
+  return DEVICE_LOCAL.has(key)
+}
 
 /** A copy of `settings` without the device-local keys, the other keys in their order. */
 export function withoutDeviceLocalSettings<T extends object>(
@@ -449,6 +483,296 @@ function sortKeys(value: unknown): unknown {
 
 export function hashData(data: unknown): string {
   return sha1Hex(stableStringify(data))
+}
+
+// ---------------------------------------------------------------------------
+// The settings record, key by key
+// ---------------------------------------------------------------------------
+
+/**
+ * Top-level settings keys that only make sense together and so merge as one: `searchEngineId`
+ * names an engine that `searchEngines` may be the only carrier of (an engine added by hand on
+ * the peer), and a 0.3.x phone's frozen `newTabPhone` is folded into `newTab` at apply. An edit
+ * of either member stamps both; a peer's copy wins or loses for both at once; the two travel in
+ * one record from one device (`newestByRecord`).
+ */
+const SETTINGS_KEY_GROUPS: Readonly<Record<string, string>> = {
+  searchEngineId: 'searchEngines',
+  newTabPhone: 'newTab'
+}
+
+/** The composite group a settings key merges under: its own name unless it is a member. */
+export function settingsKeyGroup(key: string): string {
+  return SETTINGS_KEY_GROUPS[key] ?? key
+}
+
+export function isSettingsRecord(id: string, type: RecordType): boolean {
+  return type === 'settings' && id === SETTINGS_RECORD_ID
+}
+
+/**
+ * The top-level keys of a settings record's data with the values they carry – what the wire
+ * carries: a key set to `undefined` is not serialised and so does not exist to a peer. Nothing
+ * for data that is no object.
+ */
+function settingsEntries(data: unknown): Array<[string, unknown]> {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return []
+  return Object.entries(data as Record<string, unknown>).filter(([, value]) => value !== undefined)
+}
+
+/** The time a settings record gives one of its keys: its own, or the record's when it names none. */
+export function settingsKeyTime(record: SyncRecord, key: string): number {
+  const own = record.keys?.[key]
+  return typeof own === 'number' && Number.isFinite(own) ? own : record.modified
+}
+
+/** The wire form of per-key times: only the keys whose time differs from the record's. */
+function keysOnWire(
+  times: Record<string, number>,
+  modified: number
+): Record<string, number> | undefined {
+  let out: Record<string, number> | undefined
+  for (const [key, time] of Object.entries(times)) {
+    if (time === modified) continue
+    ;(out ??= {})[key] = time
+  }
+  return out
+}
+
+/** The keys grouped by the composite group each merges under (`settingsKeyGroup`). */
+function groupsOf(keys: Iterable<string>): Map<string, string[]> {
+  const groups = new Map<string, string[]>()
+  for (const key of keys) {
+    const group = settingsKeyGroup(key)
+    const members = groups.get(group)
+    if (members) members.push(key)
+    else groups.set(group, [key])
+  }
+  return groups
+}
+
+/** The newest of the per-key times, or `fallback` when there is no key. */
+function newestOf(times: Iterable<number>, fallback: number): number {
+  let out: number | undefined
+  for (const time of times) if (out === undefined || time > out) out = time
+  return out ?? fallback
+}
+
+/** The settings record `data` publishes under per-key times: `keys` on the wire when any differs. */
+function settingsRecord(
+  id: string,
+  data: unknown,
+  times: Record<string, number>,
+  fallback: number
+): SyncRecord {
+  const modified = newestOf(Object.values(times), fallback)
+  const record: SyncRecord = { id, type: 'settings', modified, deleted: false, data }
+  const keys = keysOnWire(times, modified)
+  if (keys) record.keys = keys
+  return record
+}
+
+/**
+ * The settings record's own diff, key by key: against the metadata's entry for each top-level
+ * key (each composite group, `SETTINGS_KEY_GROUPS`), a value whose hash stands keeps the key's
+ * time; a group with a changed, added or removed member takes `stamp` on every member present –
+ * or, when the diff only notices (`stamp` null), each member keeps its own time and a member the
+ * metadata did not know takes 0 (`DiffLocalOptions.stamp`: made, not noticed). A key the object
+ * no longer holds loses its entry and the record simply lacks it, which says nothing to a peer
+ * (the `menuOrder` precedent: a reset travels as an explicit value, `[]`). The record's
+ * `modified` is the newest key's.
+ *
+ * An entry without `keys` speaks for the record whole. Unchanged, every key stands at the
+ * record's time with its value's hash from here on – the boot seed's migration for an entry the
+ * seed did not see (a record first seen at the last diff, a joiner's `confirmMerge` entry).
+ * Changed, the change cannot be placed on a key: every key takes the record's stamp –
+ * whole-record last-writer-wins, the rule the record had until per-key merge and the one "keep
+ * this device's data" (`confirmMerge`, hash '') wants.
+ *
+ * The record's own hash is computed first and, unchanged, settles it: the entry's per-key part
+ * was computed from this very data, so it stands as it is and no key is hashed – most state
+ * commits (a tab moved, a bookmark added) touch no setting, and the diff they run costs the
+ * settings record what it did before per-key merge. Only a changed record is placed key by key.
+ */
+function diffSettings(
+  prev: RecordMeta,
+  data: unknown,
+  stamp: number | null
+): { meta: RecordMeta; changed: boolean } {
+  const hash = hashData(data)
+  if (prev.keys && prev.hash === hash) {
+    const modified = newestOf(
+      Object.values(prev.keys).map((k) => k.modified),
+      prev.modified
+    )
+    return {
+      meta: { type: 'settings', hash, modified, deleted: false, keys: prev.keys },
+      changed: false
+    }
+  }
+  const entries = settingsEntries(data)
+  const keys: Record<string, KeyMeta> = {}
+  let changed = false
+  if (!prev.keys) {
+    const same = prev.hash === hash
+    const time = same ? prev.modified : (stamp ?? prev.modified)
+    for (const [key, value] of entries) keys[key] = { hash: hashData(value), modified: time }
+    changed = !same
+  } else {
+    const previous = prev.keys
+    const hashes = new Map(entries.map(([key, value]) => [key, hashData(value)] as const))
+    const removed = new Set(
+      Object.keys(previous)
+        .filter((key) => !hashes.has(key))
+        .map(settingsKeyGroup)
+    )
+    if (removed.size) changed = true
+    for (const [group, members] of groupsOf(hashes.keys())) {
+      const moved =
+        removed.has(group) || members.some((key) => previous[key]?.hash !== hashes.get(key))
+      if (moved) changed = true
+      for (const key of members) {
+        const kept = previous[key]?.modified ?? 0
+        keys[key] = { hash: hashes.get(key)!, modified: moved ? (stamp ?? kept) : kept }
+      }
+    }
+  }
+  const modified = newestOf(
+    Object.values(keys).map((k) => k.modified),
+    prev.modified
+  )
+  return { meta: { type: 'settings', hash, modified, deleted: false, keys }, changed }
+}
+
+/**
+ * The boot seed's form of the settings entry (`SyncEngine.seedMeta`): what differs at start is
+ * the build's, adopted without a stamp, key by key. An entry from before per-key merge gains
+ * every key at the record's time – nothing finer is known – with its value's hash; an entry
+ * with keys adopts a changed value's hash at the key's own time, puts a key it did not know (a
+ * default this build added) at 0 – a key no one edited never beats a peer's – and drops a key
+ * the build no longer holds. The record's `modified` stands. Returns `prev` itself when
+ * nothing differs.
+ */
+export function seedSettingsMeta(prev: RecordMeta, data: unknown): RecordMeta {
+  const entries = settingsEntries(data)
+  const hash = hashData(data)
+  const keys: Record<string, KeyMeta> = {}
+  if (!prev.keys) {
+    for (const [key, value] of entries)
+      keys[key] = { hash: hashData(value), modified: prev.modified }
+    return { ...prev, hash, keys }
+  }
+  let changed = prev.hash !== hash
+  for (const [key, value] of entries) {
+    const before = prev.keys[key]
+    const valueHash = hashData(value)
+    if (before && before.hash === valueHash) {
+      keys[key] = before
+      continue
+    }
+    keys[key] = { hash: valueHash, modified: before ? before.modified : 0 }
+    changed = true
+  }
+  for (const key of Object.keys(prev.keys)) if (!(key in keys)) changed = true
+  return changed ? { ...prev, hash, keys } : prev
+}
+
+/**
+ * The other devices' settings records as one: each composite group from the device whose copy
+ * of it is newest (ties to the first read, as `newestByRecord` has always ruled), the record's
+ * `modified` the newest of them. One record per id would not do here: a device whose newest
+ * key is older than another's would never be read, so a key it alone edited could not reach a
+ * third device while the other is away. A single live record is taken as it is; tombstones
+ * count only when there is nothing else.
+ */
+function mergeSettingsRecords(records: SyncRecord[]): SyncRecord {
+  const live = records.filter((r) => !r.deleted && settingsEntries(r.data).length > 0)
+  if (live.length === 0) return records.reduce((a, b) => (b.modified > a.modified ? b : a))
+  if (live.length === 1) return live[0]
+  const best = new Map<string, { time: number; from: SyncRecord; members: string[] }>()
+  for (const r of live) {
+    for (const [group, members] of groupsOf(settingsEntries(r.data).map(([key]) => key))) {
+      const time = newestOf(
+        members.map((key) => settingsKeyTime(r, key)),
+        r.modified
+      )
+      const cur = best.get(group)
+      if (!cur || time > cur.time) best.set(group, { time, from: r, members })
+    }
+  }
+  const data: Record<string, unknown> = {}
+  const times: Record<string, number> = {}
+  for (const { from, members } of best.values()) {
+    for (const key of members) {
+      data[key] = (from.data as Record<string, unknown>)[key]
+      times[key] = settingsKeyTime(from, key)
+    }
+  }
+  return settingsRecord(SETTINGS_RECORD_ID, data, times, live[0].modified)
+}
+
+/**
+ * The keys of a peer's settings record that beat this device's, as a record of those keys
+ * alone – `applyRemote` lands what the record carries, so the winner IS the winning set. A
+ * composite group wins when the peer's time for it (its newest member) is strictly newer than
+ * this device's (the newest member it holds; a group it holds nothing of cannot be beaten) and
+ * a member's value differs – ties keep the local, as they always have per record (Chrome's
+ * preferences prefer the sync copy on a conflict, which a folder without a server cannot do).
+ * A device-local key (`DEVICE_LOCAL_SETTINGS`, still sent by an older build) is no one's to
+ * win. Null when nothing wins.
+ */
+function winningSettings(
+  mine: RecordMeta & { keys: Record<string, KeyMeta> },
+  r: SyncRecord
+): SyncRecord | null {
+  const entries = settingsEntries(r.data)
+  if (entries.length === 0) return null
+  const hashes = new Map(entries.map(([key, value]) => [key, hashData(value)] as const))
+  const won = new Set<string>()
+  for (const [, members] of groupsOf(hashes.keys())) {
+    if (members.every(isDeviceLocalSetting)) continue
+    const theirs = newestOf(
+      members.map((key) => settingsKeyTime(r, key)),
+      r.modified
+    )
+    const held = members.filter((key) => mine.keys[key])
+    const ours = newestOf(
+      held.map((key) => mine.keys[key].modified),
+      Number.NEGATIVE_INFINITY
+    )
+    if (theirs <= ours) continue
+    if (!members.some((key) => mine.keys[key]?.hash !== hashes.get(key))) continue
+    for (const key of members) won.add(key)
+  }
+  if (won.size === 0) return null
+  const data: Record<string, unknown> = {}
+  const times: Record<string, number> = {}
+  for (const [key, value] of entries) {
+    if (!won.has(key)) continue
+    data[key] = value
+    times[key] = settingsKeyTime(r, key)
+  }
+  return settingsRecord(r.id, data, times, r.modified)
+}
+
+/**
+ * The metadata's settings entry once a peer's keys were applied: this device's entries with
+ * the winner's keys at the peer's times and value hashes (every key of the record when this
+ * device had no per-key entries – the record won whole; the device-local keys an older build's
+ * record carries never land, so they get no entry). The record hash is the winner's until the
+ * re-snapshot that follows an apply computes this device's own.
+ */
+function settingsMetaFromRemote(r: SyncRecord, mine: RecordMeta | undefined): RecordMeta {
+  const keys: Record<string, KeyMeta> = mine && !mine.deleted && mine.keys ? { ...mine.keys } : {}
+  for (const [key, value] of settingsEntries(r.data)) {
+    if (isDeviceLocalSetting(key)) continue
+    keys[key] = { hash: hashData(value), modified: settingsKeyTime(r, key) }
+  }
+  const modified = newestOf(
+    Object.values(keys).map((k) => k.modified),
+    r.modified
+  )
+  return { type: 'settings', hash: hashData(r.data), modified, deleted: false, keys }
 }
 
 /** The credential store's entries while it is unlocked. */
@@ -701,6 +1025,10 @@ const TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60 * 1000
  *
  * A record absent from `current` for which `frozen` answers true is held rather than deleted:
  * its metadata stays as it was and it is left out of the published set (see `frozenRecords`).
+ *
+ * The settings record the metadata already knows is diffed key by key (`diffSettings`) and
+ * published with each key's time (`SyncRecord.keys`); first seen, it takes `0` like any other
+ * record, whole – every key at 0 – and gains its per-key entries at the next diff.
  */
 export function diffLocal(
   previous: MetaMap,
@@ -713,8 +1041,17 @@ export function diffLocal(
   const records: SyncRecord[] = []
   let changed = false
   for (const [id, { type, data }] of current) {
-    const hash = hashData(data)
     const prev = previous[id]
+    if (prev && !prev.deleted && isSettingsRecord(id, type)) {
+      const settings = diffSettings(prev, data, stamp)
+      if (settings.changed) changed = true
+      meta[id] = settings.meta
+      const times: Record<string, number> = {}
+      for (const [key, entry] of Object.entries(settings.meta.keys!)) times[key] = entry.modified
+      records.push(settingsRecord(id, data, times, settings.meta.modified))
+      continue
+    }
+    const hash = hashData(data)
     let modified: number
     if (!prev) modified = 0
     else if (prev.hash === hash && !prev.deleted) modified = prev.modified
@@ -742,21 +1079,34 @@ export function diffLocal(
   return { meta, records, changed }
 }
 
-/** Newest version of every record across all remote devices. */
+/**
+ * Newest version of every record across all remote devices; the settings record merged key by
+ * key across them (`mergeSettingsRecords`).
+ */
 export function newestByRecord(remote: SyncRecord[][]): Map<string, SyncRecord> {
   const out = new Map<string, SyncRecord>()
+  const settings: SyncRecord[] = []
   for (const list of remote) {
     for (const r of list) {
+      if (isSettingsRecord(r.id, r.type)) {
+        settings.push(r)
+        continue
+      }
       const cur = out.get(r.id)
       if (!cur || r.modified > cur.modified) out.set(r.id, r)
     }
   }
+  if (settings.length) out.set(SETTINGS_RECORD_ID, mergeSettingsRecords(settings))
   return out
 }
 
 /**
  * Remote records that beat the local copy (strictly newer). Local wins ties, and unchanged
- * remote records (same hash) are skipped so nothing is re-applied needlessly.
+ * remote records (same hash) are skipped so nothing is re-applied needlessly. The settings
+ * record is judged key by key once this device holds per-key entries (`winningSettings`): what
+ * comes back is the record narrowed to the keys that won. Against an entry without them (a
+ * metadata from before per-key merge, a record first seen at the last diff) it is judged whole,
+ * as every record always was.
  */
 export function winningRemote(local: MetaMap, remote: Map<string, SyncRecord>): SyncRecord[] {
   const winners: SyncRecord[] = []
@@ -764,6 +1114,11 @@ export function winningRemote(local: MetaMap, remote: Map<string, SyncRecord>): 
     const mine = local[r.id]
     if (!mine) {
       if (!r.deleted) winners.push(r)
+      continue
+    }
+    if (mine.keys && !mine.deleted && !r.deleted && isSettingsRecord(r.id, r.type)) {
+      const won = winningSettings(mine as RecordMeta & { keys: Record<string, KeyMeta> }, r)
+      if (won) winners.push(won)
       continue
     }
     if (r.modified <= mine.modified) continue
@@ -774,16 +1129,25 @@ export function winningRemote(local: MetaMap, remote: Map<string, SyncRecord>): 
   return winners
 }
 
-/** Meta entries for records we just applied from remote (so we do not echo them as our edits). */
-export function metaFromRemote(records: SyncRecord[]): MetaMap {
+/**
+ * Meta entries for records we just applied from remote (so we do not echo them as our edits).
+ * The settings winner is a set of keys: given `local`, its entry is this device's with those
+ * keys at the peer's times (`settingsMetaFromRemote`).
+ */
+export function metaFromRemote(records: SyncRecord[], local?: MetaMap): MetaMap {
   const meta: MetaMap = {}
-  for (const r of records)
+  for (const r of records) {
+    if (!r.deleted && isSettingsRecord(r.id, r.type)) {
+      meta[r.id] = settingsMetaFromRemote(r, local?.[r.id])
+      continue
+    }
     meta[r.id] = {
       type: r.type,
       hash: r.deleted ? '' : hashData(r.data),
       modified: r.modified,
       deleted: r.deleted
     }
+  }
   return meta
 }
 

@@ -137,6 +137,10 @@ export interface ChromiumFontPreferences {
     serif?: string
     sansSerif?: string
     monospace?: string
+    /** The three families only extensions name (`chrome.fontSettings`). */
+    cursive?: string
+    fantasy?: string
+    math?: string
   }
   defaultFontSize: number
   defaultMonospaceFontSize: number
@@ -244,6 +248,335 @@ export function fontSizesMove(has: PageFontSettings, wanted: PageFontSettings): 
     a.defaultFontSize !== b.defaultFontSize ||
     a.defaultMonospaceFontSize !== b.defaultMonospaceFontSize ||
     a.minimumFontSize !== b.minimumFontSize
+  )
+}
+
+// ---------------------------------------------------------------------------
+// The extensions' layer (`chrome.fontSettings`)
+// ---------------------------------------------------------------------------
+
+/**
+ * Chrome's generic families: the setting's four slots plus the three the setting has no row
+ * for, which only extensions name (the DevTools protocol's `FontFamilies` has all seven).
+ */
+export type GenericFontSlot = FontFamilySlot | 'cursive' | 'fantasy' | 'math'
+export const GENERIC_FONT_SLOTS: readonly GenericFontSlot[] = [
+  'standard',
+  'serif',
+  'sansSerif',
+  'fixed',
+  'cursive',
+  'fantasy',
+  'math'
+]
+
+/** Families by slot, for the common script or for one script; a slot absent is not named. */
+export type FamilyMap = Partial<Record<GenericFontSlot, string>>
+
+/**
+ * What the extensions holding `fontSettings` control, resolved by the host
+ * (`platform/extensionApi/fontSettings.ts`) and laid over the user's setting: Chrome layers an
+ * extension's font prefs over the user's without writing them, and the user's own value comes
+ * back when the extension's goes. Families are Chrome's font ids (family names); `''` is
+ * Chrome's "fall back" (to the common script's family for a script, to the engine's own for
+ * the common script). Per-script families have no counterpart in the setting, so `scripts`
+ * is the layer's alone: every entry carries a concrete family (the host resolves a cleared
+ * slot to the engine's per-script default, or `''` where the engine has none).
+ */
+export interface ExtensionFontLayer {
+  families: FamilyMap
+  scripts: Readonly<Record<string, FamilyMap>>
+  sizes: { standard?: number; fixed?: number; minimum?: number }
+}
+
+const NO_EXTENSION_FONTS: ExtensionFontLayer = { families: {}, scripts: {}, sizes: {} }
+
+/**
+ * The fonts pages get: the user's setting with the extensions' layer over it. `settings` is
+ * the setting's own shape with the layer's four slots and two sizes folded in (the shape the
+ * setting's path consumes unchanged); the rest is the layer's alone.
+ */
+export interface EffectiveFonts {
+  settings: PageFontSettings
+  /**
+   * The fixed-width size: the layer's when an extension set it, else the one that goes with
+   * the user's size – Chrome's `default_fixed_font_size` is a pref of its own, which an
+   * extension's `setDefaultFontSize` leaves where it is.
+   */
+  fixedSize: number
+  /** The three families the setting has no row for, where the layer names them. */
+  extras: Partial<Record<'cursive' | 'fantasy' | 'math', string>>
+  scripts: Readonly<Record<string, FamilyMap>>
+}
+
+export function effectiveFonts(
+  user: PageFontSettings,
+  layer: ExtensionFontLayer | null
+): EffectiveFonts {
+  const over = layer ?? NO_EXTENSION_FONTS
+  const slot = (name: FontFamilySlot): string | null => {
+    const own = over.families[name]
+    if (own === undefined) return user[name]
+    return own === '' ? null : own
+  }
+  const size = over.sizes.standard ?? user.size
+  const extras: EffectiveFonts['extras'] = {}
+  for (const name of ['cursive', 'fantasy', 'math'] as const) {
+    const own = over.families[name]
+    if (own !== undefined && own !== '') extras[name] = own
+  }
+  return {
+    settings: {
+      standard: slot('standard'),
+      serif: slot('serif'),
+      sansSerif: slot('sansSerif'),
+      fixed: slot('fixed'),
+      size,
+      minimumSize: over.sizes.minimum ?? user.minimumSize
+    },
+    fixedSize: over.sizes.fixed ?? monospaceFontSize(user.size),
+    extras,
+    scripts: over.scripts
+  }
+}
+
+/** The effective fonts without the per-script families: what a page's web preferences can carry. */
+export function effectiveFontsAsMade(fonts: EffectiveFonts): EffectiveFonts {
+  return { ...fonts, scripts: {} }
+}
+
+/**
+ * Electron's `WebPreferences` for the effective fonts: the setting's (`chromiumFontPreferences`)
+ * with the layer's fixed-width size and the three extra families where the layer names them.
+ */
+export function chromiumEffectiveFontPreferences(fonts: EffectiveFonts): ChromiumFontPreferences {
+  const prefs = chromiumFontPreferences(fonts.settings)
+  prefs.defaultMonospaceFontSize = fonts.fixedSize
+  if (fonts.extras.cursive) prefs.defaultFontFamily.cursive = fonts.extras.cursive
+  if (fonts.extras.fantasy) prefs.defaultFontFamily.fantasy = fonts.extras.fantasy
+  if (fonts.extras.math) prefs.defaultFontFamily.math = fonts.extras.math
+  return prefs
+}
+
+/** The engine's own families for all seven slots. */
+export type GenericFontDefaults = Record<GenericFontSlot, string>
+
+/**
+ * `electronFontDefaults` plus the three slots the setting has no row for. Electron's
+ * `SetFontDefaults` copies Chrome's per-platform cursive (`IDS_CURSIVE_FONT_FAMILY`) onto every
+ * page but has no map for fantasy or math (`font_defaults.cc`, `FamilyMapByName`), which stay
+ * Blink's own: "Impact" and "Latin Modern Math" on every OS – what a page renders with, where
+ * Chrome itself would say Papyrus and STIX Two Math on macOS and Cambria Math on Windows.
+ */
+export function electronGenericFontDefaults(platform: string): GenericFontDefaults {
+  return {
+    ...electronFontDefaults(platform),
+    cursive: platform === 'darwin' ? 'Apple Chancery' : 'Comic Sans MS',
+    fantasy: 'Impact',
+    math: 'Latin Modern Math'
+  }
+}
+
+/**
+ * The per-script families Electron installs on every page (`font_defaults.cc`'s
+ * `kFontDefaults`, the macOS and Windows tables of Chrome's `locale_settings_*.grd`; Linux
+ * has none), by Chrome's script code and slot. A list is Chrome's ",a,b,c" form: the first
+ * installed family, else the first (`gfx::FontList::FirstAvailableOrFirst`), resolved by
+ * `firstAvailableFamily`. The entries for the browser locale's own script are left out, as
+ * Electron leaves them out (the common-script families cover the user's own language).
+ */
+export type ScriptFontDefaults = Readonly<
+  Record<string, Partial<Record<GenericFontSlot, readonly string[]>>>
+>
+
+const MAC_SCRIPT_FONT_DEFAULTS: ScriptFontDefaults = {
+  Jpan: {
+    standard: ['Hiragino Kaku Gothic ProN'],
+    fixed: ['Osaka', 'BIZ UDGothic', 'Menlo'],
+    serif: ['Hiragino Mincho ProN'],
+    sansSerif: ['Hiragino Kaku Gothic ProN']
+  },
+  Hang: {
+    standard: ['Apple SD Gothic Neo'],
+    serif: ['AppleMyungjo'],
+    sansSerif: ['Apple SD Gothic Neo']
+  },
+  Hans: {
+    standard: ['PingFang SC', 'STHeiti'],
+    serif: ['Songti SC'],
+    sansSerif: ['PingFang SC', 'STHeiti'],
+    cursive: ['Kaiti SC']
+  },
+  Hant: {
+    standard: ['PingFang TC', 'Heiti TC'],
+    serif: ['Songti TC'],
+    sansSerif: ['PingFang TC', 'Heiti TC'],
+    cursive: ['Kaiti TC']
+  }
+}
+
+const WIN_SCRIPT_FONT_DEFAULTS: ScriptFontDefaults = {
+  Jpan: {
+    standard: ['Noto Sans JP', 'Noto Sans CJK JP', 'Meiryo', 'Yu Gothic'],
+    fixed: ['BIZ UDGothic', 'MS Gothic'],
+    serif: ['Noto Serif JP', 'Noto Serif CJK JP', 'Yu Mincho', 'MS PMincho'],
+    sansSerif: ['Noto Sans JP', 'Noto Sans CJK JP', 'Meiryo', 'Yu Gothic']
+  },
+  Hang: {
+    standard: ['Noto Sans KR', 'Noto Sans CJK KR', 'Malgun Gothic'],
+    fixed: ['Gulimche'],
+    serif: ['Noto Serif KR', 'Noto Serif CJK KR', 'Batang'],
+    sansSerif: ['Noto Sans KR', 'Noto Sans CJK KR', 'Malgun Gothic'],
+    cursive: ['Gungsuh']
+  },
+  Hans: {
+    standard: ['Noto Sans SC', 'Noto Sans CJK SC', 'Microsoft YaHei'],
+    fixed: ['NSimsun'],
+    serif: ['Noto Serif SC', 'Noto Serif CJK SC', 'Simsun'],
+    sansSerif: ['Noto Sans SC', 'Noto Sans CJK SC', 'Microsoft YaHei'],
+    cursive: ['KaiTi']
+  },
+  Hant: {
+    standard: ['Noto Sans TC', 'Noto Sans CJK TC', 'Microsoft JhengHei'],
+    fixed: ['MingLiU'],
+    serif: ['Noto Serif TC', 'Noto Serif CJK TC', 'PMingLiU'],
+    sansSerif: ['Noto Sans TC', 'Noto Sans CJK TC', 'Microsoft JhengHei'],
+    cursive: ['DFKai-SB']
+  },
+  Arab: { fixed: ['Courier New'], sansSerif: ['Segoe UI'] },
+  Cyrl: {
+    standard: ['Times New Roman'],
+    fixed: ['Courier New'],
+    serif: ['Times New Roman'],
+    sansSerif: ['Arial']
+  },
+  Grek: {
+    standard: ['Times New Roman'],
+    fixed: ['Courier New'],
+    serif: ['Times New Roman'],
+    sansSerif: ['Arial']
+  }
+}
+
+/**
+ * The script Electron takes as the browser locale's own (`GetScriptOfBrowserLocale`): Chinese
+ * by region, Korean and Japanese by name, else the language's script where one of the tables
+ * has it. Only the scripts the tables know matter here.
+ */
+export function browserLocaleScript(locale: string): string | null {
+  const tag = locale.replace(/_/g, '-')
+  if (tag === 'zh-CN') return 'Hans'
+  if (tag === 'zh-TW') return 'Hant'
+  const language = tag.split('-')[0].toLowerCase()
+  if (language === 'ko') return 'Hang'
+  if (language === 'ja') return 'Jpan'
+  if (['ar', 'fa', 'ur', 'ps', 'ug', 'ckb'].includes(language)) return 'Arab'
+  if (['ru', 'uk', 'bg', 'be', 'mk', 'sr', 'kk', 'ky', 'mn', 'tg', 'tt', 'ba'].includes(language))
+    return 'Cyrl'
+  if (language === 'el') return 'Grek'
+  return null
+}
+
+export function electronScriptFontDefaults(platform: string, locale: string): ScriptFontDefaults {
+  const table =
+    platform === 'darwin'
+      ? MAC_SCRIPT_FONT_DEFAULTS
+      : platform === 'win32'
+        ? WIN_SCRIPT_FONT_DEFAULTS
+        : {}
+  const own = browserLocaleScript(locale)
+  if (own === null || !(own in table)) return table
+  const out: Record<string, Partial<Record<GenericFontSlot, readonly string[]>>> = {}
+  for (const [script, slots] of Object.entries(table)) if (script !== own) out[script] = slots
+  return out
+}
+
+/** Chrome's `FirstAvailableOrFirst` for a default given as a list: the first installed, else the first. */
+export function firstAvailableFamily(
+  list: readonly string[],
+  installed: ReadonlySet<string> | null
+): string {
+  if (installed) for (const family of list) if (installed.has(family)) return family
+  return list[0] ?? ''
+}
+
+/** The families an open page has or should have, for the common script and per script. */
+export interface CdpFamilies {
+  common: GenericFontDefaults
+  scripts: Readonly<Record<string, FamilyMap>>
+}
+
+/**
+ * The families a page has under the effective fonts: `cdpFontFamilies` for the four slots, the
+ * layer's extras else the engine's own for the other three, and the layer's per-script
+ * families as they are.
+ */
+export function cdpEffectiveFamilies(
+  fonts: EffectiveFonts,
+  defaults: GenericFontDefaults
+): CdpFamilies {
+  return {
+    common: {
+      ...cdpFontFamilies(fonts.settings, defaults),
+      cursive: fonts.extras.cursive ?? defaults.cursive,
+      fantasy: fonts.extras.fantasy ?? defaults.fantasy,
+      math: fonts.extras.math ?? defaults.math
+    },
+    scripts: fonts.scripts
+  }
+}
+
+/** What `Page.setFontFamilies` takes: the common-script slots that move, and per script the same. */
+export interface CdpFamilyChanges {
+  fontFamilies: FamilyMap
+  forScripts?: Array<{ script: string; fontFamilies: FamilyMap }>
+}
+
+/**
+ * `cdpFontFamilyChanges` over all seven slots and the per-script families: a script's slot
+ * named before and now let go is taken back with `''`, which Blink reads as "no family for
+ * this script" (the entry is erased and text falls back to the common script's family) – the
+ * state the engine starts a page in where it installs no per-script default. `null` when
+ * nothing needs sending.
+ */
+export function cdpEffectiveFamilyChanges(
+  has: CdpFamilies,
+  wanted: CdpFamilies
+): CdpFamilyChanges | null {
+  const fontFamilies: FamilyMap = {}
+  let any = false
+  for (const slot of GENERIC_FONT_SLOTS) {
+    if (has.common[slot] === wanted.common[slot]) continue
+    fontFamilies[slot] = wanted.common[slot]
+    any = true
+  }
+  const forScripts: Array<{ script: string; fontFamilies: FamilyMap }> = []
+  const scripts = new Set([...Object.keys(has.scripts), ...Object.keys(wanted.scripts)])
+  for (const script of [...scripts].sort()) {
+    const before = has.scripts[script] ?? {}
+    const after = wanted.scripts[script] ?? {}
+    const entry: FamilyMap = {}
+    let moved = false
+    for (const slot of GENERIC_FONT_SLOTS) {
+      const from = before[slot]
+      const to = after[slot]
+      if (from === to) continue
+      entry[slot] = to ?? ''
+      moved = true
+    }
+    if (moved) forScripts.push({ script, fontFamilies: entry })
+  }
+  if (!any && forScripts.length === 0) return null
+  return forScripts.length > 0 ? { fontFamilies, forScripts } : { fontFamilies }
+}
+
+/** `fontSizesMove` for the effective fonts: the layer's fixed-width size counts as well. */
+export function effectiveSizesMove(has: EffectiveFonts, wanted: EffectiveFonts): boolean {
+  return (
+    fontSizesMove(has.settings, wanted.settings) ||
+    has.fixedSize !== wanted.fixedSize ||
+    has.settings.size !== wanted.settings.size ||
+    has.settings.minimumSize !== wanted.settings.minimumSize
   )
 }
 

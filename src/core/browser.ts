@@ -357,6 +357,12 @@ export class Browser {
   /** The network location provider behind `navigator.geolocation` where the engine has none (MW-04). */
   readonly geolocation: GeolocationService
   readonly windows = new Map<string, ZenWindow>()
+  /**
+   * The pages' utility windows by page id (`WindowChrome` `page`; the task manager's, W5-18): one
+   * per page per profile, as Chrome's and Edge's task manager is one window – a second request
+   * brings the open one to the front (`openPageWindow`).
+   */
+  private readonly pageWindows = new Map<string, ZenWindow>()
   /** Set by `shutdown()`: the app is going away, windows close without further questions. */
   quitting = false
   /** Set by `onHostTeardown()`: the host is gone under the running browser; the profile is frozen. */
@@ -573,9 +579,15 @@ export class Browser {
     return [...this.windows.values()].filter((w) => w.alive)
   }
 
-  /** The window the user is interacting with (creates one when none is open, e.g. on macOS). */
+  /**
+   * The window the user is interacting with (creates one when none is open, e.g. on macOS). A
+   * page's utility window (the task manager, `WindowChrome` `page`) is passed over: it holds its
+   * one page and no strip, so what asks for "the window" – a notification's click, a PDF, a
+   * protocol handler's tab – lands in a browser window as it would with Chrome's task manager
+   * in front.
+   */
   focusedWindow(): ZenWindow {
-    const alive = this.allWindows()
+    const alive = this.allWindows().filter((w) => w.chrome !== 'page')
     const focused = alive.find((w) => w.host.isFocused())
     if (focused) return focused
     const recent = [...alive].sort((a, b) => b.lastFocusedAt - a.lastFocusedAt)[0]
@@ -612,6 +624,105 @@ export class Browser {
     }
     const win = this.createWindow({ kind, from, empty: true })
     this.tabs.createTab({ url, active: true }, win)
+  }
+
+  /**
+   * The task manager (Shift+Esc, More Tools › Task Manager, the palette's row): its own window
+   * on a host with windows, as Chrome's and Edge's task manager is a window of its own – one per
+   * profile, brought to the front when it is open already ({@link openPageWindow}); the
+   * `zen://tasks` page tab where it always was on a host with one window (the phone:
+   * `capabilities.windows` is false there). The page typed into a tab still renders as the page.
+   * Returns the window when one opened or came to the front, null for the tab.
+   */
+  openTaskManager(from?: ZenWindow): ZenWindow | null {
+    if (!this.state.capabilities.windows) {
+      this.pages.open('tasks', undefined, from)
+      return null
+    }
+    return this.openPageWindow('tasks', from)
+  }
+
+  /**
+   * A chrome page's utility window (`WindowChrome` `page`): one per page per profile, holding
+   * the page as its one tab and no browser chrome. Open already: shown (out of the taskbar if it
+   * was minimised) and focused, whatever window asked. Else an unsynced window with a local
+   * space of its own and no starter tab, placed where the page's window last stood on this
+   * device (`state.pageWindowsDevice`, kept by `rememberPageWindowBounds`) or – the first time –
+   * centred over the window that asked at the host's default size, with the page tab created in
+   * it. Not a browser window: `browserWindowFor` looks past it to its opener, it is never part
+   * of the session, and it closes with the last browser window (`onWindowClosed`). Null for a
+   * page this host has not got or would draw in a view (`PageService.openInWindow`).
+   */
+  openPageWindow(pageId: string, from?: ZenWindow): ZenWindow | null {
+    const open = this.pageWindows.get(pageId)
+    if (open?.alive && !open.isClosing) {
+      open.host.show()
+      open.host.focus()
+      return open
+    }
+    const placement = this.state.pageWindowsDevice[pageId] ?? null
+    const page = Object.prototype.hasOwnProperty.call(this.pages.pages, pageId)
+      ? this.pages.pages[pageId]
+      : undefined
+    const win = this.createWindow({
+      kind: 'unsynced',
+      from: from?.alive ? from : undefined,
+      chrome: 'page',
+      bounds: placement?.bounds ?? null,
+      displayId: placement?.displayId ?? null,
+      // The frame reads the page's title from its first paint (the tab titles it the same way).
+      title: page ? formatWindowTitle(page.title, false) : undefined,
+      empty: true
+    })
+    if (this.pages.openInWindow(pageId, win) === null) {
+      win.closeApproved = true
+      win.host.close()
+      return null
+    }
+    this.pageWindows.set(pageId, win)
+    win.host.focus()
+    return win
+  }
+
+  /** The page id a page window (`WindowChrome` `page`) holds; null for any other window. */
+  pageWindowIdOf(win: ZenWindow): string | null {
+    for (const [id, w] of this.pageWindows) if (w === win) return id
+    return null
+  }
+
+  /**
+   * A page window moved or was resized (`ZenWindow.onBoundsChanged`): where it stands is kept
+   * with the device, so it comes back there – the normal bounds (a maximised window keeps the
+   * ones it goes back to) and the display they lie on.
+   */
+  rememberPageWindowBounds(win: ZenWindow, bounds: Rect | null, displayId: number | null): void {
+    const id = this.pageWindowIdOf(win)
+    if (!id || !bounds) return
+    const kept = this.state.pageWindowsDevice[id]
+    if (
+      kept &&
+      kept.displayId === displayId &&
+      kept.bounds.x === bounds.x &&
+      kept.bounds.y === bounds.y &&
+      kept.bounds.width === bounds.width &&
+      kept.bounds.height === bounds.height
+    )
+      return
+    this.state.pageWindowsDevice[id] = { bounds: { ...bounds }, displayId }
+    this.state.commit()
+  }
+
+  /**
+   * The pages' utility windows go with the last browser window – the task manager is the
+   * browser's, and a utility window left alone would keep the app up with nothing to manage
+   * (Chrome's closes with its browser). Each closes at once: one chrome page, nothing to ask.
+   */
+  private closePageWindows(): void {
+    for (const win of this.pageWindows.values()) {
+      if (!win.alive || win.isClosing) continue
+      win.closeApproved = true
+      win.host.close()
+    }
   }
 
   /**
@@ -747,6 +858,13 @@ export class Browser {
      * windows without bounds cascade from `from`.
      */
     bounds?: Rect | null
+    /** The display `bounds` were saved on (a page window coming back where it stood), if known. */
+    displayId?: number | null
+    /**
+     * The title the frame carries from its first paint, when the caller knows it (a page
+     * window's page title); default: the product's, until the first tab titles the window.
+     */
+    title?: string
     /**
      * Start without the starter tab – blank / private windows' empty tab, the fresh tab a synced
      * window opens when its space has none (`ensureFirstTab`): the caller adds the tabs, or
@@ -789,7 +907,7 @@ export class Browser {
         ? this.state.settings.windowMaterial
         : 'none',
       bounds: opts.persisted?.bounds ?? opts.bounds ?? null,
-      displayId: opts.persisted?.displayId ?? null,
+      displayId: opts.persisted?.displayId ?? opts.displayId ?? null,
       maximized: opts.persisted?.maximized ?? false,
       activeSpaceId,
       selection: opts.persisted?.selection ?? {},
@@ -815,7 +933,7 @@ export class Browser {
       cascadeFrom: win.cascadeFrom,
       // The title the frame carries until its first tab titles it: the same formatter's, so a
       // private window reads "Zenium (Private)" from its first frame, as its title bar will.
-      title: formatWindowTitle(null, win.isPrivate, app?.name),
+      title: opts.title ?? formatWindowTitle(null, win.isPrivate, app?.name),
       chrome,
       material: win.material,
       backgroundColor: rgbToHex(theme.averageColor),
@@ -919,9 +1037,17 @@ export class Browser {
    * restored, and so is the empty space the user makes later by closing a space's last tab (Zen's
    * "This space is empty" – a matter of design, not of this rule). Windows without a tab strip
    * (a page's sized popup, a web app's window) are their caller's to fill.
+   *
+   * A host without the new tab page (the phone: `newTabPage` off) is left as it was: its fresh
+   * tab would be the blank page, which its chrome draws itself and never places as a page view –
+   * the boot's READY, armed on the active tab, would wait for a placement that never comes and
+   * the splash would hold to the host's watchdog. Its window comes up with no tab, the chrome's
+   * own empty surface in the content area and the first run ending in the omnibox
+   * (`onboarding.complete` → `openNewTab`), exactly as before this rule.
    */
   ensureFirstTab(win: ZenWindow): void {
     if (!win.alive || win.chrome !== 'full') return
+    if (!this.state.capabilities.newTabPage) return
     if (this.tabs.activeTabFor(win)) return
     const space = win.activeSpace()
     const m = this.state.model
@@ -1023,7 +1149,8 @@ export class Browser {
    * session). Null when none would.
    */
   private downloadsEndedByClosing(win: ZenWindow): WindowPromptDownloads | null {
-    const others = this.allWindows().filter((w) => w !== win)
+    // A page window (the task manager) closes with the last browser window: it keeps nothing up.
+    const others = this.allWindows().filter((w) => w !== win && w.chrome !== 'page')
     if (others.length === 0 && this.state.platform !== 'darwin') return this.downloadsEndedByQuit()
     if (win.isPrivate && !others.some((w) => w.isPrivate)) {
       const count = this.downloads.activeCount({ private: true })
@@ -1143,6 +1270,19 @@ export class Browser {
     this.newTab.onWindowClosed(win)
     for (const w of this.allWindows()) w.selection.delete(win.localSpace?.id ?? '')
     if (win.isPrivate) this.endPrivateSessionIfOver()
+    const pageId = this.pageWindowIdOf(win)
+    if (pageId) this.pageWindows.delete(pageId)
+    // The last browser window went (a popup or an app window may stay: they are the pages'
+    // own): the pages' utility windows go with it, and the app ends as it did without them – on
+    // Windows and Linux. On macOS the app lives on without windows, and a task manager standing
+    // alone is a state the platform has (Chrome's stays too): it is left up.
+    else if (
+      win.chrome === 'full' &&
+      !this.quitting &&
+      this.state.platform !== 'darwin' &&
+      !this.allWindows().some((w) => w.chrome === 'full' && !w.isClosing)
+    )
+      this.closePageWindows()
     if (this.allWindows().length === 0) {
       this.governor.stop()
       this.newTab.destroyAll()
@@ -3476,7 +3616,12 @@ export class Browser {
       'window.toggleFullscreen': (_a, win) => this.toggleFullscreen(win),
       'window.fullscreenInset': ({ bottom }, win) => win.setFullscreenInset(bottom),
       'window.formFactor': ({ formFactor }, win) => {
+        if (win.formFactor === formFactor) return
         win.formFactor = formFactor
+        // The page tabs follow the window's class: one the new layout is no tab in gives way to
+        // its overlay there (a tablet's `zen://history` tab when the window narrows into the
+        // phone class; a tablet profile's on a phone at the chrome's first report).
+        this.pages.reconcileLayout(win)
       },
       'ui.surface': ({ surface, mounted }, win) => {
         if (mounted) win.surfaces.add(surface)

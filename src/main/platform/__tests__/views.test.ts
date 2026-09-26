@@ -11,7 +11,9 @@ import type {
 import {
   DEFAULT_FONT_SETTINGS,
   electronFontDefaults,
+  electronGenericFontDefaults,
   FONT_RESTYLE_SCRIPT,
+  type ExtensionFontLayer,
   type PageFontSettings
 } from '../../../shared/fonts'
 import type { SessionManager } from '../sessions'
@@ -1755,7 +1757,9 @@ describe('page fonts (CT-25)', () => {
     dbg.commands.filter((c) => c.method === method).map((c) => c.params)
 
   afterEach(() => {
-    new ElectronTabViewHost(sessions).applyFonts(DEFAULT_FONT_SETTINGS)
+    const host = new ElectronTabViewHost(sessions)
+    host.applyFonts(DEFAULT_FONT_SETTINGS)
+    host.applyExtensionFonts(null)
   })
 
   it('makes a new page with the engine’s own fonts until the core says otherwise', () => {
@@ -2014,6 +2018,120 @@ describe('page fonts (CT-25)', () => {
     ;(nativeTheme as unknown as EventEmitter).emit('updated')
     await settle()
     expect(made.dbg.log).toEqual([])
+  })
+
+  // --- the extensions' layer (chrome.fontSettings) ---------------------------------
+
+  const LAYER: ExtensionFontLayer = {
+    families: { standard: 'Verdana', cursive: 'Zapfino', math: 'STIX Two Math' },
+    scripts: { Jpan: { sansSerif: 'Noto Sans JP' } },
+    sizes: { standard: 24, minimum: 10 }
+  }
+
+  it('makes a new page with the extensions’ layer over the setting, the user’s setting untouched', () => {
+    const host = new ElectronTabViewHost(sessions)
+    host.applyFonts(FONTS)
+    host.applyExtensionFonts(LAYER)
+    const { prefs, dbg } = page(host, 'tab_ext_fonts_new')
+    // The layer's standard over the user's Georgia; the user's Inter stands; the extras named.
+    expect(prefs.defaultFontFamily).toEqual({
+      standard: 'Verdana',
+      sansSerif: 'Inter',
+      cursive: 'Zapfino',
+      math: 'STIX Two Math'
+    })
+    expect(prefs.defaultFontSize).toBe(24)
+    // Chrome's fixed-width size is a pref of its own: the user's 20 keeps its 16.
+    expect(prefs.defaultMonospaceFontSize).toBe(16)
+    expect(prefs.minimumFontSize).toBe(10)
+    expect(ElectronTabViewHost.currentFonts()).toEqual(FONTS)
+    // Web preferences carry no per-script family: the page takes it once its first load commits.
+    expect(dbg.log).toEqual([])
+  })
+
+  it('brings an open page to the layer, per script too, and takes it back when the layer goes', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    host.applyFonts(FONTS)
+    const { dbg } = page(host, 'tab_ext_fonts_live')
+    host.applyExtensionFonts(LAYER)
+    await settle()
+    expect(dbg.log).toEqual(['attach', 'Page.setFontFamilies', 'Page.setFontSizes', 'detach'])
+    expect(sent(dbg, 'Page.setFontFamilies')).toEqual([
+      {
+        fontFamilies: { standard: 'Verdana', cursive: 'Zapfino', math: 'STIX Two Math' },
+        forScripts: [{ script: 'Jpan', fontFamilies: { sansSerif: 'Noto Sans JP' } }]
+      }
+    ])
+    expect(sent(dbg, 'Page.setFontSizes')).toEqual([{ fontSizes: { standard: 24, fixed: 16 } }])
+    // A layer with the extension's fixed-width size: the sizes alone move.
+    host.applyExtensionFonts({ ...LAYER, sizes: { ...LAYER.sizes, fixed: 11 } })
+    await settle()
+    expect(dbg.log.slice(4)).toEqual(['attach', 'Page.setFontSizes', 'detach'])
+    expect(sent(dbg, 'Page.setFontSizes').at(-1)).toEqual({
+      fontSizes: { standard: 24, fixed: 11 }
+    })
+    // The layer goes: the user's own standard, the engine's cursive and math by name, the
+    // script's slot taken back with '' (Blink erases the entry: the common family again).
+    host.applyExtensionFonts(null)
+    await settle()
+    expect(dbg.log.slice(7)).toEqual([
+      'attach',
+      'Page.setFontFamilies',
+      'Page.setFontSizes',
+      'detach'
+    ])
+    const defaults = electronGenericFontDefaults(process.platform)
+    expect(sent(dbg, 'Page.setFontFamilies').at(-1)).toEqual({
+      fontFamilies: { standard: 'Georgia', cursive: defaults.cursive, math: defaults.math },
+      forScripts: [{ script: 'Jpan', fontFamilies: { sansSerif: '' } }]
+    })
+    expect(sent(dbg, 'Page.setFontSizes').at(-1)).toEqual({
+      fontSizes: { standard: 20, fixed: 16 }
+    })
+  })
+
+  it('keeps the layer’s slots over a change of the setting; the layer never reaches the setting', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    host.applyExtensionFonts({ families: { standard: 'Verdana' }, scripts: {}, sizes: {} })
+    const { dbg } = page(host, 'tab_ext_fonts_user')
+    // The user picks a standard and a serif: the standard stays the extension's on the page.
+    host.applyFonts({ ...DEFAULT_FONT_SETTINGS, standard: 'Inter', serif: 'Lora' })
+    await settle()
+    expect(sent(dbg, 'Page.setFontFamilies')).toEqual([{ fontFamilies: { serif: 'Lora' } }])
+    expect(ElectronTabViewHost.currentFonts()).toMatchObject({ standard: 'Inter' })
+    // A new page too.
+    const made = page(host, 'tab_ext_fonts_user_new')
+    expect(made.prefs.defaultFontFamily).toEqual({ standard: 'Verdana', serif: 'Lora' })
+    host.applyFonts(DEFAULT_FONT_SETTINGS)
+    expect(ElectronTabViewHost.currentFonts()).toEqual(DEFAULT_FONT_SETTINGS)
+  })
+
+  it('takes a per-script family to a page made under the layer once its first load commits', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    host.applyExtensionFonts(LAYER)
+    const { view, dbg } = page(host, 'tab_ext_fonts_script')
+    expect(dbg.log).toEqual([])
+    ;(view.webContents as unknown as EventEmitter).emit('did-navigate', {}, 'https://a.example/')
+    await settle()
+    // The common slots were made into the page; the script's family alone goes over the
+    // protocol, and the document is asked to restyle (a family alone, no size moved).
+    expect(dbg.log).toEqual([
+      'attach',
+      'Page.setFontFamilies',
+      'Page.setFontSizes',
+      'detach',
+      'restyle'
+    ])
+    expect(sent(dbg, 'Page.setFontFamilies')).toEqual([
+      {
+        fontFamilies: {},
+        forScripts: [{ script: 'Jpan', fontFamilies: { sansSerif: 'Noto Sans JP' } }]
+      }
+    ])
+    // The next document in the same renderer keeps it: nothing to send.
+    ;(view.webContents as unknown as EventEmitter).emit('did-navigate', {}, 'https://a.example/b')
+    await settle()
+    expect(dbg.log).toHaveLength(5)
   })
 })
 

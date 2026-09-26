@@ -635,7 +635,11 @@ describe('ReadAloudService', () => {
         const { started } = await startWithoutVoices()
         await vi.advanceTimersByTimeAsync(VOICES_GRACE_MS + 1)
         await started
-        expect(h.service.uiState()).toMatchObject({ status: 'error', error: 'no-voice', voiceId: null })
+        expect(h.service.uiState()).toMatchObject({
+          status: 'error',
+          error: 'no-voice',
+          voiceId: null
+        })
         expect(h.host.spoken).toHaveLength(0)
         const asksBefore = asks
 
@@ -653,7 +657,10 @@ describe('ReadAloudService', () => {
           sentenceCount: 2
         })
         expect(h.host.spoken).toHaveLength(1)
-        expect(h.host.current).toMatchObject({ text: 'Hello.', options: { voiceId: 'en-us-x-local' } })
+        expect(h.host.current).toMatchObject({
+          text: 'Hello.',
+          options: { voiceId: 'en-us-x-local' }
+        })
         // One fresh ask of the host for the list it announced; no waiting on a deadline.
         expect(asks).toBe(asksBefore + 1)
         // The player joins the OS controls with the first sentence spoken, as for any start.
@@ -673,14 +680,22 @@ describe('ReadAloudService', () => {
         await vi.advanceTimersByTimeAsync(LATE_VOICES_RETRY_MS + 1000)
         h.host.changeVoices(ENGINE)
         await flush()
-        expect(h.service.uiState()).toMatchObject({ status: 'error', error: 'no-voice', voiceId: null })
+        expect(h.service.uiState()).toMatchObject({
+          status: 'error',
+          error: 'no-voice',
+          voiceId: null
+        })
         expect(h.host.spoken).toHaveLength(0)
         expect(vi.getTimerCount()).toBe(0)
 
         // The user's Play (#337) is the way on: the voices are there, it speaks.
         h.service.resume()
         await flush()
-        expect(h.service.uiState()).toMatchObject({ status: 'playing', voiceId: 'en-us-x-local', sentenceIndex: 0 })
+        expect(h.service.uiState()).toMatchObject({
+          status: 'playing',
+          voiceId: 'en-us-x-local',
+          sentenceIndex: 0
+        })
         expect(h.host.current.text).toBe('Hello.')
       })
 
@@ -717,7 +732,11 @@ describe('ReadAloudService', () => {
         expect(h.service.uiState()).toMatchObject({ status: 'loading' })
         await vi.advanceTimersByTimeAsync(VOICES_GRACE_MS + 1)
         // …and says no-voice again; nothing is armed for another round.
-        expect(h.service.uiState()).toMatchObject({ status: 'error', error: 'no-voice', voiceId: null })
+        expect(h.service.uiState()).toMatchObject({
+          status: 'error',
+          error: 'no-voice',
+          voiceId: null
+        })
         expect(vi.getTimerCount()).toBe(0)
 
         // Another empty announcement leaves it there: no busy state, no third grace.
@@ -732,7 +751,11 @@ describe('ReadAloudService', () => {
         h.host.voiceList = ENGINE
         h.service.resume()
         await flush()
-        expect(h.service.uiState()).toMatchObject({ status: 'playing', voiceId: 'en-us-x-local', sentenceIndex: 0 })
+        expect(h.service.uiState()).toMatchObject({
+          status: 'playing',
+          voiceId: 'en-us-x-local',
+          sentenceIndex: 0
+        })
         expect(h.host.current.text).toBe('Hello.')
       })
     })

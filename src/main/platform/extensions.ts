@@ -106,6 +106,7 @@ import {
   writePackage
 } from './extensionStore'
 import type { ExtensionApiHooks } from './extensionApi'
+import { visibleToExtensions } from './extensionApi/model'
 import type { PermissionsApi } from './extensionApi/permissions'
 import type { ApiStore } from './extensionApi/store'
 import { ExtensionErrorConsole } from './extensionErrors'
@@ -1754,9 +1755,13 @@ export function warningPlatform(): WarningPlatform {
   }
 }
 
-/** The focused window, else the one focused last; undefined when none is open (no window is created). */
+/**
+ * The focused browser window, else the one focused last; undefined when none is open (no window
+ * is created). A page window (the task manager) is not one: its chrome draws the page alone, and
+ * extensions never see it.
+ */
 function mostRecentWindow(browser: Browser): ZenWindow | undefined {
-  const alive = browser.allWindows()
+  const alive = browser.allWindows().filter(visibleToExtensions)
   return (
     alive.find((w) => w.host.isFocused()) ??
     [...alive].sort((a, b) => b.lastFocusedAt - a.lastFocusedAt)[0]

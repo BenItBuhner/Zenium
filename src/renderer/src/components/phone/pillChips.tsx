@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components -- the pill's chip kit: the run that draws the chips ships with the chip models it draws and the rows the site-information sheet lists */
 import type { JSX, ReactNode } from 'react'
 import { useLayoutEffect, useRef, useState } from 'react'
-import { AudioLines, BellOff, Languages, Shield, ShieldOff } from 'lucide-react'
+import { AudioLines, BellOff, BookOpenText, Languages, Shield, ShieldOff } from 'lucide-react'
 import { siteOriginOf } from '@shared/blocking'
 import { internalPageOf } from '@shared/internalPages'
 import { securityIndicator, type IndicatorState } from '@shared/siteInfo'
@@ -21,11 +21,13 @@ import {
   type PillChipFold,
   type PillFold
 } from '@renderer/lib/pillChips'
+import { readerArticleTab } from '@renderer/lib/readerEntry'
+import { crossReaderView } from '@renderer/lib/readerTransition'
 import { openQuietPrompt, quietPermissionPrompt } from '@renderer/lib/security'
 import { securityToneClass, securityVerdict } from '@renderer/lib/securityVerdict'
 import { closeSiteInfo, dismissSiteInfo } from '@renderer/lib/siteInfo'
 import { barStateOf, isTranslating, pairLabel, translateStateOf } from '@renderer/lib/translate'
-import { openMediaSheet, overlayAvailable } from '@renderer/lib/ui'
+import { openMediaSheet, overlayAvailable, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { PillChip } from '../urlbar/PillChip'
 
@@ -47,7 +49,8 @@ import { PillChip } from '../urlbar/PillChip'
  * shield on a Safe Browsing verdict – one id per state, so a navigation that changes the
  * verdict cross-fades the slot (§11.4) as the lock and the media chip do. `save-prompt` is
  * §9.29's other state chip – a save-password or save-address key – for when the phone grows one
- * (the desktop has `AutofillChip`); the slot rule already holds for it.
+ * (the desktop has `AutofillChip`); the slot rule already holds for it. `reader` is §9.29's
+ * reader chip: the sheet's Reader View row on an article page (PUI-14), never drawn in the pill.
  */
 export type PillChipId =
   | 'lock'
@@ -56,12 +59,21 @@ export type PillChipId =
   | 'dangerous'
   | 'blocked'
   | 'translate'
+  | 'reader'
   | 'media'
   | 'save-prompt'
   | 'notifications-blocked'
 
 /** The quiet notification ask's name, on the bell and its sheet row (Chrome's words; a harness contract). */
 export const NOTIFICATIONS_BLOCKED_LABEL = 'Notifications blocked'
+
+/**
+ * The Reader View row's name in the site-information sheet – the app menu's row's word for the
+ * same door (`core/menus.ts`; a harness contract) – and the state TalkBack hears of it at the
+ * address, the way it hears "Translation offered" of the translate row.
+ */
+export const READER_ROW_LABEL = 'Reader View'
+export const READER_ROW_SPOKEN = 'Reader View available'
 
 /** The glyph slot's chip id for a connection state that has a verdict to draw. */
 const VERDICT_CHIP_IDS = {
@@ -323,6 +335,33 @@ export function phonePillChips(
         activate: () => {
           closeSiteInfo()
           toggle()
+        }
+      }
+    })
+  }
+
+  // Reader View (PUI-14; §9.29's reader chip): on an article page – the reader core's probe said
+  // so at its dom-ready (`readerArticleTab`, the same predicate the §9.33 offer stands on; the
+  // verdict consumed, never re-run) – the sheet lists the Reader View row, the same door the
+  // offer's action and the app menu's row open: Reader View for this tab through the crossing
+  // where it runs (`crossReaderView`, MOT-36), begun on the picture the sheet already holds of
+  // the page so the page is never let back between the sheet's going and the surface's coming
+  // (the menu row's way, `lib/ui.ts` `pickMenuItem`); the sheet leaves with its spring. Never in
+  // the pill (the fixed phone pill; the design gate for #491 held to it), and not on a page the
+  // probe did not read as an article, nor in Reader View itself, whose exit is the menu's row.
+  if (identity && !page && !extension && readerArticleTab(tab)) {
+    chips.push({
+      id: 'reader',
+      fold: pillChipFold('reader'),
+      spoken: READER_ROW_SPOKEN,
+      row: {
+        glyph: <BookOpenText />,
+        label: READER_ROW_LABEL,
+        activate: () => {
+          const ui = uiStore.get()
+          const picture = ui.snapshotTabId === tab.id ? ui.snapshot : null
+          closeSiteInfo()
+          void crossReaderView(tab.id, { picture })
         }
       }
     })

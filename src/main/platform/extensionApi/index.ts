@@ -89,6 +89,7 @@ import { OmniboxApi } from './omnibox'
 import { PermissionsApi } from './permissions'
 import { FontSettingsApi } from './fontSettings'
 import { PrivacyApi } from './privacy'
+import { ExtensionControls } from './controls'
 import { ProxyApi } from './proxy'
 import { ContentSettingsApi } from './contentSettings'
 import { RuntimeApi } from './runtime'
@@ -191,6 +192,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly model: ApiModel
   readonly registry: ContextRegistry
   readonly store: ApiStore
+  readonly controls: ExtensionControls
   readonly tabs: TabsApi
   readonly windows: WindowsApi
   readonly runtime: RuntimeApi
@@ -281,6 +283,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   ) {
     this.model = new ApiModel(browser, views)
     this.store = new ApiStore(io, userDataDir)
+    this.controls = new ExtensionControls(browser.state)
     this.registry = new ContextRegistry({
       sessionsFor: (extensionId) => this.extensions.get(extensionId)?.sessions ?? [],
       persistWorkerEvents: (extensionId, events) => this.store.setWorkerEvents(extensionId, events),
@@ -1181,7 +1184,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
 
   /** Bounds changes never commit state; follow the windows themselves for `onBoundsChanged`. */
   private watchWindows(): void {
-    for (const win of this.browser.allWindows()) {
+    for (const win of this.model.windows()) {
       const bw = this.model.browserWindowOf(win)
       if (!bw || this.watchedWindows.has(bw)) continue
       this.watchedWindows.add(bw)

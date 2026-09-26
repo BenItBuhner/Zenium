@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  type ChromeTab,
-  TAB_GROUP_NONE,
-  TabStatusEdges
-} from '../../../core/extensions/api/tabs'
+import { type ChromeTab, TAB_GROUP_NONE, TabStatusEdges } from '../../../core/extensions/api/tabs'
 import { TabsApi } from '../extensionApi/tabs'
 import type { ModelSnapshot, TabSnapshot } from '../extensionApi/model'
 import type { ApiHost, LoadedExtension } from '../extensionApi/types'

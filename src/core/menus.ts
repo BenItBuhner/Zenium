@@ -619,29 +619,40 @@ export class Menus {
     // item, whose tab joins the group as it always has.
     const group =
       win.formFactor !== 'desktop' && tab.folderId ? state.model.folders[tab.folderId] : undefined
+    // On a tab in no group Chrome for Android keeps the row and MAKES the group (PUI-17): the
+    // opener and the link's tab become a group of two. Not for a tab the groups skip – an
+    // essential, a pinned or a private one – nor in a window with no space of its own (a
+    // private or blank window), where there is no group to make. The desktop menu is untouched.
+    const groupable =
+      win.formFactor !== 'desktop' &&
+      !win.localSpace &&
+      !tab.essential &&
+      !tab.pinned &&
+      !tabs.isPrivate(tab)
     // `mailto:` and `tel:` links have nowhere to open in a tab: only their copy items (Chrome).
     // The phone hands them to the device's own apps as Chrome for Android does (PUI-22): a
     // number to the dialer, the messaging app and the contacts form, an address to the mail app.
     if (win.formFactor === 'phone') open.push(...this.contactLinkItems(url))
     if (navigable) {
-      if (group) {
-        open.push({
-          label: 'Open Link in New Tab in Group',
-          click: () =>
-            tabs.createTab(
-              {
-                url,
-                active: false,
-                afterTabId: tab.id,
-                containerId: tab.containerId,
-                openerTabId: tab.id,
-                folderId: group.id
-              },
-              win
-            )
-        })
-      }
-      open.push({
+      const inGroup: MenuItemTemplate | undefined =
+        group || groupable
+          ? {
+              label: 'Open Link in New Tab in Group',
+              click: () =>
+                tabs.createTab(
+                  {
+                    url,
+                    active: false,
+                    afterTabId: tab.id,
+                    containerId: tab.containerId,
+                    openerTabId: tab.id,
+                    folderId: group ? group.id : this.groupAround(tab, win)
+                  },
+                  win
+                )
+            }
+          : undefined
+      const plain: MenuItemTemplate = {
         label: 'Open Link in New Tab',
         click: () =>
           tabs.createTab(
@@ -659,7 +670,12 @@ export class Menus {
             },
             win
           )
-      })
+      }
+      // The phone seats the pair as Chrome for Android 152 does – "Open in new tab" before "Open
+      // in new tab in group" (Chrome 140's swap, permanent by 144; the design lead's ruling on
+      // #492's (b)). The desktop's and the tablet's rows stay in their order, the group row first.
+      if (win.formFactor === 'phone') open.push(plain, ...(inGroup ? [inGroup] : []))
+      else open.push(...(inGroup ? [inGroup] : []), plain)
       if (caps.windows) {
         open.push(
           {
@@ -705,12 +721,16 @@ export class Menus {
       })
     }
     const transfer: Template = []
-    if (isDownloadable(url)) {
-      transfer.push({
-        label: 'Save Link As…',
-        click: () => view.downloadURL(url, { saveAs: true })
-      })
-    }
+    const save: MenuItemTemplate | undefined = isDownloadable(url)
+      ? {
+          label: 'Save Link As…',
+          click: () => view.downloadURL(url, { saveAs: true })
+        }
+      : undefined
+    // Chrome desktop's "Save link as…" leads the group, and the desktop's and the tablet's rows
+    // keep it there; Chrome for Android 152 puts "Download link" after the two copies, and the
+    // phone's rows follow it (the lead's ruling on #492's (b)).
+    if (save && win.formFactor !== 'phone') transfer.push(save)
     const copy = linkCopyItem(url)
     transfer.push({
       label: copy.label,
@@ -723,6 +743,7 @@ export class Menus {
         click: () => this.browser.copyText(linkText, 'Text copied', win)
       })
     }
+    if (save && win.formFactor === 'phone') transfer.push(save)
     if (caps.share && navigable) {
       transfer.push({
         label: 'Share Link…',
@@ -730,6 +751,25 @@ export class Menus {
       })
     }
     return [open, transfer]
+  }
+
+  /**
+   * The group Chrome for Android's "Open in new tab in group" makes around a tab in none: a new
+   * folder of the tab's space with the tab moved in, named and coloured as the tab menu's "Add
+   * Tab to New Folder" names its own, with no editor opened – the row is the gesture, and the
+   * group's header is where its name is changed. The link's tab then joins behind the opener.
+   * Resolves to the folder's id.
+   */
+  private groupAround(tab: Tab, win: ZenWindow): string {
+    const folder = this.browser.createFolder(
+      tab.spaceId ?? win.activeSpaceId,
+      'New Folder',
+      '📁',
+      win,
+      { rename: false }
+    )
+    this.browser.tabs.moveToFolder(tab.id, folder.id)
+    return folder.id
   }
 
   /**
@@ -3659,8 +3699,9 @@ export class Menus {
       action: 'settings.open',
       click: () => void this.browser.pages.open('settings', undefined, win)
     }
-    // Chrome's More tools › Task manager (shortcuts-menus-121): the desktop's page tab
-    // (`zen://tasks`, Shift+Esc), the row before Developer tools as Chrome seats it.
+    // Chrome's More tools › Task manager (shortcuts-menus-121): the desktop's `zen://tasks` page
+    // in its own window (Shift+Esc; `Browser.openTaskManager`, W5-18), the row before Developer
+    // tools as Chrome seats it.
     const taskManager = desktop({
       label: 'Task Manager',
       action: 'tasks.open',

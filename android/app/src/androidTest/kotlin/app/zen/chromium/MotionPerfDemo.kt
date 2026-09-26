@@ -159,7 +159,9 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             )
         ).also { it.start() }
         try {
-            runDemo()
+            // A perf reading: no events hold (DemoHarness.runDemo – the hold's service moves the WebView to
+            // its complete tree mode with every event, work inside what the frames and the traces measure).
+            runDemo(holdEvents = false)
         } finally {
             server.close()
             restoreNavigation()

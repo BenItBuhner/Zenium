@@ -10,9 +10,27 @@
   a text/plain ACTION_SEND handler Zenium's <queries> make visible, so the panel's row has an app
   whose window the driver can read back. Exported as any share target is; singleTop so the
   second share of the ranking check lands in onNewIntent.
+
+  And the accessibility service the harness enables for every run (EventsTapService.java): a
+  listener for every event type that does nothing with them, so a current WebView – which sends
+  an event only when some enabled service asked for its type, and UiAutomation is none – sends
+  them at all. Declared as any accessibility service is: bound by the system under
+  BIND_ACCESSIBILITY_SERVICE, its asks in res/xml/events_tap_service.xml.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application android:label="Nimbus News">
+        <service
+            android:name="app.zen.chromium.EventsTapService"
+            android:exported="true"
+            android:label="Demo harness events tap"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/events_tap_service" />
+        </service>
         <activity
             android:name="app.zen.chromium.CustomTabCallerActivity"
             android:exported="true"

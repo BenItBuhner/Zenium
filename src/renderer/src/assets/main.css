@@ -13080,26 +13080,80 @@ ol.zen-page-prose-list {
  * 69 % in the heading's place: its box 2 under the pinned header so its 20 text line sits at
  * the heading's 8, each header a plain text button that sorts its column, the active one in
  * the text ink with the 16 sort chevron beside its label – after the label over the task
- * column, before it over a figure column so the label stays flush with its figures. The rows
- * are the shared two-line row (52, §9.2) – the favicon in the lead slot, the title over
- * "kind · pid" – with the figures as right-aligned asides in tabular figures (§4), so a column
- * of memory reads down. The selected row is the primitive's `--v2-selected`. The footer's verb
- * is the page frame's pinned footer, below.
+ * column, before it over a figure column so the label stays flush with its figures. A table's
+ * header does not leave with its rows (W5-18 C3): the row is sticky under the page's header
+ * (its measured height, `--zen-page-header-height`) on the page tone, its 2 inside its box so
+ * nothing shows between the two, and §9.7's hairline is its own – along its bottom edge once
+ * the rows scroll under it, in place of the page header's. The rows are the shared two-line
+ * row (52, §9.2) – the favicon in the lead slot, the title over "kind · pid" – with the figures
+ * as right-aligned asides in tabular figures (§4), so a column of memory reads down. The
+ * selected row is the primitive's `--v2-selected`. The footer's verb is the page frame's pinned
+ * footer, below.
  */
 .zen-tasks-table {
   --zen-tasks-columns: minmax(0, 1fr) 96px 64px 88px;
 }
 .zen-tasks-header {
+  position: sticky;
+  z-index: 1;
+  top: var(--zen-page-header-height, 0px);
   display: grid;
-  min-height: var(--v2-control);
+  min-height: calc(var(--v2-control) + 2px);
   align-items: center;
   grid-template-columns: var(--zen-tasks-columns);
   gap: 12px;
-  margin-top: 2px;
-  padding: 0 16px;
+  padding: 2px 16px 0;
+  background: var(--v2-page);
   color: var(--v2-text-deemphasized);
   font-size: var(--v2-font-small);
   line-height: var(--v2-line-small);
+}
+.zen-tasks-header::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 1px;
+  background: var(--v2-border);
+  opacity: 0;
+  transition: opacity 120ms var(--zen-ease);
+}
+.zen-page-scroll[data-scrolled] .zen-tasks-header::after {
+  opacity: 1;
+}
+.zen-tasks-page .zen-page-header::after {
+  display: none;
+}
+/*
+ * The window form (`.zen-tasks-window`: the task manager in its own window, W5-18 C2–C4): the
+ * frame's bar is the title, so the search field leads the content at the page's 16 – the 16 is
+ * the HEADER's padding (the title block's 16 in the tab form), not the search wrapper's: the
+ * field's glyph and clear button are absolute against that wrapper and would stay 16 high of a
+ * field the wrapper had pushed down (R1). The table
+ * takes the window – no 728 column: the field, the body and the footer's verbs run to the
+ * window's edges with the 32 held at both (the page's 16 plus the rows' 16), the figure columns
+ * keeping their fixed widths right-aligned at the trailing 32 and the Task column taking the
+ * slack, never centred with air on both sides. The scroller keeps its §9.20 bar's 8 as a gutter
+ * whether or not the rows overflow, so the table does not shift by the bar as processes come
+ * and go; the footer reserves the same gutter, so its verb ends on the figures' edge. At the
+ * window's default content width, 664 + 2 × 32 + the gutter's 8 = 736, the column stands at
+ * 32 / 32 as the tab form's does.
+ */
+.zen-tasks-window .zen-page-header {
+  padding-top: 16px;
+}
+.zen-tasks-window .zen-page-search,
+.zen-tasks-window .zen-page-body,
+.zen-tasks-window .zen-page-footer-actions {
+  max-width: none;
+}
+.zen-tasks-window .zen-page-scroll {
+  scrollbar-gutter: stable;
+}
+.zen-tasks-window .zen-page-footer {
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .zen-tasks-col {
   display: flex;

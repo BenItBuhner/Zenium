@@ -481,7 +481,15 @@ describe('the keyboard (§9.22)', () => {
     expect(buttons(d)[0].textContent).toBe('Cancel')
     expect(buttons(d)[0].dataset.action).toBe('cancel')
     // Named: the word changes, nothing else does – the button, its place, its answers.
-    render(<Prompt cancel="Wait" action="Exit page" destructive onCancel={onCancel} onConfirm={onConfirm} />)
+    render(
+      <Prompt
+        cancel="Wait"
+        action="Exit page"
+        destructive
+        onCancel={onCancel}
+        onConfirm={onConfirm}
+      />
+    )
     await settle()
     expect(dialog()).toBe(d)
     const [wait, verb] = buttons(d)

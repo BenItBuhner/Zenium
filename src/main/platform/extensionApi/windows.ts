@@ -246,8 +246,8 @@ export class WindowsApi {
 
   /** The window a popup window's `window.open` lands in: the last focused one of its profile. */
   private lastFocusedWindowOfProfile(incognito: boolean): ZenWindow | undefined {
-    return this.host.browser
-      .allWindows()
+    return this.model
+      .windows()
       .filter((win) => win.isPrivate === incognito)
       .sort((a, b) => b.lastFocusedAt - a.lastFocusedAt)[0]
   }

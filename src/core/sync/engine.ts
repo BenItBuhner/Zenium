@@ -16,8 +16,10 @@ import {
   frozenRecords,
   hashData,
   inScope,
+  isSettingsRecord,
   metaFromRemote,
   newestByRecord,
+  seedSettingsMeta,
   winningRemote,
   type LocalSources,
   type MetaMap,
@@ -218,6 +220,10 @@ export class SyncEngine implements SyncHost {
    * (`credentialsOnly`: nothing else is seeded then – by that time the other records' changes
    * are the user's), before that broadcast's diff could stamp the build's change to a login's
    * record shape as an edit of every login.
+   *
+   * The settings record is seeded key by key (`seedSettingsMeta`): an entry from before per-key
+   * merge gains its per-key entries here, every key at the record's time; a key this build
+   * added starts at 0; a changed value's hash is adopted at the key's own time.
    */
   private seedMeta(sources: LocalSources, credentialsOnly = false): void {
     if (sources.credentials) this.seededVault = true
@@ -228,6 +234,14 @@ export class SyncEngine implements SyncHost {
       if (credentialsOnly && type !== 'credential') continue
       const prev = meta[id]
       if (!prev || prev.deleted) continue
+      if (isSettingsRecord(id, type)) {
+        const seeded = seedSettingsMeta(prev, data)
+        if (seeded !== prev) {
+          meta[id] = seeded
+          changed = true
+        }
+        continue
+      }
       const hash = hashData(data)
       if (prev.hash === hash) continue
       meta[id] = { ...prev, hash }
@@ -583,10 +597,12 @@ export class SyncEngine implements SyncHost {
       stamp: now,
       frozen: frozenRecords(sources, this.data.scope, this.data.meta)
     })
-    if (diff.changed) {
-      this.data.meta = diff.meta
-      this.persist()
-    }
+    // The metadata is taken whether or not a record changed: a settings entry the last round
+    // left without per-key entries (the record first seen there) has them now, from the values
+    // as they stand at its time (`RecordMeta.keys`), so this session's first edit of a key is
+    // placed on that key and not on the record whole.
+    this.data.meta = diff.meta
+    if (diff.changed) this.persist()
     if (diff.changed || this.openTabsChanged()) this.schedulePush()
   }
 
@@ -699,14 +715,19 @@ export class SyncEngine implements SyncHost {
         // Re-snapshot after applying; remote winners keep their own timestamps. `stamp: null`
         // here too: a winner this device's sanitisers normalise differently from the peer that
         // sent it re-publishes under the PEER's timestamp, so every peer skips it (`<=`) – two
-        // builds' normal forms never bounce a record back and forth.
-        const merged: MetaMap = { ...local.meta, ...metaFromRemote(winners) }
+        // builds' normal forms never bounce a record back and forth. The settings winner is a
+        // set of keys: its entry is this device's with those keys at the peer's times, and the
+        // re-snapshot places each key the same way (`diffSettings`).
+        const merged: MetaMap = { ...local.meta, ...metaFromRemote(winners, local.meta) }
         const after = this.sources()
         local = diffLocal(merged, collectLocal(after, scope), now, {
           stamp: null,
           frozen: frozenRecords(after, scope, merged)
         })
         for (const w of winners) {
+          // The settings entry the re-snapshot made is the one to keep: per key at the peer's
+          // times, the record hash this device's own – the winner whole has nothing to add.
+          if (isSettingsRecord(w.id, w.type)) continue
           const entry = local.meta[w.id]
           const fromRemote = metaFromRemote([w])[w.id]
           if (entry && fromRemote && entry.hash === fromRemote.hash) local.meta[w.id] = fromRemote

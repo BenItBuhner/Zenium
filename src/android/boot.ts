@@ -30,6 +30,7 @@ import {
   type BarScrollPayload,
   type BarScrollPhase
 } from '@renderer/lib/barHide'
+import { isPhone } from '@renderer/lib/formFactor'
 import {
   dispatchHistoryNavEvent,
   setHistoryNavHost,
@@ -53,7 +54,7 @@ import { landFromIntent } from './landing'
 import { syncNativeTheme } from './nativeTheme'
 import { AndroidPlatform, windowInsetsOf, type BootInfo, type HostEventPayloads } from './platform'
 import { createPreviewBridge } from './preview'
-import { ChromeReady } from './startup'
+import { ChromeReady, bootNeedsPlacement } from './startup'
 import { AndroidStoreIO, readDocument } from './storeIo'
 import type { ViewEventPayloads } from './views'
 
@@ -213,9 +214,9 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
   hostGlobal.flush()
   // Started, restored, flushed: READY once the chrome has painted its theme under the insets and
   // placed the page slot – when there is a page to place (the active tab restored as a page;
-  // a chrome page, the new tab page, has no view and nothing to wait for).
-  const active = browser.tabs.activeTabFor(platform.window)
-  ready.arm(active !== undefined && !browser.pages.isChromePage(active))
+  // a window without a tab, on a chrome page, or on the blank page the phone draws itself has
+  // no view and nothing to wait for).
+  ready.arm(bootNeedsPlacement(browser, platform.window, isPhone()))
 
   // Shortcuts typed into the chrome itself go through the same table as page keys.
   window.addEventListener(

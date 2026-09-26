@@ -73,7 +73,9 @@ describe('engineApiSpec', () => {
   it("defines chrome.power for the permission alone, routed, with Chrome's Level enum", () => {
     // Keep Awake (`"permissions": ["power"]`) reads `chrome.power.requestKeepAwake` in its
     // worker's click handler; without the table entry the namespace was a TypeError there.
-    expect(Object.keys(engineApiSpec({ permissions: ['storage'], manifestVersion: 3, context: 'page' }))).not.toContain('power')
+    expect(
+      Object.keys(engineApiSpec({ permissions: ['storage'], manifestVersion: 3, context: 'page' }))
+    ).not.toContain('power')
     const spec = engineApiSpec({ permissions: ['power'], manifestVersion: 3, context: 'page' })
     expect(spec.power.methods.requestKeepAwake).toEqual({
       params: [{ name: 'level', type: 'string', optional: false }]

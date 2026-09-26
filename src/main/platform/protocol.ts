@@ -43,9 +43,7 @@ export type BackgroundImageResponder = () => Promise<Response>
  * The favicon cache's copy of the icon named `hash` (`core/favicons.ts` `document`), or null
  * when the cache has none: what `zen://favicon/<hash>` serves (HB-47).
  */
-export type FaviconResponder = (
-  hash: string
-) => Promise<{ bytes: Uint8Array; mime: string } | null>
+export type FaviconResponder = (hash: string) => Promise<{ bytes: Uint8Array; mime: string } | null>
 
 /** `zen://favicon/<hash>`'s host. */
 export const FAVICON_HOST = 'favicon'

@@ -1,4 +1,26 @@
+import { BLANK_URL } from '@shared/url'
+import type { Browser } from '@core/browser'
+import type { ZenWindow } from '@core/window'
 import type { Bridge } from './bridge'
+
+/**
+ * What `bootAndroid` arms READY with once the core has started: whether the boot has a page to
+ * place – the active tab restored as a page view – before the first frame counts. A window with
+ * no tab (the phone's first run, a space emptied of its tabs: `Browser.ensureFirstTab` opens no
+ * tab on a host without the new tab page, the chrome draws its own surfaces there) and a chrome
+ * page (a registry page the chrome draws) have no view, so there is nothing to wait for.
+ *
+ * Nor has the blank page on the phone (`phone`: the chrome's layout class as `lib/formFactor`
+ * reads it): the phone draws its new tab page in the chrome for a `zen://blank` tab and leaves
+ * that tab out of every layout report (`useLayoutReporter`), so its view is never placed – a
+ * profile restored on it (one #490's first tab left behind, v0.4.71–v0.4.74) would hold READY to
+ * the host's watchdog. The tablet places the blank view and waits for it as for any page.
+ */
+export function bootNeedsPlacement(browser: Browser, win: ZenWindow, phone: boolean): boolean {
+  const active = browser.tabs.activeTabFor(win)
+  if (active === undefined || browser.pages.isChromePage(active)) return false
+  return !(phone && active.url === BLANK_URL)
+}
 
 /** The four sides as the host sends them and the chrome's store keeps them. */
 export interface ReadyInsets {

@@ -232,6 +232,9 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
       }
       case 'settings': {
         if (r.deleted || r.id !== SETTINGS_RECORD_ID) break
+        // The record carries the keys that won, key by key against this device's own times
+        // (`winningRemote`; the whole record from a peer or a metadata before per-key merge),
+        // and every key it carries lands – a key it lacks says nothing about this device's.
         // A peer on an older build still sends the device-local keys (`DEVICE_LOCAL_SETTINGS`):
         // they are this device's own and never land, whatever the record says.
         const data = withoutDeviceLocalSettings(
@@ -266,10 +269,12 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
           )
         // Another device may run an older or newer build: its new tab values arrive in whichever
         // shape it writes (the desktop's first `newTab`, the phone's `newTabPhone`, the one
-        // model) and only known values apply.
-        state.settings.newTab = sanitizeNewTabSettings(
-          migrateNewTabSettings({ newTab: state.settings.newTab, newTabPhone })
-        )
+        // model) and only known values apply. The two keys merge as one (`settingsKeyGroup`),
+        // so a record that carries either carries what the peer holds of both.
+        if ('newTab' in data || 'newTabPhone' in data)
+          state.settings.newTab = sanitizeNewTabSettings(
+            migrateNewTabSettings({ newTab: state.settings.newTab, newTabPhone })
+          )
         // The page fonts and the preferred languages (CT-25, CT-41) are read like a profile's
         // own: in range, canonical, never an empty languages list (a peer's list of nothing
         // valid leaves this device's standing).

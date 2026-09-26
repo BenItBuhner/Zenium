@@ -59,7 +59,7 @@ export const DEFAULT_TIMEOUT_S = 720
 const PACKAGE = 'app.zen.chromium'
 
 /** @typedef {{ id: string, class?: string, classes?: string[], shard: string, mirrors: string, dir?: string, script?: string, out?: string, env?: Record<string, string>, setup?: string[], needs?: string[], timeout?: number, estimate: number, note?: string }} Driver */
-/** @typedef {{ title: string, 'api-level': string, target: string, profile: string, 'emulator-gpu': string, 'emulator-options': string, display: string, 'timeout-minutes': number, 'budget-minutes': number, setup?: string[], env?: Record<string, string>, note?: string }} Shard */
+/** @typedef {{ title: string, 'api-level': string, target: string, profile: string, image: string, webview: string, 'emulator-gpu': string, 'emulator-options': string, display: string, 'timeout-minutes': number, 'budget-minutes': number, setup?: string[], cache?: { path: string, key: string }, env?: Record<string, string>, note?: string }} Shard */
 /** @typedef {{ shards: Record<string, Shard>, drivers: Driver[], skip: { class?: string, workflow?: string, reason: string, absent?: boolean }[] }} Manifest */
 
 /** @returns {Manifest} */
@@ -133,7 +133,11 @@ export function matrix(manifest, shard = 'all') {
         profile: s.profile,
         'emulator-gpu': s['emulator-gpu'],
         'emulator-options': s['emulator-options'],
-        'timeout-minutes': s['timeout-minutes']
+        'timeout-minutes': s['timeout-minutes'],
+        // What a setup step fetches by a pin, kept between runs (the recipe's actions/cache
+        // inputs; empty strings for a shard without one).
+        'setup-cache-path': s.cache?.path ?? '',
+        'setup-cache-key': s.cache?.key ?? ''
       }
     })
   }
@@ -194,6 +198,8 @@ export function writePlan(manifest, shard, dir) {
     envLines({
       NIGHTLY_SHARD: shard,
       NIGHTLY_TITLE: shardDef.title,
+      NIGHTLY_IMAGE: shardDef.image,
+      NIGHTLY_WEBVIEW: shardDef.webview,
       NIGHTLY_BUDGET_S: String(shardDef['budget-minutes'] * 60),
       NIGHTLY_DISPLAY: shardDef.display
     })
@@ -271,6 +277,22 @@ export function checkManifest(manifest, sources = sourceDriverClasses()) {
       problems.push(
         `shard ${name}: the budget (${shard['budget-minutes']} min) must be under the job timeout (${shard['timeout-minutes']} min)`
       )
+    const image = imageOf(shard)
+    if (shard.image !== image)
+      problems.push(`shard ${name}: image '${shard.image ?? ''}' is not the recipe's ${image}`)
+    if (typeof shard.webview !== 'string' || !shard.webview.trim())
+      problems.push(`shard ${name}: names no webview (the provider its drivers run on)`)
+    if (shard.cache !== undefined) {
+      const { path, key } = shard.cache
+      if (typeof path !== 'string' || !path.trim() || typeof key !== 'string' || !key.trim())
+        problems.push(
+          `shard ${name}: a cache needs both a path and a key (${JSON.stringify(shard.cache)})`
+        )
+    }
+    if ((shard.setup ?? []).includes('webview-google') && !shard.cache)
+      problems.push(
+        `shard ${name}: the webview-google step wants the shard's cache (a 2.2 GB fetch otherwise, every run)`
+      )
   }
   const skipped = new Map()
   for (const skip of manifest.skip) {
@@ -298,6 +320,11 @@ export function checkManifest(manifest, sources = sourceDriverClasses()) {
   return problems
 }
 
+/** The SDK system image the recipe boots for a shard (android-emulator-demo.yml's arch is x86_64). */
+export function imageOf(shard) {
+  return `system-images;android-${shard['api-level']};${shard.target};x86_64`
+}
+
 /** The setup steps the runner script knows (android-nightly-drivers.sh `setup`). */
 export const SETUP_STEPS = new Set([
   'downloads-server',
@@ -305,6 +332,7 @@ export const SETUP_STEPS = new Set([
   'ublock-zip',
   'ext-crx',
   'webview-snapshot',
+  'webview-google',
   'ffmpeg',
   'perfetto-python'
 ])
@@ -532,8 +560,8 @@ export function summarize(
 
 export function estimate(manifest) {
   const lines = [
-    '| shard | image | drivers | estimate (drivers) | job timeout |',
-    '| --- | --- | ---: | ---: | ---: |'
+    '| shard | image | webview | drivers | estimate (drivers) | job timeout |',
+    '| --- | --- | --- | ---: | ---: | ---: |'
   ]
   let total = 0
   for (const [name, shard] of Object.entries(manifest.shards)) {
@@ -541,10 +569,10 @@ export function estimate(manifest) {
     const minutes = drivers.reduce((sum, d) => sum + d.estimate, 0)
     total += minutes
     lines.push(
-      `| ${code(name)} | ${shard.title} | ${drivers.length} | ${minutes.toFixed(1)} min | ${shard['timeout-minutes']} min (budget ${shard['budget-minutes']}) |`
+      `| ${code(name)} | ${shard.title} (${code(shard.image)}) | ${shard.webview} | ${drivers.length} | ${minutes.toFixed(1)} min | ${shard['timeout-minutes']} min (budget ${shard['budget-minutes']}) |`
     )
   }
-  lines.push(`| **all** | | ${manifest.drivers.length} | ${total.toFixed(1)} min | |`, '')
+  lines.push(`| **all** | | | ${manifest.drivers.length} | ${total.toFixed(1)} min | |`, '')
   for (const [name] of Object.entries(manifest.shards)) {
     const drivers = driversOf(manifest, name)
     lines.push(`${code(name)}: ${drivers.map((d) => `${d.id} ${d.estimate}`).join(' · ')}`, '')

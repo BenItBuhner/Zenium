@@ -5,6 +5,7 @@ import {
   DEFAULT_SEEK_OFFSET_S,
   DUCK_VOLUME,
   EMPTY_MEDIA_REPORT,
+  PIP_CONTROLS_ATTRIBUTE,
   PIP_FILL_ATTRIBUTE,
   type MediaReport,
   type MediaSessionHostMessage
@@ -462,6 +463,47 @@ describe('the default actions (what Chrome does with actions a page left unhandl
     h.host({ action: 'fill', on: false })
     expect(v.hasAttribute(PIP_FILL_ATTRIBUTE)).toBe(false)
     expect(document.getElementById(PIP_FILL_ATTRIBUTE)).toBeNull()
+  })
+
+  it("fill takes the video's own controls off for the window and puts them back, remembering whether it had them", async () => {
+    const h = install()
+    const v = video()
+    v.setAttribute('controls', '')
+    await play(v)
+    h.host({ action: 'fill', on: true })
+    expect(v.hasAttribute('controls')).toBe(false)
+    expect(v.hasAttribute(PIP_CONTROLS_ATTRIBUTE)).toBe(true)
+    h.host({ action: 'fill', on: false })
+    expect(v.hasAttribute('controls')).toBe(true)
+    expect(v.hasAttribute(PIP_CONTROLS_ATTRIBUTE)).toBe(false)
+
+    const bare = video()
+    await play(bare)
+    h.host({ action: 'fill', on: true })
+    expect(bare.hasAttribute(PIP_CONTROLS_ATTRIBUTE)).toBe(false)
+    h.host({ action: 'fill', on: false })
+    expect(bare.hasAttribute('controls')).toBe(false)
+  })
+
+  it("the fill's end scrolls a video out of view into it, and leaves one in view alone", async () => {
+    const h = install()
+    const v = video()
+    await play(v)
+    const scrolled: ScrollIntoViewOptions[] = []
+    v.scrollIntoView = (arg?: boolean | ScrollIntoViewOptions) => {
+      if (typeof arg === 'object') scrolled.push(arg)
+    }
+    const rect = (top: number): DOMRect =>
+      ({ top, bottom: top + 100, left: 0, right: 200, width: 200, height: 100 }) as DOMRect
+    v.getBoundingClientRect = () => rect(window.innerHeight + 400)
+    h.host({ action: 'fill', on: true })
+    h.host({ action: 'fill', on: false })
+    expect(scrolled).toEqual([{ block: 'center', inline: 'nearest' }])
+
+    v.getBoundingClientRect = () => rect(10)
+    h.host({ action: 'fill', on: true })
+    h.host({ action: 'fill', on: false })
+    expect(scrolled).toHaveLength(1)
   })
 
   it('fill ignores an audio element', async () => {

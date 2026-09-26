@@ -186,7 +186,9 @@ describe('chrome.cookies over the WebView jar', () => {
       secure: true
     })
     // Stored once, under its own path; a request to the site's root does not carry it.
-    expect(h.kt.jar().cookies.map((c) => `${c.name}@${c.path}`)).toEqual(['optOut_crawl@/extension'])
+    expect(h.kt.jar().cookies.map((c) => `${c.name}@${c.path}`)).toEqual([
+      'optOut_crawl@/extension'
+    ])
     expect(h.kt.jar().pairs('https://www.example.com/')).toEqual([])
     expect(h.kt.jar().pairs('https://www.example.com/extension/x')).toEqual(['optOut_crawl=0'])
     expect(events(h, 'bg1', 'cookies.onChanged')).toHaveLength(1)

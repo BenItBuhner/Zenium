@@ -2908,9 +2908,10 @@ class ChromeA11yDemo : DemoHarness(
         return "$version ${if (running) "running" else "enabled but not reported as running"}"
     }
 
+    /** TalkBack off, and the harness's own events tap back in its place (`DemoHarness.holdEventsOpen`): the WebView keeps sending events to the tree's reader. */
     private fun disableTalkBack() {
-        shell("settings put secure enabled_accessibility_services ''")
-        shell("settings put secure accessibility_enabled 0")
+        shell("settings put secure enabled_accessibility_services $eventsTapService")
+        shell("settings put secure accessibility_enabled 1")
         SystemClock.sleep(2_000)
     }
 

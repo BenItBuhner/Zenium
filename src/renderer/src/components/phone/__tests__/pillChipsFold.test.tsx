@@ -392,6 +392,69 @@ describe('phonePillChips: the chips as data', () => {
     const [, args] = invoke.mock.calls.find(([name]) => name === 'page.open')!
     expect(args).toMatchObject({ id: 'settings', section: 'privacy' })
   })
+
+  /*
+   * PUI-14 (§9.29's reader chip; the design gate for #491): on an article page – the reader
+   * probe's verdict on the tab, the same predicate the §9.33 offer stands on – the sheet lists
+   * a Reader View row after the translate offer, spoken at the address as the offer is; the
+   * pill draws nothing for it. Not on a page the probe did not read as an article, not in
+   * Reader View itself, not on an internal page.
+   */
+  it('lists the Reader View row on an article page, after the offer, spoken at the address and never drawn', () => {
+    const article = tab('https://news.example.com/story', { readerable: true, blockedCount: 5 })
+    const chips = phonePillChips(offered(state(article)), article, ctx)
+    expect(chips.map((c) => [c.id, c.fold])).toEqual([
+      ['lock', 'glyph'],
+      ['blocked', 'sheet'],
+      ['translate', 'sheet'],
+      ['reader', 'sheet']
+    ])
+    const reader = chips.find((c) => c.id === 'reader')!
+    expect(reader.render).toBeUndefined()
+    expect(reader.row?.label).toBe('Reader View')
+    expect(reader.row?.value).toBeUndefined()
+    expect(pillChipsDrawn(chips).map((c) => c.id)).toEqual(['lock'])
+    expect(pillChipsSpoken(chips)).toEqual([
+      '5 requests blocked',
+      'Translation offered',
+      'Reader View available'
+    ])
+    expect(pillChipRows(offered(state(article)), article, ctx).map((r) => r.id)).toEqual([
+      'blocked',
+      'translate',
+      'reader'
+    ])
+  })
+
+  it('has no Reader View row on a page that is no article, in Reader View itself, or on an internal page', () => {
+    const ids = (t: Tab): string[] => phonePillChips(state(t), t, ctx).map((c) => c.id)
+    expect(ids(page)).toEqual(['lock', 'blocked'])
+    expect(
+      ids(tab('https://news.example.com/story', { readerable: true, discarded: true }))
+    ).toEqual(['lock', 'blocked'])
+    const reader = tab('zen://reader?id=article_1&url=https%3A%2F%2Fnews.example.com%2Fstory', {
+      readerable: true
+    })
+    // Reader View's own pill reads the article's identity (the lock); the row is not its.
+    expect(ids(reader)).not.toContain('reader')
+    expect(ids(tab('zen://settings', { readerable: true }))).toEqual([])
+  })
+
+  it('the Reader View row opens Reader View for the tab by the offer’s door, and the sheet leaves', async () => {
+    // Off the chassis whose chrome lies under the pages the crossing is the core's plain toggle
+    // (the rendered sheet below runs it on the phone).
+    const article = tab('https://news.example.com/story', { readerable: true })
+    const [reader] = phonePillChips(state(article), article, ctx).filter((c) => c.id === 'reader')
+    uiStore.set({ siteInfoOpen: true })
+    siteInfoStore.set({ tabId: 't1', anchor: null })
+    reader!.row!.activate()
+    expect(uiStore.get().siteInfoOpen).toBe(false)
+    await vi.waitFor(() =>
+      expect(invoke.mock.calls.map(([name]) => name)).toContain('reader.toggle')
+    )
+    const [, args] = invoke.mock.calls.find(([name]) => name === 'reader.toggle')!
+    expect(args).toEqual({ tabId: 't1' })
+  })
 })
 
 describe('the quiet notification ask in the pill (NOT-03)', () => {
@@ -985,6 +1048,74 @@ describe('the site-information sheet lists the chips as rows', () => {
       'Requests blocked, 5',
       'Translate this page, German to English'
     ])
+  })
+
+  /*
+   * PUI-14: the Reader View row on an article page (§9.29 names the reader chip among the
+   * sheet's rows), named for TalkBack by the app menu's word for the same door, after the
+   * translate offer; its tap begins the reader crossing (MOT-36) on the picture the sheet
+   * holds of the page, in the same turn – the menu row's way – and the sheet leaves. Absent on
+   * a page the probe did not read as an article.
+   */
+  it('lists Reader View after the offer on an article page, named plainly, with the book glyph; not on a plain page', async () => {
+    const article = { ...counted, url: 'https://news.example.com/story', readerable: true }
+    await open(offered(state(article)))
+    expect(rows().map((r) => r.getAttribute('aria-label'))).toEqual([
+      'Requests blocked, 5',
+      'Translate this page, German to English',
+      'Reader View'
+    ])
+    const reader = row('Reader View')!
+    expect(reader.querySelector('svg.lucide-book-open-text')).not.toBeNull()
+    expect(reader.querySelector('.zen-sheet-item-value')).toBeNull()
+    act(() => root?.unmount())
+    host?.remove()
+    await open(offered(state(counted)))
+    expect(rows().map((r) => r.getAttribute('aria-label'))).toEqual([
+      'Requests blocked, 5',
+      'Translate this page, German to English'
+    ])
+  })
+
+  it('the Reader View row begins the crossing on the sheet’s picture of the page, and the sheet leaves for the reader', async () => {
+    const { readerCrossingStore } = await import('@renderer/lib/readerTransition')
+    const { applyDrawn, applyLayout, pageViewStore } = await import('@renderer/lib/pageView')
+    const article = { ...page, url: 'https://news.example.com/story', readerable: true }
+    const s = state(article)
+    s.settings = { ...s.settings, reader: { theme: 'light' } } as UIState['settings']
+    await open(s)
+    // The sheet holds the page's picture (the page is under it, off the screen).
+    uiStore.set({ snapshot: 'data:sheet-picture', snapshotTabId: 't1' })
+    pageViewStore.set(
+      applyDrawn(
+        applyLayout(pageViewStore.get(), { contentHidden: true, hid: ['t1'], shown: [] }),
+        't1',
+        false
+      )
+    )
+    try {
+      act(() => row('Reader View')!.click())
+      // Synchronously, on the held picture: the page never comes back between the sheet's going
+      // and the surface's coming.
+      expect(readerCrossingStore.get().crossing).toMatchObject({
+        tabId: 't1',
+        crossing: 'enter',
+        phase: 'covering',
+        picture: 'data:sheet-picture'
+      })
+      expect(commands()).not.toContain('reader.toggle')
+      await vi.waitFor(() => expect(uiStore.get().siteInfoOpen).toBe(false))
+      // Covered already: the core is asked to cross – the offer's and the menu row's door – and
+      // nothing else was asked of it.
+      await vi.waitFor(() => expect(commands()).toContain('reader.toggle'))
+      expect(readerCrossingStore.get().crossing?.phase).toBe('loading')
+      const [, args] = invoke.mock.calls.find(([name]) => name === 'reader.toggle')!
+      expect(args).toEqual({ tabId: 't1' })
+    } finally {
+      readerCrossingStore.set({ crossing: null })
+      pageViewStore.set({ phases: new Map(), lastApplied: null })
+      uiStore.set({ snapshot: null, snapshotTabId: null })
+    }
   })
 
   /*

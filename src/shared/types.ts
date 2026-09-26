@@ -408,9 +408,12 @@ export type WindowSyncMode = 'all' | 'pinned' | 'off'
  * What a window's chrome shows: the sidebar with spaces and tabs; for the sized windows pages
  * open with `window.open(url, name, 'width=…')` a single toolbar row above the page; for a web
  * app launched standalone (`zenium --app=<url>`, an installed app's launcher) no browser chrome
- * at all, only the app's own title bar (Chrome's app window).
+ * at all, only the app's own title bar (Chrome's app window); for a utility window holding one
+ * of the chrome's own pages (the task manager on Shift+Esc, as Chrome's and Edge's task manager
+ * is a window of its own) no browser chrome and no title row of the chrome's either – the OS
+ * frame and the page alone (`page`).
  */
-export type WindowChrome = 'full' | 'popup' | 'app'
+export type WindowChrome = 'full' | 'popup' | 'app' | 'page'
 
 /**
  * The web app a standalone window (`WindowChrome` `app`) is showing: its name and icon for the
@@ -431,6 +434,51 @@ export interface AppWindowInfo {
 }
 /** System-drawn material behind a translucent chrome (Windows 11). */
 export type WindowMaterial = 'none' | 'mica'
+
+/**
+ * Where a page's utility window (`WindowChrome` `page`) last stood: its normal bounds and the
+ * display they were on, so the task manager comes back where it was left, as Chrome's does.
+ */
+export interface PageWindowPlacement {
+  bounds: Rect
+  displayId: number | null
+}
+
+/**
+ * The page windows' device-local placements by page id (`BrowserState.pageWindowsDevice`, the
+ * shape of `newTabDevice`): never synced – a window's place is this screen's.
+ */
+export type PageWindowsDeviceState = Record<string, PageWindowPlacement>
+
+export function emptyPageWindows(): PageWindowsDeviceState {
+  return {}
+}
+
+/** `raw` as a `PageWindowsDeviceState`: every entry that is not a whole placement is dropped. */
+export function sanitizePageWindows(raw: unknown): PageWindowsDeviceState {
+  const out: PageWindowsDeviceState = {}
+  if (!raw || typeof raw !== 'object') return out
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!value || typeof value !== 'object') continue
+    const entry = value as { bounds?: unknown; displayId?: unknown }
+    const b = entry.bounds as Partial<Record<keyof Rect, unknown>> | null | undefined
+    if (
+      !b ||
+      typeof b !== 'object' ||
+      typeof b.x !== 'number' ||
+      typeof b.y !== 'number' ||
+      typeof b.width !== 'number' ||
+      typeof b.height !== 'number' ||
+      ![b.x, b.y, b.width, b.height].every(Number.isFinite)
+    )
+      continue
+    out[id] = {
+      bounds: { x: b.x, y: b.y, width: b.width, height: b.height },
+      displayId: typeof entry.displayId === 'number' ? entry.displayId : null
+    }
+  }
+  return out
+}
 
 // ---------------------------------------------------------------------------
 // Themes (Zen's gradient theme picker)
@@ -2052,6 +2100,27 @@ export interface SearchEngineControl {
   extensionName: string
 }
 
+/**
+ * The extension holding a setting (`UIState.extensionControls`): Chrome's "An extension is
+ * controlling this setting" as the Settings page draws it – the row's control disabled, the
+ * indicator line "Controlled by <name>" and a Disable button under the row (`RowBase.
+ * controlled`). The user's own value is kept underneath and stands again when the extension
+ * lets go, is disabled or is uninstalled; the extension host publishes the map from the layers
+ * its APIs keep over the settings (`chrome.fontSettings` today; `privacy.*`, `proxy` as they
+ * take the primitive).
+ */
+export interface ExtensionControl {
+  extensionId: string
+  /** The extension's name as the Extensions page shows it. */
+  name: string
+  /**
+   * The extension's value, the one in effect: the disabled control shows it, as Chrome's
+   * shows the preference's effective value (a family's name, a size in px, a toggle's state),
+   * over the user's own kept in the setting. Absent, the row keeps to the setting's value.
+   */
+  value?: string | number | boolean
+}
+
 export interface SearchEngine {
   id: string
   name: string
@@ -2278,8 +2347,10 @@ export type ShortcutAction =
   | 'devtools.console'
   | 'devtools.browserConsole'
   /**
-   * Chrome's task manager (Shift+Esc; More Tools › Task Manager): the `zen://tasks` page tab –
-   * every process with its memory and CPU, End process (`core/tasks.ts`); desktop layouts only.
+   * Chrome's task manager (Shift+Esc; More Tools › Task Manager): the `zen://tasks` page – every
+   * process with its memory and CPU, End process (`core/tasks.ts`) – in a window of its own on a
+   * host with windows (`WindowChrome` `page`, one per profile, focused when open;
+   * `Browser.openTaskManager`), as a page tab on a host with one window; desktop layouts only.
    */
   | 'tasks.open'
   | 'settings.open'
@@ -3964,6 +4035,13 @@ export interface UIState {
   searchEngines: SearchEngine[]
   /** The extension holding the default search engine, if one does (`defaultSearchEngineOf`). */
   searchEngineControl: SearchEngineControl | null
+  /**
+   * The settings an extension holds, keyed by the setting's path in `Settings` (`fonts.
+   * standard`, `fonts.size`, `fonts.minimumSize`) or by a name for a setting kept elsewhere
+   * (`proxy`), each the controlling extension; empty when none is. A Settings row whose key is
+   * in the map draws Chrome's extension-controlled indicator (`ExtensionControl`).
+   */
+  extensionControls: Record<string, ExtensionControl>
   glance: GlanceState | null
   compactSidebarRevealed: boolean
   window: WindowState
@@ -4280,6 +4358,12 @@ export interface MenuItemDescriptor {
    * away by the host's focus move.
    */
   keepsKeyboard?: boolean
+  /**
+   * The shortcut action the item stands for, when its template named one: the chrome can then
+   * recognise a row by what it does rather than by its label – the phone's Reader View crossing
+   * takes the page under its picture before the core's toggle runs (`lib/readerTransition.ts`).
+   */
+  action?: ShortcutAction
 }
 
 /**

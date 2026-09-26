@@ -12,19 +12,24 @@ name: Android media demo
 # takes about fifteen minutes and says nothing about a change being correct. Same caveats as the
 # gesture demo about frame rate and the software GPU (the renderer is the shared workflow's
 # default). The build, the emulator and the Gradle cache live in android-emulator-demo.yml; this
-# file only picks the driver: `driver=engine` (MediaDemo, the default) or `driver=ui` (MediaUiDemo:
+# file only picks the driver: `driver=engine` (MediaDemo, the default), `driver=ui` (MediaUiDemo:
 # the Now playing chip and the media sheet with every control under a finger, the Picture in
-# picture and Switch to tab rows, Settings > Notifications; stills `services-android-media-android-ui-*`).
+# picture and Switch to tab rows, Settings > Notifications; stills `services-android-media-android-ui-*`)
+# or `driver=pip` (PipDemo: the picture-in-picture window's life in both schemes – the auto-enter
+# from a fullscreen clip on Home with the entry traced, the window's actions under a finger, the
+# expand, the X, the host's endings on a navigation, a tab change and the tab's close, and Home
+# with no fullscreen video; stills `android-pip-*`).
 on:
   workflow_dispatch:
     inputs:
       driver:
-        description: Which driver runs – the engine (MediaDemo) or the in-app controls (MediaUiDemo, `services-android-media-android-ui-*`)
+        description: Which driver runs – the engine (MediaDemo), the in-app controls (MediaUiDemo, `services-android-media-android-ui-*`) or the picture-in-picture window (PipDemo, `android-pip-*`)
         required: true
         type: choice
         options:
           - engine
           - ui
+          - pip
         default: engine
 
 permissions:
@@ -53,11 +58,11 @@ jobs:
       emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
       # The shared driver picks the demo from its environment (see the script's header).
       script-env: |
-        DEMO_CLASS=${{ inputs.driver == 'ui' && 'app.zen.chromium.MediaUiDemo' || 'app.zen.chromium.MediaDemo' }}
+        DEMO_CLASS=${{ inputs.driver == 'pip' && 'app.zen.chromium.PipDemo' || inputs.driver == 'ui' && 'app.zen.chromium.MediaUiDemo' || 'app.zen.chromium.MediaDemo' }}
         DEMO_DIR=media-demo
         DEMO_OUT=artifacts/android-media-demo
-        DEMO_VIDEO=${{ inputs.driver == 'ui' && 'services-android-media-android-ui-run.mp4' || 'services-android-media-android-run.mp4' }}
-        DEMO_REVOKE=${{ inputs.driver == 'ui' && '' || 'android.permission.POST_NOTIFICATIONS' }}
+        DEMO_VIDEO=${{ inputs.driver == 'pip' && 'android-pip-run.mp4' || inputs.driver == 'ui' && 'services-android-media-android-ui-run.mp4' || 'services-android-media-android-run.mp4' }}
+        DEMO_REVOKE=${{ inputs.driver == 'engine' && 'android.permission.POST_NOTIFICATIONS' || '' }}
         WEBVIEW_APK=artifacts/webview/SystemWebView.apk
       # The `AndroidDesktop_x64` snapshot ships com.android.webview with x86_64 native code (the
       # plain `Android` snapshot is armeabi-v7a only and cannot be dlopen'ed on an x86_64 emulator).
@@ -89,11 +94,11 @@ jobs:
       emulator-gpu: swiftshader_indirect
       emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
       script-env: |
-        DEMO_CLASS=${{ inputs.driver == 'ui' && 'app.zen.chromium.MediaUiDemo' || 'app.zen.chromium.MediaDemo' }}
+        DEMO_CLASS=${{ inputs.driver == 'pip' && 'app.zen.chromium.PipDemo' || inputs.driver == 'ui' && 'app.zen.chromium.MediaUiDemo' || 'app.zen.chromium.MediaDemo' }}
         DEMO_DIR=media-demo
         DEMO_OUT=artifacts/android-media-demo
-        DEMO_VIDEO=${{ inputs.driver == 'ui' && 'services-android-media-android-ui-run.mp4' || 'services-android-media-android-run.mp4' }}
-        DEMO_REVOKE=${{ inputs.driver == 'ui' && '' || 'android.permission.POST_NOTIFICATIONS' }}
+        DEMO_VIDEO=${{ inputs.driver == 'pip' && 'android-pip-run.mp4' || inputs.driver == 'ui' && 'services-android-media-android-ui-run.mp4' || 'services-android-media-android-run.mp4' }}
+        DEMO_REVOKE=${{ inputs.driver == 'engine' && 'android.permission.POST_NOTIFICATIONS' || '' }}
         WEBVIEW_APK=artifacts/webview/SystemWebView.apk
       setup-script: |
         base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
