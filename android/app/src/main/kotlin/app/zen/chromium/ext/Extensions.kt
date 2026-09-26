@@ -47,6 +47,7 @@ import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.InputStream
+import java.lang.ref.WeakReference
 import java.security.SecureRandom
 import java.util.Locale
 import java.util.WeakHashMap
@@ -119,6 +120,13 @@ class Extensions(private val host: Host) {
     private val compiler = UnitCompiler { bootstrap }
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor { r -> Thread(r, "zen-ext") }
+
+    /**
+     * Set by [destroy] (main thread): nothing is installed or held after it. A configure whose
+     * compile was in flight lands on it and installs nothing; a configure asked after it is
+     * refused – the old core runs on for a moment after its WebView is destroyed.
+     */
+    @Volatile private var destroyed = false
 
     /**
      * One document-start script of one extension, injected into frames whose origin matches
@@ -686,6 +694,12 @@ class Extensions(private val host: Host) {
         val name = args.str("name").ifEmpty { id }
         val debug = args.bool("debug", true)
         val epoch = attachEpochs.current(id)
+        // The runtime is destroyed (its io executor with it): the old core asking after its
+        // WebView went is told so, instead of an executor's refusal.
+        if (destroyed) {
+            reply(Host.Rejection("The extension runtime is destroyed"))
+            return
+        }
         io.execute {
             val started = System.nanoTime()
             val dir = recordDir(args.str("path"))
@@ -695,7 +709,9 @@ class Extensions(private val host: Host) {
             }
             // The plan as it arrives, before a file is read: what the compile is about to do
             // and the heap it does it on (compat round 21 – a 60-unit plan met a heap the
-            // blocking engine's rules had half filled, and only the death told of it).
+            // blocking engine's rules had half filled, and only the death told of it), and
+            // whether the runtime destroyed before this one is collected yet (round 21b – a
+            // browser restarted in the same process compiled on top of the old runtime's units).
             val planned = args.arr("units")
             val runtime = Runtime.getRuntime()
             Log.i(
@@ -703,7 +719,8 @@ class Extensions(private val host: Host) {
                 "configure ${id.take(8)} ${args.str("version")}: ${planned.length()} unit(s) planned, " +
                     "${(0 until planned.length()).sumOf { i -> planned.optJSONObject(i)?.optString("config")?.length ?: 0 }} config chars, " +
                     "shapes ${(0 until planned.length()).map { i -> planned.optJSONObject(i)?.optString("shape", ExtensionScripts.SHAPE_WHOLE) ?: ExtensionScripts.SHAPE_WHOLE }.groupingBy { it }.eachCount().entries.joinToString(" ") { (shape, n) -> "$n $shape" }}, " +
-                    "heap ${(runtime.totalMemory() - runtime.freeMemory()) shr 20}/${runtime.maxMemory() shr 20} MB"
+                    "heap ${(runtime.totalMemory() - runtime.freeMemory()) shr 20}/${runtime.maxMemory() shr 20} MB, " +
+                    "previous runtime ${previousRuntime()}"
             )
             val s = args.obj("served")
             val servedNow = Served(
@@ -735,6 +752,12 @@ class Extensions(private val host: Host) {
                 "ms" to ms
             )
             main.post {
+                // Destroyed while the units compiled: the runtime holds nothing any more, and
+                // the core that asked is gone with its WebView – nothing installed, no answer.
+                if (destroyed) {
+                    Log.i(TAG, "configure of ${id.take(8)} ${servedNow.version} dropped: the runtime was destroyed while its ${compiled.size} unit(s) compiled ($ms ms)")
+                    return@post
+                }
                 // Detached (or reset) while the units compiled: the core has dropped this attach,
                 // and units installed for it now would stay on every tab until the next one.
                 if (!attachEpochs.isCurrent(id, epoch)) {
@@ -2378,7 +2401,26 @@ class Extensions(private val host: Host) {
     fun onBridgeMessageFromPage(view: WebView, data: String?, origin: Uri, isMainFrame: Boolean, proxy: JavaScriptReplyProxy) =
         onBridgeMessage(view, data, origin, isMainFrame, proxy, "page", slot = null)
 
+    /**
+     * The window's runtime goes with the window. Besides its pages, sheets and seams, it lets go
+     * of everything it holds for the tabs – the compiler's compiled units and soft-held sources,
+     * the units installed per extension, the served records, the per-view handlers, the
+     * endpoints, the frames, the held pages, the world slots, the configure stats – so that its
+     * retained size is nothing whatever still refers to it. A browser restarted in the same
+     * process (`MainActivity` started over the old one with `CLEAR_TASK`: the compat sweep's
+     * restart proof, an app link or a shortcut into a running process) builds a new runtime
+     * while the old one is still referenced for some seconds – by the tab WebViews' bridge
+     * listeners ([attach]'s `addWebMessageListener` closures capture it, and a destroyed
+     * WebView's Java object lives until the view tree and the WebView's own cleanup let it go),
+     * by the old core's `@JavascriptInterface` hop while that core runs on for a moment after
+     * its WebView is destroyed, by any lambda still queued on the main handler – and the new
+     * runtime's configure compiled the same extensions on top of the old one's units: on a
+     * 192 MB heap Adblock Ad Blocker Pro's 66 MB twice, and the new carrier's builder found 25 MB
+     * free (compat round 21b, the class's second trigger). The last destroyed runtime is kept
+     * weakly ([lastDestroyed]) so the next one's configure line can say whether it was collected.
+     */
     fun destroy() {
+        destroyed = true
         closePopup()
         closeAuthSheets()
         releaseKeepAwake()
@@ -2395,11 +2437,54 @@ class Extensions(private val host: Host) {
         }
         if (host.blocking.redirector === redirector) host.blocking.redirector = null
         if (host.blocking.headerStage === headerStage) host.blocking.headerStage = null
+        // The release. The compiler does not wait on a compile in flight: that compile sees
+        // the close at its next unit and releases (`UnitCompiler.close`).
+        val released = compiler.close()
+        val installedUnits = units.values.sumOf { it.size }
+        val installedChars = units.values.sumOf { list -> list.sumOf { it.script.length.toLong() } }
+        units.clear()
+        served = emptyMap()
+        configureStats.clear()
+        handlers.clear()
+        endpoints.clear()
+        frames.clear()
+        heldPages.expect(emptyList())
+        worldSlots.clear()
+        pendingNotificationEvents.clear()
+        forward.forgetAll()
+        lastDestroyed = WeakReference(this)
+        lastDestroyedAt = SystemClock.uptimeMillis()
+        Log.i(
+            TAG,
+            "destroy: released $installedUnits installed unit(s) of $installedChars chars; compiler " +
+                (if (released.deferred) "releasing in the compile in flight" else "${released.extensions} extension(s), ${released.units} unit(s) of ${released.unitChars} chars, ${released.sources} held source(s)")
+        )
+    }
+
+    /**
+     * The runtime destroyed last in this process against this one, for the configure line:
+     * `none` (the first runtime of the process), `collected` (its weak reference cleared – the GC
+     * found nothing referring to it), or not yet, with the seconds since its destroy (a GC has
+     * not run since, or something still refers to it – its retained size is nothing either way,
+     * [destroy] having released it).
+     */
+    private fun previousRuntime(): String {
+        val ref = lastDestroyed ?: return "none"
+        if (ref.get() == null) return "collected"
+        return "not collected yet (destroyed ${(SystemClock.uptimeMillis() - lastDestroyedAt) / 1000} s ago, released)"
     }
 
     companion object {
         const val TAG = "ZenExt"
         const val BRIDGE = "__zenExtBridge"
+
+        /**
+         * The runtime [destroy]ed last in this process, weakly, and when: the next runtime's
+         * configure line says whether it has been collected (see [previousRuntime]). A weak
+         * reference holds nothing up; a strong one here would be the referrer this round looks for.
+         */
+        @Volatile private var lastDestroyed: WeakReference<Extensions>? = null
+        @Volatile private var lastDestroyedAt = 0L
         /**
          * Isolated worlds a tab view can host at once (one per extension, two for an extension
          * with a `USER_SCRIPT` world). Each costs one listener registration per tab view at
