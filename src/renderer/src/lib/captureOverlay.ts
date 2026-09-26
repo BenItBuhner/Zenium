@@ -243,7 +243,10 @@ export type CaptureEvent =
   | { type: 'timeout' }
   /** A card's "Select again": back to the dimmed page. */
   | { type: 'again' }
-  /** Escape, from anywhere: the overlay goes. */
+  /**
+   * Escape: one hop back (§9.5's one-hop stack). A drag in progress is let go and the dimmed
+   * page with its toolbar stays for another go; from anywhere else the overlay goes.
+   */
   | { type: 'escape' }
   /** A card's Close, or the toolbar's Cancel. */
   | { type: 'close' }
@@ -270,7 +273,7 @@ export const PAINT_TIMED_OUT = {
 export function captureReducer(phase: CapturePhase, event: CaptureEvent): CapturePhase {
   switch (event.type) {
     case 'escape':
-      return { kind: 'closed' }
+      return phase.kind === 'selecting' && phase.drag ? SELECTING : { kind: 'closed' }
     case 'close':
       return { kind: 'closed' }
     case 'again':

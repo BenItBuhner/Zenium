@@ -5888,6 +5888,14 @@ export interface Commands {
     args: { dataUrl: string; fileName?: string; tabId?: string }
     result: { path: string } | null
   }
+  /**
+   * Offer a captured picture to the browser's share hub (`ShareService`: the Share… menu's
+   * sheet on the desktop, the OS's own sheet where the host has one) as a PNG file under the
+   * screenshot name rule, with the tab's title as the message beside it; `tabId` names the
+   * page it was taken from. True once a sheet has the picture, false where the window has none
+   * to offer it to.
+   */
+  'capture.share': { args: { dataUrl: string; tabId?: string }; result: boolean }
   /** Print through the system dialog (Ctrl+Shift+P; Ctrl+P too on a host without the preview). */
   'page.print': { args: { tabId: string }; result: void }
   /**
@@ -6667,7 +6675,7 @@ export interface Events {
   'screenshot.openLong': { tabId: string }
   /**
    * Web capture asked for its overlay over `tabId`'s page (Ctrl+Shift+S in the Chrome preset,
-   * the app menu's "Web Capture…", the palette): the desktop chrome dims the page's frame over
+   * the app menu's "Screenshot…", the palette): the desktop chrome dims the page's frame over
    * its stand-in and takes the user's region, visible area or full page (`shared/capture.ts`).
    */
   'capture.start': { tabId: string }
