@@ -7,6 +7,7 @@ import { migrateNewTabSettings, sanitizeNewTabSettings } from '../../shared/newT
 import { sanitizeSearchEngines } from '../../shared/search'
 import { sanitizeFontSettings } from '../../shared/fonts'
 import { sanitizeLanguages } from '../../shared/languages'
+import { sanitizeStartupSettings } from '../startup'
 import {
   createTabRecord,
   getSpace,
@@ -238,11 +239,14 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
         // A peer on an older build still sends the device-local keys (`DEVICE_LOCAL_SETTINGS`):
         // they are this device's own and never land, whatever the record says.
         const data = withoutDeviceLocalSettings(
-          r.data as Partial<Settings> & { newTabPhone?: unknown }
+          r.data as Partial<Settings> & { newTabPhone?: unknown; restoreSession?: unknown }
         )
         // A peer on a 0.3.x build still sends the phone's frozen `newTabPhone` key: it is folded
-        // into `newTab` and never lands on the settings (else every sync would recreate it).
-        const { compactMode, newTabPhone, ...rest } = data
+        // into `newTab` and never lands on the settings (else every sync would recreate it). The
+        // 0.4.x `restoreSession` switch – sent by a peer on a build before `startup`, and by a
+        // 0.4.83 one as the mirror beside it (`collectLocal`) – is folded into `startup` the same
+        // way and never lands either.
+        const { compactMode, newTabPhone, restoreSession, ...rest } = data
         Object.assign(state.settings, rest)
         if (compactMode)
           Object.assign(state.settings.compactMode, compactMode, { sidebarPersistent: false })
@@ -281,6 +285,18 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
         if ('fonts' in rest) state.settings.fonts = sanitizeFontSettings(rest.fonts)
         if ('languages' in rest)
           state.settings.languages = sanitizeLanguages(rest.languages, state.settings.languages)
+        // Settings › On startup: a peer's `startup` is read like a profile's own (a mode this
+        // build does not know reads as the default's, the list as web addresses, capped); a peer
+        // that carries only the old switch – the two keys are one group, so the record carries
+        // what the peer holds of both – sets the mode it stands for, on "Continue where you left
+        // off", off "Open the New Tab page", over this device's own pages: a two-state switch
+        // cannot speak of a list, and a later return to `pages` here finds them.
+        if ('startup' in rest) state.settings.startup = sanitizeStartupSettings(rest.startup)
+        else if (typeof restoreSession === 'boolean')
+          state.settings.startup = {
+            mode: restoreSession ? 'continue' : 'newTab',
+            pages: state.settings.startup.pages
+          }
         break
       }
       case 'site-data': {
