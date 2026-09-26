@@ -1509,6 +1509,53 @@ describe('the section model', () => {
     expect(row(packed, 'newtab-add-shortcut').disabled).toBe(true)
   })
 
+  it('NTP-16: a Cards row beside Layout on the phone layout opens the stack’s own Show list – the second door to the one setting (§9.29); the other layouts have no stack and no row', async () => {
+    const { magicStackCustomizeStore, closeMagicStackCustomize } =
+      await import('@renderer/components/newtab/magicStackCustomize')
+    const host = state({ capabilities: { ...ANDROID, newTabPage: true } } as Partial<UIState>)
+    const on = (layout: FormFactor): Model =>
+      buildSections(availableSections(PAGE, host.capabilities, layout), {
+        ...context(host).ctx,
+        formFactor: layout
+      }).find((m) => m.section.id === 'newtab')!
+    const phone = on('phone')
+    const group = phone.groups[0]!
+    expect(group.heading).toBe('New tab page')
+    const ids = group.rows.map((r) => r.id)
+    expect(ids.indexOf('newtab-cards')).toBe(ids.indexOf('newtab-layout') + 1)
+    expect(ids.indexOf('newtab-shortcuts')).toBe(ids.indexOf('newtab-cards') + 1)
+    const cards = row(phone, 'newtab-cards')
+    if (cards.kind !== 'action') throw new Error('not an action')
+    expect(cards).toMatchObject({
+      label: 'Cards',
+      description: 'Choose which cards show under the shortcuts',
+      leaves: 'chevron',
+      layouts: ['phone']
+    })
+    expect(cards.page).toBeUndefined()
+    expect(rowText(cards)).not.toMatch(/magic stack/i)
+    // The press opens the very sheet the page's gear opens – a store, not a page or a copy.
+    expect(magicStackCustomizeStore.get().open).toBe(false)
+    cards.onPress?.()
+    expect(magicStackCustomizeStore.get().open).toBe(true)
+    closeMagicStackCustomize()
+    expect(invoke).not.toHaveBeenCalledWith('newtab.setModuleHidden', expect.anything())
+    // The landing's search reaches it by what the cards hold.
+    for (const query of ['recently closed', 'downloads', 'default browser']) {
+      expect(
+        searchRows([phone], query).map((h) => h.row.id),
+        query
+      ).toContain('newtab-cards')
+    }
+    // The desktop and the tablet: the page keeps its rows, and this one is not among them.
+    for (const layout of ['desktop', 'tablet'] as const) {
+      const model = on(layout)
+      const rows = allRows(model.groups).map((r) => r.id)
+      expect(rows, layout).toContain('newtab-layout')
+      expect(rows, layout).not.toContain('newtab-cards')
+    }
+  })
+
   it('carries #92’s Passwords rows: the ways into the manager, the preferences, protection and lock, import and export; behind `passwords`', async () => {
     const without = { ...ANDROID, passwords: false }
     expect(availableSections(PAGE, without, 'phone').some((s) => s.id === 'passwords')).toBe(false)
@@ -3586,7 +3633,7 @@ describe('what a row does', () => {
       ])
     })
 
-    it('"Choose your search engine again" (W6-2) stands in the EEA or over a record, on the desktop and tablet, and asks the core for the screen', () => {
+    it('"Choose your search engine again" (W6-2) stands in the EEA or over a record, on every layout, and asks the core for the screen', () => {
       const eea = { region: 'DE', eea: true, required: false, seed: 1 }
       const elsewhere = { region: 'US', eea: false, required: false, seed: 1 }
       const record = { engineId: 'duckduckgo', region: 'DE', madeAt: 1, version: 1 }
@@ -3600,15 +3647,17 @@ describe('what a row does', () => {
       if (again.kind !== 'action') throw new Error('not an action')
       expect(again).toMatchObject({
         label: 'Choose your search engine again',
-        button: 'Choose…',
-        layouts: ['desktop', 'tablet']
+        button: 'Choose…'
       })
+      // The phone draws the screen too (OMN-26): the row is not kept from any layout.
+      expect(again.layouts).toBeUndefined()
       expect(again.description).toMatch(/random order/)
       expect(inEea.groups[0]!.rows.map((r) => r.id)).toEqual(
         expect.arrayContaining(['search-engine', 'search-choice-again'])
       )
       again.onPress?.()
       expect(invoke).toHaveBeenCalledWith('searchChoice.askAgain', undefined)
+      expect(findRow(onLayout(inEea.groups, 'phone'), 'search-choice-again')).not.toBeNull()
 
       // A device that left the EEA keeps the row while its record stands.
       const recorded = buildSection(def, {

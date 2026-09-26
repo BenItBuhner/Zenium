@@ -30,6 +30,8 @@ import {
 import { browserStore, pushToast } from '@renderer/lib/ui'
 import { RowView, type RowContext } from '../pages/settings/rows'
 import { PhoneSheet } from '../phone/PhoneSheet'
+import type { BottomSheetHandle } from '../sheet/BottomSheet'
+import { openMagicStackCustomize } from './magicStackCustomize'
 
 const PRESET_LABELS: Record<NewTabPreset, string> = {
   focused: 'Focused',
@@ -82,6 +84,7 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
   const sections = newTabSections(settings)
   const image = wallpaperImageStore.use()
   const fileInput = useRef<HTMLInputElement>(null)
+  const sheet = useRef<BottomSheetHandle>(null)
   /** The picked picture is being read and scaled: the button shows a spinner meanwhile (§9.30). */
   const [reading, setReading] = useState(false)
 
@@ -119,8 +122,31 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
       name="newtab-customize"
       title={{ pose: 'header', text: 'New tab page' }}
       onClose={closeCustomize}
+      sheetRef={sheet}
     >
       <div className="zen-ntp-customize flex flex-col pb-1">
+        {/*
+          The cards (NTP-16, Chrome's Magic Stack – "Cards" to the user) are chosen on their own
+          sheet, and this row is one of its two doors (§9.29; the other is Settings › New tab
+          page): a card's ⋮ opens it too, but with every card hidden the stack has no ⋮ to offer,
+          so the row is the way back. It stands at the sheet's head, above Layout, a hairline
+          after it (§9.13 seats a control panel's action rows first): a row cut at the fold is
+          the pull's affordance, and the row is never below one. This sheet leaves first (§9.24:
+          one sheet over the page), and the stack's comes up as it has gone.
+        */}
+        <RowView
+          ctx={NO_SHEETS}
+          row={{
+            id: 'magic-stack',
+            kind: 'action',
+            label: 'Cards',
+            description: 'Choose which cards show under the shortcuts',
+            leaves: 'chevron',
+            onPress: () => sheet.current?.dismiss(openMagicStackCustomize)
+          }}
+        />
+        <div className="zen-sheet-sep shrink-0" aria-hidden />
+
         <Section title="Layout">
           <div role="radiogroup" aria-label="Layout" className="zen-ntp-preset-grid">
             {NEW_TAB_PRESETS.map((preset) => (

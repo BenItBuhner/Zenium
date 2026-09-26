@@ -17,7 +17,8 @@
  *   the third-party rule; `document.cookie` is out of reach this way, which is why the cookie
  *   jar drops a never-site's cookies as they land: `CookiePolicyEnforcer` in `siteData.ts`).
  *   `navigator.globalPrivacyControl` and `navigator.doNotTrack` come from the page preload,
- *   which asks for the signals over sync IPC at document start. Do Not Track has a second
+ *   which gets the signals in its one document-start ask (the `signals` field of
+ *   `documentStart.ts`'s answer, provided here). Do Not Track has a second
  *   source beside the user's setting: an extension's `chrome.privacy.websites.doNotTrackEnabled`
  *   ({@link DoNotTrackSource}, the extension layer's effective value), whose `DNT: 1` header the
  *   extension layer's own request hook adds; the page's `navigator.doNotTrack` says the same.
@@ -26,7 +27,7 @@
  * - Secure DNS: `app.configureHostResolver`, whenever the mode or the templates change.
  * - The bundled Safe Browsing snapshot (`resources/safebrowsing/<feed>.json`).
  */
-import { app, ipcMain, type WebContents } from 'electron'
+import { app, type WebContents } from 'electron'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { gunzipSync } from 'node:zlib'
@@ -35,8 +36,9 @@ import type { LookalikeTableName, PrivacyHost } from '../../core/platform'
 import { cookiesWithheld, isPreloadRequest, signalHeaders } from '../../core/protection/policy'
 import type { LookalikeVerdict, PrivacyFlags, SafeBrowsingHit } from '../../shared/privacy'
 import type { SiteDataPolicy } from '../../shared/siteData'
-import { PRIVACY_SIGNALS_CHANNEL, type PrivacySignals } from '../../shared/privacySignals'
+import type { PrivacySignals } from '../../shared/privacySignals'
 import type { ElectronBlocking } from './blocking'
+import { registerDocumentStartProvider } from './documentStart'
 import {
   HANDLER_ORDER,
   applyRequestHeaderOps,
@@ -285,8 +287,9 @@ export class ElectronPrivacy implements PrivacyHost {
 
   /**
    * The extension layer's Do Not Track value joins the user's setting in {@link signals}, and the
-   * preload's IPC asks for the signals of the sender's kind of window (private or not). Wired by
-   * the platform once the extension API host exists; before that the answers are the user's alone.
+   * preload's document-start ask gets the signals of the sender's kind of window (private or
+   * not). Wired by the platform once the extension API host exists; before that the answers are
+   * the user's alone.
    */
   attachExtensionSignals(
     source: DoNotTrackSource,
@@ -308,14 +311,15 @@ export class ElectronPrivacy implements PrivacyHost {
 
   /**
    * Register with the request pipeline: the handlers, the decision observer that reports
-   * main-frame upgrades to their tabs, and the preload's IPC. Once, before any page loads.
+   * main-frame upgrades to their tabs, and the `signals` field of the page preload's
+   * document-start answer. Once, before any page loads.
    */
   attach(blocking: ElectronBlocking): void {
     for (const handler of this.handlers()) blocking.multiplexer.register(handler)
     blocking.onDecision((request, decision) => this.observeDecision(request, decision))
-    ipcMain.on(PRIVACY_SIGNALS_CHANNEL, (event) => {
-      event.returnValue = this.signals(this.privateSender(event.sender))
-    })
+    registerDocumentStartProvider('signals', (event) =>
+      this.signals(this.privateSender(event.sender))
+    )
   }
 
   /**

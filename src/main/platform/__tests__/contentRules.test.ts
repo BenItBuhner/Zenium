@@ -1,15 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { RequestContext } from '../../../core/blocking/rules'
 import type { PermissionRequestDetails } from '../../../core/permissions'
-import type { ContentRuleId } from '../../../shared/contentRules'
+import type { ContentGuardId } from '../../../shared/contentGuards'
 import type { HostRequest, WebRequestBase } from '../webRequest'
 
 vi.mock('electron', () => ({
   ipcMain: { on: () => undefined }
 }))
 
-const { ContentRulesHandler, guardsForSender, isPdfResponse, requestDetails } =
+const { ContentRulesHandler, attachContentGuards, guardsForSender, isPdfResponse, requestDetails } =
   await import('../contentRules')
+const { documentStart } = await import('../documentStart')
 const { HANDLER_ORDER } = await import('../webRequest')
 
 function request(
@@ -36,7 +37,7 @@ function request(
 /** The core's answers: the sites listed are refused the row (per container where named). */
 function lookup(denied: Record<string, string[]>): {
   allows: (id: string, url: string, details?: PermissionRequestDetails) => boolean
-  blockedGuards: (url: string, details?: PermissionRequestDetails) => ContentRuleId[]
+  blockedGuards: (url: string, details?: PermissionRequestDetails) => ContentGuardId[]
   asked: Array<[string, string, PermissionRequestDetails | undefined]>
 } {
   const asked: Array<[string, string, PermissionRequestDetails | undefined]> = []
@@ -52,7 +53,7 @@ function lookup(denied: Record<string, string[]>): {
       return !refused(id, url, details)
     },
     blockedGuards: (url, details) =>
-      (['sensors', 'third-party-sign-in', 'payment-handler'] as ContentRuleId[]).filter((id) =>
+      (['sensors', 'third-party-sign-in', 'payment-handler'] as ContentGuardId[]).filter((id) =>
         refused(id, url, details)
       )
   }
@@ -223,5 +224,31 @@ describe('guardsForSender', () => {
       guardsForSender(rules, asEvent(sender('https://still.example/', true)), containerOf)
     ).toEqual([])
     expect(guardsForSender(rules, asEvent({ sender: undefined }), containerOf)).toEqual([])
+  })
+
+  it("is the `guards` field of the page preload's document-start answer once attached", () => {
+    const rules = lookup({ sensors: ['https://still.example'] })
+    attachContentGuards(rules, () => 'default')
+    const ask = (e: { sender: unknown }): unknown =>
+      documentStart.answer(
+        { ...e, senderFrame: null } as unknown as Parameters<typeof documentStart.answer>[0],
+        { url: 'https://still.example/a' }
+      ).guards
+    expect(ask(sender('https://still.example/a'))).toEqual(['sensors'])
+    expect(ask(sender('https://fine.example/'))).toEqual([])
+    // The other fields stay at their defaults here: nobody else registered in this test.
+    expect(
+      documentStart.answer(
+        { ...sender('https://still.example/'), senderFrame: null } as unknown as Parameters<
+          typeof documentStart.answer
+        >[0],
+        { url: '' }
+      )
+    ).toEqual({
+      signals: { gpc: false, dnt: false },
+      displayMode: 'browser',
+      guards: ['sensors'],
+      userScripts: []
+    })
   })
 })

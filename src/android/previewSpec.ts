@@ -43,6 +43,8 @@ export type PreviewStep =
   | { kind: 'back' }
   | { kind: 'overview' }
   | { kind: 'urlbar' }
+  /** The new tab page's cards strip (NTP-16) at its nth card, 1-based (`cards:<n>`). */
+  | { kind: 'cards'; page: number }
 
 /**
  * The chrome's own sheets a preview state may open by name (`sheet=<name>`): the Extensions
@@ -264,8 +266,23 @@ export type PreviewAutofillSurface = (typeof PREVIEW_AUTOFILL)[number]
 export const PREVIEW_MEDIA = ['audio', 'paused', 'video', 'elsewhere'] as const
 export type PreviewMediaVariant = (typeof PREVIEW_MEDIA)[number]
 
+/**
+ * The phone's first-run tour at one of its steps (`firstrun=<step>`; `overlays/PhoneOnboarding.tsx`):
+ * a profile seeded with `onboardingDone: false` has the tour up at its welcome, and the state
+ * presses through the steps before the one asked for. With `region=<EEA code>` on the host the
+ * search step is the EEA's search-engine choice screen (OMN-26).
+ */
+export const PREVIEW_FIRSTRUN_STEPS = ['welcome', 'look', 'search', 'default'] as const
+export type PreviewFirstRunStep = (typeof PREVIEW_FIRSTRUN_STEPS)[number]
+
 export type PreviewState =
   | { kind: 'idle' }
+  | {
+      /** The phone's first-run tour at `step`; `then` steps are taken once it is there. */
+      kind: 'firstrun'
+      step: PreviewFirstRunStep
+      then?: PreviewStep[]
+    }
   | {
       kind: 'autofill'
       surface: PreviewAutofillSurface
@@ -371,7 +388,8 @@ export type PreviewState =
       /**
        * Steps taken on the page once it is at its pose (`then=`): `press:<tile>` rests a finger
        * on a tile and lifts it, so its hold menu comes up (NTP-06); `tap:Edit Shortcut…` after
-       * it opens the edit sheet.
+       * it opens the edit sheet; `cards:<n>` puts the cards strip (NTP-16) on its nth card, the
+       * strip's own scroll set to the card's snap position – the dots take no tap.
        */
       then?: PreviewStep[]
       /**
@@ -712,7 +730,9 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
 }
 
 /**
- * A preview state spec is a query string: `idle` (or anything unrecognised), `page=<id>` for an
+ * A preview state spec is a query string: `idle` (or anything unrecognised), `firstrun=<step>`
+ * for the phone's first-run tour at one of PREVIEW_FIRSTRUN_STEPS (on a profile seeded with
+ * `onboardingDone: false`; `then=<steps>` takes steps on the step), `page=<id>` for an
  * internal page opened in its tab (`section=<id>` for one of its sections, `search=<text>` types
  * into its search field, `show=<text>` scrolls a row into view, `then=<steps>` takes steps on it
  * afterwards, `;`-separated: `tap:<text>`, `hold:<text>`, `type:<id>=<text>`, `back`,
@@ -818,6 +838,16 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  */
 export function parsePreviewSpec(spec: string): PreviewState {
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
+  const firstrun = params.get('firstrun')
+  if (firstrun !== null && (PREVIEW_FIRSTRUN_STEPS as readonly string[]).includes(firstrun)) {
+    const state: Extract<PreviewState, { kind: 'firstrun' }> = {
+      kind: 'firstrun',
+      step: firstrun as PreviewFirstRunStep
+    }
+    const then = parsePreviewSteps(params.get('then'))
+    if (then.length > 0) state.then = then
+    return state
+  }
   const page = params.get('page')
   if (page !== null && (INTERNAL_PAGE_IDS as readonly string[]).includes(page)) {
     const state: Extract<PreviewState, { kind: 'page' }> = {
@@ -1142,6 +1172,9 @@ export function parsePreviewSteps(list: string | null): PreviewStep[] {
       if (id) steps.push({ kind: 'type', id, text: step.slice(at + 1) })
     } else if (step === 'back' || step === 'overview' || step === 'urlbar') {
       steps.push({ kind: step })
+    } else if (step.startsWith('cards:')) {
+      const page = Number(step.slice('cards:'.length))
+      if (Number.isInteger(page) && page >= 1) steps.push({ kind: 'cards', page })
     }
   }
   return steps
