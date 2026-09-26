@@ -51,7 +51,9 @@ import java.security.SecureRandom
 import java.util.Locale
 import java.util.WeakHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicLongArray
 
 /**
  * The Kotlin half of the extension runtime. The browser core (`src/android/extensionRuntime.ts`,
@@ -246,7 +248,13 @@ class Extensions(private val host: Host) {
      * [WorkerScriptGate]). WebView's IO threads, in the requests' order.
      */
     private val workerScriptGate = WorkerScriptGate()
-    private val endpoints = HashMap<String, Endpoint>()
+    /**
+     * Written on the main thread (a hello, a document gone, an extension stopped) and read there
+     * and on the JavaBridge thread ([sendFromHop]: the reply hop's `ext.send` looks its endpoint
+     * up where it arrives), so a concurrent map – every read off the main thread is a lookup or a
+     * weakly consistent walk of `val` fields.
+     */
+    private val endpoints = ConcurrentHashMap<String, Endpoint>()
     private val backgrounds = HashMap<String, ExtensionWebView>()
     /**
      * How many times each extension's background has been started here since the process came
@@ -337,12 +345,13 @@ class Extensions(private val host: Host) {
      * script's or an extension page's `postMessage`, host-bound), `[1]` events the runtime raised
      * into the chrome's core on their behalf (`ext.*`: a message forwarded, a request observed, an
      * endpoint gone – each an `evaluateJavascript` on the chrome WebView), `[2]` messages from the
-     * host to frames (replies, deliveries, events; page-bound). Always on: three increments.
+     * host to frames (replies, deliveries, events; page-bound). Always on: three increments –
+     * `[2]`'s on the JavaBridge thread as well since the reply hop ([sendFromHop]), so atomic.
      */
-    private val bridgeCounters = LongArray(3)
+    private val bridgeCounters = AtomicLongArray(3)
 
     /** A copy of the bridge counters (see [bridgeCounters]): frames to host, host to chrome, host to frames. */
-    fun bridgeCounts(): LongArray = bridgeCounters.copyOf()
+    fun bridgeCounts(): LongArray = LongArray(3) { bridgeCounters.get(it) }
 
     /**
      * The flood guard's counters ([BridgeForward]): messages forwarded to the core, action updates
@@ -352,7 +361,7 @@ class Extensions(private val host: Host) {
 
     /** An `ext.*` event into the chrome's core, counted ([bridgeCounters]). */
     private fun chromeEvent(name: String, payload: Any?) {
-        bridgeCounters[1]++
+        bridgeCounters.incrementAndGet(1)
         host.chrome.hostEvent(name, payload)
     }
 
@@ -377,7 +386,7 @@ class Extensions(private val host: Host) {
                     .append(",\"origin\":").append(JSONObject.quote(origin))
                     .append(",\"message\":").append(text)
                     .append('}')
-                bridgeCounters[1]++
+                bridgeCounters.incrementAndGet(1)
                 host.chrome.hostEventJson("ext.message", event)
             }
 
@@ -850,10 +859,27 @@ class Extensions(private val host: Host) {
      */
     private fun send(ep: String, message: String, at: JSONArray? = null) {
         val endpoint = endpoints[ep] ?: return
-        bridgeCounters[2]++
+        bridgeCounters.incrementAndGet(2)
         if (debug) recordReply(ep, message, at)
         val ok = runCatching { endpoint.proxy.postMessage(message) }.isSuccess
-        if (!ok) gone(listOf(ep))
+        if (!ok) {
+            // The endpoint's bookkeeping is the main thread's; off it (the reply hop) the loss is
+            // handed over.
+            if (Looper.myLooper() === Looper.getMainLooper()) gone(listOf(ep)) else main.post { gone(listOf(ep)) }
+        }
+    }
+
+    /**
+     * `ext.send` off the reply hop ([ExtReplyHop], on the JavaBridge thread): the same [send],
+     * where it arrives – the endpoint looked up in the concurrent map, the counter atomic, the
+     * trace and the call statistics under their locks as ever, and the proxy's `postMessage`
+     * posting its one UI task itself (Chromium's `JsReplyProxy.postMessage` runs on the UI
+     * thread or posts to it). The reply's parse for the trace line (`debug`) runs here too, off
+     * the main thread. Compat round 20: the storage round trip's `back` leg, one UI turn where the
+     * port's path took two.
+     */
+    fun sendFromHop(ep: String, message: String, at: JSONArray?) {
+        send(ep, message, at)
     }
 
     private fun recordProxy(extensionId: String, request: CorsProxy.Request, status: Int) {
@@ -1300,7 +1326,7 @@ class Extensions(private val host: Host) {
             refuseBridgeMessage(proxy, ep, message, text.length)
             return
         }
-        bridgeCounters[0]++
+        bridgeCounters.incrementAndGet(0)
         if (slot != null) {
             val known = endpoints[ep]
             val claimed = if (known != null) known.extensionId else message.str("ext")

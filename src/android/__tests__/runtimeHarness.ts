@@ -46,6 +46,10 @@ export class FakeKotlin implements RuntimeBridge {
   readonly calls: Array<{ method: string; args: Record<string, unknown> }> = []
   /** The methods that came one way (`post`), in order; `calls` has them too. */
   readonly posted: string[] = []
+  /** The messages that came over the reply hop (`deliver`), when the fake has one: `[ep, at]` each; `sent` has them too. */
+  readonly hopped: Array<{ ep: string; at: unknown }> = []
+  /** Set by `harness({ hop: true })`: the reply hop, taking every `ext.send` before `post`; absent as the real bridge's is without `__zenExtHop`. */
+  deliver?: (ep: string, message: string, at?: [number, number]) => boolean
   /** Every message the runtime sent to an endpoint, decoded. */
   readonly sent: Sent[] = []
   readonly manifests = new Map<string, Record<string, unknown>>()
@@ -533,9 +537,18 @@ export function harness(
     speech?: boolean
     /** The runtime's `debug` (its default on): off, no reply carries the host trace's stamps. */
     debug?: boolean
+    /** A host with the reply hop (`__zenExtHop`): `deliver` takes every message to an endpoint; `hopped` records them. */
+    hop?: boolean
   } = {}
 ): Harness {
   const kt = new FakeKotlin()
+  if (options.hop) {
+    kt.deliver = (ep, message, at) => {
+      kt.hopped.push({ ep, at })
+      kt.sent.push({ ep, message: JSON.parse(message) as Record<string, unknown> })
+      return true
+    }
+  }
   const speech = options.speech === false ? undefined : new FakeSpeech()
   const readAloud: Harness['readAloud'] = { status: 'idle', pauses: 0 }
   kt.isolatedWorlds = options.isolatedWorlds ?? true

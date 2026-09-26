@@ -166,6 +166,14 @@ export interface RuntimeBridge {
    * message; a bridge without `post` gets a `send`.
    */
   post?(method: string, args?: unknown): void
+  /**
+   * The reply's own hop (compat round 20; `ExtReplyHop.kt`, `withReplyHop`): `ext.send` as one
+   * synchronous entry into the host with the endpoint id, the message and the stamps apart, so
+   * the message skips the port's two turns of the app's UI thread on its way to the endpoint's
+   * proxy (round 19 §4: the `back` leg, 97-99.7 % of a storage round trip). True when the host
+   * took it; false when there is no hop or it failed, and the message goes over `post` as before.
+   */
+  deliver?(ep: string, message: string, at?: ReplyStamps): boolean
 }
 
 interface RuntimeEnv {
@@ -1997,9 +2005,11 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       message: JSON.stringify({ ...message, ep: endpointId })
     }
     if (at) args.at = at
-    // Kotlin answers `ext.send` with nothing (a dead frame comes back as `ext.gone`): one way,
-    // so a port's state broadcast at several messages a second costs the chrome no `resolve`
-    // task per message.
+    // The reply hop first (one UI turn on the way to the endpoint; `RuntimeBridge.deliver`), the
+    // port for a host without it. Kotlin answers `ext.send` with nothing either way (a dead
+    // frame comes back as `ext.gone`): one way, so a port's state broadcast at several messages
+    // a second costs the chrome no `resolve` task per message.
+    if (this.bridge.deliver?.(endpointId, args.message, at)) return
     if (this.bridge.post) this.bridge.post('ext.send', args)
     else this.bridge.send('ext.send', args)
   }

@@ -108,6 +108,7 @@ import {
   type ExtRequestHeadersEvent,
   type ExtResponseEvent
 } from './extensionRuntime'
+import { withReplyHop } from './extensionReplyHop'
 import { AndroidExtensionStoreIo } from './extensionStoreIo'
 import { FullscreenHintCues } from './fullscreenHint'
 import { AndroidNewTabBackground } from './newTabBackground'
@@ -1718,7 +1719,13 @@ export class AndroidPlatform implements Platform {
   createExtensions(browser: Browser): ExtensionHost {
     if (this.extensionsRoot === null) return new NoExtensions(browser)
     const io = new AndroidExtensionStoreIo(this.bridge, this.extensionsRoot)
-    const runtime = new AndroidExtensionRuntime(this.bridge, browser, () => this.window)
+    // The runtime's replies to frames take the host's reply hop when the chrome document has one
+    // (`__zenExtHop`, one UI turn to the endpoint), the port otherwise.
+    const runtime = new AndroidExtensionRuntime(
+      withReplyHop(this.bridge, globalThis),
+      browser,
+      () => this.window
+    )
     this.extensionRuntime = runtime
     this.extensions = new AndroidExtensionsWithRuntime(browser, io, runtime)
     return this.extensions

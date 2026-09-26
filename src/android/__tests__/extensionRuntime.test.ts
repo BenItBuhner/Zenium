@@ -2076,7 +2076,13 @@ describe('AndroidExtensionRuntime: chrome.offscreen', () => {
     expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)).toBeUndefined()
     // A ready from a frame inside the page is not the page's.
     hello(h, 'off1sub', 'offscreen', { url: `${servedUrl}#frame`, top: false })
-    h.runtime.onMessage({ ep: 'off1sub', tabId: null, top: false, origin: '', message: { t: 'ready' } })
+    h.runtime.onMessage({
+      ep: 'off1sub',
+      tabId: null,
+      top: false,
+      origin: '',
+      message: { t: 'ready' }
+    })
     for (let i = 0; i < 5; i++) await Promise.resolve()
     expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)).toBeUndefined()
     message(h, 'off1', { t: 'ready' })
@@ -3427,6 +3433,58 @@ describe('AndroidExtensionRuntime: the bridge under a message storm', () => {
     expect(h.kt.posted.filter((m) => m === 'ext.send')).toHaveLength(
       h.kt.calledWith('ext.send').length
     )
+  })
+
+  it('takes the reply hop for every message to an endpoint when the host has one, the stamps apart, and posts none of them (compat round 20)', async () => {
+    const h = harness({ hop: true })
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['storage'] })))
+    backgroundUp(h, 'bg1')
+    const before = Date.now()
+    const reply = await call(h, 'bg1', 'storage', 'get', ['local', null])
+    // The reply reached the endpoint (the fake's hop records it in `sent` as the port path would).
+    expect(reply.ok).toBe(true)
+    // Over the hop, with the runtime's two stamps beside the message; nothing over `post`.
+    const hop = h.kt.hopped.find((entry) => entry.ep === 'bg1')
+    expect(hop).toBeDefined()
+    const at = hop?.at as [number, number]
+    expect(at).toHaveLength(2)
+    expect(at[0]).toBeGreaterThanOrEqual(before)
+    expect(at[1]).toBeGreaterThanOrEqual(at[0])
+    expect(h.kt.posted).not.toContain('ext.send')
+    expect(h.kt.calledWith('ext.send')).toHaveLength(0)
+    // An event is a message like any other on the hop – without stamps.
+    h.runtime.onMessage({
+      ep: 'bg1',
+      tabId: null,
+      top: true,
+      origin: `https://${ID}.ext.zenium.invalid`,
+      message: { t: 'listen', event: 'storage.onChanged', on: true }
+    })
+    await call(h, 'bg1', 'storage', 'set', ['local', { k: 1 }])
+    await until(() => h.kt.to('bg1').some((m) => m.t === 'event'))
+    const eventHops = h.kt.hopped.filter((entry) => entry.at === undefined)
+    expect(eventHops.length).toBeGreaterThan(0)
+    expect(h.kt.posted).not.toContain('ext.send')
+  })
+
+  it('goes over the port when the hop refuses a message (deliver false)', async () => {
+    const h = harness({ hop: true })
+    const hop = h.kt.deliver
+    h.kt.deliver = (ep, message, at) => {
+      // A hop that fails once: the runtime's adapter answers false from then on; the message is
+      // not lost.
+      void ep
+      void message
+      void at
+      return false
+    }
+    expect(hop).toBeDefined()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['storage'] })))
+    backgroundUp(h, 'bg1')
+    const reply = await call(h, 'bg1', 'storage', 'get', ['local', null])
+    expect(reply.ok).toBe(true)
+    expect(h.kt.hopped).toHaveLength(0)
+    expect(h.kt.posted).toContain('ext.send')
   })
 })
 
