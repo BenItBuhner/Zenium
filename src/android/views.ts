@@ -4,6 +4,9 @@ import {
   type ContentCover,
   type KeyBinding,
   type NavigationSnapshot,
+  type NewTabPageAction,
+  type NewTabPageCommand,
+  type NewTabPageState,
   type PageRules,
   type Rect,
   type Tab
@@ -15,7 +18,7 @@ import type { FormsCommand } from '@shared/forms'
 import type { FocusEdge } from '@shared/focusEdge'
 import { isCertificateError, type SiteCertificate } from '@shared/siteInfo'
 import { parsePageViewport, type PageViewport } from '@shared/capture'
-import { certificateDetailsFrom } from '@shared/url'
+import { certificateDetailsFrom, isNewTabUrl } from '@shared/url'
 import type { NavigationReport } from './extensionWebNavigation'
 import { zenPageHtml, type ImagePageLookup, type ReaderPageLookup } from '@shared/zenPages'
 import { pdfPageDownloadId, pdfViewerBaseUrl, type PdfPageLookup } from '@shared/pdfPage'
@@ -117,7 +120,8 @@ export interface ViewEventPayloads {
   leaveFullscreen: void
   found: FindResultInfo
   contextMenu: Partial<PageContextParams>
-  pageMessage: PageMessage
+  /** The page script's word, or the served new tab page's action in its envelope (NTP-35). */
+  pageMessage: PageMessage | NewTabPageMessage
   /** A trusted touch or key reached the WebView (user activation for the pop-up blocker). */
   activation: void
   /**
@@ -160,6 +164,29 @@ export interface PlacementListener {
 }
 
 const noPlacementListener: PlacementListener = { onShown: () => {} }
+
+/**
+ * A `zen://newtab` action as its script sends it up the page bridge (`pageScript.ts`): the
+ * envelope keeps it apart from the page script's own messages on the one channel.
+ */
+export interface NewTabPageMessage {
+  type: 'newtab'
+  action: NewTabPageAction
+}
+
+/**
+ * The action a `pageMessage` carries from `zen://newtab`'s script; null for every other page
+ * message, and for a malformed one (the desktop's `zen:newtab` handler asks the same of its
+ * action: an object with a string `type`).
+ */
+export function newTabActionOf(payload: unknown): NewTabPageAction | null {
+  if (typeof payload !== 'object' || payload === null) return null
+  const { type, action } = payload as { type?: unknown; action?: unknown }
+  if (type !== 'newtab' || typeof action !== 'object' || action === null) return null
+  return typeof (action as { type?: unknown }).type === 'string'
+    ? (action as NewTabPageAction)
+    : null
+}
 
 /**
  * A page living in a Kotlin `WebView`. Every method is a bridge call; the read accessors answer
@@ -349,6 +376,14 @@ export class AndroidTabView implements TabView {
         return
       }
       case 'pageMessage': {
+        // `zen://newtab`'s actions ride the page script's channel (`pageScript.ts`), the way the
+        // desktop's preload has its own IPC for them; only the document the core served is heard
+        // (the desktop checks the sender frame's URL the same way).
+        if ((payload as { type?: unknown } | undefined)?.type === 'newtab') {
+          const action = newTabActionOf(payload)
+          if (action && isNewTabUrl(this.nav.url)) ev.onNewTabAction(action)
+          return
+        }
         const message = payload as PageMessage
         if (message.type === 'media') this.audible = Boolean(message.playing)
         ev.onPageMessage(message)
@@ -650,6 +685,26 @@ export class AndroidTabView implements TabView {
 
   postToPage(message: PageHostMessage): void {
     this.bridge.send('view.postMessage', { tabId: this.tabId, message })
+  }
+
+  /**
+   * Fresh `NewTabPageState` for a `zen://newtab` document: down the page script's channel
+   * (`view.postMessage` → `__zenPageBridge.onmessage`, the one the web-app polyfill rides), where
+   * the desktop's preload has its own IPC channel (`zen:newtab-state`).
+   */
+  sendNewTabState(state: NewTabPageState): void {
+    this.bridge.send('view.postMessage', {
+      tabId: this.tabId,
+      message: { type: 'newtab-state', state }
+    })
+  }
+
+  /** What a `zen://newtab` page's tile menu picked, for the page to carry out (remove, with Undo). */
+  sendNewTabCommand(command: NewTabPageCommand): void {
+    this.bridge.send('view.postMessage', {
+      tabId: this.tabId,
+      message: { type: 'newtab-command', command }
+    })
   }
 
   setBackgroundColor(color: string): void {
