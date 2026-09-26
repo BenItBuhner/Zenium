@@ -634,24 +634,25 @@ export class Menus {
     // number to the dialer, the messaging app and the contacts form, an address to the mail app.
     if (win.formFactor === 'phone') open.push(...this.contactLinkItems(url))
     if (navigable) {
-      if (group || groupable) {
-        open.push({
-          label: 'Open Link in New Tab in Group',
-          click: () =>
-            tabs.createTab(
-              {
-                url,
-                active: false,
-                afterTabId: tab.id,
-                containerId: tab.containerId,
-                openerTabId: tab.id,
-                folderId: group ? group.id : this.groupAround(tab, win)
-              },
-              win
-            )
-        })
-      }
-      open.push({
+      const inGroup: MenuItemTemplate | undefined =
+        group || groupable
+          ? {
+              label: 'Open Link in New Tab in Group',
+              click: () =>
+                tabs.createTab(
+                  {
+                    url,
+                    active: false,
+                    afterTabId: tab.id,
+                    containerId: tab.containerId,
+                    openerTabId: tab.id,
+                    folderId: group ? group.id : this.groupAround(tab, win)
+                  },
+                  win
+                )
+            }
+          : undefined
+      const plain: MenuItemTemplate = {
         label: 'Open Link in New Tab',
         click: () =>
           tabs.createTab(
@@ -669,7 +670,12 @@ export class Menus {
             },
             win
           )
-      })
+      }
+      // The phone seats the pair as Chrome for Android 152 does – "Open in new tab" before "Open
+      // in new tab in group" (Chrome 140's swap, permanent by 144; the design lead's ruling on
+      // #492's (b)). The desktop's and the tablet's rows stay in their order, the group row first.
+      if (win.formFactor === 'phone') open.push(plain, ...(inGroup ? [inGroup] : []))
+      else open.push(...(inGroup ? [inGroup] : []), plain)
       if (caps.windows) {
         open.push(
           {
@@ -715,12 +721,16 @@ export class Menus {
       })
     }
     const transfer: Template = []
-    if (isDownloadable(url)) {
-      transfer.push({
-        label: 'Save Link As…',
-        click: () => view.downloadURL(url, { saveAs: true })
-      })
-    }
+    const save: MenuItemTemplate | undefined = isDownloadable(url)
+      ? {
+          label: 'Save Link As…',
+          click: () => view.downloadURL(url, { saveAs: true })
+        }
+      : undefined
+    // Chrome desktop's "Save link as…" leads the group, and the desktop's and the tablet's rows
+    // keep it there; Chrome for Android 152 puts "Download link" after the two copies, and the
+    // phone's rows follow it (the lead's ruling on #492's (b)).
+    if (save && win.formFactor !== 'phone') transfer.push(save)
     const copy = linkCopyItem(url)
     transfer.push({
       label: copy.label,
@@ -733,6 +743,7 @@ export class Menus {
         click: () => this.browser.copyText(linkText, 'Text copied', win)
       })
     }
+    if (save && win.formFactor === 'phone') transfer.push(save)
     if (caps.share && navigable) {
       transfer.push({
         label: 'Share Link…',

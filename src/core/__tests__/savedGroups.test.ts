@@ -484,7 +484,7 @@ describe('a saved group (TAB-16)', () => {
 describe('the link menu’s group item (TAB-15)', () => {
   const url = 'https://linked.test/'
 
-  it('offers Open Link in New Tab in Group first for a tab in a group, on a touch host', () => {
+  it('offers Open Link in New Tab in Group for a tab in a group, on a touch host: the phone’s second row, behind Open Link in New Tab (Chrome 152’s pair), the private row third', () => {
     const h = harness('phone')
     const m = h.browser.state.model
     const folder = h.group('Trip')
@@ -495,8 +495,8 @@ describe('the link menu’s group item (TAB-15)', () => {
 
     h.browser.menus.showPageContextMenu(a, linkParams(url), h.win)
     const menu = labels(h.shown())
-    expect(menu.indexOf('Open Link in New Tab in Group')).toBe(0)
-    expect(menu.indexOf('Open Link in New Tab')).toBe(1)
+    expect(menu.indexOf('Open Link in New Tab')).toBe(0)
+    expect(menu.indexOf('Open Link in New Tab in Group')).toBe(1)
     expect(menu.indexOf('Open Link in Private Tab')).toBe(2)
 
     // In the group, behind the current tab, in the background.
@@ -519,12 +519,12 @@ describe('the link menu’s group item (TAB-15)', () => {
       'https://loose.test/'
     ])
 
-    // A loose tab keeps the pair – its group row makes the group (PUI-17, below) – and the
-    // plain item joins nothing.
+    // A loose tab keeps the pair in the same order – its group row makes the group (PUI-17,
+    // below) – and the plain item joins nothing.
     h.browser.menus.showPageContextMenu(loose, linkParams('https://from-loose.test/'), h.win)
     expect(labels(h.shown()).slice(0, 2)).toEqual([
-      'Open Link in New Tab in Group',
-      'Open Link in New Tab'
+      'Open Link in New Tab',
+      'Open Link in New Tab in Group'
     ])
     click(h.shown(), 'Open Link in New Tab')
     expect(
@@ -540,7 +540,8 @@ describe('the link menu’s group item (TAB-15)', () => {
     const loose = h.open('https://loose.test/')
     const before = Object.keys(m.folders)
     h.browser.menus.showPageContextMenu(loose, linkParams(url), h.win)
-    expect(labels(h.shown()).indexOf('Open Link in New Tab in Group')).toBe(0)
+    // The phone's second row, right behind Open Link in New Tab (the lead's order, below).
+    expect(labels(h.shown()).indexOf('Open Link in New Tab in Group')).toBe(1)
 
     click(h.shown(), 'Open Link in New Tab in Group')
     const made = Object.keys(m.folders).filter((id) => !before.includes(id))
@@ -603,13 +604,70 @@ describe('the link menu’s group item (TAB-15)', () => {
     expect(Object.keys(m.folders)).toHaveLength(folders)
   })
 
-  it('is the tablet’s too, a touch host', () => {
+  it('lists the phone’s rows in the lead’s order – Chrome 152’s within Zenium’s groups: New Tab · New Tab in Group · Private Tab · Glance · Container | Copy Link Address · Copy Link Text · Save Link As… · Share Link… | Boosts', () => {
+    // The design gate's ruling on #492's (b): Chrome for Android 152 seats "Open in new tab"
+    // before "Open in new tab in group" and "Download link" after the two copies; the phone
+    // follows it and keeps Zenium's three groups with their hairlines. Pinned whole.
+    const h = harness('phone')
+    const loose = h.open('https://loose.test/')
+    h.browser.menus.showPageContextMenu(loose, { ...linkParams(url), linkText: 'Linked' }, h.win)
+    expect(labels(h.shown())).toEqual([
+      'Open Link in New Tab',
+      'Open Link in New Tab in Group',
+      'Open Link in Private Tab',
+      'Open Link in Glance',
+      'Open Link in New Container Tab',
+      '-',
+      'Copy Link Address',
+      'Copy Link Text',
+      'Save Link As…',
+      'Share Link…',
+      '-',
+      'Boosts',
+      // The harness's stubbed capabilities offer devtools; the device's (off) draw no such row.
+      'Inspect Element'
+    ])
+    // A host without private tabs (a WebView keeping no profiles) leaves the private row out,
+    // the rest as they are; a link whose text is its address has no Copy Link Text.
+    const g = harness('phone', false)
+    const onG = g.open('https://loose.test/')
+    g.browser.menus.showPageContextMenu(onG, linkParams(url), g.win)
+    expect(labels(g.shown())).toEqual([
+      'Open Link in New Tab',
+      'Open Link in New Tab in Group',
+      'Open Link in Glance',
+      'Open Link in New Container Tab',
+      '-',
+      'Copy Link Address',
+      'Save Link As…',
+      'Share Link…',
+      '-',
+      'Boosts',
+      'Inspect Element'
+    ])
+  })
+
+  it('is the tablet’s too, a touch host – whose rows keep their order as they were, the group row first, byte for byte', () => {
+    // The ruling names the phone; the tablet's list is pinned whole so a change to it is a
+    // deliberate one (the desktop's nod on the shared hunks holds under this order).
     const t = harness('tablet')
     const onTablet = t.open('https://loose.test/')
-    t.browser.menus.showPageContextMenu(onTablet, linkParams(url), t.win)
-    expect(labels(t.shown()).slice(0, 2)).toEqual([
+    t.browser.menus.showPageContextMenu(onTablet, { ...linkParams(url), linkText: 'Linked' }, t.win)
+    expect(labels(t.shown())).toEqual([
       'Open Link in New Tab in Group',
-      'Open Link in New Tab'
+      'Open Link in New Tab',
+      'Open Link in Private Tab',
+      'Open Link in Glance',
+      'Open Link in Split View',
+      'Open Link in New Container Tab',
+      '-',
+      'Save Link As…',
+      'Copy Link Address',
+      'Copy Link Text',
+      'Share Link…',
+      '-',
+      'Boosts',
+      'Inspect Element'
     ])
   })
 
