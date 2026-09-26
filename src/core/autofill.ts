@@ -23,6 +23,7 @@ import type {
 import type { FormFieldInfo, FormValues, FormsEvent } from '../shared/forms'
 import { PASSKEY_OBSERVER_SOURCE } from '../shared/passkeyObserver'
 import { newId } from '../shared/ids'
+import { EXTENSION_SETTING_KEYS, effectiveSwitch } from '../shared/extensionSettings'
 import type { Browser } from './browser'
 import type { ConfirmOptions, SystemAutofillStatus } from './platform'
 import type { ZenWindow } from './window'
@@ -233,6 +234,46 @@ export class AutofillService {
   /** Settings → Passwords / Autofill changed: the provider and the pages' script follow. */
   onSettingsChanged(): void {
     this.applyProvider()
+  }
+
+  // ---------------------------------------------------------------------------
+  // The settings in effect: the extension layer over the user's (`shared/extensionSettings.ts`)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Whether the save / update prompt may be offered: `Settings.passwords.offerToSave` under
+   * `chrome.privacy.services.passwordSavingEnabled` – a password manager that turns the browser's
+   * saving off at install (iCloud Passwords, RoboForm, Dashlane do) silences the prompt, as
+   * Chrome's `credentials_enable_service` reads the extension's value; the user's own switch
+   * stands again the moment the extension lets go. Read at the decision, never stored.
+   */
+  offerToSave(): boolean {
+    const state = this.browser.state
+    return effectiveSwitch(
+      state.extensionLayer,
+      EXTENSION_SETTING_KEYS.passwordSaving,
+      state.settings.passwords.offerToSave
+    )
+  }
+
+  /** `Settings.autofill.addresses` under `chrome.privacy.services.autofillAddressEnabled`: fill and the save offer. */
+  addressesEnabled(): boolean {
+    const state = this.browser.state
+    return effectiveSwitch(
+      state.extensionLayer,
+      EXTENSION_SETTING_KEYS.autofillAddresses,
+      state.settings.autofill.addresses
+    )
+  }
+
+  /** `Settings.autofill.cards` under `chrome.privacy.services.autofillCreditCardEnabled`: fill and the save offer. */
+  cardsEnabled(): boolean {
+    const state = this.browser.state
+    return effectiveSwitch(
+      state.extensionLayer,
+      EXTENSION_SETTING_KEYS.autofillCards,
+      state.settings.autofill.cards
+    )
   }
 
   /**
@@ -459,7 +500,6 @@ export class AutofillService {
   /** The store entries that can fill the focused form, in picker order. */
   private entriesFor(context: FocusContext): PickerEntry[] {
     const store = this.browser.passwords.store
-    const settings = this.browser.state.settings
     switch (context.group) {
       case 'login': {
         // A sign-up form gets no saved login pushed into its new-password field.
@@ -469,10 +509,10 @@ export class AutofillService {
         )
       }
       case 'address':
-        if (!settings.autofill.addresses) return []
+        if (!this.addressesEnabled()) return []
         return store.listAddresses().map((address) => ({ kind: 'address', address }))
       case 'card':
-        if (!settings.autofill.cards) return []
+        if (!this.cardsEnabled()) return []
         return store.listCards().map((card) => ({ kind: 'card', card }))
     }
   }
@@ -750,7 +790,7 @@ export class AutofillService {
     const store = this.browser.passwords.store
     const tab = this.browser.tabs.tab(candidate.tabId)
     const decision = decideSave(candidate, {
-      offerToSave: this.browser.state.settings.passwords.offerToSave,
+      offerToSave: this.offerToSave(),
       isPrivate: tab ? this.browser.tabs.isPrivate(tab) : false,
       neverSave: store.isNeverSave(candidate.origin),
       matches: store.findForOrigin(candidate.origin)
@@ -804,8 +844,7 @@ export class AutofillService {
     if (!tab || this.browser.tabs.isPrivate(tab)) return
     const origin = normalizeOrigin(tab.url)
     if (!origin) return
-    const settings = this.browser.state.settings.autofill
-    if (group === 'address' ? !settings.addresses : !settings.cards) return
+    if (group === 'address' ? !this.addressesEnabled() : !this.cardsEnabled()) return
     if (!(await this.ensureUnlocked())) return
     const store = this.browser.passwords.store
     const win = this.windowOf(tabId)

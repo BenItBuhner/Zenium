@@ -88,6 +88,11 @@
     <string name="cct_no_app">No app can open this link</string>
     <string name="cct_find_count">%1$d/%2$d</string>
 
+    <!-- An installed web app's own window (WebAppActivity, PWA-02): a page's Notification ask on the native
+         prompt sheet (PermissionPromptSheet, v2 §9.23) – the permission family's question naming the requester,
+         with the pair Block | Allow (cct_block, cct_allow) under it. -->
+    <string name="webapp_notifications_question">Allow %1$s to show notifications?</string>
+
     <!-- The unresponsive-page prompt (ERR-16) on the native prompt sheet, since the chrome shares the hung renderer. -->
     <string name="unresponsive_description">This page isn’t responding. You can wait for it to respond, or exit the page.</string>
     <string name="unresponsive_wait">Wait</string>

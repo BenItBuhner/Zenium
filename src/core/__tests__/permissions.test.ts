@@ -388,6 +388,16 @@ describe('PermissionService: qualified keys and prompt copy', () => {
       'Allow http://a.example to use "something-new"?'
     )
   })
+
+  it('asks about a second download in the words the lead settled (PS-71)', () => {
+    const copy = permissionPromptCopy('automatic-downloads', 'https://files.example')
+    expect(copy.message).toBe('Allow files.example to download multiple files?')
+    expect(copy.detail).toBe(
+      'The page started another download on its own. Your choice is remembered for this site.'
+    )
+    expect(copy.okLabel).toBe('Allow')
+    expect(copy.cancelLabel).toBe('Block')
+  })
 })
 
 describe('PermissionService: File System Access status checks', () => {

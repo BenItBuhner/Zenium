@@ -91,6 +91,7 @@ import type { PrivacyFlags, SafeBrowsingHit, SafeBrowsingThreat } from '@shared/
 import readabilityJs from '@mozilla/readability/Readability.js?raw'
 import readabilityReaderableJs from '@mozilla/readability/Readability-readerable.js?raw'
 import type { AgentHttpRequest, AgentHttpResponse } from '@core/agent/http'
+import { BOOKMARKS_INBOX_FILE, BookmarkInboxDrain } from './bookmarkInbox'
 import type { Bridge } from './bridge'
 import type { AndroidExtensions } from './extensionHost'
 import {
@@ -1273,6 +1274,16 @@ export class AndroidConnectivity implements ConnectivityHost {
 }
 
 /**
+ * How long after the window is created (`Browser.start`) the first pass over the custom tab's
+ * bookmark inbox runs: 5 s after the window is created – in practice past READY (the run's boot
+ * marks `boot=4349 ready=4791` ms put the sweep about 4.5 s after it), by margin rather than by
+ * construction, since the arm sits in `browser.start()` before READY is armed (`boot.ts`) –
+ * after the first page has its frame, well before the other startup sweeps (20 s and later), so
+ * a page starred in a custom tab before the browser was launched is a bookmark soon after it is.
+ */
+export const BOOKMARK_INBOX_SWEEP_DELAY_MS = 5_000
+
+/**
  * Zen's browser core running inside the chrome WebView on Android. Kotlin owns the tab
  * WebViews, downloads, permissions and dialogs; this class turns the `Platform` contract into
  * bridge calls and routes Kotlin's events back into the core.
@@ -1348,7 +1359,23 @@ export class AndroidPlatform implements Platform {
   browser!: Browser
   private windowHost: AndroidWindowHost | null = null
   private zenWindow: ZenWindow | null = null
+  /**
+   * The custom tab's bookmark inbox (`bookmarkInbox.ts`): drained into the tree once the core
+   * is up – a startup sweep armed as the window is created, 5 s on (≈ 4.5 s past READY in the
+   * run; READY waits on nothing here), off the boot path and under the demo harness's hold like
+   * the others – and whenever the app comes back to the front, a custom tab in front being the
+   * one that files. A return to the front before that first pass (the cold start's own `focus`)
+   * folds into it: nothing runs before the sweep.
+   */
+  private readonly bookmarkInbox: BookmarkInboxDrain
+  private bookmarkInboxSwept = false
   private readonly downloadTokens = new Map<string, string>()
+  /**
+   * Announced transfers the automatic-downloads prompt holds (PS-71), by record id: Kotlin
+   * starts a transfer on `bind`, so a held one is not bound until the core's `resume` brings
+   * Allow (`bind` runs then) – Block comes as `cancel` and refuses the token instead.
+   */
+  private readonly heldDownloads = new Map<string, { token: string; bind: () => void }>()
   private readonly agentTransport: AndroidAgentTransport
   private readonly updateHost: AndroidUpdateHost
   /** `files/zen/extensions` when Kotlin has one; the preview host installs nothing. */
@@ -1397,6 +1424,23 @@ export class AndroidPlatform implements Platform {
     }
     this.bootEnvironment = boot.environment ?? null
     this.io = io
+    this.bookmarkInbox = new BookmarkInboxDrain({
+      // The store hands the boot copy once and asks the host after (`storeIo.ts`): each pass
+      // reads the disk as the custom tab left it – through the document handler, off the main
+      // thread; an inbox that is not there (the handler's 404) ends in the one bridge read of
+      // the pre-handoff path, in the pass's own turn, never in the `focus` handler's.
+      readInbox: () => this.io.read(BOOKMARKS_INBOX_FILE),
+      writeInbox: (text) => this.io.write(BOOKMARKS_INBOX_FILE, text),
+      has: (url) => this.browser.bookmarks.has(url),
+      // The core's public command, as the star's own `browser.starTab` creates: no parent named,
+      // so the star's default folder (the last used one, else Mobile bookmarks).
+      create: ({ title, url }) =>
+        this.browser.handleCommand(this.window, 'bookmark.create', {
+          title,
+          url,
+          type: 'url'
+        }) !== null
+    })
     this.newTabBackground = new AndroidNewTabBackground(this.io)
     this.sync = new AndroidSyncHost(
       bridge,
@@ -1435,6 +1479,12 @@ export class AndroidPlatform implements Platform {
         this.zenWindow = win
         // The chrome document is already running; report it ready once the core has the host.
         queueMicrotask(() => win.onChromeReady())
+        // The core is up and has its window: the inbox's first pass, a startup sweep – a timer
+        // armed inside `browser.start()`, before the host's READY is armed (`boot.ts`), which
+        // waits on nothing here.
+        this.browser.background.armStartup(BOOKMARK_INBOX_SWEEP_DELAY_MS, () =>
+          this.drainBookmarkInbox('sweep')
+        )
         return host
       }
     }
@@ -1536,9 +1586,28 @@ export class AndroidPlatform implements Platform {
       // The downloader retries a network failure itself (Chromium's automatic resume, 2 / 4 / 8 s)
       // and announces each attempt; the core schedules none so nothing is retried twice.
       autoResume: 'host',
-      pause: (id) => bridge.send('download.pause', { id }),
-      resume: (item) => bridge.send('download.resume', describe(item)),
-      cancel: (id) => bridge.send('download.cancel', { id }),
+      // A held transfer (PS-71) is not bound, so Kotlin has nothing to pause: the message is moot.
+      pause: (id) => {
+        if (!this.heldDownloads.has(id)) bridge.send('download.pause', { id })
+      },
+      resume: (item) => {
+        const held = this.heldDownloads.get(item.id)
+        if (held) {
+          this.heldDownloads.delete(item.id)
+          held.bind()
+          return
+        }
+        bridge.send('download.resume', describe(item))
+      },
+      cancel: (id) => {
+        const held = this.heldDownloads.get(id)
+        if (held) {
+          this.heldDownloads.delete(id)
+          bridge.send('download.refuse', { token: held.token })
+          return
+        }
+        bridge.send('download.cancel', { id })
+      },
       retry: (item) => bridge.send('download.retry', describe(item)),
       // The downloader's own notification announces the finished file, so the setting rides along.
       release: (item, options) =>
@@ -1700,7 +1769,26 @@ export class AndroidPlatform implements Platform {
     this.views.pages.reader = (id) => browser.reader.pageHtml(id)
     this.views.pages.image = (id) => browser.sharedImage(id)
     this.views.pages.pdf = (id) => browser.pdf.document(id)
+    // The views ask the core's content-rules service for every navigation's answers (PS-63,
+    // PS-64, PS-59 and the guarded rows): the WebView decides from `permissions.resolve`, an
+    // extension's rule over the user's, not from the pushed document alone.
+    this.views.contentRules = browser.contentRules
     if (this.bootEnvironment) browser.pageControls.setEnvironment(this.bootEnvironment)
+  }
+
+  /**
+   * A pass over the custom tab's bookmark inbox (`bookmarkInbox.ts`): the startup sweep's, or
+   * a return to the front's. The latter counts only once the sweep has run – the cold start's
+   * own `focus` arrives before the sweep (the host's queue is flushed into the started core)
+   * and folds into it – and the sweep needs the window the creates go through.
+   */
+  private drainBookmarkInbox(cue: 'sweep' | 'focus'): void {
+    if (cue === 'focus' && !this.bookmarkInboxSwept) return
+    if (!this.zenWindow) return
+    this.bookmarkInboxSwept = true
+    this.bookmarkInbox.request().catch((error: unknown) => {
+      console.warn('[zen] the custom tab’s bookmark inbox could not be drained', error)
+    })
   }
 
   createAgentTransport(): AgentTransport {
@@ -1832,6 +1920,10 @@ export class AndroidPlatform implements Platform {
         this.windowHost.focused = focused
         if (focused) this.window.onFocused()
         else this.window.onWindowStateChanged()
+        // Back in front – from a custom tab, whose star files pages into the inbox. After the
+        // window's own focus handling, and the inbox read off the main thread: the resume path
+        // pays no bridge hop for it.
+        if (focused) this.drainBookmarkInbox('focus')
         return
       }
       case 'fullscreen': {
@@ -1954,23 +2046,34 @@ export class AndroidPlatform implements Platform {
           if (!p.resumes) browser.onDownloadStarted(p.sourceTabId)
           return
         }
-        this.downloadTokens.set(p.token, record.id)
-        // Where the file goes: the system save dialog, the folder from Settings, or the default.
-        const settings = resolveDownloadSettings(browser.state.settings)
-        const destination = settings.askWhereToSave
-          ? { mode: 'ask' }
-          : settings.directory
-            ? { mode: 'folder', folder: settings.directory }
-            : { mode: 'default' }
-        this.bridge.send('download.bind', {
-          token: p.token,
-          id: record.id,
-          destination,
-          private: record.private,
-          // Keep anyway was chosen on this row: the downloader's own chain rule stands down.
-          insecureAccepted: record.insecureAccepted === true
-        })
-        if (!p.resumes) browser.onDownloadStarted(p.sourceTabId)
+        if (record.state === 'cancelled') {
+          // The automatic-downloads rule refused it (PS-71): the announced transfer is dropped
+          // before it starts, no row and nothing announced.
+          this.bridge.send('download.refuse', { token: p.token })
+          return
+        }
+        const bind = (): void => {
+          this.downloadTokens.set(p.token, record.id)
+          // Where the file goes: the system save dialog, the folder from Settings, or the default.
+          const settings = resolveDownloadSettings(browser.state.settings)
+          const destination = settings.askWhereToSave
+            ? { mode: 'ask' }
+            : settings.directory
+              ? { mode: 'folder', folder: settings.directory }
+              : { mode: 'default' }
+          this.bridge.send('download.bind', {
+            token: p.token,
+            id: record.id,
+            destination,
+            private: record.private,
+            // Keep anyway was chosen on this row: the downloader's own chain rule stands down.
+            insecureAccepted: record.insecureAccepted === true
+          })
+          if (!p.resumes) browser.onDownloadStarted(p.sourceTabId)
+        }
+        // Held for the automatic-downloads prompt: bound – started – once the core resumes it.
+        if (record.state === 'paused') this.heldDownloads.set(record.id, { token: p.token, bind })
+        else bind()
         return
       }
       case 'download.progress': {
@@ -2197,12 +2300,14 @@ export class AndroidPlatform implements Platform {
         const tabId = newId('tab')
         const view = this.views.registerAdopted(tabId)
         this.bridge.send('view.bind', { viewId: p.viewId, tabId })
-        const { events } = browser.tabs.adoptView(
+        const { tab, events } = browser.tabs.adoptView(
           view,
           { tabId, parentTabId: p.parentTabId, active: p.active },
           this.window
         )
         view.events = events
+        // The popup lives in its opener's container: its content-rule answers are read there.
+        view.containerId = tab.containerId
         return
       }
     }

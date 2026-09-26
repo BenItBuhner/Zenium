@@ -51,6 +51,11 @@ import type { FormsCommand } from '../shared/forms'
 import { USER_SCRIPTS_CHANNELS } from '../shared/userScripts'
 import { installUserScripts } from './userScripts'
 import { completeChromeObject } from '../shared/chromeObject'
+import {
+  CONTENT_GUARDS_CHANNEL,
+  installContentGuards,
+  type ContentGuardId
+} from '../shared/contentGuards'
 import { installNewTabPage } from '../shared/newTabPageScript'
 import type { NewTabPageCommand, NewTabPageState } from '../shared/types'
 import { isNewTabUrl } from '../shared/url'
@@ -94,6 +99,17 @@ try {
   })
 } catch (error) {
   console.warn('[zen] display-mode shim unavailable:', (error as Error).message)
+}
+// The per-site guards (Motion sensors, Third-party sign-in, Payment handlers): the rows the
+// page's site is refused, from a third synchronous ask (an array of up to three names), taken
+// out of the main world of every frame of the document before its first script
+// (`shared/contentGuards`; the Android host does the same from its document-start script).
+try {
+  const blocked = ipcRenderer.sendSync(CONTENT_GUARDS_CHANNEL) as ContentGuardId[] | undefined
+  if (blocked && blocked.length > 0)
+    contextBridge.executeInMainWorld({ func: installContentGuards, args: [blocked] })
+} catch (error) {
+  console.warn('[zen] content guards unavailable:', (error as Error).message)
 }
 installPageDialogs()
 installUserScripts({

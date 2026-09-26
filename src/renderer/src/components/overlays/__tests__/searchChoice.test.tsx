@@ -160,6 +160,23 @@ async function toSearchStep(): Promise<void> {
   await click(button('Continue'))
 }
 
+/** From the step after the search step to the tour's end: Continue through the rest, then Start browsing. */
+async function toTourEnd(): Promise<void> {
+  for (let guard = 0; guard < 8 && button('Continue'); guard++) await click(button('Continue'))
+  await click(button('Start browsing'))
+}
+
+/** The `onboarding.complete` the tour's end sent. */
+const completion = (): { searchEngineId: string } | undefined =>
+  commands().find(([n]) => n === 'onboarding.complete')?.[1] as
+    { searchEngineId: string } | undefined
+
+/** An EEA profile that already has an engine of its own – what a skip must leave standing. */
+function eeaProfileWith(engineId: string, searchChoice: SearchChoiceState = EEA): UIState {
+  const state = profile(false, searchChoice)
+  return { ...state, settings: { ...state.settings, searchEngineId: engineId } }
+}
+
 afterEach(() => {
   act(() => root?.unmount())
   host?.remove()
@@ -257,17 +274,23 @@ describe('the tour’s search step in the EEA', () => {
     expect(checked.map((r) => r.dataset.engine)).toEqual(['ecosia'])
     expect(setDefault().disabled).toBe(false)
 
-    // The same after a skip: the step, nothing picked.
+    // The same after a skip – with a tile picked first: the skip lets the pick go (§9.39), so
+    // the step comes back with nothing picked and Set as default off again.
     act(() => root?.unmount())
     host?.remove()
     invoke.mockClear()
     await mount(profile(false, EEA))
     await toSearchStep()
+    await click(rows().find((r) => r.dataset.engine === 'qwant'))
+    expect(setDefault().disabled).toBe(false)
     await click(button('Skip for now'))
+    expect(commands()).toContainEqual(['searchChoice.skip', undefined])
+    expect(commands().map(([n]) => n)).not.toContain('searchChoice.choose')
     await act(async () => browserStore.set({ state: profile(false, ANSWERED) }))
     await click(button('Back'))
     expect(q('[data-testid="search-choice"]')).not.toBeNull()
     expect(rows().every((r) => r.getAttribute('aria-checked') === 'false')).toBe(true)
+    expect(setDefault().disabled).toBe(true)
     expect(button('Skip for now')).not.toBeUndefined()
     expect(button('Skip tour')).toBeUndefined()
   })
@@ -290,6 +313,35 @@ describe('the tour’s search step in the EEA', () => {
     await key(window, 'Escape')
     expect(commands()).toContainEqual(['searchChoice.skip', undefined])
     expect(q('[data-testid="search-choice"]')).toBeNull()
+  })
+
+  it('a tile picked and then Skip for now is let go: the tour’s end installs the profile’s engine, not the pick, and the core never hears a choose (§9.39)', async () => {
+    await mount(eeaProfileWith('duckduckgo'))
+    await toSearchStep()
+    await click(rows().find((r) => r.dataset.engine === 'qwant'))
+    expect(setDefault().disabled).toBe(false)
+    await click(button('Skip for now'))
+    expect(commands()).toContainEqual(['searchChoice.skip', undefined])
+    // The core answers the skip: the screen is not owed for the rest of this run; the profile's
+    // engine stands as it was.
+    await act(async () => browserStore.set({ state: eeaProfileWith('duckduckgo', ANSWERED) }))
+    await toTourEnd()
+    expect(completion()?.searchEngineId).toBe('duckduckgo')
+    expect(commands().map(([n]) => n)).not.toContain('searchChoice.choose')
+  })
+
+  it('the same through Escape on the step: the pick is let go, the tour’s end installs the profile’s engine (§9.39)', async () => {
+    await mount(eeaProfileWith('duckduckgo'))
+    await toSearchStep()
+    await click(rows().find((r) => r.dataset.engine === 'qwant'))
+    expect(rows().filter((r) => r.getAttribute('aria-checked') === 'true')).toHaveLength(1)
+    await key(window, 'Escape')
+    expect(commands()).toContainEqual(['searchChoice.skip', undefined])
+    expect(q('[data-testid="search-choice"]')).toBeNull()
+    await act(async () => browserStore.set({ state: eeaProfileWith('duckduckgo', ANSWERED) }))
+    await toTourEnd()
+    expect(completion()?.searchEngineId).toBe('duckduckgo')
+    expect(commands().map(([n]) => n)).not.toContain('searchChoice.choose')
   })
 
   it('arrow keys move the pick as a radio group’s do; Space picks the focused row', async () => {

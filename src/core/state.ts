@@ -135,7 +135,12 @@ import {
   type BlockingStatus
 } from '../shared/blocking'
 import { DEFAULT_PAGE_ENVIRONMENT, sanitizePageControls } from '../shared/pageControls'
-import { emptyPrivacyStatus, sanitizePrivacySettings, type PrivacyStatus } from '../shared/privacy'
+import {
+  emptyPrivacyStatus,
+  sanitizePreloadPages,
+  sanitizePrivacySettings,
+  type PrivacyStatus
+} from '../shared/privacy'
 import { emptySiteDataStatus, type SiteDataStatus } from '../shared/siteData'
 import {
   UNAVAILABLE_SPELLCHECK,
@@ -152,6 +157,7 @@ import {
   migrateNewTabSettings,
   sanitizeNewTabSettings
 } from '../shared/newTab'
+import { EXTENSION_SETTING_KEYS, type ExtensionLayer } from '../shared/extensionSettings'
 import { defer, type StoreIO } from './platform'
 import {
   sanitizeArchivedEntries,
@@ -542,11 +548,64 @@ export class BrowserState {
    * over the settings, whole, as the layers change; never persisted here, the extensions' own
    * values are the record.
    */
-  private extensionControls: Record<string, ExtensionControl> = {}
+  private extensionControlMap: Record<string, ExtensionControl> = {}
+  private readonly extensionControlListeners = new Set<StateListener>()
+  /**
+   * The run's first publish of the privacy layer is still to land while an enabled extension
+   * has persisted `chrome.privacy` values (`ExtensionLayer.pending`): set by the platform at the
+   * extension host's load, cleared by the first publish that carries one of the privacy keys or
+   * by the load's settling, whichever comes first. The readers answer the strict pole meanwhile.
+   */
+  private layerPending = false
+  private layer: ExtensionLayer = { controls: this.extensionControlMap, pending: false }
 
   setExtensionControls(controls: Record<string, ExtensionControl>): void {
-    this.extensionControls = controls
+    this.extensionControlMap = controls
+    const landed =
+      this.layerPending &&
+      Object.values(EXTENSION_SETTING_KEYS).some((key) => controls[key] !== undefined)
+    if (landed) this.layerPending = false
+    this.layer = { controls, pending: this.layerPending }
+    for (const listener of this.extensionControlListeners) listener()
     this.commit()
+  }
+
+  /**
+   * Mark (or end) the interval before the privacy layer's first publish: while `pending` every
+   * reader of the layer answers its setting's strict pole (`shared/extensionSettings.ts`). No-op
+   * when nothing changes; a change notifies the layer's listeners, so the hosts' flags are
+   * pushed again with the values now in effect.
+   */
+  setExtensionLayerPending(pending: boolean): void {
+    if (pending === this.layerPending) return
+    this.layerPending = pending
+    this.layer = { controls: this.extensionControlMap, pending }
+    for (const listener of this.extensionControlListeners) listener()
+    this.commit()
+  }
+
+  /**
+   * The layer the services read their effective values through (`shared/extensionSettings.ts`):
+   * the extension's value while one holds a setting, the user's own otherwise – Chrome's
+   * `PrefValueStore` order, the extension layer above the user's – and the strict pole while
+   * the run's first publish is pending. One object per change, so a reader may compare it.
+   */
+  get extensionLayer(): ExtensionLayer {
+    return this.layer
+  }
+
+  /** The published map alone (`UIState.extensionControls`, the Settings rows' holders). */
+  get extensionControls(): Readonly<Record<string, ExtensionControl>> {
+    return this.extensionControlMap
+  }
+
+  /**
+   * The layer changed (an extension set, cleared, was disabled or uninstalled; the pending
+   * interval began or ended): re-read what it holds.
+   */
+  onExtensionControlsChange(listener: StateListener): () => void {
+    this.extensionControlListeners.add(listener)
+    return () => this.extensionControlListeners.delete(listener)
   }
 
   /**
@@ -763,6 +822,9 @@ export class BrowserState {
     // null – the screen is owed again in the EEA.
     this.settings.searchChoice = sanitizeSearchChoice(data.settings?.searchChoice)
     this.settings.privacy = sanitizePrivacySettings(data.settings?.privacy)
+    // Preload pages (PS-43): `standard` for a profile from before it (the fold of the desktop's
+    // "Block prerendering" is a read of nothing – see `sanitizePreloadPages`).
+    this.settings.preloadPages = sanitizePreloadPages(data.settings?.preloadPages)
     this.settings.spellcheck = sanitizeSpellcheck(data.settings?.spellcheck)
     this.settings.reader = sanitizeReaderPreferences(data.settings?.reader)
     this.settings.readAloud = sanitizeReadAloudSettings(data.settings?.readAloud)

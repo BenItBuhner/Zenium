@@ -42,6 +42,7 @@ import { BookmarkService } from './bookmarks'
 import { ReadingListService } from './readingList'
 import { BookmarkUndoStack, type BookmarkUndone } from './bookmarkUndo'
 import { DownloadService, isQuarantined } from './downloads'
+import { AUTOMATIC_DOWNLOADS_PERMISSION, DownloadLimiter } from './downloadLimiter'
 import { resolveDownloadSettings } from '../shared/downloads'
 import { PermissionService } from './permissions'
 import { PermissionPromptService } from './permissionPrompts'
@@ -74,6 +75,7 @@ import { TranslateService } from './translate/service'
 import { PrintService } from './print'
 import { CaptureService } from './capture'
 import { PdfViewerService } from './pdf'
+import { ContentRulesService } from './contentRules'
 import { PageControls } from './pageControls'
 import { SpellcheckService } from './spellcheck'
 import { LanguagesService } from './languages'
@@ -175,7 +177,7 @@ import { displayModeFor, type DisplayMode } from '../shared/displayMode'
 import { sanitizeBlockingSettings } from '../shared/blocking'
 import { isShortcutPreset } from '../shared/shortcuts'
 import { sanitizeDevtoolsDock } from '../shared/devtoolsDock'
-import { sanitizePrivacySettings } from '../shared/privacy'
+import { sanitizePreloadPages, sanitizePrivacySettings } from '../shared/privacy'
 import { sanitizeSpellcheck } from '../shared/spellcheck'
 import { sanitizeReaderPreferences } from '../shared/reader'
 import { sanitizeFontSettings } from '../shared/fonts'
@@ -332,6 +334,8 @@ export class Browser {
   readonly blocking: BlockingService
   /** Safe Browsing, HTTPS-only mode, secure DNS, third-party cookies and the GPC / DNT signals. */
   readonly protection: ProtectionService
+  /** The per-site content settings the hosts enforce at the load path (images, JavaScript, …). */
+  readonly contentRules: ContentRulesService
   /** Offline page translation: detection, offers, the engine and its models. */
   readonly translate: TranslateService
   /** The print preview (`zen://print`) on hosts whose engine has none of its own. */
@@ -466,7 +470,24 @@ export class Browser {
         settings: () => resolveDownloadSettings(this.state.settings),
         referrerFamiliar: (referrer) => this.history.visitedBeforeToday(referrer),
         onDanger: (item) => this.emitDownload('download.danger', { id: item.id }, item.private),
-        onBegin: (item, init) => this.pdf.onDownloadBegin(item, init)
+        onBegin: (item, init) => this.pdf.onDownloadBegin(item, init),
+        // The `automatic-downloads` row (PS-71) over the tab's page, the pop-up blocker's
+        // activation clock and the permission store (read as transfers start: the services it
+        // names are built below).
+        limiter: new DownloadLimiter({
+          page: (tabId) => {
+            const tab = this.tabs.tab(tabId)
+            if (!tab) return null
+            return tab.containerId === PRIVATE_CONTAINER_ID
+              ? { url: tab.url, privateContainerId: tab.containerId }
+              : { url: tab.url }
+          },
+          activatedAt: (tabId) => this.popups.activation(tabId).lastActivatedAt(),
+          setting: (url, details) =>
+            this.permissions.resolve(AUTOMATIC_DOWNLOADS_PERMISSION, url, details),
+          ask: (url, details) =>
+            this.permissions.decide(AUTOMATIC_DOWNLOADS_PERMISSION, url, details)
+        })
       }
     )
     this.state.downloadsFor = (win) => ({
@@ -543,6 +564,7 @@ export class Browser {
     this.imports = new ImportService(this)
     this.blocking = new BlockingService(this)
     this.protection = new ProtectionService(this)
+    this.contentRules = new ContentRulesService(this)
     this.translate = new TranslateService(this)
     this.spellcheck = new SpellcheckService(this)
     this.languages = new LanguagesService(this)
@@ -1455,10 +1477,17 @@ export class Browser {
       // The left pane's link rule follows the splits (a swap, a pane joining or leaving).
       this.tabs.syncSplitLinkFlags()
     })
+    // An extension taking or releasing a privacy setting (`chrome.privacy`) changes the effective
+    // policy without a settings change: the service that pushes a document to the hosts re-reads.
+    // The services that read at the decision (credentials, autofill, suggestions) need no push.
+    this.state.onExtensionControlsChange(() => this.protection.onExtensionControlsChanged())
     // Rule sets load synchronously so the first page is protected.
     this.blocking.start()
     // After the blocking store is attached: HTTPS-only mode's set is persisted like the others.
     this.protection.start()
+    // The load-path content rules reach the host before the first page view is made, so a
+    // restored tab's first navigation already has its site's answers (PS-63, PS-64).
+    this.contentRules.start()
     // A clear on exit the last close left owed runs now, off the boot path.
     this.siteData.start()
     // The pages' languages and fonts reach the host before the first page view is made, so the
@@ -2647,6 +2676,7 @@ export class Browser {
     this.updates.stop()
     this.downloads.shutdown()
     this.protection.stop()
+    this.contentRules.stop()
     this.blocking.stop()
     this.inactiveTabs.stop()
     this.background.stop()
@@ -4206,6 +4236,7 @@ export class Browser {
       updates: JSON.stringify(s.updates),
       blocking: s.blocking,
       privacy: JSON.stringify(s.privacy),
+      preloadPages: s.preloadPages,
       autofill: `${JSON.stringify(s.passwords)}${JSON.stringify(s.autofill)}`,
       spellcheck: JSON.stringify(s.spellcheck),
       reader: JSON.stringify(s.reader),
@@ -4297,6 +4328,8 @@ export class Browser {
           ...s.privacy,
           ...(value as Partial<Settings['privacy']>)
         })
+      } else if (key === 'preloadPages') {
+        s.preloadPages = sanitizePreloadPages(value)
       } else if (key === 'spellcheck' && value && typeof value === 'object') {
         s.spellcheck = sanitizeSpellcheck({
           ...s.spellcheck,
@@ -4380,7 +4413,8 @@ export class Browser {
     if (before.updates !== JSON.stringify(s.updates)) this.updates.onSettingsChanged()
     if (before.appIcon !== s.appIcon) this.platform.app.setAppIcon?.(s.appIcon)
     if (before.blocking !== s.blocking) this.blocking.onSettingsChanged()
-    if (before.privacy !== JSON.stringify(s.privacy)) this.protection.onSettingsChanged()
+    if (before.privacy !== JSON.stringify(s.privacy) || before.preloadPages !== s.preloadPages)
+      this.protection.onSettingsChanged()
     if (before.autofill !== `${JSON.stringify(s.passwords)}${JSON.stringify(s.autofill)}`)
       this.autofill.onSettingsChanged()
     if (before.spellcheck !== JSON.stringify(s.spellcheck)) this.spellcheck.onSettingsChanged()

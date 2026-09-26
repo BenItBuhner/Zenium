@@ -4,6 +4,7 @@ import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { Tab, UIState } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
+import { EXTENSION_SETTING_KEYS } from '@shared/extensionSettings'
 import { DEFAULT_NEW_TAB_SETTINGS } from '@shared/newTab'
 import { DEFAULT_PRIVACY_SETTINGS, emptyPrivacyStatus } from '@shared/privacy'
 import { DEFAULT_SEARCH_ENGINES } from '@shared/search'
@@ -76,17 +77,25 @@ const state = {
   newTabShortcuts: [],
   newTabHiddenHosts: [],
   bookmarks: [],
-  privacy: emptyPrivacyStatus()
+  privacy: emptyPrivacyStatus(),
+  extensionControls: {}
 } as unknown as UIState
 
 /**
  * The state with the private contexts' third-party cookie status as the core publishes it
  * (`PrivacyStatus.privateThirdPartyCookies`): the switch reads that, not the settings.
  */
-function withPrivateCookies(blocked: boolean, locked = false): UIState {
+function withPrivateCookies(blocked: boolean, locked = false, lockedByExtension?: string): UIState {
   return {
     ...state,
-    privacy: { ...state.privacy, privateThirdPartyCookies: { blocked, locked } }
+    privacy: {
+      ...state.privacy,
+      privateThirdPartyCookies: {
+        blocked,
+        locked,
+        ...(lockedByExtension === undefined ? {} : { lockedByExtension })
+      }
+    }
   }
 }
 
@@ -201,10 +210,63 @@ describe('the new tab route keyed on the container', () => {
     expect(row.getAttribute('aria-checked')).toBe('true')
     // §9.30: the whole control disabled – `aria-disabled` is what `.zen-ntp-row` lays out at .4.
     expect(row.getAttribute('aria-disabled')).toBe('true')
-    expect(row.textContent).toContain('Blocked in every tab by Settings → Privacy.')
+    // The pane's actual name behind the language's path glyph (the lead's ruling on #522).
+    expect(row.textContent).toContain('Blocked in every tab by Settings › Privacy and Security.')
+    expect(row.textContent).not.toContain('Settings → Privacy')
     expect(row.textContent).not.toContain('Blocks third-party cookies in private tabs.')
     act(() => row.click())
     expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it('locked under an extension’s hold (chrome.privacy thirdPartyCookiesAllowed off, services pass 10): the line names the extension from the core’s status, or says "an extension" without a name', () => {
+    // The holder comes with the status the core computes (`lockedByExtension`, the published
+    // control's name), not from a second read of the layer.
+    render(tab('p', PRIVATE_CONTAINER_ID), withPrivateCookies(true, true, 'uBlock Origin'))
+    let row = cookiesRow()
+    expect(row.getAttribute('aria-checked')).toBe('true')
+    expect(row.getAttribute('aria-disabled')).toBe('true')
+    expect(row.textContent).toContain('Blocked in every tab by the extension uBlock Origin.')
+    expect(row.textContent).not.toContain('Settings › Privacy and Security')
+    act(() => row.click())
+    expect(invoke).not.toHaveBeenCalled()
+
+    render(tab('p', PRIVATE_CONTAINER_ID), withPrivateCookies(true, true, ''))
+    row = cookiesRow()
+    expect(row.textContent).toContain('Blocked in every tab by an extension.')
+  })
+
+  it('locked OFF under an extension’s hold at true (allow everywhere – the independent review’s Required 1): off, at .4, the twin sentence names the extension, and a tap writes nothing', () => {
+    render(tab('p', PRIVATE_CONTAINER_ID), withPrivateCookies(false, true, 'Opener'))
+    let row = cookiesRow()
+    expect(row.getAttribute('aria-checked')).toBe('false')
+    // §9.30: the whole row at .4, inert – the switch would spring back with no word otherwise.
+    expect(row.getAttribute('aria-disabled')).toBe('true')
+    expect(row.textContent).toContain('Allowed in every tab by the extension Opener.')
+    expect(row.textContent).not.toContain('Blocks third-party cookies in private tabs.')
+    expect(row.textContent).not.toContain('Settings › Privacy and Security')
+    act(() => row.click())
+    expect(invoke).not.toHaveBeenCalled()
+
+    render(tab('p', PRIVATE_CONTAINER_ID), withPrivateCookies(false, true, ''))
+    row = cookiesRow()
+    expect(row.textContent).toContain('Allowed in every tab by an extension.')
+
+    // The published map alone does not lock or word the row: the core's status does. A stale
+    // holder in the map with an unlocked status is the switch's own description.
+    const unlocked: UIState = {
+      ...withPrivateCookies(false, false),
+      extensionControls: {
+        [EXTENSION_SETTING_KEYS.thirdPartyCookies]: {
+          extensionId: 'x',
+          name: 'Opener',
+          value: true
+        }
+      }
+    }
+    render(tab('p', PRIVATE_CONTAINER_ID), unlocked)
+    row = cookiesRow()
+    expect(row.getAttribute('aria-disabled')).toBeNull()
+    expect(row.textContent).toContain('Blocks third-party cookies in private tabs.')
   })
 
   it('the global mode alone does not drive it: the switch follows the status the core computes with the private override', () => {

@@ -109,8 +109,10 @@ import type {
   WindowOpenTicket
 } from '../../core/platform'
 import type { SessionManager } from './sessions'
+import { requestDetails, type ContentRulesLookup } from './contentRules'
 import { downloadDir } from './downloads'
 import { savePageDialogOptions, savePageTarget } from './savePage'
+import { StartupHold } from './startupHold'
 import { uniquePath } from './uniquePath'
 import { frameById, frameIdOf } from './extensionApi/frames'
 import type { ElectronWindow } from './window'
@@ -278,10 +280,11 @@ function fontsKey(fonts: EffectiveFonts): string {
 
 /**
  * The emulation overrides a page view keeps on the page's shared session
- * (`ElectronTabView.setEmulation`): the dark theme for sites' auto dark mode, and the Appearance
- * setting's `prefers-color-scheme` where the engine does not carry it to pages itself.
+ * (`ElectronTabView.setEmulation`): the dark theme for sites' auto dark mode, the Appearance
+ * setting's `prefers-color-scheme` where the engine does not carry it to pages itself, and the
+ * JavaScript site setting's switch (`refreshScripts`).
  */
-type EmulationOverride = 'autoDark' | 'colorScheme'
+type EmulationOverride = 'autoDark' | 'colorScheme' | 'scripts'
 
 /** A DevTools protocol command as the view sends it. */
 interface CdpCommand {
@@ -294,10 +297,23 @@ const AUTO_DARK_MODE_ON: CdpCommand = {
   params: { enabled: true }
 }
 
+/**
+ * The JavaScript site setting's block (PS-64): the browser-side emulation handler takes
+ * `javascript_enabled` out of the page's web preferences, which the renderer reads at every
+ * script's execution – a document that starts under it runs none of its own, as under Chrome's
+ * JAVASCRIPT content setting. One difference, measured on the real build (services pass 10): the
+ * parser still sees scripting as on, so `<noscript>` content stays hidden where Chrome shows it.
+ */
+const SCRIPTS_OFF: CdpCommand = {
+  method: 'Emulation.setScriptExecutionDisabled',
+  params: { value: true }
+}
+
 /** What takes each override off a session that stays. */
 const EMULATION_RELEASE: Record<EmulationOverride, CdpCommand> = {
   autoDark: { method: 'Emulation.setAutoDarkModeOverride', params: {} },
-  colorScheme: { method: 'Emulation.setEmulatedMedia', params: emulatedMediaParams(null) }
+  colorScheme: { method: 'Emulation.setEmulatedMedia', params: emulatedMediaParams(null) },
+  scripts: { method: 'Emulation.setScriptExecutionDisabled', params: { value: false } }
 }
 
 function sameCommand(a: CdpCommand | null, b: CdpCommand | null): boolean {
@@ -676,6 +692,8 @@ export class ElectronTabView implements TabView {
       this.pageIntent = null
       // A refused certificate belongs to the navigation it happened in (which asks after this).
       this.refusedCertificate = null
+      // The JavaScript site setting for the document on its way, before its response is read.
+      this.refreshScripts(details.url)
     })
     // A server redirect inside the navigation under way (Chromium's `DidRedirectNavigation`):
     // the core keeps the hop and records the chain with the commit (history-23).
@@ -684,6 +702,7 @@ export class ElectronTabView implements TabView {
       const from = this.navigatingUrl
       this.navigatingUrl = details.url
       if (from && from !== details.url) ev.onRedirected?.(from, details.url)
+      this.refreshScripts(details.url)
     })
     wc.on('dom-ready', () => ev.onDomReady())
     // By the time this fires `this.view.webContents` no longer returns the object (Electron drops
@@ -867,7 +886,12 @@ export class ElectronTabView implements TabView {
     // `link` too, so no `typed` claim is made without knowing the source.
     this.navigationHint = {}
     this.recordHostNavigation(false, () => this.loadURL(url))
-    void this.wc.loadURL(url).catch(() => undefined)
+    // The run's first documents wait for the extension layer's first publish (`startupHold.ts`);
+    // the hold is open for the run once it opened, and the page may have gone while it waited.
+    this.owner.startupHold.run(() => {
+      if (this.wc.isDestroyed()) return
+      void this.wc.loadURL(url).catch(() => undefined)
+    })
   }
 
   /**
@@ -947,6 +971,9 @@ export class ElectronTabView implements TabView {
 
   async restoreNavigation(snapshot: NavigationSnapshot): Promise<void> {
     const wc = this.wc
+    if (wc.isDestroyed()) return
+    // A restored tab's first document, held like `loadURL`'s (`startupHold.ts`).
+    await this.owner.startupHold.whenOpen()
     if (wc.isDestroyed()) return
     const entries = snapshot.entries.filter((e) => typeof e.url === 'string' && e.url !== '')
     const index = Math.min(Math.max(snapshot.index, 0), entries.length - 1)
@@ -2270,6 +2297,28 @@ export class ElectronTabView implements TabView {
     )
   }
 
+  // --- the JavaScript site setting (PS-64) --------------------------------------------
+
+  /**
+   * JavaScript for the document about to load at `url`: the site setting's block goes on the
+   * page's session as `Emulation.setScriptExecutionDisabled` (`SCRIPTS_OFF`) as the navigation
+   * starts – and again at each redirect hop, for the address the page ends at – and comes off
+   * the same way for a document the setting allows, so a blocked site's answer never outlives
+   * its document. Electron 44 has no per-view switch of its own: a page's web preferences are
+   * fixed at creation, and the emulation override is the one runtime path (the same primitive
+   * as the dark theme for sites). What it does not reach: a page an extension's `chrome.debugger`
+   * or DevTools already holds when the hold attaches keeps its scripts until the next load
+   * (`setEmulation` drops the override then); the preload's isolated world still runs (Blink
+   * lets isolated worlds execute under the block, as Chrome's content scripts do), the page's
+   * own scripts, `javascript:` URLs and `webContents.executeJavaScript` in the main world do
+   * not. Same-document navigations change no document and are left alone.
+   */
+  private refreshScripts(url: string): void {
+    if (this.wc.isDestroyed()) return
+    const blocked = this.owner.scriptsBlocked(url, this.wc.session)
+    this.setEmulation('scripts', blocked ? SCRIPTS_OFF : null)
+  }
+
   setBackgroundThrottling(allowed: boolean): void {
     if (!this.wc.isDestroyed()) this.wc.setBackgroundThrottling(allowed)
   }
@@ -2861,6 +2910,12 @@ export class ElectronTabViewHost implements TabViewHost {
   private readonly keyboardWatched = new WeakSet<BrowserWindow>()
   /** Windows whose focus the pages' hang monitors follow (`watchFocus`). */
   private readonly focusWatched = new WeakSet<BrowserWindow>()
+  /**
+   * The hold on the run's first documents until the extension layer's first publish
+   * (`startupHold.ts`): the pages' first `loadURL` / `restoreNavigation` go through it. Open
+   * unless the platform closes it at start (`ElectronPlatform.start`).
+   */
+  startupHold = new StartupHold()
   /** The certificates the sessions verified, by host, for the site-information card (`certificate`). */
   readonly certificates = new SiteCertificates()
   /**
@@ -2954,6 +3009,24 @@ export class ElectronTabViewHost implements TabViewHost {
   /** The page fonts every new page view is made with right now (for the tests). */
   static currentFonts(): PageFontSettings {
     return userFontSettings
+  }
+
+  /**
+   * The core's per-site content settings the views enforce themselves (the JavaScript switch,
+   * `ElectronTabView.refreshScripts`); the platform sets it once the core is up. Null: nothing
+   * is blocked (the views made before the core answers, and the tests).
+   */
+  contentRules: ContentRulesLookup | null = null
+
+  /** Whether the JavaScript site setting blocks a document at `url` in `ses`'s container. */
+  scriptsBlocked(url: string, ses: Session): boolean {
+    if (!this.contentRules || !/^(https?|file):/i.test(url)) return false
+    const containerId = this.sessions.containerOf(ses)
+    return !this.contentRules.allows(
+      'javascript',
+      url,
+      containerId ? requestDetails(containerId) : undefined
+    )
   }
 
   /** Follow the window's own chrome for the keyboard, as every tab page in it is followed. */

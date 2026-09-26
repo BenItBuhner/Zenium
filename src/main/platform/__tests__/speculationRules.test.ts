@@ -167,6 +167,7 @@ const FLAGS: PrivacyFlags = {
   dnt: true,
   secureDnsMode: 'automatic',
   secureDnsServers: [],
+  preloadPages: 'standard',
   siteData: DEFAULT_SITE_DATA_POLICY
 }
 

@@ -13,6 +13,7 @@ import {
   VenetianMask
 } from 'lucide-react'
 import type { PhoneBarPosition, Tab, UIState } from '@shared/types'
+import type { PrivateThirdPartyCookieStatus } from '@shared/privacy'
 import { defaultSearchEngineOf } from '@shared/search'
 import { getHost } from '@shared/url'
 import { MAX_NEW_TAB_SHORTCUTS, newTabSections } from '@shared/newTab'
@@ -275,11 +276,37 @@ function PrivateNewTabPage({ state, tab, hidden }: Props): JSX.Element {
 }
 
 const COOKIES_SWITCH_LABEL = 'Block third-party cookies'
-// One line each at 13 px in the row's text column (about 300 px on a 412 px phone), a full stop
-// like the page's other description lines; the locked line names the section as the root named
-// it, Privacy, the short form of the Settings nav's "Privacy and Security".
+// The description at 13 px in the row's text column (about 300 px on a 412 px phone), a full
+// stop like the page's other description lines: the switch's own line fits one line; the locked
+// line by Settings (56 characters) wraps to a second on the phone, and `line-clamp-2` holds a
+// holder's long name to two – the row grows to 84 with it (§9.1's stack). The locked line names
+// the pane by its actual name behind the language's path glyph (the lead's ruling on #522), or
+// the extension whose `chrome.privacy` hold locks the switch (§10.5's controlled rows name theirs).
 const COOKIES_SWITCH_DESCRIPTION = 'Blocks third-party cookies in private tabs.'
-const COOKIES_SWITCH_LOCKED = 'Blocked in every tab by Settings → Privacy.'
+const COOKIES_SWITCH_LOCKED = 'Blocked in every tab by Settings › Privacy and Security.'
+
+/**
+ * The locked line while an extension holds `thirdPartyCookiesAllowed`, at either pole – "Blocked"
+ * under `false`, "Allowed" under `true` (the switch off and locked: a tap would spring back) –
+ * naming the holder where the name is to hand.
+ */
+function cookiesLockedByExtension(blocked: boolean, name: string): string {
+  const verb = blocked ? 'Blocked' : 'Allowed'
+  return name.trim()
+    ? `${verb} in every tab by the extension ${name.trim()}.`
+    : `${verb} in every tab by an extension.`
+}
+
+/**
+ * Why the private switch is locked (`PrivacyStatus.privateThirdPartyCookies`): the extension
+ * holding the cookie setting (`lockedByExtension`, the effective value over the user's mode –
+ * Chrome's one cookie pref), else the user's own global block in Settings.
+ */
+function cookiesLockedLine(cookies: PrivateThirdPartyCookieStatus): string {
+  return cookies.lockedByExtension === undefined
+    ? COOKIES_SWITCH_LOCKED
+    : cookiesLockedByExtension(cookies.blocked, cookies.lockedByExtension)
+}
 
 /**
  * Chrome's Incognito page's "Block third-party cookies" switch (NTP-31), private-only as
@@ -291,14 +318,18 @@ const COOKIES_SWITCH_LOCKED = 'Blocked in every tab by Settings → Privacy.'
  * third-party cookies everywhere the status is `locked`: the switch shows on and disabled (§9.30:
  * the whole row laid out at .4, full size, inert), the description giving the reason, and the row
  * never writes in that state (the engine would keep a write for when the lock lifts, but the
- * chrome does not offer one). A §10.4 switch row on the shared row primitive with its window
+ * chrome does not offer one). An extension holding `chrome.privacy`'s cookie setting locks it at
+ * either pole – on under a block, off under an allow – the description naming the extension, as
+ * a tap would otherwise write an override the layer above does not read and spring back with no
+ * word. A §10.4 switch row on the shared row primitive with its window
  * modifier (`.zen-ntp-row`): the whole row is the switch, the glyph on the first line as the
  * explainer rows' are, the description 13 at 69 % under the label (a row's own description,
  * §9.1's stack), the switch centred on the row. The heading is the Settings cookies group's, so
  * the two surfaces name the setting alike.
  */
 function ThirdPartyCookiesRow({ state }: { state: UIState }): JSX.Element {
-  const { blocked, locked } = state.privacy.privateThirdPartyCookies
+  const cookies = state.privacy.privateThirdPartyCookies
+  const { blocked, locked } = cookies
   return (
     <section className="zen-firstrun-group -mx-4 flex flex-col">
       <h2 className="zen-firstrun-heading px-4 pb-1">{PROTECTION_TEXT.cookies.heading}</h2>
@@ -320,7 +351,7 @@ function ThirdPartyCookiesRow({ state }: { state: UIState }): JSX.Element {
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="zen-firstrun-body">{COOKIES_SWITCH_LABEL}</span>
           <span className="zen-firstrun-small zen-firstrun-deemphasized line-clamp-2">
-            {locked ? COOKIES_SWITCH_LOCKED : COOKIES_SWITCH_DESCRIPTION}
+            {locked ? cookiesLockedLine(cookies) : COOKIES_SWITCH_DESCRIPTION}
           </span>
         </span>
         <span className="zen-v2-switch" aria-hidden />

@@ -6,9 +6,16 @@ import { fileURLToPath } from 'node:url'
 // eslint-disable-next-line no-restricted-imports
 import { gunzipSync } from 'node:zlib'
 import { describe, expect, it, vi } from 'vitest'
-import type { HostCapabilities, Platform as PlatformOs, Tab } from '../../../shared/types'
+import type {
+  ExtensionControl,
+  HostCapabilities,
+  Platform as PlatformOs,
+  Tab
+} from '../../../shared/types'
 import type { PrivacyFlags, PrivacySettings } from '../../../shared/privacy'
 import { HTTPS_ONLY_PERMISSION, LOOKALIKE_PERMISSION } from '../../../shared/privacy'
+import { ON_DEVICE_SITE_DATA_PERMISSION, cookieVerdict } from '../../../shared/siteData'
+import { EXTENSION_SETTING_KEYS } from '../../../shared/extensionSettings'
 import { BLANK_URL } from '../../../shared/url'
 import { Browser } from '../../browser'
 import { BUILTIN_RULE_SETS } from '../../blocking/rules'
@@ -325,6 +332,40 @@ describe('ProtectionService: the policy the hosts get', () => {
       secureDnsMode: 'automatic',
       secureDnsServers: []
     })
+  })
+
+  it('folds the On-device site data row into the cookie policy the hosts apply', () => {
+    const f = fixture()
+    const last = (): PrivacyFlags => f.applied[f.applied.length - 1]
+    expect(last().siteData).toEqual({ blockAll: false, allow: [], clearOnExit: [], block: [] })
+
+    // A site the row blocks joins the never list: pushed to the hosts at once, its cookies withheld.
+    f.browser.permissions.set(ON_DEVICE_SITE_DATA_PERMISSION, 'https://tracker.example/x', 'deny')
+    expect(last().siteData.block).toEqual(['https://tracker.example'])
+    expect(cookieVerdict(last().siteData, 'https://tracker.example/pixel')).toBe('blocked')
+    expect(cookieVerdict(last().siteData, 'http://tracker.example/pixel')).toBe('default')
+    expect(f.browser.siteData.siteState('https://tracker.example/').state).toBe('block')
+
+    // An allowed site joins the allow list; the row's default Block is the policy's block-all.
+    f.browser.permissions.set(ON_DEVICE_SITE_DATA_PERMISSION, 'https://shop.example', 'allow')
+    f.browser.permissions.chooseDefault(ON_DEVICE_SITE_DATA_PERMISSION, 'deny')
+    expect(last().siteData).toMatchObject({
+      blockAll: true,
+      allow: ['https://shop.example'],
+      block: ['https://tracker.example']
+    })
+    expect(cookieVerdict(last().siteData, 'https://shop.example/cart')).toBe('allowed')
+    expect(cookieVerdict(last().siteData, 'https://other.example/')).toBe('blocked')
+
+    // The Cookies-and-site-data lists keep their own say; a site on both stays blocked.
+    f.browser.siteData.add('allow', '[*.]tracker.example')
+    expect(cookieVerdict(last().siteData, 'https://tracker.example/pixel')).toBe('blocked')
+    expect(cookieVerdict(last().siteData, 'https://cdn.tracker.example/pixel')).toBe('allowed')
+
+    // Reset from the site-information sheet: the policy follows.
+    f.browser.permissions.chooseDefault(ON_DEVICE_SITE_DATA_PERMISSION, 'allow')
+    f.browser.permissions.resetOrigin('https://tracker.example')
+    expect(last().siteData).toMatchObject({ blockAll: false, block: [] })
   })
 })
 
@@ -947,5 +988,226 @@ describe('ProtectionService: the custom resolver check', () => {
       ok: false
     })
     expect(asked).toHaveLength(3)
+  })
+})
+
+/**
+ * The extension layer's hold on a privacy setting, the way the host publishes it
+ * (`State.setExtensionControls`, the sink of `chrome.privacy`'s effective values).
+ */
+function hold(f: Fixture, controls: Record<string, ExtensionControl>): void {
+  f.browser.state.setExtensionControls(controls)
+}
+
+function lastFlags(f: Fixture): PrivacyFlags {
+  return f.applied[f.applied.length - 1]
+}
+
+describe('ProtectionService: the extension layer (chrome.privacy, services pass 10)', () => {
+  const LOOKALIKE = 'https://gogle.com/'
+  const GUARD = { extensionId: 'guard', name: 'Guard' }
+
+  it("takes an extension's Safe Browsing value over the user's – in the flags, the lookups and the lookalike check – and hands the user's back on release", async () => {
+    const f = fixture()
+    await tablesLoaded(f)
+    f.browser.protection.safeBrowsing.setTable(
+      'urlhaus',
+      PrefixTable.fromHosts(['evil.example']),
+      1
+    )
+    expect(f.browser.protection.safeBrowsing.lookup('http://evil.example/')).not.toBeNull()
+    expect(f.browser.protection.checkLookalike(LOOKALIKE)).not.toBeNull()
+    const pushes = f.applied.length
+
+    // The extension's `false` over the user's `true`: one push of the flags, the effective
+    // value everywhere the switch is read; the user's setting is untouched.
+    hold(f, { [EXTENSION_SETTING_KEYS.safeBrowsing]: { ...GUARD, value: false } })
+    expect(f.browser.state.settings.privacy.safeBrowsingEnabled).toBe(true)
+    expect(f.applied).toHaveLength(pushes + 1)
+    expect(lastFlags(f).safeBrowsing).toBe(false)
+    expect(f.browser.protection.status().safeBrowsing.enabled).toBe(false)
+    expect(f.browser.protection.safeBrowsing.lookup('http://evil.example/')).toBeNull()
+    // #478's lookalike question sits under the switch: the extension turning Safe Browsing off
+    // turns it off too, as in Chrome.
+    expect(f.browser.protection.checkLookalike(LOOKALIKE)).toBeNull()
+
+    // The user's own change while held changes nothing visible – and is not lost.
+    setPrivacy(f, { safeBrowsingEnabled: false })
+    setPrivacy(f, { safeBrowsingEnabled: true })
+    expect(f.applied).toHaveLength(pushes + 1)
+    expect(lastFlags(f).safeBrowsing).toBe(false)
+    expect(f.browser.state.settings.privacy.safeBrowsingEnabled).toBe(true)
+
+    // Release (clear, disable, uninstall): the user's value returns.
+    hold(f, {})
+    expect(f.applied).toHaveLength(pushes + 2)
+    expect(lastFlags(f).safeBrowsing).toBe(true)
+    expect(f.browser.protection.status().safeBrowsing.enabled).toBe(true)
+    expect(f.browser.protection.safeBrowsing.lookup('http://evil.example/')).not.toBeNull()
+    expect(f.browser.protection.checkLookalike(LOOKALIKE)).not.toBeNull()
+
+    // The extension's `true` over the user's `false`, the same way round.
+    setPrivacy(f, { safeBrowsingEnabled: false })
+    expect(lastFlags(f).safeBrowsing).toBe(false)
+    hold(f, { [EXTENSION_SETTING_KEYS.safeBrowsing]: { ...GUARD, value: true } })
+    expect(lastFlags(f).safeBrowsing).toBe(true)
+    expect(f.browser.protection.checkLookalike(LOOKALIKE)).not.toBeNull()
+    expect(f.browser.state.settings.privacy.safeBrowsingEnabled).toBe(false)
+    hold(f, {})
+    expect(lastFlags(f).safeBrowsing).toBe(false)
+  })
+
+  it("takes an extension's third-party cookie boolean as Chrome's one cookie pref – false blocks everywhere, the private switch locked; true allows everywhere – and hands the user's two values back whole", () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    setPrivacy(f, { thirdPartyCookies: 'block-private', thirdPartyCookiesPrivate: 'block' })
+    expect(lastFlags(f)).toMatchObject({
+      thirdPartyCookies: 'block-private',
+      thirdPartyCookiesPrivate: 'block'
+    })
+    const pushes = f.applied.length
+
+    // `false`: the global block, one push; the private switch reads on and locked, as under the
+    // user's own block. The user's values are untouched.
+    hold(f, { [EXTENSION_SETTING_KEYS.thirdPartyCookies]: { ...GUARD, value: false } })
+    expect(f.applied).toHaveLength(pushes + 1)
+    expect(lastFlags(f)).toMatchObject({
+      thirdPartyCookies: 'block',
+      thirdPartyCookiesPrivate: 'block'
+    })
+    expect(f.browser.protection.status().privateThirdPartyCookies).toEqual({
+      blocked: true,
+      locked: true,
+      lockedByExtension: GUARD.name
+    })
+    expect(f.browser.state.settings.privacy).toMatchObject({
+      thirdPartyCookies: 'block-private',
+      thirdPartyCookiesPrivate: 'block'
+    })
+    // The user's own change while held changes nothing visible – and is kept.
+    setPrivacy(f, { thirdPartyCookies: 'allow' })
+    expect(f.applied).toHaveLength(pushes + 1)
+    expect(lastFlags(f).thirdPartyCookies).toBe('block')
+    expect(f.browser.state.settings.privacy.thirdPartyCookies).toBe('allow')
+
+    // `true`: allow everywhere – the private override reads `default` too, as Chrome's `kOff`
+    // lifts the incognito block; the switch reads off, and locked at that pole with the holder
+    // named (a tap would write an override the layer does not read and spring back).
+    hold(f, { [EXTENSION_SETTING_KEYS.thirdPartyCookies]: { ...GUARD, value: true } })
+    expect(f.applied).toHaveLength(pushes + 2)
+    expect(lastFlags(f)).toMatchObject({
+      thirdPartyCookies: 'allow',
+      thirdPartyCookiesPrivate: 'default'
+    })
+    expect(f.browser.protection.status().privateThirdPartyCookies).toEqual({
+      blocked: false,
+      locked: true,
+      lockedByExtension: GUARD.name
+    })
+    // A write that lands anyway sets the user's own value underneath, nothing visible.
+    f.browser.protection.setThirdPartyCookiesPrivate('allow', win)
+    expect(f.browser.state.settings.privacy.thirdPartyCookiesPrivate).toBe('allow')
+    expect(f.applied).toHaveLength(pushes + 2)
+    expect(lastFlags(f).thirdPartyCookiesPrivate).toBe('default')
+
+    // Release: the user's two values return whole – the mode set while held, the switch as set.
+    hold(f, {})
+    expect(f.applied).toHaveLength(pushes + 3)
+    expect(lastFlags(f)).toMatchObject({
+      thirdPartyCookies: 'allow',
+      thirdPartyCookiesPrivate: 'allow'
+    })
+    expect(f.browser.protection.status().privateThirdPartyCookies).toEqual({
+      blocked: false,
+      locked: false
+    })
+    // `true` over the user's global block, and the block back on release.
+    setPrivacy(f, { thirdPartyCookies: 'block' })
+    hold(f, { [EXTENSION_SETTING_KEYS.thirdPartyCookies]: { ...GUARD, value: true } })
+    expect(lastFlags(f).thirdPartyCookies).toBe('allow')
+    hold(f, {})
+    expect(lastFlags(f).thirdPartyCookies).toBe('block')
+    expect(f.browser.protection.status().privateThirdPartyCookies.locked).toBe(true)
+  })
+
+  it('leaves the flags alone when a hold on another setting comes or goes', () => {
+    const f = fixture()
+    const pushes = f.applied.length
+    hold(f, { [EXTENSION_SETTING_KEYS.passwordSaving]: { ...GUARD, value: false } })
+    hold(f, {})
+    expect(f.applied).toHaveLength(pushes)
+  })
+})
+
+describe('ProtectionService: Preload pages (PS-43)', () => {
+  const GUARD = { extensionId: 'guard', name: 'Guard' }
+  const setLevel = (f: Fixture, preloadPages: unknown): void => {
+    f.browser.handleCommand(f.browser.focusedWindow(), 'settings.update', { preloadPages })
+  }
+
+  it('carries the level in the flags: standard by default, the change pushed once, garbage read as standard', () => {
+    const f = fixture()
+    expect(f.browser.state.settings.preloadPages).toBe('standard')
+    expect(lastFlags(f).preloadPages).toBe('standard')
+    const pushes = f.applied.length
+    setLevel(f, 'none')
+    expect(f.browser.state.settings.preloadPages).toBe('none')
+    expect(f.applied).toHaveLength(pushes + 1)
+    expect(lastFlags(f).preloadPages).toBe('none')
+    // The same level again pushes nothing; an unknown value is the default, not an error.
+    setLevel(f, 'none')
+    expect(f.applied).toHaveLength(pushes + 1)
+    setLevel(f, 'turbo')
+    expect(f.browser.state.settings.preloadPages).toBe('standard')
+    expect(lastFlags(f).preloadPages).toBe('standard')
+    setLevel(f, 'extended')
+    expect(lastFlags(f).preloadPages).toBe('extended')
+  })
+
+  it('reads a profile from before the setting – the desktop\'s "Block prerendering" on, as every profile had it – as standard, and its own value back after a restart', () => {
+    const io = memoryIo()
+    // A pre-PS-43 profile: no `preloadPages`, the resource governor's default `disablePrerender: true`.
+    io.writeSync(
+      'state.json',
+      JSON.stringify({
+        version: 6,
+        settings: { resources: { process: { disablePrerender: true } } }
+      })
+    )
+    const before = fixture(io)
+    expect(before.browser.state.settings.preloadPages).toBe('standard')
+    expect(before.browser.state.settings.resources.process.disablePrerender).toBe(true)
+    expect(lastFlags(before).preloadPages).toBe('standard')
+    setLevel(before, 'none')
+    before.browser.state.flushSync()
+    // A restart reads the chosen level, and the folded switch is left as it was.
+    const after = fixture(io)
+    expect(after.browser.state.settings.preloadPages).toBe('none')
+    expect(after.browser.state.settings.resources.process.disablePrerender).toBe(true)
+    expect(lastFlags(after).preloadPages).toBe('none')
+  })
+
+  it("takes an extension's networkPredictionEnabled – false is none; true is the user's own level – and hands the user's back on release", () => {
+    const f = fixture()
+    const pushes = f.applied.length
+    hold(f, { [EXTENSION_SETTING_KEYS.preloadPages]: { ...GUARD, value: false } })
+    expect(f.applied).toHaveLength(pushes + 1)
+    expect(lastFlags(f).preloadPages).toBe('none')
+    expect(f.browser.protection.preloadPages()).toBe('none')
+    expect(f.browser.state.settings.preloadPages).toBe('standard')
+    // The user's own change while held changes nothing visible – and is not lost.
+    setLevel(f, 'extended')
+    expect(lastFlags(f).preloadPages).toBe('none')
+    expect(f.browser.state.settings.preloadPages).toBe('extended')
+    hold(f, {})
+    expect(lastFlags(f).preloadPages).toBe('extended')
+    // `true` lifts only an extension's block: the user's none stands under it.
+    setLevel(f, 'none')
+    hold(f, { [EXTENSION_SETTING_KEYS.preloadPages]: { ...GUARD, value: true } })
+    expect(lastFlags(f).preloadPages).toBe('none')
+    setLevel(f, 'standard')
+    expect(lastFlags(f).preloadPages).toBe('standard')
+    hold(f, {})
+    expect(lastFlags(f).preloadPages).toBe('standard')
   })
 })

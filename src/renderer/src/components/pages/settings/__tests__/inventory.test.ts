@@ -505,7 +505,7 @@ const INVENTORY: Record<string, readonly string[]> = {
     'Low-end device mode',
     'No spare renderer process',
     'Drop the back/forward cache',
-    'Block prerendering',
+    // "Block prerendering" folded into Privacy and security's Preload pages (PS-43, services pass 10).
     'Raster threads per page',
     'V8: favour memory over speed'
   ],
@@ -568,6 +568,9 @@ const INVENTORY: Record<string, readonly string[]> = {
     // Cookies and site data's default radio on #322 (the lead's ruling on Q3): the mode is the
     // "Default behaviour" choice there and the private-only switch under it.
     'Only in private windows',
+    // Preload pages (PS-43): Chrome's row, on both hosts, where the Resources pane's "Block
+    // prerendering" switch went.
+    'Preload pages',
     'HTTPS-only mode',
     'intranet.example',
     'Use secure DNS',
@@ -590,7 +593,9 @@ const INVENTORY: Record<string, readonly string[]> = {
     'File editing',
     'Clipboard',
     'Payment handlers',
-    'Insecure content',
+    // Insecure content is the Android host's row alone (services pass 10): Electron fixes
+    // `allowRunningInsecureContent` per WebContents at creation and has no per-site path, so the
+    // desktop is not offered a row nothing acts on (`support.desktop: 'n-a'`).
     'Virtual reality',
     'Window management',
     'Fonts',
@@ -737,6 +742,7 @@ const HEADINGS: Record<string, readonly string[]> = {
     'Content',
     'Additional permissions',
     'Sites with their own settings',
+    'Preload pages',
     'HTTPS-only mode',
     'Sites allowed over http',
     'Secure DNS',

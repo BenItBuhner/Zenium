@@ -115,8 +115,10 @@ import createBackgroundWorker from './backgroundWorker?nodeWorker'
 import { ElectronBlocking, ElectronBundledLists, bundledListsDirectory } from './blocking'
 import { supportsWindowMaterial } from './appShell'
 import { ElectronPrivacy } from './privacy'
+import { ContentRulesHandler, attachContentGuards } from './contentRules'
 import { ElectronSpellcheck } from './spellcheck'
 import { ElectronScreenCapture } from './screenCapture'
+import { StartupHold, extensionLayerNeedsHold } from './startupHold'
 import { ElectronShareSheet } from './shareSheet'
 import { ElectronGeolocation } from './geolocation'
 import { ElectronImportHost } from './importHost'
@@ -659,7 +661,10 @@ export class ElectronPlatform implements Platform {
     extensionApi.privacy.attach(this.requestBlocking)
     // `navigator.doNotTrack` follows the same effective source as the `DNT: 1` header: the
     // user's setting or an extension's `chrome.privacy.websites.doNotTrackEnabled` (the value
-    // for private windows counts only for a private tab's documents).
+    // for private windows counts only for a private tab's documents). While the extension
+    // layer's first publish is pending the flags' `dnt` already says sent – the eighth guarded
+    // key's strict pole (`ProtectionService.doNotTrack`), which the header and the signal both
+    // read – so nothing here waits on the publish.
     this.privacy.attachExtensionSignals(
       {
         doNotTrack: (privateWindow) =>
@@ -704,8 +709,24 @@ export class ElectronPlatform implements Platform {
     // Safe Browsing ahead of the rules, the cookie and signal edits after them; the upgrade
     // observer and the page preload's signals IPC.
     this.privacy.attach(this.requestBlocking)
+    // The per-site content settings that act in the request engine (images, PDF download) and
+    // the page preload's document-start question for the page-world guards (sensors, FedCM,
+    // payment handlers); the core answers both from the permission store.
+    this.requestBlocking.multiplexer.register(new ContentRulesHandler(browser.contentRules))
+    attachContentGuards(browser.contentRules, (ses) =>
+      this.requestBlocking.multiplexer.containerOf(ses)
+    )
+    // The JavaScript switch is each view's own (`Emulation.setScriptExecutionDisabled`).
+    this.views.contentRules = browser.contentRules
     this.downloadsShell = new ElectronDownloadsShell(browser)
     const chromiumLicences = chromiumLicencesResponder()
+    // The run's first documents – the restored pages' and the chrome windows' – wait for the
+    // extension layer's first publish (`startupHold.ts`), the one hold for both funnels. It
+    // closes below, at the default session's extension load, when an enabled extension holds
+    // persisted `chrome.privacy` values; the windows come after (`browser.start`).
+    const startupHold = new StartupHold()
+    this.views.startupHold = startupHold
+    this.windows.startupHold = startupHold
     this.sessions.configure((ses: Session, containerId: string) => {
       installZenProtocol(
         ses,
@@ -732,8 +753,26 @@ export class ElectronPlatform implements Platform {
       )
       if (this.sessions.isPersistent(containerId)) {
         webstore.attach(ses)
+        // The API host listens for `extension-loaded` before the service loads: the load's
+        // event publishes the layer (`extensionApi/privacy.ts` `load`), the promise settles after.
         extensionApi.attachSession(ses, containerId)
-        void (browser.extensions as ExtensionService).attachSession(ses)
+        const loaded = extensionService.attachSession(ses)
+        if (
+          containerId === DEFAULT_CONTAINER_ID &&
+          extensionLayerNeedsHold(extensionService.records(), (id) =>
+            extensionApi.store.privacyValues(id)
+          )
+        ) {
+          // The layer is pending until its first publish lands (`State.setExtensionControls`
+          // ends it) or the load settles – resolved or rejected – whichever comes first: the
+          // core's readers answer the strict pole meanwhile, so a hold the bound lets go of
+          // before the publish fails safe (the root's condition). Registered before the hold's
+          // own `then`, so on the ordinary path the interval ends before the documents go.
+          browser.state.setExtensionLayerPending(true)
+          const settled = (): void => browser.state.setExtensionLayerPending(false)
+          loaded.then(settled, settled)
+          startupHold.until(loaded)
+        }
       }
     })
     this.sessions.get(DEFAULT_CONTAINER_ID)

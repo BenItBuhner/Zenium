@@ -4,6 +4,7 @@ import {
   baselineDisabledFeatures,
   baselineSwitches,
   deriveStartupProfile,
+  pendingStartupSwitches,
   profilesDiffer,
   sanitizeResourceSettings,
   serializeProfile,
@@ -48,10 +49,35 @@ describe('deriveStartupProfile', () => {
       { name: 'js-flags', value: '--max-old-space-size=512 --optimize-for-size' },
       {
         name: 'disable-features',
-        value: 'SpareRendererForSitePerProcess,BackForwardCache,Prerender2'
+        value: 'SpareRendererForSitePerProcess,BackForwardCache'
       }
     ])
     expect(profile.hardwareAcceleration).toBe(true)
+  })
+
+  it('puts no switch on the command line for Preload pages – none included – and reads the old Block prerendering no more (PS-43)', () => {
+    // Under `none` the request engine refuses every speculative request live, the prerender's
+    // own first fetch among them: the level's whole enforcement, nothing to relaunch for. The
+    // profile is the resource settings' alone, and `process.disablePrerender` (the fold) is not
+    // read either.
+    const profile = deriveStartupProfile(settings())
+    expect(profile.switches.find((sw) => sw.name === 'disable-features')?.value).toBe(
+      'SpareRendererForSitePerProcess,BackForwardCache'
+    )
+    expect(serializeProfile(profile)).not.toContain('Prerender2')
+    const withOldFold = deriveStartupProfile(
+      settings({ process: { ...settings().process, disablePrerender: true } })
+    )
+    expect(withOldFold).toEqual(profile)
+    expect(deriveStartupProfile(settings({ enabled: false }))).toEqual({
+      switches: [],
+      hardwareAcceleration: true
+    })
+    expect(startupSwitches(deriveStartupProfile(settings({ enabled: false })))).toEqual([
+      { name: 'disable-features', value: 'FedCm' }
+    ])
+    // The derivation takes the resource settings alone: no level goes in.
+    expect(deriveStartupProfile.length).toBe(1)
   })
 
   it('clamps out-of-range process values', () => {
@@ -185,13 +211,11 @@ describe('startupSwitches', () => {
   it('merges the baseline into the profile’s one disable-features switch, once', () => {
     const profile = deriveStartupProfile(settings())
     const own = profile.switches.find((sw) => sw.name === 'disable-features')
-    expect(own?.value).toBe('SpareRendererForSitePerProcess,BackForwardCache,Prerender2')
+    expect(own?.value).toBe('SpareRendererForSitePerProcess,BackForwardCache')
     const applied = startupSwitches(profile)
     const disable = applied.filter((sw) => sw.name === 'disable-features')
     expect(disable).toHaveLength(1)
-    expect(disable[0].value).toBe(
-      'SpareRendererForSitePerProcess,BackForwardCache,Prerender2,FedCm'
-    )
+    expect(disable[0].value).toBe('SpareRendererForSitePerProcess,BackForwardCache,FedCm')
     // Everything else passes through in order, and the profile itself is untouched.
     expect(applied.filter((sw) => sw.name !== 'disable-features')).toEqual(
       profile.switches.filter((sw) => sw.name !== 'disable-features')
@@ -209,6 +233,83 @@ describe('startupSwitches', () => {
       baselineDisabledFeatures('linux')
     )
     expect(linux).toEqual([{ name: 'disable-features', value: 'FedCm,HardwareMediaKeyHandling' }])
+  })
+})
+
+describe('pendingStartupSwitches', () => {
+  const limit = (n: number): ResourceSettings =>
+    settings({ process: { ...settings().process, rendererProcessLimit: n } })
+
+  it('names nothing while the settings match the running process', () => {
+    expect(
+      pendingStartupSwitches(deriveStartupProfile(settings()), deriveStartupProfile(settings()))
+    ).toEqual([])
+    expect(
+      pendingStartupSwitches(
+        deriveStartupProfile(settings({ enabled: false })),
+        deriveStartupProfile(settings({ enabled: false }))
+      )
+    ).toEqual([])
+  })
+
+  it('names the switch a change adds, the one it removes, and the one whose value changed – each once, sorted', () => {
+    expect(
+      pendingStartupSwitches(deriveStartupProfile(limit(3)), deriveStartupProfile(settings()))
+    ).toEqual(['renderer-process-limit'])
+    expect(
+      pendingStartupSwitches(deriveStartupProfile(settings()), deriveStartupProfile(limit(3)))
+    ).toEqual(['renderer-process-limit'])
+    expect(
+      pendingStartupSwitches(deriveStartupProfile(limit(3)), deriveStartupProfile(limit(4)))
+    ).toEqual(['renderer-process-limit'])
+    // Turning the governor off drops every switch it put on: each is named, once.
+    const all = pendingStartupSwitches(
+      deriveStartupProfile(settings({ enabled: false })),
+      deriveStartupProfile(
+        settings({
+          gpuMode: 'low',
+          gpuMemoryMb: 512,
+          process: { ...settings().process, rendererProcessLimit: 3, rendererHeapMb: 1024 }
+        })
+      )
+    )
+    expect(all).toEqual([...new Set(all)].sort())
+    expect(all).toEqual([
+      'disable-accelerated-2d-canvas',
+      'disable-accelerated-video-decode',
+      'disable-features',
+      'disable-gpu-rasterization',
+      'force-gpu-mem-available-mb',
+      'force-gpu-mem-discardable-limit-mb',
+      'js-flags',
+      'renderer-process-limit'
+    ])
+  })
+
+  it('names hardware acceleration as `gpu`, which is no command-line switch', () => {
+    expect(
+      pendingStartupSwitches(
+        deriveStartupProfile(settings({ gpuMode: 'off' })),
+        deriveStartupProfile(settings())
+      )
+    ).toEqual(['gpu'])
+  })
+
+  it('agrees with profilesDiffer: something is named exactly when the profiles differ', () => {
+    const cases: Array<[ResourceSettings, ResourceSettings]> = [
+      [settings(), settings()],
+      [limit(3), settings()],
+      [settings({ gpuMode: 'off' }), settings()],
+      [settings({ enabled: false }), settings()],
+      [settings({ enabled: false }), settings({ enabled: false })]
+    ]
+    for (const [a, b] of cases) {
+      const wanted = deriveStartupProfile(a)
+      const running = deriveStartupProfile(b)
+      expect(pendingStartupSwitches(wanted, running).length > 0).toBe(
+        profilesDiffer(wanted, running)
+      )
+    }
   })
 })
 

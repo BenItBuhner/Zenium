@@ -65,6 +65,13 @@ import kotlin.math.abs
  *    what the next tap does, which withdraws it; a page the browser already holds as a bookmark
  *    (seeded in the profile) opens with the star filled from the core's `state.json`, reading
  *    Edit Bookmark, and its tap opens the page in Zenium;
+ *  - the inbox's DRAIN (`src/android/bookmarkInbox.ts`, the browser's half of the star): an inbox
+ *    seeded before the launch – a page filed in a custom tab while the browser was not running,
+ *    and the seeded bookmark's page filed too – is a bookmark once the core is up (the startup
+ *    sweep, one bookmark of each, none doubled) and the inbox is emptied; a page filed under a
+ *    finger and left filed becomes a bookmark when Zenium next comes to the front, into the
+ *    star's folder, the withdrawn story does not, the Bookmarks page lists it, and the custom
+ *    tab's star reads Edit Bookmark from the browser's store on its next open;
  *  - Desktop Site: the user agent changes to the desktop one and back, the row reads checked;
  *  - Page Info: the v2 prompt sheet with the host and the Connection row (a loopback page reads
  *    Local site, as the browser's sheet does);
@@ -114,9 +121,23 @@ class CustomTabMenuDemo : DemoHarness("customtabs-demo-state.json", "customtabs-
     private fun folder(id: String, title: String, index: Int): JSONObject =
         JSONObject().put("id", id).put("parentId", JSONObject.NULL).put("index", index).put("type", "folder").put("title", title).put("dateAdded", 0)
 
+    /**
+     * The inbox as a custom tab left it while the browser was not running: a page the browser does
+     * not hold, filed first, and the seeded bookmark's page filed after it (the tree holds that one
+     * already: the drain must make no second bookmark of it, and empty its entry all the same).
+     */
+    override fun seedMore(zen: File) {
+        val filed = listOf(
+            CustomTabBookmarks.Entry(filedUrl(), FILED_TITLE, 1_788_438_500_000L),
+            CustomTabBookmarks.Entry(bookmarkedUrl(), BOOKMARKED_TITLE, 1_788_438_500_001L)
+        )
+        File(zen, CustomTabBookmarks.INBOX).writeText(CustomTabBookmarks.serialize(filed))
+    }
+
     override fun warmUp() {
         findings = File(out, "findings.txt")
         findings.writeText("Zenium Android custom tab menu (CCT-03) and start animations (CCT-08), API ${Build.VERSION.SDK_INT}, ${width}x$height, density $density\n\n")
+        readBootDrain()
         server = DemoServer(PORT, routes()).also { it.start() }
         Log.i(tag, "server: ${server.selfCheck()}")
         connect()
@@ -313,14 +334,34 @@ class CustomTabMenuDemo : DemoHarness("customtabs-demo-state.json", "customtabs-
         assertTrue("closing the fourth custom tab returned to the caller", waitForWindow(callerPackage, 8_000))
         SystemClock.sleep(1_200)
 
-        // 12. A page the browser holds as a bookmark: the star is filled from the core's state.json
+        // 12. The star on the second page, filed under a finger and LEFT filed: the browser makes the
+        //     bookmark when it next comes to the front (`bookmarkInbox.ts`), not the custom tab.
+        showCaller(customTabIntent(dark = false, disabled = false, url = secondUrl()))
+        openCustomTab(SECOND_PATH)
+        openMenu()
+        assertTrue(
+            "the star under a finger filed the second page in the inbox",
+            touchTapLabelExpecting(BOOKMARK_LABEL, "the inbox holds the second page", timeoutMs = 8_000) { inboxUrls().contains(secondUrl()) }
+        )
+        note("drain: inbox after filing the second page = ${inboxUrls()}")
+        SystemClock.sleep(1_500)
+        openMenu()
+        assertTrue("the second page's star reads Remove Bookmark: filed, not yet the browser's", findNode { it == REMOVE_BOOKMARK_LABEL } != null)
+        shot("17-second-page-filed")
+        beat()
+        dismissSheet()
+        clickByLabel(CLOSE_LABEL)
+        assertTrue("closing the fifth custom tab returned to the caller", waitForWindow(callerPackage, 8_000))
+        SystemClock.sleep(1_200)
+
+        // 13. A page the browser holds as a bookmark: the star is filled from the core's state.json
         //     at open, reads Edit Bookmark, and its tap opens the page in Zenium.
         showCaller(customTabIntent(dark = false, disabled = false, url = bookmarkedUrl()))
         openCustomTab(BOOKMARKED_PATH)
         openMenu()
         assertTrue("the star is filled from the browser's store (Edit Bookmark)", findNode { it == EDIT_BOOKMARK_LABEL } != null)
         assertTrue("no empty star on a bookmarked page", findNode { it == BOOKMARK_LABEL } == null)
-        shot("17-star-from-store")
+        shot("18-star-from-store")
         beat()
         assertTrue(
             "Edit Bookmark under a finger opened the page in Zenium",
@@ -329,8 +370,54 @@ class CustomTabMenuDemo : DemoHarness("customtabs-demo-state.json", "customtabs-
             }
         )
         SystemClock.sleep(4_000)
-        shot("18-edit-in-zenium")
+        shot("19-edit-in-zenium")
         note("edit bookmark: the browser shows ${findByLabelPrefix(PILL_LABEL)}")
+
+        // 14. Back in front, the browser drained the inbox: the second page is its bookmark (one, in
+        //     the star's folder), the withdrawn story is not, nothing was doubled, the inbox is empty,
+        //     and the store the custom tab's star reads holds the page.
+        assertTrue(
+            "the browser made the bookmark of the page filed in the custom tab once it came back to the front",
+            awaitTrue(20_000) { coreBookmarkUrls().contains(secondUrl()) }
+        )
+        val bookmarks = coreBookmarks()
+        val urls = bookmarks.map { it.optString("url") }
+        note("drain on return: core bookmarks = $urls; inbox = ${inboxUrls()}")
+        assertEquals("one bookmark of the second page", 1, urls.count { it == secondUrl() })
+        assertEquals("one bookmark of the page filed before the browser ran", 1, urls.count { it == filedUrl() })
+        assertEquals("one bookmark of the seeded page, filed in the inbox before the boot too", 1, urls.count { it == bookmarkedUrl() })
+        assertFalse("the withdrawn story is no bookmark", urls.contains(storyUrl()))
+        assertEquals(
+            "the second page went into the star's folder (Mobile bookmarks, the seeded tree's default)",
+            "3",
+            bookmarks.first { it.optString("url") == secondUrl() }.optString("parentId")
+        )
+        assertEquals("the second page's title is the custom tab's", SECOND_TITLE, bookmarks.first { it.optString("url") == secondUrl() }.optString("title"))
+        assertTrue("the inbox was emptied of what the browser made", awaitTrue(8_000) { inboxUrls().isEmpty() })
+        assertTrue("the store the custom tab's star reads holds the second page", awaitTrue(8_000) { storeHolds(secondUrl()) })
+        SystemClock.sleep(1_000)
+        assertTrue("the Bookmarks page opened from the menu", openMenuItem(MENU_BOOKMARKS, MENU_SHOW_BOOKMARKS))
+        assertTrue("the Bookmarks page is up", awaitTrue(10_000) { bookmarksPageUp() })
+        assertTrue("the Bookmarks page lists the page filed in the custom tab", awaitTrue(10_000) { bookmarkRowUp(SECOND_TITLE) })
+        assertTrue("the Bookmarks page lists the page filed before the browser ran", bookmarkRowUp(FILED_TITLE))
+        SystemClock.sleep(1_500)
+        shot("20-bookmarks-page")
+        beat()
+        back()
+        SystemClock.sleep(1_200)
+
+        // 15. The custom tab's star on the drained page, its next open: Edit Bookmark, from the store.
+        showCaller(customTabIntent(dark = false, disabled = false, url = secondUrl()))
+        openCustomTab(SECOND_PATH)
+        openMenu()
+        assertTrue("the drained page's star reads Edit Bookmark from the browser's store", findNode { it == EDIT_BOOKMARK_LABEL } != null)
+        assertTrue("no Remove Bookmark: the filing is the browser's bookmark now", findNode { it == REMOVE_BOOKMARK_LABEL } == null)
+        shot("21-star-after-drain")
+        beat()
+        dismissSheet()
+        clickByLabel(CLOSE_LABEL)
+        assertTrue("closing the last custom tab returned to the caller", waitForWindow(callerPackage, 8_000))
+        SystemClock.sleep(1_200)
 
         Log.i(tag, "session events: $events; caller hits: $callerHits")
         note("session events: $events")
@@ -584,6 +671,52 @@ class CustomTabMenuDemo : DemoHarness("customtabs-demo-state.json", "customtabs-
         return CustomTabBookmarks.entries(runCatching { file.readText() }.getOrNull()).map { it.url }
     }
 
+    // --- the inbox's drain -----------------------------------------------------------------------
+
+    /**
+     * The startup sweep's pass over the inbox [seedMore] left (`BOOKMARK_INBOX_SWEEP_DELAY_MS`
+     * past the window, off the boot path): read while the browser is still in front, before the
+     * caller comes up – the chrome answers `window.zen.invoke` only while its activity is resumed.
+     */
+    private fun readBootDrain() {
+        assertTrue(
+            "the startup sweep made the bookmark of the page filed before the browser ran",
+            awaitTrue(30_000) { coreBookmarkUrls().contains(filedUrl()) }
+        )
+        val urls = coreBookmarkUrls()
+        note("drain at boot: core bookmarks = $urls; inbox = ${inboxUrls()}")
+        assertEquals("one bookmark of the page filed before the browser ran", 1, urls.count { it == filedUrl() })
+        assertEquals("the seeded bookmark, filed in the inbox too, was not doubled", 1, urls.count { it == bookmarkedUrl() })
+        assertTrue("the sweep emptied the inbox", awaitTrue(8_000) { inboxUrls().isEmpty() })
+        assertTrue("the store the custom tab's star reads holds the page the sweep made", awaitTrue(8_000) { storeHolds(filedUrl()) })
+    }
+
+    /** The core's bookmark nodes of pages (`app.getState`'s `bookmarks`, `type: "url"`), in the tree's order. */
+    private fun coreBookmarks(): List<JSONObject> {
+        val nodes = coreState().optJSONArray("bookmarks") ?: return emptyList()
+        return (0 until nodes.length()).mapNotNull { nodes.optJSONObject(it) }.filter { it.optString("type") == "url" }
+    }
+
+    private fun coreBookmarkUrls(): List<String> = coreBookmarks().map { it.optString("url") }
+
+    /** A bookmark row of `title` is on the Bookmarks page: its title text, or its 3-dot button's name. */
+    private fun bookmarkRowUp(title: String): Boolean =
+        findByLabelPrefix(title) != null || findByLabel("More options for $title") != null
+
+    /** The browser's Bookmarks page is on screen: its search field (a hint, which no label read sees) is in the tree. */
+    private fun bookmarksPageUp(): Boolean =
+        findNodeWhere { node ->
+            node.className == "android.widget.EditText" &&
+                listOfNotNull(node.hintText, node.text, node.contentDescription).any { it.toString().contains(BOOKMARKS_SEARCH) }
+        } != null
+
+    /** Whether the browser's state document on disk – what the custom tab's star reads at open – holds `url` as a bookmark. */
+    private fun storeHolds(url: String): Boolean {
+        val file = File(app.filesDir, "zen/${CustomTabBookmarks.STATE}")
+        if (!file.isFile) return false
+        return CustomTabBookmarks.bookmarkedUrls(runCatching { file.readText() }.getOrNull()).contains(url)
+    }
+
     /** The MHTML archives this app put in MediaStore Downloads (the rows it owns), by display name. */
     private fun archives(): List<String> {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
@@ -824,12 +957,15 @@ class CustomTabMenuDemo : DemoHarness("customtabs-demo-state.json", "customtabs-
     // --- the pages -------------------------------------------------------------------------------
 
     private fun storyUrl() = "http://$HOST:$PORT$STORY_PATH"
+    private fun secondUrl() = "http://$HOST:$PORT$SECOND_PATH"
     private fun bookmarkedUrl() = "http://$HOST:$PORT$BOOKMARKED_PATH"
+    private fun filedUrl() = "http://$HOST:$PORT$FILED_PATH"
 
     private fun routes(): Map<String, Pair<String, ByteArray>> = mapOf(
         STORY_PATH to (HTML to page(STORY_TITLE, "Every long span has a note of its own. Engineers tune it out with dampers.", link = true).toByteArray()),
-        SECOND_PATH to (HTML to page("Tuned mass dampers", "A second page of the story, one step forward in the tab's history.").toByteArray()),
-        BOOKMARKED_PATH to (HTML to page(BOOKMARKED_TITLE, "A page the browser already holds as a bookmark.").toByteArray())
+        SECOND_PATH to (HTML to page(SECOND_TITLE, "A second page of the story, one step forward in the tab's history.").toByteArray()),
+        BOOKMARKED_PATH to (HTML to page(BOOKMARKED_TITLE, "A page the browser already holds as a bookmark.").toByteArray()),
+        FILED_PATH to (HTML to page(FILED_TITLE, "A page starred in a custom tab while the browser was not running.").toByteArray())
     )
 
     private fun page(title: String, body: String, link: Boolean = false): String = """
@@ -851,8 +987,12 @@ class CustomTabMenuDemo : DemoHarness("customtabs-demo-state.json", "customtabs-
         private const val STORY_PATH = "/story.html"
         private const val SECOND_PATH = "/second.html"
         private const val BOOKMARKED_PATH = "/bookmarked.html"
+        /** Filed in the inbox before the launch ([seedMore]); the startup sweep makes its bookmark. Never opened. */
+        private const val FILED_PATH = "/filed.html"
         private const val STORY_TITLE = "Why suspension bridges hum"
+        private const val SECOND_TITLE = "Tuned mass dampers"
         private const val BOOKMARKED_TITLE = "Damping, bookmarked"
+        private const val FILED_TITLE = "Starred before the browser ran"
         /** This driver's toolbar colour: a green nothing else on screen wears, so the start frames can find the toolbar. */
         private const val TOOLBAR = 0xFF0E8A5F.toInt()
         /**
@@ -905,6 +1045,10 @@ class CustomTabMenuDemo : DemoHarness("customtabs-demo-state.json", "customtabs-
         private const val CANCEL_LABEL = "Cancel"
         private const val MOBILE_TOKEN = " Mobile Safari/"
         private const val DESKTOP_TOKEN = "X11; Linux x86_64"
+        /** The browser's menu path to its Bookmarks page, and the page's search field (as HistoryBookmarksDemo reads them). */
+        private const val MENU_BOOKMARKS = "Bookmarks"
+        private const val MENU_SHOW_BOOKMARKS = "Show Bookmarks"
+        private const val BOOKMARKS_SEARCH = "Search bookmarks"
 
         /** The story's link's centre in device pixels relative to the WebView. */
         private val LINK_POINT_JS = """

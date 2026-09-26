@@ -198,6 +198,8 @@ vi.mock('electron', async () => {
     getURL(): string {
       return this.url
     }
+    /** A host older than Electron 34's `restore`: `restoreNavigation` loads the current entry. */
+    readonly navigationHistory = {}
     /** The page's session, for the tests that look something up by it. */
     session: object = {}
     getZoomFactor(): number {
@@ -422,6 +424,7 @@ async function guestWebContents(): Promise<Electron.WebContents> {
 const sessionHooks: Array<(ses: object, containerId: string) => void> = []
 const sessions = {
   get: () => ({}),
+  containerOf: () => 'default',
   configure: (hook: (ses: object, containerId: string) => void) => {
     sessionHooks.push(hook)
   }
@@ -442,6 +445,46 @@ describe('ElectronTabViewHost', () => {
 
     expect(host.tabIdForWebContents(wc)).toBeUndefined()
     expect(host.viewForWebContents(wc)).toBeUndefined()
+  })
+
+  it('gives a page its first document only once the startup hold opens – loadURL and restoreNavigation alike, in order, a destroyed page’s dropped (services pass 10, the extension layer’s first publish)', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    let settle!: () => void
+    host.startupHold.until(new Promise<void>((resolve) => (settle = resolve)))
+    const view = host.createView(
+      { id: 'tab_held', containerId: 'default' } as Tab,
+      noEvents,
+      detachedWindow
+    )
+    const wc = (view as unknown as { webContents: Electron.WebContents & { loaded: string[] } })
+      .webContents
+    const gone = host.createView(
+      { id: 'tab_gone', containerId: 'default' } as Tab,
+      noEvents,
+      detachedWindow
+    )
+    const goneWc = (gone as unknown as { webContents: Electron.WebContents & { loaded: string[] } })
+      .webContents
+
+    view.loadURL('https://example.com/login')
+    const restored = view.restoreNavigation({
+      entries: [{ url: 'https://example.com/account', title: '' }],
+      index: 0
+    })
+    gone.loadURL('https://gone.example/')
+    gone.destroy()
+    await new Promise((r) => setTimeout(r, 5))
+    expect(wc.loaded).toEqual([])
+    expect(goneWc.loaded).toEqual([])
+
+    settle()
+    await restored
+    expect(wc.loaded).toEqual(['https://example.com/login', 'https://example.com/account'])
+    expect(goneWc.loaded).toEqual([])
+
+    // Open for the run: the next document goes out at once.
+    view.loadURL('https://example.com/next')
+    expect(wc.loaded[2]).toBe('https://example.com/next')
   })
 
   it('reports each server redirect of the main-frame navigation under way as a hop, from the address it was bound for (history-23)', () => {
@@ -638,6 +681,81 @@ describe('the layout’s visibility and the page’s shared session', () => {
     } finally {
       theme.shouldUseDarkColors = false
     }
+  })
+
+  it('switches JavaScript off on the page’s session for a blocked site’s document as its navigation starts, and back on for the next site (PS-64)', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    const asked: Array<[string, string, string | undefined]> = []
+    host.contentRules = {
+      allows: (id, url, details) => {
+        asked.push([id, url, details?.privateContainerId])
+        return !(id === 'javascript' && url.startsWith('https://noscript.example'))
+      },
+      blockedGuards: () => []
+    }
+    const { view, dbg } = make(host, 'tab_scripts')
+    const wc = view.webContents as unknown as EventEmitter
+    const commands = (): Array<{ method: string; params: Record<string, unknown> | undefined }> =>
+      (
+        dbg as unknown as {
+          commands: Array<{ method: string; params: Record<string, unknown> | undefined }>
+        }
+      ).commands
+    // An allowed site: nothing goes on the session (no attach for nothing).
+    wc.emit('did-start-navigation', {
+      url: 'https://fine.example/',
+      isMainFrame: true,
+      isSameDocument: false
+    })
+    await settle()
+    expect(dbg.log).toEqual([])
+    expect(asked).toEqual([['javascript', 'https://fine.example/', undefined]])
+    // A blocked site's document: the switch goes on before the response is read.
+    wc.emit('did-start-navigation', {
+      url: 'https://noscript.example/a',
+      isMainFrame: true,
+      isSameDocument: false
+    })
+    await settle()
+    expect(dbg.log).toEqual(['attach', 'Emulation.setScriptExecutionDisabled'])
+    expect(commands()[0]).toEqual({
+      method: 'Emulation.setScriptExecutionDisabled',
+      params: { value: true }
+    })
+    // A same-document navigation and a frame's are no document of the page's: left alone.
+    wc.emit('did-start-navigation', {
+      url: 'https://noscript.example/a#x',
+      isMainFrame: true,
+      isSameDocument: true
+    })
+    wc.emit('did-start-navigation', {
+      url: 'https://fine.example/frame',
+      isMainFrame: false,
+      isSameDocument: false
+    })
+    await settle()
+    expect(dbg.log).toHaveLength(2)
+    // A redirect hop to an allowed site takes it off, and the hold's session with it.
+    wc.emit('did-redirect-navigation', {
+      url: 'https://fine.example/landing',
+      isMainFrame: true,
+      isSameDocument: false
+    })
+    await settle()
+    expect(dbg.log.slice(2)).toEqual(['Emulation.setScriptExecutionDisabled', 'detach'])
+    expect(commands()[1]).toEqual({
+      method: 'Emulation.setScriptExecutionDisabled',
+      params: { value: false }
+    })
+    expect(dbg.attached).toBe(false)
+    // The chrome's own documents are never asked about.
+    wc.emit('did-start-navigation', {
+      url: 'zen://settings',
+      isMainFrame: true,
+      isSameDocument: false
+    })
+    await settle()
+    expect(asked.map(([, url]) => url)).not.toContain('zen://settings')
   })
 })
 

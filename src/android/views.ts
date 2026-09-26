@@ -1,12 +1,16 @@
-import type {
-  ContentCover,
-  KeyBinding,
-  NavigationSnapshot,
-  PageRules,
-  Rect,
-  Tab
+import {
+  DEFAULT_CONTAINER_ID,
+  PRIVATE_CONTAINER_ID,
+  type ContentCover,
+  type KeyBinding,
+  type NavigationSnapshot,
+  type PageRules,
+  type Rect,
+  type Tab
 } from '@shared/types'
 import type { SafeBrowsingHit } from '@shared/privacy'
+import type { ContentRules, ResolvedContentRules } from '@shared/contentRules'
+import type { PermissionRequestDetails } from '@core/permissions'
 import type { FormsCommand } from '@shared/forms'
 import type { FocusEdge } from '@shared/focusEdge'
 import { isCertificateError, type SiteCertificate } from '@shared/siteInfo'
@@ -121,7 +125,30 @@ export interface ViewEventPayloads {
    * notch, away from the user for `in`. Electron's `zoom-changed`; the core's `adjustZoom`.
    */
   zoomChanged: { direction: 'in' | 'out' }
+  /**
+   * Kotlin asks which per-site content settings govern a main-frame navigation to `url` it did
+   * not start itself (a link, a redirect hop, a form): the WebView holds the navigation until
+   * `view.rulesResolved` answers with `token` (a `token` of 0 asks without holding – the answer
+   * is remembered for the site's next document). The answer is the core's `resolveAll`: an
+   * extension's rule over the user's, in the tab's own container (`ContentRulesService`).
+   */
+  resolveRules: { token: number; url: string }
   destroyed: void
+}
+
+/**
+ * The core's resolver the views ask per navigation (`ContentRulesService.resolveAll`); null
+ * until the platform is bound to a browser. Before the service has started (the store unread)
+ * a view answers null: Kotlin then reads the pushed document – the defaults – as it did.
+ */
+export interface ContentRulesResolver {
+  readonly started: boolean
+  resolveAll(url: string, details?: PermissionRequestDetails): ResolvedContentRules
+}
+
+/** The tab's container as the core reads a private container's own answers by it. */
+export function containerDetails(containerId: string): PermissionRequestDetails | undefined {
+  return containerId === PRIVATE_CONTAINER_ID ? { privateContainerId: containerId } : undefined
 }
 
 /**
@@ -154,6 +181,8 @@ export class AndroidTabView implements TabView {
   private cssSeq = 0
   private cover: ContentCover = { top: 0, bottom: 0 }
   events!: TabViewEvents
+  /** The tab's container, by which the core reads a private tab's own content-setting answers. */
+  containerId: string = DEFAULT_CONTAINER_ID
 
   constructor(
     readonly tabId: string,
@@ -166,8 +195,21 @@ export class AndroidTabView implements TabView {
     private readonly navigation: NavigationBridge = new NavigationBridge(bridge),
     private readonly placement: PlacementListener = noPlacementListener,
     /** Told of every `setBounds`: the boot's READY counts the first placement (`startup.ts`). */
-    private readonly placed: () => void = () => {}
+    private readonly placed: () => void = () => {},
+    /** The core's content-rules resolver, asked for every navigation the view starts or Kotlin asks about. */
+    private readonly rules: () => ContentRulesResolver | null = () => null
   ) {}
+
+  /**
+   * Every content-rule row's answer for a page at `url` in this tab's container – the word the
+   * WebView sets its `WebSettings` and the document's guards by – or null before the core's
+   * rules service has started (Kotlin then reads the pushed document, the defaults).
+   */
+  resolvedRules(url: string): ResolvedContentRules | null {
+    const resolver = this.rules()
+    if (!resolver?.started || !/^(https?|file):/i.test(url)) return null
+    return resolver.resolveAll(url, containerDetails(this.containerId))
+  }
 
   /** Route a Kotlin event to the core. */
   dispatch<K extends keyof ViewEventPayloads>(name: K, payload: ViewEventPayloads[K]): void {
@@ -232,6 +274,20 @@ export class AndroidTabView implements TabView {
         const p = payload as ViewEventPayloads['redirected']
         if (typeof p.from === 'string' && typeof p.to === 'string' && p.from !== p.to)
           ev.onRedirected?.(p.from, p.to)
+        return
+      }
+      case 'resolveRules': {
+        // Answered at once, null included: a held navigation waits for the word, not for a
+        // watchdog, and a null tells Kotlin to read the pushed document.
+        const p = payload as ViewEventPayloads['resolveRules']
+        if (typeof p.url !== 'string') return
+        const token = typeof p.token === 'number' ? p.token : 0
+        this.bridge.send('view.rulesResolved', {
+          tabId: this.tabId,
+          token,
+          url: p.url,
+          rules: this.resolvedRules(p.url)
+        })
         return
       }
       case 'unsafe': {
@@ -370,7 +426,16 @@ export class AndroidTabView implements TabView {
       return
     }
     this.pendingHtml = false
-    this.bridge.send('view.load', { tabId: this.tabId, url })
+    // The destination's content rules ride with the load (no hop: the core is in this process),
+    // so Kotlin sets the WebSettings and the document's guards from the core's own word; the
+    // key is absent while the core has none (Kotlin reads the pushed document then).
+    this.bridge.send('view.load', { tabId: this.tabId, url, ...this.rulesFor(url) })
+  }
+
+  /** `{ rules }` for a load's wire when the core has an answer for `url`, nothing otherwise. */
+  private rulesFor(url: string): { rules: ResolvedContentRules } | Record<string, never> {
+    const rules = this.resolvedRules(url)
+    return rules ? { rules } : {}
   }
 
   getURL(): string {
@@ -474,7 +539,13 @@ export class AndroidTabView implements TabView {
   }
 
   reload(ignoreCache: boolean): void {
-    this.bridge.send('view.reload', { tabId: this.tabId, ignoreCache })
+    // The reloaded page's answer comes along (`url`, `rules`) when the core has one.
+    const rules = this.resolvedRules(this.nav.url)
+    this.bridge.send('view.reload', {
+      tabId: this.tabId,
+      ignoreCache,
+      ...(rules ? { url: this.nav.url, rules } : {})
+    })
   }
 
   stop(): void {
@@ -913,6 +984,14 @@ export class AndroidTabViewHost implements TabViewHost, PlacementListener {
    */
   onPlaced: (() => void) | null = null
   private readonly placed = (): void => this.onPlaced?.()
+  /**
+   * The core's content-rules service (`AndroidPlatform.bind`): the views ask it for every
+   * navigation's answers – the destination's effective decision per row, an extension's rule
+   * over the user's – so the WebView never decides from the pushed document while the core can
+   * be asked.
+   */
+  contentRules: ContentRulesResolver | null = null
+  private readonly rules = (): ContentRulesResolver | null => this.contentRules
 
   constructor(private readonly bridge: Bridge) {
     this.navigation = new NavigationBridge(bridge)
@@ -929,9 +1008,11 @@ export class AndroidTabViewHost implements TabViewHost, PlacementListener {
       this.pages,
       this.navigation,
       this,
-      this.placed
+      this.placed,
+      this.rules
     )
     view.events = events
+    view.containerId = tab.containerId
     this.views.set(tab.id, view)
     this.bridge.send('view.create', { tabId: tab.id, containerId: tab.containerId })
     return view
@@ -945,7 +1026,8 @@ export class AndroidTabViewHost implements TabViewHost, PlacementListener {
       this.pages,
       this.navigation,
       this,
-      this.placed
+      this.placed,
+      this.rules
     )
     this.views.set(tabId, view)
     return view
@@ -966,5 +1048,13 @@ export class AndroidTabViewHost implements TabViewHost, PlacementListener {
   /** Kotlin keeps the policy so a navigation gets its user agent and viewport before it starts. */
   setPageRules(rules: PageRules): void {
     this.bridge.send('view.setPageRules', rules)
+  }
+
+  /**
+   * Kotlin keeps the per-site content settings so a navigation's `WebSettings` (images,
+   * JavaScript, insecure content) are set before its request leaves (`TabWebView.applyContentRules`).
+   */
+  setContentRules(rules: ContentRules): void {
+    this.bridge.send('view.setContentRules', rules)
   }
 }

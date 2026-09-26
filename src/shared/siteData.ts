@@ -34,6 +34,13 @@ export type SiteDataList = 'allow' | 'clearOnExit' | 'block'
 export const SITE_DATA_LISTS: readonly SiteDataList[] = ['allow', 'clearOnExit', 'block']
 
 /**
+ * The content-settings row (`contentSettings.ts`) over the same ground: a site's Allow / Block
+ * from Settings › Site settings or the site-information card, kept in the permission store and
+ * folded into the policy the hosts apply (`ProtectionService.flags`).
+ */
+export const ON_DEVICE_SITE_DATA_PERMISSION = 'on-device-site-data'
+
+/**
  * The persisted policy (`sitedata.json`, and the `site-data` sync record). The default's
  * `allow` / `block-third-party` half lives in `PrivacySettings.thirdPartyCookies` (one source
  * for the third-party choice); `blockAll` is the extra state the third-party setting cannot say.

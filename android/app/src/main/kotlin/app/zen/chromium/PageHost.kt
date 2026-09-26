@@ -27,6 +27,20 @@ interface PageHost {
     /** The same rules as the core sent them, handed to every page's document-start script. */
     val pageRulesJson: JSONObject get() = JSONObject()
     /**
+     * The per-site content settings the pages enforce before a document's request leaves (images,
+     * JavaScript, insecure content, the page-world guards; `src/shared/contentRules.ts`); none
+     * by default – a host without a core (a custom tab) allows everything, as the WebView does.
+     */
+    val contentRules: ContentRules get() = ContentRules.NONE
+    /** The same rules as the core sent them, handed to every page's document-start script. */
+    val contentRulesJson: JSONObject get() = JSONObject()
+    /**
+     * Whether the core can be asked which content settings govern a navigation (`resolveRules` →
+     * `view.rulesResolved`, [TabWebView.interceptNavigation]): once its rules service has pushed
+     * its first document. A host without a core (a custom tab) reads [contentRules] alone.
+     */
+    val contentRulesResolvable: Boolean get() = false
+    /**
      * Whether the turn of the device takes a playing video fullscreen and back (MED-02, Chrome's
      * rule for the phone alone – design language v2 §9.36): the one word both halves of the rule
      * read. The page script's half hears it at document start (`window.__zenRotateToFullscreen`,
