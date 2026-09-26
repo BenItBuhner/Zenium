@@ -3174,16 +3174,30 @@ abstract class DemoHarness(
          * leaves it so), an info row reading [DEFAULT_BROWSER_HELD] once Zenium holds it ("Zenium
          * is your default browser."). [OPEN_BY_DEFAULT_ROW] is the row under it on Android 12+
          * (DEF-06), the system's link-handling screen. A driver reads the role row through
-         * [defaultBrowserRow] – either state – and names the state it found; FirstRunDemo read
-         * "Default browser" / "Set as default" (the labels before the About page took Chrome's
-         * words) and failed its step 6 on every run of W6-HF1's (run 36200834282).
+         * [defaultBrowserRow] – either state, matched as a Settings row ([settingsRow]) – and names
+         * the state it found. FirstRunDemo read "Default browser" / "Set as default" (the labels
+         * before the About page took Chrome's words) and failed its step 6 on every run of
+         * W6-HF1's (run 36200834282); with the words right it still failed (run 36216598268),
+         * because it asked for a node EQUAL to the label and a Settings row's node never is.
          */
         const val DEFAULT_BROWSER_OFFER = "Set as default browser"
         const val DEFAULT_BROWSER_HELD = "Default browser"
         const val OPEN_BY_DEFAULT_ROW = "Open by default"
 
-        /** The About section's browser-role row in either state: [DEFAULT_BROWSER_OFFER] or [DEFAULT_BROWSER_HELD]. */
-        fun defaultBrowserRow(): (String) -> Boolean = { it == DEFAULT_BROWSER_OFFER || it == DEFAULT_BROWSER_HELD }
+        /**
+         * A Settings row by its label. The tree runs a row's label and what stands under it
+         * together in one node – "Colour scheme Dark", "Set as default browser Open links from
+         * other apps in Zenium." (rows.tsx: a `<button>` named from its contents) – so the row is
+         * the node whose text STARTS with the label, never one equal to it; [rowReads],
+         * [revealSettingsRow] and [clickSettingsRow] read it the same way. A driver that asks
+         * [findByLabel] for a row's bare label finds nothing and reads FAIL against a row on screen.
+         */
+        fun settingsRow(label: String): (String) -> Boolean = { it.startsWith(label) }
+
+        /** The About section's browser-role row in either state: [DEFAULT_BROWSER_OFFER] or [DEFAULT_BROWSER_HELD], as a [settingsRow]. */
+        fun defaultBrowserRow(): (String) -> Boolean = {
+            settingsRow(DEFAULT_BROWSER_OFFER)(it) || settingsRow(DEFAULT_BROWSER_HELD)(it)
+        }
 
         /** Settings section ids to the labels of their landing rows (`internalPages.ts`), for [openSettingsSection]. */
         val SETTINGS_SECTIONS: Map<String, String> = mapOf(
