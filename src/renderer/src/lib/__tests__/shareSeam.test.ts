@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { MenuItemDescriptor, SharePanelRequest } from '@shared/types'
 import {
   SHARE_ROW_KEY,
+  SHARE_SEAM_BUSY_MS,
   SHARE_SEAM_GUARD_MS,
   SHARE_SEAM_OUT_MS,
   handsOverToSharePanel,
@@ -169,8 +170,10 @@ describe("the seam's steps", () => {
     expect(answered).toEqual({ seam: null, effect: 'closeMenu' })
   })
 
-  it("keeps §11's lengths: the rows leave over 120 ms, and a menu waits longer than any gather for a request that does not come", () => {
+  it("keeps §11's lengths: the rows leave over 120 ms, the tapped row says busy after 150 ms of the gather (§9.30), and a menu waits longer than any gather for a request that does not come", () => {
     expect(SHARE_SEAM_OUT_MS).toBe(120)
+    expect(SHARE_SEAM_BUSY_MS).toBe(150)
     expect(SHARE_SEAM_GUARD_MS).toBeGreaterThanOrEqual(2000)
+    expect(SHARE_SEAM_BUSY_MS).toBeLessThan(SHARE_SEAM_GUARD_MS)
   })
 })

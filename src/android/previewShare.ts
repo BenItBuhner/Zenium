@@ -101,10 +101,11 @@ let seq = 0
  * favicon; a selection's its text and the link to its highlight, no title and no favicon; an
  * image the picture alone. A page's `navigator.share` (`page-*`, `source: 'page'`) carries what
  * the page handed over – `text` making it the host's `text` kind, as `Share.shareText` sorts it –
- * with the tab's favicon beside it, which the panel draws for a link and not for text.
+ * with the tab's favicon beside it, which the panel draws for a link and not for text. The
+ * `gathering` pose sends no request – that is the pose (`previewStates.ts`).
  */
 export function previewShareRequest(
-  kind: PreviewShareKind,
+  kind: Exclude<PreviewShareKind, 'gathering'>,
   tab: Tab | null,
   isPrivate: boolean
 ): SharePanelRequest {

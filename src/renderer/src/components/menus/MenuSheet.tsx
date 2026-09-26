@@ -43,7 +43,11 @@ import {
   viewportSize,
   type PopoverBox
 } from '@renderer/lib/portals'
-import { SHARE_SEAM_OUT_MS, handsOverToSharePanel } from '@renderer/lib/shareSeam'
+import {
+  SHARE_SEAM_BUSY_MS,
+  SHARE_SEAM_OUT_MS,
+  handsOverToSharePanel
+} from '@renderer/lib/shareSeam'
 import {
   beginShareSeam,
   browserStore,
@@ -58,6 +62,7 @@ import { GroupGlyph } from '../GroupGlyph'
 import { RowFavicon } from '../phone/PhoneList'
 import { useLongPress } from '../phone/useLongPress'
 import { SharePanelContent, SharePanelPreview } from '../share/SharePanelSheet'
+import { Spinner } from '../siteControls/primitives'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import { TabletMenu } from '../tablet/TabletMenu'
 import { MenuEditor } from './MenuEditor'
@@ -136,7 +141,9 @@ interface MenuNav {
  *
  * The app menu's Share row, below Android 14, is the one pick the sheet does not leave for
  * (`lib/shareSeam.ts`, v2 draft §9.38's hand-off): the host gathers the share panel's row while
- * the menu stands, its rows inert, and the request that comes back takes this very chassis –
+ * the menu stands, its rows inert – the tapped row taking §9.30's spinner in its trailing slot
+ * once the gather has run 150 ms, the others as they were – and the request that comes back
+ * takes this very chassis –
  * the header becomes the share's preview, the body the panel's chips and apps, the two contents
  * crossfading (the rows out over §11's 120 ms, the panel in over 250 ms) while the sheet
  * re-detents to the panel's height on its own spring (`contentKey`); one sheet, no bare page
@@ -177,11 +184,24 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
   const sharePanelStandsIn = browserStore.use((s) => s.state?.capabilities.sharePanel === true)
   const seam = uiStore.use((s) => s.shareSeam)
   const panel = uiStore.use((s) => s.sharePanel)
-  const gathering = seam?.phase === 'gathering' && seam.menuId === menu.id
+  const gatheringRow = seam?.phase === 'gathering' && seam.menuId === menu.id ? seam.itemId : null
+  const gathering = gatheringRow !== null
   const hosted =
     seam?.phase === 'hosting' && seam.menuId === menu.id && panel?.id === seam.panelId
       ? panel
       : null
+  // The gather's sign of life (§9.30): a gather still running after 150 ms puts the spinner in
+  // the tapped row's trailing slot – the row at full opacity, `aria-busy`, the other rows as
+  // they are. A fast host's request is in before it and nothing shows. The sign stands for the
+  // gather it belongs to, rides the rows' fading copy through the hand-off, and goes when the
+  // seam does, not before.
+  const [busyRow, setBusyRow] = useState<string | null>(null)
+  useEffect(() => {
+    if (gatheringRow === null) return
+    const timer = window.setTimeout(() => setBusyRow(gatheringRow), SHARE_SEAM_BUSY_MS)
+    return () => window.clearTimeout(timer)
+  }, [gatheringRow])
+  const busy = busyRow !== null && (busyRow === gatheringRow || hosted !== null) ? busyRow : null
   // The rows fade out over the panel as it rises – drawn once more, inert, for the fade's
   // length, from the hand-off's first frame – unless motion is reduced, when the panel simply
   // stands where the rows were.
@@ -324,6 +344,9 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
                     aria-checked={
                       item.type === 'checkbox' || item.type === 'radio' ? item.checked : undefined
                     }
+                    // The Share row at work (§9.30): busy, not disabled – its opacity and its
+                    // width kept, the spinner in its trailing slot.
+                    aria-busy={busy === item.id || undefined}
                     onClick={(e) => {
                       // The rows stand inert while the host gathers the share panel's row.
                       if (gathering) return
@@ -350,6 +373,7 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
                         aria-hidden
                       />
                     )}
+                    {busy === item.id && <Spinner className="h-4 w-4" />}
                   </button>
                 )}
               </li>

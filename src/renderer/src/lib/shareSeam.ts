@@ -27,6 +27,15 @@ export const SHARE_SEAM_GUARD_MS = 4000
 /** The outgoing content's fade (§11's leave, 120 ms); the incoming rises over 250 ms (`main.css`). */
 export const SHARE_SEAM_OUT_MS = 120
 
+/**
+ * How long the gather runs before the tapped Share row says so – §9.30's busy form: the row at
+ * full opacity, the 16 spinner in its trailing slot, `aria-busy` – so a menu standing for up to
+ * a second is seen to be working, not stuck (a second tap would do nothing). A fast device's
+ * gather is over before it and shows nothing; the other rows stay as they are, inert and never
+ * dimmed (.4 would say disabled); the guard above stands.
+ */
+export const SHARE_SEAM_BUSY_MS = 150
+
 export type ShareSeam =
   | { phase: 'gathering'; menuId: string; itemId: string }
   | { phase: 'hosting'; menuId: string; panelId: string }

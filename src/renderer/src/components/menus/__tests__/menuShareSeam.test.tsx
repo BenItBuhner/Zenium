@@ -9,13 +9,19 @@ import { SharePanelLayer } from '../../share/SharePanelSheet'
 import { topBackSurface } from '@renderer/lib/back'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { SheetPresence } from '@renderer/lib/motion/presence'
-import { SHARE_ROW_KEY, SHARE_SEAM_GUARD_MS, SHARE_SEAM_OUT_MS } from '@renderer/lib/shareSeam'
+import {
+  SHARE_ROW_KEY,
+  SHARE_SEAM_BUSY_MS,
+  SHARE_SEAM_GUARD_MS,
+  SHARE_SEAM_OUT_MS
+} from '@renderer/lib/shareSeam'
 import { browserStore, openSharePanel, uiStore } from '@renderer/lib/ui'
 
 /*
  * The menu-to-panel seam (v2 draft §9.38's hand-off; `lib/shareSeam.ts`), rendered for real in
  * happy-dom: on a host whose share panel stands in for the system sheet (Android below 14) the
- * app menu's Share row runs its pick with the sheet standing and its rows inert, and the host's
+ * app menu's Share row runs its pick with the sheet standing and its rows inert (the tapped row
+ * taking §9.30's spinner once the gather has run 150 ms, the others as they were), and the host's
  * `share.panel` request is drawn in the menu's own chassis – the same sheet element, its header
  * now the share's preview, its body the panel's chips and apps, the menu's rows and title once
  * more in inert layers fading out for §11's 120 ms, the back surface the panel's, the handle
@@ -304,6 +310,87 @@ describe("the app menu's Share row below Android 14 (the seam's first half: the 
     runAll()
     expect(commands('menu.click')).toEqual([{ menuId: 'menu_1', itemId: 'menu_1_4' }])
     expect(uiStore.get().menu?.id).toBe('menu_1')
+  })
+
+  it("shows §9.30's busy sign on the tapped Share row once the gather has run 150 ms – the 16 spinner in its trailing slot and aria-busy, the row and the others at full opacity, never disabled – and the guard stands", async () => {
+    await show()
+    await pickShare()
+    const share = rowByText('Share…')
+    const spinnerOf = (row: HTMLElement): Element | null => row.querySelector('svg.animate-spin')
+    // Nothing yet: a fast host's request would be in before the sign.
+    expect(share.getAttribute('aria-busy')).toBeNull()
+    expect(spinnerOf(share)).toBeNull()
+    elapse(SHARE_SEAM_BUSY_MS - 1)
+    expect(share.getAttribute('aria-busy')).toBeNull()
+    expect(spinnerOf(share)).toBeNull()
+    elapse(1)
+    await settle()
+    expect(share.getAttribute('aria-busy')).toBe('true')
+    const spinner = spinnerOf(share)!
+    expect(spinner).not.toBeNull()
+    // The row's trailing slot, at 16 (the phone's glyph is 20), hidden from the tree.
+    expect(share.lastElementChild).toBe(spinner)
+    expect(spinner.classList.contains('h-4')).toBe(true)
+    expect(spinner.classList.contains('w-4')).toBe(true)
+    expect(spinner.getAttribute('aria-hidden')).toBe('true')
+    // The label stays in the flow: busy is not disabled, and no row is dimmed or disabled for it.
+    expect(share.textContent).toBe('Share…')
+    expect(rows().filter((row) => row.hasAttribute('aria-busy'))).toEqual([share])
+    for (const row of rows()) {
+      expect(row.getAttribute('aria-disabled')).toBeNull()
+      expect(row.classList.contains('opacity-40')).toBe(false)
+    }
+    expect(rowByText('Print…').disabled).toBe(false)
+    expect(uiStore.get().menu?.id).toBe('menu_1')
+    expect(handle()).toBe('Resize menu')
+    // The 4 s guard runs on as before, the busy row leaving with the menu.
+    elapse(SHARE_SEAM_GUARD_MS - SHARE_SEAM_BUSY_MS)
+    await settle()
+    expect(uiStore.get().menu).toBeNull()
+    expect(uiStore.get().shareSeam).toBeNull()
+  })
+
+  it('shows no sign for a gather that is over inside 150 ms: the hand-off carries no spinner', async () => {
+    await show()
+    await pickShare()
+    elapse(SHARE_SEAM_BUSY_MS - 50)
+    await arrive()
+    expect(qa('[aria-busy]')).toHaveLength(0)
+    expect(qa('svg.animate-spin')).toHaveLength(0)
+    // The armed timer was let go with the gather: past its hour, with the rows' copy still
+    // fading, no sign appears in the copy or the panel.
+    elapse(SHARE_SEAM_OUT_MS / 2)
+    await settle()
+    expect(qa('.zen-share-seam-out')).toHaveLength(2)
+    expect(qa('[aria-busy]')).toHaveLength(0)
+    expect(qa('svg.animate-spin')).toHaveLength(0)
+    elapse(SHARE_SEAM_OUT_MS)
+    await settle()
+    expect(qa('.zen-share-seam-out')).toHaveLength(0)
+    expect(qa('[aria-busy]')).toHaveLength(0)
+  })
+
+  it("lets the busy row fade with the rows' copy at the hand-off – the sign goes with the seam, not before, and the panel's own rows carry none", async () => {
+    await show()
+    await pickShare()
+    elapse(SHARE_SEAM_BUSY_MS)
+    await settle()
+    expect(rowByText('Share…').getAttribute('aria-busy')).toBe('true')
+    await arrive()
+    const copy = q('.zen-share-seam > .zen-share-seam-out')!
+    const shareCopy = [...copy.querySelectorAll<HTMLElement>('.zen-sheet-item')].find(
+      (row) => row.textContent === 'Share…'
+    )!
+    expect(shareCopy.getAttribute('aria-busy')).toBe('true')
+    expect(shareCopy.querySelector('svg.animate-spin')).not.toBeNull()
+    // Every busy row is in the inert copy; the panel's content has none.
+    expect(qa('[aria-busy]').every((el) => el.closest('.zen-share-seam-out') !== null)).toBe(true)
+    expect(q('.zen-share-seam-in [aria-busy]')).toBeNull()
+    expect(q('.zen-share-seam-in svg.animate-spin')).toBeNull()
+    elapse(SHARE_SEAM_OUT_MS)
+    await settle()
+    expect(qa('[aria-busy]')).toHaveLength(0)
+    expect(qa('svg.animate-spin')).toHaveLength(0)
   })
 
   it('lets the menu leave on the guard when no request comes (a share the host refused), as a pick would have had it', async () => {

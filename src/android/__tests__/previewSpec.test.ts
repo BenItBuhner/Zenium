@@ -809,6 +809,14 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('share=page-files')).toEqual({ kind: 'idle' })
   })
 
+  it("holds the app menu with its Share row busy – the seam's gather past §9.30's 150 ms, the request withheld", () => {
+    expect(parsePreviewSpec('share=gathering')).toEqual({
+      kind: 'share',
+      share: 'gathering',
+      private: false
+    })
+  })
+
   it('raises a permission prompt from the active page, behind the menu but ahead of the bars', () => {
     expect(parsePreviewSpec('prompt=camera')).toEqual({ kind: 'permission', permission: 'camera' })
     expect(parsePreviewSpec('prompt=notifications&find=x')).toEqual({
