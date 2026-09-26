@@ -63,17 +63,29 @@ export const PILL_PADDING = 16
 export const PILL_TOOLS_TIER = 110
 
 /**
+ * The content box under which the pill's text labels go before the address does (the
+ * stylesheet's `@container (width < 220px)` on `.zen-pill` drops every `zen-pill-label`): the
+ * "Not secure" word, and the Install-app chip's "Install" – Chrome's suggestion-chip text
+ * (`IDS_OMNIBOX_PWA_INSTALL_ICON_LABEL`), which the pill shows while it has this room and folds
+ * to the glyph alone below it. The chip's tier width follows (`CHIP_WIDTH.label`).
+ */
+export const PILL_LABEL_TIER = 220
+
+/**
  * Nominal boxes, the chips' negative margins folded in (§9.3): the site icon's 24 less its 4 px
- * lead-in, the star's 28 less its 8 px trail, the 20 px chips (zoom, translate, Reader View),
- * the 28 px icon buttons (blocked pop-ups, the shield, the autofill key) and what a count badge
- * adds to one of them (the 4 px gap and a 20 px two-digit pill).
+ * lead-in, the star's 28 less its 8 px trail, the 20 px chips (zoom, translate, Reader View,
+ * the Install-app glyph), the 28 px icon buttons (blocked pop-ups, the shield, the autofill
+ * key), what a count badge adds to one of them (the 4 px gap and a 20 px two-digit pill), and
+ * what the Install chip's "Install" adds to its 20 while the label tier shows it (the word at
+ * 11.5 px, its 4 px gap and the chip's 4 px padding either side).
  */
 export const CHIP_WIDTH = {
   site: 20,
   star: 20,
   small: 20,
   iconButton: 28,
-  badge: 28
+  badge: 28,
+  label: 48
 } as const
 
 export interface PillChipSpec {

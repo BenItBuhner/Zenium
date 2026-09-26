@@ -1,6 +1,9 @@
+import { useEffect } from 'react'
 import { Copy, Download, Link, Mail, Share, type LucideIcon } from 'lucide-react'
 import type { ShareFileInfo } from '@shared/share'
-import type { ShareAnswer, ShareRequest } from '@shared/types'
+import type { ShareAnswer, ShareRequest, UIState } from '@shared/types'
+import { run } from '@renderer/lib/api'
+import { createStore } from '@renderer/lib/store'
 import { formatBytes } from '@renderer/lib/utils'
 
 export interface ShareTarget {
@@ -55,6 +58,66 @@ export function shareTargets(request: ShareRequest): ShareTarget[] {
   }
   if (request.system) targets.push({ answer: 'system', label: 'More…', icon: Share })
   return targets
+}
+
+/**
+ * The address pill's Share chip and the popover it opened (W8-6; the desktop pill's hover-only
+ * chip beside Copy URL – Chrome's desktop omnibox carries no share page action any more, its
+ * sharing hub is the app menu's, so the chip is the house's seat for `share.open` in the pill).
+ * The chip is pressed before the core's request has come back in the state, so the mark is
+ * kept here: the tab whose page the chip asked to share, then the request the core raised for
+ * it once one has (`requestId`), cleared when that request leaves or the tab is no longer the
+ * pill's. The chip reads it for its `aria-expanded` and for the `data-share-anchor` mark the
+ * popover hangs from (§9.20: a popover hangs from what opened it); a share a page
+ * (`navigator.share`) or a menu raised leaves the mark off and the popover on the pill.
+ */
+export const shareChip = createStore<{ tabId: string | null; requestId: string | null }>(
+  { tabId: null, requestId: null },
+  'shareChip'
+)
+
+/** The chip's press: mark the tab, then ask the core to share its page. */
+export function openShareFromChip(tabId: string): void {
+  shareChip.set({ tabId, requestId: null })
+  run('share.open', { tabId })
+}
+
+/** The share of `tabId`'s own page standing in the state (the menu's or the chip's, not a site's). */
+function pageShareRequest(
+  state: Pick<UIState, 'shareRequests'>,
+  tabId: string
+): ShareRequest | null {
+  return (state.shareRequests ?? []).find((r) => r.tabId === tabId && r.origin === null) ?? null
+}
+
+/**
+ * Whether the pill's Share chip for `tabId` has its popover up: the request the chip raised is
+ * the one the share layer shows (`shareRequests[0]`). Adopts the request as it arrives and
+ * clears the mark once it has gone, or once the pill shows another tab.
+ */
+export function useShareChip(state: Pick<UIState, 'shareRequests'>, tabId: string | null): boolean {
+  const mark = shareChip.use((s) => s)
+  const request = tabId ? pageShareRequest(state, tabId) : null
+  useEffect(() => {
+    if (mark.tabId === null) return
+    if (mark.tabId !== tabId) {
+      shareChip.set({ tabId: null, requestId: null })
+      return
+    }
+    if (mark.requestId === null) {
+      if (request) shareChip.set({ tabId, requestId: request.id })
+      return
+    }
+    if (!request || request.id !== mark.requestId) shareChip.set({ tabId: null, requestId: null })
+  }, [mark, tabId, request])
+  const shown = (state.shareRequests ?? [])[0]
+  return Boolean(
+    tabId !== null &&
+    mark.tabId === tabId &&
+    mark.requestId !== null &&
+    shown !== undefined &&
+    shown.id === mark.requestId
+  )
 }
 
 /**

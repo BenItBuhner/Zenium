@@ -10,10 +10,13 @@ import {
   type BookmarkNode,
   type MediaState,
   type PermissionPrompt,
+  type ShareRequest,
   type Space,
   type Tab,
-  type UIState
+  type UIState,
+  type WebAppInstallPrompt
 } from '@shared/types'
+import type { InstalledWebApp, WebAppInfo } from '@shared/webApp'
 
 /*
  * The chips inside the URL pill (design language v2 §9.22): the address first, then every chip
@@ -37,6 +40,9 @@ const { browserStore, closeMemorySaverBubble, openUrlbar, uiStore } =
   await import('@renderer/lib/ui')
 const { closeSiteInfo, openSiteInfo, siteInfoStore } = await import('@renderer/lib/siteInfo')
 const { MEMORY_SAVER_LEAF_MS } = await import('@renderer/lib/siteChips')
+const { shareChip } = await import('@renderer/lib/share')
+const { publishToolbarTiering, toolbarTiering } = await import('@renderer/lib/toolbarPins')
+const { viewportStore } = await import('@renderer/lib/formFactor')
 const { defaultShortcuts } = await import('@shared/shortcuts')
 const { DEFAULT_PAGE_CONTROLS } = await import('@shared/pageControls')
 
@@ -1704,6 +1710,344 @@ describe('desktop pill (NavRow)', () => {
  * the widths the pill measures before its first paint (the address at its natural width in the
  * probe, the width the field is given) are set here.
  */
+/*
+ * W8-6 – the Install-app chip and the Share chip (omnibox-35, omnibox-31; Chrome's
+ * `kActionInstallPwa` page action, whose "Install" text and "Install <app>" tooltip the chip
+ * carries, between Zoom and the star as `page_action/action_ids.h` orders them; and a Share
+ * chip the house adds as a hover-only utility beside Copy URL, Chrome's desktop omnibox having
+ * retired its sharing-hub icon). The desktop layout's alone: the phone pill is pinned.
+ */
+describe('the Install-app chip and the Share chip (W8-6)', () => {
+  const page = tab('https://app.example/some/path', { readerable: true })
+  const app: WebAppInfo = {
+    manifestUrl: 'https://app.example/manifest.webmanifest',
+    id: 'https://app.example/',
+    name: 'Example App',
+    shortName: 'Example',
+    description: null,
+    startUrl: 'https://app.example/',
+    scope: 'https://app.example/',
+    display: 'standalone',
+    themeColor: null,
+    backgroundColor: null,
+    icons: [
+      {
+        src: 'https://app.example/icon-512.png',
+        sizes: '512x512',
+        type: 'image/png',
+        purpose: ['any']
+      }
+    ],
+    screenshots: []
+  }
+  const installable = tab('https://app.example/some/path', { readerable: true, webApp: app })
+  /** The desktop host: a launcher to write, the chrome's own share popover. */
+  function desktop(t: Tab, patch: Partial<UIState> = {}): UIState {
+    const s = state(t)
+    return {
+      ...s,
+      capabilities: { ...s.capabilities, pinShortcuts: true, shareSheet: true },
+      webApps: [],
+      shareRequests: [],
+      ...patch
+    } as UIState
+  }
+  const pageShare = (id = 'r1'): ShareRequest => ({
+    id,
+    tabId: 't1',
+    windowId: 'w1',
+    origin: null,
+    title: 'Example',
+    text: '',
+    url: 'https://app.example/some/path',
+    files: [],
+    imageUrl: null,
+    system: false,
+    requestedAt: 0
+  })
+  const chipLabels = (el: HTMLElement): (string | null)[] =>
+    labels(Array.from(el.querySelectorAll<HTMLElement>('[data-pill-chip]')))
+
+  beforeEach(() => {
+    uiStore.set({ install: null })
+    shareChip.set({ tabId: null, requestId: null })
+    publishToolbarTiering([])
+  })
+
+  it('seats the Install chip between Zoom and the star while the page is installable and not yet installed, named "Install <app>" with the "Install" label as the pill’s label tier', () => {
+    const zoomed = tab('https://app.example/some/path', {
+      readerable: true,
+      webApp: app,
+      zoom: 1.25
+    })
+    const s = desktop(zoomed)
+    s.settings = { ...s.settings, pageControls: DEFAULT_PAGE_CONTROLS }
+    const el = render(<NavRow state={s} tab={zoomed} compact={false} />)
+    expect(chipLabels(el)).toEqual([
+      'Site information',
+      'Reader View',
+      'Translate this page',
+      'Boost this site',
+      'Copy URL',
+      'Share this page',
+      'Zoom: 125%',
+      'Install Example App',
+      'Bookmark this tab'
+    ])
+    const chip = el.querySelector<HTMLElement>('[data-install-chip]')!
+    expectChip(chip, 'Install Example App')
+    // Its popup is the install dialog, not up yet; Chrome's tooltip is the name itself.
+    expect(chip.getAttribute('aria-haspopup')).toBe('dialog')
+    expect(chip.getAttribute('aria-expanded')).toBe('false')
+    expect(chip.getAttribute('data-tooltip')).toBe('Install Example App')
+    // A resident chip of the tier (no hover gate), a pinnable control marked for the pinned
+    // button's menu, with Chrome's suggestion-chip word on the label tier.
+    expect(chip.classList.contains('zen-pill-chip')).toBe(true)
+    expect(chip.className).not.toContain('hidden')
+    expect(chip.getAttribute('data-zen-menu-control')).toBe('install')
+    const label = chip.querySelector<HTMLElement>('.zen-pill-label')!
+    expect(label.textContent).toBe('Install')
+    expect(label.getAttribute('aria-hidden')).toBe('true')
+    expect(chip.querySelector('svg')).not.toBeNull()
+  })
+
+  it('opens the install dialog from the chip, which keeps its pressed fill while the dialog is up and goes once the app is installed', () => {
+    const el = render(<NavRow state={desktop(installable)} tab={installable} compact={false} />)
+    const chip = el.querySelector<HTMLElement>('[data-install-chip]')!
+    act(() => chip.click())
+    expect(invoke).toHaveBeenCalledWith('webapp.openInstall', { tabId: 't1' })
+    // The core's prompt comes back as the dialog's state: the chip is its anchor.
+    act(() =>
+      uiStore.set({
+        install: {
+          tabId: 't1',
+          title: 'Example App',
+          url: 'https://app.example/',
+          origin: 'app.example',
+          icon: null,
+          info: app,
+          tint: null,
+          surface: 'desktop'
+        } as WebAppInstallPrompt
+      })
+    )
+    expect(chip.getAttribute('aria-expanded')).toBe('true')
+    expect(chip.className).toContain('bg-[var(--v2-control-fill-hover)]')
+    // A second press while it is up asks nothing more.
+    invoke.mockClear()
+    act(() => chip.click())
+    expect(invoke).not.toHaveBeenCalledWith('webapp.openInstall', expect.anything())
+    act(() => uiStore.set({ install: null }))
+    expect(chip.getAttribute('aria-expanded')).toBe('false')
+    // Installed: the state's record whose scope holds the page hides the chip.
+    const installed: InstalledWebApp = {
+      id: app.id,
+      name: app.name,
+      startUrl: app.startUrl,
+      scope: app.scope,
+      pinnedAt: 1,
+      windows: 0
+    }
+    act(() =>
+      root!.render(
+        <NavRow
+          state={desktop(installable, { webApps: [installed] })}
+          tab={installable}
+          compact={false}
+        />
+      )
+    )
+    expect(el.querySelector('[data-install-chip]')).toBeNull()
+  })
+
+  it('shows no Install chip without an installable manifest, on a private tab, in a read-only bar, on a host without launchers, or once the pin folds it', () => {
+    const chipIn = (s: UIState, t: Tab): boolean => {
+      const el = render(<NavRow state={s} tab={t} compact={false} />)
+      const found = el.querySelector('[data-install-chip]') !== null
+      act(() => root?.unmount())
+      host?.remove()
+      return found
+    }
+    expect(chipIn(desktop(installable), installable)).toBe(true)
+    // No manifest; a manifest whose display asks for the browser's own window.
+    expect(chipIn(desktop(page), page)).toBe(false)
+    const inBrowser = tab(page.url, { webApp: { ...app, display: 'browser' } })
+    expect(chipIn(desktop(inBrowser), inBrowser)).toBe(false)
+    // A private tab never installs (Chrome's Incognito).
+    const privateTab = tab(page.url, { webApp: app, containerId: PRIVATE_CONTAINER_ID })
+    expect(chipIn(desktop(privateTab), privateTab)).toBe(false)
+    // A popup's read-only bar shows no page actions.
+    const popup = desktop(installable)
+    popup.window = { ...popup.window, chrome: 'popup' } as UIState['window']
+    expect(chipIn(popup, installable)).toBe(false)
+    // A host with no launcher to write.
+    const noLaunchers = desktop(installable)
+    noLaunchers.capabilities = { ...noLaunchers.capabilities, pinShortcuts: false }
+    expect(chipIn(noLaunchers, installable)).toBe(false)
+    // Folded by Customise toolbar: the app menu's "Install Example App…" row is what runs it.
+    const folded = desktop(installable)
+    folded.settings = { ...folded.settings, toolbarPins: { install: false } }
+    expect(chipIn(folded, installable)).toBe(false)
+  })
+
+  it('folds the Install chip by the pill’s tier – after Translate, before the shield – and tells the Customise toolbar dialog it is hidden at this width', () => {
+    let emit: ((width: number) => void) | null = null
+    const Native = window.ResizeObserver
+    class FakeResizeObserver {
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      observe(): void {
+        emit = (width) =>
+          this.callback(
+            [{ contentRect: { width } } as unknown as ResizeObserverEntry],
+            this as unknown as ResizeObserver
+          )
+      }
+      unobserve(): void {
+        emit = null
+      }
+      disconnect(): void {
+        emit = null
+      }
+    }
+    window.ResizeObserver = FakeResizeObserver as unknown as typeof ResizeObserver
+    try {
+      const s = desktop(installable)
+      // The translation engine has left idle on the page (an offer the user dismissed: the bar is
+      // down, the chip stays): the translate chip is in the tier too.
+      s.translate = {
+        available: true,
+        tabs: { t1: { status: 'offered', dismissed: true } }
+      } as never
+      const el = render(<NavRow state={s} tab={installable} compact={false} />)
+      expect(el.querySelector('[data-install-chip]')).not.toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual([])
+      // Wide: the label is up and measured (20 + 48); everything fits at a 320 pill.
+      act(() => emit!(304))
+      expect(el.querySelector('[data-install-chip]')).not.toBeNull()
+      expect(el.querySelector('[data-install-chip] .zen-pill-label')).not.toBeNull()
+      // Under the label tier the chip is the glyph alone: site 26 + star 26 + install 26 = 78,
+      // + 56 for the address = 134 with translate's 26 on top at 160.
+      act(() => emit!(160))
+      expect(el.querySelector('[data-install-chip]')).not.toBeNull()
+      expect(el.querySelector('[data-install-chip] .zen-pill-label')).toBeNull()
+      expect(el.querySelector('[aria-label="Translate this page"]')).not.toBeNull()
+      // Reader View, the lowest chip present, went first – with the chips' hiding order, the
+      // informational pair before Install.
+      expect(toolbarTiering.get().hidden).toEqual(['reader'])
+      act(() => emit!(159))
+      // Translate goes next, the Install chip stays.
+      expect(el.querySelector('[data-install-chip]')).not.toBeNull()
+      expect(el.querySelector('[aria-label="Translate this page"]')).toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual(['reader', 'translate'])
+      act(() => emit!(133))
+      expect(el.querySelector('[data-install-chip]')).toBeNull()
+      expect(el.querySelector('[data-bm-star]')).not.toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual(['reader', 'translate', 'install'])
+    } finally {
+      window.ResizeObserver = Native
+    }
+  })
+
+  it('adds the Share chip after Copy URL as a hover-only utility whose popup is the share popover, hung from the chip while its own request is up', () => {
+    const el = render(<NavRow state={desktop(page)} tab={page} compact={false} />)
+    const order = chipLabels(el)
+    expect(order.indexOf('Share this page')).toBe(order.indexOf('Copy URL') + 1)
+    const chip = el.querySelector<HTMLElement>('[data-share-chip]')!
+    expectChip(chip, 'Share this page')
+    expect(chip.getAttribute('aria-haspopup')).toBe('dialog')
+    expect(chip.getAttribute('aria-expanded')).toBe('false')
+    expect(chip.hasAttribute('data-share-anchor')).toBe(false)
+    // Boost's and Copy URL's gate, and the pill's tier: no seat of its own in the address's room.
+    for (const cls of [
+      'zen-pill-chip',
+      'zen-pill-extra',
+      'hidden',
+      'group-hover/pill:flex',
+      'group-focus-within/chips:flex',
+      'group-has-[[aria-expanded=true]]/chips:flex'
+    ])
+      expect(chip.classList.contains(cls), cls).toBe(true)
+    // Not a pin: no control mark.
+    expect(chip.hasAttribute('data-zen-menu-control')).toBe(false)
+
+    act(() => chip.click())
+    expect(invoke).toHaveBeenCalledWith('share.open', { tabId: 't1' })
+    expect(shareChip.get()).toEqual({ tabId: 't1', requestId: null })
+    // The core's request for the page comes back in the state: the chip adopts it and is the
+    // popover's anchor while it stands.
+    act(() =>
+      root!.render(
+        <NavRow
+          state={desktop(page, { shareRequests: [pageShare()] })}
+          tab={page}
+          compact={false}
+        />
+      )
+    )
+    expect(shareChip.get()).toEqual({ tabId: 't1', requestId: 'r1' })
+    expect(chip.getAttribute('aria-expanded')).toBe('true')
+    expect(chip.hasAttribute('data-share-anchor')).toBe(true)
+    expect(chip.className).toContain('bg-[var(--v2-control-fill-hover)]')
+    // Answered or dismissed, the request leaves and the chip lets go of the mark.
+    act(() => root!.render(<NavRow state={desktop(page)} tab={page} compact={false} />))
+    expect(chip.getAttribute('aria-expanded')).toBe('false')
+    expect(chip.hasAttribute('data-share-anchor')).toBe(false)
+    expect(shareChip.get()).toEqual({ tabId: null, requestId: null })
+  })
+
+  it('leaves a share the page or a menu raised on the pill: the chip is no anchor for it', () => {
+    const el = render(
+      <NavRow state={desktop(page, { shareRequests: [pageShare()] })} tab={page} compact={false} />
+    )
+    const chip = el.querySelector<HTMLElement>('[data-share-chip]')!
+    expect(chip.getAttribute('aria-expanded')).toBe('false')
+    expect(chip.hasAttribute('data-share-anchor')).toBe(false)
+    // A site's `navigator.share` (an origin on the request) after the chip's press: not its own.
+    act(() => chip.click())
+    act(() =>
+      root!.render(
+        <NavRow
+          state={desktop(page, {
+            shareRequests: [{ ...pageShare('r2'), origin: 'https://app.example' }]
+          })}
+          tab={page}
+          compact={false}
+        />
+      )
+    )
+    expect(chip.getAttribute('aria-expanded')).toBe('false')
+    expect(chip.hasAttribute('data-share-anchor')).toBe(false)
+  })
+
+  it('offers no Share chip without a share surface, off a page of the web, or on the tablet layout; no Install chip there either', () => {
+    const noSheet = state(page)
+    let el = render(<NavRow state={noSheet} tab={page} compact={false} />)
+    expect(el.querySelector('[data-share-chip]')).toBeNull()
+    act(() => root?.unmount())
+    host?.remove()
+    // The host's own sheet (a tablet host's `share`) also earns the chip on the desktop layout.
+    const systemSheet = state(page)
+    systemSheet.capabilities = { ...systemSheet.capabilities, share: true }
+    el = render(<NavRow state={systemSheet} tab={page} compact={false} />)
+    expect(el.querySelector('[data-share-chip]')).not.toBeNull()
+    act(() => root?.unmount())
+    host?.remove()
+    const settings = tab('zen://settings')
+    el = render(<NavRow state={desktop(settings)} tab={settings} compact={false} />)
+    expect(el.querySelector('[data-share-chip]')).toBeNull()
+    act(() => root?.unmount())
+    host?.remove()
+    act(() => viewportStore.set({ ...viewportStore.get(), formFactor: 'tablet' }))
+    try {
+      el = render(<NavRow state={desktop(installable)} tab={installable} compact={false} />)
+      expect(el.querySelector('[data-share-chip]')).toBeNull()
+      expect(el.querySelector('[data-install-chip]')).toBeNull()
+    } finally {
+      act(() => viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop' }))
+    }
+  })
+})
+
 /*
  * The tablet keeps private browsing in tabs (`capabilities.privateTabs`), so the desktop pill
  * meets a private tab in a regular window: the mask takes the leading slot, as it does in the

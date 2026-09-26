@@ -25,10 +25,12 @@ import {
   MapPinOff,
   Mic,
   MicOff,
+  MonitorDown,
   MoreHorizontal,
   RotateCw,
   ScreenShare,
   Search,
+  Share2,
   Sparkles,
   TriangleAlert,
   VenetianMask,
@@ -40,6 +42,7 @@ import { toolbarPinned, type ToolbarControl } from '@shared/toolbarPins'
 import { defaultSearchEngineOf } from '@shared/search'
 import { securityIndicator, type IndicatorState } from '@shared/siteInfo'
 import { addressParts, displayUrl, fullUrl, getDomain, isWebPageUrl, pillText } from '@shared/url'
+import { isInstallable, launcherName, pinnedAppFor } from '@shared/webApp'
 import { useElementWidth } from '@renderer/hooks/useElementWidth'
 import { updateReadyAt } from '@renderer/lib/about'
 import { addressDragOf, writeAddressDrag } from '@renderer/lib/addressDrag'
@@ -59,6 +62,7 @@ import {
   openQuietPrompt
 } from '@renderer/lib/security'
 import { isPrivateWindow, tabTitle } from '@renderer/lib/selectors'
+import { openShareFromChip, useShareChip } from '@renderer/lib/share'
 import {
   MEMORY_SAVER_LEAF_MS,
   siteChipName,
@@ -87,7 +91,12 @@ import { useLongPress } from '../phone/useLongPress'
 import { BlockedChip } from '../urlbar/BlockedChip'
 import { EngineFieldGlyph } from '../urlbar/EngineFieldGlyph'
 import { PillChip } from '../urlbar/PillChip'
-import { CHIP_WIDTH, fittingChips, type PillChipSpec } from '../urlbar/pillChipTiers'
+import {
+  CHIP_WIDTH,
+  PILL_LABEL_TIER,
+  fittingChips,
+  type PillChipSpec
+} from '../urlbar/pillChipTiers'
 import { TOOLBAR_STROKE } from '../v2/controls'
 import { WindowControls } from '../WindowControls'
 import { Favicon } from './Favicon'
@@ -278,12 +287,46 @@ export function NavRow({
   const readerPinned = toolbarPinned(pins, 'reader')
   const translatePinned = toolbarPinned(pins, 'translate')
   const starPinned = toolbarPinned(pins, 'star')
+  const installPinned = toolbarPinned(pins, 'install')
   const mediaPinned = toolbarPinned(pins, 'media')
   const starred = Boolean(tab && !masked && (isWebPage || internalPageOf(tab.url)?.pill.showStar))
   const bookmarked = Boolean(tab && starred && tree.hasUrl(tab.url))
   // The chips the pins keep in the pill: the star, the translate glyph, an article's Reader View.
   const starUp = starred && starPinned
   const readerUp = Boolean(tab && !masked && !extension && tab.readerable) && readerPinned
+  // The Install-app chip (W8-6; Chrome's `kActionInstallPwa` page action, shown while the
+  // page is "probably promotable": a manifest that passes the install bar and an app not yet
+  // installed for the profile): the desktop layout's, on a page of the web in a regular window
+  // (Chrome hides its page actions in a popup's read-only bar, and Incognito never installs),
+  // while the host can write a launcher (`capabilities.pinShortcuts`) and the pin keeps it.
+  // Once the app is installed (`state.webApps` carries a record whose scope holds the page) the
+  // chip goes, as Chrome's does on the next visibility update; the app menu's "Open in <app>"
+  // takes over. The phone and the tablet keep their own install surfaces (v2 §10.1's pill).
+  const manifest = tab?.webApp ?? null
+  const installable =
+    tab !== null &&
+    manifest !== null &&
+    isWebPage &&
+    !isPrivate &&
+    !readOnly &&
+    formFactor === 'desktop' &&
+    Boolean(state.capabilities.pinShortcuts) &&
+    isInstallable(manifest) &&
+    pinnedAppFor(tab.url, state.webApps ?? []) === null
+  const installUp = installable && installPinned
+  const installName = manifest ? launcherName(manifest, 'desktop') : ''
+  const installOpen = uiStore.use((s) => s.install !== null && s.install.tabId === tab?.id)
+  // The Share chip (W8-6): Chrome's desktop omnibox has no share page action now (its sharing
+  // hub is the app menu's), so the chip is the house's – a hover-only utility beside Copy URL,
+  // never a resident chip – on a page of the web where the chrome has a share sheet to show
+  // (`shareSheet`, the desktop popover) or the host one of its own (`share`). Its popover hangs
+  // from the chip (`data-share-anchor` while its request is up, `lib/share.ts`).
+  const shareable =
+    tab !== null &&
+    isWebPage &&
+    formFactor === 'desktop' &&
+    Boolean(state.capabilities.shareSheet || state.capabilities.share)
+  const shareOpen = useShareChip(state, shareable ? tab.id : null)
   const menuButton = useRef<HTMLButtonElement>(null)
   // The hub's toolbar button is tiered by the row's width, as the pill's chips are (§9.29,
   // `mediaHubButtonFits`): at the 240 sidebar it is unmounted – never hidden with an opacity or
@@ -436,6 +479,17 @@ export function NavRow({
   }
   if (tab && starUp) chipsPresent.push({ id: 'star', tier: 'star', width: CHIP_WIDTH.star })
   if (zoomed) chipsPresent.push({ id: 'zoom', tier: 'zoom', width: CHIP_WIDTH.small })
+  // The Install chip's "Install" shows while the pill has the label tier's room (the same
+  // container rule as "Not secure"; unmeasured, the label is up), and the chip is measured with
+  // it: the tier reads the box the pill draws.
+  const installLabelUp = pillInner <= 0 || pillInner >= PILL_LABEL_TIER
+  if (installUp) {
+    chipsPresent.push({
+      id: 'install',
+      tier: 'install',
+      width: CHIP_WIDTH.small + (installLabelUp ? CHIP_WIDTH.label : 0)
+    })
+  }
   if (translation) chipsPresent.push({ id: 'translate', tier: 'info', width: CHIP_WIDTH.small })
   if (tab && (readerUp || isReader)) {
     chipsPresent.push({ id: 'reader', tier: isReader ? 'state' : 'info', width: CHIP_WIDTH.small })
@@ -451,16 +505,18 @@ export function NavRow({
   const hiddenStar = Boolean(tab && starUp && !fits.has('star'))
   const hiddenTranslate = Boolean(translation && !fits.has('translate'))
   const hiddenReader = Boolean(tab && readerUp && !isReader && !fits.has('reader'))
+  const hiddenInstall = installUp && !fits.has('install')
   const hiddenMedia = mediaPinned && mediaHubVisible(state) && !hubUp
   useLayoutEffect(() => {
     const hidden: ToolbarControl[] = []
     if (hiddenReader) hidden.push('reader')
     if (hiddenTranslate) hidden.push('translate')
+    if (hiddenInstall) hidden.push('install')
     if (hiddenStar) hidden.push('star')
     if (hiddenMedia) hidden.push('media')
     publishToolbarTiering(hidden)
     return () => publishToolbarTiering([])
-  }, [hiddenReader, hiddenTranslate, hiddenStar, hiddenMedia])
+  }, [hiddenReader, hiddenTranslate, hiddenInstall, hiddenStar, hiddenMedia])
   return (
     // The row's buttons sit 4 apart (Firefox's 32 pitch: the 28 box plus its 2 px outer
     // padding each side, `TOOLBAR_GAP`); the pill takes the rest between them.
@@ -942,7 +998,74 @@ export function NavRow({
                 <Copy className="h-3 w-3" />
               </PillChip>
             )}
+            {shareable && (
+              // Chrome's sharing hub icon (`IDS_SHARING_HUB_TOOLTIP`, "Share this page"; the
+              // Material share glyph its non-Mac icon was), a hover-only utility with Copy URL:
+              // its popup is the share popover, hung from this chip while the request it raised
+              // is up (`data-share-anchor`; `aria-expanded` keeps the chip drawn under it, §9.20).
+              <PillChip
+                label="Share this page"
+                title="Share this page"
+                popup="dialog"
+                expanded={shareOpen}
+                data-share-chip=""
+                data-share-anchor={shareOpen ? '' : undefined}
+                className={cn(
+                  'zen-pill-chip zen-pill-extra hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)] group-hover/pill:flex group-focus-within/chips:flex group-has-[[aria-expanded=true]]/chips:flex',
+                  // The anchor keeps its pressed fill while its popover is up (§9.20).
+                  shareOpen && 'bg-[var(--v2-control-fill-hover)] opacity-100'
+                )}
+                onActivate={() => {
+                  // A pointer press while the popover is up never gets here (the chrome layer
+                  // consumes it); the keyboard's second press leaves the popover to its Escape.
+                  if (!shareOpen) openShareFromChip(tab.id)
+                }}
+              >
+                <Share2 className="h-3 w-3" />
+              </PillChip>
+            )}
             {tab && !masked && <ZoomChip state={state} tab={tab} collapsed={!fits.has('zoom')} />}
+            {installUp && fits.has('install') && (
+              // Chrome's `kActionInstallPwa` page action between Zoom and the star (its
+              // `action_ids.h` order): the install-desktop glyph, the "Install" of its suggestion
+              // chip while the pill has the label's room (`zen-pill-label`, the "Not secure"
+              // tier), named "Install <app>" as its tooltip is (`IDS_OMNIBOX_PWA_INSTALL_ICON_TOOLTIP`).
+              // Its popup is the install dialog – Chrome's simple install dialog is tab-modal,
+              // so the house's frame dialog stands – and the chip keeps its pressed fill while
+              // the dialog is up (§9.20). The tier folds it after Translate and Reader View and
+              // before the shield (`pillChipTiers.ts`); folded or unpinned, the app menu's
+              // "Install <app>…" row runs the same command. A pinnable control, it carries its
+              // control mark for the pinned button's right-click menu (context-menus-112,
+              // W8-1's `toolbarMenuMarks`): until that menu is in, the mark alone, and the chip
+              // keeps the pill's own menu as every chip does.
+              <PillChip
+                label={`Install ${installName}`}
+                title={`Install ${installName}`}
+                popup="dialog"
+                expanded={installOpen}
+                data-install-chip=""
+                data-zen-menu-control="install"
+                className={cn(
+                  'zen-pill-chip flex h-5 shrink-0 items-center justify-center gap-1 rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)]',
+                  installLabelUp ? 'px-1' : 'w-5',
+                  // The anchor keeps its pressed fill while its dialog is up (§9.20).
+                  installOpen && 'bg-[var(--v2-control-fill-hover)] opacity-100'
+                )}
+                onActivate={() => {
+                  if (!installOpen) run('webapp.openInstall', { tabId: tab.id })
+                }}
+              >
+                <MonitorDown className="h-3.5 w-3.5" />
+                {installLabelUp && (
+                  <span
+                    className="zen-pill-label text-[11.5px] leading-none font-medium"
+                    aria-hidden
+                  >
+                    Install
+                  </span>
+                )}
+              </PillChip>
+            )}
             {tab && isWebPage && <AutofillChip state={state} tab={tab} />}
             {tab && starUp && (
               <StarChip

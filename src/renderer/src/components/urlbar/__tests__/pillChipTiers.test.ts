@@ -4,6 +4,7 @@ import {
   CHIP_PRIORITY,
   CHIP_WIDTH,
   MIN_ADDRESS_WIDTH,
+  PILL_LABEL_TIER,
   PILL_PADDING,
   addressWidth,
   fittingChips,
@@ -28,8 +29,50 @@ const inner = (pillWidth: number): number => pillWidth - PILL_PADDING
 const ids = (s: ReadonlySet<string>): string[] => [...s].sort()
 
 describe('the pill chip overflow rule (M8)', () => {
-  it('orders the tiers: site, state, star, zoom, shield, informational (§9.29)', () => {
-    expect(CHIP_PRIORITY).toEqual(['site', 'state', 'star', 'zoom', 'shield', 'info'])
+  it('orders the tiers: site, state, star, zoom, shield, the Install-app chip, informational (§9.29; W8-6)', () => {
+    expect(CHIP_PRIORITY).toEqual(['site', 'state', 'star', 'zoom', 'shield', 'install', 'info'])
+  })
+
+  /*
+   * W8-6: the Install-app chip (Chrome's `kActionInstallPwa`) folds after Translate and Reader
+   * View and before the shield – an offer the pill cannot make any other way, but not a state –
+   * and is measured with its "Install" label while the pill has the label tier's room
+   * (`PILL_LABEL_TIER`, the "Not secure" rule), as the glyph alone below it.
+   */
+  it('folds the Install chip after the informational chips and before the shield, zoom and the star', () => {
+    const chips: PillChipSpec[] = [
+      { id: 'site', tier: 'site', width: CHIP_WIDTH.site },
+      { id: 'shield', tier: 'shield', width: CHIP_WIDTH.iconButton },
+      { id: 'translate', tier: 'info', width: CHIP_WIDTH.small },
+      { id: 'install', tier: 'install', width: CHIP_WIDTH.small },
+      { id: 'zoom', tier: 'zoom', width: CHIP_WIDTH.small },
+      { id: 'star', tier: 'star', width: CHIP_WIDTH.star }
+    ]
+    const at = (pill: number): string[] => ids(fittingChips(inner(pill), chips))
+    // site 26 + star 26 + zoom 26 + shield 34 + install 26 + translate 26 = 164; + 56 = 220 → pill 236.
+    expect(at(236)).toEqual(['install', 'shield', 'site', 'star', 'translate', 'zoom'])
+    // Translate goes first, at a 235 pill; the Install chip stays down to 138 + 56 = 194 → pill 210.
+    expect(at(235)).toEqual(['install', 'shield', 'site', 'star', 'zoom'])
+    expect(at(210)).toEqual(['install', 'shield', 'site', 'star', 'zoom'])
+    // Then the Install chip: without it 112 + 56 = 168 → pill 184.
+    expect(at(184)).toEqual(['shield', 'site', 'star', 'zoom'])
+    expect(at(183)).toEqual(['site', 'star', 'zoom'])
+  })
+
+  it('measures the Install chip with its label while the pill has the label tier’s room', () => {
+    expect(PILL_LABEL_TIER).toBe(220)
+    // The label's width is what the chip adds to its 20 px glyph box.
+    expect(CHIP_WIDTH.label).toBeGreaterThan(0)
+    const labelled: PillChipSpec[] = [
+      { id: 'site', tier: 'site', width: CHIP_WIDTH.site },
+      { id: 'install', tier: 'install', width: CHIP_WIDTH.small + CHIP_WIDTH.label }
+    ]
+    // At the label tier's own content box the labelled chip fits beside the address floor:
+    // 26 + (20 + 48 + 6) + 56 = 156 ≤ 220.
+    expect(ids(fittingChips(PILL_LABEL_TIER, labelled))).toEqual(['install', 'site'])
+    expect(addressWidth(PILL_LABEL_TIER, labelled, fittingChips(PILL_LABEL_TIER, labelled))).toBe(
+      PILL_LABEL_TIER - 26 - (CHIP_WIDTH.small + CHIP_WIDTH.label + CHIP_GAP)
+    )
   })
 
   it('hides nothing before the pill has been measured', () => {
