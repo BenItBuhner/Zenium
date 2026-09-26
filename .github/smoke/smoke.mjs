@@ -3,7 +3,7 @@
 // blocking dialog, takes OS-level screenshots at each step and writes one JSON result per step.
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
-//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,features,recaptcha,downloads,notifications,restart-registration,private-taskbar,quit-hold,visibility,default-browser,menu-bar]
+//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,features,recaptcha,downloads,notifications,restart-registration,private-taskbar,quit-hold,visibility,default-browser,menu-bar,mcp]
 //        [--extra-args="--no-sandbox --disable-gpu"]   (space-separated, passed to the app)
 //        [--sandbox]             (the run is a sandboxed leg: Chromium's sandbox stays on, so
 //                                 --no-sandbox in --extra-args is refused and ELECTRON_DISABLE_SANDBOX
@@ -236,12 +236,29 @@
 //                Zenium an enabled row of the application menu opening Settings › About. Off
 //                macOS the one step reads that no application menu is set (macOS jobs judge
 //                the bar; the Windows unpacked leg and the Linux job the absence)
+//   mcp          the MCP server (Settings → AI Agents) soaked, short (mcp-scenario.mjs, the legs
+//                of scripts/mcp-soak.mjs run in-process): a profile past onboarding with the
+//                server on at a free port, scripts allowed, new agents let in; once agent.json
+//                says running, 6 agent lives 3 at a time over HTTP – initialize, status,
+//                background mode, a tab on the soak's own fixture page, snapshot, screenshot,
+//                the form, foreground mode, screenshot, `zen_session end` (closeTabs on the even
+//                ones), a call after it on the SAME session id, an earlier session's orphaned
+//                group adopted, end, DELETE – then 2 more through `zenium --mcp` (one shim
+//                process each), a client dropped without DELETE whose group another adopts
+//                (force: true soft until E; after the DELETE for real), a made-up session id
+//                answered 200 + "resumed" with the token and 404 without, and an HTTP session
+//                plus a shim process carried across a graceful quit and relaunch of the same
+//                profile (`mcp-restart`): both must answer afterwards. A step fails on a hard
+//                check; the soft ones (`… (until B)`, `… (until E)`) are its detail only.
+//                What the soak left is adopted and closed, `zenium://diagnostics` read, and the
+//                whole verdict – counts, client p50 / p95 per tool and leg, the server's
+//                counters – written to <out>/<label>/soak.json (Linux, under Xvfb)
 //
 // Windows and macOS run boot, restore, scale, dark and visibility (the installed Windows build
 // boot and restore), Windows notifications, restart-registration and private-taskbar too and
 // macOS quit-hold, default-browser and menu-bar too (menu-bar's no-bar step runs on the Windows
 // unpacked leg as well); the walkthrough, the crash pair, clear-on-exit, the two mv3-worker legs,
-// pip, the split pair, features and recaptcha run on Linux under Xvfb only (visibility runs
+// pip, the split pair, features, recaptcha and mcp run on Linux under Xvfb only (visibility runs
 // there too, on its own step, and menu-bar's no-bar step with the boot set).
 //
 // Zero tolerated JS errors: a chrome console error, a chrome page error, a preload or Electron-side
@@ -276,6 +293,7 @@ import { FIND_MATCHES, FIND_WORD, isWebPage, startBootFixture } from './boot-fix
 import { DEFAULT_BROWSER_SCENARIO, scenarioDefaultBrowser } from './default-browser-scenario.mjs'
 import { DOWNLOADS_SCENARIO, scenarioDownloads } from './downloads-scenario.mjs'
 import { classifyFailures, formatFailure, loadKnownFailures } from './known-failures.mjs'
+import { MCP_SCENARIO, scenarioMcp } from './mcp-scenario.mjs'
 import { MENU_BAR_SCENARIO, scenarioMenuBar } from './menu-bar-scenario.mjs'
 import { NOTIFICATIONS_SCENARIO, scenarioNotifications } from './notifications-scenario.mjs'
 import { RESTART_SCENARIO, scenarioRestartRegistration } from './restart-scenario.mjs'
@@ -7626,6 +7644,17 @@ async function main() {
           log,
           fixture: bootSite,
           isMac: IS_MAC
+        }),
+      [MCP_SCENARIO]: () =>
+        scenarioMcp({
+          freshProfile,
+          runScenario,
+          log,
+          // The shim processes (`zenium --mcp`) are this build's, with the leg's switches
+          // (--no-sandbox --disable-gpu under Xvfb); soak.json goes next to result.json.
+          exe: opts.exe,
+          extraArgs: EXTRA_ARGS,
+          outDir
         }),
       [DEFAULT_BROWSER_SCENARIO]: () =>
         scenarioDefaultBrowser({

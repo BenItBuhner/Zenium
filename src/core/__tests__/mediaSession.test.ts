@@ -2,12 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 import {
   AUTO_PIP_BLUR_GRACE_MS,
   AUTO_PIP_SETTING,
+  MEDIA_HUB_INACTIVE_MS,
   MIN_SESSION_DURATION_S,
   MediaSessionService,
   siteOf
 } from '../mediaSession'
 import type { Browser } from '../browser'
 import type { ZenWindow } from '../window'
+import type { MediaState } from '../../shared/types'
 import type {
   MediaSessionInfo,
   MediaReport,
@@ -82,7 +84,13 @@ interface Harness {
 }
 
 function harness(
-  options: { host?: boolean; pip?: boolean; pictureInPicture?: boolean } = {}
+  options: {
+    host?: boolean
+    pip?: boolean
+    pictureInPicture?: boolean
+    /** The host has the chrome's media hub, with this linger (ms) for a paused session (the desktop); absent for the phone. */
+    mediaHub?: number
+  } = {}
 ): Harness {
   const views = new Map<string, FakeView>()
   const tabs = new Map<string, { id: string; url: string; title: string; alert?: string }>()
@@ -119,7 +127,10 @@ function harness(
               })
         }
   const browser = {
-    platform: { mediaSession: host },
+    platform: {
+      mediaSession: host,
+      mediaHub: options.mediaHub === undefined ? undefined : { inactiveAfterMs: options.mediaHub }
+    },
     state: { capabilities: { pictureInPicture: options.pictureInPicture ?? true } },
     tabs: {
       allViews: () => views.entries(),
@@ -1382,6 +1393,290 @@ describe('automatic picture-in-picture (MW-28)', () => {
       await h.service.optOutAuto('film')
       expect(h.sets).toHaveLength(1)
     })
+  })
+})
+
+describe("the hub's linger for a paused session (W7-5: Chrome's inactivity dismissal)", () => {
+  /** The desktop's linger in the tests: short, as `ZEN_MEDIA_LINGER_MS` makes it for a drive. */
+  const LINGER_MS = 5_000
+  const METADATA = { title: 'Nocturne', artist: 'Ensemble', album: '', artwork: [] }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** The tab's entry in the hub's list, or undefined once the linger took it out. */
+  function entry(h: Harness, tabId: string): MediaState | undefined {
+    return h.service.refresh().find((s) => s.tabId === tabId)
+  }
+
+  it("is Chrome's kAutoDismissTimerInMinutesDefault: 60 minutes", () => {
+    expect(MEDIA_HUB_INACTIVE_MS).toBe(60 * 60 * 1000)
+  })
+
+  it('keeps a paused session in the hub with its title and artwork, and a play offered, until the linger runs out', () => {
+    const h = harness({ mediaHub: LINGER_MS })
+    h.addTab('t1', 'https://music.example/a', 'Music')
+    play(h, 't1', report({ metadata: METADATA }))
+    // The pause starts the clock; the entry stays, paused.
+    play(h, 't1', report({ playing: false, metadata: METADATA }))
+    vi.advanceTimersByTime(LINGER_MS - 1)
+    const paused = entry(h, 't1')
+    expect(paused).toMatchObject({ tabId: 't1', playing: false, title: 'Nocturne' })
+    // The clock runs out: the chrome is told and the entry is gone from the hub's list…
+    h.updateMedia.mockClear()
+    vi.advanceTimersByTime(1)
+    expect(h.updateMedia).toHaveBeenCalledTimes(1)
+    expect(entry(h, 't1')).toBeUndefined()
+    expect(h.service.isInactive('t1')).toBe(true)
+    // …while the OS controls keep the paused session, as Chrome's SMTC and MPRIS do.
+    expect(h.service.session()).toMatchObject({ tabId: 't1', playing: false })
+  })
+
+  it('cancels the clock when the media plays again, and shows an entry the linger had taken out', () => {
+    const h = harness({ mediaHub: LINGER_MS })
+    h.addTab('t1', 'https://music.example/a', 'Music')
+    play(h, 't1')
+    play(h, 't1', report({ playing: false }))
+    vi.advanceTimersByTime(LINGER_MS - 1)
+    // A play cancels the clock: no expiry follows, however long the playback runs.
+    play(h, 't1')
+    vi.advanceTimersByTime(LINGER_MS * 3)
+    expect(entry(h, 't1')).toMatchObject({ tabId: 't1', playing: true })
+    // Paused again: a fresh clock, the full linger long.
+    play(h, 't1', report({ playing: false }))
+    vi.advanceTimersByTime(LINGER_MS - 1)
+    expect(entry(h, 't1')).toBeDefined()
+    vi.advanceTimersByTime(1)
+    expect(entry(h, 't1')).toBeUndefined()
+    // The next playback brings the entry back at once (Chrome's ShowItem on MarkActiveIfNecessary).
+    play(h, 't1')
+    expect(entry(h, 't1')).toMatchObject({ tabId: 't1', playing: true })
+    expect(h.service.isInactive('t1')).toBe(false)
+  })
+
+  it("starts the clock when the view falls quiet, not on the pause's report: the engine's audible word trails the element", () => {
+    const h = harness({ mediaHub: LINGER_MS })
+    h.addTab('t1', 'https://music.example/a', 'Music')
+    play(h, 't1')
+    const view = h.views.get('t1')!
+    // The pause's report arrives while `isCurrentlyAudible()` still says audible (Chromium holds
+    // the stream's word for a moment after its last audible frame; the W7-5 drive's probe read
+    // two seconds): the entry keeps the engine's word, and no clock starts yet – one started
+    // here would be stopped by this very refresh and never started again.
+    h.service.onReport('t1', report({ playing: false }))
+    expect(entry(h, 't1')).toMatchObject({ tabId: 't1', playing: true })
+    expect(vi.getTimerCount()).toBe(0)
+    // The view falls quiet (`audio-state-changed` → `updateMedia` → refresh): the clock starts.
+    view.audible = false
+    expect(entry(h, 't1')).toMatchObject({ tabId: 't1', playing: false })
+    expect(vi.getTimerCount()).toBe(1)
+    vi.advanceTimersByTime(LINGER_MS - 1)
+    expect(entry(h, 't1')).toMatchObject({ playing: false })
+    vi.advanceTimersByTime(1)
+    expect(entry(h, 't1')).toBeUndefined()
+    // The play's report wakes the entry before the view is heard again (the mirror lag).
+    h.service.onReport('t1', report({ playing: true }))
+    expect(entry(h, 't1')).toMatchObject({ tabId: 't1', playing: false })
+    expect(h.service.isInactive('t1')).toBe(false)
+    expect(vi.getTimerCount()).toBe(0)
+    // Heard: the entry plays by the engine's word; a later pause runs the whole path again.
+    view.audible = true
+    expect(entry(h, 't1')).toMatchObject({ tabId: 't1', playing: true })
+    h.service.onReport('t1', report({ playing: false }))
+    view.audible = false
+    expect(entry(h, 't1')).toMatchObject({ tabId: 't1', playing: false })
+    vi.advanceTimersByTime(LINGER_MS)
+    expect(entry(h, 't1')).toBeUndefined()
+  })
+
+  it('treats an ended track as a pause: it lingers the same way, and its entry can replay it', () => {
+    const h = harness({ mediaHub: LINGER_MS })
+    h.addTab('t1', 'https://music.example/a', 'Music')
+    play(h, 't1', report({ position: { duration: 240, position: 200, playbackRate: 1 } }))
+    // The element ended: the shim keeps reporting it, paused at the end.
+    play(
+      h,
+      't1',
+      report({ playing: false, position: { duration: 240, position: 240, playbackRate: 1 } })
+    )
+    vi.advanceTimersByTime(LINGER_MS - 1)
+    expect(entry(h, 't1')).toMatchObject({ playing: false })
+    // The hub's Play reaches the page as `toggle`: the shim resolves it to a play of the element
+    // (an ended element's `play()` starts it over) – and the press restarts the clock meanwhile.
+    h.service.act('t1', 'toggle')
+    expect(h.views.get('t1')!.posted.at(-1)).toEqual({ type: 'mediaSession', action: 'toggle' })
+    vi.advanceTimersByTime(LINGER_MS - 1)
+    expect(entry(h, 't1')).toMatchObject({ playing: false })
+    // A page that refused the replay (no `play` handler, the element gone read-only) leaves the
+    // entry paused, and the clock takes it out on time.
+    vi.advanceTimersByTime(1)
+    expect(entry(h, 't1')).toBeUndefined()
+  })
+
+  it('restarts the clock on an interaction: a control pressed in the hub, or a seek while paused', () => {
+    const h = harness({ mediaHub: LINGER_MS })
+    h.addTab('t1', 'https://music.example/a', 'Music')
+    play(h, 't1')
+    play(
+      h,
+      't1',
+      report({ playing: false, position: { duration: 240, position: 12, playbackRate: 1 } })
+    )
+    vi.advanceTimersByTime(LINGER_MS - 1)
+    // A seek while paused (Chrome's MediaSessionPositionChanged → OnSessionInteractedWith).
+    play(
+      h,
+      't1',
+      report({ playing: false, position: { duration: 240, position: 90, playbackRate: 1 } })
+    )
+    vi.advanceTimersByTime(LINGER_MS - 1)
+    expect(entry(h, 't1')).toBeDefined()
+    // A control pressed in the hub (a seek forward on a paused track) restarts it again.
+    h.service.act('t1', 'seekforward', { seekOffset: 10 })
+    vi.advanceTimersByTime(LINGER_MS - 1)
+    expect(entry(h, 't1')).toBeDefined()
+    vi.advanceTimersByTime(1)
+    expect(entry(h, 't1')).toBeUndefined()
+  })
+
+  it('does not restart the clock for a paused report that changed nothing (metadata refreshed, the same position)', () => {
+    const h = harness({ mediaHub: LINGER_MS })
+    h.addTab('t1', 'https://music.example/a', 'Music')
+    play(h, 't1')
+    play(h, 't1', report({ playing: false }))
+    vi.advanceTimersByTime(LINGER_MS - 1)
+    play(h, 't1', report({ playing: false, metadata: METADATA }))
+    vi.advanceTimersByTime(1)
+    expect(entry(h, 't1')).toBeUndefined()
+  })
+
+  it('removes the session at once when its tab closes, clock or no clock', () => {
+    const h = harness({ mediaHub: LINGER_MS })
+    h.addTab('t1', 'https://music.example/a', 'Music')
+    play(h, 't1')
+    play(h, 't1', report({ playing: false }))
+    h.closeTab('t1')
+    expect(entry(h, 't1')).toBeUndefined()
+    expect(h.service.session()).toBeNull()
+    // The clock was cleared with the tab: its expiry tells the chrome nothing.
+    h.updateMedia.mockClear()
+    vi.advanceTimersByTime(LINGER_MS * 2)
+    expect(h.updateMedia).not.toHaveBeenCalled()
+  })
+
+  it('removes the session at once when its media element is gone, and a later element starts afresh', () => {
+    const h = harness({ mediaHub: LINGER_MS })
+    h.addTab('t1', 'https://music.example/a', 'Music')
+    play(h, 't1')
+    play(h, 't1', report({ playing: false }))
+    // The element removed from the document: the shim's report has no media in it.
+    play(h, 't1', report({ playing: false, position: null }))
+    expect(entry(h, 't1')).toBeUndefined()
+    h.updateMedia.mockClear()
+    vi.advanceTimersByTime(LINGER_MS * 2)
+    expect(h.updateMedia).not.toHaveBeenCalled()
+    expect(h.service.isInactive('t1')).toBe(false)
+  })
+
+  it('never ends a session for a mute: a muted element starts no clock and stops one that runs', () => {
+    const h = harness({ mediaHub: LINGER_MS })
+    h.addTab('t1', 'https://music.example/a', 'Music')
+    play(h, 't1')
+    // Muted on the page while playing: the report says playing false, muted true.
+    play(h, 't1', report({ playing: false, muted: true }))
+    vi.advanceTimersByTime(LINGER_MS * 3)
+    expect(entry(h, 't1')).toBeDefined()
+    // Paused, then muted while paused: the clock stops; unmuted while paused, it starts over.
+    play(h, 't1', report({ playing: false }))
+    vi.advanceTimersByTime(LINGER_MS - 1)
+    play(h, 't1', report({ playing: false, muted: true }))
+    vi.advanceTimersByTime(LINGER_MS * 3)
+    expect(entry(h, 't1')).toBeDefined()
+    play(h, 't1', report({ playing: false }))
+    vi.advanceTimersByTime(LINGER_MS - 1)
+    expect(entry(h, 't1')).toBeDefined()
+    vi.advanceTimersByTime(1)
+    expect(entry(h, 't1')).toBeUndefined()
+  })
+
+  it('leaves a host without the hub (the phone) exactly as it was: no clock, the paused session stays', () => {
+    const h = harness()
+    h.addTab('t1', 'https://music.example/a', 'Music')
+    play(h, 't1', report({ metadata: METADATA }))
+    play(h, 't1', report({ playing: false, metadata: METADATA }))
+    expect(vi.getTimerCount()).toBe(0)
+    vi.advanceTimersByTime(MEDIA_HUB_INACTIVE_MS * 2)
+    expect(entry(h, 't1')).toMatchObject({ tabId: 't1', playing: false, title: 'Nocturne' })
+    expect(h.service.isInactive('t1')).toBe(false)
+    expect(h.service.session()).toMatchObject({ tabId: 't1', playing: false })
+  })
+
+  it('ignores a linger that is not a positive number of milliseconds', () => {
+    const h = harness({ mediaHub: 0 })
+    h.addTab('t1', 'https://music.example/a', 'Music')
+    play(h, 't1')
+    play(h, 't1', report({ playing: false }))
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('dispose clears the timers; a late report after dispose arms nothing', () => {
+    // `Browser.shutdown()` – the quit path – calls `dispose()`; the services read asked that no
+    // linger outlive it and none be armed after it.
+    const h = harness({ mediaHub: LINGER_MS })
+    h.addTab('t1', 'https://music.example/a', 'Music')
+    h.addTab('t2', 'https://video.example/b', 'Video')
+    play(h, 't1')
+    play(h, 't1', report({ playing: false }))
+    play(h, 't2')
+    play(h, 't2', report({ playing: false }))
+    expect(vi.getTimerCount()).toBe(2)
+    h.service.dispose()
+    // Every clock is cleared: none stands, none fires into the torn-down chrome.
+    expect(vi.getTimerCount()).toBe(0)
+    h.updateMedia.mockClear()
+    vi.advanceTimersByTime(LINGER_MS * 2)
+    expect(h.updateMedia).not.toHaveBeenCalled()
+    expect(h.service.isInactive('t1')).toBe(false)
+    expect(h.service.isInactive('t2')).toBe(false)
+    // Late in the teardown a page reports a pause (a seek, a fresh pause), the view falls quiet
+    // and a refresh runs: nothing arms – no timer, and the entry never goes inactive.
+    h.service.onReport(
+      't1',
+      report({ playing: false, position: { duration: 240, position: 90, playbackRate: 1 } })
+    )
+    h.service.refresh()
+    play(h, 't2')
+    play(h, 't2', report({ playing: false }))
+    h.service.act('t2', 'seekforward', { seekOffset: 10 })
+    expect(vi.getTimerCount()).toBe(0)
+    h.updateMedia.mockClear()
+    vi.advanceTimersByTime(MEDIA_HUB_INACTIVE_MS * 2)
+    expect(h.updateMedia).not.toHaveBeenCalled()
+    expect(h.service.isInactive('t1')).toBe(false)
+    expect(h.service.isInactive('t2')).toBe(false)
+    expect(entry(h, 't1')).toMatchObject({ tabId: 't1', playing: false })
+    expect(entry(h, 't2')).toMatchObject({ tabId: 't2', playing: false })
+  })
+
+  it("dispose clears the automatic picture-in-picture's blur clock too, and a blur after it arms none", () => {
+    // The desktop's auto-PiP host: no `enterPictureInPicture` of the OS's, the page's own window.
+    const h = harness({ host: false, mediaHub: LINGER_MS })
+    h.addTab('film', 'https://video.example/watch', 'A film')
+    h.activated.add('film')
+    const win = h.addWindow('w1', ['film'])
+    play(h, 'film', report({ video: true, width: 1280, height: 720 }))
+    win.focused = false
+    h.service.onWindowFocusChanged(win as unknown as ZenWindow, false)
+    expect(vi.getTimerCount()).toBe(1)
+    h.service.dispose()
+    expect(vi.getTimerCount()).toBe(0)
+    h.service.onWindowFocusChanged(win as unknown as ZenWindow, false)
+    expect(vi.getTimerCount()).toBe(0)
   })
 })
 

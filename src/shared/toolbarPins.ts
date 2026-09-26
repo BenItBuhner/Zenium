@@ -4,7 +4,7 @@
  * beside the address pill are pinned in the bar. Back, Reload, the pill itself and the ⋯ menu
  * are never optional and have no key here. A control that is not pinned is folded into the app
  * menu, whose row for it is what runs it – Forward's row, Reader View, Translate Page…,
- * Bookmark This Page, Now Playing… – so nothing is lost, only moved (v2 §9.29's fold).
+ * Bookmark This Page, Media Controls… – so nothing is lost, only moved (v2 §9.29's fold).
  *
  * The record holds the user's departures alone: a key absent reads pinned, so a profile from
  * before the setting existed shows the default bar, and re-pinning a control removes its key

@@ -135,7 +135,6 @@ describe('mediaHubButtonFits (the §9.29 tier)', () => {
 
 describe('mediaHubLabel', () => {
   it('counts what plays', () => {
-    expect(mediaHubLabel([media({ tabId: 'a' })])).toBe('Media controls')
     expect(mediaHubLabel([media({ tabId: 'a', playing: true })])).toBe('Media controls, 1 playing')
     expect(
       mediaHubLabel([
@@ -144,6 +143,21 @@ describe('mediaHubLabel', () => {
         media({ tabId: 'c' })
       ])
     ).toBe('Media controls, 2 playing')
+  })
+
+  it("joins the paused state to the name with §9.31's ' · ' while nothing it lists plays (W7-5's linger)", () => {
+    // The #552 ruling: "Media controls · Paused" – never "Paused: <title>"; the title is the popover's.
+    expect(mediaHubLabel([media({ tabId: 'a' })])).toBe('Media controls · Paused')
+    expect(mediaHubLabel([media({ tabId: 'a' }), media({ tabId: 'b' })])).toBe(
+      'Media controls · Paused'
+    )
+    expect(mediaHubLabel([media({ tabId: 'a', title: 'Nocturne' })])).not.toContain('Nocturne')
+    // One playing among the paused: the count, as before.
+    expect(mediaHubLabel([media({ tabId: 'a' }), media({ tabId: 'b', playing: true })])).toBe(
+      'Media controls, 1 playing'
+    )
+    // Nothing listed: the bare name (the button is not shown then; the popover's name at rest).
+    expect(mediaHubLabel([])).toBe('Media controls')
   })
 })
 

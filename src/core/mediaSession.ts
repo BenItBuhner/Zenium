@@ -24,6 +24,19 @@ export const MIN_SESSION_DURATION_S = 5
 export const AUTO_PIP_SETTING = 'auto-picture-in-picture'
 
 /**
+ * Chrome's linger for a paused session in its global media controls (the toolbar's media button
+ * and its dialog): the item stays up, with Play, until this long passes without an interaction,
+ * then goes – and comes back with the next playback. Read from Chromium's
+ * `components/global_media_controls/public/media_session_item_producer.cc`:
+ * `kAutoDismissTimerInMinutesDefault = 60` (minutes – the `timer_in_minutes` param of
+ * `media::kGlobalMediaControlsAutoDismiss`, a feature on by default), the value it has carried
+ * since M80's `kInactiveTimerDelay`. The desktop hands it to the core as
+ * `Platform.mediaHub.inactiveAfterMs`; a drive shortens it through the host's test hook, never
+ * production.
+ */
+export const MEDIA_HUB_INACTIVE_MS = 60 * 60 * 1000
+
+/**
  * How long after a window's blur the desktop waits before it counts the user as gone from the
  * app: a focus that only moves to another Zenium window arrives within this and leaves the
  * video where it is, as that window is still the user's.
@@ -126,6 +139,19 @@ export class MediaSessionService {
   /** The tabs each window showed at the last look (`onVisibleTabsChanged`), by window id. */
   private readonly shown = new Map<string, string[]>()
   private blurTimer: ReturnType<typeof setTimeout> | null = null
+  /**
+   * The hub's linger running for each tab whose media paused or ended (`Platform.mediaHub`):
+   * fires once `inactiveAfterMs` passes without an interaction and takes the tab's entry out
+   * of the hub, as Chrome's `Session::inactive_timer_` hides its item.
+   */
+  private readonly lingers = new Map<string, ReturnType<typeof setTimeout>>()
+  /** Tabs whose linger ran out: out of the hub until their media plays again. */
+  private readonly inactive = new Set<string>()
+  /**
+   * {@link dispose} ran: the browser is shutting down, and no clock may be armed after it – a
+   * report or a refresh that arrives late in the teardown finds this set and starts nothing.
+   */
+  private disposed = false
 
   constructor(
     private readonly browser: Browser,
@@ -138,8 +164,7 @@ export class MediaSessionService {
     const at = this.now()
     const before = this.reports.get(tabId)
     if (!hasMedia(report)) {
-      this.reports.delete(tabId)
-      this.dismissed.delete(tabId)
+      this.forget(tabId)
       return
     }
     const playing = reportIsPlaying(report)
@@ -150,6 +175,109 @@ export class MediaSessionService {
       at,
       startedAt: playing && !wasPlaying ? at : (before?.startedAt ?? 0)
     })
+    // A seek while the clock runs restarts it (Chrome's `OnSessionInteractedWith` for a position
+    // change while paused); the clock's start and stop are {@link refresh}'s, where the entry's
+    // playing state is decided.
+    if (before && this.lingers.has(tabId) && positionMoved(before.report, report)) {
+      this.startLinger(tabId)
+    }
+  }
+
+  /** The tab's media is gone (its element removed, its page unloaded): nothing of it stays. */
+  private forget(tabId: string): void {
+    this.reports.delete(tabId)
+    this.dismissed.delete(tabId)
+    this.inactive.delete(tabId)
+    this.clearLinger(tabId)
+  }
+
+  /**
+   * The hub's linger, Chrome's `Session::MediaSessionInfoChanged` in short: a playback wakes the
+   * tab's entry and stops the clock; a pause or an end starts it (once – a clock already
+   * running runs on). Decided on every {@link refresh}, from the view's audibility together
+   * with the page's report, not on the report alone: the engine's `isCurrentlyAudible()` trails
+   * the element by a moment (Chromium holds a stream's audible word for a while after its last
+   * audible frame – a pause's report finds the view still audible, an end's too), so a clock
+   * started on the report would be stopped by the refresh that followed it and never started
+   * again once the view fell quiet. Here the clock starts with the `audio-state-changed` that
+   * follows the pause, and a play's report wakes the entry before the view is heard. A muted
+   * element is not paused – its report says `playing: false` for the speaker glyph's sake and
+   * `muted` why – so muting never starts the clock and stops one that runs: the entry stays as
+   * long as the element does, as it did before the linger. Hosts without the hub
+   * (`Platform.mediaHub` absent: Android, whose mini player shows a paused session until it is
+   * dismissed or its tab goes) have no clock.
+   */
+  private followLinger(tabId: string, report: MediaReport, audible: boolean): void {
+    if (audible || reportIsPlaying(report) || report.muted) {
+      this.wake(tabId)
+      return
+    }
+    if (this.lingers.has(tabId) || this.inactive.has(tabId)) return
+    this.startLinger(tabId)
+  }
+
+  /** The linger the host asks for, or null on a host without the hub. */
+  private lingerMs(): number | null {
+    const host = this.browser.platform.mediaHub
+    if (!host) return null
+    const ms = host.inactiveAfterMs
+    return Number.isFinite(ms) && ms > 0 ? ms : null
+  }
+
+  /** Start (or restart) the tab's linger; nothing on a host without one, nothing once disposed. */
+  private startLinger(tabId: string): void {
+    if (this.disposed) return
+    const ms = this.lingerMs()
+    if (ms === null) return
+    this.clearLinger(tabId)
+    this.lingers.set(
+      tabId,
+      setTimeout(() => {
+        this.lingers.delete(tabId)
+        if (!this.reports.has(tabId)) return
+        this.inactive.add(tabId)
+        this.browser.updateMedia()
+      }, ms)
+    )
+  }
+
+  private clearLinger(tabId: string): void {
+    const timer = this.lingers.get(tabId)
+    if (timer === undefined) return
+    clearTimeout(timer)
+    this.lingers.delete(tabId)
+  }
+
+  /** The tab's media plays (or is interacted with as a playing one): its entry is back and the clock off. */
+  private wake(tabId: string): void {
+    this.clearLinger(tabId)
+    this.inactive.delete(tabId)
+  }
+
+  /** The user pressed one of the hub's controls on the tab's session: Chrome's interaction restarts the clock. */
+  private touch(tabId: string): void {
+    if (this.lingers.has(tabId)) this.startLinger(tabId)
+  }
+
+  /** Whether the tab's paused session has left the hub for want of an interaction (its linger ran out). */
+  isInactive(tabId: string): boolean {
+    return this.inactive.has(tabId)
+  }
+
+  /**
+   * The browser is going away (`Browser.shutdown()`, the quit path): every linger is cleared so
+   * none fires into a torn-down chrome, and none can be armed after – a report a page sends as
+   * its view is destroyed, a refresh the teardown provokes, run into {@link startLinger}'s guard.
+   * The blur clock of the automatic picture-in-picture goes the same way.
+   */
+  dispose(): void {
+    this.disposed = true
+    for (const timer of this.lingers.values()) clearTimeout(timer)
+    this.lingers.clear()
+    if (this.blurTimer !== null) {
+      clearTimeout(this.blurTimer)
+      this.blurTimer = null
+    }
   }
 
   /** The tab the OS controls show right now (a source's tab when a source holds them), or null. */
@@ -208,7 +336,9 @@ export class MediaSessionService {
    * The media list for the chrome (`UIState.media`), and the session for the host's controls,
    * recomputed from the live views: tabs whose view is gone drop out (their notification with
    * them), so a closed tab ends its session as Chrome's does. A chrome player is its tab's entry
-   * while the tab's page has no media of its own; with both, the page's entry stays.
+   * while the tab's page has no media of its own; with both, the page's entry stays. A tab whose
+   * linger ran out ({@link followLinger}) is left out of the list – the hub's, not the OS
+   * controls', which keep the paused session as Chrome's SMTC and MPRIS do – until it plays.
    */
   refresh(): MediaState[] {
     const { tabs } = this.browser
@@ -220,6 +350,10 @@ export class MediaSessionService {
       const tracked = this.reports.get(tabId)
       const playing = view.isCurrentlyAudible()
       if (!tracked && !playing) continue
+      if (tracked) {
+        this.followLinger(tabId, tracked.report, playing)
+        if (this.inactive.has(tabId)) continue
+      }
       const state: MediaState = { tabId, playing }
       if (tracked) {
         const { report } = tracked
@@ -243,10 +377,7 @@ export class MediaSessionService {
       states.push(state)
     }
     for (const tabId of [...this.reports.keys()]) {
-      if (!live.has(tabId)) {
-        this.reports.delete(tabId)
-        this.dismissed.delete(tabId)
-      }
+      if (!live.has(tabId)) this.forget(tabId)
     }
     for (const [id, tracked] of [...this.sources]) {
       const { state: source } = tracked
@@ -468,6 +599,7 @@ export class MediaSessionService {
     if (typeof details.seekOffset === 'number' && Number.isFinite(details.seekOffset))
       message.seekOffset = details.seekOffset
     view.postToPage?.(message)
+    this.touch(target)
     if (action === 'stop') {
       this.dismissed.add(target)
       this.browser.updateMedia()
@@ -707,7 +839,7 @@ export class MediaSessionService {
       clearTimeout(this.blurTimer)
       this.blurTimer = null
     }
-    if (!this.autoPipSupported()) return
+    if (this.disposed || !this.autoPipSupported()) return
     if (focused) {
       if (this.autoPip && this.browser.tabs.visibleTabIds(win).includes(this.autoPip.tabId)) {
         void this.leaveAuto()
@@ -891,6 +1023,16 @@ function hasMedia(report: MediaReport): boolean {
     report.playbackState !== 'none' ||
     report.playing
   )
+}
+
+/**
+ * Whether the media's position moved between two reports of it paused – a seek, the one
+ * interaction a page can show while nothing plays (Chrome's `MediaSessionPositionChanged` counts
+ * it as one). A report that gained or lost its position altogether says nothing either way.
+ */
+function positionMoved(before: MediaReport, after: MediaReport): boolean {
+  if (!before.position || !after.position) return false
+  return Math.abs(before.position.position - after.position.position) > 0.5
 }
 
 /** Whether the report's media deserves the OS controls (Chrome's rules: no short clips). */
