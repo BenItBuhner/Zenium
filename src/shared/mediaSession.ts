@@ -165,6 +165,12 @@ export interface MediaSessionInfo {
   fullscreen: boolean
   /** A private tab: the controls show no title, artist or artwork (Chrome's incognito notification). */
   private: boolean
+  /**
+   * The tab's site may keep its video playing when the app goes to the background: its
+   * `background-video` content setting resolves to allow (Android reads it at the transition;
+   * false for a chrome player's session and for every site under the default).
+   */
+  backgroundVideo: boolean
   /** A page's media, or a chrome player's (`video` false, no PiP: hosts skip their PiP paths). */
   source: MediaSessionSourceKind
   /** The chrome player's id (`read-aloud`) when `source` is `chrome`. */

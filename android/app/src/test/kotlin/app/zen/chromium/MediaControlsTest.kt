@@ -105,6 +105,10 @@ class MediaControlsTest {
         assertEquals(MediaSessionInfo.SOURCE_PAGE, info.source)
         assertFalse(info.chrome)
         assertNull(info.sourceId)
+        // The site's background-video setting is block unless the core said allow (an older core says nothing).
+        assertFalse(info.backgroundVideo)
+        assertTrue(MediaSessionInfo.parse(json.put("backgroundVideo", true))!!.backgroundVideo)
+        assertFalse(MediaSessionInfo.parse(json.put("backgroundVideo", JSONObject.NULL))!!.backgroundVideo)
     }
 
     @Test

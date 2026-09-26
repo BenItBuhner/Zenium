@@ -218,6 +218,7 @@ function desktopState(): UIState {
     downloads: [],
     downloadsProgress: { active: 0, progress: 0 },
     bookmarks: [],
+    readingList: [],
     newTabShortcuts: [{ id: 'nt1', title: 'Zenium', url: 'https://zenium.example/' }],
     newTabHiddenHosts: [],
     newTabBackground: { image: false, canPick: true, accent: null },

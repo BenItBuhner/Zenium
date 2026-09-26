@@ -1093,6 +1093,16 @@
       "note": "The link menu on a tab in no group (PUI-17, W6-8): the tab-group drivers' seeded profile, a real hold on a loose tab's link, the sheet's rows read by name and checked against the design lead's order (Chrome 152's within Zenium's groups) with each Chrome 152 row looked up, then a real touch on Open Link in New Tab in Group making the group of two; light on Home, dark on Gamma, the two design stills. Its nightly stills are the device record of the ruled order (the dispatch runs 36196152105 and 36198125137 recorded the order before the ruling). About two and a half minutes of driver after the boot; the driver puts the device's night mode back at its end."
     },
     {
+      "id": "background-video",
+      "class": "BackgroundVideoDemo",
+      "shard": "phone-f",
+      "mirrors": "android-background-video-demo.yml",
+      "dir": "media-demo",
+      "timeout": 1200,
+      "estimate": 5,
+      "note": "Background video per site (MED-08 / EDGE-32, services pass 10) on the image's own WebView 113: the loopback clip with sound under the default (block) – a plain <video> paused by the engine itself on Home, the site pausing itself on visibilitychange – then the site allowed through permissions.set: Home with the audio on for thirty seconds (page visible to itself, no visibilitychange, notification with Pause, the foreground service up), the screen locked and still playing, the return with nothing heard; the same with picture-in-picture denied; Pause from the notification while away letting the held hide through. Stills services-pass-10-media-android-*. The driver turns the lock screen on for one scene and off again at its end."
+    },
+    {
       "id": "sheet-leave",
       "class": "SheetLeaveDemo",
       "shard": "api35",

@@ -1,5 +1,6 @@
 import {
   Activity,
+  BookOpen,
   Download,
   FileText,
   History,
@@ -24,5 +25,6 @@ export const PAGE_GLYPHS: Readonly<Record<InternalPageGlyph, LucideIcon>> = {
   scale: Scale,
   sparkles: Sparkles,
   'file-text': FileText,
-  activity: Activity
+  activity: Activity,
+  'book-open': BookOpen
 }

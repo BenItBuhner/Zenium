@@ -213,6 +213,7 @@ function state(
     },
     downloads: [],
     bookmarks: [],
+    readingList: [],
     recentlyClosedCount: 0,
     media: [],
     findResult: null,
