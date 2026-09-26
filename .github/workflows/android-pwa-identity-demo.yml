@@ -10,7 +10,8 @@ name: Android installed web app identity demo
 # browser's own task left standing – the Recents screen under KEYCODE_APP_SWITCH (the still),
 # the tile tapped a second time bringing the same task forward (one task, not two), then a page
 # notification asked for and shown from inside the app's window: the window's own permission
-# prompt under a real finger, the channel group named for the app (the API and `dumpsys
+# prompt on the native sheet (the still; the scrim and the system back dismissing it with nothing
+# written) and Allow under a real finger, the channel group named for the app (the API and `dumpsys
 # notification`), the card's sub text, tile and colour, the shade opened with the app's name on
 # the card (the still), a real tap on the card landing in the app's task with the page told
 # `click`, the system's notification settings listing the app, and last the browser's own tab

@@ -46,8 +46,10 @@ import kotlin.math.abs
  * through the API and `dumpsys activity recents` – the app's name as the label, the manifest's
  * `theme_color` as the card's colour, the browser's task another one – and Recents itself on a
  * still; the tile tapped again with the app up: the same window forward, one task; the page's
- * button under a finger, the window's own prompt ("Sketch wants to: Show notifications") answered
- * Allow under a finger, the card posted under the app's channel GROUP named for the app (the
+ * button under a finger, the window's own prompt on the native sheet ("Allow Sketch to show
+ * notifications?", Block | Allow) on a still, dismissed by a touch on the scrim and then by the
+ * system back – nothing written, the page reading `default` each time – and answered Allow under
+ * a finger, the card posted under the app's channel GROUP named for the app (the
  * system's channel list, `dumpsys notification`, the card's sub text and large icon), the shade
  * on a still reading the app's name, the card's tap bringing the app's task forward and the page
  * hearing `click`; the app's notification settings in the system's Settings listing the app as a
@@ -311,19 +313,43 @@ class PwaIdentityDemo : DemoHarness("pwa-demo-state.json", "android-pwa-identity
             return false
         }
         f.tap(point.x, point.y)
-        val prompt = waitFor(PROMPT_TITLE, 8_000) != null
+        val title = waitFor(PROMPT_TITLE, 8_000)
         SystemClock.sleep(1_200)
-        val line = findByLabel(PROMPT_LINE) != null
-        finding("the window's prompt: title '$PROMPT_TITLE' ${if (prompt) "up" else "not up"}, line '$PROMPT_LINE' ${if (line) "up" else "not up"}; page '${pageStatus(page)}'")
-        check("the window's own prompt names the app – '$PROMPT_TITLE' / '$PROMPT_LINE' (Chrome's fragment)", prompt && line)
-        if (!prompt) {
+        val block = findByLabel(BLOCK)
+        val allow = findByLabel(ALLOW)
+        val grip = findByLabel(GRIP_LABEL)
+        finding("the window's prompt: title '$PROMPT_TITLE' ${if (title != null) "up at $title" else "not up"}; grip $grip; Block $block; Allow $allow; page '${pageStatus(page)}'")
+        check("the window's own prompt is the native sheet asking '$PROMPT_TITLE' with the grip strip over it (§9.23)", title != null && grip != null)
+        check("§9.11's pair under the question, Block leading and Allow trailing on one row", block != null && allow != null && block.left < allow.left && abs(block.centerY() - allow.centerY()) < 4 * density)
+        if (title == null) {
             touchFault("the touch on the page's '$NOTIFY_LABEL' brought no prompt in 8 s (page: ${pageStatus(page)})")
             return false
         }
         shot("prompt-$THEME")
         beat()
+        // A dismissal writes nothing and leaves the question open: the scrim first, then the system back,
+        // each answering the page's promise 'default' with the app's memory still empty, the page asking again.
+        touchScrim("the scrim over the page")
+        val scrimGone = awaitTrue(6_000) { findByLabel(PROMPT_TITLE) == null }
+        val afterScrim = awaitTrue(6_000) { pageAnswers(page) == listOf("default") }
+        finding("after the scrim: sheet ${if (scrimGone) "gone" else "still up"}; the page's answers ${pageAnswers(page)}; memory ${appMemory()}")
+        check("a touch on the scrim dismisses the sheet; the page reads 'default' and nothing is written", scrimGone && afterScrim && appMemory() == null)
+        if (!scrimGone) touchFault("the touch on the scrim did not send the sheet away in 6 s")
+        f.tap(point.x, point.y)
+        val again = waitFor(PROMPT_TITLE, 8_000) != null
+        SystemClock.sleep(600)
+        back()
+        val backGone = awaitTrue(6_000) { findByLabel(PROMPT_TITLE) == null }
+        val afterBack = awaitTrue(6_000) { pageAnswers(page) == listOf("default", "default") }
+        finding("after the back: asked again $again; sheet ${if (backGone) "gone" else "still up"}; the page's answers ${pageAnswers(page)}; memory ${appMemory()}")
+        check("the page may ask again after a dismissal; the system back dismisses the sheet the same way – 'default', nothing written", again && backGone && afterBack && appMemory() == null)
+        if (again && !backGone) touchFault("the system back did not send the sheet away in 6 s")
+        f.tap(point.x, point.y)
+        val third = waitFor(PROMPT_TITLE, 8_000) != null
+        SystemClock.sleep(600)
+        check("the sheet is up a third time for the answer", third)
         // Allow under a finger: the page reads granted and posts; Android 13's own prompt should the run lack POST_NOTIFICATIONS.
-        touchTapLabelExpecting("Allow", "the page reads granted", timeoutMs = 10_000) {
+        touchTapLabelExpecting(ALLOW, "the page reads granted", timeoutMs = 10_000) {
             pageStatus(page).startsWith("permission: granted")
         }
         if (awaitSystemWindow(2_000)) {
@@ -331,10 +357,10 @@ class PwaIdentityDemo : DemoHarness("pwa-demo-state.json", "android-pwa-identity
             if (!tapInWindows(f, "Allow")) shellCommand("pm grant ${app.packageName} android.permission.POST_NOTIFICATIONS")
         }
         val shown = awaitTrue(12_000) { pageStatus(page).contains("shown") }
-        val memory = app.getSharedPreferences(WebAppNotifications.PREFS, Context.MODE_PRIVATE).getString(SHORTCUT_ID, null)
-        finding("page after: '${pageStatus(page)}'; the window's own memory for the app: $memory; the browser's site decisions: ${siteDecisions()}")
+        val memory = appMemory()
+        finding("page after: '${pageStatus(page)}', its answers ${pageAnswers(page)}; the window's own memory for the app: $memory; the browser's site decisions: ${siteDecisions()}")
         check("the page's notification was shown (its 'show' event fired)", shown)
-        check("the window kept the answer as the app's own memory (allow)", memory == WebAppNotifications.ALLOW)
+        check("the window kept the answer as the app's own memory (allow) – the one write of the three asks", memory == WebAppNotifications.ALLOW && pageAnswers(page) == listOf("default", "default", "granted"))
         // The channel group, from the system's list.
         val group = notificationManager.notificationChannelGroups.firstOrNull { it.id == GROUP_ID }
         val channel = notificationManager.notificationChannels.firstOrNull { it.id.startsWith(WebAppChannels.channelPrefix(SHORTCUT_ID)) }
@@ -406,6 +432,7 @@ class PwaIdentityDemo : DemoHarness("pwa-demo-state.json", "android-pwa-identity
             SystemClock.sleep(3_000)
             val listed = awaitInWindows(6_000) { it == TILE_LABEL } != null
             finding("system notification settings: the app's group '$TILE_LABEL' ${if (listed) "listed" else "not in the tree (may be below the fold)"}; Sites ${if (findInWindows { it == SitesChannels.GROUP_NAME } != null) "listed" else "not in the tree"}; labels ${labelsInWindows()}")
+            check("the system's notification settings list the app's group '$TILE_LABEL' by name (the group named for the app, its one switch)", listed)
             if (listed) {
                 shot("settings-$THEME")
                 beat()
@@ -560,6 +587,23 @@ class PwaIdentityDemo : DemoHarness("pwa-demo-state.json", "android-pwa-identity
     /** The page's status line (`#status`: "permission: default", then "permission: granted > shown > click > close" as the events come). */
     private fun pageStatus(page: TabWebView): String =
         evalJs(page, "String((document.getElementById('status')||{}).textContent||'')") ?: ""
+
+    /** What every `requestPermission()` of the page has resolved to so far, in order (`window.zenAnswers`); a pending promise adds nothing. */
+    private fun pageAnswers(page: TabWebView): List<String> {
+        val text = evalJs(page, "JSON.stringify(window.zenAnswers || [])") ?: return emptyList()
+        val array = runCatching { JSONArray(text) }.getOrNull() ?: return emptyList()
+        return List(array.length()) { array.getString(it) }
+    }
+
+    /** The window's own memory of the app's answer (`WebAppNotifications.PREFS`), null while the question is open. */
+    private fun appMemory(): String? = app.getSharedPreferences(WebAppNotifications.PREFS, Context.MODE_PRIVATE).getString(SHORTCUT_ID, null)
+
+    /** A real touch on the page area above the sheet: the scrim's, a dismissal. */
+    private fun touchScrim(what: String) {
+        val point = PointF(width / 2f, touchable.top + 48 * density)
+        finding("touch at ${point.x.toInt()},${point.y.toInt()} on $what")
+        Finger().tap(point.x, point.y)
+    }
 
     /** Where the element `id` is on screen (device px). */
     private fun elementCentre(page: TabWebView, id: String): PointF? {
@@ -792,9 +836,12 @@ class PwaIdentityDemo : DemoHarness("pwa-demo-state.json", "android-pwa-identity
         private const val NOTIFY_LABEL = "Notify me"
         private const val NOTIFY_TITLE = "New sketch shared"
         private const val NOTIFY_BODY = "Ada shared “Harbour at dusk” with you"
-        /** The window's own prompt: `cct_permission_message` with the app's name, over `webapp_permission_notifications`. */
-        private const val PROMPT_TITLE = "$TILE_LABEL wants to:"
-        private const val PROMPT_LINE = "Show notifications"
+        /** The window's own prompt on the native sheet (`PermissionPromptSheet`): `webapp_notifications_question` with the app's name. */
+        private const val PROMPT_TITLE = "Allow $TILE_LABEL to show notifications?"
+        /** §9.11's pair under it (`cct_block`, `cct_allow`), and the chassis's grip (`prompt_sheet_dismiss`). */
+        private const val BLOCK = "Block"
+        private const val ALLOW = "Allow"
+        private const val GRIP_LABEL = "Dismiss"
         /** The launcher's pin dialog accepts on one of these (Launcher3 says "Add automatically"). */
         private val PIN_ACCEPT_LABELS = listOf("Add automatically", "Add to Home screen", "Add to home screen", "Add")
 
@@ -845,6 +892,9 @@ class PwaIdentityDemo : DemoHarness("pwa-demo-state.json", "android-pwa-identity
               // Not `status`: window.status is a string-typed built-in, and an element assigned to it at the top level coerces.
               var line = document.getElementById('status');
               var events = [];
+              // Every answer the asks resolved to, in order: a dismissed prompt resolves 'default' – the same
+              // words the line showed before the ask – so the driver reads this list to tell the two apart.
+              window.zenAnswers = [];
               function say(t) { events = [t]; line.textContent = t; }
               // The notification's events accumulate (a tap fires click and then close at once).
               function note(t) { events.push(t); line.textContent = events.join(' > '); }
@@ -852,6 +902,7 @@ class PwaIdentityDemo : DemoHarness("pwa-demo-state.json", "android-pwa-identity
               document.getElementById('notify').addEventListener('click', function () {
                 if (!window.Notification) { say('no Notification API'); return; }
                 Notification.requestPermission().then(function (p) {
+                  window.zenAnswers.push(p);
                   say('permission: ' + p);
                   if (p !== 'granted') return;
                   var n = new Notification('$NOTIFY_TITLE', { body: '$NOTIFY_BODY', tag: 'share' });
