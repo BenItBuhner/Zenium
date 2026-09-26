@@ -471,6 +471,40 @@ describe('end of session and orphaned groups', () => {
     expect(fake.model.folders[home]).toBeDefined()
   })
 
+  it('the page hears that an agent drives it: `setAgentDriven(true)` with every prepare, `false` when the session lets the tab go (MCP B)', async () => {
+    const fake = fakeBrowser()
+    const A = await fake.connect('A', { mode: 'background' })
+    const a1 = fake.openedTab(
+      await fake.call(A, 'browser_tabs', { action: 'new', url: 'https://a.example/1' })
+    )
+    // `browser_tabs new` prepares the page: driven from the first call on it.
+    expect(fake.agentDriven.get(a1)).toEqual([true])
+    // Every later action prepares it again and says so again; the host takes a repeat as nothing.
+    await fake.call(A, 'browser_snapshot', { tabId: a1 })
+    expect(fake.agentDriven.get(a1)).toEqual([true, true])
+    // The session ends with the tab kept: the page is let go – hidden the plain way again.
+    await fake.call(A, 'zen_session', { action: 'end' })
+    expect(fake.agentDriven.get(a1)).toEqual([true, true, false])
+
+    // The user releasing a tab from an agent's group lets it go the same way.
+    const B = await fake.connect('B', { mode: 'background' })
+    const b1 = fake.openedTab(
+      await fake.call(B, 'browser_tabs', { action: 'new', url: 'https://b.example/1' })
+    )
+    expect(fake.agentDriven.get(b1)).toEqual([true])
+    fake.user.moveToFolder(b1, null)
+    // Noticed at the session's next call, as the move's notice is.
+    await fake.call(B, 'browser_tabs', { action: 'list' })
+    expect(fake.agentDriven.get(b1)).toEqual([true, false])
+    // Closing a session (the transport's DELETE, the idle sweep) detaches too.
+    const C = await fake.connect('C', { mode: 'background' })
+    const c1 = fake.openedTab(
+      await fake.call(C, 'browser_tabs', { action: 'new', url: 'https://c.example/1' })
+    )
+    fake.service.close(C.id)
+    expect(fake.agentDriven.get(c1)).toEqual([true, false])
+  })
+
   it('an idle session is parked, not lost: its next call is answered and its groups come back', async () => {
     const fake = fakeBrowser()
     const A = await fake.connect('A')

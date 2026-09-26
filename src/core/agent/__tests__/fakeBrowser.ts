@@ -48,6 +48,11 @@ export interface FakeBrowser {
   pages: Map<string, FakePage>
   /** Real input the pages received, by tab id. */
   input: Map<string, AgentInputEvent[]>
+  /**
+   * Every `TabView.setAgentDriven` call each page took, in order (the desktop stages a hidden
+   * page on `true`, MCP B): `prepare` is to say true, `detach` false.
+   */
+  agentDriven: Map<string, boolean[]>
   /** What the user does from the chrome. */
   user: {
     openTab(url: string, opts?: { essential?: boolean; pinned?: boolean; folderId?: string }): Tab
@@ -133,6 +138,7 @@ export function fakeBrowser(
   const pages = new Map<string, FakePage>()
   const views = new Map<string, TabView>()
   const input = new Map<string, AgentInputEvent[]>()
+  const agentDriven = new Map<string, boolean[]>()
   const gates = new Map<string, Promise<void>>()
   let commits = 0
   const transport: AgentTransport = {
@@ -160,6 +166,8 @@ export function fakeBrowser(
     pages.set(tab.id, page)
     const events: AgentInputEvent[] = []
     input.set(tab.id, events)
+    const driven: boolean[] = []
+    agentDriven.set(tab.id, driven)
     const view = {
       executeJavaScript: async (code: string, frameId?: number) => {
         const gate = gates.get(tab.id)
@@ -181,6 +189,9 @@ export function fakeBrowser(
       canGoForward: () => false,
       focus: () => undefined,
       setBackgroundThrottling: () => undefined,
+      setAgentDriven: (on: boolean) => {
+        driven.push(on)
+      },
       snapshot: async () => null
     } as unknown as TabView
     return view
@@ -399,6 +410,7 @@ export function fakeBrowser(
     userSpace,
     pages,
     input,
+    agentDriven,
     user,
     hold: (tabId) => {
       let release = (): void => undefined
