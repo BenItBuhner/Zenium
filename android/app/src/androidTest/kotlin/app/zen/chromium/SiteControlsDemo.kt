@@ -290,7 +290,10 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
         //    host (the answer is kept per site per tab, so a second hop into the same host would
         //    not be held); the destination echoes `document.referrer` in its title and its server
         //    records the Referer and the Sec-Fetch-Site the browser sent – `none` is the
-        //    browser-initiated re-issue, the proof the hop was held at all.
+        //    browser-initiated re-issue, the proof the hop was held at all. The WebView lifts the
+        //    load's Referer into the navigation's referrer under its DEFAULT policy
+        //    (AwContents.loadUrl), so a page policy stricter than the default is followed and a
+        //    looser one is clamped to it (the last case records the clamp).
         note("\n8. the held navigation's referrer under the page's own policy")
         for (case in REFERRER_CASES) referrerScene(case)
 
@@ -789,12 +792,13 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
             ),
             ReferrerCase(
                 id = "anchor-over-meta",
-                title = "Link with referrerpolicy=unsafe-url under a no-referrer meta",
-                description = "The anchor's own policy beats the document's: the held hop carries the page's full address.",
+                title = "Link with referrerpolicy=origin under a no-referrer meta",
+                description = "The anchor's own policy beats the document's: the same meta alone sends none (the first case); " +
+                    "the anchor's referrerpolicy=origin has the held hop carry the page's origin.",
                 destinationAddress = "127.0.0.4",
                 head = "<meta name=referrer content=no-referrer>",
-                anchorAttributes = " referrerpolicy=\"unsafe-url\"",
-                expectedReferer = "$REFERRER_SOURCE_ORIGIN/anchor-over-meta.html",
+                anchorAttributes = " referrerpolicy=\"origin\"",
+                expectedReferer = "$REFERRER_SOURCE_ORIGIN/",
             ),
             ReferrerCase(
                 id = "default-policy",
@@ -803,6 +807,17 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
                 destinationAddress = "127.0.0.6",
                 head = "",
                 anchorAttributes = "",
+                expectedReferer = "$REFERRER_SOURCE_ORIGIN/",
+            ),
+            ReferrerCase(
+                id = "unsafe-url-clamped",
+                title = "Link with referrerpolicy=unsafe-url – the WebView's own clamp",
+                description = "A policy looser than Chrome's default asks for the page's full address; the WebView lifts a " +
+                    "loadUrl Referer into the navigation's referrer under its default policy (AwContents.loadUrl), so the " +
+                    "held hop carries the origin – never more than the default's, never more than the page asked.",
+                destinationAddress = "127.0.0.7",
+                head = "",
+                anchorAttributes = " referrerpolicy=\"unsafe-url\"",
                 expectedReferer = "$REFERRER_SOURCE_ORIGIN/",
             ),
         )

@@ -139,7 +139,9 @@ class ContentRules(private val rows: Map<String, Row>) {
          * `<meta name=referrer>`), one of the eight tokens of the Referrer Policy spec; an empty or
          * unknown token is Chrome's default, `strict-origin-when-cross-origin`. Nothing is sent
          * under any policy for a page or a destination without a web origin. "Full" is the page's
-         * address without its fragment and credentials; "downgrade" is HTTPS to HTTP.
+         * address without its fragment and credentials; "downgrade" is HTTPS to HTTP. This is
+         * what the policy says; the WebView sends at most what its default policy allows of it
+         * (the view's hold in [TabWebView] says where).
          */
         fun resumeReferer(from: String?, to: String, policy: String = ""): String? {
             if (from == null) return null

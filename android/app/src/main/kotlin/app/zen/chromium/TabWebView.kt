@@ -593,8 +593,14 @@ class TabWebView(
      * as its script read it for this navigation ([ReferrerPolicyWord]: the tapped anchor's
      * `rel=noreferrer` / `referrerpolicy`, else the document's `<meta name=referrer>`; the empty
      * word is Chrome's default) – a policy set by the `Referrer-Policy` response header alone
-     * is not readable from the page and is not followed here. A redirect hop's referrer is the
-     * original request's, which the view does not know, so it is resumed without one. A Leave
+     * is not readable from the page and is not followed here. The WebView lifts the load's
+     * `Referer` into the navigation's referrer under its default policy (`AwContents.loadUrl`),
+     * so a page policy stricter than the default is followed to the wire and a looser one
+     * (`unsafe-url`, `no-referrer-when-downgrade`, the downgrade cases of `origin` /
+     * `origin-when-cross-origin`) is clamped there to the default's: the re-issued hop never
+     * carries more than the default would, nor more than the page asked. A redirect hop's
+     * referrer is the original request's, which the view does not know, so it is resumed
+     * without one. A Leave
      * the user gave the page's `beforeunload` objection for this navigation goes with it
      * ([LeaveCarry]: the re-issued load has the browser ask the page once more).
      */
