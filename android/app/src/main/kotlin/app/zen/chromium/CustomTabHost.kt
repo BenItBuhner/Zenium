@@ -200,20 +200,23 @@ class CustomTabHost(
      * sentence and the decoded address on a line of its own, Not now | Open with Open the accent
      * primary, in this tab's scheme. Open lets the request go; Not now, the scrim's tap and the
      * system back refuse it, and nothing is remembered – no core here to remember a scheme with,
-     * so no Always open row: every ask is answered for itself. With no app at all the request
-     * goes through unasked so the link's fallback (an `intent://`'s web address, a store listing,
-     * a toast) runs. One question per window, the core's rule: a newer request under a tap takes
-     * the sheet over (the one it replaces answered `false`), one without a tap is refused – a
-     * script firing on its own does not get to replace the question the user is reading.
+     * so no Always open row: every ask is answered for itself. With no app at all there is
+     * nothing to ask: the request is refused, nothing started, and the deliberate fallback runs
+     * as the browser window's core runs it (`noHandler`) – the `intent://`'s web address loaded
+     * in this tab, else the store listing of the app it wants, else the toast
+     * ([ExternalProtocols.refuseWithFallback]). One question per window, the core's rule: a newer
+     * request under a tap takes the sheet over (the one it replaces answered `false`), one
+     * without a tap is refused – a script firing on its own does not get to replace the question
+     * the user is reading. A window on its way out asks nothing and runs no fallback.
      */
     private fun askExternal(args: JSONObject) {
         val requestId = args.str("requestId")
-        if (args.str("handler") == "none") {
-            externalProtocols.respond(requestId, true)
-            return
-        }
         if (activity.isFinishing || activity.isDestroyed) {
             externalProtocols.respond(requestId, false)
+            return
+        }
+        if (args.str("handler") == "none") {
+            externalProtocols.refuseWithFallback(requestId)
             return
         }
         externalRequestId?.let { standing ->
