@@ -13,9 +13,16 @@ import type { MenulistOption } from '@renderer/components/siteControls/primitive
 /**
  * The ranges as the menulist / the sheet list them – and the one source of a range's words: the
  * toast takes its period from here (`rangeLabel`), so a range added to this list reads the same
- * in the picker and in the toast.
+ * in the picker and in the toast. Chrome's six, the shortest first: "Last 15 minutes" is Quick
+ * Delete's default and the first entry of Chrome Android's spinner
+ * (`IDS_CLEAR_BROWSING_DATA_TAB_PERIOD_15_MINUTES`, `android_chrome_strings.grd:1283–1285`;
+ * `QuickDeleteDialogDelegate.java:115–118`) and the first of the desktop dialog's picker
+ * (`IDS_SETTINGS_CLEAR_PERIOD_15_MINUTES`, `settings_strings.grdp:946–948`; the page's own
+ * picker shortens it to "Last 15 min", `IDS_SETTINGS_CLEAR_PERIOD_15_MIN` – the dialog's full
+ * word here, on every host).
  */
 export const RANGE_OPTIONS: ReadonlyArray<MenulistOption<BrowsingDataRange>> = [
+  { value: '15min', label: 'Last 15 minutes' },
   { value: 'hour', label: 'Last hour' },
   { value: 'day', label: 'Last 24 hours' },
   { value: 'week', label: 'Last 7 days' },
@@ -28,6 +35,11 @@ export function rangeLabel(range: BrowsingDataRange): string {
   return RANGE_OPTIONS.find((o) => o.value === range)?.label ?? range
 }
 
+/**
+ * The label of each type. Every `BrowsingDataType` has one, whether or not a surface lists the
+ * row yet (`tabs` is Chrome Android's Quick Delete row, `IDS_CLEAR_TABS_TITLE`; the phone
+ * form's row is the UI half's – MOT-24 UI).
+ */
 export const TYPE_LABEL: Record<BrowsingDataType, string> = {
   history: 'Browsing history',
   cookies: 'Cookies and site data',
@@ -36,7 +48,8 @@ export const TYPE_LABEL: Record<BrowsingDataType, string> = {
   passwords: 'Saved passwords',
   autofill: 'Autofill form data',
   sitePermissions: 'Site settings',
-  recentlyClosed: 'Recently closed tabs'
+  recentlyClosed: 'Recently closed tabs',
+  tabs: 'Tabs'
 }
 
 /**
@@ -78,7 +91,8 @@ export function countLine(
     downloads: ['download', 'downloads'],
     logins: ['login', 'logins'],
     entries: ['entry', 'entries'],
-    permissions: ['permission', 'permissions']
+    permissions: ['permission', 'permissions'],
+    tabs: ['tab', 'tabs']
   }
   const [one, many] = unit[c.unit]
   const prefix = c.unit === 'sites' ? 'From ' : ''

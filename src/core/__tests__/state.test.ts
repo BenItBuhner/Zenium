@@ -271,6 +271,40 @@ describe('tab navigation persistence', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// Quick Delete's tab stamp (HB-07): `Tab.lastNavigatedAt` persists with the tab and a record
+// from before the field reads null (that it never travels in the `open-tabs` sync record is
+// `sync/__tests__/documents.test.ts`).
+// ---------------------------------------------------------------------------
+
+describe('Tab.lastNavigatedAt persistence (HB-07)', () => {
+  it('round-trips the stamp with the tab and reads null for a record older than the field', async () => {
+    const { doc, ids } = profile()
+    const [, a, b] = ids
+    const { s, io } = stateFrom(doc)
+    // `createTabRecord` gave the profile's tabs an explicit null; a record from before the
+    // field carries no key at all, and reads the same.
+    const tabs = doc.tabs as Array<Record<string, unknown>>
+    for (const raw of tabs) delete raw.lastNavigatedAt
+    const older = stateFrom(doc).s
+    expect(older.model.tabs[a].lastNavigatedAt).toBeNull()
+    expect(older.model.tabs[b].lastNavigatedAt).toBeNull()
+
+    s.model.tabs[a].lastNavigatedAt = 1_700_000_000_000
+    s.commit()
+    await tick()
+    await s.flush()
+    const written = JSON.parse(io.writes[io.writes.length - 1]) as {
+      tabs: Array<{ id: string; lastNavigatedAt?: number | null }>
+    }
+    expect(written.tabs.find((t) => t.id === a)?.lastNavigatedAt).toBe(1_700_000_000_000)
+    expect(written.tabs.find((t) => t.id === b)?.lastNavigatedAt).toBeNull()
+    const reloaded = stateFrom(written).s
+    expect(reloaded.model.tabs[a].lastNavigatedAt).toBe(1_700_000_000_000)
+    expect(reloaded.model.tabs[b].lastNavigatedAt).toBeNull()
+  })
+})
+
 describe('forgetSession', () => {
   it('drops regular tabs, keeps pinned tabs and essentials, and leaves one window without a selection', () => {
     const { doc, ids } = profile()
