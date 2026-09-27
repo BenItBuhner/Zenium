@@ -9,9 +9,13 @@ name: Android share and screenshot demo
 # a link to a highlight followed, and the editor once more under the dark chrome. The driver
 # writes `share-screenshot-findings.txt` with a PASS / FAIL per check and fails when any did. The
 # build, the emulator and the Gradle cache live in android-emulator-demo.yml; this file only picks
-# the driver and the demo it runs.
+# the driver and the demo it runs. On API 33 the card's Share goes to the browser's own share
+# panel (SH-03; `Share.sharePicture`, as Chrome's screenshot Share goes to its sharing hub below
+# Android 14): the second job records the same demo there.
 on:
   workflow_dispatch:
+  push:
+    branches: [cursor/android-screenshot-card-actions-9271]
 
 permissions:
   contents: read
@@ -22,7 +26,8 @@ concurrency:
 
 jobs:
   record:
-    name: Share and screenshot demo
+    name: Share and screenshot demo (API 34, the system sheet)
+    if: github.event_name != 'push'
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-gesture-demo.sh
@@ -37,3 +42,25 @@ jobs:
         DEMO_KEEP=com.google.android.apps.photos com.google.android.apps.nbu.files
       artifact-name: android-share-screenshot-demo
       artifact-path: artifacts/android-share-screenshot-demo/
+
+  record-api33:
+    name: Share and screenshot demo (API 33, the share panel)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.ShareScreenshotDemo
+        DEMO_DIR=share-screenshot-demo
+        DEMO_OUT=artifacts/android-share-screenshot-demo-api33
+        DEMO_VIDEO=android-share-screenshot-demo-api33.mp4
+        DEMO_KEEP=com.google.android.apps.photos com.google.android.apps.nbu.files
+        WEBVIEW_GOOGLE_DIR=artifacts/webview-google
+      # The API 33 image's own WebView is 109: a current Google WebView goes over it first, as the
+      # share demo's API 33 job does (android-webview-google.sh, the pin and its source in the
+      # script's header), the APK kept between runs under the key naming its version.
+      setup-script: bash .github/scripts/android-webview-google.sh fetch artifacts/webview-google
+      setup-cache-path: artifacts/webview-google
+      setup-cache-key: webview-google-com.google.android.webview-145.0.7632.218
+      api-level: '33'
+      artifact-name: android-share-screenshot-demo-api33
+      artifact-path: artifacts/android-share-screenshot-demo-api33/
