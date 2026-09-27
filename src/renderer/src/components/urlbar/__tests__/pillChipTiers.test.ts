@@ -90,12 +90,13 @@ describe('the pill chip overflow rule (M8)', () => {
 
   /*
    * The pill's other word, "Not secure" (or "Dangerous") before an http page's address, is a
-   * state chip of the tier since the W8-6 round on #589: at 13 px it is 68.4 wide ("Dangerous"
-   * 68.0), reserved at 69, so the chips – the utilities first – fold before the word takes the
-   * address under its floor. Both words read their 13 px from one stylesheet line.
+   * state chip of the tier since the W8-6 round on #589: at 13 px the build draws it 66.1 wide
+   * ("Dangerous" 67.4), reserved at the wider word's next integer, 68, so the chips – the
+   * utilities first – fold before the word takes the address under its floor. Both words read
+   * their 13 px from one stylesheet line.
    */
   it('counts the "Not secure" word as a never-hidden state chip at its 13 px width', () => {
-    expect(CHIP_WIDTH.indicatorLabel).toBe(69)
+    expect(CHIP_WIDTH.indicatorLabel).toBe(68)
     const http: PillChipSpec[] = [
       { id: 'site', tier: 'site', width: CHIP_WIDTH.site },
       { id: 'indicator', tier: 'state', width: CHIP_WIDTH.indicatorLabel },
@@ -107,14 +108,15 @@ describe('the pill chip overflow rule (M8)', () => {
     ]
     const at = (innerWidth: number): string[] => ids(fittingChips(innerWidth, http))
     // Uncounted, the 240 inner of a 400 sidebar read 154 free over the residents and let three
-    // utilities in – the address at 2 px. Counted: site 26 + word 75 + shield 34 + star 26 = 161;
-    // 240 − 161 = 79 over the floor's 56 – room for none of the 26 px utilities.
+    // utilities in – the address at 2 px. Counted: site 26 + word 74 + shield 34 + star 26 = 160;
+    // 240 − 160 = 80 over the floor's 56 – room for none of the 26 px utilities.
     expect(at(240)).toEqual(['indicator', 'shield', 'site', 'star'])
-    expect(addressWidth(240, http, fittingChips(240, http))).toBe(79)
-    // Copy URL at 161 + 26 + 56 = 243, Share at 269, Boost at 295.
-    expect(at(243)).toEqual(['copy', 'indicator', 'shield', 'site', 'star'])
-    expect(at(269)).toEqual(['copy', 'indicator', 'share', 'shield', 'site', 'star'])
-    expect(at(295)).toEqual(['boost', 'copy', 'indicator', 'share', 'shield', 'site', 'star'])
+    expect(addressWidth(240, http, fittingChips(240, http))).toBe(80)
+    // Copy URL at 160 + 26 + 56 = 242, Share at 268, Boost at 294.
+    expect(at(241)).toEqual(['indicator', 'shield', 'site', 'star'])
+    expect(at(242)).toEqual(['copy', 'indicator', 'shield', 'site', 'star'])
+    expect(at(268)).toEqual(['copy', 'indicator', 'share', 'shield', 'site', 'star'])
+    expect(at(294)).toEqual(['boost', 'copy', 'indicator', 'share', 'shield', 'site', 'star'])
     // Never hidden by the tier while it stands: it is the page's state. The pill lists it only
     // while it stands (`labelFits`, below), and the stylesheet drops it under the label tier.
     expect(ids(fittingChips(PILL_LABEL_TIER, http))).toEqual([
@@ -126,37 +128,37 @@ describe('the pill chip overflow rule (M8)', () => {
     expect(ids(fittingChips(120, http))).toEqual(['indicator', 'site'])
     // The word folds as the Install word does – first, by the room, before any chip hides, one
     // way: a zoomed http page with a translate chip keeps every chip beside the word down to
-    // 26 + 75 + 34 + 26 + 26 + 26 = 213, + 56 = 269; one pixel under, the word goes and the six
+    // 26 + 74 + 34 + 26 + 26 + 26 = 212, + 56 = 268; one pixel under, the word goes and the six
     // chips stand over the room it left (138 + 56 = 194), where hiding zoom and translate at
-    // 220–268 to return them at 219 would have been the jitter §9.29's one-way tiers rule out.
+    // 220–267 to return them at 219 would have been the jitter §9.29's one-way tiers rule out.
     const crowded: PillChipSpec[] = [
       ...http.slice(0, 4),
       { id: 'zoom', tier: 'zoom', width: CHIP_WIDTH.small },
       { id: 'translate', tier: 'info', width: CHIP_WIDTH.small }
     ]
-    expect(labelFits(269, crowded)).toBe(true)
-    expect(labelFits(268, crowded)).toBe(false)
+    expect(labelFits(268, crowded)).toBe(true)
+    expect(labelFits(267, crowded)).toBe(false)
     const bare = crowded.filter((c) => c.id !== 'indicator')
-    expect(fittingChips(268, bare).size).toBe(bare.length)
+    expect(fittingChips(267, bare).size).toBe(bare.length)
     expect(fittingChips(194, bare).size).toBe(bare.length)
-    // The utilities keep reading the word's room as spent: none until 213 + 26 + 56 = 295.
+    // The utilities keep reading the word's room as spent: none until 212 + 26 + 56 = 294.
     const utilities = http.slice(4)
-    expect(ids(fittingUtilities(294, crowded, utilities))).toEqual([])
-    expect(ids(fittingUtilities(295, crowded, utilities))).toEqual(['copy'])
+    expect(ids(fittingUtilities(293, crowded, utilities))).toEqual([])
+    expect(ids(fittingUtilities(294, crowded, utilities))).toEqual(['copy'])
   })
 
   it('220 holds as the label tier for both words at 13 px', () => {
     // The widest run an http page keeps beside its word – the site icon, "Not secure", the
-    // shield, the star – stands over a 56 px address at the tier: 26 + 75 + 34 + 26 + 56 = 217.
+    // shield, the star – stands over a 56 px address at the tier: 26 + 74 + 34 + 26 + 56 = 216.
     const http: PillChipSpec[] = [
       { id: 'site', tier: 'site', width: CHIP_WIDTH.site },
       { id: 'indicator', tier: 'state', width: CHIP_WIDTH.indicatorLabel },
       { id: 'shield', tier: 'shield', width: CHIP_WIDTH.iconButton },
       { id: 'star', tier: 'star', width: CHIP_WIDTH.star }
     ]
-    expect(26 + (CHIP_WIDTH.indicatorLabel + CHIP_GAP) + 34 + 26 + MIN_ADDRESS_WIDTH).toBe(217)
+    expect(26 + (CHIP_WIDTH.indicatorLabel + CHIP_GAP) + 34 + 26 + MIN_ADDRESS_WIDTH).toBe(216)
     expect(fittingChips(PILL_LABEL_TIER, http).size).toBe(http.length)
-    expect(addressWidth(PILL_LABEL_TIER, http, fittingChips(PILL_LABEL_TIER, http))).toBe(59)
+    expect(addressWidth(PILL_LABEL_TIER, http, fittingChips(PILL_LABEL_TIER, http))).toBe(60)
     // The labelled Install chip beside the site icon and the star: 26 + 70 + 26 + 56 = 178. (The
     // two words all but never share a pill – an Install offer needs a secure context, and the
     // loopback http that installs carries no indicator word.)
@@ -169,8 +171,8 @@ describe('the pill chip overflow rule (M8)', () => {
     expect(labelFits(PILL_LABEL_TIER, installable)).toBe(true)
     expect(labelFits(PILL_LABEL_TIER - 1, installable)).toBe(false)
     // Where they would share one (a certificate error bypassed on a page with a manifest), the
-    // Install word folds first, by the room: 26 + 75 + 70 + 26 + 56 = 253 > 220, and the glyph
-    // alone stands with the rest at 26 + 75 + 26 + 26 + 56 = 209.
+    // Install word folds first, by the room: 26 + 74 + 70 + 26 + 56 = 252 > 220, and the glyph
+    // alone stands with the rest at 26 + 74 + 26 + 26 + 56 = 208.
     const both: PillChipSpec[] = [installable[0]!, http[1]!, installable[1]!, installable[2]!]
     expect(labelFits(PILL_LABEL_TIER, both)).toBe(false)
     const bare = both.map((c) => (c.id === 'install' ? { ...c, width: CHIP_WIDTH.small } : c))

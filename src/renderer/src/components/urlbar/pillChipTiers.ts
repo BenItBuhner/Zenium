@@ -100,8 +100,8 @@ export const PILL_TOOLS_TIER = 110
  * (`IDS_OMNIBOX_PWA_INSTALL_ICON_LABEL`), which the pill shows while it has this room and folds
  * to the glyph alone below it. The chip's tier width follows (`CHIP_WIDTH.label`). Re-derived
  * for the labels at 13 px (the design lead's ruling on #589): the widest run an http page keeps
- * beside its word – the site icon 26, "Not secure" 69 + 6, the shield 34, the star 26 – and the
- * address's 56 come to 217 ≤ 220, and the labelled Install chip beside the site icon, the star
+ * beside its word – the site icon 26, "Not secure" 68 + 6, the shield 34, the star 26 – and the
+ * address's 56 come to 216 ≤ 220, and the labelled Install chip beside the site icon, the star
  * and the floor to 26 + 70 + 26 + 56 = 178; so at the tier either word still stands over a
  * 56 px address, and either word folds by the room (`labelFits`) before any chip hides – 220
  * holds. (The two words all but never share a pill: an Install offer needs a secure context,
@@ -119,9 +119,11 @@ export const PILL_LABEL_TIER = 220
  * the two text labels at §4's 13 px: what the Install chip's "Install" adds to its 20 while the
  * label tier shows it – the word at 13 px medium is 37.4 wide, its gap before it 4 and the chip's
  * padding 4 either side, a 63.4 px chip, so the tier reserves 64, 44 over the glyph's 20 – and
- * the indicator's word before the address, "Not secure" 68.4 at 13 px ("Dangerous" 68.0),
- * reserved at 69. The W8-6 probe read the words on the packaged build's font stack (system-ui);
- * the constants are their ceilings, so the address's floor holds to the pixel under them.
+ * the indicator's word before the address, "Not secure" 66.1 at 13 px regular and "Dangerous"
+ * 67.4, reserved at the wider word's next integer, 68. The W8-6 drive read the words inside the
+ * packaged build (its own font stack, system-ui, at 1×); each constant is the next integer over
+ * what the build draws, so the address's floor holds to the pixel under them and the tier keeps
+ * nothing it does not need.
  */
 export const CHIP_WIDTH = {
   site: 20,
@@ -130,7 +132,7 @@ export const CHIP_WIDTH = {
   iconButton: 28,
   badge: 28,
   label: 44,
-  indicatorLabel: 69
+  indicatorLabel: 68
 } as const
 
 export interface PillChipSpec {

@@ -2311,7 +2311,8 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
 
   /*
    * The pill's other word, "Not secure" (or "Dangerous") before an http page's address, is
-   * counted by the tier since the W8-6 round on #589 – at its 13 px width (69) – and folds as
+   * counted by the tier since the W8-6 round on #589 – at its 13 px width (68, the wider word
+   * "Dangerous" 67.4 rounded up; "Not secure" draws 66.1) – and folds as
    * the Install word does: first, by the room, before any chip hides, one way; never under the
    * label tier. Uncounted, the utilities mounted into the word's room and left the address 2 px
    * on an http page at the 400 sidebar.
@@ -2362,25 +2363,25 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
       ).toBe(false)
       expect(word()!.classList.contains('opacity-70')).toBe(true)
       expect(utilities()).toHaveLength(3)
-      // The residents beside the word: site 26 + word 75 + star 26 + zoom 26 + translate 26 +
-      // Reader 26 = 205; + 56 = 261. The utilities read the word's room as spent: Copy URL
-      // needs 205 + 26 + 56 = 287, Share 313, Boost 339.
-      act(() => emit!(339))
-      expect(utilities()).toHaveLength(3)
+      // The residents beside the word: site 26 + word 74 + star 26 + zoom 26 + translate 26 +
+      // Reader 26 = 204; + 56 = 260. The utilities read the word's room as spent: Copy URL
+      // needs 204 + 26 + 56 = 286, Share 312, Boost 338.
       act(() => emit!(338))
+      expect(utilities()).toHaveLength(3)
+      act(() => emit!(337))
       expect(utilities()).toEqual(['Copy URL', 'Share this page'])
-      act(() => emit!(287))
-      expect(utilities()).toEqual(['Copy URL'])
       act(() => emit!(286))
+      expect(utilities()).toEqual(['Copy URL'])
+      act(() => emit!(285))
       expect(utilities()).toEqual([])
-      // At 261 the word and every chip stand; one pixel under, the word folds first – the
+      // At 260 the word and every chip stand; one pixel under, the word folds first – the
       // chips all stay (130 + 56 = 186) where hiding Reader View would have hidden it only to
       // return it with the word's room. The tier reports nothing hidden.
-      act(() => emit!(261))
+      act(() => emit!(260))
       expect(word()).not.toBeNull()
       expect(el.querySelector('[aria-label="Reader View"]')).not.toBeNull()
       expect(toolbarTiering.get().hidden).toEqual([])
-      act(() => emit!(260))
+      act(() => emit!(259))
       expect(word()).toBeNull()
       expect(el.querySelector('[aria-label="Reader View"]')).not.toBeNull()
       expect(el.querySelector('[aria-label="Translate this page"]')).not.toBeNull()
@@ -2393,7 +2394,7 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
       expect(el.querySelector('[aria-label="Reader View"]')).toBeNull()
       expect(el.querySelector('[aria-label="Translate this page"]')).not.toBeNull()
       // A plain http page keeps the word down to the label tier and drops it under, whatever
-      // the room: site 26 + word 75 + star 26 + 56 = 183 would fit at 219.
+      // the room: site 26 + word 74 + star 26 + 56 = 182 would fit at 219.
       const plain = tab('http://example.com/some/path')
       act(() => root!.render(<NavRow state={desktop(plain)} tab={plain} compact={false} />))
       act(() => emit!(220))
@@ -2402,14 +2403,18 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
       expect(word()).toBeNull()
       expect(el.querySelector('[data-bm-star]')).not.toBeNull()
       // At the 400 sidebar's 240 the plain page mounts Copy URL and Share beside the word
-      // (127 + 52 + 56 = 235 ≤ 240) and not Boost (261): the address keeps 61, not the 35
-      // three utilities left it uncounted.
+      // (126 + 52 + 56 = 234 ≤ 240) and not Boost (260): the address keeps 62 where the three
+      // utilities uncounted had left it under 40. Share goes under 234, Copy URL under 208.
       act(() => emit!(240))
       expect(word()).not.toBeNull()
       expect(utilities()).toEqual(['Copy URL', 'Share this page'])
       act(() => emit!(234))
+      expect(utilities()).toEqual(['Copy URL', 'Share this page'])
+      act(() => emit!(233))
       expect(utilities()).toEqual(['Copy URL'])
       act(() => emit!(208))
+      expect(utilities()).toEqual(['Copy URL'])
+      act(() => emit!(207))
       expect(utilities()).toEqual([])
     } finally {
       window.ResizeObserver = Native
