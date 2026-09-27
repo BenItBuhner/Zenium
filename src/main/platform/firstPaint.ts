@@ -265,7 +265,11 @@ export const FRAME_DRAWN_SCRIPT = `/* zenium: frame drawn */ new Promise(functio
  * where Electron 44's frame evaluates and nowhere else: the script reads nothing of the page but
  * its clock and writes nothing, and a page that meddles with its own animation frames holds
  * nothing but its own swap, to the asker's ceiling. No user gesture goes with it. Rejects for
- * contents that are gone, or whose frame is; resolves `NaN` for an answer that is no number.
+ * contents that are gone, or whose frame is – the frame's throw included: a `WebFrameMain`
+ * disposed between the read and the ask (the document navigated away, the renderer gone)
+ * throws from `executeJavaScript` itself rather than rejecting, and an asker racing the word
+ * against its ceiling (`TabManager.afterFrame`) must find a rejection to swallow, not an
+ * exception out of the ask. Resolves `NaN` for an answer that is no number.
  */
 export function frameDrawn(wc: WebContents): Promise<number> {
   if (wc.isDestroyed()) return Promise.reject(new Error('The page is gone'))
@@ -276,9 +280,15 @@ export function frameDrawn(wc: WebContents): Promise<number> {
     return Promise.reject(new Error('The page has no main frame'))
   }
   if (!frame) return Promise.reject(new Error('The page has no main frame'))
-  return frame
-    .executeJavaScript(FRAME_DRAWN_SCRIPT, false)
-    .then((answer) => (typeof answer === 'number' ? answer : NaN))
+  let asked: Promise<unknown>
+  try {
+    asked = frame.executeJavaScript(FRAME_DRAWN_SCRIPT, false)
+  } catch (error) {
+    return Promise.reject(
+      error instanceof Error ? error : new Error('The page’s frame is gone', { cause: error })
+    )
+  }
+  return asked.then((answer) => (typeof answer === 'number' ? answer : NaN))
 }
 
 function sleep(ms: number): Promise<void> {
