@@ -8763,11 +8763,14 @@
   }
   /*
    * The Safety check card's content (NTP-19; Chrome's `safety_hub_magic_stack_view.xml`): the
-   * type's glyph in a 56 rounded tile at the type's ink over its 12 % tint – the success ink for
-   * the permissions already removed, the accent for Safe Browsing and the passwords – and, 16
-   * to its right, the title at the heading size on two lines at most over the one-line summary
-   * at the small size in the deemphasised ink. Chrome's tile is 60 with a 28 glyph and a 16
-   * radius; the card's own radius scale gives 56 / 28 / 12.
+   * type's glyph in the page's own tile – 56 at radius 8 with the space's corner shape on the
+   * window's fill, the glyph 24 (§9.29's phone tile and its icon; the gate on #642 read a tinted
+   * 56 / 12 tile as a near-twin of the shortcuts' that isn't the same object) in the type's ink,
+   * the success ink for the permissions already removed and the accent for the two asks – and,
+   * 16 to its right, §9.23's title block: the title at 17/600 on 22 on two lines at most,
+   * balanced so a short noun never strands ('Removed permissions / for 2 sites'), over the
+   * one-line description at 15 in the deemphasised ink. Chrome's tile is 60 with a 28 glyph
+   * and a 16 radius.
    */
   :root[data-form-factor='phone'] .zen-mstack-safety {
     display: flex;
@@ -8781,19 +8784,19 @@
     flex-shrink: 0;
     align-items: center;
     justify-content: center;
-    border-radius: var(--v2-radius-sheet);
-    background: color-mix(in srgb, var(--v2-accent) 12%, transparent);
+    border-radius: var(--v2-radius-card);
+    corner-shape: var(--zen-corner);
+    background: var(--v2-fill);
     color: var(--v2-accent);
   }
   :root[data-form-factor='phone']
     .zen-mstack-safety[data-type='revoked-permissions']
     .zen-mstack-safety-tile {
-    background: color-mix(in srgb, var(--v2-ok) 12%, transparent);
     color: var(--v2-ok);
   }
   :root[data-form-factor='phone'] .zen-mstack-safety-tile > svg {
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
     stroke-width: var(--v2-icon-stroke);
   }
   :root[data-form-factor='phone'] .zen-mstack-safety-text {
@@ -8810,13 +8813,14 @@
     font-size: var(--v2-font-heading);
     font-weight: var(--v2-weight-heading);
     line-height: var(--v2-line-heading);
+    text-wrap: balance;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
   }
   :root[data-form-factor='phone'] .zen-mstack-safety-summary {
     overflow: hidden;
-    font-size: var(--v2-font-small);
-    line-height: var(--v2-line-small);
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
     color: var(--v2-text-deemphasized);
     white-space: nowrap;
     text-overflow: ellipsis;
