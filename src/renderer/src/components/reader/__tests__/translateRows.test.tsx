@@ -419,7 +419,10 @@ describe('the panel’s order', () => {
       '—',
       'Line focus',
       'Lines in focus',
-      'Syllables'
+      'Syllables',
+      '—',
+      'Links',
+      'Images'
     ])
     // The head's action rows carry their glyphs together (§10.4's mixing rule within the
     // group): the leading slot is each row's first child. The setting rows carry none: their
@@ -469,7 +472,10 @@ describe('the panel’s order', () => {
       '—',
       'Line focus',
       'Lines in focus',
-      'Syllables'
+      'Syllables',
+      '—',
+      'Links',
+      'Images'
     ])
   })
 })
