@@ -297,16 +297,24 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
 
     /** One frame of the display during a landing's watch, kept because it differed from the one kept before it. */
     private class Frame(
-        /** The capture as taken; null once recycled (past [LANDING_FULL_CAP], or not chosen for a still). */
+        /**
+         * The capture as taken; null once let go – rolled out of the ring of the [LANDING_FULL_CAP]
+         * most recent changed frames' full captures, or handed to the encoder for a still.
+         */
         var full: Bitmap?,
         /** The capture at a [LANDING_SCALE]th of its size: the pixels the frames are told apart and classified by. */
         val small: Bitmap,
         /** Uptime the capture was asked. */
         val at: Long
     ) {
-        fun recycle() {
+        /** The full capture recycled; the small one stays for the read. */
+        fun letGo() {
             full?.recycle()
             full = null
+        }
+
+        fun recycle() {
+            letGo()
             small.recycle()
         }
     }
@@ -322,9 +330,13 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
      * allows, keeping each frame that differs from the one kept before it (a status bar's clock is
      * under the mark; a tile's icon is not), until the window is over: [LANDING_AFTER_FRAME_MS]
      * after the FULLY DRAWN mark at a fresh boot – the hold's 5 s and the page's 5 s cap inside it –
-     * or [LANDING_RELAUNCH_MS] from `onCreate` at a relaunch, whose marks are the first boot's. What
-     * the frames show is read after the fact, against the slot's own rectangle ([classify]). The
-     * captures share the emulator's CPU with the boot they watch.
+     * or [LANDING_RELAUNCH_MS] from `onCreate` at a relaunch, whose marks are the first boot's. Every
+     * kept frame's small copy stays; the full captures ride a ring of the [LANDING_FULL_CAP] most
+     * recent – the oldest let go as a newer one comes – so the landing's LAST frames (the ground, the
+     * fade, the first paint), which the stills are cut from, always have theirs, however many frames
+     * a relaunch's early picture (the old activity, the window animation, the chrome) changed before
+     * them. What the frames show is read after the fact, against the slot's own rectangle
+     * ([classify]). The captures share the emulator's CPU with the boot they watch.
      */
     private inner class LandingWatch(val scheme: String, val relaunch: Boolean) : Runnable {
         private val monitor = Instrumentation.ActivityMonitor(MainActivity::class.java.name, null, false)
@@ -351,7 +363,8 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
                 }
                 createdAt = SystemClock.uptimeMillis()
                 var last: IntArray? = null
-                var fullKept = 0
+                // The frames still holding their full capture, oldest first: the ring.
+                val fulls = ArrayDeque<Frame>()
                 while (SystemClock.uptimeMillis() < windowEnd()) {
                     val at = SystemClock.uptimeMillis()
                     val bmp = ui.takeScreenshot()
@@ -363,9 +376,10 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
                     val small = Bitmap.createScaledBitmap(bmp, bmp.width / LANDING_SCALE, bmp.height / LANDING_SCALE, true)
                     val px = pixels(small)
                     if (last == null || differing(px, last) > LANDING_KEEP_FRACTION) {
-                        val keepFull = fullKept < LANDING_FULL_CAP
-                        if (keepFull) fullKept++ else bmp.recycle()
-                        frames += Frame(if (keepFull) bmp else null, small, at)
+                        val frame = Frame(bmp, small, at)
+                        frames += frame
+                        fulls.addLast(frame)
+                        if (fulls.size > LANDING_FULL_CAP) fulls.removeFirst().letGo()
                         last = px
                     } else {
                         bmp.recycle()
@@ -493,7 +507,7 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
             if (frame == null) return
             val full = frame.full
             if (full == null) {
-                finding("  landing ($scheme): the $state frame's full capture was not kept (past the $LANDING_FULL_CAP kept frames); no still of it")
+                finding("  landing ($scheme): the $state frame's full capture had rolled out of the ring of $LANDING_FULL_CAP (more than $LANDING_FULL_CAP changed frames came after it); no still of it")
                 return
             }
             still(state, full)
@@ -1429,7 +1443,12 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
         private const val LANDING_RELAUNCH_MS = 12_000L
         /** How long the read waits for the watch once the launch has settled. */
         private const val LANDING_WAIT_MS = 30_000L
-        /** Full captures kept at most (4 MB each at 1280x800): the landing's changed frames are a handful. */
+        /**
+         * Full captures held at once (4 MB each at 1280x800): the ring of the MOST RECENT changed
+         * frames' – the landing's own frames are a handful and come last, so they always have theirs.
+         * (A first-come cap of the same size lost sample 1′'s dark first paint: its relaunch changed
+         * 14 frames and the first paint was the 13th.)
+         */
         private const val LANDING_FULL_CAP = 12
         /** Two pixels differ when their channel differences sum past this. */
         private const val LANDING_PIXEL_TOLERANCE = 24
