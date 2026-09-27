@@ -48,3 +48,48 @@
   cursor: default;
   user-select: none;
 }
+
+/* --- The Define surface (a §9.20 popover, a §9.13 sheet) ------------------------------------ */
+
+/*
+ * The answer: the entries in a column 12 apart, each its part of speech (§9.27's sub-heading
+ * pose at the small size, deemphasised: a label over the senses, not a title) 4 over the
+ * numbered senses at the body size, the numbers in a 20 gutter of their own so the sense's
+ * lines align. Text wraps anywhere a long term would otherwise overflow the 400 column.
+ */
+.zen-define-result {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: var(--v2-line-body-box);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  overflow-wrap: anywhere;
+}
+.zen-define-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.zen-define-pos {
+  margin: 0;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  font-weight: var(--v2-weight-heading);
+  line-height: var(--v2-line-small);
+}
+.zen-define-senses {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0 0 0 20px;
+  list-style: decimal;
+}
+/* The attribution the licence asks for (CC BY-SA 4.0): the small caption, deemphasised, after the hairline. */
+.zen-define-attribution {
+  margin: 0;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+}
