@@ -2929,6 +2929,14 @@ export interface Settings {
   pinnedCloseBehavior: PinnedCloseBehavior
   pinnedResetOnStartup: boolean
   thirdPartyOnPinned: ThirdPartyPinnedBehavior
+  /**
+   * Memory Saver's switch and timer (settings-69; the phone's sleeping-tabs rows read the same
+   * two keys): a tab hidden for `unloadTimeoutMinutes` is unloaded while `unloadEnabled`.
+   * Chrome's twins (`performance_tuning.high_efficiency_mode.state` / `.aggressiveness`) are
+   * local-state prefs it never syncs – device-local here too (`DEVICE_LOCAL_SETTINGS`, W8-2):
+   * each device keeps its own value, the phone's ladder and the desktop's tiers apart. The
+   * keep-active hosts (`unloadExcludedDomains`) sync, as Chrome's exceptions list does.
+   */
   unloadEnabled: boolean
   unloadTimeoutMinutes: number
   unloadExcludedDomains: string[]
@@ -2940,9 +2948,11 @@ export interface Settings {
    * once the battery is at `ENERGY_SAVER_LOW_BATTERY_PERCENT` or lower – Chrome's
    * `kLowBatteryThresholdPercent`, 20 – where the host can read the level (Linux's sysfs,
    * macOS's `pmset`; Windows exposes it to a native module alone, so there the mode waits and
-   * the row says so); `off` never. Chrome's default is the threshold; Zenium keeps its present
-   * behaviour – the budgets shrank on battery before the mode had a name – so `on-battery`.
-   * Absent in profiles from before it existed (read as `on-battery`).
+   * the row says so); `off` never. A fresh desktop profile takes Chrome's default, the
+   * threshold – `on-battery` on Windows, where the level cannot be read
+   * (`freshPerformanceDefaults`); the shipped default stays `on-battery`, Zenium's behaviour
+   * before the mode had a name, for every existing profile and the phone. Absent in profiles
+   * from before it existed (read as `on-battery`).
    */
   energySaver: EnergySaverMode
   /**

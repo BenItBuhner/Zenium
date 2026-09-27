@@ -227,29 +227,34 @@ describe('collectLocal', () => {
     expect(hashData(settings())).toBe(untouched)
   })
 
-  it('keeps the device-local settings out of the settings record, every other key in (W5-F3)', () => {
+  it('keeps the device-local settings out of the settings record, every other key in (W5-F3, W8-2)', () => {
     const src = sources()
     // A device that chose both ways, and answered the choice screen: the record carries none.
     src.settings.sidebarExpandOnHover = false
     src.settings.onboardingDone = true
     src.settings.searchChoice = { engineId: 'duckduckgo', region: 'DE', madeAt: 1, version: 1 }
-    // A laptop that turned Energy Saver off: the desktop beside it keeps its own answer, as
-    // Chrome's battery_saver_mode.state is local state (W8-2).
+    // A laptop that turned Energy Saver off and set Memory Saver to Balanced: the desktop and
+    // the phone beside it keep their own answers, as Chrome's battery_saver_mode.state and
+    // high_efficiency_mode.{state,aggressiveness} are local state (W8-2).
     src.settings.energySaver = 'off'
+    src.settings.unloadEnabled = false
+    src.settings.unloadTimeoutMinutes = 240
     const data = collectLocal(src, defaultScope()).get('settings')?.data as Record<string, unknown>
     expect(DEVICE_LOCAL_SETTINGS).toEqual([
       'onboardingDone',
       'sidebarExpandOnHover',
       'searchChoice',
-      'energySaver'
+      'energySaver',
+      'unloadEnabled',
+      'unloadTimeoutMinutes'
     ])
     expect(data).not.toHaveProperty('sidebarExpandOnHover')
     expect(data).not.toHaveProperty('onboardingDone')
     expect(data).not.toHaveProperty('searchChoice')
     expect(data).not.toHaveProperty('energySaver')
-    // Memory Saver's three keys travel, as Chrome syncs tab_discarding.exceptions.
-    expect(data).toHaveProperty('unloadEnabled')
-    expect(data).toHaveProperty('unloadTimeoutMinutes')
+    expect(data).not.toHaveProperty('unloadEnabled')
+    expect(data).not.toHaveProperty('unloadTimeoutMinutes')
+    // The keep-active hosts travel, as Chrome syncs tab_discarding.exceptions.
     expect(data).toHaveProperty('unloadExcludedDomains')
     const local = new Set<string>(DEVICE_LOCAL_SETTINGS)
     // Every other key, and no key the settings lack (the retired `restoreSession` mirror is gone).
@@ -261,6 +266,32 @@ describe('collectLocal', () => {
     expect(src.settings.sidebarExpandOnHover).toBe(false)
     expect(src.settings.onboardingDone).toBe(true)
     expect(src.settings.energySaver).toBe('off')
+    expect(src.settings.unloadEnabled).toBe(false)
+    expect(src.settings.unloadTimeoutMinutes).toBe(240)
+  })
+
+  it('an edit of Memory Saver’s mode or timer, or of Energy Saver, stamps nothing – the per-key metadata holds no entry for a device-local key, and the record is unchanged by the edit (W8-2)', () => {
+    const src = sources()
+    // First seen, then diffed once unchanged: the entry gains its per-key part.
+    const seeded = diffLocal({}, collectLocal(src, defaultScope()), 1000)
+    const known = diffLocal(seeded.meta, collectLocal(src, defaultScope()), 1500)
+    const keys = known.meta[SETTINGS_RECORD_ID]!.keys!
+    for (const key of DEVICE_LOCAL_SETTINGS) expect(keys).not.toHaveProperty(key)
+    expect(keys).toHaveProperty('unloadExcludedDomains')
+    // The tier, the switch and the mode change on this device: no record changes, no key is
+    // stamped – the choice stays here. The hosts list is an edit like any other.
+    src.settings.unloadTimeoutMinutes = 120
+    src.settings.unloadEnabled = false
+    src.settings.energySaver = 'low-battery'
+    const after = diffLocal(known.meta, collectLocal(src, defaultScope()), 2000)
+    expect(after.changed).toBe(false)
+    expect(after.meta[SETTINGS_RECORD_ID]!.modified).toBe(known.meta[SETTINGS_RECORD_ID]!.modified)
+    expect(after.meta[SETTINGS_RECORD_ID]!.keys).toEqual(keys)
+    src.settings.unloadExcludedDomains = ['zen.test']
+    const hosts = diffLocal(after.meta, collectLocal(src, defaultScope()), 3000)
+    expect(hosts.changed).toBe(true)
+    expect(hosts.meta[SETTINGS_RECORD_ID]!.keys!.unloadExcludedDomains!.modified).toBe(3000)
+    expect(hosts.meta[SETTINGS_RECORD_ID]!.keys).not.toHaveProperty('unloadTimeoutMinutes')
   })
 
   it('publishes startup alone – the 0.4.x restoreSession switch mirrored beside it for one release is retired – whatever the mode; an edit of the mode stamps startup and no other key; a profile from before the key sends its record as it was', () => {

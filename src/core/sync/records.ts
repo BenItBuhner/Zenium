@@ -345,19 +345,27 @@ export function readReadingListData(id: string, data: unknown): ReadingListEntry
  *   since profile v6; a peer on v5 still stores that build's default `false`, no choice.
  * - `searchChoice`: the EEA's search-engine choice screen's record (W6-2) – each device's to
  *   answer once, as Chrome's; the engine it set travels as `searchEngineId`, the record does not.
- * - `energySaver`: when the governor's budgets tighten on battery (W8-2) – a laptop's choice
- *   that means nothing on a tower or a phone; Chrome keeps its twin
- *   (`performance_tuning.battery_saver_mode.state`) in local state, off the sync list. The
- *   Memory Saver rows' three keys (`unloadEnabled`, `unloadTimeoutMinutes`,
- *   `unloadExcludedDomains`) stay synced as they were: Chrome syncs its exceptions list
- *   (`performance_tuning.tab_discarding.exceptions`, `syncer::PREFERENCES`), and the phone's
- *   sleeping-tabs rows have bound the other two across devices since before this list.
+ * - `energySaver`, `unloadEnabled`, `unloadTimeoutMinutes`: Settings › Performance's modes and
+ *   timer (W8-2) – one class, each device's own: Energy Saver is a laptop's choice that means
+ *   nothing on a tower or a phone, and Memory Saver's switch and tier are sized to the device
+ *   running them. Chrome keeps all three twins (`performance_tuning.battery_saver_mode.state`,
+ *   `high_efficiency_mode.state`, `high_efficiency_mode.aggressiveness`) in local state, off
+ *   the sync list. The phone's sleeping-tabs mode and timer are these same two keys, so they
+ *   are each phone's own too: the desktop's tier no longer moves the phone's ladder, nor the
+ *   phone's the desktop's. No migration – each device keeps the value it holds: the two keys'
+ *   departure from this device's record stamps nothing (`diffSettings`), an older peer's copy
+ *   is stripped at apply (`withoutDeviceLocalSettings`) and never wins (`winningRemote`), and
+ *   older peers keep trading the keys among themselves, as `sidebarExpandOnHover`'s did. The
+ *   keep-active hosts (`unloadExcludedDomains`) stay synced: Chrome syncs its exceptions list
+ *   (`performance_tuning.tab_discarding.exceptions`, `syncer::PREFERENCES`).
  */
 export const DEVICE_LOCAL_SETTINGS = [
   'onboardingDone',
   'sidebarExpandOnHover',
   'searchChoice',
-  'energySaver'
+  'energySaver',
+  'unloadEnabled',
+  'unloadTimeoutMinutes'
 ] as const
 export type DeviceLocalSetting = (typeof DEVICE_LOCAL_SETTINGS)[number]
 const DEVICE_LOCAL = new Set<string>(DEVICE_LOCAL_SETTINGS)
