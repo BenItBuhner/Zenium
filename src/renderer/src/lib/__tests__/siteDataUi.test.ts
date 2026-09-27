@@ -121,7 +121,8 @@ describe('the lists', () => {
     // "Sites that can always use cookies" restated the heading (#322 nit 1).
     expect(ui.siteDataPatternDescription('allow', false)).toBeUndefined()
     expect(ui.siteDataPatternDescription('block', true)).toBeUndefined()
-    expect(ui.siteDataListDescription('block', false)).toContain('cleared when it is added')
+    // The never list's line speaks the Delete verb (W8-11): "What a site stored is deleted when it is added".
+    expect(ui.siteDataListDescription('block', false)).toContain('What a site stored is deleted when it is added')
   })
 
   it('find the list holding a pattern as typed, in the grammar’s canonical form', () => {
@@ -319,7 +320,8 @@ describe('the site-information row', () => {
     expect(ui.siteDataChoiceOptions(site(), true)[2]!.description).toBe(
       'Site data from this session is cleared the next time Zenium starts.'
     )
-    expect(options[3]!.description).toContain('cleared now')
+    // The never-allow line speaks the Delete verb (W8-11), as the never list's line does.
+    expect(options[3]!.description).toBe('No cookies; what it stored is deleted now.')
   })
 
   it('applies a choice: the site onto the list picked, the deciding entry off its list for the default', async () => {

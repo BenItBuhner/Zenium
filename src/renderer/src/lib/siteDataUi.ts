@@ -125,7 +125,9 @@ export const SITE_DATA_TEXT = {
     // Chrome's site-details words ("Clear on exit"), which also fit the desktop popover's
     // menulist trailing the row; the description under each says when the clear runs – on a
     // host that clears at its next start, as a sentence about the effect (the #322 ruling (d)),
-    // never a second moment in the value line.
+    // never a second moment in the value line. The never-allow line speaks the Delete family's
+    // verb, as the never list's own line does (W8-11); the Clear-on-exit lines keep Chrome's kept
+    // name and its state words.
     options: {
       default: 'Use the default',
       allow: 'Always allow',
@@ -136,7 +138,7 @@ export const SITE_DATA_TEXT = {
       allow: 'The site can always use cookies, embedded in other sites too.',
       clearOnExit: 'Its cookies and data go when Zenium closes.',
       clearOnExitNextLaunch: 'Site data from this session is cleared the next time Zenium starts.',
-      block: 'No cookies; what it stored is cleared now.'
+      block: 'No cookies; what it stored is deleted now.'
     }
   }
 } as const
@@ -201,7 +203,9 @@ export function siteDataListDescription(list: SiteDataList, nextLaunch: boolean)
         ? 'These sites keep their cookies for the session; site data from the session is cleared the next time Zenium starts.'
         : 'These sites keep their cookies for the session; the cookies and stored data go when Zenium closes.'
     case 'block':
-      return 'These sites can never use cookies. What a site stored is cleared when it is added.'
+      // The never list's line speaks the Delete verb (W8-11): "What a site stored is deleted when
+      // it is added." The clear-on-exit line above keeps Chrome's kept name for that list.
+      return 'These sites can never use cookies. What a site stored is deleted when it is added.'
   }
 }
 
