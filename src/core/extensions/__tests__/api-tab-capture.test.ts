@@ -350,6 +350,8 @@ function world(): World {
     tab: (zenId: string) => tabs.get(zenId),
     zenTab: (chromeId: number) => [...tabs.values()].find((t) => chromeIds.get(t.id) === chromeId),
     chromeTabId: (tab: Tab) => chromeIds.get(tab.id) ?? -1,
+    // No reader's cover in this world: the tab's address is its page's.
+    urlOf: (tab: Tab) => tab.url,
     webContentsOf: (tab: Tab) => {
       const wc = contents.get(tab.id)
       return wc && !wc.destroyed ? (wc as unknown as WebContents) : undefined
