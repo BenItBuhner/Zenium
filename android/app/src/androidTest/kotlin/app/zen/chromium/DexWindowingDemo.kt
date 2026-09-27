@@ -570,19 +570,22 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
             awaitUntil(2_000) { opacityOf("${row(GAMMA)} .zen-tab-close") == 1.0 },
             "close opacity ${opacityOf("${row(GAMMA)} .zen-tab-close")}"
         )
-        // The pointer has rested on the row past the hover card's delay (800 ms). The card is the
-        // desktop's (TabletShell mounts no host for it): its controller must raise nothing here,
-        // or it would capture the live page and hide it behind the still for a card that never
-        // shows – and keep it hidden past a tab switch under the resting pointer, the stage
-        // empty until the pointer left the rows (runs 3 and 4 of this demo, before the fix).
+        // The pointer has rested on the row past the hover card's delay (800 ms). On the tablet
+        // the card is the HOST's (`chrome.hoverCard`, TabHoverCardView.kt), drawn above the page
+        // in the native layer while the page keeps playing: the controller writes the frame to
+        // the native slice and never to `ui.hoverCard`, and captures nothing – the DOM card on a
+        // capture of the page would hide the live page behind the still and keep it hidden past
+        // a tab switch under the resting pointer (runs 3 and 4 of this demo, before the fix).
         SystemClock.sleep(900)
         val cardStore = jsText("JSON.stringify(window.__zenStores.ui.get().hoverCard)")
         val cardTab = jsText("JSON.stringify(window.__zenStores.ui.get().hoverCard.tabId)")
-        finding("  cursor over the row: ${cursorOf(host.chrome)}; hover card store: $cardStore (the desktop's card; the tablet chrome mounts no host for it)")
+        val nativeCard = jsText("JSON.stringify(window.__zenStores.nativeHoverCard.get().card.tabId)")
+        val hostCard = onMain { host.tabHoverCard?.shown == true }
+        finding("  cursor over the row: ${cursorOf(host.chrome)}; ui.hoverCard: $cardStore (never the tablet's – the card is the host's); native slice tab $nativeCard; host card shown $hostCard")
         check(
-            "resting the mouse on a row keeps the page live: the tablet chrome hosts no hover card, so its controller raises none and captures nothing – the page view stays shown",
+            "resting the mouse on a row keeps the page live: the tablet's card is the host's, drawn above the page – the DOM card is never raised and nothing is captured, so the page view stays shown",
             cardTab == "null" && pageCenter(ALPHA) != null,
-            "hover card tab $cardTab, Alpha's page view shown ${pageCenter(ALPHA) != null}"
+            "ui.hoverCard tab $cardTab, Alpha's page view shown ${pageCenter(ALPHA) != null}"
         )
         still("hover-strip")
 
