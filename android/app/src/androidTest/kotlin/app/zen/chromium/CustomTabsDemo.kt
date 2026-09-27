@@ -33,6 +33,7 @@ import androidx.browser.customtabs.CustomTabsIntent
 import androidx.browser.customtabs.CustomTabsServiceConnection
 import androidx.browser.customtabs.CustomTabsSession
 import androidx.browser.customtabs.EngagementSignalsCallback
+import androidx.browser.trusted.TrustedWebActivityIntentBuilder
 import androidx.core.content.ContextCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
@@ -117,7 +118,15 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
     fun record() {
         server = DemoServer(
             NO_HANDLER_PORT,
-            mapOf(FALLBACK_PATH to DemoServer.page("The app's web page", "<p>The link's app is not installed, so its web address opened here, in the tab.</p>"))
+            mapOf(
+                FALLBACK_PATH to DemoServer.page("The app's web page", "<p>The link's app is not installed, so its web address opened here, in the tab.</p>"),
+                // The Trusted Web Activity's site (CCT-20): its start page, a page on another
+                // origin (the same server by its address rather than its name), and the
+                // statement that makes the caller its app.
+                TWA_PATH to DemoServer.page("Nimbus News", "<p>The publisher's own site, opened by its app as a Trusted Web Activity: no browser toolbar over it.</p>"),
+                AWAY_PATH to DemoServer.page("Terms of service", "<p>Another origin: the browser's toolbar is back over the page, its X the way home.</p>"),
+                ASSET_LINKS_PATH to ("application/json" to assetLinks())
+            )
         ).also { it.start() }
         try {
             runDemo()
@@ -431,6 +440,57 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         assertTrue("closing the share-off tab returned to the caller", waitForWindow(callerPackage, 8_000))
         SystemClock.sleep(1_200)
         shot("27-closed-to-caller")
+
+        // 28. A Trusted Web Activity (CCT-20): the caller opens its own site – the loopback page
+        //     whose /.well-known/assetlinks.json names the caller's package and signing certificate
+        //     – with LAUNCH_AS_TRUSTED_WEB_ACTIVITY on the session. No toolbar comes up: the page
+        //     is the app's, under the status bar strip alone (app mode, as Chrome's – a pending
+        //     check counts as in, and the verdict lands beside the load).
+        showCaller(trustedWebActivityIntent("$TWA_ORIGIN$TWA_PATH"))
+        openTrustedWebActivity("localhost")
+        claim("scene 28: the trusted web activity shows no toolbar on its verified origin", awaitTrue(3_000) { findByLabel(CLOSE_LABEL) == null && findByLabel(MENU_LABEL) == null })
+        shot("28-twa-app-mode")
+        beat()
+
+        // 29. A link to another origin (the same server by its address, not its name): the custom
+        //     tab's toolbar comes up over the page; its X walks back to the verified page (Chrome's
+        //     CloseButtonNavigator) and the toolbar goes again. Then back out to the caller.
+        val twaPage = customTab()?.page
+        val away = twaPage?.let { plantLinkAt(it, "${server.origin}$AWAY_PATH", "Read the terms", 0.25f) }
+        if (away != null) {
+            Finger().tap(away.x, away.y)
+            claim("scene 29: out of the verified origin the custom tab's toolbar comes up", waitFor(CLOSE_LABEL, 8_000) != null)
+            waitForPage("127.0.0.1")
+            SystemClock.sleep(1_200)
+            shot("29-twa-out-of-scope")
+            beat()
+            clickByLabel(CLOSE_LABEL)
+            val home = awaitTrue(8_000) {
+                findByLabel(CLOSE_LABEL) == null && customTab()?.page?.let { evalJs(it, PAGE_STATE_JS) }?.startsWith("localhost") == true
+            }
+            claim("scene 29: the X walks back to the verified page and the toolbar goes again", home)
+            SystemClock.sleep(1_200)
+            shot("30-twa-back-in-scope")
+            beat()
+        } else {
+            claim("scene 29: a link out of the verified origin planted on the trusted web activity's page", false)
+        }
+        back()
+        assertTrue("back out of the trusted web activity returned to the caller", waitForWindow(callerPackage, 8_000))
+        SystemClock.sleep(1_200)
+
+        // 30. A Trusted Web Activity whose origin fails the check – the site by its address, which
+        //     no statement can verify (Chrome's gate: http is localhost or nothing) – comes up as a
+        //     plain custom tab: the toolbar with its X, the page loaded all the same.
+        showCaller(trustedWebActivityIntent("${server.origin}$TWA_PATH"))
+        openTrustedWebActivity("127.0.0.1")
+        claim("scene 30: a trusted web activity whose origin fails verification keeps the custom tab's toolbar and loads the page", waitFor(CLOSE_LABEL, 8_000) != null)
+        shot("31-twa-unverified")
+        beat()
+        clickByLabel(CLOSE_LABEL)
+        assertTrue("closing the unverified trusted web activity returned to the caller", waitForWindow(callerPackage, 8_000))
+        SystemClock.sleep(1_200)
+        shot("32-closed-to-caller")
 
         Log.i(tag, "caller hits: $callerHits; session events: $events; engagement signals: $signals")
         assertTrue("the scenes' claims held (${sheetFaults.size} did not): $sheetFaults", sheetFaults.isEmpty())
@@ -1281,6 +1341,31 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         return intent
     }
 
+    /**
+     * A Trusted Web Activity's launch (CCT-20), as androidx.browser's `TrustedWebActivityIntentBuilder`
+     * makes it for a real client: a `CustomTabsIntent` on the session with
+     * `EXTRA_LAUNCH_AS_TRUSTED_WEB_ACTIVITY`, aimed at the provider it bound.
+     */
+    private fun trustedWebActivityIntent(url: String): Intent {
+        val s = session ?: error("no session")
+        val intent = TrustedWebActivityIntentBuilder(Uri.parse(url)).build(s).intent
+        intent.setPackage(app.packageName)
+        return intent
+    }
+
+    /**
+     * The statement the Trusted Web Activity's site serves at `/.well-known/assetlinks.json`:
+     * `handle_all_urls` granted to the caller – the instrumentation package and the app's, the two
+     * the session's uid names, under their (one, debug) signing certificate.
+     */
+    private fun assetLinks(): ByteArray {
+        val statements = listOf(callerPackage, app.packageName).distinct().map { pkg ->
+            val prints = DigitalAssetLinks.signingFingerprints(app, pkg).joinToString(",") { "\"$it\"" }
+            """{"relation":["${AuthTab.RELATION_HANDLE_ALL_URLS}"],"target":{"namespace":"android_app","package_name":"$pkg","sha256_cert_fingerprints":[$prints]}}"""
+        }
+        return "[${statements.joinToString(",")}]".toByteArray()
+    }
+
     /** A 24 dp bookmark glyph, white so the provider's tint applies (`setActionButton(…, tint = true)`). */
     private fun bookmarkIcon(): Bitmap = glyph { u ->
         moveTo(6 * u, 3 * u)
@@ -1353,6 +1438,14 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         assertTrue("the custom tab's toolbar is up", waitFor(CLOSE_LABEL, 10_000) != null)
         waitForPage("wikipedia.org")
         SystemClock.sleep(2_500)
+    }
+
+    /** Press the caller's button and wait for the Trusted Web Activity's page on [host]; nothing is said of a toolbar. */
+    private fun openTrustedWebActivity(host: String) {
+        assertTrue("the caller's button is on screen", clickByLabel(READ_LABEL))
+        assertTrue("the trusted web activity came up", waitForWindow(app.packageName, 15_000))
+        waitForPage(host)
+        SystemClock.sleep(2_000)
     }
 
     // --- moves -----------------------------------------------------------------------------------
@@ -1555,6 +1648,16 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         /** The loopback server the `intent://` link's `S.browser_fallback_url` names (W6-D2), and the page on it. */
         private const val NO_HANDLER_PORT = 8149
         private const val FALLBACK_PATH = "/fallback.html"
+        /**
+         * The Trusted Web Activity's origin (CCT-20): the loopback server by the one http host
+         * Chrome's verifier accepts, `localhost` (Android's hosts file names 127.0.0.1 alone by
+         * it); `server.origin`, the same server by its address, is another origin no statement
+         * can verify.
+         */
+        private const val TWA_ORIGIN = "http://localhost:$NO_HANDLER_PORT"
+        private const val TWA_PATH = "/twa.html"
+        private const val AWAY_PATH = "/terms.html"
+        private const val ASSET_LINKS_PATH = "/.well-known/assetlinks.json"
         /** A package no device has: the `intent://` links name it, so no app answers and the host's word is `none`. */
         private const val ABSENT_PACKAGE = "io.github.benitbuhner.zenium.demo.absent"
 

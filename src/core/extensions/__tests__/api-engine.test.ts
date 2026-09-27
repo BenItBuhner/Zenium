@@ -1133,6 +1133,41 @@ describe('the flow bound (a page bursting messages at the bridge faster than the
     for (const message of h.sent)
       expect(Object.keys(message).slice(0, 3)).toEqual(['token', 'ep', 't'])
   })
+
+  it("lists the posts still without a reply – what each asked and its age – and forgets each as its reply lands (RoValra's init silence, compat round 21)", async () => {
+    let clock = 1_000
+    const h = harness({}, {}, { now: () => clock })
+    expect(h.engine.unanswered()).toEqual([])
+    void (h.chrome.tabs.query as Fn)({})
+    const queryId = h.last().id
+    clock += 250
+    const asked = (h.chrome.runtime.sendMessage as Fn)({ ask: 1 }) as Promise<unknown>
+    asked.catch(() => undefined)
+    const msgId = h.last().id
+    clock += 100
+    void ((h.chrome.storage.local as Ns).get as Fn)('k')
+    const getId = h.last().id
+    clock += 50
+    // Oldest first, the ages by the captured clock.
+    expect(h.engine.unanswered()).toEqual([
+      { id: queryId, what: 'tabs.query', ageMs: 400 },
+      { id: msgId, what: 'msg', ageMs: 150 },
+      { id: getId, what: 'storage.get', ageMs: 50 }
+    ])
+    h.reply(queryId, [])
+    h.fail(msgId, 'Receiving end does not exist')
+    await flush()
+    expect(h.engine.unanswered()).toEqual([{ id: getId, what: 'storage.get', ageMs: 50 }])
+    h.reply(getId, { k: 1 })
+    await flush()
+    expect(h.engine.unanswered()).toEqual([])
+    // An engine without a clock of its own counts by Date.now: an age, never a negative one.
+    const plain = harness()
+    void (plain.chrome.tabs.query as Fn)({})
+    const [call] = plain.engine.unanswered()
+    expect(call.what).toBe('tabs.query')
+    expect(call.ageMs).toBeGreaterThanOrEqual(0)
+  })
 })
 
 describe('the receiver of API callbacks and event listeners', () => {

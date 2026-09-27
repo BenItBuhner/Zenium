@@ -271,6 +271,40 @@ describe('tab navigation persistence', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// Quick Delete's tab stamp (HB-07): `Tab.lastNavigatedAt` persists with the tab and a record
+// from before the field reads null (that it never travels in the `open-tabs` sync record is
+// `sync/__tests__/documents.test.ts`).
+// ---------------------------------------------------------------------------
+
+describe('Tab.lastNavigatedAt persistence (HB-07)', () => {
+  it('round-trips the stamp with the tab and reads null for a record older than the field', async () => {
+    const { doc, ids } = profile()
+    const [, a, b] = ids
+    const { s, io } = stateFrom(doc)
+    // `createTabRecord` gave the profile's tabs an explicit null; a record from before the
+    // field carries no key at all, and reads the same.
+    const tabs = doc.tabs as Array<Record<string, unknown>>
+    for (const raw of tabs) delete raw.lastNavigatedAt
+    const older = stateFrom(doc).s
+    expect(older.model.tabs[a].lastNavigatedAt).toBeNull()
+    expect(older.model.tabs[b].lastNavigatedAt).toBeNull()
+
+    s.model.tabs[a].lastNavigatedAt = 1_700_000_000_000
+    s.commit()
+    await tick()
+    await s.flush()
+    const written = JSON.parse(io.writes[io.writes.length - 1]) as {
+      tabs: Array<{ id: string; lastNavigatedAt?: number | null }>
+    }
+    expect(written.tabs.find((t) => t.id === a)?.lastNavigatedAt).toBe(1_700_000_000_000)
+    expect(written.tabs.find((t) => t.id === b)?.lastNavigatedAt).toBeNull()
+    const reloaded = stateFrom(written).s
+    expect(reloaded.model.tabs[a].lastNavigatedAt).toBe(1_700_000_000_000)
+    expect(reloaded.model.tabs[b].lastNavigatedAt).toBeNull()
+  })
+})
+
 describe('forgetSession', () => {
   it('drops regular tabs, keeps pinned tabs and essentials, and leaves one window without a selection', () => {
     const { doc, ids } = profile()
@@ -748,6 +782,36 @@ describe('Settings.energySaver (W8-2)', () => {
     expect(stored('on-battery').settings.energySaver).toBe('on-battery')
     for (const bad of ['always', 20, true, null, { mode: 'off' }]) {
       expect(stored(bad).settings.energySaver, JSON.stringify(bad)).toBe('on-battery')
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Roll's best score (ERR-03, §9.17 (i)): a synced setting, sanitised at load like the rest.
+// ---------------------------------------------------------------------------
+
+describe('Settings.gameBestScore (ERR-03)', () => {
+  const stored = (value: unknown): BrowserState => {
+    const settings = structuredClone(DEFAULT_SETTINGS) as unknown as Record<string, unknown>
+    if (value === undefined) delete settings.gameBestScore
+    else settings.gameBestScore = value
+    return state(
+      fakeIo(legacyProfile(6, { settings: settings as unknown as Persisted['settings'] }))
+    )
+  }
+
+  it('ships at 0 and a profile from before the game reads 0', () => {
+    expect(DEFAULT_SETTINGS.gameBestScore).toBe(0)
+    expect(stored(undefined).settings.gameBestScore).toBe(0)
+  })
+
+  it('keeps a stored whole number within the meter’s five digits, and reads anything else as 0 or the bound', () => {
+    expect(stored(420).settings.gameBestScore).toBe(420)
+    expect(stored(99999).settings.gameBestScore).toBe(99999)
+    expect(stored(12.7).settings.gameBestScore).toBe(12)
+    expect(stored(123456).settings.gameBestScore).toBe(99999)
+    for (const bad of ['420', -3, Number.NaN, null, true, { best: 3 }]) {
+      expect(stored(bad).settings.gameBestScore, JSON.stringify(bad)).toBe(0)
     }
   })
 })

@@ -126,6 +126,8 @@ export function createTabRecord(
     splitGroupId: null,
     createdAt: init.createdAt ?? now,
     lastActiveAt: init.lastActiveAt ?? now,
+    // A record older than the field carries none: never in a bounded Quick Delete range.
+    lastNavigatedAt: init.lastNavigatedAt ?? null,
     errorCode: null,
     bookmarked: init.bookmarked ?? false,
     readerable: false,

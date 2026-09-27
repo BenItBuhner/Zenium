@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import type { PhoneBarPosition, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { chromeHover, useChromeHover } from '@renderer/lib/formFactor'
+import { spendIphSession } from '@renderer/lib/iph'
 import { pushToast } from '@renderer/lib/ui'
 
 /** The hint waits this long after the chrome settles on a page, and stays this long untouched. */
@@ -30,11 +31,14 @@ export function gestureHintDue(
 /**
  * Arm the hint: after the delay its toast goes up on the shared card and the showing is
  * recorded, once and for all. The returned function cancels a hint that has not gone up yet.
+ * The showing is the session's one education (lib/iph.ts, Chrome's `session_rate < 1`): the
+ * tab switcher's bubble waits for another start.
  */
 export function armGestureHint(edge: PhoneBarPosition, onShown?: () => void): () => void {
   const timer = setTimeout(() => {
     pushToast(gestureHintText(edge), 'info', { duration: GESTURE_HINT_DURATION_MS })
     run('settings.update', { gestureHintDone: true })
+    spendIphSession()
     onShown?.()
   }, GESTURE_HINT_DELAY_MS)
   return () => clearTimeout(timer)

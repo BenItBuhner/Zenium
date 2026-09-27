@@ -1,5 +1,5 @@
 import type { Tab } from '@shared/types'
-import { BLANK_URL } from '@shared/url'
+import { BLANK_URL, GAME_URL } from '@shared/url'
 import type { Browser } from '@core/browser'
 import type { ZenWindow } from '@core/window'
 import { browserStore } from '@renderer/lib/browserStore'
@@ -9,13 +9,14 @@ import { startVoiceSearch } from '@renderer/lib/voiceSearch'
 import { openShortcutPrivateTab, PRIVATE_TABS_UNAVAILABLE } from './privateShortcut'
 
 /**
- * The states the search widget and the launcher's shortcuts ask the app to open in (WID-07). The
- * words are `Landing.kt`'s: one intent extra (`app.zen.chromium.extra.LANDING`), read by
- * `MainActivity.handleIntent` and handed to `ChromeWebView.land`. Cold, the chrome stashes it
- * and the boot answer carries it (`BootInfo.landing`), applied by `bootAndroid` right after
- * `browser.start()`; warm (`onNewIntent`), it reaches `window.__zenHost.land` at once.
+ * The states the widgets and the launcher's shortcuts ask the app to open in (WID-07; WID-04's
+ * `game`, Roll's 1×1 face). The words are `Landing.kt`'s: one intent extra
+ * (`app.zen.chromium.extra.LANDING`), read by `MainActivity.handleIntent` and handed to
+ * `ChromeWebView.land`. Cold, the chrome stashes it and the boot answer carries it
+ * (`BootInfo.landing`), applied by `bootAndroid` right after `browser.start()`; warm
+ * (`onNewIntent`), it reaches `window.__zenHost.land` at once.
  */
-export const LANDING_STATES = ['search', 'voice', 'private', 'scan', 'newTab'] as const
+export const LANDING_STATES = ['search', 'voice', 'private', 'scan', 'newTab', 'game'] as const
 export type LandingState = (typeof LANDING_STATES)[number]
 
 /** The word as the host sent it, or null for anything that is not one of the states. */
@@ -77,7 +78,8 @@ function whenChromeHasState(fn: () => void): void {
  * private tab, the QR scanner – without the previous tab ever painting.
  *
  * The rule that gives the "no flash": every landing is a NEW tab, created active in this turn
- * (`private` is the shortcut's private tab; the rest a blank tab, the phone's new tab page). Cold,
+ * (`private` is the shortcut's private tab; `game` a tab on `zen://game`, Roll's own page, as
+ * Chrome's `chrome://dino` opens; the rest a blank tab, the phone's new tab page). Cold,
  * this runs inside `bootAndroid`, right after `browser.start()` and before React mounts, so the
  * chrome's first frame already shows the new tab and the restored one never takes a frame. Warm,
  * the next frame shows it. The surface (omnibox, voice, scan) is the chrome's own entry point,
@@ -110,13 +112,16 @@ export function landFromIntent(
     ready(() => over.unavailable(PRIVATE_TABS_UNAVAILABLE))
     return null
   }
-  const tab = browser.tabs.createTab({ url: BLANK_URL, active: true, fromIntent: true }, win)
+  const tab = browser.tabs.createTab(
+    { url: state === 'game' ? GAME_URL : BLANK_URL, active: true, fromIntent: true },
+    win
+  )
   const surface = surfaceOf(state)
   if (surface) ready(() => over[surface](tab.id))
   return tab
 }
 
-/** The surface a state puts over its tab; `newTab` and `private` have none. */
+/** The surface a state puts over its tab; `newTab`, `private` and `game` have none. */
 export function surfaceOf(state: LandingState): keyof LandingSurfaces | null {
   switch (state) {
     case 'search':

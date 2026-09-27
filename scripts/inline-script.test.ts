@@ -2,16 +2,19 @@ import { describe, expect, it } from 'vitest'
 import {
   INLINE_SCRIPTS,
   inlineScriptModuleSource,
+  inlineScriptOf,
   inlineScriptPlugin,
   inlineScriptSource
 } from './inline-script'
 
 /*
- * The scripts the main process runs in documents it does not own, bundled at build time into
- * strings: one IIFE per entry with its imports followed, served as a virtual module whose
- * default export is the source (`electron.vite.config.ts`, `vitest.config.ts`).
+ * The scripts the main process runs in documents it does not own, and the one the page builder
+ * writes into the documents it serves, bundled at build time into strings: one IIFE per entry
+ * with its imports followed, served as a virtual module whose default export is the source
+ * (`electron.vite.config.ts`, `vite.android.config.ts`, `vitest.config.ts`).
  */
 const PANEL_ID = 'virtual:zenium-devtools-quit-hold-panel'
+const GAME_ID = 'virtual:zenium-game-runtime'
 
 describe('inlineScriptSource', () => {
   it('bundles the toolbox panel entry and what it imports from src/shared into one self-contained script', async () => {
@@ -26,6 +29,32 @@ describe('inlineScriptSource', () => {
     expect(names.some((f) => f.endsWith('src/main/platform/devtoolsQuitHoldPanel.ts'))).toBe(true)
     expect(names.some((f) => f.endsWith('src/shared/quitHoldPanel.ts'))).toBe(true)
     expect(names.some((f) => f.endsWith('src/shared/fullscreenHint.ts'))).toBe(true)
+  })
+
+  it("bundles Roll's runtime entry minified, at the phone page script's syntax level, with the game's modules and no other", async () => {
+    const script = INLINE_SCRIPTS[GAME_ID]!
+    expect(inlineScriptOf(script)).toEqual({
+      entry: 'src/shared/game/runtimeEntry.ts',
+      minify: true,
+      target: 'es2020'
+    })
+    const { code, inputs } = await inlineScriptSource(script)
+    // The mount attribute and the bridge's key survive minification as string literals.
+    expect(code).toContain('data-zen-game')
+    expect(code).toContain('zeniumGame')
+    expect(code).not.toMatch(/\bimport\s*[({'"]/)
+    expect(code).not.toMatch(/\bexport\s/)
+    // Minified: no line of the source's comments, no indentation to speak of.
+    expect(code).not.toContain('/**')
+    expect(code.split('\n').length).toBeLessThan(10)
+    const names = inputs.map((file) => file.replace(/\\/g, '/').replace(/^.*\/src\//, 'src/'))
+    expect(names.sort()).toEqual([
+      'src/shared/game/bridge.ts',
+      'src/shared/game/logic.ts',
+      'src/shared/game/page.ts',
+      'src/shared/game/runtime.ts',
+      'src/shared/game/runtimeEntry.ts'
+    ])
   })
 })
 

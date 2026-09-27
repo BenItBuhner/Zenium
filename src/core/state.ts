@@ -141,6 +141,7 @@ import {
 } from '../shared/updates'
 import { BLANK_URL } from '../shared/url'
 import { sanitizePromoState } from '../shared/defaultBrowser'
+import { sanitizeIphState } from '../shared/iph'
 import {
   emptyBlockingStatus,
   sanitizeBlockingSettings,
@@ -162,6 +163,7 @@ import {
 import { sanitizeReaderPreferences } from '../shared/reader'
 import { sanitizeReadAloudSettings, type ReadAloudState } from '../shared/readAloud'
 import { sanitizeFontSettings } from '../shared/fonts'
+import { sanitizeGameBestScore } from '../shared/game/bridge'
 import { defaultLanguages, sanitizeLanguages } from '../shared/languages'
 import {
   emptyNewTabDevice,
@@ -844,6 +846,8 @@ export class BrowserState {
     this.settings.passwords = sanitizePasswordSettings(data.settings?.passwords)
     this.settings.autofill = sanitizeAutofillSettings(data.settings?.autofill)
     this.settings.defaultBrowserPromo = sanitizePromoState(data.settings?.defaultBrowserPromo)
+    // The phone's hint bubbles' records (TB-19): a profile from before them reads the defaults.
+    this.settings.iph = sanitizeIphState(data.settings?.iph)
     this.settings.blocking = sanitizeBlockingSettings(data.settings?.blocking)
     this.settings.pageControls = sanitizePageControls(data.settings?.pageControls)
     // Off only when the profile says so: an older profile, or anything but a boolean, reads on.
@@ -914,6 +918,8 @@ export class BrowserState {
     this.settings.reader = sanitizeReaderPreferences(data.settings?.reader)
     this.settings.readAloud = sanitizeReadAloudSettings(data.settings?.readAloud)
     this.settings.fonts = sanitizeFontSettings(data.settings?.fonts)
+    // Roll's best (ERR-03): a whole number in the meter's range, 0 for a profile from before it.
+    this.settings.gameBestScore = sanitizeGameBestScore(data.settings?.gameBestScore)
     // A profile from before the list existed starts from the OS's languages, as a fresh Chrome
     // profile's `intl.accept_languages` does; one that has a list keeps it (never empty).
     const storedLanguages = sanitizeLanguages(data.settings?.languages)

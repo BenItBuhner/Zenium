@@ -106,14 +106,28 @@ class CorsProxy(private val cookies: Cookies, private val userAgent: () -> Strin
         return MatchPattern.anyMatchesOrigin(hosts, request.url)
     }
 
-    /** Answer `request` (a preflight or the request itself); null when the network failed and the WebView should try. */
-    fun handle(request: Request, extensionId: String, extensionOrigin: String): Reply? {
+    /**
+     * Answer `request` (a preflight or the request itself); null when the network failed – or a
+     * ticketed body never came over the bridge – and the WebView should try. What went wrong is
+     * told to [onFailure] (the exception's class and message; `body <ticket> never arrived`) for
+     * the runtime's record of the extension's proxied requests: compat round 22 read Temp Mail's
+     * popup draw an empty address with nothing in that record, and a request the proxy could not
+     * answer left it as empty as one never made.
+     */
+    fun handle(request: Request, extensionId: String, extensionOrigin: String, onFailure: (String) -> Unit = {}): Reply? {
         if (request.method.equals("OPTIONS", true) && request.header("Access-Control-Request-Method") != null) {
             return preflight(request, extensionOrigin)
         }
         val ticket = request.header(PROXY_HEADER)
-        val body = if (ticket != null && ticket != SKIP) takeBody(ticket) ?: return null else null
-        return runCatching { forward(request, extensionId, extensionOrigin, body) }.getOrNull()
+        val body = if (ticket != null && ticket != SKIP) {
+            takeBody(ticket) ?: run {
+                onFailure("body $ticket never arrived over the bridge")
+                return null
+            }
+        } else null
+        return runCatching { forward(request, extensionId, extensionOrigin, body) }
+            .onFailure { e -> onFailure("${e.javaClass.simpleName}: ${e.message ?: "no message"}") }
+            .getOrNull()
     }
 
     /** The preflight allows what the page asked for; the request that follows is answered by [forward]. */

@@ -17,7 +17,8 @@ import {
   type EmulatedEngine,
   type EngineContextKind,
   type FlowStats,
-  type Primordials
+  type Primordials,
+  type UnansweredCall
 } from '@core/extensions/api/engine'
 import { EXTENSION_ORIGIN_SUFFIX, extensionOrigin } from '@core/extensions/runtime/plan'
 import {
@@ -822,6 +823,17 @@ declare const __zenExtBoot: Boot
         const flow: Record<string, FlowStats> = {}
         for (const [ep, engine] of engines) flow[ep] = engine.flow
         return flow
+      },
+      enumerable: true,
+      configurable: true
+    })
+    // The engines' posts still without a reply, read when the stats are (the sweep's
+    // discriminator at a core timeout: a runtime reply lost, or the page's own await).
+    Object.defineProperty(stats, 'unanswered', {
+      get: (): Record<string, UnansweredCall[]> => {
+        const unanswered: Record<string, UnansweredCall[]> = {}
+        for (const [ep, engine] of engines) unanswered[ep] = engine.unanswered()
+        return unanswered
       },
       enumerable: true,
       configurable: true

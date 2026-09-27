@@ -1,4 +1,4 @@
-import type { FlowStats } from '../api/engine'
+import type { FlowStats, UnansweredCall } from '../api/engine'
 import { parseMatchPattern } from '../api/matchPattern'
 import type { LocaleMessages, RunAt, RuntimeManifest, ScriptWorld } from './manifest'
 import { planInjection, resolveDotSegments, type RegisteredContentScript } from './plan'
@@ -150,6 +150,13 @@ export interface BootStats {
    * posted, read, held, dropped, fences): what a page's burst of messages met at the page.
    */
   flow?: Record<string, FlowStats>
+  /**
+   * The host-bound posts of every engine this copy runs that are still without their reply,
+   * by endpoint id, oldest first (`UnansweredCall`: the id, what it asked, its age in ms) –
+   * read by the compat sweep when a row's core check runs out its wait, to tell a runtime
+   * reply that never came from a page-side `await` of the extension's own.
+   */
+  unanswered?: Record<string, UnansweredCall[]>
   /**
    * The webpack chunks of the content scripts' module graphs under the `with` fallback: run in
    * the content script's scope, imported plain on the page's global, thrown

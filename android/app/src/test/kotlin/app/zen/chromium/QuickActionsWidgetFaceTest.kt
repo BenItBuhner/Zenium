@@ -177,10 +177,12 @@ class QuickActionsWidgetFaceTest {
         }
         assertFalse(File(res, "color/widget_quick_actions_hairline.xml").exists())
         // The one day value and the one night value reach the pre-31 card and bars, the pre-31 picker's
-        // vector (its card's and bar's strokes) and the picker's frame – nothing else.
+        // vector (its card's and bar's strokes) and the picker's frame – and the same three places of
+        // the game widget, which wears this widget's roles (WID-04 on WID-02's colours) – nothing else.
         val naming = res.walk().filter { it.isFile && it.readText().contains("widget_quick_actions_hairline") }.map { it.relativeTo(res).path }.toSortedSet()
         assertEquals(
             sortedSetOf(
+                "drawable/widget_game_card.xml", "drawable/widget_game_preview.xml", "drawable/widget_game_preview_frame.xml",
                 "drawable/widget_quick_actions_card.xml", "drawable/widget_quick_actions_medium_bar.xml", "drawable/widget_quick_actions_preview.xml",
                 "drawable/widget_quick_actions_preview_frame.xml", "drawable/widget_quick_actions_small_bar.xml", "drawable/widget_quick_actions_xsmall_bar.xml",
                 "drawable/widget_quick_actions_xsmall_card.xml", "values-night/colors.xml", "values/colors.xml"

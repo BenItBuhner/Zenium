@@ -166,7 +166,8 @@ describe('page script: the PDF viewer relay', () => {
     fit: 'width',
     title: null,
     find: null,
-    outline: []
+    outline: [],
+    form: { fields: 0, modified: false }
   }
 
   function post(data: unknown): void {
@@ -305,5 +306,16 @@ describe('page script: the fullscreen video report (MED-01)', () => {
     })
     fullscreen(v)
     expect(sent.filter((m) => m.type === 'fullscreen')).toHaveLength(1)
+  })
+})
+
+describe("Roll's relay on a web page (ERR-03)", () => {
+  it('is not installed off Zenium’s own scheme: a game message on a web page reaches no browser', async () => {
+    expect(location.protocol).toBe('http:')
+    const sent = install(false)
+    window.postMessage({ zeniumGame: { ask: 'best' } }, '*')
+    window.postMessage({ zeniumGame: { best: 42 } }, '*')
+    await new Promise((r) => setTimeout(r, 20))
+    expect(sent.filter((m) => m.type === 'game')).toEqual([])
   })
 })

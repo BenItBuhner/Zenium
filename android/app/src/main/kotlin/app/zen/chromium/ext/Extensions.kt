@@ -269,6 +269,8 @@ class Extensions(private val host: Host) {
      * attach it was requested for is still the current one (see [AttachEpochs]).
      */
     private val attachEpochs = AttachEpochs()
+    /** The extension's configures between request and landing ([ConfiguresInFlight]); `unitMemory` reports the count. Main thread. */
+    private val configuresInFlight = ConfiguresInFlight()
     /**
      * A background document's own worker script is served to it once: the generated page's own
      * `<script src>`; a `<script>` the worker script appends through the page's bare `document`
@@ -342,7 +344,7 @@ class Extensions(private val host: Host) {
      * for instrumentation (the demo's latency figures).
      */
     val decisions = ArrayDeque<String>()
-    /** While `debug`: the CORS proxy's last answers ("<ext> METHOD status url"), for instrumentation. */
+    /** While `debug`: the CORS proxy's last outcomes ("<ext> METHOD <status | words> url" – [recordProxy]), for instrumentation. */
     val proxied = ArrayDeque<String>()
     /**
      * While `debug`: `"<ext> <ns>.<method>"` → `[calls, failed replies, unanswered]` over the
@@ -700,11 +702,15 @@ class Extensions(private val host: Host) {
             reply(Host.Rejection("The extension runtime is destroyed"))
             return
         }
+        configuresInFlight.begun(id)
         io.execute {
             val started = System.nanoTime()
             val dir = recordDir(args.str("path"))
             if (dir == null) {
-                main.post { reply(Host.Rejection("The extension directory is not under the install root")) }
+                main.post {
+                    configuresInFlight.landed(id)
+                    reply(Host.Rejection("The extension directory is not under the install root"))
+                }
                 return@execute
             }
             // The plan as it arrives, before a file is read: what the compile is about to do
@@ -752,6 +758,9 @@ class Extensions(private val host: Host) {
                 "ms" to ms
             )
             main.post {
+                // Landed, whatever comes of it below: the runtime's units for the extension are
+                // its last configure's from here (ConfiguresInFlight, for the heap instrumentation).
+                configuresInFlight.landed(id)
                 // Destroyed while the units compiled: the runtime holds nothing any more, and
                 // the core that asked is gone with its WebView – nothing installed, no answer.
                 if (destroyed) {
@@ -897,6 +906,7 @@ class Extensions(private val host: Host) {
     /** A new core runtime starts from nothing: every extension of the previous one goes. */
     private fun reset() {
         attachEpochs.reset()
+        configuresInFlight.reset()
         closePopup()
         for (id in backgrounds.keys.toList()) stopBackground(id, "reset")
         workerScriptGate.reset()
@@ -987,11 +997,17 @@ class Extensions(private val host: Host) {
         send(ep, message, at)
     }
 
-    private fun recordProxy(extensionId: String, request: CorsProxy.Request, status: Int) {
+    /**
+     * One line of the extension's proxied requests while `debug` (`proxied`): `<ext> METHOD <outcome> <url>`,
+     * the outcome a status, or the words for a redirect or a failure left to the WebView and for a
+     * host the extension has no permission for; the latter three in logcat as well.
+     */
+    private fun recordProxy(extensionId: String, request: CorsProxy.Request, outcome: String) {
         synchronized(proxied) {
             if (proxied.size >= 200) proxied.removeFirst()
-            proxied.addLast("$extensionId ${request.method} $status ${request.url}")
+            proxied.addLast("$extensionId ${request.method} $outcome ${request.url}")
         }
+        if (!outcome.first().isDigit()) Log.w(TAG, "cors proxy ${extensionId.take(8)} ${request.method} ${request.url}: $outcome")
     }
 
     private fun recordCall(ep: String, message: JSONObject, chars: Int) {
@@ -1888,11 +1904,22 @@ class Extensions(private val host: Host) {
             if (ext != null && (tab?.isPrivateTab != true || ext.allowPrivate)) {
                 val proxied = CorsProxy.Request(request.method ?: "GET", url.toString(), request.requestHeaders ?: emptyMap())
                 val hosts = grantedHosts[id]?.let { ext.hosts + it } ?: ext.hosts
-                if (corsProxy.applies(proxied, corsOrigin, hosts)) {
-                    val reply = corsProxy.handle(proxied, id, corsOrigin)
+                // The record while `debug` (`proxied`; the sweep reads it): every outcome for an
+                // http(s) request off the extension's origin – answered with its status, a redirect
+                // or a failure left to the WebView, or the proxy standing aside for a host the
+                // extension has no permission for (compat round 22: Temp Mail's popup drew an empty
+                // address with nothing on record, a request the proxy could not answer as absent as
+                // one never made).
+                val offOrigin = (proxied.url.startsWith("http://") || proxied.url.startsWith("https://")) &&
+                    !proxied.url.startsWith("$corsOrigin/") && proxied.header(CorsProxy.PROXY_HEADER) != CorsProxy.SKIP
+                if (!corsProxy.applies(proxied, corsOrigin, hosts)) {
+                    if (debug && offOrigin) recordProxy(id, proxied, "not proxied: no host permission for the URL")
+                } else {
+                    val reply = corsProxy.handle(proxied, id, corsOrigin) { why -> if (debug) recordProxy(id, proxied, "failed ($why); left to the WebView") }
                     // A 3xx the proxy could not follow cannot be a WebResourceResponse; the WebView tries itself.
+                    if (reply != null && reply.status in 300..399 && debug) recordProxy(id, proxied, "${reply.status} redirect left to the WebView")
                     if (reply != null && reply.status !in 300..399) {
-                        if (debug) recordProxy(id, proxied, reply.status)
+                        if (debug) recordProxy(id, proxied, reply.status.toString())
                         if (reply.cookies.isEmpty()) {
                             return WebResourceResponse(reply.mime, reply.charset, reply.status, reply.reason, reply.headers, reply.body)
                         }
@@ -2203,6 +2230,9 @@ class Extensions(private val host: Host) {
     /** The hidden background WebView of an attached extension (instrumentation reads its console). */
     fun backgroundView(id: String): ExtensionWebView? = backgrounds[id]
 
+    /** The extension's offscreen document's view (`chrome.offscreen`), when one is open (instrumentation reads its state). */
+    fun offscreenView(id: String): ExtensionWebView? = offscreens[id]
+
     /** How many times the extension's background has been started here (instrumentation; see [backgroundStarts]). */
     fun backgroundStarts(id: String): Int = backgroundStarts[id] ?: 0
 
@@ -2220,9 +2250,16 @@ class Extensions(private val host: Host) {
      * The Java heap the runtime holds for one extension's content-script units, for
      * instrumentation ([UnitCompiler.memoryOf]: the compiled scripts – the one copy the
      * compiler's cache and the tabs' [ScriptUnit]s share – and the soft-held sources), with the
-     * units installed on the tabs counted. Main thread.
+     * units installed on the tabs counted, and the extension's configures in flight
+     * (`pending`, [ConfiguresInFlight]: requested, their post not landed yet). Main thread; does
+     * not wait on a compile in flight (`compiling: true` then, the compiler's counts absent). The
+     * reading is settled – the units installed are the last configure's, the compiler's cache
+     * theirs – when `pending` is 0 and `compiling` false; a reading taken while a configure is
+     * in flight counts the plan being replaced (compat round 22's `[lane]` run, Adblock Ad
+     * Blocker Pro's heap split: the compiler's 11 units against 1 installed).
      */
-    fun unitMemory(id: String): JSONObject = compiler.memoryOf(id).put("installed", units[id]?.size ?: 0)
+    fun unitMemory(id: String): JSONObject =
+        compiler.memoryOf(id).put("installed", units[id]?.size ?: 0).put("pending", configuresInFlight.pending(id))
 
     /**
      * Let the runtime's share of an extension's heap go while the extension stays attached, for
@@ -2440,6 +2477,7 @@ class Extensions(private val host: Host) {
         // The release. The compiler does not wait on a compile in flight: that compile sees
         // the close at its next unit and releases (`UnitCompiler.close`).
         val released = compiler.close()
+        configuresInFlight.reset()
         val installedUnits = units.values.sumOf { it.size }
         val installedChars = units.values.sumOf { list -> list.sumOf { it.script.length.toLong() } }
         units.clear()

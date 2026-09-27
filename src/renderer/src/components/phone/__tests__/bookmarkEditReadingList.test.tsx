@@ -265,16 +265,18 @@ describe("the star sheet's Reading list row (HB-20)", () => {
     expect(toggle.textContent?.trim()).toBe('Reading list')
     // The switch is the shared 36 × 20 track (§10.4), drawn on from the row's `aria-checked`.
     expect(toggle.querySelector('.zen-v2-switch')).not.toBeNull()
-    // Under the fields, above the footer's Delete | Save.
+    // Under the fields and the Folder row (HB-16), above the footer's Delete | Save.
     const form = toggle.closest('form')!
     const order = [...form.children].map((el) =>
       el.matches('[data-testid="bookmark-reading-list"]')
         ? 'reading-list'
-        : el.classList.contains('zen-sheet-footer')
-          ? 'footer'
-          : 'field'
+        : el.matches('[data-testid="bookmark-folder"]')
+          ? 'folder'
+          : el.classList.contains('zen-sheet-footer')
+            ? 'footer'
+            : 'field'
     )
-    expect(order).toEqual(['field', 'field', 'reading-list', 'footer'])
+    expect(order).toEqual(['field', 'field', 'folder', 'reading-list', 'footer'])
 
     act(() => toggle.click())
     await settle()

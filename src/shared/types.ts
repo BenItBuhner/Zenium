@@ -162,6 +162,12 @@ export interface HostCapabilities {
    * viewer and leave this off.
    */
   pdfViewer: boolean
+  /**
+   * The host prints a PDF the inline viewer shows through the system's print flow
+   * (`Platform.printPdf`; Android's `PrintManager`): the viewer's Print row. Off on a host
+   * without the verb, and on the desktop, where Chromium's viewer prints its own document.
+   */
+  pdfPrint: boolean
   /** The host can run the MCP server that lets AI agents control the browser. */
   agents: boolean
   /**
@@ -678,6 +684,19 @@ export interface Tab {
   splitGroupId: string | null
   createdAt: number
   lastActiveAt: number
+  /**
+   * When the tab's main frame last committed a navigation (ms since the epoch): a document, or
+   * a same-document move – a `pushState`, a fragment – as Chrome Android stamps its tab on
+   * every committed navigation (`TabImpl.handleDidFinishNavigation`, the tab's
+   * `lastNavigationCommittedTimestampMillis`, which `TabWebContentsObserver` calls for any
+   * commit of the primary main frame). Quick Delete's tab half reads it (HB-07, `'tabs'`): a
+   * tab is in a range when this stands at or after the range's start. `lastActiveAt` is the
+   * tab's activation, not its navigation. Set by the core at the commit (`Tabs.onNavigated`),
+   * persisted with the tab so a restart keeps it (Chrome's `TabState` keeps its stamp too),
+   * DEVICE-LOCAL: never part of the `open-tabs` sync record. Null on a tab that never committed
+   * this way; absent on records older than the field and read as null – in no bounded range.
+   */
+  lastNavigatedAt?: number | null
   /** Set when a navigation failed – rendered by the zen://error page. */
   errorCode: number | null
   /**
@@ -3186,6 +3205,13 @@ export interface Settings {
   /** The one-time exit hint for a video in fullscreen (GN-20) has been shown (phones). */
   fullscreenHintDone: boolean
   /**
+   * The phone's in-product help bubbles (TB-19, `shared/iph.ts`): one record per bubble Chrome
+   * Android shows on its toolbar. Device-local (`DEVICE_LOCAL_SETTINGS`), as Chrome's feature
+   * engagement store is the profile's own; a profile from before it reads the defaults
+   * (`sanitizeIphState`).
+   */
+  iph: IphState
+  /**
    * Spell checking of text fields: on / off and the dictionary languages (Settings › Languages).
    * Absent in profiles from before it existed (`sanitizeSpellcheck` fills the defaults).
    */
@@ -3212,6 +3238,14 @@ export interface Settings {
    * in profiles from before it existed: filled from the OS locales (`defaultLanguages`). Synced.
    */
   languages: string[]
+  /**
+   * Roll's best score (ERR-03, design language v2 §9.17): the profile's, host-kept and synced
+   * like Chrome's `net.easter_egg_high_score` – one number across the no-connection page and
+   * `zen://game` on every device – never a document origin's storage. A whole number in the
+   * meter's range (0 to 99999; `sanitizeGameBestScore`), 0 in profiles from before it existed.
+   * The core's `GameService` answers the pages and only ever raises it.
+   */
+  gameBestScore: number
 }
 
 // ---------------------------------------------------------------------------
@@ -3403,6 +3437,36 @@ export interface DefaultBrowserPromoState {
 
 /** What the chrome should show for the default-browser prompts right now. */
 export type DefaultBrowserPrompt = 'sheet' | 'banner' | null
+
+// ---------------------------------------------------------------------------
+// In-product help (the phone's hint bubbles, TB-19)
+// ---------------------------------------------------------------------------
+
+/**
+ * One hint bubble's record (`shared/iph.ts`), device-local. Chrome's feature engagement tracker
+ * keeps the same two things per IPH feature: the day it became available, and whether it has
+ * been triggered or its subject used.
+ */
+export interface IphBubbleState {
+  /**
+   * When the bubble became available on this device (ms since the epoch): stamped by the first
+   * deferred arm of a build that has the bubble; Chrome's `availability` clock starts the same
+   * day. `null` until then.
+   */
+  availableAt: number | null
+  /**
+   * The bubble has been shown – or the user did what it teaches before it was due (Chrome's
+   * `used` event: `tab_switcher_button_clicked` holds the tab switcher bubble back). Either way
+   * it is spent and never shows.
+   */
+  shown: boolean
+}
+
+/** The bubbles, one record each: the ones Chrome Android 152 shows by default. */
+export interface IphState {
+  /** Chrome's `IPH_TabSwitcherButton`: the bubble on the bar's Tabs button. */
+  tabSwitcher: IphBubbleState
+}
 
 export interface DefaultBrowserStatus {
   /** Whether this app holds the browser role; null until the host answered (or when it cannot tell). */
@@ -4205,12 +4269,21 @@ export interface DevicePairingResponse {
 // Clear browsing data and Safety check
 // ---------------------------------------------------------------------------
 
-/** Chrome's time ranges: the last hour, 24 hours, 7 days, 4 weeks, or everything. */
-export type BrowsingDataRange = 'hour' | 'day' | 'week' | 'month' | 'all'
+/**
+ * Chrome's time ranges: the last 15 minutes, hour, 24 hours, 7 days, 4 weeks, or everything
+ * (`browsing_data::TimePeriod`, `components/browsing_data/core/browsing_data_utils.h`:
+ * `LAST_15_MINUTES` beside `LAST_HOUR` … `ALL_TIME`; both hosts' dialogs offer the 15 minutes –
+ * `IDS_SETTINGS_CLEAR_PERIOD_15_MINUTES` on the desktop, `IDS_CLEAR_BROWSING_DATA_TAB_PERIOD_
+ * 15_MINUTES` on Android, where it is Quick Delete's default).
+ */
+export type BrowsingDataRange = '15min' | 'hour' | 'day' | 'week' | 'month' | 'all'
 
 /**
  * What "Clear browsing data" can remove. `history`, `cookies` and `cache` are Chrome's Basic
- * set; the rest is Advanced. `cookies` covers cookies and every other kind of site data.
+ * set; the rest of the dialog's list is Advanced. `cookies` covers cookies and every other kind
+ * of site data. `tabs` is the phone's alone (Chrome Android's Quick Delete, HB-07 – its Tabs
+ * row; Chrome's desktop dialog closes no tabs, so it is in neither set): the tabs whose last
+ * committed navigation falls in the range close, with no undo and no "Recently closed" entry.
  */
 export type BrowsingDataType =
   | 'history'
@@ -4221,6 +4294,7 @@ export type BrowsingDataType =
   | 'autofill'
   | 'sitePermissions'
   | 'recentlyClosed'
+  | 'tabs'
 
 export const BROWSING_DATA_BASIC: readonly BrowsingDataType[] = ['history', 'cookies', 'cache']
 export const BROWSING_DATA_ADVANCED: readonly BrowsingDataType[] = [
@@ -4239,7 +4313,7 @@ export interface BrowsingDataCount {
   type: BrowsingDataType
   /** Items of `unit` in the range; null when the engine cannot count this type. */
   count: number | null
-  unit: 'visits' | 'sites' | 'bytes' | 'downloads' | 'logins' | 'entries' | 'permissions'
+  unit: 'visits' | 'sites' | 'bytes' | 'downloads' | 'logins' | 'entries' | 'permissions' | 'tabs'
   /** False when the engine cannot limit this type to the range: clearing removes all of it. */
   rangeApplies: boolean
   /** Why the type cannot be cleared right now (the vault is locked), or null. */
@@ -5519,17 +5593,32 @@ export interface Commands {
   /**
    * Clear browsing data of the chosen types in the range. Passwords need re-authentication
    * (`passphrase` carries the vault passphrase when the chrome was asked for it); when it fails
-   * nothing is cleared and the outcome says which step is needed.
+   * nothing is cleared and the outcome says which step is needed. With `'tabs'` among the types
+   * (the phone's Quick Delete, HB-07) the tabs the range holds AT THIS MOMENT close last, after
+   * the data – the set `privacy.tabsInRange` named a moment earlier, give or take a tab that
+   * navigated in between – with no undo and no "Recently closed" entry (Chrome's
+   * `QuickDeleteTabsFilter`: `allowUndo(false).saveToTabRestoreService(false)`).
    */
   'privacy.clearBrowsingData': {
     args: { range: BrowsingDataRange; types: BrowsingDataType[]; passphrase?: string }
     result: ReauthOutcome<ClearBrowsingDataResult>
   }
-  /** How much of each type the range holds, for the dialog's preview lines. */
+  /** How much of each type the range holds, for the dialog's preview lines (the `tabs` row last). */
   'privacy.clearBrowsingDataCounts': {
     args: { range: BrowsingDataRange }
     result: BrowsingDataCount[]
   }
+  /**
+   * The tabs Quick Delete would close for the range right now (HB-07 / MOT-24), as ids in the
+   * order the overview lists them: every tab of every space and window whose last committed
+   * navigation (`Tab.lastNavigatedAt`) is at or after the range's start – pinned and essential
+   * tabs among them, private tabs never – or, for `'all'`, every tab (Chrome's ALL_TIME takes the
+   * whole model). The chrome asks BEFORE `privacy.clearBrowsingData` with `'tabs'`, as Chrome
+   * shows the tab switcher and runs its motion on the cards first, then closes; the clear takes
+   * the set as it stands at clear time, so a tab that navigates between the two calls joins or
+   * leaves it – the motion's list may differ by that tab, as Chrome's may (cosmetic).
+   */
+  'privacy.tabsInRange': { args: { range: BrowsingDataRange }; result: string[] }
 
   /**
    * Cookies and site data (Chrome's `chrome://settings/content/siteData`): the default for sites
@@ -6218,7 +6307,21 @@ export interface Commands {
   'pdf.openWith': { args: { tabId: string }; result: void }
   /** The system share sheet with the PDF file the tab shows. */
   'pdf.share': { args: { tabId: string }; result: void }
-  /** What the viewer in the tab last reported (page, zoom, find, outline); null before it did. */
+  /**
+   * Save a copy of the PDF with the form's values written in (pdf.js's incremental save) to the
+   * downloads location under the file's name, listed as a completed download; the viewer's
+   * form reads unmodified once it is written. The path the copy was written under (a `content:`
+   * address on a host that names none), or null when the tab shows no viewer, the host cannot
+   * write files, or the copy could not be made or written.
+   */
+  'pdf.save': { args: { tabId: string }; result: string | null }
+  /**
+   * The system print flow with the PDF the tab shows (`capabilities.pdfPrint`): the file as
+   * downloaded, or – the form edited – a copy with its values written in. False when the tab
+   * shows no viewer, the host cannot print, or the edited copy could not be made.
+   */
+  'pdf.print': { args: { tabId: string }; result: boolean }
+  /** What the viewer in the tab last reported (page, zoom, find, outline, form); null before it did. */
   'pdf.state': { args: { tabId: string }; result: PdfViewerReport | null }
   /** Drive the viewer in the tab (zoom, fit, go to a page, find, rotate); false when it has none. */
   'pdf.command': { args: { tabId: string; command: PdfViewerCommand }; result: boolean }

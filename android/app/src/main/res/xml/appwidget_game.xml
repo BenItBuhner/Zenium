@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Home-screen game widget (GameWidgetProvider; WID-04 / ERR-03): one cell that opens Roll,
+     Zenium's offline game, on zen://game. Chrome has no widget for its Dino – its Home-screen door is
+     the quick action search widget's fourth button – so there is no Chrome info to mirror; the face is
+     gate #607 (f)'s ruling. One cell by one, fixed: minWidth and minHeight the platform's one-cell
+     minimum (70 dp a cell less 30), no resizing (the card fills whatever the launcher's cell is), the
+     picker's target one by one. The picker renders the layout itself where it can (previewLayout,
+     API 31; the 64 dp preview under its hairline); older pickers draw the vector under previewImage.
+     Stateless: no update period. Offered for the Home screen alone – a one-cell face is no search box.
+     The face's colours are the quick actions widget's roles: the system's on Android 12+
+     (res/color-v31/widget_quick_actions_*.xml), the v2 tokens below. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:description="@string/widget_game_description"
+    android:initialLayout="@layout/widget_game"
+    android:minWidth="@dimen/widget_game_size"
+    android:minHeight="@dimen/widget_game_size"
+    android:previewImage="@drawable/widget_game_preview"
+    android:previewLayout="@layout/widget_game_preview"
+    android:resizeMode="none"
+    android:targetCellWidth="1"
+    android:targetCellHeight="1"
+    android:updatePeriodMillis="0"
+    android:widgetCategory="home_screen"
+    tools:targetApi="s" />

@@ -26,6 +26,8 @@ export const BOOKMARKS_URL = 'zen://bookmarks'
 export const DOWNLOADS_URL = 'zen://downloads'
 /** The version page (chrome://version): a document page every host serves (`zenPages.ts`). */
 export const VERSION_URL = 'zen://version'
+/** Roll, the offline game (Chrome's chrome://dino, ERR-03): a document page every host serves (`zenPages.ts`). */
+export const GAME_URL = 'zen://game'
 /** The addresses of an empty tab (Zen's blank page and the aliases that resolve to it). */
 const NEW_TAB_URLS = new Set([BLANK_URL, NEW_TAB_URL, 'about:newtab', 'about:blank', ''])
 
@@ -54,8 +56,9 @@ const KNOWN_SCHEMES = [
  * `about:preferences`, `zenium://newtab`, `chrome://version`. Each resolves to the canonical
  * `zen://` address. The set is the pages Zenium has: of the addresses Chrome Android serves in a
  * tab (SET-66), `version`, `newtab`, `history`, `downloads` and `bookmarks` are here (`settings`
- * too, which Chrome Android does not serve); `chrome://flags` and `chrome://policy` are not, and
- * stay as typed – Zenium has no flags page and no policy engine.
+ * too, which Chrome Android does not serve), and `dino` – Chrome's runner's own page – comes to
+ * Roll's (`zen://game`, ERR-03); `chrome://flags` and `chrome://policy` are not, and stay as
+ * typed – Zenium has no flags page and no policy engine.
  */
 const INTERNAL_PAGE_ALIASES: Record<string, string> = {
   blank: BLANK_URL,
@@ -66,7 +69,8 @@ const INTERNAL_PAGE_ALIASES: Record<string, string> = {
   history: HISTORY_URL,
   bookmarks: BOOKMARKS_URL,
   downloads: DOWNLOADS_URL,
-  version: VERSION_URL
+  version: VERSION_URL,
+  dino: GAME_URL
 }
 /** `host:port[/path]` – looks like a scheme but is a bare host with a port (dev servers). */
 const HOST_PORT_RE =
