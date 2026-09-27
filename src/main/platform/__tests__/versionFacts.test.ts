@@ -61,9 +61,9 @@ describe('desktopVersionFacts (SET-66)', () => {
     expect(desktopVersionFacts({ ...INPUT, osType: 'Darwin', osRelease: '23.2.0' }).os).toBe(
       'macOS 23.2.0'
     )
-    expect(desktopVersionFacts({ ...INPUT, osType: 'Windows_NT', osRelease: '10.0.22631' }).os).toBe(
-      'Windows 10.0.22631'
-    )
+    expect(
+      desktopVersionFacts({ ...INPUT, osType: 'Windows_NT', osRelease: '10.0.22631' }).os
+    ).toBe('Windows 10.0.22631')
     expect(desktopVersionFacts({ ...INPUT, osType: 'FreeBSD', osRelease: '' }).os).toBe('FreeBSD')
   })
 
@@ -82,7 +82,7 @@ describe('desktopVersionFacts (SET-66)', () => {
     expect(processorVariation('freebsd', 'x64')).toBe('(64-bit)')
   })
 
-  it("reads the primitives from Electron, the process and the session as the page is requested", () => {
+  it('reads the primitives from Electron, the process and the session as the page is requested', () => {
     const ses = { getUserAgent: () => 'UA of the session' } as unknown as Session
     const input = readDesktopVersionInput(ses, '/profile/zen')
     expect(input).toMatchObject({

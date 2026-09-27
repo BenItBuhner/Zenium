@@ -59,7 +59,9 @@ describe('androidVersionFacts (SET-66)', () => {
     })
     // Nor is a malformed answer trusted for any field.
     expect(androidVersionFacts('garbage', FALLBACK).app).toBe('0.5.9')
-    expect(androidVersionFacts({ version: 7, sdkInt: 'x', is64Bit: 'yes' }, FALLBACK)).toMatchObject({
+    expect(
+      androidVersionFacts({ version: 7, sdkInt: 'x', is64Bit: 'yes' }, FALLBACK)
+    ).toMatchObject({
       app: '0.5.9',
       os: 'Android'
     })

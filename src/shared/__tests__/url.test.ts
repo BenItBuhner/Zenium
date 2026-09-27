@@ -313,7 +313,14 @@ describe('internal pages', () => {
     expect(inputToUrl('chrome://flags/#enable-something')).toBe('chrome://flags/#enable-something')
     // The rest of Chrome's set – chrome-urls, credits, crashes, components, the internals –
     // stay as typed the same way.
-    for (const name of ['chrome-urls', 'credits', 'crashes', 'components', 'gpu', 'net-internals']) {
+    for (const name of [
+      'chrome-urls',
+      'credits',
+      'crashes',
+      'components',
+      'gpu',
+      'net-internals'
+    ]) {
       expect(inputToUrl(`chrome://${name}`)).toBe(`chrome://${name}`)
     }
   })

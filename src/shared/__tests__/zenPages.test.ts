@@ -1442,15 +1442,31 @@ describe('zenPageHtml', () => {
     })
 
     it('serves the page through zenPageHtml with the lookup, the blank page without one, the other routes as before', () => {
-      expect(zenPageHtml('zen://version', undefined, undefined, undefined, 'system', 'android', () => FACTS)).toBe(
-        versionPageHtml(FACTS)
-      )
+      expect(
+        zenPageHtml(
+          'zen://version',
+          undefined,
+          undefined,
+          undefined,
+          'system',
+          'android',
+          () => FACTS
+        )
+      ).toBe(versionPageHtml(FACTS))
       // A host that passes no lookup (or whose lookup has nothing) serves what it served before:
       // the blank page – the routes of a host that never asked for the page are untouched.
       expect(zenPageHtml('zen://version')).toBe(zenPageHtml('zen://blank'))
-      expect(zenPageHtml('zen://version', undefined, undefined, undefined, 'system', 'desktop', () => null)).toBe(
-        zenPageHtml('zen://blank')
-      )
+      expect(
+        zenPageHtml(
+          'zen://version',
+          undefined,
+          undefined,
+          undefined,
+          'system',
+          'desktop',
+          () => null
+        )
+      ).toBe(zenPageHtml('zen://blank'))
       // The lookup is asked only for the version page: every other route answers as it did
       // with no lookup at all, byte for byte.
       const asked: string[] = []
@@ -1458,7 +1474,15 @@ describe('zenPageHtml', () => {
         asked.push('version')
         return FACTS
       }
-      for (const url of ['zen://blank', 'zen://newtab', 'zen://nonsense', 'zen://settings', REFUSED, OFFLINE, DNS]) {
+      for (const url of [
+        'zen://blank',
+        'zen://newtab',
+        'zen://nonsense',
+        'zen://settings',
+        REFUSED,
+        OFFLINE,
+        DNS
+      ]) {
         expect(zenPageHtml(url, undefined, undefined, undefined, 'system', 'desktop', lookup)).toBe(
           zenPageHtml(url)
         )
