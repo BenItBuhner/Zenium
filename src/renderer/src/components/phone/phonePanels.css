@@ -401,6 +401,44 @@
     margin: 0;
     padding: 0 16px;
   }
+  /*
+   * The bookmark editor's pane swap (HB-16; the lead on #630): the form and the folder pane are
+   * one sheet's two faces, and each comes in on the 120 ms `--zen-ease` state change (v2 §11,
+   * v1 §7's tokens; transform and opacity alone) – a fade with the depth idiom's 24 px settle
+   * (`Level`'s push, primitives.tsx), from the end edge going into the pane and from the start
+   * edge coming back to the form, the side `data-from` names (the pane it replaced);
+   * no `data-from` on the sheet's first open, whose entrance is the sheet's own slide. No fill
+   * mode: the last frame is the pane's own resting style, and a filling animation would keep the
+   * settled pane on a compositor layer (its text rasterised there, not with the sheet's). Nothing
+   * is re-declared under reduced motion: the global remover in main.css cuts it to the swap
+   * itself (§11.3, the passwords panes' way).
+   */
+  .zen-bookmark-edit-pane[data-from] {
+    animation: zen-bookmark-edit-pane-in 120ms var(--zen-ease);
+  }
+  .zen-bookmark-edit-pane[data-from='folder'] {
+    animation-name: zen-bookmark-edit-pane-back;
+  }
+  @keyframes zen-bookmark-edit-pane-in {
+    from {
+      opacity: 0;
+      transform: translateX(24px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes zen-bookmark-edit-pane-back {
+    from {
+      opacity: 0;
+      transform: translateX(-24px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
 }
 
 /*

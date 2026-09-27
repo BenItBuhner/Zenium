@@ -5,20 +5,29 @@ import type { BottomSheetHandle } from '../sheet/BottomSheet'
 import { PhoneSheet } from './PhoneSheet'
 
 /**
- * The phone's folder picker, shared by Move to… (`BookmarkMoveSheet`, HB-12 / HB-15) and the
- * bookmark editor's Folder row (`BookmarkEditSheet`, HB-16) – the form the lead passed on #570:
- * a §9.13 radio list of every folder the nodes can land in, the whole tree in reading order
- * (`moveTargets`), each level 16 further in, the checked row's glyph filled and the folder the
- * nodes stand in now saying `Current` aside at the value's 13/69 %. Chrome 152's
+ * The phone's folder picker, shared by the Move sheet (`BookmarkMoveSheet`, HB-12 / HB-15) and
+ * the bookmark editor's Folder row (`BookmarkEditSheet`, HB-16) – the form the lead passed on
+ * #570: a §9.13 radio list of every folder the nodes can land in, the whole tree in reading
+ * order (`moveTargets`), each level 16 further in, the checked row's glyph filled and the folder
+ * the nodes stand in now saying `Current` aside at the value's 13/69 %. Chrome 152's
  * `BookmarkFolderPickerMediator` drills one folder a page with a chevron on every row and no
  * mark on the current parent (its Move here is merely disabled there); the flat list shows the
- * same folders at once, the ones a bookmark cannot enter (the moved folder and its subtree,
- * Chrome's `isValidFolderForMovedBookmarks`) already left out by `moveTargets`.
+ * same folders at once. The ones the nodes cannot enter are already left out by `moveTargets`,
+ * as Chrome leaves the moved ids out of its rows (Mediator l.182) with their subtree unreachable
+ * by construction; Chrome's `isValidFolderForMovedBookmarks` (l.296-305) greys the special
+ * folders instead – the root, managed and partner folders, the reading list – which
+ * `moveTargets` never lists.
+ *
+ * The indent is the eye's reading of the tree; assistive technology reads each row's name as
+ * "title, in parent" (and ", current folder" on the one the nodes stand in), the parent taken
+ * from the rows themselves, so Work and Specs are not peers to a screen reader either. The
+ * row's visible text stays the bare title.
  */
 export function BookmarkFolderList({
   rows,
   checked,
   current,
+  label = 'Folder',
   onPick
 }: {
   /** Every folder that can take the nodes, in reading order with its depth (`moveTargets`). */
@@ -27,16 +36,28 @@ export function BookmarkFolderList({
   checked: string | null
   /** The folder the nodes stand in now, `Current` aside its title. */
   current: string | null
+  /** The group's accessible name: the header the list stands under (`Folder`, `Parent folder`). */
+  label?: string
   onPick: (id: string) => void
 }): JSX.Element {
+  const titles = new Map(rows.map(({ node }) => [node.id, node.title]))
   return (
-    <div role="radiogroup" aria-label="Folder" className="pb-2">
+    <div role="radiogroup" aria-label={label} className="pb-2">
       {rows.map(({ node, depth }) => (
         <button
           key={node.id}
           type="button"
           role="radio"
           aria-checked={node.id === checked}
+          aria-label={[
+            node.title,
+            node.parentId !== null && titles.has(node.parentId)
+              ? `in ${titles.get(node.parentId)}`
+              : null,
+            node.id === current ? 'current folder' : null
+          ]
+            .filter(Boolean)
+            .join(', ')}
           className="zen-v2-row"
           style={depth ? { paddingInlineStart: 16 + depth * 16 } : undefined}
           onClick={() => onPick(node.id)}

@@ -1,25 +1,35 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { BookmarkNode, Space, Tab, UIState } from '@shared/types'
-import { createBookmarkRoots, MOBILE_BOOKMARKS_ID, OTHER_BOOKMARKS_ID } from '@shared/bookmarks'
+import {
+  BOOKMARKS_BAR_ID,
+  createBookmarkRoots,
+  MOBILE_BOOKMARKS_ID,
+  OTHER_BOOKMARKS_ID
+} from '@shared/bookmarks'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
 
 /*
  * The bookmark editor's Folder row and its folder pane (HB-16; Chrome 152's
  * `BookmarkEditActivity` folder row → `BookmarkFolderPickerMediator`; v2 draft §9.13, §9.24,
- * §10.4): under Name and Address the row reads the parent folder's title under its label
- * (`Folder`, `Parent folder` for a folder) with a chevron; a tap steps the sheet into the folder
- * pane – the picker's radio list of every folder the node can enter (never the edited folder or
- * its subtree), the folder Save would use checked, the folder it stands in now saying
- * `Current` – with Back leading and `New folder` trailing in the header. A pick steps back to
- * the form with the row reading the picked folder; nothing is written by the pick; the system
- * back in the pane is the header's Back. Save runs
+ * §10.4): under Name and Address the row is §10.4's value row – the parent folder's title as
+ * the 13/69 % description under its label (`Folder`, `Parent folder` for a folder; the folder's
+ * own editor titled `Edit folder`), no chevron; a tap steps the sheet into the folder pane – the
+ * picker's radio list of every folder the node can enter (never the edited folder or its
+ * subtree), the folder Save would use checked, the folder it stands in now saying `Current` –
+ * with Back leading and `New folder` trailing in the header, each swap riding the 120 ms
+ * `--zen-ease` state change (`data-from` on the pane names the side it comes from). A pick
+ * steps back to the form with the row reading the picked folder; nothing is written by the
+ * pick; the system back and Escape in the pane are the header's Back, one hop. Save runs
  * `bookmark.update` and then `bookmark.move` in the one commit once the sheet is gone; a new
  * node is created into the picked folder. `New folder` makes a folder at once inside the
- * checked one (`bookmark.create`) and picks it. Rendered for real on the frame's dialog host,
- * the frame loop cranked by hand.
+ * checked one (`bookmark.create`) and picks it – the pick standing on the created node until
+ * the state carries it. Rendered for real on the frame's dialog host, the frame loop cranked by
+ * hand.
  */
 
 const SPACE = 'space'
@@ -241,6 +251,11 @@ const sheetTitle = (): string =>
   dialogs().querySelector('.zen-sheet-title')?.textContent?.trim() ?? ''
 const folderRow = (): HTMLButtonElement | null =>
   dialogs().querySelector<HTMLButtonElement>('[data-testid="bookmark-folder"]')
+/** The pane in view – the form or the folder list – the element whose entrance is the swap's. */
+const pane = (): HTMLElement | null =>
+  dialogs().querySelector<HTMLElement>('.zen-bookmark-edit-pane')
+const radiogroup = (): HTMLElement | null =>
+  dialogs().querySelector<HTMLElement>('[role="radiogroup"]')
 const radios = (): HTMLButtonElement[] => [
   ...dialogs().querySelectorAll<HTMLButtonElement>('[role="radio"]')
 ]
@@ -275,14 +290,22 @@ function type(input: HTMLInputElement, value: string): void {
 // --- the row and the pane ----------------------------------------------------------------------
 
 describe("the bookmark editor's Folder row (HB-16)", () => {
-  it('reads the parent folder under its label with a chevron, under the Address field, and steps into the folder pane on a tap – every folder the bookmark can enter, its own folder checked and marked Current', async () => {
+  it('reads the parent folder as the 13/69 % value under its label – §10.4’s value row, no chevron, named "label, value" – under the Address field, and steps into the folder pane on a tap – every folder the bookmark can enter, its own folder checked and marked Current', async () => {
     await show(stateOf(), { id: 'jira', parentId: 'work', type: 'url' })
     expect(sheetTitle()).toBe('Edit bookmark')
     const row = folderRow()!
     expect(row).not.toBeNull()
     expect(row.textContent).toContain('Folder')
-    expect(row.textContent).toContain('Work')
-    expect(row.querySelector('svg')).not.toBeNull()
+    // The value row's second line: 13 on the small line in the deemphasised (69 %) ink.
+    const value = row.querySelector('.text-\\[13px\\]')!
+    expect(value.textContent?.trim()).toBe('Work')
+    expect(value.classList.contains('text-[var(--v2-text-deemphasized)]')).toBe(true)
+    expect(value.classList.contains('leading-[var(--v2-line-small)]')).toBe(true)
+    // No control drawn, no chevron: the tap itself opens the pane.
+    expect(row.querySelector('svg')).toBeNull()
+    expect(row.getAttribute('aria-label')).toBe('Folder, Work')
+    // No `data-from` on the sheet's first open: the entrance is the sheet's own slide.
+    expect(pane()!.hasAttribute('data-from')).toBe(false)
     // Under the two fields, above the Reading list row (HB-20) and the footer.
     const form = row.closest('form')!
     const kinds = [...form.children].map((el) =>
@@ -309,25 +332,104 @@ describe("the bookmark editor's Folder row (HB-16)", () => {
     expect(currentTitles()).toEqual(['Work'])
     expect(radios()[2]!.style.paddingInlineStart).toBe('48px')
     expect(inputs()).toEqual([])
+    // The group is named by the header it stands under; each row by its title, its parent and
+    // its standing, so the indent's depth reaches a screen reader too.
+    expect(radiogroup()!.getAttribute('aria-label')).toBe('Folder')
+    expect(radios().map((r) => r.getAttribute('aria-label'))).toEqual([
+      'Mobile bookmarks',
+      'Work, in Mobile bookmarks, current folder',
+      'Specs, in Work',
+      'Home, in Mobile bookmarks',
+      'Other bookmarks'
+    ])
     // Nothing written by stepping in.
     expect(calls()).toEqual([])
   })
 
-  it('names a folder’s row Parent folder and lists neither the folder itself nor its descendants', async () => {
+  it('swaps its panes on the 120 ms --zen-ease state change, the pane naming the side it comes from – form going in, folder coming back – and cut, not re-declared, under reduced motion', async () => {
+    await show(stateOf(), { id: 'jira', parentId: 'work', type: 'url' })
+    const first = pane()!
+    expect(first.hasAttribute('data-from')).toBe(false)
+    act(() => folderRow()!.click())
+    await settle()
+    // A new element each swap, so the entrance plays again.
+    expect(pane()).not.toBe(first)
+    expect(pane()!.getAttribute('data-from')).toBe('form')
+    act(() => button('Back').click())
+    await settle()
+    expect(pane()!.getAttribute('data-from')).toBe('folder')
+    act(() => folderRow()!.click())
+    await settle()
+    expect(pane()!.getAttribute('data-from')).toBe('form')
+
+    // The sheet's motion: `data-from` starts the 120 ms `--zen-ease` entrance, the back swap on
+    // its own keyframes from the start edge; both `transform` and `opacity` alone (v2 §11), and
+    // nothing under `prefers-reduced-motion` – the global remover cuts it (§11.3).
+    const css = readFileSync(resolve(__dirname, '../phonePanels.css'), 'utf8')
+    expect(css).toMatch(
+      /\.zen-bookmark-edit-pane\[data-from\] \{\n\s+animation: zen-bookmark-edit-pane-in 120ms var\(--zen-ease\);\n\s+\}/
+    )
+    expect(css).toMatch(
+      /\.zen-bookmark-edit-pane\[data-from='folder'\] \{\n\s+animation-name: zen-bookmark-edit-pane-back;\n\s+\}/
+    )
+    for (const [name, from] of [
+      ['zen-bookmark-edit-pane-in', 'translateX(24px)'],
+      ['zen-bookmark-edit-pane-back', 'translateX(-24px)']
+    ]) {
+      const steps = css.match(new RegExp(`@keyframes ${name} \\{([^@]*?)\\n {2}\\}`))?.[1] ?? ''
+      expect(steps, name).toContain(`transform: ${from};`)
+      expect(
+        steps
+          .match(/^\s+([a-z-]+):/gm)
+          ?.map((m) => m.trim().slice(0, -1))
+          .sort()
+      ).toEqual(['opacity', 'opacity', 'transform', 'transform'])
+    }
+    expect(css).not.toMatch(/prefers-reduced-motion[^}]*zen-bookmark-edit-pane/s)
+  })
+
+  it('names a folder’s row Parent folder under the Edit folder title and lists neither the folder itself nor its descendants', async () => {
     await show(stateOf(), { id: 'work', parentId: MOBILE_BOOKMARKS_ID, type: 'folder' })
-    expect(sheetTitle()).toBe('Rename folder')
+    // Chrome 152's `IDS_EDIT_FOLDER` (android_chrome_strings.grd l.4628-4630): the sheet moves
+    // the folder as well as renaming it.
+    expect(sheetTitle()).toBe('Edit folder')
     const row = folderRow()!
     expect(row.textContent).toContain('Parent folder')
     expect(row.textContent).toContain('Mobile bookmarks')
+    expect(row.getAttribute('aria-label')).toBe('Parent folder, Mobile bookmarks')
     // A folder has no Address field: Name, the row, the footer.
     expect(inputs().length).toBe(1)
 
     act(() => row.click())
     await settle()
     expect(sheetTitle()).toBe('Parent folder')
+    expect(radiogroup()!.getAttribute('aria-label')).toBe('Parent folder')
     expect(rowTitles()).toEqual(['Mobile bookmarks', 'Home', 'Other bookmarks'])
     expect(checkedTitle()).toBe('Mobile bookmarks')
     expect(currentTitles()).toEqual(['Mobile bookmarks'])
+  })
+
+  it('says none of the strings the lead ruled out – Rename folder, Move to…, Location – anywhere in the editor or its pane', async () => {
+    const seen: string[] = []
+    const collect = (): void => {
+      seen.push(dialogs().textContent ?? '')
+      for (const el of dialogs().querySelectorAll('[aria-label], [placeholder]'))
+        seen.push(el.getAttribute('aria-label') ?? '', el.getAttribute('placeholder') ?? '')
+    }
+    await show(stateOf(), { id: 'work', parentId: MOBILE_BOOKMARKS_ID, type: 'folder' })
+    collect()
+    act(() => folderRow()!.click())
+    await settle()
+    collect()
+    act(() => button('New folder').click())
+    await settle()
+    await land()
+    collect()
+    for (const text of seen) {
+      expect(text).not.toContain('Rename folder')
+      expect(text).not.toContain('Move to')
+      expect(text).not.toContain('Location')
+    }
   })
 
   it('has no Folder row for a root, which cannot move', async () => {
@@ -405,6 +507,53 @@ describe("the bookmark editor's Folder row (HB-16)", () => {
       dispatchBackEvent('start', { edge: 'left' })
       dispatchBackEvent('commit')
     })
+    await settle()
+    await land()
+    expect(uiStore.get().bookmarkEdit).toBeNull()
+    expect(calls()).toEqual([])
+  })
+
+  it('takes Escape in the pane as the header’s Back too – the form back, the draft kept – and from the form as the sheet’s dismissal', async () => {
+    const escape = (): void => {
+      act(() => {
+        window.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+        )
+      })
+    }
+    await show(stateOf(), { id: 'jira', parentId: 'work', type: 'url' })
+    type(inputs()[0]!, 'Jira board')
+    act(() => folderRow()!.click())
+    await settle()
+    expect(sheetTitle()).toBe('Folder')
+    escape()
+    await settle()
+    await land()
+    expect(sheetTitle()).toBe('Edit bookmark')
+    expect(uiStore.get().bookmarkEdit).not.toBeNull()
+    expect(inputs()[0]!.value).toBe('Jira board')
+    expect(calls()).toEqual([])
+
+    // With the naming sheet over the pane, Escape is that sheet's: the pane stays.
+    act(() => folderRow()!.click())
+    await settle()
+    act(() => button('New folder').click())
+    await settle()
+    await land()
+    escape()
+    await settle()
+    await land()
+    expect(sheetTitle()).toBe('Folder')
+    expect([...dialogs().querySelectorAll('.zen-sheet-title')].map((t) => t.textContent)).toEqual([
+      'Folder'
+    ])
+
+    // From the form, the sheet's own Escape: its dismissal.
+    escape()
+    await settle()
+    await land()
+    expect(sheetTitle()).toBe('Edit bookmark')
+    escape()
     await settle()
     await land()
     expect(uiStore.get().bookmarkEdit).toBeNull()
@@ -531,5 +680,91 @@ describe("the bookmark editor's Save with a picked folder (HB-16)", () => {
     act(() => button('Save').click())
     await land()
     expect(of('bookmark.move')).toEqual([{ ids: ['jira'], parentId: 'made' }])
+  })
+
+  it('stands the pick on the created folder in the tick before the state carries it – the row reading its title, Save moving into it', async () => {
+    await show(stateOf(), { id: 'jira', parentId: 'work', type: 'url' })
+    act(() => folderRow()!.click())
+    await settle()
+    act(() => button('New folder').click())
+    await settle()
+    await land()
+    created = folder('made', 'work', 2, 'Reads')
+    type(inputs()[0]!, 'Reads')
+    act(() => button('Create').click())
+    await land()
+    expect(of('bookmark.create')).toEqual([{ parentId: 'work', title: 'Reads', type: 'folder' }])
+    // `bookmark.create` has answered; no state carries the folder yet. The form is back on the
+    // created folder, not the one the bookmark stands in.
+    expect(sheetTitle()).toBe('Edit bookmark')
+    expect(folderRow()!.textContent).toContain('Reads')
+    expect(folderRow()!.getAttribute('aria-label')).toBe('Folder, Reads')
+    // Stepping in before the state arrives: the created folder is not among the rows, so none
+    // is checked and New folder waits; Back keeps the pick.
+    act(() => folderRow()!.click())
+    await settle()
+    expect(checkedTitle()).toBeNull()
+    expect(button('New folder').disabled).toBe(true)
+    act(() => button('Back').click())
+    await settle()
+    expect(folderRow()!.textContent).toContain('Reads')
+    act(() => button('Save').click())
+    await land()
+    expect(calls()).toEqual(['bookmark.create', 'bookmark.update', 'bookmark.move'])
+    expect(of('bookmark.move')).toEqual([{ ids: ['jira'], parentId: 'made' }])
+  })
+
+  it('falls back to the folder the bookmark stands in when the picked one has gone from the tree – that folder checked again, Save moving nowhere', async () => {
+    await show(stateOf(), { id: 'jira', parentId: 'work', type: 'url' })
+    act(() => folderRow()!.click())
+    await settle()
+    act(() =>
+      radios()
+        .find((r) => radioTitle(r) === 'Home')!
+        .click()
+    )
+    await settle()
+    expect(folderRow()!.textContent).toContain('Home')
+    // Home is deleted elsewhere: the state arrives without it.
+    const state = stateOf(profile().filter((n) => n.id !== 'home'))
+    act(() => browserStore.set({ state }))
+    render(state, { id: 'jira', parentId: 'work', type: 'url' })
+    await settle()
+    expect(folderRow()!.textContent).toContain('Work')
+    expect(folderRow()!.textContent).not.toContain('Home')
+    act(() => folderRow()!.click())
+    await settle()
+    expect(rowTitles()).toEqual(['Mobile bookmarks', 'Work', 'Specs', 'Other bookmarks'])
+    expect(checkedTitle()).toBe('Work')
+    expect(currentTitles()).toEqual(['Work'])
+    expect(button('New folder').disabled).toBe(false)
+    act(() => button('Back').click())
+    await settle()
+    act(() => button('Save').click())
+    await land()
+    expect(calls()).toEqual(['bookmark.update'])
+  })
+
+  it('checks nothing and holds New folder when the folder the request names is not one the pane lists – a new bookmark into the empty Bookmarks bar', async () => {
+    await show(stateOf(), { id: null, parentId: BOOKMARKS_BAR_ID, type: 'url' })
+    expect(folderRow()!.textContent).toContain('Bookmarks bar')
+    act(() => folderRow()!.click())
+    await settle()
+    // The empty, non-default root is not among the rows (`topLevelRoots`): no row is checked,
+    // and New folder – which creates inside the checked folder – waits for a pick.
+    expect(rowTitles()).toEqual(['Mobile bookmarks', 'Work', 'Specs', 'Home', 'Other bookmarks'])
+    expect(checkedTitle()).toBeNull()
+    expect(currentTitles()).toEqual([])
+    expect(button('New folder').disabled).toBe(true)
+    act(() =>
+      radios()
+        .find((r) => radioTitle(r) === 'Home')!
+        .click()
+    )
+    await settle()
+    act(() => folderRow()!.click())
+    await settle()
+    expect(checkedTitle()).toBe('Home')
+    expect(button('New folder').disabled).toBe(false)
   })
 })
