@@ -64,19 +64,6 @@ on:
         required: false
         type: number
         default: 150
-  # TEMPORARY, on cursor/android-tablet-newtab-page-9271 alone (removed in a `.github`-only commit
-  # once the run is read): #563's gate – the tablet's served new tab page with mitigation (1)'s two
-  # halves (READY not waiting for the served page's placement; the host holding that placement to
-  # the frame after READY) – on the pixel_tablet chassis at the tablet demos' display, the profile
-  # seeded past its first run on both arms (the root's ruling of 27 Sep on the recipe: the install's
-  # own profile boots every start into the tour, blind to the first tab's path), the base pinned to
-  # the main this head contains (aea763e73, v0.5.6), where a dispatch is refused to the agent's
-  # token. The push path takes the tablet's values below; a dispatch's are the inputs', unchanged.
-  # A push that touches the demo workflow's file alone (the demo's second sample) does not refire
-  # or cancel this pair.
-  push:
-    branches: [cursor/android-tablet-newtab-page-9271]
-    paths-ignore: ['.github/workflows/android-tablet-newtab-demo.yml']
 
 permissions:
   contents: read
@@ -94,20 +81,20 @@ jobs:
       api-level: ${{ inputs.api-level || '34' }}
       # The chassis: the phone's unless the caller asks for the tablet's (a change the tablet's
       # boot pays and the phone's does not – its served new tab page).
-      profile: ${{ github.event_name == 'push' && 'pixel_tablet' || inputs.profile || 'pixel_6' }}
+      profile: ${{ inputs.profile || 'pixel_6' }}
       # The base APK: the base ref in a worktree, its web build, then assembleDebug -PskipWeb as the
       # head's own step ran it. The labels are the two commits, for the table.
       # The display follows the chassis, the demos' way (DEMO_DISPLAY): the tablet's 1280 x 800 dp at
       # one px per dp on pixel_tablet – under the phone's 720x1600@280 a tablet AVD boots the PHONE
       # chrome, 411 dp wide – the phone's Pixel 6 layout otherwise. The seed is the caller's opt-in
-      # (the push path's gate seeds; main's pairs do not).
+      # (main's pairs do not seed).
       script-env: |
-        P0_BASE_REF=${{ github.event_name == 'push' && 'aea763e7310f2ca8daa6e5b27e6e52b0278bbddb' || inputs.base-ref || 'main' }}
+        P0_BASE_REF=${{ inputs.base-ref || 'main' }}
         P0_BASE_APK=artifacts/cold-start-base/app-base.apk
         P0_RUNS=${{ inputs.runs || 15 }}
         P0_STARTS=${{ inputs.starts || 2 }}
-        P0_SEED_ONBOARDING=${{ (github.event_name == 'push' || inputs.seed-onboarding) && '1' || '0' }}
-        DEMO_DISPLAY=${{ (github.event_name == 'push' || inputs.profile == 'pixel_tablet') && '1280x800@160' || '720x1600@280' }}
+        P0_SEED_ONBOARDING=${{ inputs.seed-onboarding && '1' || '0' }}
+        DEMO_DISPLAY=${{ inputs.profile == 'pixel_tablet' && '1280x800@160' || '720x1600@280' }}
         DEMO_OUT=artifacts/android-cold-start-pair
       setup-script: |
         set -euo pipefail
