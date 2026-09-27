@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The search widget's pill on Android 12+ (WID-03): the fill alone, fully rounded at its 48 dp
+     height – no hairline, as Chrome's pill has none (search_widget_template.xml:20,24: one tinted
+     rounded box, no stroke), a form the lead's read confirmed for the dynamic face. The fill is the
+     system's colorSurfaceContainerHigh at Chrome's 0.9 over the wallpaper
+     (res/color-v31/widget_search_fill.xml and its night / v34 pairs). Below API 31 the base
+     drawable keeps the v2 border. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/widget_search_fill" />
+    <corners android:radius="24dp" />
+</shape>
