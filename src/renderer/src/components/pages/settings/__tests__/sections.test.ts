@@ -7173,7 +7173,10 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
       label: 'Theme',
       description: 'Default · Personal space',
       layouts: ['desktop', 'tablet'],
-      button: 'Change…'
+      button: 'Change…',
+      // The button hangs the `theme` overlay from itself (round C): the row's view draws it as
+      // the popover's anchor – aria-haspopup="dialog", aria-expanded while the picker hangs.
+      popover: 'theme'
     })
     if (theme.kind !== 'action') throw new Error('not an action row')
     // The desktop button passes itself (`anchorOf`, lib/anchor.ts); the picker opens for the
@@ -7209,6 +7212,8 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
       button: 'Reset to default'
     })
     if (theme.kind !== 'action') throw new Error('not an action row')
+    // Reset to default hangs nothing: no popover, so the view draws the plain button.
+    expect(theme.popover).toBeUndefined()
     theme.onPress?.()
     expect(invoke).toHaveBeenCalledWith('space.update', {
       spaceId: 'space',
