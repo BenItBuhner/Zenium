@@ -20,8 +20,8 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.SystemClock
-import android.util.Log
 import android.provider.MediaStore
+import android.util.Log
 import android.util.Rational
 import android.view.Gravity
 import android.view.MotionEvent
@@ -130,6 +130,12 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
      * the page under the status bar strip; out of it the custom tab's toolbar with its X is up.
      */
     private var appMode = false
+    /**
+     * The toolbar is up and pinned (Chrome's `BrowserControlsState.SHOWN`, [TwaScope.controls]):
+     * a page in the TWA badged "Not secure" keeps its controls whatever a scroll does. Never set
+     * on a plain custom tab.
+     */
+    private var toolbarPinned = false
     /** The TWA's first document is still loading: its failures are the start page's ([twaQuality]). */
     private var twaStartPage = true
 
@@ -347,7 +353,7 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
     private fun onPageScrolled(y: Int) {
         val dy = y - lastScrollY
         lastScrollY = y
-        if (findBar != null || host.fullscreenTab != null || toolbarAnimating || appMode) return
+        if (findBar != null || host.fullscreenTab != null || toolbarAnimating || appMode || toolbarPinned) return
         if (y <= 0) {
             scrolledSinceTurn = 0
             showToolbar()
@@ -407,15 +413,25 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
     private fun onTwaVerdict(origin: String, verification: TwaScope.Verification) {
         val verifier = twa ?: return
         val url = currentUrl.ifEmpty { config.url }
+        // The start page's origin failing is a start-page fact whatever its load state (the
+        // verdict may land after the page finished loading), so it bypasses twaQuality's gate.
         if (verification == TwaScope.Verification.FAILED && TwaScope.origin(config.url) == origin) {
-            twaQuality(url, "is not the client's: the Digital Asset Links check of $origin failed")
+            Log.i(TWA_TAG, "Trusted Web Activity: the start page ${config.url} is not the client's: the Digital Asset Links check of $origin failed")
         }
         setTwaState(TwaScope.stateFor(url, config.trustedOrigins.orEmpty(), verifier.verdicts, twaState), url)
     }
 
+    /**
+     * The state and, from it, the toolbar's constraint ([TwaScope.controls]): gone for app mode,
+     * pinned up on a "Not secure" page – brought back if a scroll had hidden it – or the custom
+     * tab's own scroll-hide.
+     */
     private fun setTwaState(state: TwaScope.Verification?, url: String) {
         twaState = state
-        setAppMode(!TwaScope.toolbarShown(state, url))
+        val controls = TwaScope.controls(state, url)
+        toolbarPinned = controls == TwaScope.Controls.SHOWN
+        setAppMode(controls == TwaScope.Controls.HIDDEN)
+        if (toolbarPinned && !toolbarShown) showToolbar()
     }
 
     /**
@@ -438,15 +454,26 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
         toolbarShown = true
         toolbarAnimating = false
         scrolledSinceTurn = 0
-        toolbar.visibility = if (on) View.GONE else View.VISIBLE
+        applyToolbarVisibility()
         layoutPage()
     }
 
+    /** The toolbar view's visibility from the one rule the mode and the minimized card share ([CustomTabMinimize.toolbarVisibility]). */
+    private fun applyToolbarVisibility() {
+        toolbar.visibility = when (CustomTabMinimize.toolbarVisibility(minimized, appMode)) {
+            CustomTabMinimize.Visibility.VISIBLE -> View.VISIBLE
+            CustomTabMinimize.Visibility.INVISIBLE -> View.INVISIBLE
+            CustomTabMinimize.Visibility.GONE -> View.GONE
+        }
+    }
+
     /**
-     * A quality violation of the TWA's start page – it failed to load (offline), answered a 404
-     * or a 5xx, or its origin failed the Digital Asset Links check – named in the log, which is
-     * all Chrome 152 does: its `QualityEnforcer` and the `quality_enforcement` callback went in
-     * M115. The user sees what the page shows: WebView's error page, or the server's own body.
+     * A quality violation of the TWA's start page while it loads – it failed to load (offline) or
+     * answered a 404 or a 5xx – named in the log, which is all Chrome 152 does: its
+     * `QualityEnforcer` and the `quality_enforcement` callback went in M115. The user sees what
+     * the page shows: WebView's error page, or the server's own body. The start page's origin
+     * failing its Digital Asset Links check is named by [onTwaVerdict] directly, whatever the
+     * load state when the verdict lands.
      */
     private fun twaQuality(url: String?, what: String) {
         if (twa == null || !twaStartPage) return
@@ -564,17 +591,18 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
         card.show(CustomTabMinimize.card(page?.title, currentUrl.ifEmpty { config.url }), page?.favicon)
         if (card.parent == null) shell.addView(card, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         pageContainer.visibility = View.INVISIBLE
-        toolbar.visibility = View.INVISIBLE
+        applyToolbarVisibility()
         statusStrip.visibility = View.INVISIBLE
         bottomBar.visibility = View.GONE
         divider?.visibility = View.GONE
         page?.onPause()
     }
 
+    /** The card lifts; the toolbar returns only out of app mode – a TWA that committed into its scope meanwhile keeps it gone. */
     private fun hideMinimizedCard() {
         minimizedCard?.let(shell::removeView)
         pageContainer.visibility = View.VISIBLE
-        toolbar.visibility = View.VISIBLE
+        applyToolbarVisibility()
         statusStrip.visibility = View.VISIBLE
         bottomBar.visibility = if (bottomBar.hasContent && !keyboardUp) View.VISIBLE else View.GONE
         page?.onResume()

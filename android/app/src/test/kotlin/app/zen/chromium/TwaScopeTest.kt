@@ -133,6 +133,30 @@ class TwaScopeTest {
     }
 
     @Test
+    fun aNotSecurePagePinsTheToolbarWhateverTheState() {
+        // Chrome's computeBrowserControlsState: SHOWN for a DANGEROUS or WARNING page, not BOTH –
+        // the toolbar a not-secure page forces up does not ride the scroll away.
+        assertEquals(TwaScope.Controls.SHOWN, TwaScope.controls(Verification.VERIFIED, "http://app.example/"))
+        assertEquals(TwaScope.Controls.SHOWN, TwaScope.controls(Verification.PENDING, "http://app.example/"))
+        assertEquals(TwaScope.Controls.SHOWN, TwaScope.controls(Verification.FAILED, "http://app.example/"))
+        assertEquals(TwaScope.Controls.SHOWN, TwaScope.controls(null, "data:text/html,x"))
+        // App mode hides the controls; out of it the custom tab's scroll-hide is back.
+        assertEquals(TwaScope.Controls.HIDDEN, TwaScope.controls(Verification.VERIFIED, "https://app.example/"))
+        assertEquals(TwaScope.Controls.HIDDEN, TwaScope.controls(Verification.PENDING, "https://app.example/"))
+        assertEquals(TwaScope.Controls.HIDDEN, TwaScope.controls(null, "https://app.example/"))
+        assertEquals(TwaScope.Controls.HIDDEN, TwaScope.controls(Verification.VERIFIED, "http://localhost:8080/"))
+        assertEquals(TwaScope.Controls.BOTH, TwaScope.controls(Verification.FAILED, "https://other.example/"))
+        assertEquals(TwaScope.Controls.BOTH, TwaScope.controls(Verification.FAILED, "http://localhost:8080/"))
+        assertEquals(TwaScope.Controls.BOTH, TwaScope.controls(Verification.FAILED, "about:blank"))
+        // toolbarShown is the same rule read as a bit: everything but HIDDEN.
+        for (state in listOf(null, Verification.PENDING, Verification.VERIFIED, Verification.FAILED)) {
+            for (url in listOf("https://app.example/", "http://app.example/", "http://localhost/", "data:text/html,x", "about:blank")) {
+                assertEquals("$state $url", TwaScope.controls(state, url) != TwaScope.Controls.HIDDEN, TwaScope.toolbarShown(state, url))
+            }
+        }
+    }
+
+    @Test
     fun aRedirectChainIsJudgedByWhereEachHopCommits() {
         val verdicts = mapOf(app to Verification.VERIFIED)
         var state: Verification? = null

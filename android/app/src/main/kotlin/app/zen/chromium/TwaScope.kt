@@ -3,8 +3,8 @@ package app.zen.chromium
 /**
  * The scope rules of a Trusted Web Activity (CCT-20), pure so they have a JVM test. A custom tab
  * launched with `EXTRA_LAUNCH_AS_TRUSTED_WEB_ACTIVITY` names the origins its client claims: the
- * launch URL's and `EXTRA_ADDITIONAL_TRUSTED_ORIGINS`. Each is verified once against the site's
- * Digital Asset Links statement ([TwaVerifier]); every committed navigation is then judged by its
+ * launch URL's and `EXTRA_ADDITIONAL_TRUSTED_ORIGINS`. Each is verified at every launch against
+ * the site's Digital Asset Links statement ([TwaVerifier]); every committed navigation is judged by its
  * origin alone, as Chrome 152's `CurrentPageVerifier.verify` (`CurrentPageVerifier.java:118-132`)
  * judges it through `TwaVerifier.verify` (`TwaVerifier.java:70-92`): a claimed origin is pending
  * until its verdict lands, any other origin counts only if it was verified before, and a URL with
@@ -79,10 +79,26 @@ object TwaScope {
     fun appMode(state: Verification?): Boolean = state != Verification.FAILED
 
     /**
-     * Whether the toolbar shows on [url]: out of app mode, or whatever the state on a page Chrome
-     * badges "Not secure" (the controls forced SHOWN for a DANGEROUS or WARNING level).
+     * What the toolbar may do on a page, Chrome's `BrowserControlsState`: gone for app mode
+     * ([HIDDEN]), up and pinned so no scroll takes it away ([SHOWN]), or the custom tab's own
+     * scroll-hide ([BOTH]).
      */
-    fun toolbarShown(state: Verification?, url: String?): Boolean = !appMode(state) || notSecure(url)
+    enum class Controls { HIDDEN, BOTH, SHOWN }
+
+    /**
+     * The toolbar's constraint on [url] in [state], Chrome's `computeBrowserControlsState`
+     * (`TrustedWebActivityBrowserControlsVisibilityManager.java:116-129`): on a page Chrome
+     * badges "Not secure" the controls are SHOWN whatever the state – up, and pinned there; in
+     * app mode HIDDEN; out of it BOTH, the toolbar riding the scroll as on any custom tab.
+     */
+    fun controls(state: Verification?, url: String?): Controls = when {
+        notSecure(url) -> Controls.SHOWN
+        appMode(state) -> Controls.HIDDEN
+        else -> Controls.BOTH
+    }
+
+    /** Whether the toolbar shows on [url]: every constraint but HIDDEN. */
+    fun toolbarShown(state: Verification?, url: String?): Boolean = controls(state, url) != Controls.HIDDEN
 
     /**
      * The pages Chrome's `security_state::GetSecurityLevel` puts at WARNING (`security_state.cc:
