@@ -350,15 +350,15 @@ export function NavRow({
   // – Home folded away (its Customise toolbar row says "Hidden at this width."; there is no
   // app-menu row for it, the lead's word on #572), the hub folded into the app menu's "Media
   // Controls…" row; each returns where the pill, with the button's own slot back in the row,
-  // still holds the box the star returned at (126 / 110: the 302 sidebar with the always-there
-  // buttons), so the pill reads the same on either side of the return. Home at the 240 sidebar
-  // had taken the pill from 96 to 64 and the Settings tab's title to "S…" (the FIRST LINE's F1
-  // on #572; §9.29, §10.1). The buttons each makes room against are the ones always in the row
-  // (back, forward, reload, ⋯), the puzzle piece while there are extensions and the downloads
-  // button while it is up – and the tiered controls standing ahead of it in the bar's order
-  // (below): Home seats first in the row and is the first back, so with Home and the hub pinned
-  // the hub returns one slot (32) after Home (the 334 sidebar). The compact column has no pill
-  // to keep, so there they all stay.
+  // still holds the box the star returned at (126 / 110: the 298 sidebar with the always-there
+  // buttons, the pill's `PILL_BLEED` counted), so the pill reads the same on either side of the
+  // return. Home at the 240 sidebar had taken the pill from 96 to 64 and the Settings tab's
+  // title to "S…" (the FIRST LINE's F1 on #572; §9.29, §10.1). The buttons each makes room
+  // against are the ones always in the row (back, forward, reload, ⋯), the puzzle piece while
+  // there are extensions and the downloads button while it is up – and the tiered controls
+  // standing ahead of it in the bar's order (below): Home seats first in the row and is the
+  // first back, so with Home and the hub pinned the hub returns one slot (32) after Home (the
+  // 330 sidebar). The compact column has no pill to keep, so there they all stay.
   const downloadsUp = downloadButtonVisible(state, downloadsUiState)
   const puzzleUp = actionable(state.extensions).length > 0
   // Forward folded by its pin leaves the fixed set (the tiers and the extensions' overflow count
@@ -374,8 +374,8 @@ export function NavRow({
   // governor says the mode is on and the control is pinned, ahead of the hub as Chrome's stands
   // ahead of its media button – and tiered by the row's width on the hub's one rule
   // (`energySaverLeafFits`, pr-584 L2): at the 240 sidebar it took the pill from "Settings" to
-  // "S…", so there it folds, unmounted like the hub's button, and returns at the 302 sidebar
-  // (the 286 row with the four always-there buttons; 32 more a button for the puzzle piece and
+  // "S…", so there it folds, unmounted like the hub's button, and returns at the 298 sidebar
+  // (the 282 row with the four always-there buttons; 32 more a button for the puzzle piece and
   // the downloads button, and for Home while its own tier has it up). The leaf counts the row's
   // other buttons and Home, not the hub, while the hub counts the leaf: where the row has room
   // for one of the two, the leaf stands and the hub folds to its menu row – the leaf has no fold
@@ -389,7 +389,8 @@ export function NavRow({
     (compact || mediaHubButtonFits(rowWidth, otherButtons + (homeUp ? 1 : 0) + (saverUp ? 1 : 0)))
   // The hub's toolbar button off the row (§9.29's fold): the ⋯ button then wears the hub's dot.
   // Decided here, from the same width the button is mounted by, so the dot and the button move
-  // in one commit as the sidebar crosses 270 ↔ 240 – never both in a frame, never neither.
+  // in one commit as the sidebar crosses the button's return – never both in a frame, never
+  // neither.
   const mediaFolded = mediaHubFoldedAt(state, hubUp)
   // An update downloaded and waiting (shortcuts-menus-101): the menu opens on its "Update
   // Zenium" row and ⋯ wears the dot for it – Chrome's dot on its ⋮ – over the hub's while
@@ -682,7 +683,7 @@ export function NavRow({
           Chrome's Home button (settings-32; `HomeButton`, seated after Reload and before the
           location bar), shown by Appearance's "Show home button" – the `home` pin – where the
           row's width tier has room for it (`homeUp`: §9.29's hub-button rule; at the 240 sidebar
-          it is folded, back at 302 with the always-there buttons), and running `nav.home`, the
+          it is folded, back at 298 with the always-there buttons), and running `nav.home`, the
           one Home with Alt+Home and the menu bar's row: the home page set under Appearance (a
           page of the user's or the new tab page). Chrome's names: the accessible name "Home",
           the tooltip "Open the home page" – each carrying the chord, as the row's names and
@@ -720,9 +721,14 @@ export function NavRow({
           // A window surface's fill (§9.29: `--v2-window-fill`, its hover through the control
           // roles the row's `data-surface` resolves), 32 tall at Zen's medium radius, 8 of
           // padding each side (`PILL_PADDING`: the content box the chip tier and the container
-          // queries read).
+          // queries read). It fills its slot in the row, 2 into the gap either side
+          // (`-mx-0.5`, `PILL_BLEED`): the row's `gap-1` is the buttons' 2 px outer paddings
+          // meeting (§5's 32 pitch), and the pill's slot runs to the neighbours' boxes, so at
+          // the 240 sidebar it is §9.29's 100 (102–202, content 84, the address 58 beside the
+          // site icon) with Back, Forward, Reload and ⋯ on the same 32 slots as before
+          // (8–36, 40–68, 72–100, 204–232). The tablet's toolbar keeps its own margin.
           className={cn(
-            'zen-squircle zen-pill group/pill relative flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-[10px] bg-[var(--v2-control-fill)] px-2 text-left',
+            'zen-squircle zen-pill group/pill relative -mx-0.5 flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-[10px] bg-[var(--v2-control-fill)] px-2 text-left',
             !readOnly && 'hover:bg-[var(--v2-control-fill-hover)]'
           )}
           // The tooltip (lib/tooltip.ts; the chips inside carry their own) carries the whole

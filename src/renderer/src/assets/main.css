@@ -6170,12 +6170,13 @@
  * else, as the phone pill is (v2 §10.1); the site icon keeps the favicon slot, and the blocked
  * pop-ups chip stays, a notice rather than a tool (#62). The queries read
  * the pill's content box, 16 px inside its border box (`px-2`, `PILL_PADDING`): 110 here is the
- * 270 px sidebar's pill – §9.29's "130 px pill", 126 wide now that the row's buttons sit 4
- * apart (§5). At the default sidebar width the pill's content box is 80 (the 100 px pill of
- * §9.29's arithmetic), and the star's 26 px are what "Settings" (48 px) is short of. 110: with
- * the star the field would keep under 58 px, which no host fits, and the shortest internal
- * address (`zenium://settings`, 102 px) still needs a 129 px content box without the star, so a
- * sidebar dragged wider never trades the address for the title and back.
+ * 266 px sidebar's pill – §9.29's "130 px pill", 126 wide with the row's buttons 4 apart (§5)
+ * and the pill filling its slot (`PILL_BLEED`, the `-mx-0.5` on it). At the default sidebar
+ * width the pill is §9.29's 100 and its content box 84, the address 58 beside the site icon;
+ * with the star it would keep 32, which no host fits. 110: with the star the field would keep
+ * 58 px, under the shortest internal address (`zenium://settings`, ~106 px at the address's
+ * 13 px), which still needs a ~132 px content box without the star, so a sidebar dragged wider
+ * never trades the address for the title and back.
  */
 @container (width < 110px) {
   .zen-pill-chip {

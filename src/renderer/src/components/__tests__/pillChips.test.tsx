@@ -1521,9 +1521,9 @@ describe('desktop pill (NavRow)', () => {
   /*
    * The pill yields its chips to the address as it narrows, in tiers of a container query on
    * `.zen-pill` (main.css; content-box widths, 16 px inside the pill): the hover-only chips under
-   * 170, the "Not secure" label under 220, and under 110 – the 270 sidebar's 126 px pill – every
+   * 170, the "Not secure" label under 220, and under 110 – the 266 sidebar's 126 px pill – every
    * tool after the address (the star, zoom, Reader View, Translate, Boost, Copy), so a pill at
-   * the default sidebar width (96 px, content 80) is the address, or one of Zenium's pages' name,
+   * the default sidebar width (100 px, content 84; W8-F7's `PILL_BLEED`) is the address, or one of Zenium's pages' name,
    * and the site icon (v2 §10.1's favicon slot). The blocked pop-ups chip is the one chip after the address that stays: a
    * notice, not a tool, and the only word of a pop-up the page tried to open (#62). happy-dom
    * evaluates no container query, so the markers and the rule are pinned here; the widths are
@@ -2335,14 +2335,15 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
             .filter((l) => l !== '')
         )
       const utilities = ['Copy URL', 'Share this page', 'Boost this site']
-      // The 520 sidebar: pill 376, content box 360.
-      act(() => emit!(360))
+      // The 520 sidebar: pill 380, content box 364 (the pill fills its slot, `PILL_BLEED`); the
+      // sweep runs from there to the 240 sidebar's 84.
+      act(() => emit!(364))
       let previous = mounted()
       for (const u of utilities) expect(previous.has(u)).toBe(true)
       expect(el.querySelector('[data-install-chip] .zen-pill-label')).not.toBeNull()
       let wordFolded = false
       const lastSeen = new Map<string, number>()
-      for (let innerWidth = 360; innerWidth >= 80; innerWidth -= 1) {
+      for (let innerWidth = 364; innerWidth >= 84; innerWidth -= 1) {
         act(() => emit!(innerWidth))
         const now = mounted()
         for (const id of now) {
@@ -2367,7 +2368,7 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
       expect(lastSeen.get('Translate this page')).toBe(160)
       expect(lastSeen.get('Install Example App')).toBe(134)
       expect(lastSeen.get('Bookmark this tab')).toBe(108)
-      expect(lastSeen.get('Site information')).toBe(80)
+      expect(lastSeen.get('Site information')).toBe(84)
     } finally {
       window.ResizeObserver = Native
     }

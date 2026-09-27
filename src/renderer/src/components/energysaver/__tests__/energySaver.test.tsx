@@ -141,26 +141,27 @@ describe('the leaf’s reading of the snapshot (lib/energySaver)', () => {
     expect(energySaverLeafUp(stateWith({ energySaver: false }), {})).toBe(false)
   })
 
-  it('tiers the leaf by the row’s width on the hub’s one rule: folded at the 240 sidebar, back at the 302 with the always-there buttons, 32 more a button (L2)', () => {
+  it('tiers the leaf by the row’s width on the hub’s one rule: folded at the 240 sidebar, back at the 298 with the always-there buttons, 32 more a button (L2)', () => {
     // The 240 sidebar's row (its two 8 gutters aside) with back, forward, reload and ⋯: no room.
     expect(energySaverLeafFits(240 - 16, 4)).toBe(false)
-    // The 302 sidebar: the 286 row is the pill's 126 plus five 32 slots – the leaf returns there,
-    // over a pill that still holds the 110 box the star and the tools return at.
-    expect(mediaHubReturnRow(4)).toBe(286)
-    expect(energySaverLeafFits(285, 4)).toBe(false)
-    expect(energySaverLeafFits(286, 4)).toBe(true)
+    // The 298 sidebar: the 282 row is the pill's 126 – less the 4 it takes of its neighbours'
+    // slots (`PILL_BLEED`, W8-F7) – plus five 32 slots; the leaf returns there, over a pill that
+    // still holds the 110 box the star and the tools return at.
+    expect(mediaHubReturnRow(4)).toBe(282)
+    expect(energySaverLeafFits(281, 4)).toBe(false)
+    expect(energySaverLeafFits(282, 4)).toBe(true)
     // A fifth button beside it (the puzzle piece, the downloads button) moves the return by 32.
-    expect(energySaverLeafFits(286, 5)).toBe(false)
-    expect(energySaverLeafFits(318, 5)).toBe(true)
+    expect(energySaverLeafFits(282, 5)).toBe(false)
+    expect(energySaverLeafFits(314, 5)).toBe(true)
     // The same floor as the hub's, in both directions, so the two buttons never disagree on
     // what the pill needs; an unmeasured row shows the leaf as it shows the hub's button.
     for (const [width, others] of [
       [0, 4],
       [224, 4],
-      [285, 4],
-      [286, 4],
-      [317, 5],
-      [318, 5],
+      [281, 4],
+      [282, 4],
+      [313, 5],
+      [314, 5],
       [400, 6]
     ]) {
       expect(energySaverLeafFits(width, others)).toBe(mediaHubButtonFits(width, others))
