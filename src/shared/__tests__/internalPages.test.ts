@@ -49,12 +49,15 @@ describe('the page registry', () => {
     // its "Import bookmarks and settings" (ID-23), Accessibility, Keyboard Shortcuts, Default
     // Browser (the desktop platforms alone), Updates, System (Chrome's System page: the computer's
     // proxy settings, the desktop platforms alone), Reset Settings (Chrome's foot of the list,
-    // the desktop and tablet shells'; settings-70); About past the second.
+    // the desktop and tablet shells'; settings-70); About past the second. Performance (Memory
+    // Saver and Energy Saver, the desktop and tablet shells'; W8-2) sits right after Tab
+    // Management, whose desktop Tab unloading rows it took over.
     expect(SETTINGS_SECTIONS.map((s) => s.id)).toEqual([
       'look',
       'compact',
       'newtab',
       'tabs',
+      'performance',
       'downloads',
       'resources',
       'search',
@@ -95,6 +98,25 @@ describe('the page registry', () => {
       'reset'
     )
     expect(matchSections(SETTINGS_SECTIONS, 'restore defaults').map((s) => s.id)).toEqual(['reset'])
+  })
+
+  it('keeps Performance to the desktop and tablet shells, right after Tab Management (W8-2)', () => {
+    const performance = SETTINGS_SECTIONS.find((s) => s.id === 'performance')!
+    expect(performance).toMatchObject({ label: 'Performance', layouts: ['desktop', 'tablet'] })
+    expect(performance.requires).toBeUndefined()
+    expect(performance.platforms).toBeUndefined()
+    for (const layout of ['desktop', 'tablet'] as const) {
+      const ids = availableSections(INTERNAL_PAGES.settings, ALL, layout).map((s) => s.id)
+      expect(ids.indexOf('performance')).toBe(ids.indexOf('tabs') + 1)
+    }
+    // The phone keeps Edge's sleeping-tabs ladder inside Tab Management (CT-22); no seat here.
+    expect(availableSections(INTERNAL_PAGES.settings, ALL, 'phone').map((s) => s.id)).not.toContain(
+      'performance'
+    )
+    // Chrome's two names and the governor's words all land on it.
+    for (const q of ['memory saver', 'energy saver', 'battery', 'inactive tabs']) {
+      expect(matchSections(SETTINGS_SECTIONS, q).map((s) => s.id)).toContain('performance')
+    }
   })
 
   it('keeps section ids URL safe and unique', () => {

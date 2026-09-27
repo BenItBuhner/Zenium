@@ -2,6 +2,7 @@ import React, { type JSX } from 'react'
 import { App } from './App'
 import { DefaultBrowserLayer } from './components/defaultbrowser/DefaultBrowserPrompt'
 import { DownloadBubbleLayer } from './components/downloads/DownloadBubble'
+import { EnergySaverBubbleLayer } from './components/energysaver/EnergySaverBubble'
 import { MediaHubLayer } from './components/media/MediaHubPopover'
 import { MenuSheet } from './components/menus/MenuSheet'
 import { NewTabCustomizeLayer } from './components/newtab/CustomizeSheet'
@@ -41,6 +42,7 @@ export function Root(): JSX.Element {
       <ExtensionsSheetLayer />
       <SendTabSheetLayer />
       <DownloadBubbleLayer />
+      <EnergySaverBubbleLayer />
       <MediaHubLayer />
       <MenuLayer />
       <ExternalProtocolLayer />

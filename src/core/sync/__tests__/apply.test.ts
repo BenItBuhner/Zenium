@@ -235,6 +235,30 @@ describe('applyRemote: the settings record and the new tab page', () => {
     expect(b.state.settings.sidebarWidth).toBe(321)
   })
 
+  it("a peer's Memory Saver mode and timer and its Energy Saver mode never land – an older build still sends them – while the keep-active hosts and the rest apply (W8-2)", () => {
+    const b = browser()
+    // This laptop: Memory Saver at Balanced, Energy Saver at the threshold. The peer – a phone
+    // on a build from before the keys were device-local, or a tower – sends its own values.
+    b.state.settings.unloadEnabled = true
+    b.state.settings.unloadTimeoutMinutes = 240
+    b.state.settings.energySaver = 'low-battery'
+    applyRemote(b, [
+      settingsRecord({
+        ...b.state.settings,
+        unloadEnabled: false,
+        unloadTimeoutMinutes: 20,
+        energySaver: 'off',
+        unloadExcludedDomains: ['zen.test'],
+        colorScheme: 'dark'
+      })
+    ])
+    expect(b.state.settings.unloadEnabled).toBe(true)
+    expect(b.state.settings.unloadTimeoutMinutes).toBe(240)
+    expect(b.state.settings.energySaver).toBe('low-battery')
+    expect(b.state.settings.unloadExcludedDomains).toEqual(['zen.test'])
+    expect(b.state.settings.colorScheme).toBe('dark')
+  })
+
   it("a v6 device that turned Expand on hover off stays off when a peer's record applies (W5-F3)", () => {
     // The profile as a v6 build wrote it after the user turned the row off: a choice.
     const profile = {
