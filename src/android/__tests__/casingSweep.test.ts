@@ -18,13 +18,27 @@ import { describe, expect, it } from 'vitest'
 
 const repo = fileURLToPath(new URL('../../../', import.meta.url))
 
-/** The Android-owned roots and files the sweep reads (directories walked, tests left out). */
+/**
+ * The Android-owned roots and files the sweep reads (directories walked, tests left out). The
+ * sheets outside `components/phone` are here by their gates: each is mounted for every host by
+ * `Root.tsx` or `ContentArea.tsx` but drawn only where the desktop's `HostCapabilities`
+ * (`src/main/platform/index.ts`) say no – `voiceSearch: false`, `sharePanel: false`,
+ * `pdfViewer: false` – or where the desktop has no host at all (no `ExternalProtocolHost` under
+ * `src/main`; the phone's new tab page alone carries the customise gear). `menus/MenuSheet.tsx`
+ * is NOT here: the desktop's "⋯" app menu is drawn by the renderer through the same
+ * `RendererMenuHost` (`src/main/platform/menus.ts`), so its words are desktop-shared.
+ */
 const SWEPT = [
   'src/android',
   'src/renderer/src/components/phone',
   'src/renderer/src/components/tablet',
   'src/renderer/src/components/overlays/PhoneOnboarding.tsx',
   'src/renderer/src/components/overlays/PhoneSearchChoice.tsx',
+  'src/renderer/src/components/voice/VoiceSearchSheet.tsx',
+  'src/renderer/src/components/share/SharePanelSheet.tsx',
+  'src/renderer/src/components/protocol/ExternalProtocolSheet.tsx',
+  'src/renderer/src/components/pdf/PdfSheets.tsx',
+  'src/renderer/src/components/newtab/CustomizeSheet.tsx',
   'android/app/src/main/res/values/strings.xml',
   'android/app/src/main/kotlin'
 ]
@@ -72,7 +86,12 @@ const JSX_TEXT = /^\s*[A-Za-z][^<>{}'"`=;()]*[a-z.!?…]\s*$/
 
 export function literalsOf(file: string, source: string): Literal[] {
   const out: Literal[] = []
-  const lines = source.split('\n')
+  // Block comments (`/* … */`, JSX's `{/* … */}`) blanked with their newlines kept: a continuation
+  // line of plain prose is not the user's (read as JSX text otherwise). A `/*` inside a string
+  // (`'http://*/*'`, `"image/*"`) follows a non-space character and is left alone.
+  const lines = source
+    .replace(/(?<=^|[\s{(,])\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ' '))
+    .split('\n')
   if (file.endsWith('.xml')) {
     lines.forEach((line, i) => {
       const m = /<string\b[^>]*>([^<]*)<\/string>/.exec(line)
@@ -98,8 +117,8 @@ export function literalsOf(file: string, source: string): Literal[] {
  */
 const SPACE_AS_PROSE = /(?<![\w.$\-{`'"/])spaces?(?![\w\-.[(?=:`'"/])/
 
-/** 'Split View' or 'Split view' anywhere but as the literal's first words. */
-const SPLIT_VIEW_CAPITALISED = /(?<!^)(?<=\S.*)\bSplit [Vv]iew\b/
+/** 'Split View' or 'Split view' anywhere but as the literal's first words; 'split View' anywhere. */
+const SPLIT_VIEW_CAPITALISED = /(?<!^)(?<=\S.*)\bSplit [Vv]iew\b|\bsplit View\b/
 
 export function strays(literals: Literal[]): string[] {
   const out: string[] = []
@@ -123,6 +142,9 @@ describe('the §9.1 casing sweep of the Android-owned strings (W6-S14)', () => {
   it('reads the swept files: the phone components, the tablet components, the Android chrome, the resources and the Kotlin', () => {
     const rel = files.map((f) => relative(repo, f).split('\\').join('/'))
     expect(rel).toContain('src/renderer/src/components/phone/SpacesDrawer.tsx')
+    expect(rel).toContain('src/renderer/src/components/voice/VoiceSearchSheet.tsx')
+    expect(rel).toContain('src/renderer/src/components/pdf/PdfSheets.tsx')
+    expect(rel).not.toContain('src/renderer/src/components/menus/MenuSheet.tsx')
     expect(rel).toContain('src/android/nativeTheme.ts')
     expect(rel).toContain('android/app/src/main/res/values/strings.xml')
     expect(rel.some((f) => f.startsWith('android/app/src/main/kotlin/') && f.endsWith('.kt'))).toBe(
@@ -160,6 +182,7 @@ describe('the §9.1 casing sweep of the Android-owned strings (W6-S14)', () => {
     expect(flag('const s = `${count} tabs in this space will be closed.`')).toHaveLength(1)
     expect(flag("toast('Toggle Split View grid')")).toHaveLength(1)
     expect(flag('data-tooltip="Open as Split view"')).toHaveLength(1)
+    expect(flag("tooltip('Open in split View')")).toHaveLength(1)
     expect(flag('aria-label="New Space"')).toEqual([])
     expect(flag("label: 'Jump to the next Space'")).toEqual([])
     expect(flag("title: 'Split view, pane 1 of 2'")).toEqual([])
@@ -171,6 +194,20 @@ describe('the §9.1 casing sweep of the Android-owned strings (W6-S14)', () => {
     expect(flag("'data-space-target'")).toEqual([])
     expect(flag('`.row{justify-content:space-between}`')).toEqual([])
     expect(flag("console.debug('[zen] the space is empty again')")).toEqual([])
+    // A JSX comment's continuation line of plain prose is not the user's; the same line alone is
+    // JSX text (the control: the blanking is what lets the comment through). A `/*` inside a
+    // string opens no comment, so the literal after it is still read.
+    const comment = [
+      '      {/* The loose rows are the list (lib/drag.ts): the rows are its children,',
+      '          and the empty space under the panel is its tail. With no rows',
+      '          there is no list (an empty one would take the gap). */}',
+      '      <Row label="Move to the next Space" />'
+    ]
+    expect(flag(comment.join('\n'))).toEqual([])
+    expect(flag(comment[1])).toHaveLength(1)
+    expect(
+      flag("const all = ['http://*/*', 'https://*/*']\nconst t = 'Open in a new space'")
+    ).toHaveLength(1)
     // Kotlin and the resources.
     const kt = join(repo, 'android/app/src/main/kotlin/app/zen/chromium/Host.kt')
     expect(strays(literalsOf(kt, 'toast("Moved to the new space")'))).toHaveLength(1)

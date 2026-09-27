@@ -63,8 +63,10 @@ describe('colour utilities', () => {
     expect(cssColorToHex('color(srgb none 0.5 1)')).toBe('#0080ffff')
     expect(cssColorToHex('color(srgb 1.2 -0.1 0.5 / none)')).toBe('#ff008000')
     expect(cssColorToHex('  COLOR(SRGB 0.1 0.2 0.3)  ')).toBe('#1a334dff')
-    // Another colour space is not a colour the host can paint.
+    // Another colour space is not a colour the host can paint – `srgb-linear` least of all: its
+    // channels are linear-light, and read as sRGB they would be a silently wrong colour.
     expect(cssColorToHex('color(display-p3 0.1 0.2 0.3)')).toBeNull()
+    expect(cssColorToHex('color(srgb-linear 0.1 0.2 0.3)')).toBeNull()
     expect(cssColorToHex('color(srgb 0.1 0.2)')).toBeNull()
     expect(cssColorToHex('color-mix(in srgb, red 40%, #fff)')).toBeNull()
     // What parsed before parses the same (the rgb() path is untouched).
