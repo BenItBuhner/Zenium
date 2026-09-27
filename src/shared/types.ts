@@ -4439,9 +4439,9 @@ export interface UIState {
   /**
    * The update dot's per-version 'seen' record, this device's (`BrowserState.updateDot`,
    * `core/updateDot.ts`; TB-12): the waiting update's version the app menu was last opened for.
-   * The phone bar's ⋮ and the tablet toolbar's menu button read `updateDotShows(updates, updateDot)`
-   * – the dot clears on the menu's first open for a version and returns for another version's
-   * `ready`; the desktop's ⋯ reads the plain phase until W8-F3.
+   * Every layout's menu button – the phone bar's ⋮, the tablet toolbar's, the desktop's ⋯ (W8-F3)
+   * – reads `updateDotShows(updates, updateDot)`: the dot clears on the menu's first open for a
+   * version and returns for another version's `ready`.
    */
   updateDot: UpdateDotRecord
   /**
