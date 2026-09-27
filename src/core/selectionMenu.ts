@@ -33,10 +33,13 @@ import type { ZenWindow } from './window'
  * The pill hugs its chips – each the button primitive at 12 of side padding around its glyph
  * and title, no floor – and folds as one row where the page view is narrower than the pill and
  * its margins (`miniMenuFolds`; the lead's rule): every chip becomes a 28 px glyph button with
- * its title as the tooltip, never one chip at a time. The fold is decided here, where the view's
- * width is known, from the pill's full width – measured when its document has, estimated until
- * then – and told to the pill through `SelectionMenuState.folded`; the document measures each
- * pose it draws and the service keeps one measurement per pose.
+ * its title as the tooltip, never one chip at a time. The fold changes the pill's width alone:
+ * the box keeps §9.20's 46 in both poses, the glyph buttons centred in the 32 control band (as
+ * the capture toolbar's 28 close is), so a resize across the threshold never moves the pill by
+ * the buttons' 4. The fold is decided here, where the view's width is known, from the pill's
+ * full width – measured when its document has, estimated until then – and told to the pill
+ * through `SelectionMenuState.folded`; the document measures each pose it draws and the
+ * service keeps one measurement per pose.
  *
  * Desktop hosts with `capabilities.selectionMenu`, and the setting on (`Settings.
  * showSelectionMenu`, Edge's "Show mini menu when selecting text"); a report reaching a host
@@ -59,12 +62,12 @@ export interface MiniMenuSize {
 }
 
 /**
- * §9.20's floating toolbar: 32 controls with 6 of padding, 44 tall inside its hairlines – the
- * box 46. What the surface opens at before the pill's document has measured itself.
+ * §9.20's floating toolbar: the 32 control band with 6 of padding, 44 tall inside its hairlines
+ * – the box 46, in both poses (folded, the 28 glyph buttons stand centred in the band: the fold
+ * changes the width alone). What the surface opens at before the pill's document has measured
+ * itself.
  */
 export const MINI_MENU_HEIGHT = 46
-/** The folded row: 28 glyph buttons with the same 6 of padding and the hairlines – the box 42. */
-export const MINI_MENU_FOLDED_HEIGHT = 42
 /** Transparent margin around the pill inside the popup surface, where its shadow draws (the picker's). */
 export const MINI_MENU_SURFACE_PAD = 8
 /** The gap between the selection's box and the pill (§9.20's popover gap). */
@@ -93,7 +96,8 @@ const MINI_MENU_GLYPH_CHIP = 28
 /**
  * How big the pill comes out for `actions` before its document has measured itself: one chip
  * per action at its glyph-and-label width – or, `folded`, at the glyph button's 28 – the gaps
- * between them and the pill's sides. The surface opens at this size and follows the document's
+ * between them and the pill's sides, at the one height (`MINI_MENU_HEIGHT`: the fold changes
+ * the width alone). The surface opens at this size and follows the document's
  * `selectionMenu.surfaceSize` report for the pose afterwards.
  */
 export function estimateMiniMenuSize(
@@ -107,7 +111,7 @@ export function estimateMiniMenuSize(
     MINI_MENU_SIDES +
     chips.reduce((sum, chip) => sum + chip, 0) +
     Math.max(0, chips.length - 1) * MINI_MENU_CHIP_GAP
-  return { width, height: folded ? MINI_MENU_FOLDED_HEIGHT : MINI_MENU_HEIGHT }
+  return { width, height: MINI_MENU_HEIGHT }
 }
 
 /**

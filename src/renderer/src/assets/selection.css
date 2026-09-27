@@ -33,17 +33,23 @@
 }
 /*
  * The pill is the screenshot toolbar's pose (`.zen-capture-toolbar`, §9.20): a panel of the
- * page family at 6 padding – the 32 control + 12, 44 tall inside its hairlines – with its chips
- * 8 apart, each the button primitive with a 16 glyph 8 before the label (extensions.css's gap
- * and glyph rules; §9.34: nothing added beside them). It sizes itself to its chips
- * (`max-content`) whatever the document's width, so the box it reports is its own and not the
- * estimate's, and takes no selection of its own – the page's is the one that stands.
+ * page family at 6 padding – the 32 control band + 12, 44 tall inside its hairlines, the box 46
+ * – with its chips 8 apart, each the button primitive with a 16 glyph 8 before the label
+ * (extensions.css's gap and glyph rules; §9.34: nothing added beside them). The row IS the
+ * control band whatever its chips' height – `min-height` the band plus the padding and the
+ * hairlines, the box being border-box under the preflight – so the box stays 46 across the
+ * fold, the 28 glyph buttons centred in it (`align-items`) as the capture toolbar's 28 close
+ * is, and the fold changes the width alone (the lead's line; the core's one `MINI_MENU_HEIGHT`).
+ * It sizes itself to its chips (`max-content`) whatever the document's width, so the box it
+ * reports is its own and not the estimate's, and takes no selection of its own – the page's is
+ * the one that stands.
  */
 .zen-mini-menu {
   display: flex;
   align-items: center;
   gap: 8px;
   width: max-content;
+  min-height: calc(var(--v2-control) + 2 * 6px + 2 * 1px);
   padding: 6px;
   cursor: default;
   user-select: none;
@@ -60,7 +66,8 @@
 /*
  * Folded (`[data-folded]`: the page view is narrower than the pill and its margins, the core's
  * `miniMenuFolds`), every chip is the shared `.zen-v2-icon-button` as it is – the 28 glyph
- * button with its title as the tooltip, the whole row at once. Nothing to add here.
+ * button with its title as the tooltip, the whole row at once, centred in the row's 32 band by
+ * the pill's `align-items` above. Nothing to add here.
  */
 
 /* --- The Define surface (a §9.20 popover, a §9.13 sheet) ------------------------------------ */

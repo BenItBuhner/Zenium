@@ -5,7 +5,6 @@ import { SELECTION_MINI_MENU_ORDER } from '../menus'
 import {
   estimateMiniMenuSize,
   MINI_MENU_FOLD_SLACK,
-  MINI_MENU_FOLDED_HEIGHT,
   MINI_MENU_GAP,
   MINI_MENU_HEIGHT,
   MINI_MENU_MARGIN,
@@ -29,7 +28,8 @@ import {
  * actions give it – for the tab on screen in its window, and goes with the selection, the
  * document, the tab, the window's keyboard or the chip that ran. The pill stands on the
  * window's popup surface over the selection's box, at the size its document measures, hugging
- * its chips and folding as one row to glyph buttons where the view is narrower than it.
+ * its chips and folding as one row to glyph buttons where the view is narrower than it – the
+ * fold changing its width alone, the box 46 in both poses.
  */
 
 const RECT = { x: 100, y: 200, width: 120, height: 18 }
@@ -147,7 +147,7 @@ describe('where the pill stands', () => {
     expect(placed.height).toBe(SIZE.height + PAD * 2)
   })
 
-  it('estimates the pill from its chips hugging their labels (no floor), the gaps and sides; folded, from the 28 glyph buttons', () => {
+  it('estimates the pill from its chips hugging their labels (no floor), the gaps and sides; folded, from the 28 glyph buttons at the same 46', () => {
     const three = estimateMiniMenuSize([
       { id: 'copy', title: 'Copy' },
       { id: 'search', title: 'Search Google' },
@@ -168,7 +168,9 @@ describe('where the pill stands', () => {
     ])
     expect(five.width).toBeGreaterThan(three.width)
     expect(estimateMiniMenuSize([]).width).toBe(14)
-    // Folded: five 28 glyph buttons, the gaps and sides, in the 42 box – whatever the labels.
+    // Folded: five 28 glyph buttons, the gaps and sides – whatever the labels – in the SAME 46
+    // box (the lead's line: the fold changes the width alone; the glyph buttons stand centred in
+    // the 32 control band, so a resize across the threshold never moves the pill by 4).
     const folded = estimateMiniMenuSize(
       [
         { id: 'copy', title: 'Copy' },
@@ -179,7 +181,10 @@ describe('where the pill stands', () => {
       ],
       true
     )
-    expect(folded).toEqual({ width: 14 + 5 * 28 + 4 * 8, height: MINI_MENU_FOLDED_HEIGHT })
+    expect(folded).toEqual({ width: 14 + 5 * 28 + 4 * 8, height: MINI_MENU_HEIGHT })
+    expect(folded.width).toBeLessThan(five.width)
+    expect(folded.height).toBe(five.height)
+    expect(MINI_MENU_HEIGHT).toBe(46)
   })
 
   it('folds where the view is narrower than the full pill and its two margins, and not at that width', () => {
@@ -362,10 +367,11 @@ describe('the pill on the popup surface', () => {
     expect(h.popupCalls.at(-1)).toEqual(
       placeMiniMenuSurface(anchorInChrome(RECT, narrow, 1), narrow, foldedEstimate)
     )
-    expect(h.popupCalls.at(-1)).toMatchObject({ height: MINI_MENU_FOLDED_HEIGHT + PAD * 2 })
+    // The fold changed the surface's width alone: the box is the 46 it was.
+    expect(h.popupCalls.at(-1)).toMatchObject({ height: MINI_MENU_HEIGHT + PAD * 2 })
     // The folded pill measures itself: the surface follows, the pose stands.
-    measure(h, 190, 42, true)
-    expect(h.popupCalls.at(-1)).toMatchObject({ width: 190 + PAD * 2, height: 42 + PAD * 2 })
+    measure(h, 190, 46, true)
+    expect(h.popupCalls.at(-1)).toMatchObject({ width: 190 + PAD * 2, height: 46 + PAD * 2 })
     expect(model(h)?.folded).toBe(true)
     // The view at exactly the pill and its margins: the row unfolds, at the full estimate until
     // the full pill has measured.
@@ -379,7 +385,7 @@ describe('the pill on the popup surface', () => {
     // folded measurement it already has.
     measure(h, full.width + 4, 46)
     expect(model(h)?.folded).toBe(true)
-    expect(h.popupCalls.at(-1)).toMatchObject({ width: 190 + PAD * 2, height: 42 + PAD * 2 })
+    expect(h.popupCalls.at(-1)).toMatchObject({ width: 190 + PAD * 2, height: 46 + PAD * 2 })
     // A view with the room for the measured pill: unfolded, at the measured 46.
     layout(h, { ...narrow, width: full.width + 4 + MINI_MENU_FOLD_SLACK })
     expect(model(h)?.folded).toBe(false)

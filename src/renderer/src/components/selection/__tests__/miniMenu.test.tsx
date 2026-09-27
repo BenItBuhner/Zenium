@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -10,9 +12,10 @@ import { browserStore } from '@renderer/lib/ui'
  * (`PopupSurface`, `MiniMenu`): the document marks itself, draws the picker in front of the
  * pill and the pill alone otherwise; the pill is a toolbar of the button primitive with a glyph
  * and the core's title per chip, in the core's order – or, folded by the core for a narrow view,
- * the whole row as icon buttons with the title as the tooltip – tells the core the box it
- * measured with its pose (again for a new list of chips or the other pose), runs a chip's
- * action through the core and dismisses on Escape.
+ * the whole row as icon buttons with the title as the tooltip, in the same 46 box (the fold
+ * changes the width alone) – tells the core the box it measured with its pose (again for a new
+ * list of chips or the other pose), runs a chip's action through the core and dismisses on
+ * Escape.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -265,11 +268,12 @@ describe('the mini menu', () => {
     const sizes = (): unknown[] =>
       run.mock.calls.filter(([name]) => name === 'selectionMenu.surfaceSize').map(([, a]) => a)
     expect(sizes()).toEqual([{ tabId: 't1', width: 300, height: 46, folded: false }])
-    box = { width: 186, height: 42 }
+    // The folded row as the stylesheet draws it: narrower, the same 46 box.
+    box = { width: 186, height: 46 }
     render(<MiniMenu menu={{ ...MENU, folded: true }} />)
     expect(sizes()).toEqual([
       { tabId: 't1', width: 300, height: 46, folded: false },
-      { tabId: 't1', width: 186, height: 42, folded: true }
+      { tabId: 't1', width: 186, height: 46, folded: true }
     ])
     // The same pose again tells nothing new; the other pose tells its own box again.
     render(<MiniMenu menu={{ ...MENU, folded: true, text: 'foam' }} />)
@@ -292,5 +296,25 @@ describe('the mini menu', () => {
     render(<MiniMenu menu={MENU} />)
     escape()
     expect(run).toHaveBeenCalledWith('selectionMenu.dismiss', { tabId: 't1' })
+  })
+
+  it('keeps the 46 box across the fold: the row is the 32 control band in the stylesheet, the glyph buttons centred in it', () => {
+    // The lead's line: the fold changes the pill's width, not its height. The core estimates
+    // one height for both poses (`MINI_MENU_HEIGHT`, its own test); the document has to draw
+    // it – a row of 28 glyph buttons would stand 28 tall on its own, the box 42. The pill's
+    // rule holds the box at the control band plus its 6 padding and its hairlines
+    // (`min-height: calc(var(--v2-control) + 2 * 6px + 2 * 1px)` = 46: every box is border-box
+    // under the bundle's preflight, so the band alone as the minimum would sit under the 42)
+    // and centres its items in it (`align-items: center`) as the capture toolbar centres its
+    // 28 close among 32 buttons. The rule sets no box-sizing of its own: the preflight's stands.
+    // `__dirname`, not `import.meta.url`: under happy-dom the module URL is the document's.
+    const css = readFileSync(resolve(__dirname, '../../../assets/selection.css'), 'utf8')
+    const rule = /\.zen-mini-menu\s*\{([^}]*)\}/.exec(css)?.[1] ?? ''
+    expect(rule).toMatch(/min-height:\s*calc\(var\(--v2-control\) \+ 2 \* 6px \+ 2 \* 1px\)/)
+    expect(rule).toMatch(/align-items:\s*center/)
+    expect(rule).not.toMatch(/box-sizing/)
+    // No rule of the folded pose overrides the band: the folded chip is the shared icon button
+    // as it is (the attribute is named in a comment alone).
+    expect(css).not.toMatch(/^[^\n*]*\[data-folded\][^\n{]*\{/m)
   })
 })

@@ -26,7 +26,9 @@ const GLYPHS: Record<SelectionMenuActionId, LucideIcon> = {
  *
  * Folded (`menu.folded`: the core found the page view narrower than the pill and its margins),
  * the whole row is the 28 icon button per action – the glyph alone, the title as the tooltip
- * and the accessible name – never one chip at a time; the pill measures each pose it draws.
+ * and the accessible name – never one chip at a time, centred in the row's 32 control band so
+ * the box keeps its 46 and the fold changes the width alone (`.zen-mini-menu`'s `min-height`;
+ * the lead's line); the pill measures each pose it draws.
  * The tooltip is the toolkit's `title`, not §9.31's `data-tooltip`: this document mounts no
  * tooltip host (the picker it shares the surface with names its controls the same way), and
  * the surface – the pill and its 8 shadow band – has no room beside the pill for the chrome's
