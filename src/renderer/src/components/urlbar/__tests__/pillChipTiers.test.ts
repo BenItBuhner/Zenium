@@ -397,7 +397,7 @@ describe('the pill chip overflow rule (M8)', () => {
     expect(ids(fittingChips(140, chips))).toEqual(['site'])
   })
 
-  it('§9.29: with the site icon alone beside it, the star returns at the 270 sidebar (a 126 px pill, content 110)', () => {
+  it('§9.29: with the site icon alone beside it, the star returns at the 266 sidebar (a 126 px pill, content 110; the pill fills its slot, W8-F7)', () => {
     const chips: PillChipSpec[] = [
       { id: 'site', tier: 'site', width: CHIP_WIDTH.site },
       { id: 'star', tier: 'star', width: CHIP_WIDTH.star }
