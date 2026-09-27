@@ -291,6 +291,37 @@ What no runner confirms: the menu as drawn by AppKit (the Search field the `help
 window list the `window` role appends) – UI scripting would open it, and the readings above are
 what AppKit draws from.
 
+## The OS's Settings rows (`os-settings`)
+
+`os-settings-scenario.mjs` (W8-F5 / F6; settings-116 / #572, #594) runs on all five installer
+legs and on the Linux boot set: two rows of the Settings page whose reading is the OS's, read on
+the OS that gives it. The accent (`src/main/platform/accent.ts`) is Electron's
+`systemPreferences.getAccentColor()` on Windows (the DWM accent) and macOS (the Appearance pane's);
+Linux has no reading and the guard is the platform's, so the "Use system accent colour" row is
+held there. The proxy door (`src/main/platform/systemSettings.ts`, after Chromium's
+`settings_utils_{win,mac,linux}`) hands Windows' `ms-settings:network-proxy` or macOS's
+`x-apple.systempreferences:` URL to `shell.openExternal`, and on Linux spawns the desktop's tool
+from Chrome's table or answers `unsupported` where the table has none – the runner's shell, with
+no desktop named. The URL strings are unit-tested; that the OS takes them is what the step reads,
+so the call is let through and the OS app really opens (the default-browser scenario opens
+`ms-settings:defaultapps` the same way on the installed Windows leg), recorded by a pass-through
+wrapper in the main process and closed again before the leg goes on. The section the accent row is
+on is `look` (`zen://settings/look`, "Look and Feel", the Appearance group): the wave plan's
+`zen://settings/appearance` names no section, and an unknown one resolves to the landing.
+
+| step                | reads                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | confirmed by                                   |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| `accent-row`        | `getAccentColor()` raw in the main process, the core's `UIState.systemAccent` and `settings.useSystemAccent` through `app.getState`, then `page.open { settings, look }` and the `use-system-accent` row: on Windows and macOS present in the `appearance` group as a boolean control (the desktop layout's checkbox) reading the setting – off on a fresh profile – enabled, under its label, the core's accent the OS's first six digits as `#rrggbb` (logged); on Linux absent, the core holding null              | the main process, the chrome; the log's hex    |
+| `system-proxy-door` | the Settings tab moved to `system`, the `proxy-settings` row present, enabled, with its resting description; `system.openProxySettings` fired from the chrome page as the row's press fires it and its answer polled: `opened` on Windows and macOS with exactly one `shell.openExternal` of the expected URL (a refused macOS URL allowed its `openPath` fallback to the Network pane); `unsupported` with no shell call on a Linux runner with no desktop named (either answer, recorded, on a desktop with a tool) | the main process's record of the shell's calls |
+|                     | the OS's half, recorded: the screen as it is 3 s after `opened`, Windows' `SystemSettings` process (win-session.ps1 `processes`, then `kill`), macOS's System Settings (`pgrep`, told to quit over osascript, `pkill` when the session refuses the Apple event, polled gone); Zenium's window brought back to the front                                                                                                                                                                                               | the screenshot, the process list               |
+| `quit`              | the graceful quit as every scenario's (held on macOS)                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | the process's exit                             |
+
+What no runner confirms: that the Settings app landed on the Proxy page rather than its front
+page (Windows' process list and the screenshot show the app; the page is the URL's, which the OS
+took), the accent following a change of the OS's colour while the app runs (Windows'
+`accent-color-changed`, macOS's system-colours notification – nothing on a runner changes it), and
+the Linux door on a desktop with a tool (the runners have none).
+
 ## Hold ⌘Q to quit (`quit-hold`, and every macOS quit)
 
 Chrome's "Warn Before Quitting (⌘Q)" (session-08, W5-19; `src/core/quitHold.ts`): on a Mac with
