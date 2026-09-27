@@ -61,22 +61,71 @@ export function newTabPlan({ barVisible, submitTabUrl }) {
  */
 export const URLBAR_FIELD_OWNER = 'chrome:urlbar-input'
 
+/** How long `Session.urlbarCaret` waits for the field to hold the keyboard (W8-F10). */
+export const CARET_BUDGET_MS = 10_000
+
+/** How often it reads the keyboard owner while it waits (W8-F10). */
+export const CARET_POLL_EVERY_MS = 250
+
+/** `ms` as the caret trace writes an offset from the bar coming up: `+2.5s`. */
+const caretSec = (ms) => `+${(ms / 1000).toFixed(1)}s`
+
+/**
+ * The caret poll trace as one line for a failure message: `trace` are the readings
+ * `Session.urlbarCaret` took while it waited – `{ ms, owner }`, `ms` since the bar came up and
+ * `owner` the keyboard owner then (`chrome:urlbar-input` when the field held it, `none`,
+ * `chrome`, `tab:<id>`). Consecutive readings that agree collapse into one entry with their span
+ * and count, so a 10 s budget of 250 ms polls reads as a few entries:
+ *
+ *     +0.0s…+9.8s ×40 none
+ *     +0.0s chrome; +0.2s…+0.5s ×2 chrome:urlbar-input
+ *
+ * No readings reads `(no polls)`.
+ */
+export function formatCaretTrace(trace) {
+  if (!trace || trace.length === 0) return '(no polls)'
+  const runs = []
+  for (const { ms, owner } of trace) {
+    const last = runs[runs.length - 1]
+    if (last && last.owner === owner) {
+      last.to = ms
+      last.count++
+    } else {
+      runs.push({ from: ms, to: ms, count: 1, owner })
+    }
+  }
+  return runs
+    .map((r) =>
+      r.count === 1
+        ? `${caretSec(r.from)} ${r.owner}`
+        : `${caretSec(r.from)}…${caretSec(r.to)} ×${r.count} ${r.owner}`
+    )
+    .join('; ')
+}
+
 /**
  * A step's detail as it is, or the step's failure when a URL bar the step typed into had no
  * caret: `carets` are the readings `openUrlInNewTab` took before the harness focused the field
- * (`{ focused, owner, ms, bar }`; by default the one at `detail.caret`), and the error carries
- * the detail so the step keeps what it gathered. Thrown once the step's work is done – the page
- * loaded and on screen all the same, through the harness's focus-first way into the field
+ * (`{ focused, owner, ms, bar, trace }`; by default the one at `detail.caret`), and the error
+ * carries the detail so the step keeps what it gathered. Thrown once the step's work is done – the
+ * page loaded and on screen all the same, through the harness's focus-first way into the field
  * (#342) – so the scenarios that build on the step go on and a regression is one failure, named
  * where it is: the new tab's URL bar up with no caret, the state main's boot smoke was in three
  * times on 2026-09-22 before lib/panes.ts pageTookKeyboard kept the field from the page's view.
+ *
+ * The failure names how long the caret was waited for (`urlbarCaret`'s budget, `ms`) and, when
+ * the reading carries a poll `trace` (W8-F10, the windows-arm64 legs: a caret that took longer
+ * than a fixed 3 s wait allowed on the slow Intel-emulated runner), the keyboard owner through
+ * that budget, so a genuine miss shows it stayed off the field the whole time and a slow one
+ * shows it arriving.
  */
 export function caretVerdict(detail, carets = [detail.caret]) {
   const missing = carets.find((caret) => caret && !caret.focused)
   if (!missing) return detail
   const bar = missing.bar === 'accel-t' ? 'brought up with Accel+T' : 'found up'
+  const trace = missing.trace && missing.trace.length ? `; polls ${formatCaretTrace(missing.trace)}` : ''
   const error = new Error(
-    `the URL bar ${bar} had no caret: the keyboard was ${missing.owner} for the ${missing.ms} ms before the harness focused the field`
+    `the URL bar ${bar} had no caret: the keyboard was ${missing.owner} for the ${missing.ms} ms before the harness focused the field${trace}`
   )
   error.detail = detail
   throw error

@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CARET_BUDGET_MS,
+  CARET_POLL_EVERY_MS,
   ERR_ABORTED,
   URLBAR_FIELD_OWNER,
   caretVerdict,
   firstRetryableFailLoad,
+  formatCaretTrace,
   isNewTabUrl,
   isRetryableFailLoad,
   newTabPlan,
@@ -104,6 +107,66 @@ describe('caretVerdict', () => {
     expect(() => caretVerdict(detail, [first, second])).toThrow(
       'the URL bar brought up with Accel+T had no caret: the keyboard was tab:9 for the 3000 ms before the harness focused the field'
     )
+  })
+
+  it('appends the poll trace to the failure when the reading carries one (W8-F10)', () => {
+    // The windows-arm64 red: the field never took the keyboard through the whole budget.
+    const missing = {
+      ...caret('none', 'found-up', 10000),
+      trace: [
+        { ms: 0, owner: 'none' },
+        { ms: 250, owner: 'none' },
+        { ms: 9800, owner: 'none' }
+      ]
+    }
+    expect(() => caretVerdict({ caret: missing })).toThrow(
+      'the URL bar found up had no caret: the keyboard was none for the 10000 ms before the harness focused the field; polls +0.0s…+9.8s ×3 none'
+    )
+    // A caret that arrived is never a failure, whatever its trace holds.
+    const arrived = { ...caret(URLBAR_FIELD_OWNER), trace: [{ ms: 0, owner: 'none' }] }
+    expect(caretVerdict({ caret: arrived })).toEqual({ caret: arrived })
+  })
+})
+
+describe('formatCaretTrace', () => {
+  it('has a budget generous enough for the slow runner and a steady poll interval', () => {
+    // The 3097 ms miss on windows-arm64 sat past the old 3 s wait; the budget clears it.
+    expect(CARET_BUDGET_MS).toBeGreaterThanOrEqual(10_000)
+    expect(CARET_POLL_EVERY_MS).toBe(250)
+  })
+
+  it('collapses consecutive equal owners into runs with a span and count', () => {
+    expect(
+      formatCaretTrace([
+        { ms: 0, owner: 'none' },
+        { ms: 250, owner: 'none' },
+        { ms: 500, owner: 'none' }
+      ])
+    ).toBe('+0.0s…+0.5s ×3 none')
+  })
+
+  it('writes one entry per owner and a lone reading without a span', () => {
+    expect(
+      formatCaretTrace([
+        { ms: 0, owner: 'chrome' },
+        { ms: 500, owner: 'chrome:urlbar-input' }
+      ])
+    ).toBe('+0.0s chrome; +0.5s chrome:urlbar-input')
+  })
+
+  it('shows a slow caret arriving after the page view held the keyboard', () => {
+    expect(
+      formatCaretTrace([
+        { ms: 0, owner: 'tab:2' },
+        { ms: 250, owner: 'tab:2' },
+        { ms: 500, owner: 'chrome:urlbar-input' }
+      ])
+    ).toBe('+0.0s…+0.3s ×2 tab:2; +0.5s chrome:urlbar-input')
+  })
+
+  it('reads (no polls) with nothing gathered', () => {
+    expect(formatCaretTrace([])).toBe('(no polls)')
+    expect(formatCaretTrace(undefined)).toBe('(no polls)')
   })
 })
 
