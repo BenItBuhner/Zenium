@@ -126,6 +126,7 @@ import { ElectronPrivacy } from './privacy'
 import { ContentRulesHandler, attachContentGuards } from './contentRules'
 import { attachDocumentStart, registerDocumentStartProvider } from './documentStart'
 import { ElectronSpellcheck } from './spellcheck'
+import { openProxySettings } from './systemSettings'
 import { ElectronScreenCapture } from './screenCapture'
 import { StartupHold, extensionLayerNeedsHold } from './startupHold'
 import { ElectronShareSheet } from './shareSheet'
@@ -471,7 +472,9 @@ export class ElectronPlatform implements Platform {
       openPath: async (path) => {
         await shell.openPath(path)
       },
-      showItemInFolder: (path) => shell.showItemInFolder(path)
+      showItemInFolder: (path) => shell.showItemInFolder(path),
+      // Settings › System's door to the computer's proxy settings, per OS as Chrome opens it.
+      openProxySettings: () => openProxySettings()
     }
     this.net = {
       fetchText: async (url, options) => {

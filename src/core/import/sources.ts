@@ -71,7 +71,7 @@ export function passwordLimit(
 ): string {
   const name = BROWSER_NAMES[browser]
   if (browser === 'firefox')
-    return `Firefox keeps its passwords in its own encrypted store. Export them from Firefox (Passwords, then Export passwords) and import the CSV file here.`
+    return `This Firefox profile has no saved passwords to read. If Firefox keeps yours elsewhere, export them from Firefox (Passwords, then Export passwords) and import the CSV file here.`
   if (browser === 'safari')
     return `Safari keeps its passwords in the Keychain. Export them from Safari (File, Export, Passwords) and import the CSV file here.`
   if (os === 'win32')
@@ -167,9 +167,18 @@ async function firefoxSources(
       const kinds: ImportKind[] = []
       if (places || backups) kinds.push('bookmarks')
       if (places && options.historyWritable) kinds.push('history')
-      if (kinds.length === 0) continue
       const limits: ImportSource['limits'] = {}
-      if (options.passwordsAvailable) limits.passwords = passwordLimit('firefox', options.os)
+      if (options.passwordsAvailable) {
+        // Firefox's own logins: `logins.json` sealed with the master key in `key4.db`. Both must
+        // be present (a profile that never saved a password has neither); the CSV route is the
+        // way round only when they are missing.
+        const hasLogins =
+          (await isFile(host, joinPath(profile.path, FIREFOX_FILES.logins))) &&
+          (await isFile(host, joinPath(profile.path, FIREFOX_FILES.key)))
+        if (hasLogins) kinds.push('passwords')
+        else limits.passwords = passwordLimit('firefox', options.os)
+      }
+      if (kinds.length === 0) continue
       sources.push({
         id: `firefox:${profile.path}`,
         browser: 'firefox',
