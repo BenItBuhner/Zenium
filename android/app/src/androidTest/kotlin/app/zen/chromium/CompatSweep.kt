@@ -319,7 +319,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                         "heap enabled ${entry.optLong("heapEnabledKb", -1) / 1024} MB, after ${entry.optLong("heapAfterKb") / 1024} MB, " +
                         "bridge refused ${entry.optInt("bridgeRefused")}; flood guard ${entry.optJSONObject("floodGuard")}" +
                         (entry.optJSONObject("coreStall")?.let { "; core stall $it" } ?: "") +
-                        (entry.optJSONObject("heapSplit")?.let { "; heap split: the runtime's units ${it.optLong("runtimeUnitsKb") / 1024} MB, the rules and the rest ${it.optLong("rulesAndRestKb") / 1024} MB" } ?: "")
+                        (entry.optJSONObject("heapSplit")?.let { "; heap split: the runtime's units ${it.optLong("runtimeUnitsKb") / 1024} MB, the rules and the rest ${it.optLong("rulesAndRestKb") / 1024} MB${if (it.optBoolean("disturbed")) " (DISTURBED)" else ""}" } ?: "")
                 )
                 rowEntry = null
                 rowStalledOut = false
@@ -471,7 +471,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         core(row, entry, slug)
         evidence(row, entry)
         // What the extension costs the Java heap while it runs (its units, its rules in the
-        // Kotlin engine), against `heapAfterKb` once it is disabled, and the engine's snapshot.
+        // Kotlin engine), against `heapAfterKb` once it is disabled, and the engine's snapshot –
+        // read once the runtime's units for the row are its last configure's ([settleUnits]).
+        settleUnits(row, entry)
         val enabledKb = heapKb()
         entry.put("heapEnabledKb", enabledKb)
         // The chrome WebView's JS heap and the renderer's RSS at the same moment (compat round 22, R22-3's lane read beside the ART heap line).
@@ -485,14 +487,51 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     private val heapSplitFromKb: Long = Runtime.getRuntime().maxMemory() / 2048
 
     /**
+     * The runtime's units for the row's extension settled before its heap is read. An
+     * `ext.configure` in flight – the worker's `registerContentScripts` re-plan, Adblock Ad
+     * Blocker Pro's 1 unit to 11, 8.1 s cold on the API 34 image – has the reading count the plan
+     * being replaced: compat round 22's `[lane]` run took Adblock's heap split while that compile
+     * ran, the reading on the main thread stood on the compiler's lock for its last 1.5 s
+     * (Choreographer's 92 skipped frames), counted the new plan's 11 units against the 1
+     * installed, released the compiler's copy, and the configure's post then installed the 11 it
+     * had in hand – live until the row's disable and counted with the rules (`rulesAndRestKb`
+     * 68.1 MB against the BEFORE's 28.9, the units' 39.5 MB the difference). Polls
+     * [Extensions.unitMemory] on the main thread every [UNITS_SETTLE_POLL_MS] until no configure
+     * of the extension is pending and no compile holds the compiler's lock, at most
+     * [UNITS_SETTLE_MS]; the wait and the last reading go into the row (`unitsSettled`), a wait
+     * that ran out marked `settled: false`. Every row, since `heapEnabledKb` is read for every row
+     * and compared run to run; the cost is one main-thread hop when nothing is in flight.
+     */
+    private fun settleUnits(row: Row, entry: JSONObject) {
+        val started = SystemClock.uptimeMillis()
+        var polls = 0
+        var memory = JSONObject()
+        var settled = false
+        while (true) {
+            instrumentation.runOnMainSync { memory = host.extensions.unitMemory(row.id) }
+            polls++
+            settled = memory.optInt("pending") == 0 && !memory.optBoolean("compiling")
+            if (settled || SystemClock.uptimeMillis() - started >= UNITS_SETTLE_MS) break
+            SystemClock.sleep(UNITS_SETTLE_POLL_MS)
+        }
+        val waitedMs = SystemClock.uptimeMillis() - started
+        entry.put("unitsSettled", JSONObject().put("settled", settled).put("waitedMs", waitedMs).put("polls", polls).put("memory", memory))
+        if (polls > 1 || !settled) Log.i(TAG, "UNITS ${if (settled) "SETTLED" else "NOT SETTLED"} ${row.name}: a configure in flight at the heap reading, waited $waitedMs ms over $polls poll(s); $memory")
+    }
+
+    /**
      * Where a heavy extension's Java heap is (round 21's OOM class – Adblock Ad Blocker Pro's
      * row: 144 MB live with the extension enabled against 34 MB after it, on a 192 MB limit):
      * the runtime's units against the DNR engine's rules and the rest, MEASURED rather than
      * summed. The compiler's own count of what it holds first ([Extensions.unitMemory]: the
-     * scripts' characters and the bytes ART keeps them in, the soft-held sources), then the
-     * runtime lets its units go ([Extensions.releaseUnitsForInstrumentation]) and the heap is
-     * read again after a full collection; what is left goes with the row's disable
-     * (`heapAfterKb`, read in the row's `finally`, which completes the split). Only for a row
+     * scripts' characters and the bytes ART keeps them in, the soft-held sources, the units
+     * installed and the configures pending), then the runtime lets its units go
+     * ([Extensions.releaseUnitsForInstrumentation]) and the heap is read again after a full
+     * collection; what is left goes with the row's disable (`heapAfterKb`, read in the row's
+     * `finally`, which completes the split). The enabled reading is settled ([settleUnits]); a
+     * configure landing between the release and the released reading would put its units back
+     * into what the disable takes, so the runtime is read once more after that reading and the
+     * split marked `disturbed` when it installed anything or has one pending. Only for a row
      * whose live heap reached [heapSplitFromKb]: the readings cost two more full collections.
      */
     private fun heapSplit(row: Row, entry: JSONObject, enabledKb: Long) {
@@ -502,11 +541,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             host.extensions.releaseUnitsForInstrumentation(row.id)
         }
         val releasedKb = heapKb()
+        var afterRelease: JSONObject? = null
+        instrumentation.runOnMainSync { afterRelease = host.extensions.unitMemory(row.id) }
+        val disturbed = (afterRelease?.optInt("installed") ?: 0) > 0 || (afterRelease?.optInt("pending") ?: 0) > 0 || afterRelease?.optBoolean("compiling") == true
         entry.put(
             "heapSplit",
             JSONObject().put("enabledKb", enabledKb).put("unitsReleasedKb", releasedKb).put("runtimeUnitsKb", enabledKb - releasedKb).put("compiler", compiler ?: JSONObject.NULL)
+                .put("afterRelease", afterRelease ?: JSONObject.NULL).put("disturbed", disturbed)
         )
-        Log.i(TAG, "HEAP SPLIT ${row.name}: enabled ${enabledKb / 1024} MB, units released ${releasedKb / 1024} MB (the runtime's units ${(enabledKb - releasedKb) / 1024} MB; compiler $compiler)")
+        Log.i(TAG, "HEAP SPLIT ${row.name}: enabled ${enabledKb / 1024} MB, units released ${releasedKb / 1024} MB (the runtime's units ${(enabledKb - releasedKb) / 1024} MB; compiler $compiler${if (disturbed) "; DISTURBED – a configure landed after the release: $afterRelease" else ""})")
     }
 
     /**
@@ -13032,6 +13075,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         /** How often the page-dialog watch looks while a wait is under way ([PageDialogWatch]). */
         private const val PAGE_DIALOG_WATCH_MS = 2_000L
         private const val HANG_MAIN_THREAD_MS = 90_000L
+        /** The longest a row's heap reading waits for the extension's configures in flight to land ([settleUnits]); Adblock Ad Blocker Pro's 11-unit re-plan takes 8.1 s cold on the API 34 image. */
+        private const val UNITS_SETTLE_MS = 30_000L
+        private const val UNITS_SETTLE_POLL_MS = 250L
         /** A stall that lasts is dumped again this often (the sweep script's own silence watch fires at five minutes). */
         private const val HANG_DUMP_AGAIN_MS = 300_000L
         /**
