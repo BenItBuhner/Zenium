@@ -164,6 +164,14 @@ export interface ValueRow extends RowBase {
   onChange(value: string): void
   /** The picker sheet's description: what the desktop row explained beside its menulist. */
   sheetDescription?: string
+  /**
+   * How the desktop draws the choice (§10.4: "a menulist or 2–4 radios on desktop"; §10.5): the
+   * trailing 32 px menulist unless `'radios'` – §9.14's plain radios under the row's text, for a
+   * choice of a few options named in full whose next row hangs on the one picked (Appearance ›
+   * Home page: "Enter custom web address" stands over the Address field it reveals, as Chrome's
+   * radio does). The phone's picker sheet is the same either way.
+   */
+  form?: 'menulist' | 'radios'
 }
 
 /** A boolean: the whole row toggles the trailing 36 × 20 switch (§10.4). */

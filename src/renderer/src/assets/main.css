@@ -12554,6 +12554,28 @@
   max-width: none;
 }
 /*
+ * The radio row (`ValueRow.form: 'radios'`, `rows.tsx`'s `RadioListRow`; §9.14 in a row, §10.4's
+ * "a menulist or 2–4 radios on desktop"): the stacked row's column – the text block on its
+ * lines, then the §9.14 list UNDER it, 4 below the text as a form's radio list stands under its
+ * label (`.zen-settings-field-block`'s gap) – the option rows pulled to the page's edge as the
+ * forms pull theirs (`.zen-settings-form .zen-settings-radio-row` above), so each 16 px circle
+ * stands at the label's inset and an option's press fill bleeds to the edge (§9.25). Each option
+ * is a one-line `.zen-v2-row`, 32 on the desktop – §9.14's pitch, the rows touching – so the row
+ * stands 6 + 20 + 20 n + 4 + 32 k + 6 tall for n lines of description and k options (120 with
+ * one line and two options). Nothing trails the text, so nothing is seated (§9.18).
+ */
+.zen-settings-radios-row {
+  flex-direction: column;
+  align-items: stretch;
+}
+.zen-settings-radios-row .zen-settings-row-text {
+  flex: none;
+}
+.zen-settings-radios-row .zen-settings-radio-row {
+  margin: 0 -16px;
+  width: calc(100% + 32px);
+}
+/*
  * A slider row (§10.4, `rows.tsx`'s `SliderControl`): the zoom sheet's slider (`.zen-zoom-slider`,
  * its ring in the page's tone here as the Default zoom row's) with the value as 13/69 % text in
  * `tabular-nums`. On a phone the block is the row's text – the label with the value on its

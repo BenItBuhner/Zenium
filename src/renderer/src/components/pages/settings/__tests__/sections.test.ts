@@ -7239,7 +7239,8 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
     ).toEqual(['show-home-button', 'home-page', 'customize-toolbar'])
     const page = row(on.model, 'home-page')
     if (page.kind !== 'value') throw new Error('not a value row')
-    expect(page).toMatchObject({ label: 'Home page', layouts: ['desktop'] })
+    // §9.14's radios on the desktop (the lead's Q7 on #572), not the menulist.
+    expect(page).toMatchObject({ label: 'Home page', layouts: ['desktop'], form: 'radios' })
     expect(currentOptionLabel(page)).toBe('New Tab page')
     expect(page.options.map((o) => o.label)).toEqual(['New Tab page', 'Enter custom web address'])
     page.onChange('url')

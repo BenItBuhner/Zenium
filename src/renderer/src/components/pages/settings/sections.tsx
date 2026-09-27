@@ -580,11 +580,13 @@ function lookSection({
         // – the Home control's pin (`toolbarPins.home`, the Customise toolbar dialog's Home
         // row), synced as Chrome's is – with its radio under it while on: "New Tab page" or a
         // page of the user's (Chrome's `homepage_is_newtabpage`, `homepage`), the chassis's
-        // value row for Chrome's radio (the Startup group's precedent), and the address as a
-        // §9.12 field once a page is chosen – what was typed fixed up as Chrome's `FixupURL`
-        // does at the navigation (`example.com` → `https://example.com/`), a §9.12 line under
-        // the field for what is no web address. The setting is the phone's Home group's
-        // (`homepage`), so a page chosen here is the phone's Home page too.
+        // value row drawn as §9.14's two radios on the desktop (`form: 'radios'`, §10.4's "2–4
+        // radios on desktop"; the lead's Q7 ruling on #572 – the menulist went), and the
+        // address as a §9.12 field stacked under the second option once a page is chosen – what
+        // was typed fixed up as Chrome's `FixupURL` does at the navigation (`example.com` →
+        // `https://example.com/`), a §9.12 line under the field for what is no web address. The
+        // setting is the phone's Home group's (`homepage`), so a page chosen here is the phone's
+        // Home page too.
         {
           kind: 'switch',
           id: 'show-home-button',
@@ -602,6 +604,7 @@ function lookSection({
                 keywords: ['home', 'homepage', 'new tab page', 'custom web address'],
                 layouts: ['desktop'],
                 controlled: homepageControlled,
+                form: 'radios',
                 value: homepage.mode === 'url' ? 'url' : 'newtab',
                 sheetDescription: 'Where the Home button goes.',
                 options: [

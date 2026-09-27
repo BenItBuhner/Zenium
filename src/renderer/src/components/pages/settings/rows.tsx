@@ -28,7 +28,7 @@ import {
   type SwitchRow,
   type ValueRow
 } from './model'
-import { ValidationMessage } from './blocks'
+import { RadioOption, ValidationMessage } from './blocks'
 import { attachLineCount } from './lineCount'
 import { useSheetDismiss, type SheetDismiss } from './sheetContext'
 
@@ -531,7 +531,11 @@ function DesktopRowView({
 }): JSX.Element {
   switch (row.kind) {
     case 'value':
-      return <MenulistRow row={row} caption={caption} />
+      return row.form === 'radios' ? (
+        <RadioListRow row={row} caption={caption} />
+      ) : (
+        <MenulistRow row={row} caption={caption} />
+      )
     case 'switch':
       return <CheckRow row={row} caption={caption} />
     case 'action':
@@ -666,6 +670,64 @@ function MenulistRow({ row, caption }: { row: ValueRow; caption?: string }): JSX
         className="zen-settings-menulist"
       />
     </ControlRow>
+  )
+}
+
+/**
+ * A value row on the desktop drawn as §9.14's plain radios (`ValueRow.form: 'radios'`; §10.4's
+ * "2–4 radios on desktop"): the text block – the label, the sheet's description on its lines –
+ * then one radio row per option UNDER it in one `radiogroup` the label names, each the shared
+ * `RadioOption` (the 16 px circle, the checked one the accent ring round the page-colour dot,
+ * the label 15/400 beside it, the whole 32 row the target at §9.14's pitch) pulled to the page's
+ * edge as the forms pull theirs, so the circles stand at the label's inset (main.css
+ * `.zen-settings-radios-row`) – Chrome's Appearance › Home page radios. Held by an extension or
+ * disabled as a dependent row the list takes the row's one .4 (§9.30) and no press: the options
+ * are `disabled`, `aria-disabled` keeping their fill off, the checked one still marked. Tab moves
+ * between the options, as it does in the forms' radio lists (`RadioOption` has no roving arrow
+ * keys; the chassis's).
+ */
+function RadioListRow({ row, caption }: { row: ValueRow; caption?: string }): JSX.Element {
+  const labelId = `${useId()}-label`
+  const disabled = row.disabled === true
+  return (
+    <div
+      data-row={row.id}
+      data-static=""
+      data-tone={row.tone}
+      className={cn(
+        'zen-settings-row zen-settings-radios-row zen-v2-row',
+        disabled && 'zen-settings-row-disabled'
+      )}
+    >
+      <div className="zen-settings-field-block">
+        <RowText
+          label={row.label}
+          labelId={labelId}
+          description={row.sheetDescription ?? row.description}
+          caption={caption}
+        />
+        <div
+          role="radiogroup"
+          aria-labelledby={labelId}
+          aria-disabled={disabled || undefined}
+          className="zen-settings-radio-list"
+        >
+          {row.options.map((option) => (
+            <RadioOption
+              key={option.value}
+              label={option.label}
+              description={option.description}
+              leading={option.leading}
+              checked={option.value === row.value}
+              disabled={disabled}
+              onSelect={() => {
+                if (option.value !== row.value) row.onChange(option.value)
+              }}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
   )
 }
 
