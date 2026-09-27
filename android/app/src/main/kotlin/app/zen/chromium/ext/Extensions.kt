@@ -269,6 +269,8 @@ class Extensions(private val host: Host) {
      * attach it was requested for is still the current one (see [AttachEpochs]).
      */
     private val attachEpochs = AttachEpochs()
+    /** The extension's configures between request and landing ([ConfiguresInFlight]); `unitMemory` reports the count. Main thread. */
+    private val configuresInFlight = ConfiguresInFlight()
     /**
      * A background document's own worker script is served to it once: the generated page's own
      * `<script src>`; a `<script>` the worker script appends through the page's bare `document`
@@ -700,11 +702,15 @@ class Extensions(private val host: Host) {
             reply(Host.Rejection("The extension runtime is destroyed"))
             return
         }
+        configuresInFlight.begun(id)
         io.execute {
             val started = System.nanoTime()
             val dir = recordDir(args.str("path"))
             if (dir == null) {
-                main.post { reply(Host.Rejection("The extension directory is not under the install root")) }
+                main.post {
+                    configuresInFlight.landed(id)
+                    reply(Host.Rejection("The extension directory is not under the install root"))
+                }
                 return@execute
             }
             // The plan as it arrives, before a file is read: what the compile is about to do
@@ -752,6 +758,9 @@ class Extensions(private val host: Host) {
                 "ms" to ms
             )
             main.post {
+                // Landed, whatever comes of it below: the runtime's units for the extension are
+                // its last configure's from here (ConfiguresInFlight, for the heap instrumentation).
+                configuresInFlight.landed(id)
                 // Destroyed while the units compiled: the runtime holds nothing any more, and
                 // the core that asked is gone with its WebView – nothing installed, no answer.
                 if (destroyed) {
@@ -897,6 +906,7 @@ class Extensions(private val host: Host) {
     /** A new core runtime starts from nothing: every extension of the previous one goes. */
     private fun reset() {
         attachEpochs.reset()
+        configuresInFlight.reset()
         closePopup()
         for (id in backgrounds.keys.toList()) stopBackground(id, "reset")
         workerScriptGate.reset()
@@ -2223,9 +2233,16 @@ class Extensions(private val host: Host) {
      * The Java heap the runtime holds for one extension's content-script units, for
      * instrumentation ([UnitCompiler.memoryOf]: the compiled scripts – the one copy the
      * compiler's cache and the tabs' [ScriptUnit]s share – and the soft-held sources), with the
-     * units installed on the tabs counted. Main thread.
+     * units installed on the tabs counted, and the extension's configures in flight
+     * (`pending`, [ConfiguresInFlight]: requested, their post not landed yet). Main thread; does
+     * not wait on a compile in flight (`compiling: true` then, the compiler's counts absent). The
+     * reading is settled – the units installed are the last configure's, the compiler's cache
+     * theirs – when `pending` is 0 and `compiling` false; a reading taken while a configure is
+     * in flight counts the plan being replaced (compat round 22's `[lane]` run, Adblock Ad
+     * Blocker Pro's heap split: the compiler's 11 units against 1 installed).
      */
-    fun unitMemory(id: String): JSONObject = compiler.memoryOf(id).put("installed", units[id]?.size ?: 0)
+    fun unitMemory(id: String): JSONObject =
+        compiler.memoryOf(id).put("installed", units[id]?.size ?: 0).put("pending", configuresInFlight.pending(id))
 
     /**
      * Let the runtime's share of an extension's heap go while the extension stays attached, for
@@ -2443,6 +2460,7 @@ class Extensions(private val host: Host) {
         // The release. The compiler does not wait on a compile in flight: that compile sees
         // the close at its next unit and releases (`UnitCompiler.close`).
         val released = compiler.close()
+        configuresInFlight.reset()
         val installedUnits = units.values.sumOf { it.size }
         val installedChars = units.values.sumOf { list -> list.sumOf { it.script.length.toLong() } }
         units.clear()

@@ -158,6 +158,68 @@ class UnitCompilerTest {
         assertEquals(2, memory.getInt("units"))
         assertEquals(1, memory.getInt("wideUnits"))
         assertEquals(compiled[0].script.length.toLong() + 2L * compiled[1].script.length, memory.getLong("unitBytes"))
+        assertFalse(memory.getBoolean("compiling"))
+        assertEquals(0, memory.getInt("refused"))
+    }
+
+    @Test
+    fun `memoryOf does not wait on a compile in flight - it says compiling and counts nothing - and counts the settled plan after`() {
+        // Compat round 22's `[lane]` run: the heap split's reading on the main thread stood on the
+        // compiler's lock for the compile's last 1.5 s (Choreographer's 92 skipped frames) and got
+        // the plan being compiled counted against the one still installed.
+        val compiler = UnitCompiler { "/*boot*/" }
+        compiler.compile(id, "1.0.0", units("k" to listOf("cs.js")), true, read, size)
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val blockingRead: (String) -> String? = { path ->
+            if (path == "extra.js") {
+                entered.countDown()
+                release.await(10, java.util.concurrent.TimeUnit.SECONDS)
+            }
+            files[path]
+        }
+        val worker = Thread {
+            compiler.compile(id, "1.0.0", units("k" to listOf("cs.js"), "k2" to listOf("extra.js")), true, blockingRead, size)
+        }
+        worker.start()
+        assertTrue(entered.await(10, java.util.concurrent.TimeUnit.SECONDS))
+        val t0 = System.nanoTime()
+        val during = compiler.memoryOf(id)
+        assertTrue("memoryOf waited ${(System.nanoTime() - t0) / 1_000_000} ms", System.nanoTime() - t0 < 2_000_000_000L)
+        assertTrue(during.getBoolean("compiling"))
+        assertFalse(during.has("units"))
+        release.countDown()
+        worker.join(10_000)
+        assertFalse(worker.isAlive)
+        val after = compiler.memoryOf(id)
+        assertFalse(after.getBoolean("compiling"))
+        assertEquals(2, after.getInt("units"))
+        assertEquals(0, after.getInt("sources"))
+    }
+
+    @Test
+    fun `memoryOf counts a refused unit apart from the compiled ones - its empty script in no total`() {
+        val vendor = "/* vendor */ " + "v".repeat(2_000)
+        files["vendor.js"] = vendor
+        val compiler = UnitCompiler(budgetChars = 10_000) { "/*boot*/" }
+        val groups = JSONArray()
+        for (g in 0 until 8) {
+            groups.put(org.json.JSONObject().put("ext", id).put("index", g).put("js", JSONArray(listOf("vendor.js", "cs.js"))).put("isolation", "with"))
+        }
+        val plan = units("small:https://example.com" to listOf("cs.js"))
+        plan.put(
+            org.json.JSONObject().put("key", "big:*").put("origins", JSONArray(listOf("*"))).put("world", org.json.JSONObject.NULL)
+                .put("config", "{}").put("groups", groups).put("css", JSONArray())
+        )
+        val compiled = compiler.compile(id, "1.0.0", plan, true, read, size)
+        val memory = compiler.memoryOf(id)
+        // Two entries in the cache, one of them the refusal: the runtime installs one unit, and the count here matches it.
+        assertEquals(2, memory.getInt("units"))
+        assertEquals(1, memory.getInt("refused"))
+        assertEquals(compiled[0].script.length.toLong(), memory.getLong("unitChars"))
+        assertEquals(compiled[0].script.length.toLong(), memory.getLong("unitBytes"))
+        assertEquals(0, memory.getInt("wideUnits"))
+        assertEquals(1, memory.getInt("units") - memory.getInt("refused"))
     }
 
     @Test

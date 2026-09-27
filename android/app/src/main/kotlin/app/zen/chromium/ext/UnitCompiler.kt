@@ -288,31 +288,49 @@ class UnitCompiler(
      * same way. The width is the sources' own: the bootstrap, the boot config the core
      * serializes and the assembly's glue are Latin-1 (compat round 22 read Adblock Ad Blocker
      * Pro's every unit 16-bit for one U+205D in each uBlock scriptlet's `makeLogPrefix` and the
-     * filter lists' CJK, Cyrillic and Arabic text – theirs to carry as they are).
+     * filter lists' CJK, Cyrillic and Arabic text – theirs to carry as they are). The units a
+     * plan refused ([Compiled.refused], kept with an empty script) are counted apart, so the
+     * count installed on the tabs has its match here. Does not wait: the lock is a compile's for
+     * its whole run (seconds for a plan of Adblock Ad Blocker Pro's size), and what the reading
+     * would count under it is the plan being replaced – `compiling: true` and nothing else says
+     * so (compat round 22's `[lane]` run read a heap split off such a wait: the instrumentation's
+     * main-thread reading stood on the lock for the compile's last 1.5 s and the count it got
+     * was the old plan's beside the new plan's units, landed a moment later).
      */
-    fun memoryOf(id: String): JSONObject = lock.withLock {
-        val entry = cache[id] ?: return@withLock JSONObject().put("units", 0)
-        var unitChars = 0L
-        var unitBytes = 0L
-        var wideUnits = 0
-        for (unit in entry.units.values) {
-            val wide = unit.script.any { it > '\u00FF' }
-            if (wide) wideUnits++
-            unitChars += unit.script.length
-            unitBytes += unit.script.length.toLong() * (if (wide) 2 else 1)
+    fun memoryOf(id: String): JSONObject {
+        if (!lock.tryLock()) return JSONObject().put("compiling", true)
+        try {
+            val entry = cache[id] ?: return JSONObject().put("compiling", false).put("units", 0).put("refused", 0)
+            var unitChars = 0L
+            var unitBytes = 0L
+            var wideUnits = 0
+            var refused = 0
+            for (unit in entry.units.values) {
+                if (unit.refused != null) {
+                    refused++
+                    continue
+                }
+                val wide = unit.script.any { it > '\u00FF' }
+                if (wide) wideUnits++
+                unitChars += unit.script.length
+                unitBytes += unit.script.length.toLong() * (if (wide) 2 else 1)
+            }
+            var sources = 0
+            var sourceChars = 0L
+            var sourceBytes = 0L
+            for (held in entry.sources.values) {
+                val text = (held as? SoftReference<*>)?.get() as? String ?: continue
+                sources++
+                sourceChars += text.length
+                sourceBytes += text.length.toLong() * (if (text.any { it > '\u00FF' }) 2 else 1)
+            }
+            return JSONObject()
+                .put("compiling", false)
+                .put("units", entry.units.size).put("refused", refused).put("unitChars", unitChars).put("unitBytes", unitBytes).put("wideUnits", wideUnits)
+                .put("sources", sources).put("sourceChars", sourceChars).put("sourceBytes", sourceBytes)
+        } finally {
+            lock.unlock()
         }
-        var sources = 0
-        var sourceChars = 0L
-        var sourceBytes = 0L
-        for (held in entry.sources.values) {
-            val text = (held as? SoftReference<*>)?.get() as? String ?: continue
-            sources++
-            sourceChars += text.length
-            sourceBytes += text.length.toLong() * (if (text.any { it > '\u00FF' }) 2 else 1)
-        }
-        JSONObject()
-            .put("units", entry.units.size).put("unitChars", unitChars).put("unitBytes", unitBytes).put("wideUnits", wideUnits)
-            .put("sources", sources).put("sourceChars", sourceChars).put("sourceBytes", sourceBytes)
     }
 
     /**
