@@ -344,7 +344,7 @@ class Extensions(private val host: Host) {
      * for instrumentation (the demo's latency figures).
      */
     val decisions = ArrayDeque<String>()
-    /** While `debug`: the CORS proxy's last answers ("<ext> METHOD status url"), for instrumentation. */
+    /** While `debug`: the CORS proxy's last outcomes ("<ext> METHOD <status | words> url" – [recordProxy]), for instrumentation. */
     val proxied = ArrayDeque<String>()
     /**
      * While `debug`: `"<ext> <ns>.<method>"` → `[calls, failed replies, unanswered]` over the
@@ -997,11 +997,17 @@ class Extensions(private val host: Host) {
         send(ep, message, at)
     }
 
-    private fun recordProxy(extensionId: String, request: CorsProxy.Request, status: Int) {
+    /**
+     * One line of the extension's proxied requests while `debug` (`proxied`): `<ext> METHOD <outcome> <url>`,
+     * the outcome a status, or the words for a redirect or a failure left to the WebView and for a
+     * host the extension has no permission for; the latter three in logcat as well.
+     */
+    private fun recordProxy(extensionId: String, request: CorsProxy.Request, outcome: String) {
         synchronized(proxied) {
             if (proxied.size >= 200) proxied.removeFirst()
-            proxied.addLast("$extensionId ${request.method} $status ${request.url}")
+            proxied.addLast("$extensionId ${request.method} $outcome ${request.url}")
         }
+        if (!outcome.first().isDigit()) Log.w(TAG, "cors proxy ${extensionId.take(8)} ${request.method} ${request.url}: $outcome")
     }
 
     private fun recordCall(ep: String, message: JSONObject, chars: Int) {
@@ -1898,11 +1904,22 @@ class Extensions(private val host: Host) {
             if (ext != null && (tab?.isPrivateTab != true || ext.allowPrivate)) {
                 val proxied = CorsProxy.Request(request.method ?: "GET", url.toString(), request.requestHeaders ?: emptyMap())
                 val hosts = grantedHosts[id]?.let { ext.hosts + it } ?: ext.hosts
-                if (corsProxy.applies(proxied, corsOrigin, hosts)) {
-                    val reply = corsProxy.handle(proxied, id, corsOrigin)
+                // The record while `debug` (`proxied`; the sweep reads it): every outcome for an
+                // http(s) request off the extension's origin – answered with its status, a redirect
+                // or a failure left to the WebView, or the proxy standing aside for a host the
+                // extension has no permission for (compat round 22: Temp Mail's popup drew an empty
+                // address with nothing on record, a request the proxy could not answer as absent as
+                // one never made).
+                val offOrigin = (proxied.url.startsWith("http://") || proxied.url.startsWith("https://")) &&
+                    !proxied.url.startsWith("$corsOrigin/") && proxied.header(CorsProxy.PROXY_HEADER) != CorsProxy.SKIP
+                if (!corsProxy.applies(proxied, corsOrigin, hosts)) {
+                    if (debug && offOrigin) recordProxy(id, proxied, "not proxied: no host permission for the URL")
+                } else {
+                    val reply = corsProxy.handle(proxied, id, corsOrigin) { why -> if (debug) recordProxy(id, proxied, "failed ($why); left to the WebView") }
                     // A 3xx the proxy could not follow cannot be a WebResourceResponse; the WebView tries itself.
+                    if (reply != null && reply.status in 300..399 && debug) recordProxy(id, proxied, "${reply.status} redirect left to the WebView")
                     if (reply != null && reply.status !in 300..399) {
-                        if (debug) recordProxy(id, proxied, reply.status)
+                        if (debug) recordProxy(id, proxied, reply.status.toString())
                         if (reply.cookies.isEmpty()) {
                             return WebResourceResponse(reply.mime, reply.charset, reply.status, reply.reason, reply.headers, reply.body)
                         }
