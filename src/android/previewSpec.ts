@@ -143,6 +143,13 @@ export const PREVIEW_SHARE_KINDS = [
 export type PreviewShareKind = (typeof PREVIEW_SHARE_KINDS)[number]
 
 /**
+ * What the QR code sheet shows (`qrcode=<variant>`; SH-06): the code, the too-long message, the
+ * toast after Download, or the code as the share panel's chip hands its chassis over.
+ */
+export const PREVIEW_QR_CODE_VARIANTS = ['link', 'too-long', 'saved', 'panel'] as const
+export type PreviewQrCodeVariant = (typeof PREVIEW_QR_CODE_VARIANTS)[number]
+
+/**
  * The phone new tab page's field on its way to the omnibox (`ntp=<pose>`; NTP-02 / MOT-08,
  * `lib/fakeboxMorph.ts`): `rest` is the page as it opens, `morph:<n>` the field held n percent
  * of the way from the page to the omnibox with the bar open under it (the stills' source; the
@@ -574,6 +581,17 @@ export type PreviewState =
        */
       kind: 'qr'
       script: string
+    }
+  | {
+      /**
+       * The QR code sheet (SH-06) up as the share sheet's "QR code" opens it: with the code for
+       * the preview's link (`qrcode=link`), with Chrome's too-long message in the code's place
+       * (`qrcode=too-long`), after Download – the sheet gone and the host's "Saved to Downloads"
+       * toast up (`qrcode=saved`) – or on the share panel's own chassis after its QR code chip's
+       * hand-off (`qrcode=panel`; §9.38). The stand-in host's code is `previewShare.ts`'s.
+       */
+      kind: 'qrcode'
+      variant: PreviewQrCodeVariant
     }
   | {
       kind: 'popups'
@@ -1088,6 +1106,15 @@ export function parsePreviewSpec(spec: string): PreviewState {
   if (download) return { kind: 'download', download: parseDownload(download, params) }
   const qr = params.get('qr')
   if (qr !== null) return { kind: 'qr', script: qr || 'url' }
+  const qrcode = params.get('qrcode')
+  if (qrcode !== null) {
+    return {
+      kind: 'qrcode',
+      variant: (PREVIEW_QR_CODE_VARIANTS as readonly string[]).includes(qrcode)
+        ? (qrcode as PreviewQrCodeVariant)
+        : 'link'
+    }
+  }
   const popups = params.get('popups')
   if (popups !== null && popups !== '' && Number.isFinite(Number(popups))) {
     const count = Math.min(PREVIEW_POPUPS_MAX, Math.max(0, Math.floor(Number(popups))))
