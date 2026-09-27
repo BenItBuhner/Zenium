@@ -5,6 +5,7 @@ import type { BookmarkNode, UIState } from '@shared/types'
 import { isBookmarkRoot } from '@shared/bookmarks'
 import { inputToUrl } from '@shared/url'
 import { cmd, run } from '@renderer/lib/api'
+import { useBackSurface } from '@renderer/lib/back'
 import { closeBookmarkEditor, type BookmarkEditRequest } from '@renderer/lib/bookmarkEdit'
 import { moveTargets } from '@renderer/lib/bookmarkList'
 import type { BottomSheetHandle } from '../sheet/BottomSheet'
@@ -40,7 +41,9 @@ import { readingListToggle } from './readingListToggle'
  * new node is created straight into the picked folder.
  *
  * Every way out – Save, Delete, the scrim, the back gesture, Escape – slides the sheet away
- * first and clears the request once it is gone. Focus moves to the dialog itself as it opens,
+ * first and clears the request once it is gone; in the pane the back gesture is the header's
+ * Back instead and steps to the form, as Chrome's back climbs out of its picker onto the edit
+ * page. Focus moves to the dialog itself as it opens,
  * not into a field (§9.22: the keyboard would come up with the sheet); stepping into the pane
  * puts it on the checked folder, stepping back puts it on the sheet again.
  *
@@ -75,6 +78,13 @@ export function BookmarkEditSheet({
   }
   const [pane, setPane] = useState<'form' | 'folder'>('form')
   const [naming, setNaming] = useState(false)
+  // The system back in the pane steps back to the form, as the header's Back does (Chrome's
+  // back climbs out of its picker onto the edit page): a surface over the sheet's own for as
+  // long as the pane is up, a cut rather than a slide – the form's back still slides the sheet
+  // away, and the naming sheet's own surface stands over this one while it is up.
+  useBackSurface(
+    pane === 'folder' ? { name: 'bookmark-edit-folder', onCommit: () => setPane('form') } : null
+  )
 
   useEffect(() => {
     if (gone) closeBookmarkEditor()

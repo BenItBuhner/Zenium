@@ -14,7 +14,8 @@ import { DEFAULT_SETTINGS } from '@shared/defaults'
  * pane – the picker's radio list of every folder the node can enter (never the edited folder or
  * its subtree), the folder Save would use checked, the folder it stands in now saying
  * `Current` – with Back leading and `New folder` trailing in the header. A pick steps back to
- * the form with the row reading the picked folder; nothing is written by the pick. Save runs
+ * the form with the row reading the picked folder; nothing is written by the pick; the system
+ * back in the pane is the header's Back. Save runs
  * `bookmark.update` and then `bookmark.move` in the one commit once the sheet is gone; a new
  * node is created into the picked folder. `New folder` makes a folder at once inside the
  * checked one (`bookmark.create`) and picks it. Rendered for real on the frame's dialog host,
@@ -40,6 +41,7 @@ const { BookmarkEditSheet } = await import('../BookmarkEditSheet')
 const { FrameDialogHost } = await import('@renderer/lib/portals')
 const { viewportStore } = await import('@renderer/lib/formFactor')
 const { browserStore, uiStore } = await import('@renderer/lib/ui')
+const { dispatchBackEvent } = await import('@renderer/lib/back')
 
 // --- a profile ---------------------------------------------------------------------------------
 
@@ -360,6 +362,31 @@ describe("the bookmark editor's Folder row (HB-16)", () => {
     await settle()
     expect(checkedTitle()).toBe('Home')
     expect(currentTitles()).toEqual(['Work'])
+  })
+
+  it('takes the system back in the pane as the header’s Back – the form comes back with the editor still up – and from the form as the sheet’s dismissal', async () => {
+    await show(stateOf(), { id: 'jira', parentId: 'work', type: 'url' })
+    act(() => folderRow()!.click())
+    await settle()
+    expect(sheetTitle()).toBe('Folder')
+    act(() => {
+      dispatchBackEvent('start', { edge: 'left' })
+      dispatchBackEvent('commit')
+    })
+    await settle()
+    await land()
+    expect(sheetTitle()).toBe('Edit bookmark')
+    expect(uiStore.get().bookmarkEdit).not.toBeNull()
+    expect(calls()).toEqual([])
+
+    act(() => {
+      dispatchBackEvent('start', { edge: 'left' })
+      dispatchBackEvent('commit')
+    })
+    await settle()
+    await land()
+    expect(uiStore.get().bookmarkEdit).toBeNull()
+    expect(calls()).toEqual([])
   })
 })
 
