@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import type { WebPreferences } from 'electron'
-import type { Tab } from '../../../shared/types'
+import type { Rect, Tab } from '../../../shared/types'
 import type {
   AgentInputEvent,
   NavigationCommitDetails,
@@ -488,14 +488,17 @@ function fakeWindow(): WindowHost & {
   chrome: FakeChrome
   zen: { contentHidden: boolean }
   buttonHeld: boolean
+  /** Where the layout last placed a page alone in this window (`ZenWindow.contentRect`); null before a layout. */
+  contentRect: Rect | null
 } {
   const chrome = new FakeChrome()
   const win = new FakeBrowserWindow(chrome)
   const host = {
     win,
     chrome,
-    zen: { contentHidden: false },
+    zen: { contentHidden: false, contentRect: (): Rect | null => host.contentRect },
     buttonHeld: false,
+    contentRect: null as Rect | null,
     pointerButtonHeld: (): boolean => host.buttonHeld
   }
   return host as unknown as WindowHost & {
@@ -503,6 +506,7 @@ function fakeWindow(): WindowHost & {
     chrome: FakeChrome
     zen: { contentHidden: boolean }
     buttonHeld: boolean
+    contentRect: Rect | null
   }
 }
 
@@ -2098,6 +2102,50 @@ describe('a hidden page an agent drives and the stage', () => {
     expect(staged()!.contentSize).toEqual([1600, 820])
   })
 
+  it('stages a page at the page area the window’s layout last placed a page alone in, over the view’s own last box and a sibling’s', () => {
+    const { window, create } = setup()
+    const shown = create()
+    shown.setBounds(box)
+    shown.setVisible(true)
+    // The window's page area moved since either view was placed: a chrome bar went.
+    window.contentRect = { x: 200, y: 40, width: 1000, height: 760 }
+    const view = create()
+    view.setBounds({ x: 200, y: 60, width: 1000, height: 740 })
+    view.setVisible(true)
+    view.setVisible(false)
+    view.setAgentDriven(true)
+    expect(engine(view).bounds).toEqual({ x: 0, y: 0, width: 1000, height: 760 })
+    expect(staged()!.contentSize).toEqual([1000, 760])
+    // Off the stage it takes its own box back, as the layout gave it.
+    view.setVisible(true)
+    expect(engine(view).bounds).toEqual({ x: 200, y: 60, width: 1000, height: 740 })
+  })
+
+  it('moves a staged page to the page area the window has at the agent’s next word, growing the stage, and leaves it be when nothing moved', () => {
+    const { window, create } = setup()
+    window.contentRect = { x: 200, y: 60, width: 1000, height: 740 }
+    const view = create()
+    view.setAgentDriven(true)
+    const stage = staged()!
+    expect(engine(view).bounds).toEqual({ x: 0, y: 0, width: 1000, height: 740 })
+    // The user widens the window: a hidden view hears nothing of it from the layout.
+    window.contentRect = { x: 200, y: 60, width: 1200, height: 900 }
+    expect(engine(view).bounds).toEqual({ x: 0, y: 0, width: 1000, height: 740 })
+    // The session's next action prepares the tab: on the stage already, it takes the new box.
+    view.setAgentDriven(true)
+    expect(engine(view).bounds).toEqual({ x: 0, y: 0, width: 1200, height: 900 })
+    expect(stage.contentSize).toEqual([1200, 900])
+    expect(stages).toHaveLength(1)
+    expect(stage.children).toEqual([view.view])
+    // The same word with nothing moved changes nothing; a narrower window shrinks the view, not the stage.
+    view.setAgentDriven(true)
+    expect(engine(view).bounds).toEqual({ x: 0, y: 0, width: 1200, height: 900 })
+    window.contentRect = { x: 200, y: 60, width: 900, height: 700 }
+    view.setAgentDriven(true)
+    expect(engine(view).bounds).toEqual({ x: 0, y: 0, width: 900, height: 700 })
+    expect(stage.contentSize).toEqual([1200, 900])
+  })
+
   it('never stages a page in front, and an active page hidden by a tab switch goes onto the stage at its own last box, back in front when shown again', () => {
     const { window, create } = setup()
     const view = create()
@@ -2295,6 +2343,149 @@ describe('a hidden page an agent drives and the stage', () => {
     fresh.setVisible(true)
     fresh.bringToFront()
     expect(traffic(other).filter(([, child]) => child === 'throwaway')).toHaveLength(2)
+  })
+
+  /**
+   * A staged page is pictured from a frame of its renderer's own, never `capturePage`'s copy,
+   * which would count as a capturer on the page and make an agent's page (throttling off) read
+   * `visible` for good. The frame subscription is one per page: captures take turns, and each
+   * ends its own subscription off the frame's callback before the next begins.
+   */
+  interface FrameFakes {
+    log: string[]
+    frames: Array<(image: Electron.NativeImage) => void>
+    capturePage: ReturnType<typeof vi.fn>
+    throttling: boolean[]
+  }
+  const frameFakes = (view: ElectronTabView): FrameFakes => {
+    const wc = (view as unknown as { webContents: Electron.WebContents }).webContents
+    const fakes: FrameFakes = {
+      log: [],
+      frames: [],
+      capturePage: vi.fn(() => Promise.reject(new Error('capturePage on a staged page'))),
+      throttling: []
+    }
+    Object.assign(wc, {
+      capturePage: fakes.capturePage,
+      getZoomFactor: () => 1,
+      executeJavaScriptInIsolatedWorld: () => Promise.reject(new Error('no geometry')),
+      setBackgroundThrottling: (allowed: boolean) => {
+        fakes.throttling.push(allowed)
+      },
+      beginFrameSubscription: (
+        onlyDirty: boolean,
+        callback: (image: Electron.NativeImage) => void
+      ) => {
+        fakes.log.push(`begin${onlyDirty ? ' dirty' : ''}`)
+        fakes.frames.push(callback)
+      },
+      endFrameSubscription: () => {
+        fakes.log.push('end')
+      }
+    })
+    return fakes
+  }
+  const frame = (w: number, h: number): Electron.NativeImage =>
+    ({
+      isEmpty: () => false,
+      getSize: () => ({ width: w, height: h }),
+      crop: (r: { width: number; height: number }) => frame(r.width, r.height),
+      toPNG: () => Buffer.from(`png-${w}x${h}`),
+      toJPEG: (q: number) => Buffer.from(`jpeg-${w}x${h}-${q}`)
+    }) as unknown as Electron.NativeImage
+  const settled = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
+
+  it('pictures a staged page from a frame of its own, never capturePage, ending the subscription after the frame; a full page or region is the viewport, said so', async () => {
+    const { create } = setup()
+    const view = create()
+    view.setAgentDriven(true)
+    expect(staged()!.children).toEqual([view.view])
+    const fakes = frameFakes(view)
+    const pending = view.capture({ mode: 'viewport', format: 'jpeg' })
+    await settled()
+    expect(fakes.log).toEqual(['begin'])
+    fakes.frames[0]!(frame(1032, 732))
+    // The end comes off the callback, deferred, before the picture is answered.
+    expect(fakes.log).toEqual(['begin'])
+    expect(await pending).toEqual({
+      data: Buffer.from('jpeg-1032x732-75').toString('base64'),
+      mimeType: 'image/jpeg',
+      width: 1032,
+      height: 732
+    })
+    expect(fakes.log).toEqual(['begin', 'end'])
+    expect(fakes.capturePage).not.toHaveBeenCalled()
+    const full = view.capture({ mode: 'fullPage', format: 'png' })
+    await settled()
+    fakes.frames[1]!(frame(1032, 732))
+    expect(await full).toMatchObject({ width: 1032, height: 732, fallback: 'viewport' })
+    expect(fakes.log).toEqual(['begin', 'end', 'begin', 'end'])
+    expect(fakes.capturePage).not.toHaveBeenCalled()
+  })
+
+  it('lets captures of a staged page take turns: the second subscription begins once the first has ended', async () => {
+    const { create } = setup()
+    const view = create()
+    view.setAgentDriven(true)
+    const fakes = frameFakes(view)
+    const first = view.capture({ mode: 'viewport', format: 'jpeg' })
+    const second = view.capture({ mode: 'viewport', format: 'jpeg' })
+    await settled()
+    expect(fakes.log).toEqual(['begin'])
+    fakes.frames[0]!(frame(1032, 732))
+    expect(await first).toMatchObject({ width: 1032, height: 732 })
+    await settled()
+    expect(fakes.log).toEqual(['begin', 'end', 'begin'])
+    fakes.frames[1]!(frame(1032, 732))
+    expect(await second).toMatchObject({ width: 1032, height: 732 })
+    expect(fakes.log).toEqual(['begin', 'end', 'begin', 'end'])
+  })
+
+  it('shows a staged renderer as painting before asking for its frame, with the throttling as it stands, once more when it paints nothing, and answers null when it still paints nothing', async () => {
+    vi.useFakeTimers()
+    try {
+      const { create } = setup()
+      const view = create()
+      const fakes = frameFakes(view)
+      view.setBackgroundThrottling(false)
+      view.setAgentDriven(true)
+      fakes.throttling.length = 0
+      const pending = view.capture({ mode: 'viewport', format: 'jpeg' })
+      await vi.advanceTimersByTimeAsync(0)
+      // The un-hide comes before the subscription: a navigation since the session's prepare
+      // hid the widget again, and a hidden widget answers no frame.
+      expect(fakes.throttling).toEqual([false])
+      expect(fakes.log).toEqual(['begin'])
+      await vi.advanceTimersByTimeAsync(799)
+      expect(fakes.throttling).toEqual([false])
+      await vi.advanceTimersByTimeAsync(1)
+      expect(fakes.throttling).toEqual([false, false])
+      await vi.advanceTimersByTimeAsync(1999)
+      expect(fakes.log).toEqual(['begin'])
+      await vi.advanceTimersByTimeAsync(1)
+      await vi.runAllTimersAsync()
+      expect(await pending).toBeNull()
+      expect(fakes.log).toEqual(['begin', 'end'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('pictures the same page with capturePage once it is off the stage', async () => {
+    const { create } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setAgentDriven(true)
+    const fakes = frameFakes(view)
+    fakes.capturePage.mockImplementation(() => Promise.resolve(frame(1000, 740)))
+    view.setVisible(true)
+    expect(staged()!.children).toEqual([])
+    expect(await view.capture({ mode: 'viewport', format: 'jpeg' })).toMatchObject({
+      width: 1000,
+      height: 740
+    })
+    expect(fakes.log).toEqual([])
+    expect(fakes.capturePage).toHaveBeenCalledTimes(1)
   })
 })
 
