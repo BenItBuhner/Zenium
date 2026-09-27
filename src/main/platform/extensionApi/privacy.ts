@@ -31,6 +31,7 @@ import {
   type WebRtcIpHandlingPolicy
 } from '../../../core/extensions/api/privacy'
 import type { BlockingResponse, WebRequestDetails } from '../webRequest'
+import { extensionName } from './controls'
 import { ApiError, type ApiContext, type ApiHost, type NamespaceHandlers } from './types'
 import type { WebRequestListenerHost } from './webRequest'
 
@@ -49,22 +50,38 @@ const REFERRERS = settingKey('websites', 'referrersEnabled')
 const DO_NOT_TRACK = settingKey('websites', 'doNotTrackEnabled')
 const WEB_RTC = settingKey('network', 'webRTCIPHandlingPolicy')
 const PASSWORD_SAVING = settingKey('services', 'passwordSavingEnabled')
+const SAFE_BROWSING = settingKey('services', 'safeBrowsingEnabled')
+const SEARCH_SUGGEST = settingKey('services', 'searchSuggestEnabled')
+const AUTOFILL_ADDRESSES = settingKey('services', 'autofillAddressEnabled')
+const AUTOFILL_CARDS = settingKey('services', 'autofillCreditCardEnabled')
+const THIRD_PARTY_COOKIES = settingKey('websites', 'thirdPartyCookiesAllowed')
+const NETWORK_PREDICTION = settingKey('network', 'networkPredictionEnabled')
 
 /**
- * The settings whose services read the extension layer (`shared/extensionSettings.ts`), by the
- * key the Settings row and the service share (`UIState.extensionControls`). Published from
- * `recompute` with the normal windows' effective value – the regular profile's, as Chrome's
- * Settings rows are – so the service reads the extension's value over the user's and the user's
- * again once every holder has cleared, been disabled or uninstalled (services pass 10, F3).
+ * The one table of the `chrome.privacy` settings the extension layer publishes
+ * (`UIState.extensionControls`), by the key the Settings row and the service share
+ * (`shared/extensionSettings.ts`'s `EXTENSION_SETTING_KEYS`): the row that says "Controlled by
+ * <extension>" (`extensionControlled(state, key)`, the §10.5 primitive) and the service that
+ * acts (`layer ?? user`, Chrome's `PrefValueStore` with the extension layer above the user's)
+ * read one value under one name. Published from `recompute` with the normal windows' effective
+ * value – the regular profile's, as Chrome's Settings rows are; a private-window-only value
+ * marks nothing – so the service reads the extension's value over the user's, the row shows it
+ * held, and the user's own returns the moment every holder has cleared, been disabled or
+ * uninstalled (services pass 10, F3). Do Not Track is the eighth pair: the `DNT: 1` header and
+ * `navigator.doNotTrack` read `privacy.doNotTrack` through the protection service, the same key
+ * the Privacy signals row reads. The settings not here stand for no row: Chrome marks nothing
+ * for them either (the WebRTC policy, hyperlink auditing, referrers), or Zenium has no setting
+ * behind them (Google's services, the Privacy Sandbox).
  */
-const SERVICE_CONTROL_KEYS: ReadonlyArray<readonly [string, string]> = [
+export const SERVICE_CONTROL_KEYS: ReadonlyArray<readonly [string, string]> = [
   [PASSWORD_SAVING, EXTENSION_SETTING_KEYS.passwordSaving],
-  [settingKey('services', 'autofillAddressEnabled'), EXTENSION_SETTING_KEYS.autofillAddresses],
-  [settingKey('services', 'autofillCreditCardEnabled'), EXTENSION_SETTING_KEYS.autofillCards],
-  [settingKey('services', 'safeBrowsingEnabled'), EXTENSION_SETTING_KEYS.safeBrowsing],
-  [settingKey('websites', 'thirdPartyCookiesAllowed'), EXTENSION_SETTING_KEYS.thirdPartyCookies],
-  [settingKey('services', 'searchSuggestEnabled'), EXTENSION_SETTING_KEYS.searchSuggestions],
-  [settingKey('network', 'networkPredictionEnabled'), EXTENSION_SETTING_KEYS.preloadPages]
+  [AUTOFILL_ADDRESSES, EXTENSION_SETTING_KEYS.autofillAddresses],
+  [AUTOFILL_CARDS, EXTENSION_SETTING_KEYS.autofillCards],
+  [SAFE_BROWSING, EXTENSION_SETTING_KEYS.safeBrowsing],
+  [THIRD_PARTY_COOKIES, EXTENSION_SETTING_KEYS.thirdPartyCookies],
+  [SEARCH_SUGGEST, EXTENSION_SETTING_KEYS.searchSuggestions],
+  [NETWORK_PREDICTION, EXTENSION_SETTING_KEYS.preloadPages],
+  [DO_NOT_TRACK, EXTENSION_SETTING_KEYS.doNotTrack]
 ]
 
 /**
@@ -78,11 +95,16 @@ const SERVICE_CONTROL_KEYS: ReadonlyArray<readonly [string, string]> = [
  * What Zenium acts on: the WebRTC IP handling policy goes to every tab page (Electron's
  * `setWebRTCIPHandlingPolicy`, the per-`WebContents` form of Chrome's preference); hyperlink
  * auditing off cancels `ping` requests, referrers off drops the `Referer` header, Do Not Track
- * on adds `DNT: 1`, all in the session's request pipeline and only in the sessions the value
- * applies to. The other settings stand for Chromium features Electron exposes no switch for
- * (network prediction, third-party cookie blocking) or Zenium does not have (Safe Browsing,
- * autofill, the Privacy Sandbox, Google's services): their values are remembered and reported
- * back, so extensions that toggle them at start-up run and see their own value.
+ * on adds `DNT: 1` (and an extension holding it off strips the header the user's setting
+ * sends), all in the session's request pipeline and only in the sessions the value applies
+ * to. The settings Zenium has as its own (Safe Browsing, third-party cookies, search
+ * suggestions, offering to save passwords, autofill, Preload pages, Do Not Track) answer the
+ * user's setting while no extension holds them and follow it as it changes; an extension's
+ * value over them is published as the extension layer (`SERVICE_CONTROL_KEYS`), which their
+ * services read over the user's own and their Settings rows show held – "Controlled by
+ * <extension>" – until the extension lets go. The rest stand for features Zenium does not have
+ * (the Privacy Sandbox, Google's services): their values are remembered and reported back, so
+ * extensions that toggle them at start-up run and see their own value.
  */
 export class PrivacyApi {
   /** By setting key, then extension id. */
@@ -92,6 +114,8 @@ export class PrivacyApi {
   private readonly pages = new Map<PrivacyPage, boolean>()
   private listenerHost: WebRequestListenerHost | null = null
   private requestHooks: Array<() => void> = []
+  /** The user's own values of the settings Zenium has, as last resolved (`attach` follows them). */
+  private userKey = ''
 
   constructor(private readonly host: ApiHost) {}
 
@@ -105,9 +129,21 @@ export class PrivacyApi {
   // Wiring
   // ---------------------------------------------------------------------------
 
-  /** The session pipeline is created after the API host. */
+  /**
+   * The session pipeline is created after the API host. From here the API also follows the
+   * user's own settings (`browserValue`): a change of one under no extension's control moves
+   * the effective value and is reported through `onChange`, as Chrome reports a pref change
+   * whoever made it; under an extension's control the extension's value stands.
+   */
   attach(listenerHost: WebRequestListenerHost): void {
     this.listenerHost = listenerHost
+    this.userKey = this.userValuesKey()
+    this.host.browser.state.subscribe(() => {
+      const key = this.userValuesKey()
+      if (key === this.userKey) return
+      this.userKey = key
+      this.recompute()
+    })
     this.refreshRequestHooks()
   }
 
@@ -237,11 +273,40 @@ export class PrivacyApi {
     return installOrderRank(this.host, (id) => this.allowedInPrivate(id))
   }
 
+  /**
+   * The browser's own value while no extension controls the setting: the user's setting where
+   * Zenium has one (Chrome answers its pref), the spec's fixed default otherwise. Third-party
+   * cookies are "allowed" unless blocked everywhere – Chrome's `CookieControlsMode` transform
+   * reads its incognito-only mode as allowed too.
+   */
   private browserValue(spec: PrivacySettingSpec): PrivacyValue {
-    if (settingKey(spec.category, spec.name) === PASSWORD_SAVING) {
-      return this.host.browser.state.settings.passwords.offerToSave
+    const settings = this.host.browser.state.settings
+    switch (settingKey(spec.category, spec.name)) {
+      case PASSWORD_SAVING:
+        return settings.passwords.offerToSave
+      case SAFE_BROWSING:
+        return settings.privacy.safeBrowsingEnabled
+      case DO_NOT_TRACK:
+        return settings.privacy.dnt
+      case THIRD_PARTY_COOKIES:
+        return settings.privacy.thirdPartyCookies !== 'block'
+      case SEARCH_SUGGEST:
+        return settings.searchSuggestions
+      case AUTOFILL_ADDRESSES:
+        return settings.autofill.addresses
+      case AUTOFILL_CARDS:
+        return settings.autofill.cards
+      case NETWORK_PREDICTION:
+        // Chrome's `NetworkPredictionTransformer`: `false` is the "never" level, `true` any other.
+        return settings.preloadPages !== 'none'
+      default:
+        return spec.browserDefault
     }
-    return spec.browserDefault
+  }
+
+  /** The user's values of the settings `browserValue` reads, as one string to compare. */
+  private userValuesKey(): string {
+    return JSON.stringify(PRIVACY_SETTINGS.map((spec) => this.browserValue(spec)))
   }
 
   private forSetting(spec: PrivacySettingSpec): Map<string, ScopedValues> {
@@ -301,7 +366,13 @@ export class PrivacyApi {
     this.publishControls()
   }
 
-  /** The layer the services read (`SERVICE_CONTROL_KEYS`): every held key with its holder and value. */
+  /**
+   * The layer the services read and the Settings rows show (`SERVICE_CONTROL_KEYS`, through
+   * `ApiHost.controls` into `UIState.extensionControls`): every held key with its holder and
+   * the normal windows' value – the whole map each time, so a setting let go (a clear, the
+   * extension disabled or uninstalled, an older extension's value surfacing under a newer one's
+   * clear) drops or moves its key on the same resolution.
+   */
   private publishControls(): void {
     const controls: Record<string, ExtensionControl> = {}
     for (const [key, controlKey] of SERVICE_CONTROL_KEYS) {
@@ -309,18 +380,11 @@ export class PrivacyApi {
       if (!effective || effective.controller === null) continue
       controls[controlKey] = {
         extensionId: effective.controller,
-        name: this.nameOf(effective.controller),
+        name: extensionName(this.host, effective.controller),
         value: effective.value
       }
     }
     this.host.controls.publish('privacy', controls)
-  }
-
-  /** The extension's name as the Extensions page shows it (the id when nothing better is known). */
-  private nameOf(extensionId: string): string {
-    const info = this.host.browser.extensions.list().find((record) => record.id === extensionId)
-    if (info?.name) return info.name
-    return this.host.loaded(extensionId)?.extension.name || extensionId
   }
 
   // ---------------------------------------------------------------------------
@@ -338,14 +402,15 @@ export class PrivacyApi {
     }
   }
 
-  /** Whether any request setting differs from the browser's own value somewhere. */
+  /** Whether an extension holds any request setting away from the browser's own value somewhere. */
   private requestHooksNeeded(): boolean {
     for (const spec of PRIVACY_SETTINGS) {
       if (spec.effect !== 'request') continue
       const key = settingKey(spec.category, spec.name)
       for (const incognito of [false, true]) {
-        const value = this.effective.get(effectiveKey(key, incognito))?.value
-        if (value !== undefined && value !== spec.browserDefault) return true
+        const effective = this.effective.get(effectiveKey(key, incognito))
+        if (!effective || effective.controller === null) continue
+        if (effective.value !== this.browserValue(spec)) return true
       }
     }
     return false
@@ -380,23 +445,29 @@ export class PrivacyApi {
     ]
   }
 
-  private requestSetting(key: string, details: WebRequestDetails): PrivacyValue | undefined {
-    return this.effective.get(effectiveKey(key, details.partition === PRIVATE_CONTAINER_ID))?.value
+  private requestSetting(key: string, details: WebRequestDetails): EffectiveSetting | undefined {
+    return this.effective.get(effectiveKey(key, details.partition === PRIVATE_CONTAINER_ID))
   }
 
   /** Hyperlink auditing off: the `<a ping>` requests never leave. */
   private beforeRequest(details: WebRequestDetails): BlockingResponse | undefined {
     if (details.resourceType !== 'ping') return undefined
-    return this.requestSetting(HYPERLINK_AUDITING, details) === false ? { cancel: true } : undefined
+    return this.requestSetting(HYPERLINK_AUDITING, details)?.value === false
+      ? { cancel: true }
+      : undefined
   }
 
-  /** Referrers off drops `Referer`; Do Not Track on adds `DNT: 1`. */
+  /**
+   * Referrers off drops `Referer`; Do Not Track on adds `DNT: 1`, and an extension holding it
+   * off strips the header the user's own setting sends (the extension's value is the one in
+   * effect, as the Settings row says).
+   */
   private beforeSendHeaders(details: WebRequestDetails): BlockingResponse | undefined {
     const headers = details.requestHeaders
     if (!headers) return undefined
     let changed = false
     const out: Record<string, string> = { ...headers }
-    if (this.requestSetting(REFERRERS, details) === false) {
+    if (this.requestSetting(REFERRERS, details)?.value === false) {
       for (const name of Object.keys(out)) {
         if (name.toLowerCase() === 'referer') {
           delete out[name]
@@ -404,13 +475,17 @@ export class PrivacyApi {
         }
       }
     }
-    if (this.requestSetting(DO_NOT_TRACK, details) === true) {
-      const existing = Object.keys(out).find((name) => name.toLowerCase() === 'dnt')
+    const dnt = this.requestSetting(DO_NOT_TRACK, details)
+    const existing = Object.keys(out).find((name) => name.toLowerCase() === 'dnt')
+    if (dnt?.value === true) {
       if (existing === undefined || out[existing] !== '1') {
         if (existing !== undefined) delete out[existing]
         out.DNT = '1'
         changed = true
       }
+    } else if (dnt?.value === false && dnt.controller !== null && existing !== undefined) {
+      delete out[existing]
+      changed = true
     }
     return changed ? { requestHeaders: out } : undefined
   }

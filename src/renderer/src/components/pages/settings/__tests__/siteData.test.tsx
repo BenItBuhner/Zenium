@@ -45,13 +45,19 @@ function status(over: Partial<SiteDataStatus> = {}): SiteDataStatus {
   return { ...emptySiteDataStatus(), ...over }
 }
 
-/** The slice of the state the builder reads: the policy, the host's windows, the privacy settings. */
+/**
+ * The slice of the state the builder reads: the policy, the host's windows, the privacy settings,
+ * and the extensions' holds over them – none here: an extension holding
+ * `privacy.thirdPartyCookies` marks both cookie rows as one run at the value the service applies
+ * (`sections.test.ts`, the §10.5 rows); these tests are the user's own rows.
+ */
 function state(siteData: SiteDataStatus, windows = false): UIState {
   return {
     platform: windows ? 'linux' : 'android',
     capabilities: { windows },
     settings: DEFAULT_SETTINGS,
-    siteData
+    siteData,
+    extensionControls: {}
   } as unknown as UIState
 }
 
