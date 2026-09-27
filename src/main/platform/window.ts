@@ -428,11 +428,15 @@ export class ElectronWindow implements WindowHost {
     // chord is down in draws it in its own document, and the chrome reads no hold meanwhile
     // (`DevtoolsQuitHoldNotice`); it is taken down there with the hold.
     if (name === 'state') payload = this.quitHoldRouted(payload as UIState) as Events[K]
-    // A layout applied with no chrome cover on: a view parked under the cover that this layout
-    // did not show again (its tab switched away from meanwhile) is hidden for good
-    // (`ElectronTabView.setVisible` on why a covered page is parked, not hidden).
+    // A layout applied with no chrome popup over the content: a view parked under the popup
+    // that this layout did not show again (its tab switched away from meanwhile; the page
+    // beneath the reader's cover, hidden on the cover's word while the popup was up) is hidden
+    // for good (`ElectronTabView.setVisible` on why a page under the popup is parked, not
+    // hidden). Every view of the window, the pages beneath the reader's covers included – a
+    // page hidden beneath its cover is in no layout, and would otherwise stay parked until the
+    // reader's exit.
     if (name === 'layout.applied' && !(payload as Events['layout.applied']).contentHidden) {
-      for (const view of this.browser.tabs.viewsOwnedBy(this.zen).values()) {
+      for (const view of this.browser.tabs.allViewsOwnedBy(this.zen)) {
         if (hasCoverLifted(view)) view.coverLifted()
       }
     }
@@ -455,11 +459,13 @@ export class ElectronWindow implements WindowHost {
    * minimised or not visible; a window merely blurred while on screen is not. Idempotent – the
    * view ignores a state it already holds, and the core window is told the same state once
    * (`ZenWindow.onWindowVisibleChanged`: what waits for the window's return hears it there).
+   * Every view of the window, the pages beneath the reader's covers included: a page that never
+   * heard the window go would come up in the concealed window at the reader's exit.
    */
   private refreshTabViewConcealment(): void {
     if (!this.alive) return
     const visible = !this.win.isMinimized() && this.win.isVisible()
-    for (const view of this.browser.tabs.viewsOwnedBy(this.zen).values()) {
+    for (const view of this.browser.tabs.allViewsOwnedBy(this.zen)) {
       if (hasWindowVisibility(view)) view.applyWindowVisible(visible)
     }
     this.zen.onWindowVisibleChanged(visible)

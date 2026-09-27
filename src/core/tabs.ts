@@ -445,7 +445,9 @@ export class TabManager {
 
   /**
    * The view each of `win`'s pages is laid out as: the cover of a covered tab (the page
-   * beneath it keeps its place off screen until the cover comes down), else the page.
+   * beneath it keeps its place off screen until the cover comes down), else the page. One per
+   * tab, for whoever addresses the tab's document in front; a host telling every view of the
+   * window something walks `allViewsOwnedBy`.
    */
   viewsOwnedBy(win: ZenWindow): Map<string, TabView> {
     const out = new Map<string, TabView>()
@@ -454,6 +456,29 @@ export class TabManager {
       const cover = this.covers.get(tabId)
       const view = cover && !cover.isDestroyed() ? cover : this.views.get(tabId)
       if (view) out.set(tabId, view)
+    }
+    return out
+  }
+
+  /**
+   * Every live view of `win`'s tabs: each page, and over a covered tab's page the reader's
+   * cover – standing, or taken down and waiting on the page's word (`coverLeaving`). What a host
+   * walks when the window tells its views something as views of the window – the chrome's popup
+   * lifted off them, the window concealed or back – whereas `viewsOwnedBy` hands the layout one
+   * per tab: a page hidden beneath its cover since the cover's word is in no layout, and one
+   * that hid under the chrome's popup, parked, would otherwise wait for the exit to hear the
+   * popup went. One view per tab on a host without a cover (the phone).
+   */
+  allViewsOwnedBy(win: ZenWindow): TabView[] {
+    const out: TabView[] = []
+    for (const [tabId, owner] of this.owners) {
+      if (owner !== win) continue
+      const page = this.views.get(tabId)
+      if (page) out.push(page)
+      const leaving = this.coverLeaving(tabId)
+      if (leaving) out.push(leaving)
+      const cover = this.covers.get(tabId)
+      if (cover && !cover.isDestroyed()) out.push(cover)
     }
     return out
   }

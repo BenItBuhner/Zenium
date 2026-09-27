@@ -802,6 +802,53 @@ describe('the layout and the handshake’s window', () => {
     expect(phone.browser.tabs.pageAwaitingCover(phone.tabId)).toBeUndefined()
     expect(phone.browser.tabs.coverLeaving(phone.tabId)).toBeUndefined()
   })
+
+  it('the window’s every view (allViewsOwnedBy) keeps the page beneath its cover throughout – hidden on the cover’s word it leaves the layout (viewsOwnedBy, viewsOf), not the window – and the departing cover until the page’s word; another window’s pages are not its', async () => {
+    const s = scene()
+    vi.useFakeTimers()
+    const other = secondTab(s)
+    const appWin = s.browser.openAppWindow('https://app.example/dash/')!
+    const appPage = s.host.pages.get(s.browser.tabs.activeTabFor(appWin)!.id)!
+    const cover = enterReader(s)
+    const name = (v: TabView): string =>
+      v === s.page.view
+        ? 'page'
+        : v === cover.view
+          ? 'cover'
+          : v === other.page.view
+            ? 'other'
+            : v === appPage.view
+              ? 'app'
+              : '?'
+    const every = (): string[] => s.browser.tabs.allViewsOwnedBy(s.win).map(name).sort()
+    const laid = (): string[] => [...s.browser.tabs.viewsOwnedBy(s.win).values()].map(name).sort()
+    // Before the cover's word: the page is the layout's still, and the window's.
+    expect(every()).toEqual(['cover', 'other', 'page'])
+    expect(laid()).toEqual(['cover', 'other'])
+    // On the word the page hides and leaves the layout; the window keeps it – the popup lifted
+    // off it, the window concealed or back, reach it there (the desktop host's two loops).
+    await drawn(cover)
+    expect(s.page.visible).toBe(false)
+    expect(laidOut(s, cover)).toEqual(['cover'])
+    expect(laid()).toEqual(['cover', 'other'])
+    expect(every()).toEqual(['cover', 'other', 'page'])
+    // The exit: the cover taken down stands over the page until the page's word, then goes.
+    s.browser.reader.toggle(s.tabId, s.win)
+    expect(laidOut(s, cover)).toEqual(['page', 'cover'])
+    expect(every()).toEqual(['cover', 'other', 'page'])
+    await drawn(s.page)
+    expect(cover.destroyed).toBe(true)
+    expect(every()).toEqual(['other', 'page'])
+    expect(laid()).toEqual(['other', 'page'])
+    expect(s.browser.tabs.allViewsOwnedBy(appWin).map(name)).toEqual(['app'])
+    // The phone: one view per tab, the same list either way.
+    const phone = scene(false)
+    phone.browser.reader.open(phone.tabId, ARTICLE)
+    const all = phone.browser.tabs.allViewsOwnedBy(phone.win)
+    expect(all).toHaveLength(1)
+    expect(all[0]).toBe(phone.page.view)
+    expect(all[0]).toBe(phone.browser.tabs.viewsOwnedBy(phone.win).get(phone.tabId))
+  })
 })
 
 /**
