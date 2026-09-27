@@ -16,6 +16,7 @@ import {
   closeImportDialog,
   closeMediaSheet,
   closeNameWindow,
+  newTabRevealOpensUrlbar,
   onboardingUp,
   openClearBrowsingData,
   openDeleteSearchHistoryConfirm,
@@ -369,5 +370,33 @@ describe('the URL bar and the first-run tour', () => {
     openNewTabPageUrlbar('t1', undefined, true)
     await settled()
     expect(uiStore.get().urlbar).toMatchObject({ open: true, mode: 'new-tab', tabId: 't1' })
+  })
+})
+
+describe("the served new tab page's reveal (NTP-35): `newtab.opened` and the bar", () => {
+  afterEach(() => {
+    viewportStore.set({ formFactor: 'desktop' })
+  })
+
+  it("the desktop's reveal is unchanged: the announcement of a new tab opens the bar over the page", () => {
+    viewportStore.set({ formFactor: 'desktop' })
+    // `Browser.revealFreshTab` / `NewTabService.open` announce without `text`.
+    expect(newTabRevealOpensUrlbar(undefined)).toBe(true)
+    // The page's `search` action: a click ('') or the first character typed into its field.
+    expect(newTabRevealOpensUrlbar('')).toBe(true)
+    expect(newTabRevealOpensUrlbar('z')).toBe(true)
+  })
+
+  it('the tablet skips it: the page comes up bare, and only the tap on its field opens the bar', () => {
+    viewportStore.set({ formFactor: 'tablet' })
+    expect(newTabRevealOpensUrlbar(undefined)).toBe(false)
+    expect(newTabRevealOpensUrlbar('')).toBe(true)
+    expect(newTabRevealOpensUrlbar('z')).toBe(true)
+  })
+
+  it('the phone never reaches it (its chrome draws its own page – `bootFirstTab.test.ts`); were it announced, the page would come up bare too', () => {
+    viewportStore.set({ formFactor: 'phone' })
+    expect(newTabRevealOpensUrlbar(undefined)).toBe(false)
+    expect(newTabRevealOpensUrlbar('')).toBe(true)
   })
 })

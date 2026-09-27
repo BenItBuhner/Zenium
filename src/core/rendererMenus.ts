@@ -64,6 +64,7 @@ export class RendererMenuHost implements MenuHost {
       source: options.source,
       x: options.x ?? null,
       y: options.y ?? null,
+      ...(options.rect ? { rect: options.rect } : {}),
       ...(options.keyboard !== undefined ? { keyboard: options.keyboard } : {}),
       ...(options.header ? { header: options.header } : {}),
       ...(options.defaultOrder ? { defaultOrder: options.defaultOrder } : {})

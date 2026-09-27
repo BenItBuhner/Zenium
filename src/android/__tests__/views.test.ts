@@ -208,6 +208,115 @@ describe('AndroidTabView.dispatch', () => {
   })
 })
 
+describe("the new tab page's channel (NTP-35: `zen://newtab` over the page script's bridge)", () => {
+  const nav = { title: '', canGoBack: false, canGoForward: false }
+  const state = {
+    theme: 'dark',
+    shortcuts: [],
+    mostVisited: [],
+    greeting: null
+  } as unknown as Parameters<AndroidTabView['sendNewTabState']>[0]
+
+  function recording(): {
+    view: AndroidTabView
+    calls: Array<{ method: string; args: unknown }>
+    actions: unknown[]
+    reached: string[]
+  } {
+    const { bridge, calls } = fakeBridge()
+    const actions: unknown[] = []
+    const reached: string[] = []
+    const events = new Proxy({} as TabViewEvents, {
+      get: (_target, name: string) =>
+        name === 'onNewTabAction'
+          ? (action: unknown) => actions.push(action)
+          : (): undefined => {
+              reached.push(name)
+              return undefined
+            }
+    })
+    const view = new AndroidTabView('tab_1', bridge)
+    view.events = events
+    return { view, calls, actions, reached }
+  }
+
+  it("routes the served page's `{ type: 'newtab', action }` page message to onNewTabAction, and nothing of it to onPageMessage", () => {
+    const { view, actions, reached } = recording()
+    view.loadURL('zen://newtab')
+    view.dispatch('navigated', { ...nav, url: 'zen://newtab', inPage: false })
+    view.dispatch('pageMessage', { type: 'newtab', action: { type: 'ready' } })
+    view.dispatch('pageMessage', {
+      type: 'newtab',
+      action: {
+        type: 'tile-menu',
+        id: 'site:a.example',
+        url: 'https://a.example/',
+        title: 'A',
+        x: 40,
+        y: 60,
+        keyboard: false
+      }
+    })
+    expect(actions).toEqual([
+      { type: 'ready' },
+      {
+        type: 'tile-menu',
+        id: 'site:a.example',
+        url: 'https://a.example/',
+        title: 'A',
+        x: 40,
+        y: 60,
+        keyboard: false
+      }
+    ])
+    expect(reached.filter((name) => name === 'onPageMessage')).toEqual([])
+  })
+
+  it('only the document the core served is heard: under any other URL the action is dropped, as the desktop drops a stray sender', () => {
+    const { view, actions, reached } = recording()
+    view.dispatch('pageMessage', { type: 'newtab', action: { type: 'ready' } })
+    view.dispatch('navigated', { ...nav, url: 'https://a.example/', inPage: false })
+    view.dispatch('pageMessage', { type: 'newtab', action: { type: 'ready' } })
+    expect(actions).toEqual([])
+    expect(reached.filter((name) => name === 'onPageMessage')).toEqual([])
+  })
+
+  it('a malformed action goes nowhere; every other page message still reaches onPageMessage', () => {
+    const { view, actions, reached } = recording()
+    view.dispatch('navigated', { ...nav, url: 'zen://newtab', inPage: false })
+    view.dispatch('pageMessage', { type: 'newtab' } as never)
+    view.dispatch('pageMessage', { type: 'newtab', action: 'ready' } as never)
+    view.dispatch('pageMessage', { type: 'newtab', action: { kind: 'ready' } } as never)
+    view.dispatch('pageMessage', { type: 'media', playing: true })
+    expect(actions).toEqual([])
+    expect(reached).toEqual(['onNavigated', 'onPageMessage'])
+    expect(view.isCurrentlyAudible()).toBe(true)
+  })
+
+  it("pushes state and commands down the page's channel (`view.postMessage`), typed for the page script's dispatch", () => {
+    const { view, calls } = recording()
+    calls.length = 0
+    view.sendNewTabState(state)
+    view.sendNewTabCommand({ type: 'remove-tile', id: 'site:a.example' })
+    expect(calls).toEqual([
+      {
+        method: 'view.postMessage',
+        args: { tabId: 'tab_1', message: { type: 'newtab-state', state } }
+      },
+      {
+        method: 'view.postMessage',
+        args: {
+          tabId: 'tab_1',
+          message: {
+            type: 'newtab-command',
+            command: { type: 'remove-tile', id: 'site:a.example' }
+          }
+        }
+      }
+    ])
+  })
+})
+
 describe('AndroidTabView.sendFormsCommand', () => {
   it('hands fills and the on/off configuration to Kotlin for the page', () => {
     const { bridge, calls } = fakeBridge()
