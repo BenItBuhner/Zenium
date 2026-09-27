@@ -597,9 +597,9 @@ describe('HistoryNavMachine', () => {
     // and arrow tint key on this field's rising edge, and the forced exit never raises it.
     const anchor = { x: 6, centerY: 400, clip: { left: 6, top: 100, right: 366, bottom: 700 } }
     for (const f of hiding) expect(bubbleHostFrame(f, navigating, anchor, false).armed).toBe(false)
-    expect(bubbleHostFrame(hiding[hiding.length - 1], navigating, anchor, false).opacity).toBeLessThan(
-      bubbleHostFrame(hiding[0], navigating, anchor, false).opacity
-    )
+    expect(
+      bubbleHostFrame(hiding[hiding.length - 1], navigating, anchor, false).opacity
+    ).toBeLessThan(bubbleHostFrame(hiding[0], navigating, anchor, false).opacity)
 
     // Without the word the same release springs home: `force` is the host's alone to say.
     const plain = harness()
