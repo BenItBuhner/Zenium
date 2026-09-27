@@ -6,6 +6,7 @@ import { sanitizeHomepage } from '../../shared/homepage'
 import { migrateNewTabSettings, sanitizeNewTabSettings } from '../../shared/newTab'
 import { sanitizeSearchEngines } from '../../shared/search'
 import { sanitizeFontSettings } from '../../shared/fonts'
+import { sanitizeGameBestScore } from '../../shared/game/bridge'
 import { sanitizeLanguages } from '../../shared/languages'
 import { sanitizeReaderPreferences } from '../../shared/reader'
 import { sanitizeStartupSettings } from '../startup'
@@ -274,6 +275,8 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
         // 0.4.83 one as the mirror beside it (`collectLocal`) – is folded into `startup` the same
         // way and never lands either.
         const { compactMode, newTabPhone, restoreSession, ...rest } = data
+        // Roll's best before the peer's lands (ERR-03): the number only ever rises, see below.
+        const ownBest = sanitizeGameBestScore(state.settings.gameBestScore)
         Object.assign(state.settings, rest)
         if (compactMode)
           Object.assign(state.settings.compactMode, compactMode, { sidebarPersistent: false })
@@ -318,6 +321,15 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
         // the apply (`SyncEngine.run()`, `stamp: null`) publishes the completed object at the
         // PEER's time, so the peer ties on it and keeps its own – no bounce between two builds.
         if ('reader' in rest) state.settings.reader = sanitizeReaderPreferences(rest.reader)
+        // Roll's best is read like a profile's own (a whole number in the meter's range). The
+        // peer's key won the round and lands as the record says; a LOWER number than this
+        // device's is then raised back to this device's as an edit of its own, a macrotask
+        // later (`GameService.raiseAfterApply`) – after the re-snapshot the engine takes on
+        // returning, so the write is stamped fresh and every peer converges on the highest.
+        if ('gameBestScore' in rest) {
+          state.settings.gameBestScore = sanitizeGameBestScore(rest.gameBestScore)
+          if (ownBest > state.settings.gameBestScore) browser.game.raiseAfterApply(ownBest)
+        }
         // Settings › On startup: a peer's `startup` is read like a profile's own (a mode this
         // build does not know reads as the default's, the list as web addresses, capped); a peer
         // that carries only the old switch – the two keys are one group, so the record carries

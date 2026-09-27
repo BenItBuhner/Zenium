@@ -336,7 +336,9 @@ export const DEFAULT_SETTINGS: Settings = {
   readAloud: structuredClone(DEFAULT_READ_ALOUD_SETTINGS),
   fonts: structuredClone(DEFAULT_FONT_SETTINGS),
   // A profile takes the OS's languages as it loads (`defaultLanguages`); this stands in until then.
-  languages: [...FALLBACK_LANGUAGES]
+  languages: [...FALLBACK_LANGUAGES],
+  // Roll's best (ERR-03): no run yet.
+  gameBestScore: 0
 }
 
 /** Firefox's four default containers plus "No Container". */

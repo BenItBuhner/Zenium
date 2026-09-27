@@ -3238,6 +3238,14 @@ export interface Settings {
    * in profiles from before it existed: filled from the OS locales (`defaultLanguages`). Synced.
    */
   languages: string[]
+  /**
+   * Roll's best score (ERR-03, design language v2 §9.17): the profile's, host-kept and synced
+   * like Chrome's `net.easter_egg_high_score` – one number across the no-connection page and
+   * `zen://game` on every device – never a document origin's storage. A whole number in the
+   * meter's range (0 to 99999; `sanitizeGameBestScore`), 0 in profiles from before it existed.
+   * The core's `GameService` answers the pages and only ever raises it.
+   */
+  gameBestScore: number
 }
 
 // ---------------------------------------------------------------------------

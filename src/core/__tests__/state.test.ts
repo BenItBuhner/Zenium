@@ -787,6 +787,36 @@ describe('Settings.energySaver (W8-2)', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Roll's best score (ERR-03, §9.17 (i)): a synced setting, sanitised at load like the rest.
+// ---------------------------------------------------------------------------
+
+describe('Settings.gameBestScore (ERR-03)', () => {
+  const stored = (value: unknown): BrowserState => {
+    const settings = structuredClone(DEFAULT_SETTINGS) as unknown as Record<string, unknown>
+    if (value === undefined) delete settings.gameBestScore
+    else settings.gameBestScore = value
+    return state(
+      fakeIo(legacyProfile(6, { settings: settings as unknown as Persisted['settings'] }))
+    )
+  }
+
+  it('ships at 0 and a profile from before the game reads 0', () => {
+    expect(DEFAULT_SETTINGS.gameBestScore).toBe(0)
+    expect(stored(undefined).settings.gameBestScore).toBe(0)
+  })
+
+  it('keeps a stored whole number within the meter’s five digits, and reads anything else as 0 or the bound', () => {
+    expect(stored(420).settings.gameBestScore).toBe(420)
+    expect(stored(99999).settings.gameBestScore).toBe(99999)
+    expect(stored(12.7).settings.gameBestScore).toBe(12)
+    expect(stored(123456).settings.gameBestScore).toBe(99999)
+    for (const bad of ['420', -3, Number.NaN, null, true, { best: 3 }]) {
+      expect(stored(bad).settings.gameBestScore, JSON.stringify(bad)).toBe(0)
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Settings › Performance on a fresh profile (W8-2; pr-584 §D (2)(3)): Chrome's defaults for a
 // profile written for the first time, an existing profile keeping what it had.
 // ---------------------------------------------------------------------------
