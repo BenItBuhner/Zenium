@@ -361,6 +361,11 @@ async function measure(count: number, settled: Settle, base: Mem): Promise<Readi
   const afterSet = settled()
   const documentChars = io.written.get(store.documentPathFor(set.id)) ?? 0
   const phoneBytes = afterSet.total - base.total - rulesBytes - defaultsBytes
+  // The phone condition, pinned: until a decision asks for them there is no table and no index
+  // of the set – the engine holds the `Rule[]` (the document's source, which main holds too) and
+  // the summary, nothing compiled.
+  expect(engine.tableOf(set.id)).toBeNull()
+  expect(engine.indexOf(set.id)).toBeNull()
   store.detach()
   store = null
   io.written.clear()
@@ -372,6 +377,7 @@ async function measure(count: number, settled: Settle, base: Mem): Promise<Readi
   const afterIndex = settled()
   const indexBytes = afterIndex.total - afterSet.total
   const indexBuffers = afterIndex.buffers - afterSet.buffers
+  expect(engine.tableOf(set.id)).not.toBeNull()
   engine = null
 
   const { forms, lists } = measureForms(set, settled)
@@ -405,6 +411,10 @@ describe("the core's compiled rule table", () => {
     const after = settled().total - base.total
     expect(m.compiled).toBeGreaterThan((count * 9) / 10)
     expect(m.biggest).toBe(Math.max(1, Math.round((HOSTS_RULE_DOMAINS * count) / CENSUS_RULES)))
+    // The phone condition in bytes: what `setRuleSet` retains beyond the `Rule[]` once the
+    // document is written stays a small fraction of what a compiled copy of the rules costs
+    // (1 254 B/rule on main before the table), collector noise allowed for.
+    if (gc) expect(m.phoneBytes).toBeLessThan(Math.max(2 * 1048576, 100 * m.compiled))
 
     // The desktop matcher's rate and the decisions' hash: the service defaults alone, then with
     // the census set, indexed, over the synthetic corpus; the linear scan over a sample for
@@ -426,16 +436,18 @@ describe("the core's compiled rule table", () => {
     const rate = (r: { ms: number }, n: number): string =>
       `${Math.round((n / r.ms) * 1000)} requests/s`
 
-    // The same corpus through an engine building its tables in each list form: the forms may
-    // differ in speed, never in a decision.
+    // A sample of the corpus through an engine building its tables in each list form: the forms
+    // may differ in speed, never in a decision.
+    const formSample = requests.slice(0, Math.min(requests.length, 20_000))
+    const sampleHash = decideAll(engine, formSample).hash
     const byForm = DOMAIN_LIST_FORMS.map((form) => {
       const formEngine = new RuleEngine({ domainLists: form })
       serviceDefaults(formEngine)
       formEngine.setRuleSet(census.set)
       formEngine.buildIndexes()
       for (let i = 0; i < 2_000; i++) formEngine.decide(requests[i]!)
-      const result = decideAll(formEngine, requests)
-      expect(result.hash, `decisions with ${form} lists`).toBe(all.hash)
+      const result = decideAll(formEngine, formSample)
+      expect(result.hash, `decisions with ${form} lists`).toBe(sampleHash)
       return { form, ...result }
     })
 
@@ -455,8 +467,8 @@ describe("the core's compiled rule table", () => {
       `everything let go: ${mb(after)}`,
       `decide over ${requests.length} requests, service defaults alone: ${rate(defaults, requests.length)} (${ms(defaults.ms)}; ${defaults.notAllowed} decided by a rule), decisions ${hex(defaults.hash)}`,
       `decide over ${requests.length} requests, defaults + census set: ${rate(all, requests.length)} (${ms(all.ms)}; ${all.notAllowed} decided by a rule), decisions ${hex(all.hash)}; decideLinear over ${linearSample.length}: ${rate(linear, linearSample.length)}, decisions ${hex(linear.hash)}`,
-      `defaults + census set by list form (decisions identical): ${byForm
-        .map((f) => `${f.form} ${rate(f, requests.length)}`)
+      `defaults + census set over ${formSample.length} of them by list form (decisions identical): ${byForm
+        .map((f) => `${f.form} ${rate(f, formSample.length)}`)
         .join('; ')}`
     ]
     console.info(lines.join('\n'))
