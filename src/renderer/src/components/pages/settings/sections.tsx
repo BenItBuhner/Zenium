@@ -88,6 +88,7 @@ import { displayUrl, getDomain, inputToUrl, isWebPageUrl } from '@shared/url'
 import { extensionHomepage, homepageAddress, homepageDisplay } from '@shared/homepage'
 import { languageName } from '@shared/languageNames'
 import { HELP_URL, ISSUES_URL } from '@shared/links'
+import { isProxyMode, type ProxyMode } from '@core/extensions/api/proxy'
 import { catalogueLanguageName } from '@renderer/lib/languageCatalogue'
 import { SPELLCHECK_LANGUAGES_MAX, type SpellcheckDictionaryStatus } from '@shared/spellcheck'
 import {
@@ -5232,32 +5233,37 @@ function updatesSection({ state, set }: SectionContext): RowGroup[] {
  * Settings › System (Chrome's chrome://settings/system): the words of its one row. The label is
  * Chrome's (`IDS_SETTINGS_SYSTEM_PROXY_SETTINGS_LABEL`). At rest the description says whose proxy
  * settings Zenium follows – the computer's, which is what the row opens. While an extension holds
- * `chrome.proxy` the description is the root's sentence with the configuration's mode in Chrome's
- * words (the API's `Mode`: fixed servers, a PAC script, automatic detection, direct, the
- * system's), and the §10.5 indicator row follows: "Controlled by <name>" with Disable. When the
- * host cannot open the panel (a Linux desktop Chrome's table does not know, or whose settings
- * tool is not on the PATH) the renderer says so in one sentence.
+ * `chrome.proxy` the description is the value alone – the configuration's mode in Chrome's words
+ * (the API's `Mode`: fixed servers, a PAC script, automatic detection, a direct connection, the
+ * system's), one sentence for each of the five – as the §10.5 indicator row after it already
+ * names the holder: "Controlled by <name>" with Disable. When the host cannot open the panel (a
+ * Linux desktop Chrome's table does not know, or whose settings tool is not on the PATH) the
+ * renderer says so in one sentence.
  */
 export const PROXY_SETTINGS_COPY = {
   row: "Open your computer's proxy settings",
   resting: "Zenium uses your computer's proxy settings.",
-  held: (name: string): string => `${name} is controlling your proxy settings.`,
   modes: {
-    fixed_servers: 'It uses fixed servers.',
-    pac_script: 'It uses a PAC script.',
-    auto_detect: 'It uses automatic detection.',
-    direct: 'It uses a direct connection.',
-    system: "It uses the system's proxy settings."
-  } as Readonly<Record<string, string>>,
+    fixed_servers: 'Using fixed servers.',
+    pac_script: 'Using a PAC script.',
+    auto_detect: 'Using automatic detection.',
+    direct: 'Using a direct connection.',
+    system: "Using the system's proxy settings."
+  } as const satisfies Readonly<Record<ProxyMode, string>>,
   unsupported: "Zenium could not open your computer's proxy settings."
 } as const
 
-/** The held row's description: the extension's sentence, then its configuration's mode. */
-export function proxyHeldDescription(control: { name: string; value?: unknown }): string {
-  const mode =
-    typeof control.value === 'string' ? PROXY_SETTINGS_COPY.modes[control.value] : undefined
-  const held = PROXY_SETTINGS_COPY.held(control.name)
-  return mode ? `${held} ${mode}` : held
+/**
+ * The held row's description: the configuration's mode alone, the map total over the API's five.
+ * The host always publishes the mode as the control's value (`ProxyApi.publishControls` in
+ * `main/platform/extensionApi/proxy.ts`), so a value that is not one of the five is unreachable
+ * through it; the resting sentence stands in for one all the same, so the row never loses its
+ * description.
+ */
+export function proxyHeldDescription(control: { value?: unknown }): string {
+  return isProxyMode(control.value)
+    ? PROXY_SETTINGS_COPY.modes[control.value]
+    : PROXY_SETTINGS_COPY.resting
 }
 
 /**
@@ -5271,8 +5277,8 @@ export function proxyHeldDescription(control: { name: string; value?: unknown })
  * (`Browser.openAppLinkSettings`). While an extension holds the proxy (`chrome.proxy`,
  * `UIState.extensionControls.proxy` with the configuration's mode as the value) the row is held
  * (`RowBase.controlled`, §10.5): disabled at .4 as Chrome's row is not actionable then, its
- * description saying which extension and what its configuration does, with the indicator row
- * after it – Disable takes the Extensions page's path, and the host's proxy service puts every
+ * description the configuration's mode alone, with the indicator row after it naming the
+ * extension – Disable takes the Extensions page's path, and the host's proxy service puts every
  * session back on the system proxy as the extension unloads. Chrome's other System rows
  * (background apps, graphics acceleration) are not here. The desktop OSes' category alone
  * (`internalPages.ts`): Android's proxy is the network's.

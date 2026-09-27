@@ -25,6 +25,7 @@ import type {
 } from '@shared/types'
 import type { InstalledWebApp } from '@shared/webApp'
 import { defaultScope } from '@core/sync/records'
+import { PROXY_MODES, type ProxyMode } from '@core/extensions/api/proxy'
 import { INTERNAL_PAGES, availableSections } from '@shared/internalPages'
 import {
   DEFAULT_BLOCKING_SETTINGS,
@@ -72,7 +73,13 @@ import { emptyUpdateStatus } from '@shared/updates'
 const invoke = vi.fn<(name: string, args?: unknown) => Promise<null>>(async () => null)
 Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 
-const { buildSection, buildSections, autoCloseDescription } = await import('../sections')
+const {
+  buildSection,
+  buildSections,
+  autoCloseDescription,
+  PROXY_SETTINGS_COPY,
+  proxyHeldDescription
+} = await import('../sections')
 const {
   allRows,
   controlledRuns,
@@ -7321,7 +7328,9 @@ describe('Settings › System: "Open your computer\'s proxy settings" (Chrome\'s
     state({ platform: 'linux', capabilities: { ...ANDROID, windows: true }, ...patch })
   const extension = { extensionId: 'c'.repeat(32), name: 'FoxyProxy' }
   const holding = (value?: string): UIState =>
-    desktop({ extensionControls: { proxy: { ...extension, ...(value ? { value } : {}) } } })
+    desktop({
+      extensionControls: { proxy: { ...extension, ...(value === undefined ? {} : { value }) } }
+    })
 
   it('is a category of the desktop OSes, before Reset Settings as Chrome’s System precedes its Reset settings; Android has none, on any layout', () => {
     for (const platform of ['linux', 'win32', 'darwin'] as const) {
@@ -7371,31 +7380,30 @@ describe('Settings › System: "Open your computer\'s proxy settings" (Chrome\'s
     uiStore.set({ toasts: [] })
   })
 
-  it('is held while an extension holds chrome.proxy: the row carries the control (one indicator row after it, "Controlled by FoxyProxy"), its description names the extension and its configuration’s mode in Chrome’s words, Disable takes the Extensions page’s path', () => {
+  it('is held while an extension holds chrome.proxy: the row carries the control (one indicator row after it, "Controlled by FoxyProxy"), its description the configuration’s mode alone in Chrome’s words – the indicator names the holder – Disable takes the Extensions page’s path', () => {
     const held = section('system', holding('fixed_servers'))
     const proxy = row(held, 'proxy-settings')
     expect(proxy.controlled).toMatchObject({ ...extension, value: 'fixed_servers' })
-    expect(proxy.description).toBe(
-      'FoxyProxy is controlling your proxy settings. It uses fixed servers.'
-    )
+    expect(proxy.description).toBe('Using fixed servers.')
+    expect(proxy.description).not.toContain('FoxyProxy')
     // The primitive draws the indicator after the run: one row, one indicator.
     expect(controlledRuns(held.groups[0]!.rows)).toEqual([1])
-    // The other modes of a `chrome.proxy` configuration, each in Chrome's words.
-    const modes: Array<[string, string]> = [
-      ['pac_script', 'It uses a PAC script.'],
-      ['auto_detect', 'It uses automatic detection.'],
-      ['direct', 'It uses a direct connection.'],
-      ['system', "It uses the system's proxy settings."]
+    // The five modes of a `chrome.proxy` configuration (the API's `Mode`, the host's value), each
+    // one sentence in Chrome's words and nothing else; the map is total over the five.
+    const modes: Array<[ProxyMode, string]> = [
+      ['fixed_servers', 'Using fixed servers.'],
+      ['pac_script', 'Using a PAC script.'],
+      ['auto_detect', 'Using automatic detection.'],
+      ['direct', 'Using a direct connection.'],
+      ['system', "Using the system's proxy settings."]
     ]
+    expect(modes.map(([mode]) => mode).sort()).toEqual([...PROXY_MODES].sort())
+    expect(Object.keys(PROXY_SETTINGS_COPY.modes).sort()).toEqual([...PROXY_MODES].sort())
     for (const [mode, sentence] of modes) {
       expect(row(section('system', holding(mode)), 'proxy-settings').description, mode).toBe(
-        `FoxyProxy is controlling your proxy settings. ${sentence}`
+        sentence
       )
     }
-    // A mode the table does not know (or none published): the first sentence alone.
-    expect(row(section('system', holding()), 'proxy-settings').description).toBe(
-      'FoxyProxy is controlling your proxy settings.'
-    )
     // Disable takes the Extensions page's path; the host's proxy service puts the sessions back
     // on the system proxy as the extension unloads.
     proxy.controlled!.onDisable()
@@ -7410,6 +7418,21 @@ describe('Settings › System: "Open your computer\'s proxy settings" (Chrome\'s
     )
     expect(row(other, 'proxy-settings').controlled).toBeUndefined()
     expect(controlledRuns(other.groups[0]!.rows)).toEqual([0])
+  })
+
+  it('keeps the resting sentence for a held value that is not one of the five modes – unreachable through proxy.ts, which always publishes the mode – so the row never loses its description', () => {
+    // The host's `ProxyApi.publishControls` sets `value` to the configuration's `mode`, always
+    // one of `PROXY_MODES`; the fallback covers a value from anywhere else, and none at all.
+    for (const value of ['socks', 'FIXED_SERVERS', '', undefined]) {
+      const proxy = row(section('system', holding(value)), 'proxy-settings')
+      expect(proxy.controlled).toMatchObject(extension)
+      expect(proxy.description, String(value)).toBe("Zenium uses your computer's proxy settings.")
+    }
+    expect(proxyHeldDescription({ value: 42 })).toBe("Zenium uses your computer's proxy settings.")
+    expect(proxyHeldDescription({ value: ['direct'] })).toBe(
+      "Zenium uses your computer's proxy settings."
+    )
+    expect(proxyHeldDescription({ value: 'direct' })).toBe('Using a direct connection.')
   })
 
   it('is found by the search by Chrome’s words and the row’s own, its caption the category alone', () => {
