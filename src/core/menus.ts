@@ -3222,11 +3222,14 @@ export class Menus {
       }
     }
     if (nodes.length) {
+      // One word for both types (W8-F13): the dialog the row opens is the folder's editor too
+      // – "Edit folder", the name and the parent folder – not Chrome desktop's name-only
+      // Rename… (`EditBookmarkDialog`; the phone's own row says the same of its sheet).
       template.push(
         ...edit(
           { type: 'separator' },
           {
-            label: single?.type === 'url' ? 'Edit…' : 'Rename…',
+            label: 'Edit…',
             enabled: Boolean(single) && editable,
             click: () =>
               single &&
