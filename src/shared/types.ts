@@ -3311,6 +3311,14 @@ export type AppLinkState = 'allowed' | 'disallowed' | 'unknown'
  */
 export type DefaultBrowserRequestSource = 'onboarding' | 'sheet' | 'banner' | 'settings' | 'newtab'
 
+/**
+ * What came of asking the host for the computer's proxy settings panel (Settings › System):
+ * `opened` – the OS panel is up (or the desktop's settings tool was launched); `unsupported` –
+ * the host has no door to it, as Chrome has none on a Linux desktop outside its table or whose
+ * tool is not on the PATH, and the page says so.
+ */
+export type ProxySettingsDoor = 'opened' | 'unsupported'
+
 // ---------------------------------------------------------------------------
 // Page controls (desktop site, dark theme for sites, page zoom)
 // ---------------------------------------------------------------------------
@@ -6036,6 +6044,15 @@ export interface Commands {
   'defaultBrowser.dismiss': { args: { prompt: 'sheet' | 'banner' }; result: void }
   /** Read the role again (the settings row opens; the app came back from the system dialog). */
   'defaultBrowser.refresh': { args: void; result: boolean | null }
+
+  /**
+   * Settings › System › "Open your computer's proxy settings" (Chrome's System page): the OS
+   * panel where the computer's proxy is set – Windows Settings › Network & internet › Proxy,
+   * macOS System Settings › Network › Proxies, the Linux desktop's network settings by Chrome's
+   * table of desktops. `unsupported` when the host could not open one (a Linux desktop the
+   * table does not know, its tool not on the PATH, a host without the door): the page says so.
+   */
+  'system.openProxySettings': { args: void; result: ProxySettingsDoor }
 
   'boost.update': {
     args: { domain: string; patch: Partial<Omit<Boost, 'domain' | 'updatedAt'>> }

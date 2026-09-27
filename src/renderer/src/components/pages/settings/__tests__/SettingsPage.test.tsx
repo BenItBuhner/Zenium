@@ -360,6 +360,8 @@ describe('the two-pane Settings tab (§10.5)', () => {
       'Keyboard Shortcuts',
       'Default Browser',
       'Updates',
+      // Chrome's System page (the computer's proxy settings), the desktop platforms alone.
+      'System',
       // settings-70: Chrome's "Reset settings" at the foot of its list (W7-6).
       'Reset Settings',
       '|',

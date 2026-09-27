@@ -3348,6 +3348,11 @@ export class Browser {
       'qr.download': ({ url }) => void platform.shell.downloadQrCode?.(url),
       'app.openAppLinkSettings': (_a, win) => this.openAppLinkSettings(win),
       'app.openNotificationSettings': (_a, win) => this.openNotificationSettings(win),
+      // Settings › System's door to the computer's proxy panel: the host's answer is the page's
+      // to tell (it says so in one sentence when nothing opened); a host without the door is
+      // `unsupported` the same way.
+      'system.openProxySettings': () =>
+        platform.shell.openProxySettings?.() ?? Promise.resolve('unsupported' as const),
       // Voice search: the host listens (`VoiceHost`); the chrome's sheet acts on the `voice.event`s.
       'voice.start': () => this.startVoiceSearch(),
       'voice.cancel': () => this.platform.voice?.cancel(),
