@@ -7,13 +7,23 @@ import {
   EllipsisVertical,
   Folder,
   Globe,
+  ListFilter,
   Trash2
 } from 'lucide-react'
 import type { BookmarkNode, UIState } from '@shared/types'
 import { isBookmarkRoot, searchBookmarks } from '@shared/bookmarks'
+import { sortBookmarkRows, type BookmarkRowDisplay } from '@shared/bookmarkRows'
 import { displayUrl } from '@shared/url'
+import { announce } from '@renderer/lib/announce'
 import { run } from '@renderer/lib/api'
 import { editBookmark } from '@renderer/lib/bookmarkEdit'
+import {
+  DISPLAY_ANNOUNCEMENTS,
+  pictureTabFor,
+  SORT_ORDER_ANNOUNCEMENTS,
+  SORT_VIEW_MENU_TITLE,
+  sortViewMenuItems
+} from '@renderer/lib/bookmarkRowOptions'
 import {
   deletableIds,
   folderCountLabel,
@@ -33,6 +43,7 @@ import {
 } from '@renderer/lib/multiSelect'
 import { openInPrivateItems } from '@renderer/lib/privateTabs'
 import { activeTab } from '@renderer/lib/selectors'
+import { useThumbnail } from '@renderer/lib/thumbnails'
 import {
   browserStore,
   closeOverlay,
@@ -43,6 +54,7 @@ import {
 } from '@renderer/lib/ui'
 import { OverlayShell } from '../overlays/OverlayShell'
 import { BookmarkMoveSheet } from './BookmarkMoveSheet'
+import { useFlip } from './useFlip'
 import {
   PhoneEmptyNote,
   PhoneHeader,
@@ -76,11 +88,22 @@ const SEARCH_LIMIT = 200
  * is the panel's own `BookmarkMoveSheet` in the same host; the row menus are the shared menu
  * sheet. Chrome's manager has no "Add to reading list" row (its reading list is a bookmark
  * folder reached by Move to…), so none is built here.
+ *
+ * The header's "Sort and view options" (HB-13; Chrome's `sort_submenu`) hangs Chrome's six
+ * orders and two views as radio rows (`lib/bookmarkRowOptions.ts`). The order applies to a
+ * folder's rows and to search results alike (`sortBookmarkRows`); the view draws each row as
+ * an image tile (Visual: the card picture of an open tab on the page, else the favicon on a
+ * card) or as the plain favicon row (Compact). Both are the device's own settings, as Chrome's
+ * `BookmarkUiPrefs` are (`DEVICE_LOCAL_SETTINGS`). A re-order glides the rows to their new
+ * places on the house spring (`useFlip`, v2 §11.4 – Chrome keeps only its RecyclerView's move
+ * animations); a folder, a search or a view change is a cut.
  */
 export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element {
   const tree = useBookmarkTree(state)
   const { platform } = state
   const tab = activeTab(state)
+  const sortOrder = state.settings.bookmarkRowSortOrder
+  const display = state.settings.bookmarkRowDisplay
   const [rawStack, setStack] = useState<readonly FolderId[]>(() =>
     initialFolderStack(tree, platform, uiStore.get().overlayFolderId)
   )
@@ -90,6 +113,7 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
   const [moving, setMoving] = useState<readonly string[] | null>(null)
   const pending = usePendingDeletes()
   const [attachList, listScrolled] = useScrolled<HTMLDivElement>()
+  const listRef = useRef<HTMLDivElement | null>(null)
 
   // A folder deleted elsewhere (sync, another window) unwinds the stack to what still exists.
   const stack = useMemo(() => pruneFolderStack(tree, rawStack), [tree, rawStack])
@@ -100,8 +124,13 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
     const list = searching
       ? searchBookmarks(tree, query, SEARCH_LIMIT)
       : folderRows(tree, folderId, platform)
-    return list.filter((node) => !pending.has(node.id))
-  }, [tree, query, searching, folderId, platform, pending])
+    return sortBookmarkRows(list, sortOrder).filter((node) => !pending.has(node.id))
+  }, [tree, query, searching, folderId, platform, pending, sortOrder])
+  // A re-order (or a delete) glides the rows to their new slots; a folder, a search or a view
+  // change is a new list with no spatial relation to the old one and takes a fresh baseline.
+  useFlip(listRef, true, {
+    epoch: `${display}|${folderId ?? ''}|${searching ? query : ''}`
+  })
   const order = useMemo(() => rows.map((node) => node.id), [rows])
   const selection = useMemo(() => pruneSelection(rawSelection, order), [rawSelection, order])
 
@@ -310,6 +339,29 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
     run('bookmark.menu', { x: Math.round(r.left), y: Math.round(r.bottom) })
   }
 
+  // Chrome's "Sort and view options" (`BookmarkToolbarMediator.onMenuItemClick`: the pick is
+  // written to `BookmarkUiPrefs` and announced; the list re-queries from the pref). The two
+  // settings are the device's own; the core's state carries the change back to the list.
+  const sortViewMenu = (): void => {
+    noteSheetOpener()
+    void showLocalMenu(
+      'bookmark',
+      sortViewMenuItems(
+        { sortOrder, display },
+        (order) => {
+          run('settings.update', { bookmarkRowSortOrder: order })
+          announce(SORT_ORDER_ANNOUNCEMENTS[order])
+        },
+        (next) => {
+          run('settings.update', { bookmarkRowDisplay: next })
+          announce(DISPLAY_ANNOUNCEMENTS[next])
+        }
+      ),
+      tab?.id ?? null,
+      { title: SORT_VIEW_MENU_TITLE }
+    )
+  }
+
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
@@ -343,9 +395,14 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
         ) : undefined
       }
       actions={
-        <PhoneIconButton label="More bookmark actions" onClick={panelMenu}>
-          <EllipsisVertical className="h-5 w-5" strokeWidth={1.75} />
-        </PhoneIconButton>
+        <>
+          <PhoneIconButton label={SORT_VIEW_MENU_TITLE} onClick={sortViewMenu}>
+            <ListFilter className="h-5 w-5" strokeWidth={1.75} />
+          </PhoneIconButton>
+          <PhoneIconButton label="More bookmark actions" onClick={panelMenu}>
+            <EllipsisVertical className="h-5 w-5" strokeWidth={1.75} />
+          </PhoneIconButton>
+        </>
       }
       onClose={() => closeOverlay()}
     />
@@ -365,7 +422,14 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
         placeholder="Search bookmarks"
         scrolled={listScrolled}
       />
-      <div ref={attachList} className="zen-phone-list min-h-0 flex-1 overflow-y-auto pb-2">
+      <div
+        ref={(el) => {
+          listRef.current = el
+          return attachList(el)
+        }}
+        className="zen-phone-list min-h-0 flex-1 overflow-y-auto pb-2"
+        data-display={display}
+      >
         {rows.length === 0 ? (
           searching ? (
             <PhoneEmptyNote>No matching bookmarks</PhoneEmptyNote>
@@ -384,27 +448,31 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
           )
         ) : (
           rows.map((node) => (
-            <BookmarkNodeRow
-              key={node.id}
-              node={node}
-              childCount={node.type === 'folder' ? tree.children(node.id).length : 0}
-              selecting={selection.active}
-              selected={selection.ids.has(node.id)}
-              onTap={() =>
-                selection.active ? setSelection(toggleSelected(selection, node.id)) : open(node)
-              }
-              onLongPress={
-                isBookmarkRoot(node.id)
-                  ? undefined
-                  : () =>
-                      setSelection(
-                        selection.active
-                          ? toggleSelected(selection, node.id)
-                          : startSelection(node.id)
-                      )
-              }
-              onMenu={isBookmarkRoot(node.id) ? undefined : () => rowMenu(node)}
-            />
+            // The cell the FLIP tracker glides (`data-cell`): the row's own box, keyed by the node.
+            <div key={node.id} data-cell={node.id}>
+              <BookmarkNodeRow
+                node={node}
+                childCount={node.type === 'folder' ? tree.children(node.id).length : 0}
+                display={display}
+                pictureTabId={display === 'visual' ? pictureTabFor(node, state.tabs) : null}
+                selecting={selection.active}
+                selected={selection.ids.has(node.id)}
+                onTap={() =>
+                  selection.active ? setSelection(toggleSelected(selection, node.id)) : open(node)
+                }
+                onLongPress={
+                  isBookmarkRoot(node.id)
+                    ? undefined
+                    : () =>
+                        setSelection(
+                          selection.active
+                            ? toggleSelected(selection, node.id)
+                            : startSelection(node.id)
+                        )
+                }
+                onMenu={isBookmarkRoot(node.id) ? undefined : () => rowMenu(node)}
+              />
+            </div>
           ))
         )}
       </div>
@@ -424,6 +492,8 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
 function BookmarkNodeRow({
   node,
   childCount,
+  display,
+  pictureTabId,
   selecting,
   selected,
   onTap,
@@ -432,6 +502,10 @@ function BookmarkNodeRow({
 }: {
   node: BookmarkNode
   childCount: number
+  /** Chrome's `BookmarkRowDisplayPref`: an image tile (visual) or the favicon row (compact). */
+  display: BookmarkRowDisplay
+  /** The open tab whose card picture a visual tile shows, when one is on the page (`pictureTabFor`). */
+  pictureTabId: string | null
   selecting: boolean
   selected: boolean
   onTap: () => void
@@ -440,25 +514,38 @@ function BookmarkNodeRow({
   onMenu?: () => void
 }): JSX.Element {
   const folder = node.type === 'folder'
+  const visual = display === 'visual'
   const title = node.title || (folder ? 'Folder' : displayUrl(node.url ?? ''))
+  // The tile's picture – the tab's card picture, the full cover failing that – held only while
+  // the row is a visual one (a compact row reads none).
+  const pictureSrc = useThumbnail(visual ? pictureTabId : null)
   const menuButton = onMenu ? (
     <PhoneIconButton label={`More options for ${title}`} onClick={onMenu}>
       <EllipsisVertical className="h-5 w-5" strokeWidth={1.75} />
     </PhoneIconButton>
   ) : null
+  const mark = folder ? (
+    <Folder className="h-5 w-5" strokeWidth={1.75} />
+  ) : (
+    <RowFavicon
+      src={node.favicon}
+      page={node.url ?? null}
+      fallback={<Globe className="zen-list-standin h-5 w-5" strokeWidth={1.75} />}
+    />
+  )
+  // Chrome's visual row (`ImprovedBookmarkRowCoordinator`): the page's image, else the favicon on
+  // the tile; a folder shows its glyph (Chrome layers its first two children's images under it).
+  const picture = visual ? (
+    pictureSrc ? (
+      <img src={pictureSrc} alt="" className="zen-list-page" draggable={false} />
+    ) : (
+      <span className="zen-list-mark">{mark}</span>
+    )
+  ) : undefined
   return (
     <PhoneListRow
-      icon={
-        folder ? (
-          <Folder className="h-5 w-5" strokeWidth={1.75} />
-        ) : (
-          <RowFavicon
-            src={node.favicon}
-            page={node.url ?? null}
-            fallback={<Globe className="zen-list-standin h-5 w-5" strokeWidth={1.75} />}
-          />
-        )
-      }
+      icon={visual ? undefined : mark}
+      picture={picture}
       title={title}
       subtitle={folder ? undefined : displayUrl(node.url ?? '')}
       ariaLabel={folder ? `${title}, folder, ${folderCountLabel(childCount)}` : undefined}
