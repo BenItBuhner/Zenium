@@ -11,6 +11,7 @@ import type { ZenWindow } from '../window'
 import { parseImport } from '../credentials/csv'
 import { parseChromiumBookmarks } from './chromiumBookmarks'
 import { chromiumKeys, chromiumLogins } from './chromiumLogins'
+import { FirefoxLoginsError, deriveFirefoxKey, firefoxLogins } from './firefoxLogins'
 import {
   decodeFirefoxBackup,
   firefoxBookmarksFromBackup,
@@ -102,6 +103,8 @@ function emptyOutcome(): ImportKindOutcome {
 export class ImportService {
   private progress: ImportProgress | null = null
   private abort: AbortController | null = null
+  /** The primary password the user gave for this run (Firefox); '' is the default no-password. */
+  private primaryPassword = ''
 
   constructor(
     private readonly browser: Browser,
@@ -133,13 +136,15 @@ export class ImportService {
   async run(
     sourceId: string,
     kinds: ImportKind[],
-    win?: ZenWindow
+    win?: ZenWindow,
+    options: { primaryPassword?: string } = {}
   ): Promise<ImportProgress | null> {
     if (this.running) return this.progress
     const source = (await this.sources()).find((s) => s.id === sourceId)
     if (!source) return null
     const wanted = KIND_ORDER.filter((k) => kinds.includes(k) && source.kinds.includes(k))
     if (wanted.length === 0) return null
+    this.primaryPassword = options.primaryPassword ?? ''
     const progress: ImportProgress = {
       source,
       kinds: wanted,
@@ -326,6 +331,10 @@ export class ImportService {
   }
 
   private async importPasswords(source: ImportSource, outcome: ImportKindOutcome): Promise<void> {
+    if (source.browser === 'firefox') {
+      await this.importFirefoxPasswords(source, outcome)
+      return
+    }
     const host = this.requireHost()
     if (source.browser !== 'chrome' && source.browser !== 'chromium' && source.browser !== 'edge')
       throw new ImportError(source.limits.passwords ?? 'This source has no passwords to import.')
@@ -356,6 +365,48 @@ export class ImportService {
         os === 'darwin'
           ? `${read.unreadable} ${plural(read.unreadable, 'password')} could not be opened: the Keychain did not give up ${source.browserName}'s Safe Storage key.`
           : `${read.unreadable} ${plural(read.unreadable, 'password')} could not be opened: they are protected by the system keyring, which could not be read.`
+    if (read.logins.length === 0) return
+    await this.ensureVaultUnlocked()
+    const result = this.browser.passwords.store.importRows(
+      read.logins,
+      'skip',
+      source.browser,
+      this.now()
+    )
+    outcome.imported += result.added + result.replaced
+    outcome.duplicates += result.skipped
+    outcome.invalid += result.invalid
+  }
+
+  /**
+   * Firefox's own logins (ID-42): `logins.json` opened with the master key from `key4.db`, which
+   * the primary password unwraps (empty by default; `this.primaryPassword` when the user gave one).
+   * `key4.db` is read from a temp copy like every other profile database; a wrong primary password
+   * fails this kind with a message and leaves the rest of the run alone.
+   */
+  private async importFirefoxPasswords(
+    source: ImportSource,
+    outcome: ImportKindOutcome
+  ): Promise<void> {
+    const host = this.requireHost()
+    const loginsPath = joinPath(source.path, FIREFOX_FILES.logins)
+    const keyPath = joinPath(source.path, FIREFOX_FILES.key)
+    if ((await host.stat(loginsPath)) !== 'file' || (await host.stat(keyPath)) !== 'file')
+      throw new ImportError(`${source.browserName} has no saved passwords in this profile.`)
+    const master = await this.withDatabase(source, keyPath, (db) => {
+      try {
+        return deriveFirefoxKey(db, this.primaryPassword)
+      } catch (error) {
+        // A key-store failure (a wrong primary password, a missing key) reads as itself, not as a
+        // generic "could not read key4.db"; the copy / lock failures stay for `readFailure`.
+        if (error instanceof FirefoxLoginsError) throw new ImportError(error.message)
+        throw error
+      }
+    })
+    const loginsText = await this.readText(source, loginsPath)
+    const read = firefoxLogins(loginsText, master, this.now())
+    outcome.unreadable += read.unreadable
+    outcome.invalid += read.invalid
     if (read.logins.length === 0) return
     await this.ensureVaultUnlocked()
     const result = this.browser.passwords.store.importRows(

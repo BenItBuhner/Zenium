@@ -5760,7 +5760,10 @@ export interface Commands {
    * progress is `UIState.import`. Resolves with the finished progress, or null for an unknown
    * source or nothing to import.
    */
-  'import.run': { args: { source: string; kinds: ImportKind[] }; result: ImportProgress | null }
+  'import.run': {
+    args: { source: string; kinds: ImportKind[]; primaryPassword?: string }
+    result: ImportProgress | null
+  }
   /** Stop the running import after the kind in flight; false when none runs. */
   'import.cancel': { args: void; result: boolean }
   /** Drop the finished import from `UIState.import` (the dialog closed). */
