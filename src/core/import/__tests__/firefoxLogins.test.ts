@@ -166,4 +166,22 @@ describe('firefoxLogins: key4.db + logins.json', () => {
     expect(() => deriveFirefoxKey(db, '')).toThrow(FirefoxLoginsError)
     db.close()
   })
+
+  it('says the profile has no key store when no row carries the SDR key id', () => {
+    const vault = firefoxVault()
+    const db = memoryDatabase((native) => {
+      vault.key4(native)
+      // Only the decoy row is left: the password-check still verifies, the key is not there.
+      native.exec("DELETE FROM nssPrivate WHERE a102 = X'f8000000000000000000000000000001'")
+    })
+    expect(() => deriveFirefoxKey(db, '')).toThrowError('Firefox has no key store in this profile.')
+    db.close()
+  })
+
+  it('says the key store is malformed when the unwrapped key is too short', () => {
+    const vault = firefoxVault({ masterKey: new Uint8Array(8) })
+    const db = memoryDatabase(vault.key4)
+    expect(() => deriveFirefoxKey(db, '')).toThrowError('Firefox’s key store is malformed.')
+    db.close()
+  })
 })

@@ -101,7 +101,7 @@ export function deriveFirefoxKey(db: ImportDatabase, primaryPassword: string): F
   const wrapped = readMasterKeyBlob(db)
   const cleartext = pbeDecrypt(c, wrapped, meta.globalSalt, primaryPassword)
   if (cleartext.length < DES3_KEY_BYTES)
-    throw new FirefoxLoginsError('corrupt', 'Firefox’s master key is malformed.')
+    throw new FirefoxLoginsError('corrupt', 'Firefox’s key store is malformed.')
   return { key: cleartext.slice(0, DES3_KEY_BYTES) }
 }
 
@@ -195,7 +195,7 @@ function readMasterKeyBlob(db: ImportDatabase): Uint8Array {
       if (blob) return blob
     }
   }
-  throw new FirefoxLoginsError('no-key', 'Firefox has no master key in this profile.')
+  throw new FirefoxLoginsError('no-key', 'Firefox has no key store in this profile.')
 }
 
 // ---------------------------------------------------------------------------
