@@ -70,7 +70,8 @@ function state(over: Partial<UIState>): UIState {
 let container: HTMLDivElement
 let root: Root
 let box = { width: 0, height: 0 }
-const boundingBox = HTMLElement.prototype.getBoundingClientRect
+const offsetWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth')
+const offsetHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight')
 
 function render(el: ReactElement): void {
   act(() => root.render(el))
@@ -95,19 +96,19 @@ beforeEach(() => {
   cmd.mockReset()
   cmd.mockResolvedValue(true)
   box = { width: 0, height: 0 }
-  // happy-dom lays nothing out: the pill's box is what the test says it is.
-  HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
-    const size = this.hasAttribute('data-mini-menu') ? box : { width: 0, height: 0 }
-    return {
-      x: 0,
-      y: 0,
-      top: 0,
-      left: 0,
-      right: size.width,
-      bottom: size.height,
-      ...size
-    } as DOMRect
-  }
+  // happy-dom lays nothing out: the pill's layout box is what the test says it is.
+  Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+    configurable: true,
+    get(this: HTMLElement) {
+      return this.hasAttribute('data-mini-menu') ? box.width : 0
+    }
+  })
+  Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+    configurable: true,
+    get(this: HTMLElement) {
+      return this.hasAttribute('data-mini-menu') ? box.height : 0
+    }
+  })
   browserStore.set({ state: null })
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -117,7 +118,10 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount())
   container.remove()
-  HTMLElement.prototype.getBoundingClientRect = boundingBox
+  if (offsetWidth) Object.defineProperty(HTMLElement.prototype, 'offsetWidth', offsetWidth)
+  else delete (HTMLElement.prototype as { offsetWidth?: number }).offsetWidth
+  if (offsetHeight) Object.defineProperty(HTMLElement.prototype, 'offsetHeight', offsetHeight)
+  else delete (HTMLElement.prototype as { offsetHeight?: number }).offsetHeight
   delete document.documentElement.dataset.chromeSurface
 })
 
@@ -184,7 +188,7 @@ describe('the mini menu', () => {
     expect(bar.querySelector('[tabindex]')).toBeNull()
   })
 
-  it('tells the core the box it measured, rounded up, and nothing for an empty one', () => {
+  it('tells the core the layout box it measured (not the pop animation’s scaled one), rounded up, and nothing for an empty one', () => {
     render(<MiniMenu menu={MENU} />)
     expect(run).not.toHaveBeenCalledWith('selectionMenu.surfaceSize', expect.anything())
     box = { width: 412.4, height: 45.6 }

@@ -35,24 +35,33 @@ export function MiniMenu({ menu }: { menu: SelectionMenuState }): JSX.Element {
   const chipKey = menu.actions.map((action) => `${action.id}:${action.title}`).join('\n')
 
   // Measured as it comes and again whenever the chips change: the core forgets its measurement
-  // with the chips, so the same size is told again for a new list.
+  // with the chips, so the same size is told again for a new list. The layout box is what is
+  // told (`offsetWidth`, the observer's border box), never `getBoundingClientRect`'s: the pop
+  // animation scales the pill down for its first frames, and a scaled box would leave the
+  // surface short of the pill's last chip.
   useEffect(() => {
     const el = pillRef.current
     if (!el) return
     reported.current = null
-    const report = (): void => {
-      const box = el.getBoundingClientRect()
-      const width = Math.ceil(box.width)
-      const height = Math.ceil(box.height)
+    const report = (size: { width: number; height: number }): void => {
+      const width = Math.ceil(size.width)
+      const height = Math.ceil(size.height)
       if (width <= 0 || height <= 0) return
       const last = reported.current
       if (last && last.width === width && last.height === height) return
       reported.current = { width, height }
       run('selectionMenu.surfaceSize', { tabId: menu.tabId, width, height })
     }
-    report()
+    report({ width: el.offsetWidth, height: el.offsetHeight })
     if (typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(report)
+    const observer = new ResizeObserver((entries) => {
+      const border = entries[0]?.borderBoxSize?.[0]
+      report(
+        border
+          ? { width: border.inlineSize, height: border.blockSize }
+          : { width: el.offsetWidth, height: el.offsetHeight }
+      )
+    })
     observer.observe(el)
     return () => observer.disconnect()
   }, [menu.tabId, chipKey])
