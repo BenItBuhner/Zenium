@@ -10,6 +10,7 @@ import { BookmarkService } from '../../bookmarks'
 import type { ImportRow } from '../../credentials/store'
 import { BrowserState } from '../../state'
 import { LINUX_ITERATIONS, V10_SECRET } from '../chromiumLogins'
+import { PRIMARY_PASSWORD_NEEDED } from '../firefoxLogins'
 import type { HistoryImportSink } from '../historySink'
 import {
   ImportService,
@@ -459,9 +460,14 @@ describe('ImportService: browser profiles', () => {
       duplicates: 0,
       unreadable: 0,
       invalid: 0,
-      error: 'The primary password is wrong.'
+      error: PRIMARY_PASSWORD_NEEDED
     })
     expect(h.vault.rows).toEqual([])
+    h.service.dismiss()
+    const wrong = (await h.service.run(source.id, ['passwords'], undefined, {
+      primaryPassword: 'hunter3'
+    }))!
+    expect(wrong.results.passwords?.error).toBe('The primary password is wrong.')
     h.service.dismiss()
     const again = (await h.service.run(source.id, ['passwords'], undefined, {
       primaryPassword: 'hunter2'

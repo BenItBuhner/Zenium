@@ -265,6 +265,79 @@ describe('the import dialog', () => {
     expect(submitButton().disabled).toBe(false)
   })
 
+  it('a Firefox profile with a login store offers its passwords and asks for the primary password, sent with the run only when typed (ID-42)', async () => {
+    const withLogins: ImportSource = {
+      ...FIREFOX,
+      kinds: ['bookmarks', 'history', 'passwords'],
+      limits: {}
+    }
+    await open([CHROME_1, withLogins])
+    const fieldBlock = (): HTMLElement | null =>
+      document.querySelector<HTMLElement>('[data-testid="import-primary-password"]')
+    // Chrome's passwords come from the keyring: no field for them.
+    expect(fieldBlock()).toBeNull()
+
+    await pick(menulists()[0]!, 'Firefox')
+    expect(kinds().map((r) => [r.kind, r.checked, r.disabled])).toEqual([
+      ['bookmarks', true, false],
+      ['history', true, false],
+      ['passwords', true, false]
+    ])
+    expect(document.querySelectorAll('[data-testid="import-limit"]')).toHaveLength(0)
+    const block = fieldBlock()!
+    expect(block.textContent).toContain('Firefox primary password')
+    expect(block.textContent).toContain(
+      'Leave this empty unless Firefox asks for a primary password before showing your saved passwords.'
+    )
+    const field = block.querySelector<HTMLInputElement>('input')!
+    expect(field.type).toBe('password')
+    expect(field.getAttribute('aria-describedby')).toBe(`${field.id}-hint`)
+    expect(document.getElementById(`${field.id}-hint`)).not.toBeNull()
+
+    // The field goes with the passwords box: unchecked, no password is asked for.
+    const passwords = document.querySelector<HTMLInputElement>(
+      '[data-import-kind="passwords"] input'
+    )!
+    act(() => {
+      passwords.click()
+    })
+    expect(fieldBlock()).toBeNull()
+    act(() => {
+      passwords.click()
+    })
+    expect(fieldBlock()).not.toBeNull()
+
+    // Left empty, the run goes without the argument (the engine's empty default).
+    press(submitButton())
+    expect(vi.mocked(cmd)).toHaveBeenLastCalledWith('import.run', {
+      source: withLogins.id,
+      kinds: ['bookmarks', 'history', 'passwords']
+    })
+    // `import.run` answered null (the form comes back), so the field can be typed into.
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(panel().dataset.phase).toBe('form')
+    const input = fieldBlock()!.querySelector<HTMLInputElement>('input')!
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setter.call(input, 'hunter2')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(input.value).toBe('hunter2')
+    // Enter in the field is the Import press; the typed password travels with the run.
+    act(() => {
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      )
+    })
+    expect(vi.mocked(cmd)).toHaveBeenLastCalledWith('import.run', {
+      source: withLogins.id,
+      kinds: ['bookmarks', 'history', 'passwords'],
+      primaryPassword: 'hunter2'
+    })
+  })
+
   it('the status line’s slot stands blank under the form, so the press of Import moves nothing (§9.30)', async () => {
     await open()
     // Present and empty in the form phase: the same 28 px box the busy line fills, a live region

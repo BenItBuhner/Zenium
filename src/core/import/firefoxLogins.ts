@@ -67,7 +67,10 @@ function nodeCrypto(): NodeCrypto {
     'node:crypto'
   )
   if (!loaded)
-    throw new FirefoxLoginsError('unsupported', 'This build of Zenium cannot read Firefox’s passwords.')
+    throw new FirefoxLoginsError(
+      'unsupported',
+      'This build of Zenium cannot read Firefox’s passwords.'
+    )
   return loaded as NodeCrypto
 }
 
@@ -75,6 +78,12 @@ function nodeCrypto(): NodeCrypto {
 export interface FirefoxMasterKey {
   key: Uint8Array
 }
+
+/** What the import reports when the primary password does not open the store. */
+export const WRONG_PRIMARY_PASSWORD = 'The primary password is wrong.'
+/** The same, when none was given: the profile has one set and the user has to enter it. */
+export const PRIMARY_PASSWORD_NEEDED =
+  'Firefox protects this profile’s passwords with a primary password. Enter it and try again.'
 
 /**
  * Verify `primaryPassword` against the profile's `password-check` and return the master key.
@@ -85,7 +94,10 @@ export function deriveFirefoxKey(db: ImportDatabase, primaryPassword: string): F
   const meta = readPasswordMeta(db)
   const check = pbeDecrypt(c, meta.item2, meta.globalSalt, primaryPassword)
   if (!startsWithAscii(check, PASSWORD_CHECK))
-    throw new FirefoxLoginsError('wrong-password', 'The primary password is wrong.')
+    throw new FirefoxLoginsError(
+      'wrong-password',
+      primaryPassword === '' ? PRIMARY_PASSWORD_NEEDED : WRONG_PRIMARY_PASSWORD
+    )
   const wrapped = readMasterKeyBlob(db)
   const cleartext = pbeDecrypt(c, wrapped, meta.globalSalt, primaryPassword)
   if (cleartext.length < DES3_KEY_BYTES)
@@ -343,7 +355,8 @@ function decode(blob: Uint8Array): Asn1Node {
   try {
     return decodeDer(blob)
   } catch (error) {
-    if (error instanceof Asn1Error) throw new FirefoxLoginsError('corrupt', `key4.db: ${error.message}`)
+    if (error instanceof Asn1Error)
+      throw new FirefoxLoginsError('corrupt', `key4.db: ${error.message}`)
     throw error
   }
 }

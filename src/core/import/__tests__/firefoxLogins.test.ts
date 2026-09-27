@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { FirefoxLoginsError, deriveFirefoxKey, firefoxLogins } from '../firefoxLogins'
+import {
+  FirefoxLoginsError,
+  PRIMARY_PASSWORD_NEEDED,
+  WRONG_PRIMARY_PASSWORD,
+  deriveFirefoxKey,
+  firefoxLogins
+} from '../firefoxLogins'
 import { firefoxLoginsJson, firefoxVault } from './firefoxFixtures'
 import { memoryDatabase } from './helpers'
 
@@ -58,7 +64,10 @@ describe('firefoxLogins: key4.db + logins.json', () => {
   it('verifies a set primary password and rejects the wrong one with a message', () => {
     const vault = firefoxVault({ algo: 'pbes2', password: 'hunter2' })
     const db = memoryDatabase(vault.key4)
+    // No password given where one is set: the message says to enter it; a wrong one says wrong.
     expect(() => deriveFirefoxKey(db, '')).toThrow(FirefoxLoginsError)
+    expect(() => deriveFirefoxKey(db, '')).toThrowError(PRIMARY_PASSWORD_NEEDED)
+    expect(() => deriveFirefoxKey(db, 'guess')).toThrowError(WRONG_PRIMARY_PASSWORD)
     expect(() => deriveFirefoxKey(db, 'guess')).toThrowError('The primary password is wrong.')
     const master = deriveFirefoxKey(db, 'hunter2')
     db.close()
@@ -70,7 +79,10 @@ describe('firefoxLogins: key4.db + logins.json', () => {
         formSubmitURL: 'https://a.example'
       }
     ])
-    expect(firefoxLogins(json, master, NOW).logins[0]).toMatchObject({ username: 'u', password: 'p' })
+    expect(firefoxLogins(json, master, NOW).logins[0]).toMatchObject({
+      username: 'u',
+      password: 'p'
+    })
   })
 
   it('opens the legacy 3DES store shape too', () => {
@@ -116,7 +128,11 @@ describe('firefoxLogins: key4.db + logins.json', () => {
     const master = deriveFirefoxKey(db, '')
     db.close()
     const json = firefoxLoginsJson([
-      { hostname: 'ftp://nope', encryptedUsername: vault.seal('x'), encryptedPassword: vault.seal('y') },
+      {
+        hostname: 'ftp://nope',
+        encryptedUsername: vault.seal('x'),
+        encryptedPassword: vault.seal('y')
+      },
       {
         hostname: 'https://ok.example',
         encryptedUsername: vault.seal('u'),

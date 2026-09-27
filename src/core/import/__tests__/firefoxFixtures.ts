@@ -14,7 +14,9 @@ const OID_PBE_SHA1_3DES = '1.2.840.113549.1.12.5.1.3'
 
 const MASTER_KEY_ID = Uint8Array.from([0xf8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01])
 const PASSWORD_CHECK = 'password-check'
-const DEFAULT_GLOBAL_SALT = Uint8Array.from(Array.from({ length: 20 }, (_v, i) => (i * 7 + 3) & 0xff))
+const DEFAULT_GLOBAL_SALT = Uint8Array.from(
+  Array.from({ length: 20 }, (_v, i) => (i * 7 + 3) & 0xff)
+)
 
 // ---------------------------------------------------------------------------
 // A tiny DER encoder (the inverse of asn1.ts, for building fixtures)
@@ -135,9 +137,13 @@ function legacyKeyIv(
   const pes = Buffer.alloc(20)
   entrySalt.copy(pes, 0, 0, Math.min(20, entrySalt.length))
   const chp = createHash('sha1').update(hp).update(entrySalt).digest()
-  const k1 = createHmac('sha1', chp).update(Buffer.concat([pes, entrySalt])).digest()
+  const k1 = createHmac('sha1', chp)
+    .update(Buffer.concat([pes, entrySalt]))
+    .digest()
   const tk = createHmac('sha1', chp).update(pes).digest()
-  const k2 = createHmac('sha1', chp).update(Buffer.concat([tk, entrySalt])).digest()
+  const k2 = createHmac('sha1', chp)
+    .update(Buffer.concat([tk, entrySalt]))
+    .digest()
   const k = Buffer.concat([k1, k2])
   return { key: k.subarray(0, 24), iv: k.subarray(k.length - 8) }
 }

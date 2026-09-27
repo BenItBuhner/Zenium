@@ -34,7 +34,11 @@ export interface Asn1Node {
   readonly children: Asn1Node[]
 }
 
-function readNode(bytes: Uint8Array, start: number, depth: number): { node: Asn1Node; end: number } {
+function readNode(
+  bytes: Uint8Array,
+  start: number,
+  depth: number
+): { node: Asn1Node; end: number } {
   if (depth > MAX_DEPTH) throw new Asn1Error('value nested too deeply')
   if (start >= bytes.length) throw new Asn1Error('truncated: no tag')
   const tag = bytes[start]
@@ -86,12 +90,14 @@ export function childAt(node: Asn1Node, index: number): Asn1Node {
 }
 
 export function octetsOf(node: Asn1Node): Uint8Array {
-  if (node.tag !== TAG_OCTET_STRING) throw new Asn1Error(`expected OCTET STRING, got 0x${hex(node.tag)}`)
+  if (node.tag !== TAG_OCTET_STRING)
+    throw new Asn1Error(`expected OCTET STRING, got 0x${hex(node.tag)}`)
   return node.content
 }
 
 export function oidOf(node: Asn1Node): string {
-  if (node.tag !== TAG_OID) throw new Asn1Error(`expected OBJECT IDENTIFIER, got 0x${hex(node.tag)}`)
+  if (node.tag !== TAG_OID)
+    throw new Asn1Error(`expected OBJECT IDENTIFIER, got 0x${hex(node.tag)}`)
   const bytes = node.content
   if (bytes.length === 0) throw new Asn1Error('empty OBJECT IDENTIFIER')
   const first = bytes[0]
