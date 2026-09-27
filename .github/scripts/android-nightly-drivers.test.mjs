@@ -1,8 +1,10 @@
+import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  HEADROOM_MINUTES,
   MANIFEST_DIR,
   NEEDS,
   REPO_ROOT,
@@ -15,17 +17,23 @@ import {
   driverFiles,
   driversOf,
   environmentOf,
+  estimate,
+  headroomLine,
+  headroomWarnings,
   imageOf,
   matrix,
   readManifest,
   readResults,
   runnerKeysOf,
   setupSteps,
+  shardMinutes,
   shardNames,
   sourceDriverClasses,
   summarize,
   writePlan
 } from './android-nightly-drivers.mjs'
+
+const SCRIPT = join(REPO_ROOT, '.github', 'scripts', 'android-nightly-drivers.mjs')
 
 const manifest = readManifest()
 const runner = readFileSync(
@@ -145,7 +153,9 @@ describe('the manifest directory', () => {
     // .github/scripts/android-nightly-drivers.mjs matrix` from .github/nightly-drivers.json at
     // 0abc7784 (the file this directory replaced; the same bytes at b360293e, v0.4.82, and at
     // bd47e39a, v0.4.83, where the file last stood - the matrix is the shards' alone, and the
-    // driver #523 added there changed no shard). A shard change regenerates it, on purpose.
+    // driver #523 added there changed no shard), regenerated once since for the seventh phone
+    // shard (phone-g, W6-H: one row more, the rows before it byte for byte the same). A shard
+    // change regenerates it, on purpose.
     const golden = readFileSync(
       join(REPO_ROOT, '.github', 'scripts', 'fixtures', 'android-nightly-drivers-matrix.json'),
       'utf8'
@@ -254,11 +264,101 @@ describe('the manifest against the sources', () => {
   it('splits the drivers into shards of about an hour each, every shard under its budget', () => {
     for (const name of shardNames(manifest)) {
       const shard = manifest.shards[name]
-      const minutes = driversOf(manifest, name).reduce((sum, d) => sum + d.estimate, 0)
+      const minutes = shardMinutes(manifest, name)
       expect(minutes, `${name}: ${minutes} min of drivers`).toBeLessThanOrEqual(
         shard['budget-minutes']
       )
     }
+  })
+
+  it('warns of a shard past its headroom line (60 minutes on a phone shard) by name, and says nothing of one under it', () => {
+    // The cap stays the budget (68 on a phone shard; the test above): the warning is the early
+    // word, so a driver of three to five minutes still finds room without a move by hand.
+    expect(HEADROOM_MINUTES).toBe(8)
+    expect(headroomLine(manifest.shards['phone-a'])).toBe(60)
+    expect(headroomLine(manifest.shards.tablet)).toBe(37)
+    for (const name of shardNames(manifest))
+      expect(headroomLine(manifest.shards[name]), name).toBeGreaterThan(0)
+    const shard = (extra = {}) => ({
+      ...manifest.shards['phone-a'],
+      'budget-minutes': 68,
+      'timeout-minutes': 90,
+      ...extra
+    })
+    const driver = (id, where, estimate) => ({
+      id,
+      class: 'GestureDemo',
+      shard: where,
+      mirrors: 'x.yml',
+      dir: 'gesture-demo',
+      estimate
+    })
+    const synthetic = {
+      shards: {
+        full: shard(),
+        line: shard(),
+        roomy: shard(),
+        small: shard({ 'budget-minutes': 45, 'timeout-minutes': 60 })
+      },
+      drivers: [
+        driver('a', 'full', 40),
+        driver('b', 'full', 21),
+        driver('c', 'line', 60),
+        driver('d', 'roomy', 58),
+        driver('e', 'small', 37.5)
+      ],
+      skip: []
+    }
+    expect(shardMinutes(synthetic, 'full')).toBe(61)
+    // Past the line by a minute, and the small shard past its own (45 - 8 = 37) by half of one;
+    // exactly on the line is not past it.
+    expect(headroomWarnings(synthetic)).toEqual([
+      'shard full: 61.0 min of drivers, past the 60-minute headroom line (7.0 min left of its 68)',
+      'shard small: 37.5 min of drivers, past the 37-minute headroom line (7.5 min left of its 45)'
+    ])
+    expect(headroomWarnings(synthetic, 10)).toEqual([
+      'shard full: 61.0 min of drivers, past the 58-minute headroom line (7.0 min left of its 68)',
+      'shard line: 60.0 min of drivers, past the 58-minute headroom line (8.0 min left of its 68)',
+      'shard small: 37.5 min of drivers, past the 35-minute headroom line (7.5 min left of its 45)'
+    ])
+    expect(headroomWarnings(synthetic, 7.5)).toEqual([
+      'shard full: 61.0 min of drivers, past the 60.5-minute headroom line (7.0 min left of its 68)'
+    ])
+    expect(headroomWarnings(synthetic, 0)).toEqual([])
+    // The checked-in manifest: every shard past its line is named, none under it is, and the
+    // lines are printed here so the test run shows them (a warning, not a failure).
+    const past = shardNames(manifest).filter(
+      (name) => shardMinutes(manifest, name) > headroomLine(manifest.shards[name])
+    )
+    const warnings = headroomWarnings(manifest)
+    expect(warnings.map((line) => line.match(/^shard (\S+):/)[1])).toEqual(past)
+    for (const name of past)
+      expect(warnings.join('\n')).toContain(
+        `shard ${name}: ${shardMinutes(manifest, name).toFixed(1)} min of drivers, past the ${headroomLine(manifest.shards[name])}-minute headroom line`
+      )
+    for (const line of warnings) console.warn(`headroom: ${line}`)
+  })
+
+  it('prints the headroom warnings from check (as annotations of the plan job) and under estimate', () => {
+    const warnings = headroomWarnings(manifest)
+    const check = spawnSync(process.execPath, [SCRIPT, 'check'], { encoding: 'utf8' })
+    expect(check.status, check.stderr).toBe(0)
+    expect(check.stdout).toMatch(/^\d+ drivers cover \d+ classes; \d+ skipped with a reason$/m)
+    const annotated = check.stdout
+      .split('\n')
+      .filter((line) => line.startsWith('::warning::'))
+      .map((line) => line.slice('::warning::'.length))
+    expect(annotated).toEqual(warnings)
+    const markdown = estimate(manifest)
+    expect(markdown).toContain('| **all** |')
+    if (warnings.length) {
+      expect(markdown).toContain(`**Headroom:**`)
+      for (const line of warnings) expect(markdown).toContain(`- ${line}`)
+    } else expect(markdown).not.toContain('**Headroom:**')
+    // With no shard past the line there is nothing to say.
+    const quiet = { shards: { one: manifest.shards['phone-a'] }, drivers: [], skip: [] }
+    expect(headroomWarnings(quiet)).toEqual([])
+    expect(estimate(quiet)).not.toContain('Headroom')
   })
 })
 
