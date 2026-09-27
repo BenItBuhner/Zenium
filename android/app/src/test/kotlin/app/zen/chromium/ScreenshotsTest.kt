@@ -1,10 +1,14 @@
 package app.zen.chromium
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** The gallery write's pure parts (`Screenshots`): the file's name, the editor's crop made sane, the thumbnail's fit. */
+/**
+ * The gallery write's pure parts (`Screenshots`): the file's name, the editor's crop made sane,
+ * the thumbnail's fit – and which tab a saved picture came from ([ScreenshotOrigins]).
+ */
 class ScreenshotsTest {
     @Test
     fun fileNamesCarryTheAppAndTheMoment() {
@@ -41,5 +45,46 @@ class ScreenshotsTest {
         assertEquals(720 to 8000, Screenshots.fitted(1440, 16000, Screenshots.PREVIEW_MAX_WIDTH, Int.MAX_VALUE))
         // Nothing to scale is one pixel, not a division by zero.
         assertEquals(1 to 1, Screenshots.fitted(0, 0, 320, 320))
+    }
+
+    // --- which tab a saved picture came from (the card's Share carries it to the sheet) ---------------
+
+    @Test
+    fun aSavedPictureRemembersItsTabUntilItIsDeleted() {
+        val origins = ScreenshotOrigins()
+        origins.record("content://media/external/images/media/41", "tab-1")
+        origins.record("content://media/external/images/media/42", "tab-2")
+        assertEquals("tab-1", origins.tabOf("content://media/external/images/media/41"))
+        assertEquals("tab-2", origins.tabOf("content://media/external/images/media/42"))
+        // A picture the session did not save (or one long forgotten) shares with no tab.
+        assertNull(origins.tabOf("content://media/external/images/media/7"))
+        // Delete on the card takes the origin with the row.
+        origins.forget("content://media/external/images/media/41")
+        assertNull(origins.tabOf("content://media/external/images/media/41"))
+        assertEquals(1, origins.size)
+        // Forgetting what was never known is nothing.
+        origins.forget("content://media/external/images/media/41")
+        assertEquals(1, origins.size)
+    }
+
+    @Test
+    fun theOriginsKeepTheLatestFewAndDropTheOldestFirst() {
+        val origins = ScreenshotOrigins(max = 3)
+        for (i in 1..3) origins.record("uri-$i", "tab-$i")
+        assertEquals(3, origins.size)
+        origins.record("uri-4", "tab-4")
+        // The oldest went; the three latest stay.
+        assertEquals(3, origins.size)
+        assertNull(origins.tabOf("uri-1"))
+        assertEquals("tab-2", origins.tabOf("uri-2"))
+        assertEquals("tab-4", origins.tabOf("uri-4"))
+        // A picture recorded again is the newest, whatever its tab was: it is the last to go.
+        origins.record("uri-2", "tab-9")
+        origins.record("uri-5", "tab-5")
+        assertNull(origins.tabOf("uri-3"))
+        assertEquals("tab-9", origins.tabOf("uri-2"))
+        assertEquals(3, origins.size)
+        // The default cap is a session's worth of cards, not a gallery's.
+        assertEquals(32, ScreenshotOrigins.MAX_ORIGINS)
     }
 }
