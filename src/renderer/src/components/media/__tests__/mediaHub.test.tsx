@@ -57,6 +57,7 @@ function track(over: Partial<MediaState> = {}): MediaState {
   return {
     tabId: 't1',
     playing: true,
+    muted: false,
     title: 'Nocturne',
     artist: 'The Band',
     artwork: 'data:image/png;base64,AAAA',
@@ -309,6 +310,66 @@ describe('MediaHubPopover', () => {
     expect(mediaHubUi.get().open).toBe(false)
   })
 
+  it("the tab's Mute / Unmute trails the now-playing line, before picture-in-picture (W8-8: the sidebar card's control, retired here), and a muted tab that plays keeps Pause", async () => {
+    await open(stateWith([track({ video: true })]))
+    let player = hub()!.querySelector<HTMLElement>('[data-media-player="t1"]')!
+    // Unmuted: the speaker, named Mute; the mute is the tab's (`tab.toggleMute`, the strip's).
+    const mute = player.querySelector<HTMLButtonElement>('[data-media-mute]')!
+    expect(mute).not.toBeNull()
+    expect(mute.getAttribute('aria-label')).toBe('Mute')
+    expect(mute.querySelector('svg')!.classList.contains('lucide-volume-2')).toBe(true)
+    expect(player.hasAttribute('data-muted')).toBe(false)
+    // After the title (the way to the tab), the line's trailing slot at §9.3's 8 apart: the
+    // mute, then the window's PiP.
+    const line = [...player.querySelectorAll<HTMLElement>('.zen-mhub-now button')].map(
+      (b) => b.getAttribute('aria-label') ?? b.getAttribute('data-tooltip')
+    )
+    expect(line).toEqual(['Switch to tab', 'Mute', 'Picture in picture'])
+    expect(mute.parentElement!.classList.contains('gap-2')).toBe(true)
+    expect(mute.nextElementSibling).toBe(player.querySelector('[data-media-pip]'))
+    click(mute)
+    expect(commands().at(-1)).toEqual(['tab.toggleMute', { tabId: 't1' }])
+    // The hub stays: a mute is not a leave, the way PiP is.
+    expect(mediaHubUi.get().open).toBe(true)
+
+    // Muted and playing (`MediaState.muted` beside `playing`, the core's next push): the crossed
+    // speaker named Unmute, the transport's Pause as before – a muted tab that plays is not a
+    // paused one.
+    const show = (entries: MediaState[]): HTMLElement => {
+      const state = stateWith(entries)
+      browserStore.set({ state })
+      render(
+        <>
+          <MediaHubButton state={state} />
+          <MediaHubLayer />
+        </>
+      )
+      return hub()!.querySelector<HTMLElement>('[data-media-player="t1"]')!
+    }
+    player = show([track({ muted: true })])
+    const unmute = player.querySelector<HTMLButtonElement>('[data-media-mute]')!
+    expect(unmute.getAttribute('aria-label')).toBe('Unmute')
+    expect(unmute.querySelector('svg')!.classList.contains('lucide-volume-x')).toBe(true)
+    expect(player.getAttribute('data-muted')).toBe('true')
+    expect(player.getAttribute('data-playing')).toBe('true')
+    expect(player.querySelector('[data-media-toggle]')!.getAttribute('aria-label')).toBe('Pause')
+    // No PiP for the audio track: the mute stands alone in the slot.
+    expect(player.querySelector('[data-media-pip]')).toBeNull()
+
+    // A paused, muted tab: Play and Unmute – the two states told apart.
+    player = show([track({ muted: true, playing: false })])
+    expect(player.querySelector('[data-media-toggle]')!.getAttribute('aria-label')).toBe('Play')
+    expect(player.querySelector('[data-media-mute]')!.getAttribute('aria-label')).toBe('Unmute')
+    expect(player.hasAttribute('data-playing')).toBe(false)
+  })
+
+  it("offers no mute on a chrome player's entry: the tab's mute would not quiet the read-aloud voice", async () => {
+    await open(stateWith([track({ source: 'chrome', artwork: null, position: null })]))
+    const player = hub()!.querySelector<HTMLElement>('[data-media-player="t1"]')!
+    expect(player.querySelector('[data-media-mute]')).toBeNull()
+    expect(player.querySelector('[data-media-toggle]')).not.toBeNull()
+  })
+
   it('the title is the way to the tab; the track buttons wait for the page to handle them', async () => {
     await open(stateWith([track({ actions: ['play', 'pause'], playing: false })]))
     const panel = hub()!
@@ -517,12 +578,14 @@ describe('a paused session lingering in the hub (W7-5)', () => {
   })
 
   /*
-   * One paused control per session (§9.29 amended, the #552 ruling): the sidebar foot's old
-   * mini player (`SidebarBottom`'s `MediaPlayer` card, one per entry of the same list before
-   * this) reads the PLAYING set alone, so a session that paused or ended is told by the hub –
-   * its button and popover – and nowhere else in the window; the card's retirement into the
-   * hub is the follow-up slice. Mounted on the desktop (`Sidebar`) and on Android's tablet
-   * layout (`TabletShell` → `Sidebar`), never on the phone, whose chip and sheet are their own.
+   * One player per window (§9.37: "no compact player: the media hub's toolbar button is the
+   * window's one player"; §9.29 retired the sidebar's mini player into the hub – the #552
+   * ruling, its card's controls moved in W8-8 and the card itself removed on the #650 lead
+   * check): the sidebar foot (`SidebarBottom`, mounted on the desktop's `Sidebar` and on
+   * Android's tablet layout, `TabletShell` → `Sidebar`; never on the phone, whose chip and
+   * sheet are their own) draws no card for a session, playing, paused or ended – the hub
+   * button's dot and the tab row's audio glyph already show it, and the hub's popover holds its
+   * one transport and its one mute.
    */
   function footState(entries: MediaState[]): UIState {
     return {
@@ -534,26 +597,31 @@ describe('a paused session lingering in the hub (W7-5)', () => {
     } as unknown as UIState
   }
 
-  /** The foot's media cards: the panels carrying a Play / Pause and a Mute / Unmute. */
+  /** Any media card the foot might draw (`SidebarBottom`'s retired `MediaPlayer` marked its own). */
   function footCards(): HTMLElement[] {
-    return [...document.querySelectorAll<HTMLElement>('.zen-panel')].filter(
-      (panel) =>
-        panel.querySelector('button[aria-label="Play"], button[aria-label="Pause"]') &&
-        panel.querySelector('button[aria-label="Mute"], button[aria-label="Unmute"]')
-    )
+    return [...document.querySelectorAll<HTMLElement>('[data-media-card]')]
   }
 
-  function renderFoot(state: UIState): void {
+  /** A media control standing outside the hub's popover – there must be none. */
+  function strayControls(): HTMLElement[] {
+    return [
+      ...document.querySelectorAll<HTMLElement>(
+        '[aria-label="Play"], [aria-label="Pause"], [aria-label="Mute"], [aria-label="Unmute"]'
+      )
+    ].filter((el) => el.closest('[data-zen-media-hub]') === null)
+  }
+
+  function renderFoot(state: UIState, compact = false): void {
     browserStore.set({ state })
     render(
       <>
         <MediaHubButton state={state} />
-        <SidebarBottom state={state} compact={false} isDark={false} />
+        <SidebarBottom state={state} compact={compact} isDark={false} />
       </>
     )
   }
 
-  it("a paused session shows in the hub's list and not in the mini player's: the foot reads the playing set alone (§9.29)", () => {
+  it("a session shows in the hub's list and its button, never as a card of the foot's – playing, paused or ended (§9.37, §9.29)", () => {
     const paused = footState([track({ playing: false })])
     renderFoot(paused)
     // The hub lists the paused session – its button in the row, bare of the dot, named paused…
@@ -562,39 +630,68 @@ describe('a paused session lingering in the hub (W7-5)', () => {
     expect(button).not.toBeNull()
     expect(button.querySelector('.zen-mhub-dot')).toBeNull()
     expect(button.getAttribute('aria-label')).toBe('Media controls · Paused')
-    // …and the foot draws no card for it: one paused control per session, the hub's.
+    // …and the foot draws nothing for it.
     expect(footCards()).toEqual([])
 
-    // Playing, the card is the foot's as before, beside the button with its dot.
+    // Playing, the button carries its dot and the foot still draws no card: the dot and the
+    // tab row's audio glyph are the window's indicators, the hub its one player.
     const playing = footState([track()])
     renderFoot(playing)
-    expect(footCards()).toHaveLength(1)
-    expect(footCards()[0]!.querySelector('button[aria-label="Pause"]')).not.toBeNull()
-    expect(footCards()[0]!.querySelector('button.truncate')!.textContent).toBe('Album – Music')
     expect(q('[data-zen-media-hub-button] .zen-mhub-dot')).not.toBeNull()
+    expect(footCards()).toEqual([])
+    expect(document.body.textContent).not.toContain('Album – Music')
+    expect(strayControls()).toEqual([])
 
-    // One playing, one paused: the hub lists both (the session first); the foot has the
-    // playing tab's card alone.
+    // One playing, one paused: the hub lists both (the session first) and names the count; the
+    // foot names neither.
     const both = footState([
       track({ tabId: 't2', title: 'A film', artist: '', video: true, session: false }),
       track({ playing: false })
     ])
     renderFoot(both)
     expect(mediaHubEntries(both).map((m) => m.tabId)).toEqual(['t1', 't2'])
-    expect(footCards().map((card) => card.querySelector('button.truncate')!.textContent)).toEqual([
-      'A film'
-    ])
     expect(q('[data-zen-media-hub-button]')!.getAttribute('aria-label')).toBe(
       'Media controls, 1 playing'
     )
+    expect(footCards()).toEqual([])
+    expect(document.body.textContent).not.toContain('A film')
 
-    // An ended track is a paused one to the foot too: no card, the hub's replay alone.
+    // An ended track: the hub's replay alone, the foot bare.
     const ended = footState([
       track({ playing: false, position: { duration: 120, position: 120, playbackRate: 1 } })
     ])
     renderFoot(ended)
     expect(footCards()).toEqual([])
     expect(q('[data-zen-media-hub-button]')).not.toBeNull()
+
+    // Compact, the same: no picture-only card either (its `aria-label` was the tab's title).
+    renderFoot(footState([track({ muted: true })]), true)
+    expect(footCards()).toEqual([])
+    expect(document.querySelector('[aria-label="Album – Music"]')).toBeNull()
+    expect(strayControls()).toEqual([])
+  })
+
+  it("the foot's panels are the agents pill and the toasts alone: a playing tab adds no panel button to it (W8-8, the #650 lead check)", async () => {
+    const state = footState([track(), track({ tabId: 't2', title: 'A film', video: true })])
+    browserStore.set({ state })
+    render(
+      <>
+        <MediaHubButton state={state} />
+        <MediaHubLayer />
+        <SidebarBottom state={state} compact={false} isDark={false} />
+      </>
+    )
+    // `SidebarBottom`'s panel buttons (`button.zen-panel`) were the agents pill and the media
+    // cards; with no agent and two playing tabs there is none.
+    expect(document.querySelectorAll('button.zen-panel')).toHaveLength(0)
+    expect(footCards()).toEqual([])
+    // The hub, opened, is where each session's Pause and Mute stand – one each, nowhere else.
+    click(q('[data-zen-media-hub-button]'))
+    await settle()
+    expect(hub()).not.toBeNull()
+    expect(hub()!.querySelectorAll('[data-media-toggle]')).toHaveLength(2)
+    expect(hub()!.querySelectorAll('[data-media-mute]')).toHaveLength(2)
+    expect(strayControls()).toEqual([])
   })
 })
 

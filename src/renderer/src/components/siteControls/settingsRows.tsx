@@ -48,8 +48,9 @@ import { StatusGlyph } from './pane'
 /**
  * The site-controls rows of the phone's Privacy and Security category (design-language-v2-draft
  * §9.2, §9.13, §9.17, §10.3–§10.4): three self-contained blocks the `privacySection` builder
- * (`pages/settings/sections.tsx`) places in Chrome's order – Safety check first, Clear browsing
- * data after the tracking groups, Site settings after it – each a plain function of the state
+ * (`pages/settings/sections.tsx`) places in the privacy hub cards' order (the #553 lead check's
+ * Q6) – Delete browsing data first, Site settings after the cookies and Safe Browsing groups,
+ * Safety check after it – each a plain function of the state
  * and the commands it runs, the way every builder row is. They are the desktop panes
  * (`overlays/SafetyCheckSection`, `ClearBrowsingDataSection`, `SiteSettingsSection`) row for
  * row: a card becomes rows under a 15/600 heading, a menulist a value row, a button an action

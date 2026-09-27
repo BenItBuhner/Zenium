@@ -87,6 +87,8 @@ interface Harness {
    */
   onScreen(win: FakeWindow, visible: boolean): void
   setAlert(tabId: string, alert: string | undefined): void
+  /** The tab's mute as the tab manager records it (`Tab.muted`); `undefined` for a record without the field. */
+  setMuted(tabId: string, muted: boolean | undefined): void
   updateMedia: ReturnType<typeof vi.fn>
 }
 
@@ -100,7 +102,10 @@ function harness(
   } = {}
 ): Harness {
   const views = new Map<string, FakeView>()
-  const tabs = new Map<string, { id: string; url: string; title: string; alert?: string }>()
+  const tabs = new Map<
+    string,
+    { id: string; url: string; title: string; alert?: string; muted?: boolean }
+  >()
   const updates: Array<MediaSessionInfo | null> = []
   const pipRequests: MediaSessionInfo[] = []
   const now = { value: 1_700_000_000_000 }
@@ -259,6 +264,10 @@ function harness(
     setAlert: (tabId, alert) => {
       const tab = tabs.get(tabId)
       if (tab) tab.alert = alert
+    },
+    setMuted: (tabId, muted) => {
+      const tab = tabs.get(tabId)
+      if (tab) tab.muted = muted
     }
   }
 }
@@ -580,6 +589,28 @@ describe('MediaSessionService', () => {
     expect(plain.service.sessionTab).toBe('a')
     expect(plain.service.refresh().find((m) => m.tabId === 'a')?.session).toBe(true)
     expect(plain.updates).toEqual([])
+  })
+
+  it("carries the tab's mute beside its audibility (W8-8, `MediaState.muted`): a muted tab that plays says both; a record without the field reads unmuted", () => {
+    play(h, 't1')
+    expect(h.service.refresh()).toEqual([
+      expect.objectContaining({ tabId: 't1', playing: true, muted: false })
+    ])
+    // The tab muted while it plays (the strip's mute, `webContents.setAudioMuted`): the engine's
+    // audible word stands – Chromium keeps a muted tab audible, the strip's muted speaker is
+    // that – so the entry says playing and muted, and the hub tells it from a paused tab.
+    h.setMuted('t1', true)
+    expect(h.service.refresh()).toEqual([
+      expect.objectContaining({ tabId: 't1', playing: true, muted: true })
+    ])
+    // Paused and muted: the other pair.
+    play(h, 't1', report({ playing: false }))
+    expect(h.service.refresh()).toEqual([
+      expect.objectContaining({ tabId: 't1', playing: false, muted: true })
+    ])
+    // A host whose tab record carries no mute (the field arrives null-safe): unmuted.
+    h.setMuted('t1', undefined)
+    expect(h.service.refresh()[0]!.muted).toBe(false)
   })
 
   it("marks a page's session as the page's for the host", () => {
@@ -928,6 +959,8 @@ describe('MediaSessionService', () => {
       expect(states[0]).toEqual({
         tabId: 't1',
         playing: true,
+        // The tab's mute, as every entry carries it (the hub offers a chrome player no mute).
+        muted: false,
         title: 'An article',
         artist: 'news.example',
         album: '',

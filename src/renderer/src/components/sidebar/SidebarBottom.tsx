@@ -1,23 +1,21 @@
 import type { JSX } from 'react'
 import { useEffect } from 'react'
-import { Bot, Palette, Pause, Play, Plus, VenetianMask, Volume2, VolumeX } from 'lucide-react'
-import type { MediaState, Space, UIState } from '@shared/types'
+import { Bot, Palette, Plus } from 'lucide-react'
+import type { Space, UIState } from '@shared/types'
 import { resolveTheme, rgbToHex } from '@shared/theme'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
 import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { dropStore } from '@renderer/lib/drag'
 import { openSettings } from '@renderer/lib/pages'
-import { PRIVATE_TAB_PLACEHOLDER, useTabMasked } from '@renderer/lib/privateLock'
-import { isPrivateTab, privateInTabs, type SidebarPose } from '@renderer/lib/privateTabs'
-import { activeTab, isLocalWindow, tabTitle } from '@renderer/lib/selectors'
+import type { SidebarPose } from '@renderer/lib/privateTabs'
+import { activeTab, isLocalWindow } from '@renderer/lib/selectors'
 import { hint } from '@renderer/lib/shortcuts'
 import { claimMessageCards, openOverlay, pickToastAction, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { ToastCard } from '../messages/ToastCard'
 import { SpaceGlyph } from '../SpaceGlyph'
-import { TOOLBAR_STROKE, V2_TRAILING_GLYPH } from '../v2/controls'
-import { Favicon } from './Favicon'
+import { TOOLBAR_STROKE } from '../v2/controls'
 
 interface Props {
   state: UIState
@@ -25,14 +23,19 @@ interface Props {
   isDark: boolean
   /**
    * The sidebar's pose (`sidebarPose`; the tablet). On the PRIVATE pose the foot is the
-   * private session's: its players are the private tabs' alone, and the spaces row and the
-   * palette – the workspaces' – are not drawn (the phone's Private pane shows no space strip
-   * either: the session is one across the spaces). On the regular pose no private tab's player
-   * shows, whatever it plays: a player names its tab.
+   * private session's: the spaces row and the palette – the workspaces' – are not drawn (the
+   * phone's Private pane shows no space strip either: the session is one across the spaces).
    */
   pose?: SidebarPose
 }
 
+/**
+ * The sidebar's foot: the agents pill, the toasts, the status line, the spaces row with its
+ * palette. No media card (design language v2 §9.37: "no compact player: the media hub's
+ * toolbar button is the window's one player"; §9.29 retired the sidebar's mini player into the
+ * hub – the #650 lead check, W8-8): a session is told by the hub button's dot and the tab
+ * row's audio glyph, and controlled in the hub's popover, nowhere else in the window.
+ */
 export function SidebarBottom({ state, compact, isDark, pose = 'regular' }: Props): JSX.Element {
   const drag = uiStore.use((s) => s.drag)
   const dropKey = dropStore.use((s) => s.key)
@@ -41,20 +44,6 @@ export function SidebarBottom({ state, compact, isDark, pose = 'regular' }: Prop
   const current = activeTab(state)
   const local = isLocalWindow(state)
   const privatePose = pose === 'private'
-  // Zen 1.21.11: every playing tab gets its own media control – of the pose's mode, on a host
-  // that keeps private browsing in tabs. The playing set alone (design language v2 §9.29, the
-  // #552 ruling): a session that paused or ended is the media hub's to tell – its toolbar
-  // button and popover, where it lingers Chrome's hour with Play – and this card, a second
-  // control for the same session, would tell the one state twice; the card's retirement into
-  // the hub is the follow-up slice.
-  const mixed = privateInTabs(state)
-  const media = state.media
-    .filter((m) => {
-      if (!m.playing) return false
-      const tab = state.tabs[m.tabId]
-      return tab !== undefined && (!mixed || isPrivateTab(tab) === privatePose)
-    })
-    .slice(0, 3)
 
   const agents = state.agents.filter((a) => !a.pending)
   // The space row scrolls sideways when expanded and downwards when the sidebar is compact.
@@ -68,9 +57,6 @@ export function SidebarBottom({ state, compact, isDark, pose = 'regular' }: Prop
   return (
     <div className="flex flex-col gap-1 px-2 pb-2 pt-1">
       {agents.length > 0 && <AgentPill agents={agents} compact={compact} />}
-      {media.map((m) => (
-        <MediaPlayer key={m.tabId} state={state} media={m} compact={compact} />
-      ))}
       {toasts.length > 0 && cards && (
         // The well clips the card's slide in from below (and out again) to its own row.
         <div className="zen-message-well">
@@ -255,70 +241,5 @@ function SpaceIcon({
         />
       )}
     </button>
-  )
-}
-
-function MediaPlayer({
-  state,
-  media,
-  compact
-}: {
-  state: UIState
-  media: MediaState
-  compact: boolean
-}): JSX.Element | null {
-  const tab = state.tabs[media.tabId]
-  // A private tab's player under the lock names nothing of its page (§9.19; `mediaMasked`'s
-  // rule for the phone's player): the mask and the placeholder, the transport as it is.
-  const masked = useTabMasked(tab ?? { containerId: '' })
-  if (!tab) return null
-  const title = masked ? PRIVATE_TAB_PLACEHOLDER : tabTitle(tab)
-  return (
-    <div
-      className={cn('zen-panel flex items-center gap-2 px-2 py-1.5', compact && 'flex-col')}
-      data-masked={masked || undefined}
-    >
-      {masked ? (
-        <VenetianMask className="h-4 w-4 shrink-0 opacity-[0.69]" aria-hidden />
-      ) : (
-        <Favicon tab={tab} />
-      )}
-      {!compact && (
-        <button
-          type="button"
-          className="min-w-0 flex-1 truncate text-left text-[12px]"
-          data-tooltip={title}
-          onClick={() => run('tab.activate', { tabId: tab.id })}
-        >
-          {title}
-        </button>
-      )}
-      <button
-        type="button"
-        className="zen-toolbar-button h-6 w-6"
-        aria-label={media.playing ? 'Pause' : 'Play'}
-        data-tooltip={media.playing ? 'Pause' : 'Play'}
-        onClick={() => run('media.toggle', { tabId: tab.id })}
-      >
-        {media.playing ? (
-          <Pause className={V2_TRAILING_GLYPH} />
-        ) : (
-          <Play className={V2_TRAILING_GLYPH} />
-        )}
-      </button>
-      <button
-        type="button"
-        className="zen-toolbar-button h-6 w-6"
-        aria-label={tab.muted ? 'Unmute' : 'Mute'}
-        data-tooltip={tab.muted ? 'Unmute' : 'Mute'}
-        onClick={() => run('tab.toggleMute', { tabId: tab.id })}
-      >
-        {tab.muted ? (
-          <VolumeX className={V2_TRAILING_GLYPH} />
-        ) : (
-          <Volume2 className={V2_TRAILING_GLYPH} />
-        )}
-      </button>
-    </div>
   )
 }
