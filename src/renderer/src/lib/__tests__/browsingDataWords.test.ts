@@ -20,6 +20,19 @@ import { describe, expect, it } from 'vitest'
  * Android sources, and the Kotlin and resource strings, and asserts that no user-facing "Clear
  * browsing data" is left in any casing. The family's own files are held to the verb itself: no
  * prose literal there says "clear" at all.
+ *
+ * The verb's remainder (W8-11, the design lead's ruling after W8-7 landed): the site-data viewer
+ * takes Chrome's `IDS_SETTINGS_SITE_SETTINGS_DELETE` "Delete data" and
+ * `IDS_SETTINGS_SITE_SETTINGS_DELETE_ALL_STORAGE_LABEL` "Delete all data" (its question
+ * `IDS_SETTINGS_SITE_SETTINGS_DELETE_ALL_STORAGE_DIALOG_TITLE` "Delete all data?") with the
+ * per-site question "Delete data for <site>?"; the site-information surfaces' row and question
+ * "Delete site data" / "Delete site data?" (`IDS_SETTINGS_SITE_SETTINGS_SITE_DELETE_STORAGE_DIALOG_TITLE`),
+ * their toast naming the data, not the site; History's house pair "Delete history" / "Delete
+ * all"; the never list's line "What a site stored is deleted when it is added". The sweep below
+ * holds that no user-facing "Clear data" / "Clear site data" / "Clear history", no "Cleared <site>"
+ * toast and no "stored is cleared" remains, and that what Chrome kept stays: the clear-on-exit
+ * list's state words, the downloads list's "Clear all" (`IDS_DOWNLOAD_LINK_CLEAR_ALL`), the
+ * cookies level's "Clear cookies", the Reset settings explanation.
  */
 
 const repo = fileURLToPath(new URL('../../../../../', import.meta.url))
@@ -133,6 +146,31 @@ const OLD_NAME = /clear browsing data/i
 /** The old verb standing in prose: "Clear data", "Cleared history", "Nothing to clear", "clearing". */
 const OLD_VERB = /\bclear(ed|ing|s)?\b/i
 
+/**
+ * The remainder's old words (W8-11): the viewer's buttons and questions ("Clear data", "Clear all
+ * data", "Clear site data", "Clear all site data", "Clear data for <site>?"), History's pair
+ * ("Clear history", "Clear all history?"), the viewer's line ("Clearing a site signs you out")
+ * and the never list's ("What a site stored is cleared when it is added"), in any casing.
+ */
+const OLD_REMAINDER =
+  /\bclear (all )?(site )?data\b|\bclear (all )?history\b|\bclearing a site\b|\bstored is cleared\b/i
+
+/**
+ * The old toasts' shape: a message that begins "Cleared …" ("Cleared <site>", "Cleared everything
+ * <site> stored"). A word on its own (`type: 'cleared'`, an event's tag) is an identifier, not a toast.
+ */
+const OLD_TOAST = /^cleared\s\S/i
+
+/**
+ * What Chrome kept, kept: the clear-on-exit list's state words (`IDS_SETTINGS_SITE_SETTINGS_SESSION_ONLY`'s
+ * family – the option's name is "Clear on exit", so its states say "Cleared").
+ */
+const KEPT_TOAST_SHAPES = new Set([
+  'Cleared on exit',
+  'Cleared when Zenium closes',
+  'Cleared the next time Zenium starts'
+])
+
 const at = (l: Literal): string => `${rel(l.file)}:${l.line}: "${l.text}"`
 
 describe('the Delete browsing data words (W8-7): Chrome M124+’s "Delete" on every surface', () => {
@@ -242,5 +280,173 @@ describe('the Delete browsing data words (W8-7): Chrome M124+’s "Delete" on ev
     expect(kt('awaitRow("Clear browsing data", 8_000)')).toEqual(['Clear browsing data'])
     expect(kt('// awaitRow("Clear browsing data", 8_000)')).toEqual([])
     expect(kt('/* Clear browsing data */ awaitRow("Delete browsing data", 8_000)')).toEqual([])
+  })
+})
+
+describe('the verb’s remainder (W8-11): the site-data viewer, History’s pair, the never list’s line', () => {
+  const files = SWEPT.flatMap((p) => walk(join(repo, p)))
+  const literals = files.flatMap(literalsOf)
+  const find = (file: string, text: string): boolean =>
+    literals.some((l) => rel(l.file) === file && l.text === text)
+  const SITE_DATA_UI = 'src/renderer/src/lib/siteDataUi.ts'
+  const POPOVER = 'src/renderer/src/components/siteControls/SiteInfoPopover.tsx'
+  const SHEET = 'src/renderer/src/components/siteinfo/SiteInfoSheet.tsx'
+  const HISTORY = 'src/renderer/src/components/phone/PhoneHistoryPanel.tsx'
+  const KT = 'android/app/src/androidTest/kotlin/app/zen/chromium/'
+
+  it('finds the viewer’s new words: Chrome’s "Delete data" / "Delete all data" / "Delete all data?", the per-site question, the item sheet’s row', () => {
+    // The row's button (`IDS_SETTINGS_SITE_SETTINGS_DELETE`), the footer's
+    // (`..._DELETE_ALL_STORAGE_LABEL`) and its question (`..._DELETE_ALL_STORAGE_DIALOG_TITLE`).
+    expect(find(SITE_DATA_UI, 'Delete data')).toBe(true)
+    expect(find(SITE_DATA_UI, 'Delete all data')).toBe(true)
+    expect(find(SITE_DATA_UI, 'Delete all data?')).toBe(true)
+    // The phone page's action row and the item sheet's danger row, the verb swapped.
+    expect(find(SITE_DATA_UI, 'Delete all site data')).toBe(true)
+    expect(find(SITE_DATA_UI, 'Delete site data')).toBe(true)
+    // The per-site question names the site (the lead's words): the template's head.
+    expect(find(SITE_DATA_UI, 'Delete data for')).toBe(true)
+    // The viewer's line takes the verb along.
+    expect(
+      literals.some(
+        (l) => rel(l.file) === SITE_DATA_UI && /Deleting a site’s data signs you out/.test(l.text)
+      )
+    ).toBe(true)
+    // The viewer raised no toast; the two it once declared ("Cleared <site>", "Cleared every
+    // site’s cookies and data") are gone rather than reworded. The clear-on-exit states stay.
+    expect(
+      literals
+        .filter((l) => rel(l.file) === SITE_DATA_UI && OLD_TOAST.test(l.text))
+        .filter((l) => !KEPT_TOAST_SHAPES.has(l.text))
+        .map(at)
+    ).toEqual([])
+  })
+
+  it('finds the site-information surfaces’ row, question and toast, on the popover and the sheet alike', () => {
+    for (const file of [POPOVER, SHEET]) {
+      expect(find(file, 'Delete site data')).toBe(true)
+      expect(find(file, 'Delete site data?')).toBe(true)
+      // The toast names the data, not the site (Chrome's compound from
+      // `IDS_SETTINGS_SITE_SETTINGS_COOKIE_REMOVE_SITE`, said as done).
+      expect(find(file, 'Site data and permissions deleted')).toBe(true)
+      // The house line's verb goes along ("Deletes …, then reloads the page").
+      expect(
+        literals.some(
+          (l) => rel(l.file) === file && /^Deletes (the )?cookies, stored data and permissions of/.test(l.text)
+        )
+      ).toBe(true)
+    }
+    expect(find(SHEET, 'Confirm delete site data')).toBe(true)
+  })
+
+  it('finds History’s house pair: "Delete history" over the question "Delete all history?" and its "Delete all"', () => {
+    expect(find(HISTORY, 'Delete history')).toBe(true)
+    expect(find(HISTORY, 'Delete all history?')).toBe(true)
+    expect(find(HISTORY, 'Delete all')).toBe(true)
+    expect(
+      literals.some(
+        (l) => rel(l.file) === HISTORY && /will be deleted from Zenium's history/.test(l.text)
+      )
+    ).toBe(true)
+  })
+
+  it('finds the never list’s line: "What a site stored is deleted when it is added"', () => {
+    expect(
+      find(
+        SITE_DATA_UI,
+        'These sites can never use cookies. What a site stored is deleted when it is added.'
+      )
+    ).toBe(true)
+    expect(find(SITE_DATA_UI, 'No cookies; what it stored is deleted now.')).toBe(true)
+  })
+
+  it('the phone’s demo drivers look the surfaces up by the new words', () => {
+    expect(find(`${KT}SiteDataUiDemo.kt`, 'Delete data for')).toBe(true)
+    expect(find(`${KT}SiteDataUiDemo.kt`, 'Delete site data')).toBe(true)
+    expect(find(`${KT}SiteDataUiDemo.kt`, 'Delete all data?')).toBe(true)
+    expect(find(`${KT}HistoryBookmarksDemo.kt`, 'Delete history')).toBe(true)
+    expect(find(`${KT}HistoryBookmarksDemo.kt`, 'Delete all')).toBe(true)
+    // The question is read inside a `finding(...)` line whose quotes nest; the words are there.
+    expect(
+      literals.some(
+        (l) => rel(l.file) === `${KT}HistoryBookmarksDemo.kt` && l.text.includes('Delete all history?')
+      )
+    ).toBe(true)
+    expect(find(`${KT}PrimitivesPass4Demo.kt`, 'Delete history')).toBe(true)
+    expect(find(`${KT}BackDemo.kt`, 'Delete history')).toBe(true)
+    expect(find(`${KT}ChromeA11yDemo.kt`, 'Delete history')).toBe(true)
+  })
+
+  it('leaves no user-facing "Clear data" / "Clear site data" / "Clear history" / "Clearing a site" / "stored is cleared", in any casing, on any surface', () => {
+    expect(literals.filter((l) => OLD_REMAINDER.test(l.text)).map(at)).toEqual([])
+  })
+
+  it('raises no toast that begins "Cleared", the clear-on-exit list’s state words apart', () => {
+    const toasts = literals.filter(
+      (l) => /\.tsx?$/.test(l.file) && OLD_TOAST.test(l.text) && !KEPT_TOAST_SHAPES.has(l.text)
+    )
+    expect(toasts.map(at)).toEqual([])
+  })
+
+  it('keeps what Chrome kept: the clear-on-exit words, the downloads list’s "Clear all", "Clear cookies", the Reset explanation', () => {
+    for (const kept of KEPT_TOAST_SHAPES) expect(find(SITE_DATA_UI, kept)).toBe(true)
+    expect(find(SITE_DATA_UI, 'Clear on exit')).toBe(true)
+    // `IDS_DOWNLOAD_LINK_CLEAR_ALL` "Clear all": Chrome's downloads page kept its verb.
+    expect(find('src/renderer/src/components/pages/downloads/DownloadsPage.tsx', 'Clear all')).toBe(
+      true
+    )
+    expect(
+      find('src/renderer/src/components/downloads/ClearAllConfirm.tsx', 'Clear all downloads?')
+    ).toBe(true)
+    // The cookies level's verb was not ruled on; it stands as it was.
+    expect(find(POPOVER, 'Clear cookies')).toBe(true)
+    expect(find(SHEET, 'Clear cookies')).toBe(true)
+    // `IDS_SETTINGS_RESET_PROFILE_SETTINGS_EXPLANATION` still says "clear temporary data like cookies".
+    expect(
+      literals.some(
+        (l) =>
+          rel(l.file) === 'src/renderer/src/components/pages/settings/sections.tsx' &&
+          /clear temporary data like cookies/.test(l.text)
+      )
+    ).toBe(true)
+  })
+
+  it('would catch the words it swept away', () => {
+    // A `.tsx` path, so the JSX snippets parse as JSX.
+    const file = join(repo, POPOVER)
+    const flag = (snippet: string): string[] =>
+      literalsOfTs(file, snippet)
+        .filter((l) => OLD_REMAINDER.test(l.text) || OLD_TOAST.test(l.text))
+        .map((l) => l.text)
+    expect(flag("clear: 'Clear'")).toEqual([])
+    expect(flag("clear: 'Clear data'")).toEqual(['Clear data'])
+    expect(flag("clearAll: 'Clear all'")).toEqual([])
+    expect(flag("clearAll: 'Clear all site data'")).toEqual(['Clear all site data'])
+    expect(flag("title: 'Clear all site data?'")).toEqual(['Clear all site data?'])
+    expect(flag('const t = `Clear data for ${site}?`')).toEqual(['Clear data for'])
+    expect(flag('const x = <button>Clear site data</button>')).toEqual(['Clear site data'])
+    expect(flag('const x = <Row title="Clear history" />')).toEqual(['Clear history'])
+    expect(flag("text: 'Clear all history?'")).toEqual(['Clear all history?'])
+    expect(flag('pushToast(`Cleared everything ${site} stored`)')).toEqual(['Cleared everything'])
+    expect(flag("const t = 'What a site stored is cleared when it is added.'")).toEqual([
+      'What a site stored is cleared when it is added.'
+    ])
+    expect(flag("const t = 'Clearing a site signs you out of it'")).toEqual([
+      'Clearing a site signs you out of it'
+    ])
+    // Kept shapes and unrelated verbs pass.
+    expect(flag("const t = 'Clear on exit'")).toEqual([])
+    expect(flag("const t = 'Clear cookies'")).toEqual([])
+    expect(flag("const t = 'Clear browsing data'")).toEqual([])
+    expect(flag("const t = 'Delete data for'")).toEqual([])
+    expect(flag("const t = 'Its cookies and site data are cleared.'")).toEqual([])
+    expect(flag('// Clear site data\nconst t = 1')).toEqual([])
+    const kt = (snippet: string): string[] =>
+      literalsOfOther('Demo.kt', snippet)
+        .filter((l) => OLD_REMAINDER.test(l.text))
+        .map((l) => l.text)
+    expect(kt('click("Clear history")')).toEqual(['Clear history'])
+    expect(kt('topSheetTitled("Clear data for")')).toEqual(['Clear data for'])
+    expect(kt('// click("Clear history")')).toEqual([])
+    expect(kt('note("  the Clear all site data row did not open its prompt")')).toEqual([])
   })
 })
