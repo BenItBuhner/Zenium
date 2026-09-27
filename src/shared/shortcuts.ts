@@ -314,7 +314,9 @@ interface Def {
   label: string
   /**
    * The system helper's sentence-form words (`Shortcut.helperLabel`), where they differ from
-   * `label`; the rows Chrome has print Chrome's own words there and carry none.
+   * `label`; the rows Chrome has print Chrome's own words there and carry none. Chrome's register
+   * (§9.1): verb-first, no ellipsis, sentence case – a product's name keeps its capitals, 'Space'
+   * its capital in any position, 'split view' is a common noun written lower-case.
    */
   helperLabel?: string
   unsupported?: boolean
@@ -393,7 +395,6 @@ const DEFS: Def[] = [
     action: `space.switch${n}` as ShortcutAction,
     group: 'zen-workspace',
     label: `Switch to Space ${n}`,
-    helperLabel: `Switch to space ${n}`,
     ...both({ key: n === 10 ? '0' : String(n), mods: CTRL, platforms: MAC })
   })),
   {
@@ -401,7 +402,7 @@ const DEFS: Def[] = [
     action: 'space.next',
     group: 'zen-workspace',
     label: 'Next Space',
-    helperLabel: 'Next space',
+    helperLabel: 'Jump to the next Space',
     zen: { key: 'ArrowRight', mods: ACCEL_ALT },
     chrome: zenFeature('ArrowRight')
   },
@@ -410,7 +411,7 @@ const DEFS: Def[] = [
     action: 'space.prev',
     group: 'zen-workspace',
     label: 'Previous Space',
-    helperLabel: 'Previous space',
+    helperLabel: 'Jump to the previous Space',
     zen: { key: 'ArrowLeft', mods: ACCEL_ALT },
     chrome: zenFeature('ArrowLeft')
   },
@@ -432,7 +433,7 @@ const DEFS: Def[] = [
     action: 'space.new',
     group: 'zen-workspace',
     label: 'Create New Space',
-    helperLabel: 'Create new space',
+    helperLabel: 'Create new Space',
     ...both(UNBOUND)
   },
 
@@ -442,7 +443,7 @@ const DEFS: Def[] = [
     action: 'split.grid',
     group: 'zen-split-view',
     label: 'Toggle Split View Grid',
-    helperLabel: 'Toggle Split View grid',
+    helperLabel: 'Toggle split view grid',
     zen: { key: 'g', mods: ACCEL_ALT },
     chrome: zenFeature('g')
   },
@@ -451,7 +452,7 @@ const DEFS: Def[] = [
     action: 'split.vertical',
     group: 'zen-split-view',
     label: 'Toggle Split View Vertical',
-    helperLabel: 'Toggle Split View vertical',
+    helperLabel: 'Toggle split view vertical',
     zen: { key: 'v', mods: ACCEL_ALT },
     chrome: zenFeature('v')
   },
@@ -460,7 +461,7 @@ const DEFS: Def[] = [
     action: 'split.horizontal',
     group: 'zen-split-view',
     label: 'Toggle Split View Horizontal',
-    helperLabel: 'Toggle Split View horizontal',
+    helperLabel: 'Toggle split view horizontal',
     zen: { key: 'h', mods: ACCEL_ALT },
     chrome: zenFeature('h')
   },
@@ -478,7 +479,7 @@ const DEFS: Def[] = [
     action: 'split.newEmpty',
     group: 'zen-split-view',
     label: 'New Empty Split View',
-    helperLabel: 'New empty Split View',
+    helperLabel: 'Open a new empty split view',
     ...both({ key: '*', mods: ACCEL_SHIFT })
   },
   {
@@ -489,7 +490,7 @@ const DEFS: Def[] = [
     action: 'split.nextPane',
     group: 'zen-split-view',
     label: 'Next Split Pane',
-    helperLabel: 'Next split pane',
+    helperLabel: 'Jump to the next split pane',
     zen: { key: 'ArrowRight', mods: ACCEL_ALT_SHIFT },
     chrome: zenFeature('ArrowRight', true)
   },
@@ -498,7 +499,7 @@ const DEFS: Def[] = [
     action: 'split.prevPane',
     group: 'zen-split-view',
     label: 'Previous Split Pane',
-    helperLabel: 'Previous split pane',
+    helperLabel: 'Jump to the previous split pane',
     zen: { key: 'ArrowLeft', mods: ACCEL_ALT_SHIFT },
     chrome: zenFeature('ArrowLeft', true)
   },
@@ -571,7 +572,7 @@ const DEFS: Def[] = [
     action: 'window.newUnsynced',
     group: 'zen-other',
     label: 'New Blank Window',
-    helperLabel: 'New blank window',
+    helperLabel: 'Open a new blank window',
     zen: { key: 'n', mods: ACCEL_SHIFT },
     chrome: zenFeature('n')
   },
@@ -660,7 +661,7 @@ const DEFS: Def[] = [
     action: 'window.name',
     group: 'windowAndTabManagement',
     label: 'Name Window…',
-    helperLabel: 'Name window…',
+    helperLabel: 'Name window',
     layouts: ['desktop'],
     ...both(UNBOUND)
   },
@@ -983,7 +984,7 @@ const DEFS: Def[] = [
     action: 'page.openFile',
     group: 'pageOperations',
     label: 'Open File…',
-    helperLabel: 'Open file…',
+    helperLabel: 'Open file',
     zen: UNBOUND,
     chrome: { key: 'o', mods: ACCEL }
   },
@@ -1002,7 +1003,7 @@ const DEFS: Def[] = [
     action: 'page.print',
     group: 'pageOperations',
     label: 'Print Using System Dialog…',
-    helperLabel: 'Print using system dialog…',
+    helperLabel: 'Print using system dialog',
     zen: UNBOUND,
     chrome: { key: 'p', mods: ACCEL_SHIFT, perPlatform: { darwin: { key: 'p', mods: META_ALT } } }
   },
@@ -1067,6 +1068,7 @@ const DEFS: Def[] = [
     action: 'capture.start',
     group: 'pageOperations',
     label: 'Screenshot…',
+    helperLabel: 'Open the screenshot overlay',
     // The desktop's overlay; the touch shells' Ctrl+Shift+S takes their screenshot instead
     // (`capture.start` falls through to `page.screenshot` there), so their listings leave the
     // row out rather than name a surface the chord does not open.
@@ -1088,7 +1090,7 @@ const DEFS: Def[] = [
     action: 'page.emailLink',
     group: 'pageOperations',
     label: 'Email Page Link…',
-    helperLabel: 'Email page link…',
+    helperLabel: 'Email page link',
     zen: UNBOUND,
     chrome: { key: 'i', mods: META_SHIFT, platforms: MAC }
   },

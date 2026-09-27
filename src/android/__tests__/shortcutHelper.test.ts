@@ -26,25 +26,36 @@ function chromesRows(): Set<string> {
 }
 
 /**
- * Chrome's sentence form: the first word capitalised, the rest lowercase but for a product's
- * name or an acronym, which keeps its capitals (Split View, Compact Mode, Reader View, Glance,
- * URL, Markdown, Chrome's "Bookmarks bar").
+ * Chrome's register (§9.1): the first word capitalised, the rest lowercase but for a product's
+ * name or an acronym, which keeps its capitals (Compact Mode, Reader View, Glance, URL, Markdown,
+ * Chrome's "Bookmarks bar"); 'Space' keeps its capital in any position; 'split view' is a common
+ * noun written lower-case; no row ends in an ellipsis (Chrome's helper rows carry none – the
+ * Settings label keeps its own).
  */
 const KEEPS_CAPITALS = new Set([
-  'Split',
-  'View',
   'Compact',
   'Mode',
   'Reader',
   'Glance',
   'URL',
   'Markdown',
-  'Bookmarks'
+  'Bookmarks',
+  'Space'
 ])
 function isSentenceForm(words: string): boolean {
-  const [first, ...rest] = words.split(' ')
+  if (/…|\.\.\./.test(words)) return false
+  if (/\bspace\b/.test(words)) return false
+  if (/split view/i.test(words) && !/split view/.test(words)) return false
+  const parts = words.split(' ')
+  const first = parts[0]
   if (!first || first[0] !== first[0]?.toUpperCase()) return false
-  return rest.every((word) => word[0] === word[0]?.toLowerCase() || KEEPS_CAPITALS.has(word))
+  return parts.every(
+    (word, i) =>
+      i === 0 ||
+      word[0] === word[0]?.toLowerCase() ||
+      KEEPS_CAPITALS.has(word) ||
+      (word === 'View' && parts[i - 1] === 'Reader')
+  )
 }
 
 describe('helperShortcuts (TABLET-20)', () => {
@@ -151,23 +162,56 @@ describe('helperShortcuts (TABLET-20)', () => {
         expect(shortcut.helperLabel).not.toBe(shortcut.label)
       }
     }
-    expect(withWords).toBeGreaterThanOrEqual(50)
+    expect(withWords).toBeGreaterThanOrEqual(45)
     // The lead's samples, verbatim.
     const words = (action: string): string | undefined =>
       TABLE.find((s) => s.action === action)?.helperLabel
+    const label = (action: string): string | undefined =>
+      TABLE.find((s) => s.action === action)?.label
     expect(words('tab.duplicate')).toBe('Duplicate tab')
     expect(words('tab.moveToStart')).toBe('Move tab to start')
     expect(words('bookmark.allTabs')).toBe('Bookmark all tabs')
     expect(words('tab.copyUrlMarkdown')).toBe('Copy current URL as Markdown')
     expect(words('tab.togglePin')).toBe('Pin or unpin tab')
-    expect(words('split.grid')).toBe('Toggle Split View grid')
-    expect(words('space.switch3')).toBe('Switch to space 3')
-    // A label already in the sentence form – a product's name with its capitals – carries none.
-    for (const action of ['page.readerMode', 'glance.expand', 'compact.toggle']) {
+    // The lead's two §9.1 nouns: 'Space' with its capital in any position, 'split view' lower-case.
+    expect(words('split.grid')).toBe('Toggle split view grid')
+    expect(words('split.vertical')).toBe('Toggle split view vertical')
+    expect(words('split.horizontal')).toBe('Toggle split view horizontal')
+    expect(words('space.new')).toBe('Create new Space')
+    expect(words('space.next')).toBe('Jump to the next Space')
+    expect(words('space.prev')).toBe('Jump to the previous Space')
+    // Chrome's verb-first parallels (the coordinator's ruling on the six noun-phrase rows).
+    expect(words('split.nextPane')).toBe('Jump to the next split pane')
+    expect(words('split.prevPane')).toBe('Jump to the previous split pane')
+    expect(words('window.newUnsynced')).toBe('Open a new blank window')
+    expect(words('split.newEmpty')).toBe('Open a new empty split view')
+    // The ellipsis is the Settings label's and the menus', never the sheet's.
+    expect(words('window.name')).toBe('Name window')
+    expect(words('page.openFile')).toBe('Open file')
+    expect(words('page.print')).toBe('Print using system dialog')
+    expect(words('page.emailLink')).toBe('Email page link')
+    expect(words('capture.start')).toBe('Open the screenshot overlay')
+    for (const action of [
+      'window.name',
+      'page.openFile',
+      'page.print',
+      'page.emailLink',
+      'capture.start'
+    ]) {
+      expect(label(action), action).toMatch(/…$/)
+    }
+    // A label already in the register carries none: a product's name with its capitals, and the
+    // ten Switch to Space rows, whose label reads as the sheet would print it.
+    for (const action of ['page.readerMode', 'glance.expand', 'compact.toggle', 'space.switch3']) {
       expect(words(action), action).toBeUndefined()
     }
+    expect(label('space.switch3')).toBe('Switch to Space 3')
     expect(isSentenceForm('Toggle Reader View')).toBe(true)
     expect(isSentenceForm('Duplicate Tab')).toBe(false)
+    expect(isSentenceForm('Switch to space 3')).toBe(false)
+    expect(isSentenceForm('Toggle Split View grid')).toBe(false)
+    expect(isSentenceForm('Open file…')).toBe(false)
+    expect(isSentenceForm('Jump to the next Space')).toBe(true)
   })
 
   it("leaves the desktop's table and rendering as they were: the same labels on every platform, and no desktop listing reads the helper words", () => {
