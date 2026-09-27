@@ -84,7 +84,13 @@ import {
   sendTabArrivedText,
   type SendTabDocument
 } from './sendTab'
-import { WEBDAV_SECRET_KEY, WebDavTransport, isWebDavError, webDavFolderUrl } from './webdav'
+import {
+  WEBDAV_SECRET_KEY,
+  WebDavTransport,
+  isWebDavError,
+  webDavFolderName,
+  webDavFolderUrl
+} from './webdav'
 
 interface Persisted {
   version: 1
@@ -294,7 +300,12 @@ export class SyncEngine implements SyncHost {
     return {
       enabled: this.data.enabled,
       folder: this.data.folder,
-      folderName: this.data.folder === null ? null : (this.folderName ?? this.data.folder),
+      folderName:
+        this.data.folder === null
+          ? null
+          : this.data.transport === 'webdav' && this.data.webdav
+            ? webDavFolderName(this.data.webdav)
+            : (this.folderName ?? this.data.folder),
       folderLost: this.folderLost,
       deviceId: this.data.deviceId,
       deviceName: this.data.deviceName,
