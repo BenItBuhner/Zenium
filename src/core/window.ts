@@ -508,6 +508,44 @@ export class ZenWindow {
     // The views this report takes down or brings back: told to the chrome once they are placed.
     const hid: string[] = []
     const shown: string[] = []
+    /**
+     * Place the tab's views at `rect` and show them, bottom to top (`TabManager.viewsOf`: the
+     * page, and the reader's cover over it while the two are laid out together – before the
+     * cover's first frame). A view shown from elsewhere joins the window on top (a page an
+     * agent held on its stage): the ones over it in the tab's order are raised over it again;
+     * `raise` orders them all over the rest. True when the view the layout owns
+     * (`viewsOwnedBy`) was hidden until now.
+     */
+    const place = (
+      tabId: string,
+      view: TabView,
+      rect: Rect,
+      radius: number,
+      cover: ContentCover,
+      raise = false
+    ): boolean => {
+      let shownNow = false
+      let reorder = raise
+      for (const v of tabs.viewsOf(tabId)) {
+        if (reorder) v.bringToFront()
+        v.setBounds(rect)
+        v.setBorderRadius(radius)
+        v.setCover?.(cover)
+        if (v.isVisible()) continue
+        v.setVisible(true)
+        if (v === view) shownNow = true
+        reorder = true
+      }
+      return shownNow
+    }
+    /**
+     * Hide the tab's views. The page beneath a cover goes with the cover: shown still before
+     * the cover's first frame, it would otherwise stand at the tab's place – over whatever this
+     * report shows there, where it is the younger view – until the cover's handshake ends.
+     */
+    const hide = (tabId: string): void => {
+      for (const v of tabs.viewsOf(tabId)) if (v.isVisible()) v.setVisible(false)
+    }
     if (fullscreenTabId && owned.has(fullscreenTabId)) {
       // An element in HTML fullscreen covers the whole window, chrome included, save for the
       // strip a docked find bar asked for.
@@ -517,14 +555,10 @@ export class ZenWindow {
       for (const [tabId, view] of owned) {
         if (view.isDestroyed()) continue
         if (tabId === fullscreenTabId) {
-          view.bringToFront()
-          view.setBounds({ x: 0, y: 0, width, height })
-          view.setBorderRadius(0)
-          view.setCover?.(NO_COVER)
-          if (!view.isVisible()) shown.push(tabId)
-          view.setVisible(true)
+          if (place(tabId, view, { x: 0, y: 0, width, height }, 0, NO_COVER, true))
+            shown.push(tabId)
         } else if (view.isVisible()) {
-          view.setVisible(false)
+          hide(tabId)
           hid.push(tabId)
         }
       }
@@ -553,16 +587,19 @@ export class ZenWindow {
       const isGlance = glance?.tabId === tabId
       if (isGlance) continue
       if (placement) {
-        view.setBounds(roundRect(placement.rect))
-        view.setBorderRadius(Math.round(placement.radius))
-        view.setCover?.(placement.cover)
-        if (!view.isVisible()) {
-          view.setVisible(true)
+        if (
+          place(
+            tabId,
+            view,
+            roundRect(placement.rect),
+            Math.round(placement.radius),
+            placement.cover
+          )
+        )
           shown.push(tabId)
-        }
       } else if (view.isVisible()) {
         if (view.isFocused?.()) coveredTyping = true
-        view.setVisible(false)
+        hide(tabId)
         hid.push(tabId)
         covered = true
       }
@@ -570,14 +607,17 @@ export class ZenWindow {
     if (glance) {
       const view = owned.get(glance.tabId)
       if (view && !view.isDestroyed()) {
-        view.bringToFront()
-        view.setBounds(roundRect(glance.rect))
-        view.setBorderRadius(Math.round(glance.radius))
-        view.setCover?.(glance.cover ?? NO_COVER)
-        if (!view.isVisible()) {
-          view.setVisible(true)
+        if (
+          place(
+            glance.tabId,
+            view,
+            roundRect(glance.rect),
+            Math.round(glance.radius),
+            glance.cover ?? NO_COVER,
+            true
+          )
+        )
           shown.push(glance.tabId)
-        }
       }
     }
     // The chrome sequences its page cover against the host's frames from this (lib/pageView.ts).

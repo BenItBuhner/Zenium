@@ -108,6 +108,7 @@ function fakeView(url: string, events: TabViewEvents, reports = true): FakeView 
     },
     isFocused: () => false,
     focus: () => log('focus'),
+    bringToFront: () => log('bringToFront'),
     isDestroyed: () => record.destroyed,
     // As the engine: a page destroyed says so to its events (`ElectronTabView.wire`).
     destroy: () => {
@@ -210,6 +211,31 @@ function scene(withCover = true, reports = true): Scene {
   })
   page.calls.length = 0
   return { browser, win, host, tabId: tab.id, page }
+}
+
+/** The chrome's layout after a switch to `tabId`: its view placed at `RECT`, every other down. */
+function showTab(s: Scene, tabId: string): void {
+  s.browser.tabs.activateTab(tabId, s.win)
+  s.browser.handleCommand(s.win, 'layout.report', {
+    placements: [{ tabId, rect: RECT, radius: 0 }],
+    glance: null,
+    contentHidden: false
+  })
+}
+
+const OTHER_URL = 'https://example.org/elsewhere'
+
+/** A second tab of the window, committed, its page shown once; the scene's tab back in front. */
+function secondTab(s: Scene): { id: string; page: FakeView } {
+  const tab = s.browser.tabs.createTab({ url: OTHER_URL, active: true }, s.win)
+  const page = s.host.pages.get(tab.id)!
+  page.events.onNavigated(OTHER_URL, false)
+  page.events.onDomReady()
+  showTab(s, tab.id)
+  showTab(s, s.tabId)
+  s.page.calls.length = 0
+  page.calls.length = 0
+  return { id: tab.id, page }
 }
 
 const ARTICLE = { title: 'Story', content: '<p>Once upon a time.</p>', length: 18 }
@@ -455,16 +481,28 @@ describe('the reader as a cover over the page (reader-30)', () => {
     expect(s.page.calls).toContain('focus()')
   })
 
-  it('a page hidden already beneath the cover is left as it is once the cover has drawn (a staged page is not moved twice)', async () => {
+  it('the reader opened on a tab not in front leaves its hidden page as it is: nothing of the two shows until the tab does, and the cover’s handshake ending hides nothing twice (a staged page is not moved)', async () => {
     const s = scene()
-    // A background tab's page (switched away from, or held on an agent's stage): hidden before
-    // the reader opens on it.
-    s.page.visible = false
+    vi.useFakeTimers()
+    const other = secondTab(s)
+    // The scene's tab goes to the back (its page switched away from, or held on an agent's
+    // stage) before the reader opens on it.
+    showTab(s, other.id)
+    expect(s.page.visible).toBe(false)
     s.page.calls.length = 0
     const cover = enterReader(s)
-    await drawn(cover)
+    expect(cover.visible).toBe(false)
+    expect(s.page.calls.filter((c) => c.startsWith('setVisible('))).toEqual([])
+    // Hidden, the cover has no frame to report: its ceiling ends the handshake with the page
+    // left exactly as it was.
+    await vi.advanceTimersByTimeAsync(COVER_REPORT_CEILING_MS)
     expect(s.page.calls.filter((c) => c.startsWith('setVisible('))).toEqual([])
     expect(s.page.visible).toBe(false)
+    // The tab comes to the front: the cover alone shows, the page is its now.
+    showTab(s, s.tabId)
+    expect(cover.visible).toBe(true)
+    expect(s.page.visible).toBe(false)
+    expect(s.page.calls.filter((c) => c.startsWith('setVisible('))).toEqual([])
   })
 
   it('in an app window a link out of the app’s scope followed in the reader opens in the browser window behind; the reader stays over the app’s page (MW-23)', () => {
@@ -589,6 +627,109 @@ describe('the paint handshake and its failure ceiling', () => {
     expect(cover.destroyed).toBe(false)
     await vi.advanceTimersByTimeAsync(COVER_REPORT_CEILING_MS)
     expect(cover.destroyed).toBe(true)
+  })
+})
+
+/**
+ * The window lays a tab's views out as one (`TabManager.viewsOf`, `ZenWindow.applyLayout`):
+ * the page beneath a cover that has yet to draw its first frame goes where the cover goes – so
+ * that a tab switched away from inside the handshake's window leaves nothing of its own
+ * standing at its place, over whatever the layout shows there (a younger view draws over an
+ * older one), until the ceiling; and a view that joins the window on top of the rest (a page an
+ * agent held on the stage) has the rest raised over it again.
+ */
+describe('the layout and the handshake’s window', () => {
+  /** The tab's views as the layout gets them (`viewsOf`), bottom to top, by name. */
+  const laidOut = (s: Scene, cover?: FakeView, tabId = s.tabId): string[] =>
+    s.browser.tabs
+      .viewsOf(tabId)
+      .map((v) => (v === s.page.view ? 'page' : v === cover?.view ? 'cover' : 'other'))
+
+  /** What the layout asked of a view: its place, its showing, its raising, its frame's word. */
+  const placed = (v: FakeView): string[] =>
+    v.calls.filter((c) => /^(bringToFront|setBounds|setVisible|frameDrawn)\(/.test(c))
+
+  it('a tab switched away from before the cover’s word takes the page beneath down with the cover, on no clock; back before the word, both show again, the page beneath the cover, until it comes', async () => {
+    const s = scene()
+    vi.useFakeTimers()
+    const other = secondTab(s)
+    const cover = enterReader(s)
+    expect(s.page.visible).toBe(true)
+    expect(cover.frames).toHaveLength(1)
+    expect(s.browser.tabs.pageAwaitingCover(s.tabId)).toBe(s.page.view)
+    expect(laidOut(s, cover)).toEqual(['page', 'cover'])
+    s.page.calls.length = 0
+    cover.calls.length = 0
+    // Away: the layout hides the cover, and the page beneath with it – at once, nothing of the
+    // ceiling – and shows the other tab's page alone.
+    showTab(s, other.id)
+    expect(cover.visible).toBe(false)
+    expect(s.page.visible).toBe(false)
+    expect(placed(s.page)).toEqual(['setVisible(false)'])
+    expect(other.page.visible).toBe(true)
+    // Back inside the word's window: the page shows again beneath the cover, at the tab's
+    // place, and the cover is raised over it again (it may have joined the window on top).
+    s.page.calls.length = 0
+    cover.calls.length = 0
+    showTab(s, s.tabId)
+    expect(cover.visible).toBe(true)
+    expect(s.page.visible).toBe(true)
+    expect(placed(s.page)).toEqual([`setBounds(${JSON.stringify(RECT)})`, 'setVisible(true)'])
+    expect(placed(cover)).toEqual([
+      'bringToFront()',
+      `setBounds(${JSON.stringify(RECT)})`,
+      'setVisible(true)'
+    ])
+    expect(s.page.calls).not.toContain('bringToFront()')
+    // The word comes: the page hides, and is the cover's from then on – no later switch shows
+    // it or moves it, and no clock does.
+    await drawn(cover)
+    expect(s.page.visible).toBe(false)
+    expect(s.browser.tabs.pageAwaitingCover(s.tabId)).toBeUndefined()
+    expect(laidOut(s, cover)).toEqual(['cover'])
+    s.page.calls.length = 0
+    showTab(s, other.id)
+    expect(cover.visible).toBe(false)
+    showTab(s, s.tabId)
+    expect(cover.visible).toBe(true)
+    expect(s.page.visible).toBe(false)
+    expect(placed(s.page)).toEqual([])
+    await vi.advanceTimersByTimeAsync(COVER_REPORT_CEILING_MS * 2)
+    expect(s.page.visible).toBe(false)
+  })
+
+  it('a tab switched away from before the cover’s word and back after its ceiling: the page, hidden with the cover, stays the cover’s – the cover returns alone', async () => {
+    const s = scene()
+    vi.useFakeTimers()
+    const other = secondTab(s)
+    const cover = enterReader(s)
+    showTab(s, other.id)
+    expect(s.page.visible).toBe(false)
+    // Hidden, the cover never reports; the ceiling ends the handshake with the page hidden.
+    await vi.advanceTimersByTimeAsync(COVER_REPORT_CEILING_MS)
+    expect(s.browser.tabs.pageAwaitingCover(s.tabId)).toBeUndefined()
+    s.page.calls.length = 0
+    showTab(s, s.tabId)
+    expect(cover.visible).toBe(true)
+    expect(s.page.visible).toBe(false)
+    expect(placed(s.page)).toEqual([])
+    // The cover's late word moves nothing either.
+    await drawn(cover)
+    expect(s.page.visible).toBe(false)
+  })
+
+  it('a cover gone leaves the page alone to lay out; a tab without a cover, and every tab on the phone, is one view', () => {
+    const s = scene()
+    expect(laidOut(s)).toEqual(['page'])
+    const cover = enterReader(s)
+    cover.events.onCrashed('crashed')
+    expect(cover.destroyed).toBe(true)
+    expect(laidOut(s, cover)).toEqual(['page'])
+    expect(s.browser.tabs.viewsOf('nope')).toEqual([])
+    const phone = scene(false)
+    phone.browser.reader.open(phone.tabId, ARTICLE)
+    expect(laidOut(phone)).toEqual(['page'])
+    expect(phone.browser.tabs.pageAwaitingCover(phone.tabId)).toBeUndefined()
   })
 })
 

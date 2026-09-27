@@ -217,6 +217,13 @@ export class TabManager {
   /** What the tab showed before its cover went up, put back when the cover comes down. */
   private readonly covered = new Map<string, CoveredPage>()
   /**
+   * Covers whose paint handshake at the entry is over (`onCoverReady`): the cover's word that
+   * its first frame is drawn came, or the ceiling stood for it, and the page beneath was hidden
+   * on it. Until then the page still shows beneath the cover and is the window's to lay out
+   * with it (`pageAwaitingCover`).
+   */
+  private readonly settledCovers = new WeakSet<TabView>()
+  /**
    * Tabs whose current load is an https:// upgrade – of typed input without a scheme, or of an
    * http:// navigation HTTPS-only mode's rule upgraded – keyed to the plaintext URL to fall back
    * to (or to ask about) when the secure load fails.
@@ -352,6 +359,42 @@ export class TabManager {
   /** Whether the reader's cover stands over the tab's page (`cover`). */
   isCovered(tabId: string): boolean {
     return this.covers.has(tabId)
+  }
+
+  /**
+   * The page beneath a covered tab while its cover has yet to draw: shown under the cover until
+   * the cover's word that its first frame is drawn (`onCoverReady`; §11: a frame of ground
+   * between the two is the defect), it is still the window's to lay out – placed and shown with
+   * the cover, hidden with it (`ZenWindow.applyLayout`). A tab switched away from within that
+   * frame would otherwise leave its page shown at the tab's place, over whatever the layout
+   * shows there now (a younger view draws over an older one), until the ceiling. Undefined once
+   * the cover has its frame (the page hidden beneath it for good), with no cover standing, and
+   * on a host without one (the phone).
+   */
+  pageAwaitingCover(tabId: string): TabView | undefined {
+    const cover = this.covers.get(tabId)
+    if (!cover || cover.isDestroyed() || this.settledCovers.has(cover)) return undefined
+    return this.pageView(tabId)
+  }
+
+  /**
+   * The live views of `tabId` its window lays out together, bottom to top: the page, and the
+   * reader's cover standing over it (`cover`). Beneath a cover the page is listed only until
+   * the cover's first frame (`pageAwaitingCover`): hidden on the cover's word, it is the cover's
+   * alone from then on and not the layout's. The window places, shows and hides them as one
+   * (`ZenWindow.applyLayout`) – no ground between them, none left standing at the tab's place
+   * once the tab is switched away from – and one that joins the window on top of the rest (a
+   * page an agent held on the stage) has the rest raised over it again in this order. One view,
+   * the page, on a host without a cover (the phone).
+   */
+  viewsOf(tabId: string): TabView[] {
+    const out: TabView[] = []
+    const cover = this.covers.get(tabId)
+    const standing = cover && !cover.isDestroyed() ? cover : undefined
+    const page = standing ? this.pageAwaitingCover(tabId) : this.pageView(tabId)
+    if (page) out.push(page)
+    if (standing) out.push(standing)
+    return out
   }
 
   /**
@@ -969,7 +1012,10 @@ export class TabManager {
    * the page – the page beneath is hidden to the engine, as a background tab's is, so that
    * nothing of it shows should the window be resized under the cover. The page hides on that
    * word and nothing else: hidden before the cover has a frame, the ground would show between
-   * the two (§11: "a frame of ground between the two is the defect").
+   * the two (§11: "a frame of ground between the two is the defect"). Until the word the page
+   * goes where the layout puts the cover – hidden with it when the tab is switched away from,
+   * shown back beneath it when the tab returns (`pageAwaitingCover`) – and the word, or the
+   * ceiling, still ends the handshake once it comes.
    */
   private onCoverReady(tabId: string, cover: TabView): void {
     this.sendPageFlags(tabId)
@@ -985,8 +1031,9 @@ export class TabManager {
       cover.focus()
     this.afterFrame(cover, () => {
       if (this.covers.get(tabId) !== cover || cover.isDestroyed()) return
-      // A page hidden already (a tab switched away from under the cover, a page an agent holds
-      // on the stage) is left as it is: a second hide would move a staged page again.
+      this.settledCovers.add(cover)
+      // A page hidden already (the layout hid it with the cover, an agent holds it on the
+      // stage) is left as it is: a second hide would move a staged page again.
       const page = this.pageView(tabId)
       if (page?.isVisible()) page.setVisible(false)
     })
