@@ -528,6 +528,12 @@ function pressAction(
  * extensions.css is the same rule for the same reason). Its own component, since only it reads
  * the ui store: a row that opens nothing subscribes to nothing. The overlay open at its seat
  * instead – the space menu's, the palette's – expands no button: the fill is the anchor's.
+ *
+ * The same component draws the button whose press has changed under the popover it opened
+ * (`ActionRow.anchors`: the theme row's Reset to default while the picker hangs) – one element
+ * through the flip, so the popover's focus comes back to it (§9.22) – expanded and saying what
+ * hangs from it while the overlay is open from an anchor, and silent at rest: a press that
+ * opens no popup carries no `aria-haspopup`, and no `aria-expanded` either.
  */
 function PopoverActionButton({
   row,
@@ -538,14 +544,16 @@ function PopoverActionButton({
   ctx: RowContext
   dismissSheet: SheetDismiss
 }): JSX.Element {
-  const open = uiStore.use((s) => s.overlay === row.popover && s.overlayAnchor !== null)
+  const kind = row.popover ?? row.anchors
+  const open = uiStore.use((s) => s.overlay === kind && s.overlayAnchor !== null)
+  const opens = row.popover !== undefined
   return (
     <V2Button
       variant={row.destructive ? 'danger' : 'secondary'}
       busy={row.busy}
       disabled={row.disabled}
-      aria-haspopup="dialog"
-      aria-expanded={open}
+      aria-haspopup={opens || open ? 'dialog' : undefined}
+      aria-expanded={opens ? open : open || undefined}
       onClick={(e) => pressAction(row, ctx, dismissSheet, anchorOf(e.currentTarget))}
     >
       {row.button}
@@ -584,7 +592,7 @@ function DesktopRowView({
       if (row.button && !row.leaves) {
         return (
           <ControlRow row={row} caption={caption} description={row.description}>
-            {row.popover ? (
+            {row.popover || row.anchors ? (
               <PopoverActionButton row={row} ctx={ctx} dismissSheet={dismissSheet} />
             ) : (
               <V2Button

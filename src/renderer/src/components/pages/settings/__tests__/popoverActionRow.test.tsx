@@ -118,6 +118,35 @@ describe('the popover anchor button (ActionRow.popover, §9.20)', () => {
     expect(button(busy).getAttribute('aria-busy')).toBe('true')
   })
 
+  it('a look picked in the hanging picker flips the row to Reset to default (ActionRow.anchors): the same element – the popover’s focus has a control to come back to – expanded and naming the open popup while the picker hangs, and silent at rest', () => {
+    const el = render(<RowView row={themeRow()} ctx={ctx} variant="desktop" />)
+    const change = button(el)
+    act(() => uiStore.set({ overlay: 'theme', overlaySpaceId: 'space', overlayAnchor: anchor }))
+    expect(change.getAttribute('aria-expanded')).toBe('true')
+    // Ocean lands: the builder rebuilds the row as Reset to default anchoring the open picker.
+    const themed = themeRow({
+      description: 'Ocean · Personal space',
+      button: 'Reset to default',
+      popover: undefined,
+      anchors: 'theme'
+    })
+    act(() => root!.render(<RowView row={themed} ctx={ctx} variant="desktop" />))
+    const reset = button(el)
+    expect(reset).toBe(change)
+    expect(reset.isConnected).toBe(true)
+    expect(reset.textContent).toBe('Reset to default')
+    expect(reset.getAttribute('aria-haspopup')).toBe('dialog')
+    expect(reset.getAttribute('aria-expanded')).toBe('true')
+    // The picker closes: the button is a plain reset – no popup to name, no expanded state.
+    act(() => uiStore.set({ overlay: 'none', overlayAnchor: null }))
+    expect(reset.hasAttribute('aria-haspopup')).toBe(false)
+    expect(reset.hasAttribute('aria-expanded')).toBe(false)
+    // The picker open at its seat over a themed space expands nothing here either.
+    act(() => uiStore.set({ overlay: 'theme', overlayAnchor: null }))
+    expect(reset.hasAttribute('aria-haspopup')).toBe(false)
+    expect(reset.hasAttribute('aria-expanded')).toBe(false)
+  })
+
   it('a button without popover is as it was: aria-haspopup for a confirmation, none for a plain action, and never aria-expanded', () => {
     const plain = render(
       <RowView

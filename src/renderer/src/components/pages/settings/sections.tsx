@@ -503,10 +503,12 @@ function lookSection({
         // that opened it – end-aligned under it, §9.20 (#572's L8), a popover in the popover's
         // chrome with the button its expanded anchor (`popover`; the lead's ruling on #572's
         // notes 16–19) – not at the sidebar's seat the palette and the space menu open it at.
-        // The theme is a space's, so the row reads the active space's and names it – "Ocean ·
-        // Default space", the picker's own description under its title (#572's N5) – one
-        // space or many. The phone's Appearance keeps to its own rows; the tablet shares the
-        // desktop's two-pane page.
+        // A look picked in the hanging picker flips the row live, as Chrome's does, to Reset
+        // to default: the same button, the picker's anchor still while it hangs (`anchors`),
+        // the reset once it has gone. The theme is a space's, so the row reads the active
+        // space's and names it – "Ocean · Default space", the picker's own description under
+        // its title (#572's N5) – one space or many. The phone's Appearance keeps to its own
+        // rows; the tablet shares the desktop's two-pane page.
         ...(activeSpace
           ? [
               {
@@ -518,6 +520,7 @@ function lookSection({
                 layouts: ['desktop', 'tablet'],
                 button: themed ? 'Reset to default' : 'Change…',
                 popover: themed ? undefined : 'theme',
+                anchors: themed ? 'theme' : undefined,
                 onPress: (anchor) =>
                   themed ? resetSpaceTheme(activeSpace.id) : openThemePicker(activeSpace.id, anchor)
               } satisfies SettingsRow

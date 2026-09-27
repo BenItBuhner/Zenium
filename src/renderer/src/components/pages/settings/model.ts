@@ -247,6 +247,18 @@ export interface ActionRow extends RowBase {
    * panel has none. Only with `button`; the phone never reads it.
    */
   popover?: OverlayKind
+  /**
+   * The button is where this overlay hangs while it is open from an anchor, though pressing it
+   * now does something else: the theme row's button once a look is picked in the popover its
+   * Change… opened – it reads Reset to default under the picker still hanging from it (Chrome's
+   * row flips live), and resets when pressed after the picker has gone. While the overlay hangs
+   * it is the anchor still – `aria-expanded`, the `aria-haspopup` of the popup that is open from
+   * it, the pressed fill – and the same element the Change… was, so the focus the popover took
+   * has a control to come back to (§9.22); at rest it says nothing of a popup, since its press
+   * opens none. With `popover` the anchoring is implied; this names it for a button whose press
+   * has changed under the popover.
+   */
+  anchors?: OverlayKind
   /** A sheet holding a small form (add a route, create a container) instead of a plain press. */
   form?: FormSheet
   /**

@@ -7179,6 +7179,7 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
       popover: 'theme'
     })
     if (theme.kind !== 'action') throw new Error('not an action row')
+    expect(theme.anchors).toBeUndefined()
     // The desktop button passes itself (`anchorOf`, lib/anchor.ts); the picker opens for the
     // space as the `theme` overlay with the anchor's boxes in the store – the element stays
     // with the button – and not through the core's `theme.open`, which seats the picker.
@@ -7212,8 +7213,11 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
       button: 'Reset to default'
     })
     if (theme.kind !== 'action') throw new Error('not an action row')
-    // Reset to default hangs nothing: no popover, so the view draws the plain button.
+    // Reset to default opens nothing (no `popover`), but it is the picker's anchor still while
+    // the picker its Change… opened hangs from it (`anchors`, round C): one element through
+    // the flip, expanded and lit until the popover closes.
     expect(theme.popover).toBeUndefined()
+    expect(theme.anchors).toBe('theme')
     theme.onPress?.()
     expect(invoke).toHaveBeenCalledWith('space.update', {
       spaceId: 'space',
