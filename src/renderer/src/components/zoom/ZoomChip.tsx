@@ -46,13 +46,16 @@ export function ZoomChip({
   const label = `Zoom: ${formatZoom(tab.zoom)}`
   // One of the pill's chips (`PillChip`, v2 draft §9.22): a 20px chip like Reader View's, whose
   // popup is the panel; `aria-expanded` follows it. `data-zoom-chip` is what the bubble hangs
-  // from and what its Escape hands the keyboard back to.
+  // from and what its Escape hands the keyboard back to – and, hung from the chip, the bubble
+  // is the surface the desktop pill keeps its hover-only run drawn under (`anchored`, L7); a
+  // sheet host's zoom sheet hangs from nothing.
   return (
     <PillChip
       label={label}
       title={label}
       popup="dialog"
       expanded={open}
+      anchored={!sheetHost}
       data-zoom-chip=""
       className="zen-pill-chip flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)]"
       onActivate={() => {

@@ -756,23 +756,23 @@ describe('the hub from the app menu (§9.29)', () => {
       expect(menu.getAttribute('data-tooltip')).toMatch(/^Menu \(.+\)$/)
       expect(menu.getAttribute('aria-label')).toBe(menu.getAttribute('data-tooltip'))
       expect(menu.hasAttribute('title')).toBe(false)
-      sidebarDraggedTo(302)
+      sidebarDraggedTo(298)
       expect(dots()).toEqual(['hub'])
-      // The sidebar dragged under 302: the tier folds the button in the row's observer pass,
+      // The sidebar dragged under 298: the tier folds the button in the row's observer pass,
       // and in that same commit ⋯ takes the disc and its name keeps the chord.
-      sidebarDraggedTo(301)
+      sidebarDraggedTo(297)
       expect(q('[data-zen-media-hub-button]')).toBeNull()
       expect(dots()).toEqual(['menu'])
       expect(menu.getAttribute('aria-label')).toBe(
         `${menu.getAttribute('data-tooltip')}, media playing`
       )
-      // 270, where the star returns without the button, is still the folded side.
-      sidebarDraggedTo(270)
+      // 266, where the star returns without the button, is still the folded side.
+      sidebarDraggedTo(266)
       expect(dots()).toEqual(['menu'])
       sidebarDraggedTo(240)
       expect(dots()).toEqual(['menu'])
-      // And back at 302: the button returns with its disc, ⋯ says nothing twice.
-      sidebarDraggedTo(302)
+      // And back at 298: the button returns with its disc, ⋯ says nothing twice.
+      sidebarDraggedTo(298)
       expect(q('[data-zen-media-hub-button]')).not.toBeNull()
       expect(dots()).toEqual(['hub'])
       expect(menu.getAttribute('aria-label')).toBe(menu.getAttribute('data-tooltip'))
@@ -860,7 +860,7 @@ describe('the hub from the app menu (§9.29)', () => {
     expect(mediaHubFolded()).toBe(true)
   })
 
-  it('the tier: the row unmounts the hub button at the 240 sidebar – ⋯ takes the dot and the menu request says folded – keeps it folded at 269, 270 and 301, and mounts it again at 302 (§9.29)', () => {
+  it('the tier: the row unmounts the hub button at the 240 sidebar – ⋯ takes the dot and the menu request says folded – keeps it folded at 265, 266 and 297, and mounts it again at 298 (§9.29)', () => {
     // The row is the sidebar less its 8 px gutters each side; happy-dom lays nothing out, so the
     // width the row measures before its first paint is set here (the nav row alone – every
     // other box stays 0, as the pill's unmeasured content box shows every chip).
@@ -889,24 +889,24 @@ describe('the hub from the app menu (§9.29)', () => {
         'app.menu',
         expect.objectContaining({ mediaHubFolded: true })
       ])
-      // At 269 the row still has no room for it.
-      widths.row = 269 - 16
-      render(<NavRow key="at-269" state={state} tab={music} compact={false} />)
+      // At 265 the row still has no room for it.
+      widths.row = 265 - 16
+      render(<NavRow key="at-265" state={state} tab={music} compact={false} />)
       expect(q('[data-zen-media-hub-button]')).toBeNull()
-      // At 270 the pill first reaches the star's 126 without the button; a button returning
+      // At 266 the pill first reaches the star's 126 without the button; a button returning
       // here would take it straight back to 94, so the row keeps it folded and ⋯ keeps the dot.
-      widths.row = 270 - 16
-      render(<NavRow key="at-270" state={state} tab={music} compact={false} />)
+      widths.row = 266 - 16
+      render(<NavRow key="at-266" state={state} tab={music} compact={false} />)
       expect(q('[data-zen-media-hub-button]')).toBeNull()
       expect(q('[data-zen-app-menu-button] .zen-mhub-dot')).not.toBeNull()
-      // One pixel under 302 the pill with the button would be 125.
-      widths.row = 301 - 16
-      render(<NavRow key="at-301" state={state} tab={music} compact={false} />)
+      // One pixel under 298 the pill with the button would be 125.
+      widths.row = 297 - 16
+      render(<NavRow key="at-297" state={state} tab={music} compact={false} />)
       expect(q('[data-zen-media-hub-button]')).toBeNull()
-      // At 302 the button returns over a 126 pill – the star up with it – with its own disc,
+      // At 298 the button returns over a 126 pill – the star up with it – with its own disc,
       // and ⋯ says nothing twice.
-      widths.row = 302 - 16
-      render(<NavRow key="at-302" state={state} tab={music} compact={false} />)
+      widths.row = 298 - 16
+      render(<NavRow key="at-298" state={state} tab={music} compact={false} />)
       const hubButton = q('[data-zen-media-hub-button]')!
       expect(hubButton).not.toBeNull()
       expect(hubButton.querySelector('.zen-mhub-dot')).not.toBeNull()
@@ -924,7 +924,7 @@ describe('the hub from the app menu (§9.29)', () => {
 
   /*
    * The row's width observer (`useElementWidth`) unmounts the hub button inside its own delivery
-   * pass when the sidebar crosses 302 → 240; an observer on the button would then fire for the
+   * pass when the sidebar crosses 298 → 240; an observer on the button would then fire for the
    * detached node at depth 0, shallower than the pass, and Chromium would report "ResizeObserver
    * loop completed with undelivered notifications" on every crossing with media. The fold is
    * decided from the row's width in the render that moves the button (`mediaHubFoldedAt`).
@@ -1157,7 +1157,7 @@ describe('the hub from the app menu (§9.29)', () => {
     expect(button.hasAttribute('aria-expanded')).toBe(false)
   })
 
-  it('the hold follows the row’s fold with no push behind it: the sidebar dragged across 302 with the hub open hands aria-expanded ⋯ → button in the row’s observer pass, and back – never both, never neither (§9.20, §9.29)', async () => {
+  it('the hold follows the row’s fold with no push behind it: the sidebar dragged across 298 with the hub open hands aria-expanded ⋯ → button in the row’s observer pass, and back – never both, never neither (§9.20, §9.29)', async () => {
     const Native = window.ResizeObserver
     window.ResizeObserver = DeliverableResizeObserver as unknown as typeof ResizeObserver
     // The row at the 240 sidebar (happy-dom lays nothing out: the row's first measure is set
@@ -1186,11 +1186,11 @@ describe('the hub from the app menu (§9.29)', () => {
       expect(hub()).not.toBeNull()
       // Folded: the "⋯" anchors the hub and says so.
       expect(menu.getAttribute('aria-expanded')).toBe('true')
-      // Dragged out to 302: the row's observer pass mounts the button, and the row's word on
+      // Dragged out to 298: the row's observer pass mounts the button, and the row's word on
       // it (`mediaHubUi.buttonUp`, from that commit's layout phase) has the popover read its
       // anchor again in the same act – the button takes the hold, the "⋯" is bare, no push.
-      widths.row = 302 - 16
-      sidebarDraggedTo(302)
+      widths.row = 298 - 16
+      sidebarDraggedTo(298)
       const hubButton = q<HTMLButtonElement>('[data-zen-media-hub-button]')!
       expect(hubButton).not.toBeNull()
       expect(mediaHubUi.get().buttonUp).toBe(true)
@@ -1202,10 +1202,10 @@ describe('the hub from the app menu (§9.29)', () => {
       sidebarDraggedTo(320)
       expect(hubButton.getAttribute('aria-expanded')).toBe('true')
       expect(menu.hasAttribute('aria-expanded')).toBe(false)
-      // And back under 302: the button leaves with its rest state given back, and the "⋯" takes
+      // And back under 298: the button leaves with its rest state given back, and the "⋯" takes
       // the hold in the pass that unmounts it.
-      widths.row = 301 - 16
-      sidebarDraggedTo(301)
+      widths.row = 297 - 16
+      sidebarDraggedTo(297)
       expect(q('[data-zen-media-hub-button]')).toBeNull()
       expect(mediaHubUi.get().buttonUp).toBe(false)
       expect(hubButton.getAttribute('aria-expanded')).toBe('false')

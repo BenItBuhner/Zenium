@@ -1521,9 +1521,9 @@ describe('desktop pill (NavRow)', () => {
   /*
    * The pill yields its chips to the address as it narrows, in tiers of a container query on
    * `.zen-pill` (main.css; content-box widths, 16 px inside the pill): the hover-only chips under
-   * 170, the "Not secure" label under 220, and under 110 – the 270 sidebar's 126 px pill – every
+   * 170, the "Not secure" label under 220, and under 110 – the 266 sidebar's 126 px pill – every
    * tool after the address (the star, zoom, Reader View, Translate, Boost, Copy), so a pill at
-   * the default sidebar width (96 px, content 80) is the address, or one of Zenium's pages' name,
+   * the default sidebar width (100 px, content 84; W8-F7's `PILL_BLEED`) is the address, or one of Zenium's pages' name,
    * and the site icon (v2 §10.1's favicon slot). The blocked pop-ups chip is the one chip after the address that stays: a
    * notice, not a tool, and the only word of a pop-up the page tried to open (#62). happy-dom
    * evaluates no container query, so the markers and the rule are pinned here; the widths are
@@ -1821,6 +1821,10 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
     // the button's medium.
     expect(label.className.split(/\s+/).some((c) => c.startsWith('text-['))).toBe(false)
     expect(label.classList.contains('font-medium')).toBe(true)
+    // Its line box is the pill's own, the address's – no leading of its own: a `leading-none`
+    // box centred in the chip's 20 put the word's baseline 1 px under the address's (the FIRST
+    // LINE's N4 on #589; W8-F7 measured both at ink row 61 with it gone).
+    expect(label.className.split(/\s+/).some((c) => c.startsWith('leading-'))).toBe(false)
   })
 
   // The seam with W8-1 (#578), folded once it landed: the Install chip takes the shared
@@ -2046,6 +2050,115 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
     }
   })
 
+  it('keeps the hover-only run for a chip whose open surface hangs from the pill, never for one that opened a frame dialog: the anchored chips carry `data-zen-anchored`, the Install and Boost chips none, and the utilities’ keep-rule reads the mark (the FIRST LINE’s L7 on #589)', () => {
+    // Every kind of chip in one pill: the slot, the shield, a blocked pop-up, a save prompt's
+    // key, the zoom chip, the Install chip, the star, and the utilities under the pointer.
+    const everything = tab('https://app.example/some/path', {
+      readerable: true,
+      webApp: app,
+      zoom: 1.25
+    })
+    const base = desktop(everything)
+    const el = render(
+      <NavRow
+        state={
+          {
+            ...base,
+            capabilities: { ...base.capabilities, requestBlocking: true },
+            settings: {
+              ...base.settings,
+              blocking: { level: 'standard' },
+              pageControls: DEFAULT_PAGE_CONTROLS
+            },
+            blocking: { enabled: true, siteExceptions: [] },
+            blockedPopups: withBlocked(everything, 1).blockedPopups,
+            autofill: { prompts: [savePrompt], picker: null }
+          } as unknown as UIState
+        }
+        tab={everything}
+        compact={false}
+      />
+    )
+    const chip = (selector: string): HTMLElement => {
+      const found = el.querySelector<HTMLElement>(selector)
+      expect(found, selector).not.toBeNull()
+      return found!
+    }
+    // The chips whose popup is a popover or bubble placed on them (§9.20) say so once, with
+    // the mark, whatever their state: site information from the slot and from the shield, the
+    // blocked pop-ups list, the save prompt, the zoom bubble, the star's bubble, the share
+    // popover.
+    const anchored = [
+      '[data-site-chip]',
+      '.zen-v2-blocked-chip',
+      '[data-blocked-popups-chip]',
+      '[data-af-chip]',
+      '[data-zoom-chip]',
+      '[data-bm-star]',
+      '[data-share-chip]'
+    ]
+    for (const selector of anchored) {
+      const c = chip(selector)
+      expect(c.getAttribute('aria-haspopup'), selector).toBe('dialog')
+      expect(c.getAttribute('aria-expanded'), selector).toBe('false')
+      expect(c.hasAttribute('data-zen-anchored'), selector).toBe(true)
+    }
+    // A frame dialog's opener carries `aria-haspopup` for the tree and no mark: the Install
+    // chip's install dialog and Boost's dialog stand over the window, hung from nothing.
+    for (const selector of ['[data-install-chip]', '[aria-label="Boost this site"]']) {
+      const c = chip(selector)
+      expect(c.getAttribute('aria-haspopup'), selector).toBe('dialog')
+      expect(c.hasAttribute('data-zen-anchored'), selector).toBe(false)
+    }
+    // An action chip has neither.
+    expect(chip('[aria-label="Copy URL"]').hasAttribute('aria-haspopup')).toBe(false)
+    expect(chip('[aria-label="Copy URL"]').hasAttribute('data-zen-anchored')).toBe(false)
+    // The three hover-only utilities keep the run for an anchored chip's open popup alone: the
+    // stylesheet's `:has([data-zen-anchored][aria-expanded=true])` on the chips' scope, never
+    // the bare `aria-expanded` that held them drawn under the install dialog's scrim. (The
+    // retired class is assembled here so the stylesheet's scanner, which reads this file too,
+    // never emits its rule again.)
+    const bareKeepRule = ['group-has-[[aria-expanded=true]]', 'chips:flex'].join('/')
+    for (const selector of [
+      '[aria-label="Copy URL"]',
+      '[data-share-chip]',
+      '[aria-label="Boost this site"]'
+    ]) {
+      const c = chip(selector)
+      expect(
+        c.classList.contains('group-has-[[data-zen-anchored][aria-expanded=true]]/chips:flex'),
+        selector
+      ).toBe(true)
+      expect(c.classList.contains(bareKeepRule), selector).toBe(false)
+      expect(c.classList.contains('group-hover/pill:flex'), selector).toBe(true)
+      expect(c.classList.contains('group-focus-within/chips:flex'), selector).toBe(true)
+    }
+    // The chips' scope is the one the rule reads.
+    const scope = el.querySelector<HTMLElement>('.group\\/chips')!
+    for (const selector of [...anchored, '[data-install-chip]']) {
+      expect(scope.contains(chip(selector)), selector).toBe(true)
+    }
+    // The Install chip's dialog up: its `aria-expanded` is true, and no anchored chip's is –
+    // the selector the keep-rule is written on finds nothing to hold the run for.
+    act(() =>
+      uiStore.set({
+        install: {
+          tabId: 't1',
+          title: 'Example App',
+          url: 'https://app.example/',
+          origin: 'app.example',
+          icon: null,
+          info: app,
+          tint: null,
+          surface: 'desktop'
+        } as WebAppInstallPrompt
+      })
+    )
+    expect(chip('[data-install-chip]').getAttribute('aria-expanded')).toBe('true')
+    expect(scope.querySelector('[data-zen-anchored][aria-expanded="true"]')).toBeNull()
+    expect(scope.querySelector('[aria-expanded="true"]')).toBe(chip('[data-install-chip]'))
+  })
+
   it('adds the Share chip after Copy URL as a hover-only utility whose popup is the share popover, hung from the chip while its own request is up', () => {
     const el = render(<NavRow state={desktop(page)} tab={page} compact={false} />)
     const order = chipLabels(el)
@@ -2062,9 +2175,11 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
       'hidden',
       'group-hover/pill:flex',
       'group-focus-within/chips:flex',
-      'group-has-[[aria-expanded=true]]/chips:flex'
+      'group-has-[[data-zen-anchored][aria-expanded=true]]/chips:flex'
     ])
       expect(chip.classList.contains(cls), cls).toBe(true)
+    // Its popover hangs from the chip: the anchored mark the keep-rule reads (L7).
+    expect(chip.hasAttribute('data-zen-anchored')).toBe(true)
     // Not a pin: no control mark.
     expect(chip.hasAttribute('data-zen-menu-control')).toBe(false)
 
@@ -2335,14 +2450,15 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
             .filter((l) => l !== '')
         )
       const utilities = ['Copy URL', 'Share this page', 'Boost this site']
-      // The 520 sidebar: pill 376, content box 360.
-      act(() => emit!(360))
+      // The 520 sidebar: pill 380, content box 364 (the pill fills its slot, `PILL_BLEED`); the
+      // sweep runs from there to the 240 sidebar's 84.
+      act(() => emit!(364))
       let previous = mounted()
       for (const u of utilities) expect(previous.has(u)).toBe(true)
       expect(el.querySelector('[data-install-chip] .zen-pill-label')).not.toBeNull()
       let wordFolded = false
       const lastSeen = new Map<string, number>()
-      for (let innerWidth = 360; innerWidth >= 80; innerWidth -= 1) {
+      for (let innerWidth = 364; innerWidth >= 84; innerWidth -= 1) {
         act(() => emit!(innerWidth))
         const now = mounted()
         for (const id of now) {
@@ -2367,7 +2483,7 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
       expect(lastSeen.get('Translate this page')).toBe(160)
       expect(lastSeen.get('Install Example App')).toBe(134)
       expect(lastSeen.get('Bookmark this tab')).toBe(108)
-      expect(lastSeen.get('Site information')).toBe(80)
+      expect(lastSeen.get('Site information')).toBe(84)
     } finally {
       window.ResizeObserver = Native
     }
@@ -2681,6 +2797,150 @@ describe('desktop pill on an internal page', () => {
     const el = render(<NavRow state={state(empty)} tab={empty} compact={false} />)
     const { pill } = pillOf(el)
     expect(pill.getAttribute('data-tooltip')).toBe('Search or enter address')
+  })
+})
+
+/*
+ * The hover reveal's trim (the FIRST LINE's L3 on #589, W8-F7): the pointer or the keyboard on
+ * the address puts the scheme and `www.` back, and a field near §9.29's 56 floor, truncating
+ * from the end, read `http://…` – the scheme and none of the host. The reveal never costs the
+ * host: the least it must fit (`revealProbeText` – the trimmed run, the host's first character,
+ * the ellipsis – drawn invisibly at the field's size) is measured against the field's box before
+ * the reveal is drawn, and where it does not fit the trim stays under the pointer.
+ */
+describe('desktop pill: the reveal never costs the host', () => {
+  const site = tab('https://www.example.com/some/path')
+  const widths = { reveal: 0, field: 0 }
+
+  beforeEach(() => {
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: Element
+    ) {
+      const width = this.hasAttribute('data-reveal-probe')
+        ? widths.reveal
+        : this.hasAttribute('data-reads')
+          ? widths.field
+          : 0
+      return { x: 0, y: 0, top: 0, left: 0, right: width, bottom: 0, width, height: 0 } as DOMRect
+    })
+  })
+
+  afterEach(() => vi.restoreAllMocks())
+
+  const parts = (
+    el: HTMLElement
+  ): { address: HTMLElement; field: HTMLElement; revealProbe: HTMLElement } => {
+    const pill = el.querySelector<HTMLElement>('[role="group"][aria-label="Address"]')!
+    return {
+      address: focusable(pill)[0],
+      field: pill.querySelector<HTMLElement>('[data-reads]')!,
+      revealProbe: pill.querySelector<HTMLElement>('[data-reveal-probe]')!
+    }
+  }
+  const hover = (address: HTMLElement): void => {
+    act(() => {
+      address.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+    })
+  }
+  const leave = (address: HTMLElement): void => {
+    act(() => {
+      address.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }))
+    })
+  }
+
+  it('reveals the full address under the pointer while the field holds the host’s first character', () => {
+    // `https://www.e…` at 13 px is about 76 wide; a 240 sidebar's rest field is 58, a 302's 120.
+    widths.reveal = 76
+    widths.field = 120
+    const el = render(<NavRow state={state(site)} tab={site} compact={false} />)
+    const { address, field, revealProbe } = parts(el)
+    expect(field.textContent).toBe('example.com/some/path')
+    // The probe holds the least the reveal must fit, out of the tree and never seen.
+    expect(revealProbe.textContent).toBe('https://www.e…')
+    expect(revealProbe.getAttribute('aria-hidden')).toBe('true')
+    expect(revealProbe.className).toContain('invisible')
+    expect(revealProbe.className).toContain('text-[13px]')
+    hover(address)
+    expect(field.textContent).toBe('https://www.example.com/some/path')
+    // The site in full ink is the scheme, `www.` and the host; the path dims after it.
+    expect(field.querySelector('.opacity-70')?.textContent).toBe('/some/path')
+    leave(address)
+    expect(field.textContent).toBe('example.com/some/path')
+  })
+
+  it('keeps §9.29’s trim under the pointer where the scheme would push the host’s first character out of the field', () => {
+    widths.reveal = 76
+    widths.field = 58
+    const el = render(<NavRow state={state(site)} tab={site} compact={false} />)
+    const { address, field } = parts(el)
+    hover(address)
+    expect(field.textContent).toBe('example.com/some/path')
+    expect(field.getAttribute('data-reads')).toBe('address')
+    // The keyboard's reveal is the same reveal.
+    leave(address)
+    act(() => address.focus())
+    expect(document.activeElement).toBe(address)
+    expect(field.textContent).toBe('example.com/some/path')
+    act(() => address.blur())
+    // The tooltip still carries the whole address, as it does at rest.
+    expect(
+      el
+        .querySelector<HTMLElement>('[role="group"][aria-label="Address"]')!
+        .getAttribute('data-tooltip')
+    ).toBe('https://www.example.com/some/path')
+  })
+
+  it('measures at the edge: the host’s first character just inside the field reveals, one pixel over keeps the trim', () => {
+    widths.reveal = 58
+    widths.field = 58
+    let el = render(<NavRow state={state(site)} tab={site} compact={false} />)
+    let { address, field } = parts(el)
+    hover(address)
+    expect(field.textContent).toBe('https://www.example.com/some/path')
+    leave(address)
+    act(() => root?.unmount())
+    host?.remove()
+    widths.reveal = 59
+    el = render(<NavRow state={state(site)} tab={site} compact={false} />)
+    ;({ address, field } = parts(el))
+    hover(address)
+    expect(field.textContent).toBe('example.com/some/path')
+  })
+
+  it('leaves the "Always show full URLs" setting’s full address unmeasured: the user’s word, at any width', () => {
+    widths.reveal = 76
+    widths.field = 40
+    const s = state(site)
+    s.settings = { ...s.settings, showFullUrls: true }
+    const el = render(<NavRow state={s} tab={site} compact={false} />)
+    const { address, field } = parts(el)
+    expect(field.textContent).toBe('https://www.example.com/some/path')
+    hover(address)
+    expect(field.textContent).toBe('https://www.example.com/some/path')
+  })
+
+  it('has nothing to measure on an internal page or an http page with nothing trimmed but the scheme it cannot hold', () => {
+    // An internal page's alias is the same text revealed and at rest: no probe text, no trim.
+    widths.reveal = 0
+    widths.field = 200
+    const settings = tab('zen://settings/privacy', { title: 'Settings' })
+    let el = render(<NavRow state={state(settings)} tab={settings} compact={false} />)
+    let { address, field, revealProbe } = parts(el)
+    expect(revealProbe.textContent).toBe('')
+    hover(address)
+    expect(field.textContent).toBe('zenium://settings/privacy')
+    leave(address)
+    act(() => root?.unmount())
+    host?.remove()
+    // The dev server's address at the 240 sidebar: `http://1…` measured against the 58 field.
+    const dev = tab('http://127.0.0.1:18560/some/path')
+    widths.reveal = 60
+    widths.field = 58
+    el = render(<NavRow state={state(dev)} tab={dev} compact={false} />)
+    ;({ address, field, revealProbe } = parts(el))
+    expect(revealProbe.textContent).toBe('http://1…')
+    hover(address)
+    expect(field.textContent).toBe('127.0.0.1:18560/some/path')
   })
 })
 
