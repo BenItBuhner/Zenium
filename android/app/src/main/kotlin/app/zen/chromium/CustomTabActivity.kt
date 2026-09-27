@@ -20,6 +20,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.SystemClock
+import android.util.Log
 import android.provider.MediaStore
 import android.util.Rational
 import android.view.Gravity
@@ -117,6 +118,21 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
      */
     private var authTab: AuthTabVerifier? = null
 
+    /**
+     * The Trusted Web Activity's verifier (CCT-20), only when the caller launched one with its
+     * claimed origins ([CustomTabConfig.trustedOrigins]). Null on an ordinary custom tab.
+     */
+    private var twa: TwaVerifier? = null
+    /** The page's TWA state ([TwaScope.stateFor]), null before the first committed navigation. */
+    private var twaState: TwaScope.Verification? = null
+    /**
+     * App mode (a TWA alone): the page is on a claimed or verified origin and the toolbar is gone,
+     * the page under the status bar strip; out of it the custom tab's toolbar with its X is up.
+     */
+    private var appMode = false
+    /** The TWA's first document is still loading: its failures are the start page's ([twaQuality]). */
+    private var twaStartPage = true
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // The caller's colour scheme decides the scheme of every native piece (dialogs, the
         // menu), not the system's: applied before the theme is resolved.
@@ -180,6 +196,17 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
         // the caller. The callback never lets go, so the system never finishes us without the
         // exit animation the caller asked for.
         host.back = PredictiveBack(this, host, chrome = { null }, onLeave = ::closeToCaller, alwaysHandle = true, dismissOverlay = ::closeFind)
+        config.trustedOrigins?.let { origins ->
+            // The client is the session's binder (Chrome's `ClientPackageNameProvider`), else what
+            // the launch said. The start page is judged before it loads, as Chrome's
+            // `CurrentPageVerifier` judges `getUrlToLoad()` at native init: a claimed origin is
+            // pending, and pending is app mode – no toolbar at first paint, the verdict beside the
+            // load and never ahead of it.
+            val verifier = TwaVerifier(this, CustomTabSessions.packageOf(config.session) ?: config.callerPackage, origins, ::onTwaVerdict)
+            twa = verifier
+            setTwaState(TwaScope.stateFor(config.url, origins, verifier.verdicts, null), config.url)
+            verifier.start()
+        }
         createPage().loadUrl(config.url)
         host.back.update(chrome = false, tabId = TAB_ID)
     }
@@ -227,7 +254,13 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
                 toolbar.setUrl(url)
                 // A new document (not a pushState or hash change of the one shown): the greatest
                 // scroll percentage starts over for it, as Chrome's does at a committed navigation.
-                if (!payload.optBoolean("inPage", false)) engagement.navigated()
+                if (!payload.optBoolean("inPage", false)) {
+                    engagement.navigated()
+                    // The committed document decides the TWA's scope, as Chrome's
+                    // `CurrentPageVerifier` decides at `onDidFinishNavigationInPrimaryMainFrame`
+                    // (a redirect's hops land here too); a same-document change is no navigation.
+                    twa?.let { verifier -> setTwaState(TwaScope.stateFor(url, config.trustedOrigins.orEmpty(), verifier.verdicts, twaState), url) }
+                }
             }
             "title" -> toolbar.setTitle(payload?.strOrNull("title"))
             "startLoading" -> {
@@ -239,12 +272,16 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
                 pageLoading = false
                 toolbar.setProgress(100)
                 navigationEvent(CustomTabsCallback.NAVIGATION_FINISHED)
+                twaStartPage = false
             }
             "failLoad" -> {
                 pageLoading = false
                 toolbar.setProgress(100)
                 navigationEvent(CustomTabsCallback.NAVIGATION_FAILED)
+                twaQuality(payload?.strOrNull("url"), "failed to load – ${payload?.strOrNull("description") ?: "a net error"}; the error page shows")
+                twaStartPage = false
             }
+            "httpError" -> twaQuality(payload?.strOrNull("url"), "answered HTTP ${payload?.optInt("status") ?: 0}")
             "found" -> findBar?.setCount(payload?.optInt("activeMatchOrdinal") ?: 0, payload?.optInt("matches") ?: 0)
             // A long-press on a link: Chrome's Auth Tab has no context menu (the sign-in's page
             // is not the user's to copy or share out of), so nothing opens on one.
@@ -284,7 +321,7 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
      */
     private fun layoutPage() {
         val lp = pageContainer.layoutParams as FrameLayout.LayoutParams
-        lp.topMargin = topInset + if (toolbarShown) toolbar.barHeight else 0
+        lp.topMargin = topInset + if (toolbarShown && !appMode) toolbar.barHeight else 0
         val barHeight = currentBarHeight()
         laidOutBarHeight = barHeight
         lp.bottomMargin = CustomTabBottomBarRules.pageBottomMargin(bottomInset, barHeight, toolbarShown && barHeight > 0)
@@ -310,7 +347,7 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
     private fun onPageScrolled(y: Int) {
         val dy = y - lastScrollY
         lastScrollY = y
-        if (findBar != null || host.fullscreenTab != null || toolbarAnimating) return
+        if (findBar != null || host.fullscreenTab != null || toolbarAnimating || appMode) return
         if (y <= 0) {
             scrolledSinceTurn = 0
             showToolbar()
@@ -362,6 +399,58 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
             layoutPage()
             toolbarAnimating = false
         }.start()
+    }
+
+    // --- the Trusted Web Activity's scope (CCT-20) -------------------------------------------------
+
+    /** A verdict landed ([TwaVerifier]): the page it applies to is judged again, whatever it is now. */
+    private fun onTwaVerdict(origin: String, verification: TwaScope.Verification) {
+        val verifier = twa ?: return
+        val url = currentUrl.ifEmpty { config.url }
+        if (verification == TwaScope.Verification.FAILED && TwaScope.origin(config.url) == origin) {
+            twaQuality(url, "is not the client's: the Digital Asset Links check of $origin failed")
+        }
+        setTwaState(TwaScope.stateFor(url, config.trustedOrigins.orEmpty(), verifier.verdicts, twaState), url)
+    }
+
+    private fun setTwaState(state: TwaScope.Verification?, url: String) {
+        twaState = state
+        setAppMode(!TwaScope.toolbarShown(state, url))
+    }
+
+    /**
+     * The TWA's edge: in app mode the toolbar is gone and the page starts under the status bar
+     * strip; out of it the custom tab's toolbar with its X is up, at rest whatever a scroll had
+     * done to the bars before (Chrome's `showToolbarTemporarily` as the controls come back,
+     * `TrustedWebActivityBrowserControlsVisibilityManager.java:96-99`). Nothing new is drawn:
+     * the toolbar is the one every custom tab has.
+     */
+    private fun setAppMode(on: Boolean) {
+        if (appMode == on) return
+        appMode = on
+        toolbar.animate().cancel()
+        pageContainer.animate().cancel()
+        bottomBar.animate().cancel()
+        bottomBar.stopSettling()
+        toolbar.translationY = 0f
+        pageContainer.translationY = 0f
+        bottomBar.translationY = 0f
+        toolbarShown = true
+        toolbarAnimating = false
+        scrolledSinceTurn = 0
+        toolbar.visibility = if (on) View.GONE else View.VISIBLE
+        layoutPage()
+    }
+
+    /**
+     * A quality violation of the TWA's start page – it failed to load (offline), answered a 404
+     * or a 5xx, or its origin failed the Digital Asset Links check – named in the log, which is
+     * all Chrome 152 does: its `QualityEnforcer` and the `quality_enforcement` callback went in
+     * M115. The user sees what the page shows: WebView's error page, or the server's own body.
+     */
+    private fun twaQuality(url: String?, what: String) {
+        if (twa == null || !twaStartPage) return
+        Log.i(TWA_TAG, "Trusted Web Activity: the start page ${url ?: config.url} $what")
     }
 
     // --- the caller's bottom toolbar (CCT-07) -------------------------------------------------------
@@ -497,7 +586,25 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
 
     // --- toolbar controls --------------------------------------------------------------------------
 
-    override fun onClose() = closeToCaller()
+    /**
+     * The X. A Trusted Web Activity's, up only out of scope: back to the newest page of the
+     * history on a verified origin (Chrome's `CloseButtonNavigator.navigateSingleTab`,
+     * `CloseButtonNavigator.java:125-139`), and out to the caller only when the history holds
+     * none. Every other custom tab's closes.
+     */
+    override fun onClose() {
+        val verifier = twa
+        val view = page
+        if (verifier != null && view != null) {
+            val list = view.copyBackForwardList()
+            val history = (0 until list.size).map { list.getItemAtIndex(it).url }
+            TwaScope.landingIndex(history, list.currentIndex, verifier.verdicts)?.let { i ->
+                view.goBackOrForward(i - list.currentIndex)
+                return
+            }
+        }
+        closeToCaller()
+    }
 
     override fun onMenu() {
         val titles = config.menuItems.map { it.title }
@@ -880,6 +987,7 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
         if (isFinishing) CustomTabSessions.sessionEnded(config.session, engagement.didUserInteract)
         CustomTabSessions.detach(config.session, this)
         authTab?.destroy()
+        twa?.destroy()
         bottomBar.stopSettling()
         host.destroy()
         storage.close()
@@ -900,6 +1008,7 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
         /** The one page's id within its TabHost. */
         const val TAB_ID = "custom-tab"
         private const val TOOLBAR_MS = 200L
+        private const val TWA_TAG = "ZenTwa"
         /** Scroll distance in one direction before the toolbar moves. */
         private const val SCROLL_THRESHOLD_DP = 40
     }

@@ -63,8 +63,20 @@ class CustomTabConfig(
      */
     val authTab: AuthTab.Redirect? = null,
     /** The Auth Tab's session (its `AuthTabCallback` binder under `EXTRA_SESSION`), in place of [session]. */
-    val authSession: AuthTabSession? = null
+    val authSession: AuthTabSession? = null,
+    /**
+     * The origins a Trusted Web Activity's client claims (CCT-20; `EXTRA_LAUNCH_AS_TRUSTED_WEB_ACTIVITY`
+     * sent with a session, the two Chrome's `CustomTabIntentDataProvider.java:651-656` requires
+     * of a TWA): the launch URL's and `EXTRA_ADDITIONAL_TRUSTED_ORIGINS` ([TwaScope.trustedOrigins]).
+     * Each is verified against its Digital Asset Links statement ([TwaVerifier]); the tab hides
+     * its toolbar while the page is on one of them and shows it elsewhere. Null on every
+     * ordinary custom tab, whose one cost for the feature is this null.
+     */
+    val trustedOrigins: Set<String>? = null
 ) {
+    /** Whether this tab was launched as a Trusted Web Activity. */
+    val trustedWebActivity: Boolean get() = trustedOrigins != null
+
     class ActionButton(val icon: Bitmap, val description: String, val intent: PendingIntent, val tint: Boolean, val id: Int = CustomTabButtons.TOP_BAR_ID)
     class MenuItem(val title: String, val intent: PendingIntent)
 
@@ -137,9 +149,11 @@ class CustomTabConfig(
                 path = extras.getString(AuthTab.EXTRA_HTTPS_REDIRECT_PATH)
             )
             if (authTab != null) return authTabConfig(intent, extras, scheme, authTab)
+            val url = intent.dataString ?: "about:blank"
+            val session = CustomTabsSessionToken.getSessionTokenFromIntent(intent)
             return CustomTabConfig(
-                url = intent.dataString ?: "about:blank",
-                session = CustomTabsSessionToken.getSessionTokenFromIntent(intent),
+                url = url,
+                session = session,
                 callerPackage = intent.getStringExtra(CustomTabIntents.EXTRA_CALLER_PACKAGE),
                 scheme = scheme,
                 closeIcon = IntentCompat.getParcelableExtra(intent, CustomTabsIntent.EXTRA_CLOSE_BUTTON_ICON, Bitmap::class.java),
@@ -156,8 +170,18 @@ class CustomTabConfig(
                 exitAnimation = extras.getBundle(CustomTabsIntent.EXTRA_EXIT_ANIMATION_BUNDLE),
                 remoteViews = remoteViews(extras),
                 bottomButtons = placement.bottom.map { items[it] },
-                swipeUpIntent = CustomTabsIntent.getSecondaryToolbarSwipeUpGesture(intent)
+                swipeUpIntent = CustomTabsIntent.getSecondaryToolbarSwipeUpGesture(intent),
+                trustedOrigins = trustedOrigins(extras, session, url)
             )
+        }
+
+        /**
+         * A Trusted Web Activity's claimed origins, null for anything else: the launch flag
+         * counts only with a session, as Chrome's (a TWA without one is a plain custom tab).
+         */
+        private fun trustedOrigins(extras: Bundle, session: CustomTabsSessionToken?, url: String): Set<String>? {
+            if (session == null || !extras.getBoolean(TwaScope.EXTRA_LAUNCH_AS_TRUSTED_WEB_ACTIVITY, false)) return null
+            return TwaScope.trustedOrigins(url, extras.getStringArrayList(TwaScope.EXTRA_ADDITIONAL_TRUSTED_ORIGINS))
         }
 
         /**
