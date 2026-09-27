@@ -334,6 +334,7 @@ const SHIFT: Mods = { shift: true }
 const META: Mods = { meta: true }
 const META_SHIFT: Mods = { meta: true, shift: true }
 const META_ALT: Mods = { meta: true, alt: true }
+const META_ALT_SHIFT: Mods = { meta: true, alt: true, shift: true }
 const META_CTRL: Mods = { meta: true, ctrl: true }
 const META_CTRL_SHIFT: Mods = { meta: true, ctrl: true, shift: true }
 const WINLIN: Platform[] = ['win32', 'linux']
@@ -1202,6 +1203,25 @@ const DEFS: Def[] = [
     label: 'Add-ons and Themes',
     zen: { key: 'a', mods: ACCEL_SHIFT },
     chrome: UNBOUND
+  },
+  {
+    // Chrome's Help › Report an issue… (`IDC_FEEDBACK`): ⌥⇧⌘I on macOS (its main menu's chord),
+    // Alt+Shift+I on Windows and Linux (`accelerator_table.cc`), both free in Zenium's table
+    // until now, so the menu bar's row shows Chrome's chord and the key runs it. Zen (Firefox)
+    // has none. The desktop's alone: unbound on Android, and the touch shells' listings leave
+    // the row out (they have no Help menu to seat it in).
+    id: 'key_reportIssue',
+    action: 'help.reportIssue',
+    group: 'devTools',
+    label: 'Report an Issue…',
+    layouts: ['desktop'],
+    zen: UNBOUND,
+    chrome: {
+      key: 'i',
+      mods: ALT_SHIFT,
+      platforms: [...WINLIN, ...MAC],
+      perPlatform: { darwin: { key: 'i', mods: META_ALT_SHIFT } }
+    }
   }
 ]
 

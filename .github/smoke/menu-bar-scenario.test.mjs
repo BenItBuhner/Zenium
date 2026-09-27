@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  HELP_MENU_CHORDS,
   HELP_MENU_ROWS,
   MENU_ORDER,
+  TAB_DIRECTION_ROWS,
   TAB_MENU_CHORDS,
   TAB_MENU_ROWS,
   aboutPageProblems,
@@ -14,6 +16,7 @@ import {
   pickMenuRowScript,
   rowLabels,
   tabMenuProblems,
+  tabMenuRows,
   toggleProblems
 } from './menu-bar-scenario.mjs'
 
@@ -41,19 +44,27 @@ const bar = (labels = MENU_ORDER) => ({
 })
 
 describe('expectedTabMenu', () => {
-  it('lists Chrome’s rows in Chrome’s order, a new tab page alone greying Mute Site and the closes', () => {
+  it('lists Chrome’s rows in Chrome’s order, a new tab page alone greying Mute Site, the closes and the move to a new window', () => {
     const menu = expectedTabMenu('new-tab-page')
     expect(menu.map((r) => r.label)).toEqual(TAB_MENU_ROWS)
     expect(menu.filter((r) => !r.enabled).map((r) => r.label)).toEqual([
       'Mute Site',
       'Remove from Folder',
       'Close Other Tabs',
-      'Close Tabs Below'
+      'Close Tabs Below',
+      'Move Tab to New Window'
     ])
   })
-  it('enables Mute Site and the closes for a site page with a tab below it', () => {
+  it('enables Mute Site, the closes and the move for a site page with a tab below it', () => {
     const menu = expectedTabMenu('site-among-others')
     expect(menu.filter((r) => !r.enabled).map((r) => r.label)).toEqual(['Remove from Folder'])
+  })
+  it('seats Add Tab to New Split View after Move Tab to New Window, before Search Tabs, as Chrome does', () => {
+    expect(TAB_MENU_ROWS.slice(-3)).toEqual([
+      'Move Tab to New Window',
+      'Add Tab to New Split View',
+      'Search Tabs…'
+    ])
   })
   it('gives the chord rows the Chrome preset’s chords and the others none', () => {
     const chords = Object.fromEntries(
@@ -64,14 +75,44 @@ describe('expectedTabMenu', () => {
       'Select Previous Tab': 'Ctrl+Shift+Tab',
       'Duplicate Tab': 'Cmd+Shift+K',
       'Pin Tab': 'Cmd+Ctrl+P',
+      'Add Tab to New Split View': 'Cmd+Shift+*',
       'Search Tabs…': 'Cmd+Shift+A',
       'New Tab Below': null,
       'Mute Site': null,
       'Move Tab to New Window': null
     })
   })
-  it('refuses a state it does not know', () => {
+  it('words the two direction rows to the Right beside a horizontal strip, Below beside the sidebar’s, the rest the same', () => {
+    const horizontal = expectedTabMenu('site-among-others', 'horizontal')
+    const labels = horizontal.map((r) => r.label)
+    expect(labels).toEqual(tabMenuRows('horizontal'))
+    expect(labels[0]).toBe('New Tab to the Right')
+    expect(labels[labels.indexOf('Close Other Tabs') + 1]).toBe('Close Tabs to the Right')
+    expect(labels).not.toContain('New Tab Below')
+    expect(labels).not.toContain('Close Tabs Below')
+    const vertical = expectedTabMenu('site-among-others', 'vertical')
+    expect(vertical.map((r) => r.label)).toEqual(TAB_MENU_ROWS)
+    expect(expectedTabMenu('site-among-others')).toEqual(vertical)
+    const swap = (rows) =>
+      rows.map((r) => ({ ...r, label: r.label.replace(/ (to the Right|Below)$/, '') }))
+    expect(swap(horizontal)).toEqual(swap(vertical))
+    expect(TAB_DIRECTION_ROWS.horizontal).toEqual({
+      newTab: 'New Tab to the Right',
+      closeAfter: 'Close Tabs to the Right'
+    })
+    const newTabPage = expectedTabMenu('new-tab-page', 'horizontal')
+    expect(newTabPage.filter((r) => !r.enabled).map((r) => r.label)).toEqual([
+      'Mute Site',
+      'Remove from Folder',
+      'Close Other Tabs',
+      'Close Tabs to the Right',
+      'Move Tab to New Window'
+    ])
+  })
+  it('refuses a state or an orientation it does not know', () => {
     expect(() => expectedTabMenu('pinned')).toThrow(/no such Tab menu state/)
+    expect(() => expectedTabMenu('new-tab-page', 'diagonal')).toThrow(/no such strip orientation/)
+    expect(() => tabMenuRows('diagonal')).toThrow(/no such strip orientation/)
   })
 })
 
@@ -104,10 +145,32 @@ describe('tabMenuProblems', () => {
       '!Remove from Folder',
       '!Close Other Tabs',
       '!Close Tabs Below',
-      'Move Tab to New Window',
+      '!Move Tab to New Window',
+      'Add Tab to New Split View',
       'Search Tabs…'
     ])
     expect(tabMenuProblems(items, expectedTabMenu('new-tab-page'))).toEqual([])
+    const horizontal = rows([
+      'New Tab to the Right',
+      'Select Next Tab',
+      'Select Previous Tab',
+      'Duplicate Tab',
+      'Mute Site',
+      'Pin Tab',
+      'Add Tab to New Folder',
+      '!Remove from Folder',
+      'Close Other Tabs',
+      'Close Tabs to the Right',
+      'Move Tab to New Window',
+      'Add Tab to New Split View',
+      'Search Tabs…'
+    ])
+    expect(tabMenuProblems(horizontal, expectedTabMenu('site-among-others', 'horizontal'))).toEqual(
+      []
+    )
+    expect(tabMenuProblems(horizontal, expectedTabMenu('site-among-others'))[0]).toMatch(
+      /^rows .*"New Tab to the Right".*expected .*"New Tab Below"/
+    )
   })
   it('names a row out of order, a wrong state and a chord off the table', () => {
     const order = rows(TAB_MENU_ROWS.slice().reverse())
@@ -118,7 +181,8 @@ describe('tabMenuProblems', () => {
     expect(problems).toEqual([
       'Mute Site is enabled, expected greyed',
       'Close Other Tabs is enabled, expected greyed',
-      'Close Tabs Below is enabled, expected greyed'
+      'Close Tabs Below is enabled, expected greyed',
+      'Move Tab to New Window is enabled, expected greyed'
     ])
     const chords = rows(
       TAB_MENU_ROWS.map((l) => (l === 'Remove from Folder' ? `!${l}` : l)),
@@ -132,25 +196,57 @@ describe('tabMenuProblems', () => {
 })
 
 describe('helpMenuProblems', () => {
-  it('accepts the Help rows, enabled and without chords', () => {
-    expect(helpMenuProblems(rows(HELP_MENU_ROWS, {}))).toEqual([])
+  /** The Help rows with Report an Unsafe Site… greyed, a new tab page's reading. */
+  const unreportable = HELP_MENU_ROWS.map((l) =>
+    l === 'Report an Unsafe Site…' ? '!Report an Unsafe Site…' : l
+  )
+  it('accepts the Help rows with Report an Issue… on Chrome’s chord, Report an Unsafe Site… enabled on a site page and greyed on a new tab page', () => {
+    expect(helpMenuProblems(rows(HELP_MENU_ROWS, HELP_MENU_CHORDS), { reportable: true })).toEqual(
+      []
+    )
+    expect(helpMenuProblems(rows(unreportable, HELP_MENU_CHORDS), { reportable: false })).toEqual(
+      []
+    )
+    expect(HELP_MENU_ROWS.slice(-2)).toEqual(['Report an Issue…', 'Report an Unsafe Site…'])
+    expect(HELP_MENU_CHORDS).toEqual({ 'Report an Issue…': 'Cmd+Alt+Shift+I' })
   })
-  it('names a stray About or Report Unsafe Site row, a greyed row and a chord', () => {
-    const withAbout = rows([...HELP_MENU_ROWS, 'About Zenium', 'Report Unsafe Site'], {})
-    const problems = helpMenuProblems(withAbout)
+  it('names a stray About row, a missing row, a wrong state and a chord off the table', () => {
+    const withAbout = rows([...HELP_MENU_ROWS, 'About Zenium'], HELP_MENU_CHORDS)
+    const problems = helpMenuProblems(withAbout, { reportable: true })
     expect(problems[0]).toMatch(/^rows /)
     expect(problems).toContain('About Zenium is in the Help menu')
-    expect(problems).toContain('Report Unsafe Site is in the Help menu')
+    const without = rows(
+      HELP_MENU_ROWS.filter((l) => l !== 'Report an Unsafe Site…'),
+      HELP_MENU_CHORDS
+    )
+    expect(helpMenuProblems(without, { reportable: true })).toEqual([
+      expect.stringMatching(/^rows .*expected .*"Report an Unsafe Site…"/)
+    ])
     expect(
       helpMenuProblems(
         rows(
           HELP_MENU_ROWS.map((l) => (l === 'Zenium Help' ? '!Zenium Help' : l)),
-          {}
-        )
+          HELP_MENU_CHORDS
+        ),
+        { reportable: true }
       )
-    ).toEqual(['Zenium Help is greyed'])
-    expect(helpMenuProblems(rows(HELP_MENU_ROWS, { 'Zenium Help': 'Cmd+Shift+/' }))).toEqual([
-      'Zenium Help shows Cmd+Shift+/'
+    ).toEqual(['Zenium Help is greyed, expected enabled'])
+    expect(helpMenuProblems(rows(HELP_MENU_ROWS, HELP_MENU_CHORDS), { reportable: false })).toEqual(
+      ['Report an Unsafe Site… is enabled, expected greyed']
+    )
+    expect(helpMenuProblems(rows(unreportable, HELP_MENU_CHORDS), { reportable: true })).toEqual([
+      'Report an Unsafe Site… is greyed, expected enabled'
+    ])
+    expect(
+      helpMenuProblems(
+        rows(HELP_MENU_ROWS, { ...HELP_MENU_CHORDS, 'Zenium Help': 'Cmd+Shift+/' }),
+        {
+          reportable: true
+        }
+      )
+    ).toEqual(['Zenium Help shows Cmd+Shift+/, expected none'])
+    expect(helpMenuProblems(rows(HELP_MENU_ROWS, {}), { reportable: true })).toEqual([
+      'Report an Issue… shows no chord, expected Cmd+Alt+Shift+I'
     ])
   })
 })

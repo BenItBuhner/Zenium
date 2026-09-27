@@ -11,9 +11,11 @@ import type {
 } from '../shared/types'
 import { BOOKMARKS_BAR_ID } from '../shared/bookmarks'
 import { HELP_URL, ISSUES_URL } from '../shared/links'
+import { isHorizontalTabs } from '../shared/toolbarLayout'
 import { displayUrl } from '../shared/url'
+import { openHelp, openReportUnsafeSite, reportUnsafeSiteUrl } from './help'
 import { clipLabel } from './menus'
-import { isPrivateFolder } from './model'
+import { isPrivateFolder, orderedTabsForSpace } from './model'
 import { permissionSite } from './permissions'
 
 type Template = MenuItemTemplate[]
@@ -409,18 +411,34 @@ export function applicationMenu(browser: Browser): Template {
   // is the application menu's (where Chrome keeps About on macOS): this build's group – its
   // release notes – over the hairline, then the help (shortcuts-menus-152, -162). The two
   // surfaces read the same, so the eye that learned one finds the other. The `help` role gives
-  // the menu macOS's Search field. Chrome's Report Unsafe Site is Google's Safe Browsing report
-  // form, which Zenium has no path to (services PS-01), so there is no such row; Chrome's Help
-  // chords (⌥⇧⌘I, ⇧⌘/) name no action of the key table, so the rows show none.
+  // the menu macOS's Search field. Chrome's Help menu (`BuildHelpMenu`) is Report an Issue…,
+  // Report an Unsafe Site…, then "Google Chrome Help", its help a tab (`ShowHelp` opens a
+  // singleton tab): Zenium Help opens `HELP_URL` in a new tab in front too (`openHelp`, the
+  // lead's ruling on #578), in a window opened for it when none is up. Report an Issue… shows
+  // Chrome's ⌥⇧⌘I, the key table's `help.reportIssue`, and opens the tracker in the system
+  // browser with or without a window. Report an Unsafe Site… is Google's Safe Browsing report
+  // form for the front window's page in a new tab (`openReportUnsafeSite`, services' word on
+  // #578: shown whether Safe Browsing is on), greyed when the page is not one the form takes –
+  // a `zen://` page, a blank tab, no tab – where the ⋯ menu hides its row: a menu bar greys
+  // rather than hides (§9.30). Chrome's ⇧⌘/ names no action of the key table: no chord there.
   const help: MenuItemTemplate = {
     label: 'Help',
     role: 'help',
     submenu: [
       { label: "What's New", click: withWindow((w) => browser.updates.openWhatsNew(w), true) },
       { type: 'separator' },
-      { label: 'Zenium Help', click: () => browser.platform.shell.openExternal(HELP_URL) },
+      { label: 'Zenium Help', click: withWindow((w) => openHelp(browser, w), true) },
       { label: 'Keyboard Shortcuts', click: settings('shortcuts') },
-      { label: 'Report an Issue…', click: () => browser.platform.shell.openExternal(ISSUES_URL) }
+      {
+        label: 'Report an Issue…',
+        action: 'help.reportIssue',
+        click: () => browser.platform.shell.openExternal(ISSUES_URL)
+      },
+      {
+        label: 'Report an Unsafe Site…',
+        enabled: reportUnsafeSiteUrl(active?.url) !== null,
+        click: withWindow((w) => void openReportUnsafeSite(browser, w))
+      }
     ]
   }
 
@@ -433,20 +451,29 @@ export function applicationMenu(browser: Browser): Template {
  * has no counterpart): New Tab to the Right, Select Next Tab, Select Previous Tab, Duplicate
  * Tab, Mute Site, Pin Tab, Group Tab, Close Other Tabs, Close Tabs to the Right, Move Tab to
  * New Window, Search Tabs, in Chrome's order and without Chrome's separators (its menu is one
- * group). Zenium's strip is vertical, so the two rows Chrome words by direction read as Chrome
- * words them for a vertical strip – "New Tab Below" and "Close Tabs Below", the twins its nib
- * keeps hidden for that case (`IDS_TAB_CXMENU_NEWTABBELOW`, `IDS_TAB_CXMENU_CLOSETABSBELOW`) –
- * and Chrome's Group Tab is Zenium's folder rows in the tab context menu's own words (its Move
- * Tab ▸ folder rows, context-menus-91: "Add Tab to New Folder" while the space has no folder,
- * else "Move to Folder ▸" – a new folder first, then the space's folders, the tab's own checked
- * – with "Remove from Folder" beside it). Every row runs the command the tab's context menu
- * runs (`Menus.showTabContextMenu`), on the front window's active tab: the rows with a chord
- * name their `action`, so the key table's binding shows after the label and the pick runs the
- * key's code; the rest run the tab service's command directly. Greyed with no tab to act on,
- * and where the context menu greys (nothing to close, a page without a site to mute, a pinned
- * or Essentials tab that no folder takes, a local space that has none) – a menu bar greys
- * rather than hides (§9.30) – with the toggles reading their state: Mute Site / Unmute Site,
- * Pin Tab / Unpin Tab. Chrome's Add Tab to New Split stays the View menu's Split View submenu's.
+ * group). The two rows Chrome words by direction follow the strip (`tabDirectionLabels`): its
+ * nib keeps both twins and shows the pair for the strip's orientation
+ * (`app_controller_mac.mm`'s `onVerticalTabStripModeChanged`: "New Tab to the Right" / "Close
+ * Tabs to the Right" beside a horizontal strip, `IDS_TAB_CXMENU_NEWTABBELOW` /
+ * `IDS_TAB_CXMENU_CLOSETABSBELOW` beside a vertical one), so the rows read "to the Right"
+ * under the desktop's horizontal layout and "Below" under its sidebar layouts. Chrome's Group
+ * Tab is Zenium's folder rows in the tab context menu's own words (its Move Tab ▸ folder rows,
+ * context-menus-91: "Add Tab to New Folder" while the space has no folder, else "Move to
+ * Folder ▸" – a new folder first, then the space's folders, the tab's own checked – with
+ * "Remove from Folder" beside it). Every row runs the command the tab's context menu runs
+ * (`Menus.showTabContextMenu`), on the front window's active tab: the rows with a chord name
+ * their `action`, so the key table's binding shows after the label and the pick runs the key's
+ * code; the rest run the tab service's command directly. Greyed with no tab to act on, and
+ * where the context menu greys (nothing to close, a page without a site to mute, a pinned or
+ * Essentials tab that no folder takes, a local space that has none) – a menu bar greys rather
+ * than hides (§9.30) – with the toggles reading their state: Mute Site / Unmute Site, Pin Tab /
+ * Unpin Tab. Move Tab to New Window greys while the window shows one tab alone, as Chrome's
+ * does (`CanMoveTabsToNewWindow`: more tabs than the selection – the move would only close
+ * the window behind it). Chrome's Add Tab to New Split View (`IDC_NEW_SPLIT_TAB`: a new tab
+ * after the active one, the two split side by side) is the key table's New Empty Split View
+ * (`split.newEmpty`, the same code) under Chrome's words, greyed while the active tab is in a
+ * split already – Chrome's command is a no-op there (`ExecuteCommand`'s `IsSplit` guard), and
+ * a menu bar greys a row that would do nothing – or is an Essentials tab, which no split takes.
  */
 function tabMenu(
   browser: Browser,
@@ -458,6 +485,15 @@ function tabMenu(
   const { state, tabs } = browser
   const m = state.model
   const has = Boolean(active)
+  const direction = tabDirectionLabels(
+    win?.formFactor === 'desktop' && isHorizontalTabs(state.settings.toolbarLayout)
+  )
+  // The tabs the window shows in its space – Essentials, pinned and regular – the count Chrome
+  // reads the move row against.
+  const shown = win
+    ? orderedTabsForSpace(m, win.activeSpace(), state.settings.containerSpecificEssentials, win.id)
+        .length
+    : 0
   // Mute Site writes the site's `sound` setting: a page without a site (`zen://`, `about:blank`)
   // has none to write, and the row greys – the command's own precondition (`Tabs.toggleMuteSite`).
   const site = Boolean(active && permissionSite(active.url))
@@ -506,7 +542,7 @@ function tabMenu(
     label: 'Tab',
     submenu: [
       {
-        label: 'New Tab Below',
+        label: direction.newTab,
         enabled: has && !active!.essential,
         click: withActiveTab((t, w) => browser.newTabAfter(t.id, w))
       },
@@ -526,7 +562,7 @@ function tabMenu(
         click: withActiveTab((t, w) => tabs.closeOthers(t.id, w))
       },
       {
-        label: 'Close Tabs Below',
+        label: direction.closeAfter,
         enabled: closeScope('below'),
         click: withActiveTab((t, w) => tabs.closeBelow(t.id, w))
       },
@@ -534,14 +570,50 @@ function tabMenu(
         ? [
             {
               label: 'Move Tab to New Window',
-              enabled: has,
+              enabled: has && shown > 1,
               click: withActiveTab((t, w) => void tabs.moveTabToNewWindow(t.id, null, w))
             }
           ]
         : []),
+      {
+        label: 'Add Tab to New Split View',
+        action: 'split.newEmpty',
+        enabled: has && !active!.essential && !active!.splitGroupId
+      },
       { label: 'Search Tabs…', action: 'tab.search', enabled: Boolean(win) }
     ]
   }
+}
+
+/** The tab rows Chrome words by direction, per strip orientation (`tabDirectionLabels`). */
+export interface TabDirectionLabels {
+  /** Chrome's `IDC_NEW_TAB_TO_RIGHT`: the new tab after this one. */
+  newTab: string
+  /** Chrome's `IDC_WINDOW_CLOSE_TABS_TO_RIGHT`: every tab after this one. */
+  closeAfter: string
+  /** The context menu's Close Tabs Above: every tab before this one (Chrome has no such row). */
+  closeBefore: string
+}
+
+/**
+ * How the tab menus word the rows that name a direction: Chrome keeps both twins in its Tab
+ * menu's nib and in its tab context menu (`tab_menu_model.cc`) and shows the pair for the
+ * strip's orientation – "New Tab to the Right" / "Close Tabs to the Right" beside a horizontal
+ * strip, "New Tab Below" / "Close Tabs Below" beside a vertical one
+ * (`VerticalTabStripStateController::ShouldDisplayVerticalTabs`). The desktop's horizontal
+ * layout (`isHorizontalTabs`) is the one strip that runs along the top; every sidebar layout,
+ * the phone's and the tablet's strips included, runs down, so their rows keep "Below" (the
+ * lead's ruling, wave 7's backlog under §9.37). Close Tabs Above is the vertical strip's
+ * "before" row, which reads "to the Left" along a horizontal one.
+ */
+export function tabDirectionLabels(horizontal: boolean): TabDirectionLabels {
+  return horizontal
+    ? {
+        newTab: 'New Tab to the Right',
+        closeAfter: 'Close Tabs to the Right',
+        closeBefore: 'Close Tabs to the Left'
+      }
+    : { newTab: 'New Tab Below', closeAfter: 'Close Tabs Below', closeBefore: 'Close Tabs Above' }
 }
 
 /** "Recently Closed": newest first, ten at most; the newest is what the reopen chord brings back. */
