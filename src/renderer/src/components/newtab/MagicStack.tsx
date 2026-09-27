@@ -399,25 +399,29 @@ function useSafetyHub(
   }, [reshown, inputs, memories])
 
   // The mount's pick names the type; a module shown again reads the record its impression wrote.
-  const type = ended ? null : first && reshown === 0 ? first.type : activeSafetyHubType(memories)
+  const live = first && reshown === 0 ? first.type : activeSafetyHubType(memories)
   // The run's memory to dismiss from: the record as written back, else the pick's own.
   const dismissFrom = useCallback(
     (t: SafetyHubCardType): SafetyHubCardMemories =>
       memories[t]?.activeSince != null ? memories : (first?.memories ?? memories),
     [memories, first]
   )
-  // Safe Browsing back on, the compromised count gone: the run ends where Chrome's observers end it.
+  // Safe Browsing back on, the compromised count gone: the run ends where Chrome's observers end
+  // it – the card leaves for the rest of the mount (`ended` latches; the render that saw the
+  // clearing is replaced by the one with the latch, so the dismissal reads `cleared` from the
+  // live type, not from the card's) and the run is dismissed once.
   const cleared =
-    type !== null &&
-    ((type === 'safe-browsing' && inputs.safeBrowsingEnabled) ||
-      (type === 'passwords' && inputs.compromisedPasswords === 0))
+    live !== null &&
+    ((live === 'safe-browsing' && inputs.safeBrowsingEnabled) ||
+      (live === 'passwords' && inputs.compromisedPasswords === 0))
   if (cleared && !ended) setEnded(true)
+  const type = ended ? null : live
   const dismissed = useRef<SafetyHubCardType | null>(null)
   useEffect(() => {
-    if (!cleared || type === null || dismissed.current === type) return
-    dismissed.current = type
+    if (!cleared || live === null || dismissed.current === live) return
+    dismissed.current = live
     run('newtab.setSafetyHubCardMemory', {
-      memories: dismissSafetyHubCard(dismissFrom(type), type)
+      memories: dismissSafetyHubCard(dismissFrom(live), live)
     })
   })
 
