@@ -276,7 +276,10 @@ android {
                 webRoot.resolve("src/renderer/src/lib/bookmarkUndo.ts"),
                 webRoot.resolve("src/renderer/src/lib/gestures/swipe.ts"),
                 webRoot.resolve("src/renderer/src/lib/gestures/dismiss.ts"),
-                webRoot.resolve("src/renderer/src/components/messages/ToastCard.tsx")
+                webRoot.resolve("src/renderer/src/components/messages/ToastCard.tsx"),
+                // The keyboard-shortcut helper's pin (ShortcutHelperTest): Chrome's rows name the core's actions, every core group has a home.
+                webRoot.resolve("src/shared/shortcuts.ts"),
+                webRoot.resolve("src/shared/types.ts")
             ).withPathSensitivity(PathSensitivity.RELATIVE)
             // NotificationsTest scans every source set for a deleted channel id, and the drivers
             // (androidTest) are not on the unit tests' classpath: name them as an input so a

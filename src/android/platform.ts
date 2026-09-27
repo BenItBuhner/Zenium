@@ -24,6 +24,7 @@ import type { SharedIntent } from '@shared/shareTarget'
 import type { VoiceEvent, VoiceStartOutcome } from '@shared/voice'
 import type { QrCodeRequest, QrEvent, QrStartOutcome } from '@shared/qrScan'
 import type { ReadAloudVoice } from '@shared/readAloud'
+import type { VersionPageFacts } from '@shared/zenPages'
 import {
   isDebugApplicationId,
   type UpdateAsset,
@@ -118,6 +119,7 @@ import { AndroidSiteData } from './siteData'
 import { type HostShareAction, routeShareAction } from './shareAction'
 import { AndroidStoreIO } from './storeIo'
 import { AndroidTranslateHost, type TranslateProgressEvent } from './translate'
+import { androidVersionFacts } from './versionFacts'
 import { AndroidTabViewHost, type HostHistory, type ViewEventPayloads } from './views'
 
 /** Android 13 (Tiramisu): the first release whose clipboard shows its own "copied" chip. */
@@ -1396,6 +1398,12 @@ export class AndroidPlatform implements Platform {
   private extensionRuntime: AndroidExtensionRuntime | null = null
   private readonly bootEnvironment: PageEnvironment | null
   /**
+   * `zen://version`'s rows (SET-66), asked of the host the first time the page is opened and
+   * kept for the run (nothing in them changes while the app runs). Request-time, not boot-path:
+   * a run that never opens the page never asks.
+   */
+  private versionFactsCache: VersionPageFacts | null = null
+  /**
    * The exit hint's cues per tab (`fullscreen.entered`). The chrome is under the fullscreen
    * layer: the hint is drawn in the page's top layer (`shared/pageHint.ts`), as the desktop's
    * fullscreen hints are.
@@ -1788,11 +1796,33 @@ export class AndroidPlatform implements Platform {
     this.views.pages.reader = (id) => browser.reader.pageHtml(id)
     this.views.pages.image = (id) => browser.sharedImage(id)
     this.views.pages.pdf = (id) => browser.pdf.document(id)
+    this.views.pages.version = () => this.versionFacts()
     // The views ask the core's content-rules service for every navigation's answers (PS-63,
     // PS-64, PS-59 and the guarded rows): the WebView decides from `permissions.resolve`, an
     // extension's rule over the user's, not from the pushed document alone.
     this.views.contentRules = browser.contentRules
     if (this.bootEnvironment) browser.pageControls.setEnvironment(this.bootEnvironment)
+  }
+
+  /**
+   * The rows of `zen://version`: one synchronous hop to the host the first time (`app.versionFacts`,
+   * cheap reads on the bridge thread, as the navigation reads are), the chrome's own facts – the
+   * boot's version, its user agent – where an older host answers nothing.
+   */
+  private versionFacts(): VersionPageFacts {
+    if (!this.versionFactsCache) {
+      let answer: unknown
+      try {
+        answer = this.bridge.callSync<unknown>('app.versionFacts')
+      } catch {
+        answer = undefined
+      }
+      this.versionFactsCache = androidVersionFacts(answer, {
+        version: this.info.version,
+        userAgent: typeof navigator === 'undefined' ? '' : navigator.userAgent
+      })
+    }
+    return this.versionFactsCache
   }
 
   /**

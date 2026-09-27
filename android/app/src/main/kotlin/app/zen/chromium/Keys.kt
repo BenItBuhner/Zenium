@@ -8,32 +8,28 @@ import org.json.JSONObject
 /**
  * Physical keyboard support (DeX, tablets with keyboards). The core owns the shortcut table and
  * mirrors every binding here so page WebViews can decide synchronously whether a key press belongs
- * to the browser (consumed) or to the page.
+ * to the browser (consumed) or to the page. The table's rows come with the bindings, for the
+ * keyboard-shortcut helper ([ShortcutHelper]; the system's Meta + /) to list what routes.
  */
 class Keys {
-    private data class Binding(
-        val ctrl: Boolean,
-        val alt: Boolean,
-        val shift: Boolean,
-        val meta: Boolean,
-        val key: String
-    )
+    private var bindings: Set<ShortcutHelper.Chord> = emptySet()
 
-    private var bindings: List<Binding> = emptyList()
+    /** The core's shortcut rows, as last synced; the helper lists them. */
+    var helperRows: List<ShortcutHelper.Row> = emptyList()
+        private set
 
-    fun setShortcuts(list: JSONArray) {
-        val next = ArrayList<Binding>(list.length())
+    fun setShortcuts(list: JSONArray, shortcuts: JSONArray = JSONArray()) {
+        val next = LinkedHashSet<ShortcutHelper.Chord>(list.length())
         for (i in 0 until list.length()) {
             val b = list.optJSONObject(i) ?: continue
-            next.add(
-                Binding(
-                    b.bool("ctrl"), b.bool("alt"), b.bool("shift"), b.bool("meta"),
-                    normalise(b.str("key"))
-                )
-            )
+            next.add(ShortcutHelper.parseChord(b))
         }
         bindings = next
+        helperRows = ShortcutHelper.parseRows(shortcuts)
     }
+
+    /** True when the chord is one of the synced bindings (what [matches] asks of a key event). */
+    fun routes(chord: ShortcutHelper.Chord): Boolean = chord in bindings
 
     /** The DOM `KeyboardEvent.key` for an Android key event, normalised like the core does. */
     fun domKey(event: KeyEvent): String? {
@@ -55,14 +51,15 @@ class Keys {
     /** True when the key press matches one of the synced shortcuts. */
     fun matches(event: KeyEvent): Boolean {
         val key = domKey(event) ?: return false
-        val pressed = Binding(
-            ctrl = event.isCtrlPressed,
-            alt = event.isAltPressed,
-            shift = event.isShiftPressed,
-            meta = event.isMetaPressed,
-            key = key
+        return routes(
+            ShortcutHelper.Chord(
+                ctrl = event.isCtrlPressed,
+                alt = event.isAltPressed,
+                shift = event.isShiftPressed,
+                meta = event.isMetaPressed,
+                key = key
+            )
         )
-        return bindings.any { it == pressed }
     }
 
     /** Serialise for `__zenHost.onKey`. */
@@ -78,8 +75,6 @@ class Keys {
             "isAutoRepeat" to (event.repeatCount > 0)
         )
     }
-
-    private fun normalise(key: String): String = if (key.length == 1) key.lowercase() else key
 
     companion object {
         private val SPECIAL = mapOf(
