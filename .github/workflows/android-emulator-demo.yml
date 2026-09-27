@@ -130,6 +130,14 @@ on:
         required: false
         type: number
         default: 45
+      driver-timeout-minutes:
+        description: >-
+          Timeout of the step that boots the emulator and runs the driver; below the job's cap it
+          cuts a driver that sinks with the job still alive, so the artifact upload and the
+          emulator-death reading run (the job cap cancels them with it). GitHub's step default.
+        required: false
+        type: number
+        default: 360
       emulator-gpu:
         description: >-
           Renderer behind the emulator's -gpu flag (see the header): swangle, or swiftshader_indirect
@@ -306,6 +314,7 @@ jobs:
           echo "options=$options" >> "$GITHUB_OUTPUT"
       - name: Boot the emulator and run the driver
         uses: reactivecircus/android-emulator-runner@v2
+        timeout-minutes: ${{ inputs.driver-timeout-minutes }}
         with:
           api-level: ${{ inputs.api-level }}
           target: ${{ inputs.target }}
