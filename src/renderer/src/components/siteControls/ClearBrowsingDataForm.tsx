@@ -11,18 +11,19 @@ import { BusyButton } from './primitives'
 import { useClearForm } from './useClearForm'
 
 /**
- * Clear browsing data under a finger (design-language-v2-draft §9.12–§9.14, §9.23, §9.25,
- * §9.30, §10.4): the form sheet the Privacy and security row opens through the Settings
- * builder (`settingsRows.tsx`, `clear-data-open`), drawn with the builder's own rows so it is
- * the page's list continued – the time range as a value row whose picker is the §9.13 sheet
- * over this one (48 header, the range's label centred), Basic or Advanced as two radio rows,
- * a switch row per type with how much the range holds under its label (a type the range cannot
- * clear now is laid out at 40 % and takes no press), the vault passphrase as a §9.12 field when
- * the outcome asks for it, and the two footer actions splitting the width. The state is the
- * dialog's (`useClearForm`), §9.30 included: while it clears every row keeps its value at full
- * opacity and takes no press, the passphrase stays masked in place, only Clear data is busy and
- * Cancel sits at .4; a refused passphrase clears the field, which takes the focus back under its
- * validation text; on success the sheet closes with its values shown until it is gone.
+ * Delete browsing data under a finger (design-language-v2-draft §9.12–§9.14, §9.23, §9.25,
+ * §9.30, §10.4; Chrome's words since M124, `IDS_CLEAR_DATA_DELETE` "Delete data" on Android):
+ * the form sheet the Privacy and security row opens through the Settings builder
+ * (`settingsRows.tsx`, `clear-data-open`), drawn with the builder's own rows so it is the
+ * page's list continued – the time range as a value row whose picker is the §9.13 sheet over
+ * this one (48 header, the range's label centred), Basic or Advanced as two radio rows, a
+ * switch row per type with how much the range holds under its label (a type the range cannot
+ * delete now is laid out at 40 % and takes no press), the vault passphrase as a §9.12 field
+ * when the outcome asks for it, and the two footer actions splitting the width. The state is
+ * the dialog's (`useClearForm`), §9.30 included: while it deletes every row keeps its value at
+ * full opacity and takes no press, the passphrase stays masked in place, only Delete data is
+ * busy and Cancel sits at .4; a refused passphrase clears the field, which takes the focus back
+ * under its validation text; on success the sheet closes with its values shown until it is gone.
  */
 export function ClearBrowsingDataForm({ close }: { close: () => void }): JSX.Element {
   const state = useClearForm(close)
@@ -152,7 +153,7 @@ export function ClearBrowsingDataForm({ close }: { close: () => void }): JSX.Ele
               onClick={state.submit}
               data-testid="clear-data-submit"
             >
-              Clear data
+              Delete data
             </BusyButton>
           </div>
         </div>

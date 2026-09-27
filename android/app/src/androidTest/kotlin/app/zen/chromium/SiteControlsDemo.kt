@@ -21,9 +21,9 @@ import java.util.concurrent.TimeUnit
  * Records the site controls engine on the phone: a page asking for the location and the
  * in-chrome permission prompt that answers it (Allow remembered for the site, Allow once kept for
  * the tab), a private tab on its own WebView profile (the normal profile's cookie is not there,
- * its own cookie is gone once the last private tab closes), Clear browsing data with its count
+ * its own cookie is gone once the last private tab closes), Delete browsing data with its count
  * preview, Safety check and the site-information snapshot; then the chrome on those: the
- * Settings tab's Privacy and Security rows (Safety check, the Clear browsing data form sheet,
+ * Settings tab's Privacy and Security rows (Safety check, the Delete browsing data form sheet,
  * Site settings with a type's sheet and picker) and the menu sheet.
  *
  * The page comes from a loopback HTTP server inside this process and reports what it sees
@@ -163,7 +163,7 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
             note("  normal tab meanwhile: ${describeTab(waitForTitle("SC|cookie:", 15_000))}")
         }
 
-        // 5. Clear browsing data: the preview counts, the clearing, the page without its data.
+        // 5. Delete browsing data: the preview counts, the clearing, the page without its data.
         note("\n5. clear browsing data")
         note("  counts (all time): ${invoke("privacy.clearBrowsingDataCounts", """{"range":"all"}""")}")
         note("  cleared: ${invoke("privacy.clearBrowsingData", """{"range":"all","types":["cookies","cache"]}""")}")
@@ -184,7 +184,7 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
         // 7. The chrome on those results: the Settings tab's Privacy and Security category (#134:
         //    Settings is a tab of the phone chrome, its rows from the builder), where this PR's
         //    groups sit in Chrome's order – Safety check (the standing, Check now, a row per
-        //    area), Clear browsing data (one row whose sheet is the form: Basic, then Advanced,
+        //    area), Delete browsing data (one row whose sheet is the form: Basic, then Advanced,
         //    the range picker over it), Site settings (the catalogue, a type's sheet with its
         //    default and the sites that answered, the §9.13 picker over that, the sites with
         //    their own settings) – and the menu sheet with New Private Tab. The tab is opened by
@@ -213,9 +213,9 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
                 beat()
             }
 
-            // Clear browsing data: the row's form sheet, Basic; Advanced reveals its rows; the range
-            // picker stacks over the form (§9.24); Cancel closes it.
-            if (touchRowExpecting("Clear browsing data", "the form sheet shows Clear data", 10_000) { sheetPresented(CLEAR_SHEET) || findByLabel("Clear data") != null }) {
+            // Delete browsing data (Chrome's words since M124, W8-7): the row's form sheet, Basic;
+            // Advanced reveals its rows; the range picker stacks over the form (§9.24); Cancel closes it.
+            if (touchRowExpecting("Delete browsing data", "the form sheet shows Delete data", 10_000) { sheetPresented(CLEAR_SHEET) || findByLabel("Delete data") != null }) {
                 SystemClock.sleep(SHEET_SETTLE)
                 shot("11-clear-data-basic")
                 beat()
@@ -232,12 +232,12 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
                         !sheetPresented("Time range") && rowListed("Time range")
                     }
                 }
-                // The sheet's leave is the document's word (the tree kept 'Clear data' listed
-                // for 8 s after the sheet had gone in the nightly's run 35737412086).
+                // The sheet's leave is the document's word (the tree kept the primary's label
+                // listed for 8 s after the sheet had gone in the nightly's run 35737412086).
                 if (!touchRowExpecting("Cancel", "the form sheet closes", 8_000) { !sheetPresented(CLEAR_SHEET) }) {
                     backUntil("the form sheet is gone") { !sheetPresented(CLEAR_SHEET) }
                 }
-                if (!awaitSettingsRow("Clear browsing data", 8_000)) awaitRow("Clear browsing data", 8_000)
+                if (!awaitSettingsRow("Delete browsing data", 8_000)) awaitRow("Delete browsing data", 8_000)
                 SystemClock.sleep(600)
             }
 
@@ -749,8 +749,8 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
     }
 
     companion object {
-        /** The Clear browsing data form sheet's title (siteControls/settingsRows.tsx). */
-        private const val CLEAR_SHEET = "Clear browsing data"
+        /** The Delete browsing data form sheet's title (siteControls/settingsRows.tsx, W8-7). */
+        private const val CLEAR_SHEET = "Delete browsing data"
         private const val PORT = 18124
         /** What the Settings rows call the origin (`hostOf`: the URL's host, port included). */
         private const val HOST = "127.0.0.1:$PORT"

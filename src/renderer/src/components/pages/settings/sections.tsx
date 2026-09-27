@@ -3142,11 +3142,11 @@ function resourcesSection({ state, set, navigate }: SectionContext): RowGroup[] 
 
 /**
  * The hub at the top of the section (settings-12; Chrome's card list, `privacyHub.ts`): one
- * §10.4 action row per card in Chrome's order – Clear browsing data…, Third-party cookies,
+ * §10.4 action row per card in Chrome's order – Delete browsing data…, Third-party cookies,
  * Safe Browsing, Site settings, Safety check – the leading glyph, the title, one line under it.
  * A card brings its program's first group on screen (`ctx.reveal`, the section's `?group=`
  * landing) and trails the chevron that says so (Q5 of the #553 lead check: the four landings
- * keep it); Clear browsing data… opens the PS-13 dialog the Clear browsing data row opens, with
+ * keep it); Delete browsing data… opens the PS-13 dialog the Delete browsing data row opens, with
  * §9.1's ellipsis on its name and no chevron (F1). No heading: the cards stand under the
  * section's title as Chrome's do. The desktop and tablet shells' (`layouts`): the phone's
  * Privacy page keeps its plain list.
@@ -3179,8 +3179,10 @@ function privacyHubGroups(ctx: SectionContext): RowGroup[] {
           label: card.label,
           description: lines[card.id],
           leading: <Glyph className="zen-settings-glyph" aria-hidden="true" />,
+          // The dialog's card keeps its pre-M124 name as a search alias (W8-7): a hand that
+          // types "clear browsing data" still finds it.
           ...(group === null
-            ? { form: CLEAR_BROWSING_DATA_FORM }
+            ? { form: CLEAR_BROWSING_DATA_FORM, keywords: ['clear'] }
             : { leaves: 'chevron', onPress: () => reveal?.(group) })
         }
       })
@@ -3191,7 +3193,7 @@ function privacyHubGroups(ctx: SectionContext): RowGroup[] {
 /**
  * Groups in Chrome's Privacy and security order – the hub's cards (`privacyHubGroups`), then
  * Safety check, Safe Browsing, Tracking
- * prevention, Clear browsing data, Cookies and site data, Site settings, HTTPS-only, Secure
+ * prevention, Delete browsing data, Cookies and site data, Site settings, HTTPS-only, Secure
  * DNS, Privacy signals – each program's groups self-contained: the site-controls program's
  * (`siteControls/settingsRows`) at the safety-check, clear-browsing-data and site-settings
  * positions, the request engine's (`tracking.tsx`) at the tracking-prevention position, the

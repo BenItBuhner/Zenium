@@ -70,7 +70,7 @@ export function chromeReference(platform: Platform): ReferenceBinding[] {
     ref('p', ACCEL, 'Print', ['page.printPreview']),
     ref('s', ACCEL, 'Save page as', ['page.savePage']),
     ref('o', ACCEL, 'Open a file', ['page.openFile']),
-    ref('Delete', ACCEL_SHIFT, 'Clear browsing data', ['privacy.clearBrowsingData']),
+    ref('Delete', ACCEL_SHIFT, 'Delete browsing data', ['privacy.clearBrowsingData']),
     ref('m', ACCEL_SHIFT, 'Profile menu'),
     ref('a', ACCEL_SHIFT, 'Tab search (Chrome) / tab actions menu (Edge)', ['tab.search']),
     ref('=', ACCEL, 'Zoom in', ['zoom.in']),

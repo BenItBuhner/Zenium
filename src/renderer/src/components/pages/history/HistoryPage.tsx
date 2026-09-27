@@ -135,7 +135,8 @@ const REMOTE_COPY = {
 /**
  * The History page (`zen://history`, Ctrl+H; Chrome's `chrome://history`): a chrome page tab
  * (design language v2 §10.1) on the shared page frame (`PageFrame.tsx`) – the "History" title
- * block with "Clear browsing data…" in its trailing slot, the search field under it, then every
+ * block with "Delete browsing data…" in its trailing slot (Chrome's `IDS_CLEAR_BROWSING_DATA_TITLE`
+ * since M124), the search field under it, then every
  * visit grouped by day under §9.27 headings ("Today", "Yesterday", the weekday, the date) as
  * §9.21 two-line rows: the favicon on the first line, the title 15/20 over the host 13/20
  * deemphasised, the visit's time at the trailing edge and the row's ⋮ menu (the core's history
@@ -187,7 +188,7 @@ const REMOTE_COPY = {
  * (`display: contents` wrappers, so the row's geometry is untouched), the checkbox an
  * `<input type=checkbox>` labelled by the row's title, the bar's count a `status` (one live
  * region for the count, not one per row). The tasks page is the grid's precedent.
- * "Clear browsing data…" is the services dialog through the frame dialog host (§9.23).
+ * "Delete browsing data…" is the services dialog through the frame dialog host (§9.23).
  */
 export function HistoryPage({ state, tab }: { state: UIState; tab: Tab }): JSX.Element {
   const urlQuery = parseInternalPageUrl(tab.url)?.query?.q ?? ''
@@ -223,7 +224,7 @@ export function HistoryPage({ state, tab }: { state: UIState; tab: Tab }): JSX.E
    * The set the bulk delete's prompt asks about (the bar's Delete, or the Delete key on a
    * selection): the prompt stands while that set is the selection – the same set, by identity
    * (`useRowSelection` hands the set itself back while nothing changed). A live change that
-   * takes a picked row from under it – another window's delete, a Clear browsing data – makes
+   * takes a picked row from under it – another window's delete, a Delete browsing data – makes
    * a new set, and the question is withdrawn rather than answered about a different one: the
    * bar's count shows what is left and Delete asks again.
    */
@@ -397,7 +398,7 @@ export function HistoryPage({ state, tab }: { state: UIState; tab: Tab }): JSX.E
                   data-testid="history-clear-browsing-data"
                   onClick={() => void openClearBrowsingData(tab.id)}
                 >
-                  Clear browsing data…
+                  Delete browsing data…
                 </button>
               )
             }
