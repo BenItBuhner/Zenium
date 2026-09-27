@@ -58,6 +58,7 @@ import app.zen.chromium.ext.ExtensionUrls
 import app.zen.chromium.ext.NavigationReports
 import app.zen.chromium.privacy.PreloadRules
 import app.zen.chromium.privacy.PrivacyFlags
+import app.zen.chromium.privacy.SaverModes
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -2841,9 +2842,9 @@ class TabWebView(
          * Network thread. The served new tab page's own icons come first, on that view alone
          * ([newTabFavicon]; one boolean read on every other); then the viewer page's files; the
          * extension layer next: it serves the extension origins and the CORS proxy of extension
-         * pages; then Preload pages `none` refuses a prefetch ([refusePreload]); anything left goes
-         * to the request engine, whose rule sets include the extensions' declarativeNetRequest
-         * rules.
+         * pages; then Preload pages `none`, or the system's Data Saver or Battery Saver, refuses a
+         * prefetch ([refusePreload]); anything left goes to the request engine, whose rule sets
+         * include the extensions' declarativeNetRequest rules.
          */
         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
             (if (servesNewTabPage) newTabFavicon(request) else null)
@@ -2895,9 +2896,17 @@ class TabWebView(
          * no prefetch cache will serve for the tap that follows – a 204 would, and a navigation
          * onto a 204 commits nothing (the engine's answer for a blocked DOCUMENT), which is not
          * what a refused prefetch may do to the link the user then taps.
+         *
+         * The same answer under the system's Data Saver (this app's data restricted on a metered
+         * network) or Battery Saver, at `standard` and `extended` too (OS-21): Chrome Android's
+         * `IsSomePreloadingEnabled` holds the pages' preloads under either mode (its one
+         * exception, the omnibox's on-press search prefetch, this omnibox does not do), and this
+         * is the phone's one preloading seam. The state is [SaverModes]' as of the last second, read
+         * only for a request that carries the mark – a page's own requests never ask the
+         * system, and the reader is created by the first marked request, not at boot.
          */
         private fun refusePreload(request: WebResourceRequest): WebResourceResponse? =
-            if (PreloadRules.refuses(host.privacy.flags, request.url.toString(), request.requestHeaders)) {
+            if (PreloadRules.refuses(host.privacy.flags, request.url.toString(), request.requestHeaders) { SaverModes.shared(context).state() }) {
                 Blocking.emptyResponse(403, "Forbidden", "text/plain")
             } else {
                 null
