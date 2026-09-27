@@ -310,6 +310,9 @@ function decryptItem(c: NodeCrypto, masterKey: Uint8Array, b64: string): string 
   let cipherText: Uint8Array
   try {
     sequenceOf(node)
+    // The blob names the key it was sealed with; Firefox looks it up by that id, and a field
+    // sealed under some other key is not one this store can open.
+    if (!bytesEqual(octetsOf(childAt(node, 0)), MASTER_KEY_ID)) return null
     const alg = childAt(node, 1)
     sequenceOf(alg)
     if (oidOf(childAt(alg, 0)) !== OID_DES_EDE3_CBC) return null

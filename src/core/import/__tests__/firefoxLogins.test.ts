@@ -144,12 +144,19 @@ describe('firefoxLogins: key4.db + logins.json', () => {
         encryptedUsername: vault.seal('u'),
         encryptedPassword: vault.seal(''),
         formSubmitURL: 'https://empty.example'
+      },
+      {
+        // Sealed under a key this store does not hold (the blob names another key id).
+        hostname: 'https://foreign.example',
+        encryptedUsername: vault.seal('u'),
+        encryptedPassword: vault.sealForeign('p'),
+        formSubmitURL: 'https://foreign.example'
       }
     ])
     const read = firefoxLogins(json, master, NOW)
     expect(read.logins).toEqual([])
     expect(read.invalid).toBe(2)
-    expect(read.unreadable).toBe(1)
+    expect(read.unreadable).toBe(2)
   })
 
   it('reports a corrupt key store as a typed error', () => {

@@ -157,15 +157,11 @@ function wrapLegacy3des(plain: Uint8Array, globalSalt: Uint8Array, password: Buf
   return derSeq(algId, derOctet(ct))
 }
 
-function sealLogin(masterKey: Uint8Array, text: string): string {
+function sealLogin(masterKey: Uint8Array, text: string, keyId = MASTER_KEY_ID): string {
   const iv = randomBytes(8)
   const cipher = createCipheriv('des-ede3-cbc', buf(masterKey), iv)
   const ct = Buffer.concat([cipher.update(Buffer.from(text, 'utf8')), cipher.final()])
-  const blob = derSeq(
-    derOctet(MASTER_KEY_ID),
-    derSeq(derOid(OID_DES_EDE3_CBC), derOctet(iv)),
-    derOctet(ct)
-  )
+  const blob = derSeq(derOctet(keyId), derSeq(derOid(OID_DES_EDE3_CBC), derOctet(iv)), derOctet(ct))
   return buf(blob).toString('base64')
 }
 
@@ -187,6 +183,8 @@ export interface FirefoxVault {
   globalSalt: Uint8Array
   /** Seal one field (username / password) into a logins.json base64 blob. */
   seal(text: string): string
+  /** The same blob naming some other key: a field this store cannot open. */
+  sealForeign(text: string): string
 }
 
 export function firefoxVault(options: FirefoxVaultOptions = {}): FirefoxVault {
@@ -218,7 +216,13 @@ export function firefoxVault(options: FirefoxVaultOptions = {}): FirefoxVault {
       buf(MASTER_KEY_ID)
     )
   }
-  return { key4, masterKey, globalSalt, seal: (text) => sealLogin(masterKey, text) }
+  return {
+    key4,
+    masterKey,
+    globalSalt,
+    seal: (text) => sealLogin(masterKey, text),
+    sealForeign: (text) => sealLogin(masterKey, text, Uint8Array.from([0x01, 0x02, 0x03]))
+  }
 }
 
 export interface FirefoxLoginEntry {
