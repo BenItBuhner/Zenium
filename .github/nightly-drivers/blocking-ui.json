@@ -5,6 +5,6 @@
   "shard": "phone-c",
   "mirrors": "android-blocking-ui-demo.yml",
   "dir": "blocking-ui-demo",
-  "estimate": 4,
-  "note": "Step 11 (W6-S10, PS-43) is the Preload pages scene: two visits to a fixture page on the loopback server, a 5 s wait under none for the prefetch that must not come, up to 15 s under standard for the one that must - about half a minute more than the ten steps measured at 3.5."
+  "estimate": 4.5,
+  "note": "Step 11 (W6-S10, PS-43) is the Preload pages scene: two visits to a fixture page on the loopback server, a 5 s wait under none for the prefetch that must not come, up to 15 s under standard for the one that must - about half a minute more than the ten steps measured at 3.5. Step 12 (W6-D24, OS-21) is the saver-modes scene at standard: Battery Saver on (battery unplugged, low_power 1) and Data Saver on (Wi-Fi metered, restrict-background), each a 5 s wait for the prefetch that must not come and a control visit after - about 40 s more on the good path, a minute when the Wi-Fi cannot be marked metered and the radio's network stands in; every lever put back in a finally."
 }
