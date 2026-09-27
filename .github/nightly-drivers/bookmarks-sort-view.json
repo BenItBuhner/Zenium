@@ -1,0 +1,10 @@
+{
+  "id": "bookmarks-sort-view",
+  "order": 119,
+  "class": "BookmarksDemo",
+  "shard": "phone-d",
+  "mirrors": "android-bookmarks-sort-view-demo.yml",
+  "dir": "bookmarks-sort-view-demo",
+  "estimate": 4,
+  "note": "The phone bookmarks panel's Sort and view options against Chrome 152 (HB-13, W6-E1, PR #612): the tab-group drivers' seeded profile with five nodes made through the core at warm-up (Mango, the folder Work, apple, the folder arts, Zebra under Mobile bookmarks), every press in the sheet a real touch, every outcome read off the core's settings and nodes – the header's Sort and view options button and its eight radio rows in Chrome's words with Chrome's defaults checked; each order picked (the pref, the live region's announcement, the list re-ordered folders first then by the key, A to Z case-insensitive); the manual → A to Z re-sort sampled per animation frame for the glide; Compact view and Visual view (tiles vs leads, the picture or the glyph on each tile); a real touch on a row opening its page and stamping dateLastUsed, then Sort by last opened; the dark scheme for the record (night mode put back off at the end). About three minutes of driver after the boot; seated on phone-d, the phone shard with the most room (62 of 68 before it)."
+}

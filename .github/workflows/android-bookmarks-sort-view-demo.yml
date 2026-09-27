@@ -1,0 +1,64 @@
+name: Android bookmarks sort and view demo
+
+# Records the phone bookmarks panel's Sort and view options against Chrome 152 (parity row HB-13,
+# W6-E1; PR #612): the tab-group drivers' seeded profile with five nodes made through the core at
+# warm-up (Mango, the folder Work, apple, the folder arts, Zebra under Mobile bookmarks), every
+# press in the sheet a real touch, every outcome read off the core's settings and nodes or the
+# chrome's DOM – the header's "Sort and view options" button and its sheet (eight radio rows in
+# Chrome's words, "Sort by manual order" and "Visual view" checked as Chrome's defaults); each order
+# under a finger (the pref written, the live region's announcement, the list re-ordered folders
+# first then by the key, A to Z case-insensitive); the manual → A to Z re-sort sampled per animation
+# frame so the glide is on record rather than a cut; "Compact view" and "Visual view" (the tiles
+# against the leads, the page image or the glyph on each tile); a real touch on a row opening its
+# page in the current tab and stamping dateLastUsed, then "Sort by last opened"; the dark scheme for
+# the record, the device's night mode put back off at the end. Stills `bookmarks-sort-view-NN-
+# <state>.png`, light then dark. The driver writes `bookmarks-sort-view-findings.txt` with an OK or
+# FAIL per claim and fails when any did. Dispatch-only, like the other demos: it takes about four
+# minutes; the nightly sweep runs the same driver on its phone-d shard
+# (.github/nightly-drivers/bookmarks-sort-view.json). The build, the emulator and the Gradle cache
+# live in android-emulator-demo.yml; this file only picks the driver and the demo it runs.
+on:
+  workflow_dispatch:
+  # TEMPORARY (W6-E1): the one recorded run of PR #612 on its own branch; removed before READY.
+  push:
+    branches:
+      - cursor/android-bookmarks-sort-view-9271
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-bookmarks-sort-view-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Bookmarks sort and view demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.BookmarksDemo
+        DEMO_DIR=bookmarks-sort-view-demo
+        DEMO_OUT=artifacts/android-bookmarks-sort-view-demo
+        DEMO_VIDEO=android-bookmarks-sort-view-demo.mp4
+      artifact-name: android-bookmarks-sort-view-demo
+      artifact-path: artifacts/android-bookmarks-sort-view-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Bookmarks sort and view demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.BookmarksDemo
+        DEMO_DIR=bookmarks-sort-view-demo
+        DEMO_OUT=artifacts/android-bookmarks-sort-view-demo
+        DEMO_VIDEO=android-bookmarks-sort-view-demo.mp4
+      artifact-name: android-bookmarks-sort-view-demo-second-boot
+      artifact-path: artifacts/android-bookmarks-sort-view-demo/
