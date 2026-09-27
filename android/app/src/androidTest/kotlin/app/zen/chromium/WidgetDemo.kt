@@ -89,7 +89,18 @@ import kotlin.math.roundToInt
  *    record;
  *  - the launcher's four static shortcuts read from the manifest in rank order with their
  *    landings, the Search shortcut fired cold through the trampoline with the same frame read,
- *    Scan QR code and New tab fired warm from Home.
+ *    Scan QR code and New tab fired warm from Home;
+ *  - the Quick Actions widget (WID-02), Chrome's second provider – the search bar with the
+ *    Voice, Private and QR-scan buttons in one resizable widget: its info read (Chrome's floor,
+ *    48 dp, resizable both ways), an id bound on the driver's host and the face laid at each of
+ *    Chrome's three forms by height (xsmall under 72 dp, small under 155, medium from there) with
+ *    the host's default padding kept, so the PROVIDER is handed the exact size a launcher hands
+ *    it; the form read off the host (its row, the bar's click, each button's visibility by the
+ *    drop rule), the three surfaces read against the system's roles and the drawn pixels – opaque
+ *    and without a hairline, as Chrome's quick action widget is; the floor scene at the
+ *    provider's minimum width, where the scan button drops on xsmall and small as Chrome's Lens
+ *    does; a finger on each part of the small form (voice search, the omnibox, a private tab or
+ *    the toast, the QR scanner). A still of each form (`widget-<theme>-quick-actions-<form>.png`).
  *
  * Every check is a finding line (`widget-findings.txt`); one that fails fails the run at the end,
  * after the stills are down. Handshake and screenshots (`widget-<theme>-*.png`) as in the other
@@ -216,6 +227,7 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         ) { scanLanded(30_000) }
 
         shortcuts()
+        quickActions()
         finding("\nend: ${describeActive()}; ${failures.size} failed check(s)")
     }
 
@@ -417,8 +429,13 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         return ContextThemeWrapper(app.createConfigurationContext(configuration), android.R.style.Theme_DeviceDefault_DayNight)
     }
 
-    /** The face in a 4×1 frame near the top of a wallpaper-like backdrop laid over the window, taking the touches. */
-    private fun showOnTheBackdrop(face: View, hostView: AppWidgetHostView?) {
+    /**
+     * The face in a 4×1 frame near the top of a wallpaper-like backdrop laid over the window,
+     * taking the touches. [fourCells] sizes the host as the search widget's scenes have it – the
+     * frame's size handed to the provider, the host's padding zeroed so the face fills the frame;
+     * false leaves the frame to [layTheFace], which keeps the host's padding.
+     */
+    private fun showOnTheBackdrop(face: View, hostView: AppWidgetHostView?, fourCells: Boolean = true) {
         onMain {
             val content = activity.findViewById<ViewGroup>(android.R.id.content)
             val backdrop = FrameLayout(activity).apply {
@@ -430,13 +447,15 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
             val frameWidth = dp(FRAME_WIDTH_DP)
             val frameHeight = dp(FRAME_HEIGHT_DP)
             val frameTop = (this@WidgetDemo.height * FRAME_TOP_SHARE).roundToInt()
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                hostView?.updateAppWidgetSize(Bundle(), listOf(SizeF(FRAME_WIDTH_DP.toFloat(), FRAME_HEIGHT_DP.toFloat())))
-            } else {
-                @Suppress("DEPRECATION")
-                hostView?.updateAppWidgetSize(null, FRAME_WIDTH_DP, FRAME_HEIGHT_DP, FRAME_WIDTH_DP, FRAME_HEIGHT_DP)
+            if (fourCells) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    hostView?.updateAppWidgetSize(Bundle(), listOf(SizeF(FRAME_WIDTH_DP.toFloat(), FRAME_HEIGHT_DP.toFloat())))
+                } else {
+                    @Suppress("DEPRECATION")
+                    hostView?.updateAppWidgetSize(null, FRAME_WIDTH_DP, FRAME_HEIGHT_DP, FRAME_WIDTH_DP, FRAME_HEIGHT_DP)
+                }
+                hostView?.setPadding(0, 0, 0, 0)
             }
-            hostView?.setPadding(0, 0, 0, 0)
             cells.addView(face, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
             backdrop.addView(
                 cells,
@@ -524,23 +543,24 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         return true
     }
 
-    private fun touchTheMic() {
+    /** The [part] (its view [id] on the face) under a finger: voice search; [still] the shot's name. */
+    private fun touchTheMic(id: Int = R.id.widget_search_mic, still: String = "02-mic-listening", part: String = "the mic") {
         val before = activeCoreTab()?.optString("id").orEmpty()
         val intentBefore = onMain { activity.intent }
         val starts = recognizer.starts
-        expect("a finger reaches the mic on the face", touchPart(R.id.widget_search_mic))
+        expect("a finger reaches $part on the face", touchPart(id))
         SystemClock.sleep(150)
         hideOverlay()
         val up = awaitVoicePhase(setOf("starting", "listening"), 10_000)
-        expect("the mic lands in voice search: the sheet is up (phase ${voicePhase()})", up)
+        expect("$part lands in voice search: the sheet is up (phase ${voicePhase()})", up)
         expect("the widget's intent arrived through onNewIntent (the running activity, no relaunch)", onMain { activity.intent } !== intentBefore && !onMain { activity.isDestroyed })
         expect("the recogniser was started for it", awaitTrue(4_000) { recognizer.starts > starts })
         expect("the sheet reads Listening", awaitVoicePhase(setOf("listening"), 6_000) && waitFor(LISTENING_TITLE, 5_000) != null)
         val tab = activeCoreTab()
         expect("the landing opened a tab of its own, blank, sent by another app (fromIntent)", tab?.optString("id") != before && emptyTabUrl(tab?.optString("url")) && tab?.optBoolean("fromIntent") == true)
         SystemClock.sleep(800)
-        shot("02-mic-listening")
-        finding("after the mic: ${describeActive()}, voice phase ${voicePhase()}, recogniser starts ${recognizer.starts}")
+        shot(still)
+        finding("after $part: ${describeActive()}, voice phase ${voicePhase()}, recogniser starts ${recognizer.starts}")
         back()
         expect("a back closes the listening sheet", awaitSurface(false, 6_000))
         expect("the cancelled session let the recogniser go", awaitTrue(3_000) { recognizer.cancels + recognizer.destroys > 0 })
@@ -548,53 +568,60 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         showOverlay()
     }
 
-    private fun touchTheFace() {
+    /** The [part] (its view [id]) under a finger: the omnibox, the landing traced as [scene]; [still] the shot's name. */
+    private fun touchTheFace(
+        id: Int = R.id.widget_search_face,
+        still: String = "03-pill-omnibox-keyboard",
+        scene: String = "widget-land-search-warm",
+        part: String = "the pill"
+    ) {
         val before = activeCoreTab()?.optString("id").orEmpty()
         var reading: OmniboxOpen? = null
         var keyboard = false
-        val scene = traceFrames("widget-land-search-warm", JankBudget.Kind.OPEN) {
-            expect("a finger reaches the pill on the face", touchPart(R.id.widget_search_face))
+        val traced = traceFrames(scene, JankBudget.Kind.OPEN) {
+            expect("a finger reaches $part on the face", touchPart(id))
             SystemClock.sleep(150)
             hideOverlay()
             reading = awaitOmniboxOpen(10_000)
             keyboard = awaitIme(true, 8_000)
         }
         val open = reading
-        expect("the pill lands in the omnibox, focused (${open?.describe()})", open?.ok == true)
+        expect("$part lands in the omnibox, focused (${open?.describe()})", open?.ok == true)
         expect("the keyboard is up on the landing", keyboard)
         val tab = activeCoreTab()
         expect("the omnibox is the landing tab's own, in new-tab mode", chromeJsString(URLBAR_MODE_JS) == "new-tab" && chromeJsString(URLBAR_TAB_JS) == tab?.optString("id"))
         expect("the landing opened a tab of its own, blank, sent by another app (fromIntent)", tab?.optString("id") != before && emptyTabUrl(tab?.optString("url")) && tab?.optBoolean("fromIntent") == true)
         SystemClock.sleep(600)
-        shot("03-pill-omnibox-keyboard")
-        finding("after the pill: ${describeActive()}, ${open?.describe()}, keyboard $keyboard")
-        finding("  RULING 5, the warm landing traced: " + (scene.trace?.describe() ?: "trace: none read (${scene.traceMissing ?: "no trace asked"})"))
+        shot(still)
+        finding("after $part: ${describeActive()}, ${open?.describe()}, keyboard $keyboard")
+        finding("  RULING 5, the warm landing traced: " + (traced.trace?.describe() ?: "trace: none read (${traced.traceMissing ?: "no trace asked"})"))
         closeUrlField()
         awaitIme(false, 4_000)
         backToThePrevious(tab?.optString("id"))
         showOverlay()
     }
 
-    private fun touchTheMask() {
+    /** The [part] (its view [id]) under a finger: a private tab, or the toast; [still] the shot's stem (`-tab` / `-unavailable`). */
+    private fun touchTheMask(id: Int = R.id.widget_search_private, still: String = "04-mask-private", part: String = "the mask") {
         val before = activeCoreTab()?.optString("id").orEmpty()
         watchToasts()
-        expect("a finger reaches the mask on the face", touchPart(R.id.widget_search_private))
+        expect("a finger reaches $part on the face", touchPart(id))
         SystemClock.sleep(150)
         hideOverlay()
         val landed = privateLanded(12_000)
-        expect("the mask lands in a new private tab, or in the toast where this WebView has no profiles ($landed)", landed != null)
+        expect("$part lands in a new private tab, or in the toast where this WebView has no profiles ($landed)", landed != null)
         val tab = activeCoreTab()
         if (landed == PRIVATE_TAB) {
             expect("the private tab is a tab another app sent (fromIntent)", tab?.optString("id") != before && tab?.optBoolean("fromIntent") == true)
             expect("the chrome is on the private theme", awaitTrue(6_000) { host.themeDark && host.privateSurface })
             waitFor(PRIVATE_TITLE, 8_000)
             SystemClock.sleep(600)
-            shot("04-mask-private-tab")
+            shot("$still-tab")
         } else {
             expect("no tab opened for a private landing this WebView cannot keep private", tab?.optString("id") == before)
-            shot("04-mask-private-unavailable")
+            shot("$still-unavailable")
         }
-        finding("after the mask: ${describeActive()}, landing $landed, private surface ${host.privateSurface}")
+        finding("after $part: ${describeActive()}, landing $landed, private surface ${host.privateSurface}")
         if (landed == PRIVATE_TAB) backToThePrevious(tab?.optString("id"))
         showOverlay()
     }
@@ -908,6 +935,370 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         } else null
         pendingIntent.send(app, 0, null, null, null, null, options)
     }
+
+    // --- 9. the Quick Actions widget (WID-02) ----------------------------------------------------
+
+    /**
+     * Chrome's second widget: the search bar with the Voice, Private and QR-scan buttons in one
+     * resizable widget (the Lens slot the scanner's, the Dino slot absent until the offline game
+     * exists). Its provider as the picker lists it – Chrome's floor (300 dp, 220 under sw240, 260
+     * from sw280: 260 on a phone) by 48 dp, resizable both ways, home screen and searchbox, no
+     * target cells and no ceiling – then an id bound on the driver's host, the face shown with
+     * the host's default padding KEPT so the provider is handed the exact size a launcher hands
+     * it, and laid at each of Chrome's three forms by height (xsmall under 72 dp, small under 155,
+     * medium from there): the form's row read in the host, the bar's click, each button's
+     * visibility against the provider's drop rule (one button per button width short of the
+     * reference width, in Chrome's order less the Dino), the size the host recorded, the parts'
+     * words in the tree, the card's and the buttons' boxes, the three surfaces against the
+     * system's roles and the drawn pixels; the floor scene at the provider's minimum width, where
+     * the scan button drops on xsmall and small – as Chrome's Lens and Dino drop there, leaving
+     * Voice and Incognito – and medium keeps all three; then a finger on each part of the small
+     * form, laid wide.
+     */
+    private fun quickActions() {
+        ensureForeground()
+        val manager = AppWidgetManager.getInstance(app)
+        val provider = ComponentName(app, QuickActionsWidgetProvider::class.java)
+        val info = manager.getInstalledProvidersForPackage(app.packageName, null).firstOrNull { it.provider == provider }
+        expect("the quick actions widget's provider is installed for ${app.packageName}", info != null)
+        info ?: return
+        finding("\nquick actions provider: ${describe(info)}")
+        val floorPx = app.resources.getDimensionPixelSize(R.dimen.widget_quick_actions_width)
+        val floorDp = (floorPx / density).roundToInt()
+        finding("the provider's floor in this configuration: $floorDp dp ($floorPx px; smallest width ${app.resources.configuration.smallestScreenWidthDp} dp – Chrome's 300, 220 under sw240, 260 from sw280)")
+        expect("the widget asks for Chrome's floor by 48 dp (minWidth the quick action width, minHeight the xsmall form)", info.minWidth == floorPx && info.minHeight == dp(QUICK_XSMALL_CARD_DP))
+        expect(
+            "the widget resizes both ways and its floor is its minimum (minResizeWidth = minWidth, minResizeHeight = minHeight), as Chrome's info",
+            info.resizeMode == (AppWidgetProviderInfo.RESIZE_HORIZONTAL or AppWidgetProviderInfo.RESIZE_VERTICAL) && info.minResizeWidth == info.minWidth && info.minResizeHeight == info.minHeight
+        )
+        expect(
+            "the widget is for the home screen and the searchbox category, as Chrome's",
+            info.widgetCategory and AppWidgetProviderInfo.WIDGET_CATEGORY_HOME_SCREEN != 0 && info.widgetCategory and AppWidgetProviderInfo.WIDGET_CATEGORY_SEARCHBOX != 0
+        )
+        expect("the widget names itself for the picker", info.loadLabel(app.packageManager) == QUICK_ACTIONS_LABEL)
+        expect("the widget asks for no periodic update", info.updatePeriodMillis == 0)
+        expect("a preview image for pickers without a preview layout", info.previewImage == R.drawable.widget_quick_actions_preview)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            expect(
+                "no target cells and no ceiling, as Chrome's info declares none; a description and a preview layout for the picker",
+                info.targetCellWidth == 0 && info.targetCellHeight == 0 && info.maxResizeWidth == 0 && info.maxResizeHeight == 0 &&
+                    !info.loadDescription(app).isNullOrEmpty() && info.previewLayout == R.layout.widget_quick_actions_preview
+            )
+        }
+
+        val grant = shellCommand("appwidget grantbind --package ${app.packageName} --user 0").trim()
+        val widgetHost = AppWidgetHost(app, HOST_ID).also { widgetHost = it }
+        onMain { widgetHost.startListening() }
+        val id = widgetHost.allocateAppWidgetId().also { widgetId = it }
+        val bound = onMain { manager.bindAppWidgetIdIfAllowed(id, provider) }
+        finding("bind: grantbind '${grant.ifEmpty { "(no output)" }}', id $id bound $bound")
+        expect("the id binds to the quick actions provider on the driver's host", bound)
+        if (!bound) {
+            takeDownTheHost()
+            return
+        }
+        val launcherContext = launcherContext()
+        val hostView = onMain { widgetHost.createView(launcherContext, id, info) }
+        // The provider hears the bind and answers with its views for the options it finds – no
+        // sizes yet, so the orientation pair for 0 × 0 dp: xsmall, every button dropped. The first
+        // laying hands it a size.
+        val delivered = awaitTrue(8_000) { onMain { hostView.findViewById<View>(R.id.widget_quick_actions_bar)?.hasOnClickListeners() == true } }
+        expect("the provider's RemoteViews reach the host after the bind (the bar has its click)", delivered)
+        widgetView = hostView
+        showOnTheBackdrop(hostView, hostView, fourCells = false)
+        val padding = onMain { Rect(hostView.paddingLeft, hostView.paddingTop, hostView.paddingRight, hostView.paddingBottom) }
+        val wideDp = FRAME_WIDTH_DP - ((padding.left + padding.right) / density).roundToInt()
+        finding(
+            "the host's default padding ${padding.left}/${padding.top}/${padding.right}/${padding.bottom} px, kept: the frame is the provider's size plus it; " +
+                "the wide scenes hand the provider $wideDp dp (the search widget's $FRAME_WIDTH_DP dp frame less the padding), the floor scene $floorDp dp"
+        )
+
+        val forms = QuickActionsWidgetProvider.Variant.values()
+        for (variant in forms) {
+            theForm(manager, id, hostView, variant, wideDp)
+            saveFace("widget-$THEME-quick-actions-${variant.name.lowercase()}")
+            shot("${11 + variant.ordinal}-quick-actions-${variant.name.lowercase()}")
+            theQuickActionsColours(launcherContext, variant)
+        }
+        for (variant in forms) {
+            theForm(manager, id, hostView, variant, floorDp)
+            saveFace("widget-$THEME-quick-actions-floor-${variant.name.lowercase()}")
+            if (variant == QuickActionsWidgetProvider.Variant.SMALL) shot("14-quick-actions-floor-small")
+        }
+        expect(
+            "at Chrome's phone floor ($floorDp dp) the xsmall and small forms keep Voice and Private and drop the scan button, as Chrome's drop Dino and Lens there and keep Voice and Incognito",
+            QuickActionsWidgetProvider.Variant.XSMALL.shown(floorDp) == listOf(QuickActionsWidgetProvider.VOICE, QuickActionsWidgetProvider.PRIVATE) &&
+                QuickActionsWidgetProvider.Variant.SMALL.shown(floorDp) == listOf(QuickActionsWidgetProvider.VOICE, QuickActionsWidgetProvider.PRIVATE)
+        )
+        expect(
+            "at Chrome's phone floor the medium form keeps all three, as Chrome's keeps Voice, Incognito and Lens and drops the Dino alone",
+            QuickActionsWidgetProvider.Variant.MEDIUM.shown(floorDp) == QuickActionsWidgetProvider.BUTTONS
+        )
+
+        theForm(manager, id, hostView, QuickActionsWidgetProvider.Variant.SMALL, wideDp)
+        touchTheMic(R.id.widget_quick_actions_voice, "15-quick-actions-voice-listening", "the voice button")
+        touchTheFace(R.id.widget_quick_actions_bar, "16-quick-actions-bar-omnibox-keyboard", "widget-quick-actions-land-search-warm", "the bar")
+        touchTheMask(R.id.widget_quick_actions_private, "17-quick-actions-private", "the private button")
+        touchTheScanner(R.id.widget_quick_actions_scan, "18-quick-actions-scan")
+        takeDownTheHost()
+    }
+
+    /**
+     * The frame re-laid so the PROVIDER is handed exactly [widthDp] × [heightDp]: a launcher's host
+     * subtracts its default padding (`default_app_widget_padding_*`, 8 dp a side on a phone) from
+     * the frame before the sizes reach the provider's options, and the face fills the padded area;
+     * the padding is kept here so the drawn face is the width the provider measured for.
+     */
+    private fun layTheFace(hostView: AppWidgetHostView, widthDp: Int, heightDp: Int) {
+        onMain {
+            val cells = frame ?: return@onMain
+            val padX = hostView.paddingLeft + hostView.paddingRight
+            val padY = hostView.paddingTop + hostView.paddingBottom
+            cells.layoutParams = (cells.layoutParams as FrameLayout.LayoutParams).apply {
+                width = dp(widthDp) + padX
+                height = dp(heightDp) + padY
+            }
+            val frameWidthDp = widthDp + padX / density
+            val frameHeightDp = heightDp + padY / density
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                hostView.updateAppWidgetSize(Bundle(), listOf(SizeF(frameWidthDp, frameHeightDp)))
+            } else {
+                @Suppress("DEPRECATION")
+                hostView.updateAppWidgetSize(null, frameWidthDp.roundToInt(), frameHeightDp.roundToInt(), frameWidthDp.roundToInt(), frameHeightDp.roundToInt())
+            }
+        }
+    }
+
+    /**
+     * The face laid at [widthDp] by the form's height and the provider's answer awaited in the
+     * host: the form's row, the bar's click, each button's visibility as the drop rule has it at
+     * that width; the size the host recorded in the widget's options; the parts' words in the tree
+     * and the dropped buttons' absent; the card's and the buttons' boxes.
+     */
+    private fun theForm(manager: AppWidgetManager, id: Int, hostView: AppWidgetHostView, variant: QuickActionsWidgetProvider.Variant, widthDp: Int) {
+        val form = variant.name.lowercase()
+        val heightDp = formHeightDp(variant)
+        val shown = variant.shown(widthDp)
+        val hidden = QuickActionsWidgetProvider.BUTTONS - shown.toSet()
+        finding("\nquick actions $form at $widthDp × $heightDp dp: the rule shows ${wordsOf(shown)}" + (if (hidden.isEmpty()) "" else " and drops ${wordsOf(hidden)}"))
+        layTheFace(hostView, widthDp, heightDp)
+        val answered = awaitTrue(8_000) {
+            onMain {
+                hostView.findViewById<View>(variant.rowId) != null &&
+                    hostView.findViewById<View>(R.id.widget_quick_actions_bar)?.hasOnClickListeners() == true &&
+                    QuickActionsWidgetProvider.BUTTONS.all { hostView.findViewById<View>(it.viewId)?.visibility == (if (it in shown) View.VISIBLE else View.GONE) }
+            }
+        }
+        val options = manager.getAppWidgetOptions(id)
+        val sizes: List<SizeF>? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) sizesIn(options) else null
+        val rows = onMain { QuickActionsWidgetProvider.Variant.values().filter { hostView.findViewById<View>(it.rowId) != null }.map { it.name.lowercase() } }
+        finding(
+            "  the host's options: sizes $sizes, min ${options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH)}×${options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT)} dp, " +
+                "max ${options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH)}×${options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT)} dp; the host shows the row(s) $rows, buttons ${describeButtons(hostView)}"
+        )
+        expect(
+            "the provider answers $widthDp × $heightDp dp with the $form form: its row in the host, the bar clickable, ${wordsOf(shown)} visible" + (if (hidden.isEmpty()) "" else ", ${wordsOf(hidden)} gone"),
+            answered
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            expect(
+                "the host handed the provider exactly $widthDp × $heightDp dp (the frame less its default padding, one size)",
+                sizes != null && sizes.size == 1 && abs(sizes[0].width - widthDp) < 0.5f && abs(sizes[0].height - heightDp) < 0.5f
+            )
+        }
+        SystemClock.sleep(600)
+        expect(
+            "the $form face reads the omnibox's hint and the shown buttons' names in the tree (${wordsOf(shown)})",
+            awaitTrue(6_000) { labelsInFrame(HINT_TEXT) && shown.all { labelsInFrame(labelOf(it)) } }
+        )
+        if (hidden.isNotEmpty()) expect("the dropped buttons (${wordsOf(hidden)}) have no node in the tree", hidden.none { labelsInFrame(labelOf(it)) })
+        expect("the mark carries no name of its own (decorative)", onMain { hostView.findViewById<View>(R.id.widget_quick_actions_mark)?.importantForAccessibility == View.IMPORTANT_FOR_ACCESSIBILITY_NO })
+        val card = viewBounds(android.R.id.background)
+        val buttonDp = formButtonDp(variant)
+        finding(
+            "  card ${card.width()}×${card.height()} px (${dpOf(card.width())}×${dpOf(card.height())} dp) at $card, bar ${viewBounds(R.id.widget_quick_actions_bar)}, " +
+                "buttons ${shown.map { "${wordOf(it)} ${viewBounds(it.viewId)}" }}"
+        )
+        expect("the $form card is the form's fixed height (${variant.heightDp} dp) at the provider's width ($widthDp dp)", card.height() == dp(variant.heightDp) && card.width() == dp(widthDp))
+        expect("the shown buttons stand in Chrome's $buttonDp dp boxes", shown.all { viewBounds(it.viewId).let { box -> box.width() == dp(buttonDp) && box.height() == dp(buttonDp) } })
+    }
+
+    /**
+     * The face's colours: the three surfaces Chrome's quick action widget takes from Material You
+     * – the card colorSurface (`widget_bg`), the bar colorSurfaceContainerHigh (`widget_searchbox_bg`,
+     * the search widget's fill at full alpha), the buttons colorSurfaceContainer (`widget_button_bg`)
+     * – resolved in the launcher's configuration and read against the system's own roles on 34+
+     * (the palette re-lit on 31–33; the v2 page and panel below 31), every one opaque: Chrome's
+     * quick action widget carries no 0.9 (that is the classic search widget's alone). Then the
+     * drawn face: a pixel of the card's interior, of the bar's and of a button's disc – or, on
+     * xsmall, where the button is a bare ripple, the card showing through – each its surface's
+     * colour with nothing composited; the card over black and over white for its alpha (255); its
+     * top edge the interior's colour on 12+ (no hairline), the v2 border's below.
+     */
+    private fun theQuickActionsColours(launcherContext: Context, variant: QuickActionsWidgetProvider.Variant) {
+        val res = launcherContext.resources
+        val theme = launcherContext.theme
+        val dark = THEME == "dark"
+        val dynamic = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+        val form = variant.name.lowercase()
+        val surface = res.getColor(R.color.widget_quick_actions_surface, theme)
+        val bar = res.getColor(R.color.widget_quick_actions_bar, theme)
+        val button = res.getColor(R.color.widget_quick_actions_button, theme)
+        val ink = res.getColor(R.color.widget_search_ink, theme)
+        val searchFill = res.getColor(R.color.widget_search_fill, theme)
+        finding("  quick actions colours in the launcher's configuration ($THEME): card ${hex(surface)} bar ${hex(bar)} buttons ${hex(button)} ink ${hex(ink)}; the search widget's fill ${hex(searchFill)}")
+        if (variant == QuickActionsWidgetProvider.Variant.XSMALL) {
+            when {
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> {
+                    val systemSurface = res.getColor(if (dark) android.R.color.system_surface_dark else android.R.color.system_surface_light, theme)
+                    val systemBar = res.getColor(if (dark) android.R.color.system_surface_container_high_dark else android.R.color.system_surface_container_high_light, theme)
+                    val systemButton = res.getColor(if (dark) android.R.color.system_surface_container_dark else android.R.color.system_surface_container_light, theme)
+                    finding("  the system's roles: surface ${hex(systemSurface)} surfaceContainerHigh ${hex(systemBar)} surfaceContainer ${hex(systemButton)}")
+                    expect("the card is the system's colorSurface, as Chrome's widget_bg", surface == systemSurface)
+                    expect("the bar is the system's colorSurfaceContainerHigh, as Chrome's widget_searchbox_bg", bar == systemBar)
+                    expect("the buttons are the system's colorSurfaceContainer, as Chrome's widget_button_bg", button == systemButton)
+                }
+                dynamic -> {
+                    val v2Page = res.getColor(if (dark) R.color.v2_page_dark else R.color.v2_page_light, theme)
+                    val v2Panel = res.getColor(if (dark) R.color.v2_panel_dark else R.color.v2_panel_light, theme)
+                    expect("on Android 12 and 13 the three surfaces are the system's neutral-variant palette re-lit: distinct, none the v2 tokens", setOf(surface, bar, button).size == 3 && surface != v2Page && bar != v2Panel && button != v2Panel)
+                }
+                else -> {
+                    val v2Page = res.getColor(if (dark) R.color.v2_page_dark else R.color.v2_page_light, theme)
+                    val v2Panel = res.getColor(if (dark) R.color.v2_panel_dark else R.color.v2_panel_light, theme)
+                    expect("below Android 12 the card is the v2 page and the bar and the buttons the v2 panel", surface == v2Page && bar == v2Panel && button == v2Panel)
+                }
+            }
+            expect("the three surfaces are opaque: Chrome's quick action widget has no 0.9", Color.alpha(surface) == 0xFF && Color.alpha(bar) == 0xFF && Color.alpha(button) == 0xFF)
+            expect("the bar's role is the search widget's fill, at full alpha", rgb(bar) == rgb(searchFill))
+            expect("the ink is the search widget's (colorOnSurfaceVariant), opaque", Color.alpha(ink) == 0xFF)
+        }
+
+        val drawn = drawFace() ?: return
+        val (bitmap, band) = drawn
+        val card = viewBounds(android.R.id.background)
+        val pill = viewBounds(R.id.widget_quick_actions_bar)
+        val disc = viewBounds(R.id.widget_quick_actions_private)
+        // The card's interior in its side padding at mid-height (clear of the corners); the bar's
+        // interior at its trailing end, past the hint, inside the small form's 3.5 dp inset; the
+        // disc under its top, clear of the glyph (the small form's inset 3.5 dp, the xsmall form's
+        // bare ripple leaves the card); the card's top edge at its middle, one row in.
+        val cardX = card.left + dp(3) - band.left
+        val cardY = card.centerY() - band.top
+        val pillX = pill.right - dp(8) - band.left
+        val pillY = pill.centerY() - band.top
+        val discX = disc.centerX() - band.left
+        val discY = disc.top + dp(formDiscInsetDp(variant)) - band.top
+        val edgeX = card.centerX() - band.left
+        val edgeY = card.top + 1 - band.top
+        val cardPixel = pixelAt(bitmap, cardX, cardY)
+        val pillPixel = pixelAt(bitmap, pillX, pillY)
+        val discPixel = pixelAt(bitmap, discX, discY)
+        val edge = pixelAt(bitmap, edgeX, edgeY)
+        bitmap.recycle()
+        val onBlack = drawFace(backdrop = Color.BLACK)?.let { (b, _) -> pixelAt(b, cardX, cardY).also { b.recycle() } } ?: 0
+        val onWhite = drawFace(backdrop = Color.WHITE)?.let { (b, _) -> pixelAt(b, cardX, cardY).also { b.recycle() } } ?: 0
+        val measuredAlpha = listOf(
+            255 - (Color.red(onWhite) - Color.red(onBlack)),
+            255 - (Color.green(onWhite) - Color.green(onBlack)),
+            255 - (Color.blue(onWhite) - Color.blue(onBlack))
+        )
+        finding(
+            "  the drawn $form face: card ${hex(cardPixel)} (+3 dp, mid-height), bar ${hex(pillPixel)} (trailing end −8 dp), ${wordOf(QuickActionsWidgetProvider.PRIVATE)} ${hex(discPixel)} (+${formDiscInsetDp(variant)} dp under its top), " +
+                "top edge ${hex(edge)}; the card over black ${hex(onBlack)}, over white ${hex(onWhite)}: alpha $measuredAlpha of 255 a channel"
+        )
+        expect("the drawn $form card is colorSurface, nothing composited", near(cardPixel, surface))
+        expect("the drawn $form bar is colorSurfaceContainerHigh", near(pillPixel, bar))
+        if (variant == QuickActionsWidgetProvider.Variant.XSMALL) {
+            expect("the xsmall buttons draw no disc – Chrome's bare ripple – so the card shows through them", near(discPixel, surface))
+        } else {
+            expect("the drawn $form button disc is colorSurfaceContainer", near(discPixel, button))
+        }
+        expect("the drawn $form card reads opaque (255 of 255) over black and over white: no 0.9 on the quick action widget, as Chrome's", measuredAlpha.all { abs(it - 0xFF) <= 3 })
+        if (dynamic) {
+            expect("no hairline on the $form card: its top edge is its interior's colour", near(edge, cardPixel))
+        } else {
+            expect("below Android 12 the $form card keeps its v2 border: the top edge is not the interior", !near(edge, cardPixel))
+        }
+    }
+
+    /** The scan button (its view [id]) under a finger: the QR scanner up on the stand-in camera; [still] the shot's name. */
+    private fun touchTheScanner(id: Int, still: String) {
+        val before = activeCoreTab()?.optString("id").orEmpty()
+        val intentBefore = onMain { activity.intent }
+        val starts = camera.starts
+        expect("a finger reaches the scan button on the face", touchPart(id))
+        SystemClock.sleep(150)
+        hideOverlay()
+        val landed = scanLanded(12_000)
+        expect("the scan button lands in the QR scanner ($landed)", landed != null)
+        expect("the widget's intent arrived through onNewIntent (the running activity, no relaunch)", onMain { activity.intent } !== intentBefore && !onMain { activity.isDestroyed })
+        expect("the camera stand-in was started for it", awaitTrue(4_000) { camera.starts > starts })
+        val tab = activeCoreTab()
+        expect("the landing opened a tab of its own, blank, sent by another app (fromIntent)", tab?.optString("id") != before && emptyTabUrl(tab?.optString("url")) && tab?.optBoolean("fromIntent") == true)
+        SystemClock.sleep(800)
+        shot(still)
+        finding("after the scan button: ${describeActive()}, QR phase ${qrPhase()}, camera starts ${camera.starts}")
+        back()
+        expect("a back closes the scanner", awaitSurface(false, 6_000))
+        backToThePrevious(tab?.optString("id"))
+        showOverlay()
+    }
+
+    private fun sizesIn(options: Bundle): List<SizeF>? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) options.getParcelableArrayList(AppWidgetManager.OPTION_APPWIDGET_SIZES, SizeF::class.java)
+        else @Suppress("DEPRECATION") options.getParcelableArrayList(AppWidgetManager.OPTION_APPWIDGET_SIZES)
+
+    /** The height handed to the provider for each form: inside the form's band, room for its fixed card with a little of the cells around it. */
+    private fun formHeightDp(variant: QuickActionsWidgetProvider.Variant): Int = when (variant) {
+        QuickActionsWidgetProvider.Variant.XSMALL -> QUICK_XSMALL_FRAME_DP
+        QuickActionsWidgetProvider.Variant.SMALL -> QUICK_SMALL_FRAME_DP
+        QuickActionsWidgetProvider.Variant.MEDIUM -> QUICK_MEDIUM_FRAME_DP
+    }
+
+    /** Chrome's button boxes (`QuickActionSearchWidgetProviderDelegate.java:216-249`): 28 / 48 / 54 dp. */
+    private fun formButtonDp(variant: QuickActionsWidgetProvider.Variant): Int = when (variant) {
+        QuickActionsWidgetProvider.Variant.XSMALL -> 28
+        QuickActionsWidgetProvider.Variant.SMALL -> 48
+        QuickActionsWidgetProvider.Variant.MEDIUM -> 54
+    }
+
+    /** Where under a button's top its disc is read: past the small form's 3.5 dp inset, before any glyph (17 / 15.5 / 6 dp of padding). */
+    private fun formDiscInsetDp(variant: QuickActionsWidgetProvider.Variant): Int = when (variant) {
+        QuickActionsWidgetProvider.Variant.XSMALL -> 3
+        QuickActionsWidgetProvider.Variant.SMALL -> 7
+        QuickActionsWidgetProvider.Variant.MEDIUM -> 6
+    }
+
+    private fun labelOf(face: Face): String = when (face.landing) {
+        Landing.VOICE -> MIC_LABEL
+        Landing.PRIVATE -> MASK_LABEL
+        Landing.SCAN -> SCAN_LABEL
+        else -> HINT_TEXT
+    }
+
+    private fun wordOf(face: Face): String = when (face.landing) {
+        Landing.VOICE -> "Voice"
+        Landing.PRIVATE -> "Private"
+        Landing.SCAN -> "Scan"
+        else -> "the bar"
+    }
+
+    private fun wordsOf(faces: List<Face>): String = if (faces.isEmpty()) "no button" else faces.joinToString(" + ") { wordOf(it) }
+
+    private fun describeButtons(hostView: View): String = onMain {
+        QuickActionsWidgetProvider.BUTTONS.joinToString(", ") { face ->
+            val visibility = hostView.findViewById<View>(face.viewId)?.visibility
+            "${wordOf(face)} " + when (visibility) {
+                View.VISIBLE -> "visible"
+                View.INVISIBLE -> "invisible"
+                View.GONE -> "gone"
+                else -> "absent"
+            }
+        }
+    }
+
+    private fun dpOf(px: Int): Int = (px / density).roundToInt()
 
     // --- what an intent started ------------------------------------------------------------------
 
@@ -1451,7 +1842,18 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         /** The pill's view and its children, every one at full alpha (the fill alone carries the 0.9). */
         private val FACE_VIEWS = listOf(R.id.widget_search_face, R.id.widget_search_mark, R.id.widget_search_hint, R.id.widget_search_mic, R.id.widget_search_private)
 
-        /** Request codes the replays use where no face part fires (the widget's own are 1–3). */
+        /**
+         * The Quick Actions widget's forms (Chrome's `QuickActionSearchWidgetProviderDelegate.java:216-249`,
+         * `:464-471`): the xsmall card 48 dp, the provider's minHeight; the heights handed to the
+         * provider for each form – inside its band (under 72 / under 155 / from 155 dp) with room
+         * for the fixed card (48 / 72 / 155 dp) and a little of the cells around it.
+         */
+        private const val QUICK_XSMALL_CARD_DP = 48
+        private const val QUICK_XSMALL_FRAME_DP = 56
+        private const val QUICK_SMALL_FRAME_DP = 100
+        private const val QUICK_MEDIUM_FRAME_DP = 170
+
+        /** Request codes the replays use where no face part fires (the widgets' own are 1–3 and 21–24). */
         private const val SCAN_REPLAY_CODE = 11
         private const val SHORTCUT_REPLAY_CODE = 12
 
@@ -1462,6 +1864,9 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         private const val MIC_LABEL = "Search with your voice"
         private const val MASK_LABEL = "New private tab"
         private const val WIDGET_LABEL = "Zenium search"
+        /** The Quick Actions widget's words (`strings.xml`): the picker's label and the scan button's name. */
+        private const val QUICK_ACTIONS_LABEL = "Zenium quick actions"
+        private const val SCAN_LABEL = "Scan a QR code"
         private const val LISTENING_TITLE = "Listening"
         private const val PRIVATE_TITLE = "You're browsing privately"
         private const val PRIVATE_UNAVAILABLE_TOAST = "Private tabs need a newer Android System WebView"
