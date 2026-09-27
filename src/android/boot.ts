@@ -37,6 +37,7 @@ import {
   type HistoryNavEventPayload,
   type HistoryNavEventPhase
 } from '@renderer/lib/historyNav'
+import { setHoverCardHost } from '@renderer/lib/hoverCard'
 import {
   dispatchPullEvent,
   setPullHost,
@@ -191,6 +192,7 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
   syncTouchpadSwipeToNavigate(bridge, platform)
   syncBarHide(bridge, boot)
   syncHistoryNavBubble(bridge)
+  syncHoverCard(bridge)
   syncCaptureState(bridge, browser)
   // The chrome's text at the system font size (A11Y-05): the host drew it at `textZoom` already;
   // the line boxes follow from here. Changes arrive with the `environment` event (platform.ts).
@@ -394,6 +396,22 @@ function syncBarHide(bridge: Bridge, boot: BootInfo): void {
 function syncHistoryNavBubble(bridge: Bridge): void {
   setHistoryNavHost({
     apply: (frame) => bridge.post('chrome.historyNavBubble', frame ?? { visible: false })
+  })
+}
+
+/**
+ * The tab hover card (`lib/hoverCard.ts`, TABLET-05), the bubble's way: a card the chrome drew
+ * beside the sidebar would never show over the pages layered above it, so the host draws it
+ * (`TabHoverCardView`, above the pages and under the fullscreen layer) where the chrome says,
+ * per change over the one-way channel, in CSS px it scales by its density; `{ visible: false }`
+ * takes it down. The chrome keeps the card's machine and its dismissals (the tablet's headless
+ * `TabletHoverCardHost` is what lets the rows raise one; the phone registers this too and
+ * mounts no host, so nothing is ever sent there). Only the registration runs at boot – bounded,
+ * no I/O; the host inflates nothing before the first frame.
+ */
+function syncHoverCard(bridge: Bridge): void {
+  setHoverCardHost({
+    apply: (frame) => bridge.post('chrome.hoverCard', frame ?? { visible: false })
   })
 }
 

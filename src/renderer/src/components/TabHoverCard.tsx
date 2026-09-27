@@ -2,6 +2,7 @@ import type { JSX } from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { UIState } from '@shared/types'
 import {
+  bindHoverCardDismissals,
   hostHoverCard,
   hoverCard,
   hoverCardHost,
@@ -105,32 +106,11 @@ export function TabHoverCard({ state }: { state: UIState }): JSX.Element | null 
     []
   )
 
+  // A press, a wheel, a scroll, a key, the window's blur or resize (`bindHoverCardDismissals`,
+  // shared with the tablet's host).
   useEffect(() => {
     if (!shown) return
-    const hide = (): void => hoverCard.hide()
-    // Escape, and typing: the page under the card had the keyboard until the card hid it (see
-    // lib/hoverCard.ts), so a letter means the user is back at the page. Arrows, Tab and Enter
-    // are the rows' own keys and move or activate instead.
-    const onKey = (e: KeyboardEvent): void => {
-      const typing = e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey
-      if (e.key === 'Escape' || e.key === 'Backspace' || e.key === 'Delete' || typing) hide()
-    }
-    document.addEventListener('pointerdown', hide, true)
-    document.addEventListener('contextmenu', hide, true)
-    document.addEventListener('wheel', hide, { capture: true, passive: true })
-    document.addEventListener('scroll', hide, { capture: true, passive: true })
-    document.addEventListener('keydown', onKey, true)
-    window.addEventListener('blur', hide)
-    window.addEventListener('resize', hide)
-    return () => {
-      document.removeEventListener('pointerdown', hide, true)
-      document.removeEventListener('contextmenu', hide, true)
-      document.removeEventListener('wheel', hide, { capture: true })
-      document.removeEventListener('scroll', hide, { capture: true })
-      document.removeEventListener('keydown', onKey, true)
-      window.removeEventListener('blur', hide)
-      window.removeEventListener('resize', hide)
-    }
+    return bindHoverCardDismissals(() => hoverCard.hide())
   }, [shown])
 
   if (!shown || !tab) return null

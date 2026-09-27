@@ -953,6 +953,9 @@ export function createPreviewBridge(): NativeBridge {
     // The history navigation disc the host draws above the pages (Kotlin: `HistoryNavBubbleView`):
     // the preview has no 3-button edge drag to start one, so nothing ever arrives here.
     'chrome.historyNavBubble': () => undefined,
+    // The tab hover card the host draws above the pages (Kotlin: `TabHoverCardView`): the
+    // preview has no native layer to draw it in, so a frame is taken and nothing shows.
+    'chrome.hoverCard': () => undefined,
     // Chrome messages along the frame's edges: the page is clipped out of their strips, eased
     // the way Kotlin springs its clip; a clip-path keeps pointer events out of them too, so the
     // cards underneath can be tapped.
