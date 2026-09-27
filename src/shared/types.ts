@@ -4919,9 +4919,10 @@ export interface MenuDescriptor {
 // ---------------------------------------------------------------------------
 
 /**
- * Strips along a view's top and bottom edges (CSS px) that chrome messages – toasts, banners –
- * draw over. Hosts that layer pages above the chrome clip the page out of them and let touches
- * there through to the chrome (see `TabView.setCover`).
+ * The message strips: strips along a view's top and bottom edges (CSS px) that chrome messages –
+ * toasts, banners – draw over. Hosts that layer pages above the chrome clip the page out of them
+ * and let touches there through to the chrome (see `TabView.setCover`). Not the reader's cover
+ * over a tab's page (`TabManager.cover`, where the tree's "covers" are told apart).
  */
 export interface ContentCover {
   top: number
