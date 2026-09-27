@@ -66,8 +66,8 @@ export function MediaHubLayer(): JSX.Element | null {
  * media, the session first, parted by air alone: the artwork (the page's, else the kind's glyph
  * on the players' shared tile) beside the title and the artist and site – the title is the way
  * to the tab, as Chrome's card is – with the tab's Mute / Unmute trailing (`tab.toggleMute`,
- * the strip's mute; the sidebar card's control, retired here in W8-8 so one control per session
- * stands – `MediaState.muted` beside `playing`, so a muted tab that plays keeps Pause) and
+ * the strip's mute; the sidebar's mini player retired into this hub in W8-8, §9.37's one player
+ * per window – `MediaState.muted` beside `playing`, so a muted tab that plays keeps Pause) and
  * picture-in-picture after it for a video where the host has it; the seek row (§10.4's slider
  * row: the times in tabular numerals at the track's ends,
  * the position carried forward from the report while it plays, a drag scrubbing and a release
