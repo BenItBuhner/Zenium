@@ -689,16 +689,21 @@ class ImageOwnerTest {
         assertTrue(forward >= 0)
         val branch = code.substring(forward, code.indexOf("\n    }\n", forward))
         val consumed = Regex(
-            """PageMessageRoute\.IMAGE_OWNER, PageMessageRoute\.IMAGE_THUMBNAIL ->\s*imageOwner\?\.onMessage\(route\.message, proxy, isMainFrame\)"""
+            """^PageMessageRoute\.IMAGE_OWNER, PageMessageRoute\.IMAGE_THUMBNAIL ->\s*imageOwner\?\.onMessage\(route\.message, proxy, isMainFrame\)\s*$"""
         )
-        assertTrue(consumed.containsMatchIn(branch))
+        // The two types' arm, whole: the orchestrator's call and nothing else – no viewEvent.
+        val armStart = branch.indexOf("PageMessageRoute.IMAGE_OWNER, PageMessageRoute.IMAGE_THUMBNAIL ->")
+        val armEnd = branch.indexOf("\"share\" ->", armStart)
+        assertTrue(armStart >= 0 && armEnd > armStart)
+        val arm = branch.substring(armStart, armEnd)
+        assertTrue(arm, consumed.matches(arm.trim()))
+        assertFalse(arm.contains("viewEvent"))
         // The rest of the branch is what it was: share prepared, everything else forwarded.
         assertTrue(branch.contains("\"share\" -> host.preparePageMessage(route.message) { host.viewEvent(tabId, \"pageMessage\", it) }"))
         assertTrue(branch.contains("else -> host.viewEvent(tabId, \"pageMessage\", route.message)"))
-        // No arm of the branch hands the two types to viewEvent.
-        val arms = branch.split("\n").filter { it.contains("IMAGE_OWNER") || it.contains("IMAGE_THUMBNAIL") }
-        assertTrue(arms.isNotEmpty())
-        assertTrue(arms.none { it.contains("viewEvent") })
+        // Nowhere else in the file are the two types handed on either.
+        assertEquals(1, Regex("""PageMessageRoute\.IMAGE_OWNER""").findAll(code).count())
+        assertEquals(1, Regex("""PageMessageRoute\.IMAGE_THUMBNAIL""").findAll(code).count())
         // The verb, beside view.eval, hands the core the JSON text; a gone view answers null.
         val host = code(File(repoRoot(), "android/app/src/main/kotlin/app/zen/chromium/Host.kt"))
         val verb = host.indexOf("\"view.imageThumbnail\" ->")
