@@ -1,7 +1,7 @@
 import type { JSX } from 'react'
 import { useLayoutEffect, useRef } from 'react'
-import type { HintBubble } from '@renderer/lib/iph'
-import { hintArrowX, hintBubbleLeft } from './stack'
+import { HINT_BUBBLE_ID, type HintBubble } from '@renderer/lib/iph'
+import { hintBubbleLeft } from './stack'
 
 interface Props {
   bubble: HintBubble
@@ -12,15 +12,19 @@ interface Props {
 }
 
 /**
- * The in-product help bubble (TB-19): one sentence in a card with an arrow at the bar control it
- * points at, at the message layer's edge on the bar's side, as Chrome's `TextBubble` sits at
- * its anchor with a 4 dp margin (`text_bubble_margin`). It is placed once, as it goes up: the
- * anchor's box was read by the hook that showed it, the layer's and the card's own here in one
- * layout effect – the only layout read of the whole education – and written as `left` and the
- * arrow's offset; nothing tracks the anchor after that, because whatever moves the anchor (a
- * touch, a scroll, a rotation, the keyboard) takes the bubble down first
- * (`useTabSwitcherHint`). A status region: a screen reader hears the sentence as it arrives,
- * and the card takes no focus, as Chrome's popup is not focusable.
+ * The in-product help bubble (TB-19): one sentence in §9.33's third kind of message – the one
+ * anchored panel the phone chrome has, in §9.20's pose and without Chrome's arrow (the lead's
+ * (a) on #641): flush against the bar band's inner edge at gap 0 – the layer's edge on the
+ * bar's side is that edge – end-aligned with the button it is about, clamped 8 inside the frame;
+ * the flush edge, the alignment and the button's pulse point at the button. It is placed once,
+ * as it goes up: the anchor's box was read by the hook that showed it, the layer's and the
+ * card's own here in one layout effect – the only layout read of the whole education – and
+ * written as `left`; nothing tracks the anchor after that, because whatever moves the anchor
+ * (a touch, a scroll, a rotation, the keyboard) takes the bubble down first
+ * (`useTabSwitcherHint`). A status region – a screen reader hears the sentence as it arrives –
+ * and, by `HINT_BUBBLE_ID`, the description the Tabs button carries while the bubble stands
+ * (`aria-describedby`, PhoneShell.tsx; the lead's (j)); the card takes no focus, as Chrome's
+ * popup is not focusable.
  */
 export function HintBubbleCard({ bubble, leaving, onMeasure }: Props): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
@@ -29,16 +33,14 @@ export function HintBubbleCard({ bubble, leaving, onMeasure }: Props): JSX.Eleme
     const layer = el?.parentElement
     if (!el || !layer) return
     const box = layer.getBoundingClientRect()
-    const width = el.offsetWidth
-    const anchorX = bubble.anchor.x + bubble.anchor.width / 2 - box.left
-    const left = hintBubbleLeft(anchorX, width, box.width)
-    el.style.left = `${left}px`
-    el.style.setProperty('--zen-hint-arrow-x', `${hintArrowX(anchorX, left, width)}px`)
+    const anchorEnd = bubble.anchor.x + bubble.anchor.width - box.left
+    el.style.left = `${hintBubbleLeft(anchorEnd, el.offsetWidth, box.width)}px`
     onMeasure?.(el.offsetHeight)
   }, [bubble, onMeasure])
   return (
     <div
       ref={ref}
+      id={HINT_BUBBLE_ID}
       className="zen-message zen-hint-bubble"
       data-surface="page"
       data-edge={bubble.edge}

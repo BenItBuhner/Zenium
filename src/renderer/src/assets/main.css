@@ -3473,65 +3473,49 @@
   }
 
   /*
-   * The in-product help bubble (TB-19; components/messages/HintBubbleCard.tsx, lib/iph.ts): the
-   * message card's box – the panel fill, hairline and shadow, the row's height, the body type –
-   * with an arrow towards the bar control it points at, at the layer's edge on the bar's side,
-   * the arrow's tip on the edge (the bar's row padding is what separates it from the control).
-   * GREYBOX, pending the design gate (internal/android-parity/design-gate-requests.md, #641):
-   * Chrome's is an accent-filled pill with on-accent 14 sp medium text on 16 dp of padding, an
-   * 8 dp corner and a 20 × 10 dp arrow (browser_ui `textbubble_text.xml` l.17–23, `dimens.xml`
-   * l.125–128), coming up over 200 ms – alpha 0 → 1 with 10 px of rise, `textbubble_in.xml` –
-   * and leaving on a 200 ms fade, `textbubble_out.xml`; under reduced motion both are the
-   * 120 ms fade §11.3 keeps. Placed once by the card's layout effect: `left` and the arrow's
-   * offset (`--zen-hint-arrow-x`) are written on the element as it goes up.
+   * The in-product help bubble (TB-19; components/messages/HintBubbleCard.tsx, lib/iph.ts):
+   * §9.33's third kind of message – the one anchored panel the phone chrome has, in §9.20's
+   * pose and without Chrome's arrow (the lead's (a)–(k) on #641, design-gate-requests.md):
+   * flush against the bar band's inner edge at gap 0 – the layer's edge on the bar's side is
+   * that edge – end-aligned with the button it is about and clamped 8 inside the frame (the
+   * card's layout effect writes `left`, once, as it goes up); 320 wide, §9.20's notice width,
+   * so the sentence sits on two lines inside its 288 (16 of padding a side, Chrome's own
+   * `textbubble_text.xml` l.17–23); `--v2-accent` filled with `--v2-on-accent` ink and no
+   * hairline – the fill is the edge, a tip reads as a tip and not a toast – under the panel
+   * shadow, the body 15/400 (`.zen-message`), the same tokens in dark. Motion is Chrome's:
+   * up over 200 ms as alpha 0 → 1 with 10 px of travel out of the bar's band
+   * (`textbubble_in.xml`; `--zen-hint-from` turns it round under a top-docked bar), out on a
+   * 200 ms fade (`textbubble_out.xml`); under reduced motion both are the 120 ms fade §11.3
+   * keeps, declared below `!important`. No clock: the first touch anywhere takes it down.
    */
   .zen-hint-bubble {
+    --zen-message-text-inset: 0;
+    --zen-hint-from: 10px;
     position: absolute;
     left: var(--zen-message-inset);
-    width: max-content;
+    width: 320px;
     max-width: calc(100% - 2 * var(--zen-message-inset));
-    padding: 3px 14px;
+    padding: 16px;
+    border: 0;
+    background: var(--v2-accent);
+    color: var(--v2-on-accent);
     animation: zen-hint-bubble-in 200ms linear;
   }
   .zen-hint-bubble[data-edge='bottom'] {
-    bottom: 10px;
+    bottom: 0;
   }
   .zen-hint-bubble[data-edge='top'] {
-    top: 10px;
+    --zen-hint-from: -10px;
+    top: 0;
   }
   .zen-hint-bubble[data-leaving] {
     animation: zen-fade-out 200ms linear forwards;
     pointer-events: none;
   }
-  /*
-   * The arrow: a 14 px square turned 45° (a 20 × 10 diamond half, Chrome's arrow), the card's
-   * fill and hairline on its two outer sides, half out of the card on the bar's side, its tip
-   * under the anchor. It paints over the card's own hairline where it stands.
-   */
-  .zen-hint-bubble::after {
-    content: '';
-    position: absolute;
-    left: calc(var(--zen-hint-arrow-x, 50%) - 7px);
-    width: 14px;
-    height: 14px;
-    background: inherit;
-    border: 1px solid var(--v2-border);
-    transform: rotate(45deg);
-  }
-  .zen-hint-bubble[data-edge='bottom']::after {
-    bottom: -8px;
-    border-top: none;
-    border-left: none;
-  }
-  .zen-hint-bubble[data-edge='top']::after {
-    top: -8px;
-    border-right: none;
-    border-bottom: none;
-  }
   @keyframes zen-hint-bubble-in {
     from {
       opacity: 0;
-      transform: translateY(-10px);
+      transform: translateY(var(--zen-hint-from, 10px));
     }
     to {
       opacity: 1;
@@ -3541,12 +3525,14 @@
   /*
    * The anchor's pulse while its bubble is up (Chrome's `HighlightShape.CIRCLE` on the tab
    * switcher button: a circle in the accent at alpha 76 / 255, 16 dp growing to 19.2 dp and back
-   * over 2.5 s – `PulseDrawable.java` l.39, l.208–231, l.263, `dimens.xml` l.129). The bar
-   * carries the item the bubble points at (`data-iph-anchor`, PhoneShell.tsx); the pulse is the
-   * bubble's and lives in its block, so the accent token stays within the messages' span. The
-   * alpha is in the colour – `--v2-selection` is the accent at 30 %, Chrome's 76 / 255 – because
-   * no rule of the bar's writes an opacity but the sheet's recede (lib/__tests__/recede.test.ts).
-   * The reduced-motion remover leaves the circle still.
+   * over 2.5 s – `PulseDrawable.java` l.39, l.208–231, l.263, `dimens.xml` l.129): §9.23's halo,
+   * the accent at 30 % as the listening mic's (`.zen-voice-halo`) – never `--v2-selection`,
+   * which is the page's – a 32 px disc scaled 1 → 1.2 and back over 1.25 s each way, Chrome's
+   * cycle (the lead's (i)). The bar carries the item the bubble is about (`data-iph-anchor`,
+   * PhoneShell.tsx); the pulse is the bubble's and lives in its block, so the accent stays within
+   * the messages' span. The alpha is in the colour because no rule of the bar's writes an
+   * opacity but the sheet's recede (lib/__tests__/recede.test.ts). Under reduced motion the
+   * sheet's one remover takes the animation and the disc stands still at its rest.
    */
   .zen-phone-bar[data-iph-anchor='tabs'] [data-bar-item='tabs'] {
     position: relative;
@@ -3560,7 +3546,7 @@
     height: 32px;
     margin: -16px 0 0 -16px;
     border-radius: 50%;
-    background: var(--v2-selection);
+    background: color-mix(in srgb, var(--v2-accent) 30%, transparent);
     pointer-events: none;
     animation: zen-iph-pulse 1250ms cubic-bezier(0.8, 0, 0.6, 1) infinite alternate;
   }

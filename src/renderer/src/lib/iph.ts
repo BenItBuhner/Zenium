@@ -168,14 +168,24 @@ export function noteTabSwitcherButtonUsed(
 // The bubble on screen
 // ---------------------------------------------------------------------------
 
+/**
+ * The bubble's element id: what the control it is about names in `aria-describedby` while the
+ * bubble stands (the lead's (j) on #641 – the announcement is the card's `role="status"`, the
+ * description the button's), one bubble at a time so one id serves.
+ */
+export const HINT_BUBBLE_ID = 'zen-hint-bubble'
+
 export interface HintBubble {
   /** Which bubble (its record in `settings.iph`). */
   id: keyof Settings['iph']
-  /** The bar control it points at. */
+  /** The bar control it is about: the bar pulses it and describes it by the bubble. */
   anchorItem: PhoneBarItemId
   /** The control's box, window coordinates, as read when the bubble went up. */
   anchor: Rect
-  /** The bar's edge: the bubble sits at the frame's edge on that side, its arrow towards the bar. */
+  /**
+   * The bar's edge: the bubble sits flush against the bar band's inner edge on that side, at gap
+   * 0 (§9.20's pose; the same form mirrored under a top-docked bar, the lead's (k)).
+   */
   edge: PhoneBarPosition
   /**
    * The words: Chrome's text, or its longer accessibility text while an accessibility service

@@ -66,8 +66,8 @@ export function MessageLayer(): JSX.Element | null {
   // The toast's slot holds one live card: a toast, or a screenshot's preview (SH-07).
   const liveToast = toasts.find((t) => !t.leaving) ?? cards.find((c) => !c.leaving)
   const cover = coverFor(liveStack, liveToast ? (heights[liveToast.id] ?? 0) : 0)
-  // The bubble's strip on the bar's edge – the card, its arrow to the edge, the inset over it –
-  // kept through its fade (its box is still over the page).
+  // The bubble's strip on the bar's edge – the card flush against the band at gap 0, the inset
+  // over it – kept through its fade (its box is still over the page).
   const hintCover = hint.bubble ? hintCoverFor(hintHeight) : 0
   const top = Math.max(cover.top, hint.bubble?.edge === 'top' ? hintCover : 0)
   const bottom = Math.max(cover.bottom, hint.bubble?.edge === 'bottom' ? hintCover : 0)

@@ -31,7 +31,7 @@ import {
 import { closeOverview, overviewIsOpen, stageStore } from '@renderer/lib/gestures/stage'
 import type { TabSwitchState } from '@renderer/lib/gestures/stage'
 import { closeSpacesDrawer } from '@renderer/lib/gestures/drawer'
-import { hintBubbleStore } from '@renderer/lib/iph'
+import { HINT_BUBBLE_ID, hintBubbleStore } from '@renderer/lib/iph'
 import { mediaSession } from '@renderer/lib/media'
 import { barFade } from '@renderer/lib/motion/recede'
 import { focusHoldsChrome, focusOmnibox, omniboxFocusStore } from '@renderer/lib/omniboxFocus'
@@ -302,7 +302,8 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   useGestureHint(state, edge, calm)
   useTabSwitcherHint(state, edge, calm)
   // The bubble's anchor pulses while the bubble is up (Chrome's `HighlightShape.CIRCLE` on the
-  // tab switcher button, `PulseDrawable`): the bar carries the item's id for the stylesheet.
+  // tab switcher button, `PulseDrawable`; §9.23's halo here): the bar carries the item's id for
+  // the stylesheet, and the item names the bubble as its description while it stands.
   const iphAnchor = hintBubbleStore.use((s) =>
     s.bubble && !s.leaving ? s.bubble.anchorItem : null
   )
@@ -496,7 +497,10 @@ export function PhoneBar({
    * page's scroll carries the field into it. The slot still takes the pill's gestures.
    */
   pillAway?: boolean
-  /** The control an in-product help bubble points at right now (TB-19): the stylesheet pulses it. */
+  /**
+   * The control an in-product help bubble is about right now (TB-19): the stylesheet pulses it
+   * and it carries the bubble as its description (`aria-describedby`, the lead's (j) on #641).
+   */
   iphAnchor?: PhoneBarItemId | null
   /** A preview of the bar at the other edge: drawn, never pressed. */
   inert?: boolean
@@ -581,7 +585,13 @@ export function PhoneBar({
         {edge === 'bottom' && groupStrip}
         <div className="zen-phone-bar-row flex items-center gap-1" {...(inert ? {} : hold)}>
           {layout.left.map((id) => (
-            <BarButton key={id} id={id} ctx={ctx} inert={inert} />
+            <BarButton
+              key={id}
+              id={id}
+              ctx={ctx}
+              inert={inert}
+              describedBy={!inert && iphAnchor === id ? HINT_BUBBLE_ID : undefined}
+            />
           ))}
           {/*
           The pill is a gesture surface, not a button: its site icon, address and lock are real
@@ -616,7 +626,13 @@ export function PhoneBar({
             )}
           </div>
           {layout.right.map((id) => (
-            <BarButton key={id} id={id} ctx={ctx} inert={inert} />
+            <BarButton
+              key={id}
+              id={id}
+              ctx={ctx}
+              inert={inert}
+              describedBy={!inert && iphAnchor === id ? HINT_BUBBLE_ID : undefined}
+            />
           ))}
         </div>
         {edge === 'top' && groupStrip}

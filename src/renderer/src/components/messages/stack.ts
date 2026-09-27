@@ -36,33 +36,34 @@ export function coverFor(bannerStack: number, toast: number, inset = MESSAGE_INS
 }
 
 /**
- * The in-product help bubble's arrow (HintBubbleCard.tsx): Chrome's is 20 × 10 dp
- * (`text_bubble_arrow_width` / `_height`, browser_ui widget `dimens.xml` l.127–128) on an 8 dp
- * corner (l.126), and its tip keeps clear of the corners by the corner plus half the arrow
- * (`ArrowBubbleDrawable.getArrowLeftSpacing`, l.96–99).
+ * The in-product help bubble's width (HintBubbleCard.tsx): §9.20's notice, 320 – one of the
+ * three fixed popover widths, never fitted to the sentence – so the words sit on two lines
+ * inside its 288 (the lead's (c) on #641; the stylesheet carries the same number).
  */
-export const HINT_ARROW_WIDTH = 20
-export const HINT_ARROW_HEIGHT = 10
-const HINT_CORNER = 8
+export const HINT_BUBBLE_WIDTH = 320
 
-/** The `left` of a bubble `width` wide whose arrow should point at `anchorX`, inside the layer's insets. */
+/**
+ * The `left` of a bubble `width` wide in §9.20's anchored pose: end-aligned with its anchor –
+ * the bubble's right edge on the button's right edge, `anchorEnd` (the chrome is LTR; the Tabs
+ * button stands in the bar's trailing half, and an anchor there end-aligns) – then slid the
+ * least distance that keeps it `inset` inside the layer on either side (the rule's step 3, no
+ * flip: the other alignment would put the bubble past the frame's edge on a phone). A bubble
+ * wider than the layer allows sits at the left inset.
+ */
 export function hintBubbleLeft(
-  anchorX: number,
+  anchorEnd: number,
   width: number,
   layerWidth: number,
   inset = MESSAGE_INSET
 ): number {
   const max = Math.max(inset, layerWidth - inset - width)
-  return Math.min(max, Math.max(inset, anchorX - width / 2))
+  return Math.min(max, Math.max(inset, anchorEnd - width))
 }
 
-/** Where on the bubble (from its left edge) the arrow's tip sits: at the anchor, kept off the corners. */
-export function hintArrowX(anchorX: number, left: number, width: number): number {
-  const margin = HINT_CORNER + HINT_ARROW_WIDTH / 2
-  return Math.min(Math.max(anchorX - left, margin), Math.max(margin, width - margin))
-}
-
-/** The strip the bubble covers on its edge: the card, its arrow to the edge, the inset over it. */
+/**
+ * The strip the bubble covers on its edge: the card – flush against the bar band's inner edge at
+ * gap 0, so its box starts at the edge – and the inset over it on the page's side.
+ */
 export function hintCoverFor(height: number, inset = MESSAGE_INSET): number {
-  return height > 0 ? height + HINT_ARROW_HEIGHT + inset : 0
+  return height > 0 ? height + inset : 0
 }

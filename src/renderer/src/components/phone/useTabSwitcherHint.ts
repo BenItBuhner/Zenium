@@ -99,6 +99,8 @@ export function useTabSwitcherHint(state: UIState, edge: PhoneBarPosition, calm:
       anchorItem: 'tabs',
       anchor: { x: r.left, y: r.top, width: r.width, height: r.height },
       edge,
+      // Under touch exploration the status text is Chrome's accessibility variant
+      // (`IDS_IPH_TAB_SWITCHER_ACCESSIBILITY_TEXT`, `android_chrome_strings.grd` l.6189–6191).
       text: touchExplorationOn() ? TAB_SWITCHER_HINT_ACCESSIBILITY_TEXT : TAB_SWITCHER_HINT_TEXT
     })
     markTabSwitcherHintShown(settings)

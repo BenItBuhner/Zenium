@@ -6,9 +6,11 @@ import type { HintBubble } from '@renderer/lib/iph'
 
 /*
  * The in-product help bubble on the message layer (TB-19; HintBubbleCard.tsx, MessageLayer.tsx,
- * stack.ts): placed once as it goes up – its `left` puts the arrow under the anchor inside the
- * layer's insets, the arrow's tip kept off the corners – a status region with Chrome's sentence,
- * the page clipped out from under it on the bar's edge for as long as it is up, through its fade.
+ * stack.ts): §9.20's anchored pose without Chrome's arrow (the lead's (a) on #641) – placed once
+ * as it goes up, its `left` end-aligning it with the anchor's box inside the layer's insets, flush
+ * against the bar band's edge at gap 0 – a status region with Chrome's sentence that the anchor
+ * names as its description (`HINT_BUBBLE_ID`, the lead's (j)), the page clipped out from under it
+ * on the bar's edge for as long as it is up, through its fade.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -22,12 +24,12 @@ vi.mock('@renderer/lib/api', () => ({
 
 const { HintBubbleCard } = await import('../HintBubbleCard')
 const { MessageLayer } = await import('../MessageLayer')
-const { hintArrowX, hintBubbleLeft, hintCoverFor, HINT_ARROW_HEIGHT, MESSAGE_INSET } =
-  await import('../stack')
+const { hintBubbleLeft, hintCoverFor, HINT_BUBBLE_WIDTH, MESSAGE_INSET } = await import('../stack')
 const {
   dismissHintBubble,
   forgetHintBubble,
   HINT_BUBBLE_EXIT_MS,
+  HINT_BUBBLE_ID,
   showHintBubble,
   TAB_SWITCHER_HINT_TEXT
 } = await import('@renderer/lib/iph')
@@ -86,22 +88,24 @@ afterEach(() => {
 })
 
 describe('the placement', () => {
-  it('centres the bubble on the anchor and keeps it inside the insets', () => {
-    expect(hintBubbleLeft(200, 300, 400)).toBe(50)
-    expect(hintBubbleLeft(20, 300, 400)).toBe(MESSAGE_INSET)
-    expect(hintBubbleLeft(390, 300, 400)).toBe(400 - MESSAGE_INSET - 300)
-    // A bubble wider than the layer sits at the left inset.
+  it("end-aligns the bubble with the anchor's box and keeps it inside the insets", () => {
+    // The anchor's right edge at 350: a 300 bubble's right edge sits there.
+    expect(hintBubbleLeft(350, 300, 400)).toBe(50)
+    // An anchor too near the left edge: slid to the left inset, no flip.
+    expect(hintBubbleLeft(120, 300, 400)).toBe(MESSAGE_INSET)
+    // An anchor past the right inset: slid back to it.
+    expect(hintBubbleLeft(398, 300, 400)).toBe(400 - MESSAGE_INSET - 300)
+    // A bubble wider than the layer allows sits at the left inset.
     expect(hintBubbleLeft(200, 500, 400)).toBe(MESSAGE_INSET)
   })
 
-  it("puts the arrow's tip under the anchor, off the corners", () => {
-    expect(hintArrowX(200, 50, 300)).toBe(150)
-    expect(hintArrowX(10, 8, 300)).toBe(18)
-    expect(hintArrowX(395, 92, 300)).toBe(282)
+  it("is §9.20's notice width: 320, the sentence on two lines at 288", () => {
+    expect(HINT_BUBBLE_WIDTH).toBe(320)
+    expect(HINT_BUBBLE_WIDTH - 2 * 16).toBe(288)
   })
 
-  it('covers the card, its arrow and the inset over it, nothing while unmeasured', () => {
-    expect(hintCoverFor(HEIGHT)).toBe(HEIGHT + HINT_ARROW_HEIGHT + MESSAGE_INSET)
+  it('covers the card at the edge and the inset over it, nothing while unmeasured', () => {
+    expect(hintCoverFor(HEIGHT)).toBe(HEIGHT + MESSAGE_INSET)
     expect(hintCoverFor(0)).toBe(0)
   })
 })
@@ -116,14 +120,16 @@ describe('the card', () => {
     )
     const card = host!.querySelector<HTMLElement>('.zen-hint-bubble')!
     expect(card.getAttribute('role')).toBe('status')
+    // The id the anchor's `aria-describedby` names while the bubble stands (PhoneShell.tsx).
+    expect(card.id).toBe(HINT_BUBBLE_ID)
     expect(card.textContent).toBe(TAB_SWITCHER_HINT_TEXT)
     expect(card.dataset.edge).toBe('bottom')
     expect(card.dataset.anchor).toBe('tabs')
     expect(card.dataset.leaving).toBeUndefined()
-    // The anchor's centre in the layer: 296 + 22 − 12 = 306; the card clamps to the right inset.
-    const left = LAYER_WIDTH - MESSAGE_INSET - WIDTH
-    expect(card.style.left).toBe(`${left}px`)
-    expect(card.style.getPropertyValue('--zen-hint-arrow-x')).toBe(`${306 - left}px`)
+    // The anchor's right edge in the layer: 296 + 44 − 12 = 328; the card's right edge sits on it.
+    expect(card.style.left).toBe(`${328 - WIDTH}px`)
+    // No arrow: nothing else is written on the element.
+    expect(card.style.getPropertyValue('--zen-hint-arrow-x')).toBe('')
     expect(measured).toHaveBeenCalledWith(HEIGHT)
   })
 
