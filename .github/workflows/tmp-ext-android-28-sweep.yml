@@ -32,7 +32,10 @@ name: TEMPORARY - compat round 22 sweep and frame budget trigger
 #     notOnGoogleImage by rounds 16, 19 and 20, read on the AOSP lane when their rows run, and not
 #     re-run on the Google image.
 #     `[sweep113]` fires the System WebView sweep job alone (with its rows-left check and second
-#     boot) – only for a re-run the coordinator grants.
+#     boot) – only for a re-run the coordinator grants. `[sweep156]` fires the AOSP-image sweep job
+#     alone (with its rows-left check and second boot) – granted 15:50 UTC Sep 27 for the one 156
+#     re-run after the AFTER's first 156 boot never reached the driver (the WebView swap's `adb
+#     root` flake) and its second lost 37 rows to the Recents finger the driver now guards against.
 #     SWEEP_LAST and the rows-left job's LAST_IDS are empty for the sweep this round.
 #   - `[budget]`: the runtime demo's two jobs with the frame budget alone (ExtensionScrollBudget
 #     under SKIP_DEMO=1: the long fixture scrolled with 0, 2, 3 and 6 extensions and the
@@ -86,7 +89,7 @@ jobs:
       timeout-minutes: 165
 
   modern-webview:
-    if: contains(github.event.head_commit.message, '[sweep]')
+    if: contains(github.event.head_commit.message, '[sweep]') || contains(github.event.head_commit.message, '[sweep156]')
     name: Best effort - Chromium snapshot WebView on an AOSP image
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
@@ -156,7 +159,7 @@ jobs:
       timeout-minutes: 165
 
   remaining-modern-webview:
-    if: always() && contains(github.event.head_commit.message, '[sweep]')
+    if: always() && (contains(github.event.head_commit.message, '[sweep]') || contains(github.event.head_commit.message, '[sweep156]'))
     needs: modern-webview
     name: Rows left after an emulator death - modern WebView
     runs-on: ubuntu-24.04
