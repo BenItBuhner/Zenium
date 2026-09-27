@@ -18,7 +18,9 @@
  * press that began in this document – and only when that gesture made or changed the
  * selection: the selection is snapshotted (a text control's bounds, or the range's ends and its
  * text) as the pointer or the key goes down and measured against the selection standing at the
- * up. The same selection merely persisting through an unrelated click or key raises nothing;
+ * up, and a `selectionchange` on the way counts as the gesture's change (a drag over the very
+ * words that stood collapses and remakes them – the user's selection, not a persisting one).
+ * The same selection merely persisting through an unrelated click or key raises nothing;
  * a selection a script made (`Selection.addRange`, `selectAllChildren`, a text control's
  * `select()` on load, a find match) raises nothing on its own; an up whose down the page never
  * saw (the key went down in the chrome, the press began in another window) raises nothing. So
@@ -227,6 +229,14 @@ export function installSelectionReporter(
    * against; `undefined` while no press begun in this document is in flight.
    */
   let gestureStart: SelectionSnapshot | null | undefined
+  /**
+   * `selectionchange` fired while the press was in flight: the gesture changed the selection
+   * on its way, even where it ends as it began – a drag over the very words that stood (the
+   * down collapses them, the drag makes them again) is the user's selection, not a persisting
+   * one. Read alongside the snapshot, never instead: an engine that coalesces the events of
+   * one task fires them after the up's handler ran, and the snapshot still tells.
+   */
+  let gestureChanged = false
 
   const cancel = (): void => {
     if (timer !== null) clearTimeout(timer)
@@ -261,23 +271,32 @@ export function installSelectionReporter(
     timer = setTimeout(report, SELECTION_REPORT_DEBOUNCE_MS)
   }
 
+  /** A press begins here: the selection as it stands, for the up to measure against. */
+  const beginGesture = (): void => {
+    gestureStart = selectionSnapshot(doc)
+    gestureChanged = false
+  }
+
   /**
-   * The gesture ended. Measured against its start, the selection it made or changed is
-   * reported once it settles; one it left as it stood – a script's, or the user's own from
-   * before, persisting through an unrelated click or key – raises nothing; none left clears.
-   * An up without a down seen here (the key went down in the chrome, the press began in another
-   * window) is no gesture of this document's.
+   * The gesture ended. The selection it made or changed – `selectionchange` on the way, or a
+   * different one standing at the up than at the down – is reported once it settles; one it
+   * left as it stood – a script's, or the user's own from before, persisting through an
+   * unrelated click or key – raises nothing; none left clears. An up without a down seen here
+   * (the key went down in the chrome, the press began in another window) is no gesture of this
+   * document's.
    */
   const settleGesture = (): void => {
     const start = gestureStart
+    const changed = gestureChanged
     gestureStart = undefined
+    gestureChanged = false
     if (start === undefined) return
     const now = selectionSnapshot(doc)
     if (now === null) {
       drop()
       return
     }
-    if (sameSelection(start, now)) return
+    if (!changed && sameSelection(start, now)) return
     owed = true
     schedule()
   }
@@ -286,9 +305,11 @@ export function installSelectionReporter(
    * The selection changed or collapsed. A standing menu follows it (a script's change, a
    * selection handle dragged, the shift-arrow before its key comes up: the fresh box at the
    * settle) and goes with its collapse; one that does not stand is not raised by this – a
-   * page's script may select what it likes and no menu comes of it.
+   * page's script may select what it likes and no menu comes of it. During a press it is the
+   * gesture's doing (`gestureChanged`), settled at the up.
    */
   const onSelectionChange = (): void => {
+    if (gestureStart !== undefined) gestureChanged = true
     if (selected(doc) === null) {
       drop()
       return
@@ -299,7 +320,7 @@ export function installSelectionReporter(
     // The mouse events follow the pointer events for one press: one snapshot, one drop.
     if (pointerDown && event.type === 'mousedown') return
     pointerDown = true
-    gestureStart = selectionSnapshot(doc)
+    beginGesture()
     drop()
   }
   const onPointerUp = (): void => {
@@ -308,7 +329,7 @@ export function installSelectionReporter(
     settleGesture()
   }
   const onKeyDown = (): void => {
-    gestureStart = selectionSnapshot(doc)
+    beginGesture()
   }
   const onKeyUp = (): void => {
     settleGesture()
@@ -335,6 +356,7 @@ export function installSelectionReporter(
    */
   const onBlur = (): void => {
     gestureStart = undefined
+    gestureChanged = false
     pointerDown = false
   }
 
@@ -360,6 +382,7 @@ export function installSelectionReporter(
     reported = false
     owed = false
     gestureStart = undefined
+    gestureChanged = false
     doc.removeEventListener('selectionchange', onSelectionChange, listen)
     win.removeEventListener('pointerdown', onPointerDown, listen)
     win.removeEventListener('mousedown', onPointerDown, listen)

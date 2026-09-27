@@ -289,6 +289,23 @@ describe('installSelectionReporter', () => {
       expect(sent).toEqual([])
     })
 
+    it('raises a drag over the very words that stood: the down collapses them, the drag remakes them', async () => {
+      document.body.innerHTML = '<p id="p">quantum foam</p>'
+      const sent = install()
+      scriptSelect('p')
+      await settle()
+      expect(sent).toEqual([])
+      // The engine's mousedown collapses the standing selection to a caret; the drag selects
+      // the same words again: the selection at the up reads as the one at the down, and the
+      // change on the way says it is the user's.
+      down()
+      collapse()
+      scriptSelect('p')
+      up()
+      await settle()
+      expect(sent.map((r) => r.text)).toEqual(['quantum foam'])
+    })
+
     it('hides on the pointer going down, and comes back only over a selection the up changed', async () => {
       document.body.innerHTML = '<p id="p">quantum foam</p><p id="q">other text</p>'
       const sent = install()
