@@ -16,6 +16,6 @@ import android.view.MotionEvent
  * Chrome's touchscreen-only refresh).
  */
 internal fun MotionEvent.isTouchpadSwipe(): Boolean {
-    val classification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) classification else HistoryNavClassifier.CLASSIFICATION_NONE
+    val classification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) this.classification else HistoryNavClassifier.CLASSIFICATION_NONE
     return HistoryNavClassifier.isTouchpadSwipe(buttonState, classification)
 }

@@ -194,8 +194,9 @@ class PullToRefreshDemo : DemoHarness("ptr-demo-state.json", "ptr-$THEME", "ptr-
      * top of a page at rest – while the finger's drag right after moves it. Both read on the
      * main thread mid-hold; a failed claim fails the run. So that the first claim cannot hold for
      * want of a swipe, the down is also read as the page's view receives it – through a touch
-     * listener the view's `dispatchTouchEvent` consults before its own `onTouchEvent` (nothing
-     * in the app sets one), which must see what the gate reads: no button, the two-finger
+     * listener the view's `dispatchTouchEvent` consults before its own `onTouchEvent` (the
+     * browser's window sets none; the custom tab sets its own on its own view,
+     * `CustomTabActivity.kt`), which must see what the gate reads: no button, the two-finger
      * classification – and the dispatcher must have taken it. Skipped below Android 14, where
      * the platform delivers no classified swipe (Chrome there treats the touchpad as a finger too).
      */

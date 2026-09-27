@@ -165,13 +165,14 @@ class PullGestureClassifierTest {
     fun theGestureReadsTheSwipeAtTheDownAndTheViewFreesItsGlowForIt() {
         // The one shared reading of the swipe: #580's predicate behind the API 29 guard.
         val swipe = code(File(repoRoot(), "android/app/src/main/kotlin/app/zen/chromium/TouchpadSwipe.kt"))
-        assertTrue(swipe.contains("internal fun MotionEvent.isTouchpadSwipe(): Boolean {"))
+        assertTrue("the one shared predicate is a MotionEvent extension", swipe.contains("internal fun MotionEvent.isTouchpadSwipe(): Boolean {"))
         assertTrue(
+            "the classification is read behind the API 29 guard, none below it",
             swipe.contains(
-                "val classification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) classification else HistoryNavClassifier.CLASSIFICATION_NONE"
+                "val classification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) this.classification else HistoryNavClassifier.CLASSIFICATION_NONE"
             )
         )
-        assertTrue(swipe.contains("return HistoryNavClassifier.isTouchpadSwipe(buttonState, classification)"))
+        assertTrue("#580's predicate stays the truth", swipe.contains("return HistoryNavClassifier.isTouchpadSwipe(buttonState, classification)"))
 
         // The pull reads it at the down, frees the view's glow for the swipe before the WebView
         // sees the down, and hands the flag to the classifier.
@@ -189,14 +190,15 @@ class PullGestureClassifierTest {
         // The view: the pull's mode keeps the WebView's glow off for a finger only; set on change.
         val view = code(File(repoRoot(), "android/app/src/main/kotlin/app/zen/chromium/TabWebView.kt"))
         val mode = view.indexOf("fun applyPullToRefreshMode(touchpad: Boolean = false) {")
-        assertTrue(mode >= 0)
+        assertTrue("the pull's mode setter takes the touchpad flag", mode >= 0)
         val body = view.substring(mode, view.indexOf("\n    }\n", mode))
         assertTrue(
+            "the glow is kept off for a finger alone",
             body.contains(
                 "val mode = if (host.pullToRefresh && !touchpad) View.OVER_SCROLL_NEVER else View.OVER_SCROLL_IF_CONTENT_SCROLLS"
             )
         )
-        assertTrue(body.contains("if (overScrollMode != mode) overScrollMode = mode"))
+        assertTrue("the mode is set on change only", body.contains("if (overScrollMode != mode) overScrollMode = mode"))
         // Its other callers (creation, the setting's flip) keep the finger's default.
         assertTrue(code(File(repoRoot(), "android/app/src/main/kotlin/app/zen/chromium/TabHost.kt")).contains("view.applyPullToRefreshMode()"))
         assertTrue(code(File(repoRoot(), "android/app/src/main/kotlin/app/zen/chromium/Host.kt")).contains("for (view in tabs.all()) view.applyPullToRefreshMode()"))
