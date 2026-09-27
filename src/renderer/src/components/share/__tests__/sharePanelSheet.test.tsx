@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import type { QrCodeRequest } from '@shared/qrScan'
 import type { SharePanelRequest } from '@shared/types'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { uiStore } from '@renderer/lib/ui'
@@ -27,6 +28,9 @@ vi.mock('@renderer/lib/api', () => ({
 }))
 
 const { SharePanelLayer } = await import('../SharePanelSheet')
+const { showQrCode, dismissQrCode } = await import('@renderer/lib/qrCode')
+const { QR_CODE_SEAM_GUARD_MS, SHARE_SEAM_BUSY_MS, SHARE_SEAM_OUT_MS } =
+  await import('@renderer/lib/shareSeam')
 
 /** A hand-cranked animation frame: `run(n)` advances the clock 16 ms a frame and runs the callbacks. */
 class Frames {
@@ -181,7 +185,8 @@ beforeEach(() => {
 
 afterEach(() => {
   unmount()
-  act(() => uiStore.set({ sharePanel: null }))
+  dismissQrCode()
+  act(() => uiStore.set({ sharePanel: null, qrCode: null, qrCodeSeam: null }))
   act(() => viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop', coarse: false }))
   vi.unstubAllGlobals()
   frames.now = 0
@@ -363,5 +368,179 @@ describe("the share panel's sheet (SH-03)", () => {
     expect(title()).toBe('a message')
     expect(detail()).toBe('https://example.com/')
     expect(captions('chips')).toEqual(['Copy', 'QR code'])
+  })
+})
+
+/*
+ * The QR code chip (SH-06; §9.38's hand-off, `lib/shareSeam.ts`'s code seam): the one pick the
+ * panel does not leave for. The host hears it at once and encodes while the panel stands, its
+ * cells inert; the code that comes back (`qr.code`, `showQrCode`) takes the panel's own sheet
+ * element – the preview and rows fading as an inert copy over the code's content, Close |
+ * Download in the footer – and its ways out end the code and the panel's request together, with
+ * no second answer to the host.
+ */
+describe("the QR code chip hands the panel's chassis to the code sheet", () => {
+  const code = (over: Partial<QrCodeRequest> = {}): QrCodeRequest => ({
+    url: 'https://example.com/',
+    tabId: 'tab-1',
+    rows: ['0000', '0110', '0110', '0000'],
+    error: null,
+    ...over
+  })
+  const actions = (): unknown[] =>
+    run.mock.calls.filter(([name]) => name === 'share.panelAction').map(([, args]) => args)
+  const click = (el: Element): void => {
+    act(() => {
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    })
+  }
+  const elapse = (ms: number): void => {
+    act(() => void vi.advanceTimersByTime(ms))
+  }
+  const qrCell = (): HTMLElement => cells('chips').find((c) => c.dataset.kind === 'qr')!
+  /** The chip picked, the code arrived: the sheet is the code's. */
+  async function handOff(): Promise<HTMLElement> {
+    show(request())
+    const chassis = q<HTMLElement>('.zen-sheet')!
+    click(qrCell())
+    await act(async () => {
+      await showQrCode(code())
+    })
+    return chassis
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    act(() => uiStore.set({ snapshot: null, snapshotTabId: null }))
+  })
+
+  it('tells the host of the pick at once and keeps the sheet standing, its cells inert, while the host encodes', () => {
+    show(request())
+    click(qrCell())
+    expect(actions()).toEqual([{ id: 'share-panel-1', kind: 'qr' }])
+    expect(uiStore.get().sharePanel?.id).toBe('share-panel-1')
+    expect(uiStore.get().qrCodeSeam).toEqual({ phase: 'encoding', panelId: 'share-panel-1' })
+    expect(panel()).not.toBeNull()
+    // Another cell meanwhile does nothing: one pick per panel.
+    click(cells('apps')[1]!)
+    click(cells('chips')[0]!)
+    rest()
+    expect(actions()).toEqual([{ id: 'share-panel-1', kind: 'qr' }])
+    expect(uiStore.get().sharePanel?.id).toBe('share-panel-1')
+    // No sign for an encode that is over inside 150 ms; §9.30's busy form after it – the
+    // spinner in the glyph's place, aria-busy, never disabled.
+    expect(qrCell().hasAttribute('aria-busy')).toBe(false)
+    elapse(SHARE_SEAM_BUSY_MS)
+    expect(qrCell().getAttribute('aria-busy')).toBe('true')
+    expect(qrCell().querySelector('.zen-share-panel-box svg')).not.toBeNull()
+    expect(qrCell().hasAttribute('disabled')).toBe(false)
+  })
+
+  it("draws the code in the same sheet element: the seam marked, one sheet and no second, the panel's class and header gone, the code's content and Close | Download in, the copy fading", async () => {
+    const chassis = await handOff()
+    expect(uiStore.get().qrCodeSeam).toEqual({
+      phase: 'hosting',
+      panelId: 'share-panel-1',
+      promptId: uiStore.get().qrCode!.id
+    })
+    expect(uiStore.get().sharePanel?.id).toBe('share-panel-1')
+    expect(qa('.zen-sheet')).toHaveLength(1)
+    expect(q('.zen-sheet')).toBe(chassis)
+    expect(chassis.classList.contains('zen-share-panel')).toBe(false)
+    expect(chassis.querySelector('.zen-sheet-header')).toBeNull()
+    const seam = chassis.querySelector<HTMLElement>('.zen-share-seam')!
+    expect(seam.dataset.seam).toBe('qr-code')
+    // The panel once more, inert and fading, over the code rising.
+    const out = seam.querySelector<HTMLElement>('.zen-share-seam-out')!
+    expect(out.hasAttribute('inert')).toBe(true)
+    expect(out.getAttribute('aria-hidden')).toBe('true')
+    expect(out.querySelector('.zen-share-panel-preview .zen-menu-link-title')?.textContent).toBe(
+      'Example Domain'
+    )
+    expect(out.querySelectorAll('[data-row="chips"] .zen-share-panel-cell')).toHaveLength(4)
+    const inLayer = seam.querySelector<HTMLElement>('.zen-share-seam-in')!
+    expect(inLayer.querySelector('[data-testid="qr-code-sheet"]')).not.toBeNull()
+    expect(inLayer.querySelector('h2')?.textContent).toBe('QR code')
+    expect(inLayer.querySelector('.zen-sheet-title-block p')?.textContent).toBe(
+      'Let someone nearby scan it to open the link.'
+    )
+    expect(inLayer.querySelector('[data-testid="qr-code-image"]')).not.toBeNull()
+    expect(inLayer.querySelector('[data-testid="qr-code-url"]')?.textContent).toBe(
+      'https://example.com/'
+    )
+    const buttons = [...chassis.querySelectorAll<HTMLButtonElement>('.zen-sheet-footer button')]
+    expect(buttons.map((b) => b.textContent)).toEqual(['Close', 'Download'])
+    expect(buttons[1]!.hasAttribute('data-primary')).toBe(true)
+    expect(chassis.getAttribute('aria-labelledby')).toBe('zen-qr-code-title')
+    // The copy leaves after its fade; the code stays.
+    elapse(SHARE_SEAM_OUT_MS)
+    expect(seam.querySelector('.zen-share-seam-out')).toBeNull()
+    expect(seam.querySelector('[data-testid="qr-code-sheet"]')).not.toBeNull()
+  })
+
+  it('Download runs the sheet down and asks the host for the picture at the landing, the panel’s request ending with it and no second answer', async () => {
+    const chassis = await handOff()
+    click(chassis.querySelector('[data-testid="qr-code-download"]')!)
+    rest()
+    expect(actions()).toEqual([{ id: 'share-panel-1', kind: 'qr' }])
+    expect(run.mock.calls.filter(([name]) => name === 'qr.download')).toEqual([
+      ['qr.download', { url: 'https://example.com/' }]
+    ])
+    expect(uiStore.get().qrCode).toBeNull()
+    expect(uiStore.get().qrCodeSeam).toBeNull()
+    expect(uiStore.get().sharePanel).toBeNull()
+  })
+
+  it('Close runs the sheet down and ends the code with no download and no second answer', async () => {
+    const chassis = await handOff()
+    const close = [...chassis.querySelectorAll<HTMLButtonElement>('.zen-sheet-footer button')][0]!
+    expect(close.textContent).toBe('Close')
+    click(close)
+    rest()
+    expect(actions()).toEqual([{ id: 'share-panel-1', kind: 'qr' }])
+    expect(run.mock.calls.filter(([name]) => name === 'qr.download')).toEqual([])
+    expect(uiStore.get().qrCode).toBeNull()
+    expect(uiStore.get().qrCodeSeam).toBeNull()
+    expect(uiStore.get().sharePanel).toBeNull()
+  })
+
+  it('shows the too-long error in the card with Download disabled, in the same chassis', async () => {
+    show(request())
+    click(qrCell())
+    await act(async () => {
+      await showQrCode(code({ rows: [], error: 'too-long' }))
+    })
+    expect(qa('.zen-sheet')).toHaveLength(1)
+    expect(q('.zen-qr-code-error')?.textContent).toBe(
+      'This link is more than 2,331 characters, too long for a QR code.'
+    )
+    expect(q<HTMLButtonElement>('[data-testid="qr-code-download"]')?.disabled).toBe(true)
+  })
+
+  it('lets the panel leave on the guard when no code comes, as the pick would have had it, with no second answer', () => {
+    show(request())
+    click(qrCell())
+    elapse(QR_CODE_SEAM_GUARD_MS)
+    rest()
+    expect(actions()).toEqual([{ id: 'share-panel-1', kind: 'qr' }])
+    expect(uiStore.get().sharePanel).toBeNull()
+    expect(uiStore.get().qrCodeSeam).toBeNull()
+  })
+
+  it("a code arriving with no panel standing for it rises on its own: the seam is the panel's alone", async () => {
+    show(request({ id: 'share-panel-8' }))
+    click(qrCell())
+    // The panel dragged away while the host encodes: the request released, the seam gone.
+    act(() => uiStore.set({ sharePanel: null, qrCodeSeam: null }))
+    rest()
+    await act(async () => {
+      await showQrCode(code())
+    })
+    expect(uiStore.get().qrCode).not.toBeNull()
+    expect(uiStore.get().qrCodeSeam).toBeNull()
   })
 })
