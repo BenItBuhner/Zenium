@@ -2107,11 +2107,29 @@ describe('a hidden page an agent drives and the stage', () => {
     expect(stage.contentSize).toEqual([1200, 900])
     expect(stages).toHaveLength(1)
     expect(stage.children).toEqual([view.view])
-    // The same word with nothing moved changes nothing; a narrower window shrinks the view, not the stage.
+    // The same word with nothing moved changes nothing – no call into the engine's view or the
+    // stage either; a narrower window shrinks the view, not the stage.
+    const engineView = view.view as unknown as { setBounds(rect: unknown): void }
+    const setBounds = engineView.setBounds.bind(engineView)
+    let boundsCalls = 0
+    engineView.setBounds = (rect: unknown): void => {
+      boundsCalls++
+      setBounds(rect)
+    }
+    const stageWin = stage as unknown as { setContentSize(width: number, height: number): void }
+    const setContentSize = stageWin.setContentSize.bind(stageWin)
+    let sizeCalls = 0
+    stageWin.setContentSize = (width: number, height: number): void => {
+      sizeCalls++
+      setContentSize(width, height)
+    }
     view.setAgentDriven(true)
+    expect(boundsCalls).toBe(0)
+    expect(sizeCalls).toBe(0)
     expect(engine(view).bounds).toEqual({ x: 0, y: 0, width: 1200, height: 900 })
     window.contentRect = { x: 200, y: 60, width: 900, height: 700 }
     view.setAgentDriven(true)
+    expect(boundsCalls).toBe(1)
     expect(engine(view).bounds).toEqual({ x: 0, y: 0, width: 900, height: 700 })
     expect(stage.contentSize).toEqual([1200, 900])
   })
@@ -2533,6 +2551,27 @@ describe('a hidden page an agent drives and the stage', () => {
       await vi.runAllTimersAsync()
       expect(await pending).toBeNull()
       expect(fakes.log).toEqual(['begin', 'end'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows a staged renderer as painting with the throttling as it stands – `true` for a page no session holds – not a `false` of its own', async () => {
+    vi.useFakeTimers()
+    try {
+      const { create } = setup()
+      const view = create()
+      const fakes = frameFakes(view)
+      view.setAgentDriven(true)
+      const pending = view.capture({ mode: 'viewport', format: 'jpeg' })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fakes.throttling).toEqual([true])
+      await vi.advanceTimersByTimeAsync(800)
+      expect(fakes.throttling).toEqual([true, true])
+      fakes.frames[0]!(frame(1032, 732))
+      await vi.runAllTimersAsync()
+      expect(await pending).toMatchObject({ width: 1032, height: 732 })
+      expect(fakes.throttling).toEqual([true, true])
     } finally {
       vi.useRealTimers()
     }
