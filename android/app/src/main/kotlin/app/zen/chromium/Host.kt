@@ -1612,8 +1612,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     /**
      * One operation on the secret store, off the main thread (the Keystore and the preferences
      * file are opened on the first call, there). A store that cannot seal rejects with
-     * `secrets-unavailable:`, which the chrome shows as it is; a read never rejects for that – it
-     * reads as no value. The value itself is never logged.
+     * `secrets-unavailable:`, which the engine turns into its typed refusal for the chrome to
+     * word; a read never rejects for that – it reads as no value. The value itself is never logged.
      */
     private fun secretsOp(reply: (Any?) -> Unit, op: (Secrets) -> Any?) {
         val store = secrets ?: Secrets.onDevice(activity).also { secrets = it }

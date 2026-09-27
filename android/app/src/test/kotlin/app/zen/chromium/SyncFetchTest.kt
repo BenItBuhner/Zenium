@@ -65,6 +65,9 @@ class SyncFetchTest {
 
     private fun recorded(): RecordedRequest = server.takeRequest(5, TimeUnit.SECONDS) ?: error("no request reached the server")
 
+    /** A failure on the wire is worded as the exception's class name and nothing else. */
+    private val EXCEPTION_NAME = Regex("[A-Za-z]+Exception")
+
     // --- the WebDAV verbs on the wire ------------------------------------------------------------
 
     @Test
@@ -306,10 +309,28 @@ class SyncFetchTest {
         val gone = MockWebServer()
         gone.start()
         val url = gone.url("/dav/").toString()
+        val port = gone.port
         gone.shutdown()
         val outcome = failure(fetch.run(fetch.begin("g"), url, "PROPFIND", mapOf("Authorization" to "Basic c2VjcmV0"), null, true))
         assertEquals(SyncFetch.NETWORK, outcome.kind)
         assertFalse(outcome.message.contains("c2VjcmV0"))
+        // OkHttp's ConnectException says "Failed to connect to /127.0.0.1:port"; the words sent are the class alone.
+        assertTrue(outcome.message, EXCEPTION_NAME.matches(outcome.message))
+        assertFalse(outcome.message.contains(port.toString()))
+        assertFalse(outcome.message.contains("127.0.0.1"))
+    }
+
+    @Test
+    fun `a host that does not resolve is a network failure whose words name the exception alone, never the host`() {
+        // `.invalid` is reserved never to resolve (RFC 2606); the resolver's own words name the host.
+        val outcome = failure(
+            fetch.run(fetch.begin("r"), "http://cloud.invalid/remote.php/dav/", "PROPFIND", mapOf("Authorization" to "Basic c2VjcmV0"), null, true)
+        )
+        assertEquals(SyncFetch.NETWORK, outcome.kind)
+        assertEquals("UnknownHostException", outcome.message)
+        assertFalse(outcome.message.contains("cloud.invalid"))
+        assertFalse(outcome.message.contains("c2VjcmV0"))
+        assertEquals(0, server.requestCount)
     }
 
     @Test

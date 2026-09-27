@@ -14,6 +14,7 @@ import java.security.GeneralSecurityException
 import java.security.ProviderException
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
+import javax.crypto.spec.SecretKeySpec
 
 /**
  * `Secrets` through its two seams – the sealed texts in a map, the key from a plain JVM AES key
@@ -38,6 +39,20 @@ class SecretsTest {
 
     private fun store(storage: MapStorage = MapStorage(), key: SecretKey? = aesKey()): Secrets =
         Secrets(storage, Secrets.KeySource { key })
+
+    /**
+     * A key the cipher refuses at `init` with a `GeneralSecurityException` that is not a bad tag –
+     * on the JVM `InvalidKeyException("Wrong algorithm")`, on the device AndroidKeyStore's
+     * `InvalidKeyException("Keystore operation failed")` after a transient keystore2 failure.
+     */
+    private fun wrongAlgorithmKey(): SecretKey = SecretKeySpec(ByteArray(8), "DES")
+
+    /** A key whose bytes the provider refuses to hand out at `init` – the Keystore's `ProviderException`, a RuntimeException. */
+    private fun refusingKey(): SecretKey = object : SecretKey {
+        override fun getAlgorithm() = "AES"
+        override fun getFormat() = "RAW"
+        override fun getEncoded(): ByteArray = throw ProviderException("Keystore operation failed")
+    }
 
     @Test
     fun `a value goes round - sealed on the way in, opened on the way out, gone after delete`() {
@@ -132,6 +147,52 @@ class SecretsTest {
         val secrets = Secrets(storage, Secrets.KeySource { null })
         secrets.delete("a")
         assertFalse(storage.values.containsKey("a"))
+    }
+
+    @Test
+    fun `a key the cipher refuses at init is the store unusable right now - a read is no value and the sealed text survives for the next beat`() {
+        val storage = MapStorage()
+        val key = aesKey()
+        store(storage, key).set("a", "kept")
+        val sealed = storage.values["a"]!!
+
+        // A GeneralSecurityException out of `init` that is no bad tag: not a damaged text, so not dropped.
+        val wrongAlgorithm = Secrets(storage, Secrets.KeySource { wrongAlgorithmKey() })
+        assertNull(wrongAlgorithm.get("a"))
+        assertEquals(sealed, storage.values["a"])
+        // The Keystore's ProviderException out of `init`: the same case.
+        val refusing = Secrets(storage, Secrets.KeySource { refusingKey() })
+        assertNull(refusing.get("a"))
+        assertEquals(sealed, storage.values["a"])
+
+        // The next beat, the key store back: the text opens as it did.
+        assertEquals("kept", store(storage, key).get("a"))
+        // Whereas a text that will never open again is still dropped.
+        assertNull(store(storage, aesKey()).get("a"))
+        assertFalse(storage.values.containsKey("a"))
+    }
+
+    @Test
+    fun `a key the cipher refuses at seal time is the same named refusal as no key at all, and nothing is written`() {
+        val storage = MapStorage()
+        store(storage).set("a", "kept")
+        val sealed = storage.values["a"]!!
+        for (refusing in listOf<Secrets.KeySource>(
+            Secrets.KeySource { wrongAlgorithmKey() },
+            Secrets.KeySource { refusingKey() }
+        )) {
+            val secrets = Secrets(storage, refusing)
+            for (name in listOf("a", "b")) {
+                try {
+                    secrets.set(name, "new")
+                    fail("a write the key store cannot seal must refuse")
+                } catch (e: Secrets.Unavailable) {
+                    assertEquals(Secrets.UNAVAILABLE_MESSAGE, e.message)
+                }
+            }
+            assertEquals(sealed, storage.values["a"])
+            assertFalse(storage.values.containsKey("b"))
+        }
     }
 
     @Test

@@ -7,6 +7,7 @@ import java.io.IOException
 import java.security.GeneralSecurityException
 import java.security.KeyStore
 import java.util.Base64
+import javax.crypto.BadPaddingException
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -26,8 +27,9 @@ import javax.crypto.spec.GCMParameterSpec
  *
  * Failure is quiet by design: a value that does not open (the key was replaced, the entry was
  * damaged) and a Keystore that cannot be used both read as *no value* – the engine then asks for
- * the password again (`authRefused`) – and only a write into a Keystore that cannot be used
- * refuses, with [UNAVAILABLE_PREFIX], which the chrome shows as a toast. Never a crash.
+ * the password again (`authRefused`) – and only a write the Keystore cannot seal refuses, with
+ * [UNAVAILABLE_PREFIX]; the engine answers its typed refusal (`{ reason: 'secrets' }`) for the
+ * chrome to word. Never a crash.
  *
  * Never opened at boot: [Host] creates its instance on the first `secrets.*` call, and the
  * Keystore and the preferences file are only touched inside the operation, on a worker thread.
@@ -51,21 +53,27 @@ class Secrets(private val storage: Storage, private val keys: KeySource) {
 
     /**
      * The value stored under [key], or null when there is none, when it does not open, or when
-     * the key store is unusable. A stored text that does not open is dropped, so a later `set`
-     * starts clean.
+     * the key store is unusable. A stored text that will never open again (the key changed, the
+     * text was damaged, it was never a sealed text) is dropped, so a later `set` starts clean; a
+     * text the key store merely cannot open right now is kept for the next beat.
      */
     fun get(key: String): String? {
         val sealed = storage.read(key) ?: return null
         val secret = obtainKey() ?: return null
         return try {
             open(secret, key, sealed)
-        } catch (e: GeneralSecurityException) {
-            // AEADBadTagException and kin: the key changed, or the text was damaged.
+        } catch (e: BadPaddingException) {
+            // `AEADBadTagException`: the key changed, the name differs, or the text was damaged.
             storage.remove(key)
             null
         } catch (e: IllegalArgumentException) {
             // Not a sealed text at all.
             storage.remove(key)
+            null
+        } catch (e: GeneralSecurityException) {
+            // The key store's refusal at `init` – AndroidKeyStore's `InvalidKeyException("Keystore
+            // operation failed")` on a transient keystore2 failure: unusable right now, and the
+            // text may well open on the next beat.
             null
         } catch (e: RuntimeException) {
             // The Keystore's own refusals (`ProviderException`): the store is unusable right now.
@@ -73,10 +81,21 @@ class Secrets(private val storage: Storage, private val keys: KeySource) {
         }
     }
 
-    /** Seal [value] under [key], replacing what was there. Throws [Unavailable] when there is no key store to seal with. */
+    /**
+     * Seal [value] under [key], replacing what was there. Throws [Unavailable] when the key store
+     * cannot seal – there is no key, or the key refuses at `init` (AndroidKeyStore's
+     * `InvalidKeyException` / `ProviderException`); nothing is written then.
+     */
     fun set(key: String, value: String) {
         val secret = obtainKey() ?: throw Unavailable(UNAVAILABLE_MESSAGE)
-        storage.write(key, seal(secret, key, value))
+        val sealed = try {
+            seal(secret, key, value)
+        } catch (e: GeneralSecurityException) {
+            throw Unavailable(UNAVAILABLE_MESSAGE)
+        } catch (e: RuntimeException) {
+            throw Unavailable(UNAVAILABLE_MESSAGE)
+        }
+        storage.write(key, sealed)
     }
 
     fun delete(key: String) {
@@ -95,7 +114,7 @@ class Secrets(private val storage: Storage, private val keys: KeySource) {
     }
 
     companion object {
-        /** The bridge's rejection prefix for a refused write; the message after it is the toast. */
+        /** The bridge's rejection prefix for a refused write; the words after it name the reason (the engine keeps the fact, not the words). */
         const val UNAVAILABLE_PREFIX = "secrets-unavailable:"
         const val UNAVAILABLE_MESSAGE = "The Android Keystore is unavailable on this device, so a password cannot be kept here"
 

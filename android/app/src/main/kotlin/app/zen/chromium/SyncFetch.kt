@@ -30,7 +30,10 @@ import java.util.concurrent.TimeUnit
  *
  * Never built at boot: [Host] creates its instance on the first `sync.fetch`, and the
  * [OkHttpClient] itself only when the first request runs (`client` is lazy). No header, URL or
- * body is ever logged here – the `Authorization` header is the user's app password.
+ * body is ever logged here – the `Authorization` header is the user's app password – and a
+ * failure's words are the exception's class name alone: `UnknownHostException`'s and
+ * `ConnectException`'s own messages carry the server's host, and the transport shows the words
+ * it is given (`WebDAV PROPFIND: UnknownHostException`), promising nothing of the address.
  */
 class SyncFetch(
     private val connectTimeoutMs: Long = CONNECT_TIMEOUT_MS,
@@ -51,7 +54,7 @@ class SyncFetch(
         /** The server answered; [headers] by lower-cased name, [body] the response's text. */
         class Response(val status: Int, val headers: Map<String, String>, val body: String) : Outcome()
 
-        /** No response: [kind] is one of the `fetch-*` kinds below, [message] the words the transport shows scrubbed. */
+        /** No response: [kind] is one of the `fetch-*` kinds below, [message] the words the transport shows – for a failure on the wire the exception's class name alone. */
         class Failure(val kind: String, val message: String) : Outcome()
     }
 
@@ -123,8 +126,10 @@ class SyncFetch(
                         e is SocketTimeoutException -> TIMEOUT
                         else -> NETWORK
                     },
-                    // The exception's words, never the request's: no URL, no header travels in them.
-                    e.javaClass.simpleName + (e.message?.let { ": $it" } ?: "")
+                    // The exception's class alone: its message names the server's host
+                    // (`UnknownHostException`, `ConnectException`), and the transport's scrub
+                    // (`describeNetworkError`) takes out whole URLs and `Basic …`, not a host name.
+                    e.javaClass.simpleName
                 )
             }
         } finally {

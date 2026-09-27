@@ -1,7 +1,7 @@
 import type { SecretStore } from '../core/platform'
 import type { Bridge } from './bridge'
 
-/** Kotlin's rejection prefix for a store that cannot seal (`Secrets.kt`, `UNAVAILABLE_PREFIX`); the words after it are for the user. */
+/** Kotlin's rejection prefix for a store that cannot seal (`Secrets.kt`, `UNAVAILABLE_PREFIX`); the words after it name the reason. */
 export const SECRETS_UNAVAILABLE_PREFIX = 'secrets-unavailable:'
 
 /**
@@ -11,7 +11,9 @@ export const SECRETS_UNAVAILABLE_PREFIX = 'secrets-unavailable:'
  * the phone, so `webdavAvailable()` reads a field at boot and nothing is opened until the engine's
  * first call. A value that does not open any more, and a Keystore that cannot be used, both read
  * as `null` (the engine then asks for the password again); only a write into an unusable Keystore
- * refuses, with Kotlin's words and no prefix – the engine shows them as its toast.
+ * refuses – rethrown here with the prefix stripped, and the engine turns any refused `secrets.set`
+ * into its typed `{ reason: 'secrets' }` (`SyncSetupRefusal`, no toast) for the chrome to word,
+ * so the words themselves reach no one.
  */
 export class AndroidSecrets implements SecretStore {
   constructor(private readonly bridge: Bridge) {}
