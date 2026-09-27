@@ -56,6 +56,7 @@ import type {
   SyncDeviceKind,
   SyncDeviceTabs,
   SyncScope,
+  SyncSetupRefusal,
   SyncStatus,
   SyncTransportKind,
   Tab,
@@ -2283,11 +2284,14 @@ export interface SyncHost {
       webdav?: WebDavSyncCredentials
     },
     win: ZenWindow
-  ): Promise<void>
+  ): Promise<SyncSetupRefusal | null>
   /** Reach a WebDAV server once with these credentials; nothing is created or kept (ID-32). */
   testWebDav(credentials: WebDavSyncCredentials): Promise<WebDavProbe>
-  /** A new app password for the configured WebDAV server; the round runs again with it. */
-  setWebDavPassword(password: string): Promise<void>
+  /**
+   * A new app password for the configured WebDAV server; the round runs again with it. A secret
+   * store that cannot keep it is the typed refusal (as `setup`'s), never a rejection.
+   */
+  setWebDavPassword(password: string): Promise<SyncSetupRefusal | null>
   setScope(patch: Partial<SyncScope>): void
   setDeviceName(name: string): void
   /** Re-point a configured device at a folder (after `folderLost`, or to move); the key stays. */

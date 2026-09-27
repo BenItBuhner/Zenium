@@ -2,8 +2,10 @@ import type {
   SyncDevice,
   SyncDeviceTabs,
   SyncScope,
+  SyncSetupRefusal,
   SyncStatus,
   SyncTransportKind,
+  WebDavErrorKind,
   WebDavProbe,
   WebDavSyncCredentials,
   WebDavSyncSettings
@@ -189,9 +191,14 @@ export class SyncEngine implements SyncHost {
   private applyingHistory = false
   private syncing = false
   private lastError: string | null = null
+  /** The class of `lastError` when the WebDAV transport raised it (`SyncStatus.lastErrorKind`). */
+  private lastErrorKind: WebDavErrorKind | null = null
   private folderLost = false
   private folderName: string | null = null
-  /** The WebDAV server refused the sign-in on the last round (`SyncStatus.authRefused`). */
+  /**
+   * The WebDAV server refused the sign-in on the last round (`SyncStatus.authRefused`): the
+   * timers are stopped and `run()` makes no request until `setWebDavPassword` connects again.
+   */
   private authRefused = false
   /** WebDAV conflicts run again in a row (`WEBDAV_CONFLICT_RETRIES`); a clean round resets it. */
   private conflictRetries = 0
@@ -312,6 +319,7 @@ export class SyncEngine implements SyncHost {
       scope: this.data.scope,
       lastSyncAt: this.data.lastSyncAt,
       lastError: this.lastError,
+      lastErrorKind: this.lastErrorKind,
       syncing: this.syncing,
       devices: this.data.devices,
       pendingMerge: this.data.pendingMerge,
@@ -341,6 +349,10 @@ export class SyncEngine implements SyncHost {
    * data, and the user is asked how to merge before anything is applied. With `transport:
    * 'webdav'` the folder is the server's (ID-32): reached with the app password given here,
    * which the host's secret store keeps from then on – the settings without it go to `sync.json`.
+   *
+   * A server's refusal, and a secret store that cannot keep the password, come back typed
+   * (`SyncSetupRefusal`) for the chrome to say in its words – no method or status of the
+   * protocol reaches a sentence (§9.33); the folder transport's refusals are toasted as before.
    */
   async setup(
     opts: {
@@ -352,10 +364,10 @@ export class SyncEngine implements SyncHost {
       webdav?: WebDavSyncCredentials
     },
     win: ZenWindow
-  ): Promise<void> {
+  ): Promise<SyncSetupRefusal | null> {
     if (!opts.passphrase || opts.passphrase.length < 8) {
       this.browser.toast('Choose a passphrase of at least 8 characters.', 'error', win)
-      return
+      return null
     }
     let target: SyncTarget
     if (opts.transport === 'webdav') {
@@ -365,7 +377,7 @@ export class SyncEngine implements SyncHost {
           'error',
           win
         )
-        return
+        return null
       }
       const { password, ...settings } = opts.webdav
       target = { transport: 'webdav', settings, password }
@@ -376,6 +388,13 @@ export class SyncEngine implements SyncHost {
     this.setBusy(true)
     try {
       const transport = this.openTransport(target)
+      if (target.transport === 'webdav' && transport instanceof WebDavTransport) {
+        // The address answers as a WebDAV server to these credentials before anything is made
+        // there: a wrong root would otherwise read as an empty folder (a listing's 404 is "no
+        // directory yet") and fail on the first round instead of at the setup.
+        const probe = await transport.probe()
+        if (!probe.ok) return { reason: 'server', kind: probe.kind, status: probe.status }
+      }
       let existing: DeviceFile[]
       try {
         await ensureReadme(transport)
@@ -383,8 +402,10 @@ export class SyncEngine implements SyncHost {
           (f) => f.deviceId !== this.data.deviceId
         )
       } catch (error) {
+        if (target.transport === 'webdav' && isWebDavError(error))
+          return { reason: 'server', kind: error.kind, status: error.status }
         this.browser.toast(this.describe(error), 'error', win)
-        return
+        return null
       }
       const salt = existing[0]?.envelope.salt ?? newSalt()
       const key = await deriveKey(opts.passphrase, salt, this.host.scrypt)
@@ -393,20 +414,22 @@ export class SyncEngine implements SyncHost {
           await decryptJson(key, existing[0].envelope)
         } catch {
           this.browser.toast(WRONG_PASSPHRASE_MESSAGE, 'error', win)
-          return
+          return null
         }
       }
-      this.disconnect(false)
       if (target.transport === 'webdav') {
-        // The secret store first: a device that restarts before the store took it would be a
-        // WebDAV device without a password, and that is refused every round.
+        // The secret store first, before anything of the device's standing setup is undone: a
+        // store that cannot keep the password leaves the device as it was, and a device that
+        // restarts before the store took it would be a WebDAV device without a password, refused
+        // every round.
         try {
           await this.browser.platform.secrets!.set(WEBDAV_SECRET_KEY, target.password)
-        } catch (error) {
-          this.browser.toast(this.describe(error), 'error', win)
-          return
+        } catch {
+          return { reason: 'secrets' }
         }
       }
+      // The password just kept is the new setup's: the disconnect leaves it in the store.
+      this.disconnect(false, { keepSecret: target.transport === 'webdav' })
       this.key = key
       this.data = {
         ...this.data,
@@ -433,6 +456,7 @@ export class SyncEngine implements SyncHost {
     }
     if (!this.data.pendingMerge) await this.syncNow()
     this.browser.state.commitVolatile()
+    return null
   }
 
   /** Reach a WebDAV server once with these credentials; nothing is made or kept (Test connection). */
@@ -443,19 +467,27 @@ export class SyncEngine implements SyncHost {
 
   /**
    * A new app password for the configured server (the old one was revoked – `authRefused` – or
-   * rotated): kept in the secret store, the connection made again with it, a round run.
+   * rotated): kept in the secret store, the connection made again with it – the poll and the
+   * push run again from here – and a round run. A store that cannot keep it is the typed
+   * refusal, never a rejection; the old password stays refused.
    */
-  async setWebDavPassword(password: string): Promise<void> {
+  async setWebDavPassword(password: string): Promise<SyncSetupRefusal | null> {
     if (!this.data.enabled || this.data.transport !== 'webdav' || !this.data.webdav || !this.key)
-      return
+      return null
     const secrets = this.browser.platform.secrets
-    if (!secrets || !password) return
-    await secrets.set(WEBDAV_SECRET_KEY, password)
+    if (!secrets || !password) return null
+    try {
+      await secrets.set(WEBDAV_SECRET_KEY, password)
+    } catch {
+      return { reason: 'secrets' }
+    }
     this.authRefused = false
     this.lastError = null
+    this.lastErrorKind = null
     this.conflictRetries = 0
     await this.connect(password)
     await this.syncNow()
+    return null
   }
 
   /**
@@ -559,6 +591,7 @@ export class SyncEngine implements SyncHost {
       this.folderLost = false
       this.authRefused = false
       this.lastError = null
+      this.lastErrorKind = null
       // The new folder has none of this device's pages: the whole open buffer is written again,
       // and the sealed pages it had elsewhere are not there to expire.
       this.data.history.written = 0
@@ -572,12 +605,16 @@ export class SyncEngine implements SyncHost {
     await this.syncNow()
   }
 
-  /** Turn sync off; optionally delete this device's file and documents from the folder. */
-  disconnect(wipeRemote: boolean): void {
+  /**
+   * Turn sync off; optionally delete this device's file and documents from the folder. A WebDAV
+   * device's app password leaves the secret store with it, unless `keepSecret` says the store
+   * already holds the next setup's (`setup`, which stores before it disconnects).
+   */
+  disconnect(wipeRemote: boolean, options: { keepSecret?: boolean } = {}): void {
     const transport = this.transport
     if (wipeRemote && transport) void this.removeOwnDocuments(transport).catch(() => undefined)
     this.stopTransport()
-    if (this.data.transport === 'webdav') this.forgetWebDavPassword()
+    if (this.data.transport === 'webdav' && !options.keepSecret) this.forgetWebDavPassword()
     this.key = null
     this.data = {
       ...this.data,
@@ -593,6 +630,7 @@ export class SyncEngine implements SyncHost {
       openTabsHash: null
     }
     this.lastError = null
+    this.lastErrorKind = null
     this.folderLost = false
     this.folderName = null
     this.authRefused = false
@@ -751,6 +789,11 @@ export class SyncEngine implements SyncHost {
     this.unwatch?.()
     this.unwatch = null
     this.transport = null
+    this.stopTimers()
+  }
+
+  /** No round starts on its own from here: the poll, a pending push, the first round after an attach. */
+  private stopTimers(): void {
     if (this.pollTimer) clearInterval(this.pollTimer)
     this.pollTimer = null
     if (this.pushTimer) clearTimeout(this.pushTimer)
@@ -798,7 +841,8 @@ export class SyncEngine implements SyncHost {
   }
 
   private schedulePush(): void {
-    if (!this.data.enabled || this.data.pendingMerge) return
+    // A refused sign-in holds every push too: the change waits for the new password's round.
+    if (!this.data.enabled || this.data.pendingMerge || this.authRefused) return
     if (this.pushTimer) clearTimeout(this.pushTimer)
     this.pushTimer = setTimeout(() => void this.syncNow(), PUSH_DEBOUNCE_MS)
   }
@@ -853,13 +897,24 @@ export class SyncEngine implements SyncHost {
   }
 
   private async run(): Promise<void> {
-    if (!this.data.enabled || !this.transport || !this.key || this.data.pendingMerge) return
+    // A refused sign-in stops the rounds outright – Sync now included: a request with the dead
+    // app password is what a server's brute-force protection counts (Nextcloud's: per address,
+    // 25 s delays then a block for every client behind it) – until `setWebDavPassword`.
+    if (
+      !this.data.enabled ||
+      !this.transport ||
+      !this.key ||
+      this.data.pendingMerge ||
+      this.authRefused
+    )
+      return
     if (this.pushTimer) {
       clearTimeout(this.pushTimer)
       this.pushTimer = null
     }
     this.syncing = true
     this.lastError = null
+    this.lastErrorKind = null
     this.browser.state.commitVolatile()
     try {
       const remote = await this.readRemote()
@@ -942,9 +997,13 @@ export class SyncEngine implements SyncHost {
         this.lastError = FOLDER_LOST_MESSAGE
       } else if (isWebDavError(error) && error.kind === 'auth') {
         // The server refused the sign-in: the app password was revoked or changed. Sync stays
-        // configured; the chrome asks for a new one (`setWebDavPassword`).
+        // configured, and nothing more is sent with that password – the poll and any pending
+        // push stop here, `run()` and `schedulePush` hold – until the chrome brings a new one
+        // (`setWebDavPassword`), whose connect starts the timers again.
         this.authRefused = true
         this.lastError = error.message
+        this.lastErrorKind = error.kind
+        this.stopTimers()
       } else if (
         isWebDavError(error) &&
         error.kind === 'conflict' &&
@@ -956,6 +1015,7 @@ export class SyncEngine implements SyncHost {
         this.schedulePush()
       } else {
         this.lastError = (error as Error).message || 'Sync failed'
+        this.lastErrorKind = isWebDavError(error) ? error.kind : null
       }
     } finally {
       this.syncing = false

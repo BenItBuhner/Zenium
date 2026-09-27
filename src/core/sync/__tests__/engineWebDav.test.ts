@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import type { WebDavSyncCredentials } from '../../../shared/types'
+import type { SyncSetupRefusal, WebDavSyncCredentials } from '../../../shared/types'
 import type { SecretStore } from '../../platform'
 import { WEBDAV_CONFLICT_RETRIES } from '../engine'
 import { SyncFolderLostError, isDeviceFileName } from '../transport'
@@ -111,7 +111,13 @@ function memorySecrets(): SecretStore & { values: Map<string, string> } {
 
 function webDavDevice(
   name: string,
-  options: { io?: Device['io']; keys?: Device['keys']; secrets?: SecretStore } = {}
+  options: {
+    io?: Device['io']
+    keys?: Device['keys']
+    secrets?: SecretStore
+    /** The poll's period; the harness default is none (the tests call `syncNow` themselves). */
+    pollMs?: number
+  } = {}
 ): Device & { secrets: SecretStore & { values: Map<string, string> } } {
   const secrets = (options.secrets ?? memorySecrets()) as SecretStore & {
     values: Map<string, string>
@@ -124,8 +130,8 @@ async function setupWebDav(
   d: Device,
   credentials: WebDavSyncCredentials = CREDENTIALS,
   passphrase = PASSPHRASE
-): Promise<void> {
-  await d.engine.setup(
+): Promise<SyncSetupRefusal | null> {
+  return d.engine.setup(
     {
       folder: '',
       passphrase,
@@ -139,6 +145,18 @@ async function setupWebDav(
 }
 
 const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
+const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+/** A secret store whose `set` fails (a keyring that refuses, a disk that is full): what the engine says. */
+function refusingSecrets(): SecretStore {
+  return {
+    get: async () => null,
+    set: async () => {
+      throw new Error('Error while encrypting the text provided to safeStorage.encryptString.')
+    },
+    delete: async () => undefined
+  }
+}
 
 describe('the engine on a WebDAV server', () => {
   it('two devices converge through the server; the settings are kept, the password only in the secret store', async () => {
@@ -232,10 +250,17 @@ describe('the engine on a WebDAV server', () => {
     expect(dav.log.some((r) => r.method === 'PROPFIND' && r.status === 207)).toBe(true)
   }, 30_000)
 
-  it('a revoked app password is authRefused with sync still configured; the new password recovers', async () => {
-    const a = webDavDevice('Desk (Linux)')
+  it('a revoked app password is authRefused with sync still configured and nothing more is sent with it; the new password recovers', async () => {
+    // A poll a few milliseconds apart: what a 45 s poll and a push on every change would do with
+    // a revoked password over a day, in a moment.
+    const a = webDavDevice('Desk (Linux)', { pollMs: 20 })
     await unlockVault(a)
     await setupWebDav(a)
+    await wait(70)
+    // The poll is running: rounds go out on their own before the refusal.
+    expect(
+      dav.log.filter((r) => r.method === 'PROPFIND' && r.status === 207).length
+    ).toBeGreaterThan(0)
 
     dav.setPassword('alice', 'rotated')
     a.browser.bookmarks.create({ title: 'X', url: 'https://x.example/' })
@@ -244,14 +269,143 @@ describe('the engine on a WebDAV server', () => {
       enabled: true,
       transport: 'webdav',
       authRefused: true,
-      lastError: 'WebDAV PROPFIND answered 401'
+      lastError: 'WebDAV PROPFIND answered 401',
+      lastErrorKind: 'auth'
     })
     expect(a.engine.status().lastError).not.toContain('app-pass')
 
-    await a.engine.setWebDavPassword('rotated')
+    // From here not one request carries the dead password: not the poll (Nextcloud's brute-force
+    // protection counts every 401 against the address, for every client behind it), not a push on
+    // a change, not Sync now.
+    dav.drain()
+    await wait(120)
+    expect(dav.log).toEqual([])
+    a.browser.bookmarks.create({ title: 'Y', url: 'https://y.example/' })
+    await wait(50)
+    await a.engine.syncNow()
+    expect(dav.log).toEqual([])
+    expect(a.engine.status().authRefused).toBe(true)
+
+    // The new password connects again, runs a round, and the poll is back.
+    expect(await a.engine.setWebDavPassword('rotated')).toBeNull()
     expect(a.secrets.values.get(WEBDAV_SECRET_KEY)).toBe('rotated')
-    expect(a.engine.status()).toMatchObject({ authRefused: false, lastError: null })
-    expect(dav.log.at(-1)?.status).not.toBe(401)
+    expect(a.engine.status()).toMatchObject({
+      authRefused: false,
+      lastError: null,
+      lastErrorKind: null
+    })
+    expect(dav.log.some((r) => r.status === 401)).toBe(false)
+    expect(dav.log.some((r) => r.method === 'PROPFIND' && r.status === 207)).toBe(true)
+    expect(dav.files(DIR)!.size).toBeGreaterThan(1)
+    dav.drain()
+    await wait(70)
+    expect(
+      dav.log.filter((r) => r.method === 'PROPFIND' && r.status === 207).length
+    ).toBeGreaterThan(0)
+  }, 30_000)
+
+  it('a 403 is the folder refused, not the password: an error of the round, sync still polling', async () => {
+    const a = webDavDevice('Desk (Linux)')
+    await unlockVault(a)
+    await setupWebDav(a)
+    dav.failNext = 403
+    await a.engine.syncNow()
+    expect(a.engine.status()).toMatchObject({
+      authRefused: false,
+      lastError: 'WebDAV PROPFIND answered 403',
+      lastErrorKind: 'forbidden'
+    })
+    await a.engine.syncNow()
+    expect(a.engine.status()).toMatchObject({ lastError: null, lastErrorKind: null })
+  }, 30_000)
+
+  it('a server refusal at the setup comes back typed, nothing toasted and nothing kept; the standing setup is left alone', async () => {
+    const a = webDavDevice('Desk (Linux)')
+    await unlockVault(a)
+    expect(await setupWebDav(a, { ...CREDENTIALS, password: 'wrong' })).toEqual({
+      reason: 'server',
+      kind: 'auth',
+      status: 401
+    })
+    expect(
+      await setupWebDav(a, { ...CREDENTIALS, url: 'https://cloud.test/remote.php/dav/files/bob/' })
+    ).toEqual({ reason: 'server', kind: 'missing', status: 404 })
+    dav.down = true
+    expect(await setupWebDav(a)).toEqual({ reason: 'server', kind: 'unavailable', status: 0 })
+    dav.down = false
+    expect(a.toasts).toEqual([])
+    expect(a.engine.status()).toMatchObject({ enabled: false, transport: 'folder', webdav: null })
+    expect(a.secrets.values.size).toBe(0)
+
+    // A device syncing through a folder asks for a server whose store cannot keep the password:
+    // the typed refusal, and the folder setup stands as it was (the store is asked before
+    // anything is undone).
+    const b = device('Desk (Linux)', { fetch: dav.fetch, secrets: refusingSecrets() })
+    await unlockVault(b)
+    await b.engine.setup(
+      {
+        folder: '/drive',
+        passphrase: PASSPHRASE,
+        deviceName: b.name,
+        scope: b.engine.status().scope
+      },
+      b.win
+    )
+    expect(b.engine.status()).toMatchObject({
+      enabled: true,
+      transport: 'folder',
+      folder: '/drive'
+    })
+    expect(await setupWebDav(b)).toEqual({ reason: 'secrets' })
+    expect(b.toasts).toEqual([])
+    expect(b.engine.status()).toMatchObject({
+      enabled: true,
+      transport: 'folder',
+      folder: '/drive'
+    })
+    b.browser.bookmarks.create({ title: 'Still', url: 'https://still.example/' })
+    await b.engine.syncNow()
+    expect(b.engine.status().lastError).toBeNull()
+  }, 30_000)
+
+  it('a new app password the store cannot keep is the typed refusal, never a rejection; the old one stays refused', async () => {
+    const store = memorySecrets()
+    const a = webDavDevice('Desk (Linux)', { secrets: store })
+    await unlockVault(a)
+    await setupWebDav(a)
+    dav.setPassword('alice', 'rotated')
+    await a.engine.syncNow()
+    expect(a.engine.status().authRefused).toBe(true)
+
+    store.set = async () => {
+      throw new Error('Error while encrypting the text provided to safeStorage.encryptString.')
+    }
+    dav.drain()
+    expect(await a.engine.setWebDavPassword('rotated')).toEqual({ reason: 'secrets' })
+    expect(a.engine.status()).toMatchObject({ authRefused: true, enabled: true })
+    expect(store.values.get(WEBDAV_SECRET_KEY)).toBe('app-pass')
+    expect(dav.log).toEqual([])
+  }, 30_000)
+
+  it('a failed precondition (412) is run again quietly like a lock, through the same retries', async () => {
+    const a = webDavDevice('Desk (Linux)')
+    await unlockVault(a)
+    await setupWebDav(a)
+    a.browser.bookmarks.create({ title: 'X', url: 'https://x.example/' })
+    for (let i = 0; i < WEBDAV_CONFLICT_RETRIES; i++) {
+      dav.failNext = 412
+      await a.engine.syncNow()
+      expect(a.engine.status()).toMatchObject({ lastError: null, lastErrorKind: null })
+    }
+    dav.failNext = 412
+    await a.engine.syncNow()
+    expect(a.engine.status()).toMatchObject({
+      lastError: 'WebDAV PROPFIND answered 412',
+      lastErrorKind: 'conflict',
+      authRefused: false
+    })
+    await a.engine.syncNow()
+    expect(a.engine.status()).toMatchObject({ lastError: null, lastErrorKind: null })
   }, 30_000)
 
   it('a lock or a failed precondition is run again quietly a few times, then shown, then cleared', async () => {
@@ -268,6 +422,7 @@ describe('the engine on a WebDAV server', () => {
     await a.engine.syncNow()
     expect(a.engine.status()).toMatchObject({
       lastError: 'WebDAV PUT answered 423',
+      lastErrorKind: 'conflict',
       authRefused: false,
       enabled: true
     })
@@ -288,11 +443,12 @@ describe('the engine on a WebDAV server', () => {
     expect(a.engine.status()).toMatchObject({
       folderLost: false,
       authRefused: false,
-      lastError: 'WebDAV PROPFIND: fetch failed: <url> refused the connection'
+      lastError: 'WebDAV PROPFIND: fetch failed: <url> refused the connection',
+      lastErrorKind: 'unavailable'
     })
     dav.down = false
     await a.engine.syncNow()
-    expect(a.engine.status().lastError).toBeNull()
+    expect(a.engine.status()).toMatchObject({ lastError: null, lastErrorKind: null })
   }, 30_000)
 
   it('the probe reaches the server with the credentials and makes nothing', async () => {

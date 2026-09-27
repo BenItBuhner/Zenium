@@ -7,6 +7,7 @@ import type {
   SidePanelInfo,
   Suggestion,
   SyncDeviceTabs,
+  SyncSetupRefusal,
   SyncStatus,
   WebDavProbe
 } from '../shared/types'
@@ -208,6 +209,7 @@ export class NoSync implements SyncHost {
       scope: defaultScope(),
       lastSyncAt: null,
       lastError: null,
+      lastErrorKind: null,
       syncing: false,
       devices: [],
       pendingMerge: false,
@@ -224,15 +226,18 @@ export class NoSync implements SyncHost {
     return null
   }
 
-  async setup(_opts: unknown, win: ZenWindow): Promise<void> {
+  async setup(_opts: unknown, win: ZenWindow): Promise<SyncSetupRefusal | null> {
     this.browser.toast('Sync is not available on this device yet.', 'info', win)
+    return null
   }
 
   async testWebDav(): Promise<WebDavProbe> {
     return { ok: false, kind: 'unavailable', status: 0 }
   }
 
-  async setWebDavPassword(): Promise<void> {}
+  async setWebDavPassword(): Promise<SyncSetupRefusal | null> {
+    return null
+  }
 
   setScope(): void {}
   setDeviceName(): void {}
