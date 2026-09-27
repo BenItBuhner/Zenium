@@ -383,8 +383,14 @@ function installGuards(
     },
     onFlags: (listener) => {
       onFlags = listener
-      // Ask for the current flags; the reply arrives through the listener above.
-      up({ type: 'hello' })
+      // Ask for the current flags; the reply arrives through the listener above. The hello
+      // carries this document's navigation start (`performance.timeOrigin`: one monotonic clock
+      // for every frame of the process, on the wall clock): the main frame's hello is the tab's
+      // document boundary for the image search's frame registry, and a sub-frame registers
+      // with its own stamp, so a frame of the new document – whose navigation began after its
+      // parent's – outlives the boundary whichever order the two hellos land in
+      // (`TabWebView.onPageMessage`, `ImageOwner.documentStarted`).
+      up({ type: 'hello', documentStart: performance.timeOrigin })
     },
     onZap: (listener) => {
       onZap = listener

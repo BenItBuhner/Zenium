@@ -25,9 +25,24 @@ import java.security.MessageDigest
  * sub-frame's proxy is registered from its `hello` ([registerFrame]); the main document's is the
  * tab's `replyProxy`, handed to [start] and broadcast last (§5 rule 1). A gone frame's proxy
  * drops what is posted to it without a word (`JsReplyProxy.postMessage`:
- * `if (mNativeJsReplyProxy == 0) return`), so nothing is pruned on failure: the set is cleared
- * with the main document ([documentStarted]) and with the view ([destroy]) and capped at
- * [OWNER_MAX_FRAMES], the oldest dropped first.
+ * `if (mNativeJsReplyProxy == 0) return`), so nothing is pruned on failure: the registry is cleared
+ * with the view ([destroy]) and capped at [OWNER_MAX_FRAMES], the oldest dropped first.
+ *
+ * The main document's boundary is the MAIN FRAME's hello, not `onPageStarted`
+ * ([documentStarted]). Every hello carries its document's navigation start
+ * (`performance.timeOrigin`, one clock for every frame), and a sub-frame's navigation begins
+ * after its parent document's, so the new document's frames all stamp at or after the main
+ * frame's: the boundary drops the frames stamped before it (the old document's) and keeps the
+ * rest. WebView 113 posts `onPageStarted` at commit as a Java `Handler` message
+ * (`AwWebContentsObserver.didFinishNavigationInPrimaryMainFrame` → `postOnPageStarted`) while
+ * it calls the message listener inline from the native task that delivered the frame's hello
+ * (`WebMessageListenerHolder.onPostMessage`), and the native pump drains its immediate tasks
+ * before yielding to the Java queue (`MessagePumpForUI::DoNonDelayedLooperWork`), so a
+ * sub-frame whose hello shared a burst with the main frame's commit was registered and then
+ * cleared by `onPageStarted`, and its image fell to the address route (`no-owner`). Ordered by
+ * the stamps, a frame of the new document survives whichever order its hello and the boundary
+ * land in; a stale entry (a frame that navigated itself keeps its old proxy here until the next
+ * boundary or the cap) costs a request the [OWNER_COLLECT_MS] wait at most, never a wrong owner.
  *
  * Pure, as `PageMessages.kt` is: the timers run on an injected scheduler, the nonce comes from
  * an injected random source and the messages leave through [post], so every case of the
@@ -43,8 +58,11 @@ class ImageOwner<P : Any>(
     /** Deliver JSON text to a frame's proxy (`proxy.postMessage`, inside a `runCatching`). */
     private val post: (frame: P, json: String) -> Unit
 ) {
-    /** The sub-frames' proxies, by identity, oldest first; never the main document's. */
-    private val frames = LinkedHashSet<P>()
+    /**
+     * The sub-frames' proxies, by identity, oldest first, each with its document's navigation
+     * start (NaN for a hello that carried none); never the main document's.
+     */
+    private val frames = LinkedHashMap<P, Double>()
     /** The one request live for the tab (Q5), or none. */
     private var live: Request<P>? = null
 
@@ -55,18 +73,20 @@ class ImageOwner<P : Any>(
     val busy: Boolean get() = live != null
 
     /**
-     * A sub-frame's page script said hello: its proxy joins the frames the next question reaches.
-     * The same proxy again (it cannot happen for one document, whose script says hello once)
-     * keeps its place; the 257th drops the oldest.
+     * A sub-frame's page script said hello: its proxy joins the frames the next question reaches,
+     * stamped with its document's navigation start ([documentStart]; NaN when the hello carried
+     * none, and the next boundary drops it). The same proxy again (it cannot happen for one
+     * document, whose script says hello once) keeps its place and its stamp; the 257th drops the
+     * oldest.
      */
-    fun registerFrame(proxy: P) {
-        if (frames.contains(proxy)) return
+    fun registerFrame(proxy: P, documentStart: Double) {
+        if (frames.containsKey(proxy)) return
         if (frames.size >= OWNER_MAX_FRAMES) {
-            val oldest = frames.iterator()
+            val oldest = frames.keys.iterator()
             oldest.next()
             oldest.remove()
         }
-        frames.add(proxy)
+        frames[proxy] = documentStart
     }
 
     /**
@@ -96,7 +116,7 @@ class ImageOwner<P : Any>(
         }
         live?.let { finish(it, failure(TIMEOUT)) }
         val targets = ArrayList<P>(frames.size + 1)
-        targets.addAll(frames)
+        targets.addAll(frames.keys)
         if (mainFrame != null) targets.add(mainFrame)
         if (targets.isEmpty()) {
             reply(failure(NO_OWNER))
@@ -174,17 +194,27 @@ class ImageOwner<P : Any>(
     }
 
     /**
-     * The main document changed (`onPageStarted`): the registered frames were the old document's,
-     * and so was any live request, whose reply is `timeout` (the core takes the address route).
+     * The main frame's hello: a new main document, whose navigation started at [documentStart]
+     * (`performance.timeOrigin`; NaN when the hello carried none). The frames stamped before it
+     * were the old document's and go, and so does one whose stamp is unknown; a frame stamped at
+     * or after it is the new document's – its hello landed before the main frame's, which the
+     * stamps make harmless – and stays. Without a stamp everything goes, as `onPageStarted` once
+     * did. Any live request was the old document's: its reply is `timeout` (the core takes the
+     * address route).
      */
-    fun documentStarted() {
-        frames.clear()
+    fun documentStarted(documentStart: Double) {
+        if (documentStart.isNaN()) {
+            frames.clear()
+        } else {
+            frames.values.removeAll { stamp -> stamp.isNaN() || stamp < documentStart }
+        }
         live?.let { finish(it, failure(TIMEOUT)) }
     }
 
-    /** The view is going: as [documentStarted]. */
+    /** The view is going: every frame is forgotten and a live request answers `timeout`. */
     fun destroy() {
-        documentStarted()
+        frames.clear()
+        live?.let { finish(it, failure(TIMEOUT)) }
     }
 
     private fun finish(request: Request<P>, json: String) {

@@ -1007,14 +1007,20 @@ class TabWebView(
     private fun onPageMessage(message: WebMessageCompat, proxy: JavaScriptReplyProxy?, isMainFrame: Boolean = true) {
         val route = routePageMessage(message.data, host.pageToken)
         // A sub-frame's hello, before it is dropped below: its reply proxy joins the frames the
-        // image search's frame-owner protocol asks ([ImageOwner.registerFrame]). The tab's
-        // replyProxy stays the main document's: the flags and the core's messages are its alone.
-        if (!isMainFrame && proxy != null && route === PageMessageRoute.Hello) imageOwner().registerFrame(proxy)
+        // image search's frame-owner protocol asks ([ImageOwner.registerFrame]), stamped with its
+        // document's navigation start. The tab's replyProxy stays the main document's: the flags
+        // and the core's messages are its alone.
+        if (!isMainFrame && proxy != null && route is PageMessageRoute.Hello) imageOwner().registerFrame(proxy, route.documentStart)
         if (!route.heardFrom(isMainFrame)) return
         when (route) {
             PageMessageRoute.Ignore -> return
-            PageMessageRoute.Hello -> {
+            is PageMessageRoute.Hello -> {
                 replyProxy = proxy
+                // The main frame's hello is the tab's document boundary for the protocol's frames:
+                // the ones stamped before this document's navigation start were the old
+                // document's ([ImageOwner.documentStarted]). Not onPageStarted, which WebView 113
+                // posts at commit as a Java message the frames' hellos can run ahead of.
+                imageOwner?.documentStarted(route.documentStart)
                 sendFlags()
             }
             // The settled value of a Promise an evaluate() script returned (see evaluate()).
@@ -2970,8 +2976,10 @@ class TabWebView(
             if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) signalScript?.let { evaluateJavascript(it, null) }
             loading = true
             domReady.documentStarted()
-            // The frames the image search's protocol knew were the old document's ([ImageOwner]).
-            imageOwner?.documentStarted()
+            // The image search's frame registry is NOT cleared here: WebView 113 posts this
+            // callback at commit as a Java message that the new document's frame hellos, delivered
+            // inline from the native queue, can run ahead of. The main frame's own hello is the
+            // boundary (onPageMessage, [ImageOwner.documentStarted]).
             // Whatever the user agent is now, this page was requested with it.
             userAgentStale = false
             // Darkening for the page that is coming, before its first paint; the core confirms.

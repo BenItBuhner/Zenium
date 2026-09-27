@@ -322,6 +322,7 @@ export const DEFAULT_SETTINGS: Settings = {
   shortcutPreset: 'chrome',
   privacy: structuredClone(DEFAULT_PRIVACY_SETTINGS),
   preloadPages: DEFAULT_PRELOAD_PAGES,
+  autoRevokeUnusedPermissions: true,
   newTab: structuredClone(DEFAULT_NEW_TAB_SETTINGS),
   gestureHintDone: false,
   fullscreenHintDone: false,

@@ -1,0 +1,9 @@
+{
+  "id": "image-search-owner",
+  "class": "ImageSearchOwnerDemo",
+  "shard": "phone-a",
+  "mirrors": "android-image-search-owner-demo.yml",
+  "dir": "image-search-owner-demo",
+  "estimate": 2,
+  "note": "The frame-owner image-search protocol's on-device scene (frame-owner-protocol-interface.md 7.3; #605 + #606 at v: 1, W6-S15). Four loopback origins on the drivers' port: a top document that hooks fetch / Image / XMLHttpRequest / Response.prototype.arrayBuffer and logs every URL seen to its title, a cross-origin frame holding the image, the fixture's own engine (the seeded default: Lens's multipart form pointed at the fixture, never the real Google), and a CORS-less image site. A real hold on the framed image and a real touch on Search Image with Google Lens, then: (a) the multipart POST landed under Origin: null with its image.jpg part, (b) the top log names no URL of the frame's origin, (b2) the image in the top document still searches (the main frame is owner), (b3) a framed image cross-origin to its frame without CORS goes opaque to the address form with the top log still empty. Runs on this shard's WebView 113 (the image's), where WEB_MESSAGE_LISTENER and DOCUMENT_START_SCRIPT hold and the protocol runs; the route is read off the protocol messages the fixture frames note and off the tab's registry by reflection (the Kotlin half writes no log lines); the top document's bridge payloads and its Resource Timing are swept for the frame's host too. About a minute and a quarter of driver after the boot."
+}

@@ -4,6 +4,7 @@ import type { PermissionPrompt, PermissionPromptAnswer } from '../../shared/type
 import {
   MAX_NOTICES,
   PermissionService,
+  coarseVisitTime,
   decisionKey,
   displayOrigin,
   permissionPromptCopy,
@@ -173,7 +174,14 @@ describe('PermissionService: local files', () => {
     expect(d.asked[0].message).toBe('Allow file:/// to know your location?')
     expect(p.check('geolocation', 'file:///')).toBe(true)
     expect(p.stored('geolocation', 'file:///tmp/other.html')).toBe('allow')
-    expect(p.rules()).toEqual([{ origin: 'file://', permission: 'geolocation', decision: 'allow' }])
+    expect(p.rules()).toEqual([
+      {
+        origin: 'file://',
+        permission: 'geolocation',
+        decision: 'allow',
+        lastVisitedAt: coarseVisitTime(Date.now())
+      }
+    ])
     expect(p.listForOrigin(FILE_PAGE)).toEqual([{ permission: 'geolocation', decision: 'allow' }])
     expect(p.listForPermission('geolocation')).toEqual([{ origin: 'file://', decision: 'allow' }])
     p.resetOrigin('file://')
@@ -234,9 +242,21 @@ describe('PermissionService: external applications', () => {
     // A different scheme from the same site is a new question.
     expect(await p.decide('openExternal', PAGE, { externalUrl: 'mailto:a@b.c' })).toBe(true)
     expect(d.asked.length).toBe(4)
+    // A per-site external-application allow is stamped like any other ask-default grant (PS-41).
+    const lastVisitedAt = coarseVisitTime(Date.now())
     expect(p.rules()).toEqual([
-      { origin: 'https://example.com', permission: 'openExternal:mailto', decision: 'allow' },
-      { origin: 'https://example.com', permission: 'openExternal:zoommtg', decision: 'allow' }
+      {
+        origin: 'https://example.com',
+        permission: 'openExternal:mailto',
+        decision: 'allow',
+        lastVisitedAt
+      },
+      {
+        origin: 'https://example.com',
+        permission: 'openExternal:zoommtg',
+        decision: 'allow',
+        lastVisitedAt
+      }
     ])
   })
 

@@ -1327,7 +1327,7 @@ describe('a section asked for one of its groups (zen://settings/<section>?group=
     expect(chevron('hub-clear-data')).toBe(false)
     expect(card('hub-clear-data').querySelector('.zen-settings-trailing')).toBeNull()
     expect(card('hub-clear-data').querySelector('.zen-settings-label')?.textContent).toBe(
-      'Clear browsing data…'
+      'Delete browsing data…'
     )
     expect(card('hub-security').querySelector('.zen-settings-label')?.textContent).toBe(
       'Safe Browsing'
@@ -1382,7 +1382,7 @@ describe('a section asked for one of its groups (zen://settings/<section>?group=
     scrolled.mockRestore()
   })
 
-  it('Clear browsing data… opens the PS-13 dialog over the section instead of landing anywhere', () => {
+  it('Delete browsing data… opens the PS-13 dialog over the section instead of landing anywhere', () => {
     const el = mountHosted(state(DESKTOP, 'linux', {}, 'zen://settings/privacy'))
     const card = el.querySelector<HTMLButtonElement>('[data-row="hub-clear-data"]')!
     expect(card.getAttribute('aria-haspopup')).toBe('dialog')
@@ -1390,8 +1390,11 @@ describe('a section asked for one of its groups (zen://settings/<section>?group=
     expect(invoke).not.toHaveBeenCalledWith('page.navigate', expect.anything())
     const dialog = el.querySelector<HTMLElement>('[data-dialog="form:hub-clear-data"]')
     expect(dialog).not.toBeNull()
-    // One name for one thing: the card reads as the dialog it opens is titled today.
-    expect(dialog!.textContent).toContain('Clear browsing data')
+    // One name for one thing: the card reads as the dialog it opens is titled – Chrome's
+    // "Delete browsing data" (W8-7), and nothing in the dialog still says "Clear".
+    expect(dialog!.querySelector('h2')?.textContent).toBe('Delete browsing data')
+    expect(dialog!.textContent).not.toContain('Clear browsing data')
+    expect(dialog!.textContent).not.toContain('Clear data')
   })
 })
 

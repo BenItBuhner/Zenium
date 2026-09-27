@@ -47,6 +47,7 @@ import type {
   Platform,
   Rect,
   ResourceSnapshot,
+  RevokedSitePermissions,
   SafetyCheckResult,
   SearchEngine,
   SearchEngineControl,
@@ -333,6 +334,7 @@ export interface StateExtras {
   network: NetworkStatus
   blockedPopups: Record<string, BlockedPopup[]>
   permissionRules: PermissionRule[]
+  revokedUnusedPermissions: RevokedSitePermissions[]
   permissionDefaults: Record<string, ContentDefault>
   lastSafetyCheck: SafetyCheckResult | null
   permissionPrompts: PermissionPrompt[]
@@ -524,6 +526,7 @@ export class BrowserState {
     network: { online: true },
     blockedPopups: {},
     permissionRules: [],
+    revokedUnusedPermissions: [],
     permissionDefaults: {},
     lastSafetyCheck: null,
     permissionPrompts: [],
@@ -896,6 +899,9 @@ export class BrowserState {
     // Preload pages (PS-43): `standard` for a profile from before it (the fold of the desktop's
     // "Block prerendering" is a read of nothing – see `sanitizePreloadPages`).
     this.settings.preloadPages = sanitizePreloadPages(data.settings?.preloadPages)
+    // Off only when the profile says so (PS-41): an older profile, or anything but a boolean,
+    // reads on – Chrome's default.
+    this.settings.autoRevokeUnusedPermissions = data.settings?.autoRevokeUnusedPermissions !== false
     this.settings.spellcheck = sanitizeSpellcheck(data.settings?.spellcheck)
     this.settings.reader = sanitizeReaderPreferences(data.settings?.reader)
     this.settings.readAloud = sanitizeReadAloudSettings(data.settings?.readAloud)

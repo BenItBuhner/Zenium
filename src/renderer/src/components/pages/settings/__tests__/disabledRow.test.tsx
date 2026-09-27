@@ -298,7 +298,7 @@ describe('a disabled settings row dims once (§9.30)', () => {
       expect(reaching(nestedBox.parentElement!)).toEqual(['opacity: 0.4;'])
       expect(reaching(nestedBox)).toEqual(['opacity: 0.4;', 'opacity: 1;'])
 
-      // The site controls' `Checkbox` (Clear browsing data's types a range cannot clear) is the
+      // The site controls' `Checkbox` (Delete browsing data's types a range cannot delete) is the
       // same nested form under a different wrapper class.
       act(() =>
         root?.render(

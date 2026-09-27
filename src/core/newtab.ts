@@ -35,6 +35,7 @@ import { makeTheme, resolveTheme, themeCssVariables, unfollowedTheme } from '../
 import { engineFieldFavicon } from '../shared/search'
 import { openHosts } from '../shared/favicons'
 import { newId } from '../shared/ids'
+import { TOAST_UNDO_MS } from '../shared/toastCard'
 import {
   DEFAULT_NEW_TAB_SETTINGS,
   MAX_NEW_TAB_SHORTCUTS,
@@ -873,8 +874,51 @@ export class NewTabService {
     this.updateDevice((d) => unpinShortcut(d, url))
   }
 
-  remove(url: string): void {
+  /**
+   * The tile menu's Remove (NTP-07): the tile off the page – its shortcut gone and its host out
+   * of the most visited (`removeSite`) – and the chrome's toast raised with Undo alone on §9.33's
+   * 8 s clock: "Shortcut removed" for a pin, "Site removed" for a most visited site, the served
+   * page's words (Chrome 152's snackbar over the same blocklist write says "This site won't be
+   * shown again", `TileGroupDelegateImpl.removeMostVisitedItem`). What went is kept for
+   * `undoRemove` until Undo runs or a later removal takes the toast; a device write in between
+   * (a pin, a reorder, a card hidden) does not forget it – the toast still offers Undo, so Undo
+   * still has to work (`restoreShortcut` clamps the slot and refuses a duplicate on its own).
+   * Nothing is raised for a tile that was not on the page.
+   */
+  remove(url: string, win?: ZenWindow): void {
+    const before = this.device
+    const index = before.shortcuts.findIndex((s) => s.url === url)
+    const shortcut = index >= 0 ? before.shortcuts[index] : null
+    if (removeSite(before, url) === before) return
     this.updateDevice((d) => removeSite(d, url))
+    this.removed = { url, shortcut, index }
+    this.browser.toast(
+      shortcut ? 'Shortcut removed' : 'Site removed',
+      'info',
+      win,
+      { label: 'Undo', command: 'newtab.undoRemove', args: { url } },
+      TOAST_UNDO_MS
+    )
+  }
+
+  /** The last `remove`, for its toast's Undo. */
+  private removed: { url: string; shortcut: NewTabShortcut | null; index: number } | null = null
+
+  /**
+   * The Undo of `remove`: a pin back at the slot it held (or the end of a grid that has moved
+   * on), its host back among the most visited either way (`removeSite` hid it; `restoreShortcut`
+   * does not unhide, as the served page's `restore-shortcut` never hid). The word is the
+   * restore's for a pin – false when the grid filled up or the url was pinned again by hand in
+   * between, the host unhidden all the same – and the unhide's for a most visited site. False
+   * when `url` is not the last removal's – Undo ran already, or a later removal replaced the toast.
+   */
+  undoRemove(url: string): boolean {
+    const removed = this.removed
+    if (!removed || removed.url !== url) return false
+    this.removed = null
+    const back = removed.shortcut ? this.restoreShortcut(removed.shortcut, removed.index) : null
+    const unhidden = this.unhideSite(url)
+    return back ?? unhidden
   }
 
   // ---------------------------------------------------------------------------
@@ -887,9 +931,11 @@ export class NewTabService {
     this.updateDevice((d) => hideSite(d, url))
   }
 
-  unhideSite(url: string): void {
-    if (!this.device.hiddenHosts.includes(siteHost(url))) return
+  /** True when the host was hidden and is not now; false for a host that was not hidden. */
+  unhideSite(url: string): boolean {
+    if (!this.device.hiddenHosts.includes(siteHost(url))) return false
     this.updateDevice((d) => unhideSite(d, url))
+    return true
   }
 
   // ---------------------------------------------------------------------------
