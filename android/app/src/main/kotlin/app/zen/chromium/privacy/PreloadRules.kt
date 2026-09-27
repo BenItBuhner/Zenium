@@ -24,8 +24,22 @@ import app.zen.chromium.PageRules
  * link prefetch carries `Sec-Purpose: prefetch` as a real header, and this rule refuses it
  * unchanged.
  *
+ * The same refusal answers the system's Data Saver and Battery Saver (OS-21): Chrome Android's
+ * `prefetch::IsSomePreloadingEnabled` holds the pages' preloads – the speculation-rules prefetch
+ * and the prerender among them – under either mode at every Preload-pages level ([SaverModes]),
+ * and so does [refuses], from the same mark. Two edges of the mark go beyond Chrome. Chrome never
+ * gates `<link rel=prefetch>` by the modes (`preload_helper.cc:795-863`), but from WebView 138
+ * the link prefetch carries the same `Sec-Purpose: prefetch` token as the speculation-rules
+ * prefetch, so under a mode it is refused too – an over-hold in the data-saving direction the
+ * mark cannot avoid, and one the page can see (the `<link>`'s `error` event; a held
+ * speculation-rules prefetch is invisible to it). And a page's own `fetch()` may set the legacy
+ * `Purpose: prefetch` (only the `Sec-` prefix is unforgeable): under `none` that request was
+ * already refused (W6-S10's accepted rule); under a saver mode it is refused at `standard` and
+ * `extended` too – self-inflicted, harmless.
+ *
  * Pure, so the JVM tests pin it; read per request on WebView's network threads, at the level the
- * core last pushed ([PrivacyFlags.preloadPages], live on every `privacy.apply`).
+ * core last pushed ([PrivacyFlags.preloadPages], live on every `privacy.apply`) and the saver
+ * state as of the last second ([SaverModes.state]).
  */
 object PreloadRules {
     /** The level under which every prefetch is refused (`PreloadPagesLevel` `none` in `src/shared/privacy.ts`). */
@@ -48,11 +62,15 @@ object PreloadRules {
     }
 
     /**
-     * Whether the request engine answers this request empty under `flags`: Preload pages is
-     * `none`, the URL is a web address (http or https; nothing else is prefetched, and the
-     * desktop refuses the same two schemes) and the headers carry the prefetch mark
-     * ([isPreloadRequest]). Under `standard` and `extended` nothing is refused.
+     * Whether the request engine answers this request empty: the URL is a web address (http or
+     * https; nothing else is prefetched, and the desktop refuses the same two schemes), the
+     * headers carry the prefetch mark ([isPreloadRequest]), and either Preload pages is `none`
+     * or the system's Data Saver or Battery Saver is on (`saver`, OS-21) – Chrome Android's
+     * `IsSomePreloadingEnabled`, in its order: the level first, the saver modes after it, at
+     * every level (`preloading_prefs.cc:60-77`). Under `standard` and `extended` with neither
+     * mode on nothing is refused. `saver` is asked last and only for a marked web request the
+     * level alone does not refuse: a page's own requests never read the system.
      */
-    fun refuses(flags: PrivacyFlags, url: String, headers: Map<String, String>?): Boolean =
-        flags.preloadPages == LEVEL_NONE && PageRules.isWebPage(url) && isPreloadRequest(headers)
+    fun refuses(flags: PrivacyFlags, url: String, headers: Map<String, String>?, saver: () -> SaverState = { SaverState.NONE }): Boolean =
+        PageRules.isWebPage(url) && isPreloadRequest(headers) && (flags.preloadPages == LEVEL_NONE || saver().refusesPreloading)
 }

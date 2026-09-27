@@ -3,7 +3,7 @@
 // blocking dialog, takes OS-level screenshots at each step and writes one JSON result per step.
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
-//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,features,recaptcha,downloads,notifications,restart-registration,private-taskbar,quit-hold,visibility,default-browser,menu-bar,mcp,agent-space-restore]
+//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,features,recaptcha,downloads,notifications,restart-registration,private-taskbar,quit-hold,visibility,default-browser,menu-bar,mcp,agent-space-restore,os-settings]
 //        [--extra-args="--no-sandbox --disable-gpu"]   (space-separated, passed to the app)
 //        [--sandbox]             (the run is a sandboxed leg: Chromium's sandbox stays on, so
 //                                 --no-sandbox in --extra-args is refused and ELECTRON_DISABLE_SANDBOX
@@ -280,13 +280,28 @@
 //                closeTabs moves it back, and the quit asks for 2 tabs; state.json after each
 //                quit has cleanExit and the window on the user space. warnBeforeQuitting is
 //                seeded off so that a Mac's chord asks like the others' (all five installer legs)
+//   os-settings  two Settings rows whose reading is the OS's (os-settings-scenario.mjs; W8-F5 /
+//                F6): `accent-row` reads systemPreferences.getAccentColor() raw, the core's
+//                UIState.systemAccent from it, and Settings › Look and Feel's Appearance group –
+//                the "Use system accent colour" row present as an off checkbox on Windows and
+//                macOS with the core holding the OS's #rrggbb (the hex in the log), absent with
+//                the core holding null on Linux; `system-proxy-door` fires
+//                system.openProxySettings from the chrome page as Settings › System's row does
+//                and reads its answer – `opened` on Windows and macOS with the one expected URL
+//                handed to shell.openExternal (ms-settings:network-proxy; the System Settings
+//                extension's x-apple.systempreferences: URL), recorded by a pass-through wrapper
+//                so the OS app really opens, its process read 3 s later with the screen as it is
+//                and closed again (win-session.ps1's kill; osascript's quit, pkill when refused);
+//                `unsupported` with no shell call on a Linux runner with no desktop named (all
+//                five installer legs and the Linux boot set)
 //
-// Windows and macOS run boot, restore, scale, dark and visibility (the installed Windows build
-// boot and restore), Windows notifications, restart-registration and private-taskbar too and
-// macOS quit-hold, default-browser and menu-bar too (menu-bar's no-bar step runs on the Windows
-// unpacked leg as well); the walkthrough, the crash pair, clear-on-exit, the two mv3-worker legs,
-// pip, the split pair, features, recaptcha and mcp run on Linux under Xvfb only (visibility runs
-// there too, on its own step, and menu-bar's no-bar step with the boot set).
+// Windows and macOS run boot, restore, scale, dark, visibility and os-settings (the installed
+// Windows build boot and restore), Windows notifications, restart-registration and
+// private-taskbar too and macOS quit-hold, default-browser and menu-bar too (menu-bar's no-bar
+// step runs on the Windows unpacked leg as well); the walkthrough, the crash pair, clear-on-exit,
+// the two mv3-worker legs, pip, the split pair, features, recaptcha and mcp run on Linux under
+// Xvfb only (visibility runs there too, on its own step, os-settings and menu-bar's no-bar step
+// with the boot set).
 //
 // Zero tolerated JS errors: a chrome console error, a chrome page error, a preload or Electron-side
 // error in a tab view, a main-process exception, a crashed process, a blocking native dialog or a
@@ -324,6 +339,7 @@ import { classifyFailures, formatFailure, loadKnownFailures } from './known-fail
 import { MCP_SCENARIO, scenarioMcp } from './mcp-scenario.mjs'
 import { MENU_BAR_SCENARIO, scenarioMenuBar } from './menu-bar-scenario.mjs'
 import { NOTIFICATIONS_SCENARIO, scenarioNotifications } from './notifications-scenario.mjs'
+import { OS_SETTINGS_SCENARIO, scenarioOsSettings } from './os-settings-scenario.mjs'
 import { RESTART_SCENARIO, scenarioRestartRegistration } from './restart-scenario.mjs'
 import { PRIVATE_TASKBAR_SCENARIO, scenarioPrivateTaskbar } from './private-taskbar-scenario.mjs'
 import {
@@ -8031,6 +8047,24 @@ async function main() {
           // has to point at this executable. The OS build decides which Settings page the
           // request opens.
           label: opts.label,
+          osRelease: os.release(),
+          isMac: IS_MAC,
+          isWin: IS_WIN
+        }),
+      [OS_SETTINGS_SCENARIO]: () =>
+        scenarioOsSettings({
+          freshProfile,
+          runScenario,
+          waitFor,
+          delay,
+          log,
+          grabScreen,
+          sh,
+          osascript,
+          ps,
+          // The Darwin major picks which macOS URL the door opens (Ventura's System Settings
+          // extension or System Preferences'); the OS half of the door is read and closed
+          // through the platform's tools.
           osRelease: os.release(),
           isMac: IS_MAC,
           isWin: IS_WIN

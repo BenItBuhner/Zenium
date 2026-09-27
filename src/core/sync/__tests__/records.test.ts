@@ -241,6 +241,8 @@ describe('collectLocal', () => {
     src.settings.energySaver = 'off'
     src.settings.unloadEnabled = false
     src.settings.unloadTimeoutMinutes = 240
+    // The touchpad swipe's Accessibility switch: Chrome's twin pref is Android-only and unsynced.
+    src.settings.touchpadSwipeToNavigate = false
     // …and turned the hover card's memory line off (W8-10): Chrome's
     // browser.hovercard.memory_usage_enabled is local state too.
     src.settings.hoverCardMemoryUsage = false
@@ -253,6 +255,7 @@ describe('collectLocal', () => {
       'energySaver',
       'unloadEnabled',
       'unloadTimeoutMinutes',
+      'touchpadSwipeToNavigate',
       'hoverCardMemoryUsage'
     ])
     expect(data).not.toHaveProperty('sidebarExpandOnHover')
@@ -262,6 +265,7 @@ describe('collectLocal', () => {
     expect(data).not.toHaveProperty('energySaver')
     expect(data).not.toHaveProperty('unloadEnabled')
     expect(data).not.toHaveProperty('unloadTimeoutMinutes')
+    expect(data).not.toHaveProperty('touchpadSwipeToNavigate')
     expect(data).not.toHaveProperty('hoverCardMemoryUsage')
     // The keep-active hosts travel, as Chrome syncs tab_discarding.exceptions.
     expect(data).toHaveProperty('unloadExcludedDomains')
@@ -283,6 +287,7 @@ describe('collectLocal', () => {
     expect(src.settings.energySaver).toBe('off')
     expect(src.settings.unloadEnabled).toBe(false)
     expect(src.settings.unloadTimeoutMinutes).toBe(240)
+    expect(src.settings.touchpadSwipeToNavigate).toBe(false)
   })
 
   it('an edit of Memory Saver’s mode or timer, or of Energy Saver, stamps nothing – the per-key metadata holds no entry for a device-local key, and the record is unchanged by the edit (W8-2)', () => {

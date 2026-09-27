@@ -556,6 +556,133 @@ describe('HistoryNavMachine', () => {
       expect(hiding[i].hide).toBeGreaterThanOrEqual(hiding[i - 1].hide)
   })
 
+  it("the host's forced release (Chrome's fling force-activation) navigates short of the threshold, the disc completing its growth as it leaves, `armed` as the drag left it", () => {
+    // A touchpad swipe let go faster than 1788 px/s: the host says `force`, and the release
+    // commits as one past the threshold does with `armed` as the drag left it – false short of
+    // the threshold. The hosts key their arming tap and tint on the frame's `armed` rising edge
+    // (`HistoryNavBubbleView` on Android, the DOM disc's `data-armed` on the desktop), and
+    // Chrome's `SideSlideLayout.release()` has neither: its haptic fires in `pull()`, and a
+    // fling's release reaches none.
+    const h = harness()
+    drag(h, 40)
+    expect(h.machine.state.armed).toBe(false)
+    settle()
+    const partGrown = h.machine.current.grow
+    expect(partGrown).toBeGreaterThan(0.3)
+    expect(partGrown).toBeLessThan(0.5)
+    h.machine.dispatch('t1', 'release', { time: now, force: true })
+    expect(h.navigated).toEqual([['t1', 'left']])
+    const navigating = h.machine.state
+    expect(navigating).toEqual({
+      tabId: 't1',
+      edge: 'left',
+      phase: 'navigating',
+      armed: false,
+      closeTarget: 'none'
+    })
+    // Never armed: no state raises the flag, so no host sees a rising edge to tap or tint on.
+    expect(h.states.filter((s) => s.armed)).toEqual([])
+    const standing = h.machine.current.offset
+    expect(standing).toBeCloseTo(bubbleOffset(40), 9)
+    settle()
+    expect(h.machine.state.phase).toBe('idle')
+    // The disc stayed where the swipe left it and grew on to full while `hide` ran to 1.
+    const hiding = h.frames.filter((f) => f.hide > 0 && f.hide < 1)
+    expect(hiding.length).toBeGreaterThan(2)
+    for (const f of hiding) expect(f.offset).toBeCloseTo(standing, 9)
+    for (let i = 1; i < hiding.length; i++)
+      expect(hiding[i].grow).toBeGreaterThanOrEqual(hiding[i - 1].grow - 1e-9)
+    expect(hiding[hiding.length - 1].grow).toBeGreaterThan(partGrown)
+    // The host's frames for the exit carry `armed: false` every one: the Android bubble's tap
+    // and arrow tint key on this field's rising edge, and the forced exit never raises it.
+    const anchor = { x: 6, centerY: 400, clip: { left: 6, top: 100, right: 366, bottom: 700 } }
+    for (const f of hiding) expect(bubbleHostFrame(f, navigating, anchor, false).armed).toBe(false)
+    expect(
+      bubbleHostFrame(hiding[hiding.length - 1], navigating, anchor, false).opacity
+    ).toBeLessThan(bubbleHostFrame(hiding[0], navigating, anchor, false).opacity)
+
+    // Without the word the same release springs home: `force` is the host's alone to say.
+    const plain = harness()
+    drag(plain, 40)
+    plain.machine.dispatch('t1', 'release', { time: now, force: false })
+    expect(plain.machine.state.phase).toBe('settling')
+    settle()
+    expect(plain.navigated).toEqual([])
+    // Forced past the threshold it is the ordinary commit, once, `armed` kept as the drag left
+    // it: true, the arming having ticked in the drag as Chrome's does in `pull()`.
+    const past = harness()
+    drag(past, 120)
+    expect(past.machine.state.armed).toBe(true)
+    past.machine.dispatch('t1', 'release', { time: now, force: true })
+    expect(past.navigated).toEqual([['t1', 'left']])
+    expect(past.machine.state).toEqual({
+      tabId: 't1',
+      edge: 'left',
+      phase: 'navigating',
+      armed: true,
+      closeTarget: 'none'
+    })
+    // The un-forced release past the threshold is untouched: the DOM disc's path (the
+    // desktop's finger and trackpad, which never say `force`) arms and commits as ever.
+    const unforced = harness()
+    drag(unforced, 120)
+    unforced.machine.dispatch('t1', 'release', { time: now })
+    expect(unforced.navigated).toEqual([['t1', 'left']])
+    expect(unforced.machine.state).toEqual({
+      tabId: 't1',
+      edge: 'left',
+      phase: 'navigating',
+      armed: true,
+      closeTarget: 'none'
+    })
+    expect(unforced.states.filter((s) => s.armed).map((s) => s.phase)).toEqual([
+      'dragging',
+      'navigating'
+    ])
+  })
+
+  it("the host's disallowed release (Chrome's fling disallow, -500 px/s back out of the page) retracts past the threshold", () => {
+    // A touchpad swipe flung back out of the page at 500 px/s or faster as it lets go: Chrome's
+    // `GetActivationStatus` returns DISALLOW (`overscroll_refresh.cc:272-276`), and
+    // `SideSlideLayout.release()` hides the arrow with nothing navigating (`:428-445`). The
+    // release retracts as one short of the threshold does – the disc runs home on its return
+    // spring – whatever the motion said.
+    const h = harness()
+    drag(h, 120)
+    expect(h.machine.state.armed).toBe(true)
+    expect(h.machine.current.offset).toBeGreaterThan(0)
+    h.machine.dispatch('t1', 'release', { time: now, disallow: true })
+    expect(h.navigated).toEqual([])
+    expect(h.machine.state).toEqual({
+      tabId: 't1',
+      edge: 'left',
+      phase: 'settling',
+      armed: false,
+      closeTarget: 'none'
+    })
+    settle()
+    expect(h.navigated).toEqual([])
+    expect(h.machine.state.phase).toBe('idle')
+    expect(h.frames[h.frames.length - 1]).toEqual({ offset: 0, hide: 0, grow: 0, caption: 0 })
+    // The return, not the exit fade: `hide` never runs.
+    for (const f of h.frames) expect(f.hide).toBe(0)
+
+    // Short of the threshold the disallow changes nothing: the release retracted anyway.
+    const short = harness()
+    drag(short, 40)
+    short.machine.dispatch('t1', 'release', { time: now, disallow: true })
+    expect(short.machine.state.phase).toBe('settling')
+    settle()
+    expect(short.navigated).toEqual([])
+    // Without the word the release past the threshold navigates: `disallow` is the host's alone
+    // to say, and the desktop's hosts never say it.
+    const allowed = harness()
+    drag(allowed, 120)
+    allowed.machine.dispatch('t1', 'release', { time: now, disallow: false })
+    expect(allowed.navigated).toEqual([['t1', 'left']])
+    expect(allowed.machine.state.phase).toBe('navigating')
+  })
+
   it('a cancel while armed runs the growth back with the return', () => {
     const h = harness()
     drag(h, 120)

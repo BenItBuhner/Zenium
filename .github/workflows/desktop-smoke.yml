@@ -128,7 +128,13 @@ jobs:
           # agents' space still empty; the quit chord quits without a question with one tab and
           # asks for "2 tabs" with two user tabs and an agent's; an agent over the local MCP
           # server takes the screen and ends its session, which moves the window back.
-          node "$env:SMOKE\smoke.mjs" --exe "$exe" --label unpacked --out "$env:SMOKE_OUT" --scenarios notifications,boot,restore,agent-space-restore,scale,dark,visibility,restart-registration,private-taskbar,default-browser,menu-bar
+          # os-settings (W8-F5 / F6; #572, #594): the Settings rows whose reading is Windows' –
+          # the "Use system accent colour" row present on Look and Feel with the core holding
+          # the DWM accent systemPreferences.getAccentColor() reads (the hex in the log), and
+          # Settings › System's proxy door answering `opened` with ms-settings:network-proxy
+          # handed to shell.openExternal: the Settings app really opens, is read as a process
+          # and killed again before default-browser reads what Settings the leg left.
+          node "$env:SMOKE\smoke.mjs" --exe "$exe" --label unpacked --out "$env:SMOKE_OUT" --scenarios notifications,boot,restore,agent-space-restore,scale,dark,visibility,restart-registration,private-taskbar,os-settings,default-browser,menu-bar
       - name: Windows and processes left behind by the unpacked build
         if: always()
         run: |
@@ -268,7 +274,14 @@ jobs:
         # tabs" with an agent's tab open besides); an agent over the local MCP server takes the
         # screen and ends its session, which moves the window back. The profile seeds
         # warnBeforeQuitting off, so the Mac's chord asks the question instead of holding.
-        run: node "$SMOKE/smoke.mjs" --exe "${{ steps.app.outputs.app }}/Contents/MacOS/Zenium" --label unpacked --out "$SMOKE_OUT" --scenarios boot,restore,agent-space-restore,scale,dark,visibility,quit-hold,default-browser,menu-bar
+        # os-settings (W8-F5 / F6; #572, #594): the Settings rows whose reading is macOS's – the
+        # "Use system accent colour" row present on Look and Feel with the core holding the
+        # Appearance pane's accent systemPreferences.getAccentColor() reads (the hex in the
+        # log), and Settings › System's proxy door answering `opened` with the System Settings
+        # extension's x-apple.systempreferences: URL handed to shell.openExternal: System
+        # Settings really opens, is read as a process and told to quit (pkill when the session
+        # refuses the Apple event) before default-browser's dialog may take the screen.
+        run: node "$SMOKE/smoke.mjs" --exe "${{ steps.app.outputs.app }}/Contents/MacOS/Zenium" --label unpacked --out "$SMOKE_OUT" --scenarios boot,restore,agent-space-restore,scale,dark,visibility,quit-hold,os-settings,default-browser,menu-bar
       - name: Bundle facts and crash reports after the run
         if: always()
         run: bash "$SMOKE/mac-facts.sh" "${{ steps.app.outputs.app }}" "$SMOKE_OUT" after-run
@@ -337,13 +350,17 @@ jobs:
         # again) from a profile seeded with the window on an empty agents' space – the restore
         # onto the user space, the quit question's count, a session's end over the local MCP
         # server moving the window back.
-        timeout-minutes: 12
+        # os-settings (W8-F5 / F6; #572, #594): one more launch – Linux reads no accent, so Look
+        # and Feel shows no "Use system accent colour" row and the core holds null; Settings ›
+        # System's proxy door answers `unsupported` with no shell call, the runner's shell
+        # naming no desktop (XDG_CURRENT_DESKTOP unset).
+        timeout-minutes: 14
         env:
           APPIMAGE_EXTRACT_AND_RUN: '1'
         run: >
           xvfb-run -a -s '-screen 0 1600x1000x24'
           node "$SMOKE/smoke.mjs" --exe "${{ steps.dist.outputs.appimage }}" --label appimage
-          --out "$SMOKE_OUT" --scenarios boot,agent-space-restore --extra-args="--no-sandbox --disable-gpu"
+          --out "$SMOKE_OUT" --scenarios boot,agent-space-restore,os-settings --extra-args="--no-sandbox --disable-gpu"
       - name: AppImage facts (extract; AppRun, the embedded desktop entry and icon)
         if: always() && steps.dist.outputs.appimage != ''
         run: node "$SMOKE/linux-install.mjs" appimage --file "${{ steps.dist.outputs.appimage }}" --out "$SMOKE_OUT" --label appimage
@@ -380,10 +397,12 @@ jobs:
         timeout-minutes: 12
         # agent-space-restore (W8-F2; #573) as on the AppImage: the installed build's restore off
         # an empty agents' space, the quit question's count, a session's end over MCP.
+        # os-settings (W8-F5 / F6) as on the AppImage: no accent row, the core's systemAccent
+        # null, the proxy door `unsupported` with no shell call.
         run: >
           xvfb-run -a -s '-screen 0 1600x1000x24'
           node "$SMOKE/smoke.mjs" --exe "${{ steps.deb.outputs.exe }}" --label deb
-          --out "$SMOKE_OUT" --scenarios boot,agent-space-restore --extra-args="--no-sandbox --disable-gpu"
+          --out "$SMOKE_OUT" --scenarios boot,agent-space-restore,os-settings --extra-args="--no-sandbox --disable-gpu"
       - name: Remove the .deb (dpkg -r) and wait for its files to be gone
         if: always()
         run: |
