@@ -620,9 +620,9 @@ export class TabManager {
       let index = Math.min(Math.max(snapshot.index, 0), entries.length - 1)
       let hostState = snapshot.hostState
       if (articleGone) {
-        // The reader's article gone, the stack – not the reader address – says where the tab was.
-        // The desktop's cover was no navigation: the current entry is the page's own (moved on
-        // by a `pushState` beneath the cover, maybe – the address the reader was opened on is
+        // The reader's article gone, the stack – not the reader address – says where the tab
+        // was. The desktop's cover was no navigation: the current entry is the page's own (moved
+        // on by a `pushState` beneath the cover, maybe – the address the reader was opened on is
         // then behind), and the tab wakes on it, stack whole. A reader that was a navigation of
         // the tab (the phone's; a desktop session from before the cover) left its own entry on
         // top: that entry goes – dropped where the page it was of is the entry beneath (the

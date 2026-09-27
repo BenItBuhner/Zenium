@@ -1656,14 +1656,14 @@ export class ElectronTabView implements TabView {
    *
    * A page taken down because the chrome is over the content – the window's `contentHidden` at
    * the time of the call: the omnibox dropdown, a menu, a sheet or dialog, the first-run tour, a
-   * drag – is parked rather than hidden (`park`). The views composite above the chrome, so the chrome
-   * cannot draw over a page and asks for it to go away instead; but a `WebContentsView` hidden,
-   * detached, sized to nothing or moved wholly off the window is HIDDEN to Chromium (its aura
-   * occlusion tracker), and Chromium starts a page's speculation-rules prefetches only while the
-   * page's `WebContents` is VISIBLE (`PrefetchDocumentManager::CanPrefetchNow`) – a prefetch the
-   * page asked for meanwhile waits in `PrefetchScheduler`'s queue, and nothing re-runs that queue
-   * when the page is shown again: it starts only once the page next changes its candidates, which
-   * for most pages is never. Chrome keeps the page visible under its own popups, and a
+   * drag – is parked rather than hidden (`park`). The views composite above the chrome, so the
+   * chrome cannot draw over a page and asks for it to go away instead; but a `WebContentsView`
+   * hidden, detached, sized to nothing or moved wholly off the window is HIDDEN to Chromium (its
+   * aura occlusion tracker), and Chromium starts a page's speculation-rules prefetches only while
+   * the page's `WebContents` is VISIBLE (`PrefetchDocumentManager::CanPrefetchNow`) – a prefetch
+   * the page asked for meanwhile waits in `PrefetchScheduler`'s queue, and nothing re-runs that
+   * queue when the page is shown again: it starts only once the page next changes its candidates,
+   * which for most pages is never. Chrome keeps the page visible under its own popups, and a
    * speculation rule in a page loaded under Zenium's omnibox dropdown (the address on the command
    * line, a fresh profile) never prefetched at all. A parked view keeps its size and stays shown
    * with one corner pixel in a corner of the window (`PARK_CORNERS`: the one pixel of it on
@@ -1749,10 +1749,10 @@ export class ElectronTabView implements TabView {
    * (`setVisible`), with no regard for what hid the widget; this hide is left plain for now, and
    * the wrap `hide` puts round a tab switch's would close it. The window back, the engine's view
    * returns to where the core's layout left it: parked at its corner under the chrome still over
-   * the content, shown, or hidden as the core's flag says. The core's flag (`visible`, `isVisible`, the
-   * `hid`/`shown` accounting the governor and snapshot logic read) is not touched, and no
-   * visibility flip is announced – the core's view of which page is in front does not change
-   * when its window is put away and brought back.
+   * the content, shown, or hidden as the core's flag says. The core's flag (`visible`,
+   * `isVisible`, the `hid`/`shown` accounting the governor and snapshot logic read) is not
+   * touched, and no visibility flip is announced – the core's view of which page is in front
+   * does not change when its window is put away and brought back.
    *
    * Occlusion by another application's window is Chromium's own to track (Windows and macOS
    * natively; none on X11, where Chrome itself does not); nothing is synthesised here for it, and
@@ -1835,8 +1835,9 @@ export class ElectronTabView implements TabView {
    * chrome hears a move at the pointer's place as the view goes (`park`), and when the view
    * comes back under the pointer the chrome hears the pointer leave and the page hears where it
    * stands (`pointerBack`), as aura's exit and move would say. Nothing while a chrome mouse
-   * button is down (a tab row's drag puts the chrome over the content): aura's synthesized moves wait for the release
-   * too, and the chrome holds the pointer's capture through the drag anyway.
+   * button is down (a tab row's drag puts the chrome over the content): aura's synthesized
+   * moves wait for the release too, and the chrome holds the pointer's capture through the drag
+   * anyway.
    */
   private park(): void {
     const rect = this.bounds
@@ -2162,9 +2163,9 @@ export class ElectronTabView implements TabView {
    * bounded as the frame is, not as the copy is: `STAGED_FRAME_FIRST_MS` and then
    * `STAGED_FRAME_RETRY_MS`, 2.8 s at the most, against the copy's `SNAPSHOT_TIMEOUT_MS` of
    * 600 ms. The copy is one paint of a widget already painting, and a late one is worth nothing
-   * to the page cover; a staged renderer is first shown as painting, and one that shows nothing for
-   * the first wait – a navigation since – is shown once more, which is what gets a frame of it
-   * at all. The tool's fallback follows a capture that took the same path; the hover card's
+   * to the page cover; a staged renderer is first shown as painting, and one that shows nothing
+   * for the first wait – a navigation since – is shown once more, which is what gets a frame of
+   * it at all. The tool's fallback follows a capture that took the same path; the hover card's
    * preview of the agent's tab comes on the frame's terms, up to that long, for the page's
    * visibility kept.
    */
@@ -2175,15 +2176,15 @@ export class ElectronTabView implements TabView {
 
   /**
    * The picture of the developer toolbox docked in this view's box (§9.29), for the page cover
-   * (the chrome's picture of the page) to lay under the page's picture: the frontend's own `capturePage`, cut to the toolbox's band – the
-   * part of the box beside the page's hole, the seam at its edge – where the frontend has said
-   * where its hole is (`devtoolsPageBounds`, with the view's box: `devtoolsBandRect`), the whole
-   * box otherwise. The page cover anchors the picture to the band's side of the box, so the cut and
-   * the whole lay out the same; the cut keeps the pair of pictures at the box's own pixels
-   * (§9.5's budget: the page's hole is in the page's picture already – at DPR 2 a 1600 × 1000
-   * box is 6 Mpx once, not 9 with the hole pictured twice). Null with no toolbox up, an undocked
-   * one (a window of its own, nothing of it in the frame) or a frontend that is gone; encoded as
-   * the page's picture is (`snapshot`).
+   * (the chrome's picture of the page) to lay under the page's picture: the frontend's own
+   * `capturePage`, cut to the toolbox's band – the part of the box beside the page's hole, the
+   * seam at its edge – where the frontend has said where its hole is (`devtoolsPageBounds`, with
+   * the view's box: `devtoolsBandRect`), the whole box otherwise. The page cover anchors the
+   * picture to the band's side of the box, so the cut and the whole lay out the same; the cut
+   * keeps the pair of pictures at the box's own pixels (§9.5's budget: the page's hole is in the
+   * page's picture already – at DPR 2 a 1600 × 1000 box is 6 Mpx once, not 9 with the hole
+   * pictured twice). Null with no toolbox up, an undocked one (a window of its own, nothing of it
+   * in the frame) or a frontend that is gone; encoded as the page's picture is (`snapshot`).
    */
   snapshotDevtools(): Promise<string | null> {
     const wc = this.wc
