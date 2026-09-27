@@ -1,7 +1,23 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Folder, Rect, Tab } from '@shared/types'
-import type { Departure } from '../departureStore'
-import { QUICK_DELETE_SWEEP_MS, closesTabs, wipeSchedule } from '../quickDelete'
+import { clearDepartures, departStore, type Departure } from '../departureStore'
+import { exitProgressAt } from '../exitSpring'
+import {
+  QUICK_DELETE_SWEEP_MS,
+  closesTabs,
+  holdQuickDeleteWipe,
+  setQuickDeleteWipe,
+  wipeSchedule
+} from '../quickDelete'
+
+const invoke = vi.fn<(channel: string, args: unknown) => Promise<unknown>>(async () => undefined)
+vi.stubGlobal('window', { zen: { invoke } })
+
+afterEach(() => {
+  clearDepartures()
+  setQuickDeleteWipe(null)
+  invoke.mockReset()
+})
 
 /*
  * Quick Delete's wipe schedule (matrix MOT-24; Chrome 152's `QuickDeleteAnimationGradientDrawable`
@@ -87,5 +103,52 @@ describe('closesTabs', () => {
     expect(closesTabs(['history', 'cookies', 'cache', 'tabs'])).toBe(true)
     expect(closesTabs(['history', 'cookies', 'cache'])).toBe(false)
     expect(closesTabs([])).toBe(false)
+  })
+})
+
+describe('exitProgressAt', () => {
+  it('is the exit spring’s closed form: whole before the run, further along as time passes, at rest well inside a second', () => {
+    expect(exitProgressAt(-50)).toBe(0)
+    expect(exitProgressAt(0)).toBe(0)
+    const at = [16, 60, 120, 250, 500].map(exitProgressAt)
+    for (let i = 1; i < at.length; i++) expect(at[i]).toBeGreaterThan(at[i - 1] ?? 0)
+    expect(at[0]).toBeGreaterThan(0)
+    expect(exitProgressAt(500)).toBeGreaterThan(0.99)
+    expect(exitProgressAt(5000)).toBeLessThanOrEqual(1)
+  })
+})
+
+describe('holdQuickDeleteWipe (the preview host’s still)', () => {
+  it('reads the range as the runner does and holds each exit at the frame the schedule would have it on – the grid’s bottom furthest gone, nothing released', async () => {
+    invoke.mockImplementation(async (channel) =>
+      channel === 'privacy.tabsInRange' ? ['top', 'bottom', 'out'] : null
+    )
+    const built = vi.fn((ids: readonly string[]) => ({
+      exits: [card('top', 100), card('bottom', 550)].filter((e) => ids.includes(e.key)),
+      grid: GRID
+    }))
+    setQuickDeleteWipe(built)
+    expect(await holdQuickDeleteWipe('15min', 120)).toBe(true)
+    expect(invoke).toHaveBeenCalledWith('privacy.tabsInRange', { range: '15min' })
+    expect(built).toHaveBeenCalledWith(['top', 'bottom', 'out'])
+    const s = departStore.get()
+    const frozen = new Map(
+      s.items.map((i) => [i.key, i.kind === 'new-tab' ? undefined : i.frozen] as const)
+    )
+    // The bottom card is 120 ms into its run; the top one sets off 450 × 250 / 600 ≈ 188 ms later
+    // (the sweep's share of its distance from the grid's bottom), so it stands whole.
+    expect(frozen.get('bottom')).toBeCloseTo(exitProgressAt(120), 10)
+    expect(frozen.get('top')).toBe(0)
+    expect(s.released.size).toBe(0)
+    expect(s.hidden).toEqual(new Set(['top', 'bottom']))
+  })
+
+  it('holds nothing when the overview has no card for the range', async () => {
+    invoke.mockImplementation(async () => [])
+    setQuickDeleteWipe(() => ({ exits: [], grid: GRID }))
+    expect(await holdQuickDeleteWipe('15min', 120)).toBe(false)
+    expect(departStore.get().items).toEqual([])
+    setQuickDeleteWipe(null)
+    expect(await holdQuickDeleteWipe('15min', 120)).toBe(false)
   })
 })

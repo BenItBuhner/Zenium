@@ -15,13 +15,10 @@ import {
   restDeparture,
   type Departure
 } from './departureStore'
+import { EXIT_TRAVEL, exitFrame } from './exitSpring'
 import { GROUP_PAD } from './GroupCard'
 import { CARD_ASPECT, CardBody, NewTabFace } from './OverviewCard'
 
-/** Travel (px) of the exit spring: its progress is 1 − position / this. */
-const EXIT_TRAVEL = 120
-/** How far a card shrinks on its way out. */
-const EXIT_SCALE = 0.1
 /** How long an exit waits for the browser to show the close before it runs regardless. */
 export const EXIT_WAIT_MS = 900
 /** `--zen-ease`, for the Web Animations API (which cannot read a custom property). */
@@ -106,6 +103,8 @@ function Exit({
   const released = departStore.use((s) => s.released.has(item.key))
   const restoring = departStore.use((s) => s.restoring.has(item.key))
   const held = isHeld(item)
+  // A held exit frozen at a frame of its run (the preview host's still): drawn there, never run.
+  const frozen = held && item.kind !== 'new-tab' ? item.frozen : undefined
   const wasAsked = useRef(false)
   // The exit's spring, kept so a restore sets off from wherever the run left it.
   const spring = useRef<SpringAnimation | null>(null)
@@ -127,7 +126,11 @@ function Exit({
     return () => clearTimeout(timer)
   }, [released, held, asked, item.key])
   useLayoutEffect(() => {
-    if (!released || restoring) return
+    if (frozen === undefined) return
+    exitFrame(ref.current)(EXIT_TRAVEL * (1 - frozen))
+  }, [frozen])
+  useLayoutEffect(() => {
+    if (!released || restoring || frozen !== undefined) return
     const el = ref.current
     // A card's exit is done at rest; a held one rests where it is, out of view, until the
     // browser's close takes its slot (or keeps its tab).
@@ -151,7 +154,7 @@ function Exit({
     return () => {
       run.stop()
     }
-  }, [item.key, released, restoring, held])
+  }, [item.key, released, restoring, held, frozen])
   // The browser kept the tab: the exit runs back to the card from where its run left it, and
   // goes once it is there – the card, hidden behind it all along, showing again on that commit.
   // Under reduced motion the spring lands at once: the card is back in a cut.
@@ -234,14 +237,4 @@ function Exit({
 
 function place(rect: Rect): CSSProperties {
   return { left: rect.x, top: rect.y, width: rect.width, height: rect.height }
-}
-
-/** The exit's frame: `scale(1 − .1·t)`, opacity `1 − t` for the spring's progress `t` (v2 §11.4). */
-function exitFrame(el: HTMLElement | null): (x: number) => void {
-  return (x) => {
-    if (!el) return
-    const t = 1 - x / EXIT_TRAVEL
-    el.style.transform = `scale(${1 - EXIT_SCALE * t})`
-    el.style.opacity = String(Math.min(1, Math.max(0, 1 - t)))
-  }
 }

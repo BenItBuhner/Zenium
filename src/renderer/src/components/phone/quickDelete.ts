@@ -19,6 +19,7 @@ import {
   restoreDepartures,
   type Departure
 } from './departureStore'
+import { exitProgressAt } from './exitSpring'
 
 /**
  * Quick Delete's tab motion on the phone (matrix MOT-24 / HB-07; Chrome 152.0.7977.89's
@@ -124,6 +125,34 @@ export function wipeSchedule(
 /** Whether the form's confirm runs the motion: only with `'tabs'` among what it clears. */
 export function closesTabs(types: readonly BrowsingDataType[]): boolean {
   return types.includes('tabs')
+}
+
+/**
+ * The wipe held `atMs` into its release, for a still (the preview host's `overview&wipe=<ms>`,
+ * `previewStates.ts`): the range's tabs read as the runner reads them, their exits departed
+ * held and frozen at the frame the schedule would have each on – a card at the grid's bottom
+ * `atMs` into its run, one higher up `atMs` less its delay, one the sweep has not reached yet
+ * standing whole (`exitProgressAt`). Nothing runs and nothing closes: the frame holds until the
+ * next state clears the store. Whether the overview had cards to hold.
+ */
+export async function holdQuickDeleteWipe(
+  range: BrowsingDataRange,
+  atMs: number
+): Promise<boolean> {
+  const inRange = await cmd('privacy.tabsInRange', { range })
+  const built = wipeBuilder?.(Array.isArray(inRange) ? inRange : []) ?? null
+  if (!built || built.exits.length === 0) return false
+  const delays = new Map(
+    wipeSchedule(built.exits, built.grid, QUICK_DELETE_SWEEP_MS).map((s) => [s.key, s.delay])
+  )
+  depart(
+    built.exits.map((exit) =>
+      isHeld(exit) && exit.kind !== 'new-tab'
+        ? { ...exit, frozen: exitProgressAt(atMs - (delays.get(exit.key) ?? 0)) }
+        : exit
+    )
+  )
+  return true
 }
 
 /**

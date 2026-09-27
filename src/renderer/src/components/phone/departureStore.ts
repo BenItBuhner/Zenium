@@ -34,10 +34,20 @@ import { createStore } from '@renderer/lib/store'
  * wipe's own schedule, and at rest it stays drawn, gone from view, over the slot the card still
  * holds (`restDeparture`) until the browser's close takes the slot (`departureGone`: the exit
  * goes on that commit, the neighbours gliding into the gap as for any close) or keeps the tab
- * (`restoreDepartures`: the exit runs back to the card, which is then shown again).
+ * (`restoreDepartures`: the exit runs back to the card, which is then shown again). A held exit
+ * `frozen` at a progress is drawn at that frame of its run and runs no further – the preview
+ * host's mid-wipe still (`holdQuickDeleteWipe`); nothing in the product freezes one.
  */
 export type Departure =
-  | { key: string; kind: 'tab'; tab: Tab; rect: Rect; filtered?: true; held?: true }
+  | {
+      key: string
+      kind: 'tab'
+      tab: Tab
+      rect: Rect
+      filtered?: true
+      held?: true
+      frozen?: number
+    }
   | GroupDeparture
   | { key: string; kind: 'new-tab'; isPrivate: boolean; rect: Rect; with?: readonly string[] }
 
@@ -52,6 +62,7 @@ export interface GroupDeparture {
   filtered?: true
   flown?: true
   held?: true
+  frozen?: number
 }
 
 interface DepartState {
