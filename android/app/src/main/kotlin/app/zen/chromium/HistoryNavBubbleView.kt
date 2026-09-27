@@ -6,6 +6,8 @@ import android.graphics.Outline
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
+import android.util.Log
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
@@ -84,12 +86,20 @@ class HistoryNavBubbleFrame(
  * frame's side and nothing of it shows over the gutter to the window's edge or a sidebar. Gone
  * while the bubble is down, so an idle window pays nothing for it; touches pass through it as
  * through the disc.
+ *
+ * The threshold's tap is the layer's too: Chrome's `SideSlideLayout.pull()` performs
+ * `HapticFeedbackConstants.KEYBOARD_TAP` on its own view as `willNavigate()` turns true
+ * (152.0.7977.89, l.345–351), and this layer performs the same constant on the frame whose
+ * `armed` comes on ([BubbleThresholdTap]) – the disc's full frame and the tap are one message
+ * from the chrome, as they are one `pull()` in Chrome. The chrome's own `haptic` tick stands
+ * only where no host draws the disc (`lib/historyNav.ts`).
  */
 class HistoryNavBubbleLayer(context: Context) : FrameLayout(context) {
     /** The disc itself; the layer moves nothing – the disc rides its own translation, scale and alpha. */
     val disc = HistoryNavBubbleView(context)
     /** The clip as last set, so a frame carrying the same box (every frame of a drag) sets nothing. */
     private var clip: HistoryNavBubbleFrame.Clip? = null
+    private val tap = BubbleThresholdTap()
 
     init {
         visibility = GONE
@@ -102,6 +112,10 @@ class HistoryNavBubbleLayer(context: Context) : FrameLayout(context) {
     /** One frame from the chrome; null takes the bubble down. */
     fun apply(frame: HistoryNavBubbleFrame?) {
         disc.apply(frame)
+        if (tap.take(frame?.armed)) {
+            Log.d(TAG, "history threshold: KEYBOARD_TAP (${frame?.edge})")
+            performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        }
         if (frame == null) {
             visibility = GONE
             clip = null
@@ -120,6 +134,31 @@ class HistoryNavBubbleLayer(context: Context) : FrameLayout(context) {
 
     /** The layer takes no touch: what is under it is the page's. */
     override fun onTouchEvent(event: MotionEvent): Boolean = false
+
+    companion object {
+        /** `TabWebView`'s tag for the gesture's own lines (`history start / release on …`), so one filter reads the drag whole. */
+        private const val TAG = "ZenPull"
+    }
+}
+
+/**
+ * When the threshold taps the finger, on the frames the chrome sends: Chrome performs
+ * `KEYBOARD_TAP` each time `willNavigate()` turns true (`SideSlideLayout.pull()`, l.345–351) –
+ * once per rising crossing, not on every frame past the threshold, and again if the finger eases
+ * back under it and crosses once more; nothing on the way back and nothing at the release. The
+ * crossing is the frame whose `armed` is on after one whose was off; a null frame (the bubble
+ * down) leaves the next drag to start unarmed. A plain class, so the JVM holds it without the view.
+ */
+class BubbleThresholdTap {
+    private var armed = false
+
+    /** The frame's armed flag in (null: the bubble is down); whether this frame taps. */
+    fun take(frameArmed: Boolean?): Boolean {
+        val now = frameArmed ?: false
+        val fires = now && !armed
+        armed = now
+        return fires
+    }
 }
 
 /**

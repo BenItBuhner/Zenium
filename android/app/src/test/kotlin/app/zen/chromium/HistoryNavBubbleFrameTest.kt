@@ -111,4 +111,62 @@ class HistoryNavBubbleFrameTest {
     fun aFrameThatShowsTheDiscAgainCutsARunningFade() {
         assertEquals(BubbleAlphaStep.SET, bubbleAlphaStep(reduced = true, target = 1f, alpha = 0.2f, fading = true))
     }
+
+    // The threshold's tap (`HistoryNavBubbleLayer.apply` through `BubbleThresholdTap`): Chrome's
+    // KEYBOARD_TAP as `willNavigate()` turns true, once per rising crossing.
+
+    @Test
+    fun theThresholdTapsOnceOnTheFrameThatArms() {
+        val tap = BubbleThresholdTap()
+        // The drag's frames up to the threshold: nothing.
+        assertFalse(tap.take(false))
+        assertFalse(tap.take(false))
+        // The crossing frame taps; the frames past it, the finger held there, do not.
+        assertTrue(tap.take(true))
+        assertFalse(tap.take(true))
+        assertFalse(tap.take(true))
+    }
+
+    @Test
+    fun theReleasePastTheThresholdAndTheLeaveTapNothing() {
+        val tap = BubbleThresholdTap()
+        assertFalse(tap.take(false))
+        assertTrue(tap.take(true))
+        // The commit: the machine keeps `armed` on through the exit fade's frames, then takes the bubble down.
+        assertFalse(tap.take(true))
+        assertFalse(tap.take(true))
+        assertFalse(tap.take(null))
+    }
+
+    @Test
+    fun easingBackUnderTheThresholdAndCrossingAgainTapsAgain() {
+        // Chrome re-arms on each change of `willNavigate()` to true: a second crossing is a second tap.
+        val tap = BubbleThresholdTap()
+        assertFalse(tap.take(false))
+        assertTrue(tap.take(true))
+        assertFalse(tap.take(false))
+        assertFalse(tap.take(false))
+        assertTrue(tap.take(true))
+    }
+
+    @Test
+    fun theBubbleGoingDownArmedLeavesTheNextDragToStartUnarmed() {
+        val tap = BubbleThresholdTap()
+        assertTrue(tap.take(true))
+        // Down (the commit's end, or an abort) while armed; the next drag's first frames are unarmed, its crossing taps.
+        assertFalse(tap.take(null))
+        assertFalse(tap.take(false))
+        assertTrue(tap.take(true))
+        // Down and straight into a drag that arms on its first frame (reduced motion's jump): a crossing all the same.
+        assertFalse(tap.take(null))
+        assertTrue(tap.take(true))
+    }
+
+    @Test
+    fun aShortDragThatNeverArmsTapsNothing() {
+        val tap = BubbleThresholdTap()
+        assertFalse(tap.take(false))
+        assertFalse(tap.take(false))
+        assertFalse(tap.take(null))
+    }
 }

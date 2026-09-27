@@ -162,7 +162,9 @@ describe('HistoryNavBubble', () => {
       // The clip is measured with the side, once: every frame carries the same box.
       expect(applied.every((f) => f !== null && f.clip.left === FRAME.left)).toBe(true)
       expect(rootEl()?.dataset.armed).toBe('')
-      expect(run).toHaveBeenCalledWith('haptic', { kind: 'tick' })
+      // The host taps on the armed frame itself (Chrome's KEYBOARD_TAP on the bubble's view):
+      // the chrome sends no tick of its own on top of it.
+      expect(run).not.toHaveBeenCalledWith('haptic', { kind: 'tick' })
     })
 
     it('measures the frame once per drag – the side and the clip box in one frame – and never per sample', () => {
