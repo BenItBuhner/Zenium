@@ -1182,6 +1182,12 @@ export interface SyncStatus {
   scope: SyncScope
   lastSyncAt: number | null
   lastError: string | null
+  /**
+   * The class of `lastError` when the WebDAV transport raised it (ID-32), for the chrome to say
+   * in its own words (§9.33: no method or status in a sentence); null for the folder transport's
+   * sentences and when there is no error.
+   */
+  lastErrorKind: WebDavErrorKind | null
   syncing: boolean
   /** Other devices seen in the sync folder. */
   devices: SyncDevice[]
@@ -1192,7 +1198,68 @@ export interface SyncStatus {
    * answer); the list itself stays out of the status, it can run to hundreds of tabs.
    */
   remoteTabsVersion: number
+  /** Where the folder lives (ID-32): a folder of this host's, or a WebDAV server. */
+  transport: SyncTransportKind
+  /** The WebDAV server in use, never its app password; null with the folder transport. */
+  webdav: WebDavSyncSettings | null
+  /**
+   * The host can reach a WebDAV server with any method and keep its app password (a fetch and a
+   * secret store): the setup may offer the choice. False on a host without either.
+   */
+  webdavAvailable: boolean
+  /**
+   * The WebDAV server refused the sign-in (401) on the last round: sync stays configured, no
+   * request leaves with the dead app password (the poll and the push stop – a server's
+   * brute-force protection throttles the whole address after a few refusals) and the engine
+   * waits for a new one (`sync.setWebDavPassword`). Never set by the folder transport.
+   */
+  authRefused: boolean
 }
+
+/** How a device reaches the shared folder: a folder of the host's (`folder`), or a WebDAV server (`webdav`). */
+export type SyncTransportKind = 'folder' | 'webdav'
+
+/**
+ * A WebDAV server as the sync folder's home (ID-32): the DAV root the account's files live under
+ * (Nextcloud's `https://cloud.example.com/remote.php/dav/files/<user>/`), the account, and the
+ * folder under that root the `zenium-sync` directory is made in. Never the app password: the
+ * host's secret store keeps it (`Platform.secrets`), the status and the stores only ever hold these.
+ */
+export interface WebDavSyncSettings {
+  url: string
+  username: string
+  folder: string
+}
+
+/** The settings with the app password, as the setup and a test connection carry them once. */
+export interface WebDavSyncCredentials extends WebDavSyncSettings {
+  password: string
+}
+
+/**
+ * How a WebDAV server answered, as the transport classes it (`core/sync/webdav.ts`): `auth`
+ * (401: the sign-in refused – a new app password is the way out), `forbidden` (403: signed in,
+ * but the server does not allow the folder to be written or read), `missing` (404 where
+ * something had to be there), `conflict` (412 / 423: a precondition failed or the resource is
+ * locked – the round is run again), `redirect` (3xx: the address sends elsewhere; the transport
+ * follows none, so the `Authorization` header never crosses to another origin), `unavailable`
+ * (5xx, a network failure, a timeout), `refused` (any other refusal, and a 200 or an empty 207
+ * where a multistatus had to come – a web page, not a WebDAV server).
+ */
+export type WebDavErrorKind =
+  'auth' | 'forbidden' | 'missing' | 'conflict' | 'redirect' | 'unavailable' | 'refused'
+
+/** A test connection's answer: reached and signed in, or the refusal and the status behind it (0: no response). */
+export type WebDavProbe = { ok: true } | { ok: false; kind: WebDavErrorKind; status: number }
+
+/**
+ * Why `sync.setup` or `sync.setWebDavPassword` did not do what was asked with a WebDAV server,
+ * for the chrome to say in its own words (§9.33): the server's answer as the transport classed
+ * it, or the host's secret store not keeping the app password. Null when it did. The folder
+ * transport's refusals are as before ID-32: a toast the setup form takes as its line.
+ */
+export type SyncSetupRefusal =
+  { reason: 'server'; kind: WebDavErrorKind; status: number } | { reason: 'secrets' }
 
 // ---------------------------------------------------------------------------
 // Passwords (the encrypted credential vault)
@@ -6391,10 +6458,30 @@ export interface Commands {
   'mod.importUrl': { args: { url: string }; result: void }
 
   'sync.chooseFolder': { args: void; result: string | null }
+  /**
+   * Turn sync on. `transport` names the folder's home (the folder of `folder` when absent, as
+   * before ID-32); with `webdav` the server's settings and app password come in `webdav` and
+   * `folder` is not read.
+   */
   'sync.setup': {
-    args: { folder: string; passphrase: string; deviceName: string; scope: SyncScope }
-    result: void
+    args: {
+      folder: string
+      passphrase: string
+      deviceName: string
+      scope: SyncScope
+      transport?: SyncTransportKind
+      webdav?: WebDavSyncCredentials
+    }
+    /** A WebDAV server's refusal, or the secret store's, in the engine's typed terms; null when sync is on. */
+    result: SyncSetupRefusal | null
   }
+  /** Reach a WebDAV server with these credentials once (nothing is created or kept): the Test connection row's answer. */
+  'sync.testWebDav': { args: WebDavSyncCredentials; result: WebDavProbe }
+  /**
+   * A new app password for the configured WebDAV server (after `authRefused`, or a rotation);
+   * sync runs again with it. The secret store not keeping it is the typed refusal, never a rejection.
+   */
+  'sync.setWebDavPassword': { args: { password: string }; result: SyncSetupRefusal | null }
   'sync.setScope': { args: Partial<SyncScope>; result: void }
   'sync.setDeviceName': { args: { name: string }; result: void }
   /**

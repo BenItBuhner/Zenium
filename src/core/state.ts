@@ -508,10 +508,15 @@ export class BrowserState {
       scope: defaultScope(),
       lastSyncAt: null,
       lastError: null,
+      lastErrorKind: null,
       syncing: false,
       devices: [],
       pendingMerge: false,
-      remoteTabsVersion: 0
+      remoteTabsVersion: 0,
+      transport: 'folder',
+      webdav: null,
+      webdavAvailable: false,
+      authRefused: false
     },
     agents: [],
     agentServer: emptyAgentServerStatus(),

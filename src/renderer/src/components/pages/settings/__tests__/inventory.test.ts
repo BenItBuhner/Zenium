@@ -287,7 +287,11 @@ function desktopState(): UIState {
       syncing: false,
       devices: [{ id: 'other', name: 'Phone', lastSeen: NOW - 120_000 }],
       pendingMerge: false,
-      remoteTabsVersion: 0
+      remoteTabsVersion: 0,
+      transport: 'folder',
+      webdav: null,
+      webdavAvailable: false,
+      authRefused: false
     },
     agents: [],
     agentServer: {

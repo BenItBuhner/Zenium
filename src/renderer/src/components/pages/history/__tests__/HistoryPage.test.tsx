@@ -233,10 +233,15 @@ function sync(enabled: boolean, openTabs = true): SyncStatus {
     },
     lastSyncAt: enabled ? NOW - 60_000 : null,
     lastError: null,
+    lastErrorKind: null,
     syncing: false,
     devices: enabled ? [{ id: 'phone', name: 'Pixel 9', lastSeen: NOW - 5 * 60_000 }] : [],
     pendingMerge: false,
-    remoteTabsVersion: ++version
+    remoteTabsVersion: ++version,
+    transport: 'folder',
+    webdav: null,
+    webdavAvailable: false,
+    authRefused: false
   }
 }
 
