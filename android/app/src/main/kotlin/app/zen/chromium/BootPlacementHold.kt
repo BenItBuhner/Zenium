@@ -49,6 +49,12 @@ class BootPlacementHold {
     /** The tabs that left the hold before the gate opened ([leave], [drop]): never admitted again. */
     private val gone = HashSet<String>()
     private val held = ArrayList<Held>()
+    /**
+     * Whether [hold] has said "first" already: the deadline is asked for ONCE a boot, however the
+     * list drains ([leave], [drop]) and fills again – a second ask would arm a second Runnable
+     * that the frame's cancel does not know, left to fire and warn at T+5 s for nothing.
+     */
+    private var deadlineAsked = false
 
     private class Held(val tabId: String, val op: () -> Unit, val onDrop: () -> Unit)
 
@@ -86,8 +92,11 @@ class BootPlacementHold {
 
     /**
      * Hold `op` for `tabId`; `onDrop` answers the message instead if the tab is dropped (a call's
-     * reply, so nothing waits on it). Answers whether it is the first held – the caller arms the
-     * deadline on it. An op offered while the gate is open is applied at once (and answers false).
+     * reply, so nothing waits on it). Answers whether it is the FIRST held of the boot – the
+     * caller arms the deadline on it, once: a hold after [leave] or [drop] drained the list does
+     * not say so again (the deadline runs from the first held message, as documented, and the
+     * frame's release cancels the one Runnable there is). An op offered while the gate is open is
+     * applied at once (and answers false).
      */
     fun hold(tabId: String, onDrop: () -> Unit = {}, op: () -> Unit): Boolean {
         if (open) {
@@ -95,7 +104,9 @@ class BootPlacementHold {
             return false
         }
         held.add(Held(tabId, op, onDrop))
-        return held.size == 1
+        if (deadlineAsked) return false
+        deadlineAsked = true
+        return true
     }
 
     /** Ops held right now. */

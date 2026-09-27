@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 /**
  * NTP-35, the second and third halves of #563's mitigation (1): the boot's served new tab page is
@@ -14,8 +15,8 @@ import org.junit.Test
  * what was held applied, its destroy with what was held dropped and answered; a tab never admitted
  * – the phone's every tab, a restored page's – is never held; the deadline is the fail-safe's
  * number. The lead's conditions of form on the page itself (the space's ground alone while held,
- * the whole first paint, the 120 ms fade / the cut) are the document's and pinned beside it
- * (`newTabPage.test.ts`, `newTabPageScript.test.ts`).
+ * the whole first paint, the 120 ms fade – the same under reduced motion) are the document's and
+ * pinned beside it (`newTabPage.test.ts`, `newTabPageScript.test.ts`).
  */
 class BootPlacementHoldTest {
     private val applied = ArrayList<String>()
@@ -95,6 +96,58 @@ class BootPlacementHoldTest {
         assertFalse(hold.hold("b", op = op("b1")))
         assertEquals(3, hold.release())
         assertEquals(listOf("a1", "a2", "b1"), applied)
+    }
+
+    @Test
+    fun `the deadline is asked for once a boot – a hold after LEAVE or DROP drained the list does not ask again`() {
+        // Two admitted tabs, the first leaving (or dropped) with the list drained: the next hold
+        // is the list's first again but not the boot's – a second ask would arm a second Runnable
+        // the frame's release does not cancel (the first line's N2 on #563).
+        val hold = BootPlacementHold()
+        hold.admit("a")
+        hold.admit("b")
+        assertTrue(hold.hold("a", op = op("a1")))
+        assertEquals(1, hold.leave("a"))
+        assertEquals(0, hold.heldCount)
+        assertFalse(hold.hold("b", op = op("b1")))
+        assertEquals(1, hold.heldCount)
+        assertEquals(1, hold.release())
+        assertEquals(listOf("a1", "b1"), applied)
+
+        applied.clear()
+        val dropped = BootPlacementHold()
+        dropped.admit("a")
+        dropped.admit("b")
+        assertTrue(dropped.hold("a", onDrop("a1"), op("a1")))
+        assertEquals(1, dropped.drop("a"))
+        assertEquals(0, dropped.heldCount)
+        assertFalse(dropped.hold("b", op = op("b1")))
+        assertEquals(1, dropped.release())
+        assertEquals(listOf("b1"), applied)
+        assertEquals(listOf("a1"), this.dropped)
+    }
+
+    @Test
+    fun `the host admits on the tablet chassis alone and re-dispatches what was held under the bridge's own guard`() {
+        // The Kotlin wiring the JUnit state machine cannot reach, pinned by its source text (the
+        // repository's idiom): the `view.create` admission is the tag AND `largeScreen()` – the
+        // phone never admits because that conjunct is false there, whatever the tag – and both
+        // hold sites hand the release a dispatch wrapped as the bridge wraps every dispatch
+        // (`dispatchHeld`: a failing held message is logged and rejected, the ones after it run).
+        val host = File(repoRoot(), "android/app/src/main/kotlin/app/zen/chromium/Host.kt").readText()
+        assertEquals(1, Regex(Regex.escape("""if (args.optBoolean("newTabPage") && activity.largeScreen() && bootHold.admit(id)) {""")).findAll(host).count())
+        assertEquals(2, Regex("""holdAtBoot\([^\n]*\) \{ dispatchHeld\(method, args, reply\) \}""").findAll(host).count())
+        assertEquals(0, Regex("""holdAtBoot\([^\n]*\) \{ dispatch\(method, args, reply\) \}""").findAll(host).count())
+        assertTrue(host.contains("private fun dispatchHeld(method: String, args: JSONObject, reply: (Any?) -> Unit) {\n        try {\n            dispatch(method, args, reply)\n        } catch (e: Exception) {"))
+    }
+
+    private fun repoRoot(): File {
+        var dir: File? = File(System.getProperty("user.dir") ?: ".").absoluteFile
+        while (dir != null) {
+            if (File(dir, "package.json").isFile && File(dir, "android").isDirectory) return dir
+            dir = dir.parentFile
+        }
+        error("not inside the repository")
     }
 
     @Test

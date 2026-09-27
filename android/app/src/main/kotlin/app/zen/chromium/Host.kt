@@ -489,16 +489,20 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     /**
      * NTP-35, the second and third halves of #563's mitigation (1): the boot's served new tab page
      * is MADE, LOADED and PLACED after the FULLY DRAWN frame. The core tags the served tab's
-     * `view.create` (`newTabPage`, `views.ts`); on the tablet chassis ([MainActivity.largeScreen] –
-     * the phone's chrome draws its own page and never sends the tag) the host admits that tab to
-     * the hold, and every `view.*` message of an admitted tab – the create itself, its background
-     * and visibility, the page-controls ops, the `loadHtml` that would parse the document and run
-     * its script, the layout's `setBounds` / `setVisible` / `shown` – is kept in arrival order and
-     * re-dispatched once the frame after `chrome.ready` is drawn ([BootPlacementHold] has the rule
-     * and the why; [releaseBootHoldAfterReadyFrame] arms the frame). A `view.load` of a URL into
-     * the tab (an intent's) or its `view.destroy` ends its hold at once (LEAVE / DROP). Every other
-     * tab, and every tab once the gate is open, takes its path unchanged: the read is one set
-     * lookup by tabId ([heldAtBoot]).
+     * `view.create` (`newTabPage`, `views.ts` – the tag follows the URL, so a restored `zen://newtab`
+     * tab carries it on any chassis); on the tablet chassis alone ([MainActivity.largeScreen], the
+     * conjunct the phone fails: its chrome draws its own page, and a tagged tab it restores is
+     * made at once) the host admits that tab to the hold, and every `view.*` message of an
+     * admitted tab – the create itself, its background and visibility, the page-controls ops, the
+     * `loadHtml` that would parse the document and run its script, the layout's `setBounds` /
+     * `setVisible` / `shown` – is kept in arrival order and re-dispatched once the frame after
+     * `chrome.ready` is drawn ([BootPlacementHold] has the rule and the why;
+     * [releaseBootHoldAfterReadyFrame] arms the frame). A `view.load` of a URL into the tab (an
+     * intent's) or its `view.destroy` ends its hold at once (LEAVE / DROP). Every other tab, and
+     * every tab once the gate is open, takes its path unchanged: the read is one set lookup by
+     * tabId ([heldAtBoot]). The rule's default for a `view.*` it does not name (one added to the
+     * `when` since, `view.imageThumbnail` say) is HOLD, while the gate is closed and for an
+     * admitted tab alone – re-dispatched at the release; nothing is held once the gate is open.
      */
     private val bootHold = BootPlacementHold()
     private var bootHoldDeadline: Runnable? = null
@@ -519,6 +523,23 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     }
 
     /**
+     * A held message dispatched again at the release ([BootPlacementHold.release], or
+     * [BootPlacementHold.leave]'s ops), wrapped as the bridge wraps every dispatch
+     * ([JsBridge.Calls]): one that fails is logged and answered with the rejection the bridge
+     * would have sent, and the held messages after it still run – the release's loop runs in a
+     * posted Runnable, which an exception would leave with the rest unapplied and the process
+     * down. One try around the call; nothing else on the path.
+     */
+    private fun dispatchHeld(method: String, args: JSONObject, reply: (Any?) -> Unit) {
+        try {
+            dispatch(method, args, reply)
+        } catch (e: Exception) {
+            Log.w(TAG, "boot hold: native $method failed at the release", e)
+            reply(Rejection(e.message ?: e.javaClass.simpleName))
+        }
+    }
+
+    /**
      * A `view.*` message of a tab the hold admitted, while the gate is closed: held in its order
      * (the rule's default; answers true, the message is dispatched again at the release), or the
      * tab's hold ended first – LEAVE for a load that makes it a page READY waits for, its held
@@ -530,7 +551,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         if (tabId == null || !method.startsWith("view.") || !bootHold.holds(tabId)) return false
         return when (bootHold.way(method, args.strOrNull("url"))) {
             BootPlacementHold.Way.HOLD -> {
-                holdAtBoot(tabId, onDrop = { reply(null) }) { dispatch(method, args, reply) }
+                holdAtBoot(tabId, onDrop = { reply(null) }) { dispatchHeld(method, args, reply) }
                 true
             }
             BootPlacementHold.Way.LEAVE -> {
@@ -1062,12 +1083,14 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             // The tab the core makes for the served new tab page at boot (`newTabPage`, its tag on
             // the create; NTP-35): on the tablet chassis it is admitted to the boot hold, so this
             // create and every message of the tab's after it wait for the FULLY DRAWN frame
-            // ([heldAtBoot]). The phone's chrome draws its own page and sends no tag; a tab made
-            // once the gate is open, or one that left the hold, is made at once like any other.
+            // ([heldAtBoot]). The tag follows the URL (`views.ts`), not the chassis: on a phone-class
+            // screen – the phone's fresh boot sends none (its chrome draws its own page); a restored
+            // `zen://newtab` tab's would carry one – `largeScreen()` is false and the tab is made at
+            // once, as is a tab made once the gate is open, or one that left the hold.
             "view.create" -> {
                 val id = args.str("tabId")
                 if (args.optBoolean("newTabPage") && activity.largeScreen() && bootHold.admit(id)) {
-                    holdAtBoot(id, onDrop = { reply(null) }) { dispatch(method, args, reply) }
+                    holdAtBoot(id, onDrop = { reply(null) }) { dispatchHeld(method, args, reply) }
                     return
                 }
                 tabs.create(id, args.str("containerId", Profiles.DEFAULT_CONTAINER))
