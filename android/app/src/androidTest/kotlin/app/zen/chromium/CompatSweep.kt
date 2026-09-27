@@ -7731,7 +7731,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // Browser Guard's popup is Urban VPN's safe-browsing verdict for the tab; Remove YouTube
         // Shorts' content script sends `/shorts/<id>` to `/watch?v=<id>` every second and hides
         // the shelves; PerfectPixel's click injects `content.js` and `styles/content.css` into the
-        // tab, which draw its `.perfectpixel-panel`; AAdvantage eShopping's popup activates the
+        // tab, which draw its panel into `div#chromeperfectpixel-panel-container` (its id and its
+        // class, `z-index: 2147483647; all: initial`, appended to `<body>`; on a WebView with
+        // `showPopover` appended to `<html>` as a manual popover) with `chromeperfectpixel-*`
+        // classes throughout – round 22's grader looked for `.perfectpixel-panel`, a name the
+        // bundle keeps for a localStorage key, and read `shown false` beside 50 nodes carrying
+        // `perfectpixel`; AAdvantage eShopping's popup activates the
         // store through an AAdvantage sign-in; Instapaper's click has its content script POST the
         // page to instapaper.com/bookmarklet/post_v6 with the account's cookies (signed out it
         // sends the tab to instapaper.com/hello2); Twitch VOD Downloader's scripts run on twitch.tv
@@ -7752,8 +7757,14 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // click sends `togglePopup` to its content script, which mounts
         // `iframe#similarsites-outer-content` with `panel/panel.html?domain=<host>` inside;
         // Backpack's MAIN-world scripts define `window.backpack` (`.solana`, `.ethereum`) and
-        // `window.ethereum` (`isBackpack`) on every page; Jungle Scout's click asks
-        // members.junglescout.com to sign in and its scripts read Amazon's listings; WebRTC
+        // `window.ethereum` (`isBackpack`) on every page; Jungle Scout's click sends `OPEN_MENU`
+        // to its content script (`tabs.sendMessage`; the script's listener dispatches the toggle
+        // and returns false – Chrome's "no answer" too), which toggles `currentTab.menuOpen` and
+        // draws its dropdown menu (Actions / Your Business with the "Log in" form / Help) into
+        // `#jsExtensionMenu`, a div in the OPEN shadow root of `#jsExtensionMenuParent` under
+        // `#jsExtensionEmbedder` at the end of `<body>` – on every page, an Amazon listing or
+        // not (round 22's row waited for a members.junglescout.com tab the click never opens);
+        // its scripts read Amazon's listings; WebRTC
         // Network Limiter (no background) is one options page of four radios over
         // `privacy.network.webRTCIPHandlingPolicy`, read back on load and set on a click;
         // GoFullPage BETA is GoFullPage's shape (the popup's `captureVisibleTab` stitch into
@@ -7784,7 +7795,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("dapjbgnjinbpoindlpdmhochffioedbn", "BuiltWith Technology Profiler", "builtwith", core = popupMarker("BuiltWith", BUILTWITH_PROFILE, settleMs = 30_000, notMeasurable = Regex("captcha|robot|verify you|too many|rate limit|blocked|unusual traffic", RegexOption.IGNORE_CASE), gate = "BuiltWith's lookup service (builtwith.com/mobile.aspx answering for the tab's address)")),
         Row("dnollkdkikklpdganoecjcmmlddbennb", "Split Screen for Google Chrome", "split-screen", core = windowLayout("Split Screen", "#root div[style*=\"grid\"] > button")),
         Row("necpbmbhhdiplmfhmjicabdeighkndkn", "Similar Sites - Discover Related Websites", "similar-sites", core = actionMarker("Similar Sites", "page-a.html?similarsites", SIMILAR_SITES_PANEL, settleMs = 30_000)),
-        Row("bckjlihkmgolmgkchbpiponapgjenaoa", "Jungle Scout", "jungle-scout", core = accountGate("Jungle Scout", Regex("junglescout\\.com", RegexOption.IGNORE_CASE), gate = "a Jungle Scout account (its click asks members.junglescout.com to sign in) and an Amazon listing for its scripts")),
+        Row("bckjlihkmgolmgkchbpiponapgjenaoa", "Jungle Scout", "jungle-scout", core = accountGate("Jungle Scout", Regex("junglescout\\.com", RegexOption.IGNORE_CASE), injects = "#jsExtensionMenuParent", ownLabels = Regex("Jungle Scout|Your Business|Scan Search Results|Copy ASINs?", RegexOption.IGNORE_CASE), gate = "a Jungle Scout account (its menu's Your Business tab is its \"Log in\" form) and an Amazon listing for its scripts")),
         Row("npeicpdbkakmehahjeeohfdhnlpdklia", "WebRTC Network Limiter", "webrtc-network-limiter", core = ownPage("WebRTC Network Limiter", "options.html", WEBRTC_LIMITER_OPTIONS, gate = "a WebRTC IP handling policy the engine takes: the phone stores and publishes `privacy.network.webRTCIPHandlingPolicy` and the WebView has no policy API to hand it to (the standing WebView blocker)")),
         Row("kehafhfdnkhdgbnpeofmhmbibmpnjaof", "GoFullPage BETA - Full Page Screen Capture", "gofullpage-beta", core = ::fullPageCapture),
         Row("kfgepjmmgamniaefbjlbacahkjjnjoaa", "Gmail reverse conversation", "gmail-reverse-conversation", core = liveAttached("Gmail reverse conversation", "https://mail.google.com/", gate = "a Gmail session (its one content script reorders a conversation's messages on mail.google.com; signed out the site sends the tab to accounts.google.com)")),
@@ -15387,10 +15398,20 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "(function(){var a=document.getElementById('attesters');var m=document.getElementById('serviceWorkerMode');var av=a?(a.value||a.textContent||''):'';var mv=m?(m.value||''):'';" +
                 "return JSON.stringify({pass:/pp-attester-turnstile\\.research\\.cloudflare\\.com/.test(av)&&mv==='production',attesters:av.replace(/\\s+/g,' ').slice(0,120),mode:mv,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,100)})})()"
 
-        /** PerfectPixel after the action click: its `content.js` and `styles/content.css` injected into the tab draw `.perfectpixel-panel` (with its layer controls) into the page. */
+        /**
+         * PerfectPixel after the action click: its `content.js` and `styles/content.css` injected
+         * into the tab draw its panel into `div#chromeperfectpixel-panel-container` (the id and the
+         * class alike; `all: initial` on the container, so its own box can read empty – the
+         * largest visible element under it is the panel's measure), a manual popover on a WebView
+         * with `showPopover` (156) and a plain child of `<body>` without it (113). Round 22's
+         * selector `.perfectpixel-panel` named a localStorage key of the bundle's, not a class.
+         */
         private const val PERFECTPIXEL_PANEL =
-            "(function(){var p=document.querySelector('.perfectpixel-panel, .perfectpixel-panel-container');var r=p?p.getBoundingClientRect():null;var ctl=document.querySelectorAll('[class*=\"perfectpixel\"]').length;" +
-                "return JSON.stringify({pass:!!p&&r.width>0&&r.height>0,shown:!!p,w:r?Math.round(r.width):0,h:r?Math.round(r.height):0,nodes:ctl,text:p?(p.innerText||'').replace(/\\s+/g,' ').trim().slice(0,80):''})})()"
+            "(function(){var p=document.getElementById('chromeperfectpixel-panel-container')||document.querySelector('.chromeperfectpixel-panel-container');" +
+                "var visible=function(e){var r=e.getBoundingClientRect();var cs=getComputedStyle(e);return r.width>0&&r.height>0&&cs.visibility!=='hidden'&&cs.display!=='none'?r:null};" +
+                "var best=null;if(p){best=visible(p);var kids=p.querySelectorAll('*');for(var i=0;i<kids.length&&i<4000;i++){var r=visible(kids[i]);if(r&&(!best||r.width*r.height>best.width*best.height))best=r}}" +
+                "var ctl=document.querySelectorAll('[class*=\"perfectpixel\"]').length;var popover=false;try{popover=!!p&&p.matches(':popover-open')}catch(e){}" +
+                "return JSON.stringify({pass:!!best,shown:!!p,w:best?Math.round(best.width):0,h:best?Math.round(best.height):0,nodes:ctl,popover:popover,parent:p?p.parentNode.nodeName.toLowerCase():'',text:p?(p.innerText||'').replace(/\\s+/g,' ').trim().slice(0,80):''})})()"
 
         /** ePub Reader's library (`data/UI/index.html`): the dashboard view with its `#dropzone` and `#file-input` (accept `.epub`) or the shelf, `#library-empty` showing while nothing is loaded. */
         private const val EPUB_LIBRARY =
