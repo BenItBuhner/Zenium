@@ -89,7 +89,8 @@ function state(): UIState {
     lastSafetyCheck: RESULT,
     updates: { phase: 'idle', mode: 'manual' },
     passwords: { locked: true, count: 0 },
-    capabilities: { extensions: false }
+    capabilities: { extensions: false },
+    settings: { autoRevokeUnusedPermissions: true }
   } as unknown as UIState
 }
 

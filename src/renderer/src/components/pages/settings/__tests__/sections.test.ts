@@ -747,6 +747,7 @@ describe('the section model', () => {
       'sites-content',
       'sites-additional',
       'sites-own',
+      'sites-unused',
       'preload',
       'https-only',
       'https-only-sites',
@@ -2076,6 +2077,7 @@ describe('the section model', () => {
       'sites-content',
       'sites-additional',
       'sites-own',
+      'sites-unused',
       'preload',
       'https-only',
       'https-only-sites',
@@ -2447,6 +2449,240 @@ describe('the section model', () => {
       kind: 'info',
       description: 'Safe Browsing is on'
     })
+  })
+
+  it('reviews the permissions the sweep removed first (PS-41): Chrome’s module as the sheet’s first group – Allow again and Got it with their toasts and undos – then the granted sites; the row keeps its review with no granted site', async () => {
+    const revoked = [
+      {
+        origin: 'https://meet.example',
+        permissions: ['camera', 'microphone'],
+        revokedAt: Date.now() - 2 * 86_400_000
+      },
+      { origin: 'https://maps.example', permissions: ['geolocation'], revokedAt: Date.now() }
+    ]
+    const result: SafetyCheckResult = {
+      checkedAt: Date.now() - 60_000,
+      updates: {
+        state: 'safe',
+        summary: 'Up to date',
+        currentVersion: '0.3.0',
+        latestVersion: null
+      },
+      safeBrowsing: {
+        state: 'safe',
+        summary: 'Safe Browsing is on',
+        configured: true,
+        enabled: true
+      },
+      passwords: {
+        state: 'safe',
+        summary: 'No passwords saved',
+        compromised: 0,
+        weak: 0,
+        reused: 0,
+        known: false,
+        checkedAt: null
+      },
+      permissions: {
+        state: 'info',
+        summary: 'Permissions removed from 2 sites',
+        grantedSites: 1,
+        review: [],
+        revoked
+      },
+      notifications: { state: 'safe', summary: 'No site may send notifications', sites: [] },
+      extensions: { state: 'unavailable', summary: 'This host runs no extensions', flagged: [] }
+    }
+    const rules = [
+      { origin: 'https://docs.example', permission: 'geolocation', decision: 'allow' as const }
+    ]
+    const privacy = section(
+      'privacy',
+      state({ lastSafetyCheck: result, permissionRules: rules } as Partial<UIState>)
+    )
+    // The card reads the row's info state; the row is the review, its sentence the engine's.
+    expect(row(privacy, 'safety-check-standing')).toMatchObject({
+      label: 'A few things to look at'
+    })
+    const permissions = row(privacy, 'safety-check:permissions')
+    if (permissions.kind !== 'item') throw new Error('not an item')
+    expect(permissions.description).toBe('Permissions removed from 2 sites')
+    expect(permissions.sheet.title).toBe('Site permissions')
+    expect(permissions.sheet.groups.map((g) => [g.id, g.heading])).toEqual([
+      ['safety-check:permissions:revoked', 'Permissions removed from 2 sites'],
+      ['safety-check:permissions:sites', 'Sites with permissions you granted']
+    ])
+    const block = permissions.sheet.groups[0]
+    expect(block.description).toBe(
+      "To protect your data, permissions were removed from sites you haven't visited recently."
+    )
+    expect(block.rows.map((r) => [r.kind, r.label, r.description])).toEqual([
+      ['item', 'meet.example', "Camera, Microphone · Removed because you haven't visited recently"],
+      ['item', 'maps.example', "Location · Removed because you haven't visited recently"],
+      ['action', 'Got it', 'The list is cleared and the permissions stay removed.']
+    ])
+    expect(permissions.sheet.groups[1].rows.map((r) => r.label)).toEqual(['docs.example'])
+
+    // Allow again: the site's permissions come back at once (no confirmation), the check runs
+    // again, and Chrome's toast offers Undo, which reverses it and reads the check once more.
+    uiStore.set({ toasts: [] })
+    const meet = row(privacy, 'safety-check:permissions:revoked:https://meet.example')
+    if (meet.kind !== 'item') throw new Error('not an item')
+    expect(meet.action).toMatchObject({ label: 'Allow again' })
+    expect(meet.action?.destructive).toBeUndefined()
+    expect(meet.sheet.title).toBe('meet.example')
+    const regrant = row(
+      privacy,
+      'safety-check:permissions:revoked:https://meet.example:allow-again'
+    )
+    expect(regrant).toMatchObject({ kind: 'action', label: 'Allow again', button: 'Allow again' })
+    if (regrant.kind !== 'action') throw new Error('not an action')
+    expect(regrant.confirm).toBeUndefined()
+    invoke.mockClear()
+    meet.action?.onPress()
+    expect(invoke.mock.calls).toEqual([
+      ['permissions.regrantRevoked', { origin: 'https://meet.example' }],
+      ['privacy.safetyCheck', undefined]
+    ])
+    let toasts = uiStore.get().toasts
+    expect(toasts.map((t) => [t.message, t.kind, t.action?.label])).toEqual([
+      ['Permissions allowed again for meet.example', 'info', 'Undo']
+    ])
+    invoke.mockClear()
+    toasts[0].action?.onPick()
+    expect(invoke.mock.calls).toEqual([
+      ['permissions.undoRegrantRevoked', { origin: 'https://meet.example' }],
+      ['privacy.safetyCheck', undefined]
+    ])
+    uiStore.set({ toasts: [] })
+    invoke.mockClear()
+    regrant.onPress?.()
+    expect(invoke.mock.calls[0]).toEqual([
+      'permissions.regrantRevoked',
+      { origin: 'https://meet.example' }
+    ])
+    uiStore.set({ toasts: [] })
+
+    // Got it: the list is acknowledged through the engine, which hands back the records; the
+    // bulk toast counts them and its Undo puts them back as they were.
+    const records = revoked.map((r) => ({ ...r, expiresAt: r.revokedAt + 30 * 86_400_000 }))
+    invoke.mockImplementation(async (name) =>
+      name === 'permissions.acknowledgeRevoked' ? (records as unknown as null) : null
+    )
+    invoke.mockClear()
+    const gotIt = row(privacy, 'safety-check:permissions:revoked:acknowledge')
+    if (gotIt.kind !== 'action') throw new Error('not an action')
+    expect(gotIt).toMatchObject({ button: 'Got it' })
+    expect(gotIt.confirm).toBeUndefined()
+    expect(gotIt.destructive).toBeUndefined()
+    gotIt.onPress?.()
+    await vi.waitFor(() => expect(uiStore.get().toasts).toHaveLength(1))
+    expect(invoke.mock.calls).toEqual([
+      ['permissions.acknowledgeRevoked', undefined],
+      ['privacy.safetyCheck', undefined]
+    ])
+    toasts = uiStore.get().toasts
+    expect(toasts.map((t) => [t.message, t.kind, t.action?.label])).toEqual([
+      ['Review complete for 2 sites', 'info', 'Undo']
+    ])
+    invoke.mockClear()
+    toasts[0].action?.onPick()
+    expect(invoke.mock.calls).toEqual([
+      ['permissions.restoreRevokedList', { records }],
+      ['privacy.safetyCheck', undefined]
+    ])
+    uiStore.set({ toasts: [] })
+    invoke.mockImplementation(async () => null)
+
+    // One site: the singular forms.
+    const one = section(
+      'privacy',
+      state({
+        lastSafetyCheck: {
+          ...result,
+          permissions: {
+            ...result.permissions,
+            summary: 'Permissions removed from 1 site',
+            grantedSites: 0,
+            revoked: [revoked[1]]
+          }
+        },
+        permissionRules: []
+      } as Partial<UIState>)
+    )
+    // With no granted site the row is still the review: the removed permissions are what it opens.
+    const single = row(one, 'safety-check:permissions')
+    if (single.kind !== 'item') throw new Error('not an item')
+    expect(single.sheet.groups[0].description).toBe(
+      "To protect your data, permissions were removed from a site you haven't visited recently."
+    )
+    expect(single.sheet.groups[1]).toMatchObject({
+      heading: 'Sites with permissions you granted',
+      rows: [],
+      empty: 'No site holds a permission'
+    })
+
+    // With nothing removed the sheet is as it was: one headingless list of the granted sites.
+    const none = section(
+      'privacy',
+      state({
+        lastSafetyCheck: {
+          ...result,
+          permissions: {
+            ...result.permissions,
+            state: 'safe',
+            summary: '1 site with permissions you granted',
+            revoked: []
+          }
+        },
+        permissionRules: rules
+      } as Partial<UIState>)
+    )
+    const plain = row(none, 'safety-check:permissions')
+    if (plain.kind !== 'item') throw new Error('not an item')
+    expect(plain.sheet.groups.map((g) => [g.id, g.heading])).toEqual([
+      ['safety-check:permissions:sites', null]
+    ])
+  })
+
+  it('keeps the sweep’s switch last among the Site settings, bound to the setting, in each host’s own words (PS-41)', () => {
+    const phone = section('privacy')
+    const ids = phone.groups.map((g) => g.id)
+    expect(ids[ids.indexOf('sites-own') + 1]).toBe('sites-unused')
+    expect(ids.indexOf('sites-own')).toBeGreaterThan(ids.indexOf('sites-permissions'))
+    const sw = row(phone, 'sites-auto-revoke')
+    expect(sw).toMatchObject({
+      kind: 'switch',
+      label: 'Automatically remove permissions',
+      description:
+        "To protect your data, let Zenium remove permissions from sites that you haven't visited recently.",
+      checked: true
+    })
+    if (sw.kind !== 'switch') throw new Error('not a switch')
+    invoke.mockClear()
+    sw.onChange(false)
+    expect(invoke.mock.calls).toEqual([['settings.update', { autoRevokeUnusedPermissions: false }]])
+    expect(
+      row(
+        section('privacy', state({}, { autoRevokeUnusedPermissions: false })),
+        'sites-auto-revoke'
+      )
+    ).toMatchObject({ checked: false })
+
+    const desktop = section(
+      'privacy',
+      state({ platform: 'linux', capabilities: { ...ANDROID, windows: true } })
+    )
+    expect(row(desktop, 'sites-auto-revoke')).toMatchObject({
+      kind: 'switch',
+      label: 'Automatically remove permissions from unused sites',
+      description:
+        "To protect your data, let Zenium remove permissions from sites you haven't visited recently. Notifications are not removed.",
+      checked: true
+    })
+    // The search reaches it; a headingless group's caption is the category's (as Check now's).
+    const hits = searchRows(phoneSections(), 'unused sites')
+    expect(hits.find((h) => h.row.id === 'sites-auto-revoke')?.caption).toBe('Privacy and Security')
   })
 
   it('orders Look and Feel identity, chrome, page behaviour, Glance (design lead, #134)', () => {
@@ -5665,9 +5901,12 @@ describe('searching the rows', () => {
     expect(at('cookies-related-sites')).toBe(at('site-data') + 1)
     expect(at('site-data-allow')).toBe(at('cookies-add-site') + 1)
     expect(at('site-data-viewer')).toBe(at('sites-permissions') - 1)
-    // Preload pages (PS-43) stands between Site settings and HTTPS-only mode, as on Chrome's
-    // Android page (Chrome desktop moved it to Performance; the shared builder keeps one place).
-    expect(at('preload')).toBe(at('sites-own') + 1)
+    // The sweep's switch closes Site settings (PS-41: the last thing on both Chromes' Site
+    // settings pages); Preload pages (PS-43) stands between Site settings and HTTPS-only mode,
+    // as on Chrome's Android page (Chrome desktop moved it to Performance; the shared builder
+    // keeps one place).
+    expect(at('sites-unused')).toBe(at('sites-own') + 1)
+    expect(at('preload')).toBe(at('sites-unused') + 1)
     expect(at('https-only')).toBe(at('preload') + 1)
     // The signals close the protection groups; after them only the private-tab lock (INC-05,
     // Chrome's Incognito lock after Do Not Track).
