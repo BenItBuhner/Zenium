@@ -1019,19 +1019,19 @@ class TabWebView(
      * The frame-owner protocol's orchestrator, made on first use (this file is on the boot path:
      * nothing of it is built with the view). Its timers run on the main looper – the view's own
      * `postDelayed` waits for an attach a hidden tab may not get – and its nonces come from a
-     * `SecureRandom`; a proxy that is gone drops the message on its own (`JsReplyProxy`), the
-     * `runCatching` is for the boundary.
+     * `SecureRandom` made at the first request, not at a frame's hello; a proxy that is gone
+     * drops the message on its own (`JsReplyProxy`), the `runCatching` is for the boundary.
      */
     private fun imageOwner(): ImageOwner<JavaScriptReplyProxy> = imageOwner ?: run {
         val handler = Handler(Looper.getMainLooper())
-        val random = SecureRandom()
+        val random = lazy(LazyThreadSafetyMode.NONE) { SecureRandom() }
         ImageOwner<JavaScriptReplyProxy>(
             schedule = { delayMs, block ->
                 val run = Runnable { block() }
                 handler.postDelayed(run, delayMs)
                 ({ handler.removeCallbacks(run) })
             },
-            randomBytes = { count -> ByteArray(count).also(random::nextBytes) },
+            randomBytes = { count -> ByteArray(count).also(random.value::nextBytes) },
             post = { proxy, payload -> runCatching { proxy.postMessage(payload) } }
         ).also { imageOwner = it }
     }
