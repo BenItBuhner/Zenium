@@ -291,6 +291,56 @@ What no runner confirms: the menu as drawn by AppKit (the Search field the `help
 window list the `window` role appends) – UI scripting would open it, and the readings above are
 what AppKit draws from.
 
+## Hold ⌘Q to quit (`quit-hold`, and every macOS quit)
+
+Chrome's "Warn Before Quitting (⌘Q)" (session-08, W5-19; `src/core/quitHold.ts`): on a Mac with
+the application menu's checkbox on – the default – the quit chord's key down arms "Hold ⌘Q to
+quit" and the app quits once the keys were down for 1500 ms; a key up before that ends the hold
+and nothing quits. The scenario runs on the macOS legs alone (the hold is the Mac's; the harness
+holds on Linux too when `--extra-args` carries the app's `--test-quit-hold`), and every other
+macOS scenario's `quit` step holds the chord to its end (`Session.quitGracefully` →
+`holdQuitChord`: the keys down, the hold read off `app.getState`, the screen grabbed mid-hold
+as `<scenario>-quit-hold.png`, the exit at the hold's end). The chord's keys go in through
+`webContents.sendInputEvent` on the chrome, the path a physical press takes into
+`before-input-event`, where the key table runs synchronously.
+
+Two things the harness learnt on macos-x64 (`macos-15-intel`, W8-F9; five `hold-release` reds
+in 37 h with the arm64 twin green each time, and one `dark/quit` red nothing could explain
+afterwards): the hold's release is timed by the app's own clock, and a quit that does not come
+is read while it is not coming.
+
+| step           | reads                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | confirmed by                     |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------- |
+| `menu-item`    | a page in a new tab in front; the application menu's `Warn Before Quitting (⌘Q)` row a checkbox, checked; `settings.warnBeforeQuitting === true` on the fresh profile; the `Quit Zenium` row kept                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | the main process, `app.getState` |
+| `hold-release` | one evaluate in the main process (`Session.holdKeysFor`) sends the chord's key down, schedules its key up on a timer there 500 ms later and returns `{ downAt, upAt }` off the app's `Date.now()` – the hold's length (`heldForMs = upAt − downAt` ≈ 500, `lateByMs` the timer's slack) contains no round trip; meanwhile `window.quitHold` is polled through the chrome and each poll is judged by its timestamps (`quit.mjs` `judgeHoldRelease`): a poll that saw the hold proves the arming (its chord `⌘Q`, its 1500 ms), a null read whose whole round trip lay inside the hold fails the step (the chord armed nothing), a poll that answered after the release proves nothing and fails nothing (`arming: 'unproven'` with a note – the other scenarios' full holds prove the arming with a still each run); then the state reads no hold, no exit comes by `downAt + 2000`, the main process answers. Fails on: a release at or past 1500 ms, a key up the app could not send, a not-armed read, a hold naming another chord or duration | the app's clock, `app.getState`  |
+| `toggle-off`   | the row picked through its own `click` in the main process: `settings.warnBeforeQuitting` false, the menu rebuilt with the row unchecked                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | the main process, `app.getState` |
+| `quit-at-once` | `quitGracefully` reads the setting off and presses instead of holding: the app quits at the press with no hold (`hold` null), exit code 0; `state.json` keeps `warnBeforeQuitting: false`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | the process, the profile         |
+
+The trace of a quit that does not come (every `quitGracefully`, on every leg): a quit not exited
+by the hold's 1500 ms and a 1000 ms margin is read BEFORE the keys come up (`holdQuitChord`) and
+then every 500 ms through the 15 s budget (`Session.traceQuit` → `sampleQuit`): the chrome's
+`window.quitHold` through `app.getState` and a main-process probe (its state through
+`probeOutcome` – `responsive`, `blocked`, `gone` – with the window count and whether one is
+focused). The hook's `before-quit` events and a still of the screen while the app is still up
+(`<scenario>-quit-stuck.png`) join them, and a "did not exit" failure carries all of it, the
+readings that agree collapsed (`quit.mjs` `formatQuitTrace`):
+
+    app did not exit within 15000 ms after Meta+q (main process responsive; prompt null;
+    before-quit none; hold {"startedAt":…,"durationMs":1500,"chord":"⌘Q"};
+    trace +2.5s quitHold=held(⌘Q, started +0.1s, 1500 ms) main=responsive windows=1 focused=true;
+    +3.0s…+14.5s ×24 quitHold=null main=responsive windows=1 focused=true; …)
+
+which says whether the hold's timer never fired (the hold still up at +2.5 s), the hold was
+cancelled or its quit refused (the hold gone, no `before-quit`), or the quit began and stalled
+(`before-quit` at its offset). Nothing is read while a quit comes within the hold and margin, so
+the green path runs as before; the step's detail and `quitGracefully`'s return carry `trace`
+only when readings were taken. The pure parts – the polls' verdicts, the release's judging, the
+trace's line – are `quit.test.mjs`'s.
+
+What no runner confirms: a physical key up (the release is `sendInputEvent`'s key up, which
+Chromium delivers to `before-input-event` as it does a keyboard's), and why a hold's timer would
+not fire – the trace names the state, not the cause.
+
 ## The agents' space around a restore (`agent-space-restore`)
 
 `agent-space-scenario.mjs` (W8-F2) guards #573 (W7-F3): a window left standing on an empty
