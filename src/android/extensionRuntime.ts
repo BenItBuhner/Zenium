@@ -84,6 +84,7 @@ import { extensionUrl, type RegisteredContentScript } from '@core/extensions/run
 import { MessageRouter, type Endpoint } from '@core/extensions/runtime/router'
 import {
   foldFilesFor,
+  latin1Json,
   planUnits,
   sameUnits,
   type ExtensionUnits,
@@ -1323,18 +1324,20 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       path: ext.record.path,
       allowFileAccess: ext.record.allowFileAccess === true,
       allowPrivate: ext.record.allowPrivate === true,
+      // The configs travel as text the host embeds as it is: Latin-1 by construction
+      // (`latin1Json`), so a unit is 16-bit on the phone only where its own sources are.
       units: units.units.map((unit) => ({
         key: unit.key,
         origins: unit.origins,
         world: unit.worldName,
         shape: unit.shape,
-        config: JSON.stringify(unit.config),
+        config: latin1Json(unit.config),
         groups: unit.groups,
         css: unit.css
       })),
       served: {
         ...units.served,
-        late: JSON.stringify(late),
+        late: latin1Json(late),
         // Kotlin localizes what it serves as `text/css` from this map, as Chrome's renderer does
         // for every `chrome-extension://` stylesheet response (a `<link>`, an `@import`, a
         // fetch): `url(chrome-extension://__MSG_@@extension_id__/...)` in a sheet an extension

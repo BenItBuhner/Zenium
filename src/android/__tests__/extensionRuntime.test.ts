@@ -70,6 +70,22 @@ describe('AndroidExtensionRuntime: attaching records', () => {
     expect(h.runtime.isolatedWorlds).toBe(false)
   })
 
+  it("hands Kotlin the unit, late and page configs Latin-1 – an extension's name outside Latin-1 travels as escapes and reads the same (compat round 22, R22-2)", async () => {
+    // The config carries the raw manifest and the messages: an extension named or localized in
+    // CJK or Cyrillic made every unit of its plan 16-bit on the phone through this text alone.
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ name: 'ページ翻訳 – Перевод' })))
+    const configure = h.kt.calledWith('ext.configure')[0]
+    const units = configure.units as Array<Record<string, unknown>>
+    const served = configure.served as Record<string, unknown>
+    for (const text of [String(units[0].config), String(served.late), String(served.page)]) {
+      expect(/[\u0100-\uffff]/.test(text)).toBe(false)
+      expect(text).toContain('\\u30da\\u30fc\\u30b8\\u7ffb\\u8a33 \\u2013 \\u041f')
+      const parsed = JSON.parse(text) as { extension: { name: string } }
+      expect(parsed.extension.name).toBe('ページ翻訳 – Перевод')
+    }
+  })
+
   it("folds many hostname units by the files' sizes Kotlin answers, and leaves the plan as it was when Kotlin cannot size them (compat round 21, Adblock Ad Blocker Pro)", async () => {
     // uBO Lite's shape on a WebView without isolated worlds: a scriptlet set per hostname, every
     // unit whole – a copy of the bootstrap per unit in every frame that matches. The planner
