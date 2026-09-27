@@ -167,6 +167,14 @@ interface PageHost {
     fun documentStarted(tab: TabWebView) {}
 
     /**
+     * `tab`'s main frame got an HTTP error status for its document (`onReceivedHttpError`, a 404
+     * or a 5xx): the page still renders the server's body, this is the status alone. Main thread.
+     * Only a Trusted Web Activity's host has a use for it (CCT-20, the quality log); the browser
+     * window has none.
+     */
+    fun documentHttpError(tab: TabWebView, url: String, status: Int) {}
+
+    /**
      * `tab`'s view is being torn down ([TabHost.destroy], [TabHost.dropAll]), before the
      * fullscreen it may hold is exited: a picture-in-picture window showing it ends with it. A
      * host without a chrome has no window.

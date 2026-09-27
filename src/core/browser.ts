@@ -3344,6 +3344,7 @@ export class Browser {
       'privacy.clearBrowsingData': ({ range, types, passphrase }, win) =>
         this.privacy.clearBrowsingData(range, types, passphrase, win),
       'privacy.clearBrowsingDataCounts': ({ range }) => this.privacy.counts(range),
+      'privacy.tabsInRange': ({ range }) => this.privacy.tabsInRange(range),
       'privacy.safetyCheck': () => this.privacy.runSafetyCheck(),
       'privacy.setThirdPartyCookiesPrivate': ({ mode }, win) =>
         this.protection.setThirdPartyCookiesPrivate(mode, win),
@@ -3996,6 +3997,8 @@ export class Browser {
       'print.close': ({ tabId }) => this.print.close(tabId),
       'pdf.openWith': ({ tabId }) => this.pdf.openWith(tabId),
       'pdf.share': ({ tabId }) => this.pdf.share(tabId),
+      'pdf.save': ({ tabId }) => this.pdf.save(tabId),
+      'pdf.print': ({ tabId }) => this.pdf.print(tabId),
       'pdf.state': ({ tabId }) => this.pdf.report(tabId),
       'pdf.command': ({ tabId, command }) => this.pdf.command(tabId, command),
       'page.savePage': ({ tabId }, win) =>

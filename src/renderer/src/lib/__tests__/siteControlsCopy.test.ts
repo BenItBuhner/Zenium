@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import type { BrowsingDataCount, PermissionRule, SafetyCheckResult, UIState } from '@shared/types'
+import type {
+  BrowsingDataCount,
+  BrowsingDataType,
+  PermissionRule,
+  SafetyCheckResult,
+  UIState
+} from '@shared/types'
 import { contentSetting } from '@shared/contentSettings'
-import { RANGE_OPTIONS, clearedToast, countLine, rangeLabel } from '../browsingData'
+import { RANGE_OPTIONS, TYPE_LABEL, clearedToast, countLine, rangeLabel } from '../browsingData'
 import { headline, passwordsSummary, safetyRows, worstState } from '../safetyCheck'
 import {
   bySite,
@@ -113,10 +119,23 @@ describe('Site settings rows', () => {
 })
 
 describe('Delete browsing data copy', () => {
-  it("names Chrome's five ranges, the last hour first", () => {
-    expect(RANGE_OPTIONS.map((o) => o.value)).toEqual(['hour', 'day', 'week', 'month', 'all'])
-    expect(RANGE_OPTIONS[0].label).toBe('Last hour')
-    expect(RANGE_OPTIONS[4].label).toBe('All time')
+  it("names Chrome's six ranges, the last 15 minutes first (HB-07; the lead's ruling 1)", () => {
+    // Quick Delete's default and the first entry of Chrome Android's spinner
+    // (`IDS_CLEAR_BROWSING_DATA_TAB_PERIOD_15_MINUTES`, `android_chrome_strings.grd:1283–1285`)
+    // and of the desktop dialog's picker (`IDS_SETTINGS_CLEAR_PERIOD_15_MINUTES`,
+    // `settings_strings.grdp:946–948`); the same six on both hosts.
+    expect(RANGE_OPTIONS.map((o) => o.value)).toEqual([
+      '15min',
+      'hour',
+      'day',
+      'week',
+      'month',
+      'all'
+    ])
+    expect(RANGE_OPTIONS[0].label).toBe('Last 15 minutes')
+    expect(RANGE_OPTIONS[1].label).toBe('Last hour')
+    expect(RANGE_OPTIONS[5].label).toBe('All time')
+    expect(rangeLabel('15min')).toBe('Last 15 minutes')
   })
 
   it("names the period deleted in Chrome Android's quick-delete shape, never the types", () => {
@@ -183,6 +202,50 @@ describe('Delete browsing data copy', () => {
     expect(countLine('sitePermissions', counts, 'all')).toBe('')
     expect(countLine('passwords', counts, 'hour')).toBe('Unlock the vault to clear saved passwords')
     expect(countLine('autofill', counts, 'hour')).toBe('')
+  })
+
+  it('has a label for every type and words for every unit, the tabs type among them (HB-07; the lead’s 3(a))', () => {
+    // The compiler keeps both lists complete: a new type or unit fails here before it can fall
+    // through to no words.
+    const TYPES: Record<BrowsingDataType, true> = {
+      history: true,
+      cookies: true,
+      cache: true,
+      downloads: true,
+      passwords: true,
+      autofill: true,
+      sitePermissions: true,
+      recentlyClosed: true,
+      tabs: true
+    }
+    for (const type of Object.keys(TYPES) as BrowsingDataType[]) {
+      expect(TYPE_LABEL[type]).toMatch(/^[A-Z]/)
+    }
+    // `IDS_CLEAR_TABS_TITLE` "Tabs" (`android_chrome_strings.grd:1265–1267`).
+    expect(TYPE_LABEL.tabs).toBe('Tabs')
+
+    const UNITS: Record<Exclude<BrowsingDataCount['unit'], 'bytes'>, true> = {
+      visits: true,
+      sites: true,
+      downloads: true,
+      logins: true,
+      entries: true,
+      permissions: true,
+      tabs: true
+    }
+    for (const unit of Object.keys(UNITS) as Array<keyof typeof UNITS>) {
+      const counts: BrowsingDataCount[] = [
+        { type: 'history', count: 1, unit, rangeApplies: true, unavailable: null },
+        { type: 'cookies', count: 2, unit, rangeApplies: true, unavailable: null }
+      ]
+      expect(countLine('history', counts, 'all')).toMatch(/^(From )?1 [a-z]+$/)
+      expect(countLine('cookies', counts, 'all')).toMatch(/^(From )?2 [a-z]+s$/)
+    }
+    const tabs: BrowsingDataCount[] = [
+      { type: 'tabs', count: 2, unit: 'tabs', rangeApplies: true, unavailable: null }
+    ]
+    expect(countLine('tabs', tabs, '15min')).toBe('2 tabs')
+    expect(countLine('tabs', [{ ...tabs[0], count: 1 }], '15min')).toBe('1 tab')
   })
 })
 

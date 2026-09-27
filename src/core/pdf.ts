@@ -10,9 +10,15 @@
  * a PDF by type or name, and not one the server marked `attachment`, which Chrome saves without
  * opening. The viewer document reports where it stands (`pdf` page messages) and takes the
  * chrome's commands (`pdf.command`); the chrome draws the controls.
+ *
+ * A form in the document (CT-44) is filled in the viewer's own widgets (pdf.js's annotation
+ * layer, `android/pdfViewerForms.ts`); `save` writes a copy with the values into Downloads, and
+ * `print` hands the system's print flow the file – or that copy, once the form was touched.
  */
 import type { Browser } from './browser'
 import type { DownloadInit } from './downloads'
+import type { PdfPrintJob } from './platform'
+import { base64Size } from './capture'
 import type { DownloadChangeKind, DownloadItem } from '../shared/types'
 import {
   pdfPageDownloadId,
@@ -23,6 +29,8 @@ import {
 import { newId } from '../shared/ids'
 import {
   pdfCommandScript,
+  pdfBytesScript,
+  pdfSaveScript,
   type PdfViewerCommand,
   type PdfViewerReport
 } from '../shared/pdfViewerProtocol'
@@ -47,6 +55,25 @@ export function opensInViewer(
   if (!hasViewer || !init.sourceTabId || !init.navigation) return false
   if (init.disposition === 'attachment') return false
   return isPdfDownload(init.mimeType, init.filename)
+}
+
+/**
+ * The name a saved copy is written under: the file's own, `.pdf` put on where it is missing
+ * (a download named by its URL can lack one). The host's file writer keeps the original and
+ * numbers the copy (`DownloadHost.saveFile`: never over a file there), as Chrome's Save does.
+ */
+export function pdfSaveName(name: string): string {
+  const trimmed = name.trim() || 'document.pdf'
+  return /\.pdf$/i.test(trimmed) ? trimmed : `${trimmed}.pdf`
+}
+
+/**
+ * Whether a print of the viewer's document takes the edited copy rather than the file: the
+ * form was changed since the file was written (the viewer's `form.modified`; a report not yet
+ * in prints the file). Chrome prints the form as it stands on screen.
+ */
+export function printsSavedCopy(report: PdfViewerReport | null): boolean {
+  return report?.form.modified === true
 }
 
 export class PdfViewerService {
@@ -169,6 +196,87 @@ export class PdfViewerService {
     }
     if (/^https?:/i.test(item.url))
       await this.browser.platform.shell.share?.({ url: item.url, title: item.finalName, tabId })
+  }
+
+  /**
+   * Save the filled form: the viewer writes the form's values into a copy of the document
+   * (pdf.js's incremental save – the file's bytes followed by an update holding the changed
+   * fields, the way Firefox's viewer saves; `pdfSaveScript`) and the host puts the copy in the
+   * downloads location under the file's name, listed as a completed download beside the
+   * original, as Chrome desktop's Save on its PDF viewer does. The viewer's form reads
+   * unmodified once the copy is written and not before: a write that failed leaves Save to try
+   * again. Answers where the copy went – the path the host wrote it under (a `content:`
+   * address on a host that names none), for the chrome to name the folder as the share hub
+   * does – or null when the tab shows no viewer, the host cannot write files, or there is no copy.
+   */
+  async save(tabId: string): Promise<string | null> {
+    const item = this.itemOf(tabId)
+    const downloads = this.browser.platform.downloads
+    if (!item || !downloads.saveFile) return null
+    const data = await this.savedCopy(tabId)
+    if (data === null) return null
+    let path: string | null
+    try {
+      path = await downloads.saveFile({
+        name: pdfSaveName(item.finalName || item.filename),
+        mimeType: 'application/pdf',
+        data
+      })
+    } catch {
+      path = null
+    }
+    if (!path) return null
+    this.browser.downloads.addCompleted(path, 'application/pdf', {
+      containerId: item.containerId,
+      private: item.private,
+      size: base64Size(data)
+    })
+    await this.command(tabId, { kind: 'saved' })
+    return path
+  }
+
+  /**
+   * Print the document through the system's print flow (`Platform.printPdf`; Chrome Android's
+   * Print on its PDF viewer): the file as it was downloaded, or – the form touched since – a
+   * copy with the values written in, so the pages print as they look. Both go over as bytes
+   * (`PdfPrintJob.data`): the host prints what it is handed and reads no file of the download's
+   * – the file lives in the public collection, which is no path the host takes through the
+   * bridge – so the viewer gives the file's own bytes (`pdfBytesScript`, pdf.js's `getData`)
+   * or the copy's (`pdfSaveScript`). False when the tab shows no viewer, the host cannot print,
+   * or the bytes could not be had: the file alone would print the form as it was, which is not
+   * what is on screen.
+   */
+  async print(tabId: string): Promise<boolean> {
+    const item = this.itemOf(tabId)
+    const printPdf = this.browser.platform.printPdf
+    if (!item || !printPdf) return false
+    const data = printsSavedCopy(this.report(tabId))
+      ? await this.savedCopy(tabId)
+      : await this.viewerBytes(tabId, pdfBytesScript())
+    if (data === null) return false
+    const job: PdfPrintJob = { tabId, name: item.finalName || item.filename, path: null, data }
+    try {
+      return await printPdf(job)
+    } catch {
+      return false
+    }
+  }
+
+  /** The viewer's copy of its document with the form's values in, base64; null when it has none to give. */
+  private savedCopy(tabId: string): Promise<string | null> {
+    return this.viewerBytes(tabId, pdfSaveScript())
+  }
+
+  /** What the viewer answers `script` with when it is bytes as base64; null for anything else. */
+  private async viewerBytes(tabId: string, script: string): Promise<string | null> {
+    const view = this.browser.tabs.view(tabId)
+    if (!view) return null
+    try {
+      const data: unknown = await view.executeJavaScript(script)
+      return typeof data === 'string' && data.length > 0 ? data : null
+    } catch {
+      return null
+    }
   }
 
   /**

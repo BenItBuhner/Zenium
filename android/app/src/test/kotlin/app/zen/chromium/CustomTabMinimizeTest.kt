@@ -26,4 +26,15 @@ class CustomTabMinimizeTest {
         assertNull(CustomTabMinimize.event(wasMinimized = true, isMinimized = true))
         assertNull(CustomTabMinimize.event(wasMinimized = false, isMinimized = false))
     }
+
+    @Test
+    fun theToolbarStaysGoneInAppModeAsTheCardComesAndGoes() {
+        // A plain custom tab: the toolbar hides behind the card and comes back with the page.
+        assertEquals(CustomTabMinimize.Visibility.INVISIBLE, CustomTabMinimize.toolbarVisibility(minimized = true, appMode = false))
+        assertEquals(CustomTabMinimize.Visibility.VISIBLE, CustomTabMinimize.toolbarVisibility(minimized = false, appMode = false))
+        // A Trusted Web Activity in app mode has no toolbar: a page that committed into the
+        // verified scope while minimized lifts the card onto a page laid out without one.
+        assertEquals(CustomTabMinimize.Visibility.GONE, CustomTabMinimize.toolbarVisibility(minimized = true, appMode = true))
+        assertEquals(CustomTabMinimize.Visibility.GONE, CustomTabMinimize.toolbarVisibility(minimized = false, appMode = true))
+    }
 }
