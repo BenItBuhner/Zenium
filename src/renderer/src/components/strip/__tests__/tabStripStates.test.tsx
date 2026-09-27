@@ -7,12 +7,12 @@ import { DEFAULT_CONTAINER_ID } from '@shared/types'
 
 /*
  * The horizontal strip's states as the DOM carries them (parity tabs-61 / tabs-63; design
- * language v2 §9.37, §9.29): the rows stand as direct children of their tablist and a group's
- * chip as the header of its shell, ahead of the member rows' own list – the shape the sheet's
- * separator rules read with sibling selectors (main.css, "The strip's states") – the active row
- * says so in `data-active`, the private window's strip is marked `data-private` and carries the
- * mask at its start, and a press commits nothing: the activation is the click's (Chrome selects
- * on the press; the strip's pressed fill is the pill's, the state the release commits).
+ * language v2 §9.37, §9.29): the rows stand as direct children of their tablist, 4 px apart –
+ * the gap is the strip's one separator – and a group's chip as the header of its shell, ahead
+ * of the member rows' own list under the group's line; the active row says so in `data-active`,
+ * the private window's strip is marked `data-private` and carries the mask at its start, and a
+ * press commits nothing: the activation is the click's, so the pressed fill (§9.29's window
+ * hover fill) is a state on the way to the pill, which arrives with the release.
  */
 
 const invoke = vi.fn<(name: string, args?: unknown) => Promise<null>>(async () => null)
@@ -166,22 +166,26 @@ const row = (id: string): HTMLElement => {
 }
 
 describe('the strip’s rows (the shape the state rules read)', () => {
-  it('stands every tab row as a direct child of its tablist, the active one saying so', () => {
+  it('stands every tab row as a direct child of its tablist, 4 px apart, the active one saying so', () => {
     strip(fixture([tab('a'), tab('b'), tab('c')], [], 'b'))
     const list = document.querySelector<HTMLElement>('[data-tab-list="regular"]')!
     const rows = [...list.children]
     expect(rows.map((r) => r.getAttribute('data-tab-id'))).toEqual(['a', 'b', 'c'])
     expect(rows.every((r) => r.classList.contains('zen-tab'))).toBe(true)
     expect(rows.map((r) => r.getAttribute('data-active'))).toEqual(['false', 'true', 'false'])
+    // §9.37's separators are the gaps: the list is a `gap-1` flex row (the 4), and no row carries
+    // a hairline of its own.
+    expect(list.classList.contains('gap-1')).toBe(true)
+    expect(list.querySelector('[data-strip-separator], hr')).toBeNull()
     // The strip is a window surface (§9.29): its rows read the window family's tokens.
     expect(document.querySelector('[data-tab-strip]')?.getAttribute('data-surface')).toBe('window')
   })
 
-  it('puts a group’s chip ahead of its members as the shell’s header, the members in their own list', () => {
+  it('puts a group’s chip ahead of its members as the shell’s header, the members in their own list under the group’s line', () => {
     strip(
       fixture(
         [tab('a'), tab('g1', { folderId: 'f' }), tab('g2', { folderId: 'f' }), tab('z')],
-        [folder('f', 'Work')],
+        [folder('f', 'Work', { color: 'blue' })],
         'a'
       )
     )
@@ -192,15 +196,26 @@ describe('the strip’s rows (the shape the state rules read)', () => {
     expect(chip.matches('.zen-tab[data-tab-folder="f"]')).toBe(true)
     expect(rows.classList.contains('zen-group-rows')).toBe(true)
     expect([...rows.children].map((r) => r.getAttribute('data-tab-id'))).toEqual(['g1', 'g2'])
-    // A chip is the header, never a tab row: the separator rules match tab rows alone.
-    expect(chip.matches(':is([data-tab-list], .zen-group-rows) > .zen-tab')).toBe(false)
-    expect(row('g1').matches(':is([data-tab-list], .zen-group-rows) > .zen-tab')).toBe(true)
+    // The same 4 between the chip and its members and between the members (§9.37: the line
+    // bridges the 4 px gaps); the shell spans the band so the line can sit in its top inset.
+    expect(shell.classList.contains('gap-1')).toBe(true)
+    expect(shell.classList.contains('h-full')).toBe(true)
+    expect(rows.classList.contains('gap-1')).toBe(true)
+    // The group's line is the shell's own child, after the rows, wearing the §9.14 colour pair.
+    const line = shell.querySelector<HTMLElement>('.zen-strip-group-line')!
+    expect(line.getAttribute('data-strip-group-line')).toBe('f')
+    expect(line.parentElement).toBe(shell)
+    expect(line.hasAttribute('data-group-rgb')).toBe(true)
+    expect(line.style.getPropertyValue('--zen-group-rgb-light')).not.toBe('')
+    expect(line.style.getPropertyValue('--zen-group-rgb-dark')).not.toBe('')
+    expect(line.getAttribute('aria-hidden')).not.toBeNull()
   })
 
-  it('lists pinned tabs in their own tablist ahead of the scroller', () => {
+  it('lists pinned tabs in their own tablist, 4 px apart, ahead of the scroller', () => {
     strip(fixture([tab('p', { pinned: true }), tab('a')], [], 'a'))
     const pinned = document.querySelector<HTMLElement>('[data-strip-pinned]')!
     expect(pinned.getAttribute('data-tab-list')).toBe('pinned')
+    expect(pinned.classList.contains('gap-1')).toBe(true)
     expect([...pinned.children].map((r) => r.getAttribute('data-tab-id'))).toEqual(['p'])
     expect(pinned.nextElementSibling?.classList.contains('zen-strip-scroller')).toBe(true)
   })
@@ -223,7 +238,7 @@ describe('the private window’s strip (§9.37: the private ink with the mask at
 })
 
 describe('pressed: the press commits nothing, the click does', () => {
-  it('activates on the click, not on the pointer-down (Chrome’s SelectTab on press is read as the pressed fill)', () => {
+  it('activates on the click, not on the pointer-down (the press is §9.29’s pressed fill, a state on the way to the pill)', () => {
     strip(fixture([tab('a'), tab('b')], [], 'a'))
     const b = row('b')
     act(() => {
