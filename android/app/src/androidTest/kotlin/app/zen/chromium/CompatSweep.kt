@@ -11702,8 +11702,19 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         return JSONObject().put("nodes", count).put("labels", JSONArray(labels))
     }
 
-    /** A sheet whose document reads empty but that shows labelled content: the shadow-root case. */
-    private fun shownDespiteEmptyDom(seen: JSONObject): Boolean = (seen.optJSONArray("labels")?.length() ?: 0) >= 3
+    /**
+     * A sheet whose document reads empty but that shows labelled content: the shadow-root case.
+     * Three labelled nodes, or six labelled words over fewer nodes – a WebView's accessibility tree
+     * may hand a list's rows over as one node's text (System WebView 113 read Bookmark Sidebar's
+     * three folder rows, drawn one under the other, as the one node "Bookmarks bar Other bookmarks
+     * Mobile bookmarks" beside the count row, where 156 read four nodes), and the user sees the
+     * same rows either way; a lone message ("Loading…", "Something went wrong") stays short of it.
+     * Words break on whitespace and the zero-width characters a merged node carries between rows.
+     */
+    private fun shownDespiteEmptyDom(seen: JSONObject): Boolean {
+        val labels = labelsOf(seen)
+        return labels.size >= 3 || labels.sumOf { it.split(LABEL_WORD_BREAK).count(String::isNotEmpty) } >= 6
+    }
 
     /**
      * The world's host-bound posts still without their reply, as one line off a `WORLD_REPORT`
@@ -13107,6 +13118,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          */
         private const val STOCK_DIALOG_TITLE_HEAD = "The page at \""
         private const val STOCK_DIALOG_TITLE_TAIL = "\" says:"
+        /** Where a label's words break ([shownDespiteEmptyDom]): whitespace, and the zero-width space, joiner, non-joiner and BOM a merged accessibility node carries between the rows it joined. */
+        private val LABEL_WORD_BREAK = Regex("[\\s\u200B\u200C\u200D\uFEFF]+")
         private const val HANG_MAIN_THREAD_MS = 90_000L
         /** The longest a row's heap reading waits for the extension's configures in flight to land ([settleUnits]); Adblock Ad Blocker Pro's 11-unit re-plan takes 8.1 s cold on the API 34 image. */
         private const val UNITS_SETTLE_MS = 30_000L
