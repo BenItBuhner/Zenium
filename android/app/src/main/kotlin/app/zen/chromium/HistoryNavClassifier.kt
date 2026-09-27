@@ -246,22 +246,30 @@ class HistoryNavClassifier(private val touchSlop: Float, private val edgeWidth: 
     }
 
     /**
-     * Why a finger that landed in an edge window and dragged inward past the slop is no history
-     * drag – null when it became one, or when it was no such finger (a tap, a scroll, a touch
-     * away from the edges, a touchpad swipe). Read at the lift for the `ZenPull` log, so a
-     * refused drag names its cause on a device whose logcat is the only view of it: the edge's
-     * eligibility as given at the down, the page's `overscroll-behavior-x` answer (or that none
-     * came) and whether the WebView reported the clamped overscroll towards that side.
+     * Why a finger that landed in an edge window and dragged inward past the slop – or a touchpad
+     * swipe that ran level past the slop – is no history drag: null when it became one, or when
+     * it was no such gesture (a tap, a scroll, a touch away from the edges, a two-finger scroll).
+     * Read at the lift for the `ZenPull` log, so a refused drag names its cause on a device whose
+     * logcat is the only view of it: the eligibility as given at the down (for the swipe, the
+     * side it pulled the page in from – `eligible=false` both ways is Settings › Accessibility's
+     * switch off), the page's `overscroll-behavior-x` answer (or that none came) and whether the
+     * WebView reported the clamped overscroll towards that side.
      */
     fun refusal(): String? {
-        if (touchpad || started) return null
-        val side = landedEdge ?: return null
+        if (started) return null
         val dx = lastX - downX
+        if (touchpad) {
+            if (abs(dx) <= touchSlop || !level(dx, lastY - downY)) return null
+            val side = pulledFrom(dx)
+            return "touchpad swipe from the $side: eligible=${eligible(side)} page=${pageAnswer()} overscroll=${reported(side)}"
+        }
+        val side = landedEdge ?: return null
         val inward = if (side == Edge.LEFT) dx else -dx
         if (inward <= touchSlop) return null
-        val page = pageAllows?.toString() ?: "unanswered"
-        return "$side edge: eligible=${eligible(side)} page=$page overscroll=${reported(side)}"
+        return "$side edge: eligible=${eligible(side)} page=${pageAnswer()} overscroll=${reported(side)}"
     }
+
+    private fun pageAnswer(): String = pageAllows?.toString() ?: "unanswered"
 
     /** Whether a displacement past the slop may still become this gesture's drag. */
     private fun heading(dx: Float, dy: Float): Boolean =

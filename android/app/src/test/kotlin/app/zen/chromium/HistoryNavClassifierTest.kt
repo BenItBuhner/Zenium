@@ -269,7 +269,8 @@ class HistoryNavClassifierTest {
         assertEquals(Step.FORWARD, handedBack.move(150f, 600f, 30L))
         assertNull(handedBack.refusal())
 
-        // A tap at the edge, a drag out over the edge, a touch away from the edges, a touchpad swipe.
+        // A tap at the edge, a drag out over the edge, a touch away from the edges, a touchpad
+        // swipe that took over, a two-finger scroll.
         val tap = classifier()
         assertEquals(Step.FORWARD, tap.down(20f, 600f, width, canBack = true, canForward = true))
         assertEquals(Step.FORWARD, tap.move(24f, 603f, 10L))
@@ -283,9 +284,41 @@ class HistoryNavClassifierTest {
         assertEquals(Step.FORWARD, middle.move(700f, 600f, 10L))
         assertNull(middle.refusal())
         val pad = classifier()
-        assertEquals(Step.FORWARD, pad.down(540f, 600f, width, canBack = true, canForward = true, touchpad = true))
-        assertEquals(Step.FORWARD, pad.move(700f, 600f, 10L))
+        assertEquals(Step.FORWARD, touchpadSwipe(pad, 60f))
+        assertEquals(Step(Disposition.CANCEL_WEBVIEW, Nav.Start(Edge.LEFT)), pad.overscrolledX(Edge.LEFT))
         assertNull(pad.refusal())
+        val scroll = classifier()
+        assertEquals(Step.FORWARD, scroll.down(540f, 600f, width, canBack = true, canForward = true, touchpad = true))
+        assertEquals(Step.FORWARD, scroll.move(548f, 760f, 10L))
+        assertNull(scroll.refusal())
+    }
+
+    @Test
+    fun aRefusedTouchpadSwipeNamesItsCauseAtTheLift() {
+        // Settings › Accessibility's switch off: `TabWebView.historyNavEligible` gives the down no
+        // way to go either side (the host's `eligible=false` line GesturesDemo reads for A11Y-14).
+        val off = classifier()
+        assertEquals(Step.FORWARD, off.down(540f, 600f, width, canBack = false, canForward = false, touchpad = true))
+        assertEquals(State.PASSTHROUGH, off.state)
+        assertEquals(Step.FORWARD, off.move(700f, 602f, 10L))
+        assertEquals("touchpad swipe from the LEFT: eligible=false page=unanswered overscroll=false", off.refusal())
+
+        // The switch on, the WebView never reporting the overscroll (a selection took the swipe,
+        // a page that scrolls sideways): the cause is the report's absence, not the switch.
+        val silent = classifier()
+        assertEquals(Step.FORWARD, touchpadSwipe(silent, 160f))
+        assertEquals("touchpad swipe from the LEFT: eligible=true page=true overscroll=false", silent.refusal())
+
+        // Pulling in from the right with nothing ahead.
+        val nowhere = classifier()
+        assertEquals(Step.FORWARD, touchpadSwipe(nowhere, -160f, canForward = false))
+        assertEquals("touchpad swipe from the RIGHT: eligible=false page=true overscroll=false", nowhere.refusal())
+
+        // Within the slop, nothing to say.
+        val still = classifier()
+        assertEquals(Step.FORWARD, still.down(540f, 600f, width, canBack = false, canForward = false, touchpad = true))
+        assertEquals(Step.FORWARD, still.move(544f, 600f, 10L))
+        assertNull(still.refusal())
     }
 
     // --- a touchpad's two-finger swipe (GN-23 / A11Y-14) ------------------------------------------

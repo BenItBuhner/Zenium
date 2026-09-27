@@ -506,6 +506,7 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         swipe.up()
         val navigated = awaitTrue(8_000) { activeUrl() == url("second") }
         watch("the release past the threshold went back to the second stop (now at ${activeUrl()})", navigated)
+        if (!navigated) finding("(the host's diagnosis at the lift: ${awaitLogLine(1_500) { it.contains("history not started") } ?: "none in logcat"})")
         claim("the bubble left after the release", awaitTrue(4_000) { bubblePhase() == "" })
         if (navigated) awaitLoaded(url("second"))
         settle()
@@ -554,6 +555,7 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         watch("the fling's release went back short of the threshold (now at ${activeUrl()})", navigated)
         val release = awaitLogLine(4_000) { it.contains("history release on") }
         finding("(the host's release line: ${release ?: "none in logcat"})")
+        if (release == null) finding("(the host's diagnosis at the lift: ${awaitLogLine(1_500) { it.contains("history not started") } ?: "none in logcat"})")
         watch("the host forced the release by the fling (the release line says so)", release?.contains("(forced by the fling)") == true)
         claim("the bubble left after the release", awaitTrue(4_000) { bubblePhase() == "" })
         if (navigated) awaitLoaded(url("second"))
@@ -642,8 +644,12 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
             claim("and nothing navigated (still at ${activeUrl()})", activeUrl() == before)
             val started = awaitLogLine(1_500) { it.contains("history start on") }
             claim("the host started no history drag for the swipe", started == null)
-            val refusal = awaitLogLine(500) { it.contains("history not started") && it.contains("eligible=false") }
-            finding("(the host's refusal line: ${refusal ?: "none in logcat – #600's line, once it is merged under this"})")
+            // The classifier's diagnosis at the lift (`HistoryNavClassifier.refusal`, under `ZenPull`
+            // with the drag's own lines): the swipe's side had nowhere to go as given at the down –
+            // the switch's refusal, whatever the WebView made of the swipe meanwhile.
+            val refusal = awaitLogLine(1_500) { it.contains("history not started") && it.contains("touchpad swipe") }
+            finding("(the host's refusal line: ${refusal ?: "none in logcat"})")
+            claim("the host's refusal line names the switch (eligible=false for the swipe's side)", refusal?.contains("eligible=false") == true)
             noteSelectionRace()
         } finally {
             restoreTouchpadSwitch()
