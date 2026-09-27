@@ -9,12 +9,19 @@ import type {
   ClosedEntrySummary,
   DownloadItem,
   MagicStackModuleId,
+  RevokedSitePermissions,
   Tab,
   UIState
 } from '@shared/types'
 import { emptyPasswordsStatus } from '@shared/defaults'
 import { DEFAULT_NEW_TAB_SETTINGS } from '@shared/newTab'
 import { DEFAULT_PRIVACY_SETTINGS } from '@shared/privacy'
+import {
+  emptySafetyHubCardMemory,
+  pickSafetyHubCard,
+  type SafetyHubCardMemories,
+  type SafetyHubCardMemory
+} from '@shared/safetyHubCard'
 import { BLANK_URL } from '@shared/url'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { closeCustomize, openCustomize } from '@renderer/lib/newtab'
@@ -1146,5 +1153,291 @@ describe('the Magic Stack on the page (NTP-16)', () => {
       'false',
       'false'
     ])
+  })
+})
+
+/*
+ * The Safety check card (NTP-19; Chrome's Safety Hub module): one of Chrome's types at a time,
+ * picked by the shared machine at the stack's mount from the memory the device holds and the
+ * state's revoked permissions, Safe Browsing switch and compromised count; the pick's memory
+ * written back once; the card's face – the tile, the title, the summary, the primary button –
+ * in Chrome's words; the button's route per type, Review leaving the run to its course and the
+ * other two ending it; Safe Browsing back on or the count gone ending the run while the card is
+ * up; a hidden module making no impression and the switch bringing it back making one.
+ */
+describe('the Safety check card (NTP-19)', () => {
+  const DAY = 24 * 3_600_000
+  const NOW = Date.UTC(2026, 8, 27, 12)
+  const REVOKED: RevokedSitePermissions[] = [
+    {
+      origin: 'https://forum.example',
+      permissions: ['geolocation'],
+      revokedAt: NOW - 2 * DAY,
+      expiresAt: NOW + 28 * DAY
+    }
+  ]
+  let clock: ReturnType<typeof vi.spyOn> | null = null
+
+  /** The state with the safety inputs given; everything else as the fixture has it. */
+  function safety(over: {
+    revoked?: RevokedSitePermissions[]
+    safeBrowsing?: boolean
+    compromised?: number
+    memories?: SafetyHubCardMemories
+    hidden?: MagicStackModuleId[]
+  }): UIState {
+    return state({
+      settings: {
+        privacy: {
+          ...structuredClone(DEFAULT_PRIVACY_SETTINGS),
+          safeBrowsingEnabled: over.safeBrowsing ?? true
+        }
+      },
+      revokedUnusedPermissions: over.revoked ?? [],
+      passwords: {
+        ...emptyPasswordsStatus(),
+        checkupSummary: {
+          ...emptyPasswordsStatus().checkupSummary,
+          compromised: over.compromised ?? 0
+        }
+      },
+      newTabSafetyHubCard: over.memories ?? {},
+      newTabHiddenModules: over.hidden ?? []
+    } as Partial<UIState>)
+  }
+
+  const memoryWrites = (): SafetyHubCardMemories[] =>
+    (commands('newtab.setSafetyHubCardMemory') as Array<{ memories: SafetyHubCardMemories }>).map(
+      (c) => c.memories
+    )
+  const card = (): HTMLElement | null => q('.zen-mstack-card[data-cell="safety-hub"]')
+  const button = (): HTMLElement | null =>
+    q('.zen-mstack-card[data-cell="safety-hub"] .zen-mstack-action')
+
+  beforeEach(() => {
+    clock = vi.spyOn(Date, 'now').mockReturnValue(NOW)
+  })
+
+  afterEach(() => {
+    clock?.mockRestore()
+    clock = null
+  })
+
+  it('draws the revoked-permissions card after the content modules, in Chrome’s words, with the impression written once', () => {
+    render(stack(safety({ revoked: REVOKED })))
+    expect(cardIds()).toEqual([
+      'continue',
+      'downloads',
+      'bookmarks',
+      'safety-hub',
+      'default-browser'
+    ])
+    const c = card()!
+    expect(c.getAttribute('aria-label')).toBe('Safety check: Removed permissions for 1 site')
+    expect(c.querySelector('.zen-mstack-title')?.textContent).toBe('Safety check')
+    const face = c.querySelector<HTMLElement>('.zen-mstack-safety')!
+    expect(face.dataset.type).toBe('revoked-permissions')
+    expect(face.querySelector('.zen-mstack-safety-tile svg')).not.toBeNull()
+    expect(face.querySelector('.zen-mstack-safety-tile')?.getAttribute('aria-hidden')).toBe('true')
+    expect(face.querySelector('.zen-mstack-safety-title')?.textContent).toBe(
+      'Removed permissions for 1 site'
+    )
+    // Chrome's revoked card carries no summary line.
+    expect(face.querySelector('.zen-mstack-safety-summary')).toBeNull()
+    const b = button()!
+    expect(b.textContent).toBe('Review')
+    expect(b.getAttribute('aria-label')).toBe('Review Safety check')
+    expect(b.dataset.primary).toBe('true')
+    expect(c.querySelector('.zen-mstack-more')?.getAttribute('aria-label')).toBe(
+      'More options for Safety check'
+    )
+    // The impression: the run started now, one impression, the other records begun (Safe
+    // Browsing's with its day), and nothing written twice.
+    const writes = memoryWrites()
+    expect(writes).toHaveLength(1)
+    expect(writes[0]!['revoked-permissions']).toEqual({
+      ...emptySafetyHubCardMemory(),
+      activeSince: NOW,
+      impressions: 1,
+      lastShownAt: NOW,
+      result: 'https://forum.example'
+    })
+    expect(writes[0]!['safe-browsing']).toEqual({
+      ...emptySafetyHubCardMemory(),
+      showAfter: NOW + DAY,
+      result: 'on'
+    })
+    expect(writes[0]!.passwords).toEqual({ ...emptySafetyHubCardMemory(), result: '0' })
+  })
+
+  it('Review opens Settings on the Safety check group and leaves the run to its course', () => {
+    render(stack(safety({ revoked: REVOKED })))
+    click(button())
+    expect(commands('page.open')).toEqual([
+      { id: 'settings', section: 'privacy', query: { group: 'safety-check' } }
+    ])
+    expect(memoryWrites()).toHaveLength(1)
+    expect(card()).not.toBeNull()
+  })
+
+  it('picks by priority: the passwords over Safe Browsing over the revoked permissions; Change passwords opens the checkup and ends the run', async () => {
+    render(stack(safety({ revoked: REVOKED, safeBrowsing: false, compromised: 2 })))
+    const c = card()!
+    expect(c.getAttribute('aria-label')).toBe(
+      'Safety check: Change passwords. Found 2 compromised passwords'
+    )
+    expect(c.querySelector<HTMLElement>('.zen-mstack-safety')?.dataset.type).toBe('passwords')
+    expect(c.querySelector('.zen-mstack-safety-title')?.textContent).toBe('Change passwords')
+    expect(c.querySelector('.zen-mstack-safety-summary')?.textContent).toBe(
+      'Found 2 compromised passwords'
+    )
+    expect(button()!.textContent).toBe('Change passwords')
+    expect(button()!.getAttribute('aria-label')).toBe('Change passwords')
+    click(button())
+    await flush()
+    expect(uiStore.get().overlay).toBe('passwords')
+    expect(uiStore.get().overlaySection).toBe('checkup')
+    // The run ends: dismissed in the memory, the card gone from the stack.
+    const writes = memoryWrites()
+    expect(writes).toHaveLength(2)
+    expect(writes[1]!.passwords).toMatchObject({ activeSince: null, impressions: 0, runs: 1 })
+    expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'default-browser'])
+  })
+
+  it('the Safe Browsing card waits its day, then Go to settings opens the Safe Browsing group and ends the run', () => {
+    // The first look after the switch went off: the record starts with its day, no card.
+    render(stack(safety({ safeBrowsing: false })))
+    expect(card()).toBeNull()
+    expect(memoryWrites()).toHaveLength(1)
+    expect(memoryWrites()[0]!['safe-browsing']).toMatchObject({
+      showAfter: NOW + DAY,
+      result: 'off'
+    })
+    act(() => root!.unmount())
+    root = null
+    run.mockClear()
+    // The day passed: the card, in Chrome's words.
+    const waited: SafetyHubCardMemory = {
+      ...emptySafetyHubCardMemory(),
+      showAfter: NOW - 1,
+      result: 'off'
+    }
+    render(stack(safety({ safeBrowsing: false, memories: { 'safe-browsing': waited } })))
+    const c = card()!
+    expect(c.getAttribute('aria-label')).toBe(
+      'Safety check: Turn on Safe Browsing. Safe Browsing is off'
+    )
+    expect(c.querySelector<HTMLElement>('.zen-mstack-safety')?.dataset.type).toBe('safe-browsing')
+    expect(c.querySelector('.zen-mstack-safety-summary')?.textContent).toBe('Safe Browsing is off')
+    expect(button()!.textContent).toBe('Go to settings')
+    click(button())
+    expect(commands('page.open')).toEqual([
+      { id: 'settings', section: 'privacy', query: { group: 'safe-browsing' } }
+    ])
+    const writes = memoryWrites()
+    expect(writes).toHaveLength(2)
+    expect(writes[0]!['safe-browsing']).toMatchObject({ activeSince: NOW, impressions: 1 })
+    expect(writes[1]!['safe-browsing']).toMatchObject({
+      activeSince: null,
+      impressions: 0,
+      runs: 1
+    })
+    expect(card()).toBeNull()
+  })
+
+  it('Safe Browsing switched back on while the card is up ends the run: the card leaves, the memory is dismissed', () => {
+    const waited: SafetyHubCardMemory = {
+      ...emptySafetyHubCardMemory(),
+      showAfter: NOW - 1,
+      result: 'off'
+    }
+    render(stack(safety({ safeBrowsing: false, memories: { 'safe-browsing': waited } })))
+    expect(card()).not.toBeNull()
+    render(stack(safety({ safeBrowsing: true, memories: memoryWrites()[0]! })))
+    expect(card()).toBeNull()
+    const writes = memoryWrites()
+    expect(writes).toHaveLength(2)
+    expect(writes[1]!['safe-browsing']).toMatchObject({ activeSince: null, runs: 1, result: 'off' })
+    // Off again in the same mount: nothing re-picks (Chrome's mHasBeenDismissed).
+    render(stack(safety({ safeBrowsing: false, memories: writes[1]! })))
+    expect(card()).toBeNull()
+    expect(memoryWrites()).toHaveLength(2)
+  })
+
+  it('the compromised count reaching zero while the passwords card is up ends the run the same way', () => {
+    render(stack(safety({ compromised: 1 })))
+    expect(card()).not.toBeNull()
+    render(stack(safety({ compromised: 0, memories: memoryWrites()[0]! })))
+    expect(card()).toBeNull()
+    expect(memoryWrites()).toHaveLength(2)
+    expect(memoryWrites()[1]!.passwords).toMatchObject({ activeSince: null, runs: 1 })
+  })
+
+  it('a run on the record continues at the mount: the card holds and the impression counts', () => {
+    const running: SafetyHubCardMemory = {
+      ...emptySafetyHubCardMemory(),
+      activeSince: NOW - DAY,
+      impressions: 2,
+      lastShownAt: NOW - DAY,
+      result: 'https://forum.example'
+    }
+    render(stack(safety({ revoked: REVOKED, memories: { 'revoked-permissions': running } })))
+    expect(card()).not.toBeNull()
+    expect(memoryWrites()[0]!['revoked-permissions']).toMatchObject({
+      activeSince: NOW - DAY,
+      impressions: 3,
+      lastShownAt: NOW
+    })
+  })
+
+  it('writes nothing when the record is settled already', () => {
+    const inputs = { revokedOrigins: [], safeBrowsingEnabled: true, compromisedPasswords: 0 }
+    const once = pickSafetyHubCard(inputs, {}, NOW).memories
+    const settled = pickSafetyHubCard(inputs, once, NOW).memories
+    render(stack(safety({ memories: settled })))
+    expect(card()).toBeNull()
+    expect(memoryWrites()).toEqual([])
+  })
+
+  it('a hidden module makes no impression; the Cards sheet’s switch bringing it back makes one', () => {
+    render(stack(safety({ revoked: REVOKED, hidden: ['safety-hub'] })))
+    expect(card()).toBeNull()
+    expect(memoryWrites()).toEqual([])
+    // The switch: the module back, picked and written in its own impression.
+    render(stack(safety({ revoked: REVOKED })))
+    const writes = memoryWrites()
+    expect(writes).toHaveLength(1)
+    expect(writes[0]!['revoked-permissions']).toMatchObject({ activeSince: NOW, impressions: 1 })
+    // The card reads the record its impression wrote, as the state publishes it.
+    render(stack(safety({ revoked: REVOKED, memories: writes[0]! })))
+    expect(card()).not.toBeNull()
+    expect(card()!.querySelector('.zen-mstack-safety-title')?.textContent).toBe(
+      'Removed permissions for 1 site'
+    )
+    expect(memoryWrites()).toHaveLength(1)
+  })
+
+  it('the Cards sheet lists the module as Safety check with its description', async () => {
+    browserStore.set({ state: safety({ revoked: REVOKED }) })
+    render(
+      <FrameDialogHost frame>
+        <MagicStack state={browserStore.get().state!} tab={TAB} dock="top" />
+        <MagicStackCustomizeLayer />
+      </FrameDialogHost>
+    )
+    await openMenu('safety-hub')
+    pick('Customise')
+    await settle()
+    rest()
+    const row = qa('[role="switch"]').find(
+      (s) => s.querySelector('.zen-settings-label')?.textContent === 'Safety check'
+    )!
+    expect(row).toBeDefined()
+    expect(row.textContent).toContain(
+      'Permissions removed from unused sites, Safe Browsing off, compromised passwords'
+    )
+    expect(row.getAttribute('aria-checked')).toBe('true')
+    click(row)
+    expect(commands('newtab.setModuleHidden')).toEqual([{ id: 'safety-hub', hidden: true }])
   })
 })

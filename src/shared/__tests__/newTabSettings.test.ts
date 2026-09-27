@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { NewTabDeviceState, NewTabSettings } from '../types'
 import { DEFAULT_SETTINGS } from '../defaults'
+import { emptySafetyHubCardMemory } from '../safetyHubCard'
 import {
   DEFAULT_NEW_TAB_MODULES,
   DEFAULT_NEW_TAB_SETTINGS,
@@ -25,6 +26,7 @@ import {
   sanitizeNewTabShortcuts,
   setModuleHidden,
   setNewTabBackground,
+  setSafetyHubCardMemories,
   setNewTabSection,
   setNewTabShortcutsMode,
   siteHost,
@@ -351,6 +353,27 @@ describe('device-local sets', () => {
     expect(d.hiddenModules).toEqual(['continue'])
     expect(setModuleHidden(d, 'downloads', false)).toBe(d)
     expect(setModuleHidden(d, 'continue', false)).toEqual(device())
+  })
+
+  it('replaces the Safety check card’s memory whole, sanitised; the same record changes nothing', () => {
+    const shown = { ...emptySafetyHubCardMemory(), activeSince: 5, impressions: 1, lastShownAt: 5 }
+    const d = setSafetyHubCardMemories(device(), { passwords: shown })
+    expect(d.safetyHubCard).toEqual({ passwords: shown })
+    expect(setSafetyHubCardMemories(d, { passwords: { ...shown } })).toBe(d)
+    // A record from anywhere else is read as one from disk: unknown types dropped, fields coerced.
+    const next = setSafetyHubCardMemories(d, {
+      'safe-browsing': { ...emptySafetyHubCardMemory(), impressions: -3, result: 'off' },
+      ...({ price: shown } as object)
+    })
+    expect(next.safetyHubCard).toEqual({
+      'safe-browsing': { ...emptySafetyHubCardMemory(), result: 'off' }
+    })
+    expect(setSafetyHubCardMemories(next, {})).toEqual(device())
+    // The document's other fields are left as they were.
+    const pinned = device({ shortcuts: [{ id: 'a', url: 'https://a.example/', title: 'A' }] })
+    expect(setSafetyHubCardMemories(pinned, { passwords: shown }).shortcuts).toEqual(
+      pinned.shortcuts
+    )
   })
 
   it('siteHost lower-cases and drops www.', () => {
