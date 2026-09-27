@@ -364,14 +364,25 @@ describe('the app menu', () => {
       expect(appMenu(noUpdates)).toEqual(plain)
     })
 
-    it("leaves the desktop's row as it was: no key, the same two items (the phone's key is added where the phone seats it)", () => {
-      const h = harness(DESKTOP)
-      updater(h, 'ready')
-      appMenu(h)
-      expect(h.shown().slice(0, 2)).toStrictEqual([
-        { label: 'Update Zenium', click: expect.any(Function) },
-        { type: 'separator' }
-      ])
+    it("keys the desktop's and the tablet's row `menu.update` like the phone's (W8-F3): the coarse-pointer sheet's split seats it as the `update` structure, its hairline unkeyed", () => {
+      for (const [caps, formFactor] of [
+        [DESKTOP, 'desktop'],
+        [ANDROID, 'tablet']
+      ] as const) {
+        const h = harness(caps, formFactor)
+        updater(h, 'ready')
+        appMenu(h)
+        expect(h.shown().slice(0, 2), formFactor).toStrictEqual([
+          { label: 'Update Zenium', key: 'menu.update', click: expect.any(Function) },
+          { type: 'separator' }
+        ])
+        // The one keyed row of its kind; the rest of the head is unkeyed structure or the
+        // groups' own keys – no second `menu.update`.
+        expect(
+          h.shown().filter((item) => item.key === 'menu.update'),
+          formFactor
+        ).toHaveLength(1)
+      }
     })
 
     it("records the waiting version as seen when the phone's or the tablet's menu opens (TB-12: the menu button's dot clears, the row stays), once per version, and nothing while no update waits", () => {

@@ -4478,12 +4478,10 @@ export class Menus {
           separator,
           // Chrome's "Update Chrome" row as the first text row under the icon row, over a
           // hairline of its own (TB-12; `TabbedAppMenuPropertiesDelegate.populatePageModeMenu`):
-          // the desktop's row, seated as structure – named `menu.update` for the sheet, outside
-          // the order and the edit mode like the Change Menu row (`lib/menuEdit.ts`) – while the
-          // update waits (`updateReadyRow`); nothing otherwise.
-          ...this.updateReadyRow().map((item) =>
-            item.type === 'separator' ? item : { ...item, key: MENU_KEY_UPDATE }
-          ),
+          // the one row every layout seats, as structure – named `menu.update` for the sheet,
+          // outside the order and the edit mode like the Change Menu row (`lib/menuEdit.ts`) –
+          // while the update waits (`updateReadyRow`); nothing otherwise.
+          ...this.updateReadyRow(),
           ...applyMenuOrder(list, keyOf, order),
           // Edge's "Change menu" as the list's last row, in a group of its own and outside the
           // order: the sheet opens its edit mode in place (`MenuSheet.tsx`); no pick reaches
@@ -4506,7 +4504,9 @@ export class Menus {
       [
         // Chrome's "Update Google Chrome" row at the menu's head (shortcuts-menus-101): while
         // an update is downloaded and waiting, one row that relaunches into it, over a hairline.
-        // The tablet's menu opens on it too (TB-12), as Chrome's Android menu does.
+        // The tablet's menu opens on it too (TB-12), as Chrome's Android menu does. Keyed
+        // `menu.update` here as on the phone (W8-F3): the coarse-pointer sheet's split
+        // (`lib/menuEdit.ts`) seats it as the `update` structure, not a plain list row.
         ...sidebar(...this.updateReadyRow()),
         // The window's live media heads the menu while the media hub's toolbar button has
         // folded (design language v2 §9.29: the sidebar's width tier folds it at 240, and this
@@ -4677,8 +4677,15 @@ export class Menus {
   private updateReadyRow(): Template {
     if (!this.browser.state.capabilities.updates) return []
     if (this.browser.updates.status().phase !== 'ready') return []
+    // Named `menu.update` on every layout (`shared/menuOrder.ts`): structure for the sheet's
+    // split (`lib/menuEdit.ts` – the `update` section, kept out of the edit pose and of the
+    // saved order like the Change Menu row); its hairline unkeyed, so the split takes the two.
     return [
-      { label: 'Update Zenium', click: () => void this.browser.updates.install() },
+      {
+        label: 'Update Zenium',
+        key: MENU_KEY_UPDATE,
+        click: () => void this.browser.updates.install()
+      },
       { type: 'separator' }
     ]
   }

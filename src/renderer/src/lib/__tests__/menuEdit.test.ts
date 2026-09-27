@@ -140,6 +140,38 @@ describe('the sections', () => {
     expect(joinMenuSections(k)).toEqual(keyedUnder)
   })
 
+  it("the sidebar layouts' root on a coarse pointer (W8-F3): no icon row, no Change Menu row, the keyed Update Zenium row at its head splits into `update` with its hairline, the rest the list; unkeyed, it would be a plain list row", () => {
+    // The desktop's / the tablet's menu as the core composes it while an update waits: the row
+    // and its hairline, then Firefox's groups – some rows keyed for the sheet, most not.
+    const sidebar = [
+      item('Update Zenium', { key: 'menu.update' }),
+      sep(),
+      item('New Tab'),
+      item('Search Tabs…'),
+      item('New Private Tab', { key: 'row.newPrivateTab' }),
+      sep(),
+      item('Bookmarks'),
+      item('Settings')
+    ]
+    const s = splitMenuSections(sidebar)
+    expect(s.row).toEqual([])
+    expect(s.rowEnd).toBeNull()
+    expect(keys(s.update)).toEqual(['menu.update', '(separator)'])
+    expect(s.list).toEqual(sidebar.slice(2))
+    expect(s.change).toEqual([])
+    expect(editableMenu(sidebar)).toBe(false)
+    expect(joinMenuSections(s)).toEqual(sidebar)
+    expect(menuSectionOf(s, 'menu.update')).toBeNull()
+    expect(nudgeMenuItem(s, 'menu.update', 1)).toBe(s)
+    // The same root with the row unkeyed (the desktop's before W8-F3): the row is the list's
+    // first item, its hairline the list's first slot – why the key travels with the row.
+    const unkeyed = [item('Update Zenium'), ...sidebar.slice(1)]
+    const u = splitMenuSections(unkeyed)
+    expect(u.update).toEqual([])
+    expect(u.list).toEqual(unkeyed)
+    expect(joinMenuSections(u)).toEqual(unkeyed)
+  })
+
   it('knows which section a key is in; the structure’s items are in neither', () => {
     const s = splitMenuSections(root())
     expect(menuSectionOf(s, 'icon.reload')).toBe('row')
