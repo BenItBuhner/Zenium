@@ -291,3 +291,69 @@ describe('the zoom bubble’s Reset ends the bubble with its chip (W8-F12, §9.2
     expect(onShare).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('FLAGGED for the design lead (W8-F12 §3): the other paths to 100 % – read here, not changed', () => {
+  /*
+   * Ctrl+0 / Cmd+0, a step that arrives at 100 % (Ctrl+plus from 90 %, the bubble's own + and −,
+   * Ctrl+wheel over the page), the page context menu's Reset Zoom, the app menu's Reset Zoom and
+   * the macOS menu bar's Actual Size all reach the main's `tabs.resetZoom` / `adjustZoom` and
+   * come back as a `zoom.changed` at the default. None is the bubble's own Reset, so
+   * `showZoomBubble` takes the path it always took: the open bubble re-raised at 100 % on the
+   * chip's last place (until dismissed, for the chip's bubble; 5 s once a button was used), or a
+   * fresh 1.5 s notice at the pill's trailing end – the chip gone by §9.29 either way, the bubble
+   * over nothing that opened it. §9.20's light dismiss consumes the press that closes it: W8-F7's
+   * swallow, whose drive reset by `tab.setZoom null` – this path, not the bubble's Reset (#644,
+   * leg B). The lead ruled the Reset path alone; these stand as they are and are pinned as they
+   * are, so a ruling on them has its red test ready to flip.
+   */
+  it('REPRO: Ctrl+0 with the chip’s bubble up leaves a 100 % bubble standing with no chip until a press closes it – and that press is consumed', async () => {
+    render(stateAt(1.25))
+    await act(async () => {
+      await openZoomBubble(TAB_ID, 1.25)
+    })
+    await settle()
+    expect(chip()).not.toBeNull()
+    // Ctrl+0 (the keyboard's, the menu's, the context menu's): the main resets and says so.
+    render(stateAt(1))
+    await zoomChanged(1)
+    expect(chip()).toBeNull()
+    expect(bubble()).not.toBeNull()
+    expect(level()).toBe('100%')
+    expect(uiStore.get().zoomBubble).toMatchObject({ source: 'chip', factor: 1 })
+    expect(resetButton().disabled).toBe(true)
+    expect(openPopoverCount()).toBe(1)
+    // The press that closes it – on the Share chip – goes no further (§9.20 kept).
+    const events = press(q('[data-share-chip]')!)
+    expect(events.pointerdown.defaultPrevented).toBe(true)
+    expect(events.click.defaultPrevented).toBe(true)
+    expect(onShare).not.toHaveBeenCalled()
+    await settle()
+    expect(uiStore.get().zoomBubble).toBeNull()
+  })
+
+  it('REPRO: a step arriving at 100 % (Ctrl+plus from 90 %, the bubble’s own +) re-raises the bubble at 100 % with no chip; with none up, Ctrl+0 raises a fresh 1.5 s notice with no chip', async () => {
+    render(stateAt(0.9))
+    await zoomChanged(0.9)
+    expect(chip()).not.toBeNull()
+    // The bubble's own + from 90 %: the main lands on 100 % and says so.
+    const plus = [...bubble()!.querySelectorAll<HTMLButtonElement>('button')].find(
+      (b) => b.getAttribute('aria-label') === 'Zoom in'
+    )!
+    press(plus)
+    expect(run).toHaveBeenCalledWith('tab.setZoom', { tabId: TAB_ID, delta: 1 })
+    render(stateAt(1))
+    await zoomChanged(1)
+    expect(chip()).toBeNull()
+    expect(bubble()).not.toBeNull()
+    expect(level()).toBe('100%')
+    expect(uiStore.get().zoomBubble).toMatchObject({ source: 'auto', factor: 1, seq: 1 })
+
+    // No bubble up, the page zoomed: Ctrl+0 from the keyboard opens the notice at 100 %.
+    act(() => uiStore.set({ zoomBubble: null }))
+    await settle()
+    await zoomChanged(1)
+    expect(chip()).toBeNull()
+    expect(bubble()).not.toBeNull()
+    expect(uiStore.get().zoomBubble).toMatchObject({ source: 'auto', factor: 1, seq: 0 })
+  })
+})
