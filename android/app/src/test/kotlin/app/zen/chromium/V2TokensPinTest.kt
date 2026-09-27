@@ -214,6 +214,94 @@ class V2TokensPinTest {
         assertEquals(dirs.groupValues[2].split(",").map { it.trim().toInt() }.toSet(), ToastSwipe.TOAST_WAYS.y)
     }
 
+    /**
+     * §9.33's card wears the chrome's corner: `main.css` declares `--zen-corner: squircle` once
+     * and `.zen-message` carries it as `corner-shape: var(--zen-corner)` beside its radius (#575);
+     * CSS Borders 4's `squircle` is `superellipse(2)`, the curve |x|^n + |y|^n = 1 in the corner's
+     * box with n = 2^2 = 4. The native card ([NativeToastCard]) draws that curve ([Squircle],
+     * [SquircleRectDrawable]) and casts its shadow from it, where the `GradientDrawable` it had
+     * drew a circular arc: at 45° the squircle stands r / 2^(1/4) = 0.841 r from the corner's
+     * centre, the arc r / √2 = 0.707 r – a difference of 1.07 dp on the card's 8, and the pin
+     * that tells the two apart. The control on the card (radius 6) stays a circle, as the
+     * stylesheet has it: the squircle goes on radius 8 and up, and `.zen-message-button` reads no
+     * corner shape.
+     */
+    @Test
+    fun theToastCardCornerIsTheChromesSquircle() {
+        // The one corner token, declared once in the theme block; the card's rule reads it right after its radius.
+        val corner = css.light["--zen-corner"] ?: error("main.css declares no --zen-corner")
+        assertEquals("squircle", corner)
+        assertEquals(1, Regex("""(?m)^ {2}--zen-corner: squircle;$""").findAll(css.text).count())
+        val message = css.rule(".zen-message")
+        assertTrue(
+            ".zen-message carries corner-shape: var(--zen-corner) right after border-radius: var(--v2-radius-card)",
+            Regex("""border-radius: var\(--v2-radius-card\);\n\s*corner-shape: var\(--zen-corner\);""").containsMatchIn(message)
+        )
+        // The button keeps the circle: radius 6, under the 8 the squircle starts at, and no corner shape of its own.
+        val button = css.rule(".zen-message-button")
+        assertEquals("var(--v2-radius-control)", declaration(button, "border-radius"))
+        assertTrue(".zen-message-button reads no corner shape", !button.contains("corner-shape"))
+        assertTrue("the control's radius is under the card's", PromptSheetSpec.CONTROL_RADIUS_DP < ToastCardSpec.RADIUS_DP)
+        // The keyword's exponent: `squircle` = `superellipse(2)`, n = 2^2; `round` = `superellipse(1)`, n = 2.
+        assertEquals(4.0, Squircle.exponent(corner), 0.0)
+        assertEquals(Squircle.EXPONENT, Squircle.exponent(corner), 0.0)
+        assertEquals(2.0, Squircle.exponent("round"), 0.0)
+        // The 45° pin: the curve's point on the card's radius, and the circular arc's, which fails it.
+        val r = ToastCardSpec.RADIUS_DP.toFloat()
+        val squircleAt45 = r / Math.pow(2.0, 1.0 / Squircle.EXPONENT)
+        val arcAt45 = r / Math.sqrt(2.0)
+        val (x, y) = Squircle.point(r, Math.PI / 4)
+        assertEquals("x at 45° is r / 2^(1/4)", squircleAt45, x.toDouble(), 1e-3)
+        assertEquals("y at 45° is r / 2^(1/4)", squircleAt45, y.toDouble(), 1e-3)
+        assertTrue("the circular arc's 45° point ($arcAt45) is not the squircle's ($squircleAt45)", Math.abs(arcAt45 - x) > 1.0)
+        assertEquals("n = 2 is the arc the GradientDrawable drew", arcAt45, Squircle.point(r, Math.PI / 4, 2.0).first.toDouble(), 1e-3)
+        // Every sample on |x|^4 + |y|^4 = r^4, from the horizontal edge (r, 0) to the vertical (0, r), monotone.
+        val samples = Squircle.corner(r)
+        assertEquals(Squircle.SEGMENTS + 1, samples.size)
+        assertEquals(r, samples.first().first, 1e-5f)
+        assertEquals(0f, samples.first().second, 1e-5f)
+        assertEquals(0f, samples.last().first, 1e-5f)
+        assertEquals(r, samples.last().second, 1e-5f)
+        val rn = Math.pow(r.toDouble(), Squircle.EXPONENT)
+        for ((sx, sy) in samples) {
+            assertEquals("($sx, $sy) is on the curve", rn, Math.pow(sx.toDouble(), Squircle.EXPONENT) + Math.pow(sy.toDouble(), Squircle.EXPONENT), rn * 1e-5)
+        }
+        for (i in 1 until samples.size) {
+            assertTrue("x falls along the corner", samples[i].first <= samples[i - 1].first)
+            assertTrue("y rises along the corner", samples[i].second >= samples[i - 1].second)
+        }
+        // The polyline's chords stay within three hundredths of a pixel of the curve at the CI emulator's density.
+        val density = 2.625
+        var worst = 0.0
+        for (i in 1 until samples.size) {
+            val (x0, y0) = samples[i - 1]
+            val (x1, y1) = samples[i]
+            for (k in 1 until 10) {
+                val f = k / 10.0
+                val mx = x0 + (x1 - x0) * f
+                val my = y0 + (y1 - y0) * f
+                worst = Math.max(worst, r - Math.pow(Math.pow(mx, Squircle.EXPONENT) + Math.pow(my, Squircle.EXPONENT), 1 / Squircle.EXPONENT))
+            }
+        }
+        assertTrue("the polyline is within 0.03 px of the curve at $density (worst ${worst * density} px)", worst * density < 0.03)
+        // The card draws it and casts its shadow from it; the button keeps its GradientDrawable at the control radius.
+        val card = File(root, "android/app/src/main/kotlin/app/zen/chromium/NativeToastCard.kt").readText()
+        assertTrue(
+            "the card's background is the squircle drawable at the card radius, the hairline and the panel inks",
+            card.contains("view.background = SquircleRectDrawable(dp(ToastCardSpec.RADIUS_DP).toFloat(), hairline, ink.panel, ink.border)")
+        )
+        assertTrue("the card's outline is its background's, so the elevation shadow follows the corner", card.contains("view.outlineProvider = ViewOutlineProvider.BACKGROUND"))
+        val buttonBuilder = Regex("""private fun button\(label: CharSequence\): TextView \{([\s\S]*?)\n    \}""").find(card)?.groupValues?.get(1)
+            ?: error("NativeToastCard.kt has no button builder")
+        assertTrue("the button's fill is a GradientDrawable", buttonBuilder.contains("GradientDrawable().apply {"))
+        assertTrue("at the control radius", buttonBuilder.contains("cornerRadius = dp(PromptSheetSpec.CONTROL_RADIUS_DP).toFloat()"))
+        assertTrue("a circle, not the squircle", !buttonBuilder.contains("Squircle"))
+        val drawable = File(root, "android/app/src/main/kotlin/app/zen/chromium/Squircle.kt").readText()
+        for (outline in listOf("outline.setPath(outer)", "outline.setConvexPath(outer)"))
+            assertTrue("the drawable's outline is its outer path: $outline", drawable.contains(outline))
+        assertTrue("the hairline is stroked inside the shape: its centre half a hairline in", drawable.contains("val half = hairline / 2f"))
+    }
+
     @Test
     fun theSpecNumbersAreTheSheetRules() {
         // §9.9: the grabber (`.zen-sheet-handle`) in its strip (`.zen-sheet-handle-hit`: 44 tall, pulled back 24).
