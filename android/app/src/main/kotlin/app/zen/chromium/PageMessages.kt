@@ -11,8 +11,15 @@ sealed class PageMessageRoute {
     /** Not JSON, or not carrying this session's token: a page forging browser messages. */
     object Ignore : PageMessageRoute()
 
-    /** The script is up and wants the current flags; the reply proxy is kept for the answers. */
-    object Hello : PageMessageRoute()
+    /**
+     * The script is up and wants the current flags; the reply proxy is kept for the answers.
+     * [documentStart] is the document's navigation start as the frame's `performance.timeOrigin`
+     * says it (Unix wall-clock milliseconds; every frame of the process reads one monotonic clock
+     * mapped onto it), or NaN when the hello carries none. The main frame's hello is the tab's
+     * document boundary for the image search's frame registry, and a sub-frame's hello registers
+     * with its stamp ([ImageOwner.documentStarted], [ImageOwner.registerFrame]).
+     */
+    data class Hello(val documentStart: Double) : PageMessageRoute()
 
     /** The settled value of a Promise an `evaluate()` script returned. */
     data class EvalResult(val id: Int, val value: String?) : PageMessageRoute()
@@ -80,7 +87,8 @@ fun routePageMessage(data: String?, token: String): PageMessageRoute {
     val obj = runCatching { JSONObject(data) }.getOrNull() ?: return PageMessageRoute.Ignore
     if (obj.str("token") != token) return PageMessageRoute.Ignore
     return when (obj.str("type")) {
-        "hello" -> PageMessageRoute.Hello
+        // `optDouble` is NaN for a hello without the stamp or with one that is not a number.
+        "hello" -> PageMessageRoute.Hello(obj.optDouble("documentStart"))
         "evalResult" -> PageMessageRoute.EvalResult(obj.optInt("id"), obj.strOrNull("value"))
         "domReady" -> PageMessageRoute.DomReady
         "fullscreen" -> {
