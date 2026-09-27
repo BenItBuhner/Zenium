@@ -203,13 +203,14 @@ describe('the picker hung from the Settings row’s Change… button (§9.20; #5
     // unfocused when it came in the measuring pass. The visibility at each call is recorded.
     const nativeFocus = HTMLElement.prototype.focus
     const panelFocusCalls: string[] = []
-    const focus = vi
-      .spyOn(HTMLElement.prototype, 'focus')
-      .mockImplementation(function (this: HTMLElement, options?: FocusOptions) {
-        if (this.hasAttribute('data-anchored')) panelFocusCalls.push(this.style.visibility)
-        if (this.style.visibility === 'hidden') return
-        nativeFocus.call(this, options)
-      })
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(function (
+      this: HTMLElement,
+      options?: FocusOptions
+    ) {
+      if (this.hasAttribute('data-anchored')) panelFocusCalls.push(this.style.visibility)
+      if (this.style.visibility === 'hidden') return
+      nativeFocus.call(this, options)
+    })
     try {
       opener.focus()
       expect(document.activeElement).toBe(opener)
