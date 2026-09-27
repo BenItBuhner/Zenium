@@ -253,6 +253,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             if (repeat > 1 && ordered.isNotEmpty()) entry.put("attempt", index / ordered.size + 1)
             rows.put(entry)
             rowEntry = entry
+            rowStalledOut = false
             if (row.notOnGoogleImage != null && googleImage) {
                 // The row is not run on this image (its cause in every stage); the lane's other
                 // rows finish in one boot, and the AOSP lane reads the row as any other.
@@ -312,6 +313,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                         (entry.optJSONObject("heapSplit")?.let { "; heap split: the runtime's units ${it.optLong("runtimeUnitsKb") / 1024} MB, the rules and the rest ${it.optLong("rulesAndRestKb") / 1024} MB" } ?: "")
                 )
                 rowEntry = null
+                rowStalledOut = false
                 write()
             }
         }
@@ -1231,6 +1233,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val installed = runCatching { extensions().firstOrNull { it.getString("id") == row.id } }
         val enabled = installed.getOrNull()?.getBoolean("enabled") ?: installed.isFailure
         if (enabled) {
+            // The disable is the one read the rows after this one depend on: a row whose reads
+            // stalled out gets the full allowance for it once more (see [coreCall]).
+            if (rowStalledOut) {
+                entry.optJSONObject("coreStall")?.put("disableWithFullAllowance", true)
+                rowStalledOut = false
+            }
             runCatching {
                 coreCall("extension.setEnabled", JSONObject().put("id", row.id).put("enabled", false).toString())
             }.onFailure { entry.put("disableError", it.toString()) }
@@ -3640,9 +3648,24 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val (tab, view) = fixture("popups.html?blocker", factor, 3_000)
         val before = tabUrls().keys
         val centre = json(tabEval(view, ELEMENT_CENTRE.replace("%SELECTOR%", "#log")))
+        // The finger lands on the page only with no sheet scrim of the chrome's over it (round
+        // 20's Popup Blocker Pro: the tap swallowed above the page by a `zen-sheet-scrim` a
+        // stalled popup sheet left, R21-11): the scrim is waited out, and the fixture's own line
+        // (`window.open on click`) is the proof the tap landed – missing it, the control is
+        // clicked by DOM once, as the install prompt falls back to the command.
+        val scrim = awaitNoScrim(scaled(6_000, factor))
+        scrim?.let { extra.put("scrimAtTap", it) }
         screenPoint(view, centre)?.let { tap(it.first, it.second) }
         SystemClock.sleep(scaled(2_500, factor))
-        val result = pollExpr(view, POPUP_BLOCK_REPORT, scaled(12_000, factor))
+        var result = pollExpr(view, POPUP_BLOCK_REPORT, scaled(12_000, factor))
+        val landed = result.optJSONArray("log")?.let { l -> (0 until l.length()).any { l.optString(it).contains("window.open on click") } } == true
+        extra.put("tapLanded", landed)
+        if (!landed) {
+            tabEval(view, "(function(){var e=document.getElementById('log');if(e)e.click();return 'clicked'})()")
+            extra.put("domClick", true)
+            SystemClock.sleep(scaled(2_500, factor))
+            result = pollExpr(view, POPUP_BLOCK_REPORT, scaled(12_000, factor))
+        }
         extra.put("page", result).put("console", JSONArray(consoleOf(view).takeLast(10)))
         val opened = tabUrls().entries.filter { it.key !in before }
         extra.put("opened", JSONArray(opened.map { it.value }))
@@ -11224,22 +11247,58 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * boundary leans on (`app.getState`) is asked once more of the rebuilt core, every other
      * command's error names the replacement and stands (whether the core ran it before it died is
      * not known, and an install or a tab command run twice is a different row).
+     *
+     * THE ROW'S STALL ALLOWANCE (round 22, R21-11's family): the two-minute wait is the row's
+     * FIRST stalled read's alone. A chrome that stayed silent through a whole allowance answers
+     * none of the row's next reads either – Reader View's row on WebView 156 (round 21 §3.3)
+     * made twelve core reads after its reader page held the renderer, each waited out its two
+     * minutes, and the row took 1,513 s of the lane's 6,000 s budget (Popup Blocker (strict)'s
+     * `app.getState` timeouts 204 s more). Once a read of the row ran out its allowance, the
+     * row's later reads wait [CORE_STALLED_ROW_READ_MS] at most, a stalled poll charged to the
+     * wait (`coreStall.timedOut` counts the reads that ran out, `coreStall.shortReads` the reads
+     * made under the short allowance); the row's cleanup gives its disable – the one call the
+     * rows after it depend on – the full allowance once more ([cleanup]). A read outside a row
+     * (the post-sweep checks) keeps the full allowance.
      */
     private fun coreCall(name: String, args: String = "null"): String =
         try {
-            coreInvokeUnderStall(name, args, onStall = coreStallOnRow(name))
+            coreRead(name, args)
         } catch (e: IllegalStateException) {
             if (!chromeHooksGone()) throw e
             chromeHooksLost(name)
-            if (name == "app.getState") coreInvokeUnderStall(name, args, onStall = coreStallOnRow(name))
+            if (name == "app.getState") coreRead(name, args)
             else throw IllegalStateException("${e.message}; the chrome's document was replaced meanwhile (its renderer gone, the chrome rebuilt)", e)
         }
+
+    /** One core read under the row's stall allowance (see [coreCall]); the row marked stalled out when the read ran out its allowance. */
+    private fun coreRead(name: String, args: String): String {
+        val entry = rowEntry
+        val short = rowStalledOut && entry != null
+        val maxMs = if (short) CORE_STALLED_ROW_READ_MS else CORE_READ_MAX_MS
+        if (short) stallOf(entry!!).let { it.put("shortReads", it.optInt("shortReads") + 1) }
+        try {
+            return coreInvokeUnderStall(name, args, baseMs = minOf(CORE_READ_BASE_MS, maxMs), maxMs = maxMs, onStall = coreStallOnRow(name))
+        } catch (e: IllegalStateException) {
+            if (entry != null && e.message?.contains("timed out after") == true) {
+                stallOf(entry).let { it.put("timedOut", it.optInt("timedOut") + 1).put("lastTimedOut", name) }
+                if (!rowStalledOut) Log.w(TAG, "CORE STALL ${entry.optString("name")}: $name ran out its ${maxMs / 1000} s allowance; the row's later reads wait ${CORE_STALLED_ROW_READ_MS / 1000} s at most")
+                rowStalledOut = true
+            }
+            throw e
+        }
+    }
+
+    /** The row's `coreStall` evidence object, made on first use. */
+    private fun stallOf(entry: JSONObject): JSONObject = entry.optJSONObject("coreStall") ?: JSONObject().also { entry.put("coreStall", it) }
+
+    /** The row under way had a core read run out its whole allowance (see [coreCall]); reset at every row's start and by [cleanup] before the disable. */
+    private var rowStalledOut = false
 
     /** The stall evidence a [coreCall] of `name` leaves on the row under way. */
     private fun coreStallOnRow(name: String): (Long) -> Unit = { longest ->
         val entry = rowEntry
         if (entry != null) {
-            val stall = entry.optJSONObject("coreStall") ?: JSONObject().also { entry.put("coreStall", it) }
+            val stall = stallOf(entry)
             stall.put("reads", stall.optInt("reads") + 1)
                 .put("longestPollMs", maxOf(stall.optLong("longestPollMs"), longest))
                 .put("last", name)
@@ -11769,6 +11828,41 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 .onFailure { Log.w(TAG, "$command failed: ${it.message}") }
         }
         chromeJs("window.__prompts=[];'ok'")
+    }
+
+    /**
+     * Wait up to `ms` for the chrome to show no sheet scrim taking the pointer (a
+     * `.zen-sheet-scrim` drawn and not `pointer-events: none`): round 20's 113 sweep found one
+     * lingering after a stalled popup sheet over rows 40-41, covering the install prompt's button
+     * and swallowing the driver's tap on Popup Blocker Pro's fixture (R21-11). Returns the
+     * evidence of a scrim that was up at the first read – its class, opacity, pointer events, box
+     * and the sheet beside it, how long the wait ran and whether it went – or `null` when none
+     * was up. Each poll is one read of the chrome's DOM; a chrome that never answers reads as no
+     * scrim (the tap then proves itself by the fixture's own line).
+     */
+    private fun awaitNoScrim(ms: Long): JSONObject? {
+        val first = scrimUp() ?: return null
+        val started = SystemClock.uptimeMillis()
+        var last: JSONObject? = first
+        while (last != null && SystemClock.uptimeMillis() - started < ms) {
+            SystemClock.sleep(250)
+            last = scrimUp()
+        }
+        val waited = SystemClock.uptimeMillis() - started
+        val gone = last == null
+        Log.w(
+            TAG,
+            "SCRIM ${rowEntry?.optString("name") ?: ""}: ${first.optString("className")} over the chrome at the tap (pointer events ${first.optString("pointerEvents")}, opacity ${first.optString("opacity")}, sheets ${first.optInt("sheets")}, ${first.opt("sheet")}); " +
+                if (gone) "gone after $waited ms" else "still up after $waited ms"
+        )
+        return JSONObject().put("scrim", first).put("waitedMs", waited).put("gone", gone)
+    }
+
+    /** The chrome's sheet scrim taking the pointer, as the chrome's DOM reads it ([SCRIM_JS]); `null` when none. */
+    private fun scrimUp(): JSONObject? {
+        val raw = chromeJs(SCRIM_JS)
+        val json = (runCatching { JSONTokener(raw).nextValue() }.getOrNull() as? String)?.takeIf { it.isNotEmpty() } ?: return null
+        return runCatching { JSONObject(json) }.getOrNull()?.takeIf { it.optBoolean("takesPointer") }
     }
 
     /**
@@ -12534,6 +12628,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         )
         private const val YOUTUBE_URL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
         private const val INSTALL_TIMEOUT_MS = 240_000L
+        /** A core read's wait when the chrome answers its polls (`coreInvokeUnderStall`'s base). */
+        private const val CORE_READ_BASE_MS = 15_000L
+        /** A core read's whole allowance under a stall – the row's first stalled read's (see [coreCall]). */
+        private const val CORE_READ_MAX_MS = 120_000L
+        /** A core read's whole allowance once a read of the row ran out [CORE_READ_MAX_MS]: a stalled poll is charged to it. */
+        private const val CORE_STALLED_ROW_READ_MS = 15_000L
         /** uBlock Origin (MV2) on Edge Add-ons: the heaviest row, run last by default. */
         private const val UBO_MV2 = "odfafepnkmbhccpbejgmiehpchacaeak"
         private const val BACKGROUND_TIMEOUT_MS = 40_000L
@@ -12642,6 +12742,18 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "var inside=r.width>0&&r.height>0&&r.top>=0&&r.left>=0&&r.bottom<=innerHeight&&r.right<=innerWidth;" +
                 "return JSON.stringify({x:cx,y:cy,w:r.width,h:r.height,top:r.top,bottom:r.bottom,innerW:innerWidth,innerH:innerHeight,drawn:drawn,onTop:onTop,inside:inside," +
                 "covering:top&&!onTop?(top.tagName+'.'+String(top.className).slice(0,60)):null,label:(b.textContent||'').trim(),reachable:drawn&&onTop&&inside})})()"
+        /**
+         * The chrome's sheet scrim as the chrome sees it: the first `.zen-sheet-scrim` in the
+         * document, whether it takes the pointer (displayed, visible, drawn above opacity 0, not
+         * `pointer-events: none`, with a box), its computed opacity and pointer events, and the
+         * sheets beside it. `null` when none is in the document.
+         */
+        private const val SCRIM_JS =
+            "(function(){var s=document.querySelector('.zen-sheet-scrim');if(!s)return null;var cs=getComputedStyle(s);var r=s.getBoundingClientRect();" +
+                "var takes=cs.display!=='none'&&cs.visibility!=='hidden'&&cs.pointerEvents!=='none'&&cs.opacity!=='0'&&r.width>0&&r.height>0;" +
+                "var sh=document.querySelector('.zen-sheet');" +
+                "return JSON.stringify({className:String(s.className).slice(0,80),opacity:cs.opacity,pointerEvents:cs.pointerEvents,w:Math.round(r.width),h:Math.round(r.height),takesPointer:takes," +
+                "sheet:sh?String(sh.className).slice(0,80):null,sheets:document.querySelectorAll('.zen-sheet').length})})()"
         /** The prompts' positive labels (ExtensionPromptDialog, hostStore.ts installPromptText). */
         private val POSITIVE_BUTTONS = setOf("Add extension", "Update extension", "Allow")
         /** The tracker hosts of sweep-ads.html, by the page's own names. */
