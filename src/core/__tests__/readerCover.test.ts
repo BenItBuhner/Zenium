@@ -384,10 +384,15 @@ describe('the reader as a cover over the page (reader-30)', () => {
   it('a move within the page’s document beneath keeps the cover and is where the exit lands', () => {
     const s = scene()
     enterReader(s)
+    // A committed navigation of the tab all the same: its stamp for Quick Delete's tab half
+    // (HB-07's `Tab.lastNavigatedAt`) moves, as Chrome's does on a same-document commit.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(1_700_000_000_000)
     s.page.url = `${PAGE_URL}#chapter-2`
     s.page.events.onNavigated(`${PAGE_URL}#chapter-2`, true)
     expect(s.browser.tabs.isCovered(s.tabId)).toBe(true)
     expect(s.browser.tabs.tab(s.tabId)!.url.startsWith(READER_URL_PREFIX)).toBe(true)
+    expect(s.browser.tabs.tab(s.tabId)!.lastNavigatedAt).toBe(1_700_000_000_000)
     s.browser.reader.toggle(s.tabId, s.win)
     expect(s.browser.tabs.tab(s.tabId)!.url).toBe(`${PAGE_URL}#chapter-2`)
   })
