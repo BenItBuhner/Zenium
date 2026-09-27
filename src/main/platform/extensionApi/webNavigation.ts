@@ -186,6 +186,9 @@ export class WebNavigationApi {
    * reach them (Zotero and AdGuard log "No tab with id" for every such navigation).
    */
   attach(view: ElectronTabView): void {
+    // The reader's cover over a tab's page is no navigation of the tab (`ElectronTabView.cover`):
+    // the layer skips it (`ExtensionApiHost`), and so does the API should it be handed one.
+    if (view.cover) return
     const wc = view.webContents
     if (wc.isDestroyed()) return
     const tabId = (): number | null => this.tabIdFor(wc)

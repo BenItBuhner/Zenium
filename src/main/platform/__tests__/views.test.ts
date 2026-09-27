@@ -534,6 +534,32 @@ describe('ElectronTabViewHost', () => {
     expect(host.viewForWebContents(wc)).toBeUndefined()
   })
 
+  it('makes the reader’s cover a marked page of the tab: routed to the tab, never the tab’s page to viewForTab, seen by every view follower (reader-30)', () => {
+    const host = new ElectronTabViewHost(sessions)
+    const tab = { id: 'tab_1', containerId: 'default' } as Tab
+    const seen: Array<[number, boolean]> = []
+    host.onViewCreated((view) => seen.push([view.webContentsId, view.cover]))
+    const page = host.createView(tab, noEvents, detachedWindow) as ElectronTabView
+    const cover = host.createCover(tab, noEvents, detachedWindow) as ElectronTabView
+    expect(page.cover).toBe(false)
+    expect(cover.cover).toBe(true)
+    // Both answer to the tab (a message or a request from the cover is the tab's); the tab's
+    // page is the page alone, before and after the cover.
+    expect(host.tabIdForWebContents(page.webContents)).toBe('tab_1')
+    expect(host.tabIdForWebContents(cover.webContents)).toBe('tab_1')
+    expect(host.viewForTab('tab_1')).toBe(page)
+    expect(host.viewForWebContents(cover.webContents)).toBe(cover)
+    // The followers of every view (the extension layer's) hear of the cover with its mark, so
+    // they can leave it out; a follower that came before saw the page as one too.
+    expect(seen).toEqual([
+      [page.webContentsId, false],
+      [cover.webContentsId, true]
+    ])
+    cover.destroy()
+    expect(host.tabIdForWebContents(cover.webContents)).toBeUndefined()
+    expect(host.viewForTab('tab_1')).toBe(page)
+  })
+
   it('gives a page its first document only once the startup hold opens – loadURL and restoreNavigation alike, in order, a destroyed page’s dropped (services pass 10, the extension layer’s first publish)', async () => {
     const host = new ElectronTabViewHost(sessions)
     let settle!: () => void

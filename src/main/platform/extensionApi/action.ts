@@ -247,7 +247,10 @@ export class ActionApi {
     if (!ext) return
     const active = this.host.browser.tabs.activeTabFor(win)
     if (!active) return
-    const tab = this.host.model.chromeTab(active, this.host.canSeeTab(ext, active.url))
+    const tab = this.host.model.chromeTab(
+      active,
+      this.host.canSeeTab(ext, this.host.model.urlOf(active))
+    )
     this.host.dispatch(extensionId, 'action', 'onClicked', [tab], { wake: true })
   }
 

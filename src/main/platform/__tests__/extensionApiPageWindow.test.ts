@@ -183,7 +183,10 @@ function world(): World {
     allWindows: () => [...alive],
     state,
     tabs: {
-      view: (id: string) => (id === 'tasks' && alive.includes(page) ? tasksView : undefined),
+      // The model reads the tab's page (`pageView`; `view` would be a reader cover over it),
+      // and what the page beneath a cover shows (`coveredPage`) – no cover here.
+      pageView: (id: string) => (id === 'tasks' && alive.includes(page) ? tasksView : undefined),
+      coveredPage: () => undefined,
       ownerOf: (id: string) => owners.get(id),
       visibleTabIds: (win: ZenWindow) => win.activeSpace().tabIds,
       activeTabFor: (win: ZenWindow) => state.model.tabs[win.activeSpace().tabIds[0] ?? ''],

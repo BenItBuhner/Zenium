@@ -579,9 +579,17 @@ export class ElectronTabView implements TabView {
    */
   private pausedByDebugger = false
 
+  /**
+   * @param cover Whether this view is the reader's cover over a tab's page
+   *   (`ElectronTabViewHost.createCover`) rather than the tab's page. A cover answers to the
+   *   tab's id for its messages and requests, but is not the tab's page to `viewForTab`, and
+   *   the followers that speak of the tab's page to extensions (`webNavigation`, the privacy
+   *   hooks, the user-script worlds) leave it out: to an extension the tab never navigated.
+   */
   constructor(
     readonly view: WebContentsView,
-    private readonly owner: ElectronTabViewHost
+    private readonly owner: ElectronTabViewHost,
+    readonly cover = false
   ) {
     this.wc = this.view.webContents
     this.webContentsId = this.wc.id
@@ -3599,34 +3607,33 @@ export class ElectronTabViewHost implements TabViewHost {
   }
 
   createView(tab: Tab, events: TabViewEvents, host: WindowHost): TabView {
-    const view = new ElectronTabView(
-      new WebContentsView({
-        webPreferences: pageWebPreferences(this.sessions.get(tab.containerId))
-      }),
-      this
-    )
-    view.wire(events)
-    view.attachTo(host)
-    this.track(view, tab.id)
-    return view
+    return this.make(tab, events, host, false)
   }
 
   /**
    * The reader's cover (`TabViewHost.createCover`): a page like any other of the tab's session,
-   * routed to the tab for its messages and requests, but not the tab's page to `viewForTab` –
-   * the extension API and the capture host keep seeing the page beneath, as Chrome's do under
-   * its reading mode overlay.
+   * routed to the tab for its messages and requests (`tabIdForWebContents`), but not the tab's
+   * page to `viewForTab` – the capture host and the extension layer reach the page beneath
+   * through it, as Chrome's do under its reading mode overlay – and marked (`cover`) so the
+   * layer's followers of every view can leave it out; the layer reads the tab's address, title
+   * and status from the page beneath meanwhile (`TabManager.coveredPage`).
    */
   createCover(tab: Tab, events: TabViewEvents, host: WindowHost): TabView {
+    return this.make(tab, events, host, true)
+  }
+
+  /** A live page of the tab's session, wired, attached and mapped; the tab's own or its cover. */
+  private make(tab: Tab, events: TabViewEvents, host: WindowHost, cover: boolean): TabView {
     const view = new ElectronTabView(
       new WebContentsView({
         webPreferences: pageWebPreferences(this.sessions.get(tab.containerId))
       }),
-      this
+      this,
+      cover
     )
     view.wire(events)
     view.attachTo(host)
-    this.track(view, tab.id, false)
+    this.track(view, tab.id, !cover)
     return view
   }
 

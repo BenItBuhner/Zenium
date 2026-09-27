@@ -580,7 +580,7 @@ export class TabCaptureApi {
    */
   private consumerById(tabId: number): { url: string; wc: WebContents | undefined } {
     const tab = this.host.model.zenTab(tabId)
-    if (tab) return { url: tab.url, wc: this.host.model.webContentsOf(tab) }
+    if (tab) return { url: this.host.model.urlOf(tab), wc: this.host.model.webContentsOf(tab) }
     const popup = this.host.model.popupForTabId(tabId)
     if (!popup) throw new ApiError(TAB_CAPTURE_INVALID_TAB_ERROR)
     const wc = popup.bw.webContents
@@ -596,7 +596,9 @@ export class TabCaptureApi {
   }
 
   private requireGrant(extensionId: string, chromeTabId: number, target: Tab): void {
-    if (!this.activeTab.allowsCapture(extensionId, chromeTabId) || !isCapturableUrl(target.url)) {
+    // The page's address beneath the reader's cover too: the capture is of the tab's page.
+    const url = this.host.model.urlOf(target)
+    if (!this.activeTab.allowsCapture(extensionId, chromeTabId) || !isCapturableUrl(url)) {
       throw new ApiError(TAB_CAPTURE_GRANT_ERROR)
     }
   }
