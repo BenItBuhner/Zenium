@@ -1792,7 +1792,7 @@ describe('a hidden tab page and the window', () => {
     expect(engine(panes[3]).bounds).toEqual(parkedAt(boxes[3], 3))
     // The cover lifts with the first pane closed meanwhile: its corner is free for the next.
     window.zen.contentHidden = false
-    panes[0].coverLifted()
+    panes[0].hideParked()
     expect(panes[0].parkedCorner()).toBeNull()
     panes.slice(1).forEach((pane, i) => {
       pane.setBounds(boxes[i + 1])
@@ -1838,10 +1838,10 @@ describe('a hidden tab page and the window', () => {
     expect(engine(view).visible).toBe(true)
     // The uncovered layout placed another tab; the window host tells the rest.
     window.zen.contentHidden = false
-    view.coverLifted()
+    view.hideParked()
     expect(engine(view)).toEqual({ visible: false, bounds: box })
     // Nothing for a view not parked.
-    view.coverLifted()
+    view.hideParked()
     expect(engine(view).visible).toBe(false)
     view.setVisible(true)
     expect(engine(view)).toEqual({ visible: true, bounds: box })
@@ -2030,7 +2030,7 @@ describe('a hidden tab page and the window', () => {
     window.zen.contentHidden = true
     view.setVisible(false)
     view.applyWindowVisible(false)
-    view.coverLifted()
+    view.hideParked()
     expect(view.parkedCorner()).toBeNull()
     view.applyWindowVisible(true)
     expect(engine(view)).toEqual({ visible: false, bounds: box })
@@ -2350,7 +2350,7 @@ describe('a hidden page an agent drives and the stage', () => {
     expect(log).toEqual([])
     // The cover lifts without the layout showing it: the hide, within the throttling.
     window.zen.contentHidden = false
-    view.coverLifted()
+    view.hideParked()
     expect(view.parkedCorner()).toBeNull()
     expect(log).toEqual(['throttling on', 'hidden', 'throttling off'])
     expect(stages).toHaveLength(0)
@@ -2361,7 +2361,7 @@ describe('a hidden page an agent drives and the stage', () => {
     view.setVisible(false)
     log.length = 0
     window.zen.contentHidden = false
-    view.coverLifted()
+    view.hideParked()
     expect(log).toEqual(['throttling on', 'hidden', 'shown', 'throttling off'])
     expect(staged()!.children).toEqual([view.view])
   })
@@ -2396,7 +2396,7 @@ describe('a hidden page an agent drives and the stage', () => {
     expect(stages).toHaveLength(0)
     expect(window.win.children).toEqual([view.view])
     window.zen.contentHidden = false
-    view.coverLifted()
+    view.hideParked()
     expect(view.parkedCorner()).toBeNull()
     expect(staged()!.children).toEqual([view.view])
     expect(window.win.children).toEqual([])

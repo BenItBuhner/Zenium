@@ -851,6 +851,26 @@ export class TabManager {
   // ---------------------------------------------------------------------------
   // The reader's cover (reader-30)
   // ---------------------------------------------------------------------------
+  //
+  // Four things in the tree are called a cover. This section's is THE READER'S COVER, and each
+  // of the others goes by its own name where two of them meet:
+  //
+  // - The reader's cover – a second live page of the tab, the `zen://reader` document, laid out
+  //   over the tab's page while the page lives on beneath it: `cover`, `uncover`, `isCovered`,
+  //   `coveredPage` / `CoveredPage`, `viewsOf`, `TabViewHost.createCover`,
+  //   `ElectronTabView.cover` (W8-5). "The reader's cover", "the page beneath" in prose.
+  // - The chrome over the content – the renderer's chrome hiding the pages, `LayoutReport.
+  //   contentHidden` (an overlay, a sheet, the compact sidebar's reveal, a chrome page tab);
+  //   the desktop host PARKS a shown page under it rather than hiding it, a pixel in a window
+  //   corner (`ElectronTabView.park`, `parkable`, `hideParked`, W6-F5), and `ZenWindow.
+  //   applyLayout` counts what it hid under it (`hidUnderChrome`). "Under the chrome", "parked"
+  //   – never "covered".
+  // - The message strips – the bands along a view's top and bottom edges the chrome's toasts
+  //   and banners draw over, `ContentCover` (`ViewPlacement.cover`, `TabView.setCover`); the
+  //   Android host clips the page out of them. "The message strips" in prose.
+  // - The page cover – the picture the chrome paints where the live page is, so that hiding the
+  //   page swaps it for its likeness: the renderer's `lib/cover.ts` and `CoverImage`, the
+  //   Android chassis' snapshots, the tab hover card's preview. "The page cover", "the picture".
 
   /**
    * Raise the reader's cover over the tab's page: a second live page of the tab loading `url`
