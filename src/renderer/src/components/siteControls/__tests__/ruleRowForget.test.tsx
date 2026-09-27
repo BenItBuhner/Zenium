@@ -55,7 +55,8 @@ function cameraSheet(): RowGroup[] {
     platform: 'linux',
     permissionDefaults: {},
     permissionRules: RULES,
-    deviceGrants: []
+    deviceGrants: [],
+    settings: { autoRevokeUnusedPermissions: true }
   } as unknown as UIState
   const camera = findRow(siteSettingsGroups({ state } as unknown as SectionContext), 'sites:camera')
   if (!camera || camera.kind !== 'item') throw new Error('no camera row')
