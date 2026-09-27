@@ -21,8 +21,13 @@ name: Android shortcut helper demo
 # ShortcutHelperDemo.kt. Dispatch-only, like the tablet layout demo (#273's recipe: a push of this
 # file on its branch registers the workflow and is the run while the PR is open; the branch-scoped
 # push trigger goes before the PR is ready). The build, the emulator and its caches live in
-# android-emulator-demo.yml; this file picks the driver, the profile and the display. The nightly
-# sweep runs the driver on its tablet shard (.github/nightly-drivers/shortcut-helper.json).
+# android-emulator-demo.yml; this file picks the driver, the profile and the display. The gesture
+# script starts the driver once more on the same boot when the SYSTEM kills its process before the
+# recording handshake (the Google image's GMS restarts itself for a module update a minute or so
+# after its first boot and the ActivityManager takes every process bound to its FontsProvider with
+# it – run 36286515814's driver, 6 s in); an app that crashed on its own still fails the run at
+# once. The nightly sweep runs the driver on its tablet shard
+# (.github/nightly-drivers/shortcut-helper.json).
 on:
   workflow_dispatch:
   push:
