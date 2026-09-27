@@ -1,10 +1,11 @@
 import { X } from 'lucide-react'
 import type { CSSProperties, ReactNode, JSX } from 'react'
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef } from 'react'
 import { useBackDismissal } from '@renderer/lib/back'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { placeUnder, popOrigin, type Anchor } from '@renderer/lib/anchor'
 import { useViewport } from '@renderer/lib/formFactor'
+import { returnFocusTo } from '@renderer/lib/popover'
 import {
   ChromePortal,
   measuringStyle,
@@ -45,6 +46,21 @@ interface Props {
    * the header. Placed once on open, as popovers are; a resize closes it. The scrim stays the
    * content area's: a press on the page under the panel closes it as at the seat. A phone
    * ignores it – its panel is the bottom sheet.
+   *
+   * Hanging there the panel IS a §9.20 popover and wears the popover's chrome, the chassis's
+   * `.zen-v2-panel` (extensions.css: the card radius 8 at §2's squircle, the opaque `--v2-panel`
+   * fill, `--v2-border`, `--v2-shadow-panel`), at one of the three popover widths (`width`, the
+   * caller's `POPOVER_WIDTH`) – not the seat's `.zen-panel`, the sidebar's 16-radius
+   * translucent card, which the seated panel keeps exactly. §9.20 as the lead amended it on
+   * #572: the chrome is the seat's, never the content's – one picker, two seats, two chromes.
+   * Its header is the same §9.7 block without the close: a popover closes by Escape, by a
+   * press outside it or by its anchor's, and carries no X (§9.20); the block's height is the
+   * title's own (main.css: the 28 close equals the 3 + 22 + 3 the title block stands in, so
+   * a title with a description measures 78 with or without it). And it takes the focus as a
+   * popover does (§9.22): the container holds it as it opens – a picker is a choice, not a
+   * form: no control is preselected, the first Tab enters it – and gives it back to the
+   * control it hung from as it leaves, however it leaves, unless something else took it
+   * meanwhile (`returnFocusTo`). The seated panel moves no focus, as it never did.
    */
   anchor?: OverlayAnchor
   /** Stable hook for the desktop boot smoke (`data-testid` on the panel). */
@@ -95,6 +111,35 @@ export function OverlayShell({
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [anchored])
+  // The popover's focus (§9.22; the confirm dialog's pattern, dialogs/ConfirmDialog.tsx): the
+  // opener is whatever held the focus as the panel came – the Settings row's button under the
+  // press that opened it – and not `body`; the container takes the focus; as the panel leaves
+  // the opener gets it back, but only a focus the leave loses – one still on the panel, fallen
+  // to `body`, or under an `inert` – and never one the user or a dialog opened over the way
+  // out has already placed. The seat does none of this: the space menu's and the palette's
+  // picker leave the focus where it was, as they always did.
+  const titleId = useId()
+  useEffect(() => {
+    if (!anchored) return
+    const root = panelRef.current
+    if (!root) return
+    const active = document.activeElement
+    const opener =
+      active instanceof HTMLElement && active !== document.body && !root.contains(active)
+        ? active
+        : null
+    root.focus({ preventScroll: true })
+    return () => {
+      if (!opener?.isConnected) return
+      const now = document.activeElement
+      const lost =
+        !now ||
+        now === document.body ||
+        root.contains(now) ||
+        now.closest('[inert], [data-leaving]') !== null
+      if (lost) returnFocusTo(opener)
+    }
+  }, [anchored])
   useBackDismissal('overlay', {
     travel: 360,
     render: (v) => {
@@ -119,16 +164,22 @@ export function OverlayShell({
   )
   // A panel is a page surface (design language v2 §9.29): its controls draw in the page family.
   // Hanging from a control it is a `fixed` box in the chrome layer at the place `placeUnder`
-  // gave it, with the pop; at its seat it drops in where its variant puts it.
+  // gave it, with the pop, in the popover's chrome (`.zen-v2-panel`) and holding the focus as
+  // a dialog does – `role="dialog"` named by its title, `tabindex="-1"` so the held container
+  // draws no ring (main.css's container rule) while its controls keep theirs; at its seat it
+  // drops in where its variant puts it, in the sidebar card's chrome (`.zen-panel`), as today.
   const panel = (
     <div
       ref={panelRef}
       data-surface="page"
       data-anchored={anchored || undefined}
+      role={anchored ? 'dialog' : undefined}
+      aria-labelledby={anchored ? titleId : undefined}
+      tabIndex={anchored ? -1 : undefined}
       style={anchored ? placed : { transformOrigin: '50% 100%' }}
       className={
         anchored
-          ? 'zen-panel zen-animate-pop fixed z-[70] flex flex-col overflow-hidden'
+          ? 'zen-v2-panel zen-animate-pop fixed z-[70] flex flex-col overflow-hidden'
           : cn(
               'zen-panel zen-animate-in flex flex-col overflow-hidden',
               // Docked panels take the whole content card on phones; dialogs hug the bottom edge.
@@ -151,7 +202,10 @@ export function OverlayShell({
         // §9.16 bar header, 56 tall with the 44 close at a 6 margin. The close is the §9.3
         // icon button, named for the screen reader without the keyboard hint a tooltip carries
         // on a phone (§9.31). With a `description` the title is a §9.23 block – the line 4
-        // under it – and the close stays on the title's line (main.css).
+        // under it – and the close stays on the title's line (main.css). Hanging from a control
+        // the header keeps the block and drops the close: a popover has none (§9.20) – Escape,
+        // a press outside and the anchor's own press close it – and the block's 78 with a
+        // description is the title's, not the button's (the `anchor` doc).
         <header
           className="zen-overlay-header"
           data-size={variant === 'full' ? 'page' : 'panel'}
@@ -159,22 +213,28 @@ export function OverlayShell({
         >
           {description ? (
             <div className="zen-overlay-title-block">
-              <h2 className="zen-overlay-title">{title}</h2>
+              <h2 id={anchored ? titleId : undefined} className="zen-overlay-title">
+                {title}
+              </h2>
               <p className="zen-overlay-description">{description}</p>
             </div>
           ) : (
-            <h2 className="zen-overlay-title">{title}</h2>
+            <h2 id={anchored ? titleId : undefined} className="zen-overlay-title">
+              {title}
+            </h2>
           )}
           {actions}
-          <button
-            type="button"
-            className="zen-v2-icon-button"
-            title={phone ? undefined : 'Close (Esc)'}
-            aria-label="Close"
-            onClick={() => closeOverlay()}
-          >
-            <X aria-hidden />
-          </button>
+          {!anchored && (
+            <button
+              type="button"
+              className="zen-v2-icon-button"
+              title={phone ? undefined : 'Close (Esc)'}
+              aria-label="Close"
+              onClick={() => closeOverlay()}
+            >
+              <X aria-hidden />
+            </button>
+          )}
         </header>
       )}
       {scroll ? (
