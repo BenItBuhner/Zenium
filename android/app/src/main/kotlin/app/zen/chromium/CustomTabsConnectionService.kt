@@ -1,10 +1,13 @@
 package app.zen.chromium
 
+import android.content.Intent
 import android.net.Uri
 import android.os.Binder
 import android.os.Bundle
 import android.os.Handler
+import android.os.IBinder
 import android.os.Looper
+import android.os.Parcel
 import android.util.Log
 import android.webkit.CookieManager
 import android.webkit.WebSettings
@@ -23,11 +26,48 @@ import java.util.concurrent.TimeUnit
  * `warmup` brings the WebView up, `newSession` gives the caller a session whose callback the
  * custom tab later reports navigation events to, and `mayLaunchUrl` resolves the likely hosts
  * ahead of time; `setEngagementSignalsCallback` keeps the callback the tab's scrolls and its
- * end are reported to (CCT-14). The rest of the protocol (post messages, Trusted Web
- * Activities, file transfer) is declined.
+ * end are reported to (CCT-14); `newAuthTabSession` gives an Auth Tab's client its session
+ * (CCT-13, [AuthTabSession] – the one transaction the 1.8.0 library's binder does not know,
+ * answered by [AuthTabBinder] in front of it). The rest of the protocol (post messages, Trusted
+ * Web Activities, file transfer) is declined.
  */
 class CustomTabsConnectionService : CustomTabsService() {
     private val main = Handler(Looper.getMainLooper())
+
+    override fun onBind(intent: Intent?): IBinder = AuthTabBinder(super.onBind(intent))
+
+    /**
+     * The service's binder with `newAuthTabSession` answered (androidx.browser 1.9.0's
+     * `ICustomTabsService`, transaction [AuthTabSession.TRANSACTION_NEW_AUTH_TAB_SESSION]);
+     * every other transaction – and the interface, ping and dump ones – is the library's own
+     * binder's, handed the same parcel. The client's death cleans its session up, as the
+     * library's stub does for a custom tab's.
+     */
+    private inner class AuthTabBinder(private val inner: IBinder) : Binder() {
+        init {
+            attachInterface(null, AuthTabSession.SERVICE_DESCRIPTOR)
+        }
+
+        override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+            if (code != AuthTabSession.TRANSACTION_NEW_AUTH_TAB_SESSION) return inner.transact(code, data, reply, flags)
+            data.enforceInterface(AuthTabSession.SERVICE_DESCRIPTOR)
+            val session = AuthTabSession.readNewSession(data)
+            val registered = newAuthTabSession(session)
+            reply?.writeNoException()
+            reply?.writeInt(if (registered) 1 else 0)
+            return true
+        }
+    }
+
+    /** An Auth Tab's client made a session: kept with its package, so the tab can report to it and name its caller. */
+    private fun newAuthTabSession(session: AuthTabSession): Boolean {
+        val uid = Binder.getCallingUid()
+        val packageName = packageManager.getPackagesForUid(uid)?.firstOrNull()
+        CustomTabSessions.registerAuth(session, packageName)
+        runCatching { session.callback?.linkToDeath({ CustomTabSessions.removeAuth(session) }, 0) }
+        Log.d(TAG, "auth tab session for ${packageName ?: "uid $uid"}")
+        return true
+    }
 
     override fun warmup(flags: Long): Boolean {
         // Loading the WebView provider is what a cold custom tab would otherwise pay for first.
@@ -137,9 +177,26 @@ object CustomTabSessions {
     private val live = ConcurrentHashMap<CustomTabsSessionToken, Visuals>()
     /** The clients' `EngagementSignalsCallback`s, one per session that asked (CCT-14). */
     private val engagement = ConcurrentHashMap<CustomTabsSessionToken, EngagementSignalsCallback>()
+    /** The Auth Tab sessions clients hold open (CCT-13), by their callback binder or pending id. */
+    private val authSessions = ConcurrentHashMap<AuthTabSession, Session>()
 
     fun register(token: CustomTabsSessionToken, packageName: String?) {
         sessions[token] = Session(packageName)
+    }
+
+    fun registerAuth(session: AuthTabSession, packageName: String?) {
+        authSessions[session] = Session(packageName)
+    }
+
+    fun removeAuth(session: AuthTabSession) {
+        authSessions.remove(session)
+    }
+
+    fun packageOfAuth(session: AuthTabSession?): String? = session?.let { authSessions[it]?.packageName }
+
+    /** `AuthTabCallback.onNavigationEvent` to the Auth Tab's client, if it holds a session with a callback. */
+    fun authNavigationEvent(session: AuthTabSession?, event: Int) {
+        session?.navigationEvent(event)
     }
 
     fun likely(token: CustomTabsSessionToken, url: String?) {

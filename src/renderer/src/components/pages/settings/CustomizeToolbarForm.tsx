@@ -1,5 +1,13 @@
 import type { JSX, ReactNode } from 'react'
-import { ArrowRight, BookOpenText, Download, Languages, SquarePlay, Star } from 'lucide-react'
+import {
+  ArrowRight,
+  BookOpenText,
+  Download,
+  Languages,
+  MonitorDown,
+  SquarePlay,
+  Star
+} from 'lucide-react'
 import { resolveDownloadSettings } from '@shared/downloads'
 import { toolbarPinned, withToolbarPin, type ToolbarControl } from '@shared/toolbarPins'
 import type { Settings, UIState } from '@shared/types'
@@ -74,6 +82,7 @@ export function CustomizeToolbarForm({
     controlRow('forward', 'Forward', <ArrowRight />),
     controlRow('reader', 'Reader View', <BookOpenText />, 'Shows on pages with an article.'),
     controlRow('translate', 'Translate', <Languages />),
+    controlRow('install', 'Install app', <MonitorDown />, 'Shows on pages that can be installed.'),
     controlRow('star', 'Bookmark this page', <Star />),
     controlRow('media', 'Media', <SquarePlay />, 'Shows while media plays.'),
     {
