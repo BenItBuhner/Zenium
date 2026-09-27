@@ -16,8 +16,10 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
+import android.view.animation.AnimationUtils
 import android.view.animation.PathInterpolator
 import android.widget.FrameLayout
+import androidx.annotation.ColorInt
 import org.json.JSONObject
 import kotlin.math.roundToInt
 
@@ -37,11 +39,13 @@ class HistoryNavBubbleFrame(
     val scale: Float,
     val alpha: Float,
     /**
-     * Letting go would navigate – the drag's state as the chrome sends it. The disc draws no mark
-     * of its own for it (v2 §11.9: the threshold shows as the full disc and the haptic).
+     * Letting go would navigate – the drag's state as the chrome sends it. The disc shows it as
+     * Chrome's does: the arrow (and the caption, in the arrow's ink) tints to the accent over
+     * 250 ms as it comes on and back as it goes off ([ArmedTint]; the lead's 04:34 ruling, v2 §11.9
+     * amended for the arrow alone); the pill's fill and hairline never tint.
      */
     val armed: Boolean,
-    /** Motion is reduced: the leave fades over 120 ms and nothing else animates; the box still follows the finger (v2 §11.3, §11.9). */
+    /** Motion is reduced: the leave fades over 120 ms and the tint rides 120 ms; nothing else animates; the box still follows the finger (v2 §11.3, §11.9). */
     val reduced: Boolean,
     /**
      * The page frame's box: the disc is drawn only inside it, as the DOM disc under the frame's
@@ -178,6 +182,106 @@ class BubbleThresholdTap {
 }
 
 /**
+ * The arrow's tint as the drag arms, on the frames the chrome sends and the clock between them:
+ * Chrome's `NavigationBubble` runs its arrow's tint from the ink to the accent over 250 ms as
+ * `willNavigate()` turns true and back over 250 ms as it turns false (152.0.7977.89
+ * `NavigationBubble.java` l.51 `COLOR_TRANSITION_DURATION_MS`, l.101–102 the colour animator,
+ * l.201–206 `setImageTint`) – a `ValueAnimator` reversed from wherever it stands, so a finger that
+ * eases back under the threshold mid-tint takes the colour back from where it is, with no jump.
+ * This keeps the same: a value 0 (the ink) to 1 (the accent) that moves toward its target at the
+ * leg's rate, the rising `armed` setting the target to 1 and the falling one to 0, each leg
+ * starting from the value as it stands. Under reduced motion the leg is v2 §11.3's 120 ms – a
+ * shorter tween, not a jump. A null frame (the bubble down) resets it, so the next drag starts in
+ * the ink. The lead's 04:34 ruling, v2 §11.9 amended for the arrow alone: the caption wears the
+ * same ink, the pill's fill and hairline never tint ([bubbleInks]). A plain class on a clock it
+ * is handed, so the JVM holds it without the view; the DOM disc runs the same class in TS
+ * (`lib/historyNav.ts` `ArmedTint`), writing the value per frame for the stylesheet to mix.
+ */
+class ArmedTint {
+    /** Where the tint stands: 0 the text ink, 1 the accent. */
+    var value = 0f
+        private set
+    private var target = 0f
+    private var durationMs = TINT_MS
+    /** The leg under way, as it started: the value it left from and when – each step lands where the clock says, no residue. */
+    private var legFrom = 0f
+    private var legStartMs = 0L
+
+    /** The tint has a way to go: the view keeps stepping it between the chrome's frames. */
+    val running: Boolean get() = value != target
+
+    /**
+     * A frame's armed flag (null: the bubble is down – the tint is reset at once) and reduced flag,
+     * at [nowMs] on the animation clock; the value as it stands on this frame. A change of target
+     * starts a leg from the value as it stands; the same target lets the leg run on.
+     */
+    fun take(frameArmed: Boolean?, reduced: Boolean, nowMs: Long): Float {
+        if (frameArmed == null) {
+            value = 0f
+            target = 0f
+            legFrom = 0f
+            legStartMs = nowMs
+            return value
+        }
+        step(nowMs)
+        val duration = if (reduced) REDUCED_TINT_MS else TINT_MS
+        if (duration != durationMs) {
+            durationMs = duration
+            legFrom = value
+            legStartMs = nowMs
+        }
+        val next = if (frameArmed) 1f else 0f
+        if (next != target) {
+            target = next
+            legFrom = value
+            legStartMs = nowMs
+        }
+        return value
+    }
+
+    /** The clock at [nowMs]: the value the leg's rate puts between where it left from and its target, and no further. */
+    fun step(nowMs: Long): Float {
+        if (value == target) return value
+        val travel = (nowMs - legStartMs).coerceAtLeast(0L).toFloat() / durationMs
+        value = if (target > legFrom) (legFrom + travel).coerceAtMost(target) else (legFrom - travel).coerceAtLeast(target)
+        return value
+    }
+
+    companion object {
+        /** Chrome's `COLOR_TRANSITION_DURATION_MS` (`NavigationBubble.java` l.51); `lib/historyNav.ts` `TINT_MS`. */
+        const val TINT_MS = 250L
+        /** Reduced motion's tween (v2 §11.3's 120 ms, `REDUCED_FADE_MS`; `lib/historyNav.ts` `REDUCED_TINT_MS`). */
+        const val REDUCED_TINT_MS = 120L
+    }
+}
+
+/** The pill's colours at one tint ([bubbleInks]): the arrow's stroke, the caption's text, the fill and the hairline. */
+data class BubbleInks(@ColorInt val arrow: Int, @ColorInt val caption: Int, @ColorInt val fill: Int, @ColorInt val border: Int)
+
+/**
+ * The pill's colours at a tint of [tint] (0 the ink, 1 the accent): one ink per pill – the arrow's
+ * stroke and the caption's text are the same mix of the text ink and the accent (the lead's 04:34
+ * ruling (a) and (d)); the fill and the hairline are the panel and the border whatever the tint.
+ * A top-level function, so the JVM holds it without the view.
+ */
+fun bubbleInks(@ColorInt text: Int, @ColorInt accent: Int, @ColorInt panel: Int, @ColorInt border: Int, tint: Float): BubbleInks {
+    val ink = lerpArgb(text, accent, tint)
+    return BubbleInks(arrow = ink, caption = ink, fill = panel, border = border)
+}
+
+/** [from] toward [to] by [t] (clamped to 0..1) per ARGB channel, rounded; the endpoints exact. Plain bit ops: `android.graphics.Color` is a stub on the JVM. */
+@ColorInt
+fun lerpArgb(@ColorInt from: Int, @ColorInt to: Int, t: Float): Int {
+    val f = t.coerceIn(0f, 1f)
+    fun channel(shift: Int): Int {
+        val a = (from ushr shift) and 0xFF
+        val b = (to ushr shift) and 0xFF
+        return (a + (b - a) * f).roundToInt().coerceIn(0, 255)
+    }
+    return (channel(24) shl 24) or (channel(16) shl 16) or (channel(8) shl 8) or channel(0)
+}
+
+/**
  * The history navigation bubble (GN-04) as a view above the pages. The page WebViews are layered
  * above the chrome's ([TabHost.create] appends them to the root the chrome sits at the bottom
  * of; `ContentCover.kt`), so the disc the chrome lays out at a page's side could never show
@@ -186,15 +290,20 @@ class BubbleThresholdTap {
  * added above the root, and draws what the chrome's disc draws (v2 §11.9): a 44 dp disc of the
  * panel token with the hairline and the panel's shadow, round a 20 dp arrow (lucide's
  * `arrow-left` / `arrow-right` at stroke 1.75, as `.zen-histnav-glyph svg` sets it) in the text
- * ink. The chrome's machine drives it per frame ([apply]) on translation, scale and alpha alone
+ * ink. The chrome's machine drives it per frame ([apply]) on translation, scale and alpha
  * – the disc grows from .6 to full on the chrome's spring as the drag approaches the threshold,
- * and the threshold itself shows as the full disc and the haptic, no tint. Touches pass through
- * it, and it is nothing to accessibility, as the DOM disc is (`pointer-events: none`,
- * `aria-hidden`).
+ * and the threshold shows as the full disc, the haptic, and the arrow's tint: over Chrome's 250 ms
+ * the arrow goes to the accent as the drag arms and back as it disarms ([ArmedTint]; the lead's
+ * 04:34 ruling, v2 §11.9 amended for the arrow alone), the caption in the same ink, the fill and
+ * the hairline never tinted. The tint is the one thing the view animates between the chrome's
+ * frames, on its own animation ticks while it has a way to go. Touches pass through it, and it
+ * is nothing to accessibility, as the DOM disc is (`pointer-events: none`, `aria-hidden`).
  *
- * The colours are the v2 tokens through [V2Ink] (`V2TokensPinTest` holds them to the CSS); the
- * shadow is the view's elevation over the disc's outline, the platform's approximation of
- * `--v2-shadow-panel` (`0 2px 6px rgb(0 0 0 / 0.2)`).
+ * The colours are the v2 tokens through [V2Ink] (`V2TokensPinTest` holds them to the CSS): the
+ * panel, the border, the text ink, and the accent the chrome computes for `--v2-accent` – what
+ * `--v2-control-accent` resolves to on the page surface the disc is drawn in – handed over with
+ * the theme (`Host.applyTheme` → [retint]). The shadow is the view's elevation over the disc's
+ * outline, the platform's approximation of `--v2-shadow-panel` (`0 2px 6px rgb(0 0 0 / 0.2)`).
  *
  * At the history's first page the armed disc widens into a pill with Chrome's caption – 'Close
  * tab' / 'Close Zenium', as the chrome words it (`NavigationBubble.showCaption`; the
@@ -232,6 +341,20 @@ class HistoryNavBubbleView(context: Context) : View(context) {
     private var caption = 0f
     /** An opacity fade under reduced motion is running on the view's animator. */
     private var fading = false
+    /** The theme's tokens as last handed over ([retint]); the paints are mixed from them at the tint. */
+    private lateinit var tokens: V2Ink
+    /** The arrow's tint toward the accent while armed, stepped on the chrome's frames and the view's own ticks between them. */
+    private val tint = ArmedTint()
+    /** A tick is posted for the next animation frame. */
+    private var ticking = false
+    private val tick = Runnable {
+        ticking = false
+        if (visibility != VISIBLE || !tint.running) return@Runnable
+        tint.step(AnimationUtils.currentAnimationTimeMillis())
+        recolour()
+        invalidate()
+        scheduleTick()
+    }
 
     init {
         visibility = GONE
@@ -249,13 +372,31 @@ class HistoryNavBubbleView(context: Context) : View(context) {
         retint(V2Ink(context, dark = false))
     }
 
-    /** The theme in force: the panel, the hairline and the text ink (the chrome's live pair). */
+    /** The theme in force: the panel, the hairline, the text ink and the accent (the chrome's live pair), mixed at the tint as it stands. */
     fun retint(tokens: V2Ink) {
-        fill.color = tokens.panel
-        border.color = tokens.border
-        ink.color = tokens.text
-        text.color = tokens.text
+        this.tokens = tokens
+        recolour()
         invalidate()
+    }
+
+    /**
+     * The paints at the tint as it stands ([bubbleInks]): the arrow and the caption in one ink, the
+     * text ink to the accent by the tween's value (a linear mix, as the DOM disc's `color-mix` of the
+     * same value is); the fill and the hairline the tokens'.
+     */
+    private fun recolour() {
+        val inks = bubbleInks(tokens.text, tokens.accent, tokens.panel, tokens.border, tint.value)
+        ink.color = inks.arrow
+        text.color = inks.caption
+        fill.color = inks.fill
+        border.color = inks.border
+    }
+
+    /** One redraw per animation frame while the tint has a way to go, whether or not the chrome sends frames meanwhile. */
+    private fun scheduleTick() {
+        if (ticking || !tint.running) return
+        ticking = true
+        postOnAnimation(tick)
     }
 
     /** One frame from the chrome; null takes the bubble down at once. */
@@ -292,6 +433,15 @@ class HistoryNavBubbleView(context: Context) : View(context) {
             invalidateOutline()
             invalidate()
         }
+        // The tint's frame: the value as it stands at this clock, the target from `armed`; a
+        // redraw only while it moves, and the view's own ticks carry it between the chrome's frames.
+        val tintBefore = tint.value
+        tint.take(frame.armed, frame.reduced, AnimationUtils.currentAnimationTimeMillis())
+        if (tint.value != tintBefore) {
+            recolour()
+            invalidate()
+        }
+        scheduleTick()
         translationX = frame.leftPx
         translationY = frame.topPx
         scaleX = frame.scale
@@ -310,6 +460,16 @@ class HistoryNavBubbleView(context: Context) : View(context) {
         override fun toString(): String = "caption=${text?.let { "'$it'" } ?: "none"} extent=${"%.2f".format(extent)} pill=${"%.0f".format(pillWidthPx)}px"
     }
 
+    /** The tint as drawn, for the harness: where it stands (0 the ink, 1 the accent) and the arrow's and the caption's paint colours. */
+    val shownTint: ShownTint get() = ShownTint(tint.value, ink.color, text.color, fill.color, border.color)
+
+    class ShownTint(val value: Float, @ColorInt val arrow: Int, @ColorInt val caption: Int, @ColorInt val fill: Int, @ColorInt val border: Int) {
+        override fun toString(): String =
+            "tint=${"%.2f".format(value)} arrow=${hex(arrow)} caption=${hex(caption)} fill=${hex(fill)} border=${hex(border)}"
+
+        private fun hex(color: Int): String = "#%08X".format(color)
+    }
+
     private fun hide() {
         animate().cancel()
         fading = false
@@ -317,6 +477,13 @@ class HistoryNavBubbleView(context: Context) : View(context) {
         scaleX = 1f
         scaleY = 1f
         visibility = GONE
+        // Down: the tint is reset for the next drag, its tick dropped.
+        removeCallbacks(tick)
+        ticking = false
+        if (tint.value != 0f || tint.running) {
+            tint.take(null, false, AnimationUtils.currentAnimationTimeMillis())
+            recolour()
+        }
     }
 
     /** The frame's opacity: set outright, save reduced motion's leave, the one 120 ms fade ([bubbleAlphaStep]). */

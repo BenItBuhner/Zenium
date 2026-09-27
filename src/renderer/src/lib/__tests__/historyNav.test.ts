@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  ArmedTint,
   BUBBLE_FADE_IN,
   BUBBLE_MIN_SCALE,
   BUBBLE_SIZE,
@@ -16,13 +17,97 @@ import {
   NAV_THRESHOLD,
   navGrowth,
   navMotion,
+  REDUCED_TINT_MS,
   releaseNavigates,
+  TINT_MS,
   type HistoryNavEdge,
   type HistoryNavFrame,
   type HistoryNavState
 } from '../historyNav'
 import type { CloseTarget } from '../back'
 import { rubberBand } from '../gestures/swipe'
+
+// The arrow's tint (`ArmedTint`; the lead's 04:34 ruling, v2 §11.9 amended for the arrow alone):
+// Chrome's 250 ms to the accent as the drag arms, back as it disarms, from wherever it stands. The
+// same cases hold the Kotlin twin (`HistoryNavBubbleFrameTest`), so the two discs tint alike.
+describe("the arrow's tint as the drag arms (Chrome NavigationBubble's 250 ms)", () => {
+  it('is 250 ms up and 120 ms reduced, as the fade', () => {
+    expect(TINT_MS).toBe(250)
+    expect(REDUCED_TINT_MS).toBe(120)
+  })
+
+  it('starts the tween on the rising armed and lands at the accent at 250 ms, held there', () => {
+    const tint = new ArmedTint()
+    expect(tint.take(false, false, 0)).toBe(0)
+    expect(tint.take(false, false, 50)).toBe(0)
+    expect(tint.running).toBe(false)
+    // The crossing frame is still the ink; the tween starts here.
+    expect(tint.take(true, false, 100)).toBe(0)
+    expect(tint.running).toBe(true)
+    expect(tint.step(150)).toBeCloseTo(0.2, 9)
+    expect(tint.step(250)).toBeCloseTo(0.6, 9)
+    expect(tint.step(350)).toBe(1)
+    expect(tint.running).toBe(false)
+    expect(tint.step(1_000)).toBe(1)
+    expect(tint.take(true, false, 1_400)).toBe(1)
+  })
+
+  it('runs back from where it stands on the falling armed', () => {
+    const tint = new ArmedTint()
+    tint.take(true, false, 0)
+    expect(tint.step(250)).toBe(1)
+    expect(tint.take(false, false, 400)).toBe(1)
+    expect(tint.running).toBe(true)
+    expect(tint.step(500)).toBeCloseTo(0.6, 9)
+    expect(tint.step(600)).toBeCloseTo(0.2, 9)
+    expect(tint.step(650)).toBe(0)
+    expect(tint.running).toBe(false)
+  })
+
+  it('reverses a re-cross mid-tween from the value as it stands – no jump either way', () => {
+    const tint = new ArmedTint()
+    tint.take(true, false, 0)
+    expect(tint.take(false, false, 100)).toBeCloseTo(0.4, 9)
+    expect(tint.step(150)).toBeCloseTo(0.2, 9)
+    expect(tint.take(true, false, 150)).toBeCloseTo(0.2, 9)
+    expect(tint.step(250)).toBeCloseTo(0.6, 9)
+    expect(tint.step(350)).toBe(1)
+  })
+
+  it('never overshoots either end, and a clock behind the leg moves nothing', () => {
+    const tint = new ArmedTint()
+    tint.take(true, false, 0)
+    expect(tint.step(5_000)).toBe(1)
+    tint.take(false, false, 5_000)
+    expect(tint.step(20_000)).toBe(0)
+    tint.take(true, false, 20_000)
+    expect(tint.step(19_000)).toBe(0)
+  })
+
+  it('resets when the bubble goes down, so the next drag starts in the ink', () => {
+    const tint = new ArmedTint()
+    tint.take(true, false, 0)
+    tint.step(250)
+    expect(tint.take(null, false, 900)).toBe(0)
+    expect(tint.running).toBe(false)
+    expect(tint.take(false, false, 30_000)).toBe(0)
+    expect(tint.take(true, false, 30_100)).toBe(0)
+    expect(tint.step(30_200)).toBeCloseTo(0.4, 9)
+    expect(tint.take(null, false, 30_200)).toBe(0)
+    expect(tint.running).toBe(false)
+  })
+
+  it('rides 120 ms under reduced motion, a tween still, both ways', () => {
+    const tint = new ArmedTint()
+    expect(tint.take(true, true, 0)).toBe(0)
+    expect(tint.step(60)).toBeCloseTo(0.5, 9)
+    expect(tint.step(120)).toBe(1)
+    expect(tint.running).toBe(false)
+    tint.take(false, true, 500)
+    expect(tint.step(560)).toBeCloseTo(0.5, 9)
+    expect(tint.step(620)).toBe(0)
+  })
+})
 
 describe('history navigation mapping (Chrome SideSlideLayout; v2 §11.3 input rule)', () => {
   it("pins Chrome's figures: 32 dp drag distance, three of them to navigate, a third per sample", () => {

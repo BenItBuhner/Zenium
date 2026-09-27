@@ -228,6 +228,95 @@ export function captionText(closeTarget: CloseTarget): string | null {
   }
 }
 
+/**
+ * Chrome's `COLOR_TRANSITION_DURATION_MS` (`NavigationBubble.java` l.51): the arrow's tint to the
+ * accent as the drag arms, and back as it disarms.
+ */
+export const TINT_MS = 250
+/** The tint under reduced motion: §11.3's 120 ms, a tween still (the lead's 04:34 ruling). */
+export const REDUCED_TINT_MS = REDUCED_FADE_MS
+/**
+ * The custom property the DOM disc writes the tint to, 0 the text ink to 1 the accent, and
+ * `main.css` mixes the glyph's and the caption's `color` from (`.zen-histnav-glyph`,
+ * `.zen-histnav-caption`).
+ */
+export const TINT_PROPERTY = '--zen-histnav-tint'
+
+/**
+ * The arrow's tint as the drag arms, on the frames the machine paints and the clock between
+ * them: Chrome's `NavigationBubble` runs its arrow's tint from the ink to the accent over 250 ms
+ * as `willNavigate()` turns true and back over 250 ms as it turns false (152.0.7977.89
+ * `NavigationBubble.java` l.51, l.101–102 the colour animator, l.201–206 `setImageTint`) – a
+ * `ValueAnimator` reversed from wherever it stands, so a finger that eases back under the
+ * threshold mid-tint takes the colour back from where it is, with no jump. This keeps the same:
+ * a value 0 (the text ink) to 1 (the accent) moving toward its target at the leg's rate, the
+ * rising `armed` setting the target to 1 and the falling one to 0, each leg starting from the
+ * value as it stands, the ends exact. Under reduced motion the leg is §11.3's 120 ms – a shorter
+ * tween, not a jump (the lead's 04:34 ruling, v2 §11.9 amended for the arrow alone). A null
+ * frame (the bubble down) resets it, so the next drag starts in the ink.
+ *
+ * Written per frame, like `fadeOpacity`: the reduced-motion stylesheet removes every transition
+ * it does not re-declare and re-declares opacity fades alone (`reducedMotion.test.ts`), so a CSS
+ * transition could not carry a 120 ms colour tween; the same class in Kotlin drives the host's
+ * disc (`HistoryNavBubbleView.kt` `ArmedTint`), so both discs mix the one ink the one way. The
+ * DOM disc writes the value to `--zen-histnav-tint` for `main.css` to mix the arrow's and the
+ * caption's `color` from (one ink per pill); the fill and the hairline never tint.
+ */
+export class ArmedTint {
+  /** Where the tint stands: 0 the text ink, 1 the accent. */
+  value = 0
+  private target = 0
+  private durationMs = TINT_MS
+  /** The leg under way, as it started: the value it left from and when – each step lands where the clock says, no residue. */
+  private legFrom = 0
+  private legStartMs = 0
+
+  /** The tint has a way to go: the disc keeps stepping it between the machine's frames. */
+  get running(): boolean {
+    return this.value !== this.target
+  }
+
+  /**
+   * A frame's armed flag (null: the bubble is down – the tint is reset at once) and reduced flag,
+   * at `nowMs` on the animation clock; the value as it stands on this frame. A change of target
+   * starts a leg from the value as it stands; the same target lets the leg run on.
+   */
+  take(armed: boolean | null, reduced: boolean, nowMs: number): number {
+    if (armed === null) {
+      this.value = 0
+      this.target = 0
+      this.legFrom = 0
+      this.legStartMs = nowMs
+      return this.value
+    }
+    this.step(nowMs)
+    const duration = reduced ? REDUCED_TINT_MS : TINT_MS
+    if (duration !== this.durationMs) {
+      this.durationMs = duration
+      this.legFrom = this.value
+      this.legStartMs = nowMs
+    }
+    const next = armed ? 1 : 0
+    if (next !== this.target) {
+      this.target = next
+      this.legFrom = this.value
+      this.legStartMs = nowMs
+    }
+    return this.value
+  }
+
+  /** The clock at `nowMs`: the value the leg's rate puts between where it left from and its target, and no further. */
+  step(nowMs: number): number {
+    if (this.value === this.target) return this.value
+    const travel = Math.max(0, nowMs - this.legStartMs) / this.durationMs
+    this.value =
+      this.target > this.legFrom
+        ? Math.min(this.target, this.legFrom + travel)
+        : Math.max(this.target, this.legFrom - travel)
+    return this.value
+  }
+}
+
 // ---------------------------------------------------------------------------
 // The machine
 // ---------------------------------------------------------------------------

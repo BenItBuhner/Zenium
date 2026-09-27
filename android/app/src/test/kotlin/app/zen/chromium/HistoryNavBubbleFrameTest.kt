@@ -211,4 +211,138 @@ class HistoryNavBubbleFrameTest {
         assertFalse(tap.take(false))
         assertFalse(tap.take(null))
     }
+
+    // The arrow's tint (`ArmedTint`, stepped by `HistoryNavBubbleView` on the chrome's frames and
+    // its own ticks): Chrome's 250 ms to the accent as the drag arms, back as it disarms, from
+    // wherever it stands (the lead's 04:34 ruling, v2 §11.9 amended for the arrow alone).
+
+    @Test
+    fun theRisingArmedStartsTheTintTowardTheAccentOverChromes250ms() {
+        val tint = ArmedTint()
+        // The drag's frames up to the threshold: the ink, nothing running.
+        assertEquals(0f, tint.take(false, reduced = false, nowMs = 0L), 1e-6f)
+        assertEquals(0f, tint.take(false, reduced = false, nowMs = 50L), 1e-6f)
+        assertFalse(tint.running)
+        // The crossing frame: still the ink on that frame, the tween started.
+        assertEquals(0f, tint.take(true, reduced = false, nowMs = 100L), 1e-6f)
+        assertTrue(tint.running)
+        assertEquals(0.2f, tint.step(150L), 1e-6f)
+        assertEquals(0.6f, tint.step(250L), 1e-6f)
+        assertEquals(1f, tint.step(350L), 1e-6f)
+        // Done at 250 ms, held there; the frames past it with the finger held move nothing.
+        assertFalse(tint.running)
+        assertEquals(1f, tint.step(1_000L), 1e-6f)
+        assertEquals(1f, tint.take(true, reduced = false, nowMs = 1_400L), 1e-6f)
+        assertFalse(tint.running)
+    }
+
+    @Test
+    fun theFallingArmedRunsTheTintBackFromWhereItStands() {
+        val tint = ArmedTint()
+        tint.take(true, reduced = false, nowMs = 0L)
+        assertEquals(1f, tint.step(250L), 1e-6f)
+        // The finger eases back under the threshold: the value on that frame is kept, the target the ink.
+        assertEquals(1f, tint.take(false, reduced = false, nowMs = 400L), 1e-6f)
+        assertTrue(tint.running)
+        assertEquals(0.6f, tint.step(500L), 1e-6f)
+        assertEquals(0.2f, tint.step(600L), 1e-6f)
+        assertEquals(0f, tint.step(650L), 1e-6f)
+        assertFalse(tint.running)
+        assertEquals(0f, tint.step(900L), 1e-6f)
+    }
+
+    @Test
+    fun aReCrossMidTweenReversesWithoutAJump() {
+        val tint = ArmedTint()
+        tint.take(true, reduced = false, nowMs = 0L)
+        // 100 ms into the rise the finger eases back: the frame reads .4 and the fall starts from .4.
+        assertEquals(0.4f, tint.take(false, reduced = false, nowMs = 100L), 1e-6f)
+        assertEquals(0.2f, tint.step(150L), 1e-6f)
+        // And crosses again 50 ms later: the frame reads .2 and the rise resumes from .2 – no jump either way.
+        assertEquals(0.2f, tint.take(true, reduced = false, nowMs = 150L), 1e-6f)
+        assertEquals(0.6f, tint.step(250L), 1e-6f)
+        assertEquals(1f, tint.step(350L), 1e-6f)
+        assertFalse(tint.running)
+    }
+
+    @Test
+    fun theTintNeverOvershootsEitherEnd() {
+        val tint = ArmedTint()
+        tint.take(true, reduced = false, nowMs = 0L)
+        // A long gap between frames (the chrome idle with the finger held) lands on 1, not past it.
+        assertEquals(1f, tint.step(5_000L), 1e-6f)
+        tint.take(false, reduced = false, nowMs = 5_000L)
+        assertEquals(0f, tint.step(20_000L), 1e-6f)
+        // A clock that reads earlier than the last frame moves nothing.
+        tint.take(true, reduced = false, nowMs = 20_000L)
+        assertEquals(0f, tint.step(19_000L), 1e-6f)
+    }
+
+    @Test
+    fun theBubbleGoingDownResetsTheTintForTheNextDrag() {
+        val tint = ArmedTint()
+        tint.take(true, reduced = false, nowMs = 0L)
+        tint.step(250L)
+        // Down at the commit's end (or an abort) while armed and at the accent: the ink at once, nothing running.
+        assertEquals(0f, tint.take(null, reduced = false, nowMs = 900L), 1e-6f)
+        assertFalse(tint.running)
+        // The next drag's first frames are the ink whatever the clock says since; its crossing starts the tween afresh.
+        assertEquals(0f, tint.take(false, reduced = false, nowMs = 30_000L), 1e-6f)
+        assertEquals(0f, tint.take(true, reduced = false, nowMs = 30_100L), 1e-6f)
+        assertEquals(0.4f, tint.step(30_200L), 1e-6f)
+        // Down mid-tween: the same reset.
+        assertEquals(0f, tint.take(null, reduced = false, nowMs = 30_200L), 1e-6f)
+        assertFalse(tint.running)
+    }
+
+    @Test
+    fun reducedMotionRidesTheTintOver120msNotAJump() {
+        val tint = ArmedTint()
+        tint.take(false, reduced = true, nowMs = 0L)
+        assertEquals(0f, tint.take(true, reduced = true, nowMs = 0L), 1e-6f)
+        assertTrue(tint.running)
+        // v2 §11.3's 120 ms: a tween still – half way at 60 ms, done at 120.
+        assertEquals(0.5f, tint.step(60L), 1e-6f)
+        assertEquals(1f, tint.step(120L), 1e-6f)
+        assertFalse(tint.running)
+        // And back over the same 120 ms.
+        tint.take(false, reduced = true, nowMs = 500L)
+        assertEquals(0.5f, tint.step(560L), 1e-6f)
+        assertEquals(0f, tint.step(620L), 1e-6f)
+    }
+
+    @Test
+    fun theCaptionWearsTheArrowsInkAtEverySampleAndTheFillAndHairlineNeverTint() {
+        val text = 0xFF1F2328.toInt()
+        val accent = 0xFF3B82F6.toInt()
+        val panel = 0xFFFFFFFF.toInt()
+        val border = 0x1F000000
+        for (sample in listOf(0f, 0.1f, 0.25f, 0.5f, 0.75f, 0.9f, 1f)) {
+            val inks = bubbleInks(text, accent, panel, border, sample)
+            // One ink per pill (the lead's ruling (a)): the caption's text is the arrow's colour, whatever the tint.
+            assertEquals("caption ink at $sample", inks.arrow, inks.caption)
+            // The pill's fill and hairline are the panel and the border at every sample (ruling (d)).
+            assertEquals("fill at $sample", panel, inks.fill)
+            assertEquals("hairline at $sample", border, inks.border)
+        }
+        // The ends exact: the text ink at 0, the accent at 1.
+        assertEquals(text, bubbleInks(text, accent, panel, border, 0f).arrow)
+        assertEquals(accent, bubbleInks(text, accent, panel, border, 1f).arrow)
+    }
+
+    @Test
+    fun theInkMixesPerChannelBetweenTheTextAndTheAccent() {
+        // Black to white, half way: mid grey per channel, the alpha kept opaque.
+        assertEquals(0xFF808080.toInt(), lerpArgb(0xFF000000.toInt(), 0xFFFFFFFF.toInt(), 0.5f))
+        // The alpha channel mixes too; a tint past the ends is clamped.
+        assertEquals(0x80000000.toInt(), lerpArgb(0x00000000, 0xFF000000.toInt(), 0.5f))
+        assertEquals(0xFF3B82F6.toInt(), lerpArgb(0xFF1F2328.toInt(), 0xFF3B82F6.toInt(), 1.5f))
+        assertEquals(0xFF1F2328.toInt(), lerpArgb(0xFF1F2328.toInt(), 0xFF3B82F6.toInt(), -0.5f))
+        // A quarter of the way from the text ink to the accent, channel by channel.
+        val quarter = lerpArgb(0xFF1F2328.toInt(), 0xFF3B82F6.toInt(), 0.25f)
+        assertEquals(0xFF, quarter ushr 24)
+        assertEquals(0x1F + ((0x3B - 0x1F) * 0.25f).toInt(), (quarter shr 16) and 0xFF)
+        assertEquals(0x23 + Math.round((0x82 - 0x23) * 0.25f), (quarter shr 8) and 0xFF)
+        assertEquals(0x28 + Math.round((0xF6 - 0x28) * 0.25f), quarter and 0xFF)
+    }
 }
