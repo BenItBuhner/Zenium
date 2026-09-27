@@ -1566,6 +1566,110 @@ describe('the focus ring (§1, §4)', () => {
   })
 })
 
+/**
+ * The menu container's exemption from the ring rule (§9.22; pr-552 F1): both pointer forms,
+ * each with the pane chord's twin (§1 as amended, a11y-09) in the same rule.
+ */
+const MENU_EXEMPTION =
+  ".zen-v2-menu:focus-visible,\n:root[data-pointer='coarse'] .zen-v2-menu:focus-visible,\n.zen-v2-menu[data-keyboard-focus]:focus,\n:root[data-pointer='coarse'] .zen-v2-menu[data-keyboard-focus]:focus"
+
+describe('the chassis corner and the holders of focus (§2, §9.22; the W7-F4 slice)', () => {
+  /** A renderer source or stylesheet by its path under `src/renderer/src`. */
+  const read = (path: string): string =>
+    readFileSync(fileURLToPath(new URL(`../../${path}`, import.meta.url)), 'utf8')
+  const extensions = read('assets/extensions.css').replace(/\/\*[\s\S]*?\*\//g, '')
+  /** The declarations of the first `selector {` rule of a comment-free stylesheet text. */
+  const declarations = (source: string, selector: string): string[] => {
+    const at = source.indexOf(`${selector} {`)
+    expect(at, `rule "${selector}"`).toBeGreaterThanOrEqual(0)
+    const open = at + selector.length + 2
+    return (source.slice(open, source.indexOf('}', open)).match(/[a-z-]+:[^;]+;/g) ?? []).map((d) =>
+      d.trim()
+    )
+  }
+
+  it('gives the message card the squircle its radius 8 asks for, through the one corner token (§2; pr-543 N1)', () => {
+    // One token, `--zen-corner: squircle`, declared once in the theme block; a chassis class of
+    // radius 8 and up carries it as `corner-shape: var(--zen-corner)` beside its radius token –
+    // the popover and toolbar chassis (`.zen-v2-panel`, extensions.css) the pattern followed.
+    expect(css.match(/^ {2}--zen-corner: squircle;$/gm)).toHaveLength(1)
+    expect(declarations(extensions, '.zen-v2-panel')).toEqual(
+      expect.arrayContaining([
+        'border-radius: var(--v2-radius-card);',
+        'corner-shape: var(--zen-corner);'
+      ])
+    )
+    // The toast (the message card every host shows: `ToastCard`, `BannerCard`, `ScreenshotCard`
+    // and the capture toast, the phone's and the tablet's through `MessageLayer`) read the
+    // card radius and drew a circle of 8 where the toolbar and the popover beside it drew the
+    // squircle. The card reads the corner token now, right after its radius; an engine older
+    // than the property (an Android WebView before Chromium 139) ignores the declaration and
+    // draws the circle it drew before.
+    const card = block('.zen-message')
+    expect(card).toMatch(
+      /^ {4}border-radius: var\(--v2-radius-card\);\n {4}corner-shape: var\(--zen-corner\);$/m
+    )
+    expect(card.match(/corner-shape/g)).toHaveLength(1)
+    expect(bare).not.toMatch(/corner-shape:\s*squircle/)
+  })
+
+  it('exempts the menu container from the ring rule by name, once, after it, at both pointer weights (§9.22; pr-552 F1)', () => {
+    // `.zen-v2-menu` is `role="menu"` at `tabindex="0"` by design (MenuSheet.tsx; axe's
+    // scrollable-region-focusable reads a scroller's own tabindex), so the dialog exemption's
+    // `[tabindex='-1']` mark cannot reach it and its own `outline: none` at one class lost to the
+    // ring rule's two: a menu opened after an Escape had marked its anchor `:focus-visible`
+    // wore the 2 px ring round the whole panel. Exactly one rule names the container's
+    // `:focus-visible`, declares nothing but `outline: none`, and sits after the ring rule
+    // unlayered – the plain form (0,2,0) wins its tie by order, the `:root[data-pointer]` form
+    // (0,4,0) the coarse form's – each form with its pane-chord twin (focusRing.test.ts holds
+    // every ring rule to the twin; the chord names panes, never a menu).
+    const menu = read('components/menus/MenuSheet.tsx')
+    expect(menu).toMatch(
+      /role="menu"\n(?:[^\n]*\n)*? *tabIndex=\{0\}\n *className="zen-v2 zen-v2-panel zen-v2-menu /
+    )
+    const rules = [...bare.matchAll(/[^{}]*\.zen-v2-menu:focus-visible[^{]*\{([^}]*)\}/g)]
+    expect(rules).toHaveLength(1)
+    expect(rules[0]![0].split('{')[0]!.trim()).toBe(MENU_EXEMPTION)
+    expect(rules[0]![1]!.match(/[a-z-]+:[^;]+;/g)).toEqual(['outline: none;'])
+    const exemption = ruleAt(MENU_EXEMPTION)
+    expect(exemption).toBeGreaterThan(ruleAt(RING_RULE))
+    expect(nesting(exemption)).toBe(0)
+    expect(layered(exemption)).toBe(false)
+    // Not a `[role='menu'][tabindex='-1']` twin of the dialog rule: the container is exempted
+    // by its class, and the rule is the only one to read the mark on it.
+    expect(bare).not.toMatch(/\[role='menu'\]/)
+    expect(bare.match(/\.zen-v2-menu\[data-keyboard-focus\]/g)).toHaveLength(2)
+    // The rows keep their own mark – the cursor fill and no ring (§9.6, the #299 ruling).
+    expect(
+      block(
+        ".zen-v2-menu-item:focus-visible,\n.zen-v2-menu-item[data-keyboard-focus]:focus,\n.zen-v2-menu-item[aria-expanded='true']"
+      )
+    ).toMatch(/^ {2}background: var\(--v2-fill\);\n {2}outline: none;$/m)
+  })
+
+  it("draws the confirmation prompt's corner as the sheet radius token with the squircle – no literal anywhere on its path (pr-553 F5, closed as read)", () => {
+    // The prompt's root is the dialog chassis (`.zen-v2-dialog`, extensions.css): radius 12
+    // through `--v2-radius-sheet` and the corner token. `ConfirmDialog.tsx` and the prompt's own
+    // rules state no radius of their own, so the token is the corner.
+    const prompt = read('components/dialogs/ConfirmDialog.tsx')
+    expect(prompt).toMatch(/className=\{cn\('zen-v2-dialog zen-confirm-dialog zen-animate-pop'/)
+    expect(prompt).not.toMatch(/rounded|borderRadius|radius/)
+    expect(declarations(extensions, '.zen-v2-dialog')).toEqual([
+      'background: var(--v2-panel);',
+      'border: 1px solid var(--v2-border);',
+      'border-radius: var(--v2-radius-sheet);',
+      'corner-shape: var(--zen-corner);',
+      'box-shadow: var(--v2-shadow-sheet);',
+      'color: var(--v2-text);'
+    ])
+    expect(extensions.match(/\n {2}\.zen-v2-dialog \{/g)).toHaveLength(1)
+    for (const rule of bare.matchAll(/[^{}]*\.zen-confirm-dialog[^{]*\{([^}]*)\}/g))
+      expect(rule[1], rule[0].split('{')[0]!.trim()).not.toMatch(/border-radius|corner-shape/)
+    expect(block(':root', lightBlockStart)).toMatch(/^ {2}--v2-radius-sheet: 12px;$/m)
+    expect(block(':root', lightBlockStart)).toMatch(/^ {2}--v2-radius-card: 8px;$/m)
+  })
+})
+
 describe('text selection (§9.6)', () => {
   const rendererRoot = fileURLToPath(new URL('../../', import.meta.url))
   /** Every renderer source file that could carry a stylesheet rule, main.css first. */

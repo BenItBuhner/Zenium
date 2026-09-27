@@ -1,12 +1,15 @@
 package app.zen.chromium
 
+import android.view.MotionEvent
 import app.zen.chromium.HistoryNavClassifier.Edge
 import app.zen.chromium.HistoryNavClassifier.Nav
 import app.zen.chromium.HistoryNavClassifier.State
 import app.zen.chromium.HistoryNavClassifier.Step
 import app.zen.chromium.PullGestureClassifier.Disposition
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class HistoryNavClassifierTest {
@@ -223,5 +226,180 @@ class HistoryNavClassifierTest {
         c.move(60f, 600f, 30L)
         assertNull(c.overscrolledX(Edge.LEFT))
         assertEquals(Step(Disposition.CANCEL_WEBVIEW, Nav.Start(Edge.LEFT)), c.pageAnswered(true))
+    }
+
+    // --- a touchpad's two-finger swipe (GN-23 / A11Y-14) ------------------------------------------
+
+    /** A touchpad swipe from the middle of the page, moved by (`dx`, `dy`) past the slop, with the page answering `allows`. */
+    private fun touchpadSwipe(
+        c: HistoryNavClassifier,
+        dx: Float,
+        dy: Float = 0f,
+        canBack: Boolean = true,
+        canForward: Boolean = true,
+        allows: Boolean = true
+    ): Step {
+        assertEquals(Step.FORWARD, c.down(540f, 600f, width, canBack = canBack, canForward = canForward, touchpad = true))
+        assertNull(c.pageAnswered(allows))
+        return c.move(540f + dx, 600f + dy, 10L)
+    }
+
+    @Test
+    fun aTouchpadSwipeGoesBackFromAnywhereOnThePage() {
+        val c = classifier()
+        assertEquals(Step.FORWARD, touchpadSwipe(c, 60f))
+        assertEquals(State.WATCHING, c.state)
+        assertTrue(c.touchpad)
+        // The page cannot scroll left under it: the swipe pulls the left side in, and that is a back.
+        assertEquals(Step(Disposition.CANCEL_WEBVIEW, Nav.Start(Edge.LEFT)), c.overscrolledX(Edge.LEFT))
+        assertEquals(State.DRAGGING, c.state)
+        assertEquals(Edge.LEFT, c.edge)
+        assertEquals(Step(Disposition.CONSUME, Nav.Move(0f, 20L)), c.move(600f, 600f, 20L))
+        assertEquals(Step(Disposition.CONSUME, Nav.Move(100f, 30L)), c.move(700f, 605f, 30L))
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(40L)), c.up(40L))
+        assertEquals(State.IDLE, c.state)
+
+        // The same movement by a finger on the screen, away from the edges, is the WebView's.
+        val finger = classifier()
+        assertEquals(Step.FORWARD, finger.down(540f, 600f, width, canBack = true, canForward = true))
+        assertEquals(State.PASSTHROUGH, finger.state)
+    }
+
+    @Test
+    fun aTouchpadSwipeTheOtherWayGoesForwardOnceThatSideOverscrolls() {
+        val c = classifier()
+        assertEquals(Step.FORWARD, touchpadSwipe(c, -60f, dy = 4f))
+        // A page with no sideways scroll reports both sides clamped; only the side the swipe pulls in from counts.
+        assertNull(c.overscrolledX(Edge.LEFT))
+        assertEquals(State.WATCHING, c.state)
+        assertEquals(Step(Disposition.CANCEL_WEBVIEW, Nav.Start(Edge.RIGHT)), c.overscrolledX(Edge.RIGHT))
+        assertEquals(Edge.RIGHT, c.edge)
+        // Travel is measured inward: leftward here.
+        assertEquals(Step(Disposition.CONSUME, Nav.Move(80f, 20L)), c.move(400f, 604f, 20L))
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L)), c.up(30L))
+    }
+
+    @Test
+    fun aTouchpadSwipeOnAPageWithRoomThatWayStaysThePagesScroll() {
+        // The page scrolls under the swipe: no clamp comes, and the WebView keeps every event.
+        val c = classifier()
+        assertEquals(Step.FORWARD, touchpadSwipe(c, -60f))
+        assertEquals(Step.FORWARD, c.move(400f, 600f, 20L))
+        assertEquals(State.WATCHING, c.state)
+        assertEquals(Step.FORWARD, c.up(30L))
+        assertEquals(State.IDLE, c.state)
+
+        // A clamp on the side the swipe pushes the page towards says nothing about it.
+        val other = classifier()
+        assertEquals(Step.FORWARD, touchpadSwipe(other, -60f))
+        assertNull(other.overscrolledX(Edge.LEFT))
+        assertEquals(State.WATCHING, other.state)
+    }
+
+    @Test
+    fun aTouchpadSwipeTowardsNothingIsTheWebViews() {
+        // Nothing behind: a swipe pulling the left side in has nowhere to go, and is the page's past the slop.
+        val noBack = classifier()
+        assertEquals(Step.FORWARD, noBack.down(540f, 600f, width, canBack = false, canForward = true, touchpad = true))
+        assertEquals(State.WATCHING, noBack.state)
+        assertNull(noBack.pageAnswered(true))
+        assertEquals(Step.FORWARD, noBack.move(600f, 600f, 10L))
+        assertEquals(State.PASSTHROUGH, noBack.state)
+        assertNull(noBack.overscrolledX(Edge.LEFT))
+
+        // Within the slop, heading that way: neither side's report arms it.
+        val early = classifier()
+        early.down(540f, 600f, width, canBack = false, canForward = true, touchpad = true)
+        early.pageAnswered(true)
+        early.move(544f, 600f, 10L)
+        assertNull(early.overscrolledX(Edge.LEFT))
+        assertNull(early.overscrolledX(Edge.RIGHT))
+        assertEquals(State.WATCHING, early.state)
+
+        // Nowhere to go either way: the WebView's from the down.
+        val nothing = classifier()
+        assertEquals(Step.FORWARD, nothing.down(540f, 600f, width, canBack = false, canForward = false, touchpad = true))
+        assertEquals(State.PASSTHROUGH, nothing.state)
+    }
+
+    @Test
+    fun aTouchpadScrollIsTheWebViews() {
+        // Vertical: a two-finger scroll, whatever the page reports.
+        val vertical = classifier()
+        assertEquals(Step.FORWARD, touchpadSwipe(vertical, 2f, dy = 40f))
+        assertEquals(State.PASSTHROUGH, vertical.state)
+        assertNull(vertical.overscrolledX(Edge.LEFT))
+        assertNull(vertical.overscrolledX(Edge.RIGHT))
+
+        // 40 across, 30 down: outside the 30° cone either way.
+        val diagonal = classifier()
+        assertEquals(Step.FORWARD, touchpadSwipe(diagonal, -40f, dy = 30f))
+        assertEquals(State.PASSTHROUGH, diagonal.state)
+        assertNull(diagonal.overscrolledX(Edge.RIGHT))
+
+        // 60 across, 30 down: inside it.
+        val shallow = classifier()
+        assertEquals(Step.FORWARD, touchpadSwipe(shallow, -60f, dy = 30f))
+        assertEquals(Step(Disposition.CANCEL_WEBVIEW, Nav.Start(Edge.RIGHT)), shallow.overscrolledX(Edge.RIGHT))
+    }
+
+    @Test
+    fun aTouchpadSwipeOnAPageThatContainsItsSidewaysOverscrollIsTheWebViews() {
+        val c = classifier()
+        assertEquals(Step.FORWARD, touchpadSwipe(c, 60f, allows = false))
+        assertEquals(State.PASSTHROUGH, c.state)
+        assertNull(c.overscrolledX(Edge.LEFT))
+
+        // The answer arriving after the overscroll settles it the same way.
+        val late = classifier()
+        late.down(540f, 600f, width, canBack = true, canForward = true, touchpad = true)
+        late.move(600f, 600f, 10L)
+        assertNull(late.overscrolledX(Edge.LEFT))
+        assertEquals(State.WATCHING, late.state)
+        assertEquals(Step(Disposition.CANCEL_WEBVIEW, Nav.Start(Edge.LEFT)), late.pageAnswered(true))
+    }
+
+    @Test
+    fun aTouchpadSwipeEndsLikeADragAndTheNextDownStartsAfresh() {
+        val c = classifier()
+        touchpadSwipe(c, 60f)
+        assertEquals(Step(Disposition.CANCEL_WEBVIEW, Nav.Start(Edge.LEFT)), c.overscrolledX(Edge.LEFT))
+        assertEquals(Step(Disposition.CONSUME, Nav.Cancel(20L)), c.cancel(20L))
+        assertEquals(State.IDLE, c.state)
+
+        // A finger on the screen next: back to the edge rule, and the swipe's reports are gone.
+        assertEquals(Step.FORWARD, c.down(20f, 600f, width, canBack = true, canForward = true))
+        assertEquals(State.WATCHING, c.state)
+        assertFalse(c.touchpad)
+        assertNull(c.pageAnswered(true))
+        c.move(60f, 600f, 30L)
+        assertNull(c.overscrolledX(Edge.RIGHT))
+        assertEquals(Step(Disposition.CANCEL_WEBVIEW, Nav.Start(Edge.LEFT)), c.overscrolledX(Edge.LEFT))
+    }
+
+    @Test
+    fun aTouchpadSwipeIsAndroid14sClassifiedFingerWithNoButtonHeld() {
+        // The spelt-out constants are Android's.
+        assertEquals(MotionEvent.CLASSIFICATION_NONE, HistoryNavClassifier.CLASSIFICATION_NONE)
+        assertEquals(MotionEvent.CLASSIFICATION_TWO_FINGER_SWIPE, HistoryNavClassifier.CLASSIFICATION_TWO_FINGER_SWIPE)
+
+        // Android 14+ classifies the fake finger it makes of the swipe (GestureConverter.cpp).
+        assertTrue(HistoryNavClassifier.isTouchpadSwipe(0, MotionEvent.CLASSIFICATION_TWO_FINGER_SWIPE))
+        // The same with the touchpad's button held is a click-and-drag: Chromium's mouse path
+        // (EventForwarder.isTrackpadToMouseConversionEvent runs before its swipe test).
+        assertFalse(HistoryNavClassifier.isTouchpadSwipe(MotionEvent.BUTTON_PRIMARY, MotionEvent.CLASSIFICATION_TWO_FINGER_SWIPE))
+        assertFalse(HistoryNavClassifier.isTouchpadSwipe(MotionEvent.BUTTON_SECONDARY, MotionEvent.CLASSIFICATION_TWO_FINGER_SWIPE))
+        // Unclassified: a finger on the screen – and, on Android 13 and before, the legacy
+        // touchpad's one-finger tap-drag and its two-finger scroll alike, which arrive as an
+        // unclassified mouse-sourced finger (TouchInputMapper.cpp) and are a finger on the
+        // screen to Chrome there too: the edge rule, not this.
+        assertFalse(HistoryNavClassifier.isTouchpadSwipe(0, MotionEvent.CLASSIFICATION_NONE))
+        assertFalse(HistoryNavClassifier.isTouchpadSwipe(MotionEvent.BUTTON_PRIMARY, MotionEvent.CLASSIFICATION_NONE))
+        // Android's other classifications: an ambiguous gesture, a deep press, Android 14's
+        // pinch and (hidden CLASSIFICATION_MULTI_FINGER_SWIPE, 4) three-finger system swipes.
+        assertFalse(HistoryNavClassifier.isTouchpadSwipe(0, MotionEvent.CLASSIFICATION_AMBIGUOUS_GESTURE))
+        assertFalse(HistoryNavClassifier.isTouchpadSwipe(0, MotionEvent.CLASSIFICATION_DEEP_PRESS))
+        assertFalse(HistoryNavClassifier.isTouchpadSwipe(0, MotionEvent.CLASSIFICATION_PINCH))
+        assertFalse(HistoryNavClassifier.isTouchpadSwipe(0, 4))
     }
 }

@@ -1,6 +1,7 @@
 import type { LucideIcon } from 'lucide-react'
 import type { PageViewport } from '@shared/capture'
 import { isDockedInFrame } from '@shared/devtoolsDock'
+import type { QrCodeRequest } from '@shared/qrScan'
 import {
   INTERNAL_PAGES,
   pageForOverlayKind,
@@ -43,7 +44,13 @@ import { awaitingShow, coverStore, markCoverDrop } from './cover'
 import { pageCovered, pageOffScreen, pageViewStore, type Hold } from './pageView'
 import { crossReaderView } from './readerTransition'
 import { activeTab } from './selectors'
-import { SHARE_SEAM_GUARD_MS, shareSeamStep, type ShareSeam } from './shareSeam'
+import {
+  QR_CODE_SEAM_GUARD_MS,
+  SHARE_SEAM_GUARD_MS,
+  shareSeamStep,
+  type QrCodeSeam,
+  type ShareSeam
+} from './shareSeam'
 import { createStore } from './store'
 import { rememberThumbnail, thumbnailOf } from './thumbnails'
 
@@ -492,6 +499,14 @@ export interface UiState {
   voice: VoicePrompt | null
   /** QR scanning: the scan sheet is up, for the payload it will load (`lib/qrScan.ts`). */
   qrScan: QrPrompt | null
+  /** The QR code sheet is up with a link's code (SH-06; `lib/qrCode.ts`). */
+  qrCode: QrCodePrompt | null
+  /**
+   * The panel-to-code seam (§9.38): the share panel holds its chassis for the code the host is
+   * encoding (`encoding`), then draws the code sheet in it (`hosting`); null otherwise
+   * (`lib/shareSeam.ts`).
+   */
+  qrCodeSeam: QrCodeSeam | null
   /** Phone layout: the sheet that rearranges the bar's controls is up. */
   barEditorOpen: boolean
   /** Phone layout: the app menu's Extensions sheet (one row per extension action) is up. */
@@ -684,6 +699,8 @@ export const uiStore = createStore<UiState>(
     shareSeam: null,
     voice: null,
     qrScan: null,
+    qrCode: null,
+    qrCodeSeam: null,
     barEditorOpen: false,
     extensionsSheetOpen: false,
     sendTabSheet: null,
@@ -1217,6 +1234,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.externalProtocol &&
     !ui.voice &&
     !ui.qrScan &&
+    !ui.qrCode &&
     !ui.longScreenshot &&
     ui.extensionPrompts.length === 0 &&
     !ui.extensionPopup &&
@@ -1288,6 +1306,7 @@ export function invalidateSnapshot(): void {
     !ui.externalProtocol &&
     !ui.voice &&
     !ui.qrScan &&
+    !ui.qrCode &&
     !ui.longScreenshot &&
     ui.extensionPrompts.length === 0 &&
     !ui.extensionPopup &&
@@ -1996,6 +2015,87 @@ export function closeQrSheet(id: number): void {
 }
 
 // ---------------------------------------------------------------------------
+// The QR code sheet (SH-06; `lib/qrCode.ts` runs the request)
+// ---------------------------------------------------------------------------
+
+/** The code sheet's request: the host's `qr.code` with the sheet's own id (each share is a new sheet). */
+export interface QrCodePrompt extends QrCodeRequest {
+  id: number
+}
+
+/**
+ * Put the code sheet up over a capture of the page, as the scan sheet goes up: the share sheet
+ * it came from (Android 14's, the system's) has left; the omnibox closes if it is open, the
+ * sheet taking the frame.
+ */
+export async function openQrCodeSheet(prompt: QrCodePrompt): Promise<void> {
+  await captureActiveTab(prompt.tabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ qrCode: prompt, drawerOpen: false })
+  if (uiStore.get().urlbar.open) closeUrlbar()
+}
+
+/**
+ * The share panel's QR code chip was picked (§9.38's hand-off, `lib/shareSeam.ts`): the panel
+ * stands, its cells inert, while the host encodes the link – the host hears the pick at once
+ * and lets the share go – and the code that comes back takes the panel's chassis
+ * (`hostQrCodeSheet`). A guard lets the panel leave should no code come.
+ */
+export function beginQrCodeSeam(panelId: string): void {
+  if (uiStore.get().sharePanel?.id !== panelId || uiStore.get().qrCodeSeam) return
+  uiStore.set({ qrCodeSeam: { phase: 'encoding', panelId } })
+  run('share.panelAction', { id: panelId, kind: 'qr' })
+  window.setTimeout(() => {
+    const { qrCodeSeam, sharePanel } = uiStore.get()
+    if (qrCodeSeam?.phase !== 'encoding' || qrCodeSeam.panelId !== panelId) return
+    if (sharePanel?.id === panelId) endSharePanel(panelId, null)
+    else uiStore.set({ qrCodeSeam: null })
+  }, QR_CODE_SEAM_GUARD_MS)
+}
+
+/** The panel whose chassis stands waiting for the code (`beginQrCodeSeam`), if one does. */
+export function qrCodeSeamPanel(): string | null {
+  const { qrCodeSeam, sharePanel } = uiStore.get()
+  return qrCodeSeam?.phase === 'encoding' && sharePanel?.id === qrCodeSeam.panelId
+    ? qrCodeSeam.panelId
+    : null
+}
+
+/**
+ * The code arrived for a panel that stands for it: the panel's chassis draws the code sheet –
+ * the page is covered under it already, so no capture and no focus move (`MenuSheet.tsx`,
+ * `SharePanelSheet.tsx` read the seam).
+ */
+export function hostQrCodeSheet(prompt: QrCodePrompt, panelId: string): void {
+  uiStore.set({
+    qrCode: prompt,
+    qrCodeSeam: { phase: 'hosting', panelId, promptId: prompt.id },
+    drawerOpen: false
+  })
+}
+
+/**
+ * The code sheet's request is over (Download, Close, the back gesture): take it down. A code
+ * the panel's chassis was drawing takes the panel's request down with it – the host heard the
+ * pick already (`beginQrCodeSeam`), so no answer goes – and the menu's sheet, when that was the
+ * chassis, closes with them.
+ */
+export function closeQrCodeSheet(id: number): void {
+  const { qrCode, qrCodeSeam, sharePanel } = uiStore.get()
+  if (qrCode?.id !== id) return
+  uiStore.set({ qrCode: null })
+  if (qrCodeSeam?.phase === 'hosting' && qrCodeSeam.promptId === id) {
+    if (sharePanel?.id === qrCodeSeam.panelId) {
+      endSharePanel(qrCodeSeam.panelId, null)
+      return
+    }
+    uiStore.set({ qrCodeSeam: null })
+  }
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+// ---------------------------------------------------------------------------
 // External protocols (a page wants to open another app)
 // ---------------------------------------------------------------------------
 
@@ -2049,6 +2149,9 @@ export function cancelExternalProtocol(requestId: string): void {
  */
 export async function openSharePanel(request: SharePanelRequest): Promise<void> {
   performance.mark('share.panel')
+  // A code seam of an older panel – its chassis about to be this request's, or gone – ends here:
+  // the code it was drawing goes with the panel it stood in.
+  if (uiStore.get().qrCodeSeam) uiStore.set({ qrCodeSeam: null, qrCode: null })
   const state = uiStore.get()
   const step = shareSeamStep(state.shareSeam, {
     type: 'panel',
@@ -2085,9 +2188,18 @@ export async function openSharePanel(request: SharePanelRequest): Promise<void> 
  */
 export function answerSharePanel(id: string, action: Omit<SharePanelAction, 'id'>): void {
   if (uiStore.get().sharePanel?.id !== id) return
+  endSharePanel(id, action)
+}
+
+/**
+ * The panel's request is over: the store lets it go, and the chassis with it – the menu's, when
+ * that hosted the panel. `action` is the host's answer; none when the host heard it already (the
+ * QR code chip's, `beginQrCodeSeam`). A code seam standing for this panel ends with it.
+ */
+function endSharePanel(id: string, action: Omit<SharePanelAction, 'id'> | null): void {
   const step = shareSeamStep(uiStore.get().shareSeam, { type: 'answered', panelId: id })
-  uiStore.set({ sharePanel: null, shareSeam: step.seam })
-  run('share.panelAction', { id, ...action })
+  uiStore.set({ sharePanel: null, shareSeam: step.seam, qrCodeSeam: null })
+  if (action) run('share.panelAction', { id, ...action })
   if (step.effect === 'closeMenu') {
     closeMenu(false)
     return
@@ -2122,12 +2234,19 @@ export function beginShareSeam(menuId: string, itemId: string): void {
  * was still waiting for will rise on its own (`openSharePanel` finds no menu).
  */
 function releaseShareSeam(): void {
-  const { shareSeam, sharePanel } = uiStore.get()
+  const { shareSeam, sharePanel, qrCodeSeam } = uiStore.get()
   if (!shareSeam) return
   uiStore.set({ shareSeam: null })
   if (shareSeam.phase === 'hosting' && sharePanel?.id === shareSeam.panelId) {
-    uiStore.set({ sharePanel: null })
-    run('share.panelAction', { id: sharePanel.id, kind: 'dismiss' })
+    // A panel handed to the code sheet was answered already (the host heard `qr`): the code
+    // goes with the chassis and nothing more is said.
+    const handedOff = qrCodeSeam?.panelId === sharePanel.id
+    uiStore.set({
+      sharePanel: null,
+      qrCodeSeam: handedOff ? null : qrCodeSeam,
+      qrCode: handedOff && qrCodeSeam.phase === 'hosting' ? null : uiStore.get().qrCode
+    })
+    if (!handedOff) run('share.panelAction', { id: sharePanel.id, kind: 'dismiss' })
   }
 }
 
@@ -2216,6 +2335,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.externalProtocol !== null ||
     ui.voice !== null ||
     ui.qrScan !== null ||
+    ui.qrCode !== null ||
     ui.longScreenshot !== null ||
     ui.extensionPrompts.length > 0 ||
     ui.extensionPopup !== null ||

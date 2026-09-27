@@ -22,7 +22,7 @@ import { interruptReasonFrom, resolveDownloadSettings } from '@shared/downloads'
 import { newId } from '@shared/ids'
 import type { SharedIntent } from '@shared/shareTarget'
 import type { VoiceEvent, VoiceStartOutcome } from '@shared/voice'
-import type { QrEvent, QrStartOutcome } from '@shared/qrScan'
+import type { QrCodeRequest, QrEvent, QrStartOutcome } from '@shared/qrScan'
 import type { ReadAloudVoice } from '@shared/readAloud'
 import {
   isDebugApplicationId,
@@ -753,6 +753,8 @@ export interface HostEventPayloads {
   'voice.event': VoiceEvent
   /** The camera reports while a QR scan runs (`QrScan.kt`; `shared/qrScan.ts`). */
   'qr.event': QrEvent
+  /** The share sheet's "QR code" was picked: the link's code for the chrome's sheet (`Share.kt`; SH-06). */
+  'qr.code': QrCodeRequest
   /** The text-to-speech engine reports on an utterance (`ReadAloud.kt`; `SpeechHost.onEvent`). */
   'speech.event': { utteranceId: string } & SpeechHostEvent
   /** The engine's voices changed (the engine was swapped or a voice installed): `SpeechHost.onVoicesChanged`. */
@@ -1537,6 +1539,7 @@ export class AndroidPlatform implements Platform {
       showItemInFolder: () => bridge.send('download.showAll'),
       share: (payload) => bridge.call('app.share', payload),
       sharePanelAction: (action) => bridge.call('share.panelAction', action),
+      downloadQrCode: (url) => bridge.call('qr.download', { url }),
       openAppLinkSettings: () => bridge.send('app.openAppLinkSettings'),
       openNotificationSettings: () => bridge.send('app.openNotificationSettings'),
       // The link menu's Call / Send message / Add to contacts / Send email (PUI-22): the
@@ -2249,6 +2252,9 @@ export class AndroidPlatform implements Platform {
         return
       case 'qr.event':
         browser.emit('qr.event', payload as HostEventPayloads['qr.event'], this.window)
+        return
+      case 'qr.code':
+        browser.emit('qr.code', payload as HostEventPayloads['qr.code'], this.window)
         return
       case 'speech.event': {
         const { utteranceId, ...event } = payload as HostEventPayloads['speech.event']

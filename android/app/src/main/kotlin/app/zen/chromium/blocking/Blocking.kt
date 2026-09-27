@@ -12,6 +12,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.InputStream
+import java.io.InputStreamReader
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
@@ -177,15 +178,19 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
     }
 
     /**
-     * The index set by set, each set's rules from its document under `blocking/sets/`; the
-     * compiled rules of a set that did not change since the previous read are the previous
-     * read's, its document unopened ([IndexReader]). An unreadable index is an empty one, as before.
+     * The index set by set, each set's rules streamed from its document under `blocking/sets/`
+     * (one rule's text in memory at a time, never the document whole); the compiled rules of a
+     * set that did not change since the previous read are the previous read's, its document
+     * unopened, and a disabled set's document stays closed too ([IndexReader]). An unreadable
+     * index is an empty one, as before.
      */
     private fun readIndex(): List<RuleSetInfo> {
         val raw = storage.read(Storage.BLOCKING_INDEX) ?: return emptyList()
         lastIndexChars = raw.length
         return runCatching {
-            indexReader.read(raw) { name -> storage.read("${Storage.BLOCKING_DIR}/$name") }
+            indexReader.read(raw, IndexReader.Documents { name ->
+                storage.open("${Storage.BLOCKING_DIR}/$name")?.let { InputStreamReader(it.stream, Charsets.UTF_8) }
+            })
         }.getOrElse { e ->
             Log.w(TAG, "blocking index unreadable", e)
             emptyList()

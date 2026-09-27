@@ -3,7 +3,7 @@
 // blocking dialog, takes OS-level screenshots at each step and writes one JSON result per step.
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
-//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,features,recaptcha,downloads,notifications,restart-registration,private-taskbar,quit-hold,visibility,default-browser,menu-bar,mcp]
+//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,features,recaptcha,downloads,notifications,restart-registration,private-taskbar,quit-hold,visibility,default-browser,menu-bar,mcp,agent-space-restore]
 //        [--extra-args="--no-sandbox --disable-gpu"]   (space-separated, passed to the app)
 //        [--sandbox]             (the run is a sandboxed leg: Chromium's sandbox stays on, so
 //                                 --no-sandbox in --extra-args is refused and ELECTRON_DISABLE_SANDBOX
@@ -253,6 +253,21 @@
 //                What the soak left is adopted and closed, `zenium://diagnostics` read, and the
 //                whole verdict – counts, client p50 / p95 per tool and leg, the server's
 //                counters – written to <out>/<label>/soak.json (Linux, under Xvfb)
+//   agent-space-restore
+//                the agents' space around a restore (agent-space-scenario.mjs; guards #573):
+//                two launches from a profile seeded as the MCP soak leaves one – a user space
+//                with the fixture's page(s), the shared Agents space (its `agent` mark) empty,
+//                the window's activeSpaceId on it, `lastUserSpaceId` set on the first launch
+//                and absent on the second (`agent-space-session`). Each boot must come up on
+//                the user space with its tab active and the agents' space still empty (no
+//                zen://newtab seeded), read through app.getState. The first launch has one tab
+//                and the quit chord quits without a question; the second has two, an agent over
+//                the local MCP server opens a tab in the agents' space in background mode, the
+//                chord asks "Quit Zenium?" for "2 tabs" (Cancel), zen_mode foreground takeScreen
+//                plus a snapshot move the window onto the agents' space, zen_session end
+//                closeTabs moves it back, and the quit asks for 2 tabs; state.json after each
+//                quit has cleanExit and the window on the user space. warnBeforeQuitting is
+//                seeded off so that a Mac's chord asks like the others' (all five installer legs)
 //
 // Windows and macOS run boot, restore, scale, dark and visibility (the installed Windows build
 // boot and restore), Windows notifications, restart-registration and private-taskbar too and
@@ -289,6 +304,7 @@ import {
   parseAxeAllowlist,
   withAriaFacts
 } from './aria.mjs'
+import { AGENT_SPACE_SCENARIO, scenarioAgentSpace } from './agent-space-scenario.mjs'
 import { FIND_MATCHES, FIND_WORD, isWebPage, startBootFixture } from './boot-fixture.mjs'
 import { DEFAULT_BROWSER_SCENARIO, scenarioDefaultBrowser } from './default-browser-scenario.mjs'
 import { DOWNLOADS_SCENARIO, scenarioDownloads } from './downloads-scenario.mjs'
@@ -7701,6 +7717,17 @@ async function main() {
           outDir,
           // The stage's hand-off is judged on the screen: its pixels where the tab's view is.
           screenPixels
+        }),
+      [AGENT_SPACE_SCENARIO]: () =>
+        scenarioAgentSpace({
+          freshProfile,
+          runScenario,
+          waitFor,
+          log,
+          // The seeded tabs are the boot fixture's pages; the agent's tab its hand-off page.
+          fixture: bootSite,
+          // The quit chord as this host's, for the question's count (Cancel, not Quit).
+          quitCombo: QUIT_COMBO
         }),
       [DEFAULT_BROWSER_SCENARIO]: () =>
         scenarioDefaultBrowser({
