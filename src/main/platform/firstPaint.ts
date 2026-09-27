@@ -246,10 +246,12 @@ function describe(wc: WebContents): string {
  * A double `requestAnimationFrame`: the first callback runs before the next frame's style,
  * layout and paint, so the second runs only after that frame – with everything in the document
  * as it stands now – was committed to the compositor. Its answer is the document's clock
- * (`performance.now()`), for a log; a document that draws no frame (hidden, its animation
- * frames paused; a hung renderer) never answers. The leading comment names the script to the
- * drive's hook of the main frame's `executeJavaScript` – the order of the report's arrival and
- * the hide's issue is the evidence (`w8-5-reader.mjs`); the strip is the confirmation.
+ * (`performance.now()`), for a log; a document that draws no frame (a hung renderer; a hidden
+ * document with its animation frames paused – though a view hidden between its creation and
+ * its first frame was found to answer that frame all the same, Electron 44, W8-F8's drive)
+ * never answers. The leading comment names the script to the drive's hook of the main frame's
+ * `executeJavaScript` – the order of the report's arrival and the hide's issue is the evidence
+ * (`w8-5-reader.mjs`); the strip is the confirmation.
  */
 export const FRAME_DRAWN_SCRIPT = `/* zenium: frame drawn */ new Promise(function (resolve) {
   requestAnimationFrame(function () {

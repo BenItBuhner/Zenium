@@ -1006,11 +1006,12 @@ export class TabManager {
   /**
    * The paint handshake (design language v2 §11): run `then` once `view` reports a frame drawn
    * with what it holds now – its word through `TabView.frameDrawn` – or at the failure ceiling
-   * (`COVER_REPORT_CEILING_MS`) for a document that never reports (a view hidden before it
-   * could draw, a hung renderer, a host without the ask), whichever comes first and once only.
-   * A rejection (the page gone) is no word either: the ceiling stands, and `then` finds what it
-   * checks for gone. The caller checks the world again in `then` – the cover may have been taken
-   * down or the reader entered again meanwhile.
+   * (`COVER_REPORT_CEILING_MS`) for a document that never reports (a hung renderer, a host
+   * without the ask, a view hidden before it could draw – though the desktop's was found to
+   * answer its first frame hidden, W8-F8's drive: the layout owns the hide either way, `viewsOf`),
+   * whichever comes first and once only. A rejection (the page gone) is no word either: the
+   * ceiling stands, and `then` finds what it checks for gone. The caller checks the world again
+   * in `then` – the cover may have been taken down or the reader entered again meanwhile.
    */
   private afterFrame(view: TabView, then: () => void): void {
     let done = false
