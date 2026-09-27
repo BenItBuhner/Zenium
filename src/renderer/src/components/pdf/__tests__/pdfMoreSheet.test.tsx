@@ -7,11 +7,11 @@ import { viewportStore } from '@renderer/lib/formFactor'
 import type { PdfRowState } from '@renderer/lib/pdfViewer'
 
 /*
- * The PDF viewer's overflow sheet with its Save and Print rows (CT-44's UI): Save is a row only
- * for a document with a form, at .4 until a field changed (§9.30: `aria-disabled` on the row,
- * the opacity on its content), Print a row only where the host prints; both sit after Share and
- * Open with and before Rotate, in the shared `.zen-v2-row` with the 20 glyph (§9.34). Rendered
- * for real in happy-dom on the frame's dialog host, as the bar places it.
+ * The PDF viewer's overflow sheet with its Save a copy and Print rows (CT-44's UI): Save a copy
+ * is a row only for a document with a form, at .4 until a field changed (§9.30: `aria-disabled`
+ * on the row, the opacity on its content), Print a row only where the host prints; both sit
+ * after Share and Open with and before Rotate, in the shared `.zen-v2-row` with the 20 glyph
+ * (§9.34). Rendered for real in happy-dom on the frame's dialog host, as the bar places it.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -77,9 +77,9 @@ afterEach(() => {
 })
 
 describe('the overflow’s rows', () => {
-  it('lists Share, Open with, Save, Print and Rotate in that order when the document has a form and the host prints', () => {
+  it('lists Share, Open with, Save a copy, Print and Rotate in that order when the document has a form and the host prints', () => {
     render(sheet('enabled', 'enabled'))
-    expect(labels()).toEqual(['Share', 'Open with', 'Save', 'Print', 'Rotate'])
+    expect(labels()).toEqual(['Share', 'Open with', 'Save a copy', 'Print', 'Rotate'])
     // The sheet is named by the document (§9.16's header pose).
     expect(document.querySelector('.zen-sheet h2.zen-sheet-title')?.textContent).toBe(
       'mooring-application.pdf'
@@ -91,9 +91,9 @@ describe('the overflow’s rows', () => {
     }
   })
 
-  it('keeps Save at .4 until a field changed: aria-disabled on the row, the opacity on its content', () => {
+  it('keeps Save a copy at .4 until a field changed: aria-disabled on the row, the opacity on its content', () => {
     render(sheet('disabled', 'enabled'))
-    const save = row('Save')
+    const save = row('Save a copy')
     expect(save.getAttribute('aria-disabled')).toBe('true')
     const [glyph, label] = [...save.children] as HTMLElement[]
     expect(glyph.className).toContain('opacity-40')
@@ -102,7 +102,7 @@ describe('the overflow’s rows', () => {
     expect(row('Print').getAttribute('aria-disabled')).toBeNull()
   })
 
-  it('has no Save row for a document without a form, and no Print row where the host does not print', () => {
+  it('has no Save a copy row for a document without a form, and no Print row where the host does not print', () => {
     render(sheet('absent', 'absent'))
     expect(labels()).toEqual(['Share', 'Open with', 'Rotate'])
   })
@@ -115,7 +115,7 @@ describe('the overflow’s rows', () => {
     expect(row('Share').getAttribute('aria-disabled')).toBeNull()
   })
 
-  it('a Save pressed at .4 does nothing: the sheet stays, no copy is asked for', () => {
+  it('a Save a copy pressed at .4 does nothing: the sheet stays, no copy is asked for', () => {
     const onSave = vi.fn()
     const onClose = vi.fn()
     render(
@@ -136,10 +136,10 @@ describe('the overflow’s rows', () => {
       </>
     )
     act(() => {
-      row('Save').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      row('Save a copy').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
     })
     expect(onSave).not.toHaveBeenCalled()
     expect(onClose).not.toHaveBeenCalled()
-    expect(labels()).toEqual(['Share', 'Open with', 'Save', 'Print', 'Rotate'])
+    expect(labels()).toEqual(['Share', 'Open with', 'Save a copy', 'Print', 'Rotate'])
   })
 })

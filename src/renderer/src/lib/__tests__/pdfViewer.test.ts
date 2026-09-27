@@ -1,8 +1,8 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { UIState } from '@shared/types'
 import type { PdfViewerReport } from '@shared/pdfViewerProtocol'
 import { folderNameOf } from '../captureOverlay'
-import { browserStore } from '../ui'
+import { browserStore, uiStore } from '../ui'
 import {
   canZoomIn,
   canZoomOut,
@@ -15,11 +15,14 @@ import {
   parsePageNumber,
   PDF_PRINT_REFUSED,
   PDF_SAVE_REFUSED,
+  PDF_SAVE_ROW_LABEL,
   pdfPrintRow,
   pdfSavedMessage,
   pdfSaveRow,
   pdfViewerStore,
   pdfZoomIs,
+  printPdf,
+  savePdfCopy,
   setPdfReport
 } from '../pdfViewer'
 
@@ -190,8 +193,94 @@ describe('the overflow’s Save and Print rows (CT-44)', () => {
     expect(pdfSavedMessage('/storage/emulated/0/Documents/Forms/mooring.pdf')).toBe(
       'Saved to Forms'
     )
+    // The row's word is the lead's: a copy, since the file itself is never written.
+    expect(PDF_SAVE_ROW_LABEL).toBe('Save a copy')
     // One clause each, uncontracted, stated of the thing (the register).
     expect(PDF_SAVE_REFUSED).toBe('This PDF cannot be saved.')
     expect(PDF_PRINT_REFUSED).toBe('This PDF cannot be printed.')
+  })
+})
+
+describe('the rows’ presses', () => {
+  const calls: Array<[string, unknown]> = []
+  let answer: (name: string) => Promise<unknown> = async () => null
+
+  beforeEach(() => {
+    calls.length = 0
+    uiStore.set({ toasts: [] })
+    vi.stubGlobal('window', {
+      zen: {
+        invoke: async (name: string, args: unknown) => {
+          calls.push([name, args])
+          return answer(name)
+        },
+        on: () => () => undefined
+      }
+    })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    uiStore.set({ toasts: [] })
+  })
+
+  const toasts = (): Array<[string, string]> => uiStore.get().toasts.map((t) => [t.message, t.kind])
+
+  it('Save a copy asks the core for the copy and says where it went; a refusal or a failure is stated of the document', async () => {
+    answer = async () => '/storage/emulated/0/Download/mooring (1).pdf'
+    expect(await savePdfCopy('t1')).toBe('saved')
+    expect(calls).toEqual([['pdf.save', { tabId: 't1' }]])
+    expect(toasts()).toEqual([['Saved to Downloads', 'info']])
+    // No path: the host writes no files, or the copy failed.
+    answer = async () => null
+    expect(await savePdfCopy('t1')).toBe('refused')
+    expect(toasts().at(-1)).toEqual([PDF_SAVE_REFUSED, 'error'])
+    // The command itself failing is the same refusal, not an unhandled rejection.
+    answer = async () => {
+      throw new Error('bridge down')
+    }
+    expect(await savePdfCopy('t1')).toBe('refused')
+    expect(toasts().at(-1)).toEqual([PDF_SAVE_REFUSED, 'error'])
+    expect(toasts()).toHaveLength(3)
+  })
+
+  it('writes one copy per tab at a time: a press while the host writes is dropped, and another tab’s goes through', async () => {
+    // The host holds every copy until released: the writes are in flight together.
+    const pending: Array<(path: string) => void> = []
+    answer = (name) =>
+      name === 'pdf.save' ? new Promise<string>((r) => pending.push(r)) : Promise.resolve(null)
+    const first = savePdfCopy('t1')
+    expect(await savePdfCopy('t1')).toBe('busy')
+    const other = savePdfCopy('t2')
+    expect(calls.map(([name, args]) => [name, (args as { tabId: string }).tabId])).toEqual([
+      ['pdf.save', 't1'],
+      ['pdf.save', 't2']
+    ])
+    expect(pending).toHaveLength(2)
+    for (const release of pending) release('/storage/emulated/0/Download/mooring (1).pdf')
+    expect(await first).toBe('saved')
+    expect(await other).toBe('saved')
+    // The tab is free again once the host answered.
+    answer = async () => '/storage/emulated/0/Download/mooring (2).pdf'
+    expect(await savePdfCopy('t1')).toBe('saved')
+    expect(toasts().filter(([m]) => m === 'Saved to Downloads')).toHaveLength(3)
+  })
+
+  it('Print hands the document to the system print flow and says nothing when the dialog took it; a refusal is stated of the document', async () => {
+    answer = async () => true
+    expect(await printPdf('t1')).toBe(true)
+    expect(calls).toEqual([['pdf.print', { tabId: 't1' }]])
+    expect(toasts()).toEqual([])
+    answer = async () => false
+    expect(await printPdf('t1')).toBe(false)
+    expect(toasts()).toEqual([[PDF_PRINT_REFUSED, 'error']])
+    answer = async () => {
+      throw new Error('bridge down')
+    }
+    expect(await printPdf('t1')).toBe(false)
+    expect(toasts()).toEqual([
+      [PDF_PRINT_REFUSED, 'error'],
+      [PDF_PRINT_REFUSED, 'error']
+    ])
   })
 })

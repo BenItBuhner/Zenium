@@ -7,15 +7,14 @@ import {
   fetchPdfReport,
   formatPdfZoom,
   PDF_FIT_LABELS,
-  PDF_PRINT_REFUSED,
-  PDF_SAVE_REFUSED,
   pdfCommand,
   pdfPrintRow,
-  pdfSavedMessage,
   pdfSaveRow,
-  pdfViewerStore
+  pdfViewerStore,
+  printPdf,
+  savePdfCopy
 } from '@renderer/lib/pdfViewer'
-import { openFindBar, pushToast } from '@renderer/lib/ui'
+import { openFindBar } from '@renderer/lib/ui'
 import {
   PdfGoToPageSheet,
   PdfMoreSheet,
@@ -34,23 +33,23 @@ type Sheet = 'zoom' | 'outline' | 'more' | 'goto' | 'password' | null
  * Chrome Android's viewer in the phone chrome's language: the page indicator, the zoom as a
  * menulist that opens the zoom sheet (the two fits and Chrome's presets), then Find, Contents
  * (the document's outline) and Share as icon buttons, and the overflow with Open with – Chrome's
- * way out of the viewer – Save and Print (CT-44: a filled form's copy, the system print flow)
- * and Rotate. Every sheet is a `PhoneSheet` on the hosted chassis.
+ * way out of the viewer – Save a copy and Print (CT-44: a filled form's copy, the system print
+ * flow) and Rotate. Every sheet is a `PhoneSheet` on the hosted chassis.
  *
  * The bar draws what the viewer document last reported (`lib/pdfViewer.ts`): the document
  * loading, waiting for a password, open, or failed – each a state of this one bar, with the
  * controls that mean nothing in it disabled at .4 (§9.30). A page surface (§9.29): the root
  * carries `data-surface="page"`. No tooltips: the controls are named for the reader (§9.31).
  *
- * Save and Print answer on the toast card (§9.33): a copy written names its destination as the
- * capture card's Save does ("Saved to Downloads"); a refusal – the host cannot write or print,
- * or the copy failed – is stated of the document in the error kind.
+ * Save a copy and Print answer on the toast card (§9.33; `savePdfCopy`, `printPdf`): a copy
+ * written names its destination as the capture card's Save does ("Saved to Downloads"); a
+ * refusal – the host cannot write or print, or the copy failed – is stated of the document in
+ * the error kind.
  */
 export function PdfViewerBar({ state, tabId }: { state: UIState; tabId: string }): JSX.Element {
   const report = pdfViewerStore.use((s) => s.reports[tabId] ?? null)
   const [sheet, setSheet] = useState<Sheet>(null)
   const [openingWith, setOpeningWith] = useState(false)
-  const [saving, setSaving] = useState(false)
 
   // A viewer that reported before this chrome listened: ask once as the bar comes up.
   useEffect(() => {
@@ -72,25 +71,6 @@ export function PdfViewerBar({ state, tabId }: { state: UIState; tabId: string }
     if (openingWith) return
     setOpeningWith(true)
     void cmd('pdf.openWith', { tabId }).finally(() => setOpeningWith(false))
-  }
-  // One copy at a time: the row is gone with its sheet while the host writes, so a second press
-  // could only come from a sheet opened again before the first answered.
-  const save = async (): Promise<void> => {
-    if (saving) return
-    setSaving(true)
-    try {
-      const path = await cmd('pdf.save', { tabId })
-      if (path) pushToast(pdfSavedMessage(path))
-      else pushToast(PDF_SAVE_REFUSED, 'error')
-    } catch {
-      pushToast(PDF_SAVE_REFUSED, 'error')
-    } finally {
-      setSaving(false)
-    }
-  }
-  const print = async (): Promise<void> => {
-    const printed = await cmd('pdf.print', { tabId }).catch(() => false)
-    if (!printed) pushToast(PDF_PRINT_REFUSED, 'error')
   }
 
   return (
@@ -252,8 +232,8 @@ export function PdfViewerBar({ state, tabId }: { state: UIState; tabId: string }
           print={pdfPrintRow(report, state.capabilities.pdfPrint)}
           onShare={() => void cmd('pdf.share', { tabId })}
           onOpenWith={openWith}
-          onSave={() => void save()}
-          onPrint={() => void print()}
+          onSave={() => void savePdfCopy(tabId)}
+          onPrint={() => void printPdf(tabId)}
           onRotate={() => pdfCommand(tabId, { kind: 'rotate' })}
           onClose={() => setSheet(null)}
         />

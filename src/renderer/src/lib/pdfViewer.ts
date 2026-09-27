@@ -11,7 +11,7 @@ import {
 import { cmd, run } from './api'
 import { folderNameOf } from './captureOverlay'
 import { createStore } from './store'
-import { browserStore } from './ui'
+import { browserStore, pushToast } from './ui'
 
 /**
  * What the chrome knows of each PDF viewer tab (`zen://pdf`, `core/pdf.ts`): the viewer
@@ -192,6 +192,12 @@ export function pdfPrintRow(report: PdfViewerReport | null, hostPrints: boolean)
   return report === null || report.state === 'loading' ? 'disabled' : 'enabled'
 }
 
+/**
+ * The Save row's label (the lead's word): a copy, since the file the viewer shows is never
+ * written – the filled form goes to Downloads as a new file (Chrome Android's "Save copy").
+ */
+export const PDF_SAVE_ROW_LABEL = 'Save a copy'
+
 /** `pdf.save` answered no path: the tab shows no viewer, the host writes no files, or the copy failed. */
 export const PDF_SAVE_REFUSED = 'This PDF cannot be saved.'
 
@@ -208,4 +214,44 @@ export const PDF_PRINT_REFUSED = 'This PDF cannot be printed.'
 export function pdfSavedMessage(path: string): string {
   const folder = /^[a-z][a-z0-9+.-]+:/i.test(path) ? '' : folderNameOf(path)
   return `Saved to ${folder || 'Downloads'}`
+}
+
+/** The tabs whose copy the host is writing now (`savePdfCopy`). */
+const savingTabs = new Set<string>()
+
+/**
+ * The Save a copy row's press: `pdf.save` writes the viewer's filled copy into Downloads, and
+ * the toast card says where (`pdfSavedMessage`) – or, when the host answered no path or the
+ * command failed, states the refusal of the document (`PDF_SAVE_REFUSED`, the error kind). One
+ * copy per tab at a time: the row goes with its sheet on the press, so a second press can come
+ * only from a sheet opened again before the host answered, and it is dropped – the first press's
+ * toast follows in a moment – rather than writing a second copy beside the first. Answers what
+ * happened, for the tests; the bar ignores it.
+ */
+export async function savePdfCopy(tabId: string): Promise<'saved' | 'refused' | 'busy'> {
+  if (savingTabs.has(tabId)) return 'busy'
+  savingTabs.add(tabId)
+  try {
+    const path = await cmd('pdf.save', { tabId }).catch(() => null)
+    if (path) {
+      pushToast(pdfSavedMessage(path))
+      return 'saved'
+    }
+    pushToast(PDF_SAVE_REFUSED, 'error')
+    return 'refused'
+  } finally {
+    savingTabs.delete(tabId)
+  }
+}
+
+/**
+ * The Print row's press: `pdf.print` hands the system print flow the document as it is on
+ * screen; the dialog is the system's from there, so a job taken says nothing on the toast card,
+ * and a refusal – the host has no print verb after all, the bytes could not be had – is stated
+ * of the document (`PDF_PRINT_REFUSED`).
+ */
+export async function printPdf(tabId: string): Promise<boolean> {
+  const printed = await cmd('pdf.print', { tabId }).catch(() => false)
+  if (!printed) pushToast(PDF_PRINT_REFUSED, 'error')
+  return printed
 }
