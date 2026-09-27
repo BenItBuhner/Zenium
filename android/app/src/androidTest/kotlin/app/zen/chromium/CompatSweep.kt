@@ -12247,7 +12247,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * and Tampermonkey's internal-error confirm opened its forum – a github.com issue page – on
      * every OK, nine tabs in one 113 job (run 35446468306) with the eight rows after it timed
      * out behind them. An alert has OK alone. The activity's own window fills the screen and is
-     * never the one; the chrome's sheets are in its DOM, not windows.
+     * never the one; the chrome's sheets are in its DOM, not windows; the browser's own sheet for
+     * a page's dialog fills the screen behind its scrim and is [dismissPageDialogSheet]'s, tried
+     * when no dialog-sized window is up.
      */
     private fun dismissDialog(): String? {
         val screenHeight = app.resources.displayMetrics.heightPixels
@@ -12269,6 +12271,56 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             val text = "${texts.joinToString(" | ").take(300)} || pressed: ${button.text?.toString()?.trim().orEmpty()}"
             dialogsDismissed.put(text)
             snap("dialog-dismissed")
+            tapRect(Rect().also(button::getBoundsInScreen))
+            return text
+        }
+        return dismissPageDialogSheet()
+    }
+
+    /**
+     * A page's dialog drawn as the browser's own sheet – `PageDialogSheet` on the
+     * `NativePromptSheet` chassis: Chrome's title line ("<host> says", "An embedded page at …
+     * says", "Leave site?"), the page's message, OK alone for an alert, Cancel beside OK / Leave /
+     * Reload otherwise – pressed away and its words returned; null when none is up. The sheet is
+     * a bottom sheet whose window covers the screen behind its scrim, so [dismissDialog]'s height
+     * test never meets it: round 22's 113 BEFORE (run 36285609473) lost 13.5 minutes and its last
+     * eleven rows behind Screen Recorder's page `alert("Error! 'permissions' is not available!")`
+     * – the renderer every WebView of the app shares parked in the dialog's synchronous IPC, the
+     * chrome silent with it through thirteen timed-out reads and the row after – while the polls
+     * looked for a dialog-sized window. Found among the app's windows over the activity's
+     * ([extraWindows]) as a window WITHOUT a WebView (an extension's popup, options or side-panel
+     * sheet carries one and is left alone) whose texts carry the title line – the host's
+     * `page_dialog_title_*` strings, every one ending in the same word ("says"), or its
+     * beforeunload pair – and whose buttons are read as [dismissDialog] reads a dialog's: Cancel
+     * when the sheet has it (a confirm's OK runs the page's positive path), OK / Leave / Reload
+     * otherwise. The sheet's buttons are `TextView`s announced as buttons, so the same node test
+     * finds them.
+     */
+    private fun dismissPageDialogSheet(): String? {
+        val titleTail = app.getString(R.string.page_dialog_title_site).substringAfter("%1\$s")
+        val titles = listOf(
+            R.string.page_dialog_title_embedded_no_site, R.string.page_dialog_title_no_site,
+            R.string.page_dialog_leave_title, R.string.page_dialog_reload_title
+        ).map(app::getString)
+        for (window in extraWindows()) {
+            val root = window.root ?: continue
+            val texts = ArrayList<String>()
+            val buttons = ArrayList<AccessibilityNodeInfo>()
+            var webView = false
+            val queue = ArrayDeque(listOf(root))
+            var visited = 0
+            while (queue.isNotEmpty() && visited++ < 2_000) {
+                val node = queue.removeFirst()
+                if (node.className == "android.webkit.WebView") { webView = true; break }
+                node.text?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let(texts::add)
+                if (node.isClickable && node.className == "android.widget.Button") buttons.add(node)
+                for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
+            }
+            if (webView || texts.none { it.endsWith(titleTail) || it in titles }) continue
+            val button = dialogButton(buttons.map { it.text?.toString()?.trim().orEmpty() })?.let(buttons::get) ?: continue
+            val text = "page dialog sheet: ${texts.joinToString(" | ").take(300)} || pressed: ${button.text?.toString()?.trim().orEmpty()}"
+            dialogsDismissed.put(text)
+            snap("page-dialog-dismissed")
             tapRect(Rect().also(button::getBoundsInScreen))
             return text
         }
