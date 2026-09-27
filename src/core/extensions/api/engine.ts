@@ -197,6 +197,8 @@ export interface Primordials {
   error: (...args: unknown[]) => void
   /** Notices that are not failures (a member the engine deliberately does nothing for). */
   warn: (...args: unknown[]) => void
+  /** The wall clock in ms (`Date.now`), for the ages of the posts still unanswered; the engine captures `Date.now` itself when absent. */
+  now?: () => number
 }
 
 export function capturePrimordials(): Primordials {
@@ -207,13 +209,15 @@ export function capturePrimordials(): Primordials {
   const micro = g.queueMicrotask ?? ((cb: () => void) => void Promise.resolve().then(cb))
   const error = console.error
   const warn = console.warn
+  const now = Date.now
   return {
     stringify: (value) => stringify(value),
     parse: (text) => parse(text),
     setTimeout: (cb, ms) => timeout(cb, ms) as unknown as number,
     queueMicrotask: (cb) => micro(cb),
     error: (...args) => error(...args),
-    warn: (...args) => warn(...args)
+    warn: (...args) => warn(...args),
+    now: () => now()
   }
 }
 
@@ -259,11 +263,31 @@ export interface EmulatedEngine {
   diagnostics: ShimDiagnostics | null
   /** The flow bound's counters ([FlowStats]), updated in place. */
   flow: FlowStats
+  /**
+   * The host-bound posts of this context still without their reply, oldest first: what each
+   * asked and how long ago it went out. The discriminator, when a page's `init` never
+   * finishes, between a runtime reply that never came and a page-side `await` of its own
+   * (RoValra's row, compat round 21): an empty list with the page still waiting is the page's.
+   */
+  unanswered(): UnansweredCall[]
+}
+
+/** One host-bound post awaiting its reply ([EmulatedEngine.unanswered]). */
+export interface UnansweredCall {
+  id: number
+  /** `ns.method` of a `chrome` call; `msg` for a message awaiting its answer; `fence` for the flow bound's fence. */
+  what: string
+  /** ms since the post went out, by the clock captured at the engine's creation. */
+  ageMs: number
 }
 
 interface PendingCall {
   resolve: (value: unknown) => void
   reject: (error: Error) => void
+  /** What the post asked ([UnansweredCall.what]). */
+  what: string
+  /** When it went out (the captured clock's ms). */
+  since: number
 }
 
 interface Port {
@@ -359,6 +383,9 @@ export function createEmulatedEngine(
   const receiver: object | undefined = options.receiver
   let seq = 0
   const pending = new Map<number, PendingCall>()
+  // The clock for the pending posts' ages, captured before the page's scripts can patch it.
+  const dateNow = Date.now
+  const now: () => number = primordials.now ?? ((): number => dateNow())
   const ports = new Map<string, { port: Port; connected: boolean }>()
   const userScript = config.context === 'userScript'
   /** A web page's engine: its messages and ports go out marked for the external events. */
@@ -469,7 +496,12 @@ export function createEmulatedEngine(
     const id = ++seq
     fenceId = id
     flow.fences += 1
-    pending.set(id, { resolve: () => undefined, reject: () => undefined })
+    pending.set(id, {
+      resolve: () => undefined,
+      reject: () => undefined,
+      what: 'fence',
+      since: now()
+    })
     const text = serialize({
       t: 'call',
       id,
@@ -584,10 +616,19 @@ export function createEmulatedEngine(
   const call = (ns: string, method: string, args: unknown[]): Promise<unknown> =>
     new Promise((resolve, reject) => {
       const id = ++seq
-      pending.set(id, { resolve, reject })
+      pending.set(id, { resolve, reject, what: `${ns}.${method}`, since: now() })
       const text = serialize({ t: 'call', id, ns, method, args })
       if (text !== undefined) send(text, id)
     })
+
+  /** The posts still awaiting their reply, oldest first ([EmulatedEngine.unanswered]). */
+  const unanswered = (): UnansweredCall[] => {
+    const at = now()
+    const list: UnansweredCall[] = []
+    for (const [id, entry] of pending)
+      list.push({ id, what: entry.what, ageMs: Math.max(0, at - entry.since) })
+    return list
+  }
 
   /**
    * `action.setIcon`'s `imageData` compacted for the text bridge before the call is posted:
@@ -735,7 +776,7 @@ export function createEmulatedEngine(
   ): Promise<unknown> => {
     const id = ++seq
     const reply = new Promise<unknown>((resolve, reject) => {
-      pending.set(id, { resolve, reject })
+      pending.set(id, { resolve, reject, what: 'msg', since: now() })
     })
     let text: string | undefined
     try {
@@ -1227,6 +1268,7 @@ export function createEmulatedEngine(
       hostEventListeners.push(listener)
     },
     diagnostics,
-    flow
+    flow,
+    unanswered
   }
 }

@@ -14,6 +14,8 @@
  * private-window scopes need that too.
  */
 
+import { EXTENSION_SETTING_KEYS } from '../../../shared/extensionSettings'
+
 export type PrivacyCategory = 'network' | 'services' | 'websites'
 
 export type PrivacyScope =
@@ -459,21 +461,23 @@ export function normalizeStoredPrivacyValues(raw: unknown): Record<string, Scope
  * the row that says "Controlled by <extension>" and of the service that acts on the value
  * (`UIState.extensionControls`, the extension-controlled layer above the user's setting, as
  * Chrome's `PrefValueStore` orders them). The strings are the Settings rows' keys as the
- * services name them (`shared/extensionSettings.ts`'s `EXTENSION_SETTING_KEYS`: services pass
- * 10), plus `privacy.dnt` for Do Not Track. A host publishes the held keys alone, from the
- * regular (non-private) effective value – the regular profile's, as Chrome's Settings rows are.
+ * services name them – `shared/extensionSettings.ts`'s `EXTENSION_SETTING_KEYS`, read here so
+ * both hosts publish the one name per setting (services pass 10; Do Not Track under
+ * `privacy.doNotTrack` since #508, the phone's table with it since compat round 22). A host
+ * publishes the held keys alone, from the regular (non-private) effective value – the regular
+ * profile's, as Chrome's Settings rows are.
  */
 export const PRIVACY_CONTROL_KEYS: ReadonlyArray<
   readonly [settingKey: string, controlKey: string]
 > = [
-  [settingKey('services', 'passwordSavingEnabled'), 'passwords.offerToSave'],
-  [settingKey('services', 'autofillAddressEnabled'), 'autofill.addresses'],
-  [settingKey('services', 'autofillCreditCardEnabled'), 'autofill.cards'],
-  [settingKey('services', 'safeBrowsingEnabled'), 'privacy.safeBrowsingEnabled'],
-  [settingKey('websites', 'thirdPartyCookiesAllowed'), 'privacy.thirdPartyCookies'],
-  [settingKey('services', 'searchSuggestEnabled'), 'search.suggestions'],
-  [settingKey('network', 'networkPredictionEnabled'), 'privacy.preloadPages'],
-  [settingKey('websites', 'doNotTrackEnabled'), 'privacy.dnt']
+  [settingKey('services', 'passwordSavingEnabled'), EXTENSION_SETTING_KEYS.passwordSaving],
+  [settingKey('services', 'autofillAddressEnabled'), EXTENSION_SETTING_KEYS.autofillAddresses],
+  [settingKey('services', 'autofillCreditCardEnabled'), EXTENSION_SETTING_KEYS.autofillCards],
+  [settingKey('services', 'safeBrowsingEnabled'), EXTENSION_SETTING_KEYS.safeBrowsing],
+  [settingKey('websites', 'thirdPartyCookiesAllowed'), EXTENSION_SETTING_KEYS.thirdPartyCookies],
+  [settingKey('services', 'searchSuggestEnabled'), EXTENSION_SETTING_KEYS.searchSuggestions],
+  [settingKey('network', 'networkPredictionEnabled'), EXTENSION_SETTING_KEYS.preloadPages],
+  [settingKey('websites', 'doNotTrackEnabled'), EXTENSION_SETTING_KEYS.doNotTrack]
 ]
 
 /** One published control: who holds the setting and the value in effect (`ExtensionControl`'s shape). */
