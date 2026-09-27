@@ -5,14 +5,33 @@ import type { SecretStore, StoreIO } from '../../core/platform'
  * The few secrets the core asks the host to keep and read back silently (a sync server's app
  * password, ID-32), each encrypted by Electron's `safeStorage` – Keychain on macOS, DPAPI on
  * Windows, the secret service on Linux – and kept together as one JSON document under the
- * profile. The password vault has its own key wrap (`passwords.ts`) with a stricter stance on a
- * Linux without a secret service; a revocable app password is kept there anyway (Chrome keeps
- * its Linux passwords behind the same "basic" obfuscation when no keyring is offered), so the
- * transport works on such a machine at all – the setup's words are the UI PR's to choose.
+ * profile.
+ *
+ * A Linux without a secret service has Electron on its `basic_text` backend, whose
+ * `encryptString` / `decryptString` throw until `safeStorage.setUsePlainTextEncryption(true)` is
+ * called: this store calls it once, before its first encrypt or decrypt, and keeps a revocable
+ * app password behind Chrome's basic obfuscation on such a machine – what Chrome does with its
+ * own Linux passwords when no keyring is offered – so the transport works there at all. The
+ * password vault's key wrap is stricter and its own (`passwords.ts`, `osAvailable` says no on
+ * that backend): a vault key is not an app password the user can revoke from the server.
  */
 
 const DOCUMENT = 'secrets.json'
 const BLOB_PREFIX = 'safeStorage:'
+
+let plainTextConsidered = false
+
+/** Once: the `basic_text` backend on Linux is told to go ahead (see the header); elsewhere nothing to set. */
+function allowBasicTextOnLinux(): void {
+  if (plainTextConsidered) return
+  plainTextConsidered = true
+  try {
+    if (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text')
+      safeStorage.setUsePlainTextEncryption(true)
+  } catch {
+    // Not offered by this Electron or platform: the encrypt below says what it can do.
+  }
+}
 
 async function asyncEncryption(): Promise<boolean> {
   try {
@@ -23,6 +42,7 @@ async function asyncEncryption(): Promise<boolean> {
 }
 
 async function encrypt(value: string): Promise<string> {
+  allowBasicTextOnLinux()
   const encrypted = (await asyncEncryption())
     ? await safeStorage.encryptStringAsync(value)
     : safeStorage.encryptString(value)
@@ -32,6 +52,7 @@ async function encrypt(value: string): Promise<string> {
 /** `null` for a blob this device cannot read (another machine's profile, a rotated key): the secret is gone. */
 async function decrypt(blob: string): Promise<string | null> {
   if (!blob.startsWith(BLOB_PREFIX)) return null
+  allowBasicTextOnLinux()
   const encrypted = Buffer.from(blob.slice(BLOB_PREFIX.length), 'base64')
   try {
     if (await asyncEncryption()) {
