@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.PointF
 import android.graphics.Rect
 import android.os.Build
@@ -133,6 +135,7 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         returnToThird()
         edgeDragArmed()
         edgeDragShort()
+        edgeDragCloseTab()
         paneSwipes()
         pillHoldPaste()
         gesturalEdgeUntouched()
@@ -315,11 +318,23 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         val frameBox = domBox("(function(){var r=document.querySelector('[data-testid=\"history-nav\"]');return r?r.parentElement:null})()")
             ?.also { it.offset(-domShiftX, -domShiftY) }
         claim("the disc's layer clips to the page frame's box (clip ${disc.clip}; frame $frameBox)", disc.clip != null && frameBox != null && disc.clip.within(frameBox, 2))
+        // G3, the arrow's tint (the lead's 04:34 ruling): armed and held well past Chrome's 250 ms,
+        // the arrow's paint stands at the accent – the chrome's computed `--v2-accent`, the number
+        // `Host.applyTheme` handed the disc – and the pixel at the arrow's shaft says so. A page
+        // turn: the plain arrow in the accent, no caption.
+        val tint = nativeTint()
+        finding("(the tint at the hold: $tint; the chrome's --v2-accent computes to '${chromeAccent()}')")
+        claim("the arrow's tint stands at the accent with the finger held past the threshold (tint ${"%.2f".format(tint.value)})", tint.value > 0.97f)
+        claim("the arrow's paint is the chrome's accent (arrow ${hex(tint.arrow)}, accent ${hex(tint.accent)})", near(tint.arrow, tint.accent, TINT_TOLERANCE))
+        claim("the pixel at the arrow's shaft is the accent (${hex(tint.shaftPixel)})", near(tint.shaftPixel, tint.accent, TINT_TOLERANCE))
+        claim("a page turn shows the plain arrow, no caption (${tint.caption})", tint.caption.text == null)
         noteScene(scene)
         shot("03-edge-drag-armed")
         f.up()
         val navigated = awaitTrue(8_000) { activeUrl() == url("second") }
         claim("the release past the threshold went back to the second stop (now at ${activeUrl()})", navigated)
+        // A refused drag names its cause at the lift (`history not started: …`), the drag's only trace.
+        if (!navigated) finding("(the drag's ZenPull lines: ${pullLog()})")
         claim("the bubble left after the navigation", awaitTrue(4_000) { bubblePhase() == "" })
         awaitLoaded(url("second"))
         settle()
@@ -354,12 +369,69 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         claim("the native disc is up short of the threshold, short of full (disc: $disc)", disc.up && disc.leadingEdgeDp in 1f..NAV_THRESHOLD_DP && disc.scale in MIN_SCALE..FULL_SCALE_FLOOR)
         claim("the disc went further with the finger (${"%.1f".format(riding.leadingEdgeDp)} -> ${"%.1f".format(disc.leadingEdgeDp)} dp)", disc.leadingEdgeDp > riding.leadingEdgeDp)
         claim("and grew with the approach (scale ${"%.3f".format(riding.scale)} -> ${"%.3f".format(disc.scale)})", disc.scale > riding.scale)
+        // Short of the threshold the arrow is the text ink: no tint before the drag arms.
+        val tint = nativeTint()
+        claim("the un-armed arrow is the text ink, not the accent ($tint)", tint.value == 0f && !near(tint.arrow, tint.accent, TINT_TOLERANCE) && tint.captionInk == tint.arrow)
         shot("05-edge-drag-short")
         f.up()
         SystemClock.sleep(1_500)
         claim("the short release navigated nothing (still at ${activeUrl()})", activeUrl() == before)
         claim("the bubble sprang away after the short release", awaitTrue(4_000) { bubblePhase() == "" })
         claim("the native disc went with it (disc: ${nativeDisc()})", !nativeDisc().up)
+    }
+
+    /**
+     * MOT-27: the back drag at the history's first page. A tab opened from `TAB` (its opener) has
+     * nothing behind it; Chrome still takes the drag (`NavigationHandler.canNavigate`: back is
+     * always possible) and, armed, widens the bubble into 'Close tab' – the release closes the
+     * tab back to its opener. The threshold taps the finger once with Chrome's `KEYBOARD_TAP`
+     * (`HistoryNavBubbleLayer`; its `ZenPull` line in the logcat), and not again while the finger
+     * is held past it.
+     */
+    private fun edgeDragCloseTab() {
+        section("MOT-27: the back drag at the first page captions 'Close tab' and closes the tab")
+        val opener = activeUrl()
+        val childId = coreInvoke("tab.create", """{"url":"${url("side")}","active":true,"openerTabId":"$TAB"}""").trim('"')
+        awaitLoaded(url("side"))
+        SystemClock.sleep(1_000)
+        finding("child tab $childId of $TAB: ${describeHistory()}")
+        claim("the child tab has no back entry of its own", activeCoreTab()?.optBoolean("canGoBack") == false)
+        val tapsBefore = thresholdTaps()
+        val y = pageMidY()
+        val f = Finger()
+        f.down(EDGE_X_DP * density, y)
+        f.moveBy(LONG_DRAG_DP * density, 0f, 1_000)
+        f.hold(450)
+        val phase = bubblePhase()
+        val armed = bubbleArmed()
+        val disc = nativeDisc()
+        val caption = onMain { host.historyNavBubble.shownCaption }
+        val target = bubbleCloseTarget()
+        claim("the drag at the first page is a drag (phase '$phase')", phase == "dragging")
+        claim("and arms past the threshold (root data-armed; disc: $disc)", armed)
+        claim("the root names the tab as what the release closes (data-close-target '$target')", target == "tab")
+        claim("the native pill carries Chrome's caption for it ($caption)", caption.text == "Close tab" && caption.extent > 0.97f)
+        claim("the pill runs out beyond the disc (${"%.0f".format(caption.pillWidthPx)} px against the ${"%.0f".format(BUBBLE_SIZE_DP * density)} px disc)", caption.pillWidthPx > BUBBLE_SIZE_DP * density * 1.5f)
+        val tapsHeld = thresholdTaps()
+        claim("the threshold tapped once (KEYBOARD_TAP lines in the logcat: $tapsBefore -> $tapsHeld)", tapsHeld - tapsBefore == 1)
+        finding("(the tap as the layer logged it, the platform's answer with it: ${lastThresholdTap()})")
+        // G3 on the pill: one ink per pill – the caption's text is the arrow's colour, both at the
+        // accent with the finger held past the threshold; the pill's fill and hairline are not.
+        val tint = nativeTint()
+        finding("(the tint on the pill: $tint)")
+        claim("the arrow's tint stands at the accent on the armed pill (tint ${"%.2f".format(tint.value)}, arrow ${hex(tint.arrow)}, accent ${hex(tint.accent)})", tint.value > 0.97f && near(tint.arrow, tint.accent, TINT_TOLERANCE))
+        claim("the caption wears the arrow's ink (caption ${hex(tint.captionInk)}, arrow ${hex(tint.arrow)})", tint.captionInk == tint.arrow)
+        claim("the pill's fill and hairline are untinted (fill ${hex(tint.fill)}, hairline ${hex(tint.border)})", !near(tint.fill, tint.arrow, TINT_TOLERANCE) && !near(tint.border, tint.arrow, TINT_TOLERANCE))
+        claim("the pixel at the arrow's shaft is the accent (${hex(tint.shaftPixel)})", near(tint.shaftPixel, tint.accent, TINT_TOLERANCE))
+        shot("05b-close-tab-caption")
+        f.up()
+        val closed = awaitTrue(8_000) { activeCoreTab()?.optString("id") == TAB }
+        claim("the release closed the tab back to its opener (active ${activeCoreTab()?.optString("id")}, at ${activeUrl()})", closed && activeUrl() == opener)
+        if (!closed) finding("(the drag's ZenPull lines: ${pullLog()})")
+        claim("the child tab is gone", coreState().getJSONObject("tabs").optJSONObject(childId) == null)
+        claim("the bubble left with the tab", awaitTrue(4_000) { bubblePhase() == "" })
+        claim("no further tap came with the release (taps ${thresholdTaps()})", thresholdTaps() - tapsBefore == 1)
+        settle()
     }
 
     // --- GN-19: the switcher's pane swipe -------------------------------------------------------
@@ -588,6 +660,31 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
     private fun bubbleArmed(): Boolean =
         js("(function(){var e=document.querySelector('[data-testid=\"history-nav\"]');return e&&e.hasAttribute('data-armed')?'armed':''})()") == "armed"
 
+    /** What the release closes at the history's first page (`data-close-target`: 'tab' or 'app'; "" for a page turn). */
+    private fun bubbleCloseTarget(): String =
+        js("(function(){var e=document.querySelector('[data-testid=\"history-nav\"]');return e?e.getAttribute('data-close-target')||'':''})()")
+
+    /**
+     * How many times the host's bubble layer tapped the finger at the threshold since boot: its
+     * `ZenPull` line goes out with each `KEYBOARD_TAP` (`HistoryNavBubbleLayer.apply`), and the
+     * instrumentation's shell reads the app's log.
+     */
+    private fun thresholdTaps(): Int =
+        shellCommand("logcat -d -s ZenPull:D").lineSequence().count { it.contains("history threshold: KEYBOARD_TAP") }
+
+    /** The layer's last tap line, the platform's answer to the pin in it (`performed=false`: detached, or view-level haptics off). */
+    private fun lastThresholdTap(): String =
+        shellCommand("logcat -d -s ZenPull:D").lineSequence()
+            .lastOrNull { it.contains("history threshold: KEYBOARD_TAP") }
+            ?.substringAfter("): ")?.trim() ?: "none"
+
+    /** The last few `ZenPull` history lines (`history start / release / not started …`), for a failed drag's finding. */
+    private fun pullLog(): String =
+        shellCommand("logcat -d -s ZenPull:D").lineSequence()
+            .filter { it.contains("history ") }
+            .map { it.substringAfter("): ").trim() }
+            .toList().takeLast(4).joinToString(" | ").ifEmpty { "none" }
+
     /**
      * What the host's disc (HistoryNavBubbleView) shows: up at all (its layer up with it), how far
      * its leading edge stands in, its scale, and the layer's clip (the page frame's box).
@@ -609,6 +706,43 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
             layer.clipBounds
         )
     }
+
+    /**
+     * What the host's disc paints its arrow and caption in (`HistoryNavBubbleView.shownTint`:
+     * the tint 0..1 and the four paints), the pixel at the arrow's shaft as the view draws itself,
+     * the caption as shown, and the accent the chrome handed the host with the theme
+     * (`Host.themeAccent`, its computed `--v2-accent`) – what the armed arrow must stand at.
+     */
+    private class NativeTint(
+        val value: Float,
+        val arrow: Int,
+        val captionInk: Int,
+        val fill: Int,
+        val border: Int,
+        val shaftPixel: Int,
+        val caption: HistoryNavBubbleView.ShownCaption,
+        val accent: Int
+    ) {
+        override fun toString(): String =
+            "tint=${"%.2f".format(value)} arrow=${hex(arrow)} caption=${hex(captionInk)} fill=${hex(fill)} border=${hex(border)} shaft=${hex(shaftPixel)} accent=${hex(accent)} $caption"
+    }
+
+    private fun nativeTint(): NativeTint = onMain {
+        val view = host.historyNavBubble
+        val shown = view.shownTint
+        // The view drawn as it stands into a bitmap of its own box (its translation and scale are
+        // the parent's to apply): the disc's centre is the arrow's shaft, inside the stroke.
+        val shaft = if (view.width > 0 && view.height > 0) {
+            val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+            view.draw(Canvas(bitmap))
+            bitmap.getPixel(view.height / 2, view.height / 2).also { bitmap.recycle() }
+        } else 0
+        NativeTint(shown.value, shown.arrow, shown.caption, shown.fill, shown.border, shaft, view.shownCaption, host.themeAccent)
+    }
+
+    /** What the chrome's `--v2-accent` computes to right now, as the chrome document says it (the record beside the host's number). */
+    private fun chromeAccent(): String =
+        js("(function(){var e=document.createElement('span');e.style.display='none';e.style.backgroundColor='var(--v2-accent)';document.documentElement.appendChild(e);var c=getComputedStyle(e).backgroundColor;e.remove();return c})()")
 
     /** Every side of this box within `tolerance` px of the other's. */
     private fun Rect.within(other: Rect, tolerance: Int): Boolean =
@@ -798,11 +932,22 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
          * short of the threshold (60 dp of 96) leaves the disc well under it.
          */
         const val FULL_SCALE_FLOOR = 0.97f
+        /** The disc's diameter (v2 §11.9's 44, `HistoryNavBubbleFrame.sizePx` at density); the caption's pill runs out past it. */
+        const val BUBBLE_SIZE_DP = 44f
+        /** How far a channel of the armed arrow's colour may stand from the accent: the tint's mix rounds per channel, the drawn pixel dithers a hair. */
+        const val TINT_TOLERANCE = 8
         const val THREE_BUTTON = "threebutton"
         const val GESTURAL = "gestural"
         const val THREE_BUTTON_OVERLAY = "com.android.internal.systemui.navbar.threebutton"
         const val GESTURAL_OVERLAY = "com.android.internal.systemui.navbar.gestural"
         /** The clipboard row's Paste (the §6 fill control; the row's own tap is Paste and search). */
         const val PASTE_BUTTON_JS = "document.querySelector('li.zen-suggestion[data-kind=\"clipboard\"] button[aria-label=\"Paste\"]')"
+
+        /** An ARGB colour as `#AARRGGBB`. */
+        fun hex(color: Int): String = "#%08X".format(color)
+
+        /** Every channel of [a] (the alpha too) within [tolerance] of [b]'s. */
+        fun near(a: Int, b: Int, tolerance: Int): Boolean =
+            (0..3).all { shift -> abs(((a ushr (shift * 8)) and 0xFF) - ((b ushr (shift * 8)) and 0xFF)) <= tolerance }
     }
 }

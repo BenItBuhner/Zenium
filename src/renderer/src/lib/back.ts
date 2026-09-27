@@ -196,6 +196,15 @@ export function handleSystemBack(): boolean {
     run('tab.back', { tabId: tab.id })
     return true
   }
+  return performRootBack(tab, state)
+}
+
+/**
+ * Perform Chrome's back at the first page of `tab`'s history ({@link rootBackAction}): false
+ * when the action is to leave the app, which the caller does its own way – the Back key lets the
+ * system's back-to-home run, the history drag ({@link ../lib/historyNav}) minimizes the window.
+ */
+export function performRootBack(tab: Tab, state: UIState): boolean {
   switch (rootBackAction(tab, state)) {
     case 'opener':
       if (tab.openerTabId) run('tab.activate', { tabId: tab.openerTabId })
@@ -280,6 +289,49 @@ export function rootBackAction(tab: Tab, state: UIState): RootBackAction {
   if (isChromePageUrl(tab.url)) return others.length > 0 ? 'previousTab' : 'background'
   if (tab.url && tab.url !== BLANK_URL) return 'newTabPage'
   return others.length > 0 ? 'closeTab' : 'background'
+}
+
+/**
+ * What the history drag's bubble says a back would close (Chrome's `NavigationBubble.CloseTarget`,
+ * read by `NavigationHandler.getCloseIndicator` off the `BackActionDelegate`'s type): the tab
+ * when the tab goes ('Close tab', Chrome's `CLOSE_TAB`); the app when it goes to the background,
+ * with the tab or without ('Close Zenium', `EXIT_APP_AND_CLOSE_TAB` / `EXIT_APP_ONLY`); nothing
+ * when the back turns a page – the page's own history, or the tab starting over as a new-tab
+ * page, which is Chrome's back onto the new-tab page's own history entry.
+ */
+export type CloseTarget = 'none' | 'tab' | 'app'
+
+export function closeTargetOf(action: RootBackAction): CloseTarget {
+  switch (action) {
+    case 'opener':
+    case 'closeTab':
+    case 'previousTab':
+      return 'tab'
+    case 'caller':
+    case 'background':
+      return 'app'
+    case 'newTabPage':
+      return 'none'
+  }
+}
+
+/** The caption a back drag on `tab` shows past the threshold right now: none while the page itself has a back. */
+export function dragCloseTarget(tab: Tab, state: UIState): CloseTarget {
+  return tab.canGoBack ? 'none' : closeTargetOf(rootBackAction(tab, state))
+}
+
+/**
+ * The history drag's back on `tab`, as Chrome's `NavigationHandler.navigate(back)` goes through
+ * the `BackActionDelegate.onBackGesture`: the page's own back; else Chrome's back at the root
+ * ({@link performRootBack}); else – the last tab of the space staying – the app to the background
+ * (`mSendToBackground(null)`).
+ */
+export function dragBack(tab: Tab, state: UIState): void {
+  if (tab.canGoBack) {
+    run('tab.back', { tabId: tab.id })
+    return
+  }
+  if (!performRootBack(tab, state)) run('window.minimize', undefined)
 }
 
 /**

@@ -89,6 +89,10 @@ class HistoryNavClassifier(private val touchSlop: Float, private val edgeWidth: 
     /** Whether a drag pulling in from the left / right has anywhere to go (as given at the down). */
     private var canBack = false
     private var canForward = false
+    /** The edge window the finger landed in (null: none, or a touchpad swipe), eligible or not. */
+    private var landedEdge: Edge? = null
+    /** Whether this finger's drag took over at some point (it may since have been handed back). */
+    private var started = false
 
     /**
      * A finger landed at (`x`, `y`) on a page `viewportWidth` wide. `canBack` / `canForward`:
@@ -108,6 +112,8 @@ class HistoryNavClassifier(private val touchSlop: Float, private val edgeWidth: 
         this.canBack = canBack
         this.canForward = canForward
         this.touchpad = touchpad
+        landedEdge = null
+        started = false
         if (touchpad) {
             state = if (canBack || canForward) State.WATCHING else State.PASSTHROUGH
             return Step.FORWARD
@@ -117,6 +123,7 @@ class HistoryNavClassifier(private val touchSlop: Float, private val edgeWidth: 
             viewportWidth - x < edgeWidth -> Edge.RIGHT
             else -> null
         }
+        landedEdge = side
         val eligible = (side == Edge.LEFT && canBack) || (side == Edge.RIGHT && canForward)
         if (side == null || !eligible) {
             state = State.PASSTHROUGH
@@ -214,8 +221,27 @@ class HistoryNavClassifier(private val touchSlop: Float, private val edgeWidth: 
         // A page that cannot scroll sideways reports the same overscroll for a drag either way.
         if (!inCone(dx, dy)) return null
         state = State.DRAGGING
+        started = true
         originX = lastX
         return Step(Disposition.CANCEL_WEBVIEW, Nav.Start(edge))
+    }
+
+    /**
+     * Why a finger that landed in an edge window and dragged inward past the slop is no history
+     * drag – null when it became one, or when it was no such finger (a tap, a scroll, a touch
+     * away from the edges, a touchpad swipe). Read at the lift for the `ZenPull` log, so a
+     * refused drag names its cause on a device whose logcat is the only view of it: the edge's
+     * eligibility as given at the down, the page's `overscroll-behavior-x` answer (or that none
+     * came) and whether the WebView reported the clamped overscroll towards that side.
+     */
+    fun refusal(): String? {
+        if (touchpad || started) return null
+        val side = landedEdge ?: return null
+        val dx = lastX - downX
+        val inward = if (side == Edge.LEFT) dx else -dx
+        if (inward <= touchSlop) return null
+        val page = pageAllows?.toString() ?: "unanswered"
+        return "$side edge: eligible=${eligible(side)} page=$page overscroll=${reported(side)}"
     }
 
     /** Whether a displacement past the slop may still become this gesture's drag. */
