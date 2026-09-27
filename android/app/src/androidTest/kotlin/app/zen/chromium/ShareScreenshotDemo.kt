@@ -256,20 +256,41 @@ class ShareScreenshotDemo : DemoHarness("share-screenshot-demo-state.json", "sha
         dismissCard()
     }
 
-    /** Share on the card: the system sheet with the picture. */
+    /**
+     * Share on the card: the system sheet with the picture – below Android 14, Zenium's share
+     * panel with the picture as its preview (SH-03; `Share.sharePicture`, as Chrome's screenshot
+     * Share goes to its sharing hub there), no system window, back to dismiss it.
+     */
     private fun shareFromCard() {
-        finding("\nSH-07 Share on the card: the system sheet")
+        val panelStandsIn = Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+        finding("\nSH-07 Share on the card: " + if (panelStandsIn) "the share panel (below Android 14)" else "the system sheet")
         takeScreenshotFromMenu() ?: return
         awaitCard() ?: run {
             check("a card to touch", false)
             return
         }
         val touched = touchControl("Share", "document.querySelector('.zen-screenshot-card .zen-screenshot-actions button:first-child')", treeMs = 1_200)
-        val sheet = touched && awaitSystemWindow(10_000)
-        SystemClock.sleep(3_000)
-        shot("03-card-share-sheet")
-        check("a real touch on Share brought the system share sheet (${topPackage()})", sheet)
-        backToZenium()
+        if (panelStandsIn) {
+            val panel = touched && awaitChrome("document.querySelector('.zen-share-panel')!=null", 10_000)
+            SystemClock.sleep(2_000)
+            shot("03-card-share-panel")
+            val title = jsonString(chromeJs("(function(){var e=document.querySelector('.zen-share-panel .zen-menu-link-title');return e?e.textContent:''})()"))
+            val picture = chromeJs("(function(){var i=document.querySelector('.zen-share-panel .zen-menu-link-thumbnail');return !!(i&&i.complete&&i.naturalWidth>0)})()")
+            val chips = jsonString(chromeJs("JSON.stringify(Array.prototype.map.call(document.querySelectorAll('.zen-share-panel [data-row=\"chips\"] [data-kind]'),function(b){return b.dataset.kind}))"))
+            finding("  the panel's preview: '$title', the picture ${if (picture == "true") "drawn" else "not drawn"}; chips $chips; top window ${topPackage()}")
+            check("a real touch on Share brought Zenium's share panel, no system window", panel && topPackage() == app.packageName)
+            check("the panel's preview is the screenshot itself, named Screenshot", title == "Screenshot" && picture == "true")
+            check("the panel's one chip is Copy image (an image's share; nothing of the page's)", chips == "[\"copy\"]")
+            back()
+            awaitChrome("document.querySelector('.zen-share-panel')==null", 6_000)
+            SystemClock.sleep(600)
+        } else {
+            val sheet = touched && awaitSystemWindow(10_000)
+            SystemClock.sleep(3_000)
+            shot("03-card-share-sheet")
+            check("a real touch on Share brought the system share sheet (${topPackage()})", sheet)
+            backToZenium()
+        }
         dismissCard()
     }
 
@@ -392,6 +413,9 @@ class ShareScreenshotDemo : DemoHarness("share-screenshot-demo-state.json", "sha
                 check("a card to touch", false)
                 return
             }
+            // The card under the dark chrome, settled as `01-card` is, for the design record's dark still.
+            SystemClock.sleep(500)
+            shot("14-card-dark")
             val touched = touchControl("Capture more", "document.querySelector('.zen-screenshot-card .zen-screenshot-trailing .zen-message-button')", treeMs = 1_200)
             val sheet = touched && awaitChrome("document.querySelector('.zen-longshot-sheet')!=null", LONG_CAPTURE_WAIT_MS)
             check("a real touch on Capture more opened the Long screenshot sheet under the dark chrome", sheet)
