@@ -500,10 +500,12 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
     }
 
     /**
-     * The fling: 30 dp over a quarter second (the drag takes over, short of the threshold), a
-     * pause with the fingers held (un-armed), then 60 dp in 48 ms and the release – over Chrome's
-     * 1788 px/s in the swipe's direction, so the host says `force` and the release navigates
-     * with the motion still short of the threshold (the chrome's clamp keeps it there).
+     * The fling: a slow lead in 10 dp steps until the drag takes over (the page's
+     * `overscroll-behavior-x` answer and the WebView's overscroll report arrive some 90 dp in on
+     * this recipe; the bubble's travel counts from where the drag took over, not from the down),
+     * a pause with the fingers held (un-armed, short of the threshold), then 60 dp in ≤48 ms and
+     * the release – over Chrome's 1788 px/s in the swipe's direction, so the host says `force`
+     * and the release navigates with the motion still short of the threshold.
      */
     private fun touchpadSwipeFling() {
         section("GN-23: a touchpad swipe let go fast forces the navigation short of the threshold")
@@ -515,12 +517,16 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         val y = pageMidY()
         val swipe = TouchpadSwipe()
         swipe.down(width * 0.5f, y)
-        swipe.moveBy(FLING_LEAD_DP * density, 0f, 250)
+        var lead = 0f
+        while (lead < FLING_LEAD_MAX_DP && bubblePhase() != "dragging") {
+            swipe.moveBy(FLING_LEAD_STEP_DP * density, 0f, FLING_LEAD_STEP_MS)
+            lead += FLING_LEAD_STEP_DP
+        }
         swipe.hold(350)
         val riding = nativeDisc()
         val phaseBefore = bubblePhase()
         val armedBefore = bubbleArmed()
-        finding("(before the fling: phase '$phaseBefore', armed $armedBefore, disc $riding)")
+        finding("(the lead: ${lead.toInt()} dp until the drag took over; before the fling: phase '$phaseBefore', armed $armedBefore, disc $riding)")
         claim("the swipe has the bubble dragging, un-armed, short of the threshold before the fling (disc: $riding)", phaseBefore == "dragging" && !armedBefore && riding.leadingEdgeDp < NAV_THRESHOLD_DP)
         val flingMs = minOf(FLING_MS, (FLING_DP * density * 1_000f / FLING_PX_PER_S).toLong())
         finding("(the flick: ${FLING_DP.toInt()} dp in $flingMs ms, ${(FLING_DP * density * 1_000f / flingMs).toInt()} px/s)")
@@ -1239,15 +1245,20 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         /** How far a channel of the armed arrow's colour may stand from the accent: the tint's mix rounds per channel, the drawn pixel dithers a hair. */
         const val TINT_TOLERANCE = 8
         /**
-         * The fling's lead: a slow 30 dp that starts the drag well short of the 96 dp threshold, so
-         * the release alone (not the distance) can arm the navigation.
+         * The fling's lead: slow 10 dp steps (about 75 dp/s with the bubble read between them)
+         * until the drag takes over, at most 160 dp – the travel the bubble measures starts where
+         * the drag took over, so the lead's length is not the drag's, and the release alone (not
+         * the distance) can arm the navigation.
          */
-        const val FLING_LEAD_DP = 30f
+        const val FLING_LEAD_MAX_DP = 160f
+        const val FLING_LEAD_STEP_DP = 10f
+        const val FLING_LEAD_STEP_MS = 80L
         /**
-         * The flick: 60 dp, so the whole drag stays at 90 dp, short of the threshold; its duration
-         * is 48 ms at most and shorter where the density is low, so the release runs at about
-         * [FLING_PX_PER_S] physical px/s on any recipe (~3300 px/s on the phone's 2.625 density,
-         * 3000 px/s at one px per dp) – past Chrome's fixed 1788 (`overscroll_refresh.cc:29-33`).
+         * The flick: 60 dp, so the drag from where it took over stays short of the 96 dp
+         * threshold; its duration is 48 ms at most and shorter where the density is low, so the
+         * release runs at [FLING_PX_PER_S] physical px/s on any recipe (35 ms on the phone
+         * recipe's 1.75 density, 20 ms at one px per dp) – past Chrome's fixed 1788
+         * (`overscroll_refresh.cc:29-33`).
          */
         const val FLING_DP = 60f
         const val FLING_MS = 48L
