@@ -162,6 +162,12 @@ export interface HostCapabilities {
    * viewer and leave this off.
    */
   pdfViewer: boolean
+  /**
+   * The host prints a PDF the inline viewer shows through the system's print flow
+   * (`Platform.printPdf`; Android's `PrintManager`): the viewer's Print row. Off on a host
+   * without the verb, and on the desktop, where Chromium's viewer prints its own document.
+   */
+  pdfPrint: boolean
   /** The host can run the MCP server that lets AI agents control the browser. */
   agents: boolean
   /**
@@ -6227,7 +6233,21 @@ export interface Commands {
   'pdf.openWith': { args: { tabId: string }; result: void }
   /** The system share sheet with the PDF file the tab shows. */
   'pdf.share': { args: { tabId: string }; result: void }
-  /** What the viewer in the tab last reported (page, zoom, find, outline); null before it did. */
+  /**
+   * Save a copy of the PDF with the form's values written in (pdf.js's incremental save) to the
+   * downloads location under the file's name, listed as a completed download; the viewer's
+   * form reads unmodified once it is written. The path the copy was written under (a `content:`
+   * address on a host that names none), or null when the tab shows no viewer, the host cannot
+   * write files, or the copy could not be made or written.
+   */
+  'pdf.save': { args: { tabId: string }; result: string | null }
+  /**
+   * The system print flow with the PDF the tab shows (`capabilities.pdfPrint`): the file as
+   * downloaded, or – the form edited – a copy with its values written in. False when the tab
+   * shows no viewer, the host cannot print, or the edited copy could not be made.
+   */
+  'pdf.print': { args: { tabId: string }; result: boolean }
+  /** What the viewer in the tab last reported (page, zoom, find, outline, form); null before it did. */
   'pdf.state': { args: { tabId: string }; result: PdfViewerReport | null }
   /** Drive the viewer in the tab (zoom, fit, go to a page, find, rotate); false when it has none. */
   'pdf.command': { args: { tabId: string; command: PdfViewerCommand }; result: boolean }

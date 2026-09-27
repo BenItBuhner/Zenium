@@ -2700,6 +2700,29 @@ export interface PrintingHost {
 }
 
 /**
+ * A PDF the inline viewer shows (`capabilities.pdfViewer`; `core/pdf.ts`), for the system's
+ * print flow (`capabilities.pdfPrint`; Android's `PrintManager` with a document adapter that
+ * writes the PDF's bytes to the job – Chrome Android prints its viewer's PDF the same way). The
+ * document is exactly one of `path` and `data`; a job with both or neither is refused (the host
+ * answers false). The core hands `data` for both of its cases – the file's bytes as downloaded
+ * when the form was not touched, the bytes of a copy with the form's values written in
+ * (pdf.js's incremental save) when it was: the download's file lives in the public collection,
+ * which is no path the host takes.
+ */
+export interface PdfPrintJob {
+  tabId: string
+  /** The job's name in the print queue: the file's (the host drops a `.pdf`). */
+  name: string
+  /**
+   * A file the host holds under its own directories (its files or cache directory – the host
+   * accepts no other file through the bridge, `PdfPrint.kt`); null with `data`.
+   */
+  path: string | null
+  /** The bytes to print, base64; null with `path`. */
+  data: string | null
+}
+
+/**
  * The OS media controls on a host whose engine feeds none of its own (the Android WebView), or
  * whose own instance Zenium replaces (Linux MPRIS, so the desktop sees "Zenium" and one player;
  * Windows' SMTC and macOS's Now Playing stay Chromium's). The core resolves one session – the
@@ -3102,6 +3125,12 @@ export interface Platform {
   readonly spellcheck?: SpellcheckHost
   /** The print preview's printers and Save as PDF; omit when `capabilities.printPreview` is off. */
   readonly printing?: PrintingHost
+  /**
+   * The system print flow for a PDF the inline viewer shows (`capabilities.pdfPrint`; Android).
+   * Resolves true once the job is handed to the system's print dialog, false when the host
+   * would not take it; omit where the engine prints its own PDF viewer's document.
+   */
+  readonly printPdf?: (job: PdfPrintJob) => Promise<boolean>
   /** Screens, windows and tabs a page may capture (`capabilities.screenCapture`). */
   readonly screenCapture?: ScreenCaptureHost
   /** Extras of the chrome's share sheet: saving shared files, the OS's own sheet where there is one. */
