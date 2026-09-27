@@ -12,9 +12,9 @@ vi.mock('@renderer/lib/api', () => ({
 
 import { run } from '@renderer/lib/api'
 import {
+  ENERGY_SAVER_DETAIL,
   ENERGY_SAVER_TITLE,
   ENERGY_SAVER_TURN_OFF,
-  energySaverDetail,
   energySaverLeafFits,
   energySaverLeafUp,
   energySaverOn,
@@ -23,7 +23,7 @@ import {
 } from '@renderer/lib/energySaver'
 import { mediaHubButtonFits, mediaHubReturnRow } from '@renderer/lib/mediaHub'
 import { viewportStore } from '@renderer/lib/formFactor'
-import { closeAllPopovers } from '@renderer/lib/portals'
+import { POPOVER_WIDTH, closeAllPopovers, placePopover } from '@renderer/lib/portals'
 import { browserStore, uiStore } from '@renderer/lib/ui'
 import { EnergySaverBubbleLayer, TURN_OFF_DETAIL } from '../EnergySaverBubble'
 import { EnergySaverButton } from '../EnergySaverButton'
@@ -168,11 +168,14 @@ describe('the leaf’s reading of the snapshot (lib/energySaver)', () => {
     expect(energySaverLeafFits(0, 9)).toBe(true)
   })
 
-  it('says what the mode does here in Zenium’s words, with the factor Settings › Performance holds', () => {
-    expect(energySaverDetail(stateWith({ batteryFactor: 0.7 }))).toBe(
-      'Zenium shrinks its memory, CPU and GPU budgets to 70%, so background tabs are throttled and unloaded sooner.'
+  it('says what the mode does here in the user’s words, two lines of the 320 notice (N3, N4)', () => {
+    expect(ENERGY_SAVER_DETAIL).toBe(
+      'Background tabs are slowed and unloaded sooner to save power.'
     )
-    expect(energySaverDetail(stateWith({ batteryFactor: 0.25 }))).toMatch(/to 25%,/)
+    // Two lines at 15/20 in the title block's 260 column (about 34 characters a line), and no
+    // word of the governor's – budgets, throttling – that names the implementation.
+    expect(ENERGY_SAVER_DETAIL.length).toBeLessThanOrEqual(68)
+    expect(ENERGY_SAVER_DETAIL).not.toMatch(/budget|governor|throttl|%/)
     // Chrome's line and its button's label, verbatim (IDS_BATTERY_SAVER_BUBBLE_TITLE,
     // IDS_BATTERY_SAVER_SESSION_TURN_OFF in sentence case).
     expect(ENERGY_SAVER_TITLE).toBe('Energy Saver is on')
@@ -234,6 +237,28 @@ describe('EnergySaverButton', () => {
 })
 
 describe('EnergySaverBubble', () => {
+  it('stands at the leaf’s leading edge by §9.20’s flip, not a clamp (N6): the leaf in the row’s trailing half prefers end-alignment, which would cross the margin, so the box flips to start on the anchor', () => {
+    // The first line's geometry: the leaf 28 × 28 at x 172 in the 302 sidebar's nav row (8–294),
+    // the bubble 320 wide at 172–491 under the row.
+    const leaf = { x: 172, y: 44, width: 28, height: 28 }
+    const row = { x: 8, y: 38, width: 286, height: 36 }
+    const box = placePopover(leaf, row, { width: 1600, height: 1000 }, POPOVER_WIDTH.list)
+    expect(box).toMatchObject({ side: 'below', left: 172, top: 74, width: 320, alignment: 'start' })
+    // (1) The leaf's centre (186) is past the row's (151): end-alignment is preferred – a box
+    // ending on the leaf's trailing edge, at x −120, over the 8 px margin. (2) It flips to
+    // start on the leaf's leading edge, 172, which fits; (3) the slide never ran – a slide would
+    // have left the preferred alignment in place at the margin, x 8.
+    expect(
+      placePopover(leaf, row, { width: 1600, height: 1000 }, POPOVER_WIDTH.list, undefined, 'end')
+    ).toMatchObject({ left: 172, alignment: 'start' })
+    // Room on the leading side (the same leaf far along a wide bar): the end alignment holds.
+    const wide = { x: 8, y: 38, width: 1500, height: 36 }
+    const far = { ...leaf, x: 1200 }
+    expect(
+      placePopover(far, wide, { width: 1600, height: 1000 }, POPOVER_WIDTH.list)
+    ).toMatchObject({ left: 1200 + 28 - 320, alignment: 'end' })
+  })
+
   it('is a 320 dialog named by its title: the leaf on the title block, Chrome’s title, Zenium’s sentence, and Turn off now below a hairline', async () => {
     await open(stateWith({ batteryFactor: 0.5 }))
     const dialog = bubble()!
@@ -245,9 +270,7 @@ describe('EnergySaverBubble', () => {
     expect(title.tagName).toBe('H2')
     expect(title.textContent).toBe('Energy Saver is on')
     expect(dialog.querySelector('svg.lucide-leaf')).not.toBeNull()
-    expect(dialog.querySelector<HTMLElement>('p')!.textContent).toBe(
-      'Zenium shrinks its memory, CPU and GPU budgets to 50%, so background tabs are throttled and unloaded sooner.'
-    )
+    expect(dialog.querySelector<HTMLElement>('p')!.textContent).toBe(ENERGY_SAVER_DETAIL)
     // Chrome's cancel button as a menu-style row below the hairline, its line saying what
     // "now" means; Chrome's OK is the light dismiss and has no row.
     const row = dialog.querySelector<HTMLElement>('[data-energy-saver-off]')!

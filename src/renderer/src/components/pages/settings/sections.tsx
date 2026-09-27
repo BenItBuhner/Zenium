@@ -2128,8 +2128,11 @@ function performanceSection({ state, tab, set }: SectionContext): RowGroup[] {
         kind: 'switch',
         id: 'energy-saver',
         label: 'Energy Saver',
+        // Chrome's shape ("conserves battery power by limiting background activity and visual
+        // effects") with what Zenium limits, in the user's words – what a background tab feels,
+        // not the governor's budgets that do it (pr-584 N3).
         description:
-          'Zenium conserves battery power by shrinking the resource governor’s memory, CPU and GPU budgets while it is on.',
+          'Zenium conserves battery power by limiting background activity – background tabs are slowed and unloaded sooner while it is on.',
         keywords: energyKeywords,
         checked: !saverOff,
         onChange: (v) => set({ energySaver: v ? 'on-battery' : 'off' })
@@ -2182,8 +2185,12 @@ function performanceSection({ state, tab, set }: SectionContext): RowGroup[] {
           kind: 'switch',
           id: 'memory-saver',
           label: 'Memory Saver',
+          // Chrome's three sentences (`IDS_SETTINGS_PERFORMANCE_MEMORY_SAVER_MODE_SETTING_
+          // DESCRIPTION`) run 214 characters and the row's description holds two lines of 13
+          // (§10.4) – about 190 at the 664 column, where Chrome's clamped mid-sentence (pr-584
+          // N1); the same three facts in two sentences, with room to spare at narrower columns.
           description:
-            'Zenium frees up memory from inactive tabs. This gives active tabs and other apps more computer resources and keeps Zenium fast. Your inactive tabs automatically become active again when you go back to them.',
+            'Zenium frees up memory from inactive tabs so active tabs and other apps have more resources. Inactive tabs become active again when you go back to them.',
           keywords: memoryKeywords,
           checked: s.unloadEnabled,
           onChange: (v) => set({ unloadEnabled: v })

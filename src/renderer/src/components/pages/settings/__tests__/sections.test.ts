@@ -5865,14 +5865,17 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
     }
   })
 
-  it('binds Memory Saver’s switch to unloadEnabled with Chrome’s sentence, Zenium named', () => {
+  it('binds Memory Saver’s switch to unloadEnabled with Chrome’s three facts in two sentences that hold the row’s two lines (N1), Zenium named', () => {
     const { model, patches } = perf(DESKTOP_STATE())
     const on = row(model, 'memory-saver')
     if (on.kind !== 'switch') throw new Error('not a switch')
     expect(on.label).toBe('Memory Saver')
     expect(on.description).toBe(
-      'Zenium frees up memory from inactive tabs. This gives active tabs and other apps more computer resources and keeps Zenium fast. Your inactive tabs automatically become active again when you go back to them.'
+      'Zenium frees up memory from inactive tabs so active tabs and other apps have more resources. Inactive tabs become active again when you go back to them.'
     )
+    // Chrome's 214 characters clamped mid-sentence at the 664 column (about 190 fit two lines
+    // of 13); this holds with room at narrower columns.
+    expect(String(on.description).length).toBeLessThanOrEqual(160)
     expect(on.checked).toBe(true)
     on.onChange(false)
     expect(patches).toEqual([{ unloadEnabled: false }])
@@ -6003,11 +6006,17 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
     ])
   })
 
-  it('binds Energy Saver’s switch to energySaver – on lands on Zenium’s default, unplugged; off is off', () => {
+  it('binds Energy Saver’s switch to energySaver – on lands on Zenium’s default, unplugged; off is off – in the user’s words (N3)', () => {
     const { model, patches } = perf(DESKTOP_STATE())
     const on = row(model, 'energy-saver')
     if (on.kind !== 'switch') throw new Error('not a switch')
     expect(on.label).toBe('Energy Saver')
+    // Chrome's shape ("conserves battery power by limiting background activity…") with what a
+    // background tab feels here; nothing of the governor or its budgets.
+    expect(on.description).toBe(
+      'Zenium conserves battery power by limiting background activity – background tabs are slowed and unloaded sooner while it is on.'
+    )
+    expect(String(on.description)).not.toMatch(/governor|budget/)
     expect(on.checked).toBe(true)
     on.onChange(false)
     expect(patches.at(-1)).toEqual({ energySaver: 'off' })

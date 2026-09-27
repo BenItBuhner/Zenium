@@ -81,16 +81,15 @@ export function energySaverLeafFits(rowWidth: number, otherButtons: number): boo
 }
 
 /**
- * The bubble's sentence under its title: Chrome's says what Chrome limits ("Background activity
- * and some visual effects, like smooth scrolling, may be limited"); Zenium's says what Zenium
- * does (§9.1) – the resource governor's budgets shrink to the factor Settings › Performance
- * holds (`resources.batteryFactor`; `deriveBudgets`), so background tabs are throttled and
- * unloaded sooner than they would be plugged in.
+ * The bubble's sentence under its title: Chrome's says what Chrome limits
+ * (`IDS_BATTERY_SAVER_BUBBLE_DESCRIPTION`: "Background activity and some visual effects, like
+ * smooth scrolling, may be limited"); Zenium's says what Zenium does (§9.1), in the user's words
+ * – what a background tab feels, not the governor's budgets that do it (pr-584 N3) – and in two
+ * lines of the 320 notice's 15/20 (pr-584 N4; the title block's text column is 260 after the
+ * leaf, about 34 characters a line). How far the budgets shrink is Settings › Performance's row
+ * to say (`resources.batteryFactor`), not the bubble's.
  */
-export function energySaverDetail(state: UIState): string {
-  const percent = Math.round((state.settings.resources?.batteryFactor ?? 1) * 100)
-  return `Zenium shrinks its memory, CPU and GPU budgets to ${percent}%, so background tabs are throttled and unloaded sooner.`
-}
+export const ENERGY_SAVER_DETAIL = 'Background tabs are slowed and unloaded sooner to save power.'
 
 /**
  * The leaf while it is in the row and laid out (a button without a box is no anchor): what the

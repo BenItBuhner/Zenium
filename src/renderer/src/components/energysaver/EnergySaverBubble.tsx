@@ -5,11 +5,11 @@ import type { Rect, UIState } from '@shared/types'
 import { useFloatingChrome } from '@renderer/hooks/useFloatingChrome'
 import {
   ENERGY_SAVER_BUTTON,
+  ENERGY_SAVER_DETAIL,
   ENERGY_SAVER_TITLE,
   ENERGY_SAVER_TURN_OFF,
   closeEnergySaverBubble,
   energySaverAnchor,
-  energySaverDetail,
   energySaverLeafUp,
   energySaverUi,
   turnOffEnergySaverForSession
@@ -84,7 +84,7 @@ function EnergySaverBubble({ state }: { state: UIState }): JSX.Element | null {
             id={titleId}
             glyph={<Leaf className={V2_GLYPH} aria-hidden />}
             title={ENERGY_SAVER_TITLE}
-            description={energySaverDetail(state)}
+            description={ENERGY_SAVER_DETAIL}
           />
           <div className="pb-1">
             <Separator />
