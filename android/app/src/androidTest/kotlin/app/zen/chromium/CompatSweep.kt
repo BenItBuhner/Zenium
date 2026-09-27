@@ -32,6 +32,7 @@ import app.zen.chromium.ext.ExtensionStore
 import app.zen.chromium.ext.ExtensionUrls
 import app.zen.chromium.ext.ExtensionWebView
 import app.zen.chromium.ext.Extensions
+import app.zen.chromium.ext.SweepOrder
 import app.zen.chromium.ext.SweepScreenGuard
 import app.zen.chromium.privacy.NonUniqueHost
 import org.json.JSONArray
@@ -89,9 +90,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * Ids that run after every other row (`last`, comma-separated; by default uBlock Origin MV2,
      * whose first start compiles 45 MB of filter lists into `chrome.storage.local`): a row that
      * takes the process down loses nothing but the rows behind it, and results.json keeps the rest.
+     * They run in the argument's order ([SweepOrder]; up to compat round 22 in the table's).
      */
-    private val last: Set<String> = arguments.getString("last")?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet()
-        ?: setOf(UBO_MV2)
+    private val last: List<String> = arguments.getString("last")?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }
+        ?: listOf(UBO_MV2)
     /**
      * How many times over the selected rows run on this boot (`repeat`, 1 by default; a pass is
      * the table's order with `last` moved to the end, then the next pass): the repeated-row lane
@@ -231,9 +233,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
 
     override fun demo() {
         snap("browser-idle")
-        // The table's order, the `last` ids moved to the end (a stable sort keeps the rest in place);
-        // a `repeat` above one runs that order again, pass after pass.
-        val ordered = table.filter { only == null || it.id in only }.sortedBy { if (it.id in last) 1 else 0 }
+        // The table's order, the `last` ids moved to the end in their argument's order ([SweepOrder],
+        // compat round 23's D23-0: the lane's "Reader View last of all"); a `repeat` above one runs
+        // that order again, pass after pass.
+        val ordered = SweepOrder.order(table, { it.id }, only, last)
         val list = if (repeat > 1) (1..repeat).flatMap { ordered } else ordered
         results.put("order", JSONArray(list.map { it.id }))
         results.put("repeat", repeat)
