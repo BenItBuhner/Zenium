@@ -8761,6 +8761,66 @@
     line-height: var(--v2-line-body);
     color: var(--v2-text-deemphasized);
   }
+  /*
+   * The Safety check card's content (NTP-19; Chrome's `safety_hub_magic_stack_view.xml`): the
+   * type's glyph in a 56 rounded tile at the type's ink over its 12 % tint – the success ink for
+   * the permissions already removed, the accent for Safe Browsing and the passwords – and, 16
+   * to its right, the title at the heading size on two lines at most over the one-line summary
+   * at the small size in the deemphasised ink. Chrome's tile is 60 with a 28 glyph and a 16
+   * radius; the card's own radius scale gives 56 / 28 / 12.
+   */
+  :root[data-form-factor='phone'] .zen-mstack-safety {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  :root[data-form-factor='phone'] .zen-mstack-safety-tile {
+    display: flex;
+    width: 56px;
+    height: 56px;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--v2-radius-sheet);
+    background: color-mix(in srgb, var(--v2-accent) 12%, transparent);
+    color: var(--v2-accent);
+  }
+  :root[data-form-factor='phone']
+    .zen-mstack-safety[data-type='revoked-permissions']
+    .zen-mstack-safety-tile {
+    background: color-mix(in srgb, var(--v2-ok) 12%, transparent);
+    color: var(--v2-ok);
+  }
+  :root[data-form-factor='phone'] .zen-mstack-safety-tile > svg {
+    width: 28px;
+    height: 28px;
+    stroke-width: var(--v2-icon-stroke);
+  }
+  :root[data-form-factor='phone'] .zen-mstack-safety-text {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+    gap: 4px;
+    padding-top: 2px;
+  }
+  :root[data-form-factor='phone'] .zen-mstack-safety-title {
+    display: -webkit-box;
+    overflow: hidden;
+    font-size: var(--v2-font-heading);
+    font-weight: var(--v2-weight-heading);
+    line-height: var(--v2-line-heading);
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+  :root[data-form-factor='phone'] .zen-mstack-safety-summary {
+    overflow: hidden;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    color: var(--v2-text-deemphasized);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
   /* The action row at the card's foot: one hugging button, leading (§9.11's in-row form); a card whose rows are its whole act has none. */
   :root[data-form-factor='phone'] .zen-mstack-actions {
     display: flex;

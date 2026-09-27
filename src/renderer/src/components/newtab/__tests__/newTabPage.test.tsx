@@ -6,6 +6,7 @@ import type { Tab, UIState } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { EXTENSION_SETTING_KEYS } from '@shared/extensionSettings'
 import { DEFAULT_NEW_TAB_SETTINGS } from '@shared/newTab'
+import { emptyPasswordsStatus } from '@shared/defaults'
 import { DEFAULT_PRIVACY_SETTINGS, emptyPrivacyStatus } from '@shared/privacy'
 import { DEFAULT_SEARCH_ENGINES } from '@shared/search'
 import { BLANK_URL } from '@shared/url'
@@ -77,6 +78,9 @@ const state = {
   newTabShortcuts: [],
   newTabHiddenHosts: [],
   newTabHiddenModules: [],
+  newTabSafetyHubCard: {},
+  revokedUnusedPermissions: [],
+  passwords: emptyPasswordsStatus(),
   recentlyClosed: [],
   downloads: [],
   bookmarks: [],

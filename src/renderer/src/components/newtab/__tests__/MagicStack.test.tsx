@@ -12,7 +12,9 @@ import type {
   Tab,
   UIState
 } from '@shared/types'
+import { emptyPasswordsStatus } from '@shared/defaults'
 import { DEFAULT_NEW_TAB_SETTINGS } from '@shared/newTab'
+import { DEFAULT_PRIVACY_SETTINGS } from '@shared/privacy'
 import { BLANK_URL } from '@shared/url'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { closeCustomize, openCustomize } from '@renderer/lib/newtab'
@@ -193,12 +195,15 @@ function state(over: Partial<UIState> = {}): UIState {
     activeSpaceId: 'space',
     folders: {},
     essentialTabIds: [],
-    settings: {},
+    settings: { privacy: structuredClone(DEFAULT_PRIVACY_SETTINGS) },
     recentlyClosed: [CLOSED],
     downloads: [DOWNLOAD],
     bookmarks: BOOKMARKS,
     defaultBrowser: { isDefault: false, prompt: null },
     newTabHiddenModules: [],
+    newTabSafetyHubCard: {},
+    revokedUnusedPermissions: [],
+    passwords: emptyPasswordsStatus(),
     ...over
   } as unknown as UIState
 }
@@ -1046,17 +1051,19 @@ describe('the Magic Stack on the page (NTP-16)', () => {
       'Continue where you left offThe tab you closed last, ready to reopen',
       'DownloadsThe file you downloaded last',
       'BookmarksThe bookmarks you added most recently',
+      'Safety checkPermissions removed from unused sites, Safe Browsing off, compromised passwords',
       'Default browserA reminder to make Zenium your default browser'
     ])
     expect(switches.map((s) => s.getAttribute('aria-checked'))).toEqual([
       'true',
       'false',
       'true',
+      'true',
       'true'
     ])
     click(switches[1]!)
     expect(commands('newtab.setModuleHidden')).toEqual([{ id: 'downloads', hidden: false }])
-    click(switches[3]!)
+    click(switches[4]!)
     expect(commands('newtab.setModuleHidden')).toEqual([
       { id: 'downloads', hidden: false },
       { id: 'default-browser', hidden: true }
@@ -1077,18 +1084,16 @@ describe('the Magic Stack on the page (NTP-16)', () => {
     act(() => openMagicStackCustomize())
     await settle()
     rest()
-    expect(qa('[role="switch"]').map((s) => s.textContent?.split('The')[0])).toEqual([
-      'Continue where you left off',
-      'Downloads',
-      'Bookmarks'
-    ])
+    expect(
+      qa('[role="switch"]').map((s) => s.querySelector('.zen-settings-label')?.textContent)
+    ).toEqual(['Continue where you left off', 'Downloads', 'Bookmarks', 'Safety check'])
   })
 
   it('the page’s gear sheet seats its Cards row first, above Layout with a hairline after it – the way to the switches once every card is hidden; it leaves first and the stack’s sheet comes up as it has gone', async () => {
     browserStore.set({
       state: state({
         settings: { newTab: structuredClone(DEFAULT_NEW_TAB_SETTINGS) },
-        newTabHiddenModules: ['continue', 'downloads', 'bookmarks', 'default-browser']
+        newTabHiddenModules: ['continue', 'downloads', 'bookmarks', 'safety-hub', 'default-browser']
       } as Partial<UIState>)
     })
     // The page is under its cover already: the gear sheet presents (and so leaves on a spring).
@@ -1135,6 +1140,7 @@ describe('the Magic Stack on the page (NTP-16)', () => {
     const sheets = qa('.zen-sheet[role="dialog"]')
     expect(sheets.map((s) => s.querySelector('h2.zen-sheet-title')?.textContent)).toEqual(['Cards'])
     expect(qa('[role="switch"]').map((s) => s.getAttribute('aria-checked'))).toEqual([
+      'false',
       'false',
       'false',
       'false',
