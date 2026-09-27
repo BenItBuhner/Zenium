@@ -4611,7 +4611,13 @@ describe("the served new tab page's tile menu (GN-11's row per host shape)", () 
 
   it('a tablet – private browsing in tabs, no windows – gains Open in Private Tab second: the site opens in the window’s private container, in front; Open in New Tab stays the background open', () => {
     const h = pageHarness(ANDROID, { formFactor: 'tablet' })
-    expect(tileMenu(h)).toEqual(['Open in New Tab', 'Open in Private Tab', '-', 'Remove'])
+    expect(tileMenu(h)).toEqual([
+      'Open in New Tab',
+      'Open in Private Tab',
+      'Copy Link',
+      '-',
+      'Remove'
+    ])
     const before = Object.keys(h.browser.state.model.tabs).length
     h.click('Open in Private Tab')
     const opened = Object.values(h.browser.state.model.tabs).find((t) => t.url === TILE.url)
@@ -4627,16 +4633,31 @@ describe("the served new tab page's tile menu (GN-11's row per host shape)", () 
     expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(opened?.id)
   })
 
-  it('the phone, should the served page reach it, carries the same row; without private tabs, or with windows to open a private one in, the row stays out – not greyed', () => {
+  it("a touch host's third row is Copy Link (NTP-35, the phone's hold menu's third): the tile's address goes to the clipboard, and no tab opens", () => {
+    const h = pageHarness(ANDROID, { formFactor: 'tablet' })
+    let copied = ''
+    h.browser.platform.clipboard.writeText = (text: string) => void (copied = text)
+    tileMenu(h)
+    const before = Object.keys(h.browser.state.model.tabs).length
+    h.click('Copy Link')
+    expect(copied).toBe(TILE.url)
+    expect(Object.keys(h.browser.state.model.tabs).length).toBe(before)
+  })
+
+  it('the phone, should the served page reach it, carries the same rows; without private tabs, or with windows to open a private one in, the rows stay out – not greyed', () => {
     expect(tileMenu(pageHarness(ANDROID, { formFactor: 'phone' }))).toEqual([
       'Open in New Tab',
       'Open in Private Tab',
+      'Copy Link',
       '-',
       'Remove'
     ])
+    // Copy Link is gated on the windows alone (a touch host cannot drag the address, whichever
+    // way it keeps private browsing): a host without profiles still carries it, and not the
+    // private open.
     expect(
       tileMenu(pageHarness({ ...ANDROID, privateTabs: false }, { formFactor: 'tablet' }))
-    ).toEqual(['Open in New Tab', '-', 'Remove'])
+    ).toEqual(['Open in New Tab', 'Copy Link', '-', 'Remove'])
     expect(tileMenu(pageHarness({ ...ANDROID, windows: true }, { formFactor: 'tablet' }))).toEqual([
       'Open in New Tab',
       'Open in New Window',
@@ -4644,6 +4665,63 @@ describe("the served new tab page's tile menu (GN-11's row per host shape)", () 
       '-',
       'Remove'
     ])
+  })
+
+  describe("where the menu hangs (NTP-35): the tile's box on the touch layouts, the pointer on the desktop", () => {
+    // The page sits to the right of the sidebar: its CSS pixels are offset in the window's.
+    const CONTENT = { x: 300, y: 60, width: 900, height: 700 }
+    const BOX = { x: 120, y: 200, width: 104, height: 96 }
+    const menuFor = (h: PageHarness, keyboard = false): void => {
+      h.win.applyLayout({
+        placements: [{ tabId: h.tabId, rect: CONTENT, radius: 8 }],
+        glance: null,
+        contentHidden: false
+      })
+      h.browser.menus.showNewTabTileMenu(
+        h.tabId,
+        { ...TILE, x: 150, y: 250, keyboard, rect: BOX },
+        h.win
+      )
+    }
+
+    it("the tablet's menu carries the tile's box in the window's pixels beside the finger's point", () => {
+      const h = pageHarness(ANDROID, { formFactor: 'tablet' })
+      menuFor(h)
+      expect(h.where()).toMatchObject({
+        source: 'page',
+        x: 450,
+        y: 310,
+        keyboard: false,
+        rect: { x: 420, y: 260, width: 104, height: 96 }
+      })
+    })
+
+    it("the desktop's menu opens at the pointer as it always has: no box, whatever the page sent", () => {
+      const h = pageHarness(DESKTOP)
+      menuFor(h)
+      expect(h.where()).toMatchObject({ source: 'page', x: 450, y: 310, keyboard: false })
+      expect(h.where()).not.toHaveProperty('rect')
+      // The keyboard's menu too: the page already points it at the square's bottom-left corner.
+      menuFor(h, true)
+      expect(h.where()).toMatchObject({ x: 450, y: 310, keyboard: true })
+      expect(h.where()).not.toHaveProperty('rect')
+    })
+
+    it('a page that sent no box (an older page script) hangs the menu at the point on every host', () => {
+      const h = pageHarness(ANDROID, { formFactor: 'tablet' })
+      h.win.applyLayout({
+        placements: [{ tabId: h.tabId, rect: CONTENT, radius: 8 }],
+        glance: null,
+        contentHidden: false
+      })
+      h.browser.menus.showNewTabTileMenu(
+        h.tabId,
+        { ...TILE, x: 150, y: 250, keyboard: false },
+        h.win
+      )
+      expect(h.where()).toMatchObject({ x: 450, y: 310, keyboard: false })
+      expect(h.where()).not.toHaveProperty('rect')
+    })
   })
 })
 

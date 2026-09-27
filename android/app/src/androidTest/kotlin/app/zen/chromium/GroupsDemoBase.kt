@@ -1,5 +1,6 @@
 package app.zen.chromium
 
+import android.graphics.Bitmap
 import android.graphics.PointF
 import android.graphics.Rect
 import android.graphics.RectF
@@ -32,9 +33,16 @@ import kotlin.math.roundToInt
  * by one calibration against the accessibility tree – never an accessibility click, which
  * bypasses hit testing (the real-touch rule). The accessibility tree itself trails the
  * emulator's software GPU by seconds, so no claim is read off it.
+ *
+ * `stateAsset` is the seeded profile: the Work space above unless a driver's scene needs
+ * another (the tablet's new tab page driver seeds a profile past its first run with no tab,
+ * [TabletNewTabDemo]); the reads of the core's state here take any profile with one space.
  */
-abstract class GroupsDemoBase(shotPrefix: String, handshakeDir: String) :
-    DemoHarness("tab-groups-demo-state.json", shotPrefix, handshakeDir) {
+abstract class GroupsDemoBase(
+    shotPrefix: String,
+    handshakeDir: String,
+    stateAsset: String = "tab-groups-demo-state.json"
+) : DemoHarness(stateAsset, shotPrefix, handshakeDir) {
 
     protected lateinit var server: DemoServer
     protected val findings = StringBuilder()
@@ -109,6 +117,12 @@ abstract class GroupsDemoBase(shotPrefix: String, handshakeDir: String) :
     protected fun still(state: String) {
         shots++
         shot("%02d-%s".format(shots, state))
+    }
+
+    /** A numbered still from a frame the driver took itself (handed over: recycled once written). */
+    protected fun still(state: String, frame: Bitmap) {
+        shots++
+        shot("%02d-%s".format(shots, state), frame)
     }
 
     // --- the chrome's DOM ------------------------------------------------------------------------

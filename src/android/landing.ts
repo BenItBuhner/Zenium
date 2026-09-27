@@ -38,7 +38,8 @@ export interface LandingSurfaces {
 }
 
 const surfaces: LandingSurfaces = {
-  // What `newtab.opened` does for a new tab on a touch layout (`useMainEvents`): new-tab mode
+  // What the tap on the served page's field does on a touch layout (`useMainEvents`,
+  // `newtab.opened` with text; the tab's arrival alone opens no bar there – NTP-35): new-tab mode
   // bound to the tab, attached to the bar, so what is typed navigates this tab.
   omnibox: (tabId) => openNewTabPageUrlbar(tabId, undefined, true),
   voice: (tabId) => void startVoiceSearch({ tabId }),

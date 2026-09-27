@@ -7,6 +7,7 @@ import type {
   TopSite
 } from './types'
 import {
+  NEW_TAB_AWAIT_STATE_ATTR,
   NEW_TAB_ICONS,
   newTabIconSvg,
   privateCookiesDescription,
@@ -42,6 +43,46 @@ const DRAG_THRESHOLD = 4
 /** Half the grid gap: the caret sits in the middle of the gap before the drop slot. */
 const HALF_GAP = 6
 const UNDO_MS = 8000
+/**
+ * A document that awaited its first state (`data-await-state`, `newTabPage.ts`) is let in once
+ * the tiles' icons are decoded – or this long after the state at most: a slot whose icon is
+ * still on its way stays empty until it comes, rather than the whole page waiting on it. The
+ * icons are the host's own answers (`zen://favicon/<hash>`, the favicon store), so the wait is
+ * ordinarily a few frames; the cap is for a store that does not answer.
+ */
+export const ICON_WAIT_MS = 300
+/**
+ * A state that never comes (a bridge that is down): the shell is let in as it stands rather
+ * than the page staying the ground for good. The boot hold's own fail-safe (`BootPlacementHold`,
+ * 5 s): the push is two hops on the host's UI thread, and that thread can sit behind the served
+ * view's first frame for seconds on an emulator (a 2.4 s stall measured on #563's tablet sample,
+ * under which a 2 s cap let the empty shell in ahead of its state) – so the cap is the hold's
+ * deadline, not a guess at the push's pace.
+ */
+export const AWAIT_STATE_CAP_MS = 5000
+
+/**
+ * The awaiting document's landing on its own clock (`performance.mark`, read post hoc by a run
+ * that watches the boot: the tablet demo): the `ready` sent, the first state applied, the icons
+ * in hand, the root let in – or the cap that let it in without a state. Only the awaiting path
+ * sets them; the desktop's document never enters it.
+ */
+export const LANDING_MARKS = {
+  ready: 'zen-newtab-ready',
+  state: 'zen-newtab-state',
+  icons: 'zen-newtab-icons',
+  in: 'zen-newtab-in',
+  cap: 'zen-newtab-cap'
+} as const
+
+function landingMark(name: (typeof LANDING_MARKS)[keyof typeof LANDING_MARKS]): void {
+  if (typeof performance === 'undefined' || typeof performance.mark !== 'function') return
+  try {
+    performance.mark(name)
+  } catch {
+    // A clock that keeps no marks: the landing goes unrecorded, the page unchanged.
+  }
+}
 
 /** Engine favicon addresses that loaded on this page: shown from the first frame on a re-push. */
 const loadedFavicons = new Set<string>()
@@ -91,6 +132,11 @@ function byId<T extends HTMLElement>(id: string): T {
 
 function reducedMotion(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+/** A finger drives the page (the tablet's served page): the touch layouts' sizes and hand-off. */
+function coarsePointer(): boolean {
+  return window.matchMedia('(pointer: coarse)').matches
 }
 
 function greetingFor(hour: number): string {
@@ -175,8 +221,15 @@ class NewTabPage {
   private drag: Drag | null = null
   private suppressClick = false
   private greetingTimer: ReturnType<typeof setInterval> | null = null
+  /**
+   * The document awaits its first state, transparent (`data-await-state` on its root, set by the
+   * host whose state comes after the first paint: `newTabPage.ts`); false once it is let in.
+   */
+  private awaitingState: boolean
+  private awaitCap: ReturnType<typeof setTimeout> | null = null
 
   constructor(private readonly transport: NewTabTransport) {
+    this.awaitingState = this.root.hasAttribute(NEW_TAB_AWAIT_STATE_ATTR)
     this.wireSearch()
     this.wireGrid()
     this.wireCustomize()
@@ -188,6 +241,13 @@ class NewTabPage {
     const initial = transport.initialState()
     if (initial) this.apply(initial)
     transport.send({ type: 'ready' })
+    if (this.awaitingState) {
+      landingMark(LANDING_MARKS.ready)
+      this.awaitCap = setTimeout(() => {
+        landingMark(LANDING_MARKS.cap)
+        this.reveal()
+      }, AWAIT_STATE_CAP_MS)
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -208,6 +268,39 @@ class NewTabPage {
         ? []
         : [...state.shortcuts.map(fromShortcut), ...state.topSites.map(fromTopSite)]
     if (!this.drag) this.renderGrid()
+    if (this.awaitingState) {
+      landingMark(LANDING_MARKS.state)
+      this.reveal()
+    }
+  }
+
+  /**
+   * The document awaited its first state and has it (or the wait ran out, `AWAIT_STATE_CAP_MS`):
+   * it is let in WHOLE – the theme, the field with its glyph, the greeting and the grid as
+   * applied above, in one paint – once its icons are in hand: each tile's `zen://favicon/<hash>`
+   * and the field's engine favicon decoded, or `ICON_WAIT_MS` at most, so no tile draws a letter
+   * that then turns into its icon: a tile whose icon is late at the cap is let in with its seat
+   * EMPTY – its `<img>` stays put, untouched by the cap, and paints the icon when it lands (an
+   * arrival into an empty seat, not a swap); the letter is the failed icon's alone (the `<img>`'s
+   * `error`, `renderTile`). Then, on the next frame so the fill is laid out first, the root's
+   * attribute comes off and the document's opacity runs 0 → 1 on the language's 120 ms fade –
+   * the same fade under reduced motion (§11.3), the stylesheet's rules (`newTabPage.ts`). Once: a
+   * later push changes the page in place, as it always did.
+   */
+  private reveal(): void {
+    if (!this.awaitingState) return
+    this.awaitingState = false
+    if (this.awaitCap !== null) clearTimeout(this.awaitCap)
+    this.awaitCap = null
+    const icons = [...this.grid.querySelectorAll<HTMLImageElement>('img.zen-ntp-icon')]
+    if (this.engineFavicon.getAttribute('src')) icons.push(this.engineFavicon)
+    void iconsInHand(icons, ICON_WAIT_MS).then(() => {
+      landingMark(LANDING_MARKS.icons)
+      requestAnimationFrame(() => {
+        this.root.removeAttribute(NEW_TAB_AWAIT_STATE_ATTR)
+        landingMark(LANDING_MARKS.in)
+      })
+    })
   }
 
   /**
@@ -361,6 +454,11 @@ class NewTabPage {
   // ---------------------------------------------------------------------------
 
   private wireSearch(): void {
+    // Under a finger the field is a hand-off control, not a live input (NTP-35): the tap opens
+    // the chrome's own omnibox over the page, so no keyboard rises for this field first – the
+    // page comes up with the field at rest and the chrome's field takes the keyboard on the tap.
+    // A hardware keyboard's first character still hands off through `keydown` below.
+    if (coarsePointer()) this.input.inputMode = 'none'
     this.search.addEventListener('submit', (e) => {
       e.preventDefault()
       this.handOff(this.input.value)
@@ -436,7 +534,10 @@ class NewTabPage {
         item,
         fromKeyboard ? rect.left : e.clientX,
         fromKeyboard ? rect.bottom : e.clientY,
-        fromKeyboard
+        fromKeyboard,
+        // The tile's box – the square and its caption – for the touch layouts' menu to hang from
+        // (NTP-35: flush under the tile, start-aligned with it, not at the finger).
+        tile.getBoundingClientRect()
       )
     })
     this.grid.addEventListener('click', (e) => {
@@ -602,7 +703,7 @@ class NewTabPage {
    * Shortcut (custom tiles) and Remove. Remove comes back as a `remove-tile` command so Undo is
    * the page's.
    */
-  private openMenu(tile: Tile, x: number, y: number, keyboard: boolean): void {
+  private openMenu(tile: Tile, x: number, y: number, keyboard: boolean, box: DOMRect): void {
     this.transport.send({
       type: 'tile-menu',
       id: tile.id,
@@ -610,7 +711,13 @@ class NewTabPage {
       title: tile.title,
       x: Math.round(x),
       y: Math.round(y),
-      keyboard
+      keyboard,
+      rect: {
+        x: Math.round(box.left),
+        y: Math.round(box.top),
+        width: Math.round(box.width),
+        height: Math.round(box.height)
+      }
     })
   }
 
@@ -955,6 +1062,30 @@ function fallbackFor(tile: Tile): Element {
 /** A key that would insert a character into a text field. */
 function isTypedCharacter(e: KeyboardEvent): boolean {
   return e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey && !e.isComposing
+}
+
+/**
+ * Settles once every image is decoded – ready to paint, `HTMLImageElement.decode`; its load or
+ * error where a browser lacks it – or at `capMs`, whichever is first. An icon that fails is
+ * settled too: its tile's fallback is already the letter, and stays it.
+ */
+export function iconsInHand(images: HTMLImageElement[], capMs: number): Promise<void> {
+  if (images.length === 0) return Promise.resolve()
+  const decoded = (img: HTMLImageElement): Promise<void> => {
+    if (typeof img.decode === 'function') return img.decode().catch(() => undefined)
+    if (img.complete) return Promise.resolve()
+    return new Promise((resolve) => {
+      img.addEventListener('load', () => resolve(), { once: true })
+      img.addEventListener('error', () => resolve(), { once: true })
+    })
+  }
+  return new Promise((resolve) => {
+    const cap = setTimeout(resolve, capMs)
+    void Promise.all(images.map(decoded)).then(() => {
+      clearTimeout(cap)
+      resolve()
+    })
+  })
 }
 
 /** Exposed for tests: the glyph names the page uses. */

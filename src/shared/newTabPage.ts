@@ -287,6 +287,17 @@ export const NEW_TAB_PAGE_STYLE = `
   .zen-v2-button svg { width: var(--v2-icon); height: var(--v2-icon); flex: none; }
   /* Customise (§9.29): the window-family button 12 in from the page's bottom trailing corner. */
   .zen-customize { position: fixed; right: 12px; bottom: 12px; z-index: 4; }
+  /*
+   * A finger on the page (the tablet's served page, NTP-35): the chrome's touch numbers, which
+   * main.css gates on the root's form factor and pointer – attributes the served document does
+   * not carry, so the pointer query stands in for them here. The field 56 tall, Customise the
+   * touch layouts' 40 control with the coarse block's 6 radius; the tiles stay the 64 square
+   * (§9.29 as amended; the toast's 32 control is the toast's own).
+   */
+  @media (pointer: coarse) {
+    .zen-ntp-field { height: 56px; }
+    .zen-customize { height: 40px; border-radius: 6px; }
+  }
 
   /* The Undo toast: a panel surface holding a 32 px control, so 40 tall (v2 §9.21). */
   .zen-toast {
@@ -308,6 +319,37 @@ export const NEW_TAB_PAGE_STYLE = `
   @media (prefers-reduced-motion: reduce) {
     *, ::before, ::after, ::backdrop { transition-property: none !important; animation: none !important; }
     .zen-toast { animation: zen-fade 120ms var(--zen-ease) !important; }
+  }
+`
+
+/**
+ * On the document's root while it awaits its first state, on a host whose state comes after the
+ * first paint (the Android host's page script has none to hand before the document renders,
+ * `src/android/pageScript.ts`; the desktop's preload fetches it synchronously and never sets
+ * this). The page script takes it off once the state is applied and the icons are in hand
+ * (`newTabPageScript.ts` `reveal`).
+ */
+export const NEW_TAB_AWAIT_STATE_ATTR = 'data-await-state'
+
+/**
+ * The awaiting document's rules (NTP-35, the tablet's served page; the lead's conditions of form
+ * on #563): the root is transparent while it awaits its state – the view is transparent over the
+ * chrome, so the frame's ground shows through where the page will be, and nothing of the shell
+ * (the field in the wrong scheme, the grid before its tiles) is ever painted – and comes in
+ * WHOLE on the language's 120 ms opacity fade once the script lets it (the fill applied, the
+ * icons decoded). Under reduced motion the arrival stays that fade (§11.3: fades stay and springs
+ * go – a fade is not a cut): the page's remover above takes every transition, the root's among
+ * them, so the root's fade is re-declared under the query, `!important` past the remover (`:root`
+ * outranks `*` at equal importance), in the one form the §11.3 guard admits – opacity alone, one
+ * segment, 120 ms written out, the page's own easing (as its Undo toast's kept fade). Nothing else
+ * on the page transitions there. Appended to the document only where the attribute is set
+ * (`newTabPageHtml`); the desktop's document is as it was.
+ */
+export const NEW_TAB_AWAIT_STATE_STYLE = `
+  :root { transition: opacity 120ms var(--zen-ease); }
+  :root[${NEW_TAB_AWAIT_STATE_ATTR}] { opacity: 0; }
+  @media (prefers-reduced-motion: reduce) {
+    :root { transition: opacity 120ms var(--zen-ease) !important; }
   }
 `
 
@@ -378,9 +420,20 @@ export function privateCookiesDescription(cookies: {
     : privateCookiesLockedByExtension(cookies.blocked, cookies.lockedByExtension)
 }
 
+export interface NewTabPageDocumentOptions {
+  /**
+   * The host fills the document after its first paint (no state to hand before it renders): the
+   * root awaits its state transparent (`NEW_TAB_AWAIT_STATE_ATTR`, `NEW_TAB_AWAIT_STATE_STYLE`)
+   * until the page script has applied one. Off, the document is the desktop's as it was.
+   */
+  awaitState?: boolean
+}
+
 /** The `zen://newtab` document. Everything dynamic is added by the page script. */
-export function newTabPageHtml(): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src * data: zen:;"><title>New Tab</title><style>${chromeTokenCss()}\n${newTabSharedCss()}${NEW_TAB_PAGE_STYLE}</style></head>
+export function newTabPageHtml(options: NewTabPageDocumentOptions = {}): string {
+  const awaitAttr = options.awaitState ? ` ${NEW_TAB_AWAIT_STATE_ATTR}` : ''
+  const awaitStyle = options.awaitState ? NEW_TAB_AWAIT_STATE_STYLE : ''
+  return `<!doctype html><html lang="en"${awaitAttr}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src * data: zen:;"><title>New Tab</title><style>${chromeTokenCss()}\n${newTabSharedCss()}${NEW_TAB_PAGE_STYLE}${awaitStyle}</style></head>
 <body data-surface="window">
 <div class="zen-bg" id="zen-bg-current"></div><div class="zen-bg" id="zen-bg-next"></div><div class="zen-ntp-scrim" aria-hidden="true"></div>
 <main class="zen-ntp" id="zen-ntp">

@@ -46,6 +46,7 @@ import {
   openClearBrowsingData,
   openExtensionsSheet,
   openFindBar,
+  newTabRevealOpensUrlbar,
   onboardingUp,
   openNewTabPageUrlbar,
   openNewTabShortcutDialog,
@@ -145,6 +146,9 @@ export function useMainEvents(): void {
       }),
       onEvent('urlbar.close', () => closeUrlbar()),
       onEvent('newtab.opened', ({ tabId, text }) => {
+        // The touch layouts' served page comes up bare (NTP-35): the announcement of a new tab
+        // opens no bar there; the tap on the page's field (`text`, a string) does.
+        if (!newTabRevealOpensUrlbar(text)) return
         const state = browserStore.get().state
         openNewTabPageUrlbar(
           tabId,

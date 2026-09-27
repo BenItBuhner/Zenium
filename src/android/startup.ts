@@ -1,4 +1,4 @@
-import { BLANK_URL, isEmptyTabUrl } from '@shared/url'
+import { BLANK_URL, isEmptyTabUrl, isNewTabUrl } from '@shared/url'
 import type { Tab } from '@shared/types'
 import type { Browser } from '@core/browser'
 import { tabVisibleIn } from '@core/model'
@@ -96,12 +96,36 @@ function hasHistory(browser: Browser, tab: Tab): boolean {
  * past its first run in the EEA with no choice made, restored on a page, arms READY without a
  * placement to wait for. A host that reports no region (every Android host before W6-13) owes
  * the screen to nobody, and the clause is never taken.
+ *
+ * Nor is the tablet's served new tab page waited for (NTP-35, `zen://newtab`: the fresh tab
+ * `Browser.ensureFirstTab` opens on the host with the new tab page capability, the tablet class
+ * alone). It IS a page view, placed by the first layout report like any page – but it is the
+ * browser's own surface as the phone's blank is, not a page the session brings back, and its
+ * first frame is a SECOND WebView's in the one renderer process the chrome shares at boot,
+ * which held the mark for as long as that frame took (#563's round-2 pair: `ready → frame`
+ * 3.1–3.5 s on the CI emulator against main's 40 ms). READY on the tablet is then what it is on
+ * a boot with no tab (main's tablet): the theme's paint and the insets; the slot shows the
+ * frame's ground until the page lands. The host is the other half of that rule: it holds the
+ * served tab's every message – its `view.create` (tagged `newTabPage`, `views.ts`), the
+ * `view.loadHtml` that would parse the document and run its script, its first placement
+ * (`view.setBounds`, `view.setVisible`, the `view.shown` ask) – until the frame after
+ * `chrome.ready` is drawn, the FULLY DRAWN frame (`Host.kt`, `BootPlacementHold`), so none of
+ * the page's document work runs before the mark and its first frame follows the mark by
+ * construction (#563's round-3 pair: the load alone before READY cost +217 / +371 ms at the
+ * median); the page then arrives whole, filled from its state push before its first paint
+ * (`newTabPage.ts`). Nothing else orders on the mark: the core's own chrome-ready
+ * (`ZenWindow.onChromeReady` – the fresh tab's reveal and the served page's state behind it) is
+ * the renderer's connection, not this post, and the served page loads inside `browser.start()`,
+ * before the arm, so it is the restore's to the host either way (`MainActivity.restoringAtBoot`).
+ * The phone's clause stands as it was: a `zen://newtab` tab restored on the phone is waited for,
+ * as before.
  */
 export function bootNeedsPlacement(browser: Browser, win: ZenWindow, phone: boolean): boolean {
   const active = browser.tabs.activeTabFor(win)
   if (active === undefined || browser.pages.isChromePage(active)) return false
   if (!browser.state.settings.onboardingDone) return false
   if (searchChoiceCovers(browser.state)) return false
+  if (!phone && isNewTabUrl(active.url)) return false
   return !(phone && active.url === BLANK_URL)
 }
 

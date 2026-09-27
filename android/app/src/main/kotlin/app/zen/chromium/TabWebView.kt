@@ -1244,6 +1244,8 @@ class TabWebView(
 
     /** Long-press on links/images opens Zen's page menu; text selection stays native. */
     private fun onLongPress(): Boolean {
+        // The served new tab page's tiles hold their own menu (NTP-35): the renderer gets the gesture.
+        if (LinkHits.holdIsThePages(currentDocument)) return false
         val result = hitTestResult
         val density = resources.displayMetrics.density
         val anchorX = (left + lastTouchX) / density
@@ -2021,11 +2023,22 @@ class TabWebView(
             interstitialUrl = replaced
         }
         pdfPage = if (baseUrl != null && document != null) PdfViewer.Page(url, baseUrl, document) else null
+        servesNewTabPage = NewTabPage.isDocument(url)
         loadDataWithBaseURL(baseUrl ?: url, html, "text/html", "utf-8", url)
     }
 
     /** The viewer page this view shows, while it does (see [loadHtml]); read on the network thread too. */
     @Volatile private var pdfPage: PdfViewer.Page? = null
+
+    /**
+     * Whether this view shows the served new tab page (`zen://newtab`, NTP-35): set when the view
+     * loads it ([loadHtml], a history step back onto it – [onPageStarted]), cleared by any other
+     * load. Read first on the network thread by [shouldInterceptRequest]: the page's tile icons
+     * (`zen://favicon/<hash>`) are answered from the favicon store only while it is set, so every
+     * other view – the phone's first load among them – pays one boolean read per request and
+     * nothing else.
+     */
+    @Volatile private var servesNewTabPage = false
 
     /**
      * The address a navigation callback's URL stands for: the viewer page's `zen://pdf` address
@@ -2068,6 +2081,8 @@ class TabWebView(
         // marks its own load right after this).
         reloadAskedAt = 0L
         leaveCarry.reset()
+        // Any other load puts the served new tab page away (its icons are answered no longer).
+        servesNewTabPage = false
         if (LocalDocuments.isLocal(url)) {
             loadLocalDocument(url)
             return
@@ -2817,16 +2832,39 @@ class TabWebView(
         }
 
         /**
-         * Network thread. The extension layer answers first: it serves the extension origins and
-         * the CORS proxy of extension pages; then Preload pages `none` refuses a prefetch
-         * ([refusePreload]); anything left goes to the request engine, whose rule sets include
-         * the extensions' declarativeNetRequest rules.
+         * Network thread. The served new tab page's own icons come first, on that view alone
+         * ([newTabFavicon]; one boolean read on every other); then the viewer page's files; the
+         * extension layer next: it serves the extension origins and the CORS proxy of extension
+         * pages; then Preload pages `none` refuses a prefetch ([refusePreload]); anything left goes
+         * to the request engine, whose rule sets include the extensions' declarativeNetRequest
+         * rules.
          */
         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
-            PdfViewer.intercept(context, request, pdfPage)
+            (if (servesNewTabPage) newTabFavicon(request) else null)
+                ?: PdfViewer.intercept(context, request, pdfPage)
                 ?: host.extensions?.intercept(request, this@TabWebView, null)
                 ?: refusePreload(request)
                 ?: host.blocking.intercept(this@TabWebView, request)
+
+        /**
+         * The served new tab page's tile icons (NTP-35): `zen://favicon/<hash>`, the address the
+         * core gives a cached favicon (`core/favicons.ts`), answered with the icon's bytes and
+         * image type from the same store the chrome's `/zen-favicon/<hash>` route reads
+         * ([BootHandoff.favicon] – the one store read, not a second). 404 for an icon that is
+         * not there or a name that is no hash: the tile shows its letter, as the chrome's rows
+         * show their glyph. Any other request of the page (null) goes on down the chain. The
+         * icon's name being its content, the answer is cacheable for good; its bytes are binary,
+         * so no charset (WebView would append one) – the chrome route's shape.
+         */
+        private fun newTabFavicon(request: WebResourceRequest): WebResourceResponse? {
+            val hash = NewTabPage.faviconHash(request.url.toString()) ?: return null
+            val answer = host.handoff?.favicon(hash) ?: return null
+            if (!answer.ok) return WebResourceResponse("text/plain", "utf-8", 404, "Not Found", emptyMap(), null)
+            val headers = HashMap<String, String>()
+            headers["Cache-Control"] = answer.cacheControl
+            headers["Content-Length"] = answer.length.toString()
+            return WebResourceResponse(answer.mimeType, null, 200, "OK", headers, answer.stream)
+        }
 
         /**
          * Preload pages "No preloading" (PS-43) at the request engine, as the desktop's
@@ -2883,6 +2921,9 @@ class TabWebView(
             if (!url.startsWith(ERROR_PAGE_PREFIX)) failedUrl = null
             currentDocument = url
             startedDocument = url
+            // The served new tab page starting (a load, a history step back onto it) turns its
+            // icons on; any other document starting turns them off.
+            servesNewTabPage = NewTabPage.isDocument(url)
             // A navigation held for the core's answer is superseded by the document starting,
             // and the page that objected to it is on its way out: its Leave is spent, and so is
             // its script's word on the next navigation's referrer policy.

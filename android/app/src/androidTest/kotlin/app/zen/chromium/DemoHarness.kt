@@ -134,6 +134,16 @@ abstract class DemoHarness(
     protected open fun launchOptions(): Bundle? = null
 
     /**
+     * The intent is about to be handed to `startActivitySync` ([launch]): a driver that must see
+     * the activity's VERY FIRST moment – the landing's frames from `onCreate` on – arms its
+     * `Instrumentation.ActivityMonitor` and its watcher here, since `startActivitySync` itself
+     * returns only at the main looper's first idle, a boot's seconds after `onCreate` (the tablet
+     * new tab demo's first landing watch began 2.2 s into the boot for that). Every launch calls
+     * it, the first and any relaunch.
+     */
+    protected open fun onLaunching() {}
+
+    /**
      * Seed, launch, warm up, hand over to the recorder, run the sequence. Fails once the
      * recording is done when a touch a step injected did not take ([touchFault]). The stills
      * are flushed whether the sequence ran through or threw, so a failed run keeps the
@@ -358,6 +368,7 @@ abstract class DemoHarness(
         val intent = Intent(app, MainActivity::class.java).setAction(Intent.ACTION_MAIN)
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         if (holdBackgroundWork) intent.putExtra(BackgroundWorkHold.EXTRA_HOLD, true)
+        onLaunching()
         appLaunchedAt = SystemClock.uptimeMillis()
         val options = launchOptions()
         activity = if (options != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -572,6 +583,15 @@ abstract class DemoHarness(
             SystemClock.sleep(400)
         }
         val bitmap = taken ?: return
+        shot(name, bitmap)
+    }
+
+    /**
+     * A still from a frame the driver took itself (a landing watch's display capture, chosen
+     * after the fact): encoded on the same background thread as [shot]'s, and recycled once
+     * written – the caller hands the bitmap over.
+     */
+    protected fun shot(name: String, bitmap: Bitmap) {
         val file = File(out, "$shotPrefix-$name.png")
         shotEncoder.execute {
             file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
