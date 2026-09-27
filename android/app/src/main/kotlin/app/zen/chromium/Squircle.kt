@@ -38,7 +38,8 @@ object Squircle {
 
     /**
      * Line segments per corner. At 16 the polyline stays within 0.11 % of the radius of the curve
-     * – 0.024 px on the card's 8 dp at the CI emulator's 2.625 density, a fortieth of a pixel.
+     * – 0.024 px on the card's 8 dp at a Pixel 6's 2.625 density (0.016 px at the demo display's
+     * 1.75), a fortieth of a pixel.
      */
     const val SEGMENTS = 16
 

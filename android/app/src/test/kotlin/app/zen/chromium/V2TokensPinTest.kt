@@ -270,7 +270,8 @@ class V2TokensPinTest {
             assertTrue("x falls along the corner", samples[i].first <= samples[i - 1].first)
             assertTrue("y rises along the corner", samples[i].second >= samples[i - 1].second)
         }
-        // The polyline's chords stay within three hundredths of a pixel of the curve at the CI emulator's density.
+        // The polyline's chords stay within three hundredths of a pixel of the curve at a Pixel 6's density
+        // (the demo display's 1.75 is looser still).
         val density = 2.625
         var worst = 0.0
         for (i in 1 until samples.size) {
