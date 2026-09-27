@@ -229,6 +229,9 @@ class QuickActionsWidgetFaceTest {
         val xsmallButton = read("drawable/widget_quick_actions_xsmall_button.xml")
         assertTrue(xsmallButton.contains("<ripple"))
         assertFalse(xsmallButton.contains("<shape"))
+        // Its ripple is the button role – Chrome's widget_button_bg (colorSurfaceContainer) – not the system's highlight.
+        assertTrue(xsmallButton.contains("""android:color="@color/widget_quick_actions_button""""))
+        assertFalse(xsmallButton.contains("colorControlHighlight"))
     }
 
     @Test
