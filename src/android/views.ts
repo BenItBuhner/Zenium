@@ -1151,7 +1151,16 @@ export class AndroidTabViewHost implements TabViewHost, PlacementListener {
     view.events = events
     view.containerId = tab.containerId
     this.views.set(tab.id, view)
-    this.bridge.send('view.create', { tabId: tab.id, containerId: tab.containerId })
+    // A tab at `zen://newtab` is tagged (NTP-35): at a tablet's boot the host holds that tab's
+    // creation, load and placement – every message of its – until the FULLY DRAWN frame
+    // (`Host.kt`'s boot hold), so none of the served page's document work runs before the mark.
+    // The tag alone is sent; whether to hold is the host's (the phone's chrome draws its own page
+    // and its host admits nothing).
+    this.bridge.send('view.create', {
+      tabId: tab.id,
+      containerId: tab.containerId,
+      ...(isNewTabUrl(tab.url) ? { newTabPage: true } : {})
+    })
     return view
   }
 

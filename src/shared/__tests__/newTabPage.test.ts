@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import mainCss from '../../renderer/src/assets/main.css?raw'
 import {
   chromeTokenCss,
+  NEW_TAB_AWAIT_STATE_ATTR,
+  NEW_TAB_AWAIT_STATE_STYLE,
   NEW_TAB_PAGE_STYLE,
   NEW_TAB_RULES_END,
   NEW_TAB_RULES_START,
@@ -14,6 +16,7 @@ import {
 } from '../newTabPage'
 import { PRIVATE_ACCENT, PRIVATE_ACCENT_RGB } from '../newTabPageScript'
 import { PRIVATE_THEME, resolveTheme, themeCssVariables } from '../theme'
+import { zenPageHtml } from '../zenPages'
 
 /** Custom-property names declared (`--x:`) in `css`. */
 function declared(css: string): Set<string> {
@@ -318,5 +321,62 @@ describe('zen://newtab tokens', () => {
     expect(rowRules).not.toMatch(/transition:[^;]*opacity/)
     // Window family only: no page ink or fill on the row or the switch (§9.29).
     expect(rowRules).not.toMatch(/--v2-(text|fill|page|accent)\b/)
+  })
+})
+
+/**
+ * NTP-35 (#563, the lead's conditions of form): the Android host fills the served document after
+ * its first paint (`pageScript.ts` hands no state synchronously), so on that host the document
+ * awaits its state TRANSPARENT and comes in WHOLE – filled, its icons in hand – on the language's
+ * 120 ms opacity fade (§11.4), a cut under reduced motion. The desktop's document is byte-identical
+ * to what it was: the option is off there, and the phone never loads this document at all.
+ */
+describe("zen://newtab: the awaiting document (NTP-35, the tablet's served page)", () => {
+  const plain = newTabPageHtml()
+  const awaiting = newTabPageHtml({ awaitState: true })
+
+  it("the desktop's document is as it was: no attribute, none of the awaiting rules", () => {
+    expect(NEW_TAB_AWAIT_STATE_ATTR).toBe('data-await-state')
+    expect(plain.startsWith('<!doctype html><html lang="en"><head>')).toBe(true)
+    expect(plain).not.toContain(NEW_TAB_AWAIT_STATE_ATTR)
+    expect(plain).not.toContain(':root { transition: opacity')
+    expect(newTabPageHtml({})).toBe(plain)
+    expect(newTabPageHtml({ awaitState: false })).toBe(plain)
+  })
+
+  it('the awaiting document carries the attribute on its root and the two rules, and nothing else differs', () => {
+    expect(awaiting.startsWith('<!doctype html><html lang="en" data-await-state><head>')).toBe(true)
+    // Transparent while awaiting; the opacity change runs the language's 120 ms fade.
+    expect(NEW_TAB_AWAIT_STATE_STYLE).toContain(':root { transition: opacity 120ms var(--zen-ease); }')
+    expect(NEW_TAB_AWAIT_STATE_STYLE).toContain(':root[data-await-state] { opacity: 0; }')
+    expect(awaiting).toContain(`${NEW_TAB_PAGE_STYLE}${NEW_TAB_AWAIT_STATE_STYLE}</style>`)
+    // Only the attribute and the appended rules: the page itself is the desktop's, so a fix to
+    // either document is a fix to both.
+    expect(
+      awaiting
+        .replace(' data-await-state><head>', '><head>')
+        .replace(NEW_TAB_AWAIT_STATE_STYLE, '')
+    ).toBe(plain)
+    expect(awaiting.split('data-await-state').length - 1).toBe(2)
+  })
+
+  it("under reduced motion the page's remover takes the root's transition too: the first paint is a cut", () => {
+    // `*` covers the root; `!important` outranks the appended rule whatever its place in the sheet.
+    expect(NEW_TAB_PAGE_STYLE).toMatch(
+      /@media \(prefers-reduced-motion: reduce\) \{\n\s+\*, ::before, ::after, ::backdrop \{ transition-property: none !important;/
+    )
+    expect(awaiting.indexOf('prefers-reduced-motion')).toBeLessThan(
+      awaiting.indexOf(':root { transition: opacity')
+    )
+  })
+
+  it("the Android host's page is the awaiting document; every other host's is the desktop's", () => {
+    expect(zenPageHtml('zen://newtab', undefined, undefined, undefined, 'system', 'android')).toBe(
+      awaiting
+    )
+    expect(zenPageHtml('zen://newtab')).toBe(plain)
+    expect(zenPageHtml('zen://newtab', undefined, undefined, undefined, 'system', 'desktop')).toBe(
+      plain
+    )
   })
 })

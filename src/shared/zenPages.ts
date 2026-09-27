@@ -1456,7 +1456,10 @@ export function zenPageHtml(
   if (!url) return blankPageHtml()
   switch (url.hostname) {
     case 'newtab':
-      return newTabPageHtml()
+      // The Android host's page has no state to hand before its first paint (`pageScript.ts`
+      // fetches none synchronously): its document awaits the state transparent and comes in
+      // whole (NTP-35, `newTabPage.ts`); the desktop's document is as it was.
+      return newTabPageHtml({ awaitState: host === 'android' })
     case 'version': {
       const facts = version?.()
       return facts ? versionPageHtml(facts) : blankPageHtml()

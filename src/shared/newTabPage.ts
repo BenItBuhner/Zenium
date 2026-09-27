@@ -322,6 +322,30 @@ export const NEW_TAB_PAGE_STYLE = `
   }
 `
 
+/**
+ * On the document's root while it awaits its first state, on a host whose state comes after the
+ * first paint (the Android host's page script has none to hand before the document renders,
+ * `src/android/pageScript.ts`; the desktop's preload fetches it synchronously and never sets
+ * this). The page script takes it off once the state is applied and the icons are in hand
+ * (`newTabPageScript.ts` `reveal`).
+ */
+export const NEW_TAB_AWAIT_STATE_ATTR = 'data-await-state'
+
+/**
+ * The awaiting document's rules (NTP-35, the tablet's served page; the lead's conditions of form
+ * on #563): the root is transparent while it awaits its state – the view is transparent over the
+ * chrome, so the frame's ground shows through where the page will be, and nothing of the shell
+ * (the field in the wrong scheme, the grid before its tiles) is ever painted – and comes in
+ * WHOLE on the language's 120 ms opacity fade once the script lets it (the fill applied, the
+ * icons decoded). Under reduced motion the page's remover above makes the change a cut:
+ * `transition-property: none !important` on every element, the root among them. Appended to the
+ * document only where the attribute is set (`newTabPageHtml`); the desktop's document is as it was.
+ */
+export const NEW_TAB_AWAIT_STATE_STYLE = `
+  :root { transition: opacity 120ms var(--zen-ease); }
+  :root[${NEW_TAB_AWAIT_STATE_ATTR}] { opacity: 0; }
+`
+
 /** Lucide-style glyphs (stroke 1.5; sized by the stylesheet) inlined so the page needs no assets. */
 export const NEW_TAB_ICONS = {
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
@@ -389,9 +413,20 @@ export function privateCookiesDescription(cookies: {
     : privateCookiesLockedByExtension(cookies.blocked, cookies.lockedByExtension)
 }
 
+export interface NewTabPageDocumentOptions {
+  /**
+   * The host fills the document after its first paint (no state to hand before it renders): the
+   * root awaits its state transparent (`NEW_TAB_AWAIT_STATE_ATTR`, `NEW_TAB_AWAIT_STATE_STYLE`)
+   * until the page script has applied one. Off, the document is the desktop's as it was.
+   */
+  awaitState?: boolean
+}
+
 /** The `zen://newtab` document. Everything dynamic is added by the page script. */
-export function newTabPageHtml(): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src * data: zen:;"><title>New Tab</title><style>${chromeTokenCss()}\n${newTabSharedCss()}${NEW_TAB_PAGE_STYLE}</style></head>
+export function newTabPageHtml(options: NewTabPageDocumentOptions = {}): string {
+  const awaitAttr = options.awaitState ? ` ${NEW_TAB_AWAIT_STATE_ATTR}` : ''
+  const awaitStyle = options.awaitState ? NEW_TAB_AWAIT_STATE_STYLE : ''
+  return `<!doctype html><html lang="en"${awaitAttr}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src * data: zen:;"><title>New Tab</title><style>${chromeTokenCss()}\n${newTabSharedCss()}${NEW_TAB_PAGE_STYLE}${awaitStyle}</style></head>
 <body data-surface="window">
 <div class="zen-bg" id="zen-bg-current"></div><div class="zen-bg" id="zen-bg-next"></div><div class="zen-ntp-scrim" aria-hidden="true"></div>
 <main class="zen-ntp" id="zen-ntp">

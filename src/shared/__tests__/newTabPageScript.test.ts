@@ -1,8 +1,14 @@
 // @vitest-environment happy-dom
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NewTabPageAction, NewTabPageCommand, NewTabPageState } from '../types'
-import { PRIVATE_COOKIES, newTabPageHtml } from '../newTabPage'
-import { installNewTabPage, type NewTabTransport } from '../newTabPageScript'
+import { NEW_TAB_AWAIT_STATE_ATTR, PRIVATE_COOKIES, newTabPageHtml } from '../newTabPage'
+import {
+  AWAIT_STATE_CAP_MS,
+  ICON_WAIT_MS,
+  iconsInHand,
+  installNewTabPage,
+  type NewTabTransport
+} from '../newTabPageScript'
 
 /**
  * The page script against the served document in happy-dom (no layout, no real focus ring):
@@ -507,5 +513,231 @@ describe('zen://newtab: the field under a finger is a hand-off control (NTP-35)'
       keyboard: false,
       rect: { x: 120, y: 200, width: 104, height: 96 }
     })
+  })
+})
+
+/**
+ * NTP-35 (#563, the lead's conditions of form on the tablet's boot landing): the Android host's
+ * document awaits its first state TRANSPARENT (`data-await-state` on its root, `newTabPage.ts`;
+ * the host hands no state before the first paint) and comes in WHOLE – filled from the state
+ * push, the tiles with their icons decoded (a tile whose icon is on its way keeps its slot empty:
+ * never a letter that turns into an icon), the field, the sentence – the attribute coming off on
+ * the NEXT FRAME after the fill so the layout is in before the root's 120 ms opacity fade runs
+ * (a cut under reduced motion: the stylesheet's rule). The frames are taken by hand, and so is
+ * `HTMLImageElement.decode()` (happy-dom's settles at once): the order is the pin.
+ */
+describe("zen://newtab: the awaiting document comes in whole (NTP-35, the tablet's served page)", () => {
+  const root = (): HTMLElement => document.documentElement
+  const awaiting = (): boolean => root().hasAttribute(NEW_TAB_AWAIT_STATE_ATTR)
+  const icons = (): HTMLImageElement[] =>
+    Array.from(document.querySelectorAll<HTMLImageElement>('img.zen-ntp-icon'))
+  const letters = (): string[] =>
+    Array.from(document.querySelectorAll<HTMLElement>('.zen-ntp-letter')).map(
+      (l) => l.textContent ?? ''
+    )
+  const engineImg = (): HTMLImageElement =>
+    document.getElementById('zen-engine-favicon') as HTMLImageElement
+  /** A macrotask: every promise chain in flight has settled. */
+  const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
+  const shortcuts = [
+    {
+      id: 's1',
+      title: 'One',
+      url: 'https://one.example/',
+      favicon: 'zen://favicon/0123456789abcdef0123456789abcdef'
+    },
+    {
+      id: 's2',
+      title: 'Two',
+      url: 'https://two.example/',
+      favicon: 'zen://favicon/fedcba9876543210fedcba9876543210'
+    },
+    // No icon cached for it: the letter IS its face, nothing arrives later to replace it.
+    { id: 's3', title: 'Three', url: 'https://three.example/', favicon: null }
+  ]
+
+  let frames: FrameRequestCallback[] = []
+  const runFrames = (): void => {
+    let now = performance.now()
+    for (let i = 0; frames.length && i < 100; i++) {
+      now += 16
+      ;(frames.shift() as FrameRequestCallback)(now)
+    }
+  }
+
+  /** `decode()` settles only by the test's hand, per image. */
+  function decodeByHand(): {
+    settle(img: HTMLImageElement): void
+    fail(img: HTMLImageElement): void
+    asked(): number
+  } {
+    const pending = new Map<HTMLImageElement, { resolve(): void; reject(e: Error): void }>()
+    const spy = vi
+      .spyOn(HTMLImageElement.prototype, 'decode')
+      .mockImplementation(function (this: HTMLImageElement) {
+        return new Promise<void>((resolve, reject) => {
+          pending.set(this, { resolve, reject })
+        })
+      })
+    const of = (img: HTMLImageElement): { resolve(): void; reject(e: Error): void } => {
+      const entry = pending.get(img)
+      if (!entry) throw new Error('decode() was not asked of this image')
+      return entry
+    }
+    return {
+      settle: (img) => of(img).resolve(),
+      fail: (img) => of(img).reject(new Error('EncodingError')),
+      asked: () => spy.mock.calls.length
+    }
+  }
+
+  /** The Android host's document: the attribute on the root, no state handed synchronously. */
+  function mountAwaiting(): Harness {
+    root().setAttribute(NEW_TAB_AWAIT_STATE_ATTR, '')
+    return mount(null)
+  }
+
+  beforeEach(() => {
+    frames = []
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => frames.push(cb))
+    vi.stubGlobal('cancelAnimationFrame', () => undefined)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+    root().removeAttribute(NEW_TAB_AWAIT_STATE_ATTR)
+  })
+
+  it('stays transparent until its first state: frames pass, nothing is let in', async () => {
+    const h = mountAwaiting()
+    expect(awaiting()).toBe(true)
+    expect(h.sent).toEqual([{ type: 'ready' }])
+    await flush()
+    runFrames()
+    expect(awaiting()).toBe(true)
+    expect(icons()).toEqual([])
+  })
+
+  it('the state fills the document unseen; the icons decode; the next frame lets it in whole', async () => {
+    const decode = decodeByHand()
+    const h = mountAwaiting()
+    h.push(
+      state({
+        shortcutsMode: 'my-shortcuts',
+        shortcuts,
+        greeting: true,
+        engineFavicon: 'https://engine.example/favicon.ico'
+      })
+    )
+    // Filled at once, still transparent: the grid's three tiles, the field's favicon asked for.
+    expect(awaiting()).toBe(true)
+    expect(icons().map((i) => i.getAttribute('src'))).toEqual([
+      shortcuts[0].favicon,
+      shortcuts[1].favicon
+    ])
+    expect(letters()).toEqual(['T'])
+    expect(engineImg().getAttribute('src')).toBe('https://engine.example/favicon.ico')
+    await flush()
+    // Every icon with an address is asked to decode – the two tiles' and the field's.
+    expect(decode.asked()).toBe(3)
+    runFrames()
+    expect(awaiting()).toBe(true)
+
+    // Two of three in hand: still waiting, and no tile shows a letter in the meantime.
+    decode.settle(icons()[0])
+    decode.settle(icons()[1])
+    await flush()
+    runFrames()
+    expect(awaiting()).toBe(true)
+    expect(letters()).toEqual(['T'])
+
+    // The last in hand: the fill is laid out on this frame, the attribute comes off on the next.
+    decode.settle(engineImg())
+    await flush()
+    expect(awaiting()).toBe(true)
+    expect(frames.length).toBeGreaterThan(0)
+    runFrames()
+    expect(awaiting()).toBe(false)
+    expect(letters()).toEqual(['T'])
+
+    // A later push changes the page in place: the attribute does not come back, no second wait.
+    const asked = decode.asked()
+    h.push(state({ shortcutsMode: 'my-shortcuts', shortcuts: shortcuts.slice(0, 1) }))
+    await flush()
+    runFrames()
+    expect(awaiting()).toBe(false)
+    expect(decode.asked()).toBe(asked)
+  })
+
+  it("an icon that fails to decode is in hand as its letter: the icon's answer, not a letter ahead of it", async () => {
+    const decode = decodeByHand()
+    const h = mountAwaiting()
+    h.push(state({ shortcutsMode: 'my-shortcuts', shortcuts: shortcuts.slice(0, 2) }))
+    await flush()
+    const [one, two] = icons()
+    decode.settle(one)
+    decode.fail(two)
+    // The store's own word that there is no icon: the tile falls back to its letter.
+    two.dispatchEvent(new Event('error'))
+    await flush()
+    runFrames()
+    expect(awaiting()).toBe(false)
+    expect(letters()).toEqual(['T'])
+    expect(icons().length).toBe(1)
+  })
+
+  it('an icon still on its way at the cap lets the page in with that slot empty, never a letter', async () => {
+    decodeByHand()
+    const img = document.createElement('img')
+    img.className = 'zen-ntp-icon'
+    img.src = shortcuts[0].favicon as string
+    let settled = false
+    const wait = iconsInHand([img], 20).then(() => {
+      settled = true
+    })
+    await flush()
+    expect(settled).toBe(false)
+    await wait
+    expect(settled).toBe(true)
+    // No icons to wait for: in hand at once, no timer armed.
+    let atOnce = false
+    void iconsInHand([], 20).then(() => {
+      atOnce = true
+    })
+    await Promise.resolve()
+    expect(atOnce).toBe(true)
+    // The page's own numbers: the icons' cap well under a frame's worth of frames at the boot's
+    // pace, the state's cap long after any push and inside the host's fail-safes (5 s, 10 s).
+    expect(ICON_WAIT_MS).toBe(300)
+    expect(AWAIT_STATE_CAP_MS).toBe(2000)
+  })
+
+  it('a state that never comes: the shell is let in at the cap rather than staying the ground', async () => {
+    // The clock alone is faked: the frames stay the test's own hand.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const h = mountAwaiting()
+    expect(awaiting()).toBe(true)
+    await vi.advanceTimersByTimeAsync(AWAIT_STATE_CAP_MS - 1)
+    runFrames()
+    expect(awaiting()).toBe(true)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(awaiting()).toBe(true)
+    runFrames()
+    expect(awaiting()).toBe(false)
+    expect(h.sent).toEqual([{ type: 'ready' }])
+  })
+
+  it("the desktop's document carries no attribute and none of this runs for it", async () => {
+    const decode = decodeByHand()
+    const h = mount(state({ shortcutsMode: 'my-shortcuts', shortcuts }))
+    expect(awaiting()).toBe(false)
+    h.push(state({ shortcutsMode: 'my-shortcuts', shortcuts }))
+    await flush()
+    runFrames()
+    expect(awaiting()).toBe(false)
+    expect(decode.asked()).toBe(0)
+    expect(icons().length).toBe(2)
   })
 })

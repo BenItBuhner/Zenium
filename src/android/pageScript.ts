@@ -470,7 +470,8 @@ function installGuards(
     // as `{ type: 'newtab', action }` (`views.ts` routes them to `onNewTabAction`); the state
     // and the tile menu's commands come down through `onmessage` above. No state is known before
     // the first paint here (the desktop fetches it synchronously): the page's `ready` action has
-    // the core push it at once.
+    // the core push it at once, and the document the core served this host awaits that push
+    // transparent, coming in whole once it is applied (`newTabPage.ts` `data-await-state`).
     if (isNewTabUrl(w.location.href)) {
       try {
         installNewTabPage({

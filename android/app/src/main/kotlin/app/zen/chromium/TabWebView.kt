@@ -2036,11 +2036,9 @@ class TabWebView(
      * load. Read first on the network thread by [shouldInterceptRequest]: the page's tile icons
      * (`zen://favicon/<hash>`) are answered from the favicon store only while it is set, so every
      * other view – the phone's first load among them – pays one boolean read per request and
-     * nothing else. Read on the main thread by the host's boot hold ([BootPlacementHold]): the
-     * served page's first placement lands a frame after READY.
+     * nothing else.
      */
-    @Volatile var servesNewTabPage = false
-        private set
+    @Volatile private var servesNewTabPage = false
 
     /**
      * The address a navigation callback's URL stands for: the viewer page's `zen://pdf` address
