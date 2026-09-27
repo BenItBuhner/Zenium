@@ -254,6 +254,11 @@ export interface PageMessage {
      * progress, so memory pressure leaves the tab alone until its next document (OS-37).
      */
     | 'formEdited'
+    /**
+     * Roll (`shared/game/bridge.ts`), from the no-connection page or `zen://game`: the ask for
+     * the profile's best score at mount, or a run's best at a crash (`GameService`).
+     */
+    | 'game'
   url?: string
   /** `editing`: whether a text field of the reporting frame has the keyboard. */
   editing?: boolean
@@ -309,6 +314,8 @@ export interface PageMessage {
   readAloud?: unknown
   /** `capture-state`: the frame's report (`CaptureStateReport`, validated by the core). */
   capture?: unknown
+  /** `game`: the ask or the report (`GameWindowMessage`, validated by the core). */
+  game?: unknown
 }
 
 /** The web-app polyfill's messages: `installable` fires `beforeinstallprompt`, `result` settles a `prompt()`, `installed` fires `appinstalled`. */

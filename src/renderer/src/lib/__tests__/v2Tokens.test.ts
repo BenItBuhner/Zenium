@@ -1596,7 +1596,12 @@ describe('the chassis corner and the holders of focus (§2, §9.22; the W7-F4 sl
     // One token, `--zen-corner: squircle`, declared once in the theme block; a chassis class of
     // radius 8 and up carries it as `corner-shape: var(--zen-corner)` beside its radius token –
     // the popover and toolbar chassis (`.zen-v2-panel`, extensions.css) the pattern followed.
-    expect(css.match(/^ {2}--zen-corner: squircle;$/gm)).toHaveLength(1)
+    // The served documents' root (`.zen-error-document`, the slice zenPages.ts cuts for the
+    // error pages and `zen://game`, which the theme block never reaches) restates it as it
+    // restates `--zen-ease`, so Roll's game-over card at radius 8 draws the squircle there too
+    // (ERR-03, §9.17 (c)); that is the token's one other declaration.
+    expect(css.match(/^ {2}--zen-corner: squircle;$/gm)).toHaveLength(2)
+    expect(block('.zen-error-document')).toMatch(/^ {2}--zen-corner: squircle;$/m)
     expect(declarations(extensions, '.zen-v2-panel')).toEqual(
       expect.arrayContaining([
         'border-radius: var(--v2-radius-card);',

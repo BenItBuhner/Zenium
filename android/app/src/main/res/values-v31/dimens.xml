@@ -7,4 +7,6 @@
 <resources>
     <dimen name="widget_quick_actions_radius">@android:dimen/system_app_widget_background_radius</dimen>
     <dimen name="widget_quick_actions_xsmall_radius">@android:dimen/system_app_widget_background_radius</dimen>
+    <!-- The game widget's one-cell card (WID-04; res/layout/widget_game.xml): the same system radius. -->
+    <dimen name="widget_game_radius">@android:dimen/system_app_widget_background_radius</dimen>
 </resources>

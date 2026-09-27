@@ -40,7 +40,8 @@ describe('the page registry', () => {
       'print',
       'pdf',
       'tasks',
-      'version'
+      'version',
+      'game'
     ])
     expect(INTERNAL_PAGES.settings.title).toBe('Settings')
     // Zen's features, Autofill, Languages and then Privacy after Search; Apps (the installed web
@@ -292,6 +293,23 @@ describe('the page registry', () => {
       splittable: true,
       requires: 'pdfViewer'
     })
+    // Roll, the offline game (ERR-03 / WID-04): a document page on every host, a tab per open as
+    // Chrome's chrome://dino is; nothing it requires of a host. The tab and the pill read the
+    // game's name (gate #607), and the favicon slot wears the game's picture, `roll` (§9.17: "a
+    // chrome page never wears the globe"; the lead's (β-2) on #607), the widget face's own.
+    expect(INTERNAL_PAGES.game).toMatchObject({
+      id: 'game',
+      title: 'Roll',
+      render: 'document',
+      singleton: false,
+      glyph: 'roll',
+      pill: { showStar: true },
+      splittable: true,
+      sections: []
+    })
+    expect(INTERNAL_PAGES.game.requires).toBeUndefined()
+    expect(pageOpensAsTab(INTERNAL_PAGES.game, NONE, 'phone')).toBe(true)
+    expect(parseInternalPageUrl('zenium://game')).toEqual({ id: 'game', section: null })
   })
 })
 

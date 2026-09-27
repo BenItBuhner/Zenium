@@ -136,9 +136,11 @@ import {
   parsePreviewSeed,
   parsePreviewSpec,
   parsePreviewSteps,
+  PREVIEW_GAME_SCENE_KEY,
   type PreviewCrashVariant,
   type PreviewDownloadSpec,
   type PreviewFirstRunStep,
+  type PreviewGameScene,
   type PreviewSiteDataSeed,
   type PreviewMediaVariant,
   type PreviewNetworkVariant,
@@ -1143,6 +1145,9 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   const translate = params.get('translate')
   const readerTranslate = params.get('readerTranslate')
   const favicon = params.get('favicon')
+  // The offline game's pose (`&game=`) is left on the root for the host to read as it serves
+  // the page's document (`preview.ts`, `view.loadHtml`); a state without one clears it.
+  poseGame('game' in target ? target.game : undefined)
   const seed = (): void => {
     if (blocking)
       seedBlocking(blocking, Number.isFinite(blocked) && blocked > 0 ? blocked : undefined)
@@ -2876,6 +2881,12 @@ function settlePage(
       })
     }
   )
+}
+
+/** The offline game's asked pose, left on the root for `preview.ts` to hand its document's driver. */
+function poseGame(scene: PreviewGameScene | undefined): void {
+  if (scene) document.documentElement.dataset[PREVIEW_GAME_SCENE_KEY] = scene
+  else delete document.documentElement.dataset[PREVIEW_GAME_SCENE_KEY]
 }
 
 /**

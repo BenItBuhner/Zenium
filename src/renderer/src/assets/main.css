@@ -28,6 +28,12 @@
   --zen-accent-rgb: 98 100 220;
   --zen-panel-rgb: 251 251 252;
   --zen-texture: 0;
+  /*
+   * Roll's mark in a favicon slot (§9.17, `shared/game/mark.ts`): the brand indigo of the widget's
+   * mark rule (`widget_search_mark`), lifted in the dark theme – not the space's accent, which the
+   * page's runner wears; `mark.test.ts` holds both values to `ROLL_MARK_INDIGO`.
+   */
+  --zen-roll-mark: #6264dc;
 
   /* Ink and fills: alphas of the foreground. */
   --zen-element-bg: rgb(var(--zen-fg-rgb) / 0.07);
@@ -99,6 +105,7 @@
 
 :root[data-theme='dark'] {
   --zen-panel-rgb: 23 23 25;
+  --zen-roll-mark: #8284f0;
   --zen-on-accent: #101010;
   --zen-ok: #6fd39a;
   --zen-ok-rgb: 111 211 154;
@@ -931,6 +938,8 @@
   --zen-accent: var(--v2-text);
   /* The chrome's easing (§7), which the v2 button's press transition reads. */
   --zen-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* The chrome's corner (§2: the squircle on radius 8 and up), which the game-over card reads. */
+  --zen-corner: squircle;
   height: 100%;
   color-scheme: light;
 }
@@ -1238,6 +1247,122 @@
 .zen-v2-button[data-primary] .zen-interstitial-punycode {
   color: inherit;
   opacity: 0.69;
+}
+/*
+ * Roll, the offline game (ERR-03, §9.17; `shared/game/`): the stage above the no-connection
+ * page's title, and alone on `zen://game` – a region the content column wide, at most 600 by 150
+ * (Chrome's runner's size), the runner and the cards drawn in the page's tokens by the document's
+ * inline runtime, so the stylesheet gives the stage no colour. The start hint sits across the
+ * stage's middle in the deemphasised ink; the game-over card is a v2 card at 8 (the squircle,
+ * `--zen-corner`) over the stage, "Game over" at the heading size, the score line deemphasised
+ * and tabular, Play again its one primary; the live region is the screen reader's alone.
+ * `touch-action: none` keeps a swipe on the stage the game's (a downward swipe mid-air is the
+ * speed drop). The card's arrival is the runtime's (Web Animations: a 180 ms pop, a 120 ms
+ * opacity fade under reduced motion, §11.3), not a transition here – the page's cut carries no
+ * reduced-motion remover of its own; the card is centred by its auto margins, never by a
+ * `transform`, so the pop's `scale()` composes with the centring instead of replacing it (the
+ * first line's B1 on #607: a `translateX(-50%)` here made the card arrive half its width off).
+ * The night is the region's: the runtime sets `data-theme` on `.zen-game` alone, and
+ * `zenPages.ts` restates the theme's tokens under that attribute (`gameStageThemeStyle`), so the
+ * hint, the card and the stage's palette flip while the page around them keeps its colours; the
+ * night's sky is the runtime's rounded box on the canvas (§9.31's inner box), not a rule here.
+ * The ring is the keyboard's alone (§1, A11Y-09): the runtime cancels the press and focuses the
+ * region itself, so Chromium records no pointer-made focus and `:focus-visible` reads the
+ * script's focus as the keyboard's – it rang under a finger (#607's night stills). The
+ * coarse-pointer suppressor below is the chrome's own form (the legacy buttons', further down)
+ * on the region: it stands the ring down unless the keyboard is what the user drives with
+ * (`data-input='keyboard'` on the root, which the runtime keeps in the served documents as
+ * lib/lastInput.ts does in the chrome), and never touches the pane chord's twin.
+ */
+.zen-game {
+  position: relative;
+  width: 100%;
+  max-width: 600px;
+  margin: 0 0 24px;
+  outline: none;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.zen-game:focus-visible,
+.zen-game[data-keyboard-focus]:focus {
+  outline: 2px solid var(--v2-ring);
+  outline-offset: 4px;
+  border-radius: var(--v2-radius-inner);
+}
+:root[data-pointer='coarse']:where(:not([data-input='keyboard'])) .zen-game:focus-visible {
+  outline: none;
+}
+.zen-game-stage {
+  display: block;
+  max-width: 100%;
+}
+.zen-game-hint {
+  position: absolute;
+  top: 56px;
+  right: 0;
+  left: 0;
+  margin: 0;
+  text-align: center;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+  pointer-events: none;
+}
+.zen-game-hint[hidden] {
+  display: none;
+}
+.zen-game-over {
+  position: absolute;
+  top: 16px;
+  right: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 200px;
+  max-width: 100%;
+  margin-inline: auto;
+  padding: var(--v2-card-padding);
+  border: 1px solid var(--v2-card-border);
+  border-radius: var(--v2-radius-card);
+  corner-shape: var(--zen-corner);
+  background: var(--v2-card);
+  color: var(--v2-text);
+}
+.zen-game-over[hidden] {
+  display: none;
+}
+.zen-game-over-title {
+  margin: 0;
+  font-size: var(--v2-font-heading);
+  font-weight: var(--v2-weight-heading);
+  line-height: var(--v2-line-heading);
+}
+.zen-game-over-score {
+  margin: 0;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+  font-variant-numeric: tabular-nums;
+}
+.zen-game-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.zen-game-page main {
+  display: flex;
+  justify-content: center;
+}
+.zen-game-page .zen-game {
+  margin: 0;
 }
 
 @layer base {

@@ -5,7 +5,8 @@ import android.content.Intent
 /**
  * The state a Home-screen widget or a launcher shortcut asks the browser window to land in
  * (WID-07): the omnibox focused with the keyboard up ([SEARCH]), the voice search sheet listening
- * ([VOICE]), a new private tab ([PRIVATE]) or the QR scanner ([SCAN]). It travels as one string
+ * ([VOICE]), a new private tab ([PRIVATE]), the QR scanner ([SCAN]), a plain new tab ([NEW_TAB])
+ * or a tab on Roll, the offline game ([GAME]). It travels as one string
  * extra on the intent that starts or re-enters `MainActivity`, and nothing else: the activity's
  * intent switch reads it ([of]) and hands the word to `ChromeWebView.land`. On a cold start the
  * chrome's document is still loading, so the word waits in a [Stash] and travels IN the core's
@@ -40,7 +41,10 @@ object Landing {
     /** A plain new tab in the current space, active (the New tab shortcut). */
     const val NEW_TAB = "newTab"
 
-    val STATES: Set<String> = setOf(SEARCH, VOICE, PRIVATE, SCAN, NEW_TAB)
+    /** A new tab on `zen://game` – Roll, the offline game – active (the 1×1 game widget's face, WID-04). */
+    const val GAME = "game"
+
+    val STATES: Set<String> = setOf(SEARCH, VOICE, PRIVATE, SCAN, NEW_TAB, GAME)
 
     /**
      * The state a raw extra value names, or null for anything that is not one of [STATES]: an

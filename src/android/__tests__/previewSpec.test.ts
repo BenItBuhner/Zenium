@@ -601,6 +601,31 @@ describe('parsePreviewSpec', () => {
     })
   })
 
+  it('poses the offline game (ERR-03) on the no-connection page and on zen://game with `game=`; waiting without it, and for a word it does not know', () => {
+    expect(parsePreviewSpec('error=-106&url=https://example.com/&game=over')).toEqual({
+      kind: 'error',
+      code: -106,
+      url: 'https://example.com/',
+      game: 'over'
+    })
+    expect(parsePreviewSpec('page=game&game=night')).toEqual({
+      kind: 'page',
+      page: 'game',
+      game: 'night'
+    })
+    expect(parsePreviewSpec('page=game&game=running')).toEqual({
+      kind: 'page',
+      page: 'game',
+      game: 'running'
+    })
+    expect(parsePreviewSpec('page=game')).toEqual({ kind: 'page', page: 'game' })
+    expect(parsePreviewSpec('error=-106&game=won')).toEqual({
+      kind: 'error',
+      code: -106,
+      url: null
+    })
+  })
+
   it('opens an internal page in its tab, on a section, searched, scrolled, then stepped through', () => {
     expect(parsePreviewSpec('page=settings')).toEqual({ kind: 'page', page: 'settings' })
     expect(parsePreviewSpec('page=settings&section=look&search=dark&show=Enable%20Glance')).toEqual(

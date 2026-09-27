@@ -17,6 +17,7 @@ import type { ReadAloudExtraction, ReadAloudHostMessage } from './readAloud'
 import { installReadAloud } from './readAloudScript'
 import { installReaderExtrasWhenReady } from './readerExtras'
 import { fullscreenElementOf, installRotateToFullscreen } from './rotateToFullscreen'
+import { gameMessageOf, type GameWindowMessage } from './game/bridge'
 import type { CaptureStateReport } from './captureState'
 
 /**
@@ -63,11 +64,15 @@ export interface PageScriptMessage {
     | 'readAloud'
     | 'fullscreen'
     | 'capture-state'
+    /** Roll asks for the profile's best score or reports a run's (`game/bridge.ts`; a `zen:` document alone). */
+    | 'game'
   url?: string
   /** `opensearch`: the link's `title`, the engine's name when its description has none. */
   title?: string
   /** `capture-state`: one frame's live camera / microphone / display / PiP state (`captureState.ts`). */
   capture?: CaptureStateReport
+  /** `game`: the ask or the report, as the game's window message carried it. */
+  game?: GameWindowMessage
   x?: number
   y?: number
   background?: boolean
@@ -252,6 +257,7 @@ export function installPageScript(transport: PageScriptTransport): void {
   if (transport.reportBlockedPopups) installPopupObserver(transport)
   installInterstitialRelay(transport)
   installPdfViewerRelay(transport)
+  installGameRelay(transport)
   if (transport.onHint) installHint(transport.onHint.bind(transport))
   if (transport.onWebApp) installWebApp(transport)
   if (transport.discoverSearchEngines) installOpenSearch(transport)
@@ -505,6 +511,23 @@ function installInterstitialRelay(transport: PageScriptTransport): void {
     const { action, url } = message
     if (typeof action !== 'string' || !actions.has(action) || typeof url !== 'string') return
     transport.send({ type: 'interstitial', action: action as InterstitialAction, url })
+  })
+}
+
+/**
+ * Roll's bridge (ERR-03; `shared/game/bridge.ts`): the game's runtime rides inline in the two
+ * documents that carry it (the no-connection page, `zen://game`), not here – every other page
+ * pays nothing for it – and the one thing it needs of the browser is the profile's best score.
+ * It posts on its own window, as the warning pages do; this relays the ask and the report to the
+ * core (`GameService`) from a document of Zenium's own scheme alone, and the core answers
+ * through the document's `window.zenGameBest`.
+ */
+function installGameRelay(transport: PageScriptTransport): void {
+  if (location.protocol !== 'zen:') return
+  window.addEventListener('message', (e: MessageEvent) => {
+    if (e.source !== window) return
+    const game = gameMessageOf(e.data)
+    if (game) transport.send({ type: 'game', game })
   })
 }
 

@@ -20,3 +20,14 @@ declare module 'virtual:zenium-devtools-quit-hold-panel' {
   const source: string
   export default source
 }
+
+/**
+ * Roll's runtime (`shared/game/runtimeEntry.ts`), bundled at build time into one minified IIFE
+ * (`scripts/inline-script.ts`) that `shared/zenPages.ts` writes inline into the two documents
+ * that carry the game (`shared/game/inlineRuntime.ts`); every host that builds `zenPages.ts`
+ * registers the plugin.
+ */
+declare module 'virtual:zenium-game-runtime' {
+  const source: string
+  export default source
+}

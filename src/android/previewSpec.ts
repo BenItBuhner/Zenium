@@ -190,6 +190,19 @@ export type PreviewNetworkVariant = (typeof PREVIEW_NETWORK_VARIANTS)[number]
 export const PREVIEW_CRASH_VARIANTS = ['crash', 'memory', 'hung', 'repeat'] as const
 export type PreviewCrashVariant = (typeof PREVIEW_CRASH_VARIANTS)[number]
 
+/**
+ * The poses the offline game (ERR-03, `shared/game/`) may be shown in (`&game=<scene>` on
+ * `error=-106` and on `page=game`): `running` (a few seconds in, the runner mid-jump over a
+ * card), `over` (the game-over card up on the first card met) and `night` (the page's theme cut
+ * to the other for the night). Without one the game waits for its first tap, as it does on a
+ * device. The stand-in host's `previewGame.ts` drives the runtime to the pose on a clock of its
+ * own, so the still is one frame of it.
+ */
+export const PREVIEW_GAME_SCENES = ['running', 'over', 'night'] as const
+export type PreviewGameScene = (typeof PREVIEW_GAME_SCENES)[number]
+/** The root's dataset key the states module leaves the asked pose under for `preview.ts` to read. */
+export const PREVIEW_GAME_SCENE_KEY = 'zenGameScene'
+
 /** The menus a preview state may open: the app menu sheet, the Tabs button's quick menu. */
 export const PREVIEW_MENUS = ['app', 'tabs'] as const
 export type PreviewMenu = (typeof PREVIEW_MENUS)[number]
@@ -316,6 +329,8 @@ export type PreviewState =
       search?: string
       /** Steps taken after the page is open, searched and scrolled. */
       then?: PreviewStep[]
+      /** For `zen://game`: the pose the offline game is shown in (waiting without one). */
+      game?: PreviewGameScene
     }
   | {
       /**
@@ -517,6 +532,8 @@ export type PreviewState =
       code: number
       /** The URL that failed; null for the active tab's own. */
       url: string | null
+      /** For -106 (offline): the pose the page's game is shown in (waiting without one). */
+      game?: PreviewGameScene
     }
   | {
       /**
@@ -901,6 +918,8 @@ export function parsePreviewSpec(spec: string): PreviewState {
     if (show) state.show = show
     const then = parsePreviewSteps(params.get('then'))
     if (then.length > 0) state.then = then
+    const game = parseGameScene(params.get('game'))
+    if (game) state.game = game
     return state
   }
   const extensionPage = parseExtensionPage(params.get('extension-page'))
@@ -1079,7 +1098,14 @@ export function parsePreviewSpec(spec: string): PreviewState {
   if (params.has('unresponsive')) return { kind: 'unresponsive', url: params.get('url') || null }
   const error = params.get('error')
   if (error !== null && error !== '' && Number.isInteger(Number(error))) {
-    return { kind: 'error', code: Number(error), url: params.get('url') || null }
+    const state: Extract<PreviewState, { kind: 'error' }> = {
+      kind: 'error',
+      code: Number(error),
+      url: params.get('url') || null
+    }
+    const game = parseGameScene(params.get('game'))
+    if (game) state.game = game
+    return state
   }
   const screenshot = params.get('screenshot')
   if (
@@ -1249,6 +1275,13 @@ function parseExtensionPage(
   if (!EXTENSION_ID.test(id)) return null
   const path = slash === -1 ? '' : value.slice(slash + 1).replace(/^\/+/, '')
   return { kind: 'extension-page', id, path }
+}
+
+/** The offline game's pose a state asks for (`&game=<scene>`); an unknown word is none. */
+function parseGameScene(value: string | null): PreviewGameScene | null {
+  return value !== null && (PREVIEW_GAME_SCENES as readonly string[]).includes(value)
+    ? (value as PreviewGameScene)
+    : null
 }
 
 function parseDownload(filename: string, params: URLSearchParams): PreviewDownloadSpec {

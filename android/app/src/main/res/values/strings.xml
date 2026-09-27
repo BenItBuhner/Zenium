@@ -153,4 +153,11 @@
     <string name="widget_quick_actions_description">Search or enter an address, search with your voice, open a new private tab, or scan a QR code</string>
     <string name="widget_quick_actions_hint_short">Search</string>
     <string name="widget_quick_actions_scan">Scan a QR code</string>
+
+    <!-- The Home-screen game widget (GameWidgetProvider, res/layout/widget_game.xml; WID-04 / ERR-03): the
+         picker's name and description as gate #607 (f) ruled them, and the one-cell face's accessible name –
+         Roll is the game's name (shared/game/page.ts GAME_NAME), so the face says what a tap does. -->
+    <string name="widget_game_label">Zenium Roll</string>
+    <string name="widget_game_description">Play Roll, Zenium\'s offline game</string>
+    <string name="widget_game_face">Play Roll</string>
 </resources>

@@ -319,6 +319,14 @@ describe('internal pages', () => {
     expect(inputToUrl('zenium://version')).toBe('zen://version')
     expect(displayUrl('zen://version')).toBe('zenium://version')
     expect(titleForUrl('zen://version')).toBe('About Version')
+    // Chrome's runner's own page (chrome://dino) is Roll's, zen://game (ERR-03, R2).
+    expect(inputToUrl('chrome://dino')).toBe('zen://game')
+    expect(inputToUrl('chrome://dino/')).toBe('zen://game')
+    expect(inputToUrl('about:dino')).toBe('zen://game')
+    expect(inputToUrl('zenium://dino')).toBe('zen://game')
+    expect(inputToUrl('zenium://game')).toBe('zen://game')
+    expect(displayUrl('zen://game')).toBe('zenium://game')
+    expect(titleForUrl('zen://game')).toBe('Roll')
     // Chrome Android's native pages in the tab: the new tab, History, Downloads, Bookmarks.
     expect(inputToUrl('chrome://newtab')).toBe('zen://newtab')
     expect(inputToUrl('chrome://history')).toBe('zen://history')

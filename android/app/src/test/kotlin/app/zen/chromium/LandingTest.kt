@@ -8,12 +8,15 @@ import org.junit.Test
 
 class LandingTest {
     @Test
-    fun theFiveStatesParseToTheirCanonicalWord() {
+    fun theSixStatesParseToTheirCanonicalWord() {
         assertEquals(Landing.SEARCH, Landing.parse("search"))
         assertEquals(Landing.VOICE, Landing.parse("voice"))
         assertEquals(Landing.PRIVATE, Landing.parse("private"))
         assertEquals(Landing.SCAN, Landing.parse("scan"))
         assertEquals(Landing.NEW_TAB, Landing.parse("newTab"))
+        assertEquals(Landing.GAME, Landing.parse("game"))
+        // The words are the core's (`src/android/landing.ts` LANDING_STATES), one for one.
+        assertEquals(setOf("search", "voice", "private", "scan", "newTab", "game"), Landing.STATES)
     }
 
     @Test
@@ -21,6 +24,7 @@ class LandingTest {
         assertEquals(Landing.SEARCH, Landing.parse("  Search "))
         assertEquals(Landing.VOICE, Landing.parse("VOICE"))
         assertEquals(Landing.NEW_TAB, Landing.parse("newtab"))
+        assertEquals(Landing.GAME, Landing.parse(" Game"))
     }
 
     @Test
@@ -29,6 +33,7 @@ class LandingTest {
         assertNull(Landing.parse(""))
         assertNull(Landing.parse("   "))
         assertNull(Landing.parse("lens"))
+        assertNull(Landing.parse("dino"))
         assertNull(Landing.parse("search voice"))
         assertNull(Landing.parse("https://example.com/"))
     }
