@@ -327,4 +327,24 @@ class CorsProxyTest {
         // A 404 is an answer, not a failure.
         assertNotNull(proxy.handle(request("GET", "/nowhere"), id, origin)?.also { assertEquals(404, it.status); it.body.close() })
     }
+
+    @Test
+    fun `what went wrong is told to the caller - the exception for a network failure, the ticket for a body that never came - and nothing for an answer`() {
+        // Compat round 22: Temp Mail's popup drew an empty address with nothing in the runtime's
+        // record of the extension's proxied requests – a request the proxy could not answer was
+        // as absent from it as one never made.
+        val failures = mutableListOf<String>()
+        val closed = ServerSocket(0).use { it.localPort }
+        assertNull(proxy.handle(CorsProxy.Request("GET", "http://127.0.0.1:$closed/echo", mapOf("Origin" to origin)), id, origin) { failures += it })
+        assertEquals(1, failures.size)
+        assertTrue(failures[0], failures[0].startsWith("ConnectException: "))
+        // A ticketed POST whose body never crossed the bridge: the ticket named, the WebView's turn.
+        val ticketed = request("POST", "/echo", CorsProxy.PROXY_HEADER to "t-never", "Content-Type" to "application/json")
+        assertNull(proxy.handle(ticketed, id, origin) { failures += it })
+        assertEquals(2, failures.size)
+        assertEquals("body t-never never arrived over the bridge", failures[1])
+        // An answer, a 404 among them, tells the caller nothing.
+        assertNotNull(proxy.handle(request("GET", "/nowhere"), id, origin) { failures += it }?.also { it.body.close() })
+        assertEquals(2, failures.size)
+    }
 }

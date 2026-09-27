@@ -489,6 +489,97 @@ describe('DnrTranslator', () => {
     )
     expect(again.headerConditioned).toEqual([3])
   })
+
+  test('a ruleset handed as a reader with an identity is read once; unchanged, it is neither read nor sent again', async () => {
+    const sink = new RecordingSink()
+    const translator = new DnrTranslator(sink)
+    const rules = compileAll([
+      rule(1, { type: 'block' }, { urlFilter: 'x', responseHeaders: [{ header: 'x-ads' }] }),
+      rule(
+        2,
+        { type: 'redirect', redirect: { transform: { scheme: 'https' } } },
+        { urlFilter: 'x' }
+      )
+    ])
+    const identity = {}
+    let reads = 0
+    const handed = (disabledRuleIds?: ReadonlySet<number>): TranslateExtension =>
+      input({
+        rulesets: [
+          {
+            source: 'static',
+            rulesetId: 'r1',
+            rules: async () => {
+              reads++
+              return rules
+            },
+            identity,
+            disabledRuleIds
+          },
+          { source: 'dynamic', rules: dynamicRules }
+        ]
+      })
+    const first = await translator.sync(handed())
+    expect(reads).toBe(1)
+    expect(first.updated).toEqual([`ext:${EXTENSION_ID}:static:r1`, `ext:${EXTENSION_ID}:_dynamic`])
+    expect(first.transforms).toEqual([2])
+    expect(first.headerConditioned).toEqual([1])
+    expect(sink.sets.get(`ext:${EXTENSION_ID}:static:r1`)?.rules).toHaveLength(2)
+
+    // The same identity: the set stands, its report lines repeat, the reader is left alone.
+    const second = await translator.sync(handed())
+    expect(reads).toBe(1)
+    expect(second.updated).toEqual([])
+    expect(second.removed).toEqual([])
+    expect(second.transforms).toEqual([2])
+    expect(second.headerConditioned).toEqual([1])
+    expect(sink.log).toHaveLength(2)
+
+    // A changed set of disabled ids: read again, this set re-sent alone.
+    const disabled = await translator.sync(handed(new Set([2])))
+    expect(reads).toBe(2)
+    expect(disabled.updated).toEqual([`ext:${EXTENSION_ID}:static:r1`])
+    expect(disabled.transforms).toEqual([])
+    expect(disabled.headerConditioned).toEqual([1])
+    expect(sink.sets.get(`ext:${EXTENSION_ID}:static:r1`)?.rules?.map((r) => r.id)).toEqual([1])
+
+    // A moved rank: every set of the extension is re-sent, the reader read for the static one.
+    await translator.setInstallOrder([EXTENSION_ID])
+    expect(reads).toBe(3)
+    expect(sink.sets.get(`ext:${EXTENSION_ID}:static:r1`)?.priority).toBe(enginePriorityForRank(0))
+    expect(sink.sets.get(`ext:${EXTENSION_ID}:_dynamic`)?.priority).toBe(enginePriorityForRank(0))
+    // Every rule disabled: read, found empty, removed; with nothing standing for it in the
+    // engine the next sync reads it again to find it empty still.
+    const gone = await translator.sync(handed(new Set([1, 2])))
+    expect(reads).toBe(4)
+    expect(gone.removed).toEqual([`ext:${EXTENSION_ID}:static:r1`])
+    expect(sink.sets.has(`ext:${EXTENSION_ID}:static:r1`)).toBe(false)
+    await translator.sync(handed(new Set([1, 2])))
+    expect(reads).toBe(5)
+  })
+
+  test('a reader without an identity is read and sent at every sync; translateExtension refuses a reader', async () => {
+    const sink = new RecordingSink()
+    const translator = new DnrTranslator(sink)
+    let reads = 0
+    const handed = (): TranslateExtension =>
+      input({
+        rulesets: [
+          {
+            source: 'static',
+            rulesetId: 'r1',
+            rules: async () => {
+              reads++
+              return staticRules
+            }
+          }
+        ]
+      })
+    expect((await translator.sync(handed())).updated).toEqual([`ext:${EXTENSION_ID}:static:r1`])
+    expect((await translator.sync(handed())).updated).toEqual([`ext:${EXTENSION_ID}:static:r1`])
+    expect(reads).toBe(2)
+    expect(() => translateExtension(handed())).toThrow(/takes rules in hand/)
+  })
 })
 
 describe('set ids and attribution', () => {

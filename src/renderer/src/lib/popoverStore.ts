@@ -160,6 +160,13 @@ export function openPopover(registration: PopoverRegistration): () => void {
     if (at === -1) return
     entries.splice(at, 1)
     for (const e of entries) if (e.parent === entry) e.parent = entry.parent
+    // A popover taking itself out (Escape, a row chosen, its anchor toggled) is not the press that
+    // dismisses one, so it consumes nothing and must leave nothing to consume: only the outside
+    // `pointerdown` that closed an open popover arms the swallow (§9.20). Any swallow still pending
+    // from an earlier press ends here – whatever the registry held after this close would otherwise
+    // eat the first event on the next anchor – and the window listeners come off unless another
+    // popover is open (the design lead's ruling on W8-F7: the residue is the bug, not the rule).
+    endSwallow()
     syncListeners()
   }
 }

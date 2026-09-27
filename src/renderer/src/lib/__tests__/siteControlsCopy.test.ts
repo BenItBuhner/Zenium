@@ -333,6 +333,24 @@ describe('Safety check card', () => {
     expect(busy.find((r) => r.id === 'updates')?.action).toBeNull()
     // A locked vault cannot be checked from here.
     expect(busy.find((r) => r.id === 'passwords')?.action).toBeNull()
+    // Permissions the sweep removed are something to review even with no site holding one (PS-41).
+    const removed = safetyRows(
+      result({
+        permissions: {
+          state: 'info',
+          summary: 'Permissions removed from 1 site',
+          grantedSites: 0,
+          review: [],
+          revoked: [{ origin: 'https://a.example', permissions: ['camera'], revokedAt: 1 }]
+        }
+      }),
+      state
+    )
+    expect(removed.find((r) => r.id === 'permissions')?.action).toEqual({
+      label: 'Review',
+      ariaLabel: 'Review site permissions',
+      act: { kind: 'section', section: 'site-settings' }
+    })
     // Without extensions on the host, flagged ones are only a sentence.
     const noExt = safetyRows(
       result({

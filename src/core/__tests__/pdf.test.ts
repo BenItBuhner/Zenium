@@ -12,8 +12,14 @@ import type {
   WindowHost
 } from '../platform'
 import type { DownloadInit } from '../downloads'
-import { isPdfDownload, opensInViewer } from '../pdf'
-import { pdfCommandScript, type PdfViewerReport } from '../../shared/pdfViewerProtocol'
+import type { PdfPrintJob } from '../platform'
+import { isPdfDownload, opensInViewer, pdfSaveName, printsSavedCopy } from '../pdf'
+import {
+  pdfBytesScript,
+  pdfCommandScript,
+  pdfSaveScript,
+  type PdfViewerReport
+} from '../../shared/pdfViewerProtocol'
 
 function memoryIo(): StoreIO {
   const files: Record<string, string> = {}
@@ -46,10 +52,34 @@ interface Fixture {
   openedWith: string[]
   shared: string[]
   opened: string[]
+  /** Files the host was asked to write (`saveFile`). */
+  written: { name: string; mimeType: string; data: string }[]
+  /** Print jobs the host took (`printPdf`). */
+  printed: PdfPrintJob[]
 }
 
+/** The base64 the viewer's save script answers with by default: the bytes of `%PDF-1`. */
+const SAVED_COPY = 'JVBERi0x'
+/** The base64 the viewer's bytes script answers with by default: the bytes of `%PDF-0`. */
+const FILE_BYTES = 'JVBERi0w'
+
 function fixture(
-  opts: { viewer?: boolean; shareHost?: boolean; windows?: boolean; document?: boolean } = {}
+  opts: {
+    viewer?: boolean
+    shareHost?: boolean
+    windows?: boolean
+    document?: boolean
+    /** Whether the host writes files (`saveFile`); true unless said, as Android's does. */
+    saveFile?: boolean
+    /** Where a written file lands, or null for a write that failed. */
+    writtenPath?: string | null
+    /** Whether the host prints PDFs (`printPdf`); absent unless asked. */
+    printHost?: boolean
+    /** What the viewer's save script answers: base64, or null for no copy. */
+    savedCopy?: string | null
+    /** What the viewer's bytes script answers: base64, or null for no document. */
+    fileBytes?: string | null
+  } = {}
 ): Fixture {
   const sent: Fixture['sent'] = []
   const loads: Fixture['loads'] = []
@@ -62,8 +92,12 @@ function fixture(
     scripts,
     openedWith: [],
     shared: [],
-    opened: []
+    opened: [],
+    written: [],
+    printed: []
   }
+  const savedCopy = opts.savedCopy === undefined ? SAVED_COPY : opts.savedCopy
+  const fileBytes = opts.fileBytes === undefined ? FILE_BYTES : opts.fileBytes
   const capabilities = stub<HostCapabilities>({
     windows: opts.windows ?? true,
     updates: false,
@@ -87,6 +121,16 @@ function fixture(
           },
           share: async (item) => {
             f.shared.push(item.id)
+          }
+        }),
+    ...(opts.saveFile === false
+      ? { saveFile: undefined }
+      : {
+          saveFile: async (file) => {
+            f.written.push(file)
+            return opts.writtenPath === undefined
+              ? `/sdcard/Download/${file.name}`
+              : opts.writtenPath
           }
         })
   })
@@ -127,6 +171,10 @@ function fixture(
           },
           executeJavaScript: async (code: string) => {
             scripts.push({ tabId: tab.id, code })
+            // The viewer's save answers with the copy's bytes, its bytes script with the
+            // file's; every other script is taken.
+            if (code === pdfSaveScript()) return savedCopy
+            if (code === pdfBytesScript()) return fileBytes
             return true
           }
         })
@@ -144,7 +192,15 @@ function fixture(
     downloads,
     sessions: stub(),
     app: stub(),
-    readabilitySource: () => null
+    readabilitySource: () => null,
+    ...(opts.printHost
+      ? {
+          printPdf: async (job: PdfPrintJob) => {
+            f.printed.push(job)
+            return true
+          }
+        }
+      : {})
   }
   const browser = new Browser(platform)
   browser.state.settings.onboardingDone = true
@@ -375,7 +431,8 @@ describe('the viewer page', () => {
       fit: null,
       title: 'Quarterly report',
       find: null,
-      outline: [{ title: 'Summary', page: 2, children: [] }]
+      outline: [{ title: 'Summary', page: 2, children: [] }],
+      form: { fields: 0, modified: false }
     }
     // Only with the document's token: the viewer's document runs under the PDF's own origin,
     // which a web page could share, so a report without it, or with another, is no one's.
@@ -399,5 +456,138 @@ describe('the viewer page', () => {
     f.browser.pdf.onNavigated(tab.id)
     expect(f.browser.pdf.report(tab.id)).toBeNull()
     expect(await f.browser.pdf.command(tab.id, { kind: 'rotate' })).toBe(false)
+  })
+})
+
+/** A report of a document whose form stands as `modified` says. */
+function formReport(modified: boolean): PdfViewerReport {
+  return {
+    state: 'ready',
+    pageCount: 1,
+    page: 1,
+    zoom: 1,
+    fit: 'width',
+    title: null,
+    find: null,
+    outline: [],
+    form: { fields: 7, modified }
+  }
+}
+
+/** Open a PDF in the viewer and have its document report the form's state. */
+async function openForm(f: Fixture, modified: boolean): Promise<{ tab: Tab; itemId: string }> {
+  const tab = openSite(f, 'https://example.test/')
+  const item = f.browser.downloads.begin(PDF_INIT(tab.id, { filename: 'mooring.pdf' }))
+  await completeDownload(f, item.id)
+  f.browser.downloads.item(item.id)!.savePath = '/sdcard/Download/mooring.pdf'
+  const pdfToken = f.browser.pdf.document(item.id)!.token
+  f.browser.handlePageMessage(tab.id, { type: 'pdf', pdf: formReport(modified), pdfToken })
+  return { tab, itemId: item.id }
+}
+
+describe('a form in the document', () => {
+  it('names the saved copy after the file, with .pdf put on where it is missing', () => {
+    expect(pdfSaveName('mooring.pdf')).toBe('mooring.pdf')
+    expect(pdfSaveName('Mooring.PDF')).toBe('Mooring.PDF')
+    expect(pdfSaveName('download')).toBe('download.pdf')
+    expect(pdfSaveName('  ')).toBe('document.pdf')
+  })
+
+  it('prints the edited copy only once the viewer reports the form modified', () => {
+    expect(printsSavedCopy(null)).toBe(false)
+    expect(printsSavedCopy(formReport(false))).toBe(false)
+    expect(printsSavedCopy(formReport(true))).toBe(true)
+  })
+
+  it('Save writes the copy the viewer made into Downloads, lists it, and tells the viewer', async () => {
+    const f = fixture({ writtenPath: '/sdcard/Download/mooring (1).pdf' })
+    const { tab } = await openForm(f, true)
+    const before = f.browser.downloads.items.length
+    // The answer is where the copy went, for the chrome's "Saved to <folder>".
+    expect(await f.browser.handleCommand(f.win, 'pdf.save', { tabId: tab.id })).toBe(
+      '/sdcard/Download/mooring (1).pdf'
+    )
+    // The viewer's bytes, under the file's own name; the host kept the original and numbered the copy.
+    expect(f.written).toEqual([
+      { name: 'mooring.pdf', mimeType: 'application/pdf', data: SAVED_COPY }
+    ])
+    const copy = f.browser.downloads.items[0]
+    expect(f.browser.downloads.items).toHaveLength(before + 1)
+    expect(copy).toMatchObject({
+      filename: 'mooring (1).pdf',
+      savePath: '/sdcard/Download/mooring (1).pdf',
+      mimeType: 'application/pdf',
+      state: 'completed',
+      containerId: 'default',
+      totalBytes: 6
+    })
+    // The save script ran, and the viewer heard the copy was written – in that order.
+    const codes = f.scripts.filter((s) => s.tabId === tab.id).map((s) => s.code)
+    expect(codes.indexOf(pdfSaveScript())).toBeGreaterThanOrEqual(0)
+    expect(codes.at(-1)).toBe(pdfCommandScript({ kind: 'saved' }))
+  })
+
+  it('Save says no – and leaves the form modified – without a copy, a writer, or a written file', async () => {
+    const noCopy = fixture({ savedCopy: null })
+    const a = await openForm(noCopy, true)
+    expect(await noCopy.browser.pdf.save(a.tab.id)).toBeNull()
+    expect(noCopy.written).toEqual([])
+    const noWriter = fixture({ saveFile: false })
+    const b = await openForm(noWriter, true)
+    expect(await noWriter.browser.pdf.save(b.tab.id)).toBeNull()
+    // The viewer is not asked for a copy no one could write.
+    expect(noWriter.scripts.some((s) => s.code === pdfSaveScript())).toBe(false)
+    const failed = fixture({ writtenPath: null })
+    const c = await openForm(failed, true)
+    const before = failed.browser.downloads.items.length
+    expect(await failed.browser.pdf.save(c.tab.id)).toBeNull()
+    expect(failed.browser.downloads.items).toHaveLength(before)
+    expect(failed.scripts.some((s) => s.code === pdfCommandScript({ kind: 'saved' }))).toBe(false)
+    // A tab that shows no viewer has nothing to save.
+    const other = openSite(failed, 'https://example.test/other')
+    expect(await failed.browser.pdf.save(other.id)).toBeNull()
+  })
+
+  it('Print hands the host the file’s bytes as downloaded, or the filled copy’s once the form was touched', async () => {
+    const f = fixture({ printHost: true })
+    const { tab } = await openForm(f, false)
+    expect(await f.browser.handleCommand(f.win, 'pdf.print', { tabId: tab.id })).toBe(true)
+    // Bytes, never the download's path: the host takes no file of the public collection
+    // through the bridge (`PdfPrint.kt`), so the viewer hands the file's own bytes.
+    expect(f.printed).toEqual([
+      { tabId: tab.id, name: 'mooring.pdf', path: null, data: FILE_BYTES }
+    ])
+    // Untouched: the viewer was asked for the file's bytes, not for a copy.
+    expect(f.scripts.some((s) => s.code === pdfBytesScript())).toBe(true)
+    expect(f.scripts.some((s) => s.code === pdfSaveScript())).toBe(false)
+    const pdfToken = f.browser.pdf.document(f.browser.pdf.itemOf(tab.id)!.id)!.token
+    f.browser.handlePageMessage(tab.id, { type: 'pdf', pdf: formReport(true), pdfToken })
+    expect(await f.browser.pdf.print(tab.id)).toBe(true)
+    expect(f.printed.at(-1)).toEqual({
+      tabId: tab.id,
+      name: 'mooring.pdf',
+      path: null,
+      data: SAVED_COPY
+    })
+    // Printing is not saving: the viewer's form stays modified for Save.
+    expect(f.scripts.some((s) => s.code === pdfCommandScript({ kind: 'saved' }))).toBe(false)
+  })
+
+  it('Print says no without a print host, without the bytes to give, and off the viewer', async () => {
+    const noHost = fixture()
+    const a = await openForm(noHost, false)
+    expect(await noHost.browser.pdf.print(a.tab.id)).toBe(false)
+    // An edited form with no copy to give prints nothing: the file would show the form as it was.
+    const noCopy = fixture({ printHost: true, savedCopy: null })
+    const b = await openForm(noCopy, true)
+    expect(await noCopy.browser.pdf.print(b.tab.id)).toBe(false)
+    expect(noCopy.printed).toEqual([])
+    const other = openSite(noCopy, 'https://example.test/other')
+    expect(await noCopy.browser.pdf.print(other.id)).toBe(false)
+    // An untouched form whose viewer has no bytes to give (the document not open) prints nothing.
+    const noBytes = fixture({ printHost: true, fileBytes: null })
+    const c = await openForm(noBytes, false)
+    expect(await noBytes.browser.pdf.print(c.tab.id)).toBe(false)
+    expect(noBytes.printed).toEqual([])
   })
 })

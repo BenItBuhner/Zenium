@@ -1,10 +1,11 @@
 import type { JSX } from 'react'
-import { useId, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import type { Platform } from '@shared/types'
 import type { BookmarkTree } from '@shared/bookmarks'
 import { cmd, run } from '@renderer/lib/api'
 import { movableIds, moveTargets, sharedParentId } from '@renderer/lib/bookmarkList'
 import type { BottomSheetHandle } from '../sheet/BottomSheet'
+import { BookmarkFolderList, NewFolderSheet } from './BookmarkFolderPicker'
 import { PhoneSheet } from './PhoneSheet'
 
 /**
@@ -21,6 +22,8 @@ import { PhoneSheet } from './PhoneSheet'
  * `Create new folder`: a §9.12 one-field sheet over this one (§9.24, depth two) names a folder
  * inside the checked one; created, it is checked in turn, ready for Move. Chrome shows no
  * snackbar for a move and neither does this – the move is on the core's bookmark undo stack.
+ * The list and the New folder sheet are `BookmarkFolderPicker`'s, shared with the bookmark
+ * editor's Folder row (HB-16).
  */
 export function BookmarkMoveSheet({
   tree,
@@ -111,97 +114,16 @@ export function BookmarkMoveSheet({
           </div>
         }
       >
-        <div role="radiogroup" aria-label="Folder" className="pb-2">
-          {rows.map(({ node, depth }) => (
-            <button
-              key={node.id}
-              type="button"
-              role="radio"
-              aria-checked={node.id === checked}
-              className="zen-v2-row"
-              style={depth ? { paddingInlineStart: 16 + depth * 16 } : undefined}
-              onClick={() => setChosen(node.id)}
-            >
-              <span className="zen-v2-radio" aria-hidden="true" />
-              <span className="min-w-0 flex-1 truncate">{node.title}</span>
-              {node.id === origin && <span className="zen-list-value shrink-0">Current</span>}
-            </button>
-          ))}
-        </div>
+        <BookmarkFolderList rows={rows} checked={checked} current={origin} onPick={setChosen} />
       </PhoneSheet>
       {naming && (
         <NewFolderSheet
+          name="bookmark-move-new-folder"
           parentTitle={checked !== null ? (tree.get(checked)?.title ?? '') : ''}
           onClose={() => setNaming(false)}
           onCreate={(title) => void create(title)}
         />
       )}
     </>
-  )
-}
-
-/**
- * The picker's `New folder`: a §9.12 one-field sheet – the field labelled by the header that
- * reads its name, no autofocus (§9.22: the keyboard would come up with the sheet), the footer's
- * Cancel · Create (disabled until the name has a character). Create slides the sheet away and
- * makes the folder once it is gone, inside the picker's checked folder.
- */
-function NewFolderSheet({
-  parentTitle,
-  onClose,
-  onCreate
-}: {
-  parentTitle: string
-  onClose: () => void
-  onCreate: (title: string) => void
-}): JSX.Element {
-  const sheet = useRef<BottomSheetHandle>(null)
-  const [name, setName] = useState('')
-  const titleId = useId()
-  const trimmed = name.trim()
-  const submit = (): void => {
-    if (!trimmed) return
-    sheet.current?.dismiss(() => onCreate(trimmed))
-  }
-  return (
-    <PhoneSheet
-      name="bookmark-move-new-folder"
-      title={{ pose: 'header', text: 'New folder' }}
-      titleId={titleId}
-      focus="dialog"
-      onClose={onClose}
-      handleLabel="Resize editor"
-      sheetRef={sheet}
-    >
-      <form
-        className="zen-phone-form"
-        onSubmit={(e) => {
-          e.preventDefault()
-          submit()
-        }}
-      >
-        <div className="zen-phone-form-field">
-          <span className="zen-phone-field">
-            <input
-              value={name}
-              placeholder={parentTitle ? `Folder in ${parentTitle}` : 'Folder name'}
-              autoComplete="off"
-              spellCheck={false}
-              enterKeyHint="done"
-              aria-labelledby={titleId}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </span>
-        </div>
-        <div className="zen-sheet-footer">
-          <button type="button" className="zen-v2-button" onClick={() => sheet.current?.dismiss()}>
-            Cancel
-          </button>
-          <button type="submit" className="zen-v2-button" data-primary disabled={!trimmed}>
-            Create
-          </button>
-        </div>
-      </form>
-    </PhoneSheet>
   )
 }

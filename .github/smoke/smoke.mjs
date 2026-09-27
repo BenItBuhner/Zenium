@@ -357,6 +357,8 @@ import {
   stateSource
 } from './profile-state.mjs'
 import {
+  CARET_BUDGET_MS,
+  CARET_POLL_EVERY_MS,
   URLBAR_FIELD_OWNER,
   caretVerdict,
   isNewTabUrl,
@@ -2133,33 +2135,46 @@ class Session {
   /**
    * The caret of the URL bar that is up: whether its field holds the keyboard – the chrome page
    * has it, not a page's view, and the field is the document's active element (keyboardOwner
-   * `chrome:urlbar-input`) – waited for up to `timeoutMs`, because the bar taking the keyboard
-   * back from the new tab's view (lib/panes.ts pageTookKeyboard → focus.chrome) is an IPC round
-   * trip away. `{ focused, owner, ms, bar }` for the step's detail, `owner` the last reading and
-   * `bar` how the bar came to be up (`found-up`, `accel-t`); navigation.mjs caretVerdict judges it.
-   * A caret that does not come carries the case for the verdict: `owners`, every reading the
-   * owner changed with, and `facts` – the main process's view of the keyboard (keyboardFacts),
-   * its keyboard moves of the last ten seconds (hookMain's `keyboard` events) and the chrome's
-   * own trace of them (traceFocus).
+   * `chrome:urlbar-input`, which reads `webContents.isFocused()` in the main process and the
+   * renderer's `document.activeElement`) – read every `everyMs` to a `budgetMs` budget, because
+   * the bar taking the keyboard back from the new tab's view (lib/panes.ts pageTookKeyboard →
+   * focus.chrome) is an IPC round trip away, and on the windows-arm64 legs (the slow Intel-emulated
+   * runner) it took longer than a fixed 3 s wait allowed – the bar found up with no caret after
+   * 3097 ms, three times on 2026-09-27 (W8-F10). `{ focused, owner, ms, bar, trace }` for the
+   * step's detail: `owner` the last reading, `bar` how the bar came to be up (`found-up`,
+   * `accel-t`) and `trace` the stamped polls (`{ ms, owner }`, one per poll); navigation.mjs
+   * caretVerdict judges it and its failure carries the trace (the step's own screenshot the still).
+   * A caret that does not come also carries the case for the verdict: `owners`, every reading the
+   * owner changed with, and `facts` – the main process's view of the keyboard (keyboardFacts, with
+   * the field's own focus and selection), its keyboard moves through the budget (hookMain's
+   * `keyboard` events) and the chrome's own trace of them (traceFocus).
    */
-  async urlbarCaret(bar, timeoutMs = 3000) {
+  async urlbarCaret(bar, budgetMs = CARET_BUDGET_MS, everyMs = CARET_POLL_EVERY_MS) {
     const t0 = Date.now()
     const owners = []
+    const trace = []
     for (;;) {
       const owner = await this.keyboardOwner()
       const ms = Date.now() - t0
       if (!owners.length || owners[owners.length - 1].owner !== owner) owners.push({ ms, owner })
-      if (owner === URLBAR_FIELD_OWNER) return { focused: true, owner, ms, bar }
-      if (ms >= timeoutMs) {
+      trace.push({ ms, owner })
+      if (owner === URLBAR_FIELD_OWNER) return { focused: true, owner, ms, bar, trace }
+      if (ms >= budgetMs) {
         const since = t0 - 10000
         const main = await this.keyboardFacts().catch((e) => ({ error: String(e.message || e) }))
         const chrome = await this.chrome
           .evaluate((since) => {
             const el = document.activeElement
+            const field = document.querySelector('[data-testid="urlbar-input"]')
+            const selection =
+              field && typeof field.selectionStart === 'number'
+                ? { start: field.selectionStart, end: field.selectionEnd, active: el === field }
+                : null
             return {
               hasFocus: document.hasFocus(),
               active:
                 el && el !== document.body ? el.getAttribute('data-testid') || el.tagName : null,
+              selection,
               trace: (window.__zenSmokeFocus || []).filter((e) => e.at >= since).slice(-200)
             }
           }, since)
@@ -2167,9 +2182,9 @@ class Session {
         const keyboard = this.readEvents()
           .filter((e) => e.type === 'keyboard' && e.t >= since)
           .map(({ t, wc, chrome, took, visible, url }) => ({ t, wc, chrome, took, visible, url }))
-        return { focused: false, owner, ms, bar, owners, facts: { main, chrome, keyboard } }
+        return { focused: false, owner, ms, bar, owners, trace, facts: { main, chrome, keyboard } }
       }
-      await delay(100)
+      await delay(everyMs)
     }
   }
 
@@ -7966,10 +7981,11 @@ async function main() {
         scenarioRestartRegistration({
           freshProfile,
           runScenario,
-          waitFor,
           delay,
           log,
           ps,
+          // For the `reg.exe query` cross-read when a RunOnce read comes up short (W8-F10).
+          sh,
           isWin: IS_WIN
         }),
       [PRIVATE_TASKBAR_SCENARIO]: () =>

@@ -5,14 +5,23 @@
  *
  * The document draws the pages – a continuous column, fitted to the width to begin with as
  * Chrome fits them – and owns what happens on them: pinch and double tap to zoom, the links a
- * page carries, the highlights of a search. Everything else is the chrome's: it learns where
- * the viewer stands from the reports this posts on its window (`pdfViewerProtocol.ts`; the page
- * script relays them) and drives it through `window.__zeniumPdf.command`.
+ * page carries, the highlights of a search, the fields of a form (pdf.js's annotation layer,
+ * `pdfViewerForms.ts`; the values live in the document's `annotationStorage`, and `save` writes
+ * them into a copy through pdf.js's incremental save). Everything else is the chrome's: it
+ * learns where the viewer stands from the reports this posts on its window
+ * (`pdfViewerProtocol.ts`; the page script relays them) and drives it through
+ * `window.__zeniumPdf.command`.
  */
 // First: what pdf.js expects of an engine older WebViews (Chromium 113 on the emulator) lack.
 import './pdfViewerPolyfills'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
-import type { PDFDocumentProxy, PDFPageProxy, PageViewport, RenderTask } from 'pdfjs-dist'
+import type {
+  AnnotationLayer,
+  PDFDocumentProxy,
+  PDFPageProxy,
+  PageViewport,
+  RenderTask
+} from 'pdfjs-dist'
 import type { TextItem } from 'pdfjs-dist/types/src/display/api'
 import {
   PDF_VIEWER_GLOBAL,
@@ -24,6 +33,15 @@ import {
   type PdfViewerCommand,
   type PdfViewerReport
 } from '@shared/pdfViewerProtocol'
+import {
+  bytesToBase64,
+  fillableFieldCount,
+  PDF_FORMS_CSS,
+  PDF_FORMS_LAYER_CLASS,
+  PdfFormGate,
+  pdfFormLinkService,
+  type PdfFormLinkService
+} from './pdfViewerForms'
 import {
   annotationRect,
   canvasScale,
@@ -76,7 +94,28 @@ interface PageSlot {
   rendering: { task: RenderTask; zoom: number; rotation: number } | null
   text: TextRun[] | null
   linksDrawn: boolean
+  /** The form layer's box: the page's widgets as inputs, built once and rescaled by CSS. */
+  forms: HTMLDivElement
+  formLayer: AnnotationLayer | null
+  /** The page's annotations were read for widgets (a page without any has no layer). */
+  formsRead: boolean
+  /** The layer's work in turn: a build under way finishes before the next zoom's update. */
+  formsQueue: Promise<void>
+  /**
+   * The appearance canvases of the widgets pdf.js paints itself – a checkbox's and a radio
+   * button's checked and unchecked faces – filled by the page's render, placed by the layer.
+   */
+  widgetCanvases: Map<string, HTMLCanvasElement>
 }
+
+/**
+ * pdf.js's parameter types for the layer: `render` names its link service as the viewer
+ * application's `PDFLinkService` (the document's own stands in for the part the widgets call,
+ * `pdfViewerForms.ts`), and `update` is typed with the whole render set though the viewport is
+ * all it reads.
+ */
+type FormRender = Parameters<AnnotationLayer['render']>[0]
+type FormUpdate = Parameters<AnnotationLayer['update']>[0]
 
 const config = (window as unknown as { __zeniumPdfDocument?: ViewerConfig }).__zeniumPdfDocument
 /**
@@ -147,8 +186,36 @@ class Viewer {
   /** A single finger that landed: a tap unless it travels or lingers. */
   private touchDown: { at: number; x: number; y: number } | null = null
   private lastTap: { at: number; x: number; y: number } | null = null
+  /** The AcroForm's fields by name (`getFieldObjects`; null for a document without a form). */
+  private fieldObjects: Promise<Map<string, object[]> | null> = Promise.resolve(null)
+  /** How many of them can be filled in (`fillableFieldCount`): the chrome's Save row wants one. */
+  private formFields = 0
+  /**
+   * Whether a value of the form differs from the file's: set by the storage's first change
+   * since the document opened or a copy was last written, cleared by the host's `saved` – and
+   * then only while the values are still the copy's (`PdfFormGate`).
+   */
+  private readonly formGate = new PdfFormGate(() => this.doc?.annotationStorage ?? null)
+  private readonly linkService: PdfFormLinkService
 
-  constructor(private readonly config: ViewerConfig) {}
+  constructor(private readonly config: ViewerConfig) {
+    this.linkService = pdfFormLinkService({
+      goToDestination: (dest) => void this.goToDestination(dest),
+      goToPage: (target) => {
+        const last = this.slots.length
+        const current = this.current || 1
+        const page =
+          target === 'first'
+            ? 1
+            : target === 'last'
+              ? last
+              : target === 'next'
+                ? Math.min(last, current + 1)
+                : Math.max(1, current - 1)
+        this.goTo(page)
+      }
+    })
+  }
 
   async open(): Promise<void> {
     this.showStatus('Loading…')
@@ -190,6 +257,7 @@ class Viewer {
     this.doc = doc
     this.pendingPassword = null
     this.passwordWrong = false
+    this.watchForm(doc)
     await this.layoutPages(doc)
     this.state = 'ready'
     status.hidden = true
@@ -199,9 +267,45 @@ class Viewer {
     void this.readOutline(doc)
   }
 
+  /**
+   * The document with the form's values written in – pdf.js's incremental save, the file's
+   * bytes followed by an update holding the changed fields (`saveDocument`; Firefox's viewer
+   * saves this way) – as base64 for the host's file. Null before the document is open, and when
+   * pdf.js cannot write it. The modified flag is the host's to clear (`saved`): a copy written
+   * for printing leaves the form still unsaved. The gate notes which values the copy was made
+   * of, so a `saved` after an edit made during the write leaves the form modified.
+   */
+  async save(): Promise<string | null> {
+    if (!this.doc || this.state !== 'ready') return null
+    try {
+      // `saveDocument` serialises the storage as it is called: the digest taken here is the copy's.
+      this.formGate.copying()
+      return bytesToBase64(await this.doc.saveDocument())
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * The document's bytes as they were downloaded (`getData`), base64, for a print of a form
+   * that was not touched: the host prints what it is handed and reads no file of the
+   * download's. Null before the document is open.
+   */
+  async bytes(): Promise<string | null> {
+    if (!this.doc || this.state !== 'ready') return null
+    try {
+      return bytesToBase64(await this.doc.getData())
+    } catch {
+      return null
+    }
+  }
+
   /** The chrome's command; anything the state cannot take is ignored. */
   command(command: PdfViewerCommand): void {
     switch (command.kind) {
+      case 'saved':
+        if (this.formGate.saved()) this.report()
+        return
       case 'zoom':
         this.setZoom(clampZoom(command.factor), null)
         return
@@ -253,7 +357,9 @@ class Viewer {
       hits.className = 'zen-pdf-hits'
       const links = document.createElement('div')
       links.className = 'zen-pdf-links'
-      element.append(links, hits)
+      const forms = document.createElement('div')
+      forms.className = PDF_FORMS_LAYER_CLASS
+      element.append(links, hits, forms)
       pagesRoot.append(element)
       this.slots.push({
         index: i,
@@ -268,7 +374,12 @@ class Viewer {
         drawn: null,
         rendering: null,
         text: null,
-        linksDrawn: false
+        linksDrawn: false,
+        forms,
+        formLayer: null,
+        formsRead: false,
+        formsQueue: Promise.resolve(),
+        widgetCanvases: new Map()
       })
     }
     // The sizes of the pages ahead, so a fit to the widest page and the page count's heights are
@@ -304,8 +415,28 @@ class Viewer {
 
   private sizeElement(slot: PageSlot): void {
     const size = this.rotatedSize(slot)
-    slot.element.style.width = `${Math.round(size.width * CSS_UNITS * this.zoom)}px`
-    slot.element.style.height = `${Math.round(size.height * CSS_UNITS * this.zoom)}px`
+    const { style } = slot.element
+    style.width = `${Math.round(size.width * CSS_UNITS * this.zoom)}px`
+    style.height = `${Math.round(size.height * CSS_UNITS * this.zoom)}px`
+    // The widgets' scale, `pdf_viewer.css`'s `--total-scale-factor`: pdf.js's viewer sets
+    // `--scale-factor` on its container (`PDFViewer.#setScale`) and `--user-unit` on a page
+    // whose unit is not the point (`PDFPageView.#setDimensions`).
+    style.setProperty('--scale-factor', String(CSS_UNITS * this.zoom))
+    const userUnit = slot.page?.userUnit ?? 1
+    if (userUnit !== 1) style.setProperty('--user-unit', String(userUnit))
+    this.sizeForms(slot)
+  }
+
+  /**
+   * The form layer's box: the page's unrotated size at the zoom, which pdf.js turns with
+   * `data-main-rotation` (`setLayerDimensions`). pdf.js sizes it with CSS `round()`, which the
+   * WebView floor (Chromium 113) has not got, so the viewer sets the pixels itself; the widgets
+   * inside are placed in percentages of it (`AnnotationElement._createContainer`).
+   */
+  private sizeForms(slot: PageSlot): void {
+    slot.forms.style.width = `${slot.size.width * CSS_UNITS * this.zoom}px`
+    slot.forms.style.height = `${slot.size.height * CSS_UNITS * this.zoom}px`
+    slot.forms.setAttribute('data-main-rotation', String(this.rotation))
   }
 
   /** Every page to its size at the zoom and rotation; the visible ones redrawn. */
@@ -366,7 +497,14 @@ class Viewer {
     const canvas = document.createElement('canvas')
     canvas.width = Math.max(1, Math.floor(viewport.width))
     canvas.height = Math.max(1, Math.floor(viewport.height))
-    const task = page.render({ canvas, viewport })
+    const task = page.render({
+      canvas,
+      viewport,
+      // The widgets are the form layer's, as HTML over the page: the render leaves them off the
+      // bitmap and paints the faces pdf.js draws itself into canvases for the layer to place.
+      annotationMode: pdfjs.AnnotationMode.ENABLE_FORMS,
+      annotationCanvasMap: slot.widgetCanvases
+    })
     slot.rendering = { task, zoom, rotation }
     try {
       await task.promise
@@ -382,6 +520,7 @@ class Viewer {
     slot.element.prepend(canvas)
     slot.drawn = { zoom, rotation }
     if (!slot.linksDrawn) void this.drawLinks(slot, page)
+    this.drawForms(slot, page)
   }
 
   /** A page far from the window gives its bitmap back; its box keeps the column in place. */
@@ -452,7 +591,9 @@ class Viewer {
   private installGestures(): void {
     scroller.addEventListener('scroll', () => this.scheduleLayout(), { passive: true })
     window.addEventListener('resize', () => {
-      if (this.fit) this.zoom = this.fitted(this.fit)
+      // The keyboard rising for a field shrinks the window: the page keeps its zoom under the
+      // finger, as Chrome's does, instead of refitting and moving the field being typed in.
+      if (this.fit && !inForm(document.activeElement)) this.zoom = this.fitted(this.fit)
       this.relayout()
     })
     document.addEventListener(
@@ -488,6 +629,11 @@ class Viewer {
       if (e.type !== 'touchend' || !down || e.touches.length !== 0) return
       const touch = e.changedTouches[0]
       if (!touch) return
+      // A tap on a widget is the widget's: no double-tap zoom out from under a field.
+      if (inForm(e.target)) {
+        this.lastTap = null
+        return
+      }
       const still = Math.hypot(touch.clientX - down.x, touch.clientY - down.y) < 12
       if (still && performance.now() - down.at < 300) this.onTap(touch)
       else this.lastTap = null
@@ -613,6 +759,112 @@ class Viewer {
     } catch {
       return null
     }
+  }
+
+  // --- forms -------------------------------------------------------------------------------
+
+  /**
+   * The form's bookkeeping for the document: the storage's first change flags the form
+   * modified (`AnnotationStorage.onSetModified`; pdf.js's viewer keys its own save button on
+   * it), and the fillable fields are counted for the chrome (`getFieldObjects`, the layer's map
+   * for finding a button's siblings and a reset button's fields).
+   */
+  private watchForm(doc: PDFDocumentProxy): void {
+    const storage = doc.annotationStorage as unknown as { onSetModified: (() => void) | null }
+    storage.onSetModified = () => {
+      if (this.formGate.edited()) this.report()
+    }
+    this.fieldObjects = doc
+      .getFieldObjects()
+      .then((fields) => {
+        this.formFields = fillableFieldCount(fields)
+        this.report()
+        return fields
+      })
+      .catch(() => null)
+  }
+
+  /**
+   * The page's widgets, the way pdf.js's own viewer has them (`web/annotation_layer_builder.js`,
+   * `AnnotationLayerBuilder.render`): an `AnnotationLayer` built once from the page's
+   * annotations with `renderForms`, then `update`d with the viewport at each zoom – the widgets
+   * are placed in percentages of the layer and sized through `--total-scale-factor`, so a zoom
+   * is a CSS change and only the faces pdf.js painted are placed afresh. In turn per page: a
+   * build under way finishes before the update of a zoom that came during it.
+   */
+  private drawForms(slot: PageSlot, page: PDFPageProxy): void {
+    slot.formsQueue = slot.formsQueue
+      .then(() => this.renderForms(slot, page))
+      .catch(() => {
+        // A layer pdf.js could not build leaves the page without its widgets; the pages read on.
+      })
+  }
+
+  private async renderForms(slot: PageSlot, page: PDFPageProxy): Promise<void> {
+    const doc = this.doc
+    if (!doc) return
+    if (slot.formLayer) {
+      slot.formLayer.update({ viewport: this.formViewport(page) } as FormUpdate)
+      this.sizeForms(slot)
+      return
+    }
+    if (slot.formsRead) return
+    slot.formsRead = true
+    const annotations = (await page.getAnnotations({ intent: 'display' })) as Array<
+      Record<string, unknown>
+    >
+    const widgets = annotations.filter(
+      (a) => a.annotationType === pdfjs.AnnotationType.WIDGET && !a.noHTML
+    )
+    if (!widgets.length) return
+    const fieldObjects = await this.fieldObjects
+    const storage = doc.annotationStorage
+    const wasModified = this.formGate.modified
+    const viewport = this.formViewport(page)
+    // The builder's own recipe (`AnnotationLayerBuilder.#initAnnotationLayer`): the layer's div,
+    // the page, a viewport cloned `dontFlip`, the document's storage, the widgets' canvases and
+    // a link service; no accessibility manager, editor, structure tree or comments here.
+    const layer = new pdfjs.AnnotationLayer({
+      div: slot.forms,
+      page,
+      viewport,
+      annotationStorage: storage,
+      annotationCanvasMap: slot.widgetCanvases,
+      linkService: this.linkService,
+      accessibilityManager: null,
+      annotationEditorUIManager: null,
+      structTreeLayer: null,
+      commentManager: null
+    })
+    await layer.render({
+      annotations: widgets,
+      div: slot.forms,
+      page,
+      viewport,
+      renderForms: true,
+      annotationStorage: storage,
+      // The fields by name: a radio group's siblings across pages, a reset button's targets.
+      fieldObjects,
+      // No scripting sandbox: a document's JavaScript does not run, as in Chrome's viewer.
+      hasJSActions: false,
+      enableScripting: false,
+      linkService: this.linkService as unknown as FormRender['linkService']
+    })
+    slot.formLayer = layer
+    // Rendering a checked radio button writes `false` for its siblings into the storage
+    // (`RadioButtonWidgetAnnotationElement.render`) – a change of pdf.js's, not the user's.
+    if (!wasModified) {
+      storage.resetModified()
+      if (this.formGate.reset()) this.report()
+    }
+    this.sizeForms(slot)
+  }
+
+  /** The layer's viewport: the page at the zoom, unflipped as the builder clones it. */
+  private formViewport(page: PDFPageProxy): PageViewport {
+    return page
+      .getViewport({ scale: CSS_UNITS * this.zoom, rotation: this.rotation })
+      .clone({ dontFlip: true })
   }
 
   // --- find --------------------------------------------------------------------------------
@@ -796,6 +1048,7 @@ class Viewer {
           }
         : null,
       outline: this.outline,
+      form: { fields: this.formFields, modified: this.formGate.modified },
       ...(this.error ? { error: this.error } : {}),
       ...(this.state === 'password' ? { passwordWrong: this.passwordWrong } : {})
     }
@@ -881,10 +1134,20 @@ function place(el: HTMLElement, rect: FractionRect): void {
   el.style.height = `${(rect.height * 100).toFixed(3)}%`
 }
 
+/** Whether a node is a form layer's: a widget, or something inside one. */
+function inForm(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest('.zen-pdf-forms') !== null
+}
+
 if (config) {
+  const style = document.createElement('style')
+  style.textContent = PDF_FORMS_CSS
+  document.head.append(style)
   const viewer = new Viewer(config)
   ;(window as unknown as Record<string, unknown>)[PDF_VIEWER_GLOBAL] = {
-    command: (command: PdfViewerCommand) => viewer.command(command)
+    command: (command: PdfViewerCommand) => viewer.command(command),
+    save: () => viewer.save(),
+    bytes: () => viewer.bytes()
   }
   void viewer.open()
 }
