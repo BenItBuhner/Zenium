@@ -6,7 +6,11 @@ import android.graphics.Outline
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
+import android.graphics.RectF
+import android.graphics.Typeface
+import android.os.Build
 import android.util.Log
+import android.util.TypedValue
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
@@ -44,7 +48,15 @@ class HistoryNavBubbleFrame(
      * `overflow: hidden` – it comes out from beyond the frame's side, not over the gutter between
      * the frame and the window's edge. Null when the chrome sent none: unclipped.
      */
-    val clip: Clip?
+    val clip: Clip?,
+    /**
+     * How far the caption's pill is out of the disc, 0 (a disc) to 1 (the whole caption): Chrome's
+     * 'Close tab' / 'Close Chrome' indicator at the history's first page, shown while the drag is
+     * armed (`SideSlideLayout.showCaption` while `mWillNavigate`). 0 whenever [captionText] is null.
+     */
+    val caption: Float = 0f,
+    /** The caption's text as the chrome words it; null: the drag has none (a page turn, a forward drag). */
+    val captionText: String? = null
 ) {
     /** A box in device px (a plain value: `android.graphics.Rect` is a stub on the JVM, the layer makes one of it). */
     data class Clip(val left: Int, val top: Int, val right: Int, val bottom: Int) {
@@ -57,6 +69,8 @@ class HistoryNavBubbleFrame(
             if (!args.optBoolean("visible", true)) return null
             val size = (args.num("size") * density).roundToInt()
             if (size <= 0) return null
+            // A caption is a text: an extent without one, or a blank, is a disc.
+            val captionText = args.strOrNull("captionText")?.takeIf { it.isNotBlank() }
             return HistoryNavBubbleFrame(
                 if (args.str("edge", "left") == "right") HistoryNavClassifier.Edge.RIGHT else HistoryNavClassifier.Edge.LEFT,
                 (args.num("left") * density).toFloat(),
@@ -73,7 +87,9 @@ class HistoryNavBubbleFrame(
                     val bottom = (clip.num("bottom") * density).roundToInt()
                     // An empty box is no clip.
                     if (right > left && bottom > top) Clip(left, top, right, bottom) else null
-                }
+                },
+                if (captionText == null) 0f else args.num("caption", 0.0).toFloat().coerceIn(0f, 1f),
+                captionText
             )
         }
     }
@@ -179,6 +195,14 @@ class BubbleThresholdTap {
  * The colours are the v2 tokens through [V2Ink] (`V2TokensPinTest` holds them to the CSS); the
  * shadow is the view's elevation over the disc's outline, the platform's approximation of
  * `--v2-shadow-panel` (`0 2px 6px rgb(0 0 0 / 0.2)`).
+ *
+ * At the history's first page the armed disc widens into a pill with Chrome's caption – 'Close
+ * tab' / 'Close Zenium', as the chrome words it (`NavigationBubble.showCaption`; the
+ * `TextView` after the arrow in `navigation_bubble.xml`) – by the frame's caption extent: the
+ * pill's far end runs out from the disc on the chrome's spring, the arrow staying where it is,
+ * the text revealed inside as the pill opens over it ([captionGeometry]). The scale stays about
+ * the disc's centre. The text is the badge's type (v2 §9.19: 13/600) in the text ink, a
+ * hair-gap from the arrow and the pill's end padding beyond it (`CAPTION_*`).
  */
 class HistoryNavBubbleView(context: Context) : View(context) {
     private val density = resources.displayMetrics.density
@@ -193,9 +217,19 @@ class HistoryNavBubbleView(context: Context) : View(context) {
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
+    private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, CAPTION_SP, resources.displayMetrics)
+        typeface = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) Typeface.create(Typeface.DEFAULT, CAPTION_WEIGHT, false)
+            else Typeface.DEFAULT_BOLD
+    }
     private val glyph = Path()
+    private val pill = RectF()
     private var edge = HistoryNavClassifier.Edge.LEFT
     private var sizePx = 0
+    /** The caption as last drawn: its text, its measured advance beyond the disc, and how far out it is. */
+    private var captionText: String? = null
+    private var captionAdvance = 0f
+    private var caption = 0f
     /** An opacity fade under reduced motion is running on the view's animator. */
     private var fading = false
 
@@ -207,7 +241,9 @@ class HistoryNavBubbleView(context: Context) : View(context) {
         elevation = SHADOW_ELEVATION_DP * density
         outlineProvider = object : ViewOutlineProvider() {
             override fun getOutline(view: View, outline: Outline) {
-                outline.setOval(0, 0, view.width, view.height)
+                // The pill as far as it is out: a disc at rest, so the shadow follows the shape.
+                val radius = view.height / 2f
+                outline.setRoundRect(0, 0, pillWidth().roundToInt().coerceAtLeast(view.height), view.height, radius)
             }
         }
         retint(V2Ink(context, dark = false))
@@ -218,6 +254,7 @@ class HistoryNavBubbleView(context: Context) : View(context) {
         fill.color = tokens.panel
         border.color = tokens.border
         ink.color = tokens.text
+        text.color = tokens.text
         invalidate()
     }
 
@@ -227,11 +264,31 @@ class HistoryNavBubbleView(context: Context) : View(context) {
             hide()
             return
         }
+        var relayout = false
         if (frame.sizePx != sizePx || frame.edge != edge) {
             sizePx = frame.sizePx
             edge = frame.edge
+            // The scale is about the disc's centre whatever the pill's width.
+            pivotX = sizePx / 2f
+            pivotY = sizePx / 2f
             buildGlyph()
+            relayout = true
+        }
+        if (frame.captionText != captionText || relayout) {
+            captionText = frame.captionText
+            captionAdvance = captionText?.let {
+                captionGeometry(sizePx, text.measureText(it), density).advance
+            } ?: 0f
+            relayout = true
+        }
+        if (relayout) {
             requestLayout()
+            invalidateOutline()
+            invalidate()
+        }
+        if (frame.caption != caption) {
+            caption = frame.caption
+            // The pill's far end moved: the one redraw a drag asks for, on the caption's frames alone.
             invalidateOutline()
             invalidate()
         }
@@ -241,6 +298,16 @@ class HistoryNavBubbleView(context: Context) : View(context) {
         scaleY = frame.scale
         setShown(frame.alpha, frame.reduced)
         if (visibility != VISIBLE) visibility = VISIBLE
+    }
+
+    /** The pill's width right now: the disc, plus the caption's advance as far as it is out. */
+    private fun pillWidth(): Float = sizePx + caption * captionAdvance
+
+    /** The caption as drawn, for the harness (`GesturesDemo`): its text, how far out it is, and the pill's width in px. */
+    val shownCaption: ShownCaption get() = ShownCaption(captionText, caption, pillWidth())
+
+    class ShownCaption(val text: String?, val extent: Float, val pillWidthPx: Float) {
+        override fun toString(): String = "caption=${text?.let { "'$it'" } ?: "none"} extent=${"%.2f".format(extent)} pill=${"%.0f".format(pillWidthPx)}px"
     }
 
     private fun hide() {
@@ -294,15 +361,30 @@ class HistoryNavBubbleView(context: Context) : View(context) {
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        setMeasuredDimension(sizePx, sizePx)
+        // The view is as wide as the pill would be whole; what is drawn is as far as it is out.
+        setMeasuredDimension((sizePx + captionAdvance).roundToInt(), sizePx)
     }
 
     override fun onDraw(canvas: Canvas) {
-        val radius = width / 2f
-        canvas.drawCircle(radius, radius, radius, fill)
-        // The hairline sits inside the disc's box, as a `border` inside a `border-box` does.
-        canvas.drawCircle(radius, radius, radius - border.strokeWidth / 2f, border)
+        val radius = height / 2f
+        val pillWidth = pillWidth()
+        pill.set(0f, 0f, pillWidth, height.toFloat())
+        canvas.drawRoundRect(pill, radius, radius, fill)
+        // The hairline sits inside the pill's box, as a `border` inside a `border-box` does.
+        val inset = border.strokeWidth / 2f
+        pill.inset(inset, inset)
+        canvas.drawRoundRect(pill, radius - inset, radius - inset, border)
         canvas.drawPath(glyph, ink)
+        val caption = captionText
+        if (caption != null && this.caption > 0f) {
+            val geometry = captionGeometry(sizePx, text.measureText(caption), density)
+            // Revealed as the pill opens over it: nothing of it past the pill's end padding.
+            canvas.save()
+            canvas.clipRect(0f, 0f, pillWidth - CAPTION_END_DP * density, height.toFloat())
+            val baseline = height / 2f - (text.ascent() + text.descent()) / 2f
+            canvas.drawText(caption, geometry.textX, baseline, text)
+            canvas.restore()
+        }
     }
 
     /** The disc takes no touch: the finger under it is the page's drag (`pointer-events: none`). */
@@ -321,8 +403,32 @@ class HistoryNavBubbleView(context: Context) : View(context) {
         private const val SHADOW_ELEVATION_DP = 3f
         /** `--zen-ease`: `cubic-bezier(0.2, 0.8, 0.2, 1)`. */
         private val EASE = PathInterpolator(0.2f, 0.8f, 0.2f, 1f)
+        /** The caption's type: the badge's 13/600 (v2 §9.19; `.zen-histnav-caption`). */
+        private const val CAPTION_SP = 13f
+        private const val CAPTION_WEIGHT = 600
+        /** The pill's end padding beyond the text (`.zen-histnav-caption`'s `padding-inline: 0 12px`). */
+        const val CAPTION_END_DP = 12f
+        /** The gap from the arrow's box to the text's start. */
+        const val CAPTION_GAP_DP = 6f
     }
 }
+
+/**
+ * Where the caption sits in the pill (device px): the text starts [textX] in – past the disc's
+ * centre, the arrow's half-box and the gap – and the pill runs [advance] beyond the disc when the
+ * caption is whole: the text and the end padding past its start.
+ */
+data class CaptionGeometry(val textX: Float, val advance: Float)
+
+/** The caption's geometry for a disc of `sizePx` and a text `textWidthPx` wide, at `density`. A top-level function the JVM holds without the view. */
+fun captionGeometry(sizePx: Int, textWidthPx: Float, density: Float): CaptionGeometry {
+    val textX = sizePx / 2f + (GLYPH_BOX_DP / 2f + HistoryNavBubbleView.CAPTION_GAP_DP) * density
+    val advance = textX + textWidthPx + HistoryNavBubbleView.CAPTION_END_DP * density - sizePx
+    return CaptionGeometry(textX, advance.coerceAtLeast(0f))
+}
+
+/** The arrow's box: v2 §11.9's 20 (`GLYPH_DP`), the caption measured from its far side. */
+private const val GLYPH_BOX_DP = 20f
 
 /** What a frame's opacity does to the disc ([bubbleAlphaStep]). */
 enum class BubbleAlphaStep {

@@ -133,6 +133,7 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         returnToThird()
         edgeDragArmed()
         edgeDragShort()
+        edgeDragCloseTab()
         paneSwipes()
         pillHoldPaste()
         gesturalEdgeUntouched()
@@ -362,6 +363,50 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         claim("the native disc went with it (disc: ${nativeDisc()})", !nativeDisc().up)
     }
 
+    /**
+     * MOT-27: the back drag at the history's first page. A tab opened from `TAB` (its opener) has
+     * nothing behind it; Chrome still takes the drag (`NavigationHandler.canNavigate`: back is
+     * always possible) and, armed, widens the bubble into 'Close tab' – the release closes the
+     * tab back to its opener. The threshold taps the finger once with Chrome's `KEYBOARD_TAP`
+     * (`HistoryNavBubbleLayer`; its `ZenPull` line in the logcat), and not again while the finger
+     * is held past it.
+     */
+    private fun edgeDragCloseTab() {
+        section("MOT-27: the back drag at the first page captions 'Close tab' and closes the tab")
+        val opener = activeUrl()
+        val childId = coreInvoke("tab.create", """{"url":"${url("side")}","active":true,"openerTabId":"$TAB"}""").trim('"')
+        awaitLoaded(url("side"))
+        SystemClock.sleep(1_000)
+        finding("child tab $childId of $TAB: ${describeHistory()}")
+        claim("the child tab has no back entry of its own", activeCoreTab()?.optBoolean("canGoBack") == false)
+        val tapsBefore = thresholdTaps()
+        val y = pageMidY()
+        val f = Finger()
+        f.down(EDGE_X_DP * density, y)
+        f.moveBy(LONG_DRAG_DP * density, 0f, 1_000)
+        f.hold(450)
+        val phase = bubblePhase()
+        val armed = bubbleArmed()
+        val disc = nativeDisc()
+        val caption = onMain { host.historyNavBubble.shownCaption }
+        val target = bubbleCloseTarget()
+        claim("the drag at the first page is a drag (phase '$phase')", phase == "dragging")
+        claim("and arms past the threshold (root data-armed; disc: $disc)", armed)
+        claim("the root names the tab as what the release closes (data-close-target '$target')", target == "tab")
+        claim("the native pill carries Chrome's caption for it ($caption)", caption.text == "Close tab" && caption.extent > 0.97f)
+        claim("the pill runs out beyond the disc (${"%.0f".format(caption.pillWidthPx)} px against the ${"%.0f".format(BUBBLE_SIZE_DP * density)} px disc)", caption.pillWidthPx > BUBBLE_SIZE_DP * density * 1.5f)
+        val tapsHeld = thresholdTaps()
+        claim("the threshold tapped once (KEYBOARD_TAP lines in the logcat: $tapsBefore -> $tapsHeld)", tapsHeld - tapsBefore == 1)
+        shot("05b-close-tab-caption")
+        f.up()
+        val closed = awaitTrue(8_000) { activeCoreTab()?.optString("id") == TAB }
+        claim("the release closed the tab back to its opener (active ${activeCoreTab()?.optString("id")}, at ${activeUrl()})", closed && activeUrl() == opener)
+        claim("the child tab is gone", coreState().getJSONObject("tabs").optJSONObject(childId) == null)
+        claim("the bubble left with the tab", awaitTrue(4_000) { bubblePhase() == "" })
+        claim("no further tap came with the release (taps ${thresholdTaps()})", thresholdTaps() - tapsBefore == 1)
+        settle()
+    }
+
     // --- GN-19: the switcher's pane swipe -------------------------------------------------------
 
     /**
@@ -588,6 +633,18 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
     private fun bubbleArmed(): Boolean =
         js("(function(){var e=document.querySelector('[data-testid=\"history-nav\"]');return e&&e.hasAttribute('data-armed')?'armed':''})()") == "armed"
 
+    /** What the release closes at the history's first page (`data-close-target`: 'tab' or 'app'; "" for a page turn). */
+    private fun bubbleCloseTarget(): String =
+        js("(function(){var e=document.querySelector('[data-testid=\"history-nav\"]');return e?e.getAttribute('data-close-target')||'':''})()")
+
+    /**
+     * How many times the host's bubble layer tapped the finger at the threshold since boot: its
+     * `ZenPull` line goes out with each `KEYBOARD_TAP` (`HistoryNavBubbleLayer.apply`), and the
+     * instrumentation's shell reads the app's log.
+     */
+    private fun thresholdTaps(): Int =
+        shellCommand("logcat -d -s ZenPull:D").lineSequence().count { it.contains("history threshold: KEYBOARD_TAP") }
+
     /**
      * What the host's disc (HistoryNavBubbleView) shows: up at all (its layer up with it), how far
      * its leading edge stands in, its scale, and the layer's clip (the page frame's box).
@@ -798,6 +855,8 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
          * short of the threshold (60 dp of 96) leaves the disc well under it.
          */
         const val FULL_SCALE_FLOOR = 0.97f
+        /** The disc's diameter (v2 §11.9's 44, `HistoryNavBubbleFrame.sizePx` at density); the caption's pill runs out past it. */
+        const val BUBBLE_SIZE_DP = 44f
         const val THREE_BUTTON = "threebutton"
         const val GESTURAL = "gestural"
         const val THREE_BUTTON_OVERLAY = "com.android.internal.systemui.navbar.threebutton"

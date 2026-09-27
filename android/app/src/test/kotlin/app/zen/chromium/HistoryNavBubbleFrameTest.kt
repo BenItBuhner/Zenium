@@ -77,6 +77,48 @@ class HistoryNavBubbleFrameTest {
         assertNull(frame("""{"edge":"left","left":-44,"top":378,"size":44,"clip":{"left":6,"top":100,"right":6,"bottom":700}}""")!!.clip)
     }
 
+    // The caption (Chrome's close indicator at the history's first page): its text and how far out it is.
+
+    @Test
+    fun theCaptionComesThroughWithItsText() {
+        val f = frame("""{"edge":"left","left":52,"top":378,"size":44,"armed":true,"caption":0.5,"captionText":"Close tab"}""")!!
+        assertEquals("Close tab", f.captionText)
+        assertEquals(0.5f, f.caption, 1e-6f)
+        val whole = frame("""{"edge":"left","left":52,"top":378,"size":44,"armed":true,"caption":1,"captionText":"Close Zenium"}""")!!
+        assertEquals("Close Zenium", whole.captionText)
+        assertEquals(1f, whole.caption, 0f)
+    }
+
+    @Test
+    fun aFrameWithoutACaptionIsADisc() {
+        val f = frame("""{"edge":"left","left":52,"top":378,"size":44,"armed":true}""")!!
+        assertNull(f.captionText)
+        assertEquals(0f, f.caption, 0f)
+        // An extent with no text, or a blank one, is a disc too: a caption is a text.
+        assertEquals(0f, frame("""{"edge":"left","left":52,"top":378,"size":44,"caption":1}""")!!.caption, 0f)
+        val blank = frame("""{"edge":"left","left":52,"top":378,"size":44,"caption":1,"captionText":"  "}""")!!
+        assertNull(blank.captionText)
+        assertEquals(0f, blank.caption, 0f)
+    }
+
+    @Test
+    fun theCaptionsExtentIsClampedToTheUnit() {
+        assertEquals(1f, frame("""{"edge":"left","left":52,"top":378,"size":44,"caption":1.4,"captionText":"Close tab"}""")!!.caption, 0f)
+        assertEquals(0f, frame("""{"edge":"left","left":52,"top":378,"size":44,"caption":-0.2,"captionText":"Close tab"}""")!!.caption, 0f)
+    }
+
+    @Test
+    fun theCaptionStartsPastTheArrowAndThePillRunsItsEndPaddingBeyondTheText() {
+        // A 44 dp disc at density 2: the text starts at the disc's centre (44) plus the arrow's
+        // half-box (20) plus the gap (12) = 76 px; a 100 px text with the 24 px end padding
+        // takes the pill to 200 px, 112 beyond the disc's 88.
+        val g = captionGeometry(sizePx = 88, textWidthPx = 100f, density = 2f)
+        assertEquals(76f, g.textX, 1e-4f)
+        assertEquals(112f, g.advance, 1e-4f)
+        // The pill never runs short of the disc, whatever the text.
+        assertTrue(captionGeometry(sizePx = 88, textWidthPx = 0f, density = 2f).advance >= 0f)
+    }
+
     // The disc's opacity per frame (`HistoryNavBubbleView.setShown` through `bubbleAlphaStep`).
 
     @Test

@@ -144,7 +144,9 @@ describe('HistoryNavBubble', () => {
           opacity: 0,
           armed: false,
           reduced: false,
-          clip: { left: FRAME.left, top: FRAME.top, right: FRAME.right, bottom: FRAME.bottom }
+          clip: { left: FRAME.left, top: FRAME.top, right: FRAME.right, bottom: FRAME.bottom },
+          caption: 0,
+          captionText: null
         }
       ])
     })
