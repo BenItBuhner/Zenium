@@ -497,7 +497,9 @@ function lookSection({
         // while the space has one – the theme picker's button by the same name, the one reset
         // (`lib/theme.ts`, §9.1). At the default look the row is the door to the
         // picker instead, as Chrome's row opens Customize Chrome (its Web Store is no part of
-        // Zenium's; the row says nothing of a store). The theme is a space's, so the row reads
+        // Zenium's; the row says nothing of a store): the picker hangs from the Change… button
+        // that opened it – end-aligned under it, §9.20 (#572's L8) – not at the sidebar's seat
+        // the palette and the space menu open it at. The theme is a space's, so the row reads
         // the active space's and names it – "Ocean · Default space", the picker's own
         // description under its title (#572's N5) – one space or many. The phone's Appearance
         // keeps to its own rows; the tablet shares the desktop's two-pane page.
@@ -511,7 +513,8 @@ function lookSection({
                 keywords: ['theme', 'accent', 'colour', 'color', 'gradient', 'preset', 'reset'],
                 layouts: ['desktop', 'tablet'],
                 button: themed ? 'Reset to default' : 'Change…',
-                onPress: () => (themed ? resetSpaceTheme(activeSpace.id) : openThemePicker())
+                onPress: (anchor) =>
+                  themed ? resetSpaceTheme(activeSpace.id) : openThemePicker(activeSpace.id, anchor)
               } satisfies SettingsRow
             ]
           : []),

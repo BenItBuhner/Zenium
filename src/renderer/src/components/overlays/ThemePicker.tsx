@@ -11,6 +11,7 @@ import {
   wheelToColor
 } from '@shared/theme'
 import { spaceLabel } from '@shared/defaults'
+import type { Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
 import { isDarkScheme } from '@renderer/lib/selectors'
 import { resetSpaceTheme } from '@renderer/lib/theme'
@@ -31,13 +32,33 @@ const ALGORITHMS: Array<{ id: ThemeAlgorithm; label: string }> = [
 ]
 
 const WHEEL = 200
+/**
+ * The picker's width, its own: the 200 wheel beside its column of controls. At its seat it is
+ * the `w-[420px]` on the panel; hanging from the Settings row's button (§9.20) it is the extent
+ * `placeUnder` takes – a surface with a width of its own, like a menu's, not one of the
+ * chassis's three.
+ */
+const WIDTH = 420
 
 function defaultTheme(): SpaceTheme {
   return structuredClone(THEME_PRESETS[0].theme)
 }
 
-/** Zen's gradient theme picker: colour wheel dots, harmony algorithm, opacity, texture, rotation. */
-export function ThemePicker({ state, spaceId }: { state: UIState; spaceId: string }): JSX.Element {
+/**
+ * Zen's gradient theme picker: colour wheel dots, harmony algorithm, opacity, texture, rotation.
+ * With an `anchor` – the Settings theme row's Change… button, `UiState.overlayAnchor` – the
+ * panel hangs from it, end-aligned under the button (§9.20, #572's L8), instead of sitting at
+ * the sidebar's seat the space menu and the palette open it at.
+ */
+export function ThemePicker({
+  state,
+  spaceId,
+  anchor
+}: {
+  state: UIState
+  spaceId: string
+  anchor?: Omit<Anchor, 'element'> | null
+}): JSX.Element {
   const space = state.spaces.find((s) => s.id === spaceId) ?? state.spaces[0]
   const [theme, setTheme] = useState<SpaceTheme | null>(space.theme)
   const dark = isDarkScheme(state)
@@ -84,6 +105,7 @@ export function ThemePicker({ state, spaceId }: { state: UIState; spaceId: strin
       description={`${spaceLabel(space)} space`}
       variant="dialog"
       className="mb-3 ml-3 mr-auto mt-auto w-[420px]"
+      anchor={anchor ? { at: anchor, width: WIDTH } : undefined}
     >
       <div className="flex flex-col gap-4 px-4 pb-4">
         <div className="flex gap-4">
@@ -141,7 +163,10 @@ export function ThemePicker({ state, spaceId }: { state: UIState; spaceId: strin
                 <SelectTrigger className="h-7 min-w-0 text-[12px]">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
+                {/* The popup portals to `body` at the menulist's z 50; hanging from the Settings
+                    row the panel stands in the chrome layer (z 100, lib/portals.tsx), so the
+                    popup lifts past it or it would open under its own picker. */}
+                <SelectContent className="z-[110]">
                   {ALGORITHMS.map((a) => (
                     <SelectItem key={a.id} value={a.id}>
                       {a.label}

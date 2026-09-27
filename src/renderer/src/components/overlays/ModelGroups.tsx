@@ -82,7 +82,8 @@ function ModelRow({ row }: { row: SettingsRow }): JSX.Element | null {
           danger={row.destructive}
           busy={row.busy}
           disabled={row.disabled}
-          onClick={row.onPress}
+          // The whole-row press passes no anchor (model.ts `onPress`): the click's event is not one.
+          onClick={row.onPress ? () => row.onPress?.() : undefined}
           data-row={row.id}
         />
       )

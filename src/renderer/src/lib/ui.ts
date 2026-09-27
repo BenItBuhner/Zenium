@@ -277,6 +277,14 @@ export interface UiState {
   overlayFolderId: string | null
   /** Settings section to open (e.g. `resources`), when the overlay was opened for one. */
   overlaySection: string | null
+  /**
+   * The control the overlay was opened from, when it hangs from one (§9.20: the Settings theme
+   * row's Change… button places the picker under itself, end-aligned – #572's L8): its box and
+   * the bar or column it stands in, plain data (`placedAnchor`, lib/anchor.ts), never the
+   * element. Null for an overlay opened from a menu, a shortcut or the palette, which takes its
+   * seat.
+   */
+  overlayAnchor: Omit<Anchor, 'element'> | null
   urlbar: UrlbarState
   findOpen: boolean
   findTabId: string | null
@@ -633,6 +641,7 @@ export const uiStore = createStore<UiState>(
     overlaySpaceId: null,
     overlayFolderId: null,
     overlaySection: null,
+    overlayAnchor: null,
     urlbar: { open: false, mode: 'new-tab', tabId: null, initialText: undefined, attached: false },
     findOpen: false,
     findTabId: null,
@@ -1183,13 +1192,16 @@ export async function openOverlay(
   folderId: string | null = null,
   section: string | null = null,
   {
-    handedBack = false
+    handedBack = false,
+    anchor = null
   }: {
     /**
      * The overlay is a page tab's the class change closed, going back to its tab as the window
      * widens (`useStageContinuity`): the core re-opens it at the slot the tab had.
      */
     handedBack?: boolean
+    /** The control the overlay hangs from, if one (`UiState.overlayAnchor`). */
+    anchor?: Omit<Anchor, 'element'> | null
   } = {}
 ): Promise<void> {
   const page = pageForOverlay(kind, folderId, section)
@@ -1206,7 +1218,8 @@ export async function openOverlay(
     overlay: kind,
     overlaySpaceId: spaceId,
     overlayFolderId: folderId,
-    overlaySection: section
+    overlaySection: section,
+    overlayAnchor: anchor
   })
 }
 
@@ -1215,7 +1228,8 @@ export function closeOverlay(): void {
     overlay: 'none',
     overlaySpaceId: null,
     overlayFolderId: null,
-    overlaySection: null
+    overlaySection: null,
+    overlayAnchor: null
   })
   invalidateSnapshot()
   returnFocusToPage()

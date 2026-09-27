@@ -502,13 +502,20 @@ function CustomRowView({ row, caption }: { row: CustomRow; caption?: string }): 
 
 /**
  * What pressing an action row (or its button) does: its dialog first, else the action itself –
- * after the sheet it sits in has gone, for an action that opens a surface of its own.
+ * after the sheet it sits in has gone, for an action that opens a surface of its own. The
+ * button passes itself as the action's `anchor` (§9.20), so a surface the action opens can
+ * hang from it; the whole-row press has no control of its own to pass.
  */
-function pressAction(row: ActionRow, ctx: RowContext, dismissSheet: SheetDismiss): void {
+function pressAction(
+  row: ActionRow,
+  ctx: RowContext,
+  dismissSheet: SheetDismiss,
+  anchor?: Anchor
+): void {
   if (row.confirm) ctx.open({ kind: 'confirm', rowId: row.id })
   else if (row.form) ctx.open({ kind: 'form', rowId: row.id })
-  else if (row.closesSheet) dismissSheet(() => row.onPress?.())
-  else row.onPress?.()
+  else if (row.closesSheet) dismissSheet(() => row.onPress?.(anchor))
+  else row.onPress?.(anchor)
 }
 
 /**
@@ -547,7 +554,7 @@ function DesktopRowView({
               busy={row.busy}
               disabled={row.disabled}
               aria-haspopup={row.confirm || row.form || row.prompts ? 'dialog' : undefined}
-              onClick={() => pressAction(row, ctx, dismissSheet)}
+              onClick={(e) => pressAction(row, ctx, dismissSheet, anchorOf(e.currentTarget))}
             >
               {row.button}
             </V2Button>

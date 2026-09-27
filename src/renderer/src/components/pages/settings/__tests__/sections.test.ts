@@ -7156,7 +7156,7 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
       settings
     )
 
-  it('the theme row stands after Colour scheme on the desktop and the tablet, never on the phone, naming the active space’s theme and the space – "Default · Personal space" at rest (the picker’s own description, #572’s N5) – with the picker as its door (Chrome’s row opens Customize Chrome; no store is named)', () => {
+  it('the theme row stands after Colour scheme on the desktop and the tablet, never on the phone, naming the active space’s theme and the space – "Default · Personal space" at rest (the picker’s own description, #572’s N5) – with the picker as its door (Chrome’s row opens Customize Chrome; no store is named), hung from the Change… button that opened it (§9.20, #572’s L8)', async () => {
     const { model } = look()
     const ids = appearanceIds(model)
     expect(ids.slice(0, 2)).toEqual(['color-scheme', 'theme'])
@@ -7169,8 +7169,21 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
       button: 'Change…'
     })
     if (theme.kind !== 'action') throw new Error('not an action row')
+    // The desktop button passes itself (`anchorOf`, lib/anchor.ts); the picker opens for the
+    // space as the `theme` overlay with the anchor's boxes in the store – the element stays
+    // with the button – and not through the core's `theme.open`, which seats the picker.
+    const column = { x: 400, y: 0, width: 1200, height: 1000 }
+    theme.onPress?.({ x: 1000, y: 240, width: 88, height: 32, column })
+    await vi.waitFor(() => expect(uiStore.get().overlay).toBe('theme'))
+    expect(uiStore.get().overlaySpaceId).toBe('space')
+    expect(uiStore.get().overlayAnchor).toEqual({ x: 1000, y: 240, width: 88, height: 32, column })
+    expect(invoke).not.toHaveBeenCalledWith('urlbar.runCommand', { action: 'theme.open' })
+    uiStore.set({ overlay: 'none', overlaySpaceId: null, overlayAnchor: null })
+    // Without a control (nothing on the desktop presses it so; the guard) it opens at its seat.
     theme.onPress?.()
-    expect(invoke).toHaveBeenCalledWith('urlbar.runCommand', { action: 'theme.open' })
+    await vi.waitFor(() => expect(uiStore.get().overlay).toBe('theme'))
+    expect(uiStore.get().overlayAnchor).toBeNull()
+    uiStore.set({ overlay: 'none', overlaySpaceId: null })
     expect(rowText(theme).toLowerCase()).not.toContain('store')
     expect(onLayout(model.groups, 'tablet').some((g) => g.rows.some((r) => r.id === 'theme'))).toBe(
       true

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import type { InternalPageQuery, InternalPageSection } from '@shared/internalPages'
 import { matchesQuery } from '@shared/internalPages'
 import type { FormFactor } from '@shared/types'
+import type { Anchor } from '@renderer/lib/anchor'
 
 /**
  * The phone Settings page as data (design language v2 §10.3–10.4). A section builder turns the
@@ -190,8 +191,13 @@ export interface SwitchRow extends RowBase {
 /** Opens or does something. Destructive actions confirm in a sheet, never inline (§10.4). */
 export interface ActionRow extends RowBase {
   kind: 'action'
-  /** What the row does; with `form`, what its sheet's primary button does is the form's own. */
-  onPress?(): void
+  /**
+   * What the row does; with `form`, what its sheet's primary button does is the form's own.
+   * The desktop's `button` passes itself as `anchor` (lib/anchor.ts: its box and the column it
+   * stands in) for an action that opens a surface hanging from it – §9.20: the theme row's
+   * Change… places the picker under the button. The whole-row press and the phone pass none.
+   */
+  onPress?(anchor?: Anchor): void
   /** A 20 px glyph on the label's line (§9.2): a status the row acts on (Safety check's rows). */
   leading?: ReactNode
   /** A trailing 16 px glyph, only when the action leaves the page (§10.4). */

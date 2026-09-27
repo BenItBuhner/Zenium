@@ -12,7 +12,9 @@ import { THEME_PRESETS } from '@shared/theme'
  * space" – the row's aside "Ocean · Personal space" names the space the same way; N5), the
  * "Default" chip and "Reset to default" as the Settings row's own button (§9.1: one reset,
  * `lib/theme.ts`), a reset dropping an edit still in the debounce instead of applying it over
- * the reset (Android's re-nod note at `9f02f12ba`).
+ * the reset (Android's re-nod note at `9f02f12ba`); and, given the button that opened it, the
+ * panel hung from it – end-aligned under the button in the chrome layer, §9.20 (L8) – rather
+ * than at the sidebar's seat.
  */
 
 const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(async () => null)
@@ -20,6 +22,8 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const { ThemePicker } = await import('../ThemePicker')
+const { uiStore } = await import('@renderer/lib/ui')
+type Anchor = import('@renderer/lib/anchor').Anchor
 
 function state(theme: UIState['spaces'][number]['theme'] = null): UIState {
   return {
@@ -43,11 +47,11 @@ function state(theme: UIState['spaces'][number]['theme'] = null): UIState {
 let root: Root | null = null
 let host: HTMLElement | null = null
 
-function mount(s: UIState, spaceId = 'space'): void {
+function mount(s: UIState, spaceId = 'space', anchor?: Omit<Anchor, 'element'>): void {
   host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
-  act(() => root!.render(createElement(ThemePicker, { state: s, spaceId })))
+  act(() => root!.render(createElement(ThemePicker, { state: s, spaceId, anchor })))
 }
 
 afterEach(() => {
@@ -56,6 +60,7 @@ afterEach(() => {
   root = null
   host = null
   invoke.mockClear()
+  uiStore.set({ overlay: 'none', overlayAnchor: null })
 })
 
 const q = <T extends Element>(selector: string): T | null => document.querySelector<T>(selector)
@@ -97,5 +102,61 @@ describe('the theme picker’s header and reset (settings-30; #572 N5, Android�
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('the picker hung from the Settings row’s Change… button (§9.20; #572’s L8)', () => {
+  const viewport = { width: 1600, height: 1000 }
+  /** The button at the trailing end of the page's column: the picker end-aligns under it. */
+  const button: Omit<Anchor, 'element'> = {
+    x: 1000,
+    y: 240,
+    width: 88,
+    height: 32,
+    column: { x: 400, y: 0, width: 1200, height: 1000 }
+  }
+  const sized = (): void => {
+    Object.assign(window, { innerWidth: viewport.width, innerHeight: viewport.height })
+  }
+
+  it('renders the panel in the chrome layer, fixed, its right edge on the button’s and its top on the button’s bottom edge – one placement, at its own 420 – and leaves the seat’s classes behind', () => {
+    sized()
+    mount(state(), 'space', button)
+    const panel = document.querySelector<HTMLElement>('#zen-chrome-layer [data-anchored]')
+    expect(panel).not.toBeNull()
+    expect(host!.querySelector('[data-anchored]')).toBeNull()
+    expect(panel!.classList.contains('fixed')).toBe(true)
+    expect(panel!.classList.contains('zen-animate-pop')).toBe(true)
+    expect(panel!.className).not.toMatch(/w-\[420px\]|ml-3|mt-auto/)
+    // End-aligned: left = the button's right edge − 420; flush under the button's box.
+    expect(panel!.style.left).toBe(`${1000 + 88 - 420}px`)
+    expect(panel!.style.top).toBe(`${240 + 32}px`)
+    expect(panel!.style.width).toBe('420px')
+    expect(panel!.style.visibility).not.toBe('hidden')
+    // The pop grows out of the button's centre on the panel's top edge (§7).
+    expect(panel!.style.transformOrigin).toMatch(/^376px 0(px)?$/)
+    // The header is the same block the seated picker draws.
+    expect(panel!.querySelector('.zen-overlay-title')?.textContent).toBe('Theme')
+    expect(panel!.querySelector('.zen-overlay-description')?.textContent).toBe('Personal space')
+  })
+
+  it('start-aligns under a button in the leading half of its column, and closes on a resize as every popover does', () => {
+    sized()
+    uiStore.set({ overlay: 'theme' })
+    mount(state(), 'space', { ...button, x: 500 })
+    const panel = document.querySelector<HTMLElement>('#zen-chrome-layer [data-anchored]')!
+    expect(panel.style.left).toBe('500px')
+    act(() => {
+      window.dispatchEvent(new Event('resize'))
+    })
+    expect(uiStore.get().overlay).toBe('none')
+  })
+
+  it('without an anchor the panel sits at its seat inside the content area, dropping in', () => {
+    mount(state())
+    expect(document.querySelector('#zen-chrome-layer [data-anchored]')).toBeNull()
+    const panel = host!.querySelector<HTMLElement>('.zen-panel')!
+    expect(panel.classList.contains('zen-animate-in')).toBe(true)
+    expect(panel.className).toMatch(/w-\[420px\]/)
   })
 })
