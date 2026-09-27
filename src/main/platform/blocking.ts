@@ -469,8 +469,14 @@ export interface BundleManifest {
   lists: Array<{ id: string; file: string; version: string | null; filterCount: number }>
 }
 
-/** The default lists' snapshot shipped in `resources/blocking/` (gzipped network filters). */
+/**
+ * The default lists' snapshot shipped in `resources/blocking/` (gzipped network filters) – and
+ * the desktop's word that the core's engine decides its requests (`BlockingHandler` above asks
+ * it for every one), so the service builds the engine's tables as soon as the sets are loaded.
+ */
 export class ElectronBundledLists implements BlockingHost {
+  readonly requestEngine = 'core' as const
+
   constructor(
     private readonly bundleDir: string,
     private readonly profileDir: string

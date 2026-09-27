@@ -2500,10 +2500,21 @@ export interface BundledFilterList {
 /**
  * The host side of ad and tracker blocking. Matching itself is the core's `RuleEngine` plus the
  * platform's text matcher (Ghostery's engine behind Electron's `webRequest`, the Kotlin engine
- * inside `shouldInterceptRequest`); this interface only hands over the bundled snapshot of the
- * default lists so the very first run is protected before any list has been downloaded.
+ * inside `shouldInterceptRequest`); this interface says whose engine decides the host's
+ * requests and hands over the bundled snapshot of the default lists so the very first run is
+ * protected before any list has been downloaded.
  */
 export interface BlockingHost {
+  /**
+   * Whose engine decides the host's requests. `'host'` (the default): the host's own engine
+   * reads the set documents the service writes and decides natively (Android's Kotlin engine
+   * inside `shouldInterceptRequest`); the core's `RuleEngine` counts and persists the sets and
+   * never builds a table of them. `'core'`: the host's request hook asks the core's engine
+   * (`engine.decide` behind Electron's `webRequest`), so the service warms the engine's tables
+   * the moment its sets are loaded – in the same synchronous tick as the startup windows, ahead
+   * of any request hook – and the first request after boot pays no build.
+   */
+  readonly requestEngine?: 'core' | 'host'
   /** The lists this build ships a snapshot of. */
   bundledLists(): Promise<BundledFilterList[]>
   /**

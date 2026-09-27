@@ -1,7 +1,7 @@
 // The Kotlin engine's fixture is compared here, test-only (the core itself never touches Node).
 // eslint-disable-next-line no-restricted-imports
 import { readFileSync } from 'node:fs'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_BLOCKING_SETTINGS,
   DEFAULT_FILTER_LISTS,
@@ -656,6 +656,82 @@ describe('BlockingService bundled snapshot', () => {
     const plain = start(harness())
     await plain.whenSettled()
     expect(plain.status().ready).toBe(true)
+  })
+})
+
+describe('BlockingService warm-up', () => {
+  /** A host in the shape of the desktop's or the phone's `BlockingHost`, without a snapshot. */
+  function host(requestEngine?: 'core' | 'host'): BlockingHost {
+    const h: BlockingHost = { bundledLists: async () => [], installBundled: async () => null }
+    return requestEngine ? { ...h, requestEngine } : h
+  }
+
+  /** The service started with `warm` watched from before `start()`. */
+  function startWatched(h: Harness) {
+    const service = new BlockingService(h.browser)
+    services.push(service)
+    const warm = vi.spyOn(service.engine, 'warm')
+    service.start()
+    return { service, warm }
+  }
+
+  function builtSets(service: BlockingService): Record<string, boolean> {
+    const out: Record<string, boolean> = {}
+    for (const s of service.engine.listRuleSets())
+      out[s.id] = service.engine.tableOf(s.id) !== null && service.engine.indexOf(s.id) !== null
+    return out
+  }
+
+  it('builds every table and index at start on a host whose requests the core’s engine decides, once, and indexes later sets on arrival', async () => {
+    const h = harness({ host: host('core') })
+    const { service, warm } = startWatched(h)
+    expect(warm).toHaveBeenCalledTimes(1)
+    // Every set the start loaded – the builtin sets and the default lists' summaries – is built.
+    const built = builtSets(service)
+    expect(Object.keys(built).length).toBeGreaterThan(DEFAULT_FILTER_LISTS.length)
+    expect(Object.values(built).every(Boolean)).toBe(true)
+    // HTTPS-only mode's set arrives from the protection service a line later in
+    // `browser.start()`: indexed as it comes, through the existing path.
+    service.engine.setRuleSet({
+      id: BUILTIN_RULE_SETS.httpsOnly,
+      source: 'builtin',
+      priority: RULE_SET_PRIORITY.httpsOnly,
+      enabled: true,
+      rules: [
+        {
+          id: 1,
+          action: { type: 'upgradeScheme' },
+          condition: { urlFilter: '|http://', resourceTypes: ['main_frame'] }
+        }
+      ]
+    })
+    expect(service.engine.tableOf(BUILTIN_RULE_SETS.httpsOnly)?.size).toBe(1)
+    expect(service.engine.indexOf(BUILTIN_RULE_SETS.httpsOnly)).not.toBeNull()
+    // The first decision builds nothing: every table is the one the start built.
+    const tables = service.engine.listRuleSets().map((s) => service.engine.tableOf(s.id))
+    expect(
+      service.engine.decide(req('http://plain.example/', { type: 'main_frame' }))
+    ).toMatchObject({ action: 'upgrade', matched: { setId: BUILTIN_RULE_SETS.httpsOnly } })
+    expect(service.engine.listRuleSets().map((s) => service.engine.tableOf(s.id))).toEqual(tables)
+    // Once per boot: the settings' re-sync and the snapshot's seeding call it no more.
+    h.settings.blocking = { ...h.settings.blocking, level: 'strict' }
+    service.onSettingsChanged()
+    await service.whenSettled()
+    expect(warm).toHaveBeenCalledTimes(1)
+    expect(Object.values(builtSets(service)).every(Boolean)).toBe(true)
+  })
+
+  it('builds nothing at start on a host whose native engine decides, or that says nothing (the phone’s path)', async () => {
+    for (const blockingHost of [undefined, host(), host('host')]) {
+      const { service, warm } = startWatched(harness({ host: blockingHost }))
+      await service.whenSettled()
+      expect(warm).not.toHaveBeenCalled()
+      expect(Object.values(builtSets(service)).some(Boolean)).toBe(false)
+      for (const s of service.engine.listRuleSets()) {
+        expect(service.engine.tableOf(s.id), s.id).toBeNull()
+        expect(service.engine.indexOf(s.id), s.id).toBeNull()
+      }
+    }
   })
 })
 
