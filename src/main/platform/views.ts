@@ -2119,7 +2119,15 @@ export class ElectronTabView implements TabView {
    * own, on the page's capture turn, as `capture` pictures it – never `capturePage`'s copy,
    * which would flip the page to `visible` (see `capture`). Two callers picture a hidden page
    * this way: the agent's screenshot tool when `capture` answered nothing, and the tab strip's
-   * hover card (`ZenWindow.snapshot` with `fresh`) over the agent's tab. Encoded the same.
+   * hover card (`ZenWindow.snapshot` with `fresh`) over the agent's tab. Encoded the same, and
+   * bounded as the frame is, not as the copy is: `STAGED_FRAME_FIRST_MS` and then
+   * `STAGED_FRAME_RETRY_MS`, 2.8 s at the most, against the copy's `SNAPSHOT_TIMEOUT_MS` of
+   * 600 ms. The copy is one paint of a widget already painting, and a late one is worth nothing
+   * to the cover; a staged renderer is first shown as painting, and one that shows nothing for
+   * the first wait – a navigation since – is shown once more, which is what gets a frame of it
+   * at all. The tool's fallback follows a capture that took the same path; the hover card's
+   * preview of the agent's tab comes on the frame's terms, up to that long, for the page's
+   * visibility kept.
    */
   snapshot(): Promise<string | null> {
     if (!this.staged) return snapshotOf(this.wc)
