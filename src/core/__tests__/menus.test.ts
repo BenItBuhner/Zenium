@@ -247,25 +247,26 @@ describe('the app menu', () => {
   })
 
   describe("Chrome's Update row at the menu's head (shortcuts-menus-101)", () => {
-    /** The updater driven to `phase`, a 2.0.0 release found (downloaded when `ready`). */
+    /** The updater driven to `phase`, a `version` (2.0.0) release found (downloaded when `ready`). */
     const updater = (
       h: Harness,
-      phase: 'available' | 'ready' | 'downloading' | 'up-to-date'
+      phase: 'available' | 'ready' | 'downloading' | 'up-to-date',
+      version = '2.0.0'
     ): void => {
       const status = h.browser.updates.status()
       vi.spyOn(h.browser.updates, 'status').mockReturnValue({
         ...status,
         phase,
         release: {
-          version: '2.0.0',
-          tag: 'v2.0.0',
+          version,
+          tag: `v${version}`,
           prerelease: false,
           publishedAt: '2026-09-24T00:00:00Z',
-          releaseUrl: 'https://github.com/BenItBuhner/Zenium/releases/tag/v2.0.0',
-          notesUrl: 'https://github.com/BenItBuhner/Zenium/releases/tag/v2.0.0',
+          releaseUrl: `https://github.com/BenItBuhner/Zenium/releases/tag/v${version}`,
+          notesUrl: `https://github.com/BenItBuhner/Zenium/releases/tag/v${version}`,
           asset: null
         },
-        downloadedPath: phase === 'ready' ? '/tmp/zenium-2.0.0.AppImage' : null
+        downloadedPath: phase === 'ready' ? `/tmp/zenium-${version}.AppImage` : null
       })
     }
 
@@ -363,14 +364,25 @@ describe('the app menu', () => {
       expect(appMenu(noUpdates)).toEqual(plain)
     })
 
-    it("leaves the desktop's row as it was: no key, the same two items (the phone's key is added where the phone seats it)", () => {
-      const h = harness(DESKTOP)
-      updater(h, 'ready')
-      appMenu(h)
-      expect(h.shown().slice(0, 2)).toStrictEqual([
-        { label: 'Update Zenium', click: expect.any(Function) },
-        { type: 'separator' }
-      ])
+    it("keys the desktop's and the tablet's row `menu.update` like the phone's (W8-F3): the coarse-pointer sheet's split seats it as the `update` structure, its hairline unkeyed", () => {
+      for (const [caps, formFactor] of [
+        [DESKTOP, 'desktop'],
+        [ANDROID, 'tablet']
+      ] as const) {
+        const h = harness(caps, formFactor)
+        updater(h, 'ready')
+        appMenu(h)
+        expect(h.shown().slice(0, 2), formFactor).toStrictEqual([
+          { label: 'Update Zenium', key: 'menu.update', click: expect.any(Function) },
+          { type: 'separator' }
+        ])
+        // The one keyed row of its kind; the rest of the head is unkeyed structure or the
+        // groups' own keys – no second `menu.update`.
+        expect(
+          h.shown().filter((item) => item.key === 'menu.update'),
+          formFactor
+        ).toHaveLength(1)
+      }
     })
 
     it("records the waiting version as seen when the phone's or the tablet's menu opens (TB-12: the menu button's dot clears, the row stays), once per version, and nothing while no update waits", () => {
@@ -399,13 +411,38 @@ describe('the app menu', () => {
       }
     })
 
-    it("leaves the desktop's open as it was: its ⋯ reads the plain phase until W8-F3, so the open records nothing", () => {
+    it("records the waiting version as seen when the desktop's menu opens too (W8-F3: one cadence on every host – the ⋯'s dot clears, the row stays), once per version, one commit; a second open writes nothing", () => {
       const h = harness(DESKTOP)
       const { state } = h.browser
       const commit = vi.spyOn(state, 'commit')
+      // Downloaded and waiting: the open shows the row at the head and records the version.
       updater(h, 'ready')
       expect(appMenu(h)[0]).toBe('Update Zenium')
+      expect(state.updateDot).toEqual({ seenVersion: '2.0.0' })
+      expect(commit).toHaveBeenCalledTimes(1)
+      // A second open: the row still at the head (it stays while the update waits), no write.
+      expect(appMenu(h)[0]).toBe('Update Zenium')
+      expect(state.updateDot).toEqual({ seenVersion: '2.0.0' })
+      expect(commit).toHaveBeenCalledTimes(1)
+      // Another version downloaded after the first was seen: its open records the new one –
+      // the dot came back for it by construction (`updateDotShows`), and goes again here.
+      updater(h, 'ready', '2.1.0')
+      expect(appMenu(h)[0]).toBe('Update Zenium')
+      expect(state.updateDot).toEqual({ seenVersion: '2.1.0' })
+      expect(commit).toHaveBeenCalledTimes(2)
+    })
+
+    it('records nothing on the desktop while no update waits: no update, one found (`available`), one downloading – the menu opens, the record and the commit count stand', () => {
+      const h = harness(DESKTOP)
+      const { state } = h.browser
+      const commit = vi.spyOn(state, 'commit')
+      appMenu(h)
       expect(state.updateDot).toEqual({ seenVersion: null })
+      for (const phase of ['available', 'downloading', 'up-to-date'] as const) {
+        updater(h, phase)
+        appMenu(h)
+        expect(state.updateDot, phase).toEqual({ seenVersion: null })
+      }
       expect(commit).not.toHaveBeenCalled()
     })
 
@@ -4611,7 +4648,13 @@ describe("the served new tab page's tile menu (GN-11's row per host shape)", () 
 
   it('a tablet – private browsing in tabs, no windows – gains Open in Private Tab second: the site opens in the window’s private container, in front; Open in New Tab stays the background open', () => {
     const h = pageHarness(ANDROID, { formFactor: 'tablet' })
-    expect(tileMenu(h)).toEqual(['Open in New Tab', 'Open in Private Tab', '-', 'Remove'])
+    expect(tileMenu(h)).toEqual([
+      'Open in New Tab',
+      'Open in Private Tab',
+      'Copy Link',
+      '-',
+      'Remove'
+    ])
     const before = Object.keys(h.browser.state.model.tabs).length
     h.click('Open in Private Tab')
     const opened = Object.values(h.browser.state.model.tabs).find((t) => t.url === TILE.url)
@@ -4627,16 +4670,31 @@ describe("the served new tab page's tile menu (GN-11's row per host shape)", () 
     expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(opened?.id)
   })
 
-  it('the phone, should the served page reach it, carries the same row; without private tabs, or with windows to open a private one in, the row stays out – not greyed', () => {
+  it("a touch host's third row is Copy Link (NTP-35, the phone's hold menu's third): the tile's address goes to the clipboard, and no tab opens", () => {
+    const h = pageHarness(ANDROID, { formFactor: 'tablet' })
+    let copied = ''
+    h.browser.platform.clipboard.writeText = (text: string) => void (copied = text)
+    tileMenu(h)
+    const before = Object.keys(h.browser.state.model.tabs).length
+    h.click('Copy Link')
+    expect(copied).toBe(TILE.url)
+    expect(Object.keys(h.browser.state.model.tabs).length).toBe(before)
+  })
+
+  it('the phone, should the served page reach it, carries the same rows; without private tabs, or with windows to open a private one in, the rows stay out – not greyed', () => {
     expect(tileMenu(pageHarness(ANDROID, { formFactor: 'phone' }))).toEqual([
       'Open in New Tab',
       'Open in Private Tab',
+      'Copy Link',
       '-',
       'Remove'
     ])
+    // Copy Link is gated on the windows alone (a touch host cannot drag the address, whichever
+    // way it keeps private browsing): a host without profiles still carries it, and not the
+    // private open.
     expect(
       tileMenu(pageHarness({ ...ANDROID, privateTabs: false }, { formFactor: 'tablet' }))
-    ).toEqual(['Open in New Tab', '-', 'Remove'])
+    ).toEqual(['Open in New Tab', 'Copy Link', '-', 'Remove'])
     expect(tileMenu(pageHarness({ ...ANDROID, windows: true }, { formFactor: 'tablet' }))).toEqual([
       'Open in New Tab',
       'Open in New Window',
@@ -4644,6 +4702,63 @@ describe("the served new tab page's tile menu (GN-11's row per host shape)", () 
       '-',
       'Remove'
     ])
+  })
+
+  describe("where the menu hangs (NTP-35): the tile's box on the touch layouts, the pointer on the desktop", () => {
+    // The page sits to the right of the sidebar: its CSS pixels are offset in the window's.
+    const CONTENT = { x: 300, y: 60, width: 900, height: 700 }
+    const BOX = { x: 120, y: 200, width: 104, height: 96 }
+    const menuFor = (h: PageHarness, keyboard = false): void => {
+      h.win.applyLayout({
+        placements: [{ tabId: h.tabId, rect: CONTENT, radius: 8 }],
+        glance: null,
+        contentHidden: false
+      })
+      h.browser.menus.showNewTabTileMenu(
+        h.tabId,
+        { ...TILE, x: 150, y: 250, keyboard, rect: BOX },
+        h.win
+      )
+    }
+
+    it("the tablet's menu carries the tile's box in the window's pixels beside the finger's point", () => {
+      const h = pageHarness(ANDROID, { formFactor: 'tablet' })
+      menuFor(h)
+      expect(h.where()).toMatchObject({
+        source: 'page',
+        x: 450,
+        y: 310,
+        keyboard: false,
+        rect: { x: 420, y: 260, width: 104, height: 96 }
+      })
+    })
+
+    it("the desktop's menu opens at the pointer as it always has: no box, whatever the page sent", () => {
+      const h = pageHarness(DESKTOP)
+      menuFor(h)
+      expect(h.where()).toMatchObject({ source: 'page', x: 450, y: 310, keyboard: false })
+      expect(h.where()).not.toHaveProperty('rect')
+      // The keyboard's menu too: the page already points it at the square's bottom-left corner.
+      menuFor(h, true)
+      expect(h.where()).toMatchObject({ x: 450, y: 310, keyboard: true })
+      expect(h.where()).not.toHaveProperty('rect')
+    })
+
+    it('a page that sent no box (an older page script) hangs the menu at the point on every host', () => {
+      const h = pageHarness(ANDROID, { formFactor: 'tablet' })
+      h.win.applyLayout({
+        placements: [{ tabId: h.tabId, rect: CONTENT, radius: 8 }],
+        glance: null,
+        contentHidden: false
+      })
+      h.browser.menus.showNewTabTileMenu(
+        h.tabId,
+        { ...TILE, x: 150, y: 250, keyboard: false },
+        h.win
+      )
+      expect(h.where()).toMatchObject({ x: 450, y: 310, keyboard: false })
+      expect(h.where()).not.toHaveProperty('rect')
+    })
   })
 })
 
@@ -4909,8 +5024,19 @@ describe('the chrome context menus', () => {
       expect(topLabels(marked.shown())).toEqual(['Unpin', 'Customise Toolbar…'])
       marked.click('Unpin')
       expect(marked.browser.state.settings.toolbarPins).toEqual({ translate: false })
-      const unknown = pageHarness(DESKTOP, {
+      // Home (W8-3, settings-32) is a pin too – the one folded by default, so its rows read Pin
+      // first; its button carries `toolbarMenuMarks('home')` as the chips do.
+      const home = pageHarness(DESKTOP, {
         chromeDocument: { hit: { target: 'toolbar', tabId: null, control: 'home' } }
+      })
+      home.win.onContextMenu(chromeParams({ x: 640, y: 18 }))
+      await settle()
+      expect(topLabels(home.shown())).toEqual(['Pin', 'Customise Toolbar…'])
+      home.click('Pin')
+      expect(home.browser.state.settings.toolbarPins).toEqual({ home: true })
+      // A control that is no pin – the Share chip, a hover-only utility (W8-6) – reads as none.
+      const unknown = pageHarness(DESKTOP, {
+        chromeDocument: { hit: { target: 'toolbar', tabId: null, control: 'share' } }
       })
       unknown.win.onContextMenu(chromeParams({ x: 640, y: 18 }))
       await settle()

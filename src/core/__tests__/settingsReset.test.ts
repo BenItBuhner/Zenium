@@ -37,6 +37,8 @@ describe('planSettingsReset', () => {
   const settings = {
     startup: { mode: 'pages' as const, pages: ['https://news.example/'] },
     homepage: { mode: 'url' as const, url: 'https://home.example/' },
+    // A shown Home button beside a folded Forward: the reset takes the one and leaves the other.
+    toolbarPins: { home: true, forward: false },
     searchEngineId: 'duckduckgo',
     searchChoice: { engineId: 'duckduckgo', region: 'DE', madeAt: 1, version: 1 }
   }
@@ -65,7 +67,12 @@ describe('planSettingsReset', () => {
     })
     expect(plan).toEqual([
       { kind: 'startup', patch: { startup: { mode: 'continue', pages: [] } } },
-      { kind: 'homepage', patch: { homepage: { mode: 'newtab', url: '' } } },
+      // The Home button goes with the home page (Chrome's `ResetHomepage` clears
+      // `kShowHomeButton` too); the folded Forward is not the resetter's and stays.
+      {
+        kind: 'homepage',
+        patch: { homepage: { mode: 'newtab', url: '' }, toolbarPins: { forward: false } }
+      },
       { kind: 'newTab' },
       {
         kind: 'searchEngine',
@@ -230,6 +237,7 @@ function customised(h: Harness): { pinned: string; essential: string } {
   browser.handleCommand(win, 'settings.update', {
     startup: { mode: 'pages', pages: ['https://news.example/'] },
     homepage: { mode: 'url', url: 'https://home.example/' },
+    toolbarPins: { home: true, forward: false },
     searchEngineId: 'duckduckgo',
     newTab: { ...DEFAULT_NEW_TAB_SETTINGS, enabled: false, preset: 'custom', background: 'none' },
     // Settings › Performance's keys (W8-2), which the sentence does not name: kept.
@@ -265,6 +273,7 @@ describe('settings.reset', () => {
       pages: ['https://news.example/']
     })
     expect(browser.state.settings.homepage).toEqual({ mode: 'url', url: 'https://home.example/' })
+    expect(browser.state.settings.toolbarPins).toEqual({ home: true, forward: false })
     expect(browser.state.settings.searchEngineId).toBe('duckduckgo')
     expect(browser.state.settings.newTab.preset).toBe('custom')
     expect(browser.state.newTabDevice.shortcuts).toHaveLength(1)
@@ -291,8 +300,10 @@ describe('settings.reset', () => {
 
     const settings = browser.state.settings
     expect(settings.startup).toEqual(DEFAULT_SETTINGS.startup)
-    // The home page is the new tab page again (Chrome's `ResetHomepage`).
+    // The home page is the new tab page again (Chrome's `ResetHomepage`), and the Home button is
+    // off the toolbar with it; the folded Forward is not the resetter's and stays folded.
     expect(settings.homepage).toEqual(DEFAULT_HOMEPAGE)
+    expect(settings.toolbarPins).toEqual({ forward: false })
     expect(settings.searchEngineId).toBe(DEFAULT_SETTINGS.searchEngineId)
     expect(settings.searchChoice).toBeNull()
     // The new tab page back to its defaults; whether a new tab opens it at all stays as it was.
@@ -350,6 +361,7 @@ describe('settings.reset', () => {
     const persisted = JSON.parse(io.files['state.json']).settings
     expect(persisted.startup).toEqual(DEFAULT_SETTINGS.startup)
     expect(persisted.homepage).toEqual(DEFAULT_HOMEPAGE)
+    expect(persisted.toolbarPins).toEqual({ forward: false })
     expect(persisted.searchEngineId).toBe('google')
     expect(persisted.energySaver).toBe('low-battery')
     expect(persisted.unloadTimeoutMinutes).toBe(120)

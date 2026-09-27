@@ -7,6 +7,7 @@ import {
   resolveWallpaper,
   rgbToHex,
   themeCssVariables,
+  withSystemAccent,
   type RGB,
   type ResolvedTheme
 } from '@shared/theme'
@@ -113,7 +114,14 @@ export function useTheme(state: UIState, formFactor: FormFactor = 'desktop'): Re
   const space = activeSpace(state)
   const systemDark = state.systemDark ?? mediaDark
   const dark = state.settings.colorScheme === 'system' ? systemDark : isDarkScheme(state)
-  const resolved = useMemo(() => resolveTheme(space.theme, dark), [space.theme, dark])
+  // The OS accent over the default look's (settings-116; Appearance › Use system accent
+  // colour): the host's reading, where it has one, while the switch is on; a themed space
+  // keeps the accent its colours give it (`withSystemAccent`).
+  const systemAccent = state.settings.useSystemAccent ? state.systemAccent : null
+  const resolved = useMemo(
+    () => withSystemAccent(resolveTheme(space.theme, dark), space.theme, systemAccent),
+    [space.theme, dark, systemAccent]
+  )
   // The space's gradient at full strength, for surfaces that show it as a wallpaper (the new tab page).
   const wallpaper = useMemo(() => resolveWallpaper(space.theme, dark), [space.theme, dark])
 

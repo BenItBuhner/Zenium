@@ -534,6 +534,25 @@
   background: var(--v2-fill-hover);
   transform: scale(0.98);
 }
+/*
+ * The anchor keeps its pressed fill while its popover is open (§9.20): the button that hangs a
+ * popover from itself – the Settings theme row's Change… with the picker under it – is
+ * `[aria-haspopup]` with `[aria-expanded='true']` for as long as it hangs there, and wears the
+ * fill a press gives it, without the press's scale. The icon button's rule (extensions.css) is
+ * this rule for the icon button, lit with `--v2-fill` from its transparent rest; the text
+ * button rests on `--v2-fill`, so its lit state is the primitive's pressed `--v2-fill-hover`.
+ * Beside the primitive and unlayered, as every state of the class is (the note above). The
+ * fill is the popover ANCHOR's – both attributes – and never a disclosure's, whose
+ * `aria-expanded` is its chevron's turn. On a phone the anchor opens a sheet, not a popover,
+ * so it keeps `aria-expanded` and its rest fill (no phone row draws the button today; the
+ * exception keeps the chassis's two rules alike).
+ */
+.zen-v2-button[aria-haspopup][aria-expanded='true'] {
+  background: var(--v2-fill-hover);
+}
+[data-form-factor='phone'] .zen-v2-button[aria-haspopup][aria-expanded='true'] {
+  background: var(--v2-fill);
+}
 .zen-v2-button:disabled {
   opacity: 0.4;
 }
@@ -2446,6 +2465,43 @@
     font-size: var(--v2-font-heading);
     line-height: var(--v2-line-heading);
     letter-spacing: -0.012em;
+  }
+  /*
+   * The header's title with a description under it (`OverlayShell description`; §9.23's title
+   * block: the title 17/600 on 22, the description 15 at 69 % 4 under it – the theme picker's
+   * "Theme" over "<space> space", #572's N5): the text is a column and the header's items sit at
+   * its top, so the close stays centred on the title's line as it is without the description –
+   * the header's 13 puts the 28 button's centre 27 down, and the column's 3 puts the 22 line's
+   * there too. 13 + 3 + 22 + 4 + 20 + 3 + 13 = 78, §9.23's height with a description, the 16
+   * from the description's line box to the first content box kept. On a phone the 44 close at
+   * its 6 margin centres 28 down, so the column takes 11 above its line (6 + 11 + 11 = 28) and
+   * 10 below the description (10 + 6 = §9.7's 16 to the body).
+   */
+  .zen-overlay-header:has(> .zen-overlay-title-block) {
+    align-items: flex-start;
+  }
+  .zen-overlay-title-block {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+    gap: 4px;
+    padding: 3px 0;
+  }
+  .zen-overlay-title-block > .zen-overlay-title {
+    flex: none;
+  }
+  .zen-overlay-description {
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+  }
+  :root[data-form-factor='phone'] .zen-overlay-title-block {
+    padding: 11px 0 10px;
   }
   .zen-overlay-header::after {
     content: '';
@@ -10993,11 +11049,17 @@
  * outranks `:checked` at 0,2,0, so it must step aside from every checked form itself (a checked
  * box under the pointer had lost its accent to `--v2-fill`). As a row's leading box it sits
  * (line − box) / 2 below the first text line's top (§9.2) and never grows the line. Disabled is
- * the one number (§9.30). A check row disabled as a dependent row puts the .4 on its content –
- * not on the row, whose hairline is structure (§0) – and the box inside that content stays at 1
- * so it does not compound to .16; the row says `aria-disabled`, which keeps the row primitive's
- * hover and press fill off it. Those two rules sit here, unlayered, because a layered exception
- * would lose to the unlayered `:disabled` above it. Besides the `<input>` read by `:checked`, the
+ * the one number (§9.30), and a check row disabled as a dependent row puts it on the row's
+ * children – not on the row, whose hairline is structure (§0). A box that is the row's own child
+ * (the settings and password check rows) is one of those children, so its border and check dim
+ * to .4 with the words beside it, once: the row's rule and the box's own name the same .4 of the
+ * same element, and no rule holds the box at 1 beside a label at .4 (the lead's 15 on #572;
+ * such a rule had, and the box read undimmed beside its dim label). Only a box nested inside a
+ * dimmed child – the site controls' `Checkbox`, the extensions' `V2CheckRow`, the confirm
+ * dialog's – stays at 1, so the child's .4 is the one dim and the two never compound to .16; the
+ * row says `aria-disabled`, which keeps the row primitive's hover and press fill off it. Those
+ * two rules sit here, unlayered, because a layered exception would lose to the unlayered
+ * `:disabled` above it. Besides the `<input>` read by `:checked`, the
  * class styles a `role="checkbox"` span by `[aria-checked]` – on itself or on the row that is
  * the checkbox for assistive technology and so cannot host a real input – as `.zen-v2-radio`
  * does (§9.34).
@@ -11048,7 +11110,7 @@
 .zen-v2-check-row:has(.zen-v2-checkbox:disabled) > * {
   opacity: 0.4;
 }
-.zen-v2-check-row .zen-v2-checkbox:disabled {
+.zen-v2-check-row > * .zen-v2-checkbox:disabled {
   opacity: 1;
 }
 /*
@@ -11772,6 +11834,16 @@
  */
 .zen-settings-row-disabled .zen-settings-description,
 .zen-settings-row-disabled .zen-settings-summary {
+  color: var(--v2-text);
+}
+/*
+ * The desktop's check row (`CheckRow`) is disabled by the check-row primitive instead – its
+ * `:has(.zen-v2-checkbox:disabled) > *` puts the .4 on the row's content – and a held one (an
+ * extension's homepage under Appearance › Show home button; the lead's rider on #508 at #572)
+ * let its description's 69 % ink compound under that .4 to .276 of the text. The same amendment,
+ * keyed as the primitive keys the .4: one number on the row, nothing compounded under it.
+ */
+.zen-settings-check-row:has(.zen-v2-checkbox:disabled) .zen-settings-description {
   color: var(--v2-text);
 }
 .zen-settings-row-disabled .zen-v2-button:disabled,

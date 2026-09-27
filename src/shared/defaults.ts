@@ -240,6 +240,9 @@ export const DEFAULT_SETTINGS: Settings = {
   // The collapsed rail flies out when the pointer rests on it (tabs-03) – on, as Zen's compact
   // mode and Edge's vertical tabs ship it; Settings › Appearance › Expand on hover turns it off.
   sidebarExpandOnHover: true,
+  // The chrome's accent is Zenium's own until asked to follow the OS's (settings-116): Chrome's
+  // `browser.theme.follows_system_colors` is off by default on Windows too.
+  useSystemAccent: false,
   borderless: false,
   windowMaterial: 'none',
   compactMode: {
@@ -259,6 +262,9 @@ export const DEFAULT_SETTINGS: Settings = {
   // (#52) keeps working when the setting arrives; "Off" is a choice.
   homepage: { mode: 'newtab', url: '' },
   pullToRefresh: true,
+  // Chrome's default for its `touchpad_overscroll_history_navigation` pref; device-local, so no
+  // synced record changes (`DEVICE_LOCAL_SETTINGS`).
+  touchpadSwipeToNavigate: true,
   hideToolbarOnScroll: true,
   glanceEnabled: true,
   glanceTrigger: 'alt',

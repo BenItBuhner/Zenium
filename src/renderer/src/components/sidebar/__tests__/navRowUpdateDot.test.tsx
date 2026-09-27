@@ -16,12 +16,12 @@ import { NavRow } from '../SidebarTop'
 
 /*
  * The update dot on the toolbar's menu button and the per-version 'seen' record (TB-12): the
- * TABLET's button takes Chrome Android's cadence – the dot clears once the app menu has been
- * opened for the waiting version (`UIState.updateDot.seenVersion`, written by the core's
- * `Menus.showAppMenu` on the touch layouts) and returns for another version's `ready` – while
- * the DESKTOP's ⋯ keeps its round-1 read of the plain phase, byte-identical, until W8-F3 wires
- * it to the same record. Both read the one `.zen-mhub-dot` seat and name the dot in the
- * button's label.
+ * TABLET's button and the DESKTOP's ⋯ take one cadence, Chrome Android's – the dot clears once
+ * the app menu has been opened for the waiting version (`UIState.updateDot.seenVersion`, written
+ * by the core's `Menus.showAppMenu` on every host) and returns for another version's `ready`.
+ * The desktop joined at W8-F3 (the lead's ruling; Chrome desktop's own badge persists by
+ * severity until the relaunch – the edge left). Both read the one `.zen-mhub-dot` seat and name
+ * the dot in the button's label.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -128,18 +128,37 @@ describe('the toolbar menu button’s update dot and the per-version seen record
     expect(nameOf()).toBe(`${tooltipOf()}, update ready`)
   })
 
-  it('on the desktop stays as round 1 left it – the plain phase, the seen record not read – until W8-F3', () => {
+  it('on the desktop takes the same cadence (W8-F3): present on `ready` with nothing seen, gone once the menu has been opened for the version, back for a new version', () => {
     viewportStore.set({ formFactor: 'desktop' })
-    // The version seen on this device: the desktop's ⋯ still wears the dot and says so.
-    render(<NavRow state={state('ready', '2.0.0')} tab={page} compact={false} />)
-    expect(dotShows()).toBe(true)
-    expect(nameOf()).toBe(`${tooltipOf()}, update ready`)
-    // Not seen: the same.
+    // Downloaded and waiting, the menu not yet opened for it: the dot and its name.
     render(<NavRow state={state('ready')} tab={page} compact={false} />)
     expect(dotShows()).toBe(true)
-    // Found but not downloaded: nothing, as before.
+    expect(nameOf()).toBe(`${tooltipOf()}, update ready`)
+    // The menu opened for 2.0.0 (the core's record, now written on the desktop's open too):
+    // the dot GONE, the plain name – the row in the menu stays, the ⋯ is quiet.
+    render(<NavRow state={state('ready', '2.0.0')} tab={page} compact={false} />)
+    expect(dotShows()).toBe(false)
+    expect(nameOf()).toBe(tooltipOf())
+    // A newer version's `ready` after 2.0.0 was seen: the dot BACK – a state change.
+    render(<NavRow state={state('ready', '2.0.0', '2.1.0')} tab={page} compact={false} />)
+    expect(dotShows()).toBe(true)
+    expect(nameOf()).toBe(`${tooltipOf()}, update ready`)
+    // An older seen version (the record from a build since installed): the dot for the new one.
+    render(<NavRow state={state('ready', '1.9.0', '2.0.0')} tab={page} compact={false} />)
+    expect(dotShows()).toBe(true)
+    // Found but not downloaded: nothing, seen or not, as before.
     render(<NavRow state={state('available')} tab={page} compact={false} />)
     expect(dotShows()).toBe(false)
     expect(nameOf()).toBe(tooltipOf())
+    render(<NavRow state={state('available', '2.0.0')} tab={page} compact={false} />)
+    expect(dotShows()).toBe(false)
+  })
+
+  it('on the desktop fails open too: a `ready` snapshot without the record still lights the dot', () => {
+    viewportStore.set({ formFactor: 'desktop' })
+    const partial = { ...state('ready'), updateDot: undefined } as unknown as UIState
+    render(<NavRow state={partial} tab={page} compact={false} />)
+    expect(dotShows()).toBe(true)
+    expect(nameOf()).toBe(`${tooltipOf()}, update ready`)
   })
 })

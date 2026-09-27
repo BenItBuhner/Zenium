@@ -233,29 +233,43 @@ describe('collectLocal', () => {
     src.settings.sidebarExpandOnHover = false
     src.settings.onboardingDone = true
     src.settings.searchChoice = { engineId: 'duckduckgo', region: 'DE', madeAt: 1, version: 1 }
+    // …and took the OS accent (W8-3): this machine's OS, so the record carries none of it.
+    src.settings.useSystemAccent = true
     // A laptop that turned Energy Saver off and set Memory Saver to Balanced: the desktop and
     // the phone beside it keep their own answers, as Chrome's battery_saver_mode.state and
     // high_efficiency_mode.{state,aggressiveness} are local state (W8-2).
     src.settings.energySaver = 'off'
     src.settings.unloadEnabled = false
     src.settings.unloadTimeoutMinutes = 240
+    // The touchpad swipe's Accessibility switch: Chrome's twin pref is Android-only and unsynced.
+    src.settings.touchpadSwipeToNavigate = false
     const data = collectLocal(src, defaultScope()).get('settings')?.data as Record<string, unknown>
     expect(DEVICE_LOCAL_SETTINGS).toEqual([
       'onboardingDone',
       'sidebarExpandOnHover',
       'searchChoice',
+      'useSystemAccent',
       'energySaver',
       'unloadEnabled',
-      'unloadTimeoutMinutes'
+      'unloadTimeoutMinutes',
+      'touchpadSwipeToNavigate'
     ])
     expect(data).not.toHaveProperty('sidebarExpandOnHover')
     expect(data).not.toHaveProperty('onboardingDone')
     expect(data).not.toHaveProperty('searchChoice')
+    expect(data).not.toHaveProperty('useSystemAccent')
     expect(data).not.toHaveProperty('energySaver')
     expect(data).not.toHaveProperty('unloadEnabled')
     expect(data).not.toHaveProperty('unloadTimeoutMinutes')
+    expect(data).not.toHaveProperty('touchpadSwipeToNavigate')
     // The keep-active hosts travel, as Chrome syncs tab_discarding.exceptions.
     expect(data).toHaveProperty('unloadExcludedDomains')
+    // The Home pin syncs with the rest of the pins, as Chrome's `show_home_button` does.
+    src.settings.toolbarPins = { home: true }
+    expect(
+      (collectLocal(src, defaultScope()).get('settings')?.data as Record<string, unknown>)
+        .toolbarPins
+    ).toEqual({ home: true })
     const local = new Set<string>(DEVICE_LOCAL_SETTINGS)
     // Every other key, and no key the settings lack (the retired `restoreSession` mirror is gone).
     expect(Object.keys(data)).toEqual(
@@ -268,6 +282,7 @@ describe('collectLocal', () => {
     expect(src.settings.energySaver).toBe('off')
     expect(src.settings.unloadEnabled).toBe(false)
     expect(src.settings.unloadTimeoutMinutes).toBe(240)
+    expect(src.settings.touchpadSwipeToNavigate).toBe(false)
   })
 
   it('an edit of Memory Saver’s mode or timer, or of Energy Saver, stamps nothing – the per-key metadata holds no entry for a device-local key, and the record is unchanged by the edit (W8-2)', () => {

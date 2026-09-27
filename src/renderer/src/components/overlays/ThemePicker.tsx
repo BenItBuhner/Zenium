@@ -10,8 +10,12 @@ import {
   toMonochrome,
   wheelToColor
 } from '@shared/theme'
+import { spaceLabel } from '@shared/defaults'
+import type { Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
+import { POPOVER_WIDTH } from '@renderer/lib/portals'
 import { isDarkScheme } from '@renderer/lib/selectors'
+import { resetSpaceTheme } from '@renderer/lib/theme'
 import { cn, debounce } from '@renderer/lib/utils'
 import { Label } from '../ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
@@ -29,13 +33,38 @@ const ALGORITHMS: Array<{ id: ThemeAlgorithm; label: string }> = [
 ]
 
 const WHEEL = 200
+/**
+ * The picker's two widths are its two seats' (§9.20 as the lead amended it on #572: the chrome
+ * is the seat's, never the content's). At the sidebar's seat the panel is the `w-[420px]`
+ * `.zen-panel` card it always was. Hanging from the Settings row's Change… button it is a
+ * popover, and a popover's width is one of the chassis's three, chosen by content and never
+ * fitted to it (lib/portals.tsx): the 400 of rows with trailing controls and forms – the wheel's
+ * 200 beside its column of controls fits, the column 20 narrower than at the seat.
+ */
+const POPOVER = POPOVER_WIDTH.form
 
 function defaultTheme(): SpaceTheme {
   return structuredClone(THEME_PRESETS[0].theme)
 }
 
-/** Zen's gradient theme picker: colour wheel dots, harmony algorithm, opacity, texture, rotation. */
-export function ThemePicker({ state, spaceId }: { state: UIState; spaceId: string }): JSX.Element {
+/**
+ * Zen's gradient theme picker: colour wheel dots, harmony algorithm, opacity, texture, rotation.
+ * With an `anchor` – the Settings theme row's Change… button, `UiState.overlayAnchor` – the
+ * panel hangs from it, end-aligned under the button (§9.20, #572's L8), instead of sitting at
+ * the sidebar's seat the space menu and the palette open it at; and hanging there it is the
+ * popover the shell draws for an anchored panel (`OverlayShell anchor`: the `.zen-v2-panel`
+ * chrome, no close, the focus held and returned), 400 wide. The seat – the space menu's and
+ * the palette's picker on a mouse, and the phone's, which never anchors – is unchanged.
+ */
+export function ThemePicker({
+  state,
+  spaceId,
+  anchor
+}: {
+  state: UIState
+  spaceId: string
+  anchor?: Omit<Anchor, 'element'> | null
+}): JSX.Element {
   const space = state.spaces.find((s) => s.id === spaceId) ?? state.spaces[0]
   const [theme, setTheme] = useState<SpaceTheme | null>(space.theme)
   const dark = isDarkScheme(state)
@@ -54,6 +83,15 @@ export function ThemePicker({ state, spaceId }: { state: UIState; spaceId: strin
     setTheme(next)
     apply(next)
   }
+  // "Reset to default" is the Settings theme row's "Reset to default" (settings-30) – one act,
+  // one name (§9.1; the FIRST LINE's N4 on #572, where the picker still said "Reset theme"):
+  // the one reset, `lib/theme.ts`, at once – an edit still in the debounce is dropped rather
+  // than applied over it. The picker is the phone's too, so the phone's button reads the same.
+  const reset = (): void => {
+    apply.cancel()
+    setTheme(null)
+    resetSpaceTheme(space.id)
+  }
   const patch = (p: Partial<SpaceTheme>): void => update({ ...(theme ?? defaultTheme()), ...p })
 
   const working = theme ?? defaultTheme()
@@ -64,11 +102,16 @@ export function ThemePicker({ state, spaceId }: { state: UIState; spaceId: strin
   }, [working])
   const preview = resolveTheme(theme, dark)
 
+  // The title is the one word, the space the picker edits its §9.23 description under it
+  // ("Default space"; the Settings theme row's aside "Ocean · Default space" names the same
+  // space the same way – #572's N5), so the space's name never runs into the title.
   return (
     <OverlayShell
-      title={`Theme · ${space.name}`}
+      title="Theme"
+      description={`${spaceLabel(space)} space`}
       variant="dialog"
       className="mb-3 ml-3 mr-auto mt-auto w-[420px]"
+      anchor={anchor ? { at: anchor, width: POPOVER } : undefined}
     >
       <div className="flex flex-col gap-4 px-4 pb-4">
         <div className="flex gap-4">
@@ -126,7 +169,13 @@ export function ThemePicker({ state, spaceId }: { state: UIState; spaceId: strin
                 <SelectTrigger className="h-7 min-w-0 text-[12px]">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
+                {/* The popup portals to `body` at the menulist's z 50. Hanging from the Settings
+                    row the panel stands in the chrome layer (z 100, lib/portals.tsx), so there
+                    the popup lifts past it or it would open under its own picker. Seated – the
+                    space menu's and the palette's picker, and the phone's, which never anchors
+                    – the popup keeps the menulist's 50: under the phone's sheets (z 90), as it
+                    always was. */}
+                <SelectContent className={anchor ? 'z-[110]' : undefined}>
                   {ALGORITHMS.map((a) => (
                     <SelectItem key={a.id} value={a.id}>
                       {a.label}
@@ -188,8 +237,8 @@ export function ThemePicker({ state, spaceId }: { state: UIState; spaceId: strin
           </div>
         </div>
         <div className="flex justify-end">
-          <Button variant="secondary" size="sm" onClick={() => update(null)}>
-            Reset theme
+          <Button variant="secondary" size="sm" onClick={reset}>
+            Reset to default
           </Button>
         </div>
       </div>

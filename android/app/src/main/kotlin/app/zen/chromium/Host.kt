@@ -75,7 +75,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      */
     val storage = Storage(activity, Storage.hostLease) { Log.w(STORAGE_TAG, it) }
     /** The file-backed handoffs to the chrome: the big boot documents and the big fetched bodies (`BootHandoff.kt`). */
-    val handoff = BootHandoff(storage, File(activity.cacheDir, BootHandoff.SPILL_DIR))
+    override val handoff = BootHandoff(storage, File(activity.cacheDir, BootHandoff.SPILL_DIR))
     /** The process's request engine, built from the rule sets the core persists, before any tab exists. */
     override val blocking = Blocking.shared(activity)
     /** The process's privacy host: the policy the core pushes, the Safe Browsing tables it writes. */
@@ -399,6 +399,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     /** Settings → Look and Feel → Pull to refresh, mirrored by the chrome (on until it says otherwise). */
     override var pullToRefresh = true
         private set
+    /**
+     * Settings → Accessibility → "Swipe between pages using a touchpad", mirrored by the chrome
+     * (on until it says otherwise); read at each touchpad swipe's down (`TabWebView.historyNavEligible`).
+     */
+    override var touchpadSwipeToNavigate = true
+        private set
     /** The core's word on the pages' forms script (`view.forms` config), kept for new documents. */
     override var formsEnabled = true
         private set
@@ -486,6 +492,108 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             disarm
         }
     )
+    /**
+     * NTP-35, the second and third halves of #563's mitigation (1): the boot's served new tab page
+     * is MADE, LOADED and PLACED after the FULLY DRAWN frame. The core tags the served tab's
+     * `view.create` (`newTabPage`, `views.ts` – the tag follows the URL, so a restored `zen://newtab`
+     * tab carries it on any chassis); on the tablet chassis alone ([MainActivity.largeScreen], the
+     * conjunct the phone fails: its chrome draws its own page, and a tagged tab it restores is
+     * made at once) the host admits that tab to the hold, and every `view.*` message of an
+     * admitted tab – the create itself, its background and visibility, the page-controls ops, the
+     * `loadHtml` that would parse the document and run its script, the layout's `setBounds` /
+     * `setVisible` / `shown` – is kept in arrival order and re-dispatched once the frame after
+     * `chrome.ready` is drawn ([BootPlacementHold] has the rule and the why;
+     * [releaseBootHoldAfterReadyFrame] arms the frame). A `view.load` of a URL into the tab (an
+     * intent's) or its `view.destroy` ends its hold at once (LEAVE / DROP). Every other tab, and
+     * every tab once the gate is open, takes its path unchanged: the read is one set lookup by
+     * tabId ([heldAtBoot]). The rule's default for a `view.*` it does not name (one added to the
+     * `when` since, `view.imageThumbnail` say) is HOLD, while the gate is closed and for an
+     * admitted tab alone – re-dispatched at the release; nothing is held once the gate is open.
+     */
+    private val bootHold = BootPlacementHold()
+    private var bootHoldDeadline: Runnable? = null
+
+    /**
+     * Hold `op` for the boot's served tab (`onDrop` answers it instead if the tab is destroyed
+     * first); the first hold arms the deadline a chrome that never draws its READY frame runs into.
+     */
+    private fun holdAtBoot(tabId: String, onDrop: () -> Unit = {}, op: () -> Unit) {
+        if (!bootHold.hold(tabId, onDrop, op)) return
+        val deadline = Runnable {
+            bootHoldDeadline = null
+            val applied = bootHold.release()
+            Log.w(TAG, "boot hold: no FULLY DRAWN frame within ${BootPlacementHold.DEADLINE_MS} ms of the first held message; $applied ops applied")
+        }
+        bootHoldDeadline = deadline
+        main.postDelayed(deadline, BootPlacementHold.DEADLINE_MS)
+    }
+
+    /**
+     * A held message dispatched again at the release ([BootPlacementHold.release], or
+     * [BootPlacementHold.leave]'s ops), wrapped as the bridge wraps every dispatch
+     * ([JsBridge.Calls]): one that fails is logged and answered with the rejection the bridge
+     * would have sent, and the held messages after it still run – the release's loop runs in a
+     * posted Runnable, which an exception would leave with the rest unapplied and the process
+     * down. One try around the call; nothing else on the path.
+     */
+    private fun dispatchHeld(method: String, args: JSONObject, reply: (Any?) -> Unit) {
+        try {
+            dispatch(method, args, reply)
+        } catch (e: Exception) {
+            Log.w(TAG, "boot hold: native $method failed at the release", e)
+            reply(Rejection(e.message ?: e.javaClass.simpleName))
+        }
+    }
+
+    /**
+     * A `view.*` message of a tab the hold admitted, while the gate is closed: held in its order
+     * (the rule's default; answers true, the message is dispatched again at the release), or the
+     * tab's hold ended first – LEAVE for a load that makes it a page READY waits for, its held
+     * messages dispatched now in their order; DROP for its destroy, the held messages answered
+     * and forgotten – and false: the caller dispatches the message as any other. False for every
+     * message of every other tab, at one set lookup.
+     */
+    private fun heldAtBoot(method: String, tabId: String?, args: JSONObject, reply: (Any?) -> Unit): Boolean {
+        if (tabId == null || !method.startsWith("view.") || !bootHold.holds(tabId)) return false
+        return when (bootHold.way(method, args.strOrNull("url"))) {
+            BootPlacementHold.Way.HOLD -> {
+                holdAtBoot(tabId, onDrop = { reply(null) }) { dispatchHeld(method, args, reply) }
+                true
+            }
+            BootPlacementHold.Way.LEAVE -> {
+                val applied = bootHold.leave(tabId)
+                Log.i(StartupSplash.TAG, "boot hold: $method into the served tab before the FULLY DRAWN frame; its $applied held ops applied first")
+                false
+            }
+            BootPlacementHold.Way.DROP -> {
+                bootHold.drop(tabId)
+                false
+            }
+        }
+    }
+
+    /**
+     * `chrome.ready` heard: the gate opens with the frame after READY's – the chrome's visual-state
+     * callback for the frame carrying the DOM as it stood at READY, the frame
+     * [MainActivity.onChromeReady] marks (`frame`) and reports fully drawn from – and the held
+     * messages are dispatched in their order on the main thread's next turn, so the activity's own
+     * callback (the mark, `reportFullyDrawn`, the splash's lift) has run first. Every boot arms it,
+     * held tab or none: a served tab the core makes between READY and its frame (a restored
+     * session's) is admitted until the gate opens; the phone's boot holds nothing and opens.
+     */
+    private fun releaseBootHoldAfterReadyFrame() {
+        if (bootHold.open) return
+        chrome.postVisualStateCallback(BOOT_HOLD_FRAME, object : WebView.VisualStateCallback() {
+            override fun onComplete(requestId: Long) {
+                main.post {
+                    bootHoldDeadline?.let { main.removeCallbacks(it) }
+                    bootHoldDeadline = null
+                    val applied = bootHold.release()
+                    if (applied > 0) Log.i(StartupSplash.TAG, "boot hold: the served page made, loaded and placed after the FULLY DRAWN frame ($applied ops)")
+                }
+            }
+        })
+    }
     /** Last: it reads the tabs and fullscreen state above when it decides what back would do. */
     val back = PredictiveBack(activity, this, chrome = { chrome }, onLeave = { activity.moveTaskToBack(true) })
     val lifecycle = HostLifecycle()
@@ -923,6 +1031,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     /** Asynchronous methods (main thread). Call `reply` exactly once. */
     fun dispatch(method: String, args: JSONObject, reply: (Any?) -> Unit) {
         val tabId = args.strOrNull("tabId")
+        // The boot's served new tab page (NTP-35): its tab's messages wait for the FULLY DRAWN frame.
+        if (heldAtBoot(method, tabId, args, reply)) return
         val tab = tabId?.let { tabs.get(it) }
         when (method) {
             // The storage calls come through `dispatchStorage` on the storage thread ([JsBridge.Calls]);
@@ -976,7 +1086,22 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             }
 
             // --- views -----------------------------------------------------------------------
-            "view.create" -> { tabs.create(args.str("tabId"), args.str("containerId", Profiles.DEFAULT_CONTAINER)); reply(null) }
+            // The tab the core makes for the served new tab page at boot (`newTabPage`, its tag on
+            // the create; NTP-35): on the tablet chassis it is admitted to the boot hold, so this
+            // create and every message of the tab's after it wait for the FULLY DRAWN frame
+            // ([heldAtBoot]). The tag follows the URL (`views.ts`), not the chassis: on a phone-class
+            // screen – the phone's fresh boot sends none (its chrome draws its own page); a restored
+            // `zen://newtab` tab's would carry one – `largeScreen()` is false and the tab is made at
+            // once, as is a tab made once the gate is open, or one that left the hold.
+            "view.create" -> {
+                val id = args.str("tabId")
+                if (args.optBoolean("newTabPage") && activity.largeScreen() && bootHold.admit(id)) {
+                    holdAtBoot(id, onDrop = { reply(null) }) { dispatchHeld(method, args, reply) }
+                    return
+                }
+                tabs.create(id, args.str("containerId", Profiles.DEFAULT_CONTAINER))
+                reply(null)
+            }
             "view.destroy" -> {
                 val tabId = args.str("tabId")
                 tabs.destroy(tabId)
@@ -1176,6 +1301,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 // the PR body).
                 coreUp = true
                 if (windowUp()) memoryPressure.start()
+                // The served page's held tab lands after the FULLY DRAWN frame (NTP-35).
+                releaseBootHoldAfterReadyFrame()
             }
             "chrome.setTheme" -> { applyTheme(args.bool("dark"), args.str("scheme", "system"), args.str("background"), args.str("scrim"), args.str("accent"), args.str("onAccent")); reply(null) }
             // The chrome asks for the bridge's asynchronous channel once its boot is answered
@@ -1185,6 +1312,11 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "chrome.setPullToRefresh" -> {
                 pullToRefresh = args.bool("enabled", true)
                 for (view in tabs.all()) view.applyPullToRefreshMode()
+                reply(null)
+            }
+            // Nothing to apply per view: the swipe reads the switch at its down.
+            "chrome.setTouchpadSwipeToNavigate" -> {
+                touchpadSwipeToNavigate = args.bool("enabled", true)
                 reply(null)
             }
             // The bar that hides on scroll says where it is (per frame while it moves) or that it
@@ -2625,6 +2757,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
 
     fun destroy() {
         accessibility?.removeTouchExplorationStateChangeListener(touchExplorationListener)
+        bootHoldDeadline?.let { main.removeCallbacks(it) }
+        bootHoldDeadline = null
+        bootHold.abandon()
         restoredPictures.releaseAll("host destroyed")
         if (memoryPressureMonitor.isInitialized()) memoryPressure.stop()
         connectivity.stop()
@@ -2671,6 +2806,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         private const val TAG = "ZenHost"
         /** The storage's refusals: a write from a destroyed or superseded host (`Storage.close`, `Storage.Lease`). */
         private const val STORAGE_TAG = "ZenStorage"
+        /** The one visual-state request of the boot hold ([releaseBootHoldAfterReadyFrame]: the FULLY DRAWN frame); the id is the callback's, nothing reads it. */
+        private const val BOOT_HOLD_FRAME = 2L
 
         /** The chrome's base light scrim (`--zen-scrim` before any space theme is applied). */
         private const val DEFAULT_SCRIM = "#49484a47"

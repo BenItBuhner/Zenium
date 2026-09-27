@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import mainCss from '../../renderer/src/assets/main.css?raw'
 import {
   chromeTokenCss,
+  NEW_TAB_AWAIT_STATE_ATTR,
+  NEW_TAB_AWAIT_STATE_STYLE,
   NEW_TAB_PAGE_STYLE,
   NEW_TAB_RULES_END,
   NEW_TAB_RULES_START,
@@ -14,6 +16,7 @@ import {
 } from '../newTabPage'
 import { PRIVATE_ACCENT, PRIVATE_ACCENT_RGB } from '../newTabPageScript'
 import { PRIVATE_THEME, resolveTheme, themeCssVariables } from '../theme'
+import { zenPageHtml } from '../zenPages'
 
 /** Custom-property names declared (`--x:`) in `css`. */
 function declared(css: string): Set<string> {
@@ -137,6 +140,19 @@ describe('zen://newtab tokens', () => {
     // The private theme itself is dark in both schemes, so the page's dark tokens apply over it.
     expect(resolveTheme(PRIVATE_THEME, false).isDark).toBe(true)
     expect(resolveTheme(PRIVATE_THEME, true).isDark).toBe(true)
+  })
+
+  it("takes the touch layouts' numbers under a coarse pointer (NTP-35): the field 56, Customise the 40 control, the tiles 64", () => {
+    // The desktop's numbers stand outside the query: the field 48, the button the 32 control.
+    expect(NEW_TAB_PAGE_STYLE).toMatch(/\.zen-ntp-field \{[^}]*height: 48px;/)
+    expect(NEW_TAB_PAGE_STYLE).toMatch(/\.zen-v2-button \{[^}]*height: var\(--v2-control\);/)
+    expect(NEW_TAB_PAGE_STYLE).toMatch(
+      /@media \(pointer: coarse\) \{\s*\.zen-ntp-field \{ height: 56px; \}\s*\.zen-customize \{ height: 40px; border-radius: 6px; \}\s*\}/
+    )
+    // The tile is the 64 square on every pointer: no coarse rule touches it.
+    expect(NEW_TAB_PAGE_STYLE).toMatch(/\.zen-ntp-tile \{[^}]*width: 64px; height: 64px; \}/)
+    const coarse = NEW_TAB_PAGE_STYLE.slice(NEW_TAB_PAGE_STYLE.indexOf('@media (pointer: coarse)'))
+    expect(coarse.slice(0, coarse.indexOf('\n  }'))).not.toContain('zen-ntp-tile')
   })
 
   it('hides with the attribute whatever display a class sets (the grid is a grid)', () => {
@@ -305,5 +321,98 @@ describe('zen://newtab tokens', () => {
     expect(rowRules).not.toMatch(/transition:[^;]*opacity/)
     // Window family only: no page ink or fill on the row or the switch (§9.29).
     expect(rowRules).not.toMatch(/--v2-(text|fill|page|accent)\b/)
+  })
+})
+
+/**
+ * NTP-35 (#563, the lead's conditions of form): the Android host fills the served document after
+ * its first paint (`pageScript.ts` hands no state synchronously), so on that host the document
+ * awaits its state TRANSPARENT and comes in WHOLE – filled, its icons in hand – on the language's
+ * 120 ms opacity fade (§11.4), the same fade under reduced motion (§11.3: a fade is not a cut). The
+ * desktop's document is byte-identical to what it was: the option is off there, and the phone never
+ * loads this document at all.
+ */
+describe("zen://newtab: the awaiting document (NTP-35, the tablet's served page)", () => {
+  const plain = newTabPageHtml()
+  const awaiting = newTabPageHtml({ awaitState: true })
+
+  it("the desktop's document is as it was: no attribute, none of the awaiting rules", () => {
+    expect(NEW_TAB_AWAIT_STATE_ATTR).toBe('data-await-state')
+    expect(plain.startsWith('<!doctype html><html lang="en"><head>')).toBe(true)
+    expect(plain).not.toContain(NEW_TAB_AWAIT_STATE_ATTR)
+    expect(plain).not.toContain(':root { transition: opacity')
+    expect(newTabPageHtml({})).toBe(plain)
+    expect(newTabPageHtml({ awaitState: false })).toBe(plain)
+  })
+
+  it('the awaiting document carries the attribute on its root and the awaiting rules, and nothing else differs', () => {
+    expect(awaiting.startsWith('<!doctype html><html lang="en" data-await-state><head>')).toBe(true)
+    // Transparent while awaiting; the opacity change runs the language's 120 ms fade – under
+    // reduced motion too (the rule below).
+    expect(NEW_TAB_AWAIT_STATE_STYLE).toContain(
+      ':root { transition: opacity 120ms var(--zen-ease); }'
+    )
+    expect(NEW_TAB_AWAIT_STATE_STYLE).toContain(':root[data-await-state] { opacity: 0; }')
+    expect(NEW_TAB_AWAIT_STATE_STYLE).toContain(
+      ':root { transition: opacity 120ms var(--zen-ease) !important; }'
+    )
+    expect(awaiting).toContain(`${NEW_TAB_PAGE_STYLE}${NEW_TAB_AWAIT_STATE_STYLE}</style>`)
+    // Only the attribute and the appended rules: the page itself is the desktop's, so a fix to
+    // either document is a fix to both.
+    expect(
+      awaiting.replace(' data-await-state><head>', '><head>').replace(NEW_TAB_AWAIT_STATE_STYLE, '')
+    ).toBe(plain)
+    expect(awaiting.split('data-await-state').length - 1).toBe(2)
+  })
+
+  it('under reduced motion the root keeps its 120 ms opacity fade and nothing else on the page transitions (§11.3: a fade is not a cut)', () => {
+    // The page's remover takes every transition, the root's among them (`*` covers the root,
+    // `!important` outranks the appended rule whatever its place in the sheet) – so the arrival's
+    // fade is re-declared under the query, `!important` past the remover (`:root` outranks `*` at
+    // equal importance), in the one form the §11.3 guard (`lib/__tests__/reducedMotion.test.ts`)
+    // admits: opacity alone, one segment, 120 ms written out, `!important`.
+    expect(NEW_TAB_PAGE_STYLE).toMatch(
+      /@media \(prefers-reduced-motion: reduce\) \{\n\s+\*, ::before, ::after, ::backdrop \{ transition-property: none !important;/
+    )
+    expect(NEW_TAB_AWAIT_STATE_STYLE).toMatch(
+      /@media \(prefers-reduced-motion: reduce\) \{\n\s+:root \{ transition: opacity 120ms var\(--zen-ease\) !important; \}\n\s+\}/
+    )
+    const kept = NEW_TAB_AWAIT_STATE_STYLE.match(
+      /:root \{ transition: (opacity 120ms var\(--zen-ease\)) !important; \}/
+    )
+    const segments = (kept?.[1] ?? '').split(',').map((s) => s.trim().split(/\s+/))
+    expect(segments).toHaveLength(1)
+    expect(segments[0][0]).toBe('opacity')
+    expect(segments[0].filter((t) => /^\d+m?s$/.test(t))).toEqual(['120ms'])
+    // The awaiting document's reduced-motion blocks, whole: the page's remover, the Undo toast's
+    // kept fade (the page's own), and the root's kept fade – no other motion survives the query.
+    const blocks = [
+      ...awaiting.matchAll(/@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n {2}\}/g)
+    ].map((m) => m[1])
+    expect(blocks).toHaveLength(2)
+    expect(
+      blocks.flatMap((b) =>
+        b
+          .trim()
+          .split('\n')
+          .map((l) => l.trim())
+      )
+    ).toEqual([
+      '*, ::before, ::after, ::backdrop { transition-property: none !important; animation: none !important; }',
+      '.zen-toast { animation: zen-fade 120ms var(--zen-ease) !important; }',
+      ':root { transition: opacity 120ms var(--zen-ease) !important; }'
+    ])
+    // The desktop's document has no arrival fade to keep: its one reduced-motion block is the page's own.
+    expect(plain.match(/prefers-reduced-motion/g)).toHaveLength(1)
+  })
+
+  it("the Android host's page is the awaiting document; every other host's is the desktop's", () => {
+    expect(zenPageHtml('zen://newtab', undefined, undefined, undefined, 'system', 'android')).toBe(
+      awaiting
+    )
+    expect(zenPageHtml('zen://newtab')).toBe(plain)
+    expect(zenPageHtml('zen://newtab', undefined, undefined, undefined, 'system', 'desktop')).toBe(
+      plain
+    )
   })
 })

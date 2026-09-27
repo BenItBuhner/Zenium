@@ -640,5 +640,13 @@ class StartupSplashTest {
         assertTrue(RestoredPictures.wanted(restoredList = true, restoring = false, painted = false, shown = false))
         assertFalse("a restored list over a page that has drawn is not covered", RestoredPictures.wanted(restoredList = true, restoring = false, painted = true, shown = false))
         assertFalse("one per tab, restored list or not", RestoredPictures.wanted(restoredList = true, restoring = false, painted = false, shown = true))
+        // The served new tab page (NTP-35, #563) arrives whole on its own, transparent until its
+        // state is in: no picture over it, at the boot's restore or under a restored list – its
+        // commit-visible frame shows nothing yet, and the picture would drop the slot onto the
+        // bare ground before the fade. A web page's restore is as it was.
+        assertFalse("no picture over the served new tab page at the boot's restore", RestoredPictures.wanted(restoredList = false, restoring = true, painted = false, shown = false, servedPage = true))
+        assertFalse("no picture over the served new tab page under a restored list", RestoredPictures.wanted(restoredList = true, restoring = false, painted = false, shown = false, servedPage = true))
+        assertTrue("a web page's restore is as it was", RestoredPictures.wanted(restoredList = true, restoring = false, painted = false, shown = false, servedPage = false))
+        assertTrue("the served page is told by its document's address", NewTabPage.isDocument("zen://newtab") && NewTabPage.isDocument("zen://newtab?x=1") && !NewTabPage.isDocument("https://example.com/"))
     }
 }

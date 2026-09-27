@@ -36,6 +36,23 @@ export function anchorOf(el: Element): Anchor {
 }
 
 /**
+ * The anchor as plain data – its boxes without the control (`element`) – for a store that
+ * holds where a surface hangs from between renders (`UiState.overlayAnchor`,
+ * `ExtensionPopupState.anchor`): the element stays with whoever pressed it.
+ */
+export function placedAnchor(anchor: Anchor): Omit<Anchor, 'element'> {
+  const placed: Omit<Anchor, 'element'> = {
+    x: anchor.x,
+    y: anchor.y,
+    width: anchor.width,
+    height: anchor.height
+  }
+  if (anchor.bar) placed.bar = anchor.bar
+  if (anchor.column) placed.column = anchor.column
+  return placed
+}
+
+/**
  * The column a control stands in when no bar holds it, whose midpoint §9.20 (1) reads the
  * control's centre against: the nearest ancestor that scrolls – a dialog's option column, a
  * page, a popover's body – else the window, the frame's own column.

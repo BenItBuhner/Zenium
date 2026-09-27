@@ -444,6 +444,17 @@ export class Browser {
         this.state.systemDark = dark
         this.state.commitVolatile()
       })
+      // The OS accent colour (settings-116): a fact the state carries for the chrome's accent
+      // (`Settings.useSystemAccent`), read at boot and again as the OS changes it.
+      if (theme.systemAccent) {
+        this.state.systemAccent = theme.systemAccent()
+        theme.onAccentChanged?.(() => {
+          const accent = theme.systemAccent?.() ?? null
+          if (accent === this.state.systemAccent) return
+          this.state.systemAccent = accent
+          this.state.commitVolatile()
+        })
+      }
     }
     this.history = new HistoryService(platform.io)
     this.favicons = new FaviconService(platform.io)
@@ -1700,7 +1711,8 @@ export class Browser {
    * tab goes to the homepage (`NewTabService.homepageUrl`) – the user's page, or the new tab
    * page at rest, Chrome's Home showing it without the keyboard (the page's own field is the
    * way in). Nothing runs with the homepage off, where no Home button is drawn. The desktop's
-   * Alt+Home (`nav.home`) keeps its own destination: the setting has no desktop row yet.
+   * Home (`nav.home`: Alt+Home, the menu bar, the toolbar's button) reads the same setting
+   * through `NewTabService.homeDestination`, where `off` reads as the new tab page (settings-32).
    */
   goHome(tabId: string, win: ZenWindow): void {
     const url = this.newTab.homepageUrl()
@@ -3389,6 +3401,9 @@ export class Browser {
       'tab.closeAbove': ({ tabId }, win) => tabs.closeAbove(tabId, win),
       'tab.navigate': ({ tabId, input }, win) => this.submitUrlbar(input, false, tabId, false, win),
       'tab.home': ({ tabId }, win) => this.goHome(tabId, win),
+      // The desktop toolbar's Home button (settings-32): Alt+Home's action, so the button, the
+      // chord and the menu bar's Home share one destination (`NewTabService.homeDestination`).
+      'nav.home': (_a, win) => this.actions.run('nav.home', { sourceTabId: null, win }),
       'tab.back': ({ tabId }) => tabs.goBack(tabId),
       'tab.forward': ({ tabId }) => tabs.goForward(tabId),
       'tab.backInNewTab': ({ tabId }, win) => void tabs.openNavigationStepInNewTab(tabId, -1, win),
@@ -4454,6 +4469,7 @@ export class Browser {
     }
     s.sidebarWidth = Math.max(160, Math.min(520, s.sidebarWidth))
     s.splitEdgeZones = s.splitEdgeZones !== false
+    s.useSystemAccent = s.useSystemAccent === true
     s.unloadTimeoutMinutes = sanitizeUnloadTimeout(s.unloadTimeoutMinutes)
     s.inactiveTabsArchiveDays = sanitizeArchiveDays(s.inactiveTabsArchiveDays)
     s.inactiveTabsAutoClose = s.inactiveTabsAutoClose !== false

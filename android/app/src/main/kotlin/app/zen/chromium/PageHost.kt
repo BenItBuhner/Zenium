@@ -69,6 +69,12 @@ interface PageHost {
     val snapshots: HistorySnapshots
     /** The tab cards' pictures on disk ([Thumbnails]); a host without cards (a custom tab) keeps none. */
     val thumbnails: Thumbnails? get() = null
+    /**
+     * The file-backed handoffs to the chrome ([BootHandoff]), whose favicon store the served new
+     * tab page's tile icons are answered from ([TabWebView.shouldInterceptRequest], NTP-35); a
+     * host without a chrome (a custom tab) serves no such page and has none.
+     */
+    val handoff: BootHandoff? get() = null
     val tabs: TabHost
     val fullscreenTab: TabWebView?
     /** Whether the host is in its own fullscreen (Menu > Fullscreen: the bars hidden, no element fullscreen). */
@@ -113,6 +119,13 @@ interface PageHost {
      * Look and Feel setting; the chrome draws the disc, so a host without one leaves it off).
      */
     val pullToRefresh: Boolean get() = false
+    /**
+     * Whether a touchpad's two-finger swipe may become a history navigation (GN-23 / A11Y-14;
+     * Settings → Accessibility → "Swipe between pages using a touchpad", Chrome's
+     * `settings.a11y.touchpad_overscroll_history_navigation`, on by default). The finger's edge
+     * drag is not this switch's: Chrome's `OnOverscrolled` gates the touchpad's overscroll alone.
+     */
+    val touchpadSwipeToNavigate: Boolean get() = true
     /**
      * The extension runtime's Kotlin half, when the host runs one: the browser window does; a
      * custom tab has no core to run the backgrounds against, so its pages get no content scripts.

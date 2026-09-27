@@ -345,6 +345,10 @@ export function readReadingListData(id: string, data: unknown): ReadingListEntry
  *   since profile v6; a peer on v5 still stores that build's default `false`, no choice.
  * - `searchChoice`: the EEA's search-engine choice screen's record (W6-2) – each device's to
  *   answer once, as Chrome's; the engine it set travels as `searchEngineId`, the record does not.
+ * - `useSystemAccent`: whether the chrome follows this device's OS accent colour (settings-116,
+ *   W8-3) – the accent is the device's, and Chrome's `browser.theme.follows_system_colors` is
+ *   not in its syncable database either. (The Home button's pin, `toolbarPins.home`, syncs with
+ *   the record, as Chrome's `browser.show_home_button` does.)
  * - `energySaver`, `unloadEnabled`, `unloadTimeoutMinutes`: Settings › Performance's modes and
  *   timer (W8-2) – one class, each device's own: Energy Saver is a laptop's choice that means
  *   nothing on a tower or a phone, and Memory Saver's switch and tier are sized to the device
@@ -358,14 +362,21 @@ export function readReadingListData(id: string, data: unknown): ReadingListEntry
  *   older peers keep trading the keys among themselves, as `sidebarExpandOnHover`'s did. The
  *   keep-active hosts (`unloadExcludedDomains`) stay synced: Chrome syncs its exceptions list
  *   (`performance_tuning.tab_discarding.exceptions`, `syncer::PREFERENCES`).
+ * - `touchpadSwipeToNavigate`: Android's Settings › Accessibility › "Swipe between pages using
+ *   a touchpad" (GN-23 / A11Y-14) – Chrome registers its twin
+ *   (`settings.a11y.touchpad_overscroll_history_navigation`, `prefs_tab_helper.cc`) Android-only
+ *   and without `SYNCABLE_PREF`: the device with the touchpad decides, and a phone's or a
+ *   desktop's record has no say. No migration, as above: the key never joins a record.
  */
 export const DEVICE_LOCAL_SETTINGS = [
   'onboardingDone',
   'sidebarExpandOnHover',
   'searchChoice',
+  'useSystemAccent',
   'energySaver',
   'unloadEnabled',
-  'unloadTimeoutMinutes'
+  'unloadTimeoutMinutes',
+  'touchpadSwipeToNavigate'
 ] as const
 export type DeviceLocalSetting = (typeof DEVICE_LOCAL_SETTINGS)[number]
 const DEVICE_LOCAL = new Set<string>(DEVICE_LOCAL_SETTINGS)

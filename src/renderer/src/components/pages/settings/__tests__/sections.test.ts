@@ -57,7 +57,7 @@ import { defaultShortcuts } from '@shared/shortcuts'
 import { DEFAULT_PAGE_ENVIRONMENT } from '@shared/pageControls'
 import { DEFAULT_SEARCH_ENGINES, withDefaultSearchEngineActive } from '@shared/search'
 import { UNAVAILABLE_SPELLCHECK } from '@shared/spellcheck'
-import { makeTheme } from '@shared/theme'
+import { THEME_PRESETS, makeTheme } from '@shared/theme'
 import type { TranslateUIState } from '@shared/translate'
 import { emptyPrivacyStatus, type PrivacyStatus } from '@shared/privacy'
 import { emptySiteDataStatus } from '@shared/siteData'
@@ -531,7 +531,11 @@ describe('the section model', () => {
     expect(look.groups.find((g) => g.id === 'site-exceptions')?.empty).toBe('No exceptions yet')
 
     const access = section('accessibility')
-    expect(access.groups.map((g) => g.heading)).toEqual(['Page zoom', 'Sites with their own zoom'])
+    expect(access.groups.map((g) => g.heading)).toEqual([
+      'Page zoom',
+      'Sites with their own zoom',
+      'Touchpad'
+    ])
     expect(row(access, 'default-zoom').kind).toBe('custom')
     expect(row(access, 'zoom-os-font').label).toBe('Include system font size')
     expect(row(access, 'force-zoom').label).toBe('Force enable zoom')
@@ -2728,21 +2732,85 @@ describe('Accessibility › Read aloud on a host with a speech engine', () => {
     buildSection(ACCESSIBILITY, context(s, false, {}, voices).ctx)
 
   it('stays off without the engine, and adds its two groups after the zoom groups with it', () => {
-    expect(section('accessibility').groups.map((g) => g.id)).toEqual(['zoom', 'site-zooms'])
+    expect(section('accessibility').groups.map((g) => g.id)).toEqual([
+      'zoom',
+      'site-zooms',
+      'touchpad'
+    ])
     const model = build(speaking(), VOICES)
     expect(model.groups.map((g) => g.id)).toEqual([
       'zoom',
       'site-zooms',
       'read-aloud',
-      'read-aloud-voices'
+      'read-aloud-voices',
+      'touchpad'
     ])
     expect(model.groups.map((g) => g.heading)).toEqual([
       'Page zoom',
       'Sites with their own zoom',
       'Read aloud',
-      'Voices'
+      'Voices',
+      'Touchpad'
     ])
     for (const group of model.groups) expect(groupShows(group)).toBe(true)
+  })
+
+  it('ends, on Android alone, with the touchpad swipe’s switch in Chrome’s words, on every layout (GN-23 / A11Y-14)', () => {
+    // Chrome Android's Accessibility page ends with "Swipe between pages using a touchpad"
+    // (`accessibility_preferences.xml` `touchpad_overscroll_history_navigation`; the strings are
+    // `browser_ui_strings.grd`'s), on by default (`settings.a11y.touchpad_overscroll_history_navigation`).
+    const access = section('accessibility')
+    const group = access.groups[access.groups.length - 1]!
+    expect(group.id).toBe('touchpad')
+    expect(group.layouts).toBeUndefined()
+    const swipe = row(access, 'touchpad-swipe-navigate')
+    expect(swipe).toMatchObject({
+      kind: 'switch',
+      label: 'Swipe between pages using a touchpad',
+      description: 'Navigate back and forth by swiping with two fingers on the touchpad.',
+      checked: true
+    })
+    expect(swipe.layouts).toBeUndefined()
+    expect(DEFAULT_SETTINGS.touchpadSwipeToNavigate).toBe(true)
+    // The switch writes the one key; a profile from before it existed reads as on.
+    const c = context(state())
+    const written = buildSection(ACCESSIBILITY, c.ctx)
+    const r = row(written, 'touchpad-swipe-navigate')
+    if (r.kind !== 'switch') throw new Error('not a switch')
+    r.onChange(false)
+    expect(c.patches).toEqual([{ touchpadSwipeToNavigate: false }])
+    const legacy = state({}, { touchpadSwipeToNavigate: undefined as unknown as boolean })
+    expect(row(section('accessibility', legacy), 'touchpad-swipe-navigate')).toMatchObject({
+      checked: true
+    })
+    const off = section('accessibility', state({}, { touchpadSwipeToNavigate: false }))
+    expect(row(off, 'touchpad-swipe-navigate')).toMatchObject({ checked: false })
+
+    // Every Android layout keeps the row – Chrome shows it on phone and tablet alike, and an
+    // Android session with a hovering pointer (DeX, a trackpad) is the desktop layout here
+    // (`classifyViewport`), the very place the touchpad is: a `layouts` pin would hide it there.
+    for (const layout of ['phone', 'tablet', 'desktop'] as const) {
+      const model = buildSection(ACCESSIBILITY, { ...context(state()).ctx, formFactor: layout })
+      expect(
+        allRows(model.groups).map((x) => x.id),
+        layout
+      ).toContain('touchpad-swipe-navigate')
+    }
+    // The desktop platform has no touchpad swipe and no row: the shared builder gains nothing there.
+    const desktop = state({
+      platform: 'linux',
+      capabilities: { ...ANDROID, pageControls: false, readAloud: true }
+    })
+    for (const layout of ['phone', 'tablet', 'desktop'] as const) {
+      const model = buildSection(ACCESSIBILITY, {
+        ...context(desktop, false, {}, VOICES).ctx,
+        formFactor: layout
+      })
+      expect(
+        model.groups.map((g) => g.id),
+        layout
+      ).toEqual(['read-aloud', 'read-aloud-voices'])
+    }
   })
 
   it('is the whole category on a desktop without page controls, and lists the category there', () => {
@@ -7570,6 +7638,266 @@ describe('SET-36 / NTP-30: the Home group of Look and Feel on a phone', () => {
     })
     const free = homeGroup(withHomepage({ mode: 'url', url: 'https://news.example/' }))
     expect(free.rows[0].controlled).toBeUndefined()
+  })
+})
+
+/* ---- W8-3: Appearance's theme row, the Home button rows, the system accent ---- */
+
+describe('W8-3: Settings › Appearance on the desktop – the theme row (settings-30), Show home button (settings-32), Use system accent colour (settings-116)', () => {
+  /** The Look and Feel category on a form factor, with the patches its rows write. */
+  function look(
+    s: UIState = state(),
+    formFactor: FormFactor = 'desktop'
+  ): { model: Model; patches: Partial<Settings>[] } {
+    const c = context(s)
+    return { model: buildSection(PAGE.sections[0], { ...c.ctx, formFactor }), patches: c.patches }
+  }
+  const appearanceIds = (model: Model): string[] =>
+    model.groups.find((g) => g.id === 'appearance')!.rows.map((r) => r.id)
+  const themed = (patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): UIState =>
+    state(
+      {
+        spaces: [
+          {
+            id: 'space',
+            name: 'Personal',
+            icon: '',
+            activeTabId: 'settings',
+            tabIds: ['site', 'settings'],
+            theme: makeTheme('#2f6fed', ['#5ac8fa'])
+          } as unknown as UIState['spaces'][number]
+        ],
+        ...patch
+      },
+      settings
+    )
+
+  it('the theme row stands after Colour scheme on the desktop and the tablet, never on the phone, naming the active space’s theme and the space – "Default · Personal space" at rest (the picker’s own description, #572’s N5) – with the picker as its door (Chrome’s row opens Customize Chrome; no store is named), hung from the Change… button that opened it (§9.20, #572’s L8)', async () => {
+    const { model } = look()
+    const ids = appearanceIds(model)
+    expect(ids.slice(0, 2)).toEqual(['color-scheme', 'theme'])
+    const theme = row(model, 'theme')
+    expect(theme).toMatchObject({
+      kind: 'action',
+      label: 'Theme',
+      description: 'Default · Personal space',
+      layouts: ['desktop', 'tablet'],
+      button: 'Change…',
+      // The button hangs the `theme` overlay from itself (round C): the row's view draws it as
+      // the popover's anchor – aria-haspopup="dialog", aria-expanded while the picker hangs.
+      popover: 'theme'
+    })
+    if (theme.kind !== 'action') throw new Error('not an action row')
+    expect(theme.anchors).toBeUndefined()
+    // The desktop button passes itself (`anchorOf`, lib/anchor.ts); the picker opens for the
+    // space as the `theme` overlay with the anchor's boxes in the store – the element stays
+    // with the button – and not through the core's `theme.open`, which seats the picker.
+    const column = { x: 400, y: 0, width: 1200, height: 1000 }
+    theme.onPress?.({ x: 1000, y: 240, width: 88, height: 32, column })
+    await vi.waitFor(() => expect(uiStore.get().overlay).toBe('theme'))
+    expect(uiStore.get().overlaySpaceId).toBe('space')
+    expect(uiStore.get().overlayAnchor).toEqual({ x: 1000, y: 240, width: 88, height: 32, column })
+    expect(invoke).not.toHaveBeenCalledWith('urlbar.runCommand', { action: 'theme.open' })
+    uiStore.set({ overlay: 'none', overlaySpaceId: null, overlayAnchor: null })
+    // Without a control (nothing on the desktop presses it so; the guard) it opens at its seat.
+    theme.onPress?.()
+    await vi.waitFor(() => expect(uiStore.get().overlay).toBe('theme'))
+    expect(uiStore.get().overlayAnchor).toBeNull()
+    uiStore.set({ overlay: 'none', overlaySpaceId: null })
+    expect(rowText(theme).toLowerCase()).not.toContain('store')
+    expect(onLayout(model.groups, 'tablet').some((g) => g.rows.some((r) => r.id === 'theme'))).toBe(
+      true
+    )
+    expect(onLayout(model.groups, 'phone').some((g) => g.rows.some((r) => r.id === 'theme'))).toBe(
+      false
+    )
+  })
+
+  it('with a theme the row names it – a preset by its name, colours of the user’s own "Custom" – and trails "Reset to default", the picker’s button by the same name: one space.update putting the theme to null (§9.1)', () => {
+    invoke.mockClear()
+    const { model } = look(themed())
+    const theme = row(model, 'theme')
+    expect(theme).toMatchObject({
+      description: 'Custom · Personal space',
+      button: 'Reset to default'
+    })
+    if (theme.kind !== 'action') throw new Error('not an action row')
+    // Reset to default opens nothing (no `popover`), but it is the picker's anchor still while
+    // the picker its Change… opened hangs from it (`anchors`, round C): one element through
+    // the flip, expanded and lit until the popover closes.
+    expect(theme.popover).toBeUndefined()
+    expect(theme.anchors).toBe('theme')
+    theme.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('space.update', {
+      spaceId: 'space',
+      patch: { theme: null }
+    })
+    // A preset as the picker wrote it reads by its name; the space is named the same way with
+    // several spaces as with one.
+    const preset = state({
+      spaces: [
+        {
+          id: 'space',
+          name: 'Work',
+          icon: '',
+          activeTabId: 'settings',
+          tabIds: ['site', 'settings'],
+          theme: structuredClone(THEME_PRESETS[1].theme)
+        },
+        { id: 'other', name: 'Play', icon: '', activeTabId: null, tabIds: [] }
+      ] as unknown as UIState['spaces']
+    })
+    expect(row(look(preset).model, 'theme').description).toBe(
+      `${THEME_PRESETS[1].name} · Work space`
+    )
+  })
+
+  it('"Show home button" is the Home control’s pin (toolbarPins.home; Chrome’s show_home_button, off by default), desktop alone: off it stands by itself, on it writes home: true and reveals the Home page value row – Chrome’s radio – at New Tab page', () => {
+    const { model, patches } = look()
+    const ids = appearanceIds(model)
+    expect(
+      ids.slice(ids.indexOf('show-forward-button'), ids.indexOf('show-forward-button') + 3)
+    ).toEqual(['show-forward-button', 'show-home-button', 'customize-toolbar'])
+    const show = row(model, 'show-home-button')
+    expect(show).toMatchObject({
+      kind: 'switch',
+      label: 'Show home button',
+      checked: false,
+      layouts: ['desktop']
+    })
+    if (show.kind !== 'switch') throw new Error('not a switch')
+    show.onChange(true)
+    expect(patches).toEqual([{ toolbarPins: { home: true } }])
+    // The search finds it by Chrome's words and the user's.
+    for (const query of ['home button', 'homepage', 'home page'])
+      expect(
+        searchRows([model], query).map((h) => h.row.id),
+        query
+      ).toContain('show-home-button')
+
+    const on = look(state({}, { toolbarPins: { home: true } }))
+    const onIds = appearanceIds(on.model)
+    expect(
+      onIds.slice(onIds.indexOf('show-home-button'), onIds.indexOf('show-home-button') + 3)
+    ).toEqual(['show-home-button', 'home-page', 'customize-toolbar'])
+    const page = row(on.model, 'home-page')
+    if (page.kind !== 'value') throw new Error('not a value row')
+    // §9.14's radios on the desktop (the lead's Q7 on #572), not the menulist – W8-2's radio-list
+    // row (`ValueRow.radios`, pr-584 R2), the one primitive for a page's radios.
+    expect(page).toMatchObject({ label: 'Home page', layouts: ['desktop'], radios: true })
+    expect(currentOptionLabel(page)).toBe('New Tab page')
+    expect(page.options.map((o) => o.label)).toEqual(['New Tab page', 'Enter custom web address'])
+    page.onChange('url')
+    expect(on.patches).toEqual([{ homepage: { mode: 'url', url: '' } }])
+    // Off again folds the page rows with it; the phone and the tablet never see any of them.
+    const off = row(on.model, 'show-home-button')
+    if (off.kind !== 'switch') throw new Error('not a switch')
+    off.onChange(false)
+    expect(on.patches.at(-1)).toEqual({ toolbarPins: {} })
+    for (const formFactor of ['phone', 'tablet'] as const)
+      for (const id of ['show-home-button', 'home-page', 'home-page-address'])
+        expect(
+          findRow(look(state({}, { toolbarPins: { home: true } }), formFactor).model.groups, id),
+          `${id} on the ${formFactor}`
+        ).toBeNull()
+  })
+
+  it('"Enter custom web address" reveals the Address field (§9.12, stacked): what is typed is fixed up as Chrome’s FixupURL does – a bare domain becomes its https page – and what is no web address is refused with the line under the field', () => {
+    const { model, patches } = look(
+      state({}, { toolbarPins: { home: true }, homepage: { mode: 'url', url: '' } })
+    )
+    const ids = appearanceIds(model)
+    expect(ids.slice(ids.indexOf('home-page'), ids.indexOf('home-page') + 2)).toEqual([
+      'home-page',
+      'home-page-address'
+    ])
+    const address = row(model, 'home-page-address')
+    if (address.kind !== 'field') throw new Error('not a field row')
+    expect(address).toMatchObject({
+      label: 'Address',
+      input: 'url',
+      form: 'stacked',
+      value: '',
+      display: 'Not set',
+      placeholder: 'Enter custom web address',
+      layouts: ['desktop']
+    })
+    expect(address.onCommit('zen://settings')).toBe('Enter a web address, like example.com')
+    expect(address.onCommit('not a url at all')).toBe('Enter a web address, like example.com')
+    expect(address.onCommit('')).toBe('Enter a web address, like example.com')
+    expect(patches).toEqual([])
+    expect(address.onCommit('news.ycombinator.com')).toBeUndefined()
+    expect(patches).toEqual([{ homepage: { mode: 'url', url: 'https://news.ycombinator.com/' } }])
+    expect(address.onCommit('  http://example.com/a?b=c  ')).toBeUndefined()
+    expect(patches.at(-1)).toEqual({ homepage: { mode: 'url', url: 'http://example.com/a?b=c' } })
+    // The page set reads without its scheme, as the phone's row does.
+    const set = look(
+      state(
+        {},
+        {
+          toolbarPins: { home: true },
+          homepage: { mode: 'url', url: 'https://news.ycombinator.com/' }
+        }
+      )
+    )
+    const shown = row(set.model, 'home-page-address')
+    if (shown.kind !== 'field') throw new Error('not a field row')
+    expect(shown.value).toBe('news.ycombinator.com')
+    expect(currentOptionLabel(row(set.model, 'home-page') as never)).toBe(
+      'Enter custom web address'
+    )
+  })
+
+  it('a phone’s Off reads as New Tab page on the desktop (Chrome has no Off) and an extension’s homepage holds the two rows at its page, as it holds the phone’s', () => {
+    const off = look(state({}, { toolbarPins: { home: true }, homepage: { mode: 'off', url: '' } }))
+    expect(appearanceIds(off.model)).not.toContain('home-page-address')
+    expect(currentOptionLabel(row(off.model, 'home-page') as never)).toBe('New Tab page')
+    const extension = { extensionId: 'a'.repeat(32), name: 'Bing Homepage & Search' }
+    const held = look(
+      state(
+        { extensionControls: { homepage: { ...extension, value: 'https://www.bing.com/' } } },
+        { toolbarPins: { home: true }, homepage: { mode: 'newtab', url: '' } }
+      )
+    )
+    const page = row(held.model, 'home-page')
+    const address = row(held.model, 'home-page-address')
+    expect(page.controlled).toMatchObject(extension)
+    expect(address.controlled).toMatchObject(extension)
+    if (address.kind !== 'field') throw new Error('not a field row')
+    expect(address.value).toBe('bing.com')
+    // The switch itself is the user's: Chrome's "Show home button" is no extension's to set.
+    expect(row(held.model, 'show-home-button').controlled).toBeUndefined()
+  })
+
+  it('"Use system accent colour" stands under the theme row on the desktop where the host read an OS accent (Windows, macOS), off by default as Chrome’s follows_system_colors is, and is absent where there is none to read (Linux)', () => {
+    // No accent read (Linux, the fixture's default): no row, and the search has none either.
+    expect(appearanceIds(look().model)).not.toContain('use-system-accent')
+    const withAccent = look(state({ systemAccent: '#0078d4' }))
+    const ids = appearanceIds(withAccent.model)
+    expect(ids.slice(0, 3)).toEqual(['color-scheme', 'theme', 'use-system-accent'])
+    const accent = row(withAccent.model, 'use-system-accent')
+    expect(accent).toMatchObject({
+      kind: 'switch',
+      label: 'Use system accent colour',
+      description: 'Controls take the colour your system uses.',
+      checked: false,
+      layouts: ['desktop']
+    })
+    if (accent.kind !== 'switch') throw new Error('not a switch')
+    accent.onChange(true)
+    expect(withAccent.patches).toEqual([{ useSystemAccent: true }])
+    // A themed space keeps its own accent: the row says when the OS's shows.
+    expect(
+      row(look(themed({ systemAccent: '#0078d4' })).model, 'use-system-accent').description
+    ).toBe('Controls take the colour your system uses while the space has the default look.')
+    for (const formFactor of ['phone', 'tablet'] as const)
+      expect(
+        findRow(
+          look(state({ systemAccent: '#0078d4' }), formFactor).model.groups,
+          'use-system-accent'
+        ),
+        formFactor
+      ).toBeNull()
   })
 })
 

@@ -20,6 +20,7 @@ import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Log
 import android.view.Choreographer
+import android.view.Display
 import android.view.InputDevice
 import android.view.InputEvent
 import android.view.KeyEvent
@@ -132,6 +133,16 @@ abstract class DemoHarness(
      * launch windowing mode and the window's bounds, and [launch] passes it on with the intent.
      */
     protected open fun launchOptions(): Bundle? = null
+
+    /**
+     * The intent is about to be handed to `startActivitySync` ([launch]): a driver that must see
+     * the activity's VERY FIRST moment – the landing's frames from `onCreate` on – arms its
+     * `Instrumentation.ActivityMonitor` and its watcher here, since `startActivitySync` itself
+     * returns only at the main looper's first idle, a boot's seconds after `onCreate` (the tablet
+     * new tab demo's first landing watch began 2.2 s into the boot for that). Every launch calls
+     * it, the first and any relaunch.
+     */
+    protected open fun onLaunching() {}
 
     /**
      * Seed, launch, warm up, hand over to the recorder, run the sequence. Fails once the
@@ -358,6 +369,7 @@ abstract class DemoHarness(
         val intent = Intent(app, MainActivity::class.java).setAction(Intent.ACTION_MAIN)
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         if (holdBackgroundWork) intent.putExtra(BackgroundWorkHold.EXTRA_HOLD, true)
+        onLaunching()
         appLaunchedAt = SystemClock.uptimeMillis()
         val options = launchOptions()
         activity = if (options != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -572,6 +584,15 @@ abstract class DemoHarness(
             SystemClock.sleep(400)
         }
         val bitmap = taken ?: return
+        shot(name, bitmap)
+    }
+
+    /**
+     * A still from a frame the driver took itself (a landing watch's display capture, chosen
+     * after the fact): encoded on the same background thread as [shot]'s, and recycled once
+     * written – the caller hands the bitmap over.
+     */
+    protected fun shot(name: String, bitmap: Bitmap) {
         val file = File(out, "$shotPrefix-$name.png")
         shotEncoder.execute {
             file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
@@ -2974,6 +2995,113 @@ abstract class DemoHarness(
             )
             try {
                 injectInput(event, false)
+            } finally {
+                event.recycle()
+            }
+        }
+    }
+
+    /**
+     * A touchpad's two-finger swipe as Android 14 and later hand it to a view (AOSP
+     * `GestureConverter.cpp`, `handleScroll`): ONE fake finger – `SOURCE_MOUSE`, `TOOL_TYPE_FINGER`,
+     * no button, `CLASSIFICATION_TWO_FINGER_SWIPE` – that lands where the pointer is and moves by
+     * the scroll, each move carrying the scroll's distance in `AXIS_GESTURE_SCROLL_X/Y_DISTANCE`.
+     * Injected in real time through the same path as [Finger] (the dispatcher's trusted one), so
+     * the app sees the platform's shape of the swipe: what `TouchpadSwipe.kt` reads and Chromium's
+     * `EventForwarder` turns into wheel scrolls. The emulator has no touchpad device, so this is
+     * the shape and not a `uinput` touchpad; and it is Android 14's alone ([supported]) – before
+     * it nothing is classified and a `MotionEvent` carries no classification of its own.
+     */
+    protected inner class Touchpad {
+        /** Whether this device delivers the swipe at all: the classified shape is Android 14's. */
+        val supported: Boolean get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+
+        private var downTime = 0L
+        private var x = 0f
+        private var y = 0f
+
+        /** Events of this swipe the dispatcher did not take (a refused down makes any claim on it vacuous). */
+        var refused = 0
+            private set
+
+        /** How many moves the last [moveBy] injected, and how long it ran (ms): the swipe as delivered. */
+        var moves = 0
+            private set
+        var movedMs = 0L
+            private set
+
+        /** Whether the dispatcher took the down. */
+        fun down(x: Float, y: Float): Boolean {
+            this.x = x
+            this.y = y
+            downTime = SystemClock.uptimeMillis()
+            return inject(MotionEvent.ACTION_DOWN, downTime, 0f, 0f)
+        }
+
+        /**
+         * Two fingers moving `dx`, `dy` on the pad over `durationMs`: the fake finger moves the
+         * same way. Paced by the clock, not by a step count: an injected pointer stream from a
+         * `SOURCE_MOUSE` costs the dispatcher more per event than a touchscreen's on the
+         * emulator, and a swipe that was to take a second must still take about a second (a real
+         * pad's report rate is the pad's; what the app reads is the distance), so a slow injection
+         * gives fewer moves rather than a longer swipe.
+         */
+        fun moveBy(dx: Float, dy: Float, durationMs: Long) {
+            val fromX = x
+            val fromY = y
+            val toX = x + dx
+            val toY = y + dy
+            val start = SystemClock.uptimeMillis()
+            var lastX = x
+            var lastY = y
+            var count = 0
+            var t = 0f
+            while (t < 1f) {
+                val elapsed = SystemClock.uptimeMillis() - start
+                t = if (durationMs <= 0) 1f else minOf(1f, elapsed.toFloat() / durationMs)
+                x = fromX + (toX - fromX) * t
+                y = fromY + (toY - fromY) * t
+                inject(MotionEvent.ACTION_MOVE, SystemClock.uptimeMillis(), x - lastX, y - lastY)
+                count++
+                lastX = x
+                lastY = y
+                if (t < 1f) SystemClock.sleep(STEP_MS)
+            }
+            moves = count
+            movedMs = SystemClock.uptimeMillis() - start
+        }
+
+        fun hold(ms: Long) = SystemClock.sleep(ms)
+
+        fun up() = inject(MotionEvent.ACTION_UP, SystemClock.uptimeMillis(), 0f, 0f)
+
+        private fun inject(action: Int, eventTime: Long, scrollX: Float, scrollY: Float): Boolean {
+            if (!supported) return false
+            val properties = MotionEvent.PointerProperties().apply {
+                id = 0
+                toolType = MotionEvent.TOOL_TYPE_FINGER
+            }
+            val coords = MotionEvent.PointerCoords().apply {
+                x = this@Touchpad.x
+                y = this@Touchpad.y
+                pressure = 1f
+                size = 1f
+                setAxisValue(MotionEvent.AXIS_GESTURE_SCROLL_X_DISTANCE, scrollX)
+                setAxisValue(MotionEvent.AXIS_GESTURE_SCROLL_Y_DISTANCE, scrollY)
+            }
+            // The API 34 overload, the one that takes the classification (declared nullable).
+            val event = MotionEvent.obtain(
+                downTime, eventTime, action, 1, arrayOf(properties), arrayOf(coords),
+                0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_MOUSE, Display.DEFAULT_DISPLAY, 0,
+                MotionEvent.CLASSIFICATION_TWO_FINGER_SWIPE
+            ) ?: return false
+            try {
+                val taken = injectInput(event, false)
+                if (!taken) {
+                    refused++
+                    Log.w(tag, "the dispatcher refused the touchpad's ${MotionEvent.actionToString(action)}")
+                }
+                return taken
             } finally {
                 event.recycle()
             }

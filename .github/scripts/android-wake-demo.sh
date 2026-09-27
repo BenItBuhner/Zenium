@@ -31,13 +31,21 @@ free -m
 # way the low-memory killer does. Google APIs images allow it; without it the driver falls back to
 # the renderer's own chrome://kill.
 rooted=0
-if adb root 2>&1 | grep -qi "cannot run as root"; then
+root_reply=$(timeout 60 adb root 2>&1 || true)
+echo "adb root: ${root_reply:-(no reply)}"
+if echo "$root_reply" | grep -qi "cannot run as root"; then
   echo "adbd stays unprivileged: renderer kills fall back to chrome://kill"
 else
   sleep 3
-  adb wait-for-device
-  rooted=1
-  echo "adbd running as root: $(adb shell id | tr -d '\r')"
+  timeout 60 adb wait-for-device || true
+  # adbd's own word decides, not the request's exit status: `adb root` may report "unable to
+  # connect for root: closed" while adbd does come back as root (android-webview-swap.sh says more).
+  if adb shell id 2> /dev/null | tr -d '\r' | grep -q '^uid=0('; then
+    rooted=1
+    echo "adbd running as root: $(adb shell id 2> /dev/null | tr -d '\r')"
+  else
+    echo "adbd did not come back as root ($(adb shell id 2> /dev/null | tr -d '\r' || echo 'no reply')): renderer kills fall back to chrome://kill"
+  fi
 fi
 
 # Host watchdog: memory every few seconds, and the kernel log the moment the emulator process

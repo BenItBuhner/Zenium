@@ -34,7 +34,13 @@ class PullToRefreshGesture(
         val step = when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 remember(event)
-                val step = classifier.down(event.x, event.y, atTop(), view.pullToRefreshEligible())
+                // A touchpad's two-finger swipe (Android 14+'s classified fake finger) is never a
+                // pull, as in Chrome, whose refresh is the touchscreen's alone: the WebView keeps
+                // the whole swipe and, with it, its stock edge glow at the top – what Chrome shows
+                // there instead of the disc.
+                val touchpad = event.isTouchpadSwipe()
+                view.applyPullToRefreshMode(touchpad)
+                val step = classifier.down(event.x, event.y, atTop(), view.pullToRefreshEligible(), touchpad)
                 if (classifier.state == PullGestureClassifier.State.WATCHING) probe()
                 step
             }

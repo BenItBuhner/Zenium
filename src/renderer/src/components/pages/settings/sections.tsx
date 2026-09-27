@@ -36,6 +36,7 @@ import type {
   Settings,
   ShortcutGroup,
   ShortcutPreset,
+  Space,
   Tab,
   ThirdPartyPinnedBehavior,
   UIState,
@@ -52,7 +53,8 @@ import {
   spaceLabel
 } from '@shared/defaults'
 import { DEFAULT_DOWNLOAD_SETTINGS, resolveDownloadSettings } from '@shared/downloads'
-import { TOOLBAR_CONTROLS, toolbarPinned, withToolbarPin } from '@shared/toolbarPins'
+import { toolbarDepartures, toolbarPinned, withToolbarPin } from '@shared/toolbarPins'
+import { themeName } from '@shared/theme'
 import {
   DEFAULT_NEW_TAB_SETTINGS,
   MAX_NEW_TAB_SHORTCUTS,
@@ -131,6 +133,7 @@ import { formatRate } from '@renderer/lib/readAloud'
 import { describePermissionRule, siteLabel } from '@renderer/lib/security'
 import { tabTitle } from '@renderer/lib/selectors'
 import { wordProblem, type DictionaryWords } from '@renderer/lib/spellcheckWords'
+import { openThemePicker, resetSpaceTheme } from '@renderer/lib/theme'
 import { openOverlay, pushToast } from '@renderer/lib/ui'
 import { pairKey, pairLabel, warmRegistryModels } from '@renderer/lib/translate'
 import { formatBytes, relativeTime } from '@renderer/lib/utils'
@@ -452,15 +455,32 @@ function lookSection({
   // tabs (§9.37): there the expanded width is the layout's, not the setting's. The phone and
   // the tablet have shells of their own, which the layout never reaches (nor does its row).
   const railSet = (formFactor ?? 'desktop') === 'desktop' && forcesRail(s.toolbarLayout)
-  // What the Reset to default row has to undo: the folded pins and the downloads button's key.
+  // What the Reset to default row has to undo: the pins that depart from the default bar (a
+  // folded Forward, a shown Home) and the downloads button's key.
   const toolbarChanges =
-    TOOLBAR_CONTROLS.filter((control) => !toolbarPinned(s.toolbarPins, control)).length +
+    toolbarDepartures(s.toolbarPins).length +
     (resolveDownloadSettings(s).alwaysShowButton !== DEFAULT_DOWNLOAD_SETTINGS.alwaysShowButton
       ? 1
       : 0)
   // The hover flyout is the Collapsed sidebar layout's alone: the one layout whose rail still
   // carries the tab rows a flyout would show in full.
   const hoverRail = (formFactor ?? 'desktop') === 'desktop' && s.toolbarLayout === 'collapsed'
+  // The theme row's space (settings-30): the theme is a space's, so the row names the active
+  // space's – and the space, where there is more than one to tell apart.
+  const activeSpace: Space | undefined =
+    state.spaces.find((space) => space.id === state.activeSpaceId) ?? state.spaces[0]
+  const themed = activeSpace?.theme !== null && activeSpace?.theme !== undefined
+  const themeLabel = themeName(activeSpace?.theme ?? null)
+  // The homepage rows (settings-32): the one setting the phone's Home group writes (`homepage`,
+  // synced), read as Chrome's `GetHomePage` reads its prefs – the phone's Off has no desktop
+  // reading, so it shows and opens as the new tab page here. An extension's homepage holds the
+  // rows as it holds the phone's (`RowBase.controlled`), the address it opens in the field.
+  const ownHomepage = s.homepage
+  const homepageControl = extensionControlled(state, 'homepage')
+  const heldHomepage = extensionHomepage(ownHomepage, homepageControl)
+  const homepage = heldHomepage ? { mode: 'url' as const, url: heldHomepage } : ownHomepage
+  const homepageControlled = heldHomepage ? homepageControl : undefined
+  const homeShown = toolbarPinned(s.toolbarPins, 'home')
   const groups: RowGroup[] = [
     {
       id: 'appearance',
@@ -480,6 +500,60 @@ function lookSection({
           ],
           onChange: (v) => set({ colorScheme: v })
         }),
+        // Chrome's Appearance › Theme row (settings-30): the theme's name, and "Reset to default"
+        // while the space has one – the theme picker's button by the same name, the one reset
+        // (`lib/theme.ts`, §9.1). At the default look the row is the door to the
+        // picker instead, as Chrome's row opens Customize Chrome (its Web Store is no part of
+        // Zenium's; the row says nothing of a store): the picker hangs from the Change… button
+        // that opened it – end-aligned under it, §9.20 (#572's L8), a popover in the popover's
+        // chrome with the button its expanded anchor (`popover`; the lead's ruling on #572's
+        // notes 16–19) – not at the sidebar's seat the palette and the space menu open it at.
+        // A look picked in the hanging picker flips the row live, as Chrome's does, to Reset
+        // to default: the same button, the picker's anchor still while it hangs (`anchors`),
+        // the reset once it has gone. The theme is a space's, so the row reads the active
+        // space's and names it – "Ocean · Default space", the picker's own description under
+        // its title (#572's N5) – one space or many. The phone's Appearance keeps to its own
+        // rows; the tablet shares the desktop's two-pane page.
+        ...(activeSpace
+          ? [
+              {
+                kind: 'action',
+                id: 'theme',
+                label: 'Theme',
+                description: `${themeLabel} · ${spaceLabel(activeSpace)} space`,
+                keywords: ['theme', 'accent', 'colour', 'color', 'gradient', 'preset', 'reset'],
+                layouts: ['desktop', 'tablet'],
+                button: themed ? 'Reset to default' : 'Change…',
+                popover: themed ? undefined : 'theme',
+                anchors: themed ? 'theme' : undefined,
+                onPress: (anchor) =>
+                  themed ? resetSpaceTheme(activeSpace.id) : openThemePicker(activeSpace.id, anchor)
+              } satisfies SettingsRow
+            ]
+          : []),
+        // Chrome's "Follow device colours" (settings-116; `browser.theme.follows_system_colors`,
+        // off by default on Windows): with it on, the controls' accent – the primary button,
+        // the on switch, the focus ring – takes the OS accent (Windows' DWM accent, macOS's
+        // Appearance pane) while the space has the default look; a themed space keeps its own.
+        // The row exists where the host has an accent to read (Windows, macOS; Linux has none
+        // through Electron and shows no row, as the Mica row shows only where Mica is), and is
+        // this device's alone – another machine's OS is another accent.
+        ...(typeof state.systemAccent === 'string'
+          ? [
+              {
+                kind: 'switch',
+                id: 'use-system-accent',
+                label: 'Use system accent colour',
+                description: themed
+                  ? 'Controls take the colour your system uses while the space has the default look.'
+                  : 'Controls take the colour your system uses.',
+                keywords: ['accent', 'system colour', 'system color', 'follow device colours'],
+                layouts: ['desktop'],
+                checked: s.useSystemAccent,
+                onChange: (v) => set({ useSystemAccent: v })
+              } satisfies SettingsRow
+            ]
+          : []),
         // One layout setting with four pictures (§9.37, §10.4's image radio cards): the desktop's
         // alone – the phone and the tablet have shells of their own.
         {
@@ -516,6 +590,70 @@ function lookSection({
           checked: toolbarPinned(s.toolbarPins, 'forward'),
           onChange: (v) => set({ toolbarPins: withToolbarPin(s.toolbarPins, 'forward', v) })
         },
+        // Chrome's "Show home button" (settings-32; `browser.show_home_button`, off by default)
+        // – the Home control's pin (`toolbarPins.home`, the Customise toolbar dialog's Home
+        // row), synced as Chrome's is – with its radio under it while on: "New Tab page" or a
+        // page of the user's (Chrome's `homepage_is_newtabpage`, `homepage`), the chassis's
+        // value row drawn as §9.14's two radios on the desktop (`radios: true` – W8-2's radio-
+        // list row, pr-584 R2 / N2: the options on the page's row chassis, the label the group's
+        // name for assistive technology alone, no `--v2-selected` band on the checked one; the
+        // lead's Q7 ruling on #572 – the menulist went), and the address as a §9.12 field
+        // stacked under the second option once a page is chosen – what was typed fixed up as
+        // Chrome's `FixupURL` does at the navigation (`example.com` →
+        // `https://example.com/`), a §9.12 line under the field for what is no web address. The
+        // setting is the phone's Home group's (`homepage`), so a page chosen here is the phone's
+        // Home page too.
+        {
+          kind: 'switch',
+          id: 'show-home-button',
+          label: 'Show home button',
+          keywords: ['toolbar', 'home', 'home page', 'homepage', 'customise toolbar'],
+          layouts: ['desktop'],
+          checked: homeShown,
+          onChange: (v) => set({ toolbarPins: withToolbarPin(s.toolbarPins, 'home', v) })
+        },
+        ...(homeShown
+          ? [
+              choice<'newtab' | 'url'>({
+                id: 'home-page',
+                label: 'Home page',
+                keywords: ['home', 'homepage', 'new tab page', 'custom web address'],
+                layouts: ['desktop'],
+                controlled: homepageControlled,
+                radios: true,
+                value: homepage.mode === 'url' ? 'url' : 'newtab',
+                sheetDescription: 'Where the Home button goes.',
+                options: [
+                  { value: 'newtab', label: 'New Tab page' },
+                  { value: 'url', label: 'Enter custom web address' }
+                ],
+                onChange: (mode) => set({ homepage: { ...ownHomepage, mode } })
+              }),
+              ...(homepage.mode === 'url'
+                ? [
+                    {
+                      kind: 'field',
+                      id: 'home-page-address',
+                      label: 'Address',
+                      keywords: ['home', 'homepage', 'url', 'web address'],
+                      layouts: ['desktop'],
+                      controlled: homepageControlled,
+                      value: homepageDisplay(homepage),
+                      display: homepageDisplay(homepage) || 'Not set',
+                      input: 'url',
+                      form: 'stacked',
+                      placeholder: 'Enter custom web address',
+                      onCommit: (value) => {
+                        const url = homepageAddress(value)
+                        if (!url) return 'Enter a web address, like example.com'
+                        set({ homepage: { mode: 'url', url } })
+                        return undefined
+                      }
+                    } satisfies SettingsRow
+                  ]
+                : [])
+            ]
+          : []),
         {
           kind: 'action',
           id: 'customize-toolbar',
@@ -925,8 +1063,9 @@ function lookSection({
  * there is none. The value row's §9.13 picker sets the mode; a "Specific page" shows its
  * address as a §9.12 field row (the one-field sheet, a web address required) and Use current
  * page, which takes the address of the page Settings was opened from (the tab's opener). The
- * rows are the phone shell's: the desktop shells have no Home control that reads the setting
- * yet (their Alt+Home keeps its own destination). While an extension holds the homepage
+ * rows are the phone shell's; the desktop reads the same setting through Appearance's Show
+ * home button rows (settings-32, `lookSection`), where Off has no reading and shows as the new
+ * tab page – Chrome has no Off. While an extension holds the homepage
  * (`chrome_settings_overrides.homepage`, `UIState.extensionControls.homepage` with its page as
  * the value) the rows are held (`RowBase.controlled`, §10.5's controlled-setting primitive):
  * the picker at Specific page, the Address row showing the extension's page – what Home opens
@@ -1078,7 +1217,37 @@ function accessibilitySection(ctx: SectionContext): RowGroup[] {
   if (ctx.state.capabilities.pageControls) groups.push(...pageZoomGroups(ctx))
   if (ctx.state.capabilities.readAloud) groups.push(...readAloudGroups(ctx))
   if (ctx.state.capabilities.caretBrowsing) groups.push(caretBrowsingGroup(ctx))
+  // Last, where Chrome Android's Accessibility page ends with it.
+  if (ctx.state.platform === 'android') groups.push(touchpadSwipeGroup(ctx))
   return groups
+}
+
+/**
+ * The touchpad swipe's switch (GN-23 / A11Y-14), Android's alone: Chrome Android's Settings ›
+ * Accessibility ends with "Swipe between pages using a touchpad" (`accessibility_preferences.xml`
+ * `touchpad_overscroll_history_navigation`; the strings are `browser_ui_strings.grd`'s), shown on
+ * every layout – phone, tablet and a desktop-windowed DeX session, which is where the touchpad
+ * is. Gated by the platform, not `layouts`: `classifyViewport` gives an Android session with a
+ * hovering pointer the desktop layout, and a layout pin would hide the row from the very
+ * device that has a touchpad. The desktop has no touchpad swipe and never sees the row. The
+ * host reads the switch at each swipe's down (`boot.ts` `syncTouchpadSwipeToNavigate`).
+ */
+function touchpadSwipeGroup({ state, set }: SectionContext): RowGroup {
+  return {
+    id: 'touchpad',
+    heading: 'Touchpad',
+    rows: [
+      {
+        kind: 'switch',
+        id: 'touchpad-swipe-navigate',
+        label: 'Swipe between pages using a touchpad',
+        description: 'Navigate back and forth by swiping with two fingers on the touchpad.',
+        keywords: ['trackpad', 'two fingers', 'back', 'forward', 'history', 'gesture'],
+        checked: state.settings.touchpadSwipeToNavigate !== false,
+        onChange: (v) => set({ touchpadSwipeToNavigate: v })
+      }
+    ]
+  }
 }
 
 /**

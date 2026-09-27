@@ -370,6 +370,23 @@ export class NewTabService {
     return this.homeUrl() ?? BLANK_URL
   }
 
+  /**
+   * Where the desktop's Home goes – the toolbar's Home button, Alt+Home and the menu bar's Home
+   * (`nav.home`; settings-32) – as Chrome's `Profile::GetHomePage` reads its three prefs: the
+   * homepage's own page while the setting names one (`mode: 'url'` with an address; an
+   * extension's page over it while one holds the setting), else the new tab page (Chrome's
+   * `homepage_is_newtabpage` default) – `page` null, for the caller to open the served page
+   * where it is on and the blank tab with the bar elsewhere, as `nav.home` always has. The
+   * phone's Off (`mode: 'off'`, its own Home button gone) reads as the new tab page here: the
+   * desktop's button is shown by a pin of its own (`toolbarPins.home`, Chrome's
+   * `show_home_button`), and Alt+Home has a destination whatever the button's state, as Chrome's
+   * IDC_HOME does.
+   */
+  homeDestination(): { page: string | null } {
+    const homepage = this.browser.state.effectiveHomepage()
+    return { page: homepage.mode === 'url' && homepage.url ? homepage.url : null }
+  }
+
   /** The new tab pages a window shows: the tab records are theirs, so are the state pushes. */
   private containerFor(win: ZenWindow): string {
     if (win.isPrivate) return PRIVATE_CONTAINER_ID

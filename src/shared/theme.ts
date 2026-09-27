@@ -59,20 +59,42 @@ export function hexToRgb(hex: string): RGB | null {
 }
 
 /**
- * A computed CSS colour (`rgb(r, g, b)`, `rgba(r, g, b, a)` or the modern `rgb(r g b / a)`) as
- * `#rrggbbaa`, the form the Android host's `parseColor` takes – how a chrome token such as
- * `--zen-scrim` is handed to native views. Null for anything else (`transparent`, `color()`).
+ * A computed CSS colour as `#rrggbbaa`, the form the Android host's `parseColor` takes – how a
+ * chrome token such as `--zen-scrim` is handed to native views: `rgb(r, g, b)`,
+ * `rgba(r, g, b, a)`, the modern `rgb(r g b / a)`, and `color(srgb r g b [/ a])`, the form the
+ * WebView serialises a `color-mix()` computed value in (`--v2-accent` is a `color-mix` of
+ * `--zen-accent`: `color(srgb 0.750588 0.772549 0.968627)` in the dark run's logcat), so the
+ * accent reads as a colour and not as '' and the host draws the space's live accent rather than
+ * its static `v2_accent_*` (W6-S14, after W6-D22's finding). The `color()` channels are 0–1
+ * numbers or percentages (`none` is a missing channel, 0); the alpha, a number or a percentage,
+ * is 1 when absent. Null for anything else (`transparent`, another colour space).
  */
 export function cssColorToHex(value: string): string | null {
-  const m =
+  const v = value.trim()
+  const rgb =
     /^rgba?\(\s*(\d+(?:\.\d+)?)\s*[, ]\s*(\d+(?:\.\d+)?)\s*[, ]\s*(\d+(?:\.\d+)?)\s*(?:[,/]\s*(\d*\.?\d+%?)\s*)?\)$/i.exec(
-      value.trim()
+      v
     )
-  if (!m) return null
-  const alpha =
-    m[4] === undefined ? 1 : m[4].endsWith('%') ? parseFloat(m[4]) / 100 : parseFloat(m[4])
-  const channels: number[] = [parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3]), alpha * 255]
-  return `#${channels.map((v) => clamp(Math.round(v), 0, 255).toString(16).padStart(2, '0')).join('')}`
+  if (rgb) return hexOfChannels([+rgb[1], +rgb[2], +rgb[3]], rgb[4])
+  const srgb =
+    /^color\(\s*srgb\s+(none|-?\d*\.?\d+%?)\s+(none|-?\d*\.?\d+%?)\s+(none|-?\d*\.?\d+%?)\s*(?:\/\s*(none|-?\d*\.?\d+%?)\s*)?\)$/i.exec(
+      v
+    )
+  if (srgb) {
+    const channel = (c: string): number =>
+      c === 'none' ? 0 : c.endsWith('%') ? (parseFloat(c) / 100) * 255 : parseFloat(c) * 255
+    const alpha = srgb[4] === 'none' ? '0' : srgb[4]
+    return hexOfChannels([channel(srgb[1]), channel(srgb[2]), channel(srgb[3])], alpha)
+  }
+  return null
+}
+
+/** `#rrggbbaa` of 0–255 channels and a CSS alpha (a number 0–1 or a percentage; 1 when absent). */
+function hexOfChannels(rgb: number[], alpha: string | undefined): string {
+  const a =
+    alpha === undefined ? 1 : alpha.endsWith('%') ? parseFloat(alpha) / 100 : parseFloat(alpha)
+  const channels: number[] = [...rgb, a * 255]
+  return `#${channels.map((c) => clamp(Math.round(c), 0, 255).toString(16).padStart(2, '0')).join('')}`
 }
 
 export function mix(a: RGB, b: RGB, t: number): RGB {
@@ -402,6 +424,72 @@ export const THEME_PRESETS: Array<{ name: string; theme: SpaceTheme }> = [
   { name: 'Rose', theme: makeTheme('#ff6b9d', ['#ffb3c6']) },
   { name: 'Slate', theme: makeTheme('#7d8ba1', ['#a9b8cf']) }
 ]
+
+/**
+ * The name Settings › Appearance's theme row reads for a space's theme (settings-30; Chrome's
+ * `themeSublabel_` names the installed theme, "Chrome colours" for a picked colour and nothing
+ * for the classic theme): "Default" for the base look, a preset's name while the theme is that
+ * preset as the picker wrote it, "From image" while the colours follow the background picture,
+ * else "Custom" – a preset the editor changed, or colours of the user's own.
+ */
+export function themeName(theme: SpaceTheme | null): string {
+  if (!theme || isDefaultLook(theme)) return 'Default'
+  if (theme.fromImage === true) return 'From image'
+  const preset = THEME_PRESETS.find((p) => sameTheme(p.theme, theme))
+  return preset ? preset.name : 'Custom'
+}
+
+/** Whether a space has the base look – no theme, or one with no colours (what `resolveTheme` paints as the base). */
+export function isDefaultLook(theme: SpaceTheme | null): boolean {
+  return !theme || theme.colors.length === 0
+}
+
+/**
+ * How far the OS accent is lifted toward white in the dark scheme (settings-116; #572's L9):
+ * the default look's own dark step – its accent pair goes 98/100 → 130/132 on red and green,
+ * a fifth of the way to white (`resolveTheme`) – so an accent read from the OS reads on the
+ * dark chrome as the default look's does: Windows' `#0078d4` on `BASE_DARK` is 3.75:1 raw and
+ * 5.14:1 lifted, beside the default dark accent's 5.26:1. The controls' accent follows, mixed
+ * from it (`--v2-accent`). A themed space's accent is its own colour in both schemes
+ * (`resolveTheme`), and is not this function's.
+ */
+export const DARK_ACCENT_LIFT = 0.2
+
+/**
+ * The resolved theme with the OS accent in the theme's own (settings-116; Chrome's
+ * `follows_system_colors`, whose `kColorAccent` is the OS accent): `--zen-accent` takes it, and
+ * with it the controls' accent the tokens mix from it (`--v2-accent`: the primary button, the
+ * on switch, the focus ring, the selection). The default look alone – a themed space keeps the
+ * accent its colours give it, as Chrome's follow yields to an installed theme – and only where
+ * the host read an accent (`UIState.systemAccent`; Windows and macOS) and the switch is on. In
+ * the dark scheme the accent takes the resolver's dark step (`DARK_ACCENT_LIFT`), as the
+ * default look's own accent does; in the light scheme it is the OS's colour as read.
+ */
+export function withSystemAccent(
+  resolved: ResolvedTheme,
+  theme: SpaceTheme | null,
+  accent: string | null
+): ResolvedTheme {
+  if (!accent || !isDefaultLook(theme)) return resolved
+  const rgb = hexToRgb(accent)
+  if (!rgb) return resolved
+  return {
+    ...resolved,
+    accent: resolved.isDark ? mix(rgb, [255, 255, 255], DARK_ACCENT_LIFT) : rgb
+  }
+}
+
+function sameTheme(a: SpaceTheme, b: SpaceTheme): boolean {
+  return (
+    a.opacity === b.opacity &&
+    a.texture === b.texture &&
+    a.algorithm === b.algorithm &&
+    a.monochrome === b.monochrome &&
+    a.rotation === b.rotation &&
+    (a.scheme ?? null) === (b.scheme ?? null) &&
+    sameColors(a.colors, b.colors)
+  )
+}
 
 /**
  * Base colour of panels, sheets and popovers: paper (or near-black) carrying the space's own

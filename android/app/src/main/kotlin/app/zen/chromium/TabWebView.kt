@@ -58,6 +58,7 @@ import app.zen.chromium.ext.ExtensionUrls
 import app.zen.chromium.ext.NavigationReports
 import app.zen.chromium.privacy.PreloadRules
 import app.zen.chromium.privacy.PrivacyFlags
+import app.zen.chromium.privacy.SaverModes
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -731,9 +732,15 @@ class TabWebView(
     /**
      * With the pull on, the top edge's effect is the pull itself, so the WebView's own glow – which
      * would flash before the pull takes the finger – stays off; off, the stock edge glow returns.
+     * A `touchpad` two-finger swipe is never a pull (see `PullToRefreshGesture`), so for the
+     * gesture that begins with it the glow is the top edge's effect, as in Chrome, whose passive
+     * glow follows a touchpad overscroll there (`overscroll_controller_android.cc`,
+     * `OnOverscrolled`); the next finger's down puts the pull's mode back before the WebView
+     * sees that finger. Set only when it changes: the WebView builds its glow afresh per set.
      */
-    fun applyPullToRefreshMode() {
-        overScrollMode = if (host.pullToRefresh) View.OVER_SCROLL_NEVER else View.OVER_SCROLL_IF_CONTENT_SCROLLS
+    fun applyPullToRefreshMode(touchpad: Boolean = false) {
+        val mode = if (host.pullToRefresh && !touchpad) View.OVER_SCROLL_NEVER else View.OVER_SCROLL_IF_CONTENT_SCROLLS
+        if (overScrollMode != mode) overScrollMode = mode
     }
 
     private fun onPull(event: PullGestureClassifier.Pull) {
@@ -753,15 +760,19 @@ class TabWebView(
      * Whether a drag in from `edge` may become a history navigation right now: with no other
      * transition moving the page, and, for a finger on the screen, only with the system's three
      * navigation buttons (in gesture mode the edges are the system's); a `touchpad` two-finger
-     * swipe (GN-23) meets no system gesture and arms in either mode. A drag from the right needs
-     * an entry ahead. A drag from the left is always one, as Chrome's `NavigationHandler.canNavigate`
-     * has it ("navigating back is considered always possible – actual navigation, closing tab, or
-     * exiting app"): with no entry behind (the one [goBack] lands on, [backIndex]) the chrome's
-     * machine performs its back at the tab's root on the release – the tab closed to its opener or
-     * the previous tab, the page starting over, the window minimized – and captions the bubble
-     * 'Close tab' / 'Close Zenium' while the drag is armed (`lib/historyNav.ts`, `lib/back.ts`).
+     * swipe (GN-23) meets no system gesture and arms in either mode, but only while Settings →
+     * Accessibility's "Swipe between pages using a touchpad" is on (Chrome's
+     * `touchpad_swipe_to_navigate` gate in `OnOverscrolled`; the finger's drag is not its). A drag
+     * from the right needs an entry ahead. A drag from the left is always one, as Chrome's
+     * `NavigationHandler.canNavigate` has it ("navigating back is considered always possible –
+     * actual navigation, closing tab, or exiting app"): with no entry behind (the one [goBack]
+     * lands on, [backIndex]) the chrome's machine performs its back at the tab's root on the
+     * release – the tab closed to its opener or the previous tab, the page starting over, the
+     * window minimized – and captions the bubble 'Close tab' / 'Close Zenium' while the drag is
+     * armed (`lib/historyNav.ts`, `lib/back.ts`).
      */
     fun historyNavEligible(edge: HistoryNavClassifier.Edge, touchpad: Boolean = false): Boolean {
+        if (touchpad && !host.touchpadSwipeToNavigate) return false
         if ((!touchpad && !host.threeButtonNavigation) || backTransition != null) return false
         return when (edge) {
             HistoryNavClassifier.Edge.LEFT -> true
@@ -773,10 +784,19 @@ class TabWebView(
         val (phase, payload) = when (event) {
             is HistoryNavClassifier.Nav.Start -> "start" to json("edge" to if (event.edge == HistoryNavClassifier.Edge.LEFT) "left" else "right")
             is HistoryNavClassifier.Nav.Move -> "move" to json("travel" to event.travel.toDouble(), "time" to event.time)
-            is HistoryNavClassifier.Nav.Release -> "release" to json("time" to event.time)
+            // `force`: a touchpad swipe let go faster than Chrome's fling threshold navigates whatever its travel;
+            // `disallow`: one flung back out of the page at Chrome's -500 px/s or faster navigates never.
+            is HistoryNavClassifier.Nav.Release -> "release" to json("time" to event.time, "force" to event.force, "disallow" to event.disallow)
             is HistoryNavClassifier.Nav.Cancel -> "cancel" to json("time" to event.time)
         }
-        if (event !is HistoryNavClassifier.Nav.Move) Log.d(PULL_TAG, "history $phase on $tabId (${url ?: "no url"})")
+        if (event !is HistoryNavClassifier.Nav.Move) {
+            val fling = when {
+                event is HistoryNavClassifier.Nav.Release && event.force -> " (forced by the fling)"
+                event is HistoryNavClassifier.Nav.Release && event.disallow -> " (disallowed by the fling)"
+                else -> ""
+            }
+            Log.d(PULL_TAG, "history $phase on $tabId (${url ?: "no url"})$fling")
+        }
         host.historyNavEvent(tabId, phase, payload)
     }
 
@@ -1244,6 +1264,8 @@ class TabWebView(
 
     /** Long-press on links/images opens Zen's page menu; text selection stays native. */
     private fun onLongPress(): Boolean {
+        // The served new tab page's tiles hold their own menu (NTP-35): the renderer gets the gesture.
+        if (LinkHits.holdIsThePages(currentDocument)) return false
         val result = hitTestResult
         val density = resources.displayMetrics.density
         val anchorX = (left + lastTouchX) / density
@@ -2021,11 +2043,22 @@ class TabWebView(
             interstitialUrl = replaced
         }
         pdfPage = if (baseUrl != null && document != null) PdfViewer.Page(url, baseUrl, document) else null
+        servesNewTabPage = NewTabPage.isDocument(url)
         loadDataWithBaseURL(baseUrl ?: url, html, "text/html", "utf-8", url)
     }
 
     /** The viewer page this view shows, while it does (see [loadHtml]); read on the network thread too. */
     @Volatile private var pdfPage: PdfViewer.Page? = null
+
+    /**
+     * Whether this view shows the served new tab page (`zen://newtab`, NTP-35): set when the view
+     * loads it ([loadHtml], a history step back onto it – [onPageStarted]), cleared by any other
+     * load. Read first on the network thread by [shouldInterceptRequest]: the page's tile icons
+     * (`zen://favicon/<hash>`) are answered from the favicon store only while it is set, so every
+     * other view – the phone's first load among them – pays one boolean read per request and
+     * nothing else.
+     */
+    @Volatile private var servesNewTabPage = false
 
     /**
      * The address a navigation callback's URL stands for: the viewer page's `zen://pdf` address
@@ -2068,6 +2101,8 @@ class TabWebView(
         // marks its own load right after this).
         reloadAskedAt = 0L
         leaveCarry.reset()
+        // Any other load puts the served new tab page away (its icons are answered no longer).
+        servesNewTabPage = false
         if (LocalDocuments.isLocal(url)) {
             loadLocalDocument(url)
             return
@@ -2817,16 +2852,39 @@ class TabWebView(
         }
 
         /**
-         * Network thread. The extension layer answers first: it serves the extension origins and
-         * the CORS proxy of extension pages; then Preload pages `none` refuses a prefetch
-         * ([refusePreload]); anything left goes to the request engine, whose rule sets include
-         * the extensions' declarativeNetRequest rules.
+         * Network thread. The served new tab page's own icons come first, on that view alone
+         * ([newTabFavicon]; one boolean read on every other); then the viewer page's files; the
+         * extension layer next: it serves the extension origins and the CORS proxy of extension
+         * pages; then Preload pages `none`, or the system's Data Saver or Battery Saver, refuses a
+         * prefetch ([refusePreload]); anything left goes to the request engine, whose rule sets
+         * include the extensions' declarativeNetRequest rules.
          */
         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
-            PdfViewer.intercept(context, request, pdfPage)
+            (if (servesNewTabPage) newTabFavicon(request) else null)
+                ?: PdfViewer.intercept(context, request, pdfPage)
                 ?: host.extensions?.intercept(request, this@TabWebView, null)
                 ?: refusePreload(request)
                 ?: host.blocking.intercept(this@TabWebView, request)
+
+        /**
+         * The served new tab page's tile icons (NTP-35): `zen://favicon/<hash>`, the address the
+         * core gives a cached favicon (`core/favicons.ts`), answered with the icon's bytes and
+         * image type from the same store the chrome's `/zen-favicon/<hash>` route reads
+         * ([BootHandoff.favicon] – the one store read, not a second). 404 for an icon that is
+         * not there or a name that is no hash: the tile shows its letter, as the chrome's rows
+         * show their glyph. Any other request of the page (null) goes on down the chain. The
+         * icon's name being its content, the answer is cacheable for good; its bytes are binary,
+         * so no charset (WebView would append one) – the chrome route's shape.
+         */
+        private fun newTabFavicon(request: WebResourceRequest): WebResourceResponse? {
+            val hash = NewTabPage.faviconHash(request.url.toString()) ?: return null
+            val answer = host.handoff?.favicon(hash) ?: return null
+            if (!answer.ok) return WebResourceResponse("text/plain", "utf-8", 404, "Not Found", emptyMap(), null)
+            val headers = HashMap<String, String>()
+            headers["Cache-Control"] = answer.cacheControl
+            headers["Content-Length"] = answer.length.toString()
+            return WebResourceResponse(answer.mimeType, null, 200, "OK", headers, answer.stream)
+        }
 
         /**
          * Preload pages "No preloading" (PS-43) at the request engine, as the desktop's
@@ -2851,9 +2909,17 @@ class TabWebView(
          * no prefetch cache will serve for the tap that follows – a 204 would, and a navigation
          * onto a 204 commits nothing (the engine's answer for a blocked DOCUMENT), which is not
          * what a refused prefetch may do to the link the user then taps.
+         *
+         * The same answer under the system's Data Saver (this app's data restricted on a metered
+         * network) or Battery Saver, at `standard` and `extended` too (OS-21): Chrome Android's
+         * `IsSomePreloadingEnabled` holds the pages' preloads under either mode (its one
+         * exception, the omnibox's on-press search prefetch, this omnibox does not do), and this
+         * is the phone's one preloading seam. The state is [SaverModes]' as of the last second, read
+         * only for a request that carries the mark – a page's own requests never ask the
+         * system, and the reader is created by the first marked request, not at boot.
          */
         private fun refusePreload(request: WebResourceRequest): WebResourceResponse? =
-            if (PreloadRules.refuses(host.privacy.flags, request.url.toString(), request.requestHeaders)) {
+            if (PreloadRules.refuses(host.privacy.flags, request.url.toString(), request.requestHeaders) { SaverModes.shared(context).state() }) {
                 Blocking.emptyResponse(403, "Forbidden", "text/plain")
             } else {
                 null
@@ -2883,6 +2949,9 @@ class TabWebView(
             if (!url.startsWith(ERROR_PAGE_PREFIX)) failedUrl = null
             currentDocument = url
             startedDocument = url
+            // The served new tab page starting (a load, a history step back onto it) turns its
+            // icons on; any other document starting turns them off.
+            servesNewTabPage = NewTabPage.isDocument(url)
             // A navigation held for the core's answer is superseded by the document starting,
             // and the page that objected to it is on its way out: its Leave is spent, and so is
             // its script's word on the next navigation's referrer policy.

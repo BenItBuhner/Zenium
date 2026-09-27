@@ -36,7 +36,7 @@ import type { PopoverAlignment } from './portals'
 import { cmd, run } from './api'
 import { browserStore } from './browserStore'
 import { devtoolsDockOf } from './contentRadius'
-import { isPhone, viewportStore } from './formFactor'
+import { isPhone, isTouchLayout, viewportStore } from './formFactor'
 import { afterKeyRelease } from './keyRelease'
 import { onboardingCovers } from './onboarding'
 import { searchChoiceCovers } from './searchChoice'
@@ -277,6 +277,14 @@ export interface UiState {
   overlayFolderId: string | null
   /** Settings section to open (e.g. `resources`), when the overlay was opened for one. */
   overlaySection: string | null
+  /**
+   * The control the overlay was opened from, when it hangs from one (§9.20: the Settings theme
+   * row's Change… button places the picker under itself, end-aligned – #572's L8): its box and
+   * the bar or column it stands in, plain data (`placedAnchor`, lib/anchor.ts), never the
+   * element. Null for an overlay opened from a menu, a shortcut or the palette, which takes its
+   * seat.
+   */
+  overlayAnchor: Omit<Anchor, 'element'> | null
   urlbar: UrlbarState
   findOpen: boolean
   findTabId: string | null
@@ -633,6 +641,7 @@ export const uiStore = createStore<UiState>(
     overlaySpaceId: null,
     overlayFolderId: null,
     overlaySection: null,
+    overlayAnchor: null,
     urlbar: { open: false, mode: 'new-tab', tabId: null, initialText: undefined, attached: false },
     findOpen: false,
     findTabId: null,
@@ -1183,13 +1192,16 @@ export async function openOverlay(
   folderId: string | null = null,
   section: string | null = null,
   {
-    handedBack = false
+    handedBack = false,
+    anchor = null
   }: {
     /**
      * The overlay is a page tab's the class change closed, going back to its tab as the window
      * widens (`useStageContinuity`): the core re-opens it at the slot the tab had.
      */
     handedBack?: boolean
+    /** The control the overlay hangs from, if one (`UiState.overlayAnchor`). */
+    anchor?: Omit<Anchor, 'element'> | null
   } = {}
 ): Promise<void> {
   const page = pageForOverlay(kind, folderId, section)
@@ -1206,7 +1218,8 @@ export async function openOverlay(
     overlay: kind,
     overlaySpaceId: spaceId,
     overlayFolderId: folderId,
-    overlaySection: section
+    overlaySection: section,
+    overlayAnchor: anchor
   })
 }
 
@@ -1215,7 +1228,8 @@ export function closeOverlay(): void {
     overlay: 'none',
     overlaySpaceId: null,
     overlayFolderId: null,
-    overlaySection: null
+    overlaySection: null,
+    overlayAnchor: null
   })
   invalidateSnapshot()
   returnFocusToPage()
@@ -1640,6 +1654,20 @@ export async function openUrlbar(
  * nothing typed between Ctrl+T and the first paint of the bar is lost.
  */
 let typeahead: { tabId: string; text: string } | null = null
+
+/**
+ * Whether the core's `newtab.opened` opens the bar here. Without `text` it announces a new tab's
+ * arrival (the boot's first tab, Ctrl+T, the sidebar's New Tab row – `Browser.revealFreshTab`,
+ * `NewTabService.open`): the desktop's reveal is the bar in new-tab mode over the page. On the
+ * touch layouts the served page comes up bare instead (NTP-35, Chrome's tablet new tab): the page
+ * in view, its own field at rest, no bar over a cover and no keyboard rising unasked. Its bar
+ * opens on the user's tap on the page's field – the page's `search` action, whose `text` is a
+ * string ('' for the tap) – or on what the page's field received. The phone's chrome draws its
+ * own page and never sends the announcement (`bootFirstTab.test.ts`).
+ */
+export function newTabRevealOpensUrlbar(text: string | undefined): boolean {
+  return text !== undefined || !isTouchLayout()
+}
 
 /**
  * The URL bar over a new tab page: `new-tab` mode bound to that tab, so what is typed navigates

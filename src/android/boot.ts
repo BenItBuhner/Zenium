@@ -188,6 +188,7 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
   syncPrivateLock(bridge, boot, platform)
   syncBackState(bridge)
   syncPullToRefresh(bridge, platform)
+  syncTouchpadSwipeToNavigate(bridge, platform)
   syncBarHide(bridge, boot)
   syncHistoryNavBubble(bridge)
   syncCaptureState(bridge, browser)
@@ -221,8 +222,9 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
   // Started, restored, flushed: READY once the chrome has painted its theme under the insets and
   // placed the page slot – when there is a page to place (the active tab restored as a page;
   // a window without a tab, on a chrome page, or on the blank page the phone draws itself has
-  // no view and nothing to wait for, and under the phone's first-run tour no page is placed
-  // until the tour ends – a fresh profile's first launch from a link, startup.ts).
+  // no view and nothing to wait for, the tablet's served new tab page is not waited for, and
+  // under the phone's first-run tour no page is placed until the tour ends – a fresh profile's
+  // first launch from a link, startup.ts).
   ready.arm(bootNeedsPlacement(browser, platform.window, phone))
 
   // Shortcuts typed into the chrome itself go through the same table as page keys.
@@ -344,6 +346,22 @@ function syncPullToRefresh(bridge: Bridge, platform: AndroidPlatform): void {
     if (enabled === last) return
     last = enabled
     bridge.send('chrome.setPullToRefresh', { enabled })
+  })
+}
+
+/**
+ * The touchpad swipe's Accessibility switch ("Swipe between pages using a touchpad", GN-23 /
+ * A11Y-14): mirrored to the host, whose `TabWebView.historyNavEligible` reads it at each
+ * touchpad swipe's down and leaves the swipe to the page while it is off (Chrome's
+ * `touchpad_swipe_to_navigate` gate). The finger's edge drag is not its.
+ */
+function syncTouchpadSwipeToNavigate(bridge: Bridge, platform: AndroidPlatform): void {
+  let last: boolean | null = null
+  platform.events.on('state', (state: UIState) => {
+    const enabled = state.settings.touchpadSwipeToNavigate !== false
+    if (enabled === last) return
+    last = enabled
+    bridge.send('chrome.setTouchpadSwipeToNavigate', { enabled })
   })
 }
 

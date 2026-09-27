@@ -9,6 +9,7 @@ import { Fragment, useCallback, useEffect, useId, useRef, useState } from 'react
 import { ChevronRight, Ellipsis, ExternalLink, Loader2, Minus, Plus } from 'lucide-react'
 import { anchorOf, type Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
+import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import type { InternalPageQuery } from '@shared/internalPages'
 import { V2Button, V2IconButton } from '../../extensions/v2'
@@ -513,13 +514,62 @@ function CustomRowView({ row, caption }: { row: CustomRow; caption?: string }): 
 
 /**
  * What pressing an action row (or its button) does: its dialog first, else the action itself –
- * after the sheet it sits in has gone, for an action that opens a surface of its own.
+ * after the sheet it sits in has gone, for an action that opens a surface of its own. The
+ * button passes itself as the action's `anchor` (§9.20), so a surface the action opens can
+ * hang from it; the whole-row press has no control of its own to pass.
  */
-function pressAction(row: ActionRow, ctx: RowContext, dismissSheet: SheetDismiss): void {
+function pressAction(
+  row: ActionRow,
+  ctx: RowContext,
+  dismissSheet: SheetDismiss,
+  anchor?: Anchor
+): void {
   if (row.confirm) ctx.open({ kind: 'confirm', rowId: row.id })
   else if (row.form) ctx.open({ kind: 'form', rowId: row.id })
-  else if (row.closesSheet) dismissSheet(() => row.onPress?.())
-  else row.onPress?.()
+  else if (row.closesSheet) dismissSheet(() => row.onPress?.(anchor))
+  else row.onPress?.(anchor)
+}
+
+/**
+ * The desktop action button that hangs a popover from itself (`ActionRow.popover`, §9.20 – the
+ * theme row's Change…): the anchor of a dialog popup (`aria-haspopup="dialog"`) whose state is
+ * `aria-expanded` – true while its overlay is open from an anchor, false while it is not – so
+ * the chassis's `[aria-haspopup][aria-expanded='true']` keeps the pressed fill on it for as long
+ * as the popover hangs there (main.css beside the primitive; the icon button's rule in
+ * extensions.css is the same rule for the same reason). Its own component, since only it reads
+ * the ui store: a row that opens nothing subscribes to nothing. The overlay open at its seat
+ * instead – the space menu's, the palette's – expands no button: the fill is the anchor's.
+ *
+ * The same component draws the button whose press has changed under the popover it opened
+ * (`ActionRow.anchors`: the theme row's Reset to default while the picker hangs) – one element
+ * through the flip, so the popover's focus comes back to it (§9.22) – expanded and saying what
+ * hangs from it while the overlay is open from an anchor, and silent at rest: a press that
+ * opens no popup carries no `aria-haspopup`, and no `aria-expanded` either.
+ */
+function PopoverActionButton({
+  row,
+  ctx,
+  dismissSheet
+}: {
+  row: ActionRow
+  ctx: RowContext
+  dismissSheet: SheetDismiss
+}): JSX.Element {
+  const kind = row.popover ?? row.anchors
+  const open = uiStore.use((s) => s.overlay === kind && s.overlayAnchor !== null)
+  const opens = row.popover !== undefined
+  return (
+    <V2Button
+      variant={row.destructive ? 'danger' : 'secondary'}
+      busy={row.busy}
+      disabled={row.disabled}
+      aria-haspopup={opens || open ? 'dialog' : undefined}
+      aria-expanded={opens ? open : open || undefined}
+      onClick={(e) => pressAction(row, ctx, dismissSheet, anchorOf(e.currentTarget))}
+    >
+      {row.button}
+    </V2Button>
+  )
 }
 
 /**
@@ -550,15 +600,19 @@ function DesktopRowView({
       if (row.button && !row.leaves) {
         return (
           <ControlRow row={row} caption={caption} description={row.description}>
-            <V2Button
-              variant={row.destructive ? 'danger' : 'secondary'}
-              busy={row.busy}
-              disabled={row.disabled}
-              aria-haspopup={row.confirm || row.form || row.prompts ? 'dialog' : undefined}
-              onClick={() => pressAction(row, ctx, dismissSheet)}
-            >
-              {row.button}
-            </V2Button>
+            {row.popover || row.anchors ? (
+              <PopoverActionButton row={row} ctx={ctx} dismissSheet={dismissSheet} />
+            ) : (
+              <V2Button
+                variant={row.destructive ? 'danger' : 'secondary'}
+                busy={row.busy}
+                disabled={row.disabled}
+                aria-haspopup={row.confirm || row.form || row.prompts ? 'dialog' : undefined}
+                onClick={(e) => pressAction(row, ctx, dismissSheet, anchorOf(e.currentTarget))}
+              >
+                {row.button}
+              </V2Button>
+            )}
           </ControlRow>
         )
       }
@@ -1110,8 +1164,8 @@ function StackedFieldRow({ row, caption }: { row: FieldRow; caption?: string }):
  * A row with a `leading` glyph seats it between the box and the label in the shared slot
  * (§10.5's Customise toolbar rows: the control's glyph after the box), on the label's line as
  * the box is (§9.2), hidden from the name the label gives the checkbox. Disabled as a dependent
- * row, the check-row primitive puts the .4 on the row's content (§9.30) and `aria-disabled`
- * keeps the row's fill off.
+ * row, the check-row primitive puts the .4 on the row's content – the box, the row's own child,
+ * dims with the words beside it, once (§9.30) – and `aria-disabled` keeps the row's fill off.
  */
 function CheckRow({ row, caption }: { row: SwitchRow; caption?: string }): JSX.Element {
   const disabled = row.disabled === true
@@ -1173,6 +1227,11 @@ function InlineField({
     setSeen(row.value)
     if (!editing) setValue(row.value)
   }
+  // Escape leaves the field through `blur()`, whose commit would otherwise run over the value
+  // this render's closure still holds – the text the key just put away – and, for a refused
+  // one, raise the error the key just cleared (the W8-3 drive's Address field: the row's value
+  // back in the field with `aria-invalid` still on it). The flag tells that one blur to leave.
+  const cancelling = useRef(false)
   const settle = (message: string | undefined): void => {
     setError(message ?? null)
     if (message) setEditing(true)
@@ -1218,7 +1277,10 @@ function InlineField({
           setValue(e.target.value)
           setError(null)
         }}
-        onBlur={commit}
+        onBlur={() => {
+          if (cancelling.current) return
+          commit()
+        }}
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
             e.preventDefault()
@@ -1229,7 +1291,10 @@ function InlineField({
             setValue(row.value)
             setError(null)
             setEditing(false)
+            // The blur is dispatched within `blur()` itself, so the flag is up for it alone.
+            cancelling.current = true
             e.currentTarget.blur()
+            cancelling.current = false
           }
         }}
       />
