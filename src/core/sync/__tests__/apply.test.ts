@@ -6,6 +6,7 @@ import type {
 } from '../../../shared/types'
 import { DEFAULT_SETTINGS } from '../../../shared/defaults'
 import { DEFAULT_NEW_TAB_SETTINGS } from '../../../shared/newTab'
+import { DEFAULT_READER_PREFERENCES } from '../../../shared/reader'
 import { matchKeywordWord } from '../../../shared/search'
 import { Browser } from '../../../core/browser'
 import { createFolder, createSpace } from '../../../core/model'
@@ -448,6 +449,102 @@ describe('applyRemote: the settings record and the new tab page', () => {
     })
     expect('newTabPhone' in b.state.settings).toBe(false)
     expect(b.state.settings.searchEngineId).toBe('custom:peer')
+  })
+})
+
+/**
+ * Reader View's text preferences (services pass 12, seed 16): the peer's `reader` is read through
+ * `sanitizeReaderPreferences` at apply like every other object-valued setting, so a peer on an
+ * older build (fewer fields) or a garbage value never leaves a hole or an off-ladder value in
+ * `state.settings.reader` – what `ReaderService.preferences()` hands out as it stands.
+ */
+describe("applyRemote: the settings record and Reader View's text preferences (services pass 12)", () => {
+  /** The record this device would send now (`collectLocal`), settings data alone. */
+  const sent = (b: Browser): Record<string, unknown> =>
+    collectLocal(
+      {
+        model: b.state.model,
+        settings: b.state.settings,
+        shortcutOverrides: {},
+        bookmarks: [],
+        boosts: []
+      },
+      defaultScope()
+    ).get(SETTINGS_RECORD_ID)?.data as Record<string, unknown>
+
+  it('a peer on an older build sends fewer fields: its object lands whole with every missing field at the default, and the reader service hands out no hole', () => {
+    const b = browser()
+    b.reader.setPreferences({ fontSize: 22, theme: 'sepia', spacing: 'wide', syllables: true })
+    expect(b.state.settings.reader).toMatchObject({ spacing: 'wide', syllables: true })
+
+    // The peer's build knows two fields fewer (built from the defaults, so the fixture is an
+    // older build's before and after the next field is added); its own edits are the size and
+    // the font.
+    const { spacing: _spacing, syllables: _syllables, ...older } = DEFAULT_READER_PREFERENCES
+    void _spacing
+    void _syllables
+    const peer = { ...older, fontSize: 14, font: 'mono' }
+    expect(Object.keys(peer)).toHaveLength(Object.keys(DEFAULT_READER_PREFERENCES).length - 2)
+    applyRemote(b, [{ ...settingsRecord({ reader: peer }), keys: { reader: 900 } }])
+
+    // The peer's key won whole: its edits land, the fields it lacks read as the defaults – not
+    // this device's previous values – and nothing is `undefined`.
+    expect(b.state.settings.reader).toEqual({
+      ...DEFAULT_READER_PREFERENCES,
+      fontSize: 14,
+      font: 'mono'
+    })
+    expect(Object.keys(b.state.settings.reader).sort()).toEqual(
+      Object.keys(DEFAULT_READER_PREFERENCES).sort()
+    )
+    expect(b.reader.preferences()).toEqual(b.state.settings.reader)
+    // The record this device sends from now on carries the completed object.
+    expect(sent(b).reader).toEqual(b.state.settings.reader)
+  })
+
+  it('a garbage value – off the ladder, unknown names, no object at all – lands as the defaults; a valid value lands as it is', () => {
+    const b = browser()
+    applyRemote(b, [
+      settingsRecord({
+        reader: {
+          fontSize: 999,
+          font: 'comic',
+          theme: 'neon',
+          width: 'huge',
+          lineFocus: 2,
+          spacing: 'x',
+          syllables: 'yes'
+        }
+      })
+    ])
+    expect(b.state.settings.reader).toEqual(DEFAULT_READER_PREFERENCES)
+
+    applyRemote(b, [
+      settingsRecord({ reader: { ...DEFAULT_READER_PREFERENCES, fontSize: 24, theme: 'dark' } })
+    ])
+    expect(b.state.settings.reader).toEqual({
+      ...DEFAULT_READER_PREFERENCES,
+      fontSize: 24,
+      theme: 'dark'
+    })
+
+    // A value that is no object at all (a corrupted record) reads as the defaults, not a crash.
+    applyRemote(b, [settingsRecord({ reader: 'big' })])
+    expect(b.state.settings.reader).toEqual(DEFAULT_READER_PREFERENCES)
+    applyRemote(b, [settingsRecord({ reader: null })])
+    expect(b.state.settings.reader).toEqual(DEFAULT_READER_PREFERENCES)
+  })
+
+  it("a record without the key (a peer whose reader preferences did not win) leaves this device's alone", () => {
+    const b = browser()
+    b.reader.setPreferences({ fontSize: 22, theme: 'sepia', lineFocus: 3 })
+    const mine = structuredClone(b.state.settings.reader)
+    expect(mine).not.toEqual(DEFAULT_READER_PREFERENCES)
+
+    applyRemote(b, [{ ...settingsRecord({ colorScheme: 'dark' }), keys: { colorScheme: 900 } }])
+    expect(b.state.settings.colorScheme).toBe('dark')
+    expect(b.state.settings.reader).toEqual(mine)
+    expect(sent(b).reader).toEqual(mine)
   })
 })
 

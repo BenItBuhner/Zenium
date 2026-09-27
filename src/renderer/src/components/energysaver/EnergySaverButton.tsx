@@ -7,6 +7,7 @@ import {
   toggleEnergySaverBubble
 } from '@renderer/lib/energySaver'
 import { openedFromKeyboard } from '@renderer/lib/popover'
+import type { toolbarMenuMarks } from '@renderer/lib/toolbarPins'
 import { TOOLBAR_STROKE } from '../v2/controls'
 
 /**
@@ -22,9 +23,19 @@ import { TOOLBAR_STROKE } from '../v2/controls'
  * Chrome's one line – tooltip, accessible name and the bubble's title – is "Energy Saver is
  * on", so the name is the state and the tooltip says nothing twice. The button publishes its
  * own standing (`energySaverUi.leafUp`) from the commit that mounts or unmounts it, so a bubble
- * up as the width tier folds the leaf leaves with it, before the frame paints (§9.20).
+ * up as the width tier folds the leaf leaves with it, before the frame paints (§9.20). As a
+ * pinnable control it wears the row's menu marks on the desktop bar (`menuMarks`), so its
+ * right-click is Chrome's pinned button menu – Unpin, Customise Toolbar… (context-menus-112).
  */
-export function EnergySaverButton(): JSX.Element {
+export function EnergySaverButton({
+  menuMarks
+}: {
+  /**
+   * The pinned control's right-click menu marks on the desktop bar
+   * (`toolbarMenuMarks('energy-saver')`); none where the button is not pinnable.
+   */
+  menuMarks?: ReturnType<typeof toolbarMenuMarks>
+} = {}): JSX.Element {
   const open = energySaverUi.use((s) => s.open)
   useLayoutEffect(() => {
     energySaverUi.set({ leafUp: true })
@@ -34,6 +45,7 @@ export function EnergySaverButton(): JSX.Element {
     <button
       type="button"
       data-zen-energy-saver-button
+      {...menuMarks}
       // The pressed fill while the bubble is up is the toolbar button's own, off `aria-expanded`.
       className="zen-toolbar-button relative"
       data-tooltip={ENERGY_SAVER_TITLE}

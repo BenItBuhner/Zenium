@@ -1,7 +1,6 @@
 package app.zen.chromium
 
 import android.Manifest
-import android.content.ClipData
 import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -35,8 +34,11 @@ import java.util.concurrent.Executor
  * the flash is not in it), flashes the page – a white view over the tab's frame that goes clear
  * in 120 ms, opacity alone (v2 §9.33) – and writes the picture to `MediaStore.Images` under
  * Pictures/Zenium, answering with the row's `content:` URI, a JPEG thumbnail for the preview
- * card, the picture's size and the file's. The card's Share puts the row on the system sheet,
- * Delete takes it out of the gallery, a tap on the thumbnail opens it in the system's viewer.
+ * card, the picture's size and the file's. The card's Share puts the row on the share sheet –
+ * Zenium's panel below Android 14, as Chrome's screenshot Share goes to its sharing hub there
+ * ([Share.sharePicture]) – Delete takes it out of the gallery, a tap on the thumbnail opens it in
+ * the system's viewer. Chrome 152 holds its (long) screenshot unsaved until its sheet's Save
+ * (a Downloads download); Zenium's is in the gallery at the capture, so the card needs no Save.
  *
  * Capture more: the whole page from the top ([TabWebView.captureLong], cut at about ten screens)
  * is held here under an id while the editor shows a scaled preview of it; Save crops the
@@ -46,8 +48,12 @@ import java.util.concurrent.Executor
 class Screenshots(private val host: Host, private val io: Executor) {
     private val activity get() = host.activity
     private val main = Handler(Looper.getMainLooper())
+    /** A long capture held for the editor, with the tab it came from. */
+    private class Held(val capture: PageCapture.Capture, val tabId: String)
     /** Long captures held for the editor, by id (one editor at a time; a stale one is dropped by `discardLong`). */
-    private val held = HashMap<String, PageCapture.Capture>()
+    private val held = HashMap<String, Held>()
+    /** The tab each saved picture came from, for the card's Share ([ScreenshotOrigins]). */
+    private val origins = ScreenshotOrigins()
     private var seq = 0
 
     // --- Take Screenshot ---------------------------------------------------------------------------
@@ -74,7 +80,10 @@ class Screenshots(private val host: Host, private val io: Executor) {
                 io.execute {
                     val saved = runCatching { save(bitmap) }.getOrNull()
                     bitmap.recycle()
-                    main.post { reply(saved) }
+                    main.post {
+                        if (saved != null) origins.record(saved.str("uri"), tabId)
+                        reply(saved)
+                    }
                 }
             }
         }
@@ -131,13 +140,13 @@ class Screenshots(private val host: Host, private val io: Executor) {
                 return@captureLong
             }
             val id = "long-${++seq}"
-            held[id] = capture
+            held[id] = Held(capture, tabId)
             val bitmap = capture.bitmap
             io.execute {
                 val preview = runCatching { dataUrl(bitmap, PREVIEW_MAX_WIDTH, Int.MAX_VALUE, PREVIEW_QUALITY) }.getOrNull()
                 main.post {
-                    if (preview == null || held[id] !== capture) {
-                        if (held.remove(id) === capture) bitmap.recycle()
+                    if (preview == null || held[id]?.capture !== capture) {
+                        if (held.remove(id)?.capture === capture) bitmap.recycle()
                         reply(null)
                         return@post
                     }
@@ -157,14 +166,15 @@ class Screenshots(private val host: Host, private val io: Executor) {
 
     /**
      * The held capture cropped to the rows `[top, bottom)` of the picture, to the gallery – and
-     * with `share`, onto the system sheet. Null when the capture is gone or the write failed.
+     * with `share`, onto the share sheet ([share]). Null when the capture is gone or the write failed.
      */
     fun saveLong(id: String, top: Int, bottom: Int, share: Boolean, reply: (Any?) -> Unit) {
-        val capture = held.remove(id)
-        if (capture == null) {
+        val entry = held.remove(id)
+        if (entry == null) {
             reply(null)
             return
         }
+        val capture = entry.capture
         val bitmap = capture.bitmap
         val rows = cropRows(top, bottom, bitmap.height)
         withStorage { granted ->
@@ -180,6 +190,7 @@ class Screenshots(private val host: Host, private val io: Executor) {
                 if (cropped !== bitmap) cropped.recycle()
                 bitmap.recycle()
                 main.post {
+                    if (saved != null) origins.record(saved.str("uri"), entry.tabId)
                     reply(saved)
                     if (saved != null && share) share(saved.str("uri")) {}
                 }
@@ -189,21 +200,17 @@ class Screenshots(private val host: Host, private val io: Executor) {
 
     /** The editor closed without saving. */
     fun discardLong(id: String) {
-        held.remove(id)?.bitmap?.recycle()
+        held.remove(id)?.capture?.bitmap?.recycle()
     }
 
     // --- the card's actions -------------------------------------------------------------------------
 
-    /** The gallery row on the system share sheet (Zenium's own actions have no link here, so none). */
+    /**
+     * The gallery row on the share sheet – Zenium's panel below Android 14, the system sheet from
+     * 14 ([Share.sharePicture]) – for the tab it was taken from (a private tab's records nothing).
+     */
     fun share(uri: String, reply: (Any?) -> Unit) {
-        val content = Uri.parse(uri)
-        val send = Intent(Intent.ACTION_SEND).apply {
-            type = activity.contentResolver.getType(content) ?: "image/png"
-            putExtra(Intent.EXTRA_STREAM, content)
-            clipData = ClipData.newUri(activity.contentResolver, "Screenshot", content)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        host.share.launchChooser(send, null, null, reply)
+        host.share.sharePicture(Uri.parse(uri), SHARE_TITLE, origins.tabOf(uri), reply)
     }
 
     /** The row out of the gallery (the app owns it, so no consent prompt); false when it could not go. */
@@ -211,7 +218,10 @@ class Screenshots(private val host: Host, private val io: Executor) {
         val content = Uri.parse(uri)
         io.execute {
             val gone = runCatching { activity.contentResolver.delete(content, null, null) > 0 }.getOrDefault(false)
-            main.post { reply(gone) }
+            main.post {
+                if (gone) origins.forget(uri)
+                reply(gone)
+            }
         }
     }
 
@@ -328,6 +338,8 @@ class Screenshots(private val host: Host, private val io: Executor) {
         /** The gallery folder under Pictures. */
         const val FOLDER = "Zenium"
         const val MIME = "image/png"
+        /** What the share sheet's clip – and the panel's preview – call the picture. */
+        const val SHARE_TITLE = "Screenshot"
         /** The card's thumbnail fits this square (the card draws it at up to 96 CSS px). */
         const val THUMBNAIL_MAX_SIDE = 320
         const val THUMBNAIL_QUALITY = 82
@@ -367,5 +379,37 @@ class Screenshots(private val host: Host, private val io: Executor) {
             val scale = minOf(1.0, maxWidth.toDouble() / width, maxHeight.toDouble() / height)
             return (width * scale).toInt().coerceAtLeast(1) to (height * scale).toInt().coerceAtLeast(1)
         }
+    }
+}
+
+/**
+ * Which tab each picture saved this session came from, by its gallery URI. The card's Share
+ * carries the tab to the share sheet ([Share.sharePicture]): below Android 14 the panel records
+ * the app taken for a private tab's picture no more than for the tab's own share. A picture's
+ * origin is a session's knowledge only – the card itself lives seconds – so the map keeps the
+ * latest [max] and forgets a deleted picture's; a URI it does not know shares with no tab.
+ */
+class ScreenshotOrigins(private val max: Int = MAX_ORIGINS) {
+    private val tabs = LinkedHashMap<String, String>()
+
+    /** `uri` was saved from `tabId`; the oldest entry goes when there are more than [max]. */
+    fun record(uri: String, tabId: String) {
+        tabs.remove(uri)
+        tabs[uri] = tabId
+        while (tabs.size > max) tabs.remove(tabs.keys.first())
+    }
+
+    /** The tab `uri` came from, or null for one not saved this session (or long since). */
+    fun tabOf(uri: String): String? = tabs[uri]
+
+    /** `uri` left the gallery. */
+    fun forget(uri: String) {
+        tabs.remove(uri)
+    }
+
+    val size: Int get() = tabs.size
+
+    companion object {
+        const val MAX_ORIGINS = 32
     }
 }

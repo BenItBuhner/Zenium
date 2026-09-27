@@ -202,6 +202,21 @@ describe('EnergySaverButton', () => {
     expect(button.querySelector('svg.lucide-leaf')).not.toBeNull()
   })
 
+  it('wears the toolbar button menu marks the row hands it – a pinnable control on the desktop bar, its right-click Chrome’s Unpin / Customise Toolbar… (W8-1, context-menus-112) – and none without them', () => {
+    render(<EnergySaverButton />)
+    let button = leaf()!
+    expect(button.hasAttribute('data-zen-menu')).toBe(false)
+    expect(button.hasAttribute('data-zen-menu-control')).toBe(false)
+    render(
+      <EnergySaverButton
+        menuMarks={{ 'data-zen-menu': 'toolbar', 'data-zen-menu-control': 'energy-saver' }}
+      />
+    )
+    button = leaf()!
+    expect(button.getAttribute('data-zen-menu')).toBe('toolbar')
+    expect(button.getAttribute('data-zen-menu-control')).toBe('energy-saver')
+  })
+
   it('publishes its own standing from the commit that mounts or unmounts it – the row’s width tier folding it says so to the bubble (L2)', () => {
     expect(energySaverUi.get().leafUp).toBe(false)
     render(<EnergySaverButton />)

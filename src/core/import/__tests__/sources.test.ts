@@ -249,6 +249,26 @@ describe('discoverSources', () => {
     expect(firefox[0].limits.passwords).toContain('Export passwords')
   })
 
+  it('offers Firefox passwords when the profile holds both logins.json and key4.db', async () => {
+    const host = new FakeImportHost('/home/b')
+    const root = '/home/b/.mozilla/firefox'
+    host.file(`${root}/profiles.ini`, PROFILES_INI)
+    const profile = `${root}/abcd1234.default-release`
+    host.file(`${profile}/places.sqlite`, 'sqlite')
+    host.file(`${profile}/logins.json`, '{}')
+    host.file(`${profile}/key4.db`, 'sqlite')
+    // The other profile has the logins without the key store: nothing to decrypt with.
+    host.file(`${root}/wxyz5678.default/logins.json`, '{}')
+    const firefox = (await discoverSources(host, OPTIONS)).filter((s) => s.browser === 'firefox')
+    expect(firefox.map((s) => [s.name, s.kinds, s.limits.passwords === undefined])).toEqual([
+      ['default-release', ['bookmarks', 'history', 'passwords'], true]
+    ])
+    // Without a vault on the host the kind stays off and no limit is recorded either.
+    const noVault = await discoverSources(host, { ...OPTIONS, passwordsAvailable: false })
+    expect(noVault.find((s) => s.browser === 'firefox')?.kinds).toEqual(['bookmarks', 'history'])
+    expect(noVault.find((s) => s.browser === 'firefox')?.limits).toEqual({})
+  })
+
   it('offers Safari on macOS only, bookmarks kept on offer when the directory is unreadable', async () => {
     const host = new FakeImportHost('/Users/b')
     host.file('/Users/b/Library/Safari/Bookmarks.plist', 'bplist')

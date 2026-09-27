@@ -5821,9 +5821,14 @@ export interface Commands {
   /**
    * Import the chosen kinds from a source (`ImportSource.id`); one import runs at a time and its
    * progress is `UIState.import`. Resolves with the finished progress, or null for an unknown
-   * source or nothing to import.
+   * source or nothing to import. `primaryPassword` is Firefox's primary password when the user
+   * typed one for a Firefox source's passwords (ID-42): sent with this run only, used to unwrap
+   * `key4.db`'s master key and kept nowhere; absent, the empty default is tried.
    */
-  'import.run': { args: { source: string; kinds: ImportKind[] }; result: ImportProgress | null }
+  'import.run': {
+    args: { source: string; kinds: ImportKind[]; primaryPassword?: string }
+    result: ImportProgress | null
+  }
   /** Stop the running import after the kind in flight; false when none runs. */
   'import.cancel': { args: void; result: boolean }
   /** Drop the finished import from `UIState.import` (the dialog closed). */
