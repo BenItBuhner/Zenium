@@ -2,8 +2,9 @@
   "id": "reader-ui",
   "order": 71,
   "class": "ReaderUiDemo",
-  "shard": "phone-b",
+  "shard": "phone-g",
   "mirrors": "android-reader-ui-demo.yml",
   "dir": "reader-ui-demo",
-  "estimate": 5.5
+  "estimate": 5.5,
+  "note": "Moved from phone-b (68 of its 68 minutes, #610's move there) to phone-g by W6-H's rebalance, with read-aloud: the two largest drivers of phone-b that nothing ties there (a11y-chrome, its largest, is the shard's last by its own note); phone-b at 57.5 without them. The same image, no setup step of its own."
 }

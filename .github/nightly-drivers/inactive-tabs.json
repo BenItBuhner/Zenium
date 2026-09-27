@@ -2,12 +2,12 @@
   "id": "inactive-tabs",
   "order": 4,
   "class": "InactiveTabsDemo",
-  "shard": "phone-d",
+  "shard": "phone-g",
   "mirrors": "android-inactive-tabs-demo.yml",
   "dir": "inactive-tabs-demo",
   "env": {
     "DEMO_THEME": "light"
   },
   "estimate": 6,
-  "note": "The Inactive tabs surface (TAB-20 / SET-34) on the overview demo's profile: the archive pass through the drivers' clock, the sheet's rows, restore, Close all's prompt, the Settings group, in both colour schemes (eleven scenes). On phone-d, the lightest phone shard once #387's relaunch race joined phone-a (phone-a 60 / phone-d 61 with it here; the Settings tab demo's environment, taken through its own env line)."
+  "note": "The Inactive tabs surface (TAB-20 / SET-34) on the overview demo's profile: the archive pass through the drivers' clock, the sheet's rows, restore, Close all's prompt, the Settings group, in both colour schemes (eleven scenes). On phone-d, the lightest phone shard once #387's relaunch race joined phone-a (phone-a 60 / phone-d 61 with it here; the Settings tab demo's environment, taken through its own env line). Moved to phone-g by W6-H's rebalance, with gestures: phone-d stood at 67 of its 68 minutes and its two six-minute drivers that nothing ties there leave it at 55 (share-screenshot, the third six-minute driver, stays: its note wants the first place, which blocking-ui (43) holds on phone-d – a pre-existing gap named in #638's Limits). First on phone-g by its order, so its environment prepares that device."
 }
