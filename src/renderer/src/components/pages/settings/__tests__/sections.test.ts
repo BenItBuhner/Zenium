@@ -7644,7 +7644,7 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
       settings
     )
 
-  it('the theme row stands after Colour scheme on the desktop and the tablet, never on the phone, naming the active space’s theme and the space – "Default · Personal space" at rest (the picker’s own description, #572’s N5) – with the picker as its door (Chrome’s row opens Customize Chrome; no store is named), hung from the Change… button that opened it (§9.20, #572’s L8)', async () => {
+  it('the theme row stands after Colour scheme on the desktop and the tablet, never on the phone, naming the active space’s theme and the space – "Default · Personal Space" at rest (the picker’s own description, #572’s N5) – with the picker as its door (Chrome’s row opens Customize Chrome; no store is named), hung from the Change… button that opened it (§9.20, #572’s L8)', async () => {
     const { model } = look()
     const ids = appearanceIds(model)
     expect(ids.slice(0, 2)).toEqual(['color-scheme', 'theme'])
@@ -7652,7 +7652,7 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
     expect(theme).toMatchObject({
       kind: 'action',
       label: 'Theme',
-      description: 'Default · Personal space',
+      description: 'Default · Personal Space',
       layouts: ['desktop', 'tablet'],
       button: 'Change…',
       // The button hangs the `theme` overlay from itself (round C): the row's view draws it as
@@ -7690,7 +7690,7 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
     const { model } = look(themed())
     const theme = row(model, 'theme')
     expect(theme).toMatchObject({
-      description: 'Custom · Personal space',
+      description: 'Custom · Personal Space',
       button: 'Reset to default'
     })
     if (theme.kind !== 'action') throw new Error('not an action row')
@@ -7720,7 +7720,7 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
       ] as unknown as UIState['spaces']
     })
     expect(row(look(preset).model, 'theme').description).toBe(
-      `${THEME_PRESETS[1].name} · Work space`
+      `${THEME_PRESETS[1].name} · Work Space`
     )
   })
 
@@ -7861,7 +7861,7 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
     // A themed space keeps its own accent: the row says when the OS's shows.
     expect(
       row(look(themed({ systemAccent: '#0078d4' })).model, 'use-system-accent').description
-    ).toBe('Controls take the colour your system uses while the space has the default look.')
+    ).toBe('Controls take the colour your system uses while the Space has the default look.')
     for (const formFactor of ['phone', 'tablet'] as const)
       expect(
         findRow(

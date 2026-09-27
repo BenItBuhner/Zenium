@@ -2485,7 +2485,7 @@ export class Browser {
       const ok = await this.platform.dialogs.confirm(
         {
           message: `Delete “${space.name}”?`,
-          detail: `${count} tab${count === 1 ? '' : 's'} in this space will be closed. Essentials are kept.`,
+          detail: `${count} tab${count === 1 ? '' : 's'} in this Space will be closed. Essentials are kept.`,
           okLabel: 'Delete Space',
           cancelLabel: 'Cancel',
           danger: true
