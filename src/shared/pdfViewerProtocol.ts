@@ -155,6 +155,16 @@ export function pdfSaveScript(): string {
   return `(() => { const v = window[${JSON.stringify(PDF_VIEWER_GLOBAL)}]; if (!v || typeof v.save !== 'function') return null; return v.save() })()`
 }
 
+/**
+ * The JavaScript that asks the viewer document for the document's bytes as they were downloaded
+ * (pdf.js's `getData`) as base64 – what a print of an untouched form hands the host, which
+ * prints the bytes it is given and reads no file of the download's. A Promise, resolving null
+ * when the tab shows no viewer or no document is open. One expression, as `pdfCommandScript`.
+ */
+export function pdfBytesScript(): string {
+  return `(() => { const v = window[${JSON.stringify(PDF_VIEWER_GLOBAL)}]; if (!v || typeof v.bytes !== 'function') return null; return v.bytes() })()`
+}
+
 /** The report inside a window message the viewer posted, or null for any other message. */
 export function pdfReportOf(data: unknown): PdfViewerReport | null {
   if (!data || typeof data !== 'object') return null

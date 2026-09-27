@@ -2703,17 +2703,22 @@ export interface PrintingHost {
  * A PDF the inline viewer shows (`capabilities.pdfViewer`; `core/pdf.ts`), for the system's
  * print flow (`capabilities.pdfPrint`; Android's `PrintManager` with a document adapter that
  * writes the PDF's bytes to the job – Chrome Android prints its viewer's PDF the same way). The
- * document is one of two: the file the host already holds (`path`, the download's), when the
- * form was not touched, or the bytes of a copy with the form's values written in (`data`,
- * base64; pdf.js's incremental save), when it was.
+ * document is exactly one of `path` and `data`; a job with both or neither is refused (the host
+ * answers false). The core hands `data` for both of its cases – the file's bytes as downloaded
+ * when the form was not touched, the bytes of a copy with the form's values written in
+ * (pdf.js's incremental save) when it was: the download's file lives in the public collection,
+ * which is no path the host takes.
  */
 export interface PdfPrintJob {
   tabId: string
-  /** The job's name in the print queue: the file's. */
+  /** The job's name in the print queue: the file's (the host drops a `.pdf`). */
   name: string
-  /** Where the host holds the file (a path, or Android's `content:` address); null with `data`. */
+  /**
+   * A file the host holds under its own directories (its files or cache directory – the host
+   * accepts no other file through the bridge, `PdfPrint.kt`); null with `data`.
+   */
   path: string | null
-  /** The bytes to print instead of the file, base64; null with `path`. */
+  /** The bytes to print, base64; null with `path`. */
   data: string | null
 }
 

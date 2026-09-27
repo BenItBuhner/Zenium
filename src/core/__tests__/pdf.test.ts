@@ -15,6 +15,7 @@ import type { DownloadInit } from '../downloads'
 import type { PdfPrintJob } from '../platform'
 import { isPdfDownload, opensInViewer, pdfSaveName, printsSavedCopy } from '../pdf'
 import {
+  pdfBytesScript,
   pdfCommandScript,
   pdfSaveScript,
   type PdfViewerReport
@@ -59,6 +60,8 @@ interface Fixture {
 
 /** The base64 the viewer's save script answers with by default: the bytes of `%PDF-1`. */
 const SAVED_COPY = 'JVBERi0x'
+/** The base64 the viewer's bytes script answers with by default: the bytes of `%PDF-0`. */
+const FILE_BYTES = 'JVBERi0w'
 
 function fixture(
   opts: {
@@ -74,6 +77,8 @@ function fixture(
     printHost?: boolean
     /** What the viewer's save script answers: base64, or null for no copy. */
     savedCopy?: string | null
+    /** What the viewer's bytes script answers: base64, or null for no document. */
+    fileBytes?: string | null
   } = {}
 ): Fixture {
   const sent: Fixture['sent'] = []
@@ -92,6 +97,7 @@ function fixture(
     printed: []
   }
   const savedCopy = opts.savedCopy === undefined ? SAVED_COPY : opts.savedCopy
+  const fileBytes = opts.fileBytes === undefined ? FILE_BYTES : opts.fileBytes
   const capabilities = stub<HostCapabilities>({
     windows: opts.windows ?? true,
     updates: false,
@@ -165,8 +171,11 @@ function fixture(
           },
           executeJavaScript: async (code: string) => {
             scripts.push({ tabId: tab.id, code })
-            // The viewer's save answers with the copy's bytes; every other script is taken.
-            return code === pdfSaveScript() ? savedCopy : true
+            // The viewer's save answers with the copy's bytes, its bytes script with the
+            // file's; every other script is taken.
+            if (code === pdfSaveScript()) return savedCopy
+            if (code === pdfBytesScript()) return fileBytes
+            return true
           }
         })
       }
@@ -539,14 +548,17 @@ describe('a form in the document', () => {
     expect(await failed.browser.pdf.save(other.id)).toBeNull()
   })
 
-  it('Print hands the host the file as downloaded, or the filled copy once the form was touched', async () => {
+  it('Print hands the host the file’s bytes as downloaded, or the filled copy’s once the form was touched', async () => {
     const f = fixture({ printHost: true })
     const { tab } = await openForm(f, false)
     expect(await f.browser.handleCommand(f.win, 'pdf.print', { tabId: tab.id })).toBe(true)
+    // Bytes, never the download's path: the host takes no file of the public collection
+    // through the bridge (`PdfPrint.kt`), so the viewer hands the file's own bytes.
     expect(f.printed).toEqual([
-      { tabId: tab.id, name: 'mooring.pdf', path: '/sdcard/Download/mooring.pdf', data: null }
+      { tabId: tab.id, name: 'mooring.pdf', path: null, data: FILE_BYTES }
     ])
-    // Untouched: the viewer was not asked for a copy.
+    // Untouched: the viewer was asked for the file's bytes, not for a copy.
+    expect(f.scripts.some((s) => s.code === pdfBytesScript())).toBe(true)
     expect(f.scripts.some((s) => s.code === pdfSaveScript())).toBe(false)
     const pdfToken = f.browser.pdf.document(f.browser.pdf.itemOf(tab.id)!.id)!.token
     f.browser.handlePageMessage(tab.id, { type: 'pdf', pdf: formReport(true), pdfToken })
@@ -561,7 +573,7 @@ describe('a form in the document', () => {
     expect(f.scripts.some((s) => s.code === pdfCommandScript({ kind: 'saved' }))).toBe(false)
   })
 
-  it('Print says no without a print host, without a copy of an edited form, and off the viewer', async () => {
+  it('Print says no without a print host, without the bytes to give, and off the viewer', async () => {
     const noHost = fixture()
     const a = await openForm(noHost, false)
     expect(await noHost.browser.pdf.print(a.tab.id)).toBe(false)
@@ -572,5 +584,10 @@ describe('a form in the document', () => {
     expect(noCopy.printed).toEqual([])
     const other = openSite(noCopy, 'https://example.test/other')
     expect(await noCopy.browser.pdf.print(other.id)).toBe(false)
+    // An untouched form whose viewer has no bytes to give (the document not open) prints nothing.
+    const noBytes = fixture({ printHost: true, fileBytes: null })
+    const c = await openForm(noBytes, false)
+    expect(await noBytes.browser.pdf.print(c.tab.id)).toBe(false)
+    expect(noBytes.printed).toEqual([])
   })
 })

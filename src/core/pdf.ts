@@ -29,6 +29,7 @@ import {
 import { newId } from '../shared/ids'
 import {
   pdfCommandScript,
+  pdfBytesScript,
   pdfSaveScript,
   type PdfViewerCommand,
   type PdfViewerReport
@@ -237,21 +238,23 @@ export class PdfViewerService {
   /**
    * Print the document through the system's print flow (`Platform.printPdf`; Chrome Android's
    * Print on its PDF viewer): the file as it was downloaded, or – the form touched since – a
-   * copy with the values written in, so the pages print as they look. False when the tab shows
-   * no viewer, the host cannot print, or the edited copy could not be made: the file alone
-   * would print the form as it was, which is not what is on screen.
+   * copy with the values written in, so the pages print as they look. Both go over as bytes
+   * (`PdfPrintJob.data`): the host prints what it is handed and reads no file of the download's
+   * – the file lives in the public collection, which is no path the host takes through the
+   * bridge – so the viewer gives the file's own bytes (`pdfBytesScript`, pdf.js's `getData`)
+   * or the copy's (`pdfSaveScript`). False when the tab shows no viewer, the host cannot print,
+   * or the bytes could not be had: the file alone would print the form as it was, which is not
+   * what is on screen.
    */
   async print(tabId: string): Promise<boolean> {
     const item = this.itemOf(tabId)
     const printPdf = this.browser.platform.printPdf
     if (!item || !printPdf) return false
-    const name = item.finalName || item.filename
-    let job: PdfPrintJob
-    if (printsSavedCopy(this.report(tabId))) {
-      const data = await this.savedCopy(tabId)
-      if (data === null) return false
-      job = { tabId, name, path: null, data }
-    } else job = { tabId, name, path: item.savePath, data: null }
+    const data = printsSavedCopy(this.report(tabId))
+      ? await this.savedCopy(tabId)
+      : await this.viewerBytes(tabId, pdfBytesScript())
+    if (data === null) return false
+    const job: PdfPrintJob = { tabId, name: item.finalName || item.filename, path: null, data }
     try {
       return await printPdf(job)
     } catch {
@@ -260,11 +263,16 @@ export class PdfViewerService {
   }
 
   /** The viewer's copy of its document with the form's values in, base64; null when it has none to give. */
-  private async savedCopy(tabId: string): Promise<string | null> {
+  private savedCopy(tabId: string): Promise<string | null> {
+    return this.viewerBytes(tabId, pdfSaveScript())
+  }
+
+  /** What the viewer answers `script` with when it is bytes as base64; null for anything else. */
+  private async viewerBytes(tabId: string, script: string): Promise<string | null> {
     const view = this.browser.tabs.view(tabId)
     if (!view) return null
     try {
-      const data: unknown = await view.executeJavaScript(pdfSaveScript())
+      const data: unknown = await view.executeJavaScript(script)
       return typeof data === 'string' && data.length > 0 ? data : null
     } catch {
       return null

@@ -286,6 +286,20 @@ class Viewer {
     }
   }
 
+  /**
+   * The document's bytes as they were downloaded (`getData`), base64, for a print of a form
+   * that was not touched: the host prints what it is handed and reads no file of the
+   * download's. Null before the document is open.
+   */
+  async bytes(): Promise<string | null> {
+    if (!this.doc || this.state !== 'ready') return null
+    try {
+      return bytesToBase64(await this.doc.getData())
+    } catch {
+      return null
+    }
+  }
+
   /** The chrome's command; anything the state cannot take is ignored. */
   command(command: PdfViewerCommand): void {
     switch (command.kind) {
@@ -1132,7 +1146,8 @@ if (config) {
   const viewer = new Viewer(config)
   ;(window as unknown as Record<string, unknown>)[PDF_VIEWER_GLOBAL] = {
     command: (command: PdfViewerCommand) => viewer.command(command),
-    save: () => viewer.save()
+    save: () => viewer.save(),
+    bytes: () => viewer.bytes()
   }
   void viewer.open()
 }
