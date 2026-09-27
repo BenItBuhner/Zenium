@@ -22,8 +22,8 @@ import { androidSyncFetch, type HostFetchResult } from '../syncFetch'
  * server, `secrets.*` answered the way `Secrets.kt` answers them (a value that opens, or `null`;
  * a refused write with `secrets-unavailable:`). What the folder transport's suite proves for the
  * SAF tree, this proves for a server: the setup runs PROPFIND / MKCOL / PUT-then-MOVE through the
- * bridge, the password lives in the secret store alone, and a Keystore that cannot be used is a
- * toast at setup and `authRefused` at a restart, never a crash.
+ * bridge, the password lives in the secret store alone, and a Keystore that cannot be used is the
+ * engine's typed refusal at setup and `authRefused` at a restart, never a crash.
  */
 
 const ROOT = '/remote.php/dav/files/alice'
@@ -245,33 +245,46 @@ describe('the engine on the phone over sync.fetch and secrets.*', () => {
       authRefused: true,
       folder: webDavFolderUrl(CREDENTIALS)
     })
+    // Refused, the engine sends nothing more: Sync now makes no request without a password.
     dav.drain()
     await bare.engine.syncNow()
     expect(dav.log).toEqual([])
 
-    // A new password into a Keystore still unusable is a toast's worth of words, never a crash.
-    const refused = await bare.engine.setWebDavPassword('app-pass').catch((e: unknown) => e)
-    expect((refused as Error).message).toBe(
-      'The Android Keystore is unavailable on this device, so a password cannot be kept here'
-    )
+    // A new password into a Keystore still unusable is the typed refusal, never a rejection or
+    // a crash; the device stays refused.
+    expect(await bare.engine.setWebDavPassword('app-pass')).toEqual({ reason: 'secrets' })
     expect(bare.engine.status().authRefused).toBe(true)
+    expect(dav.log).toEqual([])
 
     host.keystore.unusable = false
-    await bare.engine.setWebDavPassword('app-pass')
+    expect(await bare.engine.setWebDavPassword('app-pass')).toBeNull()
     expect(host.sealed.get(WEBDAV_SECRET_KEY)).toBe('app-pass')
     expect(bare.engine.status()).toMatchObject({ authRefused: false, lastError: null })
     expect(dav.log.some((r) => r.method === 'PROPFIND' && r.status === 207)).toBe(true)
   }, 30_000)
 
-  it('a Keystore that cannot seal refuses the setup with its own words; nothing is configured, nothing reaches the server', async () => {
+  it('a Keystore that cannot seal is the typed refusal (reason secrets) for the chrome to word; nothing is configured, no device file is written', async () => {
     const host = hostBridge()
     host.keystore.unusable = true
     const a = phone('Pixel 9', host)
     await unlockVault(a)
-    await setupWebDav(a)
+    const refusal = await a.engine.setup(
+      {
+        folder: '',
+        passphrase: PASSPHRASE,
+        deviceName: a.name,
+        scope: a.engine.status().scope,
+        transport: 'webdav',
+        webdav: CREDENTIALS
+      },
+      a.win
+    )
+    expect(refusal).toEqual({ reason: 'secrets' })
     expect(a.engine.status().enabled).toBe(false)
-    expect(a.toasts.at(-1)).toContain('The Android Keystore is unavailable on this device')
-    expect(a.toasts.at(-1)).not.toContain(SECRETS_UNAVAILABLE_PREFIX)
+    // The engine's words are the chrome's (§9.33): no toast, and Kotlin's refusal prefix
+    // reaches nothing the user reads.
+    expect(a.toasts).toEqual([])
+    expect(JSON.stringify(a.engine.status())).not.toContain(SECRETS_UNAVAILABLE_PREFIX)
     // The engine probes the server (the directory and its README) before it keeps the password;
     // past that point nothing of this device is written and no key is kept.
     expect([...(dav.files(DIR)?.keys() ?? [])].filter(isDeviceFileName)).toEqual([])

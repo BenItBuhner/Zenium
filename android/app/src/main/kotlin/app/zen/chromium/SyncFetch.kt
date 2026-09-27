@@ -22,7 +22,8 @@ import java.util.concurrent.TimeUnit
  * The desktop's `net.fetch(url, { cache: 'no-store', redirect: 'manual', credentials: 'omit' })`,
  * kept to the letter: the client follows no redirect at all (a 3xx comes back as the response, so
  * the `Authorization` header never travels to a second origin; the transport classes it
- * `refused`), holds no cookie jar and no cache, and trusts what the platform trusts (its TLS is
+ * `redirect`, the same kind the desktop host types Electron's cancelled manual redirect as), holds
+ * no cookie jar and no cache, and trusts what the platform trusts (its TLS is
  * the system's). A response body comes back as text and is capped at [MAX_BODY_BYTES]; response
  * headers come back by lower-cased name, repeats joined with `, ` the way the Fetch standard's
  * `Headers.get` joins them, so `headers.get('etag')` reads the same on both platforms.
