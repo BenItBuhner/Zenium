@@ -64,8 +64,12 @@ class QuickActionsWidgetTest {
 
     @Test
     fun theRowGivesItsButtonsUpInChromesOrderLessTheDino() {
-        // Chrome: Dino, Lens, Incognito, Voice (Delegate.java:145-174). Without the Dino: the scanner
-        // (Lens's slot) first, then the mask, the mic last.
+        // Chrome's row, left to right in all three layouts at the tag: Voice, Incognito, Lens, Dino
+        // (chrome/browser/ui/android/quickactionsearchwidget/java/res/layout/
+        // quick_action_search_widget_small_layout.xml:65/72/79/86; xsmall :65/72/79/86; medium
+        // :61/68/75/82) → ours Voice, Private, Scan (gate #599 (h)). Chrome drops them from the right:
+        // Dino, Lens, Incognito, Voice (Delegate.java:145-174). Without the Dino: the scanner (Lens's
+        // slot) first, then the mask, the mic last.
         val voice = QuickActionsWidgetProvider.VOICE
         val private = QuickActionsWidgetProvider.PRIVATE
         val scan = QuickActionsWidgetProvider.SCAN

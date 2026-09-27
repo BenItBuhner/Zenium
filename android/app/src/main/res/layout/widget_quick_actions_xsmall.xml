@@ -2,8 +2,10 @@
 <!-- The quick actions widget's extra-small form (QuickActionsWidgetProvider; WID-02), for a face under
      72 dp tall: Chrome's quick_action_search_widget_xsmall_layout.xml (Chrome 152, :8-94) with
      Zenium's face – a 48 dp card the launcher's cells centre, the omnibox pill (32 dp; Zenium's
-     mark, the short hint at 11 sp) taking the width the row leaves, then the mic, the private mask
-     and the scanner in 28 dp boxes. The root is @android:id/background under clipToOutline, so a
+     mark, the short hint at 13 sp, the chassis's floor where Chrome's is 11) taking the width the
+     row leaves, then the mic, the private mask and the scanner in 28 dp boxes – Chrome's row order,
+     Voice, Incognito, Lens, Dino (quick_action_search_widget_xsmall_layout.xml:65/72/79/86), less
+     the Dino. The root is @android:id/background under clipToOutline, so a
      launcher on Android 12+ finds the view it clips to the system's widget radius. The provider
      hides the buttons the width cannot hold (the scanner first, the mask, then the mic) and wires
      every part to its landing (Landing.kt). Colours are the v2 tokens' (values/colors.xml) and the

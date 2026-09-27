@@ -34,6 +34,7 @@ import android.system.Os
 import android.system.OsConstants
 import android.util.Log
 import android.util.SizeF
+import android.util.TypedValue
 import android.view.ContextThemeWrapper
 import android.view.Gravity
 import android.view.PixelCopy
@@ -44,6 +45,7 @@ import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import android.view.Window
 import android.widget.FrameLayout
+import android.widget.TextView
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONObject
@@ -1073,7 +1075,13 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
      * The face laid at [widthDp] by the form's height and the provider's answer awaited in the
      * host: the form's row, the bar's click, each button's visibility as the drop rule has it at
      * that width; the size the host recorded in the widget's options; the parts' words in the tree
-     * and the dropped buttons' absent; the card's and the buttons' boxes.
+     * and the dropped buttons' absent; the card's and the buttons' boxes; the row's ORDER as laid –
+     * the bar first, then the shown buttons left to right in Chrome's order less the Dino: Voice,
+     * Incognito, Lens, Dino in every one of Chrome's three layouts at the tag
+     * (`chrome/browser/ui/android/quickactionsearchwidget/java/res/layout/quick_action_search_widget_small_layout.xml:65/72/79/86`,
+     * the xsmall's :65/72/79/86, the medium's :61/68/75/82), so ours Voice, Private, Scan; and on
+     * xsmall the hint READ off the TextView: 13 sp (the chassis's floor, §4; Chrome's 11), the word
+     * 'Search' measured against the room the row leaves it, drawn whole (no ellipsis) – gate #599 (c).
      */
     private fun theForm(manager: AppWidgetManager, id: Int, hostView: AppWidgetHostView, variant: QuickActionsWidgetProvider.Variant, widthDp: Int) {
         val form = variant.name.lowercase()
@@ -1121,6 +1129,68 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         )
         expect("the $form card is the form's fixed height (${variant.heightDp} dp) at the provider's width ($widthDp dp)", card.height() == dp(variant.heightDp) && card.width() == dp(widthDp))
         expect("the shown buttons stand in Chrome's $buttonDp dp boxes", shown.all { viewBounds(it.viewId).let { box -> box.width() == dp(buttonDp) && box.height() == dp(buttonDp) } })
+        theRowsOrder(form, variant, shown)
+        if (variant == QuickActionsWidgetProvider.Variant.XSMALL) theXsmallWord(hostView, widthDp, shown.size)
+    }
+
+    /**
+     * Gate #599 (h): the row's order READ off the laid face – the shown buttons' left edges strictly
+     * ascending in the provider's [QuickActionsWidgetProvider.BUTTONS] order (Voice, Private, Scan),
+     * which is Chrome's Voice, Incognito, Lens, Dino less the Dino in every one of the tag's three
+     * layouts (`quick_action_search_widget_small_layout.xml:65/72/79/86`, xsmall :65/72/79/86,
+     * medium :61/68/75/82); the bar before the first button on the one-row forms, above the row
+     * on medium.
+     */
+    private fun theRowsOrder(form: String, variant: QuickActionsWidgetProvider.Variant, shown: List<Face>) {
+        val boxes = shown.map { it to viewBounds(it.viewId) }
+        val bar = viewBounds(R.id.widget_quick_actions_bar)
+        finding(
+            "  the $form row as laid, left to right: bar $bar, then " + (if (boxes.isEmpty()) "no button" else boxes.joinToString(", ") { (face, box) -> "${wordOf(face)} at x ${box.left}" }) +
+                " – Chrome's Voice, Incognito, Lens, Dino (quick_action_search_widget_${form}_layout.xml) less the Dino"
+        )
+        if (boxes.size > 1) {
+            expect(
+                "the $form row lays its buttons left to right in Chrome's order less the Dino: ${wordsOf(shown)} (quick_action_search_widget_small_layout.xml:65/72/79/86 – Voice, Incognito, Lens, Dino)",
+                boxes.map { it.second.left }.zipWithNext().all { (left, right) -> left < right }
+            )
+        }
+        if (boxes.isNotEmpty()) {
+            val first = boxes.first().second
+            if (variant == QuickActionsWidgetProvider.Variant.MEDIUM) {
+                expect("the medium bar stands above its row (the bar's bottom at or above ${wordOf(shown.first())}'s top)", bar.bottom <= first.top)
+            } else {
+                expect("the $form bar stands before its first button (the bar's right at or before ${wordOf(shown.first())}'s left)", bar.right <= first.left)
+            }
+        }
+    }
+
+    private class HintRead(val word: String, val textSizePx: Float, val wordPx: Float, val ellipsisCount: Int, val roomPx: Int)
+
+    /**
+     * Gate #599 (c): the xsmall hint read off its TextView in the host – its size 13 sp in the
+     * launcher's metrics (`widget_quick_actions_xsmall_hint`; the chassis's floor, Chrome's 11 sp),
+     * the word 'Search' measured by the view's own paint against the room the row leaves it (the
+     * widget's width less the card's 2 × 8, the bar's 2 × 3, the mark's 8 + 16 + 5 and the hint's 8
+     * dp, less 38 dp a shown button – the face test's arithmetic), and drawn WHOLE: an ellipsis
+     * count of 0 on its one line, the word's width within the room.
+     */
+    private fun theXsmallWord(hostView: AppWidgetHostView, widthDp: Int, shownButtons: Int) {
+        val sp13Px = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 13f, hostView.resources.displayMetrics)
+        val read = onMain {
+            hostView.findViewById<TextView>(R.id.widget_quick_actions_hint)?.let { hint ->
+                val word = hint.text.toString()
+                HintRead(word, hint.textSize, hint.paint.measureText(word), hint.layout?.getEllipsisCount(0) ?: -1, hint.width - hint.compoundPaddingLeft - hint.compoundPaddingRight)
+            }
+        }
+        val roomDp = widthDp - 59 - QuickActionsWidgetProvider.Variant.XSMALL.buttonWidthDp * shownButtons
+        finding(
+            if (read == null) "  the xsmall hint: no TextView in the host" else
+                "  the xsmall hint '${read.word}' at ${read.textSizePx} px (13 sp is $sp13Px px here), the word ${read.wordPx} px (${dpOf(read.wordPx.roundToInt())} dp) " +
+                    "in ${read.roomPx} px (${dpOf(read.roomPx)} dp) of room – the arithmetic's $roomDp dp at $widthDp dp with $shownButtons button(s); ellipsis count ${read.ellipsisCount}"
+        )
+        expect("the xsmall hint is set at 13 sp (the chassis's floor; Chrome's xsmall is 11)", read != null && abs(read.textSizePx - sp13Px) < 1f)
+        expect("the xsmall hint's room at $widthDp dp is the arithmetic's $roomDp dp (within 2 dp of rounding)", read != null && abs(dpOf(read.roomPx) - roomDp) <= 2)
+        expect("the xsmall word '${read?.word}' is drawn whole at $widthDp dp: no ellipsis on its line, its width within the room", read != null && read.ellipsisCount == 0 && read.wordPx <= read.roomPx)
     }
 
     /**

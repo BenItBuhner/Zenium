@@ -2,7 +2,8 @@
 <!-- The Home-screen quick actions widget (QuickActionsWidgetProvider; WID-02): the omnibox pill with
      the mic, the private mask and the QR scanner in one widget resized freely along both axes, as
      Chrome's quick action search widget is – its info one for one
-     (chrome/android/java/res/xml/quick_action_search_widget_small_info.xml:8-18 in Chrome 152):
+     (chrome/browser/ui/android/quickactionsearchwidget/java/res/xml/quick_action_search_widget_small_info.xml:8-18
+     in Chrome 152):
      the initial layout is the small form; the floor along the row is widget_quick_actions_width
      (Chrome's 300 / 220 / 260 dp by shortest side – 260 dp on every phone; values/dimens.xml and
      the sw240dp / sw280dp pairs) and along the column the extra-small form's 48 dp, each named

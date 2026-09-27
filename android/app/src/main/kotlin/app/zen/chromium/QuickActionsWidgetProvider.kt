@@ -93,10 +93,18 @@ class QuickActionsWidgetProvider : AppWidgetProvider() {
         /** Every tappable part, in the layouts' order. */
         val FACES: List<SearchWidgetProvider.Face> = listOf(BAR, VOICE, PRIVATE, SCAN)
 
-        /** The row's buttons in its order – Chrome's Voice, Incognito, Lens (then Dino, which is not here yet). */
+        /**
+         * The row's buttons in its order – Chrome's Voice, Incognito, Lens, Dino, read off the three
+         * layouts at Chrome 152 (`quick_action_search_widget_small_layout.xml:65/72/79/86`, the xsmall
+         * `:65/72/79/86`, the medium `:61/68/75/82`), less the Dino, which is not here yet.
+         */
         val BUTTONS: List<SearchWidgetProvider.Face> = listOf(VOICE, PRIVATE, SCAN)
 
-        /** The order a short row gives its buttons up in: Chrome's Dino, Lens, Incognito, Voice, less the Dino. */
+        /**
+         * The order a short row gives its buttons up in: Chrome's Dino, Lens, Incognito, Voice
+         * (`QuickActionSearchWidgetProviderDelegate.java:145-174`), less the Dino – the row's last
+         * two go first, then its first.
+         */
         val DROP_ORDER: List<SearchWidgetProvider.Face> = listOf(SCAN, PRIVATE, VOICE)
 
         /** Chrome's row has four buttons; the reference widths are stated for that row. */

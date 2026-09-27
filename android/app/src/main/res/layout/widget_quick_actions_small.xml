@@ -4,7 +4,9 @@
      quick_action_search_widget_small_layout.xml (Chrome 152, :8-93) with Zenium's face – a 72 dp
      card the launcher's cells centre, the omnibox pill (48 dp, inset to 39 by its drawable; the
      mark, the short hint at 16 sp) taking the width the row leaves, then the mic, the private mask
-     and the scanner as 48 dp buttons, each a disc round its glyph. The root is
+     and the scanner as 48 dp buttons, each a disc round its glyph – Chrome's row order, Voice,
+     Incognito, Lens, Dino (quick_action_search_widget_small_layout.xml:65/72/79/86), less the Dino.
+     The root is
      @android:id/background under clipToOutline for the launcher's clip on Android 12+. The
      provider hides the buttons the width cannot hold and wires every part to its landing
      (Landing.kt); see widget_quick_actions_xsmall.xml for the colours. -->

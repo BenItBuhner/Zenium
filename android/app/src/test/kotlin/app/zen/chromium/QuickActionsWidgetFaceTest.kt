@@ -81,11 +81,13 @@ class QuickActionsWidgetFaceTest {
         assertEquals(Variant.XSMALL.buttonWidthDp, dp(base["widget_quick_actions_xsmall_button"]) + 2 * dp(base["widget_quick_actions_xsmall_button_margin"]))
         assertEquals(Variant.SMALL.buttonWidthDp, dp(base["widget_quick_actions_small_button"]) + 2 * dp(base["widget_quick_actions_small_button_margin"]))
         assertEquals(Variant.MEDIUM.buttonWidthDp, dp(base["widget_quick_actions_medium_button"]) + 2 * dp(base["widget_quick_actions_medium_button_margin"]))
-        // Chrome's measures, values/dimens.xml:10-79 there.
+        // Chrome's measures, values/dimens.xml:10-79 there – but the xsmall hint, which is the chassis's
+        // smallest type, 13 sp (§4; the gate's (c) on #599), where Chrome's is 11 sp.
+        assertEquals("13sp", base["widget_quick_actions_xsmall_hint"])
         for ((name, value) in mapOf(
             "widget_quick_actions_radius" to "20dp", "widget_quick_actions_xsmall_radius" to "16dp",
             "widget_quick_actions_xsmall_margin" to "8dp", "widget_quick_actions_xsmall_bar_height" to "32dp", "widget_quick_actions_xsmall_bar_margin" to "3dp",
-            "widget_quick_actions_xsmall_bar_radius" to "16dp", "widget_quick_actions_xsmall_mark" to "16dp", "widget_quick_actions_xsmall_hint" to "11sp",
+            "widget_quick_actions_xsmall_bar_radius" to "16dp", "widget_quick_actions_xsmall_mark" to "16dp",
             "widget_quick_actions_xsmall_button" to "28dp", "widget_quick_actions_xsmall_button_margin" to "5dp", "widget_quick_actions_xsmall_button_padding" to "6dp",
             "widget_quick_actions_small_margin" to "8dp", "widget_quick_actions_small_bar_height" to "48dp", "widget_quick_actions_small_bar_inset_horizontal" to "3.5dp",
             "widget_quick_actions_small_bar_inset_vertical" to "4.5dp", "widget_quick_actions_small_bar_radius" to "20dp", "widget_quick_actions_small_mark" to "20dp",
@@ -99,6 +101,33 @@ class QuickActionsWidgetFaceTest {
         val v31 = dimens("values-v31/dimens.xml")
         assertEquals("@android:dimen/system_app_widget_background_radius", v31["widget_quick_actions_radius"])
         assertEquals("@android:dimen/system_app_widget_background_radius", v31["widget_quick_actions_xsmall_radius"])
+    }
+
+    @Test
+    fun theXsmallBarLeavesTheWholeWordItsRoomAtEveryWidth() {
+        // The gate's (c) on #599: the short hint at 13 sp, "Search" about 40 dp wide, never cut. The
+        // room the xsmall bar leaves the word is what the width leaves after the card's margins, the
+        // buttons the drop rule shows (Variant.XSMALL.shown), the bar's margins, the mark and its
+        // margins and the hint's end margin – the layout's own dimens, read here rather than retyped.
+        val base = dimens("values/dimens.xml")
+        val fixed = 2 * dp(base["widget_quick_actions_xsmall_margin"]) + 2 * dp(base["widget_quick_actions_xsmall_bar_margin"]) +
+            dp(base["widget_quick_actions_xsmall_mark_margin"]) + dp(base["widget_quick_actions_xsmall_mark"]) +
+            dp(base["widget_quick_actions_xsmall_mark_margin_text"]) + dp(base["widget_quick_actions_xsmall_mark_margin"])
+        val button = dp(base["widget_quick_actions_xsmall_button"]) + 2 * dp(base["widget_quick_actions_xsmall_button_margin"])
+        assertEquals(Variant.XSMALL.buttonWidthDp, button)
+        fun room(widthDp: Int) = widthDp - fixed - button * Variant.XSMALL.shown(widthDp).size
+        val word = 40
+        // The narrowest width a launcher can hand: the sw240dp floor less the host's default padding (8 dp a side).
+        val narrowest = dp(dimens("values-sw240dp/dimens.xml")["widget_quick_actions_width"]) - 16
+        assertEquals(204, narrowest)
+        assertEquals(107, room(narrowest))
+        // At the phone's floor (values-sw280dp, 260 dp) handed whole, as the driver hands it, and less the padding.
+        assertEquals(125, room(260))
+        assertEquals(109, room(244))
+        // Every width from the narrowest up leaves the word more than twice its room; every width from 99 dp up leaves it whole.
+        for (width in narrowest..600) assertTrue("$width dp leaves the word ${room(width)} dp", room(width) >= 2 * word)
+        for (width in 99..600) assertTrue("$width dp leaves the word ${room(width)} dp", room(width) >= word)
+        assertTrue("below 99 dp the word would be cut – a width no launcher offers", room(98) < word)
     }
 
     @Test
@@ -138,7 +167,7 @@ class QuickActionsWidgetFaceTest {
     }
 
     @Test
-    fun noConfigurationNamesASurfaceTwiceAndTheHairlineIsThePre31FacesAlone() {
+    fun noConfigurationNamesASurfaceTwiceAndTheHairlineIsThePre31FacesAndThePickerFramesAlone() {
         for (file in dynamicValueFiles) {
             for (surface in surfaces) assertNull("$file leaves $surface to its color-* state list", colours(file)[surface])
             assertNull("$file declares no hairline", colours(file)["widget_quick_actions_hairline"])
@@ -147,6 +176,37 @@ class QuickActionsWidgetFaceTest {
             for (surface in surfaces) assertTrue("$dir/$surface.xml exists", File(res, "$dir/$surface.xml").isFile)
         }
         assertFalse(File(res, "color/widget_quick_actions_hairline.xml").exists())
+        // The one day value and the one night value reach the pre-31 card and bars, the pre-31 picker's
+        // vector (its card's and bar's strokes) and the picker's frame – nothing else.
+        val naming = res.walk().filter { it.isFile && it.readText().contains("widget_quick_actions_hairline") }.map { it.relativeTo(res).path }.toSortedSet()
+        assertEquals(
+            sortedSetOf(
+                "drawable/widget_quick_actions_card.xml", "drawable/widget_quick_actions_medium_bar.xml", "drawable/widget_quick_actions_preview.xml",
+                "drawable/widget_quick_actions_preview_frame.xml", "drawable/widget_quick_actions_small_bar.xml", "drawable/widget_quick_actions_xsmall_bar.xml",
+                "drawable/widget_quick_actions_xsmall_card.xml", "values-night/colors.xml", "values/colors.xml"
+            ),
+            naming
+        )
+    }
+
+    @Test
+    fun theRowIsChromesOrderVoicePrivateScan() {
+        // Chrome 152's three layouts put the row Voice, Incognito, Lens, Dino
+        // (chrome/browser/ui/android/quickactionsearchwidget/java/res/layout/quick_action_search_widget_small_layout.xml:65/72/79/86,
+        // the xsmall :65/72/79/86, the medium :61/68/75/82); ours is that order less the Dino, the bar before the row.
+        val order = listOf("widget_quick_actions_bar", "widget_quick_actions_voice", "widget_quick_actions_private", "widget_quick_actions_scan")
+        for (file in layouts) {
+            val layout = read(file)
+            val positions = order.map { id -> layout.indexOf("""android:id="@+id/$id"""") }
+            assertTrue("$file names every part", positions.all { it >= 0 })
+            assertEquals("$file lays the parts in Chrome's order: ${order.joinToString()}", positions, positions.sorted())
+        }
+        // The provider wires the same four in the same order (its FACES; the row's BUTTONS are the last three).
+        assertEquals(
+            listOf(R.id.widget_quick_actions_bar, R.id.widget_quick_actions_voice, R.id.widget_quick_actions_private, R.id.widget_quick_actions_scan),
+            QuickActionsWidgetProvider.FACES.map { it.viewId }
+        )
+        assertEquals(QuickActionsWidgetProvider.FACES.drop(1), QuickActionsWidgetProvider.BUTTONS)
     }
 
     @Test
@@ -251,15 +311,22 @@ class QuickActionsWidgetFaceTest {
     }
 
     @Test
-    fun thePreviewIsTheSmallFormAtTheFloorUnderChromesPickerHairline() {
+    fun thePreviewIsTheSmallFormAtTheFloorUnderADayAndNightHairline() {
         val preview = read("layout/widget_quick_actions_preview.xml")
         assertTrue(preview.contains("""android:layout_width="@dimen/widget_quick_actions_width""""))
         assertTrue(preview.contains("""android:layout_height="@dimen/widget_quick_actions_small_height""""))
         assertTrue(preview.contains("""<include layout="@layout/widget_quick_actions_small" />"""))
         assertTrue(preview.contains("""android:foreground="@drawable/widget_quick_actions_preview_frame""""))
+        // Chrome frames its preview in black_alpha_12 (hairline_border.xml:10), a black literal the gate's
+        // (f) on #599 rules out: the frame's stroke is the v2 border, one value by day and one by night.
         val frame = read("drawable/widget_quick_actions_preview_frame.xml")
         assertTrue(frame.contains("""android:width="1dp""""))
-        assertTrue(frame.contains("""android:color="#1F000000""""))
+        assertTrue(frame.contains("""android:color="@color/widget_quick_actions_hairline""""))
+        assertFalse("no colour literal in the frame", Regex("""#[0-9A-Fa-f]{6,8}""").containsMatchIn(frame))
+        assertEquals("@color/v2_border_light", colours("values/colors.xml")["widget_quick_actions_hairline"])
+        assertEquals("@color/v2_border_dark", colours("values-night/colors.xml")["widget_quick_actions_hairline"])
+        assertEquals("#26000000", colours("values/colors.xml")["v2_border_light"])
+        assertEquals("#1FFFFFFF", colours("values/colors.xml")["v2_border_dark"])
         // The pre-31 picker's vector is the small form's size.
         val image = read("drawable/widget_quick_actions_preview.xml")
         assertTrue(image.contains("""android:width="300dp""""))

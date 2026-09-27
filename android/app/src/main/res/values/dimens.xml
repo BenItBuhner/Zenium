@@ -15,7 +15,12 @@
     <dimen name="widget_quick_actions_xsmall_radius">16dp</dimen>
 
     <!-- The extra-small form: a 48 dp row, 8 dp in from the cells; the bar a 32 dp pill 3 dp from its neighbours,
-         the mark 16 dp, the hint 11 sp; 28 dp buttons 5 dp apart, a 16 dp glyph in each. -->
+         the mark 16 dp; 28 dp buttons 5 dp apart, a 16 dp glyph in each. The hint is 13 sp – the chassis's
+         smallest type (§4), where Chrome's is 11 sp (quick_action_search_widget_xsmall_search_bar_text_size);
+         the bar's geometry stays Chrome's, and the word "Search" (about 40 dp at 13 sp) has its room at every
+         width the provider is handed: the drop rule (Variant) leaves the bar at least 107 dp of hint at the
+         narrowest width a launcher can hand (the sw240dp floor less the host's padding), and 40 dp down to a
+         99 dp widget no launcher offers (QuickActionsWidgetFaceTest pins it; WidgetDemo reads it). -->
     <dimen name="widget_quick_actions_xsmall_height">48dp</dimen>
     <dimen name="widget_quick_actions_xsmall_margin">8dp</dimen>
     <dimen name="widget_quick_actions_xsmall_bar_height">32dp</dimen>
@@ -24,7 +29,7 @@
     <dimen name="widget_quick_actions_xsmall_mark">16dp</dimen>
     <dimen name="widget_quick_actions_xsmall_mark_margin">8dp</dimen>
     <dimen name="widget_quick_actions_xsmall_mark_margin_text">5dp</dimen>
-    <dimen name="widget_quick_actions_xsmall_hint">11sp</dimen>
+    <dimen name="widget_quick_actions_xsmall_hint">13sp</dimen>
     <dimen name="widget_quick_actions_xsmall_button">28dp</dimen>
     <dimen name="widget_quick_actions_xsmall_button_margin">5dp</dimen>
     <dimen name="widget_quick_actions_xsmall_button_padding">6dp</dimen>

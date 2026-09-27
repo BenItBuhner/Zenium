@@ -3,7 +3,9 @@
      tall or taller: Chrome's quick_action_search_widget_medium_layout.xml (Chrome 152, :8-90) with
      Zenium's face – a 155 dp card the launcher's cells centre, the omnibox pill (50 dp; the mark,
      the omnibox's own hint at 16 sp) across the top, the mic, the private mask and the scanner as
-     54 dp discs in a row under it. The root is @android:id/background under clipToOutline for the
+     54 dp discs in a row under it – Chrome's row order, Voice, Incognito, Lens, Dino
+     (quick_action_search_widget_medium_layout.xml:61/68/75/82), less the Dino. The root is
+     @android:id/background under clipToOutline for the
      launcher's clip on Android 12+. The provider hides the buttons the width cannot hold and wires
      every part to its landing (Landing.kt); see widget_quick_actions_xsmall.xml for the colours. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"

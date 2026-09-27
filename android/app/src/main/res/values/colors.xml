@@ -84,7 +84,9 @@
       (widget_search_ink, widget_search_hint, widget_search_mark). On Android 12+ the three
       surfaces take the system's Material You roles instead (res/color-v31/widget_quick_actions_*.xml
       and their night / v34 pairs), and the hairlines go (res/drawable-v31/widget_quick_actions_*.xml),
-      as Chrome's quick action widget has none.
+      as Chrome's quick action widget has none. The hairline colour stays on every level for one
+      more line: the picker's frame round the preview (res/drawable/widget_quick_actions_preview_frame.xml),
+      by day and by night.
     -->
     <color name="widget_quick_actions_surface">@color/v2_page_light</color>
     <color name="widget_quick_actions_bar">@color/v2_panel_light</color>
