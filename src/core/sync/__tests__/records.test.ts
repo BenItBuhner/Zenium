@@ -258,7 +258,8 @@ describe('collectLocal', () => {
       'touchpadSwipeToNavigate',
       'hoverCardMemoryUsage',
       'bookmarkRowSortOrder',
-      'bookmarkRowDisplay'
+      'bookmarkRowDisplay',
+      'iph'
     ])
     expect(data).not.toHaveProperty('sidebarExpandOnHover')
     expect(data).not.toHaveProperty('onboardingDone')
@@ -269,6 +270,8 @@ describe('collectLocal', () => {
     expect(data).not.toHaveProperty('unloadTimeoutMinutes')
     expect(data).not.toHaveProperty('touchpadSwipeToNavigate')
     expect(data).not.toHaveProperty('hoverCardMemoryUsage')
+    // The hint bubbles' records stay on the phone that showed them (TB-19).
+    expect(data).not.toHaveProperty('iph')
     // The keep-active hosts travel, as Chrome syncs tab_discarding.exceptions.
     expect(data).toHaveProperty('unloadExcludedDomains')
     // The Home pin syncs with the rest of the pins, as Chrome's `show_home_button` does.

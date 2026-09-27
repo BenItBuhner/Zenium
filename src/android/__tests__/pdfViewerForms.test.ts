@@ -1,12 +1,20 @@
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { DEFAULT_ACCENT, DEFAULT_CONTROL_ACCENT_LIGHT, mix, rgbToHex } from '../../shared/theme'
 import {
   bytesToBase64,
   fillableFieldCount,
+  PDF_FORMS_ACCENT,
   PDF_FORMS_CSS,
+  PDF_FORMS_DANGER,
   PDF_FORMS_LAYER_CLASS,
   PdfFormGate,
   pdfFormLinkService
 } from '../pdfViewerForms'
+
+const here = dirname(fileURLToPath(import.meta.url))
 
 describe('the form layer’s stylesheet', () => {
   it('is flat CSS, every rule the viewer’s own, with nothing the WebView floor lacks', () => {
@@ -148,6 +156,60 @@ describe('PdfFormGate', () => {
     expect(gate.reset()).toBe(true)
     expect(gate.reset()).toBe(false)
     expect(gate.modified).toBe(false)
+  })
+
+  it('draws the widgets in the design system’s inks, not the system’s: the accent tint and ring, the danger edge, the hairline', () => {
+    const layer = PDF_FORMS_CSS.slice(
+      PDF_FORMS_CSS.indexOf('.zen-pdf-forms {'),
+      PDF_FORMS_CSS.indexOf('\n}', PDF_FORMS_CSS.indexOf('.zen-pdf-forms {'))
+    )
+    // The control accent – #6264dc mixed 40 % towards black, `--v2-accent` in light – and the
+    // danger ink (`--v2-danger` light), declared once on the layer.
+    expect(layer).toContain('--zen-pdf-accent: #272858;')
+    expect(layer).toContain('--zen-pdf-danger: #b02a2a;')
+    // A fillable field's tint is the accent at the selected row's 12 %, in both of pdf.js's
+    // forms of it (the field's background image; the filter over a checkbox's own face).
+    expect(layer).toContain('fill:rgba(39, 40, 88, 0.12);')
+    expect(layer).toContain("flood-color='rgb(39,40,88)' flood-opacity='0.12'")
+    expect(layer).not.toMatch(/0, 54, 255|0,54,255/)
+    // Focus is the accent ring alone – no `Highlight`, no `Canvas` halo outside it.
+    expect(layer).toContain('--input-focus-border-color: var(--zen-pdf-accent);')
+    expect(layer).toContain('--input-focus-outline: none;')
+    expect(layer).not.toMatch(/\bHighlight\b|\bCanvas\b/)
+    // Hover takes the .15 hairline, not black.
+    expect(layer).toContain('--input-hover-border-color: rgb(0 0 0 / 0.15);')
+    expect(layer).not.toMatch(/: black;/)
+    // A required field is edged in the danger ink at 1 px, never pdf.js's red.
+    expect(PDF_FORMS_CSS).toContain(':required { outline: 1px solid var(--zen-pdf-danger); }')
+    expect(PDF_FORMS_CSS).not.toMatch(/solid red/)
+    // The widget's box is the document's: its corner stays the checkbox's 2, no larger radius.
+    expect(PDF_FORMS_CSS).not.toMatch(/border-radius: (?!2px)/)
+  })
+
+  it('takes its accent from the chrome’s default control accent – the one named constant – and not from a stray hex', () => {
+    // The widget tint is the chrome's own default: `DEFAULT_CONTROL_ACCENT_LIGHT`, mixed from the
+    // default accent as `--v2-accent` mixes it (40 % accent into black), not a literal of its own.
+    expect(PDF_FORMS_ACCENT).toBe(rgbToHex(DEFAULT_CONTROL_ACCENT_LIGHT))
+    expect(DEFAULT_CONTROL_ACCENT_LIGHT).toEqual(mix([0, 0, 0], DEFAULT_ACCENT, 0.4))
+    expect(PDF_FORMS_CSS).toContain(`--zen-pdf-accent: ${PDF_FORMS_ACCENT};`)
+    expect(PDF_FORMS_CSS).toContain(`fill:rgba(${DEFAULT_CONTROL_ACCENT_LIGHT.join(', ')}, 0.12);`)
+    expect(PDF_FORMS_CSS).toContain(`flood-color='rgb(${DEFAULT_CONTROL_ACCENT_LIGHT.join(',')})'`)
+    // Pinned to the sources of truth on both sides of the bridge: the chrome's `--zen-accent`
+    // (`main.css`, the base window's value) is the default accent the constant names, and the
+    // host's stand-in for the control accent (`colors.xml` `v2_accent_light`) is the tint.
+    const css = readFileSync(resolve(here, '../../renderer/src/assets/main.css'), 'utf8')
+    expect(css).toMatch(new RegExp(`^\\s*--zen-accent: ${rgbToHex(DEFAULT_ACCENT)};`, 'm'))
+    expect(css).toMatch(/^\s*--v2-accent: color-mix\(in srgb, var\(--zen-accent\) 40%, #000\);/m)
+    const colors = readFileSync(
+      resolve(here, '../../../android/app/src/main/res/values/colors.xml'),
+      'utf8'
+    )
+    const hostAccent = /<color name="v2_accent_light">(#[0-9A-Fa-f]{6})<\/color>/.exec(colors)
+    expect(hostAccent?.[1].toLowerCase()).toBe(PDF_FORMS_ACCENT)
+    // The danger edge is the light scheme's danger ink on both sides too.
+    expect(css).toMatch(new RegExp(`^\\s*--zen-danger: ${PDF_FORMS_DANGER};`, 'm'))
+    const hostDanger = /<color name="v2_danger_light">(#[0-9A-Fa-f]{6})<\/color>/.exec(colors)
+    expect(hostDanger?.[1].toLowerCase()).toBe(PDF_FORMS_DANGER)
   })
 })
 

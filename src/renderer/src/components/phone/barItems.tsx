@@ -19,6 +19,7 @@ import { updateDotAt } from '@renderer/lib/about'
 import { run } from '@renderer/lib/api'
 import { openSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import { toggleOverview } from '@renderer/lib/gestures/stage'
+import { noteTabSwitcherButtonUsed } from '@renderer/lib/iph'
 import { prepareNewTabGrow } from '@renderer/lib/newtab'
 import {
   activeTabIsPrivate,
@@ -162,7 +163,13 @@ export const BAR_ITEMS: Record<PhoneBarItemId, BarItem> = {
     glyph: ({ state, overviewOpen }) => (
       <TabCountBadge count={tabCount(state)} active={overviewOpen} />
     ),
-    run: ({ state }) => toggleOverview(state)
+    // The button's tap is Chrome's `tab_switcher_button_clicked`: a user who has found the
+    // button is not told about it (TB-19, lib/iph.ts). The pill's pull opens the same overview
+    // and counts for nothing there, as Chrome's swipe onto the switcher does not.
+    run: ({ state }) => {
+      noteTabSwitcherButtonUsed(state.settings)
+      toggleOverview(state)
+    }
   },
   'new-tab': {
     id: 'new-tab',

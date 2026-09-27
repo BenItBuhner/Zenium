@@ -654,6 +654,9 @@ export function createPreviewBridge(): NativeBridge {
       readAloud: true,
       files,
       downloadsDir: DOWNLOADS_DIR,
+      // The print verb the phone declares once its host has it (`view.printPdf`, CT-44): the
+      // viewer's Print row is up here, and prints to the console below.
+      pdfPrint: true,
       insets: { top: 0, right: 0, bottom: 0, left: 0 },
       fullscreen: false,
       // A screen lock as the vault has one: `vault=none` is a device without (the lock switch
@@ -1044,9 +1047,20 @@ export function createPreviewBridge(): NativeBridge {
     'view.savePage': () => null,
     'view.screenshot': () => null,
     // The preview's frames are the browser's own: no page geometry or capture to read, no
-    // Downloads collection to write (the capture UI's engine says so with null).
+    // Downloads collection to write (the capture UI's engine says so with null). A PDF copy the
+    // viewer's Save writes (CT-44) is the one file kept: in the stand-in downloader's folder, as
+    // the QR code's Download is, so the row's toast and the Downloads list show where it went.
     'view.viewport': () => null,
-    'download.saveFile': () => null,
+    'download.saveFile': ({ name, mimeType }) => {
+      if (mimeType !== 'application/pdf') return null
+      console.info('[zen preview] PDF copy kept in Downloads', name)
+      return `${DOWNLOADS_DIR}/${String(name)}`
+    },
+    // The system print flow with the viewer's PDF (`Platform.printPdf`): the word alone here.
+    'view.printPdf': ({ name }) => {
+      console.info('[zen preview] print', name)
+      return true
+    },
     'view.certificate': () => null,
     // The preview has no cookie jar of its own to look into: without a `sitedata=` state the
     // sheet shows the connection only; with one, the sample it names (previewSiteData.ts) stands
