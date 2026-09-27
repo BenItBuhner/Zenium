@@ -3,7 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import { Globe, Search, VenetianMask } from 'lucide-react'
 import { internalPageOf } from '@shared/internalPages'
 import { securityIndicator } from '@shared/siteInfo'
-import type { PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
+import type { PhoneBarItemId, PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
 import { displayHost } from '@shared/url'
 import { useBarHideBinding } from '@renderer/hooks/useBarHideBinding'
 import { useFullscreenAwayBinding } from '@renderer/hooks/useFullscreenAwayBinding'
@@ -31,6 +31,7 @@ import {
 import { closeOverview, overviewIsOpen, stageStore } from '@renderer/lib/gestures/stage'
 import type { TabSwitchState } from '@renderer/lib/gestures/stage'
 import { closeSpacesDrawer } from '@renderer/lib/gestures/drawer'
+import { hintBubbleStore } from '@renderer/lib/iph'
 import { mediaSession } from '@renderer/lib/media'
 import { barFade } from '@renderer/lib/motion/recede'
 import { focusHoldsChrome, focusOmnibox, omniboxFocusStore } from '@renderer/lib/omniboxFocus'
@@ -90,6 +91,7 @@ import { useFullscreenReturn } from './useFullscreenReturn'
 import { useGestureHint } from './useGestureHint'
 import { useGroupStrip, type GroupStripPresence } from './useGroupStrip'
 import { usePillGestures, type PillGestureHandlers } from './usePillGestures'
+import { useTabSwitcherHint } from './useTabSwitcherHint'
 import './phonePanels.css'
 
 interface Props {
@@ -285,19 +287,24 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   // `--zen-recede` on it).
   const messageFrameRef = useRef<HTMLDivElement>(null)
   useRecedeSurface(messageFrameRef)
-  // The one-time gesture hint (FRE-07) is a toast on the message cards, owed once the chrome is
-  // calm: a page in view under nothing, the bar and its pill in place, no drag, overview or prompt.
-  useGestureHint(
-    state,
-    edge,
+  // The chrome is calm: a page in view under nothing, the bar and its pill in place, no drag,
+  // overview or prompt. The one-time gesture hint (FRE-07), a toast on the message cards, and
+  // the tab switcher's in-product help bubble (TB-19, `useTabSwitcherHint`) are owed on it.
+  const calm =
     !onboarding &&
-      !htmlFullscreen &&
-      !barHidden &&
-      tab !== null &&
-      !overlayCoversContent(ui) &&
-      !overviewOpen &&
-      dock.phase === 'idle' &&
-      state.defaultBrowser.prompt !== 'sheet'
+    !htmlFullscreen &&
+    !barHidden &&
+    tab !== null &&
+    !overlayCoversContent(ui) &&
+    !overviewOpen &&
+    dock.phase === 'idle' &&
+    state.defaultBrowser.prompt !== 'sheet'
+  useGestureHint(state, edge, calm)
+  useTabSwitcherHint(state, edge, calm)
+  // The bubble's anchor pulses while the bubble is up (Chrome's `HighlightShape.CIRCLE` on the
+  // tab switcher button, `PulseDrawable`): the bar carries the item's id for the stylesheet.
+  const iphAnchor = hintBubbleStore.use((s) =>
+    s.bubble && !s.leaving ? s.bubble.anchorItem : null
   )
 
   // The pill is off its slot and Settings still name the edge it left: the bar there fades out
@@ -390,6 +397,7 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
           overviewOpen={overviewOpen}
           pillLook={dock.phase === 'idle' ? 'docked' : 'well'}
           pillAway={morph.away}
+          iphAnchor={iphAnchor}
           style={fromHere ? { opacity: barFade(edge, 1 - p) } : undefined}
         />
       )}
@@ -469,6 +477,7 @@ export function PhoneBar({
   overviewOpen,
   pillLook,
   pillAway,
+  iphAnchor,
   inert,
   style
 }: {
@@ -487,6 +496,8 @@ export function PhoneBar({
    * page's scroll carries the field into it. The slot still takes the pill's gestures.
    */
   pillAway?: boolean
+  /** The control an in-product help bubble points at right now (TB-19): the stylesheet pulses it. */
+  iphAnchor?: PhoneBarItemId | null
   /** A preview of the bar at the other edge: drawn, never pressed. */
   inert?: boolean
   style?: CSSProperties
@@ -550,6 +561,7 @@ export function PhoneBar({
         // The edge it is docked at: main.css fades the bottom-docked bar with a sheet (§11.1) and
         // slides it off by `--zen-bar-hide` as the page scrolls (lib/barHide.ts).
         data-edge={edge}
+        data-iph-anchor={iphAnchor && !inert ? iphAnchor : undefined}
         aria-hidden={inert || undefined}
         data-shell-chrome
         // A hidden bar stays in the accessibility tree: TalkBack focus landing on it (the pill,
