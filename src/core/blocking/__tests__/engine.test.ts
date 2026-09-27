@@ -1213,6 +1213,82 @@ describe('RuleEngine indexes', () => {
     for (const p of probes()) expect(e.decide(p)).toEqual(e.decideLinear(p))
   })
 
+  it('warm() builds every table now – a small set’s index inline, a large set’s in slices – and turns indexing on', async () => {
+    const e = new RuleEngine()
+    e.setRuleSet(set('a', [block(1, { urlFilter: '||ads.example^' })]))
+    e.setRuleSet(large('big', 2_500))
+    e.setRuleSet(set('empty', []))
+    expect(e.tableOf('a')).toBeNull()
+    expect(e.tableOf('big')).toBeNull()
+    e.warm()
+    // Every table is built at once; the small sets are indexed on the spot...
+    const tableA = e.tableOf('a')
+    expect(tableA?.size).toBe(1)
+    expect(e.indexOf('a')?.hostCount).toBe(1)
+    expect(e.tableOf('empty')?.size).toBe(0)
+    expect(e.indexOf('empty')).not.toBeNull()
+    // ...the large set's table is ready too, its index queued for the next ticks, as after a
+    // first decision.
+    const tableBig = e.tableOf('big')
+    expect(tableBig?.size).toBe(2_503)
+    expect(e.indexOf('big')).toBeNull()
+    // A decision meanwhile scans that table and builds nothing.
+    const linear = probes().map((p) => e.decideLinear(p))
+    expect(probes().map((p) => e.decide(p))).toEqual(linear)
+    expect(e.tableOf('big')).toBe(tableBig)
+    for (let i = 0; i < 50 && e.indexOf('big') === null; i++)
+      await new Promise((resolve) => setTimeout(resolve, 1))
+    expect(e.indexOf('big')?.hostCount).toBe(2_500)
+    expect(probes().map((p) => e.decide(p))).toEqual(linear)
+    // Idempotent: a second call rebuilds and re-queues nothing.
+    const indexA = e.indexOf('a')
+    const indexBig = e.indexOf('big')
+    e.warm()
+    e.buildIndexes()
+    expect(e.tableOf('a')).toBe(tableA)
+    expect(e.indexOf('a')).toBe(indexA)
+    expect(e.tableOf('big')).toBe(tableBig)
+    expect(e.indexOf('big')).toBe(indexBig)
+    // Indexing is on: a set set afterwards is indexed as it arrives (the existing path).
+    e.setRuleSet(set('later', [block(1, { requestDomains: ['t.example'] })]))
+    expect(e.tableOf('later')?.size).toBe(1)
+    expect(e.indexOf('later')?.hostCount).toBe(1)
+    expect(e.decide(req('https://t.example/x.js'))).toMatchObject({
+      action: 'block',
+      matched: { setId: 'later', ruleId: 1 }
+    })
+  })
+
+  it('warm() keeps a table the scan built and indexes it; after a decision, or with no sets, it is a no-op', () => {
+    const e = new RuleEngine()
+    // A no-op on an empty engine, and a later set is still indexed on arrival.
+    e.warm()
+    e.setRuleSet(
+      set('a', [block(1, { urlFilter: '||ads.example^' }), block(2, { urlFilter: '/banner/' })])
+    )
+    expect(e.indexOf('a')?.hostCount).toBe(1)
+    expect(e.indexOf('a')?.tokenIndexedCount).toBe(1)
+
+    const scanned = new RuleEngine()
+    scanned.setRuleSet(set('a', [block(1, { urlFilter: '||ads.example^' })]))
+    // The scan built the table without an index; the warm-up indexes that very table.
+    expect(scanned.decideLinear(req('https://ads.example/x.js')).action).toBe('block')
+    const table = scanned.tableOf('a')
+    expect(table).not.toBeNull()
+    expect(scanned.indexOf('a')).toBeNull()
+    scanned.warm()
+    expect(scanned.tableOf('a')).toBe(table)
+    expect(scanned.indexOf('a')?.hostCount).toBe(1)
+
+    const decided = new RuleEngine()
+    decided.setRuleSet(set('a', [block(1, { urlFilter: '||ads.example^' })]))
+    expect(decided.decide(req('https://ads.example/x.js')).action).toBe('block')
+    const built = { table: decided.tableOf('a'), index: decided.indexOf('a') }
+    decided.warm()
+    expect(decided.tableOf('a')).toBe(built.table)
+    expect(decided.indexOf('a')).toBe(built.index)
+  })
+
   it('agrees with the scan on a URL with user information, which the ||host^ matcher can meet there', () => {
     const e = new RuleEngine()
     e.setRuleSet(set('a', [block(1, { urlFilter: '||ads.example^' })]))
