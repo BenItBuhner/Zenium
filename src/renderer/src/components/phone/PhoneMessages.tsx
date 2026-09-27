@@ -16,6 +16,14 @@ import { MessageLayer } from '../messages/MessageLayer'
 interface Props {
   /** The edge the bar is docked at: the frame's box is the content column's (main.css). */
   edge: PhoneBarPosition
+  /**
+   * The window chrome is held inert by something that is not a sheet – a page's fullscreen
+   * (MOT-32, the shell's own hold) or the capture overlay (`CaptureOverlay`'s) – so the toast
+   * frame at the normal seat goes inert as the message frame does (`holdChromeInert` reaches
+   * `data-shell-chrome` alone, and the toast frame is none). Never while lifted: a sheet standing
+   * has the toast above it and in reach (§9.33, Q3), whatever else holds the chrome.
+   */
+  inert?: boolean
 }
 
 /** A sheet is on the chassis's stack right now (registered at its mount, released at its landing). */
@@ -50,9 +58,12 @@ function useSheetFooter(): number {
  * Otherwise it is the message frame's twin at the normal seat. Once no sheet stands the frame
  * comes back there, the toast still up on its clock; the stylesheet has it ride the sheet's own
  * progress (`--zen-recede`, written on the frame as on the message frame), so at the landing
- * the re-seat moves nothing. Never `inert`: nothing in it stands under a sheet.
+ * the re-seat moves nothing. Never `inert` while lifted: nothing in it stands under a sheet. At
+ * the normal seat it takes the chrome's non-sheet hold the shell passes (`inert`: a page's
+ * fullscreen, the capture overlay), as the message frame takes it through `data-shell-chrome`,
+ * so a toast under a fullscreen page is no TalkBack stop and takes no focus.
  */
-export function PhoneMessages({ edge }: Props): JSX.Element {
+export function PhoneMessages({ edge, inert = false }: Props): JSX.Element {
   const messageFrameRef = useRef<HTMLDivElement>(null)
   useRecedeSurface(messageFrameRef)
   const toastFrameRef = useRef<HTMLDivElement>(null)
@@ -83,6 +94,7 @@ export function PhoneMessages({ edge }: Props): JSX.Element {
         ref={seatRef}
         data-edge={edge}
         data-lifted={lifted || undefined}
+        inert={(inert && !lifted) || undefined}
         className={cn(
           'zen-message-frame zen-toast-frame pointer-events-none absolute',
           lifted ? 'z-[60]' : 'z-[36]'

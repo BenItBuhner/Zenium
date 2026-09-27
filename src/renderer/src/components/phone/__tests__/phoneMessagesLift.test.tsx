@@ -75,8 +75,9 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-const mount = (): void => {
-  act(() => root!.render(createElement(PhoneMessages, { edge: 'bottom' })))
+/** The frames as the shell mounts them; `inert` is the chrome's non-sheet hold the shell passes. */
+const mount = (inert = false): void => {
+  act(() => root!.render(createElement(PhoneMessages, { edge: 'bottom', inert })))
 }
 
 /** A sheet comes up on the chassis: on the stack from its mount, at its first detent. */
@@ -333,5 +334,49 @@ describe("the lifted frame's bottom edge: the sheet's edge, or its footer band's
     expect(css).toContain(
       ":root[data-form-factor='phone'] .zen-message-frame[data-edge='bottom'] {\n  top: calc(var(--zen-inset-top) + var(--zen-padding));\n  bottom: calc(var(--zen-inset-bottom) + var(--zen-phone-band));\n}"
     )
+  })
+})
+
+describe("the chrome's holds that are not a sheet's: a page's fullscreen, the capture overlay", () => {
+  it('a toast up under a fullscreen page is inert with the rest of the chrome: no TalkBack stop, no focus', () => {
+    // The shell holds the chrome for the page's fullscreen (MOT-32) and says so to the frames.
+    mount(true)
+    act(() => {
+      pushToast('Saved to Bookmarks', 'info', { duration: TOAST_UNDO_MS })
+    })
+    expect(lifted()).toBe(false)
+    expect(toastFrame().hasAttribute('inert')).toBe(true)
+    // The hold goes (the page leaves its fullscreen): the frame is in reach again, the toast
+    // still up on its clock.
+    mount(false)
+    expect(toastFrame().hasAttribute('inert')).toBe(false)
+    expect(toastFrame().querySelector('[role="status"]')?.textContent).toContain(
+      'Saved to Bookmarks'
+    )
+  })
+
+  it('a sheet standing has the toast above it and in reach, whatever else holds the chrome (Q3)', () => {
+    mount(true)
+    const sheet = openSheet()
+    act(() => {
+      allowAgain(() => undefined)
+    })
+    expect(lifted()).toBe(true)
+    expect(toastFrame().hasAttribute('inert')).toBe(false)
+    // The sheet lands while the hold stands: back at the normal seat, the frame is inert again.
+    closeSheet(sheet)
+    expect(lifted()).toBe(false)
+    expect(toastFrame().hasAttribute('inert')).toBe(true)
+  })
+
+  it("the hold the shell passes is the toast frame's alone: the message frame is shell chrome, the chrome hold's own", () => {
+    mount(true)
+    act(() => {
+      showBanner({ title: 'Translate this page?' })
+    })
+    // `holdChromeInert` marks `data-shell-chrome` itself; the prop writes nothing on that frame.
+    expect(messageFrame().hasAttribute('data-shell-chrome')).toBe(true)
+    expect(messageFrame().hasAttribute('inert')).toBe(false)
+    expect(toastFrame().hasAttribute('inert')).toBe(true)
   })
 })

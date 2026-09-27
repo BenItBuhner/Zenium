@@ -3142,9 +3142,9 @@ function takeStep(step: PreviewStep): void {
       return
     }
     case 'toast':
-      // A message raised at this point of the walk, on a still's clock like `toast=`'s: after a
-      // sheet's step it is born while that sheet stands and lifts above it (§9.33, PhoneMessages);
-      // before one it keeps the seat under the sheet.
+      // A message raised at this point of the walk, on a still's clock like `toast=`'s: up while
+      // a sheet stands – raised after the sheet's step, or before it and still up as the sheet
+      // opens – it lifts above the sheet (§9.33, PhoneMessages; Chrome's rule).
       pushToast(step.text, 'info', {
         action: step.action ? { label: step.action, onPick: () => undefined } : undefined,
         duration: 600_000

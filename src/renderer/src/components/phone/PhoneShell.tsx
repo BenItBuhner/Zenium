@@ -281,6 +281,12 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
     return holdChromeInert()
   }, [htmlFullscreen])
   useEffect(() => () => settleChromeAway(false), [])
+  // The holds on the chrome that are not a sheet's: this fullscreen hold, and the capture
+  // overlay's own (`CaptureOverlay`, mounted through `TabDialogs` while `ui.capture` stands; on
+  // its own scrim, off the sheet chassis). The toast frame is no shell chrome – a toast above a
+  // sheet must stay in reach (§9.33) – so the shell tells it of these holds itself, and it goes
+  // inert at the normal seat with the rest of the chrome (never while lifted).
+  const chromeHeld = htmlFullscreen || ui.capture !== null
   const windowRef = useRef<HTMLDivElement | null>(null)
   useFullscreenReturn(windowRef, state.window.htmlFullscreenTabId, bringChromeBack)
   // The chrome is calm: a page in view under nothing, the bar and its pill in place, no drag,
@@ -364,9 +370,10 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
         )}
       </main>
       {/* Messages sit on the content frame's box, over the bar and the stage but under sheets –
-          except a toast a sheet's act raised, which stands above the sheet (§9.33; the frames and
-          their seats are PhoneMessages'). */}
-      <PhoneMessages edge={edge} />
+          except a toast up while a sheet stands, raised by the sheet's act or up already as it
+          opened, which stands above the sheet (§9.33; the frames and their seats are
+          PhoneMessages'). */}
+      <PhoneMessages edge={edge} inert={chromeHeld} />
       <PhoneStage state={state} />
       {/* The bar's opacity is the chassis rule in main.css: docked at the bottom edge, where a
           sheet arrives, it fades by `1 − recede`, the sheet's progress (v2 draft §11.1); docked

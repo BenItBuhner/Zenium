@@ -36,9 +36,9 @@ export const PREVIEW_PULL_MAX = 2.5
  * `back` is one system back (the top sheet closes, a section pops), `overview` opens the tab
  * overview over the page, `urlbar` opens the pill for editing, `toast` raises a toast at that
  * point of the walk (`toast:<text>` or `toast:<text>|<action label>`, on a still's clock like
- * `toast=`'s): raised after a sheet's step it is a message that sheet's act raised, which stands
- * above the sheet (design language v2 §9.33); raised before one it is a message the sheet did
- * not cause, seated under it.
+ * `toast=`'s): raised after a sheet's step it stands above that sheet (design language v2
+ * §9.33); raised before one it is up as the sheet opens and lifts above it too, as Chrome
+ * re-parents whatever snackbar is showing into an open bottom sheet.
  */
 export type PreviewStep =
   | { kind: 'tap'; text: string }
