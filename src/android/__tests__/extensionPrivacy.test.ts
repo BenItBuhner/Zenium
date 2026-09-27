@@ -1,4 +1,5 @@
 import { DNR_BAND_SIZE, RULE_SET_PRIORITY, type RuleSet } from '@core/blocking/rules'
+import { EXTENSION_SETTING_KEYS } from '@shared/extensionSettings'
 import {
   INCOGNITO_ERROR,
   INCOGNITO_SCOPE_ERROR,
@@ -383,8 +384,21 @@ describe('AndroidPrivacy', () => {
       'privacy.thirdPartyCookies',
       'search.suggestions',
       'privacy.preloadPages',
-      'privacy.dnt'
+      'privacy.doNotTrack'
     ])
+    // One name per setting on both hosts: the table reads the services' constants (Do Not Track
+    // under `privacy.doNotTrack` since #508 – the phone said `privacy.dnt` until compat round 22).
+    expect(PRIVACY_CONTROL_KEYS.map(([, key]) => key)).toEqual([
+      EXTENSION_SETTING_KEYS.passwordSaving,
+      EXTENSION_SETTING_KEYS.autofillAddresses,
+      EXTENSION_SETTING_KEYS.autofillCards,
+      EXTENSION_SETTING_KEYS.safeBrowsing,
+      EXTENSION_SETTING_KEYS.thirdPartyCookies,
+      EXTENSION_SETTING_KEYS.searchSuggestions,
+      EXTENSION_SETTING_KEYS.preloadPages,
+      EXTENSION_SETTING_KEYS.doNotTrack
+    ])
+    expect(EXTENSION_SETTING_KEYS.doNotTrack).toBe('privacy.doNotTrack')
     // onChange: every holder of the permission, each with its own level; not the extension without it.
     expect(host.emitted).toEqual([
       {
@@ -429,13 +443,13 @@ describe('AndroidPrivacy', () => {
       levelOfControl: 'controlled_by_other_extensions'
     })
     expect(host.last()).toEqual({
-      'privacy.dnt': { extensionId: B, name: 'Ext B', value: false }
+      'privacy.doNotTrack': { extensionId: B, name: 'Ext B', value: false }
     })
     api.call(b, 'clear', ['websites', 'doNotTrackEnabled', {}])
     expect(api.effectiveValue('websites', 'doNotTrackEnabled', false)).toBe(true)
     expect(api.controller('websites', 'doNotTrackEnabled')).toBe(A)
     expect(host.last()).toEqual({
-      'privacy.dnt': { extensionId: A, name: 'Ext A', value: true }
+      'privacy.doNotTrack': { extensionId: A, name: 'Ext A', value: true }
     })
     // Disabled: A's value stops applying, the store keeps it; enabled again it applies at attach.
     host.detach(api, A)
@@ -461,7 +475,7 @@ describe('AndroidPrivacy', () => {
     expect(host.published).toEqual([
       {
         'passwords.offerToSave': { extensionId: A, name: 'iCloud Passwords', value: false },
-        'privacy.dnt': { extensionId: B, name: 'Later', value: false }
+        'privacy.doNotTrack': { extensionId: B, name: 'Later', value: false }
       }
     ])
     // The document-start layer went out from the store too; the rules wait for the engine.
@@ -475,7 +489,7 @@ describe('AndroidPrivacy', () => {
     host.attach(api, ext(B, 2, ['storage']))
     expect(host.last()).toEqual({
       'passwords.offerToSave': { extensionId: A, name: 'iCloud Passwords', value: false },
-      'privacy.dnt': { extensionId: A, name: 'iCloud Passwords', value: true }
+      'privacy.doNotTrack': { extensionId: A, name: 'iCloud Passwords', value: true }
     })
     expect(host.layers.map((l) => l.doNotTrack)).toEqual([true])
     expect(host.sets.get(PRIVACY_RULE_SET_ID)?.rules?.[0].action.requestHeaders).toEqual([
@@ -485,7 +499,7 @@ describe('AndroidPrivacy', () => {
     host.attach(api, ext(A, 1))
     expect(host.last()).toEqual({
       'passwords.offerToSave': { extensionId: A, name: 'Ext A', value: false },
-      'privacy.dnt': { extensionId: A, name: 'Ext A', value: true }
+      'privacy.doNotTrack': { extensionId: A, name: 'Ext A', value: true }
     })
     expect(host.layers).toHaveLength(1)
   })

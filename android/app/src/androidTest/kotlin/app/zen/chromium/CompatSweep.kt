@@ -9587,7 +9587,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * on, referrers and hyperlink auditing off, each read back as `controlled_by_this_extension`
      * (`webRTCIPHandlingPolicy` and the third-party cookies setting read as the browser answers
      * them). Then the controls core publishes (`UIState.extensionControls`: the desktop's keys
-     * `passwords.offerToSave` and `privacy.dnt` naming the probe), `navigator.doNotTrack` `'1'` in
+     * `passwords.offerToSave` and `privacy.doNotTrack` naming the probe), `navigator.doNotTrack` `'1'` in
      * the open echo document (the layer's script run in it) and in a fresh tab (registered at
      * document start), and the echo navigation repeated until the request the server received
      * carries `DNT: 1` and no `Referer` (`r1`: the runtime's rule set reaches the Kotlin engine
@@ -9612,7 +9612,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         extra.put("pageReady", ready == true)
         val set = probe(pageView, PRIVACY_PROBE_SET, "__zenP", scaled(15_000, factor))
         extra.put("set", set)
-        val published = poll(scaled(15_000, factor), 400) { publishedControls().takeIf { c -> c.optJSONObject("privacy.dnt")?.optString("extensionId") == row.id && c.optJSONObject("passwords.offerToSave")?.optString("extensionId") == row.id } } ?: publishedControls()
+        val published = poll(scaled(15_000, factor), 400) { publishedControls().takeIf { c -> c.optJSONObject("privacy.doNotTrack")?.optString("extensionId") == row.id && c.optJSONObject("passwords.offerToSave")?.optString("extensionId") == row.id } } ?: publishedControls()
         extra.put("published", published)
         val events1 = poll(scaled(5_000, factor), 300) { json(tabEval(pageView, "JSON.stringify(window.__zenEv||null)")).takeIf { it.optInt("dnt") >= 1 && it.optInt("passwords") >= 1 } }
             ?: json(tabEval(pageView, "JSON.stringify(window.__zenEv||null)"))
@@ -9630,13 +9630,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         closeTab(page)
         coreCall("extension.setEnabled", JSONObject().put("id", row.id).put("enabled", false).toString())
         val off = poll(scaled(20_000, factor), 400) { extensions().firstOrNull { it.getString("id") == row.id }?.takeIf { !it.getBoolean("enabled") } } != null
-        val goneFromMap = poll(scaled(10_000, factor), 400) { publishedControls().takeIf { !it.has("privacy.dnt") && !it.has("passwords.offerToSave") } } != null
+        val goneFromMap = poll(scaled(10_000, factor), 400) { publishedControls().takeIf { !it.has("privacy.doNotTrack") && !it.has("passwords.offerToSave") } } != null
         showTab(echoTab)
         val r2 = echoUntil(echoView, factor, 20, scaled(20_000, factor)) { dntOf(it) == null && refererOf(it) != null }
         extra.put("disabled", off).put("goneFromMapWhenDisabled", goneFromMap).put("r2", r2)
         coreCall("extension.setEnabled", JSONObject().put("id", row.id).put("enabled", true).toString())
         val on = poll(scaled(20_000, factor), 400) { extensions().firstOrNull { it.getString("id") == row.id }?.takeIf { it.getBoolean("enabled") } } != null
-        val backInMap = poll(scaled(15_000, factor), 400) { publishedControls().takeIf { it.optJSONObject("privacy.dnt")?.optString("extensionId") == row.id } } != null
+        val backInMap = poll(scaled(15_000, factor), 400) { publishedControls().takeIf { it.optJSONObject("privacy.doNotTrack")?.optString("extensionId") == row.id } } != null
         val r3 = echoUntil(echoView, factor, 40, scaled(20_000, factor)) { dntOf(it) == "1" && refererOf(it) == null }
         extra.put("enabledAgain", on).put("backInMapWhenEnabled", backInMap).put("r3", r3)
         val page2 = createTab("chrome-extension://${row.id}/probe.html")
@@ -9652,7 +9652,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         showTab(echoTab)
         val r4 = echoUntil(echoView, factor, 60, scaled(20_000, factor)) { dntOf(it) == null && refererOf(it) != null }
         extra.put("r4", r4)
-        val clearedFromMap = poll(scaled(10_000, factor), 400) { publishedControls().takeIf { !it.has("privacy.dnt") && !it.has("passwords.offerToSave") } } != null
+        val clearedFromMap = poll(scaled(10_000, factor), 400) { publishedControls().takeIf { !it.has("privacy.doNotTrack") && !it.has("passwords.offerToSave") } } != null
         extra.put("clearedFromMap", clearedFromMap)
         snap("$slug-cleared")
         closeTab(page2)
@@ -9663,8 +9663,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         fun held(probe: JSONObject): Boolean = wanted.all { (path, value) -> readOf(probe, path)?.let { it.optString("levelOfControl") == "controlled_by_this_extension" && it.has("value") && it.optBoolean("value", !value) == value } == true }
         val setsTook = wanted.keys.all { path -> stepOf(set, "set $path")?.let { it.isNull("err") && !it.has("threw") } == true } && held(set)
         val baselineOk = dntOf(r0) == null && refererOf(r0) != null
-        val publishedOk = published.optJSONObject("privacy.dnt")?.let { it.optString("extensionId") == row.id && it.optBoolean("value", false) } == true &&
-            published.optJSONObject("passwords.offerToSave")?.let { it.optString("extensionId") == row.id && !it.optBoolean("value", true) } == true
+        // One name for Do Not Track on both hosts (`EXTENSION_SETTING_KEYS.doNotTrack`, #508; the phone's table read it from compat round 22): the
+        // old `privacy.dnt` in the published map is a regression of the key row (the sweep reads the published map alone – no Kotlin row reads either key).
+        val oldDntKey = published.has("privacy.dnt")
+        extra.put("publishedDntKeys", JSONArray().apply { published.keys().asSequence().filter { it.contains("dnt", ignoreCase = true) || it.contains("doNotTrack") }.forEach { put(it) } })
+        val publishedOk = published.optJSONObject("privacy.doNotTrack")?.let { it.optString("extensionId") == row.id && it.optBoolean("value", false) } == true &&
+            published.optJSONObject("passwords.offerToSave")?.let { it.optString("extensionId") == row.id && !it.optBoolean("value", true) } == true &&
+            !oldDntKey
         val headerOk = dntOf(r1) == "1" && refererOf(r1) == null
         val navigatorOk = openDnt == "1" && freshDnt == "1"
         val disableOk = off && goneFromMap && dntOf(r2) == null && refererOf(r2) != null
@@ -9675,7 +9680,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val note = "baseline: Referer ${if (refererOf(r0) != null) "present" else "MISSING"}, DNT ${dntOf(r0) ?: "absent"}, navigator.doNotTrack ${r0.optString("navigatorDoNotTrack")}; " +
             "sets: " + wanted.keys.joinToString(", ") { path -> "${path.substringAfter('.')} → ${readOf(set, path)?.toString() ?: stepOf(set, "set $path")?.toString() ?: "no answer"}" } + "; " +
             "webRTCIPHandlingPolicy reads ${webRtc?.toString() ?: "no answer"} (stored and published only: WebView has no policy API); " +
-            "published: privacy.dnt ${published.optJSONObject("privacy.dnt")?.toString() ?: "absent"}, passwords.offerToSave ${published.optJSONObject("passwords.offerToSave")?.toString() ?: "absent"}; " +
+            "published: privacy.doNotTrack ${published.optJSONObject("privacy.doNotTrack")?.toString() ?: "absent"}${if (oldDntKey) " AND the old privacy.dnt key STILL published" else ""}, passwords.offerToSave ${published.optJSONObject("passwords.offerToSave")?.toString() ?: "absent"}; " +
             "navigator.doNotTrack in the open document $openDnt, in a fresh tab $freshDnt; " +
             "a document request then carries DNT ${dntOf(r1) ?: "absent"} and Referer ${refererOf(r1)?.let { "present" } ?: "absent"} (p=${r1.optInt("p")}); " +
             "disabled: DNT ${dntOf(r2) ?: "absent"}, Referer ${refererOf(r2)?.let { "present" } ?: "absent"}, the map ${if (goneFromMap) "without the probe" else "STILL naming it"}; " +
