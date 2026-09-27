@@ -12,9 +12,13 @@ import org.json.JSONObject
  * (`KeyboardShortcuts.createShortcutGroup`, Chrome 152 – any device with a keyboard, no tablet
  * gate). The rows are the core's shortcut table, the one [Keys] routes, sent with the bindings over
  * `keys.setShortcuts`; this object puts them in Chrome's groups, in Chrome's order, under Chrome's
- * words where the action is Chrome's and the desktop's menu label where it is Zenium's own. Only
- * the primary chord is listed, as in Chrome (the alternates route, unlisted). Pure – no Android
- * calls – so the JVM tests pin it.
+ * words where the action is Chrome's and, where it is Zenium's own, the table's `helperLabel` –
+ * the same sentence form as Chrome's rows ('Duplicate tab'; a product's name keeps its capitals,
+ * 'Toggle Split View grid') – or its Settings label where the table gives none. One register on
+ * the sheet, never a case transform of the Settings page's Title Case. Only the primary chord is
+ * listed, as in Chrome (the alternates route, unlisted); a row the build cannot perform
+ * (`unsupported`) or one reserved for a feature that has not shipped (`hidden`) routes unlisted.
+ * Pure – no Android calls – so the JVM tests pin it.
  */
 object ShortcutHelper {
     /** A chord as the core normalises it (`KeyBinding`): a lowercase character or a `KeyboardEvent.key` name. */
@@ -24,13 +28,18 @@ object ShortcutHelper {
     data class Row(
         val action: String,
         val group: String,
+        /** The Settings page's Title Case words; listed where the table gives no [helperLabel]. */
         val label: String,
         /** The primary chord; null when unbound. */
         val chord: Chord?,
         /** Reserved for a feature that has not shipped: routed, never listed. */
         val hidden: Boolean,
         /** The chrome layouts whose listings show the row; null when every layout does. */
-        val layouts: List<String>?
+        val layouts: List<String>?,
+        /** The helper's sentence-form words for a row Zenium alone has; null where the table gives none. */
+        val helperLabel: String? = null,
+        /** An action this build cannot perform: the chord routes (and says so), the row is never listed. */
+        val unsupported: Boolean = false
     )
 
     data class Item(val action: String, val label: String, val chord: Chord)
@@ -66,8 +75,8 @@ object ShortcutHelper {
         ChromeRow("window.close", TABS, "Close current window"),
         ChromeRow("tab.new", TABS, "Open a new tab"),
         ChromeRow("tab.reopenClosed", TABS, "Reopen closed tab"),
-        // Chrome: "Open a new tab in Incognito mode"; Zenium's noun is Private.
-        ChromeRow("window.newPrivate", TABS, "Open a new tab in Private mode"),
+        // Chrome: "Open a new tab in Incognito mode"; Zenium's noun is a private tab.
+        ChromeRow("window.newPrivate", TABS, "Open a new private tab"),
         ChromeRow("nav.reload", TABS, "Reload the current page"),
         ChromeRow("nav.reloadSkipCache", TABS, "Reload the current page, ignoring cached content"),
         ChromeRow("tab.close", TABS, "Close current tab"),
@@ -123,13 +132,14 @@ object ShortcutHelper {
 
     /**
      * The helper's groups for `layout` (`phone` or `tablet` – the chrome's `FormFactor` on Android).
-     * A row is listed when it has a primary chord, is not hidden, is not folded into another row,
-     * and its `layouts` (if any) name the layout. Chrome's rows come first within a group in
-     * Chrome's order; Zenium's own follow in the table's order.
+     * A row is listed when it has a primary chord, is not hidden, is not unsupported in this build,
+     * is not folded into another row, and its `layouts` (if any) name the layout. Chrome's rows
+     * come first within a group in Chrome's order, under Chrome's words; Zenium's own follow in the
+     * table's order, under the table's `helperLabel` (its Settings label where there is none).
      */
     fun groups(rows: List<Row>, layout: String): List<Group> {
         val listed = rows.filter { row ->
-            row.chord != null && !row.hidden && row.action !in FOLDED_INTO &&
+            row.chord != null && !row.hidden && !row.unsupported && row.action !in FOLDED_INTO &&
                 (row.layouts == null || layout in row.layouts)
         }
         val byAction = listed.associateBy { it.action }
@@ -143,10 +153,13 @@ object ShortcutHelper {
         }
         for (row in listed) {
             if (row.action in chromeRowByAction) continue
-            add(GROUP_OF[row.group] ?: FEATURES, Item(row.action, row.label, row.chord!!))
+            add(GROUP_OF[row.group] ?: FEATURES, Item(row.action, helperWords(row), row.chord!!))
         }
         return GROUP_ORDER.mapNotNull { title -> items[title]?.let { Group(title, it) } }
     }
+
+    /** The words the helper prints for a row of Zenium's own: the table's `helperLabel`, else its label. */
+    fun helperWords(row: Row): String = row.helperLabel ?: row.label
 
     /** Parse the `shortcuts` array of `keys.setShortcuts`. */
     fun parseRows(list: JSONArray): List<Row> {
@@ -161,7 +174,9 @@ object ShortcutHelper {
                     label = s.str("label"),
                     chord = s.optJSONObject("binding")?.let { parseChord(it) },
                     hidden = s.bool("hidden"),
-                    layouts = layouts
+                    layouts = layouts,
+                    helperLabel = if (s.isNull("helperLabel")) null else s.optString("helperLabel"),
+                    unsupported = s.bool("unsupported")
                 )
             )
         }

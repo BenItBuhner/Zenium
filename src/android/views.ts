@@ -1079,7 +1079,7 @@ export class AndroidTabViewHost implements TabViewHost, PlacementListener {
 
   /**
    * Kotlin pre-filters native key presses against `bindings`; the system's keyboard-shortcut
-   * helper (a Meta long-press) lists the table's rows in Chrome's groups, so the rows cross too.
+   * helper (Meta + /) lists the table's rows in Chrome's groups, so the rows cross too.
    */
   setShortcuts(bindings: KeyBinding[], table: readonly Shortcut[]): void {
     this.bridge.send('keys.setShortcuts', { bindings, shortcuts: helperShortcuts(table) })

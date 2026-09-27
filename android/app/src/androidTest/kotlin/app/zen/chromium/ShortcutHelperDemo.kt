@@ -37,9 +37,11 @@ import java.util.concurrent.TimeUnit
  * first (and before "System" on the classic dialog); every row `ShortcutHelper.groups(rows,
  * "tablet")` lists is there under its group; Chrome's rows carry Chrome's words (a sample read
  * literally, not through the object under test: "Open a new tab" drawn with Ctrl + T, "Close
- * current tab", "Reload the current page", "Jump to address bar", "Zoom in"); a `layouts:
- * ['desktop']` row of the core's table (Name Window…, Screenshot…, Task Manager; #588's Report an
- * issue…) is NOT listed; META + / again closes it (the system's toggle). Once in each colour
+ * current tab", "Reload the current page", "Jump to address bar", "Zoom in"); Zenium's own rows
+ * carry the table's sentence-form `helperLabel`, never the Settings page's Title Case; a `layouts:
+ * ['desktop']` row of the core's table (Name Window…, Screenshot…, Task Manager, the bookmarks
+ * bar, Compact Mode; #588's Report an issue…) is NOT listed, nor an `unsupported` one (the DevTools
+ * rows, View Page Source); META + / again closes it (the system's toggle). Once in each colour
  * scheme – light, then dark by the core's setting and the system's night mode, which the system
  * dialog follows – so the stills show both.
  *
@@ -215,13 +217,25 @@ class ShortcutHelperDemo : DemoHarness("shortcut-helper-demo-state.json", "short
         val chord = if (newTab >= 0) body.drop(newTab + 1).take(3).filter { it != "+" && it != "|" }.take(2) else emptyList()
         check("[$scheme] \"Open a new tab\" is drawn with its chord, Ctrl then T", chord == listOf("Ctrl", "T"), "after the label: $chord")
 
-        // The layouts: a desktop-only row of the core's table never reaches this listing (by its
-        // label, so a label a listed row happens to share is left out of the claim).
+        // The rows the sheet leaves out, by the words it would have printed for them (Chrome's for
+        // Chrome's rows, the table's helper words for Zenium's) and by their Settings label; a
+        // text a listed row happens to share is left out of the claim.
         val listedLabels = expected.flatMap { group -> group.items.map { it.label } }.toSet()
-        val desktopOnly = helperRows().filter { it.layouts != null && "tablet" !in it.layouts }.map { it.label }.filter { it !in listedLabels }
+        fun wordsOf(rows: List<ShortcutHelper.Row>): List<String> =
+            rows.flatMap { row -> listOf(sheetWords(row), row.label) }.distinct().filter { it !in listedLabels }
+        // The layouts: a desktop-only row of the core's table never reaches this listing.
+        val desktopOnly = wordsOf(helperRows().filter { it.layouts != null && "tablet" !in it.layouts })
         check("[$scheme] the desktop-only rows are not listed (${desktopOnly.size}: $desktopOnly)", desktopOnly.isNotEmpty() && desktopOnly.none { it in body }, "listed ${desktopOnly.filter { it in body }}")
-        val hiddenOrUnbound = helperRows().filter { it.chord == null || it.hidden }.map { it.label }.filter { it !in listedLabels }
+        // The table's `unsupported` (the DevTools rows and View Page Source on Android): routed, never listed.
+        val unsupported = wordsOf(helperRows().filter { it.unsupported })
+        check("[$scheme] the unsupported rows are not listed (${unsupported.size}: $unsupported)", unsupported.isNotEmpty() && unsupported.none { it in body }, "listed ${unsupported.filter { it in body }}")
+        val hiddenOrUnbound = wordsOf(helperRows().filter { it.chord == null || it.hidden })
         check("[$scheme] the unbound and hidden rows are not listed (${hiddenOrUnbound.size})", hiddenOrUnbound.none { it in body }, "listed ${hiddenOrUnbound.filter { it in body }}")
+        // One register on the sheet: a row of Zenium's own whose helper words differ from its
+        // Settings label is drawn under the helper words alone – the Title Case never reaches the sheet.
+        val byAction = helperRows().associateBy { it.action }
+        val titleCase = expected.flatMap { it.items }.mapNotNull { item -> byAction[item.action]?.label?.takeIf { it != item.label && it !in listedLabels } }
+        check("[$scheme] Zenium's rows are drawn under the table's helper words, never the Settings label (${titleCase.size} differ)", titleCase.isNotEmpty() && titleCase.none { it in body }, "listed ${titleCase.filter { it in body }}")
 
         SystemClock.sleep(800)
         shot("$scheme-tablet")
@@ -293,6 +307,10 @@ class ShortcutHelperDemo : DemoHarness("shortcut-helper-demo-state.json", "short
         instrumentation.runOnMainSync { rows = host.keys.helperRows }
         return rows
     }
+
+    /** The words the sheet prints for a row when it lists it: Chrome's for Chrome's rows, the table's helper words for Zenium's. */
+    private fun sheetWords(row: ShortcutHelper.Row): String =
+        ShortcutHelper.CHROME_ROWS.firstOrNull { it.action == row.action }?.label ?: ShortcutHelper.helperWords(row)
 
     // --- the addresses ----------------------------------------------------------------------------
 

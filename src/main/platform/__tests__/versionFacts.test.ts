@@ -42,8 +42,9 @@ const INPUT = {
 describe('desktopVersionFacts (SET-66)', () => {
   it("lays the process's facts out as Chrome's chrome://version rows", () => {
     expect(desktopVersionFacts(INPUT)).toEqual({
-      // Chrome on Linux x86_64: "<version> (Official Build) (x86_64)".
-      app: '0.5.9 (Official Build) (x86_64)',
+      // Chrome on Linux x86_64: "<version> (Official Build) (64-bit)" – the `#else` branch of
+      // VersionUI::VersionProcessorVariation; "(x86_64)" is macOS's alone.
+      app: '0.5.9 (Official Build) (64-bit)',
       engine: 'Chromium 152.0.7977.89 (Electron 44.0.0)',
       os: 'Linux 6.12.0',
       javascript: 'V8 15.2.100.1',
@@ -57,7 +58,7 @@ describe('desktopVersionFacts (SET-66)', () => {
   it('names an unpackaged run a Developer Build and the OS by its common name', () => {
     expect(
       desktopVersionFacts({ ...INPUT, packaged: false, osType: 'Darwin', osRelease: '23.2.0' }).app
-    ).toBe('0.5.9 (Developer Build) (x86_64)')
+    ).toBe('0.5.9 (Developer Build) (64-bit)')
     expect(desktopVersionFacts({ ...INPUT, osType: 'Darwin', osRelease: '23.2.0' }).os).toBe(
       'macOS 23.2.0'
     )
@@ -68,8 +69,9 @@ describe('desktopVersionFacts (SET-66)', () => {
   })
 
   it("follows VersionUI::VersionProcessorVariation's words per platform and processor", () => {
-    expect(processorVariation('linux', 'x64')).toBe('(x86_64)')
-    expect(processorVariation('linux', 'arm64')).toBe('(arm64)')
+    // Linux is Chrome's `#else`: the word width, arm64 included.
+    expect(processorVariation('linux', 'x64')).toBe('(64-bit)')
+    expect(processorVariation('linux', 'arm64')).toBe('(64-bit)')
     expect(processorVariation('linux', 'ia32')).toBe('(32-bit)')
     expect(processorVariation('darwin', 'arm64')).toBe('(arm64)')
     expect(processorVariation('darwin', 'x64')).toBe('(x86_64)')

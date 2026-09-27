@@ -48,9 +48,10 @@ const ARCH_32 = new Set(['ia32', 'arm', 'mips', 'ppc', 's390'])
 
 /**
  * Chrome's processor variation after the version (`VersionUI::VersionProcessorVariation`,
- * `version_ui_strings.grdp`): "(x86_64)" / "(arm64)" on macOS and Linux – "(x86_64 translated)"
- * under Rosetta – "(64-bit)" / "(32-bit)" on Windows, "(arm64)" for a Windows Arm build and
- * "emulated" for an x86 one running on Arm; "(64-bit)" / "(32-bit)" for any other platform.
+ * `version_ui_strings.grdp`): "(x86_64)" / "(arm64)" on macOS – "(x86_64 translated)" under
+ * Rosetta – "(64-bit)" / "(32-bit)" on Windows, "(arm64)" for a Windows Arm build and "emulated"
+ * for an x86 one running on Arm; "(64-bit)" / "(32-bit)" for any other platform, Linux included
+ * (Chrome's `#else` branch: an arm64 Linux prints "(64-bit)" too).
  */
 export function processorVariation(platform: string, arch: string, translated = false): string {
   if (platform === 'darwin') {
@@ -61,10 +62,6 @@ export function processorVariation(platform: string, arch: string, translated = 
     if (arch === 'arm64') return '(arm64)'
     if (arch === 'ia32') return translated ? '(32-bit emulated)' : '(32-bit)'
     return translated ? '(64-bit emulated)' : '(64-bit)'
-  }
-  if (platform === 'linux') {
-    if (arch === 'x64') return '(x86_64)'
-    if (arch === 'arm64') return '(arm64)'
   }
   return ARCH_32.has(arch) ? '(32-bit)' : '(64-bit)'
 }
