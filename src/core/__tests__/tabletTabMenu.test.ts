@@ -111,7 +111,11 @@ describe("TABLET-05: the tablet's tab menu carries Chrome's strip rows", () => {
     const h = tablet()
     h.browser.menus.showTabContextMenu(h.tabId, h.win)
     const direct = labels(h.shown())
+    const popups = h.popups()
     h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
+    // The command must pop a menu of its own before its rows are compared (a silent reroute
+    // would leave the direct call's popup as the last one shown).
+    expect(h.popups()).toBe(popups + 1)
     expect(labels(h.shown())).toEqual(direct)
     expect(direct[direct.length - 1]).toBe('Reopen Closed Tab')
   })
