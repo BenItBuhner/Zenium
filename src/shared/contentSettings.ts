@@ -491,8 +491,8 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
   {
     id: 'openExternal',
     label: 'Open other apps',
-    description: 'Sites can ask to open links in another application',
-    descriptions: { deny: 'Sites cannot open links in another application' },
+    description: 'Sites can ask to open links in another app',
+    descriptions: { deny: 'Sites cannot open links in another app' },
     group: 'additional',
     builtInDefault: 'ask',
     choices: ['ask', 'deny'],

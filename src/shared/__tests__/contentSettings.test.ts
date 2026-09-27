@@ -146,7 +146,7 @@ describe('the rows’ per-value description lines (services pass 11, seed 3)', (
         deny: 'Sites cannot show sign-in prompts from identity services'
       },
       'on-device-site-data': { deny: 'Sites cannot save data on your device' },
-      openExternal: { deny: 'Sites cannot open links in another application' },
+      openExternal: { deny: 'Sites cannot open links in another app' },
       'storage-access': {
         allow: 'Embedded sites can use the cookies they stored without asking',
         deny: 'Embedded sites cannot use the cookies they stored'
