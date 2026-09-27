@@ -573,13 +573,13 @@ describe("zen://newtab: the awaiting document comes in whole (NTP-35, the tablet
     asked(): number
   } {
     const pending = new Map<HTMLImageElement, { resolve(): void; reject(e: Error): void }>()
-    const spy = vi
-      .spyOn(HTMLImageElement.prototype, 'decode')
-      .mockImplementation(function (this: HTMLImageElement) {
-        return new Promise<void>((resolve, reject) => {
-          pending.set(this, { resolve, reject })
-        })
+    const spy = vi.spyOn(HTMLImageElement.prototype, 'decode').mockImplementation(function (
+      this: HTMLImageElement
+    ) {
+      return new Promise<void>((resolve, reject) => {
+        pending.set(this, { resolve, reject })
       })
+    })
     const of = (img: HTMLImageElement): { resolve(): void; reject(e: Error): void } => {
       const entry = pending.get(img)
       if (!entry) throw new Error('decode() was not asked of this image')

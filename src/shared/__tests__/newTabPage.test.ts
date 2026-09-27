@@ -349,7 +349,9 @@ describe("zen://newtab: the awaiting document (NTP-35, the tablet's served page)
     expect(awaiting.startsWith('<!doctype html><html lang="en" data-await-state><head>')).toBe(true)
     // Transparent while awaiting; the opacity change runs the language's 120 ms fade – under
     // reduced motion too (the rule below).
-    expect(NEW_TAB_AWAIT_STATE_STYLE).toContain(':root { transition: opacity 120ms var(--zen-ease); }')
+    expect(NEW_TAB_AWAIT_STATE_STYLE).toContain(
+      ':root { transition: opacity 120ms var(--zen-ease); }'
+    )
     expect(NEW_TAB_AWAIT_STATE_STYLE).toContain(':root[data-await-state] { opacity: 0; }')
     expect(NEW_TAB_AWAIT_STATE_STYLE).toContain(
       ':root { transition: opacity 120ms var(--zen-ease) !important; }'
@@ -358,9 +360,7 @@ describe("zen://newtab: the awaiting document (NTP-35, the tablet's served page)
     // Only the attribute and the appended rules: the page itself is the desktop's, so a fix to
     // either document is a fix to both.
     expect(
-      awaiting
-        .replace(' data-await-state><head>', '><head>')
-        .replace(NEW_TAB_AWAIT_STATE_STYLE, '')
+      awaiting.replace(' data-await-state><head>', '><head>').replace(NEW_TAB_AWAIT_STATE_STYLE, '')
     ).toBe(plain)
     expect(awaiting.split('data-await-state').length - 1).toBe(2)
   })
