@@ -132,7 +132,11 @@ function sync(enabled: boolean, openTabs = true): UIState['sync'] {
     syncing: false,
     devices: [],
     pendingMerge: false,
-    remoteTabsVersion: version
+    remoteTabsVersion: version,
+    transport: 'folder',
+    webdav: null,
+    webdavAvailable: false,
+    authRefused: false
   } as UIState['sync']
 }
 

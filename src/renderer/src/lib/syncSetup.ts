@@ -1,4 +1,4 @@
-import type { SyncScope, SyncStatus } from '@shared/types'
+import type { SyncScope, SyncStatus, SyncTransportKind, WebDavSyncCredentials } from '@shared/types'
 import { cmd } from './api'
 import { createStore } from './store'
 import { browserStore, forgetToast, uiStore } from './ui'
@@ -155,6 +155,10 @@ export async function turnOnSync(opts: {
   passphrase: string
   deviceName: string
   scope: SyncScope
+  /** Where the folder lives (ID-32); absent means a folder of this device's, as before. */
+  transport?: SyncTransportKind
+  /** The WebDAV server and its app password when `transport` is `webdav`; never kept here. */
+  webdav?: WebDavSyncCredentials
 }): Promise<string | null> {
   const seen = new Set(uiStore.get().toasts.map((t) => t.id))
   let refusal: string | null = null
