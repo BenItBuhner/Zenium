@@ -849,9 +849,55 @@ describe('unused site permissions in the browser (PS-41)', () => {
     expect(check.permissions.review).toEqual([
       { origin: 'https://kept.example', permissions: ['camera'], reason: 'unused' }
     ])
-    // Past 30 days the record is gone at the next check.
+    // The row is Chrome's module sentence in the info state while the list holds anything,
+    // ahead of the flagged grant's sentence.
+    expect(check.permissions.state).toBe('info')
+    expect(check.permissions.summary).toBe('Permissions removed from 1 site')
+    // Past 30 days the record is gone at the next check, and the row says what the grants say.
     vi.setSystemTime(T0 + REVOKED_PERMISSIONS_KEPT_MS)
-    expect(fx.command<SafetyCheckResult>('privacy.safetyCheck').permissions.revoked).toEqual([])
+    const later = fx.command<SafetyCheckResult>('privacy.safetyCheck')
+    expect(later.permissions.revoked).toEqual([])
+    expect(later.permissions.summary).toBe(
+      '1 site worth a look: unused permissions or several at once'
+    )
+  })
+
+  it('the row’s sentence counts the revoked sites – "Permissions removed from N sites" – and returns to today’s once they are reviewed', () => {
+    const fx = withStale('https://cam.example')
+    vi.setSystemTime(OLD)
+    fx.browser.permissions.set('geolocation', 'https://cam.example', 'allow')
+    fx.browser.permissions.set('midi', 'https://midi.example', 'allow')
+    vi.setSystemTime(T0)
+    const check = fx.command<SafetyCheckResult>('privacy.safetyCheck')
+    expect(check.permissions.revoked.map((r) => r.origin)).toEqual([
+      'https://cam.example',
+      'https://midi.example'
+    ])
+    expect(check.permissions).toMatchObject({
+      state: 'info',
+      summary: 'Permissions removed from 2 sites',
+      grantedSites: 0
+    })
+    // Got it: the list goes, no site holds a permission any more, the row is safe again.
+    fx.command('permissions.acknowledgeRevoked')
+    expect(fx.command<SafetyCheckResult>('privacy.safetyCheck').permissions).toMatchObject({
+      state: 'safe',
+      summary: 'No site holds extra permissions',
+      revoked: []
+    })
+    // Allow again on one site: it holds its permission (kept from the sweep) and the row counts it.
+    fx.command('permissions.restoreRevokedList', {
+      records: check.permissions.revoked.map((r) => ({
+        ...r,
+        expiresAt: r.revokedAt + REVOKED_PERMISSIONS_KEPT_MS
+      }))
+    })
+    fx.command('permissions.regrantRevoked', { origin: 'https://midi.example' })
+    expect(fx.command<SafetyCheckResult>('privacy.safetyCheck').permissions).toMatchObject({
+      state: 'info',
+      summary: 'Permissions removed from 1 site',
+      grantedSites: 1
+    })
   })
 
   it('the review’s commands: Allow again and its undo, Got it and its undo, through the command map', () => {

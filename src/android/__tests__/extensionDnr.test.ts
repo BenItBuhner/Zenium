@@ -29,6 +29,7 @@ class FakeHost implements DnrHost {
   readonly badges: Array<{ id: string; tabId: number; text: string }> = []
   readonly emitted: Array<{ id: string; ns: string; name: string; args: unknown[] }> = []
   readonly warnings: string[] = []
+  readonly reads: string[] = []
   order: string[] = []
   clock = 1_700_000_000_000
   readonly io: StoreIO = {
@@ -49,6 +50,7 @@ class FakeHost implements DnrHost {
   }
 
   async readFile(extensionId: string, path: string): Promise<string | null> {
+    this.reads.push(`${extensionId}/${path}`)
     return this.files.get(`${extensionId}/${path}`) ?? null
   }
 
@@ -197,6 +199,56 @@ describe('AndroidDeclarativeNetRequest: rule sets in the engine', () => {
     expect(engine.decide({ ...ctx, partition: 'private' }).action).toBe('allow')
     expect(await dnr.call(ext, 'getEnabledRulesets', [])).toEqual(['r1'])
     expect(dnr.extensionIds()).toEqual([ID])
+  })
+
+  it("lets the core's copy of a static ruleset go once the engine has the set, and reads the file again for testMatchOutcome", async () => {
+    const { host, engine, dnr } = setUp()
+    const ext = attached(host, {
+      source: 'unpacked',
+      rulesets: [
+        { id: 'r1', enabled: true, path: 'rules.json' },
+        { id: 'r2', enabled: false, path: 'more.json' }
+      ],
+      rules: {
+        'rules.json': [
+          { id: 1, action: { type: 'block' }, condition: { urlFilter: '||ads.example^' } },
+          { id: 2, action: { type: 'block' }, condition: { urlFilter: '||trk.example^' } }
+        ],
+        'more.json': [
+          { id: 1, action: { type: 'block' }, condition: { urlFilter: '||px.example^' } }
+        ]
+      }
+    })
+    dnr.load(ext)
+    await dnr.whenSynced(ID)
+    const state = dnr.stateOf(ID)!
+    // The set is in the engine; the core holds the counts and no rules.
+    expect(engine.summary(STATIC)?.ruleCount).toBe(2)
+    expect(host.reads).toEqual([`${ID}/rules.json`])
+    expect(state.residentStaticRules()).toEqual([])
+    expect(state.rereads()).toBe(0)
+    expect(await dnr.call(ext, 'getEnabledRulesets', [])).toEqual(['r1'])
+    expect(state.enabledStaticRuleCount()).toBe(2)
+    expect(host.reads).toHaveLength(1)
+
+    // The matcher's call reads the file again and lets it go again.
+    const outcome = (await dnr.call(ext, 'testMatchOutcome', [
+      { url: 'https://trk.example/p.gif', type: 'image', initiator: 'https://site.test' }
+    ])) as { matchedRules: Array<{ ruleId: number; rulesetId: string }> }
+    expect(outcome.matchedRules).toEqual([{ ruleId: 2, rulesetId: 'r1' }])
+    expect(host.reads).toEqual([`${ID}/rules.json`, `${ID}/rules.json`])
+    expect(state.rereads()).toBe(1)
+    expect(state.residentStaticRules()).toEqual([])
+
+    // Enabling the second ruleset reads it for its counts, the sync takes it, and it is let go.
+    await dnr.call(ext, 'updateEnabledRulesets', [{ enableRulesetIds: ['r2'] }])
+    await dnr.whenSynced(ID)
+    expect(engine.summary(engineSetId(ID, { kind: 'static', rulesetId: 'r2' }))?.ruleCount).toBe(1)
+    expect(host.reads).toHaveLength(3)
+    expect(state.residentStaticRules()).toEqual([])
+    expect(state.rereads()).toBe(1)
+    // The unchanged first set was not read again for the second one's arrival.
+    expect(engine.summary(STATIC)?.ruleCount).toBe(2)
   })
 
   it('a ruleset the manifest leaves disabled stays out until updateEnabledRulesets', async () => {

@@ -401,6 +401,60 @@
     margin: 0;
     padding: 0 16px;
   }
+  /*
+   * The bookmark editor's pane swap (HB-16; the lead on #630): the form and the folder pane are
+   * one sheet's two faces, and each comes in on the 120 ms `--zen-ease` state change (v2 §11,
+   * v1 §7's tokens; transform and opacity alone) – a fade with the depth idiom's 24 px settle
+   * (`Level`'s push, primitives.tsx), from the end edge going into the pane and from the start
+   * edge coming back to the form, the side `data-from` names (the pane it replaced);
+   * no `data-from` on the sheet's first open, whose entrance is the sheet's own slide. No fill
+   * mode: the last frame is the pane's own resting style, and a filling animation would keep the
+   * settled pane on a compositor layer (its text rasterised there, not with the sheet's). Under
+   * reduced motion the swap keeps its fade and loses its movement (§11.3 as the lead read it on
+   * #563 and on #630's fold: the 24 px settle goes, the opacity's 120 ms stays) – re-declared
+   * below, `!important` and inside this layer, since main.css's unlayered remover sets
+   * `animation: none !important` on everything and a layered important declaration is what
+   * beats an unlayered one; the one fade for both directions, no side drawn.
+   */
+  .zen-bookmark-edit-pane[data-from] {
+    animation: zen-bookmark-edit-pane-in 120ms var(--zen-ease);
+  }
+  .zen-bookmark-edit-pane[data-from='folder'] {
+    animation-name: zen-bookmark-edit-pane-back;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .zen-bookmark-edit-pane[data-from] {
+      animation: zen-bookmark-edit-pane-fade 120ms var(--zen-ease) !important;
+    }
+  }
+  @keyframes zen-bookmark-edit-pane-in {
+    from {
+      opacity: 0;
+      transform: translateX(24px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes zen-bookmark-edit-pane-back {
+    from {
+      opacity: 0;
+      transform: translateX(-24px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes zen-bookmark-edit-pane-fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
 }
 
 /*

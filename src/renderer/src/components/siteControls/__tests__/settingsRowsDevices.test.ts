@@ -69,6 +69,7 @@ function groups(patch: Partial<UIState> = {}, platform = 'linux'): RowGroup[] {
     permissionDefaults: {},
     permissionRules: [],
     deviceGrants: [],
+    settings: { autoRevokeUnusedPermissions: true },
     ...patch
   } as unknown as UIState
   return siteSettingsGroups({ state } as unknown as SectionContext)

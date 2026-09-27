@@ -9,6 +9,7 @@ import {
   MAX_NUMBER_OF_REGEX_RULES,
   MAX_NUMBER_OF_SESSION_RULES,
   MAX_NUMBER_OF_UNSAFE_DYNAMIC_RULES,
+  MAX_STATIC_RULES_PER_PROFILE,
   MATCHED_RULE_LIFESPAN_MS,
   GETMATCHEDRULES_QUOTA_INTERVAL
 } from '../limits'
@@ -25,6 +26,7 @@ import {
   ERROR_INCREMENT_WITHOUT_BADGE_TEXT,
   ERROR_INTERNAL_UPDATING_ENABLED_RULESETS,
   ERROR_OVER_QUOTA,
+  ERROR_RULESET_READ_AGAIN_FAILED,
   ERROR_SESSION_REGEX_RULE_COUNT_EXCEEDED,
   ERROR_SESSION_RULE_COUNT_EXCEEDED,
   UNKNOWN_TAB_ID,
@@ -40,6 +42,7 @@ import {
   type MatchedRuleInfoDebug,
   type RequestDetails
 } from '../state'
+import { testMatchOutcome } from '../api'
 import type { Rule } from '../rules'
 import { EXTENSION_ID, blockRule, rule } from './fixtures'
 
@@ -58,6 +61,7 @@ class FakeIO implements DnrStateIO {
   warnings: string[] = []
   failSave = false
   globalStaticRulePool?: GlobalStaticRulePool
+  rereadsStaticRulesets?: boolean
 
   constructor(pool?: GlobalStaticRulePool) {
     if (pool) this.globalStaticRulePool = pool
@@ -178,7 +182,7 @@ describe('loading', () => {
     // The invalid persisted dynamic rule is dropped silently.
     expect((await state.getDynamicRules()).map((r) => r.id)).toEqual([1])
     expect(io.saves).toBe(0)
-    const matcher = state.matcherRulesets()
+    const matcher = await state.matcherRulesets()
     expect(matcher.map((r) => r.id)).toEqual(['b', '_dynamic', '_session'])
     expect(matcher[0]?.disabledRuleIds).toEqual(new Set([2]))
   })
@@ -271,7 +275,7 @@ describe('loading', () => {
     const state = make(io, { ruleResources: [resource('a')] })
     await state.load()
     expect(state.ruleCounts().static.rules).toBe(2)
-    expect(state.matcherRulesets()[0]?.rules.map((r) => r.id)).toEqual([1, 4])
+    expect((await state.matcherRulesets())[0]?.rules.map((r) => r.id)).toEqual([1, 4])
   })
 })
 
@@ -343,7 +347,7 @@ describe('updateStaticRules', () => {
     ).rejects.toThrow('Invalid ruleset id: zzz.')
     await state.updateStaticRules({ rulesetId: 'a', disableRuleIds: [3, 1, 99] })
     expect(await state.getDisabledRuleIds({ rulesetId: 'a' })).toEqual([1, 3, 99])
-    expect(state.matcherRulesets()[0]?.disabledRuleIds).toEqual(new Set([1, 3, 99]))
+    expect((await state.matcherRulesets())[0]?.disabledRuleIds).toEqual(new Set([1, 3, 99]))
     expect(state.translateInput().rulesets[0]?.disabledRuleIds).toEqual(new Set([1, 3, 99]))
     expect(io.persisted?.disabledStaticRuleIds).toEqual({ a: [1, 3, 99] })
     // An id in both lists ends up enabled.
@@ -399,7 +403,7 @@ describe('dynamic and session rules', () => {
     const reloaded = make(io)
     expect((await reloaded.getDynamicRules()).map((r) => r.id)).toEqual([2, 1])
     expect(reloaded.translateInput().rulesets).toEqual([
-      { source: 'dynamic', rules: reloaded.matcherRulesets()[0]?.rules }
+      { source: 'dynamic', rules: (await reloaded.matcherRulesets())[0]?.rules }
     ])
   })
 
@@ -519,7 +523,7 @@ describe('translateInput and matcherRulesets', () => {
       ['dynamic', undefined, undefined, undefined],
       ['session', undefined, undefined, undefined]
     ])
-    expect(state.matcherRulesets().map((r) => [r.id, r.source, r.manifestIndex])).toEqual([
+    expect((await state.matcherRulesets()).map((r) => [r.id, r.source, r.manifestIndex])).toEqual([
       ['b', 'static', 0],
       ['a', 'static', 1],
       ['_dynamic', 'dynamic', undefined],
@@ -716,5 +720,156 @@ describe('formatMessage', () => {
     expect(formatMessage('No tab with id: *.', 4)).toBe('No tab with id: 4.')
     expect(formatMessage('* and *', 'a', 'b')).toBe('a and b')
     expect(formatMessage('* and *', 'a')).toBe('a and *')
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+
+describe('a host that re-reads static rulesets (DnrStateIO.rereadsStaticRulesets)', () => {
+  const reader = (state: DnrState, id: string): (() => Promise<readonly unknown[]>) => {
+    const ruleset = state.translateInput().rulesets.find((r) => r.rulesetId === id)
+    if (!ruleset || typeof ruleset.rules !== 'function') throw new Error(`${id}: no reader`)
+    return ruleset.rules
+  }
+
+  test('hands the rules over through a reader and lets its copy go; the counts stand without a read', async () => {
+    const io = new FakeIO()
+      .ruleset('rules/a.json', blocks(5))
+      .ruleset('rules/b.json', [...blocks(2, 'b'), ...regexRules(1, 3)])
+    io.rereadsStaticRulesets = true
+    const state = make(io, { ruleResources: [resource('a'), resource('b')] })
+    await state.load()
+    // Read once each for the counts; held until the translator takes them.
+    expect(io.reads).toEqual(['rules/a.json', 'rules/b.json'])
+    expect(state.residentStaticRules()).toEqual(['a', 'b'])
+    const input = state.translateInput(2)
+    expect(input.rulesets.map((r) => typeof r.rules)).toEqual(['function', 'function'])
+    expect(input.rulesets.every((r) => r.identity !== undefined)).toBe(true)
+    // The same identity at every hand-over: the translator's unchanged check stands on it.
+    expect(state.translateInput().rulesets[0]!.identity).toBe(input.rulesets[0]!.identity)
+
+    const a = await reader(state, 'a')()
+    expect(a.map((r) => (r as { id: number }).id)).toEqual([1, 2, 3, 4, 5])
+    expect(state.residentStaticRules()).toEqual(['b'])
+    expect(await reader(state, 'b')()).toHaveLength(3)
+    expect(state.residentStaticRules()).toEqual([])
+    expect(io.reads).toHaveLength(2)
+    expect(state.rereads()).toBe(0)
+
+    // Every count comes from the summaries: no file is read again for them.
+    expect(state.enabledStaticRuleCount()).toBe(8)
+    expect(state.ruleCounts().static).toEqual({ rules: 8, unsafeRules: 0, regexRules: 1 })
+    expect(await state.getAvailableStaticRuleCount()).toBe(
+      MAX_STATIC_RULES_PER_PROFILE + GUARANTEED_MINIMUM_STATIC_RULES - 8
+    )
+    expect(await state.getEnabledRulesets()).toEqual(['a', 'b'])
+    expect(io.reads).toHaveLength(2)
+  })
+
+  test('reads the file again for the matcher and for a second hand-over, and lets it go again', async () => {
+    const io = new FakeIO().ruleset('rules/a.json', blocks(3))
+    io.rereadsStaticRulesets = true
+    const state = make(io, { ruleResources: [resource('a')] })
+    await state.load()
+    await reader(state, 'a')()
+    expect(state.residentStaticRules()).toEqual([])
+
+    const rulesets = await state.matcherRulesets()
+    expect(rulesets.map((r) => [r.id, r.rules.length])).toEqual([
+      ['a', 3],
+      ['_dynamic', 0],
+      ['_session', 0]
+    ])
+    expect(io.reads).toEqual(['rules/a.json', 'rules/a.json'])
+    expect(state.rereads()).toBe(1)
+    expect(state.residentStaticRules()).toEqual([])
+
+    // A rank change makes the translator emit the set again: the reader reads again.
+    expect(await reader(state, 'a')()).toHaveLength(3)
+    expect(state.rereads()).toBe(2)
+    expect(state.residentStaticRules()).toEqual([])
+    // The API's request path goes through the same re-read.
+    const outcome = await testMatchOutcome(state, { url: 'https://x.test/x0', type: 'image' })
+    expect(outcome.matchedRules).toEqual([{ ruleId: 1, rulesetId: 'a' }])
+    expect(state.rereads()).toBe(3)
+  })
+
+  test('a file that cannot be read again fails that call alone; the counts and the enabled set stand', async () => {
+    const io = new FakeIO()
+      .ruleset('rules/a.json', blocks(4))
+      .ruleset('rules/b.json', blocks(1, 'b'))
+    io.rereadsStaticRulesets = true
+    const state = make(io, { ruleResources: [resource('a'), resource('b')] })
+    await state.load()
+    await reader(state, 'a')()
+    await reader(state, 'b')()
+
+    io.files.delete('rules/a.json')
+    await expect(state.matcherRulesets()).rejects.toThrow(
+      formatMessage(ERROR_RULESET_READ_AGAIN_FAILED, 'a')
+    )
+    await expect(reader(state, 'a')()).rejects.toThrow(
+      formatMessage(ERROR_RULESET_READ_AGAIN_FAILED, 'a')
+    )
+    expect(state.rereads()).toBe(2)
+    expect(await state.getEnabledRulesets()).toEqual(['a', 'b'])
+    expect(state.enabledStaticRuleCount()).toBe(5)
+    expect(state.ruleCounts().static.rules).toBe(5)
+    expect(state.warnings).toEqual([])
+    // The file back, the next call reads it.
+    io.ruleset('rules/a.json', blocks(4))
+    expect((await state.matcherRulesets())[0]!.rules).toHaveLength(4)
+  })
+
+  test('a ruleset read for its counts and refused, or enabled and then taken, is not kept', async () => {
+    const io = new FakeIO(createGlobalStaticRulePool(0, 4))
+      .ruleset('rules/a.json', blocks(3))
+      .ruleset('rules/b.json', blocks(3, 'b'))
+      .ruleset('rules/c.json', blocks(1, 'c'))
+    io.rereadsStaticRulesets = true
+    const state = make(io, {
+      ruleResources: [resource('a'), resource('b', false), resource('c', false)]
+    })
+    await state.load()
+    await reader(state, 'a')()
+    expect(io.reads).toEqual(['rules/a.json'])
+
+    // b is read for its counts, refused over the budget and let go at once.
+    await expect(state.updateEnabledRulesets({ enableRulesetIds: ['b'] })).rejects.toThrow(
+      ERROR_ENABLED_RULESETS_RULE_COUNT_EXCEEDED
+    )
+    expect(io.reads).toEqual(['rules/a.json', 'rules/b.json'])
+    expect(state.residentStaticRules()).toEqual([])
+    expect(await state.getEnabledRulesets()).toEqual(['a'])
+
+    // c fits: read for its counts, held until the translator takes it, then let go.
+    await state.updateEnabledRulesets({ enableRulesetIds: ['c'] })
+    expect(state.residentStaticRules()).toEqual(['c'])
+    expect(state.enabledStaticRuleCount()).toBe(4)
+    await reader(state, 'c')()
+    expect(state.residentStaticRules()).toEqual([])
+    // b's summary was kept with the refusal: enabling it after a is gone reads nothing again.
+    await state.updateEnabledRulesets({ disableRulesetIds: ['a'], enableRulesetIds: ['b'] })
+    expect(io.reads).toEqual(['rules/a.json', 'rules/b.json', 'rules/c.json'])
+    expect(await state.getEnabledRulesets()).toEqual(['b', 'c'])
+    expect(state.enabledStaticRuleCount()).toBe(4)
+    // b's rules were let go with the refusal: the hand-over reads the file again.
+    expect(await reader(state, 'b')()).toHaveLength(3)
+    expect(state.rereads()).toBe(1)
+  })
+
+  test('without the capability the rules come in hand and stay resident; nothing is read twice', async () => {
+    const io = new FakeIO().ruleset('rules/a.json', blocks(3))
+    const state = make(io, { ruleResources: [resource('a')] })
+    await state.load()
+    const input = state.translateInput()
+    expect(Array.isArray(input.rulesets[0]!.rules)).toBe(true)
+    expect(input.rulesets[0]!.identity).toBeDefined()
+    expect(state.residentStaticRules()).toEqual(['a'])
+    const rulesets = await state.matcherRulesets()
+    expect(rulesets[0]!.rules).toBe(input.rulesets[0]!.rules)
+    expect(state.residentStaticRules()).toEqual(['a'])
+    expect(io.reads).toEqual(['rules/a.json'])
+    expect(state.rereads()).toBe(0)
   })
 })
