@@ -27,8 +27,16 @@ import { SYNC_DIR_NAME, type SyncTransport } from './transport'
  * Authentication is Basic with an APP PASSWORD (Nextcloud › Settings › Security), never the
  * account password: the header is built once and never written to a log or an error, and no
  * error carries the URL or the body. Every response class is a typed `WebDavError` for the
- * engine: 401 / 403 `auth`, 404 `missing`, 412 / 423 `conflict` (the engine runs the round
- * again), 5xx and network failures `unavailable`, everything else `refused`.
+ * engine: 401 `auth` (a new app password is the way out), 403 `forbidden` (signed in, the folder
+ * not allowed), 404 `missing`, 412 / 423 `conflict` (the engine runs the round again), 3xx
+ * `redirect` (followed never: the Authorization header must not cross to another origin), 5xx
+ * and network failures `unavailable`, everything else `refused` – a 200, or a 207 without a
+ * multistatus, where RFC 4918 §9.1 has a multistatus come, is a web page and not a server.
+ *
+ * A 409 on a write is the directory gone from under the transport (another client removed the
+ * folder; RFC 4918 §9.7.1): it is made again and the write run once more. A 404 on the listing
+ * forgets the directory too. The temporary file of a failed MOVE is removed whether the MOVE
+ * answered or threw.
  */
 
 /** The folder under the DAV root when the user leaves the field as it is. */
@@ -69,11 +77,17 @@ export function isWebDavError(error: unknown): error is WebDavError {
   )
 }
 
-/** The class a status falls in, as the engine acts on it. */
+/**
+ * The class a status falls in, as the engine acts on it. 403 is not `auth`: the sign-in was
+ * accepted and the server refuses the folder (a share without write, a path outside the
+ * account) – a new app password changes nothing there, so the engine must not ask for one.
+ */
 export function classifyStatus(status: number): WebDavErrorKind {
-  if (status === 401 || status === 403) return 'auth'
+  if (status === 401) return 'auth'
+  if (status === 403) return 'forbidden'
   if (status === 404) return 'missing'
   if (status === 412 || status === 423) return 'conflict'
+  if (status >= 300 && status < 400) return 'redirect'
   if (status >= 500 || status === 0) return 'unavailable'
   return 'refused'
 }
@@ -392,10 +406,24 @@ export class WebDavTransport implements SyncTransport {
       headers: { Depth: '1', 'Content-Type': 'application/xml; charset=utf-8' },
       body: PROPFIND_BODY
     })
-    // No directory yet: the folder is empty as far as the engine is concerned.
-    if (reply.status === 404) return []
-    if (reply.status !== 207 && reply.status !== 200) throw this.error('PROPFIND', reply.status)
-    return namesInListing(parseMultistatus(reply.text), this.dir)
+    // No directory yet (or no longer): the folder is empty as far as the engine is concerned,
+    // and the next write makes the directory again.
+    if (reply.status === 404) {
+      this.dirEnsured = false
+      return []
+    }
+    // As the probe has it (RFC 4918 §9.1): a listing is a 207 with a multistatus that names at
+    // least the directory itself; a 200, or a 207 with anything else in it, is a web page.
+    if (reply.status !== 207) throw this.error('PROPFIND', reply.status)
+    const entries = parseMultistatus(reply.text)
+    if (entries.length === 0)
+      throw new WebDavError(
+        'refused',
+        reply.status,
+        'PROPFIND',
+        'WebDAV PROPFIND answered 207 without a multistatus'
+      )
+    return namesInListing(entries, this.dir)
   }
 
   async read(name: string): Promise<string | null> {
@@ -419,6 +447,20 @@ export class WebDavTransport implements SyncTransport {
   async write(name: string, text: string): Promise<void> {
     const target = this.documentUrl(name)
     await this.ensureDir()
+    try {
+      await this.put(name, target, text)
+    } catch (error) {
+      // 409 Conflict on a PUT or a MOVE is the directory gone from under the transport (another
+      // client removed the folder; RFC 4918 §9.7.1): made again, the write run once more.
+      if (!isWebDavError(error) || error.status !== 409) throw error
+      this.dirEnsured = false
+      await this.ensureDir()
+      await this.put(name, target, text)
+    }
+  }
+
+  /** One write into the directory as it stands: PUT-then-MOVE, or PUT in place where MOVE is refused. */
+  private async put(name: string, target: string, text: string): Promise<void> {
     if (!this.moveRefused) {
       const tmpName = `${name}.tmp-${this.random()}`
       const tmp = this.documentUrl(tmpName)
@@ -427,9 +469,17 @@ export class WebDavTransport implements SyncTransport {
         body: text
       })
       if (!success(put.status)) throw this.error('PUT', put.status)
-      const move = await this.request('MOVE', tmp, {
-        headers: { Destination: target, Overwrite: 'T' }
-      })
+      let move: Reply
+      try {
+        move = await this.request('MOVE', tmp, {
+          headers: { Destination: target, Overwrite: 'T' }
+        })
+      } catch (error) {
+        // No answer to the MOVE (the network, the timeout): the temporary file may well be
+        // there, and must not stay behind – best effort, the failure itself is what is reported.
+        await this.request('DELETE', tmp).catch(() => undefined)
+        throw error
+      }
       if (success(move.status)) {
         // The destination's ETag is not in a MOVE reply: the next read fetches it whole.
         this.cache.delete(name)
@@ -443,11 +493,15 @@ export class WebDavTransport implements SyncTransport {
     }
     // In place, guarded: a resource this transport read or wrote is replaced only as it last
     // saw it (`If-Match`); one it never saw is replaced as it is – its owner is this device.
+    // A weak tag (`W/"…"`, what Apache's mod_dav gives) can never satisfy `If-Match` – RFC 7232
+    // §3.1 has it compared strongly – so it guards nothing: the write goes unconditional rather
+    // than 412 for ever.
     const known = this.written.get(name) ?? this.cache.get(name)?.etag
+    const guard = known && !known.startsWith('W/') ? known : undefined
     const put = await this.request('PUT', target, {
       headers: {
         'Content-Type': 'application/octet-stream',
-        ...(known ? { 'If-Match': known } : {})
+        ...(guard ? { 'If-Match': guard } : {})
       },
       body: text
     })
@@ -477,7 +531,8 @@ export class WebDavTransport implements SyncTransport {
 
   /**
    * The folder and its `zenium-sync` directory, made level by level on the first write (MKCOL,
-   * RFC 4918 §9.3: 201 made it, 405 says it exists already). Once per transport.
+   * RFC 4918 §9.3: 201 made it, 405 says it exists already). Once, until a 404 on the listing
+   * or a 409 on a write says the directory is gone (`dirEnsured`).
    */
   private async ensureDir(): Promise<void> {
     if (this.dirEnsured) return

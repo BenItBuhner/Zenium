@@ -207,11 +207,14 @@ describe('the addresses', () => {
   })
 
   it('classifies every status the engine acts on', () => {
-    expect([401, 403].map(classifyStatus)).toEqual(['auth', 'auth'])
+    expect(classifyStatus(401)).toBe('auth')
+    // Signed in, the folder not allowed: not a password the user could change.
+    expect(classifyStatus(403)).toBe('forbidden')
     expect(classifyStatus(404)).toBe('missing')
     expect([412, 423].map(classifyStatus)).toEqual(['conflict', 'conflict'])
+    expect([301, 302, 307, 308].map(classifyStatus)).toEqual(new Array(4).fill('redirect'))
     expect([500, 502, 503, 0].map(classifyStatus)).toEqual(new Array(4).fill('unavailable'))
-    expect([301, 400, 405, 409, 418].map(classifyStatus)).toEqual(new Array(5).fill('refused'))
+    expect([200, 400, 405, 409, 418].map(classifyStatus)).toEqual(new Array(5).fill('refused'))
   })
 
   it('spells Basic as RFC 7617 does, from the UTF-8 bytes', () => {
@@ -289,8 +292,9 @@ describe('the transport over the fake server', () => {
     }
     const probe = (fetch: SyncFetch): Promise<WebDavProbe> =>
       new WebDavTransport(CREDENTIALS, fetch).probe()
-    // A site that answers 200 to any method, a 207 with a body that is not a multistatus, and a
-    // redirect (the host's fetch follows none) are the address being wrong, not a connection.
+    // A site that answers 200 to any method and a 207 with a body that is not a multistatus are
+    // the address being wrong, not a connection; a redirect (the host's fetch follows none, so
+    // the Authorization header never crosses to another origin) is its own answer.
     expect(await probe(page(200, '<!doctype html><html><body>Hello</body></html>'))).toEqual({
       ok: false,
       kind: 'refused',
@@ -301,7 +305,13 @@ describe('the transport over the fake server', () => {
       kind: 'refused',
       status: 207
     })
-    expect(await probe(page(301, ''))).toEqual({ ok: false, kind: 'refused', status: 301 })
+    expect(await probe(page(301, ''))).toEqual({ ok: false, kind: 'redirect', status: 301 })
+    // A host whose fetch cannot answer the 3xx itself (Electron's manual mode cancels the
+    // request) says so with the transport's own error, which comes through as it is.
+    const cancelled: SyncFetch = async () => {
+      throw new WebDavError('redirect', 0, 'PROPFIND', 'WebDAV PROPFIND: the address redirected')
+    }
+    expect(await probe(cancelled)).toEqual({ ok: false, kind: 'redirect', status: 0 })
     // The real thing, any prefix: the root's own response is the one entry a Depth 0 answer holds.
     const multistatus =
       '<?xml version="1.0"?><D:multistatus xmlns:D="DAV:"><D:response><D:href>/remote.php/dav/files/alice/</D:href>' +
@@ -430,6 +440,134 @@ describe('the transport over the fake server', () => {
     expect([...other.files(DIR_PATH)!.entries()]).toEqual([['a.zensync', 'y']])
   })
 
+  it('removes the temporary file of a MOVE that failed or never answered, and reports the MOVE', async () => {
+    // The server answers the MOVE with a 500: the temporary file goes, the error is the MOVE's,
+    // and MOVE stays trusted (a 500 is not a server without MOVE).
+    const dav = server()
+    dav.mount(DIR_PATH, new Map())
+    const failing: SyncFetch = (url, init) =>
+      init.method === 'MOVE'
+        ? Promise.resolve({ status: 500, headers: { get: () => null }, text: async () => '' })
+        : dav.fetch(url, init)
+    let n = 0
+    const t = new WebDavTransport(CREDENTIALS, failing, { random: () => `r${++n}` })
+    const error = await failure(t.write('a.zensync', 'x'))
+    expect(error).toMatchObject({ kind: 'unavailable', status: 500, method: 'MOVE' })
+    expect(dav.drain().map((r) => [r.method, r.path, r.status])).toEqual([
+      ['MKCOL', `${ROOT}/Zenium`, 405],
+      ['MKCOL', DIR_PATH, 405],
+      ['PUT', `${DIR_PATH}/a.zensync.tmp-r1`, 201],
+      ['DELETE', `${DIR_PATH}/a.zensync.tmp-r1`, 204]
+    ])
+    expect(t.moveRefused).toBe(false)
+    expect([...dav.files(DIR_PATH)!.keys()]).toEqual([])
+
+    // The MOVE throws (the network, the timeout) rather than answering: the same clean-up, the
+    // failure itself is what comes out.
+    const throwing: SyncFetch = (url, init) =>
+      init.method === 'MOVE' ? Promise.reject(new TypeError('fetch failed')) : dav.fetch(url, init)
+    const u = new WebDavTransport(CREDENTIALS, throwing, { random: () => `r${++n}` })
+    const thrown = await failure(u.write('b.zensync', 'y'))
+    expect(thrown).toMatchObject({ kind: 'unavailable', status: 0, method: 'MOVE' })
+    expect(thrown.message).toBe('WebDAV MOVE: fetch failed')
+    expect(dav.drain().map((r) => [r.method, r.path, r.status])).toEqual([
+      ['MKCOL', `${ROOT}/Zenium`, 405],
+      ['MKCOL', DIR_PATH, 405],
+      ['PUT', `${DIR_PATH}/b.zensync.tmp-r2`, 201],
+      ['DELETE', `${DIR_PATH}/b.zensync.tmp-r2`, 204]
+    ])
+    expect([...dav.files(DIR_PATH)!.keys()]).toEqual([])
+  })
+
+  it('makes the directory again when a write finds it gone (409) or the listing does (404)', async () => {
+    const dav = server()
+    const t = transport(dav)
+    await t.write('a.zensync', '1')
+    dav.drain()
+
+    // Another client removed the whole folder: the PUT's 409 (no parent, RFC 4918 §9.7.1) has the
+    // directory made again and the write run once more, in the one call.
+    const otherClient = (path: string): Promise<unknown> =>
+      dav.fetch(`https://cloud.test${path}`, {
+        method: 'DELETE',
+        headers: { Authorization: basicAuthorization('alice', 'app-pass') }
+      })
+    await otherClient(`${ROOT}/Zenium/`)
+    expect(dav.collections.has(DIR_PATH)).toBe(false)
+    dav.drain()
+    await t.write('a.zensync', '2')
+    expect(dav.drain().map((r) => [r.method, r.path, r.status])).toEqual([
+      ['PUT', `${DIR_PATH}/a.zensync.tmp-r2`, 409],
+      ['MKCOL', `${ROOT}/Zenium`, 201],
+      ['MKCOL', DIR_PATH, 201],
+      ['PUT', `${DIR_PATH}/a.zensync.tmp-r3`, 201],
+      ['MOVE', `${DIR_PATH}/a.zensync.tmp-r3`, 201]
+    ])
+    expect(dav.files(DIR_PATH)?.get('a.zensync')).toBe('2')
+
+    // A listing that finds no directory is empty, and the next write makes it before anything else.
+    await otherClient(`${DIR_PATH}/`)
+    dav.drain()
+    expect(await t.list()).toEqual([])
+    await t.write('b.zensync', '3')
+    expect(dav.drain().map((r) => [r.method, r.status])).toEqual([
+      ['PROPFIND', 404],
+      ['MKCOL', 405],
+      ['MKCOL', 201],
+      ['PUT', 201],
+      ['MOVE', 201]
+    ])
+
+    // A 409 that stays a 409 after the directory was made again is reported, not retried for ever.
+    let puts = 0
+    const stubborn: SyncFetch = (url, init) => {
+      if (init.method !== 'PUT') return dav.fetch(url, init)
+      puts += 1
+      return Promise.resolve({ status: 409, headers: { get: () => null }, text: async () => '' })
+    }
+    const u = new WebDavTransport(CREDENTIALS, stubborn)
+    expect(await failure(u.write('c.zensync', '4'))).toMatchObject({
+      kind: 'refused',
+      status: 409,
+      method: 'PUT'
+    })
+    expect(puts).toBe(2)
+  })
+
+  it('sends no If-Match for a weak ETag: RFC 7232 §3.1 compares it strongly, so it could only ever be a 412', async () => {
+    const dav = server()
+    dav.refuseMove = 405
+    dav.mount(DIR_PATH, new Map([['other.zensync', 'theirs']]))
+    // What Apache's mod_dav gives: the same tag, weak.
+    const weak: SyncFetch = async (url, init) => {
+      const reply = await dav.fetch(url, init)
+      if (init.method !== 'GET') return reply
+      return {
+        ...reply,
+        headers: {
+          get: (name) => {
+            const value = reply.headers.get(name)
+            return name.toLowerCase() === 'etag' && value ? `W/${value}` : value
+          }
+        }
+      }
+    }
+    const t = new WebDavTransport(CREDENTIALS, weak)
+    expect(await t.read('other.zensync')).toBe('theirs')
+    await t.write('other.zensync', 'mine now')
+    const put = dav
+      .drain()
+      .find((r) => r.method === 'PUT' && r.path === `${DIR_PATH}/other.zensync`)
+    expect(put).toMatchObject({ status: 204 })
+    expect(put!.headers['if-match']).toBeUndefined()
+    // The PUT's own (strong) tag guards the next write as before.
+    await t.write('other.zensync', 'mine again')
+    expect(dav.drain().at(-1)).toMatchObject({
+      status: 204,
+      headers: { 'if-match': contentEtag('mine now') }
+    })
+  })
+
   it('removes a document (a missing one is done) and the whole directory', async () => {
     const dav = server()
     const t = transport(dav)
@@ -459,12 +597,15 @@ describe('the transport over the fake server', () => {
     const t = transport(dav)
     const cases: Array<[number, string]> = [
       [401, 'auth'],
-      [403, 'auth'],
+      [403, 'forbidden'],
       [412, 'conflict'],
       [423, 'conflict'],
+      [302, 'redirect'],
       [500, 'unavailable'],
       [502, 'unavailable'],
-      [418, 'refused']
+      [418, 'refused'],
+      // A listing is a 207 with a multistatus, as the probe has it: a 200 is a web page.
+      [200, 'refused']
     ]
     for (const [status, kind] of cases) {
       dav.failNext = status
@@ -472,6 +613,16 @@ describe('the transport over the fake server', () => {
       expect(error).toMatchObject({ kind, status, method: 'PROPFIND', name: 'WebDavError' })
       expect(error.message).toBe(`WebDAV PROPFIND answered ${status}`)
     }
+    // A 207 whose body holds no multistatus is refused the same way (RFC 4918 §9.1 has the
+    // directory's own response in every answer).
+    const empty: SyncFetch = async () => ({
+      status: 207,
+      headers: { get: () => null },
+      text: async () => '<html>not a multistatus</html>'
+    })
+    const notDav = await failure(new WebDavTransport(CREDENTIALS, empty).list())
+    expect(notDav).toMatchObject({ kind: 'refused', status: 207, method: 'PROPFIND' })
+    expect(notDav.message).toBe('WebDAV PROPFIND answered 207 without a multistatus')
     // A 404 is an absence where an absence is an answer (a GET, a listing, a DELETE) and
     // `missing` where it is not (the folder to make the directory in).
     dav.failNext = 404

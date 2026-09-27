@@ -508,6 +508,7 @@ export class BrowserState {
       scope: defaultScope(),
       lastSyncAt: null,
       lastError: null,
+      lastErrorKind: null,
       syncing: false,
       devices: [],
       pendingMerge: false,
