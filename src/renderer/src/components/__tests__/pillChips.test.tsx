@@ -2046,6 +2046,114 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
     }
   })
 
+  it('keeps the hover-only run for a chip whose open surface hangs from the pill, never for one that opened a frame dialog: the anchored chips carry `data-zen-anchored`, the Install and Boost chips none, and the utilities’ keep-rule reads the mark (the FIRST LINE’s L7 on #589)', () => {
+    // Every kind of chip in one pill: the slot, the shield, a blocked pop-up, a save prompt's
+    // key, the zoom chip, the Install chip, the star, and the utilities under the pointer.
+    const everything = tab('https://app.example/some/path', {
+      readerable: true,
+      webApp: app,
+      zoom: 1.25
+    })
+    const base = desktop(everything)
+    const el = render(
+      <NavRow
+        state={
+          {
+            ...base,
+            capabilities: { ...base.capabilities, requestBlocking: true },
+            settings: {
+              ...base.settings,
+              blocking: { level: 'standard' },
+              pageControls: DEFAULT_PAGE_CONTROLS
+            },
+            blocking: { enabled: true, siteExceptions: [] },
+            blockedPopups: withBlocked(everything, 1).blockedPopups,
+            autofill: { prompts: [savePrompt], picker: null }
+          } as unknown as UIState
+        }
+        tab={everything}
+        compact={false}
+      />
+    )
+    const chip = (selector: string): HTMLElement => {
+      const found = el.querySelector<HTMLElement>(selector)
+      expect(found, selector).not.toBeNull()
+      return found!
+    }
+    // The chips whose popup is a popover or bubble placed on them (§9.20) say so once, with
+    // the mark, whatever their state: site information from the slot and from the shield, the
+    // blocked pop-ups list, the save prompt, the zoom bubble, the star's bubble, the share
+    // popover.
+    const anchored = [
+      '[data-site-chip]',
+      '.zen-v2-blocked-chip',
+      '[data-blocked-popups-chip]',
+      '[data-af-chip]',
+      '[data-zoom-chip]',
+      '[data-bm-star]',
+      '[data-share-chip]'
+    ]
+    for (const selector of anchored) {
+      const c = chip(selector)
+      expect(c.getAttribute('aria-haspopup'), selector).toBe('dialog')
+      expect(c.getAttribute('aria-expanded'), selector).toBe('false')
+      expect(c.hasAttribute('data-zen-anchored'), selector).toBe(true)
+    }
+    // A frame dialog's opener carries `aria-haspopup` for the tree and no mark: the Install
+    // chip's install dialog and Boost's dialog stand over the window, hung from nothing.
+    for (const selector of ['[data-install-chip]', '[aria-label="Boost this site"]']) {
+      const c = chip(selector)
+      expect(c.getAttribute('aria-haspopup'), selector).toBe('dialog')
+      expect(c.hasAttribute('data-zen-anchored'), selector).toBe(false)
+    }
+    // An action chip has neither.
+    expect(chip('[aria-label="Copy URL"]').hasAttribute('aria-haspopup')).toBe(false)
+    expect(chip('[aria-label="Copy URL"]').hasAttribute('data-zen-anchored')).toBe(false)
+    // The three hover-only utilities keep the run for an anchored chip's open popup alone: the
+    // stylesheet's `:has([data-zen-anchored][aria-expanded=true])` on the chips' scope, never
+    // the bare `aria-expanded` that held them drawn under the install dialog's scrim.
+    for (const selector of [
+      '[aria-label="Copy URL"]',
+      '[data-share-chip]',
+      '[aria-label="Boost this site"]'
+    ]) {
+      const c = chip(selector)
+      expect(
+        c.classList.contains('group-has-[[data-zen-anchored][aria-expanded=true]]/chips:flex'),
+        selector
+      ).toBe(true)
+      expect(c.classList.contains('group-has-[[aria-expanded=true]]/chips:flex'), selector).toBe(
+        false
+      )
+      expect(c.classList.contains('group-hover/pill:flex'), selector).toBe(true)
+      expect(c.classList.contains('group-focus-within/chips:flex'), selector).toBe(true)
+    }
+    // The chips' scope is the one the rule reads.
+    const scope = el.querySelector<HTMLElement>('.group\\/chips')!
+    for (const selector of [...anchored, '[data-install-chip]']) {
+      expect(scope.contains(chip(selector)), selector).toBe(true)
+    }
+    // The Install chip's dialog up: its `aria-expanded` is true, and no anchored chip's is –
+    // the selector the keep-rule is written on finds nothing to hold the run for.
+    act(() =>
+      uiStore.set({
+        install: {
+          tabId: 't1',
+          title: 'Example App',
+          url: 'https://app.example/',
+          origin: 'app.example',
+          icon: null,
+          info: app,
+          tint: null,
+          surface: 'desktop'
+        } as WebAppInstallPrompt
+      })
+    )
+    expect(chip('[data-install-chip]').getAttribute('aria-expanded')).toBe('true')
+    expect(scope.querySelector('[data-zen-anchored][aria-expanded="true"]')).toBeNull()
+    expect(scope.querySelector('[aria-expanded="true"]')).toBe(chip('[data-install-chip]'))
+  })
+
   it('adds the Share chip after Copy URL as a hover-only utility whose popup is the share popover, hung from the chip while its own request is up', () => {
     const el = render(<NavRow state={desktop(page)} tab={page} compact={false} />)
     const order = chipLabels(el)
@@ -2062,9 +2170,11 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
       'hidden',
       'group-hover/pill:flex',
       'group-focus-within/chips:flex',
-      'group-has-[[aria-expanded=true]]/chips:flex'
+      'group-has-[[data-zen-anchored][aria-expanded=true]]/chips:flex'
     ])
       expect(chip.classList.contains(cls), cls).toBe(true)
+    // Its popover hangs from the chip: the anchored mark the keep-rule reads (L7).
+    expect(chip.hasAttribute('data-zen-anchored')).toBe(true)
     // Not a pin: no control mark.
     expect(chip.hasAttribute('data-zen-menu-control')).toBe(false)
 

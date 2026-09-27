@@ -854,8 +854,13 @@ export function NavRow({
             scope rather than `:has(:focus-visible)`: Chromium blocks a Tab whose target is
             unfocusable in the instant between blurring the old chip and focusing the next, and
             only `:focus-within` on their common ancestor holds through that instant. They stay
-            as well while a chip has its popover up (`aria-expanded`), so the chips do not shift
-            under a popover that was placed on one of them (§9.20).
+            as well while a chip has a popover up that HANGS FROM THE PILL – the zoom bubble,
+            the share popover, site information, the star's bubble: a chip marked
+            `data-zen-anchored` (`PillChip`'s `anchored`) with `aria-expanded` – so the chips do
+            not shift under a surface that was placed on one of them (§9.20); never while a chip
+            has opened a FRAME DIALOG (the Install chip's install dialog, the Boosts dialog),
+            whose surface stands over the window with nothing hung from the pill – the
+            utilities drawn under its scrim as if hovered were the FIRST LINE's L7 on #589.
             Every tool after the address – Reader View, Boost, Copy, the zoom, the star – carries
             `zen-pill-chip`: a pill under 130 px drops them all for the address (the container
             query on `.zen-pill`). The site icon stays, and so does the blocked pop-ups chip: a
@@ -921,6 +926,7 @@ export function NavRow({
                 }
                 popup="dialog"
                 expanded={anchored}
+                anchored
                 data-site-chip=""
                 data-indicator={indicator.state}
                 data-slot-state={slot?.kind ?? (maskDraws ? 'private' : 'connection')}
@@ -1035,6 +1041,7 @@ export function NavRow({
                 title="Text preferences"
                 popup="dialog"
                 expanded={readerPrefsOpen}
+                anchored
                 data-reader-prefs-chip=""
                 className={cn(
                   'flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)]',
@@ -1067,6 +1074,7 @@ export function NavRow({
                 }
                 popup="dialog"
                 expanded={blockedOpen}
+                anchored
                 data-blocked-popups-chip=""
                 className={cn(
                   'zen-animate-pop flex h-7 min-w-7 shrink-0 items-center justify-center gap-1 rounded-md px-1.5 hover:bg-[var(--v2-control-fill)]',
@@ -1117,7 +1125,10 @@ export function NavRow({
               )}
             {tab && isWebPage && !isPrivate && (boostFits || boostsOpen) && (
               // Lit, a resident chip of the tier's informational rank; unlit, a hover-only
-              // utility let in last. Either way the open Boosts overlay keeps its anchor (§9.20).
+              // utility let in last. The Boosts dialog it opens is a frame dialog – a centred
+              // card over the content, hung from nothing – so the chip carries no `anchored`
+              // mark: its `aria-expanded` says what is open for the tree and keeps the chip
+              // mounted (`boostsOpen`), but does not hold the hover-only run drawn (L7).
               <PillChip
                 label={boosted ? 'Edit Boost for this site' : 'Boost this site'}
                 title={boosted ? 'Edit Boost for this site' : 'Boost this site'}
@@ -1127,7 +1138,7 @@ export function NavRow({
                   'zen-pill-chip h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)]',
                   boosted
                     ? 'flex text-[var(--v2-control-accent)] opacity-100'
-                    : 'zen-pill-extra hidden group-hover/pill:flex group-focus-within/chips:flex group-has-[[aria-expanded=true]]/chips:flex'
+                    : 'zen-pill-extra hidden group-hover/pill:flex group-focus-within/chips:flex group-has-[[data-zen-anchored][aria-expanded=true]]/chips:flex'
                 )}
                 onActivate={() => void openOverlay('boosts', tab.id)}
               >
@@ -1138,7 +1149,7 @@ export function NavRow({
               <PillChip
                 label="Copy URL"
                 title={hint('Copy URL', state, 'tab.copyUrl')}
-                className="zen-pill-chip zen-pill-extra hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)] group-hover/pill:flex group-focus-within/chips:flex group-has-[[aria-expanded=true]]/chips:flex"
+                className="zen-pill-chip zen-pill-extra hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)] group-hover/pill:flex group-focus-within/chips:flex group-has-[[data-zen-anchored][aria-expanded=true]]/chips:flex"
                 onActivate={() => tab && run('tab.copyUrl', { tabId: tab.id })}
               >
                 <Copy className="h-3.5 w-3.5" />
@@ -1155,10 +1166,11 @@ export function NavRow({
                 title="Share this page"
                 popup="dialog"
                 expanded={shareOpen}
+                anchored
                 data-share-chip=""
                 data-share-anchor={shareOpen ? '' : undefined}
                 className={cn(
-                  'zen-pill-chip zen-pill-extra hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)] group-hover/pill:flex group-focus-within/chips:flex group-has-[[aria-expanded=true]]/chips:flex',
+                  'zen-pill-chip zen-pill-extra hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)] group-hover/pill:flex group-focus-within/chips:flex group-has-[[data-zen-anchored][aria-expanded=true]]/chips:flex',
                   // The anchor keeps its pressed fill while its popover is up (§9.20).
                   shareOpen && 'bg-[var(--v2-control-fill-hover)] opacity-100'
                 )}
@@ -1179,7 +1191,9 @@ export function NavRow({
               // tier), named "Install <app>" as its tooltip is (`IDS_OMNIBOX_PWA_INSTALL_ICON_TOOLTIP`).
               // Its popup is the install dialog – Chrome's simple install dialog is tab-modal,
               // so the house's frame dialog stands – and the chip keeps its pressed fill while
-              // the dialog is up (§9.20). The tier folds it after Translate and Reader View and
+              // the dialog is up (§9.20); a frame dialog hangs from nothing, so the chip carries
+              // no `anchored` mark and its open state never holds the pill's hover-only run
+              // (L7). The tier folds it after Translate and Reader View and
               // before the shield (`pillChipTiers.ts`); folded or unpinned, the app menu's
               // "Install <app>…" row runs the same command. A pinnable control, it carries the
               // pinned button's right-click menu marks (context-menus-112; W8-1's
