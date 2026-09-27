@@ -505,7 +505,12 @@ export function NavRow({
   const installLabelUp = installSpec !== null && installLabelFits(pillInner, chipsPresent)
   if (installSpec && !installLabelUp) installSpec.width = CHIP_WIDTH.small
   // The hover-only utilities, lowest of all and let in last, in the order they hide from the
-  // end: the translate offer first, then Boost, then Share, and Copy URL the last to go.
+  // end: the translate offer first, then Boost, then Share, and Copy URL the last to go. They
+  // take the room the pill has at the width it is: the resident chips and the Install word run
+  // one way as the pill narrows, and the word's fold (39 px, where a chip's is 26) is the one
+  // step that hands a utility room back for a step or two under the pointer – a hover-only
+  // affordance re-entering, never a chip of the pill's rest. (Under 170 the stylesheet's
+  // `zen-pill-extra` rule hides the utilities whatever the room.)
   const hoverChips: PillChipSpec[] = []
   if (url) hoverChips.push({ id: 'copy', tier: 'extra', width: CHIP_WIDTH.small })
   if (shareable) hoverChips.push({ id: 'share', tier: 'extra', width: CHIP_WIDTH.small })

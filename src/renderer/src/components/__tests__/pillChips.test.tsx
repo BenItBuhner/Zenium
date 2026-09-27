@@ -1935,11 +1935,16 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
       expect(el.querySelector('[aria-label="Copy URL"]')).toBeNull()
       expect(el.querySelector('[data-share-chip]')).toBeNull()
       expect(el.querySelector('[aria-label="Boost this site"]')).toBeNull()
-      // One pixel under, Reader View would hide: the word folds first and every chip stays.
+      // One pixel under, Reader View would hide: the word folds first and every chip stays. The
+      // utilities take the room the pill has: of the word's 39 px, Copy URL's 26 come back under
+      // the pointer (130 + 26 + 56 = 212 ≤ 224) – a hover-only affordance, not a chip of the
+      // pill's rest, which runs one way.
       act(() => emit!(224))
       expect(el.querySelector('[data-install-chip] .zen-pill-label')).toBeNull()
       expect(el.querySelector('[aria-label="Reader View"]')).not.toBeNull()
       expect(el.querySelector('[aria-label="Translate this page"]')).not.toBeNull()
+      expect(el.querySelector('[aria-label="Copy URL"]')).not.toBeNull()
+      expect(el.querySelector('[data-share-chip]')).toBeNull()
       expect(toolbarTiering.get().hidden).toEqual([])
       // Under the label tier the chip is the glyph alone: site 26 + star 26 + install 26 = 78,
       // + 56 for the address = 134 with translate's 26 on top at 160.
