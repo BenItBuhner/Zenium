@@ -43,6 +43,7 @@ import {
   viewportSize,
   type PopoverBox
 } from '@renderer/lib/portals'
+import { dismissQrCode, downloadQrCode } from '@renderer/lib/qrCode'
 import {
   SHARE_SEAM_BUSY_MS,
   SHARE_SEAM_OUT_MS,
@@ -61,7 +62,13 @@ import { DeviceGlyph, anyDeviceKind } from '../DeviceGlyph'
 import { GroupGlyph } from '../GroupGlyph'
 import { RowFavicon } from '../phone/PhoneList'
 import { useLongPress } from '../phone/useLongPress'
-import { SharePanelContent, SharePanelPreview } from '../share/SharePanelSheet'
+import {
+  QR_CODE_TITLE_ID,
+  QrCodeFooter,
+  QrCodeHandOff,
+  useHandOffOutgoing
+} from '../qr/QrCodeSheet'
+import { SharePanelContent, SharePanelPreview, useHostedQrCode } from '../share/SharePanelSheet'
 import { Spinner } from '../siteControls/primitives'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import { TabletMenu } from '../tablet/TabletMenu'
@@ -150,7 +157,10 @@ interface MenuNav {
  * between the two. From then on the sheet is the panel's: back and Escape dismiss it to the
  * page (Chrome's share sheet closes to the page too), the handle reads "Dismiss", an answer
  * closes the sheet with the panel, and a dismissal releases the share (`closeMenu`). Under
- * reduced motion the contents cut (`main.css`).
+ * reduced motion the contents cut (`main.css`). The panel's QR code chip hands the same chassis
+ * on once more (`lib/shareSeam.ts`'s code seam): the code sheet's content rises over the
+ * panel's fading copy, the footer comes with Close | Download, and the sheet is the code's –
+ * its ways out end the code at the landing, the panel's request with it (`SharePanelSheet.tsx`).
  */
 function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
   const [nav, setNav] = useState<MenuNav>({ path: [], direction: 0 })
@@ -214,6 +224,10 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
     return () => window.clearTimeout(timer)
   }, [hostedId])
   const pickShare = (then: () => void): void => sheet.current?.dismiss(then)
+  // The code sheet in this chassis after the panel's QR code chip (the second hand-off): the
+  // panel's preview and rows fade as its copy over the code's content.
+  const hostedCode = useHostedQrCode(hosted?.id ?? null)
+  const codeOutgoing = useHandOffOutgoing(hostedCode?.id ?? null)
   // Where the list stood when Share was tapped: the chassis starts new content at its top, so
   // the fading copy of the rows is drawn shifted by the offset, where the user was looking.
   const [seamScroll, setSeamScroll] = useState(0)
@@ -389,20 +403,35 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
       ref={sheet}
       onDismissed={() => {
         latest.current.saveDraft()
+        // A code the chassis was drawing ends with it (the panel's request too; the host heard
+        // the pick already).
+        if (hostedCode) dismissQrCode()
         // Past the Share row's pick the host has heard of the menu already (`menu.click`):
         // the sheet's leave is the panel's dismissal or the gather's end, not a menu's close.
         closeMenu(!gathering && !hosted)
       }}
       contentKey={
-        hosted
-          ? hosted.id
-          : `${menu.id}:${editing ? 'edit' : path.map((item) => item.id).join('/')}`
+        hostedCode
+          ? `qr:${hostedCode.id}`
+          : hosted
+            ? hosted.id
+            : `${menu.id}:${editing ? 'edit' : path.map((item) => item.id).join('/')}`
       }
       handleLabel={hosted ? 'Dismiss' : 'Resize menu'}
-      labelledBy={titleId}
-      className={hosted ? 'zen-share-panel' : undefined}
+      labelledBy={hostedCode ? QR_CODE_TITLE_ID : titleId}
+      className={hosted && !hostedCode ? 'zen-share-panel' : undefined}
+      footer={
+        hostedCode ? (
+          <QrCodeFooter
+            prompt={hostedCode}
+            className="zen-share-seam-in"
+            onClose={() => pickShare(dismissQrCode)}
+            onDownload={() => pickShare(downloadQrCode)}
+          />
+        ) : undefined
+      }
       header={
-        hosted ? (
+        hostedCode ? undefined : hosted ? (
           // The menu's title fades where it stood as the share's preview rises in the header's
           // place (the preview a direct child of the header, as a link's header is).
           <>
@@ -449,7 +478,21 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
         )
       }
     >
-      {hosted ? (
+      {hostedCode && hosted ? (
+        // The second hand-off: the panel's preview and rows once more, inert and fading, over
+        // the code sheet's content rising in their place.
+        <QrCodeHandOff
+          prompt={hostedCode}
+          outgoing={
+            codeOutgoing ? (
+              <>
+                <SharePanelPreview request={hosted} titleId={`${titleId}-out`} />
+                <SharePanelContent request={hosted} pick={() => undefined} />
+              </>
+            ) : null
+          }
+        />
+      ) : hosted ? (
         // The hand-off: the rows once more, inert and fading, over the panel rising in their
         // place – one chassis, its height following the panel's on the sheet's spring.
         <div className="zen-share-seam" data-seam="share-panel">

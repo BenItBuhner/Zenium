@@ -277,6 +277,24 @@ function fieldOf(body: string, key: string): string | null {
   return value
 }
 
+/**
+ * The QR code sheet's request (SH-06; `qr.code`): the host has encoded a link as a code for the
+ * chrome to draw – the share sheet's "QR code" row (Android 14's action row, the panel's chip),
+ * as Chrome 152's sharing hub option opens `QrCodeDialog`. `rows` are the code's modules top to
+ * bottom, a `1` for a dark module and a `0` for a light one, the quiet zone included, so the
+ * chrome draws them at any size without a raster; empty when there is no code, `error` saying
+ * why: the link is longer than a code holds (Chrome's `MAX_URL_LENGTH`, 2331) or the encoder
+ * refused it.
+ */
+export interface QrCodeRequest {
+  /** The link the code carries, shown under it. */
+  url: string
+  /** The tab the share came from (null: not known), for the capture the sheet rises over. */
+  tabId: string | null
+  rows: string[]
+  error: 'too-long' | 'failed' | null
+}
+
 /** The camera buttons show only where the host has a back camera to scan with (`QrScan.kt`). */
 export function qrScanAvailable(capabilities: Pick<HostCapabilities, 'qrScan'>): boolean {
   return capabilities.qrScan
