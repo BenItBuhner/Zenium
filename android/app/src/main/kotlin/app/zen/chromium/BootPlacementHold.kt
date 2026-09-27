@@ -24,8 +24,10 @@ package app.zen.chromium
  * `MainActivity.onChromeReady` marks and reports fully drawn from), or at [DEADLINE_MS] from the
  * first hold for a chrome that never draws that frame: the page arrives before the splash's own
  * watchdog either way. The gate then stays OPEN for the host's life: a New Tab from the sidebar's
- * row is made and placed at once. A tab the core makes for anything else – a restored page's, the
- * phone's every tab – is never admitted and takes the path it had; a held tab that the core loads
+ * row is made and placed at once. A tab the core makes for anything else – a restored web page's,
+ * the phone's every tab – is never admitted and takes the path it had (a session that comes back
+ * on the served page itself is that page at boot, tagged like a fresh one's and held the same; it
+ * gets no restore picture, [RestoredPictures.wanted]); a held tab that the core loads
  * another document into ([Way.LEAVE]) is made on the spot with what was held, since its placement
  * is then what READY waits for, and one the core destroys before the frame ([Way.DROP]) is never
  * made. A tab that left is not admitted again: its re-dispatched creation is a creation.

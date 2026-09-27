@@ -52,7 +52,7 @@ class RestoredPictures(
      */
     fun offer(view: TabWebView, url: String, restoredList: Boolean = false) {
         val thumbs = thumbnails ?: return
-        if (!wanted(restoredList, restoring(), view.hasPaintedDocument, shown.containsKey(view.tabId))) return
+        if (!wanted(restoredList, restoring(), view.hasPaintedDocument, shown.containsKey(view.tabId), NewTabPage.isDocument(url))) return
         val tabId = view.tabId
         thumbs.disk.execute {
             val picture = thumbs.loadPicture(tabId, url) ?: return@execute
@@ -121,9 +121,15 @@ class RestoredPictures(
         /**
          * Whether a view gets a picture: for a list restored under it (a sleeping tab shown again)
          * or while the boot's restore is in flight, only over a view that has drawn no document
-         * yet (a picture over a painted page would hide it), and one per tab.
+         * yet (a picture over a painted page would hide it), and one per tab – and never over the
+         * served new tab page (`servedPage`, [NewTabPage.isDocument]; NTP-35, #563): that
+         * document comes from memory and arrives WHOLE on its own – transparent until its state
+         * is in, then the 120 ms fade (`newTabPage.ts` `data-await-state`) – so a picture over it
+         * would come down at its commit-visible on a frame that shows nothing yet, dropping the
+         * slot onto the bare ground before the page fades in, and stand for nothing but a soft
+         * copy of the page swapping for the crisp one. A web page's restore is as it was.
          */
-        fun wanted(restoredList: Boolean, restoring: Boolean, painted: Boolean, shown: Boolean): Boolean =
-            (restoredList || restoring) && !painted && !shown
+        fun wanted(restoredList: Boolean, restoring: Boolean, painted: Boolean, shown: Boolean, servedPage: Boolean = false): Boolean =
+            (restoredList || restoring) && !painted && !shown && !servedPage
     }
 }

@@ -53,10 +53,36 @@ const UNDO_MS = 8000
 export const ICON_WAIT_MS = 300
 /**
  * A state that never comes (a bridge that is down): the shell is let in as it stands rather
- * than the page staying the ground for good – long after any boot's push, within the host's own
- * fail-safes (the boot hold's 5 s, the splash's 10 s).
+ * than the page staying the ground for good. The boot hold's own fail-safe (`BootPlacementHold`,
+ * 5 s): the push is two hops on the host's UI thread, and that thread can sit behind the served
+ * view's first frame for seconds on an emulator (a 2.4 s stall measured on #563's tablet sample,
+ * under which a 2 s cap let the empty shell in ahead of its state) – so the cap is the hold's
+ * deadline, not a guess at the push's pace.
  */
-export const AWAIT_STATE_CAP_MS = 2000
+export const AWAIT_STATE_CAP_MS = 5000
+
+/**
+ * The awaiting document's landing on its own clock (`performance.mark`, read post hoc by a run
+ * that watches the boot: the tablet demo): the `ready` sent, the first state applied, the icons
+ * in hand, the root let in – or the cap that let it in without a state. Only the awaiting path
+ * sets them; the desktop's document never enters it.
+ */
+export const LANDING_MARKS = {
+  ready: 'zen-newtab-ready',
+  state: 'zen-newtab-state',
+  icons: 'zen-newtab-icons',
+  in: 'zen-newtab-in',
+  cap: 'zen-newtab-cap'
+} as const
+
+function landingMark(name: (typeof LANDING_MARKS)[keyof typeof LANDING_MARKS]): void {
+  if (typeof performance === 'undefined' || typeof performance.mark !== 'function') return
+  try {
+    performance.mark(name)
+  } catch {
+    // A clock that keeps no marks: the landing goes unrecorded, the page unchanged.
+  }
+}
 
 /** Engine favicon addresses that loaded on this page: shown from the first frame on a re-push. */
 const loadedFavicons = new Set<string>()
@@ -215,7 +241,13 @@ class NewTabPage {
     const initial = transport.initialState()
     if (initial) this.apply(initial)
     transport.send({ type: 'ready' })
-    if (this.awaitingState) this.awaitCap = setTimeout(() => this.reveal(), AWAIT_STATE_CAP_MS)
+    if (this.awaitingState) {
+      landingMark(LANDING_MARKS.ready)
+      this.awaitCap = setTimeout(() => {
+        landingMark(LANDING_MARKS.cap)
+        this.reveal()
+      }, AWAIT_STATE_CAP_MS)
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -236,7 +268,10 @@ class NewTabPage {
         ? []
         : [...state.shortcuts.map(fromShortcut), ...state.topSites.map(fromTopSite)]
     if (!this.drag) this.renderGrid()
-    if (this.awaitingState) this.reveal()
+    if (this.awaitingState) {
+      landingMark(LANDING_MARKS.state)
+      this.reveal()
+    }
   }
 
   /**
@@ -258,7 +293,11 @@ class NewTabPage {
     const icons = [...this.grid.querySelectorAll<HTMLImageElement>('img.zen-ntp-icon')]
     if (this.engineFavicon.getAttribute('src')) icons.push(this.engineFavicon)
     void iconsInHand(icons, ICON_WAIT_MS).then(() => {
-      requestAnimationFrame(() => this.root.removeAttribute(NEW_TAB_AWAIT_STATE_ATTR))
+      landingMark(LANDING_MARKS.icons)
+      requestAnimationFrame(() => {
+        this.root.removeAttribute(NEW_TAB_AWAIT_STATE_ATTR)
+        landingMark(LANDING_MARKS.in)
+      })
     })
   }
 

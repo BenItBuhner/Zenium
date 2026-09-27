@@ -5,6 +5,7 @@ import { NEW_TAB_AWAIT_STATE_ATTR, PRIVATE_COOKIES, newTabPageHtml } from '../ne
 import {
   AWAIT_STATE_CAP_MS,
   ICON_WAIT_MS,
+  LANDING_MARKS,
   iconsInHand,
   installNewTabPage,
   type NewTabTransport
@@ -597,8 +598,16 @@ describe("zen://newtab: the awaiting document comes in whole (NTP-35, the tablet
     return mount(null)
   }
 
+  /** The landing's marks on the page's own clock, in the order they were set. */
+  const marks = (): string[] =>
+    performance
+      .getEntriesByType('mark')
+      .map((m) => m.name)
+      .filter((n) => n.startsWith('zen-newtab-'))
+
   beforeEach(() => {
     frames = []
+    performance.clearMarks()
     vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => frames.push(cb))
     vi.stubGlobal('cancelAnimationFrame', () => undefined)
   })
@@ -608,6 +617,7 @@ describe("zen://newtab: the awaiting document comes in whole (NTP-35, the tablet
     vi.restoreAllMocks()
     vi.useRealTimers()
     root().removeAttribute(NEW_TAB_AWAIT_STATE_ATTR)
+    performance.clearMarks()
   })
 
   it('stays transparent until its first state: frames pass, nothing is let in', async () => {
@@ -618,6 +628,8 @@ describe("zen://newtab: the awaiting document comes in whole (NTP-35, the tablet
     runFrames()
     expect(awaiting()).toBe(true)
     expect(icons()).toEqual([])
+    // The record so far: the ready sent, nothing let in.
+    expect(marks()).toEqual([LANDING_MARKS.ready])
   })
 
   it('the state fills the document unseen; the icons decode; the next frame lets it in whole', async () => {
@@ -657,10 +669,18 @@ describe("zen://newtab: the awaiting document comes in whole (NTP-35, the tablet
     decode.settle(engineImg())
     await flush()
     expect(awaiting()).toBe(true)
+    expect(marks()).toEqual([LANDING_MARKS.ready, LANDING_MARKS.state, LANDING_MARKS.icons])
     expect(frames.length).toBeGreaterThan(0)
     runFrames()
     expect(awaiting()).toBe(false)
     expect(letters()).toEqual(['T'])
+    // The landing's record, in the order the run reads it: ready → state → icons → in, no cap.
+    expect(marks()).toEqual([
+      LANDING_MARKS.ready,
+      LANDING_MARKS.state,
+      LANDING_MARKS.icons,
+      LANDING_MARKS.in
+    ])
 
     // A later push changes the page in place: the attribute does not come back, no second wait.
     const asked = decode.asked()
@@ -669,6 +689,7 @@ describe("zen://newtab: the awaiting document comes in whole (NTP-35, the tablet
     runFrames()
     expect(awaiting()).toBe(false)
     expect(decode.asked()).toBe(asked)
+    expect(marks().length).toBe(4)
   })
 
   it("an icon that fails to decode is in hand as its letter: the icon's answer, not a letter ahead of it", async () => {
@@ -709,9 +730,11 @@ describe("zen://newtab: the awaiting document comes in whole (NTP-35, the tablet
     await Promise.resolve()
     expect(atOnce).toBe(true)
     // The page's own numbers: the icons' cap well under a frame's worth of frames at the boot's
-    // pace, the state's cap long after any push and inside the host's fail-safes (5 s, 10 s).
+    // pace; the state's cap THE BOOT HOLD's OWN 5 s FAIL-SAFE (`BootPlacementHold.DEADLINE_MS`),
+    // not a guess at the push's pace – the host's UI thread can sit behind the served view's
+    // first frame for seconds on an emulator (2.4 s measured), and the push waits behind it.
     expect(ICON_WAIT_MS).toBe(300)
-    expect(AWAIT_STATE_CAP_MS).toBe(2000)
+    expect(AWAIT_STATE_CAP_MS).toBe(5000)
   })
 
   it('a state that never comes: the shell is let in at the cap rather than staying the ground', async () => {
@@ -727,6 +750,32 @@ describe("zen://newtab: the awaiting document comes in whole (NTP-35, the tablet
     runFrames()
     expect(awaiting()).toBe(false)
     expect(h.sent).toEqual([{ type: 'ready' }])
+    // The record names the cap: a run reading it knows the shell came in without its state.
+    expect(marks()).toEqual([
+      LANDING_MARKS.ready,
+      LANDING_MARKS.cap,
+      LANDING_MARKS.icons,
+      LANDING_MARKS.in
+    ])
+  })
+
+  it('a state that comes late, before the cap, is the fill: the cap is cleared and never named', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const h = mountAwaiting()
+    await vi.advanceTimersByTimeAsync(AWAIT_STATE_CAP_MS - 100)
+    runFrames()
+    expect(awaiting()).toBe(true)
+    h.push(state({ shortcutsMode: 'most-visited' }))
+    await vi.advanceTimersByTimeAsync(0)
+    runFrames()
+    expect(awaiting()).toBe(false)
+    await vi.advanceTimersByTimeAsync(AWAIT_STATE_CAP_MS)
+    expect(marks()).toEqual([
+      LANDING_MARKS.ready,
+      LANDING_MARKS.state,
+      LANDING_MARKS.icons,
+      LANDING_MARKS.in
+    ])
   })
 
   it("the desktop's document carries no attribute and none of this runs for it", async () => {
@@ -739,5 +788,7 @@ describe("zen://newtab: the awaiting document comes in whole (NTP-35, the tablet
     expect(awaiting()).toBe(false)
     expect(decode.asked()).toBe(0)
     expect(icons().length).toBe(2)
+    // No mark on the desktop's clock: the awaiting path is not the desktop's.
+    expect(marks()).toEqual([])
   })
 })
