@@ -186,12 +186,15 @@ export function DesktopSettings({
   // is spent, rewritten without `open` (`replace`, no history entry): the same request made
   // again is then a new address for the tab, and opens the dialog again, where a navigation to
   // the address the tab already shows would be none (`Pages.navigate`). A row the section does
-  // not have, or one without a form, opens nothing and spends nothing.
+  // not have, or one without a form, opens nothing and spends nothing. Nothing of the page held
+  // the focus as the address opened the dialog, so the dialog names its way back itself: the
+  // row's own control (`from`, `rowControl`), as a button-opened dialog returns to the button
+  // that opened it (§9.22) – over `?row=`'s landing, that is the row under the find field.
   const askedRow = openRow && model ? findRow(model.groups, openRow) : null
   const openForm = askedRow?.kind === 'action' && askedRow.form ? askedRow.id : null
   useEffect(() => {
     if (!openForm || !sectionId) return
-    sheetCtx.open({ kind: 'form', rowId: openForm })
+    sheetCtx.open({ kind: 'form', rowId: openForm, from: openForm })
     const ref = parseInternalPageUrl(tab.url)
     const spent: Record<string, string> = {}
     for (const [key, value] of Object.entries(ref?.query ?? {})) {
