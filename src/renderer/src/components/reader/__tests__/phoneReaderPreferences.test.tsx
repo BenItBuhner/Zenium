@@ -20,14 +20,17 @@ import { uiStore } from '@renderer/lib/ui'
 import { ReaderPreferencesPanel, Rows } from '../ReaderPreferencesPanel'
 
 /*
- * Reader View's text preferences ON THE PHONE (W6-D29): `ReaderPreferencesPanel` is one shared
- * component – `TabDialogs` mounts it on every host, the phone shell included – and its `Rows`
- * are one composition for both platforms; the form factor picks the chassis alone. So the
- * phone's sheet carries every row the desktop's popover does, and each row's press goes through
- * `reader.setPreferences` to the SAME saved, synced record the desktop writes: what a peer
- * toggles reaches this phone's reader document, and the phone has its own way back. Rendered
- * for real in happy-dom on the frame's dialog host under the phone form factor, as `TabDialogs`
- * mounts it; the desktop's pins (`translateRows.test.tsx`) stand untouched beside this file.
+ * Reader View's text preferences ON THE PHONE (W6-D29, the #587 follow-up): `ReaderPreferencesPanel`
+ * is one shared component – `TabDialogs` mounts it on every host, the phone shell included – and
+ * its `Rows` are one composition for both platforms; the form factor picks the chassis alone.
+ * So the phone's sheet carries every row the desktop's popover does, Chrome's Links and Images
+ * toggles (reader-12; one-line switch rows, the label alone, as Chrome's Settings menu has
+ * them) among them, and each row's press goes through `reader.setPreferences` to
+ * the SAME saved, synced record (`ReaderPreferences.links` / `.images`, Chrome's
+ * `read_anything.links_enabled` / `images_enabled`): a peer's toggle reaches this phone's reader
+ * document, and the phone has its own way back. Rendered for real in happy-dom on the frame's
+ * dialog host under the phone form factor, as `TabDialogs` mounts it; the desktop's pins
+ * (`translateRows.test.tsx`) stand untouched beside this file.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -152,21 +155,27 @@ describe('the phone’s reader preferences', () => {
     expect(document.querySelector('#zen-chrome-layer [data-reader-prefs-panel]')).toBeNull()
   })
 
-  it('carry every row the desktop’s popover carries – one composition, the form factor choosing the chassis alone', () => {
+  it('carry every row the desktop’s popover carries – one composition, the form factor choosing the chassis alone – Links and Images the last two behind their hairline', () => {
     phone()
     const state = stateOf()
     showPanel(state)
     const sheet = document.querySelector<HTMLElement>('.zen-frame-dialogs .zen-sheet')!
     const onPhone = outline(sheet)
-    expect(onPhone.slice(0, 6)).toEqual([
+    expect(onPhone.slice(-3)).toEqual(['—', 'Links', 'Images'])
+    expect(onPhone).toEqual([
       'Text size',
       'Font',
       'Colour theme',
       'Column width',
       'Text spacing',
-      '—'
+      '—',
+      'Line focus',
+      'Lines in focus',
+      'Syllables',
+      '—',
+      'Links',
+      'Images'
     ])
-    expect(onPhone).toContain('Syllables')
     // The desktop's rows, rendered bare, read the same outline.
     act(() => root?.unmount())
     host?.remove()
@@ -182,16 +191,35 @@ describe('the phone’s reader preferences', () => {
     expect(outline(host!)).toEqual(onPhone)
   })
 
-  it('a switch row reads the saved record and its press goes where the desktop’s does: reader.setPreferences with the one key – the record is the core’s, not the sheet’s', () => {
+  it('Links and Images are switch rows reading the saved record – a peer’s off shows off here – each press asking the core for the opposite of its own key alone (the synced keys)', () => {
     phone()
-    showPanel(stateOf({ syllables: true }))
-    const syllables = row('syllables')
-    expect(syllables.getAttribute('role')).toBe('switch')
-    expect(syllables.getAttribute('aria-checked')).toBe('true')
+    showPanel(stateOf({ links: false }))
+    const links = row('links')
+    const images = row('images')
+    expect(links.getAttribute('role')).toBe('switch')
+    expect(images.getAttribute('role')).toBe('switch')
+    expect(links.getAttribute('aria-checked')).toBe('false')
+    expect(images.getAttribute('aria-checked')).toBe('true')
+    // Chrome's words and Chrome's shape: the label alone, one line each, no description under
+    // it (the desktop's pin reads the same shape; the phone's row is the desktop's).
+    expect(links.querySelector('.truncate')?.textContent).toBe('Links')
+    expect(images.querySelector('.truncate')?.textContent).toBe('Images')
+    expect(links.querySelector('.line-clamp-2')).toBeNull()
+    expect(images.querySelector('.line-clamp-2')).toBeNull()
     expect(patches()).toEqual([])
-    act(() => syllables.click())
-    expect(run).toHaveBeenCalledWith('reader.setPreferences', { syllables: false })
-    // Nothing else was asked of the core by the press.
-    expect(patches()).toEqual([{ syllables: false }])
+    act(() => links.click())
+    act(() => images.click())
+    expect(patches()).toEqual([{ links: true }, { images: false }])
+  })
+
+  it('a press on the phone goes where the desktop’s does: reader.setPreferences with the one key – the record is the core’s, not the sheet’s', () => {
+    phone()
+    showPanel(stateOf())
+    act(() => row('images').click())
+    expect(run).toHaveBeenCalledWith('reader.setPreferences', { images: false })
+    act(() => row('links').click())
+    expect(run).toHaveBeenCalledWith('reader.setPreferences', { links: false })
+    // Nothing else was asked of the core by the presses.
+    expect(patches()).toEqual([{ images: false }, { links: false }])
   })
 })
