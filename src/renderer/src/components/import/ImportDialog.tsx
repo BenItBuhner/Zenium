@@ -27,6 +27,7 @@ import {
   Checkbox,
   ChoiceRow,
   DesktopDialog,
+  Field,
   Footer,
   Spinner,
   TitleBlock,
@@ -44,7 +45,10 @@ import { useImportForm, type ImportForm } from './useImportForm'
  * a kind the source cannot give here as a disabled row whose second line is the recorded limit
  * (Chrome's CSV export as the way round), and, for a browser that is running, the line naming it
  * (Firefox's places database is refused while it runs, so Import is off for it; Chrome and Edge
- * read from a copy and keep it armed). The dialog form of footer: Cancel and the primary Import.
+ * read from a copy and keep it armed). A Firefox source with its passwords checked adds a
+ * "Firefox primary password" field under the rows (ID-42): empty by default, as most profiles
+ * have none, with the line saying to leave it so unless Firefox asks for one; the value goes
+ * with the run. The dialog form of footer: Cancel and the primary Import.
  * While it runs the form is busy (§9.30): the menulists and boxes read-only at full opacity,
  * Import busy, Cancel at .4, and the status line – whose slot stands blank under the rows from
  * the start, so nothing moves on the press – says which kind is being read. The result takes
@@ -205,6 +209,7 @@ const SPINNER_LINE = cn(NOTE, 'overflow-hidden text-[var(--v2-text-deemphasized)
 function Body({ form }: { form: ImportForm }): JSX.Element {
   const busy = form.phase === 'busy'
   const { group, source } = form
+  const passwordId = useId()
   if (form.phase === 'loading') {
     return (
       <div className={cn(SPINNER_LINE, 'py-2')} role="status">
@@ -261,6 +266,34 @@ function Body({ form }: { form: ImportForm }): JSX.Element {
       {limitNotes(source).map(({ kind, text }) => (
         <LimitNote key={kind} text={text} />
       ))}
+      {form.asksPrimaryPassword && (
+        <div className="flex flex-col px-4 pt-2" data-testid="import-primary-password">
+          <label htmlFor={passwordId} className="text-[15px] leading-5">
+            Firefox primary password
+          </label>
+          <Field
+            id={passwordId}
+            className="mt-1"
+            type="password"
+            secret
+            autoComplete="off"
+            readOnly={busy}
+            value={form.primaryPassword}
+            onChange={(e) => form.setPrimaryPassword(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && canImport(form)) form.submit()
+            }}
+            aria-describedby={`${passwordId}-hint`}
+          />
+          <p
+            id={`${passwordId}-hint`}
+            className="mt-1 text-[13px] leading-[var(--v2-line-small)] text-[var(--v2-text-deemphasized)]"
+          >
+            Leave this empty unless Firefox asks for a primary password before showing your saved
+            passwords.
+          </p>
+        </div>
+      )}
       {notice && (
         <p
           className={cn(

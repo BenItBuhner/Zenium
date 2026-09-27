@@ -11,6 +11,7 @@ import type { ZenWindow } from '../window'
 import { parseImport } from '../credentials/csv'
 import { parseChromiumBookmarks } from './chromiumBookmarks'
 import { chromiumKeys, chromiumLogins } from './chromiumLogins'
+import { FirefoxLoginsError, deriveFirefoxKey, firefoxLogins } from './firefoxLogins'
 import {
   decodeFirefoxBackup,
   firefoxBookmarksFromBackup,
@@ -94,6 +95,15 @@ function emptyOutcome(): ImportKindOutcome {
 }
 
 /**
+ * A Firefox key-store or login-store failure (a wrong primary password, a missing key, a store
+ * not in NSS's shape) reads as itself, not as a generic "could not read key4.db"; the copy and
+ * lock failures stay for `readFailure`.
+ */
+function firefoxFailure(error: unknown): unknown {
+  return error instanceof FirefoxLoginsError ? new ImportError(error.message) : error
+}
+
+/**
  * Chrome's "Import bookmarks and settings" (ID-23): the sources on the machine, one import at
  * a time from a browser profile or a picked file, its progress and result as `UIState.import`.
  * Browser databases are read from a temp copy (the host's `copyToTemp`), never in place; a
@@ -130,10 +140,16 @@ export class ImportService {
     return this.progress?.status === 'running'
   }
 
+  /**
+   * `options.primaryPassword` is Firefox's primary password when the user typed one ('' is the
+   * default no-password). It is handed down the call chain for this run only and never kept on
+   * the service, which lives as long as the browser does.
+   */
   async run(
     sourceId: string,
     kinds: ImportKind[],
-    win?: ZenWindow
+    win?: ZenWindow,
+    options: { primaryPassword?: string } = {}
   ): Promise<ImportProgress | null> {
     if (this.running) return this.progress
     const source = (await this.sources()).find((s) => s.id === sourceId)
@@ -157,7 +173,7 @@ export class ImportService {
     this.publish()
     try {
       if (source.browser === 'file') await this.runFile(progress, win)
-      else await this.runBrowser(progress, abort.signal)
+      else await this.runBrowser(progress, abort.signal, options.primaryPassword ?? '')
       progress.status = abort.signal.aborted ? 'cancelled' : progress.error ? 'failed' : 'done'
     } catch (error) {
       progress.status = 'failed'
@@ -191,7 +207,11 @@ export class ImportService {
   // Browser profiles
   // ---------------------------------------------------------------------------
 
-  private async runBrowser(progress: ImportProgress, signal: AbortSignal): Promise<void> {
+  private async runBrowser(
+    progress: ImportProgress,
+    signal: AbortSignal,
+    primaryPassword: string
+  ): Promise<void> {
     const { source } = progress
     for (const kind of progress.kinds) {
       if (signal.aborted) return
@@ -202,7 +222,7 @@ export class ImportService {
       try {
         if (kind === 'bookmarks') await this.importBookmarks(source, outcome, progress)
         else if (kind === 'history') await this.importHistory(source, outcome)
-        else await this.importPasswords(source, outcome)
+        else await this.importPasswords(source, outcome, primaryPassword)
       } catch (error) {
         outcome.error = messageOf(error)
         // A lock refusal stops the run: every other kind would hit the same lock.
@@ -325,7 +345,15 @@ export class ImportService {
     outcome.duplicates += written.skipped
   }
 
-  private async importPasswords(source: ImportSource, outcome: ImportKindOutcome): Promise<void> {
+  private async importPasswords(
+    source: ImportSource,
+    outcome: ImportKindOutcome,
+    primaryPassword: string
+  ): Promise<void> {
+    if (source.browser === 'firefox') {
+      await this.importFirefoxPasswords(source, outcome, primaryPassword)
+      return
+    }
     const host = this.requireHost()
     if (source.browser !== 'chrome' && source.browser !== 'chromium' && source.browser !== 'edge')
       throw new ImportError(source.limits.passwords ?? 'This source has no passwords to import.')
@@ -369,6 +397,56 @@ export class ImportService {
     outcome.invalid += result.invalid
   }
 
+  /**
+   * Firefox's own logins (ID-42): `logins.json` opened with the master key from `key4.db`, which
+   * the primary password unwraps (empty by default; the one the user typed, passed down for this
+   * run, when the profile has one set). `key4.db` is read from a temp copy like every other
+   * profile database; a wrong primary password fails this kind with a message and leaves the rest
+   * of the run alone.
+   */
+  private async importFirefoxPasswords(
+    source: ImportSource,
+    outcome: ImportKindOutcome,
+    primaryPassword: string
+  ): Promise<void> {
+    // One rule for every Firefox kind: a running Firefox is refused up front. Its key store could
+    // be copied out from under it on Linux and macOS, but the copy fails on Windows anyway and a
+    // profile mid-write is not one to read.
+    this.refuseIfRunning(source)
+    const host = this.requireHost()
+    const loginsPath = joinPath(source.path, FIREFOX_FILES.logins)
+    const keyPath = joinPath(source.path, FIREFOX_FILES.key)
+    if ((await host.stat(loginsPath)) !== 'file' || (await host.stat(keyPath)) !== 'file')
+      throw new ImportError(`${source.browserName} has no saved passwords in this profile.`)
+    const master = await this.withDatabase(source, keyPath, (db) => {
+      try {
+        return deriveFirefoxKey(db, primaryPassword)
+      } catch (error) {
+        throw firefoxFailure(error)
+      }
+    })
+    const loginsText = await this.readText(source, loginsPath)
+    let read: ImportedLogins
+    try {
+      read = firefoxLogins(loginsText, master, this.now())
+    } catch (error) {
+      throw firefoxFailure(error)
+    }
+    outcome.unreadable += read.unreadable
+    outcome.invalid += read.invalid
+    if (read.logins.length === 0) return
+    await this.ensureVaultUnlocked()
+    const result = this.browser.passwords.store.importRows(
+      read.logins,
+      'skip',
+      source.browser,
+      this.now()
+    )
+    outcome.imported += result.added + result.replaced
+    outcome.duplicates += result.skipped
+    outcome.invalid += result.invalid
+  }
+
   private async ensureVaultUnlocked(): Promise<void> {
     const passwords = this.browser.passwords
     if (passwords.store.unlocked()) return
@@ -387,7 +465,7 @@ export class ImportService {
     return host
   }
 
-  /** Firefox's places database is held exclusively while Firefox runs: refuse up front, as Chrome does. */
+  /** Firefox's databases are held exclusively while Firefox runs: refuse up front, as Chrome does. */
   private refuseIfRunning(source: ImportSource): void {
     if (source.browser === 'firefox' && source.running)
       throw new ImportError(lockedMessage(source.browserName), true)

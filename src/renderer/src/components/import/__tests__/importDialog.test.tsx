@@ -265,6 +265,120 @@ describe('the import dialog', () => {
     expect(submitButton().disabled).toBe(false)
   })
 
+  it('a Firefox profile with a login store offers its passwords and asks for the primary password, sent with the run only when typed (ID-42)', async () => {
+    const withLogins: ImportSource = {
+      ...FIREFOX,
+      kinds: ['bookmarks', 'history', 'passwords'],
+      limits: {}
+    }
+    await open([CHROME_1, withLogins])
+    const fieldBlock = (): HTMLElement | null =>
+      document.querySelector<HTMLElement>('[data-testid="import-primary-password"]')
+    // Chrome's passwords come from the keyring: no field for them.
+    expect(fieldBlock()).toBeNull()
+
+    await pick(menulists()[0]!, 'Firefox')
+    expect(kinds().map((r) => [r.kind, r.checked, r.disabled])).toEqual([
+      ['bookmarks', true, false],
+      ['history', true, false],
+      ['passwords', true, false]
+    ])
+    expect(document.querySelectorAll('[data-testid="import-limit"]')).toHaveLength(0)
+    const block = fieldBlock()!
+    expect(block.textContent).toContain('Firefox primary password')
+    expect(block.textContent).toContain(
+      'Leave this empty unless Firefox asks for a primary password before showing your saved passwords.'
+    )
+    const field = block.querySelector<HTMLInputElement>('input')!
+    expect(field.type).toBe('password')
+    expect(field.getAttribute('aria-describedby')).toBe(`${field.id}-hint`)
+    expect(document.getElementById(`${field.id}-hint`)).not.toBeNull()
+
+    // The field goes with the passwords box: unchecked, no password is asked for.
+    const passwords = document.querySelector<HTMLInputElement>(
+      '[data-import-kind="passwords"] input'
+    )!
+    act(() => {
+      passwords.click()
+    })
+    expect(fieldBlock()).toBeNull()
+    act(() => {
+      passwords.click()
+    })
+    expect(fieldBlock()).not.toBeNull()
+
+    // Left empty, the run goes without the argument (the engine's empty default).
+    press(submitButton())
+    expect(vi.mocked(cmd)).toHaveBeenLastCalledWith('import.run', {
+      source: withLogins.id,
+      kinds: ['bookmarks', 'history', 'passwords']
+    })
+    // `import.run` answered null (the form comes back), so the field can be typed into.
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(panel().dataset.phase).toBe('form')
+    const input = fieldBlock()!.querySelector<HTMLInputElement>('input')!
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setter.call(input, 'hunter2')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(input.value).toBe('hunter2')
+    // Enter in the field is the Import press; the typed password travels with the run.
+    act(() => {
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      )
+    })
+    expect(vi.mocked(cmd)).toHaveBeenLastCalledWith('import.run', {
+      source: withLogins.id,
+      kinds: ['bookmarks', 'history', 'passwords'],
+      primaryPassword: 'hunter2'
+    })
+  })
+
+  it('a typed primary password is one profile’s: a change of profile or browser drops it', async () => {
+    const home: ImportSource = {
+      ...FIREFOX,
+      name: 'default-release',
+      kinds: ['bookmarks', 'history', 'passwords'],
+      limits: {}
+    }
+    const work: ImportSource = { ...home, id: 'firefox:efgh.work', name: 'work' }
+    await open([CHROME_1, home, work])
+    await pick(menulists()[0]!, 'Firefox')
+    const input = (): HTMLInputElement =>
+      document.querySelector<HTMLInputElement>('[data-testid="import-primary-password"] input')!
+    const type = (value: string): void =>
+      act(() => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+        setter.call(input(), value)
+        input().dispatchEvent(new Event('input', { bubbles: true }))
+      })
+    type('hunter2')
+    expect(input().value).toBe('hunter2')
+
+    // Another profile of the same browser: its store has its own primary password (or none).
+    await pick(menulists()[1]!, 'work')
+    expect(input().value).toBe('')
+    press(submitButton())
+    expect(vi.mocked(cmd)).toHaveBeenLastCalledWith('import.run', {
+      source: work.id,
+      kinds: ['bookmarks', 'history', 'passwords']
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    // Away to another browser and back: the value typed for Firefox before does not return.
+    type('hunter2')
+    await pick(menulists()[0]!, 'Google Chrome')
+    expect(document.querySelector('[data-testid="import-primary-password"]')).toBeNull()
+    await pick(menulists()[0]!, 'Firefox')
+    expect(input().value).toBe('')
+  })
+
   it('the status line’s slot stands blank under the form, so the press of Import moves nothing (§9.30)', async () => {
     await open()
     // Present and empty in the form phase: the same 28 px box the busy line fills, a live region

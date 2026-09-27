@@ -258,7 +258,11 @@ export const CHROMIUM_FILES = {
 
 export const FIREFOX_FILES = {
   places: 'places.sqlite',
-  backups: 'bookmarkbackups'
+  backups: 'bookmarkbackups',
+  /** The saved logins, sealed with the master key in `key`. */
+  logins: 'logins.json',
+  /** NSS's key store (SQLite): the master key wrapped with the primary password. */
+  key: 'key4.db'
 } as const
 
 export const SAFARI_FILES = {
