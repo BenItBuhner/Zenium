@@ -1,7 +1,8 @@
-import type { SyncPlatformHost, SyncTransport } from '../core/platform'
+import type { SyncFetch, SyncPlatformHost, SyncTransport } from '../core/platform'
 import type { SyncDeviceKind } from '../shared/types'
 import { SyncFolderLostError } from '../core/sync/transport'
 import type { Bridge } from './bridge'
+import { androidSyncFetch } from './syncFetch'
 
 /** Kotlin's rejection for a tree whose permission is gone (`SyncFolder.kt`, `LOST_PREFIX`). */
 export const FOLDER_LOST_PREFIX = 'folder-lost:'
@@ -81,19 +82,28 @@ export class ForegroundSignal {
 
 /**
  * The Android pieces of sync: the system folder picker behind `sync.chooseFolder`, the device
- * model as the default device name (Chrome names a phone by its model), the SAF transport, and
- * a foreground-only poll every 30 seconds instead of a watcher (no background service).
+ * model as the default device name (Chrome names a phone by its model), the SAF transport, a
+ * foreground-only poll every 30 seconds instead of a watcher (no background service), and the
+ * WebDAV transport's HTTP (`fetch`, `syncFetch.ts` over `sync.fetch` / `sync.fetchAbort`).
  */
 export class AndroidSyncHost implements SyncPlatformHost {
   readonly pollMs = ANDROID_POLL_MS
   readonly signal = new ForegroundSignal()
+  /**
+   * Any method to any server, from the Kotlin side's OkHttp client (`SyncFetch.kt`). A closure
+   * over the bridge and a counter, so `webdavAvailable()` reads a field at boot; nothing on the
+   * Kotlin side is built until the engine's first request.
+   */
+  readonly fetch: SyncFetch
 
   constructor(
     private readonly bridge: Bridge,
     private readonly deviceModel: string,
     /** The screen's smallest width is 600 dp or more at start (`PageEnvironment.largeScreen`). */
     private readonly largeScreen = false
-  ) {}
+  ) {
+    this.fetch = androidSyncFetch(bridge)
+  }
 
   async chooseFolder(): Promise<string | null> {
     const uri = await this.bridge.call<unknown>('sync.chooseFolder')

@@ -119,8 +119,8 @@ class Secrets(private val storage: Storage, private val keys: KeySource) {
         fun seal(key: SecretKey, name: String, value: String): String {
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.ENCRYPT_MODE, key)
-            cipher.updateAAD(name.toByteArray())
-            val sealed = cipher.doFinal(value.toByteArray())
+            cipher.updateAAD(name.toByteArray(Charsets.UTF_8))
+            val sealed = cipher.doFinal(value.toByteArray(Charsets.UTF_8))
             val b64 = Base64.getEncoder()
             return "$FORMAT.${b64.encodeToString(cipher.iv)}.${b64.encodeToString(sealed)}"
         }
@@ -133,8 +133,8 @@ class Secrets(private val storage: Storage, private val keys: KeySource) {
             val iv = b64.decode(parts[1])
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(TAG_BITS, iv))
-            cipher.updateAAD(name.toByteArray())
-            return String(cipher.doFinal(b64.decode(parts[2])))
+            cipher.updateAAD(name.toByteArray(Charsets.UTF_8))
+            return String(cipher.doFinal(b64.decode(parts[2])), Charsets.UTF_8)
         }
     }
 

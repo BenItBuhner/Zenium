@@ -115,6 +115,7 @@ import { AndroidExtensionStoreIo } from './extensionStoreIo'
 import { FullscreenHintCues } from './fullscreenHint'
 import { AndroidNewTabBackground } from './newTabBackground'
 import { AndroidSyncHost } from './sync'
+import { AndroidSecrets } from './secrets'
 import { AndroidSiteData } from './siteData'
 import { type HostShareAction, routeShareAction } from './shareAction'
 import { AndroidStoreIO } from './storeIo'
@@ -1375,8 +1376,10 @@ export class AndroidPlatform implements Platform {
   readonly privateSession: PrivateSessionHost
   /** The new tab page's picked wallpaper, in its own document (`newtab-wallpaper.json`). */
   readonly newTabBackground: AndroidNewTabBackground
-  /** Cross-device sync over a Storage Access Framework folder (`sync.ts`; the engine is the core's). */
+  /** Cross-device sync over a Storage Access Framework folder or a WebDAV server (`sync.ts`; the engine is the core's). */
   readonly sync: AndroidSyncHost
+  /** The WebDAV app password, sealed by the Android Keystore (`secrets.ts` over `Secrets.kt`; opened on the first call, never at boot). */
+  readonly secrets: AndroidSecrets
   /** The device's connectivity, from the boot payload and the `connectivity` host event (ERR-06, ERR-07). */
   readonly connectivity: AndroidConnectivity
   browser!: Browser
@@ -1484,6 +1487,7 @@ export class AndroidPlatform implements Platform {
       boot.deviceModel ?? '',
       boot.environment?.largeScreen === true
     )
+    this.secrets = new AndroidSecrets(bridge)
     this.connectivity = new AndroidConnectivity(boot.online !== false)
     this.agentTransport = new AndroidAgentTransport(bridge)
     this.updateHost = new AndroidUpdateHost(bridge, boot.signer ?? null, boot.packageName ?? null)
