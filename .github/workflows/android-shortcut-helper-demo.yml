@@ -30,11 +30,6 @@ name: Android shortcut helper demo
 # (.github/nightly-drivers/shortcut-helper.json).
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - cursor/android-shortcuts-helper-chrome-aliases-9271
-    paths:
-      - .github/workflows/android-shortcut-helper-demo.yml
 
 permissions:
   contents: read
