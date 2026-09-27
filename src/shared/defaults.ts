@@ -29,6 +29,7 @@ import { DEFAULT_READER_PREFERENCES } from './reader'
 import { DEFAULT_READ_ALOUD_SETTINGS } from './readAloud'
 import { DEFAULT_FONT_SETTINGS } from './fonts'
 import { FALLBACK_LANGUAGES } from './languages'
+import { DEFAULT_IPH_STATE } from './iph'
 
 /**
  * Off until the user turns it on in Settings → AI Agents; loopback only, approval required.
@@ -329,6 +330,7 @@ export const DEFAULT_SETTINGS: Settings = {
   newTab: structuredClone(DEFAULT_NEW_TAB_SETTINGS),
   gestureHintDone: false,
   fullscreenHintDone: false,
+  iph: structuredClone(DEFAULT_IPH_STATE),
   spellcheck: structuredClone(DEFAULT_SPELLCHECK),
   reader: structuredClone(DEFAULT_READER_PREFERENCES),
   readAloud: structuredClone(DEFAULT_READ_ALOUD_SETTINGS),
