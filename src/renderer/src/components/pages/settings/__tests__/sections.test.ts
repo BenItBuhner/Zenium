@@ -8291,7 +8291,7 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
       ).toBeNull()
   })
 
-  it('"Show the mini menu when text is selected" (CT-39; Edge’s Appearance › Context menus row) closes the Appearance group on desktop hosts with the popup surface, on by default with an absent value reading as on, and is absent without the capability and off the phone and the tablet', () => {
+  it('"Show the mini menu when text is selected" (CT-39; Edge’s Appearance › Context menus row) closes the Appearance group on desktop hosts with the popup surface, in the desktop and tablet layouts, on by default with an absent value reading as on, and is absent without the capability and off the phone', () => {
     // The fixture's host has no popup surface: no row, and the search has none either.
     expect(appearanceIds(look().model)).not.toContain('show-selection-menu')
     const host = (settings: Partial<Settings> = {}): UIState =>
@@ -8303,7 +8303,7 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
       kind: 'switch',
       label: 'Show the mini menu when text is selected',
       checked: true,
-      layouts: ['desktop']
+      layouts: ['desktop', 'tablet']
     })
     expect(menu.description).toBeUndefined()
     if (menu.kind !== 'switch') throw new Error('not a switch')
@@ -8312,11 +8312,9 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
     expect(
       row(look(host({ showSelectionMenu: false })).model, 'show-selection-menu')
     ).toMatchObject({ checked: false })
-    for (const formFactor of ['phone', 'tablet'] as const)
-      expect(
-        findRow(look(host(), formFactor).model.groups, 'show-selection-menu'),
-        formFactor
-      ).toBeNull()
+    // A desktop host laid out at a tablet width (a coarse pointer) still runs the menu: its row stays.
+    expect(findRow(look(host(), 'tablet').model.groups, 'show-selection-menu')).not.toBeNull()
+    expect(findRow(look(host(), 'phone').model.groups, 'show-selection-menu')).toBeNull()
   })
 })
 

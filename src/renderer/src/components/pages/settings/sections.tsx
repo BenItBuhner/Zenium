@@ -755,8 +755,9 @@ function lookSection({
         // Edge's "Show mini menu when selecting text" (Settings › Appearance › Context menus;
         // CT-39, `Settings.showSelectionMenu`, on by default – an absent value reads as on): the
         // pill of chips – Copy, Search, Define, Translate, Read aloud – over a settled text
-        // selection. Desktop hosts with the popup surface alone (`capabilities.selectionMenu`);
-        // the phone's selection toolbar is the system's.
+        // selection. Desktop hosts with the popup surface alone (`capabilities.selectionMenu`),
+        // in the desktop and the tablet layouts – a desktop host at a tablet width still runs
+        // the menu; the phone's selection toolbar is the system's.
         ...(caps.selectionMenu
           ? [
               {
@@ -775,7 +776,7 @@ function lookSection({
                   'read aloud',
                   'context menu'
                 ],
-                layouts: ['desktop'],
+                layouts: ['desktop', 'tablet'],
                 checked: s.showSelectionMenu !== false,
                 onChange: (v) => set({ showSelectionMenu: v })
               } satisfies SettingsRow
