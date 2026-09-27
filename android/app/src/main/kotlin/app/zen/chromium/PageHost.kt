@@ -120,6 +120,13 @@ interface PageHost {
      */
     val pullToRefresh: Boolean get() = false
     /**
+     * Whether a touchpad's two-finger swipe may become a history navigation (GN-23 / A11Y-14;
+     * Settings → Accessibility → "Swipe between pages using a touchpad", Chrome's
+     * `settings.a11y.touchpad_overscroll_history_navigation`, on by default). The finger's edge
+     * drag is not this switch's: Chrome's `OnOverscrolled` gates the touchpad's overscroll alone.
+     */
+    val touchpadSwipeToNavigate: Boolean get() = true
+    /**
      * The extension runtime's Kotlin half, when the host runs one: the browser window does; a
      * custom tab has no core to run the backgrounds against, so its pages get no content scripts.
      */

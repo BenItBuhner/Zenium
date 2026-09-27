@@ -241,6 +241,8 @@ describe('collectLocal', () => {
     src.settings.energySaver = 'off'
     src.settings.unloadEnabled = false
     src.settings.unloadTimeoutMinutes = 240
+    // The touchpad swipe's Accessibility switch: Chrome's twin pref is Android-only and unsynced.
+    src.settings.touchpadSwipeToNavigate = false
     const data = collectLocal(src, defaultScope()).get('settings')?.data as Record<string, unknown>
     expect(DEVICE_LOCAL_SETTINGS).toEqual([
       'onboardingDone',
@@ -249,7 +251,8 @@ describe('collectLocal', () => {
       'useSystemAccent',
       'energySaver',
       'unloadEnabled',
-      'unloadTimeoutMinutes'
+      'unloadTimeoutMinutes',
+      'touchpadSwipeToNavigate'
     ])
     expect(data).not.toHaveProperty('sidebarExpandOnHover')
     expect(data).not.toHaveProperty('onboardingDone')
@@ -258,6 +261,7 @@ describe('collectLocal', () => {
     expect(data).not.toHaveProperty('energySaver')
     expect(data).not.toHaveProperty('unloadEnabled')
     expect(data).not.toHaveProperty('unloadTimeoutMinutes')
+    expect(data).not.toHaveProperty('touchpadSwipeToNavigate')
     // The keep-active hosts travel, as Chrome syncs tab_discarding.exceptions.
     expect(data).toHaveProperty('unloadExcludedDomains')
     // The Home pin syncs with the rest of the pins, as Chrome's `show_home_button` does.
@@ -278,6 +282,7 @@ describe('collectLocal', () => {
     expect(src.settings.energySaver).toBe('off')
     expect(src.settings.unloadEnabled).toBe(false)
     expect(src.settings.unloadTimeoutMinutes).toBe(240)
+    expect(src.settings.touchpadSwipeToNavigate).toBe(false)
   })
 
   it('an edit of Memory Saver’s mode or timer, or of Energy Saver, stamps nothing – the per-key metadata holds no entry for a device-local key, and the record is unchanged by the edit (W8-2)', () => {

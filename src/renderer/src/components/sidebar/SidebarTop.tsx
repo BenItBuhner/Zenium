@@ -53,7 +53,7 @@ import {
 } from '@shared/url'
 import { isInstallable, launcherName, pinnedAppFor } from '@shared/webApp'
 import { useElementWidth } from '@renderer/hooks/useElementWidth'
-import { updateDotAt, updateReadyAt } from '@renderer/lib/about'
+import { updateDotAt } from '@renderer/lib/about'
 import { addressDragOf, writeAddressDrag } from '@renderer/lib/addressDrag'
 import { run } from '@renderer/lib/api'
 import { chipPrompt } from '@renderer/lib/autofill'
@@ -417,11 +417,12 @@ export function NavRow({
   const mediaFolded = mediaHubFoldedAt(state, hubUp)
   // An update downloaded and waiting (shortcuts-menus-101): the menu opens on its "Update
   // Zenium" row and ⋯ wears the dot for it – Chrome's dot on its ⋮ – over the hub's while
-  // both would show (one dot on the button; the menu's head row says which). The tablet's
-  // button takes Chrome Android's cadence with the phone bar (TB-12): the dot clears once the
-  // menu has been opened for the waiting version and returns for another version's
-  // (`updateDotAt`); the desktop's reads the plain phase until W8-F3 wires it to the record.
-  const updateReady = formFactor === 'tablet' ? updateDotAt(state) : updateReadyAt(state)
+  // both would show (one dot on the button; the menu's head row says which). One cadence on
+  // every layout, Chrome Android's (TB-12; W8-F3 for the desktop, the lead's ruling): the dot
+  // clears once the menu has been opened for the waiting version and returns for another
+  // version's `ready` (`updateDotAt`, the core's per-version record). Chrome desktop's badge
+  // persists by severity until the relaunch (`app_menu_icon_controller.cc`) – the edge left.
+  const updateReady = updateDotAt(state)
   // The decision published for the hub's popover (`mediaHubUi.buttonUp`), from this commit's
   // layout phase: where the button returns or folds in the row's own observer pass – a sidebar
   // drag, no state push – the popover re-reads its anchor before the frame paints, so the hold

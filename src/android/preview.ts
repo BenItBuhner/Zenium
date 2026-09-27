@@ -909,6 +909,7 @@ export function createPreviewBridge(): NativeBridge {
       applyFrame(String(tabId))
     },
     'chrome.setPullToRefresh': () => undefined,
+    'chrome.setTouchpadSwipeToNavigate': () => undefined,
     // The chrome's READY (`ChromeReady`, startup.ts): the Kotlin host lifts its splash on it and
     // sets the launch's mark. The preview has no splash; it writes the moment on the root
     // (`data-chrome-ready`, ms since the document's start) so a probe can read that READY came,

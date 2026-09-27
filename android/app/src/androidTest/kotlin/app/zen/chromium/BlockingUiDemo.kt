@@ -2,6 +2,7 @@ package app.zen.chromium
 
 import android.graphics.PointF
 import android.graphics.Rect
+import android.net.ConnectivityManager
 import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
@@ -11,6 +12,8 @@ import app.zen.chromium.blocking.ListenerOptions
 import app.zen.chromium.blocking.WebRequestEvent
 import app.zen.chromium.blocking.WebRequestListener
 import app.zen.chromium.privacy.PreloadRules
+import app.zen.chromium.privacy.SaverModes
+import app.zen.chromium.privacy.SaverState
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Test
@@ -356,6 +359,14 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
         //     FINDING, the WebView's limit.
         note("\n11. Preload pages: none refuses the marked prefetch, standard lets it go")
         preloadScene()
+
+        // 12. The system's saver modes at the same seam (OS-21, W6-D24): at `standard`, Battery
+        //     Saver on (the battery unplugged, `low_power 1`) must hold the speculation-rules
+        //     prefetch the engine is shown marked, as Chrome Android's IsSomePreloadingEnabled
+        //     does; off again, it goes (the control); then Data Saver the same way, where the
+        //     emulator gives a metered network to restrict.
+        note("\n12. saver modes: Battery Saver and Data Saver hold the marked prefetch at standard")
+        saverScene()
         note("\ndone")
     }
 
@@ -455,6 +466,133 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
             stopListening()
         }
         if (failures.isNotEmpty()) error("Preload pages: ${failures.joinToString("; ")}")
+    }
+
+    // --- the system's saver modes at the request engine ------------------------------------------
+
+    /**
+     * The system's Data Saver and Battery Saver at the request engine (OS-21; W6-D24): Chrome
+     * Android's `IsSomePreloadingEnabled` holds the pages' preloads under either mode at every
+     * Preload-pages level, and the phone's `refusePreload` reads the same two OS settings
+     * (`SaverModes`) for every marked request. The scene keeps the level at `standard` and turns
+     * each mode on with the levers the emulator offers – Battery Saver: the battery unplugged
+     * (the system holds the saver off while charging) and `settings put global low_power 1`;
+     * Data Saver: the Wi-Fi marked metered (`cmd netpolicy set metered-network`, the CTS's
+     * lever; the radio's network when the Wi-Fi cannot be marked) and `cmd netpolicy set
+     * restrict-background true` – then waits for the app's own reading (`SaverModes.state`, the
+     * one the refusal reads, cached a second) to carry the mode before it navigates. The rule
+     * asserted is [preloadScene]'s, under the mode instead of the level: the speculation-rules
+     * prefetch, which `shouldInterceptRequest` is shown WITH the mark, must not reach the server
+     * within 5 s of the page's own resources loading; the link prefetch is the WebView's limit
+     * as before (a FINDING, not failed on). Between the modes, with neither on, the control: the
+     * prefetch reaches the server again. A mode the emulator will not produce (the reading stays
+     * off for 8 s) is written as a FINDING and not failed on – the mapping is `SaverModesTest`'s,
+     * and the emulator's radio and power service are not the change under test. Every lever is
+     * put back in a `finally`.
+     */
+    private fun saverScene() {
+        val failures = mutableListOf<String>()
+        ensureDemoTab()
+        coreInvoke("settings.update", """{"preloadPages":"standard"}""")
+        note("  standard: ${awaitPreloadLevel("standard")}")
+        val modes = SaverModes.shared(app)
+        note("  the app's reading before: ${modes.state()}")
+
+        /** Navigate to a fresh fixture under `label`, wait 5 s past its own resources, judge the marked prefetch. */
+        fun underMode(label: String, mode: SaverState) {
+            val nonce = "$label-${SystemClock.uptimeMillis()}"
+            coreInvoke("tab.navigate", """{"tabId":"$DEMO_TAB","input":"$DEMO_ORIGIN/preload.html?n=$nonce"}""")
+            val own = waitForPreloadPage(nonce)
+            note("  ${describePreloadPage(nonce, own)}")
+            SystemClock.sleep(5_000)
+            val speculated = server.hits("/speculated.html?n=$nonce")
+            val prefetched = server.hits("/prefetched.txt?n=$nonce")
+            note("  5 s after the page's own resources under $mode: /speculated.html ${describeHits(speculated)}; /prefetched.txt ${describeHits(prefetched)} (the link prefetch: the WebView's limit, not judged)")
+            if (!own) failures += "under $mode the page's own resources did not load (${describePreloadPage(nonce, false)})"
+            if (speculated.isNotEmpty()) failures += "under $mode at standard the speculation-rules prefetch reached the server: ${speculated.first()}"
+            else note("  $mode: the marked prefetch held at standard – the server saw none of it")
+        }
+
+        /** The control with neither mode on: the marked prefetch goes again. */
+        fun control(label: String) {
+            val nonce = "$label-${SystemClock.uptimeMillis()}"
+            coreInvoke("tab.navigate", """{"tabId":"$DEMO_TAB","input":"$DEMO_ORIGIN/preload.html?n=$nonce"}""")
+            val own = waitForPreloadPage(nonce)
+            val hit = server.awaitHit("/speculated.html?n=$nonce", 15_000)
+            note("  ${describePreloadPage(nonce, own)}")
+            note("  the control after $label: /speculated.html ${describeHits(server.hits("/speculated.html?n=$nonce"))}")
+            if (hit == null) failures += "the control after $label: no speculation-rules prefetch reached the server within 15 s with neither mode on (reading ${modes.state()})"
+        }
+
+        // Battery Saver.
+        try {
+            shellCommand("dumpsys battery unplug")
+            shellCommand("settings put global low_power 1")
+            val reading = awaitSaverState(modes, SaverState.BATTERY_SAVER)
+            note("  Battery Saver on: $reading (low_power=${shellCommand("settings get global low_power").trim()})")
+            if (modes.state() == SaverState.BATTERY_SAVER) underMode("battery", SaverState.BATTERY_SAVER)
+            else note("  FINDING: the emulator did not read Battery Saver within 8 s (isPowerSaveMode stayed false) – not exercisable here; the mapping is SaverModesTest's")
+        } finally {
+            shellCommand("settings put global low_power 0")
+            shellCommand("dumpsys battery reset")
+        }
+        note("  Battery Saver off: ${awaitSaverState(modes, SaverState.NONE)}")
+        control("battery")
+        beat()
+
+        // Data Saver: the Wi-Fi metered first (the emulator's is "AndroidWifi"; the network id as
+        // WifiInfo.getSSID gives it, quoted, then bare), the radio's network as the fallback.
+        var wifiMetered = false
+        var wifiOff = false
+        val wifiIds = listOf("\"AndroidWifi\"", "AndroidWifi")
+        try {
+            for (id in wifiIds) {
+                if (wifiMetered) break
+                note("  cmd netpolicy set metered-network $id true: ${shellCommand("cmd netpolicy set metered-network $id true").trim()}")
+                wifiMetered = awaitMetered(5_000)
+            }
+            note("  Wi-Fi marked metered: $wifiMetered (${shellCommand("cmd netpolicy list wifi-networks").trim().replace("\n", "; ")})")
+            if (!wifiMetered) {
+                shellCommand("svc wifi disable")
+                wifiOff = true
+                note("  Wi-Fi off, the radio's network: metered ${awaitMetered(10_000)}")
+            }
+            shellCommand("cmd netpolicy set restrict-background true")
+            val reading = awaitSaverState(modes, SaverState.DATA_SAVER)
+            note("  Data Saver on: $reading (${shellCommand("cmd netpolicy get restrict-background").trim()})")
+            if (modes.state() == SaverState.DATA_SAVER) underMode("data", SaverState.DATA_SAVER)
+            else note("  FINDING: the emulator did not read Data Saver within 8 s (metered=${isActiveNetworkMetered()}, status=${restrictBackgroundStatus()}) – no metered network to restrict here; the mapping is SaverModesTest's")
+        } finally {
+            shellCommand("cmd netpolicy set restrict-background false")
+            if (wifiMetered) for (id in wifiIds) shellCommand("cmd netpolicy set metered-network $id false")
+            if (wifiOff) shellCommand("svc wifi enable")
+        }
+        note("  Data Saver off: ${awaitSaverState(modes, SaverState.NONE)}")
+        control("data")
+        if (failures.isNotEmpty()) error("Saver modes: ${failures.joinToString("; ")}")
+    }
+
+    /** Wait up to 8 s for the app's own reading (cached a second) to say `state`; describe what it says. */
+    private fun awaitSaverState(modes: SaverModes, state: SaverState): String {
+        val started = SystemClock.uptimeMillis()
+        val deadline = started + 8_000
+        while (SystemClock.uptimeMillis() < deadline && modes.state() != state) SystemClock.sleep(200)
+        val took = SystemClock.uptimeMillis() - started
+        val now = modes.state()
+        return "SaverModes.state=$now" + (if (now == state) " (read after $took ms)" else " (did NOT read $state within 8 s)")
+    }
+
+    private fun connectivity(): ConnectivityManager? = app.getSystemService(ConnectivityManager::class.java)
+
+    private fun isActiveNetworkMetered(): Boolean = connectivity()?.isActiveNetworkMetered == true
+
+    private fun restrictBackgroundStatus(): Int = connectivity()?.restrictBackgroundStatus ?: -1
+
+    /** Wait up to `timeoutMs` for the active network to read metered. */
+    private fun awaitMetered(timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline && !isActiveNetworkMetered()) SystemClock.sleep(200)
+        return isActiveNetworkMetered()
     }
 
     /**

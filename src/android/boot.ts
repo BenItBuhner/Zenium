@@ -188,6 +188,7 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
   syncPrivateLock(bridge, boot, platform)
   syncBackState(bridge)
   syncPullToRefresh(bridge, platform)
+  syncTouchpadSwipeToNavigate(bridge, platform)
   syncBarHide(bridge, boot)
   syncHistoryNavBubble(bridge)
   syncCaptureState(bridge, browser)
@@ -345,6 +346,22 @@ function syncPullToRefresh(bridge: Bridge, platform: AndroidPlatform): void {
     if (enabled === last) return
     last = enabled
     bridge.send('chrome.setPullToRefresh', { enabled })
+  })
+}
+
+/**
+ * The touchpad swipe's Accessibility switch ("Swipe between pages using a touchpad", GN-23 /
+ * A11Y-14): mirrored to the host, whose `TabWebView.historyNavEligible` reads it at each
+ * touchpad swipe's down and leaves the swipe to the page while it is off (Chrome's
+ * `touchpad_swipe_to_navigate` gate). The finger's edge drag is not its.
+ */
+function syncTouchpadSwipeToNavigate(bridge: Bridge, platform: AndroidPlatform): void {
+  let last: boolean | null = null
+  platform.events.on('state', (state: UIState) => {
+    const enabled = state.settings.touchpadSwipeToNavigate !== false
+    if (enabled === last) return
+    last = enabled
+    bridge.send('chrome.setTouchpadSwipeToNavigate', { enabled })
   })
 }
 
