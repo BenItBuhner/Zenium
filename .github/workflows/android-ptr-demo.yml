@@ -8,6 +8,10 @@ name: Android pull-to-refresh demo
 # nothing about a change being correct. The build, the emulator and its caches live in
 # android-emulator-demo.yml; this file only picks the driver and the colour scheme.
 on:
+  # TEMPORARY (W6-D27, PR #611): one run of the touchpad scene from this branch; removed before READY.
+  push:
+    branches:
+      - cursor/android-pull-to-refresh-touchpad-9271
   workflow_dispatch:
     inputs:
       theme:

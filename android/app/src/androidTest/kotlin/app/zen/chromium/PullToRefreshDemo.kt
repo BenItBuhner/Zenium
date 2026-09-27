@@ -125,6 +125,11 @@ class PullToRefreshDemo : DemoHarness("ptr-demo-state.json", "ptr-$THEME", "ptr-
         SystemClock.sleep(1_200)
         toTop()
 
+        // 5b. A touchpad's two-finger swipe down at the top (Android 14's classified fake finger,
+        //     W6-D27): never a pull, as Chrome's refresh is the touchscreen's alone – the page
+        //     keeps the swipe and the disc never comes; a finger's pull right after still does.
+        touchpadSwipeIsNotAPull()
+
         // 6. Settings → Look and Feel → Pull to refresh off: the same drag is the page's.
         openLookAndFeel()
         val row = revealSettingsRow(PULL_ROW) ?: error("no $PULL_ROW row in Look and Feel")
@@ -179,6 +184,58 @@ class PullToRefreshDemo : DemoHarness("ptr-demo-state.json", "ptr-$THEME", "ptr-
     }
 
     // --- moves -----------------------------------------------------------------------------------
+
+    /**
+     * The touchpad's swipe at the top against the finger's pull, on the same page: the swipe (the
+     * platform's fake finger, see [Touchpad]) dragged well past the pull's threshold must leave the
+     * page at home – its `translationY` is the pull's offset plus the bar's shift, both 0 at the
+     * top of a page at rest – while the finger's drag right after moves it. Both read on the
+     * main thread mid-hold; a failed claim fails the run. Skipped below Android 14, where the
+     * platform delivers no classified swipe (Chrome there treats the touchpad as a finger too).
+     */
+    private fun touchpadSwipeIsNotAPull() {
+        val touchpad = Touchpad()
+        if (!touchpad.supported) {
+            Log.i(tag, "touchpad scene skipped: no classified two-finger swipe before Android 14")
+            return
+        }
+        val view = activeTabView() ?: error("no view for the active tab")
+        touchpad.down(pageX, pageY)
+        touchpad.moveBy(0f, PAST * density, 900)
+        touchpad.hold(600)
+        val swipeOffset = onMain { view.translationY }
+        shot("11b-touchpad-swipe-no-pull")
+        touchpad.up()
+        SystemClock.sleep(1_200)
+        Log.i(tag, "touchpad swipe: page offset ${swipeOffset}px mid-hold (must be 0)")
+
+        val finger = Finger()
+        finger.down(pageX, pageY)
+        finger.moveBy(0f, BELOW * density, 800)
+        finger.hold(700)
+        val pullOffset = onMain { view.translationY }
+        shot("11c-finger-pull-after-touchpad")
+        finger.up()
+        SystemClock.sleep(1_500)
+        Log.i(tag, "finger pull: page offset ${pullOffset}px mid-hold (must be > 0)")
+
+        if (swipeOffset != 0f) error("the touchpad's swipe pulled the page ${swipeOffset}px: the pull armed on it")
+        if (pullOffset <= 0f) error("the finger's pull after the touchpad's swipe did not move the page")
+        toTop()
+    }
+
+    /** The host's view for the core's active tab. */
+    private fun activeTabView(): TabWebView? {
+        val tabId = activeCoreTab()?.optString("id")?.takeIf { it.isNotEmpty() } ?: return null
+        return onMain { (activity as? MainActivity)?.host?.tabs?.get(tabId) }
+    }
+
+    private fun <T> onMain(read: () -> T): T {
+        var out: T? = null
+        instrumentation.runOnMainSync { out = read() }
+        @Suppress("UNCHECKED_CAST")
+        return out as T
+    }
 
     /**
      * Make sure the page is at its top without pulling it: a short drag up first (a drag that
