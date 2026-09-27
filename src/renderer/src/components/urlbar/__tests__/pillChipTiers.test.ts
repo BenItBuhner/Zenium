@@ -8,7 +8,8 @@ import {
   PILL_PADDING,
   addressWidth,
   fittingChips,
-  installLabelFits,
+  fittingUtilities,
+  labelFits,
   type PillChipSpec
 } from '../pillChipTiers'
 
@@ -71,19 +72,109 @@ describe('the pill chip overflow rule (M8)', () => {
 
   it('measures the Install chip with its label while the pill has the label tier’s room', () => {
     expect(PILL_LABEL_TIER).toBe(220)
-    // The label's width is what the chip adds to its 20 px glyph box: the 59 px chip the W8-6
-    // drive read on the packaged build (the word 33 at 11.5 px medium, its gap 4, padding 4 + 4).
-    expect(CHIP_WIDTH.label).toBe(39)
+    // The label's width is what the chip adds to its 20 px glyph box, at §4's 13 px (the design
+    // lead's ruling on #589): the word 37.4 at 13 px medium on the packaged build's font stack,
+    // its gap 4, padding 4 + 4 – a 63.4 px chip, reserved at 64: 44 over the glyph.
+    expect(CHIP_WIDTH.label).toBe(44)
     const labelled: PillChipSpec[] = [
       { id: 'site', tier: 'site', width: CHIP_WIDTH.site },
       { id: 'install', tier: 'install', width: CHIP_WIDTH.small + CHIP_WIDTH.label }
     ]
     // At the label tier's own content box the labelled chip fits beside the address floor:
-    // 26 + (20 + 39 + 6) + 56 = 147 ≤ 220.
+    // 26 + (20 + 44 + 6) + 56 = 152 ≤ 220.
     expect(ids(fittingChips(PILL_LABEL_TIER, labelled))).toEqual(['install', 'site'])
     expect(addressWidth(PILL_LABEL_TIER, labelled, fittingChips(PILL_LABEL_TIER, labelled))).toBe(
       PILL_LABEL_TIER - 26 - (CHIP_WIDTH.small + CHIP_WIDTH.label + CHIP_GAP)
     )
+  })
+
+  /*
+   * The pill's other word, "Not secure" (or "Dangerous") before an http page's address, is a
+   * state chip of the tier since the W8-6 round on #589: at 13 px it is 68.4 wide ("Dangerous"
+   * 68.0), reserved at 69, so the chips – the utilities first – fold before the word takes the
+   * address under its floor. Both words read their 13 px from one stylesheet line.
+   */
+  it('counts the "Not secure" word as a never-hidden state chip at its 13 px width', () => {
+    expect(CHIP_WIDTH.indicatorLabel).toBe(69)
+    const http: PillChipSpec[] = [
+      { id: 'site', tier: 'site', width: CHIP_WIDTH.site },
+      { id: 'indicator', tier: 'state', width: CHIP_WIDTH.indicatorLabel },
+      { id: 'shield', tier: 'shield', width: CHIP_WIDTH.iconButton },
+      { id: 'star', tier: 'star', width: CHIP_WIDTH.star },
+      { id: 'copy', tier: 'extra', width: CHIP_WIDTH.small },
+      { id: 'share', tier: 'extra', width: CHIP_WIDTH.small },
+      { id: 'boost', tier: 'extra', width: CHIP_WIDTH.small }
+    ]
+    const at = (innerWidth: number): string[] => ids(fittingChips(innerWidth, http))
+    // Uncounted, the 240 inner of a 400 sidebar read 154 free over the residents and let three
+    // utilities in – the address at 2 px. Counted: site 26 + word 75 + shield 34 + star 26 = 161;
+    // 240 − 161 = 79 over the floor's 56 – room for none of the 26 px utilities.
+    expect(at(240)).toEqual(['indicator', 'shield', 'site', 'star'])
+    expect(addressWidth(240, http, fittingChips(240, http))).toBe(79)
+    // Copy URL at 161 + 26 + 56 = 243, Share at 269, Boost at 295.
+    expect(at(243)).toEqual(['copy', 'indicator', 'shield', 'site', 'star'])
+    expect(at(269)).toEqual(['copy', 'indicator', 'share', 'shield', 'site', 'star'])
+    expect(at(295)).toEqual(['boost', 'copy', 'indicator', 'share', 'shield', 'site', 'star'])
+    // Never hidden by the tier while it stands: it is the page's state. The pill lists it only
+    // while it stands (`labelFits`, below), and the stylesheet drops it under the label tier.
+    expect(ids(fittingChips(PILL_LABEL_TIER, http))).toEqual([
+      'indicator',
+      'shield',
+      'site',
+      'star'
+    ])
+    expect(ids(fittingChips(120, http))).toEqual(['indicator', 'site'])
+    // The word folds as the Install word does – first, by the room, before any chip hides, one
+    // way: a zoomed http page with a translate chip keeps every chip beside the word down to
+    // 26 + 75 + 34 + 26 + 26 + 26 = 213, + 56 = 269; one pixel under, the word goes and the six
+    // chips stand over the room it left (138 + 56 = 194), where hiding zoom and translate at
+    // 220–268 to return them at 219 would have been the jitter §9.29's one-way tiers rule out.
+    const crowded: PillChipSpec[] = [
+      ...http.slice(0, 4),
+      { id: 'zoom', tier: 'zoom', width: CHIP_WIDTH.small },
+      { id: 'translate', tier: 'info', width: CHIP_WIDTH.small }
+    ]
+    expect(labelFits(269, crowded)).toBe(true)
+    expect(labelFits(268, crowded)).toBe(false)
+    const bare = crowded.filter((c) => c.id !== 'indicator')
+    expect(fittingChips(268, bare).size).toBe(bare.length)
+    expect(fittingChips(194, bare).size).toBe(bare.length)
+    // The utilities keep reading the word's room as spent: none until 213 + 26 + 56 = 295.
+    const utilities = http.slice(4)
+    expect(ids(fittingUtilities(294, crowded, utilities))).toEqual([])
+    expect(ids(fittingUtilities(295, crowded, utilities))).toEqual(['copy'])
+  })
+
+  it('220 holds as the label tier for both words at 13 px', () => {
+    // The widest run an http page keeps beside its word – the site icon, "Not secure", the
+    // shield, the star – stands over a 56 px address at the tier: 26 + 75 + 34 + 26 + 56 = 217.
+    const http: PillChipSpec[] = [
+      { id: 'site', tier: 'site', width: CHIP_WIDTH.site },
+      { id: 'indicator', tier: 'state', width: CHIP_WIDTH.indicatorLabel },
+      { id: 'shield', tier: 'shield', width: CHIP_WIDTH.iconButton },
+      { id: 'star', tier: 'star', width: CHIP_WIDTH.star }
+    ]
+    expect(26 + (CHIP_WIDTH.indicatorLabel + CHIP_GAP) + 34 + 26 + MIN_ADDRESS_WIDTH).toBe(217)
+    expect(fittingChips(PILL_LABEL_TIER, http).size).toBe(http.length)
+    expect(addressWidth(PILL_LABEL_TIER, http, fittingChips(PILL_LABEL_TIER, http))).toBe(59)
+    // The labelled Install chip beside the site icon and the star: 26 + 70 + 26 + 56 = 178. (The
+    // two words all but never share a pill – an Install offer needs a secure context, and the
+    // loopback http that installs carries no indicator word.)
+    const installable: PillChipSpec[] = [
+      { id: 'site', tier: 'site', width: CHIP_WIDTH.site },
+      { id: 'install', tier: 'install', width: CHIP_WIDTH.small + CHIP_WIDTH.label },
+      { id: 'star', tier: 'star', width: CHIP_WIDTH.star }
+    ]
+    expect(26 + (CHIP_WIDTH.small + CHIP_WIDTH.label + CHIP_GAP) + 26 + MIN_ADDRESS_WIDTH).toBe(178)
+    expect(labelFits(PILL_LABEL_TIER, installable)).toBe(true)
+    expect(labelFits(PILL_LABEL_TIER - 1, installable)).toBe(false)
+    // Where they would share one (a certificate error bypassed on a page with a manifest), the
+    // Install word folds first, by the room: 26 + 75 + 70 + 26 + 56 = 253 > 220, and the glyph
+    // alone stands with the rest at 26 + 75 + 26 + 26 + 56 = 209.
+    const both: PillChipSpec[] = [installable[0]!, http[1]!, installable[1]!, installable[2]!]
+    expect(labelFits(PILL_LABEL_TIER, both)).toBe(false)
+    const bare = both.map((c) => (c.id === 'install' ? { ...c, width: CHIP_WIDTH.small } : c))
+    expect(fittingChips(PILL_LABEL_TIER, bare).size).toBe(bare.length)
   })
 
   it('keeps the "Install" label only while every chip fits beside it, and never under the label tier', () => {
@@ -95,23 +186,88 @@ describe('the pill chip overflow rule (M8)', () => {
       { id: 'star', tier: 'star', width: CHIP_WIDTH.star }
     ]
     // Unmeasured keeps the word, as the tier keeps every chip.
-    expect(installLabelFits(0, chips)).toBe(true)
-    // site 26 + star 26 + shield 34 + install 65 + translate 26 = 177; + 56 = 233.
-    expect(installLabelFits(233, chips)).toBe(true)
+    expect(labelFits(0, chips)).toBe(true)
+    // site 26 + star 26 + shield 34 + install 70 + translate 26 = 182; + 56 = 238.
+    expect(labelFits(238, chips)).toBe(true)
     // One pixel under, translate would hide: the word goes first instead.
-    expect(installLabelFits(232, chips)).toBe(false)
-    // Never under the label tier, however few the chips: 26 + 65 + 56 = 147 would fit at 219.
+    expect(labelFits(237, chips)).toBe(false)
+    // Never under the label tier, however few the chips: 26 + 70 + 56 = 152 would fit at 219.
     const two: PillChipSpec[] = [
       { id: 'site', tier: 'site', width: CHIP_WIDTH.site },
       { id: 'install', tier: 'install', width: CHIP_WIDTH.small + CHIP_WIDTH.label }
     ]
-    expect(installLabelFits(PILL_LABEL_TIER, two)).toBe(true)
-    expect(installLabelFits(PILL_LABEL_TIER - 1, two)).toBe(false)
+    expect(labelFits(PILL_LABEL_TIER, two)).toBe(true)
+    expect(labelFits(PILL_LABEL_TIER - 1, two)).toBe(false)
     // The word folded, the chip is its glyph: the freed room keeps translate for a while.
     const bare = chips.map((c) => (c.id === 'install' ? { ...c, width: CHIP_WIDTH.small } : c))
-    expect(ids(fittingChips(232, bare))).toEqual(['install', 'shield', 'site', 'star', 'translate'])
+    expect(ids(fittingChips(237, bare))).toEqual(['install', 'shield', 'site', 'star', 'translate'])
     // 26 + 26 + 34 + 26 + 26 = 138; + 56 = 194: at 193 translate goes, the glyph stays.
     expect(ids(fittingChips(193, bare))).toEqual(['install', 'shield', 'site', 'star'])
+  })
+
+  /*
+   * The design lead's ruling on #589 (3b): the tiers fold ONE WAY. As the sidebar narrows, a
+   * utility that hid must not come back – not even for the step or two where the Install word's
+   * fold (44) frees more than the chip (26) that would take the room. The utilities are read
+   * against the residents at their labelled widths (`fittingUtilities`), whatever the word does.
+   */
+  it('reads the hover-only utilities against the labelled residents, so the word’s fold never lets one back in', () => {
+    const labelled: PillChipSpec[] = [
+      { id: 'site', tier: 'site', width: CHIP_WIDTH.site },
+      { id: 'shield', tier: 'shield', width: CHIP_WIDTH.iconButton },
+      { id: 'translate', tier: 'info', width: CHIP_WIDTH.small },
+      { id: 'install', tier: 'install', width: CHIP_WIDTH.small + CHIP_WIDTH.label },
+      { id: 'star', tier: 'star', width: CHIP_WIDTH.star }
+    ]
+    const utilities: PillChipSpec[] = [
+      { id: 'copy', tier: 'extra', width: CHIP_WIDTH.small },
+      { id: 'share', tier: 'extra', width: CHIP_WIDTH.small },
+      { id: 'boost', tier: 'extra', width: CHIP_WIDTH.small }
+    ]
+    const at = (innerWidth: number): string[] =>
+      ids(fittingUtilities(innerWidth, labelled, utilities))
+    // The labelled residents take 182; Copy URL needs 182 + 26 + 56 = 264 of inner width (the
+    // 424 sidebar), Share 290 (456 at the drive's 8 px steps), Boost 316 (480).
+    expect(at(316)).toEqual(['boost', 'copy', 'share'])
+    expect(at(315)).toEqual(['copy', 'share'])
+    expect(at(290)).toEqual(['copy', 'share'])
+    expect(at(289)).toEqual(['copy'])
+    expect(at(264)).toEqual(['copy'])
+    expect(at(263)).toEqual([])
+    // At the word's fold (238 → 237) the bare residents take 138 and Copy URL would fit the
+    // pill's real room down to 138 + 26 + 56 = 220 – re-entering for the drag from 237 to 220.
+    // Read against the labelled set it stays out: the word's room is spent.
+    expect(labelFits(238, labelled)).toBe(true)
+    expect(labelFits(237, labelled)).toBe(false)
+    const bare = labelled.map((c) => (c.id === 'install' ? { ...c, width: CHIP_WIDTH.small } : c))
+    expect(ids(fittingChips(237, [...bare, ...utilities]))).toContain('copy')
+    expect(at(237)).toEqual([])
+    expect(at(220)).toEqual([])
+    // Unmeasured, every utility – as the tier keeps every chip before the pill has a width.
+    expect(at(0)).toEqual(['boost', 'copy', 'share'])
+    // The sweep the drive runs, 520 → 240 hovered, one pixel at a time: the mounted set is
+    // monotone non-increasing, and no utility re-enters below the width it last showed at.
+    let previous = new Set(at(inner(520 - 144)))
+    const lastSeen = new Map<string, number>()
+    for (let sidebar = 520; sidebar >= 240; sidebar -= 1) {
+      const now = new Set(at(inner(sidebar - 144)))
+      for (const id of now) {
+        expect(previous.has(id)).toBe(true)
+        lastSeen.set(id, sidebar)
+      }
+      previous = now
+    }
+    expect(lastSeen.get('boost')).toBe(316 + 16 + 144)
+    expect(lastSeen.get('share')).toBe(290 + 16 + 144)
+    expect(lastSeen.get('copy')).toBe(264 + 16 + 144)
+    for (const [id, sidebar] of lastSeen) {
+      for (let below = sidebar - 1; below >= 240; below -= 1) {
+        expect(at(inner(below - 144))).not.toContain(id)
+      }
+    }
+    // A resident that does not fit closes the door on every utility, as before.
+    const heavy: PillChipSpec[] = [...labelled, { id: 'zoom', tier: 'zoom', width: 200 }]
+    expect(ids(fittingUtilities(400, heavy, utilities))).toEqual([])
   })
 
   /*

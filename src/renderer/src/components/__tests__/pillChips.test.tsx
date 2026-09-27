@@ -1809,6 +1809,11 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
     expect(label.textContent).toBe('Install')
     expect(label.getAttribute('aria-hidden')).toBe('true')
     expect(chip.querySelector('svg')).not.toBeNull()
+    // The word's size is the stylesheet's one `.zen-pill-label` line (§4's 13 px, shared with
+    // "Not secure"; the design lead's ruling on #589) – no size utility of its own; its weight
+    // the button's medium.
+    expect(label.className.split(/\s+/).some((c) => c.startsWith('text-['))).toBe(false)
+    expect(label.classList.contains('font-medium')).toBe(true)
   })
 
   it('opens the install dialog from the chip, which keeps its pressed fill while the dialog is up and goes once the app is installed', () => {
@@ -1921,31 +1926,39 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
       const el = render(<NavRow state={s} tab={installable} compact={false} />)
       expect(el.querySelector('[data-install-chip]')).not.toBeNull()
       expect(toolbarTiering.get().hidden).toEqual([])
-      // Wide: the label is up and measured (20 + 39); everything fits at a 320 pill, the
-      // hover-only utilities too (site 26 + star 26 + install 65 + translate 26 + Reader 26 =
-      // 169, + 56 = 225; Copy URL, Share and Boost's 78 on top at 303).
-      act(() => emit!(304))
+      // Wide: the label is up and measured (20 + 44, the word at 13 px); everything fits at a
+      // 324 pill, the hover-only utilities too (site 26 + star 26 + install 70 + translate 26 +
+      // Reader 26 = 174, + 56 = 230; Copy URL, Share and Boost's 78 on top at 308).
+      act(() => emit!(308))
       expect(el.querySelector('[data-install-chip]')).not.toBeNull()
       expect(el.querySelector('[data-install-chip] .zen-pill-label')).not.toBeNull()
       expect(el.querySelector('[aria-label="Copy URL"]')).not.toBeNull()
-      // The utilities yield first: at 225 every resident chip and the word stand, none of them.
-      act(() => emit!(225))
+      expect(el.querySelector('[data-share-chip]')).not.toBeNull()
+      expect(el.querySelector('[aria-label="Boost this site"]')).not.toBeNull()
+      // The utilities yield first: at 230 every resident chip and the word stand, none of them.
+      act(() => emit!(230))
       expect(el.querySelector('[data-install-chip] .zen-pill-label')).not.toBeNull()
       expect(el.querySelector('[aria-label="Reader View"]')).not.toBeNull()
       expect(el.querySelector('[aria-label="Copy URL"]')).toBeNull()
       expect(el.querySelector('[data-share-chip]')).toBeNull()
       expect(el.querySelector('[aria-label="Boost this site"]')).toBeNull()
-      // One pixel under, Reader View would hide: the word folds first and every chip stays. The
-      // utilities take the room the pill has: of the word's 39 px, Copy URL's 26 come back under
-      // the pointer (130 + 26 + 56 = 212 ≤ 224) – a hover-only affordance, not a chip of the
-      // pill's rest, which runs one way.
-      act(() => emit!(224))
+      // One pixel under, Reader View would hide: the word folds first and every chip stays. Of
+      // the word's 44 px, Copy URL's 26 would fit the pill's real room (130 + 26 + 56 = 212 ≤
+      // 229) – and stays out: the utilities are read against the labelled residents, so nothing
+      // that hid comes back as the pill narrows (the design lead's ruling on #589).
+      act(() => emit!(229))
       expect(el.querySelector('[data-install-chip] .zen-pill-label')).toBeNull()
       expect(el.querySelector('[aria-label="Reader View"]')).not.toBeNull()
       expect(el.querySelector('[aria-label="Translate this page"]')).not.toBeNull()
-      expect(el.querySelector('[aria-label="Copy URL"]')).not.toBeNull()
+      expect(el.querySelector('[aria-label="Copy URL"]')).toBeNull()
       expect(el.querySelector('[data-share-chip]')).toBeNull()
+      expect(el.querySelector('[aria-label="Boost this site"]')).toBeNull()
       expect(toolbarTiering.get().hidden).toEqual([])
+      // Nor further down the word's band: at 212 the bare residents would leave Copy URL its
+      // room to the pixel; it stays out.
+      act(() => emit!(212))
+      expect(el.querySelector('[aria-label="Copy URL"]')).toBeNull()
+      expect(el.querySelector('[aria-label="Reader View"]')).not.toBeNull()
       // Under the label tier the chip is the glyph alone: site 26 + star 26 + install 26 = 78,
       // + 56 for the address = 134 with translate's 26 on top at 160.
       act(() => emit!(160))
@@ -2213,6 +2226,191 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
       act(() => emit!(133))
       expect(boost()).toBeNull()
       expect(el.querySelector('[data-bm-star]')).not.toBeNull()
+    } finally {
+      window.ResizeObserver = Native
+    }
+  })
+
+  /*
+   * The design lead's ruling on #589 (3b): the tiers fold ONE WAY. Swept a pixel at a time from
+   * the 520 sidebar's pill to the 240's, hovered (every utility mounted that the room allows),
+   * the set of mounted chips only shrinks – no utility re-enters at the Install word's fold, and
+   * the word itself, once folded, stays folded.
+   */
+  it('sweeps 520 → 240 with nothing re-entering: the mounted chips are monotone non-increasing and the Install word folds once', () => {
+    let emit: ((width: number) => void) | null = null
+    const Native = window.ResizeObserver
+    class FakeResizeObserver {
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      observe(): void {
+        emit = (width) =>
+          this.callback(
+            [{ contentRect: { width } } as unknown as ResizeObserverEntry],
+            this as unknown as ResizeObserver
+          )
+      }
+      unobserve(): void {
+        emit = null
+      }
+      disconnect(): void {
+        emit = null
+      }
+    }
+    window.ResizeObserver = FakeResizeObserver as unknown as typeof ResizeObserver
+    try {
+      const s = desktop(installable)
+      s.translate = {
+        available: true,
+        tabs: { t1: { status: 'offered', dismissed: true } }
+      } as never
+      const el = render(<NavRow state={s} tab={installable} compact={false} />)
+      const mounted = (): Set<string> =>
+        new Set(
+          chipLabels(el)
+            .map((l) => l ?? '')
+            .filter((l) => l !== '')
+        )
+      const utilities = ['Copy URL', 'Share this page', 'Boost this site']
+      // The 520 sidebar: pill 376, content box 360.
+      act(() => emit!(360))
+      let previous = mounted()
+      for (const u of utilities) expect(previous.has(u)).toBe(true)
+      expect(el.querySelector('[data-install-chip] .zen-pill-label')).not.toBeNull()
+      let wordFolded = false
+      const lastSeen = new Map<string, number>()
+      for (let innerWidth = 360; innerWidth >= 80; innerWidth -= 1) {
+        act(() => emit!(innerWidth))
+        const now = mounted()
+        for (const id of now) {
+          expect(previous.has(id)).toBe(true)
+          lastSeen.set(id, innerWidth)
+        }
+        previous = now
+        const wordUp = el.querySelector('[data-install-chip] .zen-pill-label') !== null
+        if (wordFolded) expect(wordUp).toBe(false)
+        if (!wordUp) wordFolded = true
+      }
+      // The residents at their labelled widths take 174 (site 26 + star 26 + install 70 +
+      // translate 26 + Reader 26): Boost last at 174 + 78 + 56 = 308, Share at 282, Copy URL at
+      // 256 – and none across the word's band below, where the pill's real room would have let
+      // Copy URL back in from 229 down to 212.
+      expect(lastSeen.get('Boost this site')).toBe(308)
+      expect(lastSeen.get('Share this page')).toBe(282)
+      expect(lastSeen.get('Copy URL')).toBe(256)
+      expect(wordFolded).toBe(true)
+      // The residents fold from the end as ever: Reader View, Translate, then the Install chip.
+      expect(lastSeen.get('Reader View')).toBe(186)
+      expect(lastSeen.get('Translate this page')).toBe(160)
+      expect(lastSeen.get('Install Example App')).toBe(134)
+      expect(lastSeen.get('Bookmark this tab')).toBe(108)
+      expect(lastSeen.get('Site information')).toBe(80)
+    } finally {
+      window.ResizeObserver = Native
+    }
+  })
+
+  /*
+   * The pill's other word, "Not secure" (or "Dangerous") before an http page's address, is
+   * counted by the tier since the W8-6 round on #589 – at its 13 px width (69) – and folds as
+   * the Install word does: first, by the room, before any chip hides, one way; never under the
+   * label tier. Uncounted, the utilities mounted into the word's room and left the address 2 px
+   * on an http page at the 400 sidebar.
+   */
+  it('counts the "Not secure" word at its 13 px width, folds it before any chip hides, and never under the label tier', () => {
+    let emit: ((width: number) => void) | null = null
+    const Native = window.ResizeObserver
+    class FakeResizeObserver {
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      observe(): void {
+        emit = (width) =>
+          this.callback(
+            [{ contentRect: { width } } as unknown as ResizeObserverEntry],
+            this as unknown as ResizeObserver
+          )
+      }
+      unobserve(): void {
+        emit = null
+      }
+      disconnect(): void {
+        emit = null
+      }
+    }
+    window.ResizeObserver = FakeResizeObserver as unknown as typeof ResizeObserver
+    try {
+      const http = tab('http://example.com/some/path', { readerable: true, zoom: 1.25 })
+      const s = desktop(http)
+      s.settings = { ...s.settings, pageControls: DEFAULT_PAGE_CONTROLS }
+      s.translate = {
+        available: true,
+        tabs: { t1: { status: 'offered', dismissed: true } }
+      } as never
+      const el = render(<NavRow state={s} tab={http} compact={false} />)
+      const word = (): HTMLElement | null =>
+        el.querySelector<HTMLElement>('.zen-pill-label[data-indicator]')
+      const utilities = (): (string | null)[] =>
+        chipLabels(el).filter((l) =>
+          ['Copy URL', 'Share this page', 'Boost this site'].includes(l ?? '')
+        )
+      // Unmeasured: the word, every chip and every utility.
+      expect(word()?.textContent).toBe('Not secure')
+      expect(word()!.getAttribute('data-indicator')).toBe('insecure')
+      // Its size is the stylesheet's `.zen-pill-label` line – no size utility of its own.
+      expect(
+        word()!
+          .className.split(/\s+/)
+          .some((c) => c.startsWith('text-['))
+      ).toBe(false)
+      expect(word()!.classList.contains('opacity-70')).toBe(true)
+      expect(utilities()).toHaveLength(3)
+      // The residents beside the word: site 26 + word 75 + star 26 + zoom 26 + translate 26 +
+      // Reader 26 = 205; + 56 = 261. The utilities read the word's room as spent: Copy URL
+      // needs 205 + 26 + 56 = 287, Share 313, Boost 339.
+      act(() => emit!(339))
+      expect(utilities()).toHaveLength(3)
+      act(() => emit!(338))
+      expect(utilities()).toEqual(['Copy URL', 'Share this page'])
+      act(() => emit!(287))
+      expect(utilities()).toEqual(['Copy URL'])
+      act(() => emit!(286))
+      expect(utilities()).toEqual([])
+      // At 261 the word and every chip stand; one pixel under, the word folds first – the
+      // chips all stay (130 + 56 = 186) where hiding Reader View would have hidden it only to
+      // return it with the word's room. The tier reports nothing hidden.
+      act(() => emit!(261))
+      expect(word()).not.toBeNull()
+      expect(el.querySelector('[aria-label="Reader View"]')).not.toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual([])
+      act(() => emit!(260))
+      expect(word()).toBeNull()
+      expect(el.querySelector('[aria-label="Reader View"]')).not.toBeNull()
+      expect(el.querySelector('[aria-label="Translate this page"]')).not.toBeNull()
+      expect(el.querySelector('[aria-label="Zoom: 125%"]')).not.toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual([])
+      expect(utilities()).toEqual([])
+      // Folded, it stays folded as the pill narrows; the chips fold from the end as ever.
+      act(() => emit!(185))
+      expect(word()).toBeNull()
+      expect(el.querySelector('[aria-label="Reader View"]')).toBeNull()
+      expect(el.querySelector('[aria-label="Translate this page"]')).not.toBeNull()
+      // A plain http page keeps the word down to the label tier and drops it under, whatever
+      // the room: site 26 + word 75 + star 26 + 56 = 183 would fit at 219.
+      const plain = tab('http://example.com/some/path')
+      act(() => root!.render(<NavRow state={desktop(plain)} tab={plain} compact={false} />))
+      act(() => emit!(220))
+      expect(word()?.textContent).toBe('Not secure')
+      act(() => emit!(219))
+      expect(word()).toBeNull()
+      expect(el.querySelector('[data-bm-star]')).not.toBeNull()
+      // At the 400 sidebar's 240 the plain page mounts Copy URL and Share beside the word
+      // (127 + 52 + 56 = 235 ≤ 240) and not Boost (261): the address keeps 61, not the 35
+      // three utilities left it uncounted.
+      act(() => emit!(240))
+      expect(word()).not.toBeNull()
+      expect(utilities()).toEqual(['Copy URL', 'Share this page'])
+      act(() => emit!(234))
+      expect(utilities()).toEqual(['Copy URL'])
+      act(() => emit!(208))
+      expect(utilities()).toEqual([])
     } finally {
       window.ResizeObserver = Native
     }

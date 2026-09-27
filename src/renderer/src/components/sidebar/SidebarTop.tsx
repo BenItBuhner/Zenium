@@ -94,7 +94,8 @@ import { PillChip } from '../urlbar/PillChip'
 import {
   CHIP_WIDTH,
   fittingChips,
-  installLabelFits,
+  fittingUtilities,
+  labelFits,
   type PillChipSpec
 } from '../urlbar/pillChipTiers'
 import { TOOLBAR_STROKE } from '../v2/controls'
@@ -481,13 +482,24 @@ export function NavRow({
   if (savePrompt && savePrompt.tabId === tab?.id) {
     chipsPresent.push({ id: 'key', tier: 'state', width: CHIP_WIDTH.iconButton })
   }
+  // The indicator's word before the address ("Not secure", "Dangerous"): a state the tier never
+  // hides while it stands, counted at its 13 px width so the chips – the hover-only utilities
+  // first – never take the address under its floor into the word's room (the W8-6 round on
+  // #589: uncounted, three utilities mounting on an http page left the address 2 px). It folds
+  // as the Install word does (`labelFits` below): first, by the room, one way, and under the
+  // label tier whatever the room – the stylesheet drops the word there too.
+  const indicatorSpec: PillChipSpec | null =
+    tab && url && indicator.label
+      ? { id: 'indicator', tier: 'state', width: CHIP_WIDTH.indicatorLabel }
+      : null
+  if (indicatorSpec) chipsPresent.push(indicatorSpec)
   if (tab && starUp) chipsPresent.push({ id: 'star', tier: 'star', width: CHIP_WIDTH.star })
   if (zoomed) chipsPresent.push({ id: 'zoom', tier: 'zoom', width: CHIP_WIDTH.small })
   // The Install chip is listed at its labelled width first: its "Install" shows while the pill
   // has the label tier's room (the same container rule as "Not secure") and every resident chip
-  // fits beside the word (`installLabelFits` – the word is the first thing the pill gives up,
-  // before any chip hides, and one way: read on the labelled set, so no chip returns into the
-  // word's room only to send it away again); folded, the chip is measured at its glyph alone.
+  // fits beside the word (`labelFits` – a word is the first thing the pill gives up, before any
+  // chip hides, and one way: read on the labelled set, so no chip returns into the word's room
+  // only to send it away again); folded, the chip is measured at its glyph alone.
   const installSpec: PillChipSpec | null = installUp
     ? { id: 'install', tier: 'install', width: CHIP_WIDTH.small + CHIP_WIDTH.label }
     : null
@@ -502,15 +514,13 @@ export function NavRow({
   // The lit Boost is a resident chip of the informational rank – a per-site state the user set
   // and can undo from the app menu's Boosts – and folds with translate and Reader View.
   if (boosted) chipsPresent.push({ id: 'boost', tier: 'info', width: CHIP_WIDTH.small })
-  const installLabelUp = installSpec !== null && installLabelFits(pillInner, chipsPresent)
-  if (installSpec && !installLabelUp) installSpec.width = CHIP_WIDTH.small
   // The hover-only utilities, lowest of all and let in last, in the order they hide from the
   // end: the translate offer first, then Boost, then Share, and Copy URL the last to go. They
-  // take the room the pill has at the width it is: the resident chips and the Install word run
-  // one way as the pill narrows, and the word's fold (39 px, where a chip's is 26) is the one
-  // step that hands a utility room back for a step or two under the pointer – a hover-only
-  // affordance re-entering, never a chip of the pill's rest. (Under 170 the stylesheet's
-  // `zen-pill-extra` rule hides the utilities whatever the room.)
+  // are read against the residents at their LABELLED widths (`fittingUtilities`), whatever the
+  // word does on screen, so the mounted set only shrinks as the pill narrows: the word's fold
+  // (44 px, where a chip's is 26) never hands a utility room back under the pointer – a chip
+  // re-appearing as the sidebar narrows is jitter (the design lead's ruling on #589). (Under
+  // 170 the stylesheet's `zen-pill-extra` rule hides the utilities whatever the room.)
   const hoverChips: PillChipSpec[] = []
   if (url) hoverChips.push({ id: 'copy', tier: 'extra', width: CHIP_WIDTH.small })
   if (shareable) hoverChips.push({ id: 'share', tier: 'extra', width: CHIP_WIDTH.small })
@@ -520,7 +530,19 @@ export function NavRow({
   if (tab && isWebPage && translatePinned && state.translate.available && !translation) {
     hoverChips.push({ id: 'translate-offer', tier: 'extra', width: CHIP_WIDTH.small })
   }
-  const fits = fittingChips(pillInner, [...chipsPresent, ...hoverChips])
+  const utilityFits = fittingUtilities(pillInner, chipsPresent, hoverChips)
+  // The words fold first, by the room, one way – the offer's before the state's: the Install
+  // word while the indicator's stands, then the indicator's beside the Install glyph alone.
+  const installLabelUp = installSpec !== null && labelFits(pillInner, chipsPresent)
+  if (installSpec && !installLabelUp) installSpec.width = CHIP_WIDTH.small
+  const indicatorLabelUp = indicatorSpec !== null && labelFits(pillInner, chipsPresent)
+  const residents =
+    indicatorSpec && !indicatorLabelUp
+      ? chipsPresent.filter((c) => c !== indicatorSpec)
+      : chipsPresent
+  const fits = fittingChips(pillInner, residents)
+  // Boost's chip reads the set it belongs to: lit, the residents'; unlit, the utilities'.
+  const boostFits = boosted ? fits.has('boost') : utilityFits.has('boost')
   // What the width tier hid of the pinned controls, for the Customise toolbar dialog's "Hidden
   // at this width" (settings-36): the chips present in the pill that did not fit, and the hub's
   // button while media plays and the row has no room for it – never a control the pins folded,
@@ -713,13 +735,17 @@ export function NavRow({
           </span>
           {/*
             Chrome's "Not secure" text before the address of an http page (or of a certificate
-            error's page, in the danger ink), drawn between the site icon and the address; a
-            narrow pill drops it before the address (see the container query on `.zen-pill`).
+            error's page, in the danger ink), drawn between the site icon and the address. The
+            tier counts it (`CHIP_WIDTH.indicatorLabel`) and folds it as it folds the Install
+            word – first, by the room, before any chip hides (`indicatorLabelUp`) – and a narrow
+            pill drops it whatever the room (the container query on `.zen-pill`). Its size is the
+            stylesheet's `.zen-pill-label` – §4's 13 px, one line for this word and the Install
+            chip's.
           */}
-          {indicator.label && url && tab && (
+          {indicatorLabelUp && indicator.label && (
             <span
               className={cn(
-                'zen-pill-label order-[-1] shrink-0 text-[11.5px]',
+                'zen-pill-label order-[-1] shrink-0',
                 indicator.state === 'certificate-error' ? 'text-[var(--v2-danger)]' : 'opacity-70'
               )}
               data-indicator={indicator.state}
@@ -973,7 +999,7 @@ export function NavRow({
               isWebPage &&
               translatePinned &&
               state.translate.available &&
-              (translation ? fits.has('translate') : fits.has('translate-offer')) && (
+              (translation ? fits.has('translate') : utilityFits.has('translate-offer')) && (
                 <PillChip
                   label={translateBarUp ? 'Hide the translation bar' : 'Translate this page'}
                   title={translateBarUp ? 'Hide the translation bar' : 'Translate this page'}
@@ -994,7 +1020,7 @@ export function NavRow({
                   <Languages className="h-3.5 w-3.5" />
                 </PillChip>
               )}
-            {tab && isWebPage && !isPrivate && (fits.has('boost') || boostsOpen) && (
+            {tab && isWebPage && !isPrivate && (boostFits || boostsOpen) && (
               // Lit, a resident chip of the tier's informational rank; unlit, a hover-only
               // utility let in last. Either way the open Boosts overlay keeps its anchor (§9.20).
               <PillChip
@@ -1013,7 +1039,7 @@ export function NavRow({
                 <Sparkles className="h-3.5 w-3.5" />
               </PillChip>
             )}
-            {url && fits.has('copy') && (
+            {url && utilityFits.has('copy') && (
               <PillChip
                 label="Copy URL"
                 title={hint('Copy URL', state, 'tab.copyUrl')}
@@ -1023,7 +1049,7 @@ export function NavRow({
                 <Copy className="h-3 w-3" />
               </PillChip>
             )}
-            {shareable && (fits.has('share') || shareOpen) && (
+            {shareable && (utilityFits.has('share') || shareOpen) && (
               // Chrome's sharing hub icon (`IDS_SHARING_HUB_TOOLTIP`, "Share this page"; the
               // Material share glyph its non-Mac icon was), a hover-only utility with Copy URL,
               // let in by the tier's lowest rank: its popup is the share popover, hung from this
@@ -1083,10 +1109,9 @@ export function NavRow({
               >
                 <MonitorDown className="h-3.5 w-3.5" />
                 {installLabelUp && (
-                  <span
-                    className="zen-pill-label text-[11.5px] leading-none font-medium"
-                    aria-hidden
-                  >
+                  // The word's size is the stylesheet's `.zen-pill-label` (13 px, shared with
+                  // "Not secure"); its weight the button's 500 (§4).
+                  <span className="zen-pill-label leading-none font-medium" aria-hidden>
                     Install
                   </span>
                 )}

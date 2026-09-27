@@ -6057,6 +6057,16 @@
     display: none;
   }
 }
+/*
+ * The pill's two words – "Not secure" (or "Dangerous") before the address, and the Install
+ * chip's "Install" – at §4's 13 px, the floor of the type scale: one line for both readers (the
+ * tier's `CHIP_WIDTH.label` and `CHIP_WIDTH.indicatorLabel` are their widths at this size; the
+ * design lead's ruling on #589). The tablet's toolbar, which sets its own 14 px address, reads
+ * the same line.
+ */
+.zen-pill-label {
+  font-size: 13px;
+}
 /* The "Not secure" text goes before the address does: it is the address the pill is for. */
 @container (width < 220px) {
   .zen-pill-label {
@@ -9349,9 +9359,6 @@
 }
 :root[data-form-factor='tablet'] .zen-tablet-toolbar .zen-pill > button > span {
   font-size: 14px;
-}
-:root[data-form-factor='tablet'] .zen-tablet-toolbar .zen-pill-label {
-  font-size: 13px;
 }
 :root[data-form-factor='tablet'] .zen-tablet-toolbar .zen-pill [data-pill-chip] {
   width: 32px;
