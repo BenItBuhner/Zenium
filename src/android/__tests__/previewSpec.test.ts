@@ -192,6 +192,17 @@ describe('parsePreviewSpec', () => {
   it('puts the active tab in Reader View on the stand-in article, with or without its text sheet', () => {
     expect(parsePreviewSpec('reader=article')).toEqual({ kind: 'reader', preferences: false })
     expect(parsePreviewSpec('reader=preferences')).toEqual({ kind: 'reader', preferences: true })
+    // The sheet rested on its expanded detent, for the rows under the peek fold; without the
+    // sheet there is nothing to expand.
+    expect(parsePreviewSpec('reader=preferences&expand')).toEqual({
+      kind: 'reader',
+      preferences: true,
+      expand: true
+    })
+    expect(parsePreviewSpec('reader=article&expand')).toEqual({
+      kind: 'reader',
+      preferences: false
+    })
     expect(parsePreviewSpec('zoom=2&reader=article')).toEqual({ kind: 'zoom', factor: 2 })
     expect(parsePreviewSpec('reader=article&error=-105')).toEqual({
       kind: 'reader',
