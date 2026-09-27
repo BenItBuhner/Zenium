@@ -3214,28 +3214,29 @@ function privacyHubGroups(ctx: SectionContext): RowGroup[] {
 }
 
 /**
- * Groups in Chrome's Privacy and security order – the hub's cards (`privacyHubGroups`), then
- * Safety check, Safe Browsing, Tracking
- * prevention, Delete browsing data, Cookies and site data, Site settings, HTTPS-only, Secure
- * DNS, Privacy signals – each program's groups self-contained: the site-controls program's
- * (`siteControls/settingsRows`) at the safety-check, clear-browsing-data and site-settings
- * positions, the request engine's (`tracking.tsx`) at the tracking-prevention position, the
- * site-data program's (`siteDataRows.tsx`, which carries the third-party cookie setting and its
- * related sites from `protectionRows.tsx`) at the cookies position, the protection program's
- * at the preload-pages (PS-43), safe-browsing, https-only, secure-dns and privacy-signals
- * positions; the remembered
- * per-site answers are Security's (`securitySection`).
+ * Groups in the hub cards' order (the #553 lead check's Q6 ruling, built in W8-8: the pane's
+ * groups take the cards' order, so the page and its hub read alike) – the cards
+ * (`privacyHubGroups`), then Delete browsing data, Cookies and site data, Safe Browsing, Site
+ * settings, Safety check – each program's groups self-contained: the site-controls program's
+ * (`siteControls/settingsRows`) at the delete-browsing-data, site-settings and safety-check
+ * positions, the site-data program's (`siteDataRows.tsx`, which carries the third-party cookie
+ * setting and its related sites from `protectionRows.tsx`) at the cookies position, the
+ * protection program's at the safe-browsing position. The groups no card names follow in their
+ * standing order: the request engine's Tracking prevention (`tracking.tsx`), then Preload pages
+ * (PS-43), HTTPS-only, Secure DNS and Privacy signals from `protectionRows.tsx`, and the
+ * private-tab lock (INC-05) last. The phone's plain list – no cards – reads in the same order.
+ * The remembered per-site answers are Security's (`securitySection`).
  */
 function privacySection(ctx: SectionContext): RowGroup[] {
   const { state, set } = ctx
   return [
     ...privacyHubGroups(ctx),
-    ...safetyCheckGroups(ctx),
-    ...safeBrowsingGroups(state, set),
-    ...trackingGroups(ctx),
     ...clearDataGroups(ctx),
     ...siteDataGroups(ctx),
+    ...safeBrowsingGroups(state, set),
     ...siteSettingsGroups(ctx),
+    ...safetyCheckGroups(ctx),
+    ...trackingGroups(ctx),
     ...preloadGroups(state, set),
     ...httpsOnlyGroups(state, set),
     ...secureDnsGroups(state, set),

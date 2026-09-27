@@ -1303,8 +1303,12 @@ describe('a section asked for one of its groups (zen://settings/<section>?group=
       'hub-site-settings',
       'hub-safety-check'
     ])
-    // The cards stand first in the column, before Safety check's own group.
+    // The cards stand first in the column, before Delete browsing data's own group – the first
+    // under them since the groups took the cards' order (W8-8, the #553 lead check's Q6).
     expect(markup.indexOf('data-group="privacy-hub"')).toBeLessThan(
+      markup.indexOf('data-group="clear-data"')
+    )
+    expect(markup.indexOf('data-group="clear-data"')).toBeLessThan(
       markup.indexOf('data-group="safety-check"')
     )
     viewport(TWO_PANE_MIN_WIDTH - 1, false)
