@@ -170,7 +170,7 @@ export function SpacesDrawer({ state, isDark }: Props): JSX.Element {
           <button
             type="button"
             className="zen-toolbar-button h-11 w-11"
-            aria-label="New space"
+            aria-label="New Space"
             onClick={() => void openOverlay('space-editor', active?.id ?? null, null)}
           >
             <Plus className="h-5 w-5" />

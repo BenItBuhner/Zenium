@@ -29,14 +29,48 @@ wait_for_boot() {
   return 1
 }
 
+# adbd restarted as root, judged by adbd's own word. `adb root` is racy: the daemon drops the
+# connection while it restarts, and the client sometimes exits non-zero with "adb: unable to
+# connect for root: closed" although adbd does come back as root – W6-D13's nightly run
+# 36276326980 died on that line, under `set -e`, before the swap was attempted. So the request is
+# best effort, the daemon waited for (bounded), and what counts is `adb shell id` saying uid=0,
+# asked a few times while adbd comes back; a second round covers a request the restart swallowed.
+# An image whose adbd cannot run as root (a production build) fails here, with its word in the
+# log, and the caller decides (fatal for a demo that needs the snapshot engine, a warning for the
+# sweeps).
+become_root() {
+  local round reply
+  for round in 1 2; do
+    reply=$(timeout 60 adb root 2>&1 || true)
+    echo "adb root: ${reply:-(no reply)}"
+    if echo "$reply" | grep -qi "cannot run as root"; then
+      echo "adbd cannot run as root on this image; the swap needs a writable system partition"
+      return 1
+    fi
+    sleep 3
+    if ! timeout 60 adb wait-for-device; then
+      echo "the device did not come back within 60s of adb root"
+      return 1
+    fi
+    for _ in 1 2 3 4 5; do
+      if adb shell id 2> /dev/null | tr -d '\r' | grep -q '^uid=0('; then
+        echo "adbd running as root: $(adb shell id 2> /dev/null | tr -d '\r')"
+        return 0
+      fi
+      sleep 2
+    done
+    echo "adbd not root after round $round: $(adb shell id 2> /dev/null | tr -d '\r' || echo 'no reply')"
+  done
+  echo "adbd did not come back as root"
+  return 1
+}
+
 echo "webview before swap:"
 adb shell dumpsys webviewupdate | tee "$out/webviewupdate-before.txt" | head -n 20 || true
 adb shell getprop ro.debuggable
 adb shell getprop ro.build.type
 
-adb root
-sleep 3
-adb wait-for-device
+become_root
 
 path=$(adb shell pm path com.android.webview | tr -d '\r' | sed 's/^package://' | head -n 1)
 echo "preinstalled com.android.webview: ${path:-none}"
@@ -48,9 +82,7 @@ if echo "$remount_output" | grep -qi "reboot"; then
   adb reboot
   sleep 5
   wait_for_boot
-  adb root
-  sleep 3
-  adb wait-for-device
+  become_root
   adb remount
 fi
 
