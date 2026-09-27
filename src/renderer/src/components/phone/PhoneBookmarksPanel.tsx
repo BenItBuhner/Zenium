@@ -244,7 +244,16 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
   const moveTo = (ids: readonly string[]): void => setMoving([...ids])
 
   // Menu items are Title Case (v2 draft 9.1) and read as the core's bookmark menus do (#119:
-  // "Edit…" and "Rename…" open a sheet, "Open All (N)" counts what a folder opens).
+  // "Edit…" opens a sheet, "Open All (N)" counts what a folder opens) – with ONE deliberate
+  // split, ruled per door (W6-E6b): a folder's edit item says "Edit…" here, not the core's
+  // "Rename…" (`src/core/menus.ts` `single?.type === 'url' ? 'Edit…' : 'Rename…'`, the desktop
+  // manager's rows likewise), because the sheet it opens is HB-16's "Edit folder" – name AND
+  // folder – where the desktop's dialog renames alone; the split closes the day that dialog
+  // gains the picker. Chrome 152 says Edit for every row (`BookmarkManagerMediator`
+  // `createListMenuForBookmark` l.1522-1523 adds `bookmark_item_edit` after `bookmark_item_select`
+  // for a folder as for a page – l.1524's `!isFolder()` gates Copy link alone – and l.1609-1613
+  // opens `startEditActivity` for either; `IDS_BOOKMARK_ITEM_EDIT` "Edit", grd l.4581-4583). The
+  // word is this panel's own literal, taken from no shared source.
   /** The addresses under `ids`, for the private rows (INC-08; a private tab is opened by URL). */
   const urlsUnder = (ids: readonly string[]): string[] =>
     ids.flatMap((id) => tree.urlsUnder(id)).map((node) => node.url ?? '')
@@ -259,7 +268,7 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
       node.type === 'folder'
         ? [
             { label: 'Select', onSelect: () => select(node) },
-            { label: 'Rename…', onSelect: () => edit(node) },
+            { label: 'Edit…', onSelect: () => edit(node) },
             { label: 'Move to…', onSelect: () => moveTo([node.id]) },
             {
               label: `Open All (${urlCount})`,
@@ -295,8 +304,10 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
   }
 
   // Chrome's selection toolbar (HB-15) behind the header's More: Edit for exactly one picked
-  // row (`selection_mode_edit_menu_id`: `numSelected == 1`, a lone folder included – it reads
-  // Rename…, as the row's own does), Move to… for any, then the open rows, Copy link, Delete.
+  // row (`selection_mode_edit_menu_id`; `BookmarkToolbarMediator` l.433 `showEdit =
+  // !hasPartnerBookmark && numSelected == 1`, a lone folder included – it reads Edit…, as the
+  // row's own does; the per-door word above), Move to… for any, then the open rows, Copy link,
+  // Delete.
   const selectionMenu = (): void => {
     noteSheetOpener()
     const ids = orderedSelection(selection, order)
@@ -305,9 +316,7 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
     void showLocalMenu(
       'selection',
       [
-        ...(only
-          ? [{ label: only.type === 'folder' ? 'Rename…' : 'Edit…', onSelect: () => edit(only) }]
-          : []),
+        ...(only ? [{ label: 'Edit…', onSelect: () => edit(only) }] : []),
         { label: 'Move to…', onSelect: () => moveTo(ids) },
         {
           label: urlCount === 1 ? 'Open in New Tab' : `Open All (${urlCount})`,
