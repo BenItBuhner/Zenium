@@ -156,6 +156,9 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     // one download per gesture is free, the next asks this row on both hosts.
     support: { desktop: 'enforced', android: 'enforced' }
   },
+  // Electron's `midi` request, which its engine sends only with `kBlockMidiByDefault` off: with
+  // the flag on (the default) a page's `requestMIDIAccess()` arrives as `midiSysex` and takes
+  // that row (`midi_access_initializer.cc:48-52`), as it does in Chrome.
   {
     id: 'midi',
     label: 'MIDI devices',
@@ -636,16 +639,32 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     allowOnce: false,
     support: { desktop: 'enforced', android: 'n-a' }
   },
+  // Chrome's one MIDI setting (`midi-sysex`, ask by default, allow / block / ask:
+  // `content_settings_registry.cc:209-217`). Since `kBlockMidiByDefault` (on by default,
+  // `blink/common/features.cc:108-109`) every `requestMIDIAccess()` – with or without `sysex` –
+  // asks for this permission (`midi_access_initializer.cc:48-52`), so it is the prompt behind
+  // any Web MIDI request on both engines (Electron's `midiSysex`, the WebView's
+  // `RESOURCE_MIDI_SYSEX`), and an Allow lets the page send system-exclusive messages too, as
+  // Chrome's does (`midi_sysex_permission_context.cc:34-41`). No one-time allow, as Chrome
+  // offers none for it (`permission_request.cc:319-320`).
   {
     id: 'midiSysex',
     label: 'MIDI system messages',
-    description: 'Zenium does not let sites send system-exclusive MIDI messages',
+    description: 'Sites can ask to control and reprogram your MIDI devices',
+    descriptions: { deny: 'Sites cannot control or reprogram your MIDI devices' },
     group: 'additional',
-    builtInDefault: 'deny',
-    choices: ['deny'],
-    promptLabel: null,
+    builtInDefault: 'ask',
+    choices: ['ask', 'deny'],
+    promptLabel: 'control and reprogram your MIDI devices',
     allowOnce: false,
-    support: { desktop: 'enforced', android: 'enforced' }
+    // Desktop: Electron's request handler is the core's prompt, and the engine grants the
+    // process the SysEx right on an Allow of its own accord (`electron_permission_manager.cc:
+    // 72-80`). Android: the WebView asks `onPermissionRequest` with `RESOURCE_MIDI_SYSEX`
+    // (`aw_permission_manager.cc:373-378`), which `Permissions.kt` refuses before the core hears
+    // it, so no path acts on the row there yet and it is not offered (a row is a promise, the
+    // root's #506 ruling); `enforced` the day the host routes the resource through its
+    // `ask("midiSysex", …)` as it routes the camera's – the core answers that request already.
+    support: { desktop: 'enforced', android: 'n-a' }
   }
 ]
 

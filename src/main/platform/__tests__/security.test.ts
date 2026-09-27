@@ -220,6 +220,11 @@ describe('permissionName', () => {
     expect(permissionName('media', at())).toBe('media')
     expect(permissionName('notifications', at())).toBe('notifications')
     expect(permissionName('geolocation', at([]))).toBe('geolocation')
+    // Web MIDI (MW-36 / PS-54): Electron's `midiSysex` – what every `requestMIDIAccess()` asks
+    // for since Chromium's `kBlockMidiByDefault` – and its `midi` reach the core under their
+    // own names, each the catalogue row of that id.
+    expect(permissionName('midiSysex', at())).toBe('midiSysex')
+    expect(permissionName('midi', at())).toBe('midi')
   })
 })
 

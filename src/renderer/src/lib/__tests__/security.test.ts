@@ -80,6 +80,9 @@ describe('describePermissionRule', () => {
     expect(rule('camera', 'deny')).toBe('May not use the camera')
     expect(rule('fileSystem')).toBe('May write to files and folders you picked')
     expect(rule('fileSystem:read', 'deny')).toBe('May not view the folders you picked')
+    // The two MIDI rows stay apart in the words as in the store (MW-36 / PS-54).
+    expect(rule('midi')).toBe('May access MIDI devices')
+    expect(rule('midiSysex', 'deny')).toBe('May not control and reprogram your MIDI devices')
   })
 
   it('names the scheme of an external-app rule and the embedder of a storage-access rule', () => {

@@ -25,6 +25,7 @@ const RULE_LABELS: Record<string, string> = {
   geolocation: 'know your location',
   notifications: 'send notifications',
   midi: 'access MIDI devices',
+  midiSysex: 'control and reprogram your MIDI devices',
   'clipboard-read': 'read the clipboard',
   mediaKeySystem: 'play protected (DRM) content',
   'window-management': 'manage windows on all displays',

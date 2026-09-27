@@ -162,6 +162,7 @@ describe('the eligibility of a rule for the sweep (Chrome’s CanTrackLastVisit)
       'microphone',
       'automatic-downloads',
       'midi',
+      'midiSysex',
       'fileSystem',
       'clipboard-read',
       'window-management',
