@@ -6423,6 +6423,20 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
     ]) {
       expect(row(model, id).disabled, id).toBe(true)
     }
+    // The list is the switch's dependent as a whole: its empty line dims with its rows (the
+    // re-read's NEW 2), and not while the switch is on.
+    expect(model.groups.find((g) => g.id === 'keep-active')?.disabled).toBe(true)
+    const emptyOff = perf(DESKTOP_STATE({ unloadEnabled: false, unloadExcludedDomains: [] }))
+    expect(emptyOff.model.groups.find((g) => g.id === 'keep-active')).toMatchObject({
+      rows: [],
+      empty: 'No sites yet',
+      disabled: true
+    })
+    expect(
+      perf(DESKTOP_STATE({ unloadExcludedDomains: [] })).model.groups.find(
+        (g) => g.id === 'keep-active'
+      )?.disabled
+    ).toBe(false)
     // Energy Saver is its own switch: Memory Saver off leaves it alone.
     expect(row(model, 'energy-saver-mode').disabled).toBe(false)
   })

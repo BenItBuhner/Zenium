@@ -2231,7 +2231,10 @@ function performanceSection({ state, tab, set }: SectionContext): RowGroup[] {
       // secondary running at once with no dialog (§10.5) – a preference removed is plain ink
       // (§10.4), the danger ink being for what destroys the user's data (§10.5), and the site is
       // one the user adds again in a press, as the permission rows' Forget is (pr-584 R1); the
-      // finger's sheet (the tablet) holds the same action as its row, as those rows do.
+      // finger's sheet (the tablet) holds the same action as its row, as those rows do. With
+      // Memory Saver off the list is a dependent of the switch: its rows and its empty line dim
+      // as one (§9.30; the re-read's NEW 2).
+      disabled: off,
       rows: sites.map((domain) => {
         const remove = (): void =>
           set({ unloadExcludedDomains: s.unloadExcludedDomains.filter((d) => d !== domain) })

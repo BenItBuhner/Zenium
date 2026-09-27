@@ -1856,6 +1856,21 @@ describe('the Settings page’s radio rows (§9.14, §10.4; pr-584 R2)', () => {
   })
 })
 
+describe('a dependent list’s empty line (§9.30; pr-584’s re-read, NEW 2)', () => {
+  it('dims at the dependent row’s one .4 in the label’s ink, as a disabled row’s description does', () => {
+    const rule = block('.zen-settings-empty[data-disabled]')
+    expect(rule).toMatch(/color: var\(--v2-text\);/)
+    expect(rule).toMatch(/opacity: 0\.4;/)
+    // The same numbers the disabled row itself takes.
+    expect(block('.zen-settings-row-disabled')).toMatch(/opacity: 0\.4;/)
+    expect(
+      block(
+        '.zen-settings-row-disabled .zen-settings-description,\n.zen-settings-row-disabled .zen-settings-summary'
+      )
+    ).toMatch(/color: var\(--v2-text\);/)
+  })
+})
+
 describe('the fullscreen hint palette', () => {
   /** The value a token is declared with in the first `selector {` block after `from`. */
   const value = (selector: string, from: number, name: string): string => {

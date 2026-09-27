@@ -11555,6 +11555,16 @@
   font-size: var(--v2-font-body);
   line-height: var(--v2-line-body);
 }
+/*
+ * The empty line of a list whose control is off (`RowGroup.disabled`; Memory Saver's exceptions
+ * while its switch is): it dims with the rows it stands in for, at the dependent row's one .4
+ * and – as a disabled row's description does (§9.30 as amended on #299) – in the label's ink,
+ * so nothing under the .4 falls below .4 of the text (pr-584's re-read, NEW 2).
+ */
+.zen-settings-empty[data-disabled] {
+  color: var(--v2-text);
+  opacity: 0.4;
+}
 /* The one line that reports a failure where the rows would be (the viewer's listing refused): §1 status ink. */
 .zen-settings-empty[data-tone='danger'],
 .zen-settings-group-description[data-tone='danger'] {
