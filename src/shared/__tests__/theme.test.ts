@@ -48,8 +48,31 @@ describe('colour utilities', () => {
     expect(cssColorToHex('rgb(8 8 10 / 0.45)')).toBe('#08080a73')
     expect(cssColorToHex('rgb(8 8 10 / 45%)')).toBe('#08080a73')
     expect(cssColorToHex('transparent')).toBeNull()
-    expect(cssColorToHex('color(srgb 0.1 0.2 0.3)')).toBeNull()
     expect(cssColorToHex('')).toBeNull()
+  })
+
+  it("reads color(srgb …), the WebView's serialisation of a color-mix() computed value, as the same #rrggbbaa", () => {
+    // The dark run's logcat, W6-D22: `--v2-accent` = color-mix(in srgb, var(--zen-accent) 40%, #fff)
+    // as the WebView computes it; '' (the static v2_accent_dark on the host) until W6-S14.
+    expect(cssColorToHex('color(srgb 0.750588 0.772549 0.968627)')).toBe('#bfc5f7ff')
+    // The light theme's mix towards black, with an alpha in both forms.
+    expect(cssColorToHex('color(srgb 0.152941 0.156863 0.345098 / 0.5)')).toBe('#27285880')
+    expect(cssColorToHex('color(srgb 0.152941 0.156863 0.345098 / 50%)')).toBe('#27285880')
+    // Percentages for the channels, `none` for a missing channel (0), an out-of-gamut value clamped.
+    expect(cssColorToHex('color(srgb 100% 0% 50%)')).toBe('#ff0080ff')
+    expect(cssColorToHex('color(srgb none 0.5 1)')).toBe('#0080ffff')
+    expect(cssColorToHex('color(srgb 1.2 -0.1 0.5 / none)')).toBe('#ff008000')
+    expect(cssColorToHex('  COLOR(SRGB 0.1 0.2 0.3)  ')).toBe('#1a334dff')
+    // Another colour space is not a colour the host can paint – `srgb-linear` least of all: its
+    // channels are linear-light, and read as sRGB they would be a silently wrong colour.
+    expect(cssColorToHex('color(display-p3 0.1 0.2 0.3)')).toBeNull()
+    expect(cssColorToHex('color(srgb-linear 0.1 0.2 0.3)')).toBeNull()
+    expect(cssColorToHex('color(srgb 0.1 0.2)')).toBeNull()
+    expect(cssColorToHex('color-mix(in srgb, red 40%, #fff)')).toBeNull()
+    // What parsed before parses the same (the rgb() path is untouched).
+    expect(cssColorToHex('rgb(30, 30, 36)')).toBe('#1e1e24ff')
+    expect(cssColorToHex('rgba(73, 72, 74, 0.28)')).toBe('#49484a47')
+    expect(cssColorToHex('rgb(8 8 10 / 45%)')).toBe('#08080a73')
   })
 
   it('maps wheel positions to colours and back', () => {

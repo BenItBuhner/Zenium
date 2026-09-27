@@ -59,20 +59,42 @@ export function hexToRgb(hex: string): RGB | null {
 }
 
 /**
- * A computed CSS colour (`rgb(r, g, b)`, `rgba(r, g, b, a)` or the modern `rgb(r g b / a)`) as
- * `#rrggbbaa`, the form the Android host's `parseColor` takes – how a chrome token such as
- * `--zen-scrim` is handed to native views. Null for anything else (`transparent`, `color()`).
+ * A computed CSS colour as `#rrggbbaa`, the form the Android host's `parseColor` takes – how a
+ * chrome token such as `--zen-scrim` is handed to native views: `rgb(r, g, b)`,
+ * `rgba(r, g, b, a)`, the modern `rgb(r g b / a)`, and `color(srgb r g b [/ a])`, the form the
+ * WebView serialises a `color-mix()` computed value in (`--v2-accent` is a `color-mix` of
+ * `--zen-accent`: `color(srgb 0.750588 0.772549 0.968627)` in the dark run's logcat), so the
+ * accent reads as a colour and not as '' and the host draws the space's live accent rather than
+ * its static `v2_accent_*` (W6-S14, after W6-D22's finding). The `color()` channels are 0–1
+ * numbers or percentages (`none` is a missing channel, 0); the alpha, a number or a percentage,
+ * is 1 when absent. Null for anything else (`transparent`, another colour space).
  */
 export function cssColorToHex(value: string): string | null {
-  const m =
+  const v = value.trim()
+  const rgb =
     /^rgba?\(\s*(\d+(?:\.\d+)?)\s*[, ]\s*(\d+(?:\.\d+)?)\s*[, ]\s*(\d+(?:\.\d+)?)\s*(?:[,/]\s*(\d*\.?\d+%?)\s*)?\)$/i.exec(
-      value.trim()
+      v
     )
-  if (!m) return null
-  const alpha =
-    m[4] === undefined ? 1 : m[4].endsWith('%') ? parseFloat(m[4]) / 100 : parseFloat(m[4])
-  const channels: number[] = [parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3]), alpha * 255]
-  return `#${channels.map((v) => clamp(Math.round(v), 0, 255).toString(16).padStart(2, '0')).join('')}`
+  if (rgb) return hexOfChannels([+rgb[1], +rgb[2], +rgb[3]], rgb[4])
+  const srgb =
+    /^color\(\s*srgb\s+(none|-?\d*\.?\d+%?)\s+(none|-?\d*\.?\d+%?)\s+(none|-?\d*\.?\d+%?)\s*(?:\/\s*(none|-?\d*\.?\d+%?)\s*)?\)$/i.exec(
+      v
+    )
+  if (srgb) {
+    const channel = (c: string): number =>
+      c === 'none' ? 0 : c.endsWith('%') ? (parseFloat(c) / 100) * 255 : parseFloat(c) * 255
+    const alpha = srgb[4] === 'none' ? '0' : srgb[4]
+    return hexOfChannels([channel(srgb[1]), channel(srgb[2]), channel(srgb[3])], alpha)
+  }
+  return null
+}
+
+/** `#rrggbbaa` of 0–255 channels and a CSS alpha (a number 0–1 or a percentage; 1 when absent). */
+function hexOfChannels(rgb: number[], alpha: string | undefined): string {
+  const a =
+    alpha === undefined ? 1 : alpha.endsWith('%') ? parseFloat(alpha) / 100 : parseFloat(alpha)
+  const channels: number[] = [...rgb, a * 255]
+  return `#${channels.map((c) => clamp(Math.round(c), 0, 255).toString(16).padStart(2, '0')).join('')}`
 }
 
 export function mix(a: RGB, b: RGB, t: number): RGB {

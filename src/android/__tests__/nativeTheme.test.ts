@@ -276,4 +276,32 @@ describe('the native theme is read on a change of the theme and on nothing else'
       ...HEX.dark
     })
   })
+
+  it('hands the accent over when the WebView serialises the color-mix token as color(srgb …), not the empty string that put the static v2_accent_* on the host', () => {
+    // `--v2-accent` is `color-mix(in srgb, var(--zen-accent) 40%, #fff)` on the dark root, and
+    // the WebView computes it to `color(srgb …)` (the dark run's logcat, W6-D22) – `rgb()` is
+    // only how the plain tokens come back. Before W6-S14 the accent read '' and `Host.applyTheme`
+    // fell back to the resources' accent, so the history bubble and the page dialog sheet's OK
+    // wore the default space's colour whatever the space.
+    computed.mockImplementation(
+      () =>
+        ({
+          color: 'rgba(0, 0, 0, 0.6)',
+          backgroundColor: 'color(srgb 0.750588 0.772549 0.968627)',
+          borderTopColor: 'color(srgb 0.082353 0.078431 0.101961 / 1)'
+        }) as unknown as CSSStyleDeclaration
+    )
+    commit(stateWith('dark'))
+    frame()
+    expect(sent).toEqual([
+      {
+        dark: true,
+        scheme: 'dark',
+        background: background(true),
+        scrim: '#00000099',
+        accent: '#bfc5f7ff',
+        onAccent: '#15141aff'
+      }
+    ])
+  })
 })
