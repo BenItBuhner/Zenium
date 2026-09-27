@@ -8,7 +8,8 @@ import type { Events } from '@shared/types'
  * The core's `toast` event as `useMainEvents` hands it to the chrome's toast slot: a plain toast
  * as it always was, and one carrying an action (the first automatic picture-in-picture toast,
  * MW-28) as a toast with that trailing action on §9.33's action clock, the pick running the
- * command the core named on the ordinary `zen:cmd` path.
+ * command the core named on the ordinary `zen:cmd` path. A clock the core names (the tile
+ * removal's 8 s Undo, NTP-07) stands in place of the chrome's default.
  */
 
 const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(async () => null)
@@ -27,6 +28,7 @@ Object.assign(window, { zen: { invoke, on } })
 
 const { useMainEvents } = await import('../useMainEvents')
 const { TOAST_ACTION_DURATION, TOAST_DURATION, uiStore } = await import('@renderer/lib/ui')
+const { TOAST_UNDO_MS } = await import('@shared/toastCard')
 
 function Wired(): null {
   useMainEvents()
@@ -81,5 +83,32 @@ describe('the toast event in the chrome', () => {
     expect(invoke).not.toHaveBeenCalledWith('media.autoPipOptOut', expect.anything())
     toast.action!.onPick()
     expect(invoke).toHaveBeenCalledWith('media.autoPipOptOut', { tabId: 'tab_1' })
+  })
+
+  it('keeps the clock the core named – the new tab page tile removal’s 8 s Undo (NTP-07, §9.33)', () => {
+    act(() =>
+      fire('toast', {
+        message: 'Shortcut removed',
+        kind: 'info',
+        action: {
+          label: 'Undo',
+          command: 'newtab.undoRemove',
+          args: { url: 'https://a.example/' }
+        },
+        duration: TOAST_UNDO_MS
+      })
+    )
+    const [toast] = uiStore.get().toasts
+    expect(toast.message).toBe('Shortcut removed')
+    expect(toast.action?.label).toBe('Undo')
+    expect(toast.duration).toBe(TOAST_UNDO_MS)
+    expect(TOAST_UNDO_MS).toBe(8000)
+    toast.action!.onPick()
+    expect(invoke).toHaveBeenCalledWith('newtab.undoRemove', { url: 'https://a.example/' })
+  })
+
+  it('a clock named without an action is kept too', () => {
+    act(() => fire('toast', { message: 'Settings reset', kind: 'info', duration: 4000 }))
+    expect(uiStore.get().toasts[0].duration).toBe(4000)
   })
 })

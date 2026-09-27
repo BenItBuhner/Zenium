@@ -343,15 +343,15 @@ export function useMainEvents(): void {
         void openReaderPreferences(tabId)
       }),
       // A core toast; one that carries an action gets it as its trailing action (the action
-      // clock, §9.33), the pick running the command the core named on the ordinary path.
-      onEvent('toast', ({ message, kind, action }) =>
-        pushToast(
-          message,
-          kind,
-          action
+      // clock, §9.33), the pick running the command the core named on the ordinary path; one
+      // that names its clock (§9.33's 8 s for an Undo) keeps it in place of the kind's default.
+      onEvent('toast', ({ message, kind, action, duration }) =>
+        pushToast(message, kind, {
+          ...(action
             ? { action: { label: action.label, onPick: () => run(action.command, action.args) } }
-            : undefined
-        )
+            : {}),
+          ...(duration !== undefined ? { duration } : {})
+        })
       ),
       // A delete's toast with Undo (bookmarks-31), on every layout – the phone's tab row's Remove
       // Bookmark speaks through it too. The phone's panels keep their own: the delete itself
