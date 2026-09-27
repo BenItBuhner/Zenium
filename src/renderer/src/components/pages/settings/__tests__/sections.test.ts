@@ -7961,9 +7961,15 @@ describe('the Privacy and security hub (W7-6, settings-12)', () => {
     )
     expect(ids('site settings')).toContain('hub-site-settings')
     expect(ids('third-party cookies')).toContain('hub-cookies')
-    // The dialog card is found by its own name and by Chrome's (its line's "Delete"), and a
-    // card's hit reads the category alone as its caption: the cards' group has no heading.
-    expect(ids('clear browsing data')).toContain('hub-clear-data')
+    // The dialog card is found by Chrome's M124+ name (its own since W8-7) and still by the
+    // pre-M124 one it kept as a search alias; the row under it the same. A card's hit reads
+    // the category alone as its caption: the cards' group has no heading.
+    expect(ids('clear browsing data')).toEqual(
+      expect.arrayContaining(['hub-clear-data', 'clear-data-open'])
+    )
+    expect(ids('delete browsing data')).toEqual(
+      expect.arrayContaining(['hub-clear-data', 'clear-data-open'])
+    )
     const hit = searchRows([privacy], 'delete browsing data').find(
       (h) => h.row.id === 'hub-clear-data'
     )

@@ -3149,8 +3149,10 @@ function privacyHubGroups(ctx: SectionContext): RowGroup[] {
           label: card.label,
           description: lines[card.id],
           leading: <Glyph className="zen-settings-glyph" aria-hidden="true" />,
+          // The dialog's card keeps its pre-M124 name as a search alias (W8-7): a hand that
+          // types "clear browsing data" still finds it.
           ...(group === null
-            ? { form: CLEAR_BROWSING_DATA_FORM }
+            ? { form: CLEAR_BROWSING_DATA_FORM, keywords: ['clear'] }
             : { leaves: 'chevron', onPress: () => reveal?.(group) })
         }
       })
