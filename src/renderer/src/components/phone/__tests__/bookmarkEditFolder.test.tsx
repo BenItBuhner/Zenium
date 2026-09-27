@@ -346,7 +346,7 @@ describe("the bookmark editor's Folder row (HB-16)", () => {
     expect(calls()).toEqual([])
   })
 
-  it('swaps its panes on the 120 ms --zen-ease state change, the pane naming the side it comes from – form going in, folder coming back – and cut, not re-declared, under reduced motion', async () => {
+  it('swaps its panes on the 120 ms --zen-ease state change, the pane naming the side it comes from – form going in, folder coming back', async () => {
     await show(stateOf(), { id: 'jira', parentId: 'work', type: 'url' })
     const first = pane()!
     expect(first.hasAttribute('data-from')).toBe(false)
@@ -363,8 +363,8 @@ describe("the bookmark editor's Folder row (HB-16)", () => {
     expect(pane()!.getAttribute('data-from')).toBe('form')
 
     // The sheet's motion: `data-from` starts the 120 ms `--zen-ease` entrance, the back swap on
-    // its own keyframes from the start edge; both `transform` and `opacity` alone (v2 §11), and
-    // nothing under `prefers-reduced-motion` – the global remover cuts it (§11.3).
+    // its own keyframes from the start edge; both `transform` and `opacity` alone (v2 §11). What
+    // reduced motion keeps of it is the next pin's.
     const css = readFileSync(resolve(__dirname, '../phonePanels.css'), 'utf8')
     expect(css).toMatch(
       /\.zen-bookmark-edit-pane\[data-from\] \{\n\s+animation: zen-bookmark-edit-pane-in 120ms var\(--zen-ease\);\n\s+\}/
@@ -385,7 +385,34 @@ describe("the bookmark editor's Folder row (HB-16)", () => {
           .sort()
       ).toEqual(['opacity', 'opacity', 'transform', 'transform'])
     }
-    expect(css).not.toMatch(/prefers-reduced-motion[^}]*zen-bookmark-edit-pane/s)
+  })
+
+  it('keeps the swap’s 120 ms opacity fade under reduced motion and drops its 24 px slide – §11.3 removes the movement, not the fade', () => {
+    // main.css's remover sets `animation: none !important` on everything under
+    // `prefers-reduced-motion: reduce`, unlayered; a layered important declaration beats it, so
+    // the fade is re-declared inside phonePanels.css's `@layer components` – opacity alone, the
+    // one fade for both directions, with no side drawn (the lead on #630's fold, as on #563).
+    // `lib/__tests__/reducedMotion.test.ts` holds the re-declaration's shape (120 ms,
+    // `!important`, an opacity-only keyframes of this sheet); this pin holds which rule it is.
+    const css = readFileSync(resolve(__dirname, '../phonePanels.css'), 'utf8')
+    const bare = css.replace(/\/\*[\s\S]*?\*\//g, '')
+    const block =
+      /@media \(prefers-reduced-motion: reduce\) \{\n\s+\.zen-bookmark-edit-pane\[data-from\] \{\n\s+animation: zen-bookmark-edit-pane-fade 120ms var\(--zen-ease\) !important;\n\s+\}\n\s+\}/
+    expect(bare).toMatch(block)
+    // The block holds that one rule: the back swap's own keyframes are not re-declared, so the
+    // return fades the same way in.
+    expect(bare.match(block)![0]).not.toContain("[data-from='folder']")
+    // Inside the layer – the one open block above the media query is `@layer components`.
+    const before = bare.slice(0, bare.search(block))
+    expect((before.match(/\{/g) ?? []).length - (before.match(/\}/g) ?? []).length).toBe(1)
+    expect(before.trimStart().startsWith('@layer components {')).toBe(true)
+    // The fade moves nothing.
+    const steps = bare.match(/@keyframes zen-bookmark-edit-pane-fade \{([^@]*?)\n {2}\}/)?.[1] ?? ''
+    expect(steps.match(/^\s+([a-z-]+):/gm)?.map((m) => m.trim().slice(0, -1))).toEqual([
+      'opacity',
+      'opacity'
+    ])
+    expect(steps).not.toContain('transform')
   })
 
   it('names a folder’s row Parent folder under the Edit folder title and lists neither the folder itself nor its descendants', async () => {

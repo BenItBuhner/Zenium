@@ -35,7 +35,8 @@ import { readingListToggle } from './readingListToggle'
  * picks a folder and steps back to the form (§9.13: picking closes the picker – nothing is
  * written by the pick, unlike the Move sheet's footer, whose Move is the act itself). Each
  * swap – in and back – rides the 120 ms `--zen-ease` state change
- * (`.zen-bookmark-edit-pane[data-from]`, phonePanels.css), a cut under reduced motion. `New
+ * (`.zen-bookmark-edit-pane[data-from]`, phonePanels.css); under reduced motion its fade
+ * stays and its 24 px slide goes (§11.3 removes the movement, not the fade). `New
  * folder` opens the shared §9.12 one-field sheet over this one (§9.24, depth two: the pane
  * keeps the picker in the editor's own sheet so the naming sheet is the second, not a third):
  * the folder is made at once inside the checked one through `bookmark.create` (Chrome's dialog
