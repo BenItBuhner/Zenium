@@ -368,8 +368,10 @@ export class WebDavTransport implements SyncTransport {
   }
 
   /**
-   * Reach the DAV root once with the credentials (PROPFIND `Depth: 0`): the address answers and
-   * the sign-in is accepted. Nothing is created; a folder that does not exist yet is not a failure.
+   * Reach the DAV root once with the credentials (PROPFIND `Depth: 0`): the address answers as
+   * a WebDAV server – a 207 whose body is a multistatus with the root's own response (RFC 4918
+   * §9.1), not a web page that answers 200 to any method – and the sign-in is accepted. Nothing
+   * is created; a folder that does not exist yet is not a failure.
    */
   async probe(): Promise<WebDavProbe> {
     try {
@@ -377,7 +379,7 @@ export class WebDavTransport implements SyncTransport {
         headers: { Depth: '0', 'Content-Type': 'application/xml; charset=utf-8' },
         body: PROPFIND_BODY
       })
-      if (reply.status === 207 || reply.status === 200) return { ok: true }
+      if (reply.status === 207 && parseMultistatus(reply.text).length > 0) return { ok: true }
       return { ok: false, kind: classifyStatus(reply.status), status: reply.status }
     } catch (error) {
       if (isWebDavError(error)) return { ok: false, kind: error.kind, status: error.status }

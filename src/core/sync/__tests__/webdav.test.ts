@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { WebDavSyncCredentials } from '../../../shared/types'
+import type { SyncFetch } from '../../platform'
+import type { WebDavProbe, WebDavSyncCredentials } from '../../../shared/types'
 import {
   WebDavError,
   WebDavTransport,
@@ -280,6 +281,33 @@ describe('the transport over the fake server', () => {
     expect(await transport(dav).probe()).toEqual({ ok: false, kind: 'unavailable', status: 503 })
     dav.down = true
     expect(await transport(dav).probe()).toEqual({ ok: false, kind: 'unavailable', status: 0 })
+  })
+
+  it('does not take a web page for a server: PROPFIND must answer 207 with a multistatus (RFC 4918 §9.1)', async () => {
+    const page = (status: number, text: string): SyncFetch => {
+      return async () => ({ status, headers: { get: () => null }, text: async () => text })
+    }
+    const probe = (fetch: SyncFetch): Promise<WebDavProbe> =>
+      new WebDavTransport(CREDENTIALS, fetch).probe()
+    // A site that answers 200 to any method, a 207 with a body that is not a multistatus, and a
+    // redirect (the host's fetch follows none) are the address being wrong, not a connection.
+    expect(await probe(page(200, '<!doctype html><html><body>Hello</body></html>'))).toEqual({
+      ok: false,
+      kind: 'refused',
+      status: 200
+    })
+    expect(await probe(page(207, '<html>not xml</html>'))).toEqual({
+      ok: false,
+      kind: 'refused',
+      status: 207
+    })
+    expect(await probe(page(301, ''))).toEqual({ ok: false, kind: 'refused', status: 301 })
+    // The real thing, any prefix: the root's own response is the one entry a Depth 0 answer holds.
+    const multistatus =
+      '<?xml version="1.0"?><D:multistatus xmlns:D="DAV:"><D:response><D:href>/remote.php/dav/files/alice/</D:href>' +
+      '<D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>' +
+      '</D:response></D:multistatus>'
+    expect(await probe(page(207, multistatus))).toEqual({ ok: true })
   })
 
   it('lists an absent directory as empty, makes it level by level on the first write, then lists the names', async () => {
