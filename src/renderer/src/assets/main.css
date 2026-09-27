@@ -1876,6 +1876,119 @@
     background: var(--v2-window-fill);
   }
   /*
+   * SEPARATORS. Chrome draws a separator between two tabs only where neither has a visible shape
+   * (`HorizontalTabStyleViews::GetSeparatorOpacity`: none on or beside an active, selected or
+   * hovered tab, none between the tabs of a split, one before a group's header and none between
+   * the header and its first tab, each tab drawing its trailing one so no gap gets two), fading
+   * it with the hover animation of the tab or its neighbour
+   * (`GetHoverInterpolatedSeparatorOpacity`: 1 − max(hover, adjacent hover)), 16 tall and
+   * centred on the tab's height (`TabStyle::kSeparatorHeight`, `GetSeparatorBounds`), in the
+   * inactive ink blended to 2.5 : 1 on the frame (`kTabSeparatorContrast`). The strip's is the
+   * split row's hairline (§9.35): 1 × 16 in `--zen-border`, the window's hairline, centred on the
+   * row and standing in the 4 gap after it (its third pixel), on every row that is a tab –
+   * a tab, a pinned tab, a split row, a group's member – and never on a group's chip, which is
+   * the header. It fades over the hover's 120 ms; the last row of the regular list draws none
+   * before the +, whose 28 box is the boundary there.
+   */
+  .zen-tab-strip :is([data-tab-list], .zen-group-rows) > :is(.zen-tab, .zen-split-row)::after {
+    content: '';
+    position: absolute;
+    top: calc(50% - 8px);
+    right: -3px;
+    width: 1px;
+    height: 16px;
+    background: var(--zen-border);
+    pointer-events: none;
+    transition: opacity 120ms var(--zen-ease);
+  }
+  .zen-tab-strip [data-tab-list='regular'] > :last-child::after,
+  .zen-tab-strip
+    [data-tab-list='regular']
+    > .zen-strip-group:last-child
+    .zen-group-rows
+    > :last-child::after {
+    display: none;
+  }
+  /* None on or beside a row with a visible shape: active, selected, pressed, a drop target, or lit by its editor. */
+  .zen-tab-strip
+    :is([data-tab-list], .zen-group-rows)
+    > :is(.zen-tab, .zen-split-row):is(
+      [data-active='true'],
+      [data-selected],
+      [data-editing],
+      [data-drop-into],
+      :active
+    )::after,
+  .zen-tab-strip
+    :is([data-tab-list], .zen-group-rows)
+    > :is(.zen-tab, .zen-split-row):has(
+      + :is(.zen-tab, .zen-split-row):is(
+          [data-active='true'],
+          [data-selected],
+          [data-editing],
+          [data-drop-into],
+          :active
+        ),
+      + .zen-strip-group
+        > [data-tab-folder]:is([data-active='true'], [data-editing], [data-drop-into])
+    )::after,
+  .zen-tab-strip
+    .zen-strip-group:has(
+      + :is(.zen-tab, .zen-split-row):is(
+          [data-active='true'],
+          [data-selected],
+          [data-editing],
+          [data-drop-into],
+          :active
+        ),
+      + .zen-strip-group
+        > [data-tab-folder]:is([data-active='true'], [data-editing], [data-drop-into])
+    )
+    .zen-group-rows
+    > :last-child::after,
+  .zen-tab-strip
+    [data-strip-pinned]:has(
+      + .zen-strip-scroller
+        [data-tab-list]
+        > :first-child:is([data-active='true'], [data-selected], [data-drop-into], :active),
+      + .zen-strip-scroller
+        [data-tab-list]
+        > .zen-strip-group:first-child
+        > [data-tab-folder][data-active='true']
+    )
+    > :last-child::after {
+    opacity: 0;
+  }
+  /* And it fades with the hover of the row or its neighbour (a pointer that can hover). */
+  :where(:root[data-hover='hover'])
+    .zen-tab-strip
+    :is([data-tab-list], .zen-group-rows)
+    > :is(.zen-tab, .zen-split-row):hover::after,
+  :where(:root[data-hover='hover'])
+    .zen-tab-strip
+    :is([data-tab-list], .zen-group-rows)
+    > :is(.zen-tab, .zen-split-row):has(
+      + :is(.zen-tab, .zen-split-row):hover,
+      + .zen-strip-group > [data-tab-folder]:hover
+    )::after,
+  :where(:root[data-hover='hover'])
+    .zen-tab-strip
+    .zen-strip-group:has(
+      + :is(.zen-tab, .zen-split-row):hover,
+      + .zen-strip-group > [data-tab-folder]:hover
+    )
+    .zen-group-rows
+    > :last-child::after,
+  :where(:root[data-hover='hover'])
+    .zen-tab-strip
+    [data-strip-pinned]:has(
+      + .zen-strip-scroller [data-tab-list] > :first-child:hover,
+      + .zen-strip-scroller [data-tab-list] > .zen-strip-group:first-child > [data-tab-folder]:hover
+    )
+    > :last-child::after {
+    opacity: 0;
+  }
+  /*
    * A group in the strip: the shell spans the band's height so the group's colour can run as
    * one continuous 2 px line in the band's top inset (y 2–4) from the chip's start to the last
    * member's end, bridging the 4 px gaps – never a dash per pill; the fold runs the shell's
