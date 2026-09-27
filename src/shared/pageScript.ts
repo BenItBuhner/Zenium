@@ -17,8 +17,7 @@ import type { ReadAloudExtraction, ReadAloudHostMessage } from './readAloud'
 import { installReadAloud } from './readAloudScript'
 import { installReaderExtrasWhenReady } from './readerExtras'
 import { fullscreenElementOf, installRotateToFullscreen } from './rotateToFullscreen'
-import { isGameMountMessage } from './game/page'
-import { mountGames } from './game/runtime'
+import { gameMessageOf, type GameWindowMessage } from './game/bridge'
 import type { CaptureStateReport } from './captureState'
 
 /**
@@ -65,11 +64,15 @@ export interface PageScriptMessage {
     | 'readAloud'
     | 'fullscreen'
     | 'capture-state'
+    /** Roll asks for the profile's best score or reports a run's (`game/bridge.ts`; a `zen:` document alone). */
+    | 'game'
   url?: string
   /** `opensearch`: the link's `title`, the engine's name when its description has none. */
   title?: string
   /** `capture-state`: one frame's live camera / microphone / display / PiP state (`captureState.ts`). */
   capture?: CaptureStateReport
+  /** `game`: the ask or the report, as the game's window message carried it. */
+  game?: GameWindowMessage
   x?: number
   y?: number
   background?: boolean
@@ -254,7 +257,7 @@ export function installPageScript(transport: PageScriptTransport): void {
   if (transport.reportBlockedPopups) installPopupObserver(transport)
   installInterstitialRelay(transport)
   installPdfViewerRelay(transport)
-  installOfflineGame()
+  installGameRelay(transport)
   if (transport.onHint) installHint(transport.onHint.bind(transport))
   if (transport.onWebApp) installWebApp(transport)
   if (transport.discoverSearchEngines) installOpenSearch(transport)
@@ -512,24 +515,19 @@ function installInterstitialRelay(transport: PageScriptTransport): void {
 }
 
 /**
- * The offline game (ERR-03; `shared/game/`): the no-connection page and `zen://game` carry its
- * fragment, and this – the page script, which every document of Zenium's own scheme runs on both
- * hosts – is what brings it to life, so the page itself ships no script of its own and the game
- * runs the same in the served document (`zen:`) and in the one the desktop writes in place into
- * the engine's error document (`chrome-error:`, `inPlaceErrorPageScript`). The fragments already
- * in the tree are mounted once the tree is parsed; the in-place page posts `zeniumGame: mount`
- * after its write (the tree changes under a document that has long loaded), which mounts
- * whatever is new. Nothing crosses to the browser: the game is the page's own.
+ * Roll's bridge (ERR-03; `shared/game/bridge.ts`): the game's runtime rides inline in the two
+ * documents that carry it (the no-connection page, `zen://game`), not here – every other page
+ * pays nothing for it – and the one thing it needs of the browser is the profile's best score.
+ * It posts on its own window, as the warning pages do; this relays the ask and the report to the
+ * core (`GameService`) from a document of Zenium's own scheme alone, and the core answers
+ * through the document's `window.zenGameBest`.
  */
-function installOfflineGame(): void {
-  if (!INTERSTITIAL_DOCUMENT_PROTOCOLS.includes(location.protocol)) return
-  const mount = (): void => {
-    mountGames(document)
-  }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount)
-  else mount()
+function installGameRelay(transport: PageScriptTransport): void {
+  if (location.protocol !== 'zen:') return
   window.addEventListener('message', (e: MessageEvent) => {
-    if (e.source === window && isGameMountMessage(e.data)) mount()
+    if (e.source !== window) return
+    const game = gameMessageOf(e.data)
+    if (game) transport.send({ type: 'game', game })
   })
 }
 

@@ -40,7 +40,8 @@ import {
 import { hexToRgb, resolveTheme, rgbToHex } from './theme'
 import { newTabPageHtml } from './newTabPage'
 import { pdfMissingPageHtml, pdfViewerPageHtml, type PdfPageLookup } from './pdfPage'
-import { GAME_TITLE, gameMarkupHtml, gameMountMessageScript } from './game/page'
+import { GAME_TITLE, gameMarkupHtml } from './game/page'
+import { gameRuntimeScriptHtml } from './game/inlineRuntime'
 
 export const ZEN_SCHEME = 'zen'
 
@@ -745,6 +746,48 @@ export function errorPageStyle(css: string = chromeStylesheet): string {
 
 const ERROR_STYLE = errorPageStyle()
 
+/** The selectors under which Roll's stage carries the other theme (`runtime.ts`'s `showNight`). */
+export const GAME_STAGE_LIGHT = ".zen-game[data-theme='light']"
+export const GAME_STAGE_DARK = ".zen-game[data-theme='dark']"
+
+/**
+ * The tokens restated under Roll's stage for its night (§9.17: "the night is the stage's alone –
+ * the region's theme attribute flips, its tokens re-resolve, the canvas paints the other theme's
+ * `--v2-page` as sky"): every token the dark root block declares – the set that differs between
+ * the themes – under `GAME_STAGE_DARK` with the dark values and under `GAME_STAGE_LIGHT` with
+ * the light block's values of the same names, and the page surface's control aliases
+ * (`--v2-control-*`, which the card's Play again reads) under both, so they resolve against the
+ * stage's values and not the body's. Nothing outside the region reads any of it: the page text
+ * and the chrome keep their theme. '' when the blocks are gone.
+ */
+export function gameStageThemeStyle(css: string = chromeStylesheet): string {
+  const blockAfter = (selector: string, from: number): string | null => {
+    const start = css.indexOf(`${selector} {`, from)
+    if (start === -1) return null
+    const open = start + selector.length + 2
+    const close = css.indexOf('\n}', open)
+    return close === -1 ? null : css.slice(open, close).replace(/\/\*[\s\S]*?\*\//g, '')
+  }
+  const declarations = (block: string): Array<[string, string]> =>
+    Array.from(block.matchAll(/(--[\w-]+):\s*([^;]+);/g), (m) => [m[1]!, m[2]!.trim()])
+  const tokens = css.indexOf('--v2-page:')
+  if (tokens === -1) return ''
+  const lightStart = css.lastIndexOf(':root {', tokens)
+  const light = blockAfter(':root', lightStart)
+  const dark = blockAfter(":root[data-theme='dark']", tokens)
+  const surface = blockAfter("[data-surface='page']", tokens)
+  if (!light || !dark || !surface) return ''
+  const darkDeclarations = declarations(dark)
+  const names = new Set(darkDeclarations.map(([name]) => name))
+  const lightDeclarations = declarations(light).filter(([name]) => names.has(name))
+  const controls = declarations(surface)
+  const rule = (selector: string, lines: Array<[string, string]>): string =>
+    `${selector} {\n  ${[...lines, ...controls].map(([n, v]) => `${n}: ${v};`).join('\n  ')}\n}`
+  return `${rule(GAME_STAGE_LIGHT, lightDeclarations)}\n${rule(GAME_STAGE_DARK, darkDeclarations)}`
+}
+
+const GAME_STAGE_STYLE = gameStageThemeStyle()
+
 /**
  * The active theme's accent, set on the document's root beside the token block (design language
  * v2 §9.11): `--zen-accent` and its triple as the chrome's `.zen-window` carries them
@@ -753,22 +796,33 @@ const ERROR_STYLE = errorPageStyle()
  * here as it does in the window, and a `data-primary` control is the accent and not the
  * unresolved variable's black or white. The core writes the accent into the page's URL when it
  * builds one; a URL without it (a page restored from an older session) takes the default
- * theme's, the same values the chrome falls back to.
+ * theme's, the same values the chrome falls back to. With `game`, the same two rules under
+ * Roll's stage selectors, so the stage's night resolves its `--v2-accent` against the other
+ * theme's accent as the page does its own.
  */
-export function errorPageAccentStyle(accent: ErrorPageAccent | null): string {
+export function errorPageAccentStyle(accent: ErrorPageAccent | null, game = false): string {
   const rule = (selector: string, hex: string | undefined, dark: boolean): string => {
     const rgb = (hex && hexToRgb(hex)) || resolveTheme(null, dark).accent
     return `${selector} {\n  --zen-accent: ${rgbToHex(rgb)};\n  --zen-accent-rgb: ${rgb.join(' ')};\n}`
   }
   return [
     rule(':root', accent?.light, false),
-    rule(":root[data-theme='dark']", accent?.dark, true)
+    rule(":root[data-theme='dark']", accent?.dark, true),
+    ...(game
+      ? [rule(GAME_STAGE_LIGHT, accent?.light, false), rule(GAME_STAGE_DARK, accent?.dark, true)]
+      : [])
   ].join('\n')
 }
 
-/** The error document's whole stylesheet: the chrome's cuts, then the theme's accent beside them. */
-function errorDocumentStyle(accent: ErrorPageAccent | null): string {
-  return `${ERROR_STYLE}\n${errorPageAccentStyle(accent)}`
+/**
+ * The error document's whole stylesheet: the chrome's cuts, then the theme's accent beside them;
+ * a document that carries Roll (`game`) adds the stage's theme restatement and the accent under
+ * it, which no other page pays for.
+ */
+function errorDocumentStyle(accent: ErrorPageAccent | null, game = false): string {
+  return game
+    ? `${ERROR_STYLE}\n${GAME_STAGE_STYLE}\n${errorPageAccentStyle(accent, true)}`
+    : `${ERROR_STYLE}\n${errorPageAccentStyle(accent)}`
 }
 
 /**
@@ -855,19 +909,18 @@ function interstitialHtml(interstitial: CertificateInterstitial, target: string)
  * page script's listeners and the entry the failure committed stay with it, and the root
  * attributes the page's inline script would set are set here (markup written this way runs no
  * scripts). Only an error document is touched; a page that did load meanwhile is left alone.
- * `scheme` is the app's colour scheme (`errorPageAttributesScript`). On the offline page, the
- * write done, the page script is told (`gameMountMessageScript`) so the game, whose fragment
- * arrived with the markup, is mounted (`installOfflineGame`).
+ * `scheme` is the app's colour scheme (`errorPageAttributesScript`). The certificate
+ * interstitial is the one page written this way (`TabsService.showInterstitial`); the offline
+ * page, which carries Roll's inline runtime, is always served as a document (`zen://error`), so
+ * the runtime runs as a script of the document's own on both hosts.
  */
 export function inPlaceErrorPageScript(url: URL, scheme: ColorScheme = 'system'): string {
   const html = JSON.stringify(errorPageHtml(url, scheme))
-  const mount =
-    Number(url.searchParams.get('code')) === OFFLINE_CODE ? `${gameMountMessageScript()};` : ''
   return (
     "(function(html){if(location.protocol!=='chrome-error:')return false;" +
     "var doc=new DOMParser().parseFromString(html,'text/html'),root=document.documentElement;" +
     'root.className=doc.documentElement.className;root.innerHTML=doc.documentElement.innerHTML;' +
-    `${errorPageAttributesScript(scheme)};${mount}return true})(${html})`
+    `${errorPageAttributesScript(scheme)};return true})(${html})`
   )
 }
 
@@ -917,29 +970,33 @@ export function errorPageHtml(
       ? reloadHtml(content)
       : ''
   const name = content.code ? `\n  <p class="zen-error-code">${escapeHtml(content.code)}</p>` : ''
-  // The offline page carries the game above its title (ERR-03), where Chrome's carries its
-  // runner in the icon's slot; the page script mounts it (`installOfflineGame`).
-  const game = code === OFFLINE_CODE ? `\n  ${gameMarkupHtml()}` : ''
-  return `<!doctype html><html class="zen-error-document"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(content.site || 'Problem loading page')}</title><script>${errorPageAttributesScript(scheme)}</script><style>${errorDocumentStyle(accent)}</style></head>
-<body class="zen-error-page" data-surface="page"><main>${game}
+  // The offline page carries Roll above its title (ERR-03), where Chrome's carries its runner in
+  // the icon's slot, and the game's runtime inline after its markup (`gameRuntimeScriptHtml`):
+  // the one error page that pays for the game's bytes.
+  const game = code === OFFLINE_CODE
+  const stage = game ? `\n  ${gameMarkupHtml()}` : ''
+  const runtime = game ? gameRuntimeScriptHtml() : ''
+  return `<!doctype html><html class="zen-error-document"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(content.site || 'Problem loading page')}</title><script>${errorPageAttributesScript(scheme)}</script><style>${errorDocumentStyle(accent, game)}</style></head>
+<body class="zen-error-page" data-surface="page"><main>${stage}
   <h1>${escapeHtml(content.title)}</h1>
   <p>${emphasiseSite(content.reason, content.site)}</p>${suggestionsHtml(content)}${name}${controls}
-</main><script>${RELOADING_SCRIPT}</script></body></html>`
+</main><script>${RELOADING_SCRIPT}</script>${runtime}</body></html>`
 }
 
 /**
- * `zen://game`: the offline game on its own page (ERR-03's second half; Chrome's `chrome://dino`,
- * `offline.ts:1481-1493`), the stage alone in the error page's column on the error page's
- * chassis – the same tokens, the same anchor at 30% – so it reads as the offline page's game
- * come out on its own. The 1×1 widget (WID-04) lands here. The accent is the URL's where the
- * core wrote one (`errorPageAccentOf`), the default theme's otherwise.
+ * `zen://game`: Roll on its own page (ERR-03's second half; Chrome's `chrome://dino`,
+ * `offline.ts:1481-1493`, and `chrome://dino` typed into the bar comes here, `shared/url.ts`),
+ * the stage alone in the error page's column on the error page's chassis – the same tokens, the
+ * same anchor at 30% – so it reads as the offline page's game come out on its own, with the
+ * runtime inline after it. The 1×1 widget (WID-04) lands here. The accent is the URL's where
+ * the core wrote one (`errorPageAccentOf`), the default theme's otherwise.
  */
 export function gamePageHtml(url: URL, scheme: ColorScheme = 'system'): string {
   const accent = errorPageAccentOf(url.searchParams)
-  return `<!doctype html><html class="zen-error-document zen-game-document"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${GAME_TITLE}</title><script>${errorPageAttributesScript(scheme)}</script><style>${errorDocumentStyle(accent)}</style></head>
+  return `<!doctype html><html class="zen-error-document zen-game-document"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${GAME_TITLE}</title><script>${errorPageAttributesScript(scheme)}</script><style>${errorDocumentStyle(accent, true)}</style></head>
 <body class="zen-error-page zen-game-page" data-surface="page"><main>
   ${gameMarkupHtml()}
-</main></body></html>`
+</main>${gameRuntimeScriptHtml()}</body></html>`
 }
 
 /**
