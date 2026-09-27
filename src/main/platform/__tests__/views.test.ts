@@ -2576,6 +2576,51 @@ describe('a hidden page an agent drives and the stage', () => {
     expect(fakes.capturePage).toHaveBeenCalledTimes(1)
   })
 
+  it('holds the turn for 10 s at the most: a copy that never answers lets the next capture begin after that, and the one after it takes its own full turn', async () => {
+    vi.useFakeTimers()
+    try {
+      const { create } = setup()
+      const view = create()
+      view.setBounds(box)
+      view.setVisible(true)
+      const fakes = frameFakes(view)
+      fakes.capturePage.mockImplementation(() => new Promise<Electron.NativeImage>(() => undefined))
+      let stuckAnswered = false
+      const stuck = view.capture({ mode: 'viewport', format: 'jpeg' })
+      void stuck.then(() => (stuckAnswered = true))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fakes.capturePage).toHaveBeenCalledTimes(1)
+      // The page goes onto the stage under the copy, which never answers; the next capture, a
+      // frame's, waits the turn out and no longer.
+      view.setAgentDriven(true)
+      view.setVisible(false)
+      const next = view.capture({ mode: 'viewport', format: 'jpeg' })
+      await vi.advanceTimersByTimeAsync(9999)
+      expect(fakes.log).toEqual([])
+      await vi.advanceTimersByTimeAsync(1)
+      expect(fakes.log).toEqual(['begin'])
+      fakes.frames[0]!(frame(1000, 740))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(await next).toMatchObject({ width: 1000, height: 740 })
+      expect(fakes.log).toEqual(['begin', 'end'])
+      // The turn's clock runs from when a capture's work begins, not from when it queued: the
+      // one after has its own frame budget entire, and the stuck copy is left to itself.
+      const third = view.capture({ mode: 'viewport', format: 'jpeg' })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fakes.log).toEqual(['begin', 'end', 'begin'])
+      await vi.advanceTimersByTimeAsync(2799)
+      expect(fakes.log).toEqual(['begin', 'end', 'begin'])
+      fakes.frames[1]!(frame(1000, 740))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(await third).toMatchObject({ width: 1000, height: 740 })
+      expect(fakes.log).toEqual(['begin', 'end', 'begin', 'end'])
+      expect(stuckAnswered).toBe(false)
+      expect(fakes.capturePage).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('shows a staged renderer as painting before asking for its frame, with the throttling as it stands, once more when it paints nothing, and answers null when it still paints nothing', async () => {
     vi.useFakeTimers()
     try {

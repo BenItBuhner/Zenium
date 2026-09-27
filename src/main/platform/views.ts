@@ -186,6 +186,16 @@ const PARK_CORNERS = 4
 const STAGED_FRAME_FIRST_MS = 800
 const STAGED_FRAME_RETRY_MS = 2000
 
+/**
+ * How long a capture or stand-in holds the page's capture turn (`onTurn`) at the most. A copy
+ * that never answers – a full page's DevTools paint begun in front and moved onto the stage
+ * under it, where `captureBeyondViewport` does not answer – lets the turn go after this and
+ * finishes, or not, on its own. The frame path's whole budget (`STAGED_FRAME_FIRST_MS` and
+ * `STAGED_FRAME_RETRY_MS`, then the viewport read) lies well within it, so a live frame
+ * subscription is never overtaken.
+ */
+const CAPTURE_TURN_MS = 10_000
+
 /** Keys that never count as a gesture in Chromium's user-activation model. */
 const NON_ACTIVATING_KEYS = new Set(['Escape', 'Shift', 'Control', 'Alt', 'Meta', 'AltGr'])
 
@@ -2718,7 +2728,8 @@ export class ElectronTabView implements TabView {
    * turns (`onTurn`), staged or not: one frame subscription per page. A capture begun in front
    * can end on the stage – a tab switch during the DevTools paint of a full page, which then
    * fails and falls through to the frame – and a second subscription begun meanwhile would
-   * replace the first's in the engine, its frame never coming; on the turn, the second waits.
+   * replace the first's in the engine, its frame never coming; on the turn, the second waits
+   * (for `CAPTURE_TURN_MS` at the most: a copy that never answers holds no one behind it).
    */
   async capture(options: AgentCaptureOptions): Promise<AgentCapture | null> {
     if (this.wc.isDestroyed()) return null
@@ -2727,11 +2738,29 @@ export class ElectronTabView implements TabView {
 
   /**
    * `work` on the page's capture turn (`stagedTurn`): after the last capture or stand-in
-   * picture has answered, whichever way, and before the next. A turn never rejects the chain.
+   * picture has answered, whichever way, and before the next. A turn never rejects the chain,
+   * and holds it for `CAPTURE_TURN_MS` at the most, counted from when its work begins: one
+   * stuck past that goes on alone and the next begins – the two unserialised, as every capture
+   * was before the turn – rather than every later capture and stand-in of the page held behind
+   * it.
    */
   private onTurn<T>(work: () => Promise<T>): Promise<T> {
-    const turn = this.stagedTurn.then(work, work)
-    this.stagedTurn = turn.catch(() => undefined)
+    let release: () => void = () => undefined
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const run = (): Promise<T> => {
+      const timer = setTimeout(release, CAPTURE_TURN_MS)
+      const done = new Promise<T>((resolve) => resolve(work()))
+      const settle = (): void => {
+        clearTimeout(timer)
+        release()
+      }
+      done.then(settle, settle)
+      return done
+    }
+    const turn = this.stagedTurn.then(run, run)
+    this.stagedTurn = released
     return turn
   }
 
