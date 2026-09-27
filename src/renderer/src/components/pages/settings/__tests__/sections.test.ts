@@ -2246,7 +2246,8 @@ describe('the section model', () => {
         state: 'warning',
         summary: '1 site worth a look: unused permissions or several at once',
         grantedSites: 2,
-        review: [{ origin: 'https://meet.example', permissions: ['camera'], reason: 'unused' }]
+        review: [{ origin: 'https://meet.example', permissions: ['camera'], reason: 'unused' }],
+        revoked: []
       },
       notifications: {
         state: 'info',

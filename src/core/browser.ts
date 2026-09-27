@@ -47,6 +47,7 @@ import { resolveDownloadSettings } from '../shared/downloads'
 import { PermissionService } from './permissions'
 import { PermissionPromptService } from './permissionPrompts'
 import { PrivacyService } from './privacy'
+import { UnusedPermissionsService } from './unusedPermissions'
 import { resetSettings } from './settingsReset'
 import { PopupBlocker } from './popups'
 import { ExternalLaunches } from './external'
@@ -270,6 +271,8 @@ export class Browser {
   readonly permissionPrompts: PermissionPromptService
   /** Clear browsing data and Safety check. */
   readonly privacy: PrivacyService
+  /** The unused-sites permissions sweep's schedule and setting (PS-41). */
+  readonly unusedPermissions: UnusedPermissionsService
   /** Pop-up blocking: user activation per tab and what was blocked. */
   readonly popups: PopupBlocker
   /** Links that leave for another application (hosts whose engine does not gate them itself). */
@@ -593,6 +596,7 @@ export class Browser {
     this.capture = new CaptureService(this)
     this.pdf = new PdfViewerService(this)
     this.privacy = new PrivacyService(this)
+    this.unusedPermissions = new UnusedPermissionsService(this)
     this.webApps = new WebAppService(this, platform.io)
     this.mediaSession = new MediaSessionService(this)
     this.caretBrowsing = new CaretBrowsing(this)
@@ -622,6 +626,7 @@ export class Browser {
       network: this.connectivity.status(),
       blockedPopups: this.popups.all(),
       permissionRules: this.permissions.rules(),
+      revokedUnusedPermissions: this.permissions.revokedUnused(),
       permissionDefaults: this.permissions.defaults(CONTENT_SETTINGS.map((s) => s.id)),
       lastSafetyCheck: this.privacy.lastSafetyCheck(),
       permissionPrompts: this.permissionPrompts.list(),
@@ -1577,6 +1582,8 @@ export class Browser {
     this.governor.start()
     // The archive's first pass is armed for later, off the boot path (TAB-20).
     this.inactiveTabs.start()
+    // The unused-sites permissions sweep's first run likewise (PS-41); then daily.
+    this.unusedPermissions.start()
     this.liveFolders.start()
     void this.extensions.start()
     this.sync.start()
@@ -2753,6 +2760,7 @@ export class Browser {
     this.contentRules.stop()
     this.blocking.stop()
     this.inactiveTabs.stop()
+    this.unusedPermissions.stop()
     this.background.stop()
     this.translate.stop()
     this.mediaSession.dispose()
@@ -3311,6 +3319,17 @@ export class Browser {
       'permissions.set': ({ origin, permission, decision }) =>
         this.permissions.set(permission, origin, decision),
       'permissions.resetOrigin': ({ origin }) => this.permissions.resetOrigin(origin),
+      'permissions.regrantRevoked': ({ origin }) => this.permissions.regrantRevoked(origin),
+      'permissions.undoRegrantRevoked': ({ origin }) => this.permissions.undoRegrantRevoked(origin),
+      'permissions.acknowledgeRevoked': () => {
+        const records = this.permissions.acknowledgeRevoked()
+        if (records.length > 0) this.state.commitVolatile()
+        return records
+      },
+      'permissions.restoreRevokedList': ({ records }) => {
+        this.permissions.restoreRevokedList(records)
+        this.state.commitVolatile()
+      },
       'privacy.clearBrowsingData': ({ range, types, passphrase }, win) =>
         this.privacy.clearBrowsingData(range, types, passphrase, win),
       'privacy.clearBrowsingDataCounts': ({ range }) => this.privacy.counts(range),
@@ -4335,6 +4354,7 @@ export class Browser {
       blocking: s.blocking,
       privacy: JSON.stringify(s.privacy),
       preloadPages: s.preloadPages,
+      autoRevokeUnusedPermissions: s.autoRevokeUnusedPermissions !== false,
       autofill: `${JSON.stringify(s.passwords)}${JSON.stringify(s.autofill)}`,
       spellcheck: JSON.stringify(s.spellcheck),
       reader: JSON.stringify(s.reader),
@@ -4470,6 +4490,7 @@ export class Browser {
     s.sidebarWidth = Math.max(160, Math.min(520, s.sidebarWidth))
     s.splitEdgeZones = s.splitEdgeZones !== false
     s.useSystemAccent = s.useSystemAccent === true
+    s.autoRevokeUnusedPermissions = s.autoRevokeUnusedPermissions !== false
     s.unloadTimeoutMinutes = sanitizeUnloadTimeout(s.unloadTimeoutMinutes)
     s.inactiveTabsArchiveDays = sanitizeArchiveDays(s.inactiveTabsArchiveDays)
     s.inactiveTabsAutoClose = s.inactiveTabsAutoClose !== false
@@ -4514,6 +4535,8 @@ export class Browser {
     if (before.blocking !== s.blocking) this.blocking.onSettingsChanged()
     if (before.privacy !== JSON.stringify(s.privacy) || before.preloadPages !== s.preloadPages)
       this.protection.onSettingsChanged()
+    if (before.autoRevokeUnusedPermissions !== s.autoRevokeUnusedPermissions)
+      this.unusedPermissions.onSettingsChanged()
     if (before.autofill !== `${JSON.stringify(s.passwords)}${JSON.stringify(s.autofill)}`)
       this.autofill.onSettingsChanged()
     if (before.spellcheck !== JSON.stringify(s.spellcheck)) this.spellcheck.onSettingsChanged()

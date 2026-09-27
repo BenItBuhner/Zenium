@@ -1803,13 +1803,18 @@ export class TabManager {
       previousUrl !== url
         ? previousUrl
         : undefined
-    if (!this.isPrivate(tab))
+    if (!this.isPrivate(tab)) {
       this.browser.history.visit(url, tab.title, tab.favicon, {
         transition,
         tabId,
         ...(redirectedFrom ? { redirectedFrom } : {}),
         ...(clientRedirectFrom ? { clientRedirectFrom } : {})
       })
+      // The site's granted permissions hear of the visit (PS-41; Chrome's
+      // `TabHelper::PrimaryPageChanged`): a page change, not a same-document navigation, and
+      // never a private tab's – its answers were never stored.
+      if (!inPage) this.browser.permissions.onPageVisited(url)
+    }
     for (const w of this.browser.allWindows())
       if (w.findResult?.tabId === tabId) w.findResult = null
     this.rememberNavigation(tabId, view)

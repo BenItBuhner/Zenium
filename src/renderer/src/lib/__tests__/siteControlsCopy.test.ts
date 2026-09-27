@@ -188,7 +188,13 @@ function result(patch: Partial<SafetyCheckResult> = {}): SafetyCheckResult {
       known: true,
       checkedAt: 1_700_000_000_000
     },
-    permissions: { state: 'safe', summary: 'No sites need a review', grantedSites: 0, review: [] },
+    permissions: {
+      state: 'safe',
+      summary: 'No sites need a review',
+      grantedSites: 0,
+      review: [],
+      revoked: []
+    },
     notifications: { state: 'safe', summary: 'No sites send notifications', sites: [] },
     extensions: { state: 'unavailable', summary: 'No extensions on this device', flagged: [] },
     ...patch
@@ -200,13 +206,15 @@ describe('Safety check card', () => {
     expect(worstState(result())).toBe('safe')
     expect(
       worstState(
-        result({ permissions: { state: 'info', summary: '', grantedSites: 3, review: [] } })
+        result({
+          permissions: { state: 'info', summary: '', grantedSites: 3, review: [], revoked: [] }
+        })
       )
     ).toBe('info')
     expect(
       worstState(
         result({
-          permissions: { state: 'info', summary: '', grantedSites: 3, review: [] },
+          permissions: { state: 'info', summary: '', grantedSites: 3, review: [], revoked: [] },
           passwords: {
             state: 'warning',
             summary: '',
@@ -269,7 +277,8 @@ describe('Safety check card', () => {
           grantedSites: 2,
           review: [
             { origin: 'https://a.example', permissions: ['camera', 'microphone'], reason: 'many' }
-          ]
+          ],
+          revoked: []
         },
         notifications: {
           state: 'info',
