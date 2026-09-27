@@ -2791,7 +2791,10 @@ describe('Accessibility › Read aloud on a host with a speech engine', () => {
     // (`classifyViewport`), the very place the touchpad is: a `layouts` pin would hide it there.
     for (const layout of ['phone', 'tablet', 'desktop'] as const) {
       const model = buildSection(ACCESSIBILITY, { ...context(state()).ctx, formFactor: layout })
-      expect(allRows(model.groups).map((x) => x.id), layout).toContain('touchpad-swipe-navigate')
+      expect(
+        allRows(model.groups).map((x) => x.id),
+        layout
+      ).toContain('touchpad-swipe-navigate')
     }
     // The desktop platform has no touchpad swipe and no row: the shared builder gains nothing there.
     const desktop = state({
@@ -2803,7 +2806,10 @@ describe('Accessibility › Read aloud on a host with a speech engine', () => {
         ...context(desktop, false, {}, VOICES).ctx,
         formFactor: layout
       })
-      expect(model.groups.map((g) => g.id), layout).toEqual(['read-aloud', 'read-aloud-voices'])
+      expect(
+        model.groups.map((g) => g.id),
+        layout
+      ).toEqual(['read-aloud', 'read-aloud-voices'])
     }
   })
 
