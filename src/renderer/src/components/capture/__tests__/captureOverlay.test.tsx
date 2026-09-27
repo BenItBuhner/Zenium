@@ -568,6 +568,13 @@ describe('the result card (capture-21)', () => {
     )
   })
 
+  it('on the phone the public collection – the directory `Download` – is named as its Files app names it, "Downloads" (the shared reading the share hub and the PDF viewer use)', async () => {
+    const el = await saved('/storage/emulated/0/Download/Screenshot 2026-09-23 at 14.05.09.png')
+    expect(el.querySelector('[data-capture-toast] .zen-message-text')?.textContent).toBe(
+      'Saved to Downloads'
+    )
+  })
+
   it('Show in folder is the engine’s reveal of the saved file, found by its path among the host’s downloads; the toast leaves with it', async () => {
     const el = await saved()
     act(() => {

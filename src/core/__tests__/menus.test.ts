@@ -239,7 +239,7 @@ describe('the app menu', () => {
     // With the media hub folded the Media Controls… row and its separator lead: twenty-one rows
     // and four separators (701 px), which still stand on an 800 px window under the bar's 74.
     full.browser.state.media = [
-      { tabId: full.tabId, playing: true, title: 'Nocturne', session: true }
+      { tabId: full.tabId, playing: true, muted: false, title: 'Nocturne', session: true }
     ]
     appMenuFolded(full)
     expect(rows(full)).toHaveLength(21)
@@ -459,7 +459,7 @@ describe('the app menu', () => {
       expect(rows(full)[0]).toBe('Update Zenium')
       // Chrome's order at the head: the update, then the folded hub's row, then the tabs.
       full.browser.state.media = [
-        { tabId: full.tabId, playing: true, title: 'Nocturne', session: true }
+        { tabId: full.tabId, playing: true, muted: false, title: 'Nocturne', session: true }
       ]
       appMenuFolded(full)
       expect(rows(full)).toHaveLength(22)
@@ -1460,6 +1460,7 @@ describe('the app menu', () => {
     const media = (tabId: string, over: Partial<MediaState> = {}): MediaState => ({
       tabId,
       playing: true,
+      muted: false,
       title: 'Nocturne',
       artist: 'The Band',
       artwork: 'https://example.com/art.png',
@@ -1626,6 +1627,7 @@ describe('the app menu', () => {
         {
           tabId: h.tabId,
           playing: true,
+          muted: false,
           title: 'Nocturne',
           artist: 'The Band',
           artwork: null,
@@ -2139,7 +2141,7 @@ describe('the app menu', () => {
       const priv = h.browser.openWindow('private', h.win)!
       const theirs = h.browser.tabs.createTab({ url: 'https://video.example.org/watch' }, priv)
       h.browser.state.media = [
-        { tabId: theirs.id, playing: true, title: 'Nocturne', session: true }
+        { tabId: theirs.id, playing: true, muted: false, title: 'Nocturne', session: true }
       ]
       expect(appMenuFolded(h, priv).slice(0, 3)).toEqual(['Media Controls…', '-', 'New Tab'])
       expect(separators(h.shown())).toBe(4)

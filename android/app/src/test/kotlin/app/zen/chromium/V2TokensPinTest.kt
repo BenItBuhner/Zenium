@@ -228,10 +228,14 @@ class V2TokensPinTest {
      */
     @Test
     fun theToastCardCornerIsTheChromesSquircle() {
-        // The one corner token, declared once in the theme block; the card's rule reads it right after its radius.
+        // The one corner token, declared in the theme block; the card's rule reads it right after its radius.
+        // Its one other declaration is the served documents' root (`.zen-error-document`, the slice
+        // zenPages.ts cuts for the error pages and `zen://game`, which the theme block never reaches),
+        // restated there as `--zen-ease` is, for Roll's game-over card at radius 8 (ERR-03, §9.17 (c)).
         val corner = css.light["--zen-corner"] ?: error("main.css declares no --zen-corner")
         assertEquals("squircle", corner)
-        assertEquals(1, Regex("""(?m)^ {2}--zen-corner: squircle;$""").findAll(css.text).count())
+        assertEquals(2, Regex("""(?m)^ {2}--zen-corner: squircle;$""").findAll(css.text).count())
+        assertTrue(".zen-error-document restates --zen-corner: squircle", Regex("""(?m)^ {2}--zen-corner: squircle;$""").containsMatchIn(css.rule(".zen-error-document")))
         val message = css.rule(".zen-message")
         assertTrue(
             ".zen-message carries corner-shape: var(--zen-corner) right after border-radius: var(--v2-radius-card)",

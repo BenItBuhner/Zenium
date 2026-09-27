@@ -13,6 +13,8 @@ import {
   type CrashPageOptions
 } from '../url'
 import { INTERSTITIAL_MESSAGE_KEY } from '../interstitial'
+import { GAME_ARIA_LABEL, GAME_MOUNT_ATTRIBUTE, GAME_RUNTIME_ATTRIBUTE } from '../game/page'
+import { GAME_BEST_CALLBACK, GAME_MESSAGE_KEY } from '../game/bridge'
 import type { CertificateDetails } from '../types'
 import {
   BLOCKED_BY_CLIENT_CODE,
@@ -28,6 +30,9 @@ import {
   errorPageHtml,
   errorPageSearchAction,
   errorPageStyle,
+  GAME_STAGE_DARK,
+  GAME_STAGE_LIGHT,
+  gameStageThemeStyle,
   inPlaceErrorPageScript,
   parseZenUrl,
   searchTermOf,
@@ -1132,6 +1137,212 @@ describe('inPlaceErrorPageScript', () => {
     expect(script.endsWith(`})(${JSON.stringify(errorPageHtml(parseZenUrl(EXPIRED)!))})`)).toBe(
       true
     )
+  })
+
+  it('writes the page and its root attributes, and nothing more: the interstitial is the one in-place page', () => {
+    // The -106 page is a served document on both hosts (`tabs.ts` loads the `zen:` URL for a
+    // net error), so the game's runtime travels inline with it and no mount message exists.
+    const offline = inPlaceErrorPageScript(parseZenUrl(OFFLINE)!)
+    expect(offline).toContain(`${ERROR_PAGE_ATTRIBUTES_SCRIPT};return true`)
+    // A script written through `innerHTML` never runs, so the in-place shape of the -106 page
+    // carries no stage and no runtime (a dead canvas otherwise): the page's title and controls
+    // alone, the served document being the one that carries Roll.
+    expect(offline).not.toContain(GAME_RUNTIME_ATTRIBUTE)
+    expect(offline).not.toContain(GAME_MOUNT_ATTRIBUTE)
+    expect(offline).not.toContain('<canvas')
+    expect(offline).not.toContain(GAME_ARIA_LABEL)
+    expect(offline).toContain('No internet')
+    expect(errorPageHtml(parseZenUrl(OFFLINE)!, 'system', 'desktop', 'in-place')).not.toContain(
+      GAME_RUNTIME_ATTRIBUTE
+    )
+    expect(errorPageHtml(parseZenUrl(OFFLINE)!, 'system', 'desktop', 'document')).toContain(
+      GAME_RUNTIME_ATTRIBUTE
+    )
+    // The writer's own code posts nothing: the same writer around a page without the game.
+    const refused = inPlaceErrorPageScript(parseZenUrl(REFUSED)!)
+    expect(refused).toContain(`${ERROR_PAGE_ATTRIBUTES_SCRIPT};return true`)
+    expect(refused).not.toContain('postMessage')
+  })
+})
+
+describe('Roll, the offline game (ERR-03)', () => {
+  /** The inline runtime's script tag as the two documents carry it. */
+  const runtimeTag = (html: string): string | null =>
+    html.match(new RegExp(`<script ${GAME_RUNTIME_ATTRIBUTE}>[\\s\\S]*?</script>`))?.[0] ?? null
+
+  it('carries the game above the title of the no-connection page alone', () => {
+    const html = errorPageHtml(parseZenUrl(OFFLINE)!, 'system', 'android')
+    const game = html.indexOf(`<div class="zen-game" ${GAME_MOUNT_ATTRIBUTE}`)
+    expect(game).toBeGreaterThan(html.indexOf('<main>'))
+    expect(game).toBeLessThan(html.indexOf('<h1>No internet</h1>'))
+    // The region named for the game and its inputs, the stage, the hint, the card with Play
+    // again as the primary, the live region.
+    expect(html).toContain(`role="application" tabindex="0" aria-label="${GAME_ARIA_LABEL}"`)
+    expect(GAME_ARIA_LABEL.startsWith('Roll, ')).toBe(true)
+    expect(html).toContain(
+      '<canvas class="zen-game-stage" width="600" height="150" aria-hidden="true">'
+    )
+    expect(html).toContain('<p class="zen-game-hint" aria-hidden="true"></p>')
+    expect(html).toContain(
+      '<div class="zen-game-over" hidden><h2 class="zen-game-over-title">Game over</h2>'
+    )
+    expect(html).toContain(
+      'class="zen-v2-button" data-primary data-zen-game-again>Play again</button>'
+    )
+    expect(html).toContain(
+      '<div class="zen-game-live" aria-live="assertive" aria-atomic="true"></div>'
+    )
+    expect(html).not.toMatch(/Retry|Offline game/)
+    expect(html.split('<div class="zen-game" ')).toHaveLength(2)
+    for (const other of [
+      REFUSED,
+      EXPIRED,
+      errorPageUrl(-105, 'net::ERR_NAME_NOT_RESOLVED', 'http://x/')
+    ]) {
+      expect(errorPageHtml(parseZenUrl(other)!)).not.toContain('<div class="zen-game" ')
+    }
+  })
+
+  it('carries its runtime inline, once, after the markup, on the two documents that mount it and no other (R1)', () => {
+    for (const html of [
+      errorPageHtml(parseZenUrl(OFFLINE)!, 'system', 'android'),
+      zenPageHtml('zen://game')
+    ]) {
+      const tag = runtimeTag(html)
+      expect(tag).not.toBeNull()
+      expect(html.split(`<script ${GAME_RUNTIME_ATTRIBUTE}>`)).toHaveLength(2)
+      expect(html.indexOf(tag!)).toBeGreaterThan(html.indexOf('<div class="zen-game" '))
+      expect(html.indexOf(tag!)).toBeGreaterThan(html.indexOf('</main>'))
+      expect(html.endsWith(`${tag}</body></html>`)).toBe(true)
+      // A bundled IIFE, minified: no module syntax, nothing that would close the tag early, and
+      // the runtime's names – the mount attribute it looks for, the bridge's message key, the
+      // best-score callback it installs on the window.
+      expect(tag).not.toMatch(/\bimport\b|\bexport\b/)
+      expect(tag!.slice(0, -'</script>'.length)).not.toMatch(/<\/script/i)
+      expect(tag).toContain(GAME_MOUNT_ATTRIBUTE)
+      expect(tag).toContain(GAME_MESSAGE_KEY)
+      expect(tag).toContain(GAME_BEST_CALLBACK)
+      expect(tag!.split('\n').length).toBeLessThan(10)
+    }
+    for (const other of [
+      errorPageHtml(parseZenUrl(REFUSED)!),
+      errorPageHtml(parseZenUrl(EXPIRED)!),
+      errorPageHtml(parseZenUrl(DNS)!),
+      zenPageHtml('zen://version'),
+      inPlaceErrorPageScript(parseZenUrl(EXPIRED)!)
+    ]) {
+      expect(other).not.toContain(GAME_RUNTIME_ATTRIBUTE)
+      expect(other).not.toContain(GAME_MESSAGE_KEY)
+    }
+  })
+
+  it("serves zen://game as the stage alone on the error page's chassis (Chrome's chrome://dino)", () => {
+    const html = zenPageHtml('zen://game', undefined, undefined, undefined, 'dark')
+    expect(html).toContain('<title>Roll</title>')
+    expect(html).toContain('<html class="zen-error-document zen-game-document">')
+    expect(html).toContain('<body class="zen-error-page zen-game-page" data-surface="page"><main>')
+    expect(html).toContain(GAME_MOUNT_ATTRIBUTE)
+    expect(html).not.toContain('<h1>')
+    expect(html).not.toContain('zen-error-reload')
+    // The theme's attributes and the accent, as the error page has them.
+    expect(html).toContain(errorPageAttributesScript('dark'))
+    expect(html).toContain('--zen-accent: #6264dc;')
+    expect(html).toContain(":root[data-theme='dark'] {\n  --zen-accent: #8284f0;")
+    expect(html).toContain('.zen-game {')
+    expect(html).toContain('.zen-game-over {')
+  })
+
+  it("draws the stage's chrome from the tokens alone; the card keeps its 8 as a squircle", () => {
+    const own = errorPageStyle().slice(errorPageStyle().indexOf('.zen-game {'))
+    expect(own).not.toMatch(/#[0-9a-f]{3,8}\b/i)
+    expect(own).not.toMatch(/rgba?\(/)
+    expect(own).toContain('touch-action: none;')
+    expect(own).toContain('max-width: 600px;')
+    const card = own.slice(own.indexOf('.zen-game-over {'), own.indexOf('.zen-game-over-title'))
+    expect(card).toContain('border-radius: var(--v2-radius-card);')
+    expect(card).toContain('corner-shape: var(--zen-corner);')
+    expect(card).toContain('background: var(--v2-card);')
+    expect(card).toContain('color: var(--v2-text);')
+    // The document declares the corner the chrome's radius ≥ 8 wears (§9.17 (c)).
+    expect(errorPageStyle()).toMatch(/\.zen-error-document \{[^}]*--zen-corner: squircle;/)
+    // No transition of its own: the card's arrival is the runtime's (§11.3, the page's cut has
+    // no remover).
+    expect(own).not.toContain('transition')
+    expect(own).not.toContain('animation')
+  })
+
+  describe("the stage's night (§9.17 (g)): the region's tokens re-resolve, the page's do not", () => {
+    const style = gameStageThemeStyle(chromeCss)
+    const block = (selector: string): string =>
+      style.slice(
+        style.indexOf(`${selector} {`),
+        style.indexOf('\n}', style.indexOf(`${selector} {`))
+      )
+
+    it("restates every token the dark block declares under the stage's dark selector, and the light values under its light one", () => {
+      const dark = block(GAME_STAGE_DARK)
+      const light = block(GAME_STAGE_LIGHT)
+      expect(dark).toContain('--v2-page: #1c1b22;')
+      expect(light).toContain('--v2-page: #fbfbfe;')
+      for (const name of [
+        '--v2-text',
+        '--v2-card',
+        '--v2-card-border',
+        '--v2-border',
+        '--v2-fill'
+      ]) {
+        expect(dark).toMatch(new RegExp(`\\n  ${name}: [^;]+;`))
+        expect(light).toMatch(new RegExp(`\\n  ${name}: [^;]+;`))
+      }
+      // The dark block's set, whole: one line each side for each of its names.
+      const darkRoot = chromeCss.slice(
+        chromeCss.indexOf(":root[data-theme='dark'] {", chromeCss.indexOf('--v2-page:'))
+      )
+      const names = Array.from(
+        darkRoot.slice(0, darkRoot.indexOf('\n}')).matchAll(/(--v2-[\w-]+):/g),
+        (m) => m[1]
+      )
+      expect(names.length).toBeGreaterThan(10)
+      for (const name of names) {
+        expect(dark.split(`\n  ${name}:`)).toHaveLength(2)
+        expect(light.split(`\n  ${name}:`)).toHaveLength(2)
+      }
+    })
+
+    it("carries the page surface's control aliases on both, so the card's Play again reads the stage's values", () => {
+      for (const selector of [GAME_STAGE_LIGHT, GAME_STAGE_DARK]) {
+        const rules = block(selector)
+        expect(rules).toContain('--v2-control-text: var(--v2-text);')
+        expect(rules).toContain('--v2-control-fill: var(--v2-fill);')
+      }
+    })
+
+    it('touches nothing outside the region: only the two stage selectors, no root rule of its own', () => {
+      expect(style.match(/^[^\s{}][^\n{]*\{$/gm)).toEqual([
+        `${GAME_STAGE_LIGHT} {`,
+        `${GAME_STAGE_DARK} {`
+      ])
+      expect(style).not.toContain(':root')
+      expect(style).not.toContain('body')
+      expect(style).not.toContain('html')
+    })
+
+    it("is '' without the token blocks, and the documents carry it with the accent restated under the stage", () => {
+      expect(gameStageThemeStyle('.a { color: red; }')).toBe('')
+      const html = zenPageHtml('zen://game')
+      expect(html).toContain(`${GAME_STAGE_DARK} {\n  --v2-page: #1c1b22;`)
+      expect(html).toContain(`${GAME_STAGE_LIGHT} {\n  --v2-page: #fbfbfe;`)
+      expect(html).toContain(`${GAME_STAGE_LIGHT} {\n  --zen-accent: #6264dc;`)
+      expect(html).toContain(`${GAME_STAGE_DARK} {\n  --zen-accent: #8284f0;`)
+      expect(errorPageHtml(parseZenUrl(OFFLINE)!)).toContain(`${GAME_STAGE_DARK} {\n  --v2-page:`)
+      // Pages without the game pay for none of it.
+      for (const other of [errorPageHtml(parseZenUrl(REFUSED)!), zenPageHtml('zen://version')]) {
+        expect(other).not.toContain(GAME_STAGE_DARK)
+        expect(other).not.toContain(GAME_STAGE_LIGHT)
+      }
+      expect(errorPageAccentStyle(null)).not.toContain('.zen-game')
+      expect(errorPageAccentStyle(null, true)).toContain(`${GAME_STAGE_DARK} {`)
+    })
   })
 })
 

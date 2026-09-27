@@ -219,6 +219,23 @@ export function toMonochrome(colors: ThemeColor[]): ThemeColor[] {
 export const BASE_LIGHT: RGB = [242, 241, 245]
 export const BASE_DARK: RGB = [28, 28, 32]
 
+/**
+ * The default look's accent in the light scheme – the space colour a space with no theme takes
+ * (`resolveTheme`): `--zen-accent`'s value in `main.css`, the Indigo app icon's colour, the
+ * host's `zen_accent` (`colors.xml`). One literal, here.
+ */
+export const DEFAULT_ACCENT: RGB = [98, 100, 220]
+
+/**
+ * The control accent under the default look in the light scheme – the primary button, the on
+ * switch, the focus ring, the selection: the accent mixed 40 % into black, as `--v2-accent`
+ * mixes it (`main.css`: `color-mix(in srgb, var(--zen-accent) 40%, #000)`) and as the host's
+ * `v2_accent_light` stands in for it (`colors.xml`). For a surface that has no tokens of the
+ * chrome's – the PDF viewer's form widgets, drawn on white paper in either theme – and must not
+ * follow a space's own accent.
+ */
+export const DEFAULT_CONTROL_ACCENT_LIGHT: RGB = mix([0, 0, 0], DEFAULT_ACCENT, 0.4)
+
 export interface ResolvedTheme {
   /** CSS `background` value for the browser window. */
   background: string
@@ -297,7 +314,7 @@ export function resolveTheme(theme: SpaceTheme | null, requestedScheme: boolean)
       rotation: 0,
       averageColor: base,
       isDark: darkScheme,
-      accent: darkScheme ? [130, 132, 240] : [98, 100, 220],
+      accent: darkScheme ? [130, 132, 240] : DEFAULT_ACCENT,
       texture: 0
     }
   }

@@ -656,8 +656,9 @@ describe('the section model', () => {
 
   it('carries #115’s Privacy and security groups (tracking-*) at Chrome’s tracking-prevention position, behind requestBlocking', () => {
     const privacy = section('privacy', blockingState())
-    // The engine's groups sit between #135's Safety check and Delete browsing data groups; their
-    // own order and content are asserted here (the whole category's order is #135's test).
+    // The engine's groups sit after the Cookies and site data groups, before the signals (the
+    // #650 lead check: Chrome's cookies-and-ad-privacy stretch); their own order and content are
+    // asserted here (the whole category's order is #135's test).
     const tracking = privacy.groups.filter((g) => g.id.startsWith('tracking-'))
     expect(tracking.map((g) => g.id)).toEqual([
       'tracking-prevention',
@@ -725,14 +726,12 @@ describe('the section model', () => {
     )
     expect(without.groups.filter((g) => g.id.startsWith('tracking-'))).toEqual([])
     // W7-6's hub cards lead (a group the desktop and tablet shells draw; the fixture has no
-    // layout, so it stays here too).
+    // layout, so it stays here too); the programs follow in the cards' order (W8-8, Q6), a
+    // group no card names after the card it is kin to (the #650 lead check) – the signals
+    // after Cookies where Tracking prevention would stand, HTTPS-only and Secure DNS after
+    // Safe Browsing.
     expect(without.groups.map((g) => g.id)).toEqual([
       'privacy-hub',
-      'safety-check',
-      'safety-check-results',
-      'safety-check-actions',
-      'safe-browsing',
-      'safe-browsing-feeds',
       'clear-data',
       'site-data',
       'cookies-related-sites',
@@ -745,16 +744,21 @@ describe('the section model', () => {
       'site-data-block-add',
       'site-data-exit',
       'site-data-viewer',
+      'signals',
+      'safe-browsing',
+      'safe-browsing-feeds',
+      'https-only',
+      'https-only-sites',
+      'secure-dns',
       'sites-permissions',
       'sites-content',
       'sites-additional',
       'sites-own',
       'sites-unused',
+      'safety-check',
+      'safety-check-results',
+      'safety-check-actions',
       'preload',
-      'https-only',
-      'https-only-sites',
-      'secure-dns',
-      'signals',
       'private-lock'
     ])
   })
@@ -2042,27 +2046,23 @@ describe('the section model', () => {
     }
   })
 
-  it('carries #135’s site-controls rows in Chrome’s Privacy and security order: Safety check, then #115’s Tracking prevention, Delete browsing data, Site settings', () => {
+  it('carries #135’s site-controls rows in the hub cards’ order (the #553 lead check’s Q6), each un-carded group after its kin as Chrome’s page holds them (the #650 lead check): Delete browsing data, Cookies and site data with #115’s Tracking prevention and the signals, Safe Browsing with HTTPS-only and Secure DNS, Site settings, Safety check, Preload pages, the lock', () => {
     const c = context()
     const privacy = buildSection(
       PAGE.sections.find((x) => x.id === 'privacy')!,
       c.ctx
     )
-    // The whole category in Chrome's order – #135's, #156's and #115's groups (each program's
+    // The whole category in the cards' order – #135's, #156's and #115's groups (each program's
     // own order and content is its own test); the remembered per-site answers are Security's
-    // since #62 (no `permissions` group here). W7-6's hub cards lead the category (settings-12).
+    // since #62 (no `permissions` group here). W7-6's hub cards lead the category (settings-12);
+    // the five carded programs follow in the cards' order (W8-8), and a group no card names
+    // follows the card it is kin to (the #650 lead check): Tracking prevention and Privacy
+    // signals after Cookies (Chrome's cookies-and-ad-privacy stretch), HTTPS-only and Secure
+    // DNS after Safe Browsing (Chrome's Security page carries both); Preload pages – Chrome's
+    // Performance › Speed row, its seat another slice's – stays after Safety check for now, and
+    // the private-tab lock is last.
     expect(privacy.groups.map((g) => g.id)).toEqual([
       'privacy-hub',
-      'safety-check',
-      'safety-check-results',
-      'safety-check-actions',
-      'safe-browsing',
-      'safe-browsing-feeds',
-      'tracking-prevention',
-      'tracking-lists',
-      'tracking-custom-lists',
-      'tracking-filters',
-      'tracking-exceptions',
       'clear-data',
       'site-data',
       'cookies-related-sites',
@@ -2075,16 +2075,26 @@ describe('the section model', () => {
       'site-data-block-add',
       'site-data-exit',
       'site-data-viewer',
+      'tracking-prevention',
+      'tracking-lists',
+      'tracking-custom-lists',
+      'tracking-filters',
+      'tracking-exceptions',
+      'signals',
+      'safe-browsing',
+      'safe-browsing-feeds',
+      'https-only',
+      'https-only-sites',
+      'secure-dns',
       'sites-permissions',
       'sites-content',
       'sites-additional',
       'sites-own',
       'sites-unused',
+      'safety-check',
+      'safety-check-results',
+      'safety-check-actions',
       'preload',
-      'https-only',
-      'https-only-sites',
-      'secure-dns',
-      'signals',
       'private-lock'
     ])
     expect(privacy.groups.every(groupShows)).toBe(true)
@@ -2114,6 +2124,23 @@ describe('the section model', () => {
     expect(clear.form?.title).toBe('Delete browsing data')
     expect(clear.form?.description).toContain('time range')
     expect(clear.form?.description).toContain('what to delete')
+    // On the phone layout the sheet is Quick Delete's (HB-07, MOT-24 UI): the same title, its
+    // description saying what the Tabs row does since nothing else on the sheet does before the
+    // switch is on (the reviewer's N5); the wide layouts' sheet says nothing of tabs.
+    expect(clear.form?.description).not.toContain('Tabs')
+    const phonePrivacy = buildSection(
+      PAGE.sections.find((x) => x.id === 'privacy')!,
+      {
+        ...c.ctx,
+        formFactor: 'phone'
+      }
+    )
+    const phoneClear = row(phonePrivacy, 'clear-data-open')
+    if (phoneClear.kind !== 'action') throw new Error('not an action')
+    expect(phoneClear.form?.title).toBe('Delete browsing data')
+    expect(phoneClear.form?.description).toBe(
+      `${clear.form?.description} Turn on Tabs to close the tabs you used in that time as well.`
+    )
 
     // Site settings: the catalogue this host honours, each an item whose sheet holds the default
     // as a value row; a type with one possible default is a fact. Notifications are in it since
@@ -5931,7 +5958,7 @@ describe('searching the rows', () => {
     expect(rowText(max)).toContain(max.kind === 'field' ? (max.display ?? max.value) : '')
   })
 
-  it('carries #156’s protection groups at Chrome’s positions: Safe Browsing after Safety check, cookies after Delete browsing data, HTTPS-only, secure DNS and the signals after Site settings', () => {
+  it('carries #156’s protection groups at the hub cards’ positions: cookies after Delete browsing data with the signals closing Chrome’s cookies stretch, Safe Browsing after them with HTTPS-only and secure DNS – Chrome’s Security page – before Site settings', () => {
     const privacy = section('privacy', state({ privacy: PRIVACY_STATUS }))
     const ids = privacy.groups.map((g) => g.id)
     // The protection groups' own order and content are asserted here; the whole category's
@@ -5941,38 +5968,51 @@ describe('searching the rows', () => {
       families.find((f) => id === f || id.startsWith(`${f}-`))
     const protection = privacy.groups.filter((g) => familyOf(g.id) !== undefined)
     // The third-party cookie mode itself is Cookies and site data's default row since #322's
-    // ruling on Q3 folded the Third-party cookies group into it; the related sites follow it.
+    // ruling on Q3 folded the Third-party cookies group into it; the related sites follow it –
+    // and, the Third-party cookies card standing before Safe Browsing's, they come first. The
+    // signals are the cookies stretch's tail (Chrome's cookies-and-ad-privacy run, the #650
+    // lead check), HTTPS-only and Secure DNS are Safe Browsing's kin (Chrome's Security page).
     expect(protection.map((g) => g.id)).toEqual([
-      'safe-browsing',
-      'safe-browsing-feeds',
       'cookies-related-sites',
       'cookies-add-site',
+      'signals',
+      'safe-browsing',
+      'safe-browsing-feeds',
       'https-only',
       'https-only-sites',
-      'secure-dns',
-      'signals'
+      'secure-dns'
     ])
-    // Each family sits at its Chrome position among the neighbours' groups.
+    // Each family sits at its card's position among the neighbours' groups (the #553 lead
+    // check's Q6: the groups take the cards' order – Delete browsing data, Third-party cookies,
+    // Safe Browsing, Site settings, Safety check). Delete browsing data is the first group
+    // under the cards.
     const at = (id: string): number => ids.indexOf(id)
-    expect(at('safe-browsing')).toBe(at('safety-check-actions') + 1)
-    expect(at('safe-browsing-feeds')).toBe(at('tracking-prevention') - 1)
+    expect(at('clear-data')).toBe(at('privacy-hub') + 1)
     // #310's Cookies and site data groups (site-data-*) stand between Delete browsing data and
-    // Site settings, where Chrome's cookies page sits, the related sites right under the default
-    // they qualify; siteData.test.ts asserts their content.
+    // Safe Browsing, where the Third-party cookies card sits, the related sites right under the
+    // default they qualify; siteData.test.ts asserts their content.
     expect(at('site-data')).toBe(at('clear-data') + 1)
     expect(at('cookies-related-sites')).toBe(at('site-data') + 1)
     expect(at('site-data-allow')).toBe(at('cookies-add-site') + 1)
-    expect(at('site-data-viewer')).toBe(at('sites-permissions') - 1)
-    // The sweep's switch closes Site settings (PS-41: the last thing on both Chromes' Site
-    // settings pages); Preload pages (PS-43) stands between Site settings and HTTPS-only mode,
-    // as on Chrome's Android page (Chrome desktop moved it to Performance; the shared builder
-    // keeps one place).
+    // The un-carded kin follow their card (the #650 lead check): Tracking prevention and the
+    // signals close the cookies stretch, then Safe Browsing, then HTTPS-only and Secure DNS –
+    // both rows of Chrome's Security page.
+    expect(at('tracking-prevention')).toBe(at('site-data-viewer') + 1)
+    expect(at('signals')).toBe(at('tracking-exceptions') + 1)
+    expect(at('safe-browsing')).toBe(at('signals') + 1)
+    expect(at('https-only')).toBe(at('safe-browsing-feeds') + 1)
+    expect(at('secure-dns')).toBe(at('https-only-sites') + 1)
+    // Site settings follows the Security stretch, Safety check follows Site settings, as the
+    // cards do; the sweep's switch closes Site settings (PS-41: the last thing on both Chromes'
+    // Site settings pages), so Safety check follows it.
+    expect(at('sites-permissions')).toBe(at('secure-dns') + 1)
     expect(at('sites-unused')).toBe(at('sites-own') + 1)
-    expect(at('preload')).toBe(at('sites-unused') + 1)
-    expect(at('https-only')).toBe(at('preload') + 1)
-    // The signals close the protection groups; after them only the private-tab lock (INC-05,
+    expect(at('safety-check')).toBe(at('sites-unused') + 1)
+    // After the carded five: Preload pages (PS-43) stays where it stood – Chrome's Performance ›
+    // Speed row, its seat another slice's question – and the private-tab lock is last (INC-05,
     // Chrome's Incognito lock after Do Not Track).
-    expect(at('signals')).toBe(ids.length - 2)
+    expect(at('preload')).toBe(at('safety-check-actions') + 1)
+    expect(at('preload')).toBe(ids.length - 2)
     expect(at('private-lock')).toBe(ids.length - 1)
     // The remembered per-site answers are the Security section's (#62), not a privacy group.
     expect(ids).not.toContain('permissions')
@@ -8341,10 +8381,17 @@ describe('the Privacy and security hub (W7-6, settings-12)', () => {
     expect(groupIds.slice(1)).toContain('clear-data')
   })
 
-  it('keeps the cards to the desktop and tablet shells: the phone’s Privacy page is as it was', () => {
+  it('keeps the cards to the desktop and tablet shells: the phone’s Privacy page is the plain list, in the cards’ order (W8-8)', () => {
     const { privacy } = hub()
-    expect(onLayout(privacy.groups, 'phone').map((g) => g.id)).not.toContain('privacy-hub')
-    expect(onLayout(privacy.groups, 'phone')[0].id).toBe('safety-check')
+    const phone = onLayout(privacy.groups, 'phone').map((g) => g.id)
+    expect(phone).not.toContain('privacy-hub')
+    // The phone's list moves with the desktop's groups (the #553 lead check's Q6): Delete
+    // browsing data leads it, the carded programs follow in the cards' order, Safety check the
+    // last of them; the same groups, the cards alone taken away.
+    expect(phone[0]).toBe('clear-data')
+    expect(phone).toEqual(privacy.groups.map((g) => g.id).slice(1))
+    const heads = ['clear-data', 'site-data', 'safe-browsing', 'sites-permissions', 'safety-check']
+    expect(phone.filter((id) => heads.includes(id))).toEqual(heads)
     expect(onLayout(privacy.groups, 'desktop')[0].id).toBe('privacy-hub')
     expect(onLayout(privacy.groups, 'tablet')[0].id).toBe('privacy-hub')
     // A phone in landscape draws the two panes (`formFactor: 'phone'` still): no cards there either.

@@ -3214,32 +3214,36 @@ function privacyHubGroups(ctx: SectionContext): RowGroup[] {
 }
 
 /**
- * Groups in Chrome's Privacy and security order – the hub's cards (`privacyHubGroups`), then
- * Safety check, Safe Browsing, Tracking
- * prevention, Delete browsing data, Cookies and site data, Site settings, HTTPS-only, Secure
- * DNS, Privacy signals – each program's groups self-contained: the site-controls program's
- * (`siteControls/settingsRows`) at the safety-check, clear-browsing-data and site-settings
- * positions, the request engine's (`tracking.tsx`) at the tracking-prevention position, the
- * site-data program's (`siteDataRows.tsx`, which carries the third-party cookie setting and its
- * related sites from `protectionRows.tsx`) at the cookies position, the protection program's
- * at the preload-pages (PS-43), safe-browsing, https-only, secure-dns and privacy-signals
- * positions; the remembered
- * per-site answers are Security's (`securitySection`).
+ * Groups in the hub cards' order (the #553 lead check's Q6 ruling, built in W8-8: the pane's
+ * groups take the cards' order, so the page and its hub read alike) – the cards
+ * (`privacyHubGroups`), then Delete browsing data, Cookies and site data, Safe Browsing, Site
+ * settings, Safety check – each program's groups self-contained: the site-controls program's
+ * (`siteControls/settingsRows`) at the delete-browsing-data, site-settings and safety-check
+ * positions, the site-data program's (`siteDataRows.tsx`, which carries the third-party cookie
+ * setting and its related sites from `protectionRows.tsx`) at the cookies position, the
+ * protection program's at the safe-browsing position. A group no card names follows the card
+ * it is kin to, as Chrome's page holds them (the #650 lead check): the request engine's
+ * Tracking prevention (`tracking.tsx`) and Privacy signals after Cookies – Chrome's
+ * cookies-and-ad-privacy stretch – and HTTPS-only with Secure DNS after Safe Browsing – both
+ * rows of Chrome's Security page. Preload pages (PS-43) is Chrome's Performance › Speed row and
+ * its seat is another slice's question, so it stays after Safety check for now; the private-tab
+ * lock (INC-05) is last, Chrome's seat for it. The phone's plain list – no cards – reads in the
+ * same order. The remembered per-site answers are Security's (`securitySection`).
  */
 function privacySection(ctx: SectionContext): RowGroup[] {
   const { state, set } = ctx
   return [
     ...privacyHubGroups(ctx),
-    ...safetyCheckGroups(ctx),
-    ...safeBrowsingGroups(state, set),
-    ...trackingGroups(ctx),
     ...clearDataGroups(ctx),
     ...siteDataGroups(ctx),
-    ...siteSettingsGroups(ctx),
-    ...preloadGroups(state, set),
+    ...trackingGroups(ctx),
+    ...signalsGroups(state, set),
+    ...safeBrowsingGroups(state, set),
     ...httpsOnlyGroups(state, set),
     ...secureDnsGroups(state, set),
-    ...signalsGroups(state, set),
+    ...siteSettingsGroups(ctx),
+    ...safetyCheckGroups(ctx),
+    ...preloadGroups(state, set),
     ...privateLockGroups(ctx)
   ]
 }

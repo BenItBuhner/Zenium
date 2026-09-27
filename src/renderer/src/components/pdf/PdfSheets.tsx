@@ -1,6 +1,6 @@
 import type { JSX, ReactNode } from 'react'
 import { useEffect, useId, useRef, useState } from 'react'
-import { CircleAlert, ExternalLink, Lock, RotateCw, Share2 } from 'lucide-react'
+import { CircleAlert, ExternalLink, Lock, Printer, RotateCw, Save, Share2 } from 'lucide-react'
 import type { PdfFitMode, PdfOutlineItem } from '@shared/pdfViewerProtocol'
 import {
   currentOutlineKey,
@@ -9,7 +9,9 @@ import {
   parsePageNumber,
   PDF_FIT_LABELS,
   PDF_ZOOM_PRESETS,
+  PDF_SAVE_ROW_LABEL,
   pdfCommand,
+  type PdfRowState,
   pdfViewerStore,
   pdfZoomIs
 } from '@renderer/lib/pdfViewer'
@@ -171,22 +173,35 @@ export function PdfOutlineSheet({
 
 /**
  * The overflow: Share (the system share sheet with the file), Open with (Chrome's way out of the
- * viewer: the system's chooser over the apps that take a PDF) and Rotate (a quarter turn
- * clockwise, Chrome's), named by the document. Rotate needs an open document; the other two only
- * the file, which is there whatever the viewer made of it.
+ * viewer: the system's chooser over the apps that take a PDF), Save a copy and Print (CT-44: the
+ * filled form as a copy in Downloads – the row says what it does, a copy, since the file itself
+ * is never written – and the system print flow with the document as it is on screen; Chrome
+ * Android's viewer keeps "Save copy" and "Print" beside its menu, here they are rows of it) and
+ * Rotate (a quarter turn clockwise, Chrome's), named by the document. Rotate needs an open
+ * document; Share, Open with and Print only the file, which is there whatever the viewer made of
+ * it. Save a copy is a row only for a document with a form, and acts only once a field changed
+ * (`pdfSaveRow`); Print is a row only where the host prints (`pdfPrintRow`).
  */
 export function PdfMoreSheet({
   title,
   ready,
+  save,
+  print,
   onShare,
   onOpenWith,
+  onSave,
+  onPrint,
   onRotate,
   onClose
 }: {
   title: string
   ready: boolean
+  save: PdfRowState
+  print: PdfRowState
   onShare: () => void
   onOpenWith: () => void
+  onSave: () => void
+  onPrint: () => void
   onRotate: () => void
   onClose: () => void
 }): JSX.Element {
@@ -203,6 +218,22 @@ export function PdfMoreSheet({
       <div className="pb-2">
         <ActionRow icon={<Share2 />} label="Share" onSelect={() => act(onShare)} />
         <ActionRow icon={<ExternalLink />} label="Open with" onSelect={() => act(onOpenWith)} />
+        {save !== 'absent' && (
+          <ActionRow
+            icon={<Save />}
+            label={PDF_SAVE_ROW_LABEL}
+            disabled={save === 'disabled'}
+            onSelect={() => act(onSave)}
+          />
+        )}
+        {print !== 'absent' && (
+          <ActionRow
+            icon={<Printer />}
+            label="Print"
+            disabled={print === 'disabled'}
+            onSelect={() => act(onPrint)}
+          />
+        )}
         <ActionRow
           icon={<RotateCw />}
           label="Rotate"

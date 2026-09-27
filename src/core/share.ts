@@ -8,6 +8,7 @@ import {
 } from '../shared/share'
 import { copyConfirmation } from '../shared/clipboard'
 import { newId } from '../shared/ids'
+import { folderNameOf } from '../shared/paths'
 import { displayHost } from '../shared/url'
 import type { Browser } from './browser'
 import { surfaceMounted, type ZenWindow } from './window'
@@ -332,16 +333,11 @@ export class ShareService {
 /**
  * What the toast says of files the hub saved: the destination, not the file – the folder the
  * paths landed in by its own name, "Downloads" where the path gives none (§9.33); several files
- * are counted. The capture card's Save says the same of the same folder (`folderNameOf` in the
- * renderer's `lib/captureOverlay.ts` reads a path the same way).
+ * are counted. The shared `folderNameOf` (`src/shared/paths.ts`) reads the path for this hub,
+ * the capture card and the PDF viewer alike, so the three toasts agree by construction – on the
+ * phone, the public collection's directory `Download` is "Downloads" to all of them.
  */
 export function savedToast(paths: readonly string[]): string {
   const folder = folderNameOf(paths[0] ?? '') || 'Downloads'
   return paths.length === 1 ? `Saved to ${folder}` : `${paths.length} files saved to ${folder}`
-}
-
-/** The last segment of a file path's parent, in either separator; '' for a bare name. */
-function folderNameOf(path: string): string {
-  const parts = path.split(/[\\/]+/).filter(Boolean)
-  return parts.length > 1 ? parts[parts.length - 2] : ''
 }

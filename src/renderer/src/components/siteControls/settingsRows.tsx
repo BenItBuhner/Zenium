@@ -48,8 +48,9 @@ import { StatusGlyph } from './pane'
 /**
  * The site-controls rows of the phone's Privacy and Security category (design-language-v2-draft
  * §9.2, §9.13, §9.17, §10.3–§10.4): three self-contained blocks the `privacySection` builder
- * (`pages/settings/sections.tsx`) places in Chrome's order – Safety check first, Clear browsing
- * data after the tracking groups, Site settings after it – each a plain function of the state
+ * (`pages/settings/sections.tsx`) places in the privacy hub cards' order (the #553 lead check's
+ * Q6) – Delete browsing data first, Site settings after the cookies and Safe Browsing groups,
+ * Safety check after it – each a plain function of the state
  * and the commands it runs, the way every builder row is. They are the desktop panes
  * (`overlays/SafetyCheckSection`, `ClearBrowsingDataSection`, `SiteSettingsSection`) row for
  * row: a card becomes rows under a 15/600 heading, a menulist a value row, a button an action
@@ -456,21 +457,37 @@ function notificationsReview(
  * Chrome's words since M124 (`IDS_CLEAR_BROWSING_DATA_TITLE` "Delete browsing data"); the
  * identifiers keep Chrome's own `clear` names, as Chrome's string ids do.
  */
+const CLEAR_BROWSING_DATA_DESCRIPTION =
+  'Choose a time range and what to delete. Cookies and site data go from every container.'
+
 export const CLEAR_BROWSING_DATA_FORM: FormSheet = {
   title: 'Delete browsing data',
-  description:
-    'Choose a time range and what to delete. Cookies and site data go from every container.',
+  description: CLEAR_BROWSING_DATA_DESCRIPTION,
   render: (close) => <ClearBrowsingDataForm close={close} />
+}
+
+/**
+ * The same sheet on the phone layout, where the form is Chrome Android's Quick Delete (HB-07,
+ * `QUICK_DELETE_FORM`) and carries a Tabs row: the description says what that row does, since
+ * nothing else on the sheet does before the switch is on (the reviewer's N5). The form itself
+ * decides the layout by `usePhone()`; this block is the builder's, so it reads the same
+ * `formFactor` the page laid the rows out for.
+ */
+export const QUICK_DELETE_SHEET: FormSheet = {
+  ...CLEAR_BROWSING_DATA_FORM,
+  description: `${CLEAR_BROWSING_DATA_DESCRIPTION} Turn on Tabs to close the tabs you used in that time as well.`
 }
 
 /**
  * Delete browsing data as one action row whose sheet is the form (`ClearBrowsingDataForm`, the
  * dialog's state under a finger): the group names what goes, the sheet's title block what to
  * choose. The row is Chrome's Settings › Privacy and security row
- * (`IDS_SETTINGS_CLEAR_BROWSING_DATA` "Delete browsing data").
+ * (`IDS_SETTINGS_CLEAR_BROWSING_DATA` "Delete browsing data"). On the phone layout the sheet is
+ * `QUICK_DELETE_SHEET`, whose description names the Tabs row.
  */
-export function clearDataGroups({ state }: SectionContext): RowGroup[] {
+export function clearDataGroups({ state, formFactor }: SectionContext): RowGroup[] {
   const containers = state.containers.length
+  const form = formFactor === 'phone' ? QUICK_DELETE_SHEET : CLEAR_BROWSING_DATA_FORM
   return [
     {
       id: 'clear-data',
@@ -488,7 +505,7 @@ export function clearDataGroups({ state }: SectionContext): RowGroup[] {
               : 'History, cookies, cache and more, including the private session',
           keywords: ['history', 'cookies', 'cache', 'site data', 'clear', 'delete', 'passwords'],
           button: 'Delete…',
-          form: CLEAR_BROWSING_DATA_FORM
+          form
         }
       ]
     }

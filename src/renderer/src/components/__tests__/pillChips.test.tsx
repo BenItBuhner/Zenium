@@ -3151,6 +3151,7 @@ describe('phone pill (PillContent)', () => {
     const playing = (over: Partial<MediaState> = {}): MediaState => ({
       tabId: 't1',
       playing: true,
+      muted: false,
       title: 'Nocturne',
       session: true,
       ...over
@@ -3160,7 +3161,7 @@ describe('phone pill (PillContent)', () => {
     it('is absent without a session, even while a tab is audible', () => {
       const el = render(
         <PillContent
-          state={withMedia(page, [{ tabId: 't1', playing: true }])}
+          state={withMedia(page, [{ tabId: 't1', playing: true, muted: false }])}
           tab={page}
           space={space}
           interactive

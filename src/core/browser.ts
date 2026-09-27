@@ -91,6 +91,7 @@ import { ReadAloudService } from './readAloud'
 import { WebNotificationService } from './webNotifications'
 import { ScreenCaptureService } from './screenCapture'
 import { ShareService } from './share'
+import { GameService } from './game'
 import { TextFragments } from './textFragments'
 import { GeolocationService } from './geolocation'
 import { UpdateService } from './updates'
@@ -159,6 +160,7 @@ import {
 import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
 import { copyConfirmation } from '../shared/clipboard'
 import { IMAGE_URL_PREFIX } from '../shared/zenPages'
+import { sanitizeGameBestScore } from '../shared/game/bridge'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID, sanitizePrivateDevice } from '../shared/types'
 import {
   DEFAULT_SETTINGS,
@@ -176,6 +178,7 @@ import { newId } from '../shared/ids'
 import { sanitizeAppIcon } from '../shared/appIcon'
 import { sanitizeUpdateSettings } from '../shared/updates'
 import { sanitizePromoState } from '../shared/defaultBrowser'
+import { sanitizeIphState } from '../shared/iph'
 import { displayModeFor, type DisplayMode } from '../shared/displayMode'
 import { sanitizeBlockingSettings } from '../shared/blocking'
 import { isShortcutPreset } from '../shared/shortcuts'
@@ -380,6 +383,8 @@ export class Browser {
   readonly shares: ShareService
   /** Links to a highlight: the selection's `#:~:text=` directive, made by the page (SH-11). */
   readonly textFragments: TextFragments
+  /** Roll's best score, the profile's and synced, answered to the pages that carry the game (ERR-03). */
+  readonly game: GameService
   /** The network location provider behind `navigator.geolocation` where the engine has none (MW-04). */
   readonly geolocation: GeolocationService
   readonly windows = new Map<string, ZenWindow>()
@@ -606,6 +611,7 @@ export class Browser {
     this.screenCapture = new ScreenCaptureService(this)
     this.shares = new ShareService(this)
     this.textFragments = new TextFragments(this)
+    this.game = new GameService(this)
     this.geolocation = new GeolocationService(this)
     this.state.extras = (win) => ({
       boosts: this.boosts.all(),
@@ -3188,6 +3194,10 @@ export class Browser {
       this.textFragments.handleMessage(tabId, message)
       return
     }
+    if (message.type === 'game') {
+      this.game.handleMessage(tabId, message.game)
+      return
+    }
     if (message.type === 'geolocation') {
       this.geolocation.handleMessage(tabId, message.geolocation)
       return
@@ -4440,6 +4450,10 @@ export class Browser {
           ...s.defaultBrowserPromo,
           ...(value as Partial<Settings['defaultBrowserPromo']>)
         })
+      } else if (key === 'iph' && value && typeof value === 'object') {
+        // A one-bubble patch (the tab switcher's stamp or `shown`) keeps the other bubbles'
+        // records; every record comes back sanitised (TB-19, `shared/iph.ts`).
+        s.iph = sanitizeIphState({ ...s.iph, ...(value as Partial<Settings['iph']>) })
       } else if (key === 'blocking' && value && typeof value === 'object') {
         s.blocking = sanitizeBlockingSettings({
           ...s.blocking,
@@ -4498,6 +4512,9 @@ export class Browser {
       } else if (key === 'toolbarPins') {
         // The Customise toolbar dialog writes the whole record; only known controls' folds stay.
         s.toolbarPins = sanitizeToolbarPins(value)
+      } else if (key === 'gameBestScore') {
+        // Roll's best (ERR-03): a whole number in the meter's range, else nothing (`GameService`).
+        s.gameBestScore = sanitizeGameBestScore(value)
       } else {
         ;(s as unknown as Record<string, unknown>)[key] = value
       }

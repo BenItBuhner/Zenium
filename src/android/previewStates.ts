@@ -94,6 +94,7 @@ import {
 } from '@shared/blocking'
 import { syncSetupStore } from '@renderer/lib/syncSetup'
 import { cancelVoiceSearch, startVoiceSearch } from '@renderer/lib/voiceSearch'
+import { forgetHintBubble, hintBubbleStore, resetIphSession } from '@renderer/lib/iph'
 import { dismissQrCode, downloadQrCode, showQrCode } from '@renderer/lib/qrCode'
 import { cancelQrScan, startQrScan } from '@renderer/lib/qrScan'
 import type { HostGlobal } from './boot'
@@ -117,6 +118,7 @@ import {
   type PreviewExtensionPage
 } from './preview'
 import { DEFAULT_PROMO_STATE, PROMO_FIRST_SESSION } from '@shared/defaultBrowser'
+import { IPH_TAB_SWITCHER_AVAILABILITY_DAYS } from '@shared/iph'
 import { clearPdfReport, isPdfViewerTab, pdfViewerStore } from '@renderer/lib/pdfViewer'
 import { dismissSiteInfo, openSiteInfo } from '@renderer/lib/siteInfo'
 import type { ReadAloudStatus } from '@shared/readAloud'
@@ -134,9 +136,11 @@ import {
   parsePreviewSeed,
   parsePreviewSpec,
   parsePreviewSteps,
+  PREVIEW_GAME_SCENE_KEY,
   type PreviewCrashVariant,
   type PreviewDownloadSpec,
   type PreviewFirstRunStep,
+  type PreviewGameScene,
   type PreviewSiteDataSeed,
   type PreviewMediaVariant,
   type PreviewNetworkVariant,
@@ -235,7 +239,9 @@ const QR_HAND_OFF_SETTLE_MS = 700
  * model's state scripted – the stand-in article's title, sentence 9 of 42 – at `playing`,
  * `paused`, `loading`, `ended` or `error`; `rate=<n>` on the speed chip, `voices` opens the
  * voice picker over it), `error=<code>` (the active tab's load failed with that Chromium `net::` code,
- * `url=<target>` naming the URL that failed: the zen://error page is up), the message surfaces
+ * `url=<target>` naming the URL that failed: the zen://error page is up), `iph=tab-switcher`
+ * (the tab switcher's in-product help bubble on the bar's Tabs button, TB-19: the seed makes
+ * it due and the shell's own trigger raises it; `bar=top` for the top edge), the message surfaces
  * and the load bar: `toast=<text>&action=<label>`, `banners=<n>`, `progress=<0…1>`,
  * `webapp=<surface>` (an "Add to Home screen" surface on the active tab), `download=<file>`
  * (the stand-in downloader starts that transfer; see `PreviewDownloadSpec`), `popups=<n>` (n
@@ -362,6 +368,9 @@ function apply(browser: Browser, spec: string): void {
     const state = browserStore.get().state
     const tab = state ? activeTab(state) : null
     clearMessages(tab?.loading ? tab.id : null)
+    // The help bubble an `iph=` state raised goes with the messages (its record stays as the
+    // shell wrote it: shown, so no later state finds the bubble due on its own).
+    forgetHintBubble()
     closeBlockedPopups()
     for (const prompt of state?.permissionPrompts ?? [])
       run('permissions.respond', { id: prompt.id, answer: 'dismiss' })
@@ -1081,6 +1090,39 @@ function raisePromo(browser: Browser, then: () => void): void {
 }
 
 /**
+ * Raise the tab switcher's in-product help bubble (TB-19, `useTabSwitcherHint`): the record is
+ * put where a phone fifteen days in finds it – available a day past Chrome's fourteen, not yet
+ * shown, the first run and the swipe hint behind the user (the hint's toast would spend the
+ * session's one education first) – and the session's education given back, so the shell's own
+ * trigger raises the bubble on its own terms: the page loaded, the chrome calm, the arm run. The
+ * state is reached once the bubble is up; `then` runs from there. A run of stills takes the
+ * state in both themes from one session, and each time it is reached the record is due again.
+ */
+function raiseTabSwitcherHint(browser: Browser, then: () => void): void {
+  const { settings } = browser.state
+  settings.onboardingDone = true
+  settings.gestureHintDone = true
+  settings.iph = {
+    ...settings.iph,
+    tabSwitcher: {
+      availableAt: Date.now() - (IPH_TAB_SWITCHER_AVAILABILITY_DAYS + 1) * 24 * 60 * 60 * 1000,
+      shown: false
+    }
+  }
+  browser.state.commit()
+  resetIphSession()
+  if (hintBubbleStore.get().bubble) {
+    then()
+    return
+  }
+  const unsubscribe = hintBubbleStore.subscribe(() => {
+    if (!hintBubbleStore.get().bubble) return
+    unsubscribe()
+    then()
+  })
+}
+
+/**
  * Take the chrome, now idle, to the state `spec` names. `securityAtRest` settles once the
  * previous state's security prompts are cancelled and forgotten (a prompt raised before that
  * would join the cancelled one's protection space instead of asking).
@@ -1103,6 +1145,9 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   const translate = params.get('translate')
   const readerTranslate = params.get('readerTranslate')
   const favicon = params.get('favicon')
+  // The offline game's pose (`&game=`) is left on the root for the host to read as it serves
+  // the page's document (`preview.ts`, `view.loadHtml`); a state without one clears it.
+  poseGame('game' in target ? target.game : undefined)
   const seed = (): void => {
     if (blocking)
       seedBlocking(blocking, Number.isFinite(blocked) && blocked > 0 ? blocked : undefined)
@@ -1456,6 +1501,8 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   } else if (target.kind === 'messages') {
     showMessages(target, tab?.id ?? null)
     finish()
+  } else if (target.kind === 'iph') {
+    raiseTabSwitcherHint(browser, finish)
   } else if (target.kind === 'webapp' && tab) {
     seed()
     applyWebApp(target.surface, tab.id, spec)
@@ -2834,6 +2881,12 @@ function settlePage(
       })
     }
   )
+}
+
+/** The offline game's asked pose, left on the root for `preview.ts` to hand its document's driver. */
+function poseGame(scene: PreviewGameScene | undefined): void {
+  if (scene) document.documentElement.dataset[PREVIEW_GAME_SCENE_KEY] = scene
+  else delete document.documentElement.dataset[PREVIEW_GAME_SCENE_KEY]
 }
 
 /**

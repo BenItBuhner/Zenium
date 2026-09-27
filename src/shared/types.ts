@@ -3205,6 +3205,13 @@ export interface Settings {
   /** The one-time exit hint for a video in fullscreen (GN-20) has been shown (phones). */
   fullscreenHintDone: boolean
   /**
+   * The phone's in-product help bubbles (TB-19, `shared/iph.ts`): one record per bubble Chrome
+   * Android shows on its toolbar. Device-local (`DEVICE_LOCAL_SETTINGS`), as Chrome's feature
+   * engagement store is the profile's own; a profile from before it reads the defaults
+   * (`sanitizeIphState`).
+   */
+  iph: IphState
+  /**
    * Spell checking of text fields: on / off and the dictionary languages (Settings › Languages).
    * Absent in profiles from before it existed (`sanitizeSpellcheck` fills the defaults).
    */
@@ -3231,6 +3238,14 @@ export interface Settings {
    * in profiles from before it existed: filled from the OS locales (`defaultLanguages`). Synced.
    */
   languages: string[]
+  /**
+   * Roll's best score (ERR-03, design language v2 §9.17): the profile's, host-kept and synced
+   * like Chrome's `net.easter_egg_high_score` – one number across the no-connection page and
+   * `zen://game` on every device – never a document origin's storage. A whole number in the
+   * meter's range (0 to 99999; `sanitizeGameBestScore`), 0 in profiles from before it existed.
+   * The core's `GameService` answers the pages and only ever raises it.
+   */
+  gameBestScore: number
 }
 
 // ---------------------------------------------------------------------------
@@ -3422,6 +3437,36 @@ export interface DefaultBrowserPromoState {
 
 /** What the chrome should show for the default-browser prompts right now. */
 export type DefaultBrowserPrompt = 'sheet' | 'banner' | null
+
+// ---------------------------------------------------------------------------
+// In-product help (the phone's hint bubbles, TB-19)
+// ---------------------------------------------------------------------------
+
+/**
+ * One hint bubble's record (`shared/iph.ts`), device-local. Chrome's feature engagement tracker
+ * keeps the same two things per IPH feature: the day it became available, and whether it has
+ * been triggered or its subject used.
+ */
+export interface IphBubbleState {
+  /**
+   * When the bubble became available on this device (ms since the epoch): stamped by the first
+   * deferred arm of a build that has the bubble; Chrome's `availability` clock starts the same
+   * day. `null` until then.
+   */
+  availableAt: number | null
+  /**
+   * The bubble has been shown – or the user did what it teaches before it was due (Chrome's
+   * `used` event: `tab_switcher_button_clicked` holds the tab switcher bubble back). Either way
+   * it is spent and never shows.
+   */
+  shown: boolean
+}
+
+/** The bubbles, one record each: the ones Chrome Android 152 shows by default. */
+export interface IphState {
+  /** Chrome's `IPH_TabSwitcherButton`: the bubble on the bar's Tabs button. */
+  tabSwitcher: IphBubbleState
+}
 
 export interface DefaultBrowserStatus {
   /** Whether this app holds the browser role; null until the host answered (or when it cannot tell). */
@@ -3920,16 +3965,25 @@ export interface WindowState {
 }
 
 /**
- * A tab with media: on every host the tab and whether it is audible; on hosts whose page script
- * reports the Media Session (Android) also what the OS controls show – the page's metadata (or
- * the tab's title and site), the artwork, the position as of `positionAt` (epoch ms; the chrome
- * extrapolates from it at `playbackRate`), the actions the page handles, and whether the
- * window is in picture-in-picture for its video. A chrome player on the tab (the read-aloud
- * player, `source: 'chrome'`) is the tab's entry while its page has no media of its own.
+ * A tab with media: on every host the tab, whether it is audible and whether the tab is muted;
+ * on hosts whose page script reports the Media Session (Android) also what the OS controls
+ * show – the page's metadata (or the tab's title and site), the artwork, the position as of
+ * `positionAt` (epoch ms; the chrome extrapolates from it at `playbackRate`), the actions the
+ * page handles, and whether the window is in picture-in-picture for its video. A chrome player
+ * on the tab (the read-aloud player, `source: 'chrome'`) is the tab's entry while its page has
+ * no media of its own.
  */
 export interface MediaState {
   tabId: string
   playing: boolean
+  /**
+   * The tab's sound is off (`Tab.muted`, W8-8): the desktop host's `webContents.isAudioMuted()`,
+   * the Android host's WebView mute – the tab's mute, not the element's own (`MediaReport.muted`
+   * is the page's). Read with `playing`, so the hub tells a playing tab that is muted (Pause,
+   * the crossed speaker) from a paused one (Play, the speaker); a host's field arrives
+   * null-safe, false where the tab carries none.
+   */
+  muted: boolean
   title?: string
   artist?: string
   album?: string
