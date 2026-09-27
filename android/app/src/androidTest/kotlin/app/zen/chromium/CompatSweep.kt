@@ -7685,6 +7685,107 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("dcdiajifnnbipfljbggcbbheipfdmgpo", "American Airlines AAdvantage eShopping", "aadvantage-eshopping", account = true, core = popupLogin("AAdvantage eShopping")),
         Row("jigflhhckdjdefdjmodlkomnmdonfbbn", "Joko: Cash back & automatic coupons", "joko", core = accountGate("Joko", Regex("joko\\.com", RegexOption.IGNORE_CASE), injects = "[class*=\"joko-\"], [id*=\"joko\" i]", gate = "a Joko account (its panel signs in at app.joko.com/auth/sign-in) and a merchant page for its coupons")),
         Row("nndknepjnldbdbepjfgmncbggmopgden", "Data Scraper - Easy Web Scraping", "data-scraper", account = true, core = popupLogin("Data Miner")),
+        // --- compat round 23 (ranks 571-600 by installs; `.github/scripts/ext-compat/next30-round20.json`) ---
+        // Each core rule read off the unpacked bundle: ZoomInfo's click (`action.onClicked`) opens
+        // its side panel for the tab (`sidePanel.setOptions`, then `sidePanel.open({tabId})`),
+        // whose "Log in" is login.zoominfo.com; AB Download Manager's worker hands the tab's
+        // downloads to the desktop app over `runtime.connectNative` (its package name) or the
+        // app's `http://localhost:15151` port; NotebookLM Web Importer's popup reads "Account not
+        // connected" without a Google session; Page Assist's click opens its side panel
+        // (`sidePanel.open({tabId})`, `sidepanel.html`), a chat composer over "Select a model" (a
+        // local Ollama the phone has not); Compose AI's popup signs in at compose.ai; Revision
+        // History's popup signs in at revisionhistory.com; WebRTC Control's options page
+        // (`data/options/options.html`) sends `load` to its worker and renders the `storage`
+        // answer – its `#method` select of four policies (`disable_non_proxied_udp` when never
+        // set) and three checkboxes –, the worker setting `privacy.network.webRTCIPHandlingPolicy`;
+        // Clockify's popup signs in at api.clockify.me; Hypothesis' click (its API object needs
+        // `chrome.extension` and `chrome.management` defined) reads the tab's content type, injects
+        // its client config (`scripting.executeScript` with `func` and `args`, a
+        // `script.js-hypothesis-config` tag) and its `/client/build/boot.js`, which mounts
+        // `<hypothesis-sidebar>` in the page; Flash Player Enable's content script (every frame,
+        // `document_start`) sends `fetch-objects` on `DOMContentLoaded` when the page carries an
+        // `embed[src*=swf]`, an `application/x-shockwave-playerFlash` object or a `param[name=movie]`,
+        // and its worker runs `contentScripts/inject.js` in the sender's tab
+        // (`scripting.executeScript`, `allFrames`), which puts a "Run this Flash Player Enabler"
+        // control (`span.swf2html`, the tag marked `data-attached`) before each Flash tag; JSON
+        // Viewer Pro's content script, on a document whose `contentType` is JSON, appends its
+        // web-accessible `/js/main.js` (`#main-script`), which mounts `#rbrahul-awesome-json` and
+        // sets `window.JSON_VIEWER_PRO_INITIALISED`; Xverse's content script appends its
+        // web-accessible `inpage.js`, which defines `window.XverseProviders`, `BitcoinProvider`,
+        // `StacksProvider` and `btc_providers`; Ad Block Wonder is DNR rulesets (`basic` enabled
+        // at install); Redirect Path's worker hears `webRequest.onBeforeRedirect` and `onCompleted`
+        // (`main_frame`, `responseHeaders`) and `webNavigation.onCommitted`, keeping a hop only
+        // when `details.frameType == "outermost_frame"`, and its popup asks `getTabPath` and
+        // clones a `.pathItem` per hop (`h2` the address, `h3` "<status>: <status line>
+        // (<redirect type>)"); Paperpile's click, signed out, has its content script mount its
+        // in-page popup in a closed shadow root (`#pp-extension-root`, `#pp-react-root`), which
+        // signs in at app.paperpile.com; Angular DevTools' isolated content script appends its
+        // web-accessible `detect_angular_bundle.js` to the page, whose detector (an `[ng-version]`
+        // element, its `__ngContext__`, a major version of 12 or more, `window.ng.getComponent`)
+        // posts its finding every second to `content_script_bundle.js`, which
+        // `runtime.sendMessage`s it, and the worker swaps the tab's popup
+        // (`action.setPopup({tabId, popup: 'popups/<verdict>.html'})` – `supported.html`,
+        // "Angular application running development mode.", for a debug build); Url Shortener's
+        // popup queries the active tab and POSTs its address to api.t.ly/api/v1/link/shorten after
+        // a second, the short link into `input#shortenedLink` (`#defaultShortenerFailed` shown on
+        // the service's refusal); AdGuard Extra (no background) is one content script
+        // (`document_start`, every frame) that appends a `<script class="extra">` on its
+        // web-accessible `userscript.js` (a random query) and removes the tag, the userscript
+        // acting on its listed hosts alone; Otter.ai's click sends `LOAD_SCRIPT` to its content
+        // script, which mounts its widget (`#otter-root`, `otter-` classes) and signs in at
+        // otter.ai; Enable Copy Paste's popup `#enable-checkbox` sets `storage.local.enable_product`
+        // and its content script reads the key at load alone, appending `* {user-select: text
+        // !important}` and stopping `contextmenu`, `copy`, `cut`, `paste` and the key events at the
+        // document's capture phase when on (default off); Bulk URL Opener's popup `textarea#urls`
+        // and `#openBtn` ("Open All") send `openURLs` with its `cleanerSettings` (`newTab: true`, no
+        // delay) to the worker, which runs `tabs.create({url, active: false})` a line and has the
+        // popup close; Speech to Text's click opens `data/interface/index.html` (its `#start`
+        // control, `#engine` Whisper / Web Speech API, `#backend` WASM / WebGPU, its `#language`
+        // list filled by script); Follower Export Tool's popup asks for an Instagram session
+        // ("login to instagram and try again"); GMB Everywhere's content scripts run on 151
+        // google.<tld> hosts and its click opens google.com/maps/search/dentist%20nearby; Figma's
+        // click, signed in, asks `permissions.request` for `<all_urls>` and `scripting` and injects
+        // its html.to.design toolbar, signed out it runs `runtime.openOptionsPage()`; Add to
+        // Google Classroom's click runs `tabs.create({url: "https:classroom.google.com/share?url="
+        // + tab.url})` (its scheme without slashes, which Chrome's URL parser mends); ID.me Shop's
+        // click sends `icon_clicked` to its content script, which mounts its panel in a shadow host
+        // (`#idme-react-container`, `#idme-extension-skip-shadow`) and signs in at shop.id.me;
+        // SyngularID's signing is `runtime.sendNativeMessage('com.syngular.extension')` for its
+        // content scripts on the signing portals; Bitget Wallet's worker registers a MAIN-world
+        // script (`scripting.registerContentScripts`, `static/js/inject.js`, `document_start`)
+        // defining `window.bitkeep`, `window.bitgetWallet` and `window.ethereum` (`isBitKeep`);
+        // Wallsflow New Tab replaces the new-tab page (`chrome_url_overrides.newtab`).
+        Row("fofjcndophjadilglgimelemjkjblgpf", "ZoomInfo", "zoominfo", core = accountGate("ZoomInfo", Regex("zoominfo\\.com", RegexOption.IGNORE_CASE), gate = "a ZoomInfo account (its click opens its side panel for the tab, whose sign-in is login.zoominfo.com)")),
+        Row("bbobopahenonfdgjgaleledndnnfhooj", "AB Download Manager Browser Integration", "ab-download-manager", core = serviceBacked("AB Download Manager Browser Integration", "its worker hands the tab's downloads to the AB Download Manager desktop app over `runtime.connectNative` (its package name) or the app's `http://localhost:15151` port; neither is on the phone", native = true)),
+        Row("ijdefdijdmghafocfmmdojfghnpelnfn", "NotebookLM Web Importer", "notebooklm-web-importer", account = true, core = popupLogin("NotebookLM Web Importer")),
+        Row("jfgfiigpkhlkbnfnbobbkinehhfdhndo", "Page Assist - A Web UI for Local AI Models", "page-assist", core = panelMarker("Page Assist", "page-a.html?pageassist", PAGE_ASSIST_PANEL, settleMs = 35_000)),
+        Row("dlepebghjlnddgihakmnpoiifjjpmomh", "Revision History: Writing Process Visibility for Google Docs & Slides", "revision-history", account = true, core = popupLogin("Revision History")),
+        Row("fjkmabmdepjfammlpliljpnbhleegehm", "WebRTC Control", "webrtc-control", core = ownPage("WebRTC Control", "data/options/options.html", WEBRTC_CONTROL_OPTIONS, gate = "a WebRTC IP handling policy the engine takes: the phone stores and publishes `privacy.network.webRTCIPHandlingPolicy` and the WebView has no policy API to hand it to (the standing WebView blocker)")),
+        Row("pmjeegjhjdlccodhacdgbgfagbpmccpe", "Clockify Time Tracker", "clockify", account = true, core = popupLogin("Clockify Time Tracker")),
+        Row("bjfhmglciegochdpefhhlphglcehbmek", "Hypothesis - Web & PDF Annotation", "hypothesis", core = actionMarker("Hypothesis", "page-a.html?hypothesis", HYPOTHESIS_SIDEBAR, settleMs = 35_000)),
+        Row("ocfjjghignicohbjammlhhoeimpfnlhc", "Flash Player Enable - flash emulator swf", "flash-player-enable", core = domMarker("Flash Player Enable's run control over the fixture's Flash tags", "flash.html?flashenable", FLASH_ENABLER_CONTROLS, settleMs = 30_000)),
+        Row("eifflpmocdbdmepbjaopkkhbfmdgijcc", "JSON Viewer Pro", "json-viewer-pro", core = domMarker("JSON Viewer Pro's viewer over the JSON document", "data.json?jsonviewerpro", JSON_VIEWER_PRO, settleMs = 25_000)),
+        Row("fpkbnjejghdcncegfglnapabnljcimdc", "Ad Block Wonder", "ad-block-wonder", core = ::adBlocker),
+        Row("aomidfkchockcldhbkggjokdkkebmdll", "Redirect Path", "redirect-path", core = popupMarker("Redirect Path", REDIRECT_PATH_CHAIN, page = "redirect?to=/page-a.html&redirectpath=1", settleMs = 25_000)),
+        Row("ienfalfjdbdpebioblfackkekamfmbnh", "Angular DevTools", "angular-devtools", core = popupMarker("Angular DevTools", ANGULAR_DEVTOOLS_POPUP, page = "angular.html?ngdevtools", settleMs = 25_000, fixtureSettleMs = 3_000)),
+        Row("oodfdmglhbbkkcngodjjagblikmoegpa", "Url Shortener", "url-shortener", core = popupMarker("Url Shortener", URL_SHORTENER_RESULT, page = "page-a.html?tly", settleMs = 25_000, notMeasurable = Regex("had an error|error|failed|try again|unavailable", RegexOption.IGNORE_CASE), gate = "t.ly's shortening API (api.t.ly, asked for the runner's own address)", apiHost = "api.t.ly")),
+        Row("gkeojjjcdcopjkbelgbcpckplegclfeg", "AdGuard Extra", "adguard-extra", core = domMarker("AdGuard Extra's userscript.js handed to the page world", "page-a.html?adguardextra", ADGUARD_EXTRA_SCRIPT, settleMs = 25_000)),
+        Row("bnmojkbbkkonlmlfgejehefjldooiedp", "Otter.ai: Record & Transcribe Meetings - Google Meet & Web Audio", "otter-ai", core = accountGate("Otter.ai", Regex("otter\\.ai", RegexOption.IGNORE_CASE), injects = "#otter-root, .otter-react-root, #otter-container, [class*=\"otter-\"]", gate = "an Otter.ai account (its click has its content script mount the Otter widget, which signs in at otter.ai; the recording itself is a tab capture the WebView has not)")),
+        Row("fpjppnhnpnknbenelmbnidjbolhandnf", "Enable Copy Paste - E.C.P", "enable-copy-paste-ecp", core = popupSwitch("Enable Copy Paste - E.C.P", "right-click.html?ecp", "#enable-checkbox", ECP_ENABLED, settleMs = 30_000)),
+        Row("hgenngnjgfkdggambccohomebieocekm", "Bulk URL Opener Extension", "bulk-url-opener", core = ::bulkUrlOpener),
+        Row("kcgloaobfaiejoiahlhnfaolfcifjjho", "Speech to Text (Voice Recognition)", "speech-to-text-kcgl", core = actionPage("Speech to Text (Voice Recognition)", Regex("data/interface/index\\.html"), STT_PAGE, listOf("page-a.html?stt"))),
+        Row("pkafmmmfdgphkffldekomeaofhgickcg", "Follower Export Tool", "follower-export-tool", account = true, core = popupLogin("Follower Export Tool")),
+        Row("oibcaeeplepnjfjhokfcabnaafodppik", "GMB Everywhere - GBP Audit for Local SEO", "gmb-everywhere", core = liveAttached("GMB Everywhere", "https://www.google.com/maps/search/dentist%20nearby", gate = "Google Maps' results page (the address its own click opens), where its content script draws its audit tools over the listings; a consent page or a bot check in the runner's region is the site's")),
+        Row("fkmaohpngenfoccdgceedjkfhkdcohmg", "Figma", "figma", core = accountGate("Figma", Regex("/options\\.html|figma\\.com", RegexOption.IGNORE_CASE), gate = "a Figma account (signed out, its click opens its options page for the sign-in; signed in it asks for <all_urls> and injects its html.to.design toolbar)")),
+        Row("oaobmlmjmhedmlphfdmdjpppjmcljnkp", "Add to Google Classroom", "add-to-google-classroom", core = actionOpens("Add to Google Classroom", "page-a.html?classroom", opens = Regex("classroom\\.google\\.com/share|accounts\\.google\\.com", RegexOption.IGNORE_CASE), carries = Regex("page-a\\.html\\?classroom"))),
+        Row("iifmmpcbkkjplbamhfohikljoogdbadp", "ID.me Shop: Discover Community Discounts", "idme-shop", core = accountGate("ID.me Shop", Regex("id\\.me", RegexOption.IGNORE_CASE), injects = "#idme-react-container, #idme-extension-skip-shadow, #idme-serp-widget-container", gate = "an ID.me account (its click mounts its in-page panel, `#idme-react-container`, which signs in at shop.id.me; its offers are its partners' pages)")),
+        Row("ccfeeinmndbnfdodejnonelofajfnakm", "Assinatura Digital no Navegador - SyngularID", "syngularid", core = serviceBacked("Assinatura Digital no Navegador - SyngularID", "its signing is the SyngularID desktop host over `runtime.sendNativeMessage('com.syngular.extension')` for its content scripts on the signing portals; without the host the call answers Chrome's error", native = true)),
+        // The five largest bundles last (Compose AI 30.2 MB, Xverse 23.8, Bitget Wallet 21.0, Wallsflow 17.4, Paperpile 11.2), as rounds 19 to 22 ordered their own.
+        Row("ddlbpiadoechcolndfeaonajmngmhblj", "Compose AI: AI-powered Writing Tool", "compose-ai", account = true, core = popupLogin("Compose AI")),
+        Row("idnnbdplmphpflfnlkomgpfbpcgelopg", "Xverse: Bitcoin Crypto Wallet", "xverse", core = domMarker("Xverse's providers injected into the page world", "wallet.html?xverse", XVERSE_PROVIDER, settleMs = 30_000)),
+        Row("jiidiaalihmmhddjgbnbgdfflelocpak", "Bitget Wallet - Crypto, Web3 | Bitcoin & USDT", "bitget-wallet", core = domMarker("Bitget Wallet's provider injected into the page world", "wallet.html?bitget", BITGET_PROVIDER, settleMs = 30_000)),
+        Row("onablhclbgaihanifkenpggjkkgdpnkk", "Wallsflow New Tab: Live Wallpapers, Widgets & Focus Music", "wallsflow-new-tab", core = newTabOverride("Wallsflow New Tab")),
+        Row("bomfdkbfpdhijjbeoicnfhjbdhncfhig", "Paperpile Extension", "paperpile", core = accountGate("Paperpile", Regex("paperpile\\.com", RegexOption.IGNORE_CASE), injects = "#pp-extension-root, #pp-react-root", gate = "a Paperpile account (its click mounts its in-page popup in a closed shadow root, `#pp-extension-root`, which signs in at app.paperpile.com)")),
         // Round 15's proof row (5.11), the #448 exemption read on both WebViews: not a store
         // extension but two fixtures of the sweep's own, sideloaded as a file manager hands
         // Zenium a package. Run alone by id (the trigger's `[proof]` lanes); a full sweep reads it
@@ -7719,6 +7820,71 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // extension's own race. A `[lane]` row (the trigger's SWEEP_ONLY names it).
         Row(ORDER_PROBE_ID, ORDER_PROBE_NAME, "proof-storage-order-probe", fixture = ORDER_PROBE_FILES, core = ::storageOrderProbe)
     )
+
+    // --- the core checks of compat round 23 (ranks 571-600 by installs) --------------------------
+
+    /**
+     * Bulk URL Opener: its popup's `textarea#urls` takes one address a line and its "Open All"
+     * (`button#openBtn`) sends `{message: 'openURLs', urls, settings}` to the worker (the
+     * settings its `storage.local.cleanerSettings`, seeded at install: `newTab: true`, no delay),
+     * which runs `tabs.create({url, active: false})` per line and has the popup close itself
+     * (`closePopup`). The fixture settles, the popup opens over it, two pages of the fixture
+     * server's go into the textarea from the popup's own world (an `input` event for its line
+     * counter), the button is tapped at its centre (a script click when the tap did not take),
+     * and the tab list is polled for both pages. `P` on both tabs open; `PARTIAL` on one; `F` on
+     * none, with the popup's text and the worker's console.
+     */
+    private fun bulkUrlOpener(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        fixture("page-a.html?bulkopen", factor, 2_500)
+        val wanted = listOf("$BASE/page-b.html?bulk", "$BASE/page-c.html?bulk")
+        val before = tabUrls().keys
+        val since = StepEvidence(row)
+        val popup = openPopup(row, factor)
+        var hit = JSONObject()
+        var how = "none"
+        if (popup != null) {
+            hit = poll(scaled(12_000, factor), 500) { json(tabEval(popup, ELEMENT_CENTRE.replace("%SELECTOR%", "#openBtn"))).takeIf { it.has("x") } } ?: JSONObject()
+            extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200))
+            if (hit.has("x")) {
+                extra.put("typed", tabEval(popup, "(function(){var t=document.getElementById('urls');if(!t)return 'no #urls';t.focus();t.value=${JSONObject.quote(wanted.joinToString("\n"))};t.dispatchEvent(new Event('input',{bubbles:true}));t.dispatchEvent(new Event('change',{bubbles:true}));return 'set '+t.value.split('\\n').length+' lines'})()"))
+                val point = screenPoint(popup, hit)
+                if (point != null && onScreen("Bulk URL Opener: Open All")) {
+                    tap(point.first, point.second)
+                    how = "tap"
+                }
+            }
+        }
+        val opened = { tabUrls().entries.filter { it.key !in before && wanted.any { page -> it.value.startsWith(page) } }.map { it.value } }
+        var found = if (how == "tap") poll(scaled(20_000, factor), 500) { opened().takeIf { it.size >= 2 } } ?: opened() else emptyList()
+        if (found.size < 2 && hit.has("x")) {
+            popupView()?.takeIf { it.context == "popup" }?.let { view ->
+                extra.put("scriptClick", tabEval(view, "(function(){var e=document.getElementById('openBtn');if(!e)return 'gone';e.click();return 'clicked'})()"))
+                how = if (how == "none") "script" else "tap then script"
+                found = poll(scaled(10_000, factor), 500) { opened().takeIf { it.size >= 2 } } ?: opened()
+            }
+        }
+        extra.put("control", hit).put("how", how).put("opened", JSONArray(found)).put("tabsAfter", JSONArray(tabUrls().values.toList()))
+        extra.put("popupClosedItself", popup != null && popupView()?.takeIf { it.context == "popup" } == null)
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-core")
+        runCatching { coreCall("extension.closePopup", "null") }
+        val pressed = when (how) {
+            "tap" -> "tapped"
+            "script" -> "clicked by script"
+            else -> "tapped, then clicked by script"
+        }
+        return when {
+            found.size >= 2 -> Grade("P", "Bulk URL Opener: Open All ($pressed) had the worker open both listed pages in new tabs (${found.joinToString().take(160)})", extra)
+            popup == null -> Grade("F", "Bulk URL Opener: popup did not render in the core check", extra)
+            !hit.has("x") -> Grade("F", "Bulk URL Opener: no `#openBtn` control in the popup within ${scaled(12_000, factor) / 1000} s (\"${extra.optString("popupText").take(100)}\")", extra)
+            found.size == 1 -> Grade("PARTIAL", "Bulk URL Opener: Open All ($pressed) opened one of the two listed pages (${found.first().take(100)})", extra)
+            else -> Grade("F", "Bulk URL Opener: Open All ($pressed) opened neither listed page within ${scaled(20_000, factor) / 1000} s (tabs: ${tabUrls().values.joinToString().take(160)})", extra)
+        }
+    }
 
     // --- the core checks of compat round 22 (ranks 541-570 by installs) --------------------------
 
@@ -15096,6 +15262,93 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val SAML_TRACER_LISTED =
             "(function(){var list=document.getElementById('request-list');var rows=list?list.querySelectorAll('tr, li, div, .request'):[];var texts=[];for(var i=0;i<rows.length;i++){var e=rows[i];var t=((e.innerText||'')+' '+(e.getAttribute('title')||'')).replace(/\\s+/g,' ').trim();if(t)texts.push(t)}var all=texts.join(' | ');" +
                 "return JSON.stringify({pass:/page-b\\.html/.test(all),rows:rows.length,requests:(all.match(/https?:\\/\\/[^\\s|]+/g)||[]).slice(0,4),text:all.slice(0,160)})})()"
+
+        // --- the expressions of compat round 23 (ranks 571-600) ---------------------------------
+
+        /** Page Assist's side panel (`sidepanel.html`): its chat composer (a textarea or a contenteditable) or its form drawn, with the panel's text ("Select a model" over a local Ollama the phone has not). */
+        private const val PAGE_ASSIST_PANEL =
+            "(function(){var ta=document.querySelector('textarea');var ce=document.querySelector('[contenteditable=\"true\"]');var form=document.querySelector('form');var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:!!(ta||ce||form)&&t.length>0,textarea:!!ta,editable:!!ce,form:!!form,text:t.slice(0,140)})})()"
+
+        /**
+         * WebRTC Control's options page (`data/options/options.html`): the worker's `storage`
+         * answer to the page's `load` rendered – the `#method` select of four policies moved off
+         * its first option, `default`, to the stored method (`disable_non_proxied_udp` when never
+         * set) – and its three checkboxes present. The pass is the read-back; the policy's effect
+         * is the standing WebView blocker, the row's `gate`.
+         */
+        private const val WEBRTC_CONTROL_OPTIONS =
+            "(function(){var m=document.getElementById('method');var opts=m?m.options.length:0;var boxes={};['inject','devices','additional'].forEach(function(i){var e=document.getElementById(i);boxes[i]=e?e.checked:null});var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:opts===4&&!!m&&m.value!=='default'&&boxes.inject!==null,method:m?m.value:null,options:opts,boxes:boxes,text:t.slice(0,120)})})()"
+
+        /** Hypothesis' client mounted in the page after the click: `<hypothesis-sidebar>` (its notebook, adder and highlights read beside it, and the `script.js-hypothesis-config` its worker injected first). */
+        private const val HYPOTHESIS_SIDEBAR =
+            "JSON.stringify({pass:!!document.querySelector('hypothesis-sidebar'),sidebar:!!document.querySelector('hypothesis-sidebar'),notebook:!!document.querySelector('hypothesis-notebook'),adder:!!document.querySelector('hypothesis-adder'),highlights:document.querySelectorAll('hypothesis-highlight').length,config:!!document.querySelector('script.js-hypothesis-config')})"
+
+        /** Flash Player Enable's controls over the Flash fixture: a `span.swf2html` ("Run this Flash Player Enabler") before each Flash tag, the tags marked `data-attached` by its injected script. */
+        private const val FLASH_ENABLER_CONTROLS =
+            "JSON.stringify({pass:document.querySelectorAll('.swf2html').length>0,controls:document.querySelectorAll('.swf2html').length,attached:document.querySelectorAll('[data-attached]').length,embed:!!document.getElementById('swf-embed'),object:!!document.getElementById('swf-object'),text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,80)})"
+
+        /** JSON Viewer Pro's viewer over the JSON document: `#rbrahul-awesome-json` mounted by its web-accessible `/js/main.js` (`#main-script`), `window.JSON_VIEWER_PRO_INITIALISED` set; the document's `contentType` beside them. */
+        private const val JSON_VIEWER_PRO =
+            "JSON.stringify({pass:!!document.getElementById('rbrahul-awesome-json'),viewer:!!document.getElementById('rbrahul-awesome-json'),initialised:!!window.JSON_VIEWER_PRO_INITIALISED,contentType:document.contentType,mainScript:!!document.getElementById('main-script'),text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,60)})"
+
+        /**
+         * Redirect Path's popup over the redirected fixture (`/redirect?to=/page-a.html`, a 302
+         * to `page-a.html`): its `.pathItem` clones (the `.template` left out) – two or more, one
+         * naming the redirect address in its `h2`, one whose `h3` carries a 3xx status – from
+         * the hops its worker kept off `webRequest.onBeforeRedirect` / `onCompleted`
+         * (`frameType == "outermost_frame"`) and `webNavigation.onCommitted`.
+         */
+        private const val REDIRECT_PATH_CHAIN =
+            "(function(){var items=[].slice.call(document.querySelectorAll('.pathItem')).filter(function(e){return !e.classList.contains('template')});var urls=items.map(function(e){return ((e.querySelector('h2')||{}).textContent||'').slice(0,80)});var heads=items.map(function(e){return ((e.querySelector('h3')||{}).textContent||'').slice(0,60)});" +
+                "return JSON.stringify({pass:items.length>=2&&urls.some(function(u){return /redirect\\?to=/.test(u)})&&heads.some(function(h){return /30[12378]/.test(h)}),items:items.length,urls:urls.slice(0,4),heads:heads.slice(0,4),text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,120)})})()"
+
+        /** Angular DevTools' popup over the Angular fixture: the tab's popup swapped to `popups/supported.html` ("Angular application running development mode."), its path and text read. */
+        private const val ANGULAR_DEVTOOLS_POPUP =
+            "JSON.stringify({pass:/development mode/i.test(document.body?document.body.innerText:''),page:location.pathname,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,140)})"
+
+        /** Url Shortener's popup: the t.ly link its `POST /api/v1/link/shorten` answered for the tab's address in `input#shortenedLink` (its `data-full-short-url`), `#defaultShortenerFailed` not shown; the long link it shortened beside it. */
+        private const val URL_SHORTENER_RESULT =
+            "(function(){var i=document.getElementById('shortenedLink');var v=i?(i.getAttribute('data-full-short-url')||i.value||''):'';var f=document.getElementById('defaultShortenerFailed');var fShown=!!f&&f.getBoundingClientRect().height>0;var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:/^(https?:\\/\\/)?t\\.ly\\/\\S+/.test(v)&&!fShown,link:v.slice(0,60),failed:fShown?(f.textContent||'').trim().slice(0,80):null,longLink:((document.getElementById('longLink')||{}).textContent||'').slice(0,60),text:t.slice(0,100)})})()"
+
+        /**
+         * AdGuard Extra's `userscript.js` handed to the page world: the page's resource timing
+         * carries the `<script class="extra">` load its content script appended (the extension's
+         * web-accessible resource under a random query), and the page fetches the same address
+         * itself – Chrome serves a web-accessible resource to a page with `Access-Control-Allow-
+         * Origin: *` – reading the userscript header (`==UserScript==`) in the body. The
+         * userscript's own effects are for its listed hosts alone, none on the fixture.
+         */
+        private const val ADGUARD_EXTRA_SCRIPT =
+            "(function(){var rs=performance.getEntriesByType('resource').filter(function(e){return /userscript\\.js/.test(e.name)});if(!window.__agx&&rs.length){window.__agx={pending:true};fetch(rs[0].name).then(function(r){return r.text().then(function(t){window.__agx={ok:r.ok,status:r.status,bytes:t.length,userscript:/==UserScript==/.test(t)}})}).catch(function(e){window.__agx={error:String(e)}})}var a=window.__agx||null;" +
+                "return JSON.stringify({pass:!!(a&&a.ok&&a.userscript),entries:rs.length,name:rs.length?rs[0].name.slice(0,90):null,fetched:a})})()"
+
+        /**
+         * Enable Copy Paste's effect on the right-click fixture after its popup switch: its
+         * content script reads `storage.local.enable_product` at load alone, so the fixture is
+         * reloaded from the poll (up to three times, 2.5 s apart, the count in `sessionStorage`)
+         * until the script's `* {user-select: text !important}` style is in the document and the
+         * fixture's own `contextmenu` probe (`window.__zenRightClick()`) reads `allowed` – the
+         * page's cancelling listener stopped at the document's capture phase.
+         */
+        private const val ECP_ENABLED =
+            "(function(){var styled=[].slice.call(document.querySelectorAll('style')).some(function(s){return /user-select:\\s*text\\s*!important/.test(s.textContent||'')});var rc=window.__zenRightClick?window.__zenRightClick():null;var pass=styled&&!!(rc&&rc.allowed);var n=parseInt(sessionStorage.getItem('__ecpReloads')||'0',10);" +
+                "if(!pass&&n<3&&performance.now()>2500){sessionStorage.setItem('__ecpReloads',String(n+1));location.reload();return JSON.stringify({pass:false,reloading:n+1})}" +
+                "return JSON.stringify({pass:pass,style:styled,contextmenu:rc,reloads:n})})()"
+
+        /** Speech to Text's interface page (`data/interface/index.html`): its `#start` control, the `#engine` and `#backend` choices, its `#language` list filled by script; the WebView's `webkitSpeechRecognition` and `getUserMedia` read beside them. */
+        private const val STT_PAGE =
+            "JSON.stringify({pass:!!document.getElementById('start')&&document.querySelectorAll('#language option').length>10,start:!!document.getElementById('start'),engines:[].map.call(document.querySelectorAll('#engine option'),function(o){return o.value}),backends:[].map.call(document.querySelectorAll('#backend option'),function(o){return o.value}),languages:document.querySelectorAll('#language option').length,webSpeech:typeof window.webkitSpeechRecognition,mic:!!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia)})"
+
+        /** Xverse's providers in the page world: `window.XverseProviders` (its `BitcoinProvider`, `StacksProvider`), `window.BitcoinProvider`, the `btc_providers` registry; the fixture's EIP-6963 record beside them. */
+        private const val XVERSE_PROVIDER =
+            "JSON.stringify({pass:!!(window.XverseProviders||window.BitcoinProvider||(window.btc_providers&&window.btc_providers.length)),xverse:typeof window.XverseProviders,bitcoin:typeof window.BitcoinProvider,stacks:typeof window.StacksProvider,btcProviders:window.btc_providers?window.btc_providers.length:0,announced:window.__wallet?window.__wallet.announced:null})"
+
+        /** Bitget Wallet's providers in the page world (its worker's MAIN-world `registerContentScripts` of `static/js/inject.js`): `window.bitkeep`, `window.bitgetWallet`, `window.ethereum` flagged `isBitKeep`; the fixture's EIP-6963 record beside them. */
+        private const val BITGET_PROVIDER =
+            "JSON.stringify({pass:!!(window.bitkeep||window.bitgetWallet||(window.ethereum&&window.ethereum.isBitKeep)),bitkeep:typeof window.bitkeep,bitgetWallet:typeof window.bitgetWallet,ethereum:typeof window.ethereum,isBitKeep:!!(window.ethereum&&window.ethereum.isBitKeep),announced:window.__wallet?window.__wallet.announced:null})"
 
         // --- compat round 19 (ranks 451-480) ---
 
