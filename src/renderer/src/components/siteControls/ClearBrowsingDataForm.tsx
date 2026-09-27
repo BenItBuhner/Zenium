@@ -7,8 +7,9 @@ import { choice, type SettingsRow, type ValueRow } from '../pages/settings/model
 import { RowView, type RowContext } from '../pages/settings/rows'
 import { useSheetRelayout } from '../pages/settings/sheetContext'
 import { OptionsSheet } from '../pages/settings/sheets'
+import { usePhone } from '@renderer/lib/surfaces'
 import { BusyButton } from './primitives'
-import { useClearForm } from './useClearForm'
+import { QUICK_DELETE_FORM, useClearForm } from './useClearForm'
 
 /**
  * Delete browsing data under a finger (design-language-v2-draft §9.12–§9.14, §9.23, §9.25,
@@ -24,9 +25,20 @@ import { useClearForm } from './useClearForm'
  * full opacity and takes no press, the passphrase stays masked in place, only Delete data is
  * busy and Cancel sits at .4; a refused passphrase clears the field, which takes the focus back
  * under its validation text; on success the sheet closes with its values shown until it is gone.
+ * On the PHONE the form is Chrome Android's Quick Delete (HB-07, `QUICK_DELETE_FORM`): it opens
+ * on the last 15 minutes and carries the Tabs row after Cached images and files – the seat
+ * Chrome's Delete browsing data page gives it (`clear_browsing_data_preferences.xml:32–39`) – OFF
+ * until the user turns it on (Chrome's `kCloseTabs` pref starts false on Android,
+ * `pref_names.cc:66–68`); on, the tabs whose last navigation falls in the range close with the
+ * data, no undo, no Recently-closed entry. "Phone" is the layout, not the host: `usePhone()` is
+ * `classifyViewport` (`PHONE_MAX_WIDTH = 600`), so a desktop window narrower than 600 px gets
+ * this form too and an Android tablet's wide layout gets the dialog's rows without the Tabs row.
+ * The toast once it is done is W8-7's `clearedToast(range, cleared)` on both – "Last 15 minutes
+ * deleted".
  */
 export function ClearBrowsingDataForm({ close }: { close: () => void }): JSX.Element {
-  const state = useClearForm(close)
+  const phone = usePhone()
+  const state = useClearForm(close, phone ? QUICK_DELETE_FORM : undefined)
   const { form, types, selected, unavailableFor, setRange, setMode, toggle, setPassphrase } = state
   const busy = form.busy
   const [picker, setPicker] = useState(false)
