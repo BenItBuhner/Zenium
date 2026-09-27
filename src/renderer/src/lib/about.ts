@@ -39,25 +39,16 @@ export function copyrightLine(year: number = new Date().getFullYear()): string {
 }
 
 /**
- * Whether an update is downloaded and waiting for the relaunch (`UpdateStatus.phase: 'ready'`,
- * shortcuts-menus-101): the app menu opens on its "Update Zenium" row then (`core/menus.ts`)
- * and the "⋯" button wears the accent dot for it (`SidebarTop`), Chrome's dot on its ⋮. A
- * found update that has not downloaded (`available`) shows neither, as Chrome shows nothing
- * until it has. A snapshot without the updater's status (a partial state in a component test)
- * reads as no update.
- */
-export function updateReadyAt(state: Pick<UIState, 'updates'>): boolean {
-  return state.updates?.phase === 'ready'
-}
-
-/**
- * Whether a touch layout's menu button wears the update dot (TB-12; `core/updateDot.ts`): an
- * update downloaded and waiting whose version the app menu has not yet been opened for
- * (`UIState.updateDot`, this device's record, written by the core as the menu opens) – Chrome
- * Android's ⋮ badge, which clears on the menu's first open and returns on a state change. The
- * phone bar's ⋮ and the tablet toolbar's menu button read this; the desktop's ⋯ keeps
- * `updateReadyAt` until W8-F3. A snapshot without the record (a partial state in a component
- * test) reads as nothing seen – the plain ready dot.
+ * Whether the menu button wears the update dot (TB-12; `core/updateDot.ts`): an update
+ * downloaded and waiting for the relaunch (`UpdateStatus.phase: 'ready'`, shortcuts-menus-101 –
+ * the app menu opens on its "Update Zenium" row then, `core/menus.ts`) whose version the app
+ * menu has not yet been opened for (`UIState.updateDot`, this device's record, written by the
+ * core as the menu opens) – Chrome Android's ⋮ badge, which clears on the menu's first open and
+ * returns on a state change. Every layout's one read: the phone bar's ⋮, the tablet toolbar's
+ * menu button and the desktop's ⋯ (W8-F3). A found update that has not downloaded (`available`)
+ * shows nothing, as Chrome shows nothing until it has. A snapshot without the updater's status
+ * (a partial state in a component test) reads as no update; one without the record reads as
+ * nothing seen – the plain ready dot.
  */
 export function updateDotAt(state: Partial<Pick<UIState, 'updates' | 'updateDot'>>): boolean {
   if (!state.updates) return false
