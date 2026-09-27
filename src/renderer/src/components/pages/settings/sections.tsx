@@ -2165,14 +2165,13 @@ function performanceSection({ state, tab, set }: SectionContext): RowGroup[] {
         }),
         radios: true
       },
+      // Nothing live in the row (the re-read's NEW 3, as the lead ruled): no "is on now" and no
+      // battery reading under the label – Chrome's Performance page carries no state sentence,
+      // the leaf and its bubble say it – so the row stays its one line of 40 whatever the mode
+      // does, and the page does not shift when it flips.
       choice({
         id: 'energy-saver-factor',
         label: 'While Energy Saver is on, shrink the budgets to',
-        description: snap.system.energySaver
-          ? 'Energy Saver is on now.'
-          : snap.system.onBattery
-            ? `On battery${snap.system.batteryPercent !== null ? ` at ${snap.system.batteryPercent}%` : ''} – Energy Saver is off.`
-            : undefined,
         keywords: [...energyKeywords, 'shrink', 'factor'],
         value: String(Math.round(r.batteryFactor * 100)),
         disabled: saverOff,

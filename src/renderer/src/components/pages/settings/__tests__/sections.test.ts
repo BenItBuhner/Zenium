@@ -6613,7 +6613,7 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
     )
   })
 
-  it('keeps Energy Saver’s effect beside it – the budget factor the governor applies while it is on – and says whether it is on now', () => {
+  it('keeps Energy Saver’s effect beside it – the budget factor the governor applies while it is on – with nothing live in the row: no "is on now", no battery reading, whatever the mode does (NEW 3, as ruled)', () => {
     const { model, patches } = perf(DESKTOP_STATE())
     const factor = row(model, 'energy-saver-factor')
     if (factor.kind !== 'value') throw new Error('not a choice')
@@ -6625,32 +6625,26 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
     factor.onChange('50')
     expect(patches).toEqual([{ resources: { ...DEFAULT_SETTINGS.resources, batteryFactor: 0.5 } }])
 
+    // The row is its one line of 40 in every state of the host: on, waiting on battery at a
+    // level, on battery with no level, unplugged – the page does not shift when the mode flips
+    // (Chrome's Performance page carries no state sentence; the leaf and its bubble say it).
     const system = (patch: Partial<UIState['resources']['system']>): Partial<UIState> => ({
       resources: {
         ...emptyResourceSnapshot(),
         system: { ...emptyResourceSnapshot().system, ...patch }
       }
     })
-    const on = row(
-      perf(DESKTOP_STATE({}, system({ onBattery: true, energySaver: true }))).model,
-      'energy-saver-factor'
-    )
-    expect(on.description).toBe('Energy Saver is on now.')
-    const waiting = row(
-      perf(
-        DESKTOP_STATE(
-          { energySaver: 'low-battery' },
-          system({ onBattery: true, batteryPercent: 63 })
-        )
-      ).model,
-      'energy-saver-factor'
-    )
-    expect(waiting.description).toBe('On battery at 63% – Energy Saver is off.')
-    const unknown = row(
-      perf(DESKTOP_STATE({ energySaver: 'low-battery' }, system({ onBattery: true }))).model,
-      'energy-saver-factor'
-    )
-    expect(unknown.description).toBe('On battery – Energy Saver is off.')
+    const hosts: readonly [Partial<Settings>, Partial<UIState>][] = [
+      [{}, system({ onBattery: true, energySaver: true })],
+      [{ energySaver: 'low-battery' }, system({ onBattery: true, batteryPercent: 63 })],
+      [{ energySaver: 'low-battery' }, system({ onBattery: true })],
+      [{ energySaver: 'on-battery' }, system({ onBattery: false, batteryPercent: 100 })]
+    ]
+    for (const [settings, host] of hosts) {
+      const r = row(perf(DESKTOP_STATE(settings, host)).model, 'energy-saver-factor')
+      expect(r.description, JSON.stringify([settings, host.resources?.system])).toBeUndefined()
+      expect(r.tone).toBeUndefined()
+    }
     expect(
       row(perf(DESKTOP_STATE({ energySaver: 'off' })).model, 'energy-saver-factor').disabled
     ).toBe(true)
