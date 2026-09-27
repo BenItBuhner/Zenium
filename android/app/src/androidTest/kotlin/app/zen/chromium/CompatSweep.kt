@@ -34,6 +34,7 @@ import app.zen.chromium.ext.ExtensionWebView
 import app.zen.chromium.ext.Extensions
 import app.zen.chromium.ext.SweepHeapSteps
 import app.zen.chromium.ext.SweepOrder
+import app.zen.chromium.ext.SweepOrderProbe
 import app.zen.chromium.ext.SweepScreenGuard
 import app.zen.chromium.privacy.NonUniqueHost
 import org.json.JSONArray
@@ -8544,7 +8545,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * otherwise it is the extension's own race (its `get` ran before the other side's `set` was
      * acknowledged), which the note counts and names. `F` on any runtime-attributed stale write or
      * order-leg inversion; `PARTIAL` when a leg did not run in full without one; `P` otherwise with
-     * the counts, the legs' medians and the cross-source receipt skews, recorded not graded.
+     * the counts, the legs' medians and the cross-source receipt skews, recorded not graded. A
+     * finger the WebView lost (a long-press under a frame stall) is retried once and, one of six
+     * still short with the other legs whole, graded through with the loss named ([SweepOrderProbe]).
      */
     private fun storageOrderProbe(row: Row, entry: JSONObject): Grade {
         val factor = speedFactor(entry)
@@ -8582,19 +8585,35 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         extra.put("button", button ?: JSONObject.NULL)
         var touched = 0
         var touchAttempts = 0
+        var fingersRetried = 0
         if (button != null) {
             val point = screenPoint(popup, button)
             if (point != null) {
-                for (i in 1..6) {
-                    val before = tabEval(popup, ORDER_POPUP_TAPS).toIntOrNull() ?: 0
-                    touchAttempts++
-                    tap(point.first, point.second)
-                    if (tapLanded(before)) touched++
+                for (i in 1..SweepOrderProbe.FINGERS) {
+                    var landed = false
+                    var attempts = 0
+                    while (!landed && attempts < 2) {
+                        val before = tabEval(popup, ORDER_POPUP_TAPS).toIntOrNull() ?: 0
+                        touchAttempts++
+                        attempts++
+                        tap(point.first, point.second)
+                        landed = tapLanded(before)
+                        if (!landed && attempts < 2) {
+                            // A finger held through a main-thread frame stall is read as a long-press
+                            // (round 22 on WebView 156: 50-54 skipped frames, the selection toolbar up,
+                            // no click). Once the popup answers again the stall is over: the selection
+                            // is cleared and the finger retried once, the retry recorded (R23-3).
+                            fingersRetried++
+                            runCatching { tabEval(popup, "(function(){var s=window.getSelection&&window.getSelection();if(s)s.removeAllRanges();return 'cleared'})()") }
+                            SystemClock.sleep(scaled(800, factor))
+                        }
+                    }
+                    if (landed) touched++
                     SystemClock.sleep(1_300)
                 }
             }
         }
-        extra.put("touchedTaps", touched).put("touchAttempts", touchAttempts)
+        extra.put("touchedTaps", touched).put("touchAttempts", touchAttempts).put("fingersRetried", fingersRetried)
         // Leg B: the script.
         var evaluated = 0
         for (i in 1..6) {
@@ -8637,13 +8656,25 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         snap("$slug-core")
         runCatching { coreCall("extension.closePopup", "null") }
         val runtimeFaults = analysis.optInt("postReceiptInversions") + analysis.optInt("ackedBeforeIssueStale") + analysis.optInt("orderStale")
-        val legsRan = touched >= 6 && evaluated >= 6 && orderDone && burstDone
-        val legs = "touched $touched/6 (attempts $touchAttempts), evaluated $evaluated/6, order ${if (orderDone) "done" else if (orderStarted) "NOT done" else "not started"}, burst ${if (burstDone) "done" else if (burstStarted) "NOT done" else "not started"}"
+        // The grade is [SweepOrderProbe]'s word (pure, JUnit-tested): F on a runtime-attributed
+        // fault, P on the four legs in full – and on ONE finger of six lost to the harness while
+        // the script's six, the order and the burst legs ran whole (R23-3) –, PARTIAL otherwise.
+        val word = SweepOrderProbe.word(
+            SweepOrderProbe.Legs(touched, touchAttempts, evaluated, orderStarted, orderDone, burstStarted, burstDone),
+            runtimeFaults
+        )
+        val legs = word.legs
         val note = analysis.optString("summary")
-        return when {
-            runtimeFaults > 0 -> Grade("F", "storage order probe: the runtime's order broke ($runtimeFaults runtime-attributed: ${analysis.optInt("postReceiptInversions")} inversion(s) after receipt, ${analysis.optInt("ackedBeforeIssueStale")} stale read(s) after an acknowledged set, ${analysis.optInt("orderStale")} order-leg inversion(s)); legs $legs: $note", extra)
-            !legsRan -> Grade("PARTIAL", "storage order probe: a leg did not run in full ($legs), no runtime-attributed fault in what ran: $note", extra)
-            else -> Grade("P", "storage order probe: no runtime-attributed fault over the four legs ($legs): $note", extra)
+        word.fingerNote?.let { extra.put("fingerNote", it) }
+        return when (word.verdict) {
+            "F" -> Grade("F", "storage order probe: the runtime's order broke ($runtimeFaults runtime-attributed: ${analysis.optInt("postReceiptInversions")} inversion(s) after receipt, ${analysis.optInt("ackedBeforeIssueStale")} stale read(s) after an acknowledged set, ${analysis.optInt("orderStale")} order-leg inversion(s)); legs $legs: $note", extra)
+            "PARTIAL" -> Grade("PARTIAL", "storage order probe: a leg did not run in full ($legs), no runtime-attributed fault in what ran: $note", extra)
+            else -> Grade(
+                "P",
+                if (word.fingerNote != null) "storage order probe: no runtime-attributed fault over the four legs ($legs; ${word.fingerNote}): $note"
+                else "storage order probe: no runtime-attributed fault over the four legs ($legs): $note",
+                extra
+            )
         }
     }
 
