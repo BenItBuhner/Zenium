@@ -220,9 +220,10 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
         />
       )}
       {drawerLayout && drawerUp && <TabletDrawer state={state} isDark={isDark} side={side} />}
-      {/* The tab hover card's host (TABLET-05): nothing to the eye – the Android host draws the
-          card above the pages where lib/hoverCard.ts says; this binds the card's dismissals while
-          one is up and keeps its text in the document for the focused row to be described by. */}
+      {/* The tab hover card's host (TABLET-05): renders nothing – the Android host draws the
+          card above the pages where lib/hoverCard.ts says; this lets the rows raise one and binds
+          the card's dismissals while one is up (its text for the focused row is Android's root's,
+          src/android/main.tsx). */}
       <TabletHoverCardHost state={state} />
       {ui.drag && <DragLayer state={state} drag={ui.drag} />}
       <ChromeDropLayer />

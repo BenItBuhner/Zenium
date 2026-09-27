@@ -21,12 +21,10 @@ const { cmd } = await import('@renderer/lib/api')
 const { browserStore, HOVER_CARD_HIDDEN, uiStore } = await import('@renderer/lib/ui')
 const {
   bindHoverCardDismissals,
-  domHoverCardHosted,
   HOVER_CARD_DELAY,
   hostHoverCard,
   hoverCard,
   hoverCardFrame,
-  hoverCardHosted,
   hoverCardNativeHost,
   nativeHoverCard,
   setHoverCardHost
@@ -220,7 +218,7 @@ describe('the native host seam (TABLET-05)', () => {
     browserStore.set({ state })
     const host = sink()
     setHoverCardHost(host)
-    release = hostHoverCard('native')
+    release = hostHoverCard()
     expect(nativeHoverCard.get().frame).toBeNull()
 
     hoverCard.pointerEnter('b', () => ({ anchor, sidebar }))
@@ -236,21 +234,6 @@ describe('the native host seam (TABLET-05)', () => {
     hoverCard.hide()
     expect(nativeHoverCard.get().frame).toBeNull()
     expect(nativeHoverCard.get().card).toEqual(HOVER_CARD_HIDDEN)
-  })
-
-  it('tells the chrome’s own card apart from a host that draws nothing itself: `domHoverCardHosted` counts the DOM card alone', () => {
-    expect(hoverCardHosted()).toBe(false)
-    expect(domHoverCardHosted()).toBe(false)
-    const native = hostHoverCard('native')
-    expect(hoverCardHosted()).toBe(true)
-    expect(domHoverCardHosted()).toBe(false)
-    const dom = hostHoverCard()
-    expect(domHoverCardHosted()).toBe(true)
-    dom()
-    expect(domHoverCardHosted()).toBe(false)
-    expect(hoverCardHosted()).toBe(true)
-    native()
-    expect(hoverCardHosted()).toBe(false)
   })
 
   it('keyboard focus sends the frame at once, by focus, along the strip with its axis', async () => {

@@ -50,6 +50,7 @@ import { Bridge, getNativeBridge, openBridgePort } from './bridge'
 import { captureUpdates, type CapturesHeld } from './captureRelay'
 import { fetchDeferredDocuments, type HandoffFetch } from './handoff'
 import { showHostToast } from './hostToast'
+import { hoverCardPost } from './hoverCardPost'
 import { installKeyboardPolicy } from './keyboard'
 import { landFromIntent } from './landing'
 import { syncNativeTheme } from './nativeTheme'
@@ -407,15 +408,14 @@ function syncHistoryNavBubble(bridge: Bridge): void {
  * takes it down. The chrome keeps the card's machine and its dismissals (the tablet's
  * `TabletHoverCardHost` is what lets the rows raise one; the phone mounts no host, so nothing
  * is raised there). The card is the tablet's by rule as well: on the phone layout whatever
- * reaches the host goes out as a take-down, so no frame can stand a 320 px card over a phone
- * page whichever host raised it – read per frame, not at boot, since the layout changes with a
- * fold (a foldable booted closed is a phone, opened a tablet). Only the registration runs at
- * boot – bounded, no I/O; the host inflates nothing before the first frame.
+ * reaches the host goes out as a take-down (`hoverCardPost`, the layout read per frame – a
+ * foldable changes it after boot). The card's text for the focused row is Android's root's
+ * (`NativeHoverCardDescription`, main.tsx). Only the registration runs at boot – bounded, no
+ * I/O; the host inflates nothing before the first frame.
  */
 function syncHoverCard(bridge: Bridge): void {
   setHoverCardHost({
-    apply: (frame) =>
-      bridge.post('chrome.hoverCard', frame && !isPhone() ? frame : { visible: false })
+    apply: (frame) => bridge.post('chrome.hoverCard', hoverCardPost(frame, isPhone()))
   })
 }
 

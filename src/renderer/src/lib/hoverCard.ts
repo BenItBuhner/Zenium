@@ -273,20 +273,10 @@ export function hoverCardPreviews(state: UIState | null, tabId: string): boolean
  * controller raises nothing until a host is mounted.
  */
 let hosts = 0
-let domHosts = 0
 
 /** Whether a card host is mounted: without one the controller raises no card. */
 export function hoverCardHosted(): boolean {
   return hosts > 0
-}
-
-/**
- * Whether the chrome's own card (`TabHoverCard`) is mounted: the document's `#zen-tab-hover-card`
- * is then its, and the tablet's host adds no second node of that id (one per document – a row's
- * `aria-describedby` names the first).
- */
-export function domHoverCardHosted(): boolean {
-  return domHosts > 0
 }
 
 /**
@@ -347,8 +337,9 @@ export function hoverCardNativeHost(): HoverCardHost | null {
  * What a native host shows: the controller's state while one is registered, kept out of the UI
  * state – `overlayCoversContent` would count a card there as chrome over the page (the page is
  * live under this one) – with the frame the host was last sent beside it. The tablet's host
- * reads it to bind the dismissals for as long as a card is up, and to keep the card's text in
- * the chrome's document for the row to be described by (`useHoverCardUp`).
+ * reads it to bind the dismissals for as long as a card is up; Android's root keeps the frame's
+ * text in the chrome's document (`NativeHoverCardDescription`, src/android) for the row to be
+ * described by (`useHoverCardUp`).
  */
 export const nativeHoverCard = createStore<{ card: HoverCardState; frame: HoverCardFrame | null }>(
   { card: HOVER_CARD_HIDDEN, frame: null },
@@ -479,20 +470,14 @@ export function bindHoverCardDismissals(hide: () => void): () => void {
  * chrome, so the host count falls to none for the duration and a pointer entering a row in the
  * frame the card remounts on the way out is dropped, not captured – the `hide()` here at that
  * moment is the last host leaving, not a card lost.
- *
- * `kind` says what the host draws: the chrome's own card in the document (`dom`, the default –
- * `TabHoverCard`), or nothing itself, a native host drawing it (`native` – the tablet's host),
- * which `domHoverCardHosted` tells apart.
  */
-export function hostHoverCard(kind: 'dom' | 'native' = 'dom'): () => void {
+export function hostHoverCard(): () => void {
   hosts++
-  if (kind === 'dom') domHosts++
   let mounted = true
   return () => {
     if (!mounted) return
     mounted = false
     hosts--
-    if (kind === 'dom') domHosts--
     if (hosts === 0) hoverCard.hide()
   }
 }

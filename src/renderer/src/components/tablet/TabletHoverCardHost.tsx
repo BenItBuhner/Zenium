@@ -1,8 +1,7 @@
-import { useEffect, type ReactElement } from 'react'
+import { useEffect } from 'react'
 import type { UIState } from '@shared/types'
 import {
   bindHoverCardDismissals,
-  domHoverCardHosted,
   hostHoverCard,
   hoverCard,
   hoverCardNativeHost,
@@ -25,20 +24,15 @@ import { HOVER_CARD_HIDDEN, overlayCoversContent, uiStore } from '@renderer/lib/
  * the window's blur or resize (`bindHoverCardDismissals`), another tab coming to the front, a
  * drag or other chrome over the page, a popover opening (as `TabHoverCard` does).
  *
- * It draws nothing a sighted user sees. While the native card stands it keeps the card's text –
- * the title, the host, the state lines, as the desktop card renders them – in the chrome's
- * document as a visually hidden node under the desktop card's id, so the focused row describes
- * itself by it (`TabItem`'s `aria-describedby`, `useHoverCardUp`) exactly as a desktop row does
- * by the DOM card; the native layer stays `NO_HIDE_DESCENDANTS`, so nothing speaks twice. One
- * `#zen-tab-hover-card` per document: the node is rendered only where a native host is
- * registered and the chrome's own card is not mounted (`domHoverCardHosted`) – where it is, the
- * id is the DOM card's.
+ * It renders nothing. The card's text for the focused row (`TabItem`'s `aria-describedby`) is
+ * not this host's to keep: the desktop class of the chrome raises the native card too, through
+ * `TabHoverCard`, so the description has one home for every layout – Android's root
+ * (`NativeHoverCardDescription`, src/android/main.tsx).
  */
-export function TabletHoverCardHost({ state }: { state: UIState }): ReactElement | null {
-  useEffect(() => (hoverCardNativeHost() ? hostHoverCard('native') : undefined), [])
+export function TabletHoverCardHost({ state }: { state: UIState }): null {
+  useEffect(() => (hoverCardNativeHost() ? hostHoverCard() : undefined), [])
 
   const shown = nativeHoverCard.use((s) => s.card.tabId !== null)
-  const frame = nativeHoverCard.use((s) => s.frame)
   const drag = uiStore.use((s) => s.drag !== null)
   const covered = uiStore.use((s) => overlayCoversContent({ ...s, hoverCard: HOVER_CARD_HIDDEN }))
   const activeTabId = activeTab(state)?.id ?? null
@@ -61,14 +55,5 @@ export function TabletHoverCardHost({ state }: { state: UIState }): ReactElement
     return bindHoverCardDismissals(() => hoverCard.hide())
   }, [shown])
 
-  if (!shown || !frame || !hoverCardNativeHost() || domHoverCardHosted()) return null
-  return (
-    <div id="zen-tab-hover-card" role="tooltip" className="sr-only" data-tab-id={frame.tabId}>
-      <div>{frame.title}</div>
-      {frame.host && <div>{frame.host}</div>}
-      {frame.lines.map((line) => (
-        <div key={line}>{line}</div>
-      ))}
-    </div>
-  )
+  return null
 }
