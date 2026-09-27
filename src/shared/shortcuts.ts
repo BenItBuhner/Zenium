@@ -1292,6 +1292,10 @@ const DEFS: Def[] = [
     action: 'help.reportIssue',
     group: 'devTools',
     label: 'Report an Issue…',
+    // The helper's register (TABLET-20): Chrome's own words for the row (`shortcutReference.ts`),
+    // no ellipsis; desktop-only, so the phone's and tablet's helper never print it – the field
+    // keeps the table's one-register audit whole.
+    helperLabel: 'Report an issue',
     layouts: ['desktop'],
     zen: UNBOUND,
     chrome: {

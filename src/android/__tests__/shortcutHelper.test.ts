@@ -89,7 +89,9 @@ describe('helperShortcuts (TABLET-20)', () => {
         'tasks.open',
         'bookmark.toggleBar',
         'compact.toggle',
-        'compact.toggleSidebar'
+        'compact.toggleSidebar',
+        // #588's Report an Issue… (W8-4): the desktop app menu's row, `layouts: ['desktop']`.
+        'help.reportIssue'
       ].sort()
     )
     for (const action of ['bookmark.toggleBar', 'compact.toggle', 'compact.toggleSidebar']) {
