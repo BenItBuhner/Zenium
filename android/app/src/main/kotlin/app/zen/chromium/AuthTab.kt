@@ -91,7 +91,9 @@ object AuthTab {
      * scheme equal; or `https`, the host equal (the authority's real host, so the userinfo trick
      * `https://host@evil/` reads as evil's page) and the path exactly equal – not a prefix, as
      * Chrome compares it – with any query and fragment. Null when it is not the redirect; else
-     * which form matched.
+     * which form matched. The authority and path are cut out by hand rather than through
+     * `java.net.URI`, which refuses characters a canonical URL's query may carry (`|`, `{`, `[`
+     * – an identity provider's `state`), and a refused parse would load the redirect as a page.
      */
     fun match(redirect: Redirect, url: String): Match? {
         val colon = url.indexOf(':')
@@ -99,12 +101,21 @@ object AuthTab {
         val scheme = url.substring(0, colon).lowercase(Locale.ROOT)
         if (redirect.scheme != null && scheme == redirect.scheme) return Match.SCHEME
         if (scheme != "https" || !redirect.https) return null
-        val parsed = runCatching { URI(url).normalize() }.getOrNull() ?: return null
-        val host = parsed.host?.lowercase(Locale.ROOT)?.removeSuffix(".") ?: return null
-        if (host != redirect.host) return null
-        val path = parsed.rawPath.ifEmpty { "/" }
-        return if (path == redirect.path) Match.HTTPS else null
+        if (!url.startsWith("//", colon + 1)) return null
+        val rest = url.substring(colon + 3)
+        val authorityEnd = rest.indexOfAny(charArrayOf('/', '?', '#')).let { if (it < 0) rest.length else it }
+        // The real host: past any userinfo, before the port.
+        val hostPort = rest.substring(0, authorityEnd).substringAfterLast('@')
+        val host = (if (hostPort.startsWith("[")) hostPort.substringBefore(']') + "]" else hostPort.substringBefore(':'))
+            .lowercase(Locale.ROOT).removeSuffix(".")
+        if (host.isEmpty() || host != redirect.host) return null
+        val rawPath = rest.substring(authorityEnd).takeWhile { it != '?' && it != '#' }.ifEmpty { "/" }
+        return if (foldPath(rawPath) == redirect.path) Match.HTTPS else null
     }
+
+    /** The path with its dot segments folded, as a canonical URL's is; a path the folding refuses stands as it is. */
+    private fun foldPath(path: String): String =
+        runCatching { URI("https://h$path").normalize().rawPath }.getOrNull()?.ifEmpty { "/" } ?: path
 
     enum class Match { SCHEME, HTTPS }
 

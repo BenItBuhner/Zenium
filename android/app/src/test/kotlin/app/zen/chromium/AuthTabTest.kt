@@ -85,6 +85,10 @@ class AuthTabTest {
         assertEquals(AuthTab.Match.HTTPS, AuthTab.match(https, "https://login.example.com:443/oauth/callback"))
         // Dot segments resolve before the compare, as a canonical URL has them.
         assertEquals(AuthTab.Match.HTTPS, AuthTab.match(https, "https://login.example.com/oauth/x/../callback"))
+        // A query with the characters a canonical URL leaves bare (an identity provider's `state`)
+        // is still the redirect: only the scheme, the host and the path are read.
+        assertEquals(AuthTab.Match.HTTPS, AuthTab.match(https, "https://login.example.com/oauth/callback?state=a|b{c}[d]^e&code=1"))
+        assertEquals(AuthTab.Match.HTTPS, AuthTab.match(https, "https://login.example.com/oauth/callback#a|b"))
     }
 
     @Test

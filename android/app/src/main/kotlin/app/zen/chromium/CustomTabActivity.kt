@@ -443,7 +443,7 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
      * video's. The system may refuse (a policy, a task that cannot); then nothing changes.
      */
     override fun onMinimize() {
-        if (minimized || isFinishing || host.fullscreenTab != null) return
+        if (minimized || isFinishing || host.fullscreenTab != null || authTab != null) return
         closeFind()
         val builder = PictureInPictureParams.Builder()
             .setAspectRatio(Rational(CustomTabMinimize.ASPECT_WIDTH, CustomTabMinimize.ASPECT_HEIGHT))
