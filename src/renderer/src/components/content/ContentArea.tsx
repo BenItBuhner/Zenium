@@ -590,7 +590,7 @@ function EmptyState(): JSX.Element {
   const chord = useChord('tab.new')?.replace(/\+(?=.)/g, ' ')
   return (
     <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-[var(--zen-muted)]">
-      <div className="text-lg font-medium text-[var(--zen-fg)]">This space is empty</div>
+      <div className="text-lg font-medium text-[var(--zen-fg)]">This Space is empty</div>
       <p className="text-[13px]">Open a new tab to start browsing.</p>
       <button
         type="button"

@@ -6370,12 +6370,13 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
     return { ...c, model }
   }
 
-  it('draws Chrome’s three groups in Chrome’s order on the desktop: Memory Saver, Always keep these sites active (with its Add group), Energy Saver', () => {
+  it('draws Chrome’s groups in Chrome’s order on the desktop: Memory Saver, Always keep these sites active (with its Add group), the tab hover card’s row (W8-10), Energy Saver', () => {
     const { model } = perf(DESKTOP_STATE({ unloadExcludedDomains: ['mail.example.com'] }))
     expect(model.groups.map((g) => [g.id, g.heading])).toEqual([
       ['memory-saver', 'Memory Saver'],
       ['keep-active', 'Always keep these sites active'],
       ['keep-active-add', null],
+      ['hover-card', 'Tab hover card'],
       ['energy-saver', 'Energy Saver']
     ])
     expect(allRows(model.groups).map((r) => [r.kind, r.id])).toEqual([
@@ -6385,6 +6386,7 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
       ['action', 'keep-active:mail.example.com:remove'],
       ['action', 'keep-active-add'],
       ['action', 'keep-active-current'],
+      ['switch', 'hover-card-memory'],
       ['switch', 'energy-saver'],
       ['value', 'energy-saver-mode'],
       ['value', 'energy-saver-factor']
@@ -6424,6 +6426,48 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
       expect(allRows(model.groups).some((r) => r.id.startsWith('energy-saver'))).toBe(false)
       expect(patches).toEqual([])
     }
+  })
+
+  it('seats the tab hover card’s memory switch on the desktop (settings-29, W8-10): Chrome’s "Show tab memory usage" under its "Tab hover card" heading, off by default, bound to hoverCardMemoryUsage; the tablet has none', () => {
+    const { model, patches } = perf(DESKTOP_STATE())
+    const group = model.groups.find((g) => g.id === 'hover-card')!
+    expect(group.heading).toBe('Tab hover card')
+    expect(group.layouts).toEqual(['desktop'])
+    expect(group.rows.map((r) => r.id)).toEqual(['hover-card-memory'])
+    const memory = row(model, 'hover-card-memory')
+    if (memory.kind !== 'switch') throw new Error('not a switch')
+    expect(memory.label).toBe('Show tab memory usage')
+    expect(memory.description).toBe(
+      'The card that appears when you rest the pointer on a tab says how much memory its page is using.'
+    )
+    // Chrome 152's effective default: browser.hovercard.memory_usage_enabled registers true in
+    // local state (RegisterBrowserPrefs) and MigrateHoverCardMemoryPref flips it to false once,
+    // under Tab Declutter, on every desktop platform – so the switch rests off.
+    expect(DEFAULT_SETTINGS.hoverCardMemoryUsage).toBe(false)
+    expect(memory.checked).toBe(false)
+    expect(memory.disabled).toBeFalsy()
+    memory.onChange(true)
+    expect(patches).toEqual([{ hoverCardMemoryUsage: true }])
+    const on = row(perf(DESKTOP_STATE({ hoverCardMemoryUsage: true })).model, 'hover-card-memory')
+    if (on.kind !== 'switch') throw new Error('not a switch')
+    expect(on.checked).toBe(true)
+    // Independent of Memory Saver: the switch stands whatever the mode.
+    const saverOff = row(
+      perf(DESKTOP_STATE({ unloadEnabled: false, hoverCardMemoryUsage: true })).model,
+      'hover-card-memory'
+    )
+    if (saverOff.kind !== 'switch') throw new Error('not a switch')
+    expect(saverOff.checked).toBe(true)
+    expect(saverOff.disabled).toBeFalsy()
+    // Found from Chrome's words and the card's.
+    for (const query of ['hover card', 'memory usage', 'preview card']) {
+      expect(
+        searchRows([model], query).map((r) => r.row.id),
+        query
+      ).toContain('hover-card-memory')
+    }
+    // The tablet chrome mounts no hover card: no row there.
+    expect(findRow(perf(DESKTOP_STATE(), 'tablet').model.groups, 'hover-card-memory')).toBeNull()
   })
 
   it('binds Memory Saver’s switch to unloadEnabled with Chrome’s three facts in two sentences that hold the row’s two lines (N1), Zenium named', () => {
@@ -6656,7 +6700,8 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
     expect(none.model.groups.map((g) => g.id)).toEqual([
       'memory-saver',
       'keep-active',
-      'keep-active-add'
+      'keep-active-add',
+      'hover-card'
     ])
     expect(allRows(none.model.groups).some((r) => r.id.startsWith('energy-saver'))).toBe(false)
     // The mode itself is left as it was: nothing is written for a group not drawn.
@@ -7677,7 +7722,7 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
       settings
     )
 
-  it('the theme row stands after Colour scheme on the desktop and the tablet, never on the phone, naming the active space’s theme and the space – "Default · Personal space" at rest (the picker’s own description, #572’s N5) – with the picker as its door (Chrome’s row opens Customize Chrome; no store is named), hung from the Change… button that opened it (§9.20, #572’s L8)', async () => {
+  it('the theme row stands after Colour scheme on the desktop and the tablet, never on the phone, naming the active space’s theme and the space – "Default · Personal Space" at rest (the picker’s own description, #572’s N5) – with the picker as its door (Chrome’s row opens Customize Chrome; no store is named), hung from the Change… button that opened it (§9.20, #572’s L8)', async () => {
     const { model } = look()
     const ids = appearanceIds(model)
     expect(ids.slice(0, 2)).toEqual(['color-scheme', 'theme'])
@@ -7685,7 +7730,7 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
     expect(theme).toMatchObject({
       kind: 'action',
       label: 'Theme',
-      description: 'Default · Personal space',
+      description: 'Default · Personal Space',
       layouts: ['desktop', 'tablet'],
       button: 'Change…',
       // The button hangs the `theme` overlay from itself (round C): the row's view draws it as
@@ -7723,7 +7768,7 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
     const { model } = look(themed())
     const theme = row(model, 'theme')
     expect(theme).toMatchObject({
-      description: 'Custom · Personal space',
+      description: 'Custom · Personal Space',
       button: 'Reset to default'
     })
     if (theme.kind !== 'action') throw new Error('not an action row')
@@ -7753,7 +7798,7 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
       ] as unknown as UIState['spaces']
     })
     expect(row(look(preset).model, 'theme').description).toBe(
-      `${THEME_PRESETS[1].name} · Work space`
+      `${THEME_PRESETS[1].name} · Work Space`
     )
   })
 
@@ -7894,7 +7939,7 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
     // A themed space keeps its own accent: the row says when the OS's shows.
     expect(
       row(look(themed({ systemAccent: '#0078d4' })).model, 'use-system-accent').description
-    ).toBe('Controls take the colour your system uses while the space has the default look.')
+    ).toBe('Controls take the colour your system uses while the Space has the default look.')
     for (const formFactor of ['phone', 'tablet'] as const)
       expect(
         findRow(

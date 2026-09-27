@@ -1832,6 +1832,24 @@ describe('the Settings page’s radio rows (§9.14, §10.4; pr-584 R2)', () => {
     expect(rows).toMatch(/className="zen-settings-radio-list zen-settings-radios"/)
   })
 
+  it('drop the row pad when the legend is aria-only and no text of the row’s own shows (pr-584’s NEW 1, W8-10): the options stand off the switch as they stand off one another, §10.3’s 0 apart', () => {
+    // The row's `--v2-row-pad` (6 / 12) above and below a list of rows that carry their own
+    // would put the first option's label 18 off the switch's where options stand 12 apart; the
+    // rule outranks `.zen-v2-row`'s padding shorthand by the attribute (0,2,0 over 0,1,0).
+    const bare = block('.zen-settings-radios-row[data-bare]')
+    expect(bare).toMatch(/^\s*padding-top: 0;\s*$/m)
+    expect(bare).toMatch(/^\s*padding-bottom: 0;\s*$/m)
+    expect(bare).not.toMatch(/padding-left|padding-right|padding:/)
+    expect(block('.zen-v2-row')).toMatch(/^\s*padding: var\(--v2-row-pad\) 16px;\s*$/m)
+    // The row carries the attribute only while no caption or description renders (rows.tsx).
+    const rows = readFileSync(
+      fileURLToPath(new URL('../../components/pages/settings/rows.tsx', import.meta.url)),
+      'utf8'
+    )
+    expect(rows).toMatch(/const text = Boolean\(caption \|\| description\)/)
+    expect(rows).toMatch(/data-bare=\{text \? undefined : ''\}/)
+  })
+
   it('draw no `--v2-selected` band on the checked option (pr-584 L1 / Q6): the accent ring and dot tell the choice; the pointer’s fill is the page row’s', () => {
     // The band is the picker sheet's (§9.6); on the page the checked row is flat at rest and
     // under a touch's sticky `:hover`, and takes `--v2-fill` under a hovering pointer or a press
