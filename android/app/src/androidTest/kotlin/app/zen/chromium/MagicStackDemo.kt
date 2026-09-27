@@ -11,6 +11,8 @@ import org.json.JSONTokener
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 
 /**
@@ -18,37 +20,49 @@ import kotlin.math.abs
  * user), every act a finger's:
  *
  *  1. The stack under a seeded profile: a recently closed tab, a completed download whose file
- *     is on the device, two bookmarks – three cards in the stack's fixed order (Continue where
- *     you left off, Downloads, Bookmarks), and the Default browser reminder as a fourth where the
- *     host says the browser is not the default (the emulator's answer; the driver reads it and
- *     expects the count it implies). The cards are page surfaces named for TalkBack, the section
- *     named "Cards", the strip a carousel with a page indicator under it – a dot per card, none
- *     of them a control, and a status line reading the page – each card's ⋮ the shared 44 icon
- *     button named for its module; one action a card and only one its rows do not already do
- *     (See all on Downloads and Bookmarks, Set as default on the reminder, none on Continue), the
- *     Continue card's detail the host then the time; at the bottom dock the stack stands above
- *     the shortcut tiles, each card the strip's width less the 24 the next one peeks by.
+ *     is on the device, two bookmarks and one site the permissions sweep took a grant from –
+ *     four cards in the stack's fixed order (Continue where you left off, Downloads, Bookmarks,
+ *     Safety check), and the Default browser reminder as a fifth where the host says the browser
+ *     is not the default (the emulator's answer; the driver reads it and expects the count it
+ *     implies). The cards are page surfaces named for TalkBack, the section named "Cards", the
+ *     strip a carousel with a page indicator under it – a dot per card, none of them a control,
+ *     and a status line reading the page – each card's ⋮ the shared 44 icon button named for its
+ *     module; one action a card and only one its rows do not already do (See all on Downloads
+ *     and Bookmarks, Review on Safety check, Set as default on the reminder, none on Continue),
+ *     the Continue card's detail the host then the time; at the bottom dock the stack stands
+ *     above the shortcut tiles, each card the strip's width less the 24 the next one peeks by.
  *  2. Paging by a real swipe on the strip (a measured scene, `magic-stack-swipe`): the strip
  *     snaps to the second card and the indicator reads "Page 2 of N" with the second dot
  *     current; a swipe back returns it to the first card.
- *  3. A card's ⋮ opens the shared local menu titled by the module, Hide This and Customise its
+ *  3. The Safety check card (NTP-19, W6-E9; Chrome's Safety Hub module in the Magic Stack): the
+ *     seed's one revoked record gives Chrome's low-priority type alone (Safe Browsing on and no
+ *     password checkup leave the two higher types nothing), the card fourth in the stack, swiped
+ *     to a card at a time; its face is the page's own tile with the check in the success ink,
+ *     the title "Removed permissions for 1 site" with no summary (Chrome's revoked type has
+ *     none), one filled Review named "Review Safety check"; the impression is on the card's
+ *     memory before the finger lands. Review opens Settings on the Safety check group in a new
+ *     tab (`zen://settings/privacy?group=safety-check`, the group the landing) and does not end
+ *     the run – Chrome's Review is a look, not a fix (`SafetyHubMagicStackMediator.java`) – the
+ *     settings tab closed, the page is back with the card still in the stack, the strip swiped
+ *     home for the steps after.
+ *  4. A card's ⋮ opens the shared local menu titled by the module, Hide This and Customise its
  *     rows; Hide This (a measured scene, `magic-stack-hide`) writes the device's hidden set,
  *     fades the card out over 120 ms and glides the cards after it into the gap on the FLIP
  *     spring – a probe on the strip records the fade's start and end, the card's removal and the
  *     siblings' transform frames while the finger's act runs.
- *  4. Customise from the ⋮ opens the "Cards" sheet of switch rows, the hidden card's switch off;
+ *  5. Customise from the ⋮ opens the "Cards" sheet of switch rows, the hidden card's switch off;
  *     a finger on it re-enables the card, which arrives in view behind the sheet: the strip
  *     pages to it on the spring (§9.29's arrival) and the first dot is current.
- *  5. Every switch off: the stack is gone from the page altogether (the page keeps its field and
+ *  6. Every switch off: the stack is gone from the page altogether (the page keeps its field and
  *     tiles); the sheet closed, the empty state.
- *  6. The way back with no ⋮ left: the page's gear sheet seats a Cards row first, above Layout
+ *  7. The way back with no ⋮ left: the page's gear sheet seats a Cards row first, above Layout
  *     with a hairline after it and in view at the sheet's rest height (§9.13); a finger on it
  *     swaps the sheets (one sheet over the page, §9.24) and the stack's sheet comes up; a switch
  *     on brings one card back, alone at the strip's full width and without dots; another brings
  *     the dots back, the strip paged to the card brought back ahead of the one in view.
- *  7. The Continue card's row restores the closed tab (`session.restoreClosed`; the row is the
+ *  8. The Continue card's row restores the closed tab (`session.restoreClosed`; the row is the
  *     card's whole act, there is no Reopen button): the tab comes back on its loopback page. The
- *     strip stands on the Continue card step 6 brought back (the arrival paged to it; Chrome
+ *     strip stands on the Continue card step 7 brought back (the arrival paged to it; Chrome
  *     alone would have kept the snapped Bookmarks card through the layout change and left
  *     Continue a page to the left) – a claim, and a swipe back the recovery if it does not.
  *
@@ -110,7 +124,10 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
      * The completed download: a real file under the app's files (the core asks the host whether a
      * completed row's file is still there when the list loads – `download.exists`, a `FileSink`
      * for an absolute path – and only a row whose file is qualifies for the card), and the
-     * downloads list naming it, three hours old.
+     * downloads list naming it, three hours old. And the permissions store with one site the
+     * unused-permissions sweep took a grant from two days ago (PS-41's `revokedUnused` record,
+     * the file the core reads at boot in any case): the Safety check card's one trigger here –
+     * Chrome's revoked-permissions type, the low priority, alone.
      */
     override fun seedMore(zen: File) {
         val dir = File(app.filesDir, DOWNLOAD_DIR).apply { mkdirs() }
@@ -127,6 +144,15 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
             .put("startedAt", System.currentTimeMillis() - 3 * 3_600_000L)
             .put("mimeType", "application/pdf")
         File(zen, "downloads.json").writeText(JSONObject().put("version", 1).put("items", JSONArray().put(item)).toString())
+        val now = System.currentTimeMillis()
+        val revoked = JSONObject()
+            .put("origin", REVOKED_ORIGIN)
+            .put("permissions", JSONArray().put("geolocation").put("notifications"))
+            .put("revokedAt", now - 2 * 86_400_000L)
+            .put("expiresAt", now + 28 * 86_400_000L)
+        File(zen, "permissions.json").writeText(
+            JSONObject().put("version", 1).put("decisions", JSONObject()).put("revokedUnused", JSONArray().put(revoked)).toString()
+        )
     }
 
     /** `"{{now-3h}}"` / `"{{now-2d}}"` (quotes included) become the epoch millisecond that long before now. */
@@ -168,7 +194,9 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         finding(
             "start: ${describeActive()}; defaultBrowser $defaultBrowser (the Default browser card ${if (notDefault) "expected" else "not expected"}); " +
                 "recentlyClosed ${state.optJSONArray("recentlyClosed")?.length()}; downloads ${summariseDownloads(state)}; " +
-                "bookmarks ${state.optJSONArray("bookmarks")?.length()}; hidden ${hiddenModules()}"
+                "bookmarks ${state.optJSONArray("bookmarks")?.length()}; revoked ${state.optJSONArray("revokedUnusedPermissions")}; " +
+                "safeBrowsing ${state.optJSONObject("settings")?.optJSONObject("privacy")?.opt("safeBrowsingEnabled")}; " +
+                "safety card memory ${state.optJSONObject("newTabSafetyHubCard")}; hidden ${hiddenModules()}"
         )
 
         // The first menu pays for layout and compilation: open it once off camera.
@@ -203,6 +231,7 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         still("page")
         theStackOnThePage()
         pageBySwipe()
+        theSafetyCheckCard()
         hideACard()
         customiseBringsItBack()
         theEmptyState()
@@ -211,7 +240,7 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         finding("\nend: ${describeActive()}; ${failures.size} claim(s) failed${if (failures.isEmpty()) "" else ": " + failures.joinToString("; ")}")
     }
 
-    /** The stack's cards on a fresh page: the three the seed gives, and the reminder where the host is not the default. */
+    /** The stack's cards on a fresh page: the four the seed gives, and the reminder where the host is not the default. */
     private fun expectedCards(): List<String> = if (notDefault) MODULES else MODULES.filter { it != "default-browser" }
 
     // --- 1. the stack on the page ----------------------------------------------------------------
@@ -235,7 +264,8 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
                 "the cards are named for TalkBack, the module first then what it holds",
                 labels.contains("Continue where you left off: ${tides.title}") &&
                     labels.contains("Downloads: $DOWNLOAD_NAME") &&
-                    labels.contains("Bookmarks: ${sites[2].title}, ${sites[3].title}"),
+                    labels.contains("Bookmarks: ${sites[2].title}, ${sites[3].title}") &&
+                    labels.contains(SAFETY_CARD_LABEL),
                 "stack-card-names"
             )
             expect("every card is a page surface (data-surface page)", chromeValue("String(${ALL_PAGE_SURFACES_JS})") == "true", "stack-card-surface")
@@ -262,7 +292,7 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
                 for (id in expected) list.put(JSONArray().put(id).put(JSONArray(actionsFor(id))))
             }.toString()
             finding("  the cards' actions: $actions")
-            expect("one action a card and only one its rows do not already do – none on Continue, See all on Downloads and Bookmarks, Set as default on the reminder", actions == actionsExpected, "stack-actions")
+            expect("one action a card and only one its rows do not already do – none on Continue, See all on Downloads and Bookmarks, Review on Safety check, Set as default on the reminder", actions == actionsExpected, "stack-actions")
             val detail = chromeValue(CONTINUE_DETAIL_JS)
             expect("the Continue card's detail reads the host then the time ('$detail'; the seed closed the tab an hour ago)", detail == "127.0.0.1 · 1 h ago", "stack-continue-detail")
             val mores = chromeValue(MORE_LABELS_JS)
@@ -363,10 +393,110 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         return Swipe(from.x, from.y, nudge, travel)
     }
 
-    // --- 3. Hide This -----------------------------------------------------------------------------
+    // --- 3. the Safety check card ---------------------------------------------------------------
+
+    /**
+     * NTP-19's card (W6-E9): swiped to a card at a time (the strip's `scroll-snap-stop: always`
+     * holds a fling to the next card; the strip scrolled to the card by the DOM is the recovery
+     * should a swipe stop short), its face read from the DOM against Chrome's and the gate's
+     * numbers – the tile the page's own (a `.zen-ntp-tile`'s radius, 56 with a 24 glyph, on the
+     * card surface's `--v2-fill` – a page surface's fill, where the shortcuts on the window read
+     * the window family's; the image's WebView 113 knows neither `corner-shape` nor `text-wrap:
+     * balance`, so the squircle and the balanced title are the device's, noted here from
+     * `CSS.supports`), the memory read from the core before and after the finger. Review opens
+     * the Settings tab; the tab is closed through the core (`tab.close`) and the new tab page
+     * made active again, the strip swiped home for the Hide This step, which wants the Continue
+     * card in view.
+     */
+    private fun theSafetyCheckCard() {
+        step("3. The Safety check card: the seeded revoked permission gives Chrome's low-priority type alone, fourth in the stack – the page's tile with the check, 'Removed permissions for 1 site', no summary, one filled Review named 'Review Safety check'; Review opens Settings on the Safety check group in a new tab and does not end the run") {
+            val ntpTabId = activeCoreTab()?.optString("id").orEmpty()
+            val expected = expectedCards()
+            val index = expected.indexOf("safety-hub")
+            if (index < 0) error("the stack's expected order has no Safety check card")
+            for (page in 1..index) {
+                swipeStrip(forward = true)
+                SystemClock.sleep(900)
+                if (!awaitChrome(dotCurrentJs(page), 4_000)) finding("  the swipe to page ${page + 1} did not take: ${geometry()}")
+            }
+            SystemClock.sleep(400)
+            var stood = geometry()
+            if (stood.optInt("selected") != index) {
+                chromeValue(SCROLL_TO_SAFETY_JS)
+                SystemClock.sleep(1_000)
+                stood = geometry()
+                finding("  the swipes stopped short of the card: the strip scrolled to it by the DOM, now $stood")
+            }
+            expect("the strip stands on the Safety check card, page ${index + 1} of ${expected.size} (selected ${stood.optInt("selected")}, status '${stood.optString("status")}')", stood.optInt("selected") == index && stood.optString("status") == "Page ${index + 1} of ${expected.size}", "safety-page")
+            val face = runCatching { JSONObject(chromeValue(SAFETY_FACE_JS)) }.getOrElse { JSONObject() }
+            finding("  the card's face: $face")
+            finding("  the WebView's CSS: ${chromeValue(CSS_SUPPORT_JS)}")
+            expect("the card is the revoked-permissions type – the seed's one record; Safe Browsing on and no password checkup leave the two higher types nothing – titled 'Removed permissions for 1 site' with no summary, as Chrome's ('${face.optString("title")}', summary ${face.opt("summary")})", face.optString("type") == "revoked-permissions" && face.optString("title") == "Removed permissions for 1 site" && face.isNull("summary"), "safety-type")
+            expect("the card is named for TalkBack '$SAFETY_CARD_LABEL' ('${face.optString("label")}')", face.optString("label") == SAFETY_CARD_LABEL, "safety-name")
+            val tile = face.optJSONObject("tile")
+            val shortcut = tile?.optJSONObject("shortcut")
+            expect(
+                "the tile is the page's own: 56 with a 24 glyph at the shortcuts' radius, on the card surface's --v2-fill and no wash (tile ${tile?.optInt("w")} × ${tile?.optInt("h")}, radius ${tile?.optString("radius")}, fill ${tile?.optString("background")} against the surface's ${face.optString("fill")}, glyph ${tile?.optInt("glyph")}; a shortcut tile radius ${shortcut?.optString("radius")} on the window's ${shortcut?.optString("background")})",
+                tile != null && shortcut != null && tile.optInt("w") == 56 && tile.optInt("h") == 56 && tile.optInt("glyph") == 24 &&
+                    tile.optString("radius") == "8px" && tile.optString("radius") == shortcut.optString("radius") && tile.optString("background") == face.optString("fill"),
+                "safety-tile"
+            )
+            expect("the title block: 17/600 on 22, the one line of the type's title (${face.optString("titleFont")})", face.optString("titleFont") == "17px/600/22px", "safety-title-scale")
+            expect("one filled button, 'Review', named 'Review Safety check' (${face.optInt("buttons")} button(s): '${face.optString("button")}' / '${face.optString("buttonLabel")}', primary ${face.optBoolean("primary")})", face.optInt("buttons") == 1 && face.optString("button") == "Review" && face.optString("buttonLabel") == "Review Safety check" && face.optBoolean("primary"), "safety-button")
+            val before = safetyMemory()
+            finding("  the memory before the finger: $before")
+            expect("the impression is on the card's memory: the run open since the stack's mount, an impression counted, no run ended (activeSince ${before?.opt("activeSince")}, impressions ${before?.optInt("impressions")}, runs ${before?.optInt("runs")})", before != null && !before.isNull("activeSince") && before.optInt("impressions") >= 1 && before.optInt("runs") == 0, "safety-memory")
+            still("safety-card")
+
+            val tabsBefore = tabCount()
+            val opened = touchDomExpecting("the Safety check card's Review button", SAFETY_ACTION_JS, "a Settings tab on the Safety check group is the active tab", 10_000) {
+                activeUrl().startsWith(SAFETY_SETTINGS_URL) && tabCount() == tabsBefore + 1
+            }
+            val settingsTab = activeCoreTab()?.takeIf { it.optString("url").startsWith(SAFETY_SETTINGS_URL) }?.optString("id").orEmpty()
+            finding("  ${describeActive()} (tabs were $tabsBefore)")
+            expect("Review opens Settings on the Safety check group in a new tab in front ($SAFETY_SETTINGS_URL)", opened && settingsTab.isNotEmpty(), "safety-review-opens")
+            val landed = settingsTab.isNotEmpty() && awaitPage(settingsTab, SAFETY_LANDED_JS, 10_000)
+            finding("  the settings page: ${if (settingsTab.isEmpty()) "no tab" else pageJs(settingsTab, SAFETY_LANDING_JS)}")
+            expect("the page lands on the Safety check group – the group marked as the landing, its top in the viewport's upper part, its heading 'Safety check'", landed, "safety-landing")
+            SystemClock.sleep(800)
+            still("safety-review-settings")
+            val after = safetyMemory()
+            finding("  the memory after Review: $after")
+            expect("Review does not end the run – Chrome's Review is a look, not a fix; the two asks' buttons dismiss, this one does not (activeSince ${after?.opt("activeSince")}, runs ${after?.optInt("runs")})", after != null && !after.isNull("activeSince") && after.optInt("runs") == 0, "safety-review-keeps-run")
+
+            if (settingsTab.isNotEmpty() && settingsTab != ntpTabId) coreInvoke("tab.close", "{\"tabId\":${JSONObject.quote(settingsTab)}}")
+            SystemClock.sleep(1_200)
+            if (ntpTabId.isNotEmpty()) ensureActive(ntpTabId)
+            val back = awaitChrome("document.querySelectorAll('.zen-mstack-card').length===${expected.size}", 8_000)
+            SystemClock.sleep(600)
+            val ids = cardIds()
+            expect("the settings tab closed, the new tab page is back with its ${expected.size} cards, the Safety check card still among them ($ids)", back && activeUrl() == BLANK_URL && ids == expected, "safety-back")
+            var home = geometry()
+            var swipes = 0
+            while (home.optInt("selected") > 0 && swipes < expected.size) {
+                val target = home.optInt("selected") - 1
+                swipeStrip(forward = false)
+                swipes++
+                SystemClock.sleep(900)
+                awaitChrome(dotCurrentJs(target), 4_000)
+                home = geometry()
+            }
+            if (home.optInt("selected") != 0 || home.optInt("scrollLeft") > 4) {
+                chromeValue(SCROLL_HOME_JS)
+                SystemClock.sleep(1_000)
+                home = geometry()
+                finding("  the swipes back stopped short of the first card: the strip scrolled home by the DOM, now $home")
+            }
+            finding("  home after $swipes swipe(s) back: $home")
+            expect("the strip stands on the first card again for the steps after (selected ${home.optInt("selected")}, scrollLeft ${home.optInt("scrollLeft")})", home.optInt("selected") == 0 && home.optInt("scrollLeft") <= 4, "safety-home")
+            SystemClock.sleep(400)
+        }
+    }
+
+    // --- 4. Hide This -----------------------------------------------------------------------------
 
     private fun hideACard() {
-        step("3. A card's ⋮ opens the module's menu (Hide This, Customise); Hide This writes the hidden set, fades the card over 120 ms and glides the rest into the gap") {
+        step("4. A card's ⋮ opens the module's menu (Hide This, Customise); Hide This writes the hidden set, fades the card over 120 ms and glides the rest into the gap") {
             val id = "continue"
             val title = moduleTitle(id)
             if (!touchControl("More options for $title", moreJs(id))) error("no ⋮ on the $title card")
@@ -404,10 +534,10 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         }
     }
 
-    // --- 4. Customise -----------------------------------------------------------------------------
+    // --- 5. Customise -----------------------------------------------------------------------------
 
     private fun customiseBringsItBack() {
-        step("4. Customise from the ⋮ opens the stack's sheet of switch rows, the hidden card's off; a finger on it brings the card back behind the sheet, the strip paged to it") {
+        step("5. Customise from the ⋮ opens the stack's sheet of switch rows, the hidden card's off; a finger on it brings the card back behind the sheet, the strip paged to it") {
             val first = cardIds().firstOrNull() ?: error("no card left on the page")
             val title = moduleTitle(first)
             if (!touchControl("More options for $title", moreJs(first))) error("no ⋮ on the $title card")
@@ -424,7 +554,7 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
             val switches = switchStates()
             finding("  the sheet's switches: $switches; sheets ${sheetsPresented()}")
             val expected = JSONObject().also { for (id in MODULES) it.put(moduleTitle(id), id != "continue") }
-            expect("one switch per module the host has (the four: Android can ask to be the default), the hidden card's off: $switches", sameStates(switches, expected), "customise-switches")
+            expect("one switch per module the host has (the five: Android can ask to be the default), the hidden card's off: $switches", sameStates(switches, expected), "customise-switches")
             val note = chromeValue("((document.querySelector('.zen-sheet .zen-v2-description')||{}).textContent||'').trim()")
             expect("the sheet says a card appears only when it has something to show ('$note')", note == "A card appears only when it has something to show.", "customise-note")
             still("customise-sheet")
@@ -445,10 +575,10 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         }
     }
 
-    // --- 5. the empty state -----------------------------------------------------------------------
+    // --- 6. the empty state -----------------------------------------------------------------------
 
     private fun theEmptyState() {
-        step("5. Every switch off: the stack is gone from the page, the page keeps its field and tiles") {
+        step("6. Every switch off: the stack is gone from the page, the page keeps its field and tiles") {
             if (!sheetPresented(SHEET_TITLE)) error("the '$SHEET_TITLE' sheet is not up")
             for (id in MODULES) {
                 val title = moduleTitle(id)
@@ -470,10 +600,10 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         }
     }
 
-    // --- 6. the way back through the gear ---------------------------------------------------------
+    // --- 7. the way back through the gear ---------------------------------------------------------
 
     private fun theWayBack() {
-        step("6. With no ⋮ left, the page's gear sheet seats a Cards row first, above Layout and in view at rest; it swaps the sheets, a switch brings one card back alone at full width, another brings the dots back and the strip pages to it") {
+        step("7. With no ⋮ left, the page's gear sheet seats a Cards row first, above Layout and in view at rest; it swaps the sheets, a switch brings one card back alone at full width, another brings the dots back and the strip pages to it") {
             if (!touchControl(GEAR_LABEL, GEAR_JS)) error("no gear on the page")
             val gear = awaitSheet(GEAR_TITLE, 8_000)
             awaitSheetAtRest(6_000)
@@ -525,11 +655,11 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         }
     }
 
-    // --- 7. the Continue card's row --------------------------------------------------------------
+    // --- 8. the Continue card's row --------------------------------------------------------------
 
     private fun reopenFromContinue() {
-        step("7. The Continue card's row restores the closed tab on its page (the row is the card's whole act; there is no Reopen button)") {
-            // Step 6 brought Bookmarks back first and Continue after it, ahead of it in the order.
+        step("8. The Continue card's row restores the closed tab on its page (the row is the card's whole act; there is no Reopen button)") {
+            // Step 7 brought Bookmarks back first and Continue after it, ahead of it in the order.
             // Chrome alone keeps the snapped card through the layout change and would leave the
             // Continue card a page to the left; the arrival paged the strip to it (§9.29), and it
             // stands there with the sheet gone. The dots take no tap; were the card a page to the
@@ -572,10 +702,14 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
 
     private fun hiddenModules(): String = coreState().optJSONArray("newTabHiddenModules")?.toString() ?: "[]"
 
+    /** The Safety check card's memory for the revoked type (`newTabDevice.safetyHubCard`, read through `UIState.newTabSafetyHubCard`), or null before a record exists. */
+    private fun safetyMemory(): JSONObject? = coreState().optJSONObject("newTabSafetyHubCard")?.optJSONObject("revoked-permissions")
+
     private fun moduleTitle(id: String): String = when (id) {
         "continue" -> "Continue where you left off"
         "downloads" -> "Downloads"
         "bookmarks" -> "Bookmarks"
+        "safety-hub" -> "Safety check"
         "default-browser" -> "Default browser"
         else -> id
     }
@@ -611,6 +745,35 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         }
         Log.w(tag, "gave up waiting for $url")
         return false
+    }
+
+    // --- a page tab ------------------------------------------------------------------------------
+
+    /** Evaluate in the tab `tabId`'s page (the Settings tab Review opens); the value as text, as [chromeValue] gives the chrome's ("" when the tab or its answer is missing). */
+    private fun pageJs(tabId: String, code: String): String {
+        var raw: String? = null
+        val latch = CountDownLatch(1)
+        instrumentation.runOnMainSync {
+            val view = (activity as MainActivity).host.tabs.get(tabId)
+            if (view == null) latch.countDown()
+            else view.evaluateJavascript(code) { value ->
+                raw = value
+                latch.countDown()
+            }
+        }
+        latch.await(10, TimeUnit.SECONDS)
+        val text = raw ?: return ""
+        return runCatching { JSONTokener(text).nextValue() }.getOrNull()?.takeIf { it != JSONObject.NULL }?.toString() ?: ""
+    }
+
+    /** Poll the tab's page until the expression `code` is true there; false when it is not in time. */
+    private fun awaitPage(tabId: String, code: String, timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (pageJs(tabId, "String(!!($code))") == "true") return true
+            SystemClock.sleep(250)
+        }
+        return pageJs(tabId, "String(!!($code))") == "true"
     }
 
     // --- the chrome ------------------------------------------------------------------------------
@@ -782,11 +945,17 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         private const val GEAR_LABEL = "Customise the new tab page"
         private const val SHEET_TITLE = "Cards"
         private const val GEAR_TITLE = "New tab page"
-        /** The modules in the stack's fixed order (`magicStackPlan.ts`); the sheet lists all four on Android, which can ask to be the default. */
-        private val MODULES = listOf("continue", "downloads", "bookmarks", "default-browser")
+        /** The modules in the stack's fixed order (`magicStackPlan.ts`); the sheet lists all five on Android, which can ask to be the default. */
+        private val MODULES = listOf("continue", "downloads", "bookmarks", "safety-hub", "default-browser")
         private const val DOWNLOAD_DIR = "magic-stack-demo-files"
         private const val DOWNLOAD_NAME = "field-guide.pdf"
         private val STAMP = Regex("\"\\{\\{now(?:-(\\d+)([hd]))?\\}\\}\"")
+        /** The one site the seeded permissions store says the sweep took grants from: the Safety check card's trigger. */
+        private const val REVOKED_ORIGIN = "https://forum.example"
+        /** The card's TalkBack name: the module, then Chrome's title for the revoked type at one site (`safetyHubCard.ts`). */
+        private const val SAFETY_CARD_LABEL = "Safety check: Removed permissions for 1 site"
+        /** Where Review lands: Settings' Privacy section asked for its Safety check group (`page.open` with `query.group`). */
+        private const val SAFETY_SETTINGS_URL = "zen://settings/privacy?group=safety-check"
 
         private const val SHEET_HANDLE_LABEL = "Resize sheet"
         private const val SHEET_HANDLE_JS = "document.querySelector('.zen-sheet [aria-label=\"$SHEET_HANDLE_LABEL\"]')"
@@ -866,12 +1035,50 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         private fun dotCurrentJs(i: Int) =
             "(document.querySelectorAll('.zen-ntp .zen-mstack-dot')[$i]||{hasAttribute:function(){return false}}).hasAttribute('data-current')"
 
-        /** The one action a card carries, by module: only what its rows do not already do (§9.29). */
+        /** The one action a card carries, by module: only what its rows do not already do (§9.29); the Safety check card's is the revoked type's Review. */
         private fun actionsFor(id: String): List<String> = when (id) {
             "downloads", "bookmarks" -> listOf("See all")
+            "safety-hub" -> listOf("Review")
             "default-browser" -> listOf("Set as default")
             else -> emptyList()
         }
+
+        /**
+         * The Safety check card's face (`MagicStack.tsx`, `SafetyHubCard`): the type, the card's
+         * name, the title and summary texts, the tile's box, radius, corner shape, fill, ink and
+         * glyph width, the card surface's own `--v2-fill` resolved through a probe element (the
+         * gate on #642: the tile is the page's tile on the surface's fill – a page surface's
+         * `--v2-fill`; the shortcuts on the window read the window family's fill), a shortcut
+         * tile's radius, corner shape and fill beside it, the title's font as size/weight/line,
+         * the summary's, the action buttons' count and the first one's text, name and primary
+         * mark.
+         */
+        private const val SAFETY_FACE_JS = "(function(){var c=document.querySelector('.zen-mstack-card[data-cell=\"safety-hub\"]');if(!c)return JSON.stringify({});" +
+            "var f=c.querySelector('.zen-mstack-safety'),t=c.querySelector('.zen-mstack-safety-tile'),g=t?t.querySelector('svg'):null;" +
+            "var ti=c.querySelector('.zen-mstack-safety-title'),su=c.querySelector('.zen-mstack-safety-summary'),b=c.querySelector('.zen-mstack-action');" +
+            "var sh=document.querySelector('.zen-ntp .zen-ntp-tile');var cs=function(e){return e?getComputedStyle(e):null};var ts=cs(t),ss=cs(sh),tis=cs(ti),sus=cs(su);" +
+            "var pr=document.createElement('span');pr.style.background='var(--v2-fill)';c.appendChild(pr);var fill=getComputedStyle(pr).backgroundColor;c.removeChild(pr);" +
+            "return JSON.stringify({type:f?f.dataset.type:null,label:c.getAttribute('aria-label'),title:ti?ti.textContent.trim():null,summary:su?su.textContent.trim():null,fill:fill," +
+            "tile:t?{w:t.offsetWidth,h:t.offsetHeight,radius:ts.borderRadius,corner:ts.cornerShape||'',background:ts.backgroundColor,ink:ts.color,glyph:g?Math.round(g.getBoundingClientRect().width):0," +
+            "shortcut:sh?{radius:ss.borderRadius,corner:ss.cornerShape||'',background:ss.backgroundColor}:null}:null," +
+            "titleFont:tis?tis.fontSize+'/'+tis.fontWeight+'/'+tis.lineHeight:null,titleWrap:tis?(tis.textWrap||tis.textWrapStyle||''):null,summaryFont:sus?sus.fontSize+'/'+sus.lineHeight:null," +
+            "buttons:c.querySelectorAll('.zen-mstack-action').length,button:b?b.textContent.trim():null,buttonLabel:b?b.getAttribute('aria-label'):null,primary:!!(b&&b.hasAttribute('data-primary'))})})()"
+        /** What of the card's CSS this WebView knows: the squircle corner and the balanced title are the device's, not the image's 113. */
+        private const val CSS_SUPPORT_JS = "JSON.stringify({cornerShape:CSS.supports('corner-shape','squircle'),textWrapBalance:CSS.supports('text-wrap','balance'),colorMix:CSS.supports('color','color-mix(in srgb,red 12%,transparent)')})"
+        /** The Safety check card's one button. */
+        private const val SAFETY_ACTION_JS = "document.querySelector('.zen-mstack-card[data-cell=\"safety-hub\"] .zen-mstack-action')"
+        /** The recovery for a swipe that stopped short: the strip scrolled to the card's snap position. */
+        private const val SCROLL_TO_SAFETY_JS = "(function(){var s=document.querySelector('.zen-ntp .zen-mstack-strip'),c=document.querySelector('.zen-mstack-card[data-cell=\"safety-hub\"]');if(!s||!c)return 'no card';s.scrollTo({left:c.offsetLeft-s.offsetLeft});return 'scrolled'})()"
+        /** The recovery for the swipes home: the strip scrolled to its start. */
+        private const val SCROLL_HOME_JS = "(function(){var s=document.querySelector('.zen-ntp .zen-mstack-strip');if(!s)return 'no strip';s.scrollTo({left:0});return 'scrolled'})()"
+        /** In the Settings tab: the Safety check group is the landing (`SettingsPage.tsx` marks the group `?group=` lands `data-landing`), its top in the viewport's upper part. */
+        private const val SAFETY_LANDED_JS = "(function(){var g=document.querySelector('.zen-settings-group[data-group=\"safety-check\"]');if(!g||!g.hasAttribute('data-landing'))return false;" +
+            "var r=g.getBoundingClientRect();return r.height>0&&r.top>=-1&&r.top<window.innerHeight*0.5})()"
+        /** In the Settings tab: the landing's account – the page's mark, the group's box and heading, the viewport. */
+        private const val SAFETY_LANDING_JS = "(function(){var p=document.querySelector('.zen-settings-page'),g=document.querySelector('.zen-settings-group[data-group=\"safety-check\"]');" +
+            "var h=g?g.querySelector('.zen-v2-heading,h2,h3'):null;var r=g?g.getBoundingClientRect():null;" +
+            "return JSON.stringify({page:!!p,pageLanding:!!(p&&p.hasAttribute('data-landing')),group:!!g,groupLanding:!!(g&&g.hasAttribute('data-landing')),heading:h?h.textContent.trim():null," +
+            "box:r?[Math.round(r.left),Math.round(r.top),Math.round(r.width),Math.round(r.height)]:null,viewport:window.innerWidth+'x'+window.innerHeight,url:location.href})})()"
 
         /** The open menu sheet's row reading `label` (`MenuSheet`: a `.zen-sheet-item` whose text is the label). */
         private fun menuItemJs(label: String) =
