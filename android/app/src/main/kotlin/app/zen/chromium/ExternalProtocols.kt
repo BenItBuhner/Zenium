@@ -172,11 +172,13 @@ class ExternalProtocols(private val host: PageHost) {
 
         companion object {
             /**
-             * A package name the store URI may carry: the token the core's `intentPackage`
-             * (`src/shared/externalProtocols.ts`) reads out of an `intent://` with
-             * `/[;#]package=([a-zA-Z0-9_.]+)(?=[;#]|$)/` – anything else there is no package to
-             * the core, so it is none here. `Intent.parseUri` hands the `;package=…;` token over
-             * raw, and `Uri.encode` is a stub on the JVM, so the plan checks rather than encodes.
+             * A package name the store URI may carry: the core's `intentPackage`
+             * (`src/shared/externalProtocols.ts`) accepts a package as a whole token of the class
+             * `[a-zA-Z0-9_.]+`, and so does this – anything else is no package to the core, so it
+             * is none here. How the core finds the `package=` extra in an `intent://` is the
+             * core's business (the test reads the class off its source, not the parser's shape).
+             * `Intent.parseUri` hands the token over percent-decoded and unvalidated, and
+             * `Uri.encode` is a stub on the JVM, so the plan checks rather than encodes.
              */
             val PACKAGE = Regex("[a-zA-Z0-9_.]+")
 

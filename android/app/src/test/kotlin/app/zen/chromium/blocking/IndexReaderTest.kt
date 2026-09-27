@@ -68,8 +68,10 @@ class IndexReaderTest {
             assertEquals(e.id, e.updatedAt, s.updatedAt)
             assertEquals(e.id, e.filterCount, s.filterCount)
             assertEquals(e.id, e.partitions, s.partitions)
-            assertEquals(e.id, e.rules.map { it.id }, s.rules.map { it.id })
-            assertEquals(e.id, e.rules.map { it.effective }, s.rules.map { it.effective })
+            // The document parser compiles every set's rules; the reader leaves a disabled set's uncompiled.
+            val rules = if (e.enabled) e.rules else emptyList()
+            assertEquals(e.id, rules.map { it.id }, s.rules.map { it.id })
+            assertEquals(e.id, rules.map { it.effective }, s.rules.map { it.effective })
             assertEquals(e.id, e.textFingerprint, s.textFingerprint)
         }
     }
@@ -90,9 +92,10 @@ class IndexReaderTest {
         assertEquals("https://safe.example/noop.js", redirected.redirectUrl)
         assertEquals(Decision.Action.BLOCK, snap.decide(req("https://a.pixel.example/p", ResourceType.IMAGE, partition = "default")).action)
         assertEquals(Decision.Action.ALLOW, snap.decide(req("https://ok.pixel.example/p", ResourceType.IMAGE, partition = "default")).action)
-        // The disabled set's rule is read but takes no part; the list's entry has no rules of its own.
+        // The disabled set's rule takes no part and is not even compiled; the list's entry has no rules of its own.
         assertEquals(Decision.Action.ALLOW, snap.decide(req("https://gone.example/x.js", partition = "default")).action)
-        assertEquals(1, sets[3].rules.size)
+        assertEquals(0, sets[3].rules.size)
+        assertEquals(false, sets[3].enabled)
         assertTrue(sets[2].rules.isEmpty())
         assertEquals("easylist.json", sets[2].file)
     }
@@ -295,27 +298,36 @@ class IndexReaderTest {
         assertSame(first[0].compiled, again[0].compiled)
         assertSame(first[1].compiled, again[1].compiled)
 
-        // An enable flip, a re-scope or a new stamp rewrites the summary alone: still not opened.
+        // A re-scope or a new stamp rewrites the summary alone: still not opened, the rules shared.
+        val restamped = reading.read(index(summary(partitions = """["default"]""", updatedAt = 1700000000009L), builtinSummary, version = 2))
+        assertEquals(2, reading.opened.size)
+        assertSame(first[0].compiled, restamped[0].compiled)
+        assertEquals(setOf("default"), restamped[0].partitions)
+
+        // A flip to disabled: not opened either, and the set holds no rules any more (it is compiled again when enabled).
         val flipped = reading.read(index(summary(enabled = false, partitions = """["default"]""", updatedAt = 1700000000009L), builtinSummary, version = 2))
         assertEquals(2, reading.opened.size)
-        assertSame(first[0].compiled, flipped[0].compiled)
         assertEquals(false, flipped[0].enabled)
+        assertTrue(flipped[0].rules.isEmpty())
         assertEquals(setOf("default"), flipped[0].partitions)
+        val reenabled = reading.read(index(summary(partitions = """["default"]""", updatedAt = 1700000000009L), builtinSummary, version = 2))
+        assertEquals(3, reading.opened.size)
+        assertEquals(4, reenabled[0].rules.size)
 
         // A new tag (the rules changed) opens the document and compiles it anew; so does another
         // priority band, since the band is baked into the compiled rules.
         val retagged = reading.read(index(summary(tag = "1a3-0000000000000001"), builtinSummary, version = 2))
-        assertEquals(3, reading.opened.size)
+        assertEquals(4, reading.opened.size)
         assertNotSame(first[0].compiled, retagged[0].compiled)
         val rebanded = reading.read(index(summary(tag = "1a3-0000000000000001", priority = 2998), builtinSummary, version = 2))
-        assertEquals(4, reading.opened.size)
+        assertEquals(5, reading.opened.size)
         assertNotSame(retagged[0].compiled, rebanded[0].compiled)
         assertEquals(DnrRule.effectivePriority(2998, 2), rebanded[0].rules.first().effective)
 
         // A set gone from the index is forgotten: back with the same tag, its document is opened again.
         reading.read(index(builtinSummary, version = 2))
         val back = reading.read(index(summary(tag = "1a3-0000000000000001", priority = 2998), builtinSummary, version = 2))
-        assertEquals(5, reading.opened.size)
+        assertEquals(6, reading.opened.size)
         assertNotSame(rebanded[0].compiled, back[0].compiled)
 
         // A summary without a tag is compiled at every read.

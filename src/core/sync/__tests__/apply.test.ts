@@ -468,7 +468,7 @@ describe('applyRemote: the settings record and Settings › On startup', () => {
     expect(b.state.settings.startup).toEqual({ mode: 'newTab', pages: MINE })
   })
 
-  it('the settings record this device sends carries startup in its sanitised shape and the mirrored switch, never a stray', () => {
+  it('the settings record this device sends carries startup in its sanitised shape and no retired switch beside it, never a stray', () => {
     const b = browser()
     b.state.settings.startup = { mode: 'pages', pages: MINE }
     const record = collectLocal(
@@ -483,10 +483,8 @@ describe('applyRemote: the settings record and Settings › On startup', () => {
     ).get(SETTINGS_RECORD_ID)
     const data = record?.data as Record<string, unknown>
     expect(data.startup).toEqual({ mode: 'pages', pages: MINE })
-    expect(data.restoreSession).toBe(true)
-    expect(Object.keys(data).filter((key) => !(key in b.state.settings))).toEqual([
-      'restoreSession'
-    ])
+    expect(data).not.toHaveProperty('restoreSession')
+    expect(Object.keys(data).filter((key) => !(key in b.state.settings))).toEqual([])
   })
 })
 

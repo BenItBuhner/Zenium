@@ -1,4 +1,5 @@
 import type { ExtensionControl } from '../../../shared/types'
+import type { ApiHost } from './types'
 
 /** Where the merged map goes: the core's state (`State.setExtensionControls`). */
 export interface ExtensionControlsSink {
@@ -9,9 +10,9 @@ export interface ExtensionControlsSink {
  * The settings the extensions hold, for the Settings page's "Controlled by <extension>" rows
  * (`UIState.extensionControls`, Chrome's extension-controlled indicator). Each API that keeps
  * a layer of extension values over a user setting publishes the keys it holds under its own
- * name – `fontSettings` today; `privacy`, `proxy` as they take the primitive – and the sink
- * gets the merge of every API's map, so one API's re-publish never drops another's keys. A
- * publish that changes nothing stops here: the state would otherwise commit a snapshot for it.
+ * name – `fontSettings`, `privacy`, `proxy`, `searchProvider` – and the sink gets the merge of
+ * every API's map, so one API's re-publish never drops another's keys. A publish that changes
+ * nothing stops here: the state would otherwise commit a snapshot for it.
  */
 export class ExtensionControls {
   private readonly byApi = new Map<string, Record<string, ExtensionControl>>()
@@ -47,6 +48,8 @@ function sameControls(
       other !== undefined &&
       other.extensionId === a[key].extensionId &&
       other.name === a[key].name &&
+      // The value in effect is part of what the row shows: the same extension moving its own
+      // value (a family, a proxy mode, a switch, a page list) is a change the row must see.
       sameValue(other.value, a[key].value)
     )
   })
@@ -59,4 +62,15 @@ function sameValue(a: ExtensionControl['value'], b: ExtensionControl['value']): 
       Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => v === b[i])
     )
   return a === b
+}
+
+/**
+ * The extension's name as the Extensions page shows it, for a control's "Controlled by <name>"
+ * (the browser's record first, then the engine's, then the id when nothing better is known).
+ */
+export function extensionName(host: ApiHost, extensionId: string): string {
+  const info = host.browser.extensions.list().find((record) => record.id === extensionId)
+  if (info?.name) return info.name
+  const loaded = host.loaded(extensionId)
+  return loaded?.extension.name || extensionId
 }

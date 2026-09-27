@@ -99,6 +99,7 @@ function state(): UIState {
     } as Settings,
     shortcuts: defaultShortcuts('linux', 'chrome'),
     searchEngines: ENGINES,
+    extensionControls: {},
     glance: null,
     compactSidebarRevealed: false,
     window: { id: 'w', kind: 'main', maximized: false, fullscreen: false, focused: true },

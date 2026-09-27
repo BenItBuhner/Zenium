@@ -3,6 +3,9 @@ package app.zen.chromium.blocking
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
+import java.io.IOException
+import java.io.Reader
+import java.io.StringReader
 
 /**
  * Reads `blocking/index.json` – what `RuleSetStore` (`store.ts`) writes: one summary per set
@@ -30,8 +33,29 @@ import org.json.JSONObject
  * malformed (half-written) is left out with a line to `log`, never a failed read: the index
  * that follows the document's rewrite brings it back. One reader per engine, used on its
  * builder thread only.
+ *
+ * Four economies of a read, measured on the JVM for a 61 K-rule set (`RuleMemoryTest`):
+ * - A DISABLED set is not compiled. Its summary is read and kept (the snapshot lists it), its
+ *   document stays closed and it holds no [DnrRule]; the read that finds it enabled compiles
+ *   it then, the way a changed set is compiled. A set that flips to disabled is dropped from
+ *   the compiled ones with the same read.
+ * - A set document is STREAMED from its file ([Documents]): the cursor scans a bounded buffer,
+ *   one rule's text at a time, so a changed set costs its largest rule's text while it is
+ *   read, not the whole document as a `String` and again as a `char[]` (three bytes per
+ *   character of document, live for the length of the parse).
+ * - The strings and domain sets of one read are INTERNED ([Interner]): rules of every set
+ *   compiled in the read share one instance per distinct domain, hostname and domain list –
+ *   the lists over [SortedDomainSet.THRESHOLD] excepted, which are close to all distinct.
+ * - A domain list over that threshold is a [SortedDomainSet] (a sorted array, a reference per
+ *   domain), and a rule whose `requestDomains` run past [RuleIndex.BIG_LIST] stands in the
+ *   index on its own rather than as an entry per domain of the host map.
  */
 internal class IndexReader(private val log: (String) -> Unit = {}) {
+    /** Where a set's document is read from: a reader over its text, or null when there is none. */
+    fun interface Documents {
+        fun open(name: String): Reader?
+    }
+
     private var compiled: Map<String, CompiledRules> = emptyMap()
 
     /**
@@ -39,15 +63,23 @@ internal class IndexReader(private val log: (String) -> Unit = {}) {
      * from the documents `document` opens – the text of `blocking/<name>`, null when there is
      * none. Throws [JSONException] on malformed index text.
      */
-    fun read(raw: String, document: (String) -> String? = { null }): List<RuleSetInfo> {
+    fun read(raw: String, document: (String) -> String? = { null }): List<RuleSetInfo> =
+        read(raw, Documents { name -> document(name)?.let { StringReader(it) } })
+
+    /**
+     * The sets of the index `raw`, their rules streamed from the documents `documents` opens
+     * (closed here). Throws [JSONException] on malformed index text.
+     */
+    fun read(raw: String, documents: Documents): List<RuleSetInfo> {
         val c = Cursor(raw, "blocking index")
         val next = HashMap<String, CompiledRules>()
+        val intern = Interner()
         var version = -1
         var sets: List<RuleSetInfo> = emptyList()
         c.objectEntries { key ->
             when (key) {
                 "version" -> version = c.int()
-                "sets" -> sets = readSets(c, next, document)
+                "sets" -> sets = readSets(c, next, documents, intern)
                 else -> c.skipValue()
             }
         }
@@ -57,16 +89,16 @@ internal class IndexReader(private val log: (String) -> Unit = {}) {
         return sets
     }
 
-    private fun readSets(c: Cursor, next: HashMap<String, CompiledRules>, document: (String) -> String?): List<RuleSetInfo> {
+    private fun readSets(c: Cursor, next: HashMap<String, CompiledRules>, documents: Documents, intern: Interner): List<RuleSetInfo> {
         val out = ArrayList<RuleSetInfo>()
         c.arrayElements {
             // An element that is not an object is left out, as the document parser leaves it out.
-            if (c.atObject()) readSet(c, next, document)?.let { out.add(it) } else c.skipValue()
+            if (c.atObject()) readSet(c, next, documents, intern)?.let { out.add(it) } else c.skipValue()
         }
         return out
     }
 
-    private fun readSet(c: Cursor, next: HashMap<String, CompiledRules>, document: (String) -> String?): RuleSetInfo? {
+    private fun readSet(c: Cursor, next: HashMap<String, CompiledRules>, documents: Documents, intern: Interner): RuleSetInfo? {
         var id = ""
         var source = "filter-list"
         var priority: Int? = null
@@ -79,7 +111,7 @@ internal class IndexReader(private val log: (String) -> Unit = {}) {
         var tag: String? = null
         var partitions: HashSet<String>? = null
         var rules: CompiledRules? = null
-        var deferred: IntRange? = null
+        var deferred: String? = null
         c.objectEntries { key ->
             when (key) {
                 "id" -> id = c.stringOrNull() ?: ""
@@ -95,8 +127,11 @@ internal class IndexReader(private val log: (String) -> Unit = {}) {
                 "partitions" -> partitions = c.strings()
                 "rules" -> {
                     val p = priority
-                    if (p == null) {
-                        deferred = c.skipValue()
+                    if (!enabled) {
+                        // The store writes `enabled` ahead of `rules`: a disabled set's inline rules are stepped over, never built.
+                        c.skipValue()
+                    } else if (p == null) {
+                        deferred = c.valueText()
                     } else {
                         val fingerprint = fingerprintOf(source, p, updatedAt)
                         val previous = known(id, fingerprint)
@@ -104,7 +139,7 @@ internal class IndexReader(private val log: (String) -> Unit = {}) {
                             c.skipValue()
                             rules = previous
                         } else {
-                            rules = readRules(c, p, fingerprint)
+                            rules = readRules(c, p, fingerprint, intern)
                         }
                     }
                 }
@@ -116,13 +151,15 @@ internal class IndexReader(private val log: (String) -> Unit = {}) {
         val pending = deferred
         val documentName = name
         val result = when {
+            // Not compiled and not carried: a disabled set costs its summary. The read that finds it enabled compiles it.
+            !enabled -> CompiledRules.NONE
             documentName != null && documentName.isNotEmpty() -> {
                 val fingerprint = fingerprintOf(p, tag)
-                known(id, fingerprint) ?: readDocument(id, documentName, p, fingerprint, document) ?: return null
+                known(id, fingerprint) ?: readDocument(id, documentName, p, fingerprint, documents, intern) ?: return null
             }
             pending != null -> {
                 val fingerprint = fingerprintOf(source, p, updatedAt)
-                known(id, fingerprint) ?: CompiledRules.parse(JSONArray(c.text(pending)), p, fingerprint)
+                known(id, fingerprint) ?: CompiledRules.parse(JSONArray(pending), p, fingerprint, intern)
             }
             else -> rules ?: CompiledRules.NONE
         }
@@ -147,43 +184,48 @@ internal class IndexReader(private val log: (String) -> Unit = {}) {
 
     /**
      * The set document `name` of set `id` (`{"id", "rules"}`, `store.ts`'s `SetDocument`)
-     * compiled; null, with a line to [log], when it is missing, is another set's, or is not a
-     * document (a write cut short) – the set is left out of this read.
+     * compiled, streamed from `documents`; null, with a line to [log], when it is missing, is
+     * another set's, is not a document (a write cut short) or cannot be read – the set is left
+     * out of this read.
      */
-    private fun readDocument(id: String, name: String, priority: Int, fingerprint: String?, document: (String) -> String?): CompiledRules? {
-        val text = document(name)
-        if (text == null) {
+    private fun readDocument(id: String, name: String, priority: Int, fingerprint: String?, documents: Documents, intern: Interner): CompiledRules? {
+        val reader = documents.open(name)
+        if (reader == null) {
             log("blocking set $id left out: its document $name is missing")
             return null
         }
         return try {
-            val c = Cursor(text, "blocking set document $name")
-            var documentId: String? = null
-            var rules: CompiledRules? = null
-            c.objectEntries { key ->
-                when (key) {
-                    "id" -> documentId = c.stringOrNull()
-                    "rules" -> rules = readRules(c, priority, fingerprint)
-                    else -> c.skipValue()
+            reader.use { r ->
+                val c = Cursor(r, "blocking set document $name")
+                var documentId: String? = null
+                var rules: CompiledRules? = null
+                c.objectEntries { key ->
+                    when (key) {
+                        "id" -> documentId = c.stringOrNull()
+                        "rules" -> rules = readRules(c, priority, fingerprint, intern)
+                        else -> c.skipValue()
+                    }
                 }
+                c.end()
+                if (documentId != id) {
+                    log("blocking set $id left out: $name is the document of ${documentId ?: "no set"}")
+                    null
+                } else rules ?: CompiledRules.of(ArrayList(), fingerprint)
             }
-            c.end()
-            if (documentId != id) {
-                log("blocking set $id left out: $name is the document of ${documentId ?: "no set"}")
-                null
-            } else rules ?: CompiledRules.of(ArrayList(), fingerprint)
         } catch (e: JSONException) {
             log("blocking set $id left out: ${e.message}")
+            null
+        } catch (e: IOException) {
+            log("blocking set $id left out: $name could not be read (${e.message})")
             null
         }
     }
 
     /** One rule at a time: a rule's object is the only document built, and only until it is compiled. */
-    private fun readRules(c: Cursor, priority: Int, fingerprint: String?): CompiledRules {
+    private fun readRules(c: Cursor, priority: Int, fingerprint: String?, intern: Interner): CompiledRules {
         val out = ArrayList<DnrRule>()
         c.arrayElements {
-            val range = c.skipValue()
-            if (c.charAt(range.first) == '{') DnrRule.parse(JSONObject(c.text(range)), priority)?.let { out.add(it) }
+            if (c.atObject()) DnrRule.parse(JSONObject(c.valueText()), priority, intern)?.let { out.add(it) } else c.skipValue()
         }
         return CompiledRules.of(out, fingerprint)
     }
@@ -206,33 +248,84 @@ internal class IndexReader(private val log: (String) -> Unit = {}) {
 
 /**
  * A position in JSON text that steps over values without building them (RFC 8259 grammar; a
- * malformed document is a [JSONException] at the offending offset, naming `what`). Works on the
- * text as a `char[]`: with uBlock Origin Lite's sets at 7.7 M chars between them, and read
- * whole at first start and whenever they change, the scan is the cost, and the emulator's debug
- * APK runs it without the JIT that hides `String.charAt`'s dispatch – array reads keep it about
- * `org.json`'s own tokeniser's speed while allocating a fraction of what building its tree would.
+ * malformed document is a [JSONException] at the offending offset, naming `what`). Works on a
+ * `char[]`: with uBlock Origin Lite's sets at 7.7 M chars between them, and read whole at first
+ * start and whenever they change, the scan is the cost, and the emulator's debug APK runs it
+ * without the JIT that hides `String.charAt`'s dispatch – array reads keep it about `org.json`'s
+ * own tokeniser's speed while allocating a fraction of what building its tree would.
+ *
+ * Over a [Reader] the array is a window onto the stream (32 K chars, grown only for a value
+ * longer than that – uBlock Origin Lite folds a hosts file into one rule's `requestDomains`),
+ * refilled as the scan reaches its end; the text of the value being spanned ([valueText],
+ * [string], a literal) is kept through refills and nothing before it is. Over a [String] the
+ * array is the whole text, as before – the index is a few kilobytes of summaries.
  */
-private class Cursor(s: String, private val what: String) {
-    private val a: CharArray = s.toCharArray()
-    private val n = a.size
+private class Cursor private constructor(private val source: Reader?, buffer: CharArray, filled: Int, private val what: String) {
+    constructor(text: String, what: String) : this(null, text.toCharArray(), text.length, what)
+    constructor(reader: Reader, what: String) : this(reader, CharArray(WINDOW), 0, what)
+
+    private var a: CharArray = buffer
+    /** Chars of `a` that hold input. */
+    private var n = filled
+    /** The position. */
     private var i = 0
+    /** No input follows `a[n - 1]`. */
+    private var eof = source == null
+    /** Start of the value being spanned, kept through refills; -1 between spans. */
+    private var mark = -1
+    /** Chars dropped from the front of the window (for offsets in messages). */
+    private var dropped = 0L
 
-    fun charAt(index: Int): Char = a[index]
+    /** Whether `a[i]` holds input, refilling the window when the scan has reached its end. */
+    private fun more(): Boolean {
+        if (i < n) return true
+        if (eof) return false
+        refill()
+        return i < n
+    }
 
-    fun text(range: IntRange): String = String(a, range.first, range.last - range.first + 1)
+    private fun refill() {
+        val keep = if (mark >= 0) mark else i
+        if (keep > 0) {
+            System.arraycopy(a, keep, a, 0, n - keep)
+            n -= keep
+            i -= keep
+            if (mark >= 0) mark -= keep
+            dropped += keep
+        }
+        if (n == a.size) a = a.copyOf(a.size * 2)
+        while (true) {
+            val read = source!!.read(a, n, a.size - n)
+            if (read < 0) {
+                eof = true
+                return
+            }
+            if (read > 0) {
+                n += read
+                return
+            }
+        }
+    }
+
+    /** Runs `step` (which advances the position) with the text from the position kept, and hands its window indices to `result`. */
+    private inline fun <T> spanned(step: () -> Unit, result: (start: Int, end: Int) -> T): T {
+        mark = i
+        step()
+        val start = mark
+        mark = -1
+        return result(start, i)
+    }
 
     private fun whitespace() {
-        var j = i
-        while (j < n) {
-            val ch = a[j]
-            if (ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t') j++ else break
+        while (i < n || more()) {
+            val ch = a[i]
+            if (ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t') i++ else return
         }
-        i = j
     }
 
     private fun peek(): Char {
         whitespace()
-        return if (i < n) a[i] else END
+        return if (i < n || more()) a[i] else END
     }
 
     private fun take(ch: Char): Boolean {
@@ -245,7 +338,7 @@ private class Cursor(s: String, private val what: String) {
         if (!take(ch)) fail("'$ch'")
     }
 
-    private fun fail(expected: String): Nothing = throw JSONException("$what: expected $expected at offset $i")
+    private fun fail(expected: String): Nothing = throw JSONException("$what: expected $expected at offset ${dropped + i}")
 
     /** Nothing but whitespace may follow the document. */
     fun end() {
@@ -279,9 +372,7 @@ private class Cursor(s: String, private val what: String) {
 
     fun string(): String {
         if (peek() != '"') fail("a string")
-        val start = i + 1
-        skipString()
-        return decode(start, i - 1)
+        return spanned({ skipString() }) { start, end -> decode(start + 1, end - 1) }
     }
 
     fun stringOrNull(): String? {
@@ -316,28 +407,33 @@ private class Cursor(s: String, private val what: String) {
     /** A number, `true`, `false` or `null`, as written. */
     private fun literal(): String {
         peek()
-        val start = i
-        var j = i
-        while (j < n) {
-            val ch = a[j]
-            if (ch == ',' || ch == '}' || ch == ']' || ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t') break
-            j++
+        return spanned({ skipLiteral() }) { start, end ->
+            if (start == end) fail("a value")
+            String(a, start, end - start)
         }
-        i = j
-        if (i == start) fail("a value")
-        return String(a, start, i - start)
+    }
+
+    private fun skipLiteral() {
+        while (i < n || more()) {
+            val ch = a[i]
+            if (ch == ',' || ch == '}' || ch == ']' || ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t') return
+            i++
+        }
+    }
+
+    /** Steps over one value of any kind. */
+    fun skipValue() {
+        when (peek()) {
+            '"' -> skipString()
+            '{', '[' -> skipNested()
+            else -> skipLiteral()
+        }
     }
 
     /** Steps over one value of any kind and returns the text it spanned. */
-    fun skipValue(): IntRange {
+    fun valueText(): String {
         peek()
-        val start = i
-        when (if (i < n) a[i] else END) {
-            '"' -> skipString()
-            '{', '[' -> skipNested()
-            else -> literal()
-        }
-        return start until i
+        return spanned({ skipValue() }) { start, end -> String(a, start, end - start) }
     }
 
     /**
@@ -348,41 +444,36 @@ private class Cursor(s: String, private val what: String) {
     private fun skipNested() {
         var stack = CharArray(64)
         var top = 0
-        var j = i
-        while (j < n) {
-            when (val ch = a[j]) {
-                '"' -> {
-                    i = j
-                    skipString()
-                    j = i
-                }
+        while (i < n || more()) {
+            when (val ch = a[i]) {
+                '"' -> skipString()
                 '{', '[' -> {
                     if (top == stack.size) stack = stack.copyOf(top * 2)
                     stack[top++] = ch
-                    j++
+                    i++
                 }
                 '}', ']' -> {
                     val closer = if (stack[top - 1] == '{') '}' else ']'
-                    if (ch != closer) { i = j; fail("'$closer'") }
+                    if (ch != closer) fail("'$closer'")
                     top--
-                    j++
-                    if (top == 0) { i = j; return }
+                    i++
+                    if (top == 0) return
                 }
-                else -> j++
+                else -> i++
             }
         }
-        i = j
         fail("the end of a value")
     }
 
     /** From the opening quote past the closing one. */
     private fun skipString() {
-        var j = i + 1
-        while (j < n) {
-            val ch = a[j++]
-            if (ch == '\\') j++ else if (ch == '"') { i = j; return }
+        i++
+        while (i < n || more()) {
+            val ch = a[i++]
+            if (ch == '\\') {
+                if (i < n || more()) i++ else break
+            } else if (ch == '"') return
         }
-        i = j
         fail("the end of a string")
     }
 
@@ -431,5 +522,6 @@ private class Cursor(s: String, private val what: String) {
 
     private companion object {
         const val END = '\u0000'
+        const val WINDOW = 32 * 1024
     }
 }

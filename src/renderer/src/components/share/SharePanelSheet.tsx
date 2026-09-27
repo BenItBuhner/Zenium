@@ -1,11 +1,13 @@
+/* eslint-disable react-refresh/only-export-components -- the panel's kit: the preview and the rows the two chassis draw (the panel's own sheet, the app menu's) ship with the hook that says when the chassis draws the code sheet in their place (`useHostedQrCode`) */
 import type { JSX } from 'react'
-import { useId, useRef } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { Globe } from 'lucide-react'
 import type { SharePanelRequest, SharePanelTarget } from '@shared/types'
 import { useEscapeUnlessLeaving } from '@renderer/hooks/useEscape'
 import { run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
 import { SheetPresence, useSheetLeave } from '@renderer/lib/motion/presence'
+import { dismissQrCode, downloadQrCode } from '@renderer/lib/qrCode'
 import {
   SHARE_PANEL_MORE,
   afterPageShown,
@@ -14,10 +16,24 @@ import {
   sharePanelPreview,
   type SharePanelChip
 } from '@renderer/lib/sharePanel'
-import { answerSharePanel, openLongScreenshot, uiStore } from '@renderer/lib/ui'
+import { SHARE_SEAM_BUSY_MS } from '@renderer/lib/shareSeam'
+import {
+  answerSharePanel,
+  beginQrCodeSeam,
+  openLongScreenshot,
+  uiStore,
+  type QrCodePrompt
+} from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { RowFavicon } from '../phone/PhoneList'
+import {
+  QR_CODE_TITLE_ID,
+  QrCodeFooter,
+  QrCodeHandOff,
+  useHandOffOutgoing
+} from '../qr/QrCodeSheet'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
+import { Spinner } from '../siteControls/primitives'
 
 /**
  * The browser's own share panel (Android below 14, where the system sheet has no row for the
@@ -38,6 +54,15 @@ import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
  * one sheet, no bare page between – with the same preview and rows (`SharePanelPreview`,
  * `SharePanelContent`); this layer stands aside for it. A page's `navigator.share` and a share
  * whose menu has gone rise here on their own.
+ *
+ * The QR code chip is the one pick the panel does not leave for: the same hand-off, one sheet
+ * on (`beginQrCodeSeam`) – the panel stands, its cells inert, while the host encodes the link,
+ * and the code that comes back takes this chassis (`QrCodeHandOff`: the preview and the rows
+ * fading out over the code's content rising, the sheet re-detenting to the code's height, Close |
+ * Download in the footer), the panel's own class and header gone with its content. From then on
+ * the sheet is the code sheet's: Close, Download, back and Escape run the chassis down and end
+ * the code at the landing (`dismissQrCode` / `downloadQrCode`, which take the panel's request
+ * with it – the host heard the pick already).
  */
 export function SharePanelLayer(): JSX.Element | null {
   const request = uiStore.use((s) => s.sharePanel)
@@ -52,9 +77,11 @@ export function SharePanelLayer(): JSX.Element | null {
 function SharePanelSheet({ request }: { request: SharePanelRequest }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
   const titleId = useId()
+  const hostedCode = useHostedQrCode(request.id)
+  const outgoing = useHandOffOutgoing(hostedCode?.id ?? null)
 
   // The system back gesture pulls the sheet down like a drag; commit or the back button slides
-  // it away, which lets the share go (`onDismissed`).
+  // it away, which lets the share go (`onDismissed`) – or ends the code, once the sheet is its.
   useBackSurface({
     name: 'share-panel',
     onProgress: (progress) => sheet.current?.backProgress(progress),
@@ -66,20 +93,62 @@ function SharePanelSheet({ request }: { request: SharePanelRequest }): JSX.Eleme
   // The sheet leaves first, then the pick runs: the other app, the system sheet or a chip's own
   // surface comes up over the page, not over a sheet on its way out.
   const pick = (then: () => void): void => sheet.current?.dismiss(then)
-  const release = (): void => answerSharePanel(request.id, { kind: 'dismiss' })
+  const release = (): void => {
+    if (hostedCode) dismissQrCode()
+    else answerSharePanel(request.id, { kind: 'dismiss' })
+  }
 
   return (
     <BottomSheet
       ref={sheet}
       onDismissed={release}
-      contentKey={request.id}
+      contentKey={hostedCode ? `qr:${hostedCode.id}` : request.id}
       handleLabel="Dismiss"
-      labelledBy={titleId}
-      className="zen-share-panel"
-      header={<SharePanelPreview request={request} titleId={titleId} />}
+      labelledBy={hostedCode ? QR_CODE_TITLE_ID : titleId}
+      className={hostedCode ? undefined : 'zen-share-panel'}
+      header={hostedCode ? undefined : <SharePanelPreview request={request} titleId={titleId} />}
+      footer={
+        hostedCode ? (
+          <QrCodeFooter
+            prompt={hostedCode}
+            className="zen-share-seam-in"
+            onClose={() => pick(dismissQrCode)}
+            onDownload={() => pick(downloadQrCode)}
+          />
+        ) : undefined
+      }
     >
-      <SharePanelContent request={request} pick={pick} />
+      {hostedCode ? (
+        <QrCodeHandOff
+          prompt={hostedCode}
+          outgoing={
+            outgoing ? (
+              <>
+                <SharePanelPreview request={request} titleId={`${titleId}-out`} />
+                <SharePanelContent request={request} pick={() => undefined} />
+              </>
+            ) : null
+          }
+        />
+      ) : (
+        <SharePanelContent request={request} pick={pick} />
+      )}
     </BottomSheet>
+  )
+}
+
+/**
+ * The code the panel `panelId`'s chassis draws after the hand-off (`lib/shareSeam.ts`
+ * `hosting`), or null while the sheet is the panel's. Read by the panel's own sheet and by the
+ * menu's sheet hosting the panel (`MenuSheet.tsx`).
+ */
+export function useHostedQrCode(panelId: string | null): QrCodePrompt | null {
+  return uiStore.use((s) =>
+    s.qrCodeSeam?.phase === 'hosting' &&
+    s.qrCodeSeam.panelId === panelId &&
+    s.qrCode?.id === s.qrCodeSeam.promptId
+      ? s.qrCode
+      : null
   )
 }
 
@@ -92,7 +161,11 @@ function SharePanelSheet({ request }: { request: SharePanelRequest }): JSX.Eleme
  * drawn the page again (`lib/pageView.ts`): the one pick that copies the page waits for that
  * (`afterPageShown`). A chip the chrome runs itself (Copy, Long screenshot, Print) is reported
  * as `chip`, so a page's awaited share hears `shared` for it as Chrome's does on a first-party
- * tap; the chips the host carries out (QR, Copy image) go by their own kinds.
+ * tap; the chips the host carries out (QR, Copy image) go by their own kinds. QR code alone
+ * keeps the sheet (§9.38's hand-off, `beginQrCodeSeam`): the host encodes while the panel
+ * stands – every cell inert meanwhile, the QR cell §9.30's busy form once 150 ms have passed
+ * (the 20 spinner in its glyph's place, `aria-busy`, full opacity) – and the code takes the
+ * chassis; a host that answers inside 150 ms shows no sign.
  */
 export function SharePanelContent({
   request,
@@ -104,8 +177,21 @@ export function SharePanelContent({
   const chips = sharePanelChips(request)
   const ran = (chip: SharePanelChip): void =>
     answerSharePanel(request.id, { kind: 'chip', chip: chip.kind })
+  const encoding = uiStore.use(
+    (s) => s.qrCodeSeam?.phase === 'encoding' && s.qrCodeSeam.panelId === request.id
+  )
+  // The sign stands for the encode it belongs to: set once 150 ms of it have passed, read only
+  // while the encode runs (a panel encodes once – the code takes its chassis or the guard ends it).
+  const [busyFor, setBusyFor] = useState<string | null>(null)
+  useEffect(() => {
+    if (!encoding) return
+    const timer = window.setTimeout(() => setBusyFor(request.id), SHARE_SEAM_BUSY_MS)
+    return () => window.clearTimeout(timer)
+  }, [encoding, request.id])
+  const busy = encoding && busyFor === request.id
 
   const onChip = (chip: SharePanelChip): void => {
+    if (encoding) return
     switch (chip.kind) {
       case 'copy':
         if (request.kind === 'image') {
@@ -133,9 +219,13 @@ export function SharePanelContent({
         })
         return
       case 'qr':
-        pick(() => answerSharePanel(request.id, { kind: 'qr' }))
+        beginQrCodeSeam(request.id)
         return
     }
+  }
+  const onTarget = (then: () => void): void => {
+    if (encoding) return
+    pick(then)
   }
 
   return (
@@ -147,10 +237,11 @@ export function SharePanelContent({
             type="button"
             className="zen-share-panel-cell"
             data-kind={chip.kind}
+            aria-busy={(busy && chip.kind === 'qr') || undefined}
             onClick={() => onChip(chip)}
           >
             <span className="zen-v2-icon-button zen-share-panel-box" aria-hidden>
-              <chip.icon />
+              {busy && chip.kind === 'qr' ? <Spinner className="h-5 w-5" /> : <chip.icon />}
             </span>
             <span className="zen-share-panel-caption">{chip.label}</span>
           </button>
@@ -163,7 +254,7 @@ export function SharePanelContent({
             key={target.component}
             target={target}
             onPick={() =>
-              pick(() =>
+              onTarget(() =>
                 answerSharePanel(request.id, { kind: 'target', component: target.component })
               )
             }
@@ -173,7 +264,7 @@ export function SharePanelContent({
           type="button"
           className="zen-share-panel-cell"
           data-kind="more"
-          onClick={() => pick(() => answerSharePanel(request.id, { kind: 'more' }))}
+          onClick={() => onTarget(() => answerSharePanel(request.id, { kind: 'more' }))}
         >
           <span className="zen-v2-icon-button zen-share-panel-box" aria-hidden>
             <SHARE_PANEL_MORE.icon />
