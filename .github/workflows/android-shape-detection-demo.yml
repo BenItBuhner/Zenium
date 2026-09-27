@@ -1,0 +1,111 @@
+name: Android shape detection demo
+
+# Records, on a hardware-accelerated Android emulator, that a page constructing a BarcodeDetector
+# does not kill the app, and uploads the video, screenshots and findings. The WebView binds
+# Chromium's shape-detection service on its in-process GPU thread; the binding's first act is the
+# Google Play services client's availability check, which reads the host app's
+# `com.google.android.gms.version` meta-data and, finding none, threw
+# GooglePlayServicesMissingManifestValueException across the JNI boundary - an uncaught Java
+# exception there is the process's death (FATAL EXCEPTION: Chrome_InProcGpuThread, SIG 9), before
+# the page's promise can reject. The manifest carries the value now; the driver
+# (ShapeDetectionDemo) is the page: BarcodeDetector constructed, getSupportedFormats() and
+# detect(img) awaited with every outcome caught, then FaceDetector and TextDetector where the
+# WebView exposes them, on a second page again; the process must be the same one afterwards and
+# on a device without Play services detect() must reject with NotSupportedError (with Play it
+# resolves). A check that fails in the driver fails the run (shape-detection-findings.txt in the
+# artifact).
+#
+# The engine. The images' Google WebView 113 did not show the death on the same page; the
+# Chromium snapshot WebView (156 at the finding) does, so the job runs on an AOSP image with the
+# snapshot SystemWebView.apk swapped in (android-webview-swap.sh, as android-private-demo.yml
+# does), under swiftshader_indirect as those jobs ask. Dispatch-only, like the other demos: it
+# takes about a quarter of an hour and says nothing about a change being correct. The build, the
+# emulator and the Gradle cache live in android-emulator-demo.yml; this file picks the driver and
+# the engine.
+on:
+  workflow_dispatch:
+  # TEMPORARY (W6-D31): the BEFORE/AFTER run for the review; removed before the PR is ready.
+  push:
+    branches:
+      - cursor/android-shape-detection-crash-9271
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-shape-detection-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: shape detection demo (Chromium snapshot WebView on an AOSP image)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      target: default
+      emulator-gpu: swiftshader_indirect
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.ShapeDetectionDemo
+        DEMO_DIR=shape-detection-demo
+        DEMO_OUT=artifacts/android-shape-detection-demo
+        DEMO_VIDEO=android-shape-detection-demo.mp4
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+      # The plain `Android` snapshot is armeabi-v7a only and its libwebviewchromium.so cannot be
+      # dlopen'ed on an x86_64 emulator; `AndroidDesktop_x64` ships the same com.android.webview
+      # (minSdk 29) with x86_64 and x86 native code.
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+        echo "== the APK's com.google.android.gms.version meta-data, as installed"
+        apk=$(find android/app/build/outputs/apk/debug -name '*.apk' -print -quit)
+        "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump xmltree --file AndroidManifest.xml "$apk" | grep -A 2 'gms.version' || echo "::error::the APK carries no com.google.android.gms.version"
+      artifact-name: android-shape-detection-demo
+      artifact-path: artifacts/android-shape-detection-demo/
+      timeout-minutes: 60
+
+  # TEMPORARY (W6-D31): the same page on the manifest WITHOUT the value (the line removed, the APK
+  # rebuilt), the reproduction for the review: expected to die at `new BarcodeDetector()` (the
+  # instrumentation shares the process: "Process crashed", the exception's stack in logcat.txt) -
+  # a red job here is the finding reproduced. Removed with the push trigger before the PR is ready.
+  before:
+    name: BEFORE - the manifest without the value (expected to crash)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      target: default
+      emulator-gpu: swiftshader_indirect
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.ShapeDetectionDemo
+        DEMO_DIR=shape-detection-demo
+        DEMO_OUT=artifacts/android-shape-detection-before
+        DEMO_VIDEO=android-shape-detection-before.mp4
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        ls -la artifacts/webview
+        echo "== removing the value from the manifest and rebuilding the app APK (main's manifest)"
+        sed -i '/android:name="com.google.android.gms.version"/d' android/app/src/main/AndroidManifest.xml
+        grep -c 'com.google.android.gms.version' android/app/src/main/AndroidManifest.xml || true
+        (cd android && ./gradlew assembleDebug -PskipWeb --no-daemon)
+        apk=$(find android/app/build/outputs/apk/debug -name '*.apk' -print -quit)
+        "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump xmltree --file AndroidManifest.xml "$apk" | grep -A 2 'gms.version' || echo "the APK carries no com.google.android.gms.version (the BEFORE build)"
+      artifact-name: android-shape-detection-before
+      artifact-path: artifacts/android-shape-detection-before/
+      timeout-minutes: 60
