@@ -4004,8 +4004,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         snap("${entry.optString("slug")}-popup-core")
         runCatching { coreCall("extension.closePopup", "null") }
         // The popup up but its answer the service's refusal (`notMeasurable` on what it shows,
-        // Scribbr's "something went wrong" from its citation API): the gate, not the runtime.
-        val refused = popup != null && !found.optBoolean("pass") && notMeasurable != null && notMeasurable.containsMatchIn(extra.optString("popupText") + " " + found.optString("text"))
+        // Scribbr's "something went wrong" from its citation API) or its challenge (the row's
+        // probe reads the CAPTCHA element and says `captcha: true` – BuiltWith's `#capA`, "Step 1
+        // of 2 Select the item shown" over a row of pictures, no word of `notMeasurable`'s in
+        // it; round 22's BEFORE graded it F on both WebViews): the gate, not the runtime.
+        val challenged = popup != null && !found.optBoolean("pass") && found.optBoolean("captcha")
+        val refused = popup != null && !found.optBoolean("pass") && (challenged || notMeasurable != null && notMeasurable.containsMatchIn(extra.optString("popupText") + " " + found.optString("text")))
         val limited = popup != null && !found.optBoolean("pass") && platformLimit != null && platformLimit.containsMatchIn(extra.optString("popupText") + " " + found.optString("text"))
         val statuses = answers.mapNotNull { proxyStatus(it) }
         val apiRefused = popup != null && !found.optBoolean("pass") && apiHost != null && statuses.isNotEmpty() && statuses.none { it in 200..299 }
@@ -4016,7 +4020,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         }
         when {
             found.optBoolean("pass") -> Grade("P", "$label: popup ${found.toString().take(240)}", extra)
-            refused -> Grade("n/m", "$label: popup renders and answers with $gate's refusal (\"${extra.optString("popupText").take(100)}\"); the core needs $gate (not measurable here)", extra)
+            refused -> Grade("n/m", "$label: popup renders and answers with $gate's ${if (challenged) "CAPTCHA" else "refusal"} (\"${extra.optString("popupText").take(100)}\"); the core needs $gate (not measurable here)", extra)
             apiRefused -> Grade("n/m", "$label: popup renders and $gate refused every request the runtime carried for it (${answers.takeLast(3).joinToString("; ") { it.substringAfter(' ').take(90) }}), the popup showing nothing for it; the core needs $gate (not measurable here)", extra)
             limited -> Grade("n/a", "$label: popup renders and reports the platform's refusal (\"${extra.optString("popupText").take(100)}\"; probe ${JSONObject(found.toString()).apply { remove("console"); remove("text") }.toString().take(160)}): $limitNote", extra)
             else -> Grade("F", "$label: popup ${if (popup == null) "did not render in the core check" else found.toString().take(240)}$apiRead", extra)
