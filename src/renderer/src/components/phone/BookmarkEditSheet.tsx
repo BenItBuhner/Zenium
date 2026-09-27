@@ -1,25 +1,48 @@
 import type { JSX } from 'react'
 import { useEffect, useId, useRef, useState } from 'react'
+import { ChevronLeft } from 'lucide-react'
 import type { BookmarkNode, UIState } from '@shared/types'
 import { isBookmarkRoot } from '@shared/bookmarks'
 import { inputToUrl } from '@shared/url'
-import { run } from '@renderer/lib/api'
+import { cmd, run } from '@renderer/lib/api'
 import { closeBookmarkEditor, type BookmarkEditRequest } from '@renderer/lib/bookmarkEdit'
+import { moveTargets } from '@renderer/lib/bookmarkList'
 import type { BottomSheetHandle } from '../sheet/BottomSheet'
-import { SwitchRow } from '../siteControls/primitives'
+import { ListRow, SwitchRow } from '../siteControls/primitives'
+import { BookmarkFolderList, NewFolderSheet } from './BookmarkFolderPicker'
 import { PhoneSheet } from './PhoneSheet'
 import { removeWithUndo, useBookmarkTree } from './phonePanel'
 import { readingListToggle } from './readingListToggle'
 
 /**
  * The bookmark editor on a phone (HB-16): a sheet in the frame's dialog host (`PhoneSheet`, the
- * 48 header naming it) with the name and the address as two fields, Save as the one primary
- * button and Delete beside it in the danger ink, the two splitting the footer (v2 draft §9.11).
- * It also names a folder (no address field) and creates either when the request has no id.
- * Under a bookmark's fields stands the page's Reading list switch (HB-20, `readingListToggle`),
- * the star's second save, flipped in place. Every way out – Save, Delete, the scrim, the back gesture, Escape – slides the sheet away
+ * 48 header naming it) with the name and the address as two fields, under them the Folder row
+ * (Chrome 152's `BookmarkEditActivity` l.268-290: the parent folder's title with a chevron, the
+ * label `Folder` – `Parent folder` for a folder – above it), Save as the one primary button and
+ * Delete beside it in the danger ink, the two splitting the footer (v2 draft §9.11). It also
+ * names a folder (no address field) and creates either when the request has no id. Under a
+ * bookmark's fields stands the page's Reading list switch (HB-20, `readingListToggle`), the
+ * star's second save, flipped in place.
+ *
+ * The Folder row steps the sheet into its folder pane – the same sheet, its header now the
+ * row's label with Back leading and `New folder` trailing, its body the shared folder picker
+ * (`BookmarkFolderList`, the form #570 built for Move to…): every folder the node can enter,
+ * the one Save would put it in checked, the one it stands in now saying `Current`. A tap picks
+ * a folder and steps back to the form (§9.13: picking closes the picker – nothing is written
+ * by the pick, unlike Move to…'s footer, whose Move is the act itself). `New folder` opens the
+ * shared §9.12 one-field sheet over this one (§9.24, depth two: the pane keeps the picker in
+ * the editor's own sheet so the naming sheet is the second, not a third): the folder is made
+ * at once inside the checked one through `bookmark.create` (Chrome's dialog writes on Add too),
+ * picked, and the form comes back with its title in the row. Chrome writes the title and the
+ * URL as its page is left and moves in the picker's own `Move here`; here nothing but New
+ * folder is written until Save, which runs `bookmark.update` and then `bookmark.move` when the
+ * folder changed, in the one commit after the sheet has gone – the desktop editor's order. A
+ * new node is created straight into the picked folder.
+ *
+ * Every way out – Save, Delete, the scrim, the back gesture, Escape – slides the sheet away
  * first and clears the request once it is gone. Focus moves to the dialog itself as it opens,
- * not into a field (§9.22: the keyboard would come up with the sheet).
+ * not into a field (§9.22: the keyboard would come up with the sheet); stepping into the pane
+ * puts it on the checked folder, stepping back puts it on the sheet again.
  *
  * A request for a node that has not reached the renderer yet (the star's event can overtake
  * the state push) keeps the sheet open with its fields waiting; only a node that was here and
@@ -42,11 +65,46 @@ export function BookmarkEditSheet({
   const folder = (node?.type ?? edit.type) === 'folder'
   const sheet = useRef<BottomSheetHandle>(null)
 
+  // What Save writes: the fields and the folder. Starts from the node when it is here (again
+  // when it arrives under a waiting sheet), then follows the typing and the pane's pick.
+  const [draft, setDraft] = useState<Draft>(() => draftOf(node, edit))
+  const [draftFor, setDraftFor] = useState(node?.id ?? null)
+  if (node && draftFor !== node.id) {
+    setDraftFor(node.id)
+    setDraft(draftOf(node, edit))
+  }
+  const [pane, setPane] = useState<'form' | 'folder'>('form')
+  const [naming, setNaming] = useState(false)
+
   useEffect(() => {
     if (gone) closeBookmarkEditor()
   }, [gone])
 
   if (gone) return null
+
+  // Where the node stands now (a new one: where the request would put it), and where Save
+  // puts it – the pick, unless that folder has gone since, then the present one.
+  const origin = node?.parentId ?? edit.parentId
+  const parentId = tree.get(draft.parentId)?.type === 'folder' ? draft.parentId : origin
+  const parentTitle = tree.get(parentId)?.title ?? ''
+  // A root cannot move or be named: its sheet has no Folder row, as Chrome edits no root.
+  const canPickFolder = !waiting && !(node !== null && isBookmarkRoot(node.id))
+  // Every folder the node can enter: the node's own subtree left out, as Chrome's picker
+  // greys the moved folder and its descendants (`isValidFolderForMovedBookmarks`).
+  const targets = pane === 'folder' ? moveTargets(tree, node ? [node.id] : [], state.platform) : []
+  const checked = targets.some((t) => t.node.id === parentId) ? parentId : null
+  const folderLabel = folder ? 'Parent folder' : 'Folder'
+
+  const pick = (id: string): void => {
+    setDraft((d) => ({ ...d, parentId: id }))
+    setPane('form')
+  }
+
+  const create = async (title: string): Promise<void> => {
+    if (checked === null) return
+    const made = await cmd('bookmark.create', { parentId: checked, title, type: 'folder' })
+    if (made) pick(made.id)
+  }
 
   // Sheet titles are sentence case like the labels and buttons (v2 draft 9.1, corrected: only
   // menu items, nav categories and window titles keep Title Case).
@@ -59,40 +117,121 @@ export function BookmarkEditSheet({
       : 'Add bookmark'
 
   return (
-    <PhoneSheet
-      name="bookmark-edit"
-      // A form: the 48 header (§9.16), never a title block – a form has no description.
-      title={{ pose: 'header', text: title }}
-      focus="dialog"
-      onClose={closeBookmarkEditor}
-      contentKey={`${edit.id ?? 'new'}:${folder ? 'folder' : 'url'}:${waiting ? 'waiting' : 'ready'}`}
-      handleLabel="Resize editor"
-      sheetRef={sheet}
-    >
-      <EditorForm
-        // Remounts when the node arrives, so the fields start from its title and address.
-        key={node ? node.id : edit.id ? 'waiting' : 'new'}
-        node={node}
-        parentId={node?.parentId ?? edit.parentId}
-        folder={folder}
-        waiting={waiting}
-        readingList={readingListToggle(state, node)}
-        dismiss={(then) => sheet.current?.dismiss(then)}
-      />
-    </PhoneSheet>
+    <>
+      <PhoneSheet
+        name="bookmark-edit"
+        // A form: the 48 header (§9.16), never a title block – a form has no description. In
+        // the folder pane the header is the row's label, Back leading, New folder trailing –
+        // disabled (§9.30, laid out at .4) while no folder is checked to hold the new one.
+        title={
+          pane === 'folder'
+            ? {
+                pose: 'header',
+                text: folderLabel,
+                leading: (
+                  <button
+                    type="button"
+                    className="zen-sheet-header-control"
+                    data-side="leading"
+                    aria-label="Back"
+                    onClick={() => setPane('form')}
+                  >
+                    <ChevronLeft className="h-5 w-5" strokeWidth={1.75} />
+                  </button>
+                ),
+                trailing: (
+                  <button
+                    type="button"
+                    className="zen-sheet-header-control disabled:opacity-40"
+                    data-side="trailing"
+                    data-text
+                    disabled={checked === null}
+                    onClick={() => setNaming(true)}
+                  >
+                    New folder
+                  </button>
+                )
+              }
+            : { pose: 'header', text: title }
+        }
+        focus="dialog"
+        onClose={closeBookmarkEditor}
+        contentKey={`${edit.id ?? 'new'}:${folder ? 'folder' : 'url'}:${waiting ? 'waiting' : 'ready'}:${pane}`}
+        body={pane === 'folder' ? 'list' : undefined}
+        under={naming}
+        handleLabel={pane === 'folder' ? 'Resize folder list' : 'Resize editor'}
+        sheetRef={sheet}
+      >
+        {pane === 'folder' ? (
+          <BookmarkFolderList
+            rows={targets}
+            checked={checked}
+            current={node ? node.parentId : null}
+            onPick={pick}
+          />
+        ) : (
+          <EditorForm
+            node={node}
+            draft={draft}
+            onDraft={setDraft}
+            parentId={parentId}
+            folderRow={
+              canPickFolder
+                ? { label: folderLabel, title: parentTitle, open: () => setPane('folder') }
+                : null
+            }
+            folder={folder}
+            waiting={waiting}
+            readingList={readingListToggle(state, node)}
+            dismiss={(then) => sheet.current?.dismiss(then)}
+          />
+        )}
+      </PhoneSheet>
+      {naming && (
+        <NewFolderSheet
+          name="bookmark-edit-new-folder"
+          parentTitle={checked !== null ? (tree.get(checked)?.title ?? '') : ''}
+          onClose={() => setNaming(false)}
+          onCreate={(name) => void create(name)}
+        />
+      )}
+    </>
   )
+}
+
+/** The editor's unsaved state: the two fields and the folder Save puts the node in. */
+interface Draft {
+  name: string
+  url: string
+  parentId: string
+}
+
+function draftOf(node: BookmarkNode | null, edit: BookmarkEditRequest): Draft {
+  return {
+    name: node?.title ?? '',
+    url: node?.url ?? '',
+    parentId: node?.parentId ?? edit.parentId
+  }
 }
 
 function EditorForm({
   node,
+  draft,
+  onDraft,
   parentId,
+  folderRow,
   folder,
   waiting,
   readingList,
   dismiss
 }: {
   node: BookmarkNode | null
+  draft: Draft
+  onDraft: (update: (draft: Draft) => Draft) => void
+  /** The folder Save puts the node in (the draft's, checked against the tree). */
   parentId: string
+  /** The Folder row: its label, the folder's title, and the step into the pane; none for a root. */
+  folderRow: { label: string; title: string; open: () => void } | null
   folder: boolean
   /** The node was asked for but is not here yet. */
   waiting: boolean
@@ -100,28 +239,36 @@ function EditorForm({
   readingList: ReturnType<typeof readingListToggle>
   dismiss: (then?: () => void) => void
 }): JSX.Element {
-  const [name, setName] = useState(node?.title ?? '')
-  const [url, setUrl] = useState(node?.url ?? '')
   const nameId = useId()
   const urlId = useId()
+  const { name, url } = draft
 
   const target = folder ? null : inputToUrl(url.trim())
   const valid = !waiting && (folder ? name.trim().length > 0 : target !== null)
 
   const save = (): void => {
     const trimmed = name.trim()
+    // The move, when the picked folder is not the one the node stands in: run after the update
+    // in the same commit, as the desktop editor orders them.
+    const move = node && parentId !== node.parentId ? { ids: [node.id], parentId } : null
     let commit: () => void
     if (folder) {
       if (!trimmed) return
       commit = node
-        ? () => run('bookmark.update', { id: node.id, title: trimmed })
+        ? () => {
+            run('bookmark.update', { id: node.id, title: trimmed })
+            if (move) run('bookmark.move', move)
+          }
         : () => run('bookmark.create', { parentId, title: trimmed, type: 'folder' })
     } else {
       if (!target) return
       const address = target
       const label = trimmed || address
       commit = node
-        ? () => run('bookmark.update', { id: node.id, title: label, url: address })
+        ? () => {
+            run('bookmark.update', { id: node.id, title: label, url: address })
+            if (move) run('bookmark.move', move)
+          }
         : () => run('bookmark.create', { parentId, title: label, url: address, type: 'url' })
     }
     // The command runs once the sheet is gone, like a picked menu row (see `pickMenuItem`).
@@ -172,7 +319,10 @@ function EditorForm({
             spellCheck={false}
             enterKeyHint={folder ? 'done' : 'next'}
             disabled={waiting}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              const value = e.target.value
+              onDraft((d) => ({ ...d, name: value }))
+            }}
           />
         </span>
       </div>
@@ -192,10 +342,25 @@ function EditorForm({
               spellCheck={false}
               enterKeyHint="done"
               disabled={waiting}
-              onChange={(e) => setUrl(e.target.value)}
+              onChange={(e) => {
+                const value = e.target.value
+                onDraft((d) => ({ ...d, url: value }))
+              }}
             />
           </span>
         </div>
+      )}
+      {folderRow && (
+        // Chrome's folder row (`BookmarkEditActivity` l.268-290): the parent's title under the
+        // label, a chevron trailing since it opens a level – the §10.4 value row's two lines.
+        <ListRow
+          label={folderRow.label}
+          description={folderRow.title || 'Folder'}
+          chevron
+          disabled={waiting}
+          onClick={folderRow.open}
+          data-testid="bookmark-folder"
+        />
       )}
       {readingList && (
         // The star sheet's Reading list row (HB-20): the toggle for this page, on while the
