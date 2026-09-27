@@ -31,6 +31,7 @@ import {
   selectionUrl
 } from '../menus'
 import { HELP_URL, ISSUES_URL } from '../menuBar'
+import { unsafeSiteReportUrl } from '../unsafeSiteReport'
 import { releaseNotesUrl } from '../../shared/links'
 import { serialiseMenu } from '../rendererMenus'
 import {
@@ -117,11 +118,19 @@ const DESKTOP_APP_MENU = [
   'History > -',
   'History > No recently closed tabs',
   'Downloads',
-  'Passwords',
+  'Passwords and Autofill',
+  'Passwords and Autofill > Passwords',
+  'Passwords and Autofill > Payment Methods',
+  'Passwords and Autofill > Addresses',
   'Add-ons and Themes',
   'Delete Browsing Data…',
   '-',
-  'Find in Page…',
+  'Find and Edit',
+  'Find and Edit > Find in Page…',
+  'Find and Edit > -',
+  'Find and Edit > Cut',
+  'Find and Edit > Copy',
+  'Find and Edit > Paste',
   'Zoom',
   'Zoom > Zoom In',
   'Zoom > Zoom Out',
@@ -159,6 +168,7 @@ const DESKTOP_APP_MENU = [
   'Help > Zenium Help',
   'Help > Keyboard Shortcuts',
   'Help > Report an Issue…',
+  'Help > Report an Unsafe Site…',
   'Quit'
 ]
 
@@ -279,14 +289,117 @@ describe('the app menu', () => {
       expect(appMenu(h)).not.toContain('Update Zenium')
     })
 
-    it("is the desktop's alone: the tablet's and the phone's menus keep their shape with an update waiting", () => {
+    it("heads the tablet's menu with the same row over its hairline while the update waits (TB-12), and with nothing otherwise", () => {
       const tablet = harness(ANDROID, 'tablet')
+      const plain = appMenu(tablet)
+      expect(plain[0]).toBe('New Tab')
       updater(tablet, 'ready')
-      expect(appMenu(tablet)).not.toContain('Update Zenium')
-      expect(appMenu(tablet)[0]).toBe('New Tab')
+      const install = vi.spyOn(tablet.browser.updates, 'install').mockResolvedValue(undefined)
+      expect(appMenu(tablet).slice(0, 3)).toEqual(['Update Zenium', '-', 'New Tab'])
+      expect(appMenu(tablet).slice(2)).toEqual(plain)
+      tablet.shown()[0]!.click?.()
+      expect(install).toHaveBeenCalledTimes(1)
+      for (const phase of ['available', 'downloading', 'up-to-date'] as const) {
+        const other = harness(ANDROID, 'tablet')
+        updater(other, phase)
+        expect(appMenu(other), phase).toEqual(plain)
+      }
+    })
+
+    it("seats the row in the phone's menu as Chrome's Android menu does (TB-12): the first text row under the icon row, over a hairline of its own, and only while the update waits", () => {
       const phone = harness(ANDROID, 'phone')
+      const plain = appMenu(phone)
+      const iconRow = plain.indexOf('-')
+      expect(plain.slice(iconRow, iconRow + 2)).toEqual(['-', 'New Tab'])
       updater(phone, 'ready')
-      expect(appMenu(phone)).not.toContain('Update Zenium')
+      const install = vi.spyOn(phone.browser.updates, 'install').mockResolvedValue(undefined)
+      const menu = appMenu(phone)
+      // Chrome's "Update Chrome" (`TabbedAppMenuPropertiesDelegate.populatePageModeMenu`): after
+      // the icon row, before New tab; Chrome's row has no divider of its own under it, the
+      // phone's flat list draws its groups with hairlines and the row is a group of its own.
+      expect(menu.slice(iconRow, iconRow + 4)).toEqual(['-', 'Update Zenium', '-', 'New Tab'])
+      expect(menu.filter((l) => l === 'Update Zenium')).toHaveLength(1)
+      // The rest of the menu is as it was: the row is one row and one hairline more.
+      expect([...menu.slice(0, iconRow + 1), ...menu.slice(iconRow + 3)]).toEqual(plain)
+      const row = item(phone.shown(), 'Update Zenium')
+      expect(row.enabled).not.toBe(false)
+      row.click?.()
+      expect(install).toHaveBeenCalledTimes(1)
+      // Structure, like the Change Menu row: named `menu.update` for the sheet to keep it out
+      // of the edit pose, its hairline unkeyed, neither in the default order the sheet's Reset
+      // restores nor moved by a saved one – the row stays at the head whatever the order says.
+      expect(row.key).toBe('menu.update')
+      const shown = phone.shown()
+      expect(shown[shown.indexOf(row) + 1]).toEqual({ type: 'separator' })
+      const defaults = phone.where()?.defaultOrder ?? []
+      expect(defaults).not.toContain('menu.update')
+      expect(defaults).toContain('row.settings')
+      phone.browser.state.settings.menuOrder = [
+        'menu.update',
+        'row.settings',
+        ...defaults.filter((k) => k !== 'row.settings')
+      ]
+      const ordered = appMenu(phone)
+      expect(ordered.slice(0, iconRow)).toEqual(plain.slice(0, iconRow))
+      expect(ordered.slice(iconRow, iconRow + 4)).toEqual(['-', 'Update Zenium', '-', 'Settings'])
+      expect(ordered.filter((l) => l === 'Update Zenium')).toHaveLength(1)
+      // Nothing while the update is merely found, downloads, or the build is up to date: the
+      // Android host downloads the APK itself, so the row shows once its pick can install
+      // (Chrome keys its row on the update being available, Play downloading after the pick).
+      for (const phase of ['available', 'downloading', 'up-to-date'] as const) {
+        const other = harness(ANDROID, 'phone')
+        updater(other, phase)
+        expect(appMenu(other), phase).toEqual(plain)
+      }
+      const noUpdates = harness({ ...ANDROID, updates: false }, 'phone')
+      updater(noUpdates, 'ready')
+      expect(appMenu(noUpdates)).toEqual(plain)
+    })
+
+    it("leaves the desktop's row as it was: no key, the same two items (the phone's key is added where the phone seats it)", () => {
+      const h = harness(DESKTOP)
+      updater(h, 'ready')
+      appMenu(h)
+      expect(h.shown().slice(0, 2)).toStrictEqual([
+        { label: 'Update Zenium', click: expect.any(Function) },
+        { type: 'separator' }
+      ])
+    })
+
+    it("records the waiting version as seen when the phone's or the tablet's menu opens (TB-12: the menu button's dot clears, the row stays), once per version, and nothing while no update waits", () => {
+      for (const formFactor of ['phone', 'tablet'] as const) {
+        const h = harness(ANDROID, formFactor)
+        const { state } = h.browser
+        const commit = vi.spyOn(state, 'commit')
+        // No update, one found, one downloading: the menu opens, nothing is recorded.
+        appMenu(h)
+        expect(state.updateDot, formFactor).toEqual({ seenVersion: null })
+        for (const phase of ['available', 'downloading'] as const) {
+          updater(h, phase)
+          appMenu(h)
+          expect(state.updateDot, `${formFactor} ${phase}`).toEqual({ seenVersion: null })
+        }
+        expect(commit, formFactor).not.toHaveBeenCalled()
+        // Downloaded and waiting: the open shows the row and records the version, one commit.
+        updater(h, 'ready')
+        expect(appMenu(h), formFactor).toContain('Update Zenium')
+        expect(state.updateDot, formFactor).toEqual({ seenVersion: '2.0.0' })
+        expect(commit, formFactor).toHaveBeenCalledTimes(1)
+        // A second open: the row still there (it stays while the update waits), no second write.
+        expect(appMenu(h), formFactor).toContain('Update Zenium')
+        expect(state.updateDot, formFactor).toEqual({ seenVersion: '2.0.0' })
+        expect(commit, formFactor).toHaveBeenCalledTimes(1)
+      }
+    })
+
+    it("leaves the desktop's open as it was: its ⋯ reads the plain phase until W8-F3, so the open records nothing", () => {
+      const h = harness(DESKTOP)
+      const { state } = h.browser
+      const commit = vi.spyOn(state, 'commit')
+      updater(h, 'ready')
+      expect(appMenu(h)[0]).toBe('Update Zenium')
+      expect(state.updateDot).toEqual({ seenVersion: null })
+      expect(commit).not.toHaveBeenCalled()
     })
 
     it('is a twenty-first row only while the update waits: 21 rows / 4 separators (701 px); the Media Controls… row folded too, 22 / 5 (741 px) and the Update row first', () => {
@@ -938,7 +1051,10 @@ describe('the app menu', () => {
     // it; Name Window… names an OS title bar the tablet's one window does not have; the Tab
     // Folders submenu (its group closing Bookmarks) is the desktop's, the tablet's saved groups
     // being its overview's pane (TAB-16). The task manager is a page tab of the desktop layout
-    // alone (`internalPages.ts`).
+    // alone (`internalPages.ts`). Chrome's Passwords and Autofill ▸ and Find and Edit ▸ are the
+    // desktop's folds (W8-1): the tablet keeps the flat Passwords and Find in Page… rows in the
+    // same seats – its menu folds nothing the desktop's does not have to, and its editing is the
+    // touch selection's own.
     const tabletChrome = DESKTOP_APP_MENU.filter(
       (label) =>
         label !== 'More Tools > Compact Mode' &&
@@ -946,7 +1062,15 @@ describe('the app menu', () => {
         label !== 'More Tools > Task Manager' &&
         label !== 'Bookmarks > Show Bookmarks Bar' &&
         label !== 'Bookmarks > Tab Folders' &&
-        label !== 'Save and Share > Screenshot…'
+        label !== 'Save and Share > Screenshot…' &&
+        !label.startsWith('Passwords and Autofill >') &&
+        !label.startsWith('Find and Edit >')
+    ).map((label) =>
+      label === 'Passwords and Autofill'
+        ? 'Passwords'
+        : label === 'Find and Edit'
+          ? 'Find in Page…'
+          : label
     )
     tabletChrome.splice(tabletChrome.lastIndexOf('Bookmarks > -'), 1)
     tabletChrome.splice(tabletChrome.indexOf('More Tools > Resources'), 0, ...TABLET_CAPTURES)
@@ -993,7 +1117,7 @@ describe('the app menu', () => {
     )
   })
 
-  it("Help is Chrome's Help submenu in Chrome's order (shortcuts-menus-152): About Zenium opens the About page, What's New the release notes, Zenium Help and Report an Issue… their pages", () => {
+  it("Help is Chrome's Help submenu in Chrome's order (shortcuts-menus-152): About Zenium opens the About page, What's New the release notes, Zenium Help the help page in a new tab (Chrome's help centre), Report an Issue… the issues page outside", () => {
     const opened: string[] = []
     const h = harness(DESKTOP)
     h.browser.platform.shell.openExternal = (url: string): Promise<void> => {
@@ -1002,17 +1126,28 @@ describe('the app menu', () => {
     }
     appMenu(h)
     const help = deepItem(h.shown(), 'Help').submenu ?? []
+    // Over no page (the harness's window holds none) Report an Unsafe Site… has nothing to
+    // report and is greyed, the submenu keeping its shape (§9.17); see the row's own tests below.
     expect(topLabels(help)).toEqual([
       'About Zenium',
       "What's New",
       '-',
       'Zenium Help',
       'Keyboard Shortcuts',
-      'Report an Issue…'
+      'Report an Issue…',
+      'Report an Unsafe Site…'
     ])
+    expect(deepItem(h.shown(), 'Report an Unsafe Site…').enabled).toBe(false)
+    const before = h.browser.tabs.activeTabFor(h.win)
     deepItem(h.shown(), 'Zenium Help').click?.()
+    // Chrome's H&elp center opens `kChromeHelpViaMenuURL` in a tab of the browser (`ShowHelp`):
+    // the help page is a new tab in front, not the system browser's.
+    const helpTab = h.browser.tabs.activeTabFor(h.win)!
+    expect(helpTab.url).toBe(HELP_URL)
+    expect(helpTab.id).not.toBe(before?.id)
+    expect(opened).toEqual([])
     deepItem(h.shown(), 'Report an Issue…').click?.()
-    expect(opened).toEqual([HELP_URL, ISSUES_URL])
+    expect(opened).toEqual([ISSUES_URL])
     // About is a row that acts now – the About page (Settings › About: the version, the
     // update row, the legal pages), not a disabled version line; the version is the page's.
     const about = deepItem(h.shown(), 'About Zenium')
@@ -1024,6 +1159,105 @@ describe('the app menu', () => {
     const phone = harness(ANDROID, 'phone')
     expect(appMenu(phone)).toContain('About Zenium 1.2.3')
     expect(appMenu(phone)).not.toContain("What's New")
+  })
+
+  describe("Chrome's Report an Unsafe Site… (shortcuts-menus-123, W8-1)", () => {
+    const helpRows = (h: Harness): string[] => {
+      appMenu(h)
+      return topLabels(deepItem(h.shown(), 'Help').submenu ?? [])
+    }
+    const reportRow = 'Report an Unsafe Site…'
+
+    it("closes Help ▸ after Report an Issue…, in Chrome's seat, over an http(s) page, and opens Safe Browsing's public report form with the page's address in a new tab in front, a child of the page, in its container", () => {
+      const opened: string[] = []
+      const h = pageHarness(DESKTOP)
+      h.browser.platform.shell.openExternal = (url: string): Promise<void> => {
+        opened.push(url)
+        return Promise.resolve()
+      }
+      const page = h.browser.tabs.activeTabFor(h.win)!
+      expect(page.url).toBe(PAGE_URL)
+      expect(helpRows(h)).toEqual([
+        'About Zenium',
+        "What's New",
+        '-',
+        'Zenium Help',
+        'Keyboard Shortcuts',
+        'Report an Issue…',
+        reportRow
+      ])
+      const row = deepItem(h.shown(), reportRow)
+      expect(row.enabled).not.toBe(false)
+      row.click?.()
+      const report = h.browser.tabs.activeTabFor(h.win)!
+      expect(report.id).not.toBe(page.id)
+      expect(report.url).toBe(
+        `https://safebrowsing.google.com/safebrowsing/report_phish/?url=${encodeURIComponent(PAGE_URL)}`
+      )
+      expect(report.url).toBe(unsafeSiteReportUrl(PAGE_URL))
+      expect(report.openerTabId).toBe(page.id)
+      expect(report.containerId).toBe(page.containerId)
+      // The form is a page of the browser's, as Chrome's help centre is – not the system browser's.
+      expect(opened).toEqual([])
+      // Zenium Help from the same page: the help page a child of the page too.
+      h.browser.tabs.activateTab(page.id, h.win)
+      appMenu(h)
+      deepItem(h.shown(), 'Zenium Help').click?.()
+      const help = h.browser.tabs.activeTabFor(h.win)!
+      expect(help.url).toBe(HELP_URL)
+      expect(help.openerTabId).toBe(page.id)
+      expect(opened).toEqual([])
+    })
+
+    it("is greyed, not left out, over a page without an address the form can take – Zenium's pages, a file, about:blank – the submenu keeping its shape (§9.17), and its click opens nothing", () => {
+      const h = harness(DESKTOP)
+      for (const url of ['zen://settings/look', 'file:///home/user/report.html', 'about:blank']) {
+        const page = h.browser.tabs.createTab({ url, active: true }, h.win)
+        expect(h.browser.tabs.activeTabFor(h.win)?.url).toBe(url)
+        const rows = helpRows(h)
+        expect(rows[rows.length - 1], url).toBe(reportRow)
+        const row = deepItem(h.shown(), reportRow)
+        expect(row.enabled, url).toBe(false)
+        // A greyed row's click (a host that relays one anyway) opens no tab.
+        row.click?.()
+        expect(h.browser.tabs.activeTabFor(h.win)?.id, url).toBe(page.id)
+      }
+      // Back over an http page the row is enabled again.
+      h.browser.tabs.createTab({ url: 'http://example.org/', active: true }, h.win)
+      appMenu(h)
+      expect(deepItem(h.shown(), reportRow).enabled).not.toBe(false)
+    })
+
+    it('shows with Safe Browsing off – the form is public and needs no key – and from a private page opens the form in a private tab', () => {
+      const h = pageHarness(DESKTOP)
+      h.browser.updateSettings(
+        { privacy: { ...h.browser.state.settings.privacy, safeBrowsingEnabled: false } },
+        h.win
+      )
+      expect(h.browser.state.settings.privacy.safeBrowsingEnabled).toBe(false)
+      expect(helpRows(h)).toContain(reportRow)
+      expect(deepItem(h.shown(), reportRow).enabled).not.toBe(false)
+      const privatePage = h.browser.tabs.createTab(
+        { url: 'https://example.com/p', active: true, containerId: PRIVATE_CONTAINER_ID },
+        h.win
+      )
+      appMenu(h)
+      deepItem(h.shown(), reportRow).click?.()
+      const report = h.browser.tabs.activeTabFor(h.win)!
+      expect(report.url).toBe(unsafeSiteReportUrl('https://example.com/p'))
+      expect(report.containerId).toBe(PRIVATE_CONTAINER_ID)
+      expect(report.openerTabId).toBe(privatePage.id)
+    })
+
+    it("is a row of the sidebar layouts' Help ▸ alone: the tablet has it over a page, the phone's flat list has no Help submenu to hold it (Chrome's phone menu has no such row)", () => {
+      const tablet = pageHarness(ANDROID, { formFactor: 'tablet' })
+      expect(helpRows(tablet)).toContain(reportRow)
+      const phone = harness(ANDROID, 'phone')
+      phone.browser.tabs.createTab({ url: PAGE_URL, active: true }, phone.win)
+      appMenu(phone)
+      expect(allItems(phone.shown()).map((i) => i.label)).not.toContain(reportRow)
+      expect(item(phone.shown(), 'Help').submenu).toBeUndefined()
+    })
   })
 
   it("What's New opens the running version's release notes: the zen://whats-new page tab where the host has it, else the version's release on GitHub in a tab", () => {
@@ -1043,6 +1277,119 @@ describe('the app menu', () => {
     appMenu(tablet)
     deepItem(tablet.shown(), "What's New").click?.()
     expect(tablet.browser.tabs.activeTabFor(tablet.win)?.url).toBe('zen://whats-new')
+  })
+
+  describe("Chrome's Passwords and Autofill ▸ (shortcuts-menus-107, W8-1)", () => {
+    it('folds the vault’s landings in Chrome’s order on the desktop, in the flat Passwords row’s seat: Passwords opens the vault, Payment Methods and Addresses land Settings › Autofill on the group', () => {
+      const h = pageHarness({ ...DESKTOP, pageTabs: true })
+      const menu = appMenu(h)
+      expect(menu.indexOf('Passwords and Autofill')).toBe(menu.indexOf('Downloads') + 1)
+      expect(menu.indexOf('Add-ons and Themes')).toBe(menu.indexOf('Passwords and Autofill') + 4)
+      const submenu = deepItem(h.shown(), 'Passwords and Autofill').submenu ?? []
+      // Chrome's Password Manager · Payments · Contact info; its Identity documents and Travel
+      // have no Zenium page and are left out, not greyed.
+      expect(topLabels(submenu)).toEqual(['Passwords', 'Payment Methods', 'Addresses'])
+      for (const row of submenu) expect(row.enabled).not.toBe(false)
+      h.sent.length = 0
+      item(submenu, 'Passwords').click?.()
+      expect(h.sent).toContain('overlay.open')
+      item(submenu, 'Payment Methods').click?.()
+      expect(h.browser.tabs.activeTabFor(h.win)?.url).toBe(
+        'zen://settings/autofill?group=autofill-cards'
+      )
+      item(submenu, 'Addresses').click?.()
+      expect(h.browser.tabs.activeTabFor(h.win)?.url).toBe(
+        'zen://settings/autofill?group=autofill-addresses'
+      )
+      // One Settings tab, moved between the groups, as Chrome's rows open one settings tab.
+      const settingsTabs = Object.values(h.browser.state.model.tabs).filter((t) =>
+        t.url.startsWith('zen://settings')
+      )
+      expect(settingsTabs).toHaveLength(1)
+    })
+
+    it('is gated as the flat row was – on the vault (`capabilities.passwords`): a host without one has neither the submenu nor a Passwords row', () => {
+      const menu = appMenu(harness({ ...DESKTOP, passwords: false }))
+      expect(menu).not.toContain('Passwords and Autofill')
+      expect(menu.some((l) => /Passwords/.test(l))).toBe(false)
+      expect(menu.indexOf('Add-ons and Themes')).toBe(menu.indexOf('Downloads') + 1)
+    })
+
+    it('is the desktop layout’s alone: the tablet keeps the flat Passwords row in the seat, the phone its list', () => {
+      const tablet = appMenu(harness(DESKTOP, 'tablet'))
+      expect(tablet).toContain('Passwords')
+      expect(tablet).not.toContain('Passwords and Autofill')
+      expect(tablet.indexOf('Passwords')).toBe(tablet.indexOf('Downloads') + 1)
+      const phone = appMenu(harness(ANDROID, 'phone'))
+      expect(phone).toContain('Passwords')
+      expect(phone).not.toContain('Passwords and Autofill')
+      expect(phone).not.toContain('Payment Methods')
+    })
+  })
+
+  describe("Chrome's Find and Edit ▸ (shortcuts-menus-119, W8-1)", () => {
+    const ROWS = ['Find in Page…', '-', 'Cut', 'Copy', 'Paste']
+
+    it('folds the find row with Cut, Copy and Paste behind a hairline on the desktop, in the flat row’s seat, each editing command going to the active page’s view', () => {
+      const h = pageHarness(DESKTOP)
+      const menu = appMenu(h)
+      // The seat: the page group's first row, right under the library's separator.
+      expect(menu[menu.indexOf('Find and Edit') - 1]).toBe('-')
+      expect(menu[menu.indexOf('Find and Edit') + ROWS.length + 1]).toMatch(/^Zoom/)
+      expect(menu).not.toContain('Find in Page…')
+      const submenu = deepItem(h.shown(), 'Find and Edit').submenu ?? []
+      expect(topLabels(submenu)).toEqual(ROWS)
+      const find = item(submenu, 'Find in Page…')
+      expect(find.action).toBe('find.open')
+      expect(find.enabled).toBe(true)
+      for (const [label, key] of [
+        ['Cut', 'X'],
+        ['Copy', 'C'],
+        ['Paste', 'V']
+      ] as const) {
+        const row = item(submenu, label)
+        expect(row.enabled).toBe(true)
+        // No key-table action of its own – the page's Ctrl+X/C/V are Blink's – but Chrome's chord
+        // shown after the label (its accelerator table's), display alone.
+        expect(row.action).toBeUndefined()
+        expect(row.accelerator).toBe(`Ctrl+${key}`)
+        expect(row.hint).toBe(`Ctrl+${key}`)
+      }
+      h.viewCalls.length = 0
+      item(submenu, 'Cut').click?.()
+      item(submenu, 'Copy').click?.()
+      item(submenu, 'Paste').click?.()
+      expect(h.viewCalls).toEqual([
+        'editCommand("cut")',
+        'editCommand("copy")',
+        'editCommand("paste")'
+      ])
+      // macOS spells the chord with the command glyph, as every other hint there.
+      const mac = pageHarness(DESKTOP, { os: 'darwin' })
+      appMenu(mac)
+      const macRows = deepItem(mac.shown(), 'Find and Edit').submenu ?? []
+      expect(item(macRows, 'Cut').hint).toBe('⌘X')
+      expect(item(macRows, 'Cut').accelerator).toBe('Cmd+X')
+    })
+
+    it('greys the editing rows with no page to act on, the submenu keeping its shape (§9.17); the find row greys with them', () => {
+      const h = harness(DESKTOP)
+      appMenu(h)
+      const submenu = deepItem(h.shown(), 'Find and Edit').submenu ?? []
+      expect(topLabels(submenu)).toEqual(ROWS)
+      for (const label of ['Find in Page…', 'Cut', 'Copy', 'Paste'])
+        expect(item(submenu, label).enabled).toBe(false)
+    })
+
+    it('is the desktop layout’s alone: the tablet and the phone keep the flat Find in Page… row', () => {
+      const tablet = appMenu(harness(DESKTOP, 'tablet'))
+      expect(tablet).toContain('Find in Page…')
+      expect(tablet).not.toContain('Find and Edit')
+      const phone = appMenu(harness(ANDROID, 'phone'))
+      expect(phone).toContain('Find in Page…')
+      expect(phone).not.toContain('Find and Edit')
+      expect(phone).not.toContain('Cut')
+    })
   })
 
   describe('the Media Controls… row (design language v2 §9.29: the hub folded into the menu)', () => {
@@ -1389,7 +1736,8 @@ describe('the app menu', () => {
       'More Tools',
       'Zenium Help',
       "What's New",
-      'Report an Issue…'
+      'Report an Issue…',
+      'Report an Unsafe Site…'
     ])
       expect(everywhere).not.toContain(label)
     expect(item(h.shown(), 'Help').submenu).toBeUndefined()
@@ -4127,6 +4475,78 @@ describe('the chrome context menus', () => {
     const h = pageHarness()
     await show(h, chromeParams())
     expect(h.popups()).toBe(0)
+  })
+
+  describe("the pinned toolbar button's menu (context-menus-112, W8-1)", () => {
+    const CUSTOMISE = 'zen://settings/look?row=customize-toolbar&open=customize-toolbar'
+
+    it('offers Chrome’s two rows in Chrome’s order on a desktop control: Unpin folds the control by settings.update, Pin (the folded state’s row) pins it back, Customise Toolbar… opens Settings › Look and Feel on the row with its form', async () => {
+      const h = pageHarness({ ...DESKTOP, pageTabs: true })
+      const reader = chromeParams({ target: 'toolbar', tabId: h.tabId, control: 'reader' })
+      expect(await show(h, reader)).toEqual(['Unpin', 'Customise Toolbar…'])
+      // The words are Chrome's: no "from Toolbar" (that is the extension button's menu, #104)
+      // and no ellipsis on a row that acts; the ellipsis on the dialog opener alone (§9.1).
+      expect(h.shown().map((i) => i.type ?? 'normal')).toEqual(['normal', 'normal'])
+      h.click('Unpin')
+      expect(h.browser.state.settings.toolbarPins).toEqual({ reader: false })
+      expect(await show(h, reader)).toEqual(['Pin', 'Customise Toolbar…'])
+      h.click('Pin')
+      expect(h.browser.state.settings.toolbarPins).toEqual({})
+      // Another control's pin is its own key; the rest of the record stands.
+      await show(h, chromeParams({ target: 'toolbar', tabId: h.tabId, control: 'media' }))
+      h.click('Unpin')
+      await show(h, chromeParams({ target: 'toolbar', tabId: h.tabId, control: 'translate' }))
+      h.click('Unpin')
+      expect(h.browser.state.settings.toolbarPins).toEqual({ media: false, translate: false })
+      h.click('Customise Toolbar…')
+      expect(h.browser.tabs.activeTabFor(h.win)?.url).toBe(CUSTOMISE)
+    })
+
+    it('on the star follows its own rows behind a hairline (Chrome seats an action’s children over its pin rows); without the control mark the star’s menu is as it was', async () => {
+      const h = pageHarness({ ...DESKTOP, pageTabs: true })
+      const plain = await show(h, chromeParams({ target: 'star', tabId: h.tabId }))
+      expect(plain).toEqual(['Bookmark This Page', 'Add to Reading List', '-', 'Show Reading List'])
+      const marked = await show(
+        h,
+        chromeParams({ target: 'star', tabId: h.tabId, control: 'star' })
+      )
+      expect(marked).toEqual([...plain, '-', 'Unpin', 'Customise Toolbar…'])
+      h.click('Unpin')
+      expect(h.browser.state.settings.toolbarPins).toEqual({ star: false })
+    })
+
+    it('is the desktop layout’s alone, and needs a known control: the tablet’s star keeps its rows, a toolbar mark without a control shows nothing', async () => {
+      const tablet = pageHarness({ ...DESKTOP, pageTabs: true }, { formFactor: 'tablet' })
+      expect(
+        await show(tablet, chromeParams({ target: 'star', tabId: tablet.tabId, control: 'star' }))
+      ).toEqual(['Bookmark This Page', 'Add to Reading List', '-', 'Show Reading List'])
+      await show(
+        tablet,
+        chromeParams({ target: 'toolbar', tabId: tablet.tabId, control: 'reader' })
+      )
+      expect(tablet.popups()).toBe(1)
+      const desktop = pageHarness(DESKTOP)
+      await show(desktop, chromeParams({ target: 'toolbar', tabId: desktop.tabId }))
+      await show(desktop, chromeParams({ target: 'toolbar', tabId: desktop.tabId, control: null }))
+      expect(desktop.popups()).toBe(0)
+    })
+
+    it('reaches the core from the host’s read of the chrome document: the control under the pointer (`data-zen-menu-control`), an unknown one reading as none', async () => {
+      const marked = pageHarness(DESKTOP, {
+        chromeDocument: { hit: { target: 'toolbar', tabId: null, control: 'translate' } }
+      })
+      marked.win.onContextMenu(chromeParams({ x: 640, y: 18 }))
+      await settle()
+      expect(topLabels(marked.shown())).toEqual(['Unpin', 'Customise Toolbar…'])
+      marked.click('Unpin')
+      expect(marked.browser.state.settings.toolbarPins).toEqual({ translate: false })
+      const unknown = pageHarness(DESKTOP, {
+        chromeDocument: { hit: { target: 'toolbar', tabId: null, control: 'home' } }
+      })
+      unknown.win.onContextMenu(chromeParams({ x: 640, y: 18 }))
+      await settle()
+      expect(unknown.popups()).toBe(0)
+    })
   })
 })
 

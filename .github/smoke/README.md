@@ -291,6 +291,41 @@ What no runner confirms: the menu as drawn by AppKit (the Search field the `help
 window list the `window` role appends) – UI scripting would open it, and the readings above are
 what AppKit draws from.
 
+## The agents' space around a restore (`agent-space-restore`)
+
+`agent-space-scenario.mjs` (W8-F2) guards #573 (W7-F3): a window left standing on an empty
+agents' space comes back on the user's space, `ensureFirstTab` seeds nothing into the agents'
+space, the quit question counts the user's tabs only, and an agent session's end moves the window
+off the space it emptied. It runs on every leg of the installers' smoke and in the Linux job's
+boot set. Two launches, each from a profile seeded as the MCP soak leaves one (`seedDocument`):
+one user space with the boot fixture's page(s), the shared Agents space persisted through its
+`agent: { kind: 'shared' }` mark with no tabs, the model's and the window's `activeSpaceId` on
+that empty agents' space, `cleanExit: true`. The first launch (`agent-space-restore`) seeds the
+window's `lastUserSpaceId`; the second (`agent-space-session`) leaves the key out, as a profile
+written before it. The profile seeds `warnBeforeQuitting: false`, so a Mac's chord asks the
+question like the other hosts' (with it on the Mac's hold is the confirmation and asks nothing),
+and `settings.agents.defaultMode: 'background'`, so only the explicit `takeScreen` brings the
+agent's tab in front. Every reading is state – the core's through `app.getState`, the question's
+through its DOM, the profile's through `state.json` – never a log line.
+
+| launch                | step                      | reads                                                                                                                                                                                                                  | confirmed by                    |
+| --------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| `agent-space-restore` | `restored-on-user-space`  | the window's `activeSpaceId` is the user space, its active tab on the fixture's first page; the agents' space present, marked `shared`, empty; one tab in all; no `zen://newtab` / `zen://blank` anywhere              | `app.getState`                  |
+|                       | `quit`                    | one tab: the quit chord quits with no question, exit code 0 within the budget (`quitGracefully`)                                                                                                                       | the process, the chrome         |
+|                       | `state-after-quit`        | `cleanExit: true`; one window remembered, on the user space; the agents' space kept with its mark and empty; one tab                                                                                                   | `state.json`                    |
+| `agent-space-session` | `restored-on-user-space`  | as above with two tabs, the first page active                                                                                                                                                                          | `app.getState`                  |
+|                       | `server-up`               | the local MCP server's endpoint from the profile's `agent.json` (`waitForEndpoint`, as the soak)                                                                                                                       | the profile                     |
+|                       | `agent-tab-in-background` | `initialize`, `zen_mode background`, `browser_tabs new` on the fixture's hand-off page: the agents' space holds exactly the agent's tab; the window still on the user space, its two tabs there, the first page active | the server's replies, the state |
+|                       | `quit-prompt-count`       | the quit chord: `[data-window-prompt="quit"]` reads "Quit Zenium?" and "2 tabs" (the agents' tab not counted); Cancel; the prompt gone, `window.prompt` null, the state as before                                      | the DOM, `app.getState`         |
+|                       | `screen-taken`            | `zen_mode foreground takeScreen: true` + `browser_snapshot` on the agent's tab: the window's `activeSpaceId` is the agents' space and its active tab the agent's                                                       | the server's replies, the state |
+|                       | `session-end`             | `zen_session end closeTabs: true`, then the DELETE: the window back on the user space, the agents' space empty, two user tabs with the first page active, no fresh tab seeded                                          | the server's replies, the state |
+|                       | `quit`                    | two tabs: "Quit Zenium?" for 2 tabs, Quit, exit code 0                                                                                                                                                                 | the DOM, the process            |
+|                       | `state-after-quit`        | as above with two tabs                                                                                                                                                                                                 | `state.json`                    |
+
+The session's end goes over the local MCP server – the soak's `HttpClient` from
+`scripts/mcp-soak.mjs`, the same HTTP path a real agent takes – not a test-only command. The
+pure parts (the seeded document, the verdicts) are `agent-space-scenario.test.mjs`'s.
+
 ## Teardown
 
 Removing a tree a launched build wrote into retries or polls, never a plain `rmSync`: Chromium's

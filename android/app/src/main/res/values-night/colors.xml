@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The search widget's face in the system's dark theme (see values/colors.xml): the v2 tokens'
      dark values, the mark the indigo Theme.Zen lifts for dark. The hint follows the ink on its own
-     (res/color/widget_search_hint.xml). -->
+     (res/color/widget_search_hint.xml). On Android 12+ values-night-v31/colors.xml and
+     values-night-v34/colors.xml put the system's dark Material You colours over these (WID-03). -->
 <resources>
     <color name="widget_search_fill">@color/v2_panel_dark</color>
     <color name="widget_search_hairline">@color/v2_border_dark</color>

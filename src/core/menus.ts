@@ -3,6 +3,7 @@ import { surfaceMounted, type ZenWindow } from './window'
 import {
   opensInNewTab,
   type ChromeContextParams,
+  type EditCommand,
   type LinkAppTarget,
   type MenuItemTemplate,
   type MenuSource,
@@ -50,6 +51,7 @@ import {
   type BookmarksBarMode,
   type DownloadDeleteFileResult,
   type Folder,
+  type KeyBinding,
   type MenuAnchor,
   type MenuHeader,
   type ImageThumbnailBounds,
@@ -67,7 +69,12 @@ import {
   type Tab
 } from '../shared/types'
 import { ZOOM_CEILING, ZOOM_FLOOR, formatZoom, siteKey } from '../shared/pageControls'
-import { MENU_KEY_CHANGE_MENU, applyMenuOrder, menuOrderOf } from '../shared/menuOrder'
+import {
+  MENU_KEY_CHANGE_MENU,
+  MENU_KEY_UPDATE,
+  applyMenuOrder,
+  menuOrderOf
+} from '../shared/menuOrder'
 import { phoneBarHas } from '../shared/phoneBar'
 import { newTabSections } from '../shared/newTab'
 import { FOLDER_COLOR_NAMES, FOLDER_COLOR_ORDER, spaceLabel } from '../shared/defaults'
@@ -77,7 +84,7 @@ import { canRetryDownload, deleteFileToast, displayName } from '../shared/downlo
 import { SAVE_PAGE_FORMATS, SAVE_PAGE_FORMAT_SPECS } from '../shared/savePage'
 import { languageName, sortedByName } from '../shared/languageNames'
 import { orderMediaEntries } from '../shared/mediaHub'
-import { toolbarPinned } from '../shared/toolbarPins'
+import { toolbarPinned, withToolbarPin, type ToolbarControl } from '../shared/toolbarPins'
 import { serialiseMenu } from './rendererMenus'
 import { dictionaryFor } from '../shared/spellcheck'
 import { installMenuLabel, openAppMenuLabel } from '../shared/webApp'
@@ -94,6 +101,8 @@ import {
 } from './menuBar'
 import { isHorizontalTabs } from '../shared/toolbarLayout'
 import { isSendableUrl } from './sync/sendTab'
+import { unsafeSiteReportUrl } from './unsafeSiteReport'
+import { markUpdateMenuOpened } from './updateDot'
 import {
   folderTabs,
   isPrivateFolder,
@@ -215,6 +224,14 @@ const SPELLCHECK_MENU_LANGUAGES_MAX = 8
 const REMOTE_TABS_MENU_MAX = 10
 /** The name a device with none reads under; the engine fills one in, a seeded list may not. */
 const UNNAMED_DEVICE = 'Another device'
+/**
+ * Settings › Look and Feel's Customise toolbar row (`settings/sections.tsx`, settings-36): the
+ * row the toolbar button's menu lands on and opens (`?row=` and `?open=`).
+ */
+export const CUSTOMIZE_TOOLBAR_ROW = 'customize-toolbar'
+/** Settings › Autofill's two vault groups (`settings/sections.tsx`), Chrome's Payments and Contact info landings. */
+const AUTOFILL_CARDS_GROUP = 'autofill-cards'
+const AUTOFILL_ADDRESSES_GROUP = 'autofill-addresses'
 
 /**
  * The page's bookmark toggle in one pair of words (§9.1): the app menu's row and the star's
@@ -1543,8 +1560,29 @@ export class Menus {
       this.popup(this.reloadItems(tab), win, 'urlbar', anchor)
       return
     }
+    // The desktop bar's pinnable controls (`shared/toolbarPins.ts`; the pins are the desktop
+    // layout's alone): the button marked with its control gets Chrome's pinned button menu –
+    // the star's own rows first, then the pin rows behind a hairline, as Chrome's
+    // `PinnedActionToolbarButtonMenuModel` seats an action's children over its pin rows.
+    const control = win.formFactor === 'desktop' ? (params.control ?? null) : null
     if (params.target === 'star') {
-      if (tab) this.popup(this.starItems(tab, win), win, 'urlbar', anchor)
+      if (tab) {
+        this.popup(
+          [
+            ...this.starItems(tab, win),
+            ...(control
+              ? [{ type: 'separator' as const }, ...this.toolbarButtonItems(control, win)]
+              : [])
+          ],
+          win,
+          'urlbar',
+          anchor
+        )
+      }
+      return
+    }
+    if (params.target === 'toolbar') {
+      if (control) this.popup(this.toolbarButtonItems(control, win), win, 'urlbar', anchor)
       return
     }
     if (params.target === 'urlbar' || params.target === 'urlpill') {
@@ -1622,6 +1660,40 @@ export class Menus {
       this.readingListTabItem(tab, win, 'page'),
       { type: 'separator' },
       this.showReadingListItem(win)
+    ]
+  }
+
+  /**
+   * The pinned toolbar button's menu (context-menus-112; Chrome's
+   * `PinnedActionToolbarButtonMenuModel` on a right-click or the Menu key on one of the desktop
+   * bar's pinnable action controls – the pill's Reader View, Translate and star chips, the
+   * media hub's button; `shared/toolbarPins.ts`): Chrome's two rows in Chrome's order and
+   * words, "Unpin" – the one of Chrome's Pin / Unpin pair the control's state shows (a control
+   * folded away has no button to right-click, so Unpin is the row met; Pin stands for the
+   * state all the same) – writing the control's key of `Settings.toolbarPins` as the Customise
+   * toolbar dialog's row does, the control folding into the app menu; then "Customise
+   * Toolbar…", which opens that dialog over Settings › Look and Feel (`?open=` lands the page
+   * on the row and opens its form) – the ellipsis because Zenium's surface is a dialog where
+   * Chrome's is a side panel (§9.1). Forward is not among them: its right-click is the stack's
+   * menu, as Chrome's Forward keeps its `BackForwardMenuModel` (a pref-toggled button, its pin
+   * Settings' "Show forward button" switch). The extension buttons keep their own menu (#104).
+   */
+  toolbarButtonItems(control: ToolbarControl, win: ZenWindow): Template {
+    const pins = this.browser.state.settings.toolbarPins
+    const pinned = toolbarPinned(pins, control)
+    const patch: Partial<Settings> = { toolbarPins: withToolbarPin(pins, control, !pinned) }
+    return [
+      {
+        label: pinned ? 'Unpin' : 'Pin',
+        click: () => this.browser.handleCommand(win, 'settings.update', patch)
+      },
+      {
+        label: 'Customise Toolbar…',
+        click: () =>
+          void this.browser.pages.open('settings', 'look', win, undefined, {
+            query: { row: CUSTOMIZE_TOOLBAR_ROW, open: CUSTOMIZE_TOOLBAR_ROW }
+          })
+      }
     ]
   }
 
@@ -3733,6 +3805,10 @@ export class Menus {
       this.showWebAppMenu(win, win.app, active, { ...anchor, keyboard: options.keyboard })
       return
     }
+    // The touch layouts' menu-button dot clears on the menu's open for the waiting version
+    // (TB-12, Chrome Android's ⋮ badge; `updateDot.ts`). The desktop's ⋯ keeps its plain read of
+    // the phase until W8-F3 wires it to the same record, so its open records nothing yet.
+    if (win.formFactor !== 'desktop') this.markUpdateMenuOpened()
 
     // --- The items, each once; the two layouts below put them in their order. ----------------
     const newTab: MenuItemTemplate = {
@@ -3915,6 +3991,26 @@ export class Menus {
       label: 'Passwords',
       click: () => this.browser.emit('overlay.open', { kind: 'passwords' }, win)
     })
+    // Chrome's Passwords and autofill ▸ (shortcuts-menus-107; `PasswordsAndAutofillSubMenuModel`,
+    // gated on the profile as the flat row is on the vault): the desktop's row folds the vault's
+    // landings in Chrome's order – Passwords (the flat row, as it is), then Chrome's Payments
+    // and Contact info rows as Zenium's Payment Methods and Addresses, each Settings › Autofill
+    // landed on the group of that name (W7-6's `?group=`; Zenium keeps the two in one section,
+    // Chrome's subpages). Chrome's Identity documents and Travel have no Zenium page and are left
+    // out, not greyed. The tablet keeps the flat row: its menu folds nothing the desktop's does
+    // not have to (§6's count is the desktop's 800 px window).
+    const autofillLanding = (group: string): MenuItemTemplate['click'] => {
+      return () =>
+        void this.browser.pages.open('settings', 'autofill', win, undefined, { query: { group } })
+    }
+    const passwordsAndAutofill = when(caps.passwords, {
+      label: 'Passwords and Autofill',
+      submenu: [
+        ...passwords,
+        { label: 'Payment Methods', click: autofillLanding(AUTOFILL_CARDS_GROUP) },
+        { label: 'Addresses', click: autofillLanding(AUTOFILL_ADDRESSES_GROUP) }
+      ]
+    })
     // The phone's way to the extensions' actions (Firefox for Android's Extensions item, in
     // the library block before the management page): the chrome's sheet of one row per
     // action. The sidebar layouts have the toolbar buttons and the puzzle panel.
@@ -3978,6 +4074,45 @@ export class Menus {
       action: 'find.open',
       enabled: Boolean(active),
       click: () => this.browser.actions.run('find.open', { sourceTabId: null, win })
+    }
+    // Chrome's Find and edit ▸ (shortcuts-menus-119; `FindAndEditSubMenuModel`, in every Chrome
+    // app menu, ungated): the find row, then Cut, Copy and Paste behind a hairline – Chrome's
+    // IDC_CUT/COPY/PASTE, which act on the active page's focused element while no chrome view
+    // holds the focus, here the view's editing command (`TabView.editCommand`). The rows stand
+    // enabled as Chrome's do (Chrome never reads the selection for its app menu; a pick with
+    // nothing to act on does nothing) wherever there is a page to act on; with no page, or on a
+    // host whose views take no such command, they are greyed, and the submenu keeps its shape
+    // (§9.17). The chord after each label is Chrome's (its accelerator table's Ctrl+X / C / V,
+    // ⌘ on macOS), shown as the key table's chords are; display alone – the page's editing keys
+    // are Blink's own, not the key table's, so the rows name no action. The desktop's alone: the
+    // tablet's menu keeps the flat find row, its editing being the touch selection's own.
+    const activeView = active ? tabs.view(active.id) : undefined
+    const os = this.browser.platform.info.os
+    const editCommand = (command: EditCommand, key: string): MenuItemTemplate => {
+      const chord: KeyBinding = {
+        key,
+        ctrl: os !== 'darwin',
+        meta: os === 'darwin',
+        alt: false,
+        shift: false
+      }
+      return {
+        label: command === 'cut' ? 'Cut' : command === 'copy' ? 'Copy' : 'Paste',
+        accelerator: toAccelerator(chord) ?? undefined,
+        hint: formatChord(chord, os),
+        enabled: Boolean(activeView?.editCommand),
+        click: () => activeView?.editCommand?.(command)
+      }
+    }
+    const findAndEdit: MenuItemTemplate = {
+      label: 'Find and Edit',
+      submenu: [
+        findInPage,
+        { type: 'separator' },
+        editCommand('cut', 'x'),
+        editCommand('copy', 'c'),
+        editCommand('paste', 'v')
+      ]
     }
     const readerView: MenuItemTemplate = {
       label: 'Reader View',
@@ -4140,27 +4275,41 @@ export class Menus {
       }))
     )
     const about: MenuItemTemplate = { label: `About Zenium ${state.version}`, enabled: false }
+    // A help page opens in a new tab in front, a child of the page the menu was opened over –
+    // back returns there (the renderer's `rootBackAction`), as Chrome's help centre opens in a
+    // tab of the browser (`ShowHelp`, `IDC_HELP_PAGE_VIA_MENU`) and its phone's help activity
+    // returns to the tab – in the tab's own container, so a private page's help stays private.
+    // One shape for the phone's Help row, the desktop's Zenium Help and Report an Unsafe Site…
+    // rows (the macOS menu bar's Help menu is `menuBar.ts`'s, W8-4's seam).
+    const openHelpPage = (url: string): void =>
+      void tabs.createTab(
+        { url, active: true, openerTabId: active?.id, containerId: active?.containerId },
+        win
+      )
     // Chrome's "Help & feedback", the phone menu's last row (TB-07): one flat row where the
     // sidebar layouts fold a Help submenu (a phone's list folds nothing in). Its pick opens the
     // help page (`HELP_URL`, the one address the desktop's Zenium Help row and Settings › About's
-    // Get help open) in a new tab in front, a child of the page the menu was opened over – back
-    // returns there (the renderer's `rootBackAction`), as Chrome's help activity returns to the
-    // tab – in the tab's own container, so a private page's help stays private. The feedback
-    // half is Settings › About's Report an issue row, and no `zen://help` page exists to open
-    // instead. The desktop opens the same address outside (`shell.openExternal`); the phone IS
-    // the browser.
+    // Get help open). The feedback half is Settings › About's Report an issue row, and no
+    // `zen://help` page exists to open instead.
     const help: MenuItemTemplate = {
       label: 'Help',
-      click: () =>
-        tabs.createTab(
-          {
-            url: HELP_URL,
-            active: true,
-            openerTabId: active?.id,
-            containerId: active?.containerId
-          },
-          win
-        )
+      click: () => openHelpPage(HELP_URL)
+    }
+    // Chrome's "Report an unsafe site…" (`IDC_REPORT_UNSAFE_SITE`, the Help submenu's last row;
+    // shortcuts-menus-123): Google Safe Browsing's public report form with the page's address
+    // in its query (`unsafeSiteReportUrl`), opened as a help page is. The form is public and
+    // needs no key, so the row shows whether or not Safe Browsing is on (Chrome's own hides with
+    // Safe Browsing off and in Incognito, its dialog being a feedback form); over a page without
+    // an address the form can take – `zen://`, `file:`, `about:blank`, no page at all – the row
+    // is greyed, the menu keeping its shape (§9.17; Chrome gates nothing on the scheme: its
+    // dialog lets the address be typed).
+    const unsafeSiteReport = unsafeSiteReportUrl(active?.url)
+    const reportUnsafeSite: MenuItemTemplate = {
+      label: 'Report an Unsafe Site…',
+      enabled: unsafeSiteReport !== null,
+      click: () => {
+        if (unsafeSiteReport !== null) openHelpPage(unsafeSiteReport)
+      }
     }
     // An Android app is left, not quit: the system owns its lifetime – on a tablet as on a
     // phone. Hosts with windows of their own (the desktop, at any layout) quit.
@@ -4247,6 +4396,14 @@ export class Menus {
         [
           ...applyMenuOrder(iconRow, keyOf, order),
           separator,
+          // Chrome's "Update Chrome" row as the first text row under the icon row, over a
+          // hairline of its own (TB-12; `TabbedAppMenuPropertiesDelegate.populatePageModeMenu`):
+          // the desktop's row, seated as structure – named `menu.update` for the sheet, outside
+          // the order and the edit mode like the Change Menu row (`lib/menuEdit.ts`) – while the
+          // update waits (`updateReadyRow`); nothing otherwise.
+          ...this.updateReadyRow().map((item) =>
+            item.type === 'separator' ? item : { ...item, key: MENU_KEY_UPDATE }
+          ),
           ...applyMenuOrder(list, keyOf, order),
           // Edge's "Change menu" as the list's last row, in a group of its own and outside the
           // order: the sheet opens its edit mode in place (`MenuSheet.tsx`); no pick reaches
@@ -4269,7 +4426,8 @@ export class Menus {
       [
         // Chrome's "Update Google Chrome" row at the menu's head (shortcuts-menus-101): while
         // an update is downloaded and waiting, one row that relaunches into it, over a hairline.
-        ...desktop(...this.updateReadyRow()),
+        // The tablet's menu opens on it too (TB-12), as Chrome's Android menu does.
+        ...sidebar(...this.updateReadyRow()),
         // The window's live media heads the menu while the media hub's toolbar button has
         // folded (design language v2 §9.29: the sidebar's width tier folds it at 240, and this
         // row is where it goes; with the button up, the button is the hub). The phone has its
@@ -4301,13 +4459,18 @@ export class Menus {
           ])
         },
         downloads,
-        ...passwords,
+        // The desktop folds the vault's landings into Chrome's Passwords and Autofill ▸ and the
+        // find row into Chrome's Find and Edit ▸ (below), each in the flat row's seat; the tablet
+        // keeps the flat rows.
+        ...desktop(...passwordsAndAutofill),
+        ...when(win.formFactor !== 'desktop', ...passwords),
         ...addons,
         ...deleteBrowsingData,
         separator,
         // The page's actions: find, zoom, translate, then the reader's and the per-site
         // controls; the long tail is the app group's More Tools.
-        findInPage,
+        ...desktop(findAndEdit),
+        ...when(win.formFactor !== 'desktop', findInPage),
         ...zoomSheet,
         ...zoom,
         ...translate,
@@ -4375,24 +4538,24 @@ export class Menus {
         },
         {
           label: 'Help',
-          // Chrome's Help submenu in Chrome's order (shortcuts-menus-152): About, What's New,
-          // the help centre, Report an Issue… – with Zenium's Keyboard Shortcuts beside its
-          // help row. Two groups behind one hairline: this build (its About page, its release
-          // notes), then the help. The legal pages are About's rows, not Help's (Chrome's Help
-          // has none).
+          // Chrome's Help submenu in Chrome's order (shortcuts-menus-152, -123): About, What's
+          // New, the help centre, Report an Issue…, Report an Unsafe Site… – with Zenium's
+          // Keyboard Shortcuts beside its help row. Two groups behind one hairline: this build
+          // (its About page, its release notes), then the help. Zenium Help opens the help page
+          // in a new tab as Chrome's help centre does (`openHelpPage`); Report an Issue… is the
+          // GitHub issues page in the system browser. The legal pages are About's rows, not
+          // Help's (Chrome's Help has none).
           submenu: [
             aboutPage,
             whatsNew,
             separator,
-            {
-              label: 'Zenium Help',
-              click: () => this.browser.platform.shell.openExternal(HELP_URL)
-            },
+            { label: 'Zenium Help', click: () => openHelpPage(HELP_URL) },
             keyboardShortcuts,
             {
               label: 'Report an Issue…',
               click: () => this.browser.platform.shell.openExternal(ISSUES_URL)
-            }
+            },
+            reportUnsafeSite
           ]
         },
         ...quit
@@ -4412,9 +4575,18 @@ export class Menus {
    * has. Nothing while an update is merely found (`available`) – Chrome shows nothing until
    * the update has downloaded – and nothing otherwise, so the menu keeps its resting count
    * (twenty rows, 661 px) and the row is a twenty-first only while an update is waiting; the
-   * "⋯" button wears the accent dot meanwhile (`SidebarTop`), Chrome's dot on its ⋮. The
-   * desktop's alone: the phone's flat list and the tablet keep Settings › Updates as their
-   * surface, and the updater's phases are the desktop main's to drive.
+   * "⋯" button wears the accent dot meanwhile (`SidebarTop`), Chrome's dot on its ⋮. Every
+   * host's (TB-12): the tablet's menu opens on it the same way, and the phone seats it as the
+   * first text row under its icon row, where Chrome's Android menu has "Update Chrome"
+   * (`TabbedAppMenuPropertiesDelegate.populatePageModeMenu`). THE DEVIATION FROM CHROME
+   * ANDROID, by design: Chrome's row shows on `UPDATE_AVAILABLE` because Play downloads AFTER
+   * the pick; Zenium downloads the APK itself, so its row shows once the update is downloaded
+   * and installable – `ready` – one rule across hosts, the pick always able to install. The row
+   * stays as long as the update waits, however often the menu opens; the dot on the touch
+   * layouts' menu buttons clears once the menu has been opened for the version
+   * (`markUpdateMenuOpened`, `updateDot.ts`) and returns for another version's `ready`.
+   * Settings › Updates stays every host's full surface; the updater's phases are the host's to
+   * drive.
    */
   private updateReadyRow(): Template {
     if (!this.browser.state.capabilities.updates) return []
@@ -4423,6 +4595,20 @@ export class Menus {
       { label: 'Update Zenium', click: () => void this.browser.updates.install() },
       { type: 'separator' }
     ]
+  }
+
+  /**
+   * The app menu opened on a touch layout: the waiting update's version becomes the one seen
+   * (`BrowserState.updateDot`, this device's, persisted with the profile), and the phone bar's ⋮
+   * and the tablet's menu button drop their dot. Nothing waiting, or the version already seen:
+   * no write, no commit.
+   */
+  private markUpdateMenuOpened(): void {
+    const { state, updates } = this.browser
+    const next = markUpdateMenuOpened(updates.status(), state.updateDot)
+    if (next === state.updateDot) return
+    state.updateDot = next
+    state.commit()
   }
 
   /**

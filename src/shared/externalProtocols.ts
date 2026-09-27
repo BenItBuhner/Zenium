@@ -76,22 +76,55 @@ export function classifyExternalUrl(url: string): ExternalUrlClass {
   }
 }
 
-/** The `S.browser_fallback_url` an `intent://` URL carries, when it is a web address. */
-export function intentFallbackUrl(url: string): string | null {
+const INTENT_MARK = '#Intent;'
+
+/**
+ * The `name=value` pairs of an `intent:` URL's `#Intent;…end` part, in the shape Android's
+ * `Intent.parseUri` reads (the parser behind Chrome's external navigation and the Android host's
+ * `ExternalProtocols.parse`): after the LAST `#`, `Intent;`, then `;`-terminated pairs up to
+ * `end`. A URL without the part, or with a part that never reaches `end`, is no intent to that
+ * parser – Chrome loads it as it is and fails on the scheme, the host answers `handler: 'none'`
+ * – so it carries nothing here either: null. Values are as written (the caller decodes what it
+ * needs); the first of a repeated name counts. Never throws.
+ */
+function intentExtras(url: string): Map<string, string> | null {
   if (schemeOf(url) !== 'intent') return null
-  const match = /[;#]S\.browser_fallback_url=([^;#]+)/.exec(url)
-  if (!match) return null
+  const trimmed = url.trim()
+  const hash = trimmed.lastIndexOf('#')
+  if (hash < 0 || !trimmed.startsWith(INTENT_MARK, hash)) return null
+  const out = new Map<string, string>()
+  let at = hash + INTENT_MARK.length
+  while (!trimmed.startsWith('end', at)) {
+    const semi = trimmed.indexOf(';', at)
+    if (semi < 0) return null
+    const pair = trimmed.slice(at, semi)
+    const eq = pair.indexOf('=')
+    if (eq > 0 && !out.has(pair.slice(0, eq))) out.set(pair.slice(0, eq), pair.slice(eq + 1))
+    at = semi + 1
+  }
+  return out
+}
+
+/**
+ * The `S.browser_fallback_url` an `intent://` URL carries, when it is a web address; null for
+ * anything else, a malformed intent included – never a throw.
+ */
+export function intentFallbackUrl(url: string): string | null {
+  const raw = intentExtras(url)?.get('S.browser_fallback_url')
+  if (!raw) return null
   try {
-    const fallback = decodeURIComponent(match[1])
+    const fallback = decodeURIComponent(raw)
     return /^https?:\/\//i.test(fallback) ? fallback : null
   } catch {
     return null
   }
 }
 
-/** The `package=` an `intent://` URL names (the app it wants; its store listing when missing). */
+/**
+ * The `package=` an `intent://` URL names (the app it wants; its store listing when missing):
+ * a package-name token, else null – a malformed intent included, never a throw.
+ */
 export function intentPackage(url: string): string | null {
-  if (schemeOf(url) !== 'intent') return null
-  const match = /[;#]package=([a-zA-Z0-9_.]+)(?=[;#]|$)/.exec(url)
-  return match ? match[1] : null
+  const pkg = intentExtras(url)?.get('package')
+  return pkg && /^[a-zA-Z0-9_.]+$/.test(pkg) ? pkg : null
 }

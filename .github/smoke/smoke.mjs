@@ -3,7 +3,7 @@
 // blocking dialog, takes OS-level screenshots at each step and writes one JSON result per step.
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
-//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,features,recaptcha,downloads,notifications,restart-registration,private-taskbar,quit-hold,visibility,default-browser,menu-bar,mcp]
+//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,features,recaptcha,downloads,notifications,restart-registration,private-taskbar,quit-hold,visibility,default-browser,menu-bar,mcp,agent-space-restore]
 //        [--extra-args="--no-sandbox --disable-gpu"]   (space-separated, passed to the app)
 //        [--sandbox]             (the run is a sandboxed leg: Chromium's sandbox stays on, so
 //                                 --no-sandbox in --extra-args is refused and ELECTRON_DISABLE_SANDBOX
@@ -256,6 +256,21 @@
 //                What the soak left is adopted and closed, `zenium://diagnostics` read, and the
 //                whole verdict – counts, client p50 / p95 per tool and leg, the server's
 //                counters – written to <out>/<label>/soak.json (Linux, under Xvfb)
+//   agent-space-restore
+//                the agents' space around a restore (agent-space-scenario.mjs; guards #573):
+//                two launches from a profile seeded as the MCP soak leaves one – a user space
+//                with the fixture's page(s), the shared Agents space (its `agent` mark) empty,
+//                the window's activeSpaceId on it, `lastUserSpaceId` set on the first launch
+//                and absent on the second (`agent-space-session`). Each boot must come up on
+//                the user space with its tab active and the agents' space still empty (no
+//                zen://newtab seeded), read through app.getState. The first launch has one tab
+//                and the quit chord quits without a question; the second has two, an agent over
+//                the local MCP server opens a tab in the agents' space in background mode, the
+//                chord asks "Quit Zenium?" for "2 tabs" (Cancel), zen_mode foreground takeScreen
+//                plus a snapshot move the window onto the agents' space, zen_session end
+//                closeTabs moves it back, and the quit asks for 2 tabs; state.json after each
+//                quit has cleanExit and the window on the user space. warnBeforeQuitting is
+//                seeded off so that a Mac's chord asks like the others' (all five installer legs)
 //
 // Windows and macOS run boot, restore, scale, dark and visibility (the installed Windows build
 // boot and restore), Windows notifications, restart-registration and private-taskbar too and
@@ -292,6 +307,7 @@ import {
   parseAxeAllowlist,
   withAriaFacts
 } from './aria.mjs'
+import { AGENT_SPACE_SCENARIO, scenarioAgentSpace } from './agent-space-scenario.mjs'
 import { FIND_MATCHES, FIND_WORD, isWebPage, startBootFixture } from './boot-fixture.mjs'
 import { DEFAULT_BROWSER_SCENARIO, scenarioDefaultBrowser } from './default-browser-scenario.mjs'
 import { DOWNLOADS_SCENARIO, scenarioDownloads } from './downloads-scenario.mjs'
@@ -6607,17 +6623,19 @@ const OMNIBOX_ROW = 'li.zen-omnibox-row'
 const OMNIBOX_SELECTED = '.zen-omnibox [role="option"][aria-selected="true"]'
 // The `?row=` landings the leg asks of Settings: one row in each of three sections
 // (sections.tsx: Look's Split view group, Tabs' Pinned tabs group, Resources' Never touch
-// group). Each section runs longer than the column, so the group can reach the column's top:
-// a section shorter than the column (Search at 1600x1000) lands its row short by the
-// difference – SettingsPage.tsx's landing pad reads the column's clamped scrollHeight – a
-// product defect the W5-14 report routes, not a fact this leg gates on.
+// group). `?row=` lands the ROW itself (the lead's L2 on #578: the row's top flush under the
+// column's scroll padding – the desktop's pinned find field; `?group=` lands the group), its
+// group's heading scrolled above. Each section runs longer than the column, so the row can
+// reach the column's top: a section shorter than the column (Search at 1600x1000) lands its
+// row short by the difference – SettingsPage.tsx's landing pad reads the column's clamped
+// scrollHeight – a product defect the W5-14 report routes, not a fact this leg gates on.
 const SETTINGS_LANDINGS = [
   { section: 'look', row: 'split-edge-zones' },
   { section: 'tabs', row: 'pinned-close' },
   { section: 'resources', row: 'protect-pinned' }
 ]
-// How far under the column's top (past its scroll padding) a landed group may sit, in px: the
-// column's own rounding, and the group's outline.
+// How far under the column's top (past its scroll padding) a landed row may sit, in px: the
+// column's own rounding, and the row's outline.
 const LANDING_SLACK = 8
 
 /**
@@ -6655,10 +6673,10 @@ async function activeFeatureTab(s) {
 }
 
 /**
- * Where the Settings page put row `row` (SettingsPage.tsx: the row's group scrolled to the
- * column's top under its scroll padding, the page carrying `data-landing` while a row is
- * asked): the page's layout, the landing flag and the end pad, and the column's, the group's
- * and the row's boxes. `error` when the page or the row is not there.
+ * Where the Settings page put row `row` (SettingsPage.tsx: the row itself scrolled to the
+ * column's top under its scroll padding, the row carrying `data-landing` and the page carrying
+ * its own while a row is asked): the page's layout, the landing flags and the end pad, and the
+ * column's, the group's and the row's boxes. `error` when the page or the row is not there.
  */
 function settingsLanding(s, row) {
   return s.chrome.evaluate((row) => {
@@ -6680,6 +6698,8 @@ function settingsLanding(s, row) {
     return {
       ...facts,
       group: group.getAttribute('data-group'),
+      rowLanding: el.hasAttribute('data-landing'),
+      groupLanding: group.hasAttribute('data-landing'),
       inset: parseFloat(getComputedStyle(column).scrollPaddingTop) || 0,
       columnTop: c.top,
       columnBottom: c.bottom,
@@ -6804,9 +6824,11 @@ async function scenarioFeatures() {
     for (const landing of SETTINGS_LANDINGS) {
       await s.step(`settings-row-landing-${landing.section}`, async () => {
         // `zenium://settings/<section>?row=<id>` typed over the active tab: Settings opens (in
-        // its own tab from a web page; the Settings tab moves for the next ones) with the row's
-        // group scrolled to the column's top under its scroll padding, the row within the
-        // column, and the page carrying `data-landing` – the deep link's landing.
+        // its own tab from a web page; the Settings tab moves for the next ones) with the row
+        // itself scrolled to the column's top under its scroll padding – flush under the pinned
+        // find field, its group's heading scrolled above (the lead's L2 on #578) – the row
+        // within the column and carrying `data-landing` (its group not), the page carrying its
+        // own `data-landing` – the deep link's landing.
         const url = `zenium://settings/${landing.section}?row=${landing.row}`
         const prefix = `zen://settings/${landing.section}`
         const tabsBefore = (await featureState(s)).tabs.length
@@ -6832,14 +6854,22 @@ async function scenarioFeatures() {
         })
         await s.settle()
         await s.shot(`0${shotIndex++}-settings-${landing.section}`)
-        const ceiling = read.columnTop + read.inset + LANDING_SLACK
-        if (read.groupTop < read.columnTop - 1 || read.groupTop > ceiling) {
+        const floor = read.columnTop + read.inset
+        if (read.rowTop < floor - 1 || read.rowTop > floor + LANDING_SLACK) {
           throw new Error(
-            `the row's group sits at ${read.groupTop.toFixed(1)}; the column's top is ${read.columnTop.toFixed(1)} plus ${read.inset} of scroll padding: the landing did not bring the group to the top (${JSON.stringify(read)})`
+            `the row sits at ${read.rowTop.toFixed(1)}; the column's top is ${read.columnTop.toFixed(1)} plus ${read.inset} of scroll padding: the landing did not bring the row flush under the field (${JSON.stringify(read)})`
           )
         }
-        if (read.rowTop < read.columnTop - 1 || read.rowBottom > read.columnBottom + 1) {
+        if (read.rowBottom > read.columnBottom + 1) {
           throw new Error(`the row is not within the column: ${JSON.stringify(read)}`)
+        }
+        if (read.groupTop > read.rowTop) {
+          throw new Error(`the row's group starts under the row: ${JSON.stringify(read)}`)
+        }
+        if (!read.rowLanding || read.groupLanding) {
+          throw new Error(
+            `the data-landing mark is not the row's alone (row ${read.rowLanding}, group ${read.groupLanding}): ${JSON.stringify(read)}`
+          )
         }
         return {
           url,
@@ -7704,6 +7734,17 @@ async function main() {
           outDir,
           // The stage's hand-off is judged on the screen: its pixels where the tab's view is.
           screenPixels
+        }),
+      [AGENT_SPACE_SCENARIO]: () =>
+        scenarioAgentSpace({
+          freshProfile,
+          runScenario,
+          waitFor,
+          log,
+          // The seeded tabs are the boot fixture's pages; the agent's tab its hand-off page.
+          fixture: bootSite,
+          // The quit chord as this host's, for the question's count (Cancel, not Quit).
+          quitCombo: QUIT_COMBO
         }),
       [DEFAULT_BROWSER_SCENARIO]: () =>
         scenarioDefaultBrowser({

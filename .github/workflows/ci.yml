@@ -108,10 +108,16 @@ jobs:
         # to 6 MB/s locally. No effect on what the smokes check (chrome, tabs, restore, quit,
         # cookies); the sign-in smoke below runs without it, as before. menu-bar (W7-4): Zenium
         # draws no menu bar off macOS – its one step here reads that no application menu is set.
+        # agent-space-restore (W8-F2; guards #573): two launches from a profile seeded as the MCP
+        # soak leaves one – the window standing on an empty agents' space – each coming up on the
+        # user space with the agents' space still empty; the quit chord quitting without a
+        # question with one tab and asking for "2 tabs" with two user tabs and an agent's; an
+        # agent over the local MCP server taking the screen and ending its session, which moves
+        # the window back to the user space.
         run: >
           xvfb-run -a -s '-screen 0 1600x1000x24'
           node .github/smoke/smoke.mjs --exe dist/linux-unpacked/zenium --label unpacked
-          --out "$SMOKE_OUT" --scenarios boot,restore,crash,walkthrough,pip,split,menu-bar
+          --out "$SMOKE_OUT" --scenarios boot,restore,crash,walkthrough,pip,split,menu-bar,agent-space-restore
           --extra-args="--no-sandbox --disable-gpu"
       - name: Clear browsing data on exit under Xvfb (the quit run, the owed clear at launch)
         # The clear-on-exit scenario (#310) on its own run of the harness, so its four launches
@@ -134,7 +140,8 @@ jobs:
         # leaves the loopback fixture) and the bookmarks bar always on. A step per leg, so a red
         # names the leg: omnibox-suggestions (a history row typed up, Enter navigates in place),
         # settings-row-landing-look / -tabs / -resources (zenium://settings/<section>?row=<id>
-        # lands the row's group at the column's top), reader-toggle (zen://reader on the fixture's
+        # lands the row itself flush under the column's scroll padding – the pinned find field –
+        # its group's heading above), reader-toggle (zen://reader on the fixture's
         # article, the chip's aria-pressed both ways), bookmarks-bar (Ctrl+D filed to the bar,
         # the chip opened from another tab, deleted from its menu). Its own log, result.json and
         # screenshots under smoke-out/features; runs after a red step above as well.

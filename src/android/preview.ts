@@ -18,7 +18,12 @@ import { previewRangeAnswer } from './previewRange'
 import { createPreviewDownloads } from './previewDownloads'
 import { createPreviewScreenshots } from './previewScreenshots'
 import { previewPdfVariantOf } from './previewPdf'
-import { PREVIEW_SHARE_TARGETS, awaitedPanelAnswer, type PreviewShareOutcome } from './previewShare'
+import {
+  PREVIEW_SHARE_TARGETS,
+  awaitedPanelAnswer,
+  previewQrCode,
+  type PreviewShareOutcome
+} from './previewShare'
 import {
   PREVIEW_SITE_DATA_EVENT,
   previewCookies,
@@ -1218,8 +1223,23 @@ export function createPreviewBridge(): NativeBridge {
         up.settle?.(outcome ?? 'aborted')
         return
       }
+      // The QR code chip: the code sheet with the share's link, as `Share.showQrCode` sends it.
+      if (kind === 'qr' && up.data.url) {
+        host().hostEvent('qr.code', JSON.stringify(previewQrCode(up.data.url, null)))
+      }
       const answer = awaitedPanelAnswer(kind)
       if (answer) up.settle?.(answer)
+    },
+    // The code sheet's Download (SH-06): the Kotlin host writes the picture into Downloads and
+    // says so through its toast; here the word alone, a beat later as the write would take.
+    'qr.download': ({ url }) => {
+      console.info('[zen preview] QR code kept in Downloads', url)
+      window.setTimeout(() => {
+        host().hostEvent(
+          'toast',
+          JSON.stringify({ message: 'Saved to Downloads', kind: 'info', action: null })
+        )
+      }, 400)
     },
     'app.openAppLinkSettings': () => console.info('[zen preview] open-by-default settings'),
     'voice.start': () => voice.start(),

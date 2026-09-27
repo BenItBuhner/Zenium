@@ -12,6 +12,7 @@ import type {
 } from './translate'
 import type { EngineRelayRequest, EngineRelayResponse } from './translateEngine'
 import type { UpdateSettings, UpdateStatus } from './updates'
+import type { UpdateDotRecord } from '../core/updateDot'
 import type { ToolbarPins } from './toolbarPins'
 import type { BlockingSettings, BlockingStatus } from './blocking'
 import type {
@@ -33,7 +34,7 @@ import type { InternalPageId, InternalPageQuery } from './internalPages'
 import type { InstallSurface, InstalledWebApp, WebAppInfo } from './webApp'
 import type { ContentDefault } from './contentSettings'
 import type { VoiceEvent, VoiceStartOutcome } from './voice'
-import type { QrEvent, QrStartOutcome } from './qrScan'
+import type { QrCodeRequest, QrEvent, QrStartOutcome } from './qrScan'
 import type { MediaPositionInfo, MediaSessionAction, MediaSessionSourceKind } from './mediaSession'
 import type { SpellcheckSettings, SpellcheckStatus } from './spellcheck'
 import type { ReaderPreferences } from './reader'
@@ -3316,6 +3317,14 @@ export type AppLinkState = 'allowed' | 'disallowed' | 'unknown'
  */
 export type DefaultBrowserRequestSource = 'onboarding' | 'sheet' | 'banner' | 'settings' | 'newtab'
 
+/**
+ * What came of asking the host for the computer's proxy settings panel (Settings › System):
+ * `opened` – the OS panel is up (or the desktop's settings tool was launched); `unsupported` –
+ * the host has no door to it, as Chrome has none on a Linux desktop outside its table or whose
+ * tool is not on the PATH, and the page says so.
+ */
+export type ProxySettingsDoor = 'opened' | 'unsupported'
+
 // ---------------------------------------------------------------------------
 // Page controls (desktop site, dark theme for sites, page zoom)
 // ---------------------------------------------------------------------------
@@ -4332,6 +4341,14 @@ export interface UIState {
    */
   privateLockOnLeave: boolean
   /**
+   * The update dot's per-version 'seen' record, this device's (`BrowserState.updateDot`,
+   * `core/updateDot.ts`; TB-12): the waiting update's version the app menu was last opened for.
+   * The phone bar's ⋮ and the tablet toolbar's menu button read `updateDotShows(updates, updateDot)`
+   * – the dot clears on the menu's first open for a version and returns for another version's
+   * `ready`; the desktop's ⋯ reads the plain phase until W8-F3.
+   */
+  updateDot: UpdateDotRecord
+  /**
    * The new tab page's custom background: whether one is set, whether the host can open a file
    * picker for one (the phone's page reads the file itself and stores it through `set`), and
    * the colour the picture suggests for the space's accent (NTP-14; `#rrggbb`, fitted to read on
@@ -4811,6 +4828,12 @@ export interface Commands {
   'qr.setTorch': { args: { on: boolean }; result: void }
   /** The app's system settings screen, where a permanently refused camera is turned back on. */
   'qr.openSettings': { args: void; result: void }
+  /**
+   * The QR code sheet's Download (SH-06; the host sent `qr.code`): the host keeps the link's
+   * code as a picture in Downloads – the link written above the code, as Chrome's
+   * `QrCodeShareMediator.addUrlToBitmap` composes it – and says so through its toast.
+   */
+  'qr.download': { args: { url: string }; result: void }
   /** The external-protocol sheet's answer (`always` remembers the scheme in settings). */
   'externalProtocol.respond': {
     args: { requestId: string; allow: boolean; always: boolean }
@@ -5741,9 +5764,14 @@ export interface Commands {
   /**
    * Import the chosen kinds from a source (`ImportSource.id`); one import runs at a time and its
    * progress is `UIState.import`. Resolves with the finished progress, or null for an unknown
-   * source or nothing to import.
+   * source or nothing to import. `primaryPassword` is Firefox's primary password when the user
+   * typed one for a Firefox source's passwords (ID-42): sent with this run only, used to unwrap
+   * `key4.db`'s master key and kept nowhere; absent, the empty default is tried.
    */
-  'import.run': { args: { source: string; kinds: ImportKind[] }; result: ImportProgress | null }
+  'import.run': {
+    args: { source: string; kinds: ImportKind[]; primaryPassword?: string }
+    result: ImportProgress | null
+  }
   /** Stop the running import after the kind in flight; false when none runs. */
   'import.cancel': { args: void; result: boolean }
   /** Drop the finished import from `UIState.import` (the dialog closed). */
@@ -6027,6 +6055,15 @@ export interface Commands {
   'defaultBrowser.dismiss': { args: { prompt: 'sheet' | 'banner' }; result: void }
   /** Read the role again (the settings row opens; the app came back from the system dialog). */
   'defaultBrowser.refresh': { args: void; result: boolean | null }
+
+  /**
+   * Settings › System › "Open your computer's proxy settings" (Chrome's System page): the OS
+   * panel where the computer's proxy is set – Windows Settings › Network & internet › Proxy,
+   * macOS System Settings › Network › Proxies, the Linux desktop's network settings by Chrome's
+   * table of desktops. `unsupported` when the host could not open one (a Linux desktop the
+   * table does not know, its tool not on the PATH, a host without the door): the page says so.
+   */
+  'system.openProxySettings': { args: void; result: ProxySettingsDoor }
 
   'boost.update': {
     args: { domain: string; patch: Partial<Omit<Boost, 'domain' | 'updatedAt'>> }
@@ -6703,6 +6740,11 @@ export interface Events {
   'voice.event': VoiceEvent
   /** The host's camera reports while a scan runs (after `qr.start` answered `scanning`). */
   'qr.event': QrEvent
+  /**
+   * The share sheet's "QR code" was picked (SH-06): the host encoded the link and the chrome
+   * draws the code sheet with it; its Download asks `qr.download`.
+   */
+  'qr.code': QrCodeRequest
   /**
    * The host put up the browser's own share panel for a share (Android below 14, SH-03): the
    * chrome draws it and answers with `share.panelAction`.

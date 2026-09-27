@@ -426,6 +426,36 @@ describe('BookmarkService: sync', () => {
     expect(service.get(BOOKMARKS_BAR_ID)).not.toBeNull()
     expectValid(service)
   })
+
+  it("a record without a favicon keeps this device's own for the same page (the peer's icon stayed home, services pass 11); one with an address takes it; another page's does not carry", () => {
+    const { service, state } = setup()
+    const icon = 'data:image/png;base64,iVBORw0KGgo='
+    const a = service.create({ title: 'A', url: 'https://a/', favicon: icon })!
+    const synced = (
+      patch: Partial<Parameters<typeof service.applySynced>[1]> = {}
+    ): Parameters<typeof service.applySynced>[1] => ({
+      parentId: BOOKMARKS_BAR_ID,
+      index: 0,
+      type: 'url',
+      title: 'A synced',
+      url: 'https://a/',
+      dateAdded: 5,
+      ...patch
+    })
+    service.applySynced(a.id, synced())
+    expect(service.get(a.id)).toMatchObject({ title: 'A synced', favicon: icon })
+    service.applySynced(a.id, synced({ favicon: 'https://a/favicon.ico' }))
+    expect(service.get(a.id)?.favicon).toBe('https://a/favicon.ico')
+    service.applySynced(a.id, synced())
+    expect(service.get(a.id)?.favicon).toBe('https://a/favicon.ico')
+    service.applySynced(a.id, synced({ url: 'https://a/other' }))
+    expect(service.get(a.id)).not.toHaveProperty('favicon')
+    // A node this device never held lands as the record says: no icon when it carries none.
+    service.applySynced('remote', synced({ url: 'https://remote/' }))
+    expect(service.get('remote')).not.toHaveProperty('favicon')
+    state.repair()
+    expectValid(service)
+  })
 })
 
 describe('BrowserState: bookmark persistence', () => {

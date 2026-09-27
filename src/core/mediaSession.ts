@@ -79,6 +79,16 @@ interface AutoPip {
   confirmed: boolean
 }
 
+/**
+ * A first-time notice of an automatic entry ({@link MediaSessionService.noticeAuto}) waiting for
+ * the tab's window to be on the user's screen again: the tab whose video went in, and the window
+ * it was off the screen in (the notice goes with that window's closing).
+ */
+interface PendingAutoPipNotice {
+  tabId: string
+  winId: string
+}
+
 interface TabReport {
   report: MediaReport
   /** When the report arrived (epoch ms): the reference `position` is extrapolated from. */
@@ -140,6 +150,14 @@ export class MediaSessionService {
   private readonly shown = new Map<string, string[]>()
   private blurTimer: ReturnType<typeof setTimeout> | null = null
   /**
+   * The first-time notice of an automatic entry made while the tab's window was off the screen
+   * (a minimise: the blur trigger enters for the pages W6-F6 hid with the window), held back until
+   * the window is seen again ({@link noticeAuto}, {@link onWindowVisibleChanged}). Dropped unspent
+   * – the site not marked, the notice for the next entry – when the tab's media stops, the tab
+   * or its window closes, or the service is disposed before then.
+   */
+  private autoPipNotice: PendingAutoPipNotice | null = null
+  /**
    * The hub's linger running for each tab whose media paused or ended (`Platform.mediaHub`):
    * fires once `inactiveAfterMs` passes without an interaction and takes the tab's entry out
    * of the hub, as Chrome's `Session::inactive_timer_` hides its item.
@@ -170,6 +188,9 @@ export class MediaSessionService {
     const playing = reportIsPlaying(report)
     const wasPlaying = before ? reportIsPlaying(before.report) : false
     if (playing) this.dismissed.delete(tabId)
+    // The video the desktop put away stopped before its window came back: the notice of that
+    // entry is not owed, and not spent – the next entry for the site says so.
+    if (!playing && this.autoPipNotice?.tabId === tabId) this.autoPipNotice = null
     this.reports.set(tabId, {
       report,
       at,
@@ -189,6 +210,7 @@ export class MediaSessionService {
     this.dismissed.delete(tabId)
     this.inactive.delete(tabId)
     this.clearLinger(tabId)
+    if (this.autoPipNotice?.tabId === tabId) this.autoPipNotice = null
   }
 
   /**
@@ -268,7 +290,8 @@ export class MediaSessionService {
    * The browser is going away (`Browser.shutdown()`, the quit path): every linger is cleared so
    * none fires into a torn-down chrome, and none can be armed after – a report a page sends as
    * its view is destroyed, a refresh the teardown provokes, run into {@link startLinger}'s guard.
-   * The blur clock of the automatic picture-in-picture goes the same way.
+   * The blur clock of the automatic picture-in-picture goes the same way, and a first-time notice
+   * still waiting for its window is dropped unspent.
    */
   dispose(): void {
     this.disposed = true
@@ -278,6 +301,17 @@ export class MediaSessionService {
       clearTimeout(this.blurTimer)
       this.blurTimer = null
     }
+    this.autoPipNotice = null
+  }
+
+  /**
+   * `win` closed: what the automatic picture-in-picture remembered of it goes – the tabs it
+   * showed at the last look, and a first-time notice waiting for it to be seen again (unspent:
+   * the window will not return, and the site is told at the next entry instead).
+   */
+  onWindowClosed(win: ZenWindow): void {
+    this.shown.delete(win.id)
+    if (this.autoPipNotice?.winId === win.id) this.autoPipNotice = null
   }
 
   /** The tab the OS controls show right now (a source's tab when a source holds them), or null. */
@@ -828,11 +862,11 @@ export class MediaSessionService {
    * and minimizing moves it – as Chrome on Linux behaves. An occlusion that arrives after the
    * grace, with no new blur, is not heard.
    *
-   * What this host gives the rule today (the pass 10 probe, Electron 44.4.5 under Xvfb): a tab
-   * page's `visibilityState` stayed `visible` behind another tab, on blur and with the window
-   * hidden outright – the host does not forward the window's state to a child
-   * `WebContentsView`'s page – so until it tells a tab page it is hidden with the window, this
-   * path enters nothing and the tab trigger above carries the feature.
+   * What this host gives the rule: since W6-F6 the desktop takes a minimised or hidden window's
+   * tab views down to Chromium so their pages read `hidden` (`applyWindowVisible`), and this path
+   * enters on a minimise – with the window off the screen, which is why the first-time notice of
+   * such an entry waits for the window's return ({@link noticeAuto}). A window blurred while on
+   * screen leaves its pages `visible` and this path enters nothing, as before.
    */
   onWindowFocusChanged(win: ZenWindow, focused: boolean): void {
     if (this.blurTimer !== null) {
@@ -938,24 +972,63 @@ export class MediaSessionService {
    * it; on a blur to another application it is the only Zenium window (none has the focus once
    * the grace is over), what the user sees on return. The user's own toggle and Android's hook
    * (#223) never come this way.
+   *
+   * Said when it can be seen: the blur trigger enters for a window the user minimised (W6-F6
+   * hides its pages with it), and a toast shown then plays out to nobody while the memory is
+   * spent all the same. So the entry happens now and the notice waits – the toast and the mark
+   * both – for the window to be on the screen again ({@link onWindowVisibleChanged}); a video
+   * stopped, a tab or window closed before then leaves it unspent, for the next entry to say.
    */
   private noticeAuto(tabId: string): void {
     const tab = this.browser.tabs.tab(tabId)
     if (!tab) return
-    const { permissions } = this.browser
-    if (permissions.noticed(AUTO_PIP_SETTING, tab.url)) return
-    permissions.markNoticed(AUTO_PIP_SETTING, tab.url)
-    let win: ZenWindow | undefined
-    try {
-      win = this.browser.tabs.windowFor(tabId)
-    } catch {
-      win = undefined
+    if (this.browser.permissions.noticed(AUTO_PIP_SETTING, tab.url)) return
+    const win = this.windowOf(tabId)
+    if (win && !win.isOnScreen) {
+      this.autoPipNotice = { tabId, winId: win.id }
+      return
     }
-    this.browser.toast(`Video from ${displayHost(tab.url)} opened in a small window`, 'info', win, {
+    this.showNoticeAuto(tabId, tab.url, win)
+  }
+
+  /**
+   * `win` went off the user's screen (minimised, hidden) or came back onto it (restored, shown):
+   * the desktop's W6-F6 signal, through `ZenWindow.onWindowVisibleChanged`. A first-time notice
+   * waiting for the window its tab is in shows now, once, and marks the site; another window's
+   * return changes nothing while the tab's own is still away.
+   */
+  onWindowVisibleChanged(_win: ZenWindow, visible: boolean): void {
+    const pending = this.autoPipNotice
+    if (!pending || !visible || this.disposed) return
+    const tab = this.browser.tabs.tab(pending.tabId)
+    if (!tab) {
+      this.autoPipNotice = null
+      return
+    }
+    const win = this.windowOf(pending.tabId)
+    if (win && !win.isOnScreen) return
+    this.autoPipNotice = null
+    if (this.browser.permissions.noticed(AUTO_PIP_SETTING, tab.url)) return
+    this.showNoticeAuto(pending.tabId, tab.url, win)
+  }
+
+  /** The notice itself: the site marked as told, the toast in `win` (the tab's window). */
+  private showNoticeAuto(tabId: string, url: string, win: ZenWindow | undefined): void {
+    this.browser.permissions.markNoticed(AUTO_PIP_SETTING, url)
+    this.browser.toast(`Video from ${displayHost(url)} opened in a small window`, 'info', win, {
       label: 'Turn off for this site',
       command: 'media.autoPipOptOut',
       args: { tabId }
     })
+  }
+
+  /** The window holding `tabId`, or undefined for a tab no window owns (mid-move, closing). */
+  private windowOf(tabId: string): ZenWindow | undefined {
+    try {
+      return this.browser.tabs.windowFor(tabId)
+    } catch {
+      return undefined
+    }
   }
 
   /**

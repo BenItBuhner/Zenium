@@ -551,13 +551,14 @@ describe('an edit is stamped where it is made, not where it is noticed', () => {
       }
     },
     {
-      name: 'a renamed key (the 0.4.x restoreSession switch folded into startup at boot, the switch mirrored beside it for a release)',
+      name: 'a renamed key (the 0.4.x restoreSession switch folded into startup at boot; this build publishes startup alone, the mirror retired)',
       upgrade: (files, record) => {
         // The previous build's record: the switch (on, as the untouched default reads), no
-        // `startup`; this build's mirrors the switch and adds the key it folded.
-        const { startup: _folded, ...asWritten } = record
+        // `startup`; this build's record holds the key it folded and no switch.
+        const { startup: _folded, ...rest } = record
         void _folded
-        expect(asWritten.restoreSession).toBe(true)
+        expect(record).not.toHaveProperty('restoreSession')
+        const asWritten = { ...rest, restoreSession: true }
         asPreviousBuild(
           files,
           (s) => {
@@ -694,6 +695,54 @@ describe('an edit is stamped where it is made, not where it is noticed', () => {
     const mine = await settingsRecord(upgraded)
     expect(mine.modified).toBe(stamped.modified)
     expect(hashData(mine.data)).toBe(hashData(stamped.data))
+  }, 30_000)
+
+  it("a bookmark's data: favicon leaving its record at the upgrade (services pass 11's wire rule) is the build's change: the seed adopts the hash, the upgrade publishes the node without the icon at its OLD modified", async () => {
+    const DATA_ICON = 'data:image/png;base64,iVBORw0KGgo='
+    const a = device('Desk (Linux)')
+    await setup(a)
+    const node = a.browser.bookmarks.create({
+      title: 'Docs',
+      url: 'https://docs.example/',
+      favicon: DATA_ICON,
+      parentId: '1'
+    })!
+    await settle()
+    await a.engine.syncNow()
+    // A real edit, stamped by the subscriber: the record's time from here on.
+    await settle()
+    a.browser.bookmarks.update(node.id, { title: 'The docs' })
+    await settle()
+    await a.engine.syncNow()
+    const stamped = (await published(a)).find((r) => r.id === node.id)!
+    expect(stamped.modified).toBeGreaterThan(0)
+    expect(stamped.data).not.toHaveProperty('favicon')
+    expect(a.browser.bookmarks.tree.get(node.id)?.favicon).toBe(DATA_ICON)
+
+    // The previous build's metadata named the record WITH the icon's bytes, as it wrote it.
+    const closed = close(a)
+    const asWritten = { ...(stamped.data as Record<string, unknown>), favicon: DATA_ICON }
+    const sync = JSON.parse(closed['sync.json']!) as { meta: MetaMap }
+    expect(sync.meta[node.id]!.hash).toBe(hashData(stamped.data))
+    sync.meta[node.id] = { ...sync.meta[node.id]!, hash: hashData(asWritten) }
+    closed['sync.json'] = JSON.stringify(sync)
+
+    // At start the seed adopts this build's record – the node without the icon – at the edit's
+    // time; the round publishes it so, never at the launch.
+    await settle()
+    const launched = Date.now()
+    const upgraded = reopen('Desk (Linux)', closed)
+    upgraded.engine.flushSync()
+    const seeded = (JSON.parse(upgraded.io.files['sync.json']!) as { meta: MetaMap }).meta[node.id]!
+    expect(seeded.hash).toBe(hashData(stamped.data))
+    expect(seeded.modified).toBe(stamped.modified)
+    await upgraded.engine.syncNow()
+    const mine = (await published(upgraded)).find((r) => r.id === node.id)!
+    expect(mine.modified).toBe(stamped.modified)
+    expect(mine.modified).toBeLessThan(launched)
+    expect(mine.data).not.toHaveProperty('favicon')
+    // The icon itself stays with the device.
+    expect(upgraded.browser.bookmarks.tree.get(node.id)?.favicon).toBe(DATA_ICON)
   }, 30_000)
 
   it("LWW intact: an edit made on the upgraded device after its restart, through the state, beats the peer's older edit", async () => {

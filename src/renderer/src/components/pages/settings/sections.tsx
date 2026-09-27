@@ -88,6 +88,7 @@ import { displayUrl, getDomain, inputToUrl, isWebPageUrl } from '@shared/url'
 import { extensionHomepage, homepageAddress, homepageDisplay } from '@shared/homepage'
 import { languageName } from '@shared/languageNames'
 import { HELP_URL, ISSUES_URL } from '@shared/links'
+import { isProxyMode, type ProxyMode } from '@core/extensions/api/proxy'
 import { catalogueLanguageName } from '@renderer/lib/languageCatalogue'
 import { SPELLCHECK_LANGUAGES_MAX, type SpellcheckDictionaryStatus } from '@shared/spellcheck'
 import {
@@ -127,7 +128,7 @@ import { formatRate } from '@renderer/lib/readAloud'
 import { describePermissionRule, siteLabel } from '@renderer/lib/security'
 import { tabTitle } from '@renderer/lib/selectors'
 import { wordProblem, type DictionaryWords } from '@renderer/lib/spellcheckWords'
-import { openOverlay } from '@renderer/lib/ui'
+import { openOverlay, pushToast } from '@renderer/lib/ui'
 import { pairKey, pairLabel, warmRegistryModels } from '@renderer/lib/translate'
 import { formatBytes, relativeTime } from '@renderer/lib/utils'
 import { versionReport } from '@renderer/lib/versionReport'
@@ -196,6 +197,7 @@ import {
 import { syncGroups } from './sync'
 import { PRIVACY_HUB_CARDS, PRIVACY_HUB_LINES, thirdPartyCookiesLine } from './privacyHub'
 import {
+  heldSwitch,
   httpsOnlyGroups,
   preloadGroups,
   safeBrowsingGroups,
@@ -341,6 +343,7 @@ const BUILDERS: Readonly<Record<string, Builder>> = {
   shortcuts: shortcutsSection,
   'default-browser': defaultBrowserSection,
   updates: updatesSection,
+  system: systemSection,
   reset: resetSection,
   about: aboutSection
 }
@@ -2853,6 +2856,18 @@ function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
   // An extension's engine (`chrome_settings_overrides`) is not the user's to pick or remove; it
   // is the default only through the extension, which the URL bar follows (`defaultSearchEngineOf`).
   const engines = state.searchEngines.filter((e) => e.source !== 'extension')
+  // While an extension holds the default (`search_provider.is_default`, the host's
+  // `search.defaultEngine` control), the picker is held at its engine – listed for the held row
+  // to show, as Chrome's disabled menu shows the extension's engine – and the user's pick waits
+  // under it (§10.5: the row reads "Controlled by <name>", Disable hands the pick back).
+  const engineControl = extensionControlled(state, 'search.defaultEngine')
+  const heldEngine =
+    typeof engineControl?.value === 'string'
+      ? state.searchEngines.find((e) => e.id === engineControl.value)
+      : undefined
+  // `chrome.privacy.services.searchSuggestEnabled` holds the suggestions switch (Chrome marks
+  // its "Autocomplete searches and URLs" toggle).
+  const suggestControl = extensionControlled(state, 'search.suggestions')
   const own = engines.filter((e) => e.source === 'custom' || e.source === 'discovered')
   // A deactivated engine (settings-43) is offered nowhere – not as the default, not by shortcut
   // – and the desktop lists it under Inactive; the default engine reads active whatever a peer's
@@ -2878,8 +2893,9 @@ function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
         choice({
           id: 'search-engine',
           label: 'Default search engine',
-          value: s.searchEngineId,
-          options: active.map((e) => ({
+          controlled: engineControl,
+          value: heldEngine?.id ?? s.searchEngineId,
+          options: [...(heldEngine ? [heldEngine] : []), ...active].map((e) => ({
             value: e.id,
             label: e.name,
             description: pickerGroup(e) ? (engineHost(e) ?? undefined) : undefined,
@@ -2912,7 +2928,8 @@ function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
           id: 'search-suggestions',
           label: 'Show search suggestions',
           description: 'Sends what you type to the search engine as you type.',
-          checked: s.searchSuggestions,
+          controlled: suggestControl,
+          checked: heldSwitch(suggestControl, s.searchSuggestions),
           onChange: (v) => set({ searchSuggestions: v })
         },
         // Suggestion privacy (omnibox-45): the local sources each behind their own switch, as
@@ -3143,6 +3160,9 @@ function autofillSection({ state, set, autofill }: SectionContext): RowGroup[] {
   const android = state.platform === 'android'
   const system = state.autofill.systemAutofill
   const zenium = s.androidProvider === 'zenium'
+  // `chrome.privacy.services.passwordSavingEnabled` holds the offer-to-save switch here and in
+  // the Passwords category alike (Chrome marks its "Offer to save passwords" toggle).
+  const offerControl = extensionControlled(state, 'passwords.offerToSave')
   const groups: RowGroup[] = [
     {
       id: 'autofill-passwords',
@@ -3154,7 +3174,8 @@ function autofillSection({ state, set, autofill }: SectionContext): RowGroup[] {
           label: 'Offer to save passwords',
           description: 'Ask to save or update a login after you sign in on a site.',
           keywords: ['save passwords', 'login', 'update'],
-          checked: s.offerToSave,
+          controlled: offerControl,
+          checked: heldSwitch(offerControl, s.offerToSave),
           onChange: (v) => set({ passwords: { ...s, offerToSave: v } })
         },
         {
@@ -3274,6 +3295,8 @@ function addressGroups(
   { addresses }: AutofillSettingsData
 ): RowGroup[] {
   const a = state.settings.autofill
+  // `chrome.privacy.services.autofillAddressEnabled` (Chrome marks its "Save and fill addresses").
+  const control = extensionControlled(state, 'autofill.addresses')
   return vaultListGroups(
     'autofill-addresses',
     {
@@ -3285,7 +3308,8 @@ function addressGroups(
           label: 'Save and fill addresses',
           description:
             'Offer to save addresses typed into forms, and fill them back into checkouts and sign-ups.',
-          checked: a.addresses,
+          controlled: control,
+          checked: heldSwitch(control, a.addresses),
           onChange: (v) => set({ autofill: { ...a, addresses: v } })
         }
       ]
@@ -3339,6 +3363,9 @@ function cardGroups(
   { cards, copying, copyCard }: AutofillSettingsData
 ): RowGroup[] {
   const a = state.settings.autofill
+  // `chrome.privacy.services.autofillCreditCardEnabled` (Chrome marks its "Save and fill
+  // payment methods").
+  const control = extensionControlled(state, 'autofill.cards')
   return vaultListGroups(
     'autofill-cards',
     {
@@ -3352,7 +3379,8 @@ function cardGroups(
           description:
             'Offer to save cards typed into checkouts, and fill them back after you verify it is you.',
           keywords: ['credit card', 'debit card'],
-          checked: a.cards,
+          controlled: control,
+          checked: heldSwitch(control, a.cards),
           onChange: (v) => set({ autofill: { ...a, cards: v } })
         }
       ]
@@ -4685,6 +4713,8 @@ function passwordsSection({ state, tab, set }: SectionContext): RowGroup[] {
   const open = (view: 'logins' | 'checkup' | 'settings'): void =>
     void openOverlay('passwords', tab.id, null, null, view)
   const unlocked = !status.locked && !status.error
+  // `chrome.privacy.services.passwordSavingEnabled`: the same hold as Autofill's twin row.
+  const offerControl = extensionControlled(state, 'passwords.offerToSave')
   return [
     {
       id: 'passwords-manager',
@@ -4719,7 +4749,8 @@ function passwordsSection({ state, tab, set }: SectionContext): RowGroup[] {
           id: 'passwords-offer-to-save',
           label: PASSWORDS_COPY.offerToSave.label,
           description: PASSWORDS_COPY.offerToSave.description,
-          checked: s.offerToSave,
+          controlled: offerControl,
+          checked: heldSwitch(offerControl, s.offerToSave),
           onChange: (v) => patch({ offerToSave: v })
         }
       ]
@@ -5192,6 +5223,94 @@ function updatesSection({ state, set }: SectionContext): RowGroup[] {
     }
   ]
   return groups
+}
+
+// ---------------------------------------------------------------------------
+// System
+// ---------------------------------------------------------------------------
+
+/**
+ * Settings › System (Chrome's chrome://settings/system): the words of its one row. The label is
+ * Chrome's (`IDS_SETTINGS_SYSTEM_PROXY_SETTINGS_LABEL`). At rest the description says whose proxy
+ * settings Zenium follows – the computer's, which is what the row opens. While an extension holds
+ * `chrome.proxy` the description is the value alone – the configuration's mode in Chrome's words
+ * (the API's `Mode`: fixed servers, a PAC script, automatic detection, a direct connection, the
+ * system's), one sentence for each of the five – as the §10.5 indicator row after it already
+ * names the holder: "Controlled by <name>" with Disable. When the host cannot open the panel (a
+ * Linux desktop Chrome's table does not know, or whose settings tool is not on the PATH) the
+ * renderer says so in one sentence.
+ */
+export const PROXY_SETTINGS_COPY = {
+  row: "Open your computer's proxy settings",
+  resting: "Zenium uses your computer's proxy settings.",
+  modes: {
+    fixed_servers: 'Using fixed servers.',
+    pac_script: 'Using a PAC script.',
+    auto_detect: 'Using automatic detection.',
+    direct: 'Using a direct connection.',
+    system: "Using the system's proxy settings."
+  } as const satisfies Readonly<Record<ProxyMode, string>>,
+  unsupported: "Zenium could not open your computer's proxy settings."
+} as const
+
+/**
+ * The held row's description: the configuration's mode alone, the map total over the API's five.
+ * The host always publishes the mode as the control's value (`ProxyApi.publishControls` in
+ * `main/platform/extensionApi/proxy.ts`), so a value that is not one of the five is unreachable
+ * through it; the resting sentence stands in for one all the same, so the row never loses its
+ * description.
+ */
+export function proxyHeldDescription(control: { value?: unknown }): string {
+  return isProxyMode(control.value)
+    ? PROXY_SETTINGS_COPY.modes[control.value]
+    : PROXY_SETTINGS_COPY.resting
+}
+
+/**
+ * System (Chrome's System, the category before Reset settings in its list): one row, "Open your
+ * computer's proxy settings", leaving for the OS panel – Windows Settings › Network & internet ›
+ * Proxy, macOS System Settings › Network › Proxies, the Linux desktop's network settings by
+ * Chrome's own table of desktops (`main/platform/systemSettings.ts`, after Chromium's
+ * `settings_utils_linux.cc`). The host answers whether the panel opened; when it did not (a
+ * desktop the table does not know, its tool not on the PATH) the page says so in one sentence
+ * through the frame's toast, the surface Zenium already uses where an OS screen cannot be opened
+ * (`Browser.openAppLinkSettings`). While an extension holds the proxy (`chrome.proxy`,
+ * `UIState.extensionControls.proxy` with the configuration's mode as the value) the row is held
+ * (`RowBase.controlled`, §10.5): disabled at .4 as Chrome's row is not actionable then, its
+ * description the configuration's mode alone, with the indicator row after it naming the
+ * extension – Disable takes the Extensions page's path, and the host's proxy service puts every
+ * session back on the system proxy as the extension unloads. Chrome's other System rows
+ * (background apps, graphics acceleration) are not here. The desktop OSes' category alone
+ * (`internalPages.ts`): Android's proxy is the network's.
+ */
+function systemSection({ state }: SectionContext): RowGroup[] {
+  const control = extensionControlled(state, 'proxy')
+  return [
+    {
+      id: 'system',
+      heading: null,
+      rows: [
+        {
+          kind: 'action',
+          id: 'proxy-settings',
+          label: PROXY_SETTINGS_COPY.row,
+          description: control ? proxyHeldDescription(control) : PROXY_SETTINGS_COPY.resting,
+          keywords: ['proxy', 'network', 'pac', 'system', 'computer'],
+          leaves: 'external',
+          controlled: control,
+          onPress: () => void openProxySettings()
+        }
+      ]
+    }
+  ]
+}
+
+/** The door: the host opens the OS panel, and says when it could not. */
+async function openProxySettings(): Promise<void> {
+  const result = await cmd('system.openProxySettings', undefined).catch(
+    () => 'unsupported' as const
+  )
+  if (result === 'unsupported') pushToast(PROXY_SETTINGS_COPY.unsupported, 'info')
 }
 
 // ---------------------------------------------------------------------------

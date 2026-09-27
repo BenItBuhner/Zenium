@@ -41,7 +41,7 @@ import { defaultSearchEngineOf } from '@shared/search'
 import { securityIndicator, type IndicatorState } from '@shared/siteInfo'
 import { addressParts, displayUrl, fullUrl, getDomain, isWebPageUrl, pillText } from '@shared/url'
 import { useElementWidth } from '@renderer/hooks/useElementWidth'
-import { updateReadyAt } from '@renderer/lib/about'
+import { updateDotAt, updateReadyAt } from '@renderer/lib/about'
 import { addressDragOf, writeAddressDrag } from '@renderer/lib/addressDrag'
 import { run } from '@renderer/lib/api'
 import { chipPrompt } from '@renderer/lib/autofill'
@@ -98,7 +98,7 @@ import { MediaHubButton, MediaLiveDot } from '../media/MediaHubButton'
 import { downloadButtonVisible, downloadsUi } from '@renderer/lib/downloads'
 import { actionable } from '@renderer/lib/extensions/toolbar'
 import { useViewport } from '@renderer/lib/formFactor'
-import { pinsFor, publishToolbarTiering } from '@renderer/lib/toolbarPins'
+import { pinsFor, publishToolbarTiering, toolbarMenuMarks } from '@renderer/lib/toolbarPins'
 import {
   mediaHubButtonFits,
   mediaHubFoldedAt,
@@ -310,8 +310,11 @@ export function NavRow({
   const mediaFolded = mediaHubFoldedAt(state, hubUp)
   // An update downloaded and waiting (shortcuts-menus-101): the menu opens on its "Update
   // Zenium" row and ⋯ wears the dot for it – Chrome's dot on its ⋮ – over the hub's while
-  // both would show (one dot on the button; the menu's head row says which).
-  const updateReady = updateReadyAt(state)
+  // both would show (one dot on the button; the menu's head row says which). The tablet's
+  // button takes Chrome Android's cadence with the phone bar (TB-12): the dot clears once the
+  // menu has been opened for the waiting version and returns for another version's
+  // (`updateDotAt`); the desktop's reads the plain phase until W8-F3 wires it to the record.
+  const updateReady = formFactor === 'tablet' ? updateDotAt(state) : updateReadyAt(state)
   // The decision published for the hub's popover (`mediaHubUi.buttonUp`), from this commit's
   // layout phase: where the button returns or folds in the row's own observer pass – a sidebar
   // drag, no state push – the popover re-reads its anchor before the frame paints, so the hold
@@ -816,6 +819,7 @@ export function NavRow({
                   // above); unlit it is a tool and goes with the rest under a 130 px pill.
                   isReader ? 'text-[var(--v2-control-accent)] opacity-100' : 'zen-pill-chip'
                 )}
+                {...toolbarMenuMarks('reader', formFactor)}
                 onActivate={() => run('reader.toggle', { tabId: tab.id })}
               >
                 <BookOpenText className="h-3.5 w-3.5" />
@@ -907,6 +911,7 @@ export function NavRow({
                       ? 'flex'
                       : 'hidden group-hover/pill:flex group-focus-within/chips:flex'
                   )}
+                  {...toolbarMenuMarks('translate', formFactor)}
                   onActivate={() => {
                     if (translateBarUp) run('translate.dismiss', { tabId: tab.id })
                     else run('translate.offer', { tabId: tab.id })
@@ -954,12 +959,13 @@ export function NavRow({
                   state,
                   'bookmark.add'
                 )}
+                control={toolbarMenuMarks('star', formFactor)['data-zen-menu-control']}
               />
             )}
           </span>
         </div>
       )}
-      {hubUp && <MediaHubButton state={state} />}
+      {hubUp && <MediaHubButton state={state} menuMarks={toolbarMenuMarks('media', formFactor)} />}
       <DownloadButton state={state} activeTabId={tab?.id ?? null} />
       <ToolbarActions
         state={state}

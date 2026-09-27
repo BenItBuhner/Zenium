@@ -175,6 +175,7 @@ export interface TabData {
   title: string
   customTitle: string | null
   customIcon: string | null
+  /** The icon's `http(s)` address, or null: what `wireFavicon` lets across (a `data:` icon reads as null). */
   favicon: string | null
   pinned: boolean
   essential: boolean
@@ -191,6 +192,30 @@ export interface ContainerData {
 }
 
 /**
+ * What a favicon may carry across the sync boundary – the engine's rule for every record that
+ * names an icon (a bookmark's, a tab record's, the `open-tabs` view's, a history visit's),
+ * argued from the receiver's need: an `http(s)` address MAY travel, the receiving device can
+ * fetch it (and its favicon cache keeps one copy, `core/favicons.ts`); a `data:` URL NEVER
+ * travels – it is the icon's bytes (a 32 px PNG is 2–6 KB of base64 per record, over thousands
+ * of bookmarks and visits in the device file and the history pages), and the receiver caches
+ * its own once it opens the page; a host-local address – the cache's `zen://favicon/<hash>`, a
+ * `file:`, `chrome:`, `about:` – never travels either, a peer cannot use it. Applied where a
+ * record is MADE (`collectLocal`, `collectOpenTabs`, `wireVisit`) and where one is READ
+ * (`readBookmarkData`, `readOpenTabs`, `readHistoryPage`, the tab apply): a peer's build may
+ * still send what this one does not. The reading list set the precedent (`readingListEntryData`:
+ * `favicon` never travels at all – the list resolves its icons by `url` from the cache). On the
+ * apply side, a landed record WITHOUT a favicon keeps this device's own for the same id and
+ * url (`BookmarkService.applySynced`, the tab apply): a missing favicon is not a deletion of
+ * the local one, it is the peer's icon staying home.
+ *
+ * Returns the address when it may travel, else `undefined`.
+ */
+export function wireFavicon(favicon: string | null | undefined): string | undefined {
+  if (typeof favicon !== 'string' || !favicon) return undefined
+  return /^https?:\/\//i.test(favicon) ? favicon : undefined
+}
+
+/**
  * One bookmark tree node (roots are fixed on every device and never replicate). Position is part
  * of the record: a move is a change of `parentId` / `index`, resolved last-writer-wins per node;
  * the receiving tree repairs index collisions and orphans (`normalizeBookmarkNodes`).
@@ -201,6 +226,11 @@ export interface BookmarkData {
   type: BookmarkNodeType
   title: string
   url?: string
+  /**
+   * The icon's `http(s)` address when the bookmark has one (`wireFavicon`): never the bytes of a
+   * `data:` URL nor a host-local address. A record without it says nothing about the receiver's
+   * own icon for the node (`BookmarkService.applySynced` keeps it).
+   */
   favicon?: string
   dateAdded: number
 }
@@ -232,7 +262,8 @@ export function readBookmarkData(data: unknown): BookmarkData | null {
     }
     if (r.type === 'url') {
       out.url = r.url
-      if (typeof r.favicon === 'string' && r.favicon) out.favicon = r.favicon
+      const favicon = wireFavicon(r.favicon)
+      if (favicon) out.favicon = favicon
     }
     return out
   }
@@ -245,7 +276,8 @@ export function readBookmarkData(data: unknown): BookmarkData | null {
       url: r.url,
       dateAdded: typeof r.createdAt === 'number' ? r.createdAt : Date.now()
     }
-    if (typeof r.favicon === 'string' && r.favicon) out.favicon = r.favicon
+    const favicon = wireFavicon(r.favicon)
+    if (favicon) out.favicon = favicon
     return out
   }
   return null
@@ -576,9 +608,39 @@ const SETTINGS_KEY_GROUPS: Readonly<Record<string, string>> = {
   restoreSession: 'startup'
 }
 
+/**
+ * The renamed keys this build never publishes (`collectLocal` holds their successors alone; an
+ * old peer's copy is folded at apply). One leaves this device's record by the build's hand, not
+ * the user's: at the upgrade that stopped publishing it (`restoreSession`, mirrored beside
+ * `startup` from 0.4.83 to 0.5.5 and retired 2026-09-26), or at the re-snapshot after an old
+ * peer's key won and was folded into its successor. `diffSettings` and `seedSettingsMeta` treat
+ * the departure alike: no stamp on the group, and the group's time – its newest member's, the
+ * retired key counted – stands, the successor taking the retired key's later time
+ * (`retiredKeyTimes`); else the old peer's switch that won once would win every round.
+ */
+const RETIRED_SETTINGS_KEYS: ReadonlySet<string> = new Set(['newTabPhone', 'restoreSession'])
+
 /** The composite group a settings key merges under: its own name unless it is a member. */
 export function settingsKeyGroup(key: string): string {
   return SETTINGS_KEY_GROUPS[key] ?? key
+}
+
+/**
+ * Per group, the newest time of the retired keys (`RETIRED_SETTINGS_KEYS`) `previous` holds
+ * that `present` no longer carries: the floor the group's surviving members keep when the
+ * retired key leaves. Empty when none left.
+ */
+function retiredKeyTimes(
+  previous: Record<string, KeyMeta>,
+  present: ReadonlySet<string>
+): Map<string, number> {
+  const floors = new Map<string, number>()
+  for (const [key, entry] of Object.entries(previous)) {
+    if (!RETIRED_SETTINGS_KEYS.has(key) || present.has(key)) continue
+    const group = settingsKeyGroup(key)
+    floors.set(group, Math.max(floors.get(group) ?? 0, entry.modified))
+  }
+  return floors
 }
 
 export function isSettingsRecord(id: string, type: RecordType): boolean {
@@ -654,8 +716,9 @@ function settingsRecord(
  * or, when the diff only notices (`stamp` null), each member keeps its own time and a member the
  * metadata did not know takes 0 (`DiffLocalOptions.stamp`: made, not noticed). A key the object
  * no longer holds loses its entry and the record simply lacks it, which says nothing to a peer
- * (the `menuOrder` precedent: a reset travels as an explicit value, `[]`). The record's
- * `modified` is the newest key's.
+ * (the `menuOrder` precedent: a reset travels as an explicit value, `[]`); a retired key's
+ * departure (`RETIRED_SETTINGS_KEYS`) stamps no one and leaves its time to its group. The
+ * record's `modified` is the newest key's.
  *
  * An entry without `keys` speaks for the record whole. Unchanged, every key stands at the
  * record's time with its value's hash from here on – the boot seed's migration for an entry the
@@ -696,18 +759,22 @@ function diffSettings(
   } else {
     const previous = prev.keys
     const hashes = new Map(entries.map(([key, value]) => [key, hashData(value)] as const))
+    const gone = Object.keys(previous).filter((key) => !hashes.has(key))
+    if (gone.length) changed = true
+    // A retired key's departure (`RETIRED_SETTINGS_KEYS`) is the build's, not an edit of its
+    // group: the record is republished without it, no member is stamped, and the group's time
+    // stands – a survivor takes the retired key's time when that is the later.
     const removed = new Set(
-      Object.keys(previous)
-        .filter((key) => !hashes.has(key))
-        .map(settingsKeyGroup)
+      gone.filter((key) => !RETIRED_SETTINGS_KEYS.has(key)).map(settingsKeyGroup)
     )
-    if (removed.size) changed = true
+    const floors = retiredKeyTimes(previous, new Set(hashes.keys()))
     for (const [group, members] of groupsOf(hashes.keys())) {
       const moved =
         removed.has(group) || members.some((key) => previous[key]?.hash !== hashes.get(key))
       if (moved) changed = true
+      const floor = floors.get(group) ?? 0
       for (const key of members) {
-        const kept = previous[key]?.modified ?? 0
+        const kept = Math.max(previous[key]?.modified ?? 0, floor)
         keys[key] = { hash: hashes.get(key)!, modified: moved ? (stamp ?? kept) : kept }
       }
     }
@@ -728,8 +795,9 @@ function diffSettings(
  * a key that succeeds a retired one (`startup` after `restoreSession`) is the same edit under a
  * new name, so the edit's time travels with the rename and an old peer's older switch cannot
  * beat this device's later choice – else at 0, a key no one edited never beats a peer's; and
- * drops a key the build no longer holds. The record's `modified` stands. Returns `prev` itself
- * when nothing differs.
+ * drops a key the build no longer holds – a retired key (`RETIRED_SETTINGS_KEYS`) leaving its
+ * later time to its group's survivors, as `diffSettings` does. The record's `modified` stands.
+ * Returns `prev` itself when nothing differs.
  */
 export function seedSettingsMeta(prev: RecordMeta, data: unknown): RecordMeta {
   const entries = settingsEntries(data)
@@ -741,16 +809,18 @@ export function seedSettingsMeta(prev: RecordMeta, data: unknown): RecordMeta {
     return { ...prev, hash, keys }
   }
   let changed = prev.hash !== hash
+  const floors = retiredKeyTimes(prev.keys, new Set(entries.map(([key]) => key)))
   for (const [key, value] of entries) {
     const before = prev.keys[key]
     const valueHash = hashData(value)
-    if (before && before.hash === valueHash) {
+    const floor = floors.get(settingsKeyGroup(key)) ?? 0
+    if (before && before.hash === valueHash && before.modified >= floor) {
       keys[key] = before
       continue
     }
     keys[key] = {
       hash: valueHash,
-      modified: before ? before.modified : inheritedKeyTime(prev.keys, key)
+      modified: Math.max(before ? before.modified : inheritedKeyTime(prev.keys, key), floor)
     }
     changed = true
   }
@@ -954,7 +1024,7 @@ export function collectLocal(
         title: t.title,
         customTitle: t.customTitle,
         customIcon: t.customIcon,
-        favicon: t.favicon,
+        favicon: wireFavicon(t.favicon) ?? null,
         pinned: t.pinned,
         essential: t.essential,
         spaceId: t.essential ? null : t.spaceId,
@@ -1002,7 +1072,12 @@ export function collectLocal(
       }
       if (b.type === 'url') {
         data.url = b.url
-        if (b.favicon) data.favicon = b.favicon
+        // The icon's address only (`wireFavicon`): a `data:` icon or the cache's own address
+        // stays home. Its departure from a record this device published before is the build's
+        // change, not the user's – the boot seed (`SyncEngine.seedMeta`) adopts the new hash at
+        // the record's old `modified`, so the upgrade republishes the node as no edit.
+        const favicon = wireFavicon(b.favicon)
+        if (favicon) data.favicon = favicon
       }
       out.set(b.id, { type: 'bookmark', data })
     }
@@ -1020,18 +1095,19 @@ export function collectLocal(
     // so the reset reaches the peers as an edit of the key, where a key the record lacks says
     // nothing to `apply`.
     const rest = withoutDeviceLocalSettings(src.settings)
-    const data: SettingsData & { restoreSession?: boolean } = {
+    const data: SettingsData = {
       ...rest,
       compactMode: { ...rest.compactMode, sidebarPersistent: false }
     }
-    // The 0.4.x `restoreSession` switch rides beside its successor `startup` for one release –
-    // mirrored here, in the same group, so an edit stamps both and a peer on the old build still
-    // hears this device's choice (a new peer prefers `startup`, `apply` folds the switch for an
-    // old one). Coarse on purpose: `pages` reads as on, as the phone boots it (continue). Comes
-    // off in 0.4.84, the release after the one that retires the key. Only a settings object that
-    // holds `startup` mirrors it: a profile from before the key (the golden fixtures) sends the
-    // record its build sent, switch and all, and manufactures no edit.
-    if (rest.startup) data.restoreSession = rest.startup.mode !== 'newTab'
+    // The 0.4.x `restoreSession` switch rode beside its successor `startup` for one release
+    // (0.4.83, mirrored in the same group so an edit stamped both and a peer on the old build
+    // still heard this device's choice); the mirror came off 2026-09-26 (v0.5.5 out), so the
+    // record carries `startup` alone. The wire's READ side keeps the rename: an old peer's switch
+    // is still weighed against `startup` (`SETTINGS_KEY_GROUPS`, `winningSettings`) and folded at
+    // apply. The key's departure from this device's record is no edit of `startup`
+    // (`RETIRED_SETTINGS_KEYS`: no stamp, the group's time stands). A profile from before the key
+    // (the golden fixtures) still sends the record its build sent, switch and all: `...rest`
+    // spreads what the settings hold.
     out.set(SETTINGS_RECORD_ID, { type: 'settings', data })
     if (src.siteData) out.set(SITE_DATA_RECORD_ID, { type: 'site-data', data: src.siteData })
   }

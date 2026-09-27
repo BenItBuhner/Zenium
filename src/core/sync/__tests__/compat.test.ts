@@ -73,6 +73,15 @@ interface GoldenFixture {
 const legacyFixture = legacy as unknown as LegacyFixture
 const goldenFixture = golden as unknown as GoldenFixture
 
+/** The golden fixture's local sources (the pre-move record set's inputs). */
+const goldenSources = (): Parameters<typeof collectLocal>[0] => ({
+  model: goldenFixture.model,
+  settings: goldenFixture.settings,
+  shortcutOverrides: goldenFixture.shortcutOverrides,
+  bookmarks: goldenFixture.bookmarks,
+  boosts: goldenFixture.boosts
+})
+
 const hex = (bytes: Uint8Array): string =>
   [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('')
 const unhex = (text: string): Uint8Array =>
@@ -206,6 +215,107 @@ describe('the moved engine on a fixed record set', () => {
       JSON.stringify({ v: 1, records: diffLocal({}, withList, goldenFixture.now).records })
     ).toBe(goldenAsWritten().plaintext)
   })
+
+  it('the favicon rule (services pass 11: an http(s) address may travel, a data: or host-local one never) changes no pinned byte: the fixtures name no icon', () => {
+    // The pins stand under the rule because of what the fixtures hold, stated here so a change
+    // of either is a deliberate one: the one bookmark has `favicon: null` (omitted from its
+    // record, as before), the three tab records carry `favicon: null` – the field's shape, which
+    // a `data:` icon also reads as. A fixture bookmark with a `data:` favicon WOULD change the
+    // pinned bytes (its record would lose the field); none has one.
+    for (const node of goldenFixture.bookmarks)
+      if (node.type === 'url') expect(node.favicon ?? null).toBeNull()
+    for (const tab of Object.values(goldenFixture.model.tabs)) expect(tab.favicon).toBeNull()
+    const payload = JSON.parse(goldenFixture.plaintext) as { records: SyncRecord[] }
+    for (const r of payload.records) {
+      const data = r.data as { favicon?: unknown } | null
+      if (r.type === 'bookmark') expect(data).not.toHaveProperty('favicon')
+      if (r.type === 'tab') expect(data?.favicon).toBeNull()
+    }
+    // The same sources with the icons a real profile holds: the bookmark's `data:` icon and a
+    // tab's stay home, an `http(s)` address travels – and the payload is the pinned bytes again
+    // once those are taken back out, so nothing else moved.
+    const bookmarks = goldenFixture.bookmarks.map((n) =>
+      n.type === 'url' ? { ...n, favicon: 'data:image/png;base64,iVBORw0KGgo=' } : n
+    )
+    const model = structuredClone(goldenFixture.model)
+    for (const tab of Object.values(model.tabs))
+      tab.favicon = 'zen://favicon/0123456789abcdef0123456789abcdef01234567'
+    const withIcons = collectLocal({ ...sources, bookmarks, model }, goldenFixture.scope)
+    expect(
+      JSON.stringify({ v: 1, records: diffLocal({}, withIcons, goldenFixture.now).records })
+    ).toBe(goldenAsWritten().plaintext)
+  })
+})
+
+/**
+ * The measurement behind the favicon rule (services pass 11, seed 6): a realistic device file –
+ * 2 000 bookmarks whose icons the model holds as `data:` URLs of the sizes the Android WebView's
+ * `onReceivedIcon` hands over (a 32 px PNG: 2–6 KB of base64 each) – as the build before the
+ * rule published it (the icon's bytes in every record) against this build's payload. Printed,
+ * not pinned: the numbers document the decision, the rule itself is pinned above and in
+ * `records.test.ts`.
+ */
+describe('the favicon rule, measured', () => {
+  /** Deterministic base64 of `chars` characters (an LCG, so the run is repeatable). */
+  const base64Of = (chars: number, seed: number): string => {
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+    let state = seed >>> 0
+    let out = ''
+    for (let i = 0; i < chars; i += 1) {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0
+      out += alphabet[state >>> 26]
+    }
+    return out
+  }
+  const SIZES = [2048, 3072, 4096, 5120, 6144]
+
+  it('2 000 bookmarks with data: favicons: the device file before and after the rule', async () => {
+    const bookmarks: BookmarkNode[] = [...goldenFixture.bookmarks.filter((n) => n.type !== 'url')]
+    for (let i = 0; i < 2000; i += 1) {
+      bookmarks.push({
+        id: `bm_${i.toString().padStart(4, '0')}`,
+        parentId: '1',
+        index: i,
+        type: 'url',
+        title: `Bookmark ${i}`,
+        url: `https://site-${i}.example/page`,
+        favicon: `data:image/png;base64,${base64Of(SIZES[i % SIZES.length], i + 1)}`,
+        dateAdded: goldenFixture.now - i * 60_000
+      })
+    }
+    const scope = { ...goldenFixture.scope, bookmarks: true }
+    const after = diffLocal(
+      {},
+      collectLocal({ ...goldenSources(), bookmarks }, scope),
+      goldenFixture.now
+    ).records
+    // The build before the rule: the record as the model holds the node, icon and all.
+    const icons = new Map(bookmarks.map((n) => [n.id, n.favicon] as const))
+    const before = after.map((r) =>
+      r.type === 'bookmark' && icons.get(r.id)
+        ? { ...r, data: { ...(r.data as object), favicon: icons.get(r.id) } }
+        : r
+    )
+    for (const r of after) if (r.type === 'bookmark') expect(r.data).not.toHaveProperty('favicon')
+    const bytes = (records: SyncRecord[]): number =>
+      new TextEncoder().encode(JSON.stringify({ v: 1, records })).length
+    const plainBefore = bytes(before)
+    const plainAfter = bytes(after)
+    const key = unhex(legacyFixture.keyHex)
+    const fileBytes = async (records: SyncRecord[]): Promise<number> =>
+      new TextEncoder().encode(
+        JSON.stringify(await encryptJson(key, legacyFixture.salt, { v: 1, records }))
+      ).length
+    const fileBefore = await fileBytes(before)
+    const fileAfter = await fileBytes(after)
+    console.info(
+      `[favicon rule] 2 000 bookmarks with data: favicons – payload JSON ${plainBefore} → ${plainAfter} bytes ` +
+        `(−${(((plainBefore - plainAfter) / plainBefore) * 100).toFixed(1)} %); ` +
+        `the encrypted device file ${fileBefore} → ${fileAfter} bytes`
+    )
+    expect(plainAfter).toBeLessThan(plainBefore / 10)
+    expect(fileAfter).toBeLessThan(fileBefore / 10)
+  }, 60_000)
 })
 
 /**

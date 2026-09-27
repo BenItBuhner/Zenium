@@ -4923,6 +4923,58 @@
     border-bottom-right-radius: calc(var(--v2-radius-card) + 4px);
   }
   /*
+   * The QR code sheet's body (SH-06; `components/qr/QrCodeSheet.tsx`): the code black on a white
+   * card in both themes, as Chrome's `qrcode_background` is white over either theme (a camera
+   * reads the code, not the theme) – Chrome's box is 248 dp with the code 16 dp inside it at the
+   * chip radius and a hairline stroke; here the card at the card radius with the border hairline,
+   * the code's own quiet zone (two modules) inside the 16 – and the link under it in the
+   * deemphasised ink, two lines at most and ellipsised, as the picture Download keeps writes it
+   * above the code. The card, not the sheet, is white: the surface keeps the theme.
+   */
+  .zen-qr-code-body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 0 16px 8px;
+  }
+  .zen-qr-code-card {
+    display: grid;
+    place-items: center;
+    box-sizing: border-box;
+    width: min(100%, 248px);
+    aspect-ratio: 1;
+    padding: 16px;
+    background: #fff;
+    border: 1px solid var(--v2-border);
+    border-radius: var(--v2-radius-card);
+  }
+  .zen-qr-code {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+  .zen-qr-code-error {
+    margin: 0;
+    color: rgb(0 0 0 / 0.69);
+    font-size: 14px;
+    line-height: 20px;
+    text-align: center;
+  }
+  .zen-qr-code-url {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    margin: 0;
+    max-width: 100%;
+    color: var(--v2-text-deemphasized);
+    font-size: 13px;
+    line-height: 18px;
+    text-align: center;
+    overflow-wrap: anywhere;
+  }
+  /*
    * The browser's own share panel (Android below 14; SH-03; §9.38): the share's preview is
    * PUI-18's header, read-only (no press fill: nothing happens on it), then two rows that scroll
    * sideways when they overflow – Zenium's own chips, a hairline, and the apps the user shares
@@ -5002,7 +5054,10 @@
    * by the offset the list was scrolled to when Share was tapped (the chassis starts new
    * content at its top) and re-running none of their own entrances; the title's layer sits where
    * the centred title stood. Reduced motion is the cut: the global rule at the foot removes both
-   * fades, and the sheet draws no outgoing layer at all.
+   * fades, and the sheet draws no outgoing layer at all. The panel's QR code chip hands the same
+   * chassis on once more (`QrCodeHandOff`, `data-seam="qr-code"`): the code sheet's title block
+   * and card rise in the panel's place, the panel's preview and rows fading out over them the
+   * same way; the footer's Close and Download take the in-fade as well.
    */
   .zen-share-seam {
     position: relative;
@@ -7694,6 +7749,16 @@
     border-radius: 50%;
     background: var(--zen-accent);
   }
+  /*
+   * The same dot boxed by the glyph rather than the button (the phone bar's ⋯, TB-12;
+   * `MenuGlyph`): the 28 button's 4 in with its 16 glyph put the dot's centre a pixel in from
+   * the glyph's top-right corner, and 2 out from the glyph's own box is that place on a glyph
+   * of any size in a button of any size.
+   */
+  .zen-glyph-dot > .zen-mhub-dot {
+    top: -2px;
+    right: -2px;
+  }
 }
 
 @layer components {
@@ -9268,6 +9333,16 @@
 :root[data-form-factor='tablet'] .zen-tablet-toolbar .zen-toolbar-button > svg {
   width: var(--v2-icon);
   height: var(--v2-icon);
+}
+/*
+ * The 6 px accent dot on the row's ⋯ – an update downloaded and waiting (TB-12), the folded
+ * hub's live media – keeps the desktop's place against the glyph on the 40 button with its 20
+ * glyph: 8 in, its centre a pixel in from the glyph's top-right corner, where the 28 button's
+ * 16 glyph puts it at 4.
+ */
+:root[data-form-factor='tablet'] .zen-tablet-toolbar .zen-mhub-dot {
+  top: 8px;
+  right: 8px;
 }
 /*
  * `Tabs (N)` pressed while the overview stands (§9.36): the window's pressed fill – §9.29's
@@ -12295,10 +12370,11 @@
   overscroll-behavior: contain;
   /* The find field's padding above and below its control (`.zen-settings-find` reads these): the
      column's top for anything scrolled into view is the field's bottom edge – its whole box,
-     16 + the control + 8 – so a landed group lands flush under the pinned field's §9.7 hairline,
-     its title's box against the line and its own margin scrolled beneath (the #553 lead check's
-     N1: the landing changes, not the air – the section's 32 stays its layout gap); the field's
-     rules cannot drift apart. */
+     16 + the control + 8 – so a landing sits flush under the pinned field's §9.7 hairline: the
+     row `?row=` lands with its box against the line, the group `?group=` lands with its title's
+     box against it and its own margin scrolled beneath (the #553 lead check's N1: the landing
+     changes, not the air – the section's 32 stays its layout gap); the field's rules cannot
+     drift apart. */
   --zen-settings-find-pad-top: 16px;
   --zen-settings-find-pad-bottom: 8px;
   scroll-padding-top: calc(
@@ -12306,12 +12382,13 @@
   );
 }
 /*
- * A landing (`?row=` / `?site=`, `SettingsPage`'s `landingPad`): the column pads its end by what
- * the landed group lacks to reach the top – a group near a section's end otherwise stops where
- * the content under it runs out (the desktop's #356: Sync's Open tabs group mid-page at a 1000 px
- * window) – as Chrome's settings pages pad the page for a deep link. The page measures the pad
- * and carries `data-landing` only while a landing is asked, so an ordinary section keeps its
- * end: the phone's 24 under the rows, the pane's 40.
+ * A landing (`?row=` the row, `?group=` / `?site=` the group; `SettingsPage`'s `landingPad`): the
+ * column pads its end by what the landed row or group lacks to reach the top – one near a
+ * section's end otherwise stops where the content under it runs out (the desktop's #356: Sync's
+ * Open tabs group mid-page at a 1000 px window) – as Chrome's settings pages pad the page for a
+ * deep link. The page measures the pad and carries `data-landing` only while a landing is asked
+ * (the landed row or group carries the same mark), so an ordinary section keeps its end: the
+ * phone's 24 under the rows, the pane's 40.
  */
 .zen-settings-page[data-landing] .zen-settings-scroll > .zen-settings-body,
 .zen-settings-page[data-landing] .zen-settings-pane > .zen-settings-body {

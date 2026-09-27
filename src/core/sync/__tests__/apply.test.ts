@@ -468,7 +468,7 @@ describe('applyRemote: the settings record and Settings › On startup', () => {
     expect(b.state.settings.startup).toEqual({ mode: 'newTab', pages: MINE })
   })
 
-  it('the settings record this device sends carries startup in its sanitised shape and the mirrored switch, never a stray', () => {
+  it('the settings record this device sends carries startup in its sanitised shape and no retired switch beside it, never a stray', () => {
     const b = browser()
     b.state.settings.startup = { mode: 'pages', pages: MINE }
     const record = collectLocal(
@@ -483,10 +483,8 @@ describe('applyRemote: the settings record and Settings › On startup', () => {
     ).get(SETTINGS_RECORD_ID)
     const data = record?.data as Record<string, unknown>
     expect(data.startup).toEqual({ mode: 'pages', pages: MINE })
-    expect(data.restoreSession).toBe(true)
-    expect(Object.keys(data).filter((key) => !(key in b.state.settings))).toEqual([
-      'restoreSession'
-    ])
+    expect(data).not.toHaveProperty('restoreSession')
+    expect(Object.keys(data).filter((key) => !(key in b.state.settings))).toEqual([])
   })
 })
 
@@ -787,5 +785,163 @@ describe('applyRemote: the reading list (services pass 11, ID-48)', () => {
     expect(b.readingList.get('rl_0002')).not.toBeNull()
     expect(b.readingList.get('rl_unread')).not.toBeNull()
     expect(b.readingList.unreadCount).toBe(1)
+  })
+})
+
+/**
+ * What a favicon may carry across the boundary (services pass 11, seed 6; `records.ts`
+ * `wireFavicon`), on the apply side: a peer's build may still send a `data:` icon's bytes or its
+ * cache's own address – neither lands – and a record WITHOUT a favicon keeps this device's own
+ * for the same page: a missing favicon is the peer's icon staying home, not a deletion.
+ */
+describe('applyRemote: favicons at the boundary (services pass 11, seed 6)', () => {
+  const DATA_ICON = 'data:image/png;base64,iVBORw0KGgo='
+  const CACHE_ICON = 'zen://favicon/0123456789abcdef0123456789abcdef01234567'
+
+  function bookmarkRecord(id: string, data: Record<string, unknown>, modified = 5000): SyncRecord {
+    return { id, type: 'bookmark', modified, deleted: false, data }
+  }
+
+  it("a bookmark record without a favicon keeps this device's own icon for the same page; one with an address takes it; a changed url drops it", () => {
+    const b = browser()
+    const mine = b.bookmarks.create({
+      title: 'Docs',
+      url: 'https://docs.example/',
+      favicon: DATA_ICON,
+      parentId: '1'
+    })!
+    expect(b.bookmarks.tree.get(mine.id)?.favicon).toBe(DATA_ICON)
+
+    // The peer renamed the node: its record carries no icon (its own is a data: URL too).
+    applyRemote(b, [
+      bookmarkRecord(mine.id, {
+        parentId: '1',
+        index: 0,
+        type: 'url',
+        title: 'The docs',
+        url: 'https://docs.example/',
+        dateAdded: mine.dateAdded
+      })
+    ])
+    const renamed = b.bookmarks.tree.get(mine.id)!
+    expect(renamed.title).toBe('The docs')
+    expect(renamed.favicon).toBe(DATA_ICON)
+
+    // A peer's build that still sends the bytes, or its cache's address: neither lands, and
+    // this device's icon stands.
+    for (const favicon of [DATA_ICON.replace('KGgo', 'PEER'), CACHE_ICON]) {
+      applyRemote(b, [
+        bookmarkRecord(mine.id, {
+          parentId: '1',
+          index: 0,
+          type: 'url',
+          title: 'The docs',
+          url: 'https://docs.example/',
+          favicon,
+          dateAdded: mine.dateAdded
+        })
+      ])
+      expect(b.bookmarks.tree.get(mine.id)?.favicon).toBe(DATA_ICON)
+    }
+
+    // An http(s) address travels and lands over this device's icon: the record won.
+    applyRemote(b, [
+      bookmarkRecord(mine.id, {
+        parentId: '1',
+        index: 0,
+        type: 'url',
+        title: 'The docs',
+        url: 'https://docs.example/',
+        favicon: 'https://docs.example/favicon.ico',
+        dateAdded: mine.dateAdded
+      })
+    ])
+    expect(b.bookmarks.tree.get(mine.id)?.favicon).toBe('https://docs.example/favicon.ico')
+
+    // The peer pointed the bookmark at another page, no icon: the old page's icon does not carry.
+    applyRemote(b, [
+      bookmarkRecord(mine.id, {
+        parentId: '1',
+        index: 0,
+        type: 'url',
+        title: 'The docs',
+        url: 'https://docs.example/v2/',
+        dateAdded: mine.dateAdded
+      })
+    ])
+    expect(b.bookmarks.tree.get(mine.id)).not.toHaveProperty('favicon')
+
+    // A node this device never had lands without an icon when the record carries none.
+    applyRemote(b, [
+      bookmarkRecord('bm_new', {
+        parentId: '1',
+        index: 1,
+        type: 'url',
+        title: 'New',
+        url: 'https://new.example/',
+        favicon: DATA_ICON,
+        dateAdded: 1
+      })
+    ])
+    expect(b.bookmarks.tree.get('bm_new')).not.toHaveProperty('favicon')
+
+    // What this device publishes back for the renamed node: no icon of its own (a data: URL
+    // stays home), the record hashing as the peer's did – nothing to bounce.
+    const local = collectLocal(
+      {
+        model: b.state.model,
+        settings: b.state.settings,
+        shortcutOverrides: {},
+        bookmarks: b.state.bookmarks,
+        boosts: []
+      },
+      defaultScope()
+    )
+    expect(local.get('bm_new')?.data).not.toHaveProperty('favicon')
+  })
+
+  it("a tab record's data: or host-local favicon never lands; a record without one leaves this device's icon; an address fills an empty one", () => {
+    const b = browser()
+    const space = b.state.model.spaces[0]
+    const pinned = (id: string, favicon: string | null): SyncRecord => ({
+      id,
+      type: 'tab',
+      modified: 5000,
+      deleted: false,
+      data: {
+        url: 'https://pinned.example/',
+        pinnedUrl: 'https://pinned.example/',
+        title: 'Pinned',
+        customTitle: null,
+        customIcon: null,
+        favicon,
+        pinned: true,
+        essential: false,
+        spaceId: space.id,
+        folderId: null,
+        containerId: space.containerId,
+        muted: false
+      }
+    })
+    // Landed new with the bytes: no icon (this device fetches its own when the page loads).
+    applyRemote(b, [pinned('tab_inline', DATA_ICON)])
+    expect(b.state.model.tabs['tab_inline'].favicon).toBeNull()
+    applyRemote(b, [pinned('tab_cached', CACHE_ICON)])
+    expect(b.state.model.tabs['tab_cached'].favicon).toBeNull()
+    // Landed new with an address: the address.
+    applyRemote(b, [pinned('tab_addressed', 'https://pinned.example/favicon.ico')])
+    expect(b.state.model.tabs['tab_addressed'].favicon).toBe('https://pinned.example/favicon.ico')
+    // This device's icon stands when the record carries none, or one that may not travel.
+    b.state.model.tabs['tab_inline'].favicon = DATA_ICON
+    applyRemote(b, [pinned('tab_inline', null)])
+    expect(b.state.model.tabs['tab_inline'].favicon).toBe(DATA_ICON)
+    applyRemote(b, [pinned('tab_inline', CACHE_ICON)])
+    expect(b.state.model.tabs['tab_inline'].favicon).toBe(DATA_ICON)
+    // An address fills an empty slot only: a tab with an icon keeps it (as before).
+    b.state.model.tabs['tab_cached'].favicon = null
+    applyRemote(b, [pinned('tab_cached', 'https://pinned.example/other.ico')])
+    expect(b.state.model.tabs['tab_cached'].favicon).toBe('https://pinned.example/other.ico')
+    applyRemote(b, [pinned('tab_cached', 'https://pinned.example/third.ico')])
+    expect(b.state.model.tabs['tab_cached'].favicon).toBe('https://pinned.example/other.ico')
   })
 })

@@ -1,6 +1,6 @@
 import type { SyncDeviceTabs, SyncRemoteTab, Tab } from '../../shared/types'
 import { PRIVATE_CONTAINER_ID } from '../../shared/types'
-import { hashData } from './records'
+import { hashData, wireFavicon } from './records'
 
 /**
  * The `open-tabs` record (ID-28, "Tabs from other devices"): what a device has open right now,
@@ -12,7 +12,9 @@ import { hashData } from './records'
  * Wire shape (`OpenTabsDocument`, under the folder's key): `{ v: 1, tabs: [{ tabId, url, title,
  * favicon, lastActive, windowId }] }`, most recently active first, `OPEN_TABS_MAX` at most.
  * Private tabs never travel (Chrome's incognito is not in "Tabs from other devices" either),
- * nor the browser's own `zen://` pages; an unloaded tab is still an open tab.
+ * nor the browser's own `zen://` pages; an unloaded tab is still an open tab. `favicon` is the
+ * icon's `http(s)` address or null (`wireFavicon`, both ways): a `data:` icon's bytes and the
+ * cache's host-local address stay home, the reader resolves the icon from its own cache.
  *
  * The document follows the "Open tabs" toggle both ways: a device with it off publishes no
  * list (its document is removed) and shows none.
@@ -43,7 +45,7 @@ export function collectOpenTabs(tabs: Iterable<Tab>): OpenTabsDocument {
       tabId: t.id,
       url: t.url,
       title: t.customTitle || t.title || t.url,
-      favicon: t.favicon,
+      favicon: wireFavicon(t.favicon) ?? null,
       lastActive: t.lastActiveAt,
       windowId: t.windowId
     })
@@ -70,7 +72,7 @@ export function readOpenTabs(data: unknown): OpenTabsDocument | null {
       tabId: typeof t.tabId === 'string' ? t.tabId : t.url,
       url: t.url,
       title: typeof t.title === 'string' && t.title ? t.title : t.url,
-      favicon: typeof t.favicon === 'string' && t.favicon ? t.favicon : null,
+      favicon: wireFavicon(t.favicon) ?? null,
       lastActive:
         typeof t.lastActive === 'number' && Number.isFinite(t.lastActive) ? t.lastActive : 0,
       windowId: typeof t.windowId === 'string' ? t.windowId : null

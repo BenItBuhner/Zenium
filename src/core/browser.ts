@@ -1379,6 +1379,7 @@ export class Browser {
     this.windows.delete(win.id)
     this.tabDrag.onWindowClosed(win)
     this.fullscreen.onWindowClosed(win)
+    this.mediaSession.onWindowClosed(win)
     this.newTab.onWindowClosed(win)
     for (const w of this.allWindows()) w.selection.delete(win.localSpace?.id ?? '')
     if (win.isPrivate) this.endPrivateSessionIfOver()
@@ -3341,8 +3342,14 @@ export class Browser {
       // The host's own share panel (Android below 14, SH-03): the chrome's answer goes straight
       // to the host holding the share; nothing on a host without the panel.
       'share.panelAction': (action) => void platform.shell.sharePanelAction?.(action),
+      'qr.download': ({ url }) => void platform.shell.downloadQrCode?.(url),
       'app.openAppLinkSettings': (_a, win) => this.openAppLinkSettings(win),
       'app.openNotificationSettings': (_a, win) => this.openNotificationSettings(win),
+      // Settings › System's door to the computer's proxy panel: the host's answer is the page's
+      // to tell (it says so in one sentence when nothing opened); a host without the door is
+      // `unsupported` the same way.
+      'system.openProxySettings': () =>
+        platform.shell.openProxySettings?.() ?? Promise.resolve('unsupported' as const),
       // Voice search: the host listens (`VoiceHost`); the chrome's sheet acts on the `voice.event`s.
       'voice.start': () => this.startVoiceSearch(),
       'voice.cancel': () => this.platform.voice?.cancel(),
@@ -3803,7 +3810,8 @@ export class Browser {
         this.menus.showReadingListContextMenu(id, anchor, win),
 
       'import.sources': () => this.imports.sources(),
-      'import.run': ({ source, kinds }, win) => this.imports.run(source, kinds, win),
+      'import.run': ({ source, kinds, primaryPassword }, win) =>
+        this.imports.run(source, kinds, win, { primaryPassword }),
       'import.cancel': () => this.imports.cancel(),
       'import.dismiss': () => this.imports.dismiss(),
 

@@ -23,12 +23,14 @@ import {
   settingsKeyTime,
   stableStringify,
   winningRemote,
+  wireFavicon,
   withoutDeviceLocalSettings,
   type BookmarkData,
   type MetaMap,
   type OrderData,
   type RecordMeta,
-  type SyncRecord
+  type SyncRecord,
+  type TabData
 } from '../records'
 import {
   createFolder,
@@ -241,30 +243,28 @@ describe('collectLocal', () => {
     expect(data).not.toHaveProperty('onboardingDone')
     expect(data).not.toHaveProperty('searchChoice')
     const local = new Set<string>(DEVICE_LOCAL_SETTINGS)
-    // Every other key, plus the retired switch mirrored beside `startup` for a release.
-    expect(Object.keys(data)).toEqual([
-      ...Object.keys(DEFAULT_SETTINGS).filter((key) => !local.has(key)),
-      'restoreSession'
-    ])
+    // Every other key, and no key the settings lack (the retired `restoreSession` mirror is gone).
+    expect(Object.keys(data)).toEqual(
+      Object.keys(DEFAULT_SETTINGS).filter((key) => !local.has(key))
+    )
     // The helper copies: the device's own settings keep their values.
     expect(withoutDeviceLocalSettings(src.settings)).not.toBe(src.settings)
     expect(src.settings.sidebarExpandOnHover).toBe(false)
     expect(src.settings.onboardingDone).toBe(true)
   })
 
-  it('mirrors the 0.4.x restoreSession switch beside startup for one release – on unless the mode is newTab – stamped with it as one item; a profile from before the key sends its record as it was', () => {
+  it('publishes startup alone – the 0.4.x restoreSession switch mirrored beside it for one release is retired – whatever the mode; an edit of the mode stamps startup and no other key; a profile from before the key sends its record as it was', () => {
     const src = sources()
     const data = (): Record<string, unknown> =>
       collectLocal(src, defaultScope()).get(SETTINGS_RECORD_ID)!.data as Record<string, unknown>
     expect(src.settings).not.toHaveProperty('restoreSession')
     expect(data().startup).toEqual({ mode: 'continue', pages: [] })
-    expect(data().restoreSession).toBe(true)
+    expect(data()).not.toHaveProperty('restoreSession')
     src.settings.startup = { mode: 'newTab', pages: [] }
-    expect(data().restoreSession).toBe(false)
-    // `pages` reads as on: the phone boots it as continue.
+    expect(data()).not.toHaveProperty('restoreSession')
     src.settings.startup = { mode: 'pages', pages: ['https://zen.test/'] }
-    expect(data().restoreSession).toBe(true)
-    // An edit of the mode stamps the switch with it: the two are one item to a peer.
+    expect(data()).not.toHaveProperty('restoreSession')
+    // An edit of the mode stamps `startup` – the group of the retired switch – and nothing else.
     src.settings.startup = { mode: 'continue', pages: [] }
     const seeded = diffLocal({}, collectLocal(src, defaultScope()), 1000)
     const migrated = diffLocal(seeded.meta, collectLocal(src, defaultScope()), 2000)
@@ -272,10 +272,10 @@ describe('collectLocal', () => {
     const edited = diffLocal(migrated.meta, collectLocal(src, defaultScope()), 3000)
     const keys = edited.meta[SETTINGS_RECORD_ID]!.keys!
     expect(keys.startup!.modified).toBe(3000)
-    expect(keys.restoreSession!.modified).toBe(3000)
+    expect(keys).not.toHaveProperty('restoreSession')
     expect(keys.colorScheme!.modified).toBe(0)
-    // The switch alone changing cannot happen: it is derived. A settings object from a build
-    // before `startup` (the golden fixtures) has no mode to mirror and sends the switch it holds.
+    // A settings object from a build before `startup` (the golden fixtures) holds the switch
+    // itself and sends the record its build sent, switch and all: nothing is added or taken.
     const old = { ...src.settings, restoreSession: true } as Record<string, unknown>
     delete old.startup
     const asBefore = collectLocal(
@@ -925,6 +925,105 @@ describe('the settings record, key by key', () => {
     expect(dropped.keys).toEqual({ x: entry(hashData('x1'), 10) })
     expect(dropped.modified).toBe(10)
   })
+
+  it('the retired mirror leaving this device’s record at the upgrade is no edit of startup: diffLocal stamps nothing, the record goes out without the key at its old times, and the round’s mode is the same', () => {
+    const src = sources()
+    src.settings.startup = { mode: 'newTab', pages: [] }
+    // The metadata the mirroring build left: `startup` and the switch stamped together at 3000
+    // (one item), every other key at 0 – and the record hash of the data WITH the switch.
+    const withMirror = collectLocal(src, defaultScope())
+    const mirrored = withMirror.get(SETTINGS_RECORD_ID)!.data as Record<string, unknown>
+    withMirror.set(SETTINGS_RECORD_ID, {
+      type: 'settings',
+      data: { ...mirrored, restoreSession: false }
+    })
+    const seeded = diffLocal({}, withMirror, 1000)
+    const migrated = diffLocal(seeded.meta, withMirror, 2000)
+    const before = migrated.meta[SETTINGS_RECORD_ID]!
+    before.keys!.startup!.modified = 3000
+    before.keys!.restoreSession!.modified = 3000
+    before.modified = 3000
+    // This build's first diff, in the subscriber's mode (stamped `now`): the switch is gone,
+    // `startup` keeps 3000 – not 9000 – and the record leaves at 3000 without the key.
+    const upgraded = diffLocal(migrated.meta, collectLocal(src, defaultScope()), 9000)
+    expect(upgraded.changed).toBe(true)
+    const keys = upgraded.meta[SETTINGS_RECORD_ID]!.keys!
+    expect(keys.startup).toEqual(entry(hashData({ mode: 'newTab', pages: [] }), 3000))
+    expect(keys).not.toHaveProperty('restoreSession')
+    expect(keys.colorScheme!.modified).toBe(0)
+    expect(upgraded.meta[SETTINGS_RECORD_ID]!.modified).toBe(3000)
+    const published = upgraded.records.find((r) => r.id === SETTINGS_RECORD_ID)!
+    expect(published.modified).toBe(3000)
+    expect(published.data).not.toHaveProperty('restoreSession')
+    expect(published.keys).not.toHaveProperty('startup')
+    // The round's mode (`stamp: null`) reads the same, and the diff after it is quiet.
+    const noticed = diffLocal(migrated.meta, collectLocal(src, defaultScope()), 9000, {
+      stamp: null
+    })
+    expect(noticed.meta[SETTINGS_RECORD_ID]!.keys!.startup!.modified).toBe(3000)
+    expect(noticed.meta[SETTINGS_RECORD_ID]!.keys).not.toHaveProperty('restoreSession')
+    const quiet = diffLocal(upgraded.meta, collectLocal(src, defaultScope()), 9500)
+    expect(quiet.changed).toBe(false)
+    // A key the user removes still stamps its group (the `menuOrder` rule is untouched): only a
+    // RETIRED key leaves without a word.
+    const peerless = diffLocal(upgraded.meta, collectLocal(src, defaultScope()), 9600)
+    src.settings.searchEngines = [engine('kagi') as unknown as SearchEngine]
+    const added = diffLocal(peerless.meta, collectLocal(src, defaultScope()), 9700)
+    expect(added.meta[SETTINGS_RECORD_ID]!.keys!.searchEngineId!.modified).toBe(9700)
+  })
+
+  it('an old peer’s switch that won once does not win every round after the retirement: the successor inherits the retired key’s time when it leaves at the re-snapshot (and at the boot seed)', () => {
+    const NEWTAB = { mode: 'newTab', pages: [] }
+    const CONTINUE = { mode: 'continue', pages: [] }
+    // This device's `startup` at 10; the phone (a 0.4.x build) flipped its switch on at 20.
+    const mine: MetaMap = { [SETTINGS_RECORD_ID]: meta(10, { startup: NEWTAB, x: 'x1' }) }
+    const phone = record(20, { restoreSession: true, x: 'x1' })
+    const won = winningRemote(mine, new Map([[SETTINGS_RECORD_ID, phone]]))
+    expect(won).toEqual([{ ...settings(), modified: 20, data: { restoreSession: true } }])
+    // The apply folds the switch into `startup`; the entry holds the switch at the peer's 20.
+    const merged: MetaMap = { ...mine, ...metaFromRemote(won, mine) }
+    expect(merged[SETTINGS_RECORD_ID]!.keys!.restoreSession!.modified).toBe(20)
+    // The re-snapshot (`stamp: null`): this build publishes no switch, so it leaves the entry –
+    // and `startup`, folded to the phone's choice, stands at 20, the group's time, not at 10.
+    const after = diffLocal(
+      merged,
+      new Map([[SETTINGS_RECORD_ID, { type: 'settings', data: { startup: CONTINUE, x: 'x1' } }]]),
+      30,
+      { stamp: null }
+    )
+    const keys = after.meta[SETTINGS_RECORD_ID]!.keys!
+    expect(keys.startup).toEqual(entry(hashData(CONTINUE), 20))
+    expect(keys).not.toHaveProperty('restoreSession')
+    expect(keys.x!.modified).toBe(10)
+    // Next round: the phone's same switch at 20 has nothing newer to say – no second win.
+    expect(winningRemote(after.meta, new Map([[SETTINGS_RECORD_ID, phone]]))).toEqual([])
+    // A later flip on the phone still wins, as it should.
+    const later = record(21, { restoreSession: false, x: 'x1' })
+    expect(winningRemote(after.meta, new Map([[SETTINGS_RECORD_ID, later]]))).toEqual([
+      { ...settings(), modified: 21, data: { restoreSession: false } }
+    ])
+    // The boot seed reads the departure the same way: a metadata that still holds the switch at
+    // 20 beside `startup` at 10 (the mirroring build's) seeds `startup` at 20 when the switch
+    // is gone from the build's record – and never raises the group above what it was.
+    const closed = meta(
+      20,
+      { startup: CONTINUE, restoreSession: true, x: 'x1' },
+      {
+        startup: 10,
+        restoreSession: 20,
+        x: 10
+      }
+    )
+    const seeded = seedSettingsMeta(closed, { startup: CONTINUE, x: 'x1' })
+    expect(seeded.keys).toEqual({
+      startup: entry(hashData(CONTINUE), 20),
+      x: entry(hashData('x1'), 10)
+    })
+    expect(seeded.modified).toBe(20)
+    expect(
+      winningRemote({ [SETTINGS_RECORD_ID]: seeded }, new Map([[SETTINGS_RECORD_ID, phone]]))
+    ).toEqual([])
+  })
 })
 
 describe('bookmark records', () => {
@@ -962,6 +1061,8 @@ describe('bookmark records', () => {
       type: 'bookmark',
       data: { parentId: BOOKMARKS_BAR_ID, index: 0, type: 'folder', title: 'Work', dateAdded: 10 }
     })
+    // The leaf's `data:` icon is the bytes: it stays home (`wireFavicon`), the record carries
+    // the node without it.
     expect(records.get('bm_leaf')).toEqual({
       type: 'bookmark',
       data: {
@@ -970,13 +1071,145 @@ describe('bookmark records', () => {
         type: 'url',
         title: 'Docs',
         url: 'https://docs.test/',
-        favicon: 'data:image/png;base64,AAAA',
         dateAdded: 15
       }
     })
     // Device-local usage is not part of the record, so opening a bookmark never re-stamps it.
     expect(records.get('bm_leaf')?.data).not.toHaveProperty('dateLastUsed')
     expect(records.get('bm_folder')?.data).not.toHaveProperty('dateGroupModified')
+  })
+
+  describe('what a favicon may carry across the boundary (services pass 11, the wire rule)', () => {
+    it('wireFavicon lets an http(s) address through and nothing else', () => {
+      expect(wireFavicon('https://docs.test/favicon.ico')).toBe('https://docs.test/favicon.ico')
+      expect(wireFavicon('HTTP://Docs.Test/icon.png')).toBe('HTTP://Docs.Test/icon.png')
+      // The bytes never travel; the receiver caches its own.
+      expect(wireFavicon('data:image/png;base64,AAAA')).toBeUndefined()
+      // A host-local address is no use to a peer.
+      expect(wireFavicon('zen://favicon/abcdef0123456789')).toBeUndefined()
+      expect(wireFavicon('file:///home/me/icon.png')).toBeUndefined()
+      expect(wireFavicon('chrome://favicon/https://a.test/')).toBeUndefined()
+      expect(wireFavicon('about:blank')).toBeUndefined()
+      expect(wireFavicon('blob:https://a.test/0f3e')).toBeUndefined()
+      expect(wireFavicon('https:not-an-address')).toBeUndefined()
+      expect(wireFavicon('')).toBeUndefined()
+      expect(wireFavicon(null)).toBeUndefined()
+      expect(wireFavicon(undefined)).toBeUndefined()
+    })
+
+    it('a bookmark record carries an http(s) icon address and never a data: or host-local one', () => {
+      const src = sources()
+      const t = tree()
+      const addressed: BookmarkNode = {
+        ...t.leaf,
+        id: 'bm_addressed',
+        index: 1,
+        url: 'https://addressed.test/',
+        favicon: 'https://addressed.test/favicon.ico'
+      }
+      const cached: BookmarkNode = {
+        ...t.leaf,
+        id: 'bm_cached',
+        index: 2,
+        url: 'https://cached.test/',
+        favicon: 'zen://favicon/0123456789abcdef0123456789abcdef01234567'
+      }
+      src.bookmarks = [...t.nodes, addressed, cached]
+      const records = collectLocal(src, defaultScope())
+      expect((records.get('bm_addressed')?.data as BookmarkData).favicon).toBe(
+        'https://addressed.test/favicon.ico'
+      )
+      expect(records.get('bm_leaf')?.data).not.toHaveProperty('favicon')
+      expect(records.get('bm_cached')?.data).not.toHaveProperty('favicon')
+    })
+
+    it("a tab record's favicon is the address or null (the field's shape stands)", () => {
+      const src = sources()
+      const m = src.model
+      const space = m.spaces[0]
+      const addressed = createTabRecord({
+        id: 'tab_addressed',
+        spaceId: space.id,
+        containerId: space.containerId,
+        url: 'https://addressed.test/',
+        favicon: 'https://addressed.test/favicon.ico',
+        pinned: true
+      })
+      const inline = createTabRecord({
+        id: 'tab_inline',
+        spaceId: space.id,
+        containerId: space.containerId,
+        url: 'https://inline.test/',
+        favicon: 'data:image/png;base64,AAAA',
+        pinned: true
+      })
+      m.tabs[addressed.id] = addressed
+      m.tabs[inline.id] = inline
+      insertTabIntoSpace(m, space, addressed)
+      insertTabIntoSpace(m, space, inline)
+      const records = collectLocal(src, defaultScope())
+      expect((records.get('tab_addressed')?.data as TabData).favicon).toBe(
+        'https://addressed.test/favicon.ico'
+      )
+      expect((records.get('tab_inline')?.data as TabData).favicon).toBeNull()
+    })
+
+    it('the same icon in two forms hashes the same record: the cache keeping an inline icon (data: → zen://favicon/<hash>) is no edit of the bookmark', () => {
+      const src = sources()
+      const t = tree()
+      src.bookmarks = t.nodes
+      const first = diffLocal({}, collectLocal(src, defaultScope()), 1000)
+      t.leaf.favicon = 'zen://favicon/0123456789abcdef0123456789abcdef01234567'
+      const second = diffLocal(first.meta, collectLocal(src, defaultScope()), 2000)
+      expect(second.changed).toBe(false)
+      expect(second.records.find((r) => r.id === 'bm_leaf')?.modified).toBe(0)
+      // The icon gone altogether is the same record still.
+      delete t.leaf.favicon
+      const third = diffLocal(second.meta, collectLocal(src, defaultScope()), 3000)
+      expect(third.changed).toBe(false)
+    })
+
+    it("a record from a peer's build that still sends a data: or host-local icon reads without it", () => {
+      const inline = readBookmarkData({
+        parentId: 'p',
+        index: 0,
+        type: 'url',
+        title: 'A',
+        url: 'https://a.test/',
+        favicon: 'data:image/png;base64,AAAA',
+        dateAdded: 5
+      })
+      expect(inline).not.toHaveProperty('favicon')
+      const cached = readBookmarkData({
+        parentId: 'p',
+        index: 0,
+        type: 'url',
+        title: 'A',
+        url: 'https://a.test/',
+        favicon: 'zen://favicon/0123456789abcdef0123456789abcdef01234567',
+        dateAdded: 5
+      })
+      expect(cached).not.toHaveProperty('favicon')
+      const addressed = readBookmarkData({
+        parentId: 'p',
+        index: 0,
+        type: 'url',
+        title: 'A',
+        url: 'https://a.test/',
+        favicon: 'https://a.test/favicon.ico',
+        dateAdded: 5
+      })
+      expect(addressed?.favicon).toBe('https://a.test/favicon.ico')
+      // A pre-tree device's flat record, the same.
+      expect(
+        readBookmarkData({
+          url: 'https://a.test/',
+          title: 'A',
+          favicon: 'data:image/png;base64,AAAA',
+          createdAt: 5
+        })
+      ).not.toHaveProperty('favicon')
+    })
   })
 
   it('a move changes only the moved node, and the scope can turn bookmarks off', () => {
@@ -1016,10 +1249,12 @@ describe('bookmark records', () => {
   })
 
   it('readBookmarkData lands flat records from pre-tree devices in Other bookmarks', () => {
+    // A pre-tree device sent its icon as it held it; the bytes of a `data:` one stay out here
+    // as everywhere (`wireFavicon`), an address comes through.
     const legacy = readBookmarkData({
       url: 'https://old.test/',
       title: 'Old',
-      favicon: 'data:x',
+      favicon: 'https://old.test/favicon.ico',
       createdAt: 42
     })
     expect(legacy).toEqual({
@@ -1028,9 +1263,12 @@ describe('bookmark records', () => {
       type: 'url',
       title: 'Old',
       url: 'https://old.test/',
-      favicon: 'data:x',
+      favicon: 'https://old.test/favicon.ico',
       dateAdded: 42
     })
+    expect(
+      readBookmarkData({ url: 'https://old.test/', title: 'Old', favicon: 'data:x', createdAt: 42 })
+    ).not.toHaveProperty('favicon')
     expect(readBookmarkData({ url: 'https://old.test/', title: '', favicon: null })?.title).toBe(
       'https://old.test/'
     )
