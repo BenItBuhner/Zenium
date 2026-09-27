@@ -3136,7 +3136,14 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             // attempts lost the `[Zenium]` chunk-refusal and alias-retry lines under Flipkart's noise).
             attempt.put("page", found).put("document", page).put("complete", complete).put("console", JSONArray(consoleKeepingRuntime(view, 10)))
             if (desktop) attempt.put("userAgent", tabEval(view, "navigator.userAgent").trim('"').take(160))
-            if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { attempt.put("world", json(it)) }
+            // The extension's world after the wait, on both WebViews (the page's own window holds
+            // the stats under the fallback): its host-bound posts still unanswered are the
+            // discriminator for a wait that ran out – a runtime reply that never came, or the
+            // page's own await (RoValra's init on 156, round 21 – R22-11).
+            val world = json((if (worlds) worldEval(view, row.id, WORLD_REPORT) else tabEval(view, WORLD_REPORT)) ?: "null")
+            attempt.put("world", world)
+            val silence = if (found.optBoolean("pass")) "" else unansweredLine(world)
+            if (silence.isNotEmpty()) attempt.put("unanswered", silence)
             SystemClock.sleep(600)
             snap("${entry.optString("slug")}-live${if (index > 0) "-$index" else ""}")
             val text = page.optString("text")
@@ -3149,7 +3156,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 found.optBoolean("pass") -> Grade("P", "$label: on $where: ${found.toString().take(220)}$before", extra)
                 errorPage || CHALLENGE_WORDS.containsMatchIn(text) || NOT_FOUND_WORDS.containsMatchIn(text) || text.isEmpty() ->
                     Grade("n/m", "$label: $where did not serve its page to the runner (\"${text.take(80)}\", complete $complete, ${page.optInt("els")} elements${if (refused) ", reloaded once" else ""})$before; nothing for the extension to act on (not measurable here)", extra)
-                else -> Grade("F", "$label: on $where (\"${text.take(60)}\"): ${found.toString().take(200)}$before", extra)
+                else -> Grade("F", "$label: on $where (\"${text.take(60)}\"): ${found.toString().take(200)}${if (silence.isNotEmpty()) "; $silence" else ""}$before", extra)
             }
             grades += grade
             // Every page of the row is tried until one passes (round 14's 7.18a: Buyhatke's
@@ -11552,6 +11559,29 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
 
     /** A sheet whose document reads empty but that shows labelled content: the shadow-root case. */
     private fun shownDespiteEmptyDom(seen: JSONObject): Boolean = (seen.optJSONArray("labels")?.length() ?: 0) >= 3
+
+    /**
+     * The world's host-bound posts still without their reply, as one line off a `WORLD_REPORT`
+     * (`stats.unanswered`, by endpoint: `{id, what, ageMs}` oldest first – the engine's
+     * `unanswered()`): a wait that ran out with posts unanswered is the runtime's silence, one
+     * with none is the page's own await (R22-11). Empty when the report carries no stats
+     * (a world without the debug stats, or a page the extension never reached).
+     */
+    private fun unansweredLine(world: JSONObject?): String {
+        val map = world?.optJSONObject("stats")?.optJSONObject("unanswered") ?: return ""
+        val posts = ArrayList<String>()
+        var count = 0
+        for (ep in map.keys()) {
+            val list = map.optJSONArray(ep) ?: continue
+            for (i in 0 until list.length()) {
+                val post = list.optJSONObject(i) ?: continue
+                count++
+                if (posts.size < 6) posts += "${post.optString("what")}#${post.optInt("id")} ${post.optLong("ageMs") / 1000}s"
+            }
+        }
+        return if (count == 0) "the world's host-bound posts are all answered (the wait is the page's own)"
+        else "$count host-bound post(s) of the world unanswered at the wait's end: ${posts.joinToString(", ")}${if (count > posts.size) ", …" else ""}"
+    }
 
     private fun decisions(): List<String> {
         var list: List<String> = emptyList()
