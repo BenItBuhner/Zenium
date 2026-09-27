@@ -40,5 +40,12 @@ export const TOAST_CARD = {
 /** A toast without an action stands this long (§9.33's 2.8 s). */
 export const TOAST_SHOW_MS = 2800
 
+/**
+ * A toast whose one action is Undo stands this long (§9.33's 8 s: the one action a user hunts
+ * for after the fact, so the toast waits for the second thought), above the 5 s a plain action
+ * toast keeps. Chrome's snackbar keeps its `TYPE_ACTION` ones 10 s (`SnackbarManager`).
+ */
+export const TOAST_UNDO_MS = 8000
+
 /** §11.3: with motion reduced, an appearance or a departure is a fade in place this long. */
 export const REDUCED_FADE_MS = 120

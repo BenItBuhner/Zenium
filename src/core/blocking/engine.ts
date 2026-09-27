@@ -474,7 +474,8 @@ function scanTable(table: RuleTable, setIndex: number, resolution: Resolution): 
  *
  * Decisions go through a per-set {@link RuleIndex} (`decide`); the linear scan of every rule is
  * kept as `decideLinear`, the reference the index is tested against. Indexes are only built on
- * an engine that decides – the first `decide` turns them on – so a host whose native engine
+ * an engine that decides – the first `decide` turns them on, or {@link warm} does once a host
+ * whose requests this engine decides has loaded its sets – so a host whose native engine
  * decides (Android) compiles and persists sets without paying for them. A small set is indexed
  * as it is set; a large one answers through the scan while its index is built in slices between
  * decisions, then swapped in.
@@ -551,6 +552,19 @@ export class RuleEngine implements BlockingEngine {
     if (!this.sets.delete(id)) return
     this.ordered = null
     this.notify({ kind: 'remove', id })
+  }
+
+  /**
+   * Build the sets' tables now instead of at the first `decide`: every stored set's table, and
+   * its index – a small set's inline, a large set's through the sliced builder from the next
+   * tick, exactly as the first `decide` would (a large set answers through the scan of its
+   * table until its index lands). A host whose requests this engine decides calls it once its
+   * sets are loaded, so the first request after boot pays no build; a host whose native engine
+   * decides never calls it and never holds a table. Idempotent: a set already built is left as
+   * it is, and indexing stays on, so a set set afterwards is indexed as it arrives.
+   */
+  warm(): void {
+    if (!this.indexing) this.startIndexing()
   }
 
   /**

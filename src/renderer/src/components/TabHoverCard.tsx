@@ -5,6 +5,7 @@ import {
   hostHoverCard,
   hoverCard,
   hoverCardHost,
+  hoverCardMemoryLine,
   hoverCardPreviews,
   placeHoverCard
 } from '@renderer/lib/hoverCard'
@@ -24,10 +25,12 @@ import { HOVER_CARD_HIDDEN, overlayCoversContent, uiStore } from '@renderer/lib/
  * The tab hover card (design-language-v2-draft §9.20; tabs-04, BUG-004): a 320 popover flush
  * against the sidebar's edge and start-aligned with its row, with the row's full title on two
  * lines at most and the page's host under it, then the state lines the row's tooltip used to
- * carry. Shown by lib/hoverCard.ts after the pointer rests on a row or when keyboard focus
- * lands on one; one at a time; it never takes the pointer. Any press, a drag, a scroll,
- * Escape, the window losing focus, another tab coming to the front, or a popover, menu or
- * dialog opening takes it down.
+ * carry, and last the page's memory – "Memory usage: 123 MB" (settings-29, Chrome's footer row)
+ * while Settings › Performance's Show tab memory usage is on, "High memory usage" past Chrome's
+ * threshold whatever it says. Shown by lib/hoverCard.ts after the pointer rests on a row or
+ * when keyboard focus lands on one; one at a time; it never takes the pointer. Any press, a
+ * drag, a scroll, Escape, the window losing focus, another tab coming to the front, or a
+ * popover, menu or dialog opening takes it down.
  *
  * For a page in the background the card previews it (tabs-19, Chrome's tab hover card
  * preview): the tab's picture above the title, a 16:10 frame at the card's inner width with
@@ -50,7 +53,10 @@ export function TabHoverCard({ state }: { state: UIState }): JSX.Element | null 
 
   const title = tab ? tabTitle(tab) : ''
   const host = tab ? hoverCardHost(tab.url) : ''
-  const lines = tab ? tabStateLines(tab, agent?.name ?? null) : []
+  // The state lines, then the page's memory (settings-29): Chrome's footer order, the memory
+  // row last; a sleeping tab's "Memory saved" stands in for it (`hoverCardMemoryLine`).
+  const memory = tab ? hoverCardMemoryLine(state, tab.id) : null
+  const lines = tab ? [...tabStateLines(tab, agent?.name ?? null), ...(memory ? [memory] : [])] : []
   const stateText = lines.join('\n')
   // The page's picture, read from the covers the chrome holds (no read from a host's disk: the
   // card is up for a moment, and the controller has just captured the page).

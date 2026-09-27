@@ -313,44 +313,47 @@ function notificationsReview(
 }
 
 // ---------------------------------------------------------------------------
-// Clear browsing data
+// Delete browsing data
 // ---------------------------------------------------------------------------
 
 /**
- * The Clear browsing data sheet (PS-13, `ClearBrowsingDataForm`): the group's row opens it, and
- * so does the Privacy and security hub's "Delete browsing data" card (W7-6), the one dialog.
+ * The Delete browsing data sheet (PS-13, `ClearBrowsingDataForm`): the group's row opens it, and
+ * so does the Privacy and security hub's "Delete browsing data…" card (W7-6), the one dialog.
+ * Chrome's words since M124 (`IDS_CLEAR_BROWSING_DATA_TITLE` "Delete browsing data"); the
+ * identifiers keep Chrome's own `clear` names, as Chrome's string ids do.
  */
 export const CLEAR_BROWSING_DATA_FORM: FormSheet = {
-  title: 'Clear browsing data',
+  title: 'Delete browsing data',
   description:
-    'Choose a time range and what to remove. Cookies and site data go from every container.',
+    'Choose a time range and what to delete. Cookies and site data go from every container.',
   render: (close) => <ClearBrowsingDataForm close={close} />
 }
 
 /**
- * Clear browsing data as one action row whose sheet is the form (`ClearBrowsingDataForm`, the
+ * Delete browsing data as one action row whose sheet is the form (`ClearBrowsingDataForm`, the
  * dialog's state under a finger): the group names what goes, the sheet's title block what to
- * choose.
+ * choose. The row is Chrome's Settings › Privacy and security row
+ * (`IDS_SETTINGS_CLEAR_BROWSING_DATA` "Delete browsing data").
  */
 export function clearDataGroups({ state }: SectionContext): RowGroup[] {
   const containers = state.containers.length
   return [
     {
       id: 'clear-data',
-      heading: 'Clear browsing data',
+      heading: 'Delete browsing data',
       description:
-        'Remove what Zenium kept while you browsed: history, cookies and site data, the cache, and more. Bookmarks, settings and your Spaces stay.',
+        'Delete what Zenium kept while you browsed: history, cookies and site data, the cache, and more. Bookmarks, settings and your Spaces stay.',
       rows: [
         {
           kind: 'action',
           id: 'clear-data-open',
-          label: 'Clear browsing data',
+          label: 'Delete browsing data',
           description:
             containers > 1
               ? `History, cookies, cache and more, across ${containers} containers and the private session`
               : 'History, cookies, cache and more, including the private session',
-          keywords: ['history', 'cookies', 'cache', 'site data', 'delete', 'passwords'],
-          button: 'Clear…',
+          keywords: ['history', 'cookies', 'cache', 'site data', 'clear', 'delete', 'passwords'],
+          button: 'Delete…',
           form: CLEAR_BROWSING_DATA_FORM
         }
       ]

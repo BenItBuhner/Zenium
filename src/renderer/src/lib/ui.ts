@@ -435,7 +435,7 @@ export interface UiState {
    * prompt id – its sheet is up while this names it; the bell alone stands for it otherwise.
    */
   quietPromptId: string | null
-  /** The Clear browsing data dialog (or sheet) is up over the page or over Settings. */
+  /** The Delete browsing data dialog (or sheet) is up over the page or over Settings. */
   clearBrowsingDataOpen: boolean
   /** Chrome's Name window prompt (`windowName/NameWindowDialog`) is up over the page. */
   nameWindowOpen: boolean
@@ -2647,7 +2647,7 @@ export function closeHistoryMenu(): void {
 }
 
 /**
- * Clear browsing data (`siteControls/ClearBrowsingDataDialog`): a dialog through the frame dialog
+ * Delete browsing data (`siteControls/ClearBrowsingDataDialog`): a dialog through the frame dialog
  * host on a mouse, a sheet on a phone, over whatever is up – Settings, where its row lives, or
  * the page, whose snapshot then has to exist first for the scrim to dim.
  */

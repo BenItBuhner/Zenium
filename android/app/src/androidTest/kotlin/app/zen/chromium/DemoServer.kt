@@ -30,7 +30,10 @@ import java.util.concurrent.atomic.AtomicInteger
  * to, whatever the method: a sign-in form's POST landing on its welcome page the way a real
  * site's does (a request body is read to its `Content-Length` first, so the connection closes
  * cleanly). A path in `cuts` is a file whose server drops the connection ([Cut]): what the
- * downloads demos need from the runner's Node server, served from the device instead.
+ * downloads demos need from the runner's Node server, served from the device instead. A path in
+ * `keepBodies` keeps the last request's body ([lastBody], up to [BODY_CAP] bytes) for a driver
+ * that asserts what a form POSTED – the multipart of an image search's upload – and every path
+ * keeps its last request's method ([lastMethod]).
  */
 class DemoServer(
     private val port: Int,
@@ -39,7 +42,8 @@ class DemoServer(
     private val delays: Map<String, Long> = emptyMap(),
     private val cacheable: Set<String> = emptySet(),
     private val redirects: Map<String, String> = emptyMap(),
-    private val cuts: Map<String, Cut> = emptyMap()
+    private val cuts: Map<String, Cut> = emptyMap(),
+    private val keepBodies: Set<String> = emptySet()
 ) : Thread("demo-server-$address-$port") {
     /**
      * A file whose server fails the downloader (the phone's `Downloads.kt`, which fetches a tapped
@@ -60,13 +64,21 @@ class DemoServer(
     private val requests = ConcurrentHashMap<String, AtomicInteger>()
     /** The request headers (names lower-cased) of the last request each path has seen. */
     private val lastHeaders = ConcurrentHashMap<String, Map<String, String>>()
+    /** The method of the last request each path has seen. */
+    private val lastMethods = ConcurrentHashMap<String, String>()
+    /** The body of the last request to each path in `keepBodies`, cut at [BODY_CAP]. */
+    private val lastBodies = ConcurrentHashMap<String, ByteArray>()
     /** Full (non-Range) responses served so far per cut path, and how many responses have died. */
     private val fullResponses = ConcurrentHashMap<String, AtomicInteger>()
     private val deaths = ConcurrentHashMap<String, AtomicInteger>()
 
     val origin: String get() = "http://$address:$port"
 
-    /** How many requests `path` has answered so far (404s included). */
+    /**
+     * How many requests `path` has answered so far (404s included). A request is counted once its
+     * headers, method and body are recorded, so a driver that saw the count rise reads that
+     * request's record ([lastHeader], [lastMethod], [lastBody]), never the one before.
+     */
     fun hits(path: String): Int = requests[path]?.get() ?: 0
 
     /** How many responses to a cut path have died so far. */
@@ -78,6 +90,16 @@ class DemoServer(
      * the browser SENT – a `Referer`, a `Sec-Fetch-Site` – rather than what the page saw.
      */
     fun lastHeader(path: String, name: String): String? = lastHeaders[path]?.get(name.lowercase())
+
+    /** The method (`GET`, `POST`) of the last request to `path`; null for a path never requested. */
+    fun lastMethod(path: String): String? = lastMethods[path]
+
+    /**
+     * The body of the last request to a path in `keepBodies` (its first [BODY_CAP] bytes), byte
+     * for byte; null for a path not kept, or never requested. For a demo that asserts what a form
+     * POSTED – the parts of an image search's multipart – rather than that a request landed.
+     */
+    fun lastBody(path: String): ByteArray? = lastBodies[path]
 
     /** Fetch `/` the way the WebView will and describe the outcome. */
     fun selfCheck(): String = runCatching {
@@ -113,7 +135,11 @@ class DemoServer(
     private fun serve(client: Socket) {
         client.use {
             it.soTimeout = 10_000
-            val request = it.getInputStream().bufferedReader()
+            // ISO-8859-1 maps every byte to one char and back, so a body's char count is its
+            // byte count (a multipart's JPEG part read as UTF-8 would come up short of its
+            // Content-Length, and the read would wait on bytes that never come) and a kept body
+            // comes back byte for byte.
+            val request = it.getInputStream().bufferedReader(Charsets.ISO_8859_1)
             val line = request.readLine() ?: return
             var range: String? = null
             var contentLength = 0
@@ -127,18 +153,27 @@ class DemoServer(
                 }
                 if (header.contains(':')) headers[header.substringBefore(':').trim().lowercase()] = header.substringAfter(':').trim()
             }
+            val method = line.substringBefore(' ')
+            val path = line.split(' ').getOrNull(1)?.substringBefore('?') ?: "/"
             // A body left unread when the socket closes goes back as a reset, which the WebView
-            // reports over the response it already has: read it (a form's fields) and drop it.
+            // reports over the response it already has: read it (a form's fields) and drop it,
+            // or keep it for a path in `keepBodies`. A negative or garbage Content-Length (a
+            // malformed client; the WebView sends none) reads as no body, never as a capacity.
+            val kept = if (path in keepBodies) StringBuilder(contentLength.coerceIn(0, BODY_CAP)) else null
             var unread = contentLength
             val scratch = CharArray(4096)
             while (unread > 0) {
                 val n = request.read(scratch, 0, minOf(unread, scratch.size))
                 if (n < 0) break
                 unread -= n
+                if (kept != null && kept.length < BODY_CAP) kept.append(scratch, 0, minOf(n, BODY_CAP - kept.length))
             }
-            val path = line.split(' ').getOrNull(1)?.substringBefore('?') ?: "/"
-            requests.getOrPut(path) { AtomicInteger() }.incrementAndGet()
+            // The record first, the count last: a driver that polls `hits` and sees it rise then
+            // reads THIS request's headers, method and body, not the request before.
             lastHeaders[path] = headers
+            lastMethods[path] = method
+            if (kept != null) lastBodies[path] = kept.toString().toByteArray(Charsets.ISO_8859_1)
+            requests.getOrPut(path) { AtomicInteger() }.incrementAndGet()
             delays[path]?.let { Thread.sleep(it) }
             val out = it.getOutputStream()
             redirects[path]?.let { location ->
@@ -192,6 +227,9 @@ class DemoServer(
     }
 
     companion object {
+        /** How much of a kept request body is held: an image search's thumbnail is under 100 KB. */
+        const val BODY_CAP = 4 * 1024 * 1024
+
         /**
          * The first and last byte a `Range` header (`bytes=from-to`, `bytes=from-`, `bytes=-last`)
          * asks for out of `size`, clamped to the body; null when it names nothing satisfiable

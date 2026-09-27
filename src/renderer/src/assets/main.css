@@ -12722,6 +12722,20 @@
   width: calc(100% + 32px);
 }
 /*
+ * With nothing of the row's own in sight – the legend aria-only (pr-584 N2) and no description
+ * or caption – the row is its options and nothing else (`data-bare`, rows.tsx). The
+ * `--v2-row-pad` a row keeps around its text (6 on a mouse, 12 on a phone) would stand over and
+ * under the list with nothing to pad: the first option's label 18 off the switch's above where
+ * options stand 12 apart (pr-584's NEW 1). §10.3's rows are 0 apart, so the pad goes – the first
+ * option's box starts where the row before ends, the last ends where the next begins, and the
+ * options' own pads are the only ones. With a description or caption the pad stays: it is the
+ * text's.
+ */
+.zen-settings-radios-row[data-bare] {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+/*
  * No `--v2-selected` band on the page's checked option (pr-584 L1 / Q6, ruled DROP): the
  * choice is told by the accent ring and its dot alone (§9.14), as a check row's is by its box –
  * the band is the picker SHEET's, where the list is the whole sheet and the picked row its one

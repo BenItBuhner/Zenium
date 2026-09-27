@@ -725,6 +725,27 @@ export function isDeviceKind(permission: string): permission is DeviceKindId {
   return (DEVICE_KINDS as readonly string[]).includes(contentSettingId(permission))
 }
 
+/**
+ * Whether a site's `allow` for `permission` carries the unused-sites clock and can be taken back
+ * by the sweep when the site goes unvisited for 60 days (PS-41). Chrome's `CanTrackLastVisit`
+ * (`content_settings_info.cc:118-133`): a permission whose initial default is `ask` – here the
+ * asked-about rows of the permissions and additional groups, and protected content (Chrome's
+ * PROTECTED_MEDIA_IDENTIFIER is such a type) – never notifications, whose review is its own row
+ * (Chrome `CHECK`s the type out of the revoke), and never a device kind, whose grant is a device
+ * picked in a chooser and never a plain allow. A qualified name (`openExternal:zoommtg`,
+ * `storage-access:https://embedder.example`, `fileSystem:read`) reads its row's answer.
+ */
+export function tracksLastVisit(permission: string): boolean {
+  const setting = contentSetting(permission)
+  if (!setting || setting.builtInDefault !== 'ask') return false
+  if (setting.id === 'notifications' || isDeviceKind(setting.id)) return false
+  return (
+    setting.group === 'permissions' ||
+    setting.group === 'additional' ||
+    setting.id === 'mediaKeySystem'
+  )
+}
+
 /** The words after "Allow <site> to …" for a prompted permission (`null`: never asked). */
 export function promptLabelFor(permission: string): string | null {
   if (permission === 'media') return 'use your camera and microphone'

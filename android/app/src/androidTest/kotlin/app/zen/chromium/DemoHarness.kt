@@ -1507,7 +1507,9 @@ abstract class DemoHarness(
     /**
      * [touchControl], then up to `timeoutMs` for `took` to hold – the claim of the step, named by
      * `effect`. True when it held; a touch that went in and did not take is a [touchFault] (the
-     * run fails at its end) and false.
+     * run fails at its end) and false. `treeMs` is [touchControl]'s: how long the tree gets to
+     * list the control before the finger lands on the DOM's box – short for a control on a clock
+     * (a toast's Undo inside §9.33's 8 s), where the emulator's tree cannot be waited on.
      */
     protected fun touchControlExpecting(
         label: String,
@@ -1515,9 +1517,10 @@ abstract class DemoHarness(
         effect: String,
         timeoutMs: Long = 6_000,
         prefix: Boolean = false,
+        treeMs: Long = 5_000,
         took: () -> Boolean
     ): Boolean {
-        if (!touchControl(label, domJs, prefix)) return false
+        if (!touchControl(label, domJs, prefix, treeMs)) return false
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
             if (took()) {

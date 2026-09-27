@@ -136,7 +136,7 @@ export function SpaceEditor({
             </SelectContent>
           </Select>
           <p className="text-[11.5px] text-[var(--zen-muted)]">
-            New tabs in this space open in the container&apos;s isolated cookie session.
+            New tabs in this Space open in the container&apos;s isolated cookie session.
           </p>
         </div>
         <div className="flex justify-end gap-2 pt-2">
@@ -150,13 +150,13 @@ export function SpaceEditor({
                 run('space.delete', { spaceId: existing.id })
               }}
             >
-              Delete space
+              Delete Space
             </Button>
           )}
           <Button type="button" variant="secondary" onClick={() => closeOverlay()}>
             Cancel
           </Button>
-          <Button type="submit">{existing ? 'Save' : 'Create space'}</Button>
+          <Button type="submit">{existing ? 'Save' : 'Create Space'}</Button>
         </div>
       </form>
     </OverlayShell>

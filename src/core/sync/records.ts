@@ -367,6 +367,12 @@ export function readReadingListData(id: string, data: unknown): ReadingListEntry
  *   (`settings.a11y.touchpad_overscroll_history_navigation`, `prefs_tab_helper.cc`) Android-only
  *   and without `SYNCABLE_PREF`: the device with the touchpad decides, and a phone's or a
  *   desktop's record has no say. No migration, as above: the key never joins a record.
+ * - `hoverCardMemoryUsage`: whether the tab hover card says the page's memory (settings-29,
+ *   W8-10; off by default, Chrome 152's effective default) – Chrome registers
+ *   `browser.hovercard.memory_usage_enabled` in local state (`RegisterBrowserPrefs` in
+ *   `browser_ui_prefs.cc`), never synced; the card is the desktop's alone, so the phone holds
+ *   the key inert. Same mechanics as the three above: no migration, an older peer's copy
+ *   stripped at apply and never winning.
  */
 export const DEVICE_LOCAL_SETTINGS = [
   'onboardingDone',
@@ -376,7 +382,8 @@ export const DEVICE_LOCAL_SETTINGS = [
   'energySaver',
   'unloadEnabled',
   'unloadTimeoutMinutes',
-  'touchpadSwipeToNavigate'
+  'touchpadSwipeToNavigate',
+  'hoverCardMemoryUsage'
 ] as const
 export type DeviceLocalSetting = (typeof DEVICE_LOCAL_SETTINGS)[number]
 const DEVICE_LOCAL = new Set<string>(DEVICE_LOCAL_SETTINGS)

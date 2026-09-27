@@ -2839,7 +2839,8 @@ export class Menus {
           label: shortcut ? 'Unpin Shortcut' : 'Pin Shortcut',
           click: () => (shortcut ? newTab.unpin(url) : newTab.pin(url, title))
         },
-        { label: 'Remove', click: () => newTab.remove(url) }
+        // The tile off the page, the chrome's toast with Undo alone (NTP-07, v2 §9.33).
+        { label: 'Remove', click: () => newTab.remove(url, win) }
       ],
       win,
       'topsite'

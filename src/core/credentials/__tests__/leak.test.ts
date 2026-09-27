@@ -268,7 +268,7 @@ describe('the checkup summary', () => {
           ? null
           : { ...emptyPasswordsStatus(), locked: false, count: 3, ...passwords },
       rules: [],
-      lastVisitByOrigin: new Map(),
+      revoked: [],
       notificationsShown: [],
       extensions: null
     }

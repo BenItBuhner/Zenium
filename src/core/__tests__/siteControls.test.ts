@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   BROWSING_DATA_ADVANCED,
   DEFAULT_CONTAINER_ID,
@@ -10,11 +10,17 @@ import {
   type PermissionRule,
   type Platform as PlatformOs,
   type ReauthOutcome,
+  type RevokedSitePermissions,
   type SafetyCheckResult,
   type Tab
 } from '../../shared/types'
 import type { SiteInfoSnapshot } from '../../shared/siteInfo'
 import { Browser } from '../browser'
+import { REVOKED_PERMISSIONS_KEPT_MS, coarseVisitTime } from '../permissions'
+import {
+  UNUSED_PERMISSIONS_FIRST_SWEEP_DELAY_MS,
+  UNUSED_PERMISSIONS_SWEEP_INTERVAL_MS
+} from '../unusedPermissions'
 import {
   MANY_PERMISSIONS,
   UNUSED_PERMISSION_MS,
@@ -278,7 +284,12 @@ describe('permission prompts through the chrome', () => {
     await expect(decision).resolves.toBe(true)
     expect(f.browser.state.snapshot(f.win).permissionPrompts).toEqual([])
     expect(f.browser.permissions.rules()).toEqual([
-      { origin: 'https://cam.example', permission: 'camera', decision: 'allow' }
+      {
+        origin: 'https://cam.example',
+        permission: 'camera',
+        decision: 'allow',
+        lastVisitedAt: coarseVisitTime(Date.now())
+      }
     ])
     // Remembered: the next request is answered without a prompt.
     await expect(
@@ -510,7 +521,7 @@ function safetyInput(patch: Partial<SafetyCheckInput> = {}): SafetyCheckInput {
     safeBrowsing: { configured: false, enabled: null },
     passwords: null,
     rules: [],
-    lastVisitByOrigin: new Map(),
+    revoked: [],
     notificationsShown: [],
     extensions: null,
     ...patch
@@ -533,28 +544,46 @@ describe('safety check', () => {
 
   it('flags sites with many permissions and sites not visited for two months', () => {
     const now = 1_000_000_000_000
+    // The clock is the rule's own coarse visit stamp (PS-41), not the history's last visit: a
+    // site whose grants carry none (an allow from before the clock, unvisited since) is not
+    // flagged, as a site without a history row was not.
     const rules: PermissionRule[] = [
       { origin: 'https://busy.example', permission: 'camera', decision: 'allow' },
       { origin: 'https://busy.example', permission: 'microphone', decision: 'allow' },
       { origin: 'https://busy.example', permission: 'geolocation', decision: 'allow' },
-      { origin: 'https://old.example', permission: 'geolocation', decision: 'allow' },
-      { origin: 'https://fine.example', permission: 'camera', decision: 'allow' },
+      {
+        origin: 'https://old.example',
+        permission: 'geolocation',
+        decision: 'allow',
+        lastVisitedAt: now - UNUSED_PERMISSION_MS - 1
+      },
+      {
+        origin: 'https://fine.example',
+        permission: 'camera',
+        decision: 'allow',
+        lastVisitedAt: now - 1000
+      },
+      // The site's newest stamp counts: one grant visited lately keeps the site off the list.
+      {
+        origin: 'https://mixed.example',
+        permission: 'camera',
+        decision: 'allow',
+        lastVisitedAt: now - UNUSED_PERMISSION_MS - 1
+      },
+      {
+        origin: 'https://mixed.example',
+        permission: 'microphone',
+        decision: 'allow',
+        lastVisitedAt: now - 1000
+      },
       // Content rows and refusals are not capabilities a site holds.
       { origin: 'https://ads.example', permission: 'popups', decision: 'allow' },
       { origin: 'https://no.example', permission: 'camera', decision: 'deny' }
     ]
-    const result = composeSafetyCheck(
-      safetyInput({
-        now,
-        rules,
-        lastVisitByOrigin: new Map([
-          ['https://old.example', now - UNUSED_PERMISSION_MS - 1],
-          ['https://fine.example', now - 1000]
-        ])
-      })
-    )
+    const result = composeSafetyCheck(safetyInput({ now, rules }))
     expect(result.permissions.state).toBe('info')
-    expect(result.permissions.grantedSites).toBe(3)
+    expect(result.permissions.grantedSites).toBe(4)
+    expect(result.permissions.revoked).toEqual([])
     expect(result.permissions.review).toEqual([
       {
         origin: 'https://busy.example',
@@ -681,5 +710,202 @@ describe('siteInfo.snapshot', () => {
     })
     expect(secret!.isPrivate).toBe(true)
     expect(await fx.command<Promise<unknown>>('siteInfo.snapshot', { tabId: 'nope' })).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// PS-41: unused site permissions – the visit seat, the sweep's schedule, the review's commands
+// ---------------------------------------------------------------------------
+
+describe('unused site permissions in the browser (PS-41)', () => {
+  const DAY = 24 * 3_600_000
+  /** A Sunday noon; the fixtures move the clock from here. */
+  const T0 = Date.UTC(2026, 8, 27, 12)
+  const WEEK0 = coarseVisitTime(T0)
+  const OLD = T0 - 10 * 7 * DAY
+  const OLD_WEEK = coarseVisitTime(OLD)
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(T0)
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** A browser whose `site` holds `permission` allowed ten weeks ago, unvisited since. */
+  const withStale = (site: string, permission = 'camera'): Fixture => {
+    const fx = fixture()
+    vi.setSystemTime(OLD)
+    fx.browser.permissions.set(permission, site, 'allow')
+    vi.setSystemTime(T0)
+    return fx
+  }
+  const stampOf = (fx: Fixture, site: string, permission = 'camera'): number | undefined =>
+    fx.browser.permissions.rules().find((r) => r.origin === site && r.permission === permission)
+      ?.lastVisitedAt
+
+  it('a non-private tab’s page commit refreshes the site’s stamps; a same-document navigation, a private tab and a history clear do not touch them', () => {
+    const fx = withStale('https://cam.example')
+    vi.setSystemTime(OLD)
+    fx.browser.permissions.set('camera', 'https://secret.example', 'allow')
+    vi.setSystemTime(T0)
+    expect(stampOf(fx, 'https://cam.example')).toBe(OLD_WEEK)
+
+    const tab = fx.browser.tabs.createTab({ url: 'https://cam.example/', active: true }, fx.win)
+    fx.viewOf(tab.id).events.onNavigated('https://cam.example/inbox', true)
+    expect(stampOf(fx, 'https://cam.example')).toBe(OLD_WEEK)
+    fx.navigate(tab.id, 'https://cam.example/inbox')
+    expect(stampOf(fx, 'https://cam.example')).toBe(WEEK0)
+
+    const privateId = fx.command<string>('tab.newPrivate', { url: 'https://secret.example/' })
+    fx.navigate(privateId, 'https://secret.example/')
+    expect(stampOf(fx, 'https://secret.example')).toBe(OLD_WEEK)
+
+    fx.browser.history.clear()
+    expect(fx.browser.history.recent(10)).toEqual([])
+    expect(stampOf(fx, 'https://cam.example')).toBe(WEEK0)
+    // Ten weeks unvisited, but the history says nothing about it any more: the stamp decides.
+    expect(fx.browser.permissions.sweepUnused(true).revoked.map((r) => r.origin)).toEqual([
+      'https://secret.example'
+    ])
+  })
+
+  it('runs its first sweep off the boot path, then daily; a run that changed the list pushes the state', () => {
+    const fx = withStale('https://cam.example')
+    expect(fx.browser.state.snapshot(fx.win).revokedUnusedPermissions).toEqual([])
+    vi.advanceTimersByTime(UNUSED_PERMISSIONS_FIRST_SWEEP_DELAY_MS - 1)
+    expect(fx.browser.permissions.revokedUnused()).toEqual([])
+    vi.advanceTimersByTime(1)
+    const first = fx.browser.permissions.revokedUnused()
+    expect(first).toEqual([
+      {
+        origin: 'https://cam.example',
+        permissions: ['camera'],
+        revokedAt: T0 + UNUSED_PERMISSIONS_FIRST_SWEEP_DELAY_MS,
+        expiresAt: T0 + UNUSED_PERMISSIONS_FIRST_SWEEP_DELAY_MS + REVOKED_PERMISSIONS_KEPT_MS
+      }
+    ])
+    expect(fx.browser.state.snapshot(fx.win).revokedUnusedPermissions).toEqual(first)
+
+    // Another site goes stale before the next daily run.
+    const now = Date.now()
+    vi.setSystemTime(OLD)
+    fx.browser.permissions.set('microphone', 'https://mic.example', 'allow')
+    vi.setSystemTime(now)
+    vi.advanceTimersByTime(UNUSED_PERMISSIONS_SWEEP_INTERVAL_MS)
+    expect(fx.browser.permissions.revokedUnused().map((r) => r.origin)).toEqual([
+      'https://mic.example',
+      'https://cam.example'
+    ])
+    expect(fx.browser.state.snapshot(fx.win).revokedUnusedPermissions).toHaveLength(2)
+  })
+
+  it('the setting off holds the sweep (the stamps still run); switching it on sweeps at once', () => {
+    const fx = withStale('https://cam.example')
+    fx.command('settings.update', { autoRevokeUnusedPermissions: false })
+    expect(fx.browser.state.settings.autoRevokeUnusedPermissions).toBe(false)
+    vi.advanceTimersByTime(UNUSED_PERMISSIONS_FIRST_SWEEP_DELAY_MS)
+    expect(fx.browser.permissions.revokedUnused()).toEqual([])
+    const check = fx.command<SafetyCheckResult>('privacy.safetyCheck')
+    expect(check.permissions.revoked).toEqual([])
+    // Off, the Safety check still names the stale grant as before.
+    expect(check.permissions.review).toEqual([
+      { origin: 'https://cam.example', permissions: ['camera'], reason: 'unused' }
+    ])
+    const tab = fx.browser.tabs.createTab({ url: 'https://cam.example/', active: true }, fx.win)
+    fx.navigate(tab.id, 'https://cam.example/')
+    expect(stampOf(fx, 'https://cam.example')).toBe(WEEK0)
+
+    vi.setSystemTime(OLD)
+    fx.browser.permissions.set('geolocation', 'https://map.example', 'allow')
+    vi.setSystemTime(T0)
+    fx.command('settings.update', { autoRevokeUnusedPermissions: true })
+    expect(fx.browser.permissions.revokedUnused().map((r) => r.origin)).toEqual([
+      'https://map.example'
+    ])
+    // The freshly visited site was not touched.
+    expect(stampOf(fx, 'https://cam.example')).toBe(WEEK0)
+  })
+
+  it('the Safety check sweeps first and carries the revoked list; the swept site is not flagged as well', () => {
+    const fx = fixture()
+    vi.setSystemTime(T0 - 130 * DAY)
+    fx.browser.permissions.set('camera', 'https://kept.example', 'allow')
+    // 65 days on: `kept` is swept and allowed again (kept from the sweep from now on); `cam` is
+    // allowed the same day and never visited again.
+    vi.setSystemTime(T0 - 65 * DAY)
+    expect(fx.browser.permissions.sweepUnused(true).revoked.map((r) => r.origin)).toEqual([
+      'https://kept.example'
+    ])
+    fx.browser.permissions.regrantRevoked('https://kept.example')
+    fx.browser.permissions.set('camera', 'https://cam.example', 'allow')
+    vi.setSystemTime(T0)
+    const check = fx.command<SafetyCheckResult>('privacy.safetyCheck')
+    expect(check.permissions.revoked).toEqual([
+      { origin: 'https://cam.example', permissions: ['camera'], revokedAt: T0 }
+    ])
+    expect(check.permissions.grantedSites).toBe(1)
+    expect(check.permissions.review).toEqual([
+      { origin: 'https://kept.example', permissions: ['camera'], reason: 'unused' }
+    ])
+    // Past 30 days the record is gone at the next check.
+    vi.setSystemTime(T0 + REVOKED_PERMISSIONS_KEPT_MS)
+    expect(fx.command<SafetyCheckResult>('privacy.safetyCheck').permissions.revoked).toEqual([])
+  })
+
+  it('the review’s commands: Allow again and its undo, Got it and its undo, through the command map', () => {
+    const fx = withStale('https://cam.example')
+    vi.setSystemTime(OLD)
+    fx.browser.permissions.set('geolocation', 'https://cam.example', 'allow')
+    fx.browser.permissions.set('midi', 'https://midi.example', 'allow')
+    vi.setSystemTime(T0)
+    fx.browser.unusedPermissions.run()
+    const snapshot = (): RevokedSitePermissions[] =>
+      fx.browser.state.snapshot(fx.win).revokedUnusedPermissions
+    expect(snapshot().map((r) => r.origin)).toEqual(['https://cam.example', 'https://midi.example'])
+    const camRecord = snapshot()[0]!
+
+    vi.setSystemTime(T0 + 3 * DAY)
+    fx.command('permissions.regrantRevoked', { origin: 'https://cam.example/page' })
+    expect(snapshot().map((r) => r.origin)).toEqual(['https://midi.example'])
+    expect(fx.browser.permissions.rules()).toEqual([
+      {
+        origin: 'https://cam.example',
+        permission: 'camera',
+        decision: 'allow',
+        lastVisitedAt: coarseVisitTime(T0 + 3 * DAY),
+        keepGranted: true
+      },
+      {
+        origin: 'https://cam.example',
+        permission: 'geolocation',
+        decision: 'allow',
+        lastVisitedAt: coarseVisitTime(T0 + 3 * DAY),
+        keepGranted: true
+      }
+    ])
+    fx.command('permissions.undoRegrantRevoked', { origin: 'https://cam.example' })
+    expect(fx.browser.permissions.rules()).toEqual([])
+    expect(snapshot()).toEqual([
+      camRecord,
+      expect.objectContaining({ origin: 'https://midi.example' })
+    ])
+
+    const acknowledged = fx.command<RevokedSitePermissions[]>('permissions.acknowledgeRevoked')
+    expect(acknowledged.map((r) => r.origin)).toEqual([
+      'https://cam.example',
+      'https://midi.example'
+    ])
+    expect(snapshot()).toEqual([])
+    expect(fx.browser.permissions.rules()).toEqual([])
+    expect(fx.command<RevokedSitePermissions[]>('permissions.acknowledgeRevoked')).toEqual([])
+
+    fx.command('permissions.restoreRevokedList', { records: acknowledged })
+    expect(snapshot()).toEqual(acknowledged)
+    fx.browser.state.flushSync()
+    fx.browser.permissions.flushSync()
+    const file = JSON.parse(fx.io.files['permissions.json']!) as { revokedUnused: unknown }
+    expect(file.revokedUnused).toEqual(acknowledged)
   })
 })

@@ -14,7 +14,7 @@ import { dayKeyOf } from '@shared/dayKey'
 
 /*
  * The History page tab (design language v2 §10.1; Chrome's chrome://history): the title block
- * with "Clear browsing data…", the search field that filters through `history.grouped` and
+ * with "Delete browsing data…", the search field that filters through `history.grouped` and
  * moves the tab's URL to `zen://history?q=` without a history entry, the day groups as §9.27
  * headings (their ⋮ on approach) over §9.21 two-line rows with no slot held at rest, selection
  * as a mode (§9.6, §10.1: entered by Ctrl/Shift-click, the row menu's Select or Ctrl+A, the
@@ -398,14 +398,16 @@ afterEach(() => {
 })
 
 describe('the History page tab (§10.1)', () => {
-  it('draws the title block with Clear browsing data… and the search field, no overlay chrome', async () => {
+  it('draws the title block with Delete browsing data… and the search field, no overlay chrome', async () => {
     const el = await mountPage()
     const page = el.querySelector('[data-testid="history-page"]')!
     expect(page.classList.contains('zen-page')).toBe(true)
     const title = page.querySelector('h1.zen-page-title')
     expect(text(title)).toBe('History')
+    // Chrome's History page link `IDS_CLEAR_BROWSING_DATA_TITLE` "Delete browsing data" (M124+),
+    // the opener's ellipsis added (W8-7).
     const clear = page.querySelector('[data-testid="history-clear-browsing-data"]')!
-    expect(text(clear)).toBe('Clear browsing data…')
+    expect(text(clear)).toBe('Delete browsing data…')
     expect(clear.classList.contains('zen-v2-button')).toBe(true)
     const field = page.querySelector<HTMLInputElement>('[data-testid="history-search"]')!
     expect(field.classList.contains('zen-v2-field')).toBe(true)

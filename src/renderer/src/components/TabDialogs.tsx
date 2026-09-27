@@ -73,7 +73,7 @@ const TAB_ICONS = [
  * renderer stopped answering (`UnresponsiveDialog`), the questions asked before a window closes or
  * Zenium quits, Chrome's Name window prompt, the new tab page's add / edit shortcut dialog, the extension install and
  * permission prompts, the site-information popover's "Clear site data?" confirmation, the
- * sidebar's "Delete <folder>?" prompt, the omnibox row menu's "Delete search history?" prompt, the Clear browsing data dialog Settings opens on a mouse, the sign-in leak warning ("Change your
+ * sidebar's "Delete <folder>?" prompt, the omnibox row menu's "Delete search history?" prompt, the Delete browsing data dialog Settings opens on a mouse, the sign-in leak warning ("Change your
  * password", `LeakWarnings`), the autofill prompts (save / update a login,
  * save an address or a card, choose a passkey account), the address and card editors of
  * Settings > Autofill, the vault passphrase asked for by a re-authenticated command run from

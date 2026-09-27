@@ -11,7 +11,7 @@ import { THEME_PRESETS } from '@shared/theme'
 /*
  * The theme picker as the Settings theme row opens it (W8-3, settings-30; #572's round B):
  * its header is the one word "Theme" over the space it edits as §9.23's description ("Personal
- * space" – the row's aside "Ocean · Personal space" names the space the same way; N5), the
+ * Space" – the row's aside "Ocean · Personal Space" names the space the same way; N5), the
  * "Default" chip and "Reset to default" as the Settings row's own button (§9.1: one reset,
  * `lib/theme.ts`), a reset dropping an edit still in the debounce instead of applying it over
  * the reset (Android's re-nod note at `9f02f12ba`); and, given the button that opened it, the
@@ -88,11 +88,11 @@ const updates = (): unknown[] =>
   invoke.mock.calls.filter(([name]) => name === 'space.update').map(([, args]) => args)
 
 describe('the theme picker’s header and reset (settings-30; #572 N5, Android’s note)', () => {
-  it('titles itself "Theme" with the space as its description – "Personal space" – the "Default" chip and "Reset to default" under it', () => {
+  it('titles itself "Theme" with the space as its description – "Personal Space" – the "Default" chip and "Reset to default" under it', () => {
     mount(state())
     const header = q<HTMLElement>('.zen-overlay-header')!
     expect(header.querySelector('.zen-overlay-title')?.textContent).toBe('Theme')
-    expect(header.querySelector('.zen-overlay-description')?.textContent).toBe('Personal space')
+    expect(header.querySelector('.zen-overlay-description')?.textContent).toBe('Personal Space')
     expect(header.querySelector('.zen-overlay-title-block')).not.toBeNull()
     expect(button('Default')).toBeDefined()
     expect(button('Reset to default')).toBeDefined()
@@ -101,7 +101,7 @@ describe('the theme picker’s header and reset (settings-30; #572 N5, Android�
 
   it('names the space it was opened for, not the active one', () => {
     mount(state(), 'work')
-    expect(q('.zen-overlay-description')?.textContent).toBe('Work space')
+    expect(q('.zen-overlay-description')?.textContent).toBe('Work Space')
   })
 
   it('a preset writes the space’s theme after the picker’s 40 ms debounce; Reset to default cancels an edit still in it and puts the theme to null at once – one space.update, the reset', async () => {
@@ -156,7 +156,7 @@ describe('the picker hung from the Settings row’s Change… button (§9.20; #5
     expect(panel!.style.transformOrigin).toMatch(/^356px 0(px)?$/)
     // The header is the same block the seated picker draws.
     expect(panel!.querySelector('.zen-overlay-title')?.textContent).toBe('Theme')
-    expect(panel!.querySelector('.zen-overlay-description')?.textContent).toBe('Personal space')
+    expect(panel!.querySelector('.zen-overlay-description')?.textContent).toBe('Personal Space')
   })
 
   it('hung from the row the panel is a §9.20 popover: the chassis’s .zen-v2-panel chrome – radius 8 at the squircle, the opaque --v2-panel, --v2-shadow-panel – in place of the seat’s .zen-panel, and no X (round C, notes 16–18)', () => {
