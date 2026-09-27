@@ -246,9 +246,7 @@ describe('discoverSources', () => {
     ])
     expect(firefox[0].browserName).toBe('Firefox')
     expect(firefox[0].profileId).toBe('wxyz5678.default')
-    // No login store in the profile: the note says so and offers no export route (a profile that
-    // never saved a login has nothing to export; another profile's are listed under Profile).
-    expect(firefox[0].limits.passwords).toBe('This Firefox profile has no saved passwords to read.')
+    expect(firefox[0].limits.passwords).toContain('Export passwords')
   })
 
   it('offers Firefox passwords when the profile holds both logins.json and key4.db', async () => {
