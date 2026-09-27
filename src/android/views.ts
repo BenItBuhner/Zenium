@@ -18,7 +18,12 @@ import { isCertificateError, type SiteCertificate } from '@shared/siteInfo'
 import { parsePageViewport, type PageViewport } from '@shared/capture'
 import { certificateDetailsFrom } from '@shared/url'
 import type { NavigationReport } from './extensionWebNavigation'
-import { zenPageHtml, type ImagePageLookup, type ReaderPageLookup } from '@shared/zenPages'
+import {
+  zenPageHtml,
+  type ImagePageLookup,
+  type ReaderPageLookup,
+  type VersionPageLookup
+} from '@shared/zenPages'
 import { pdfPageDownloadId, pdfViewerBaseUrl, type PdfPageLookup } from '@shared/pdfPage'
 import { imageUploadFormDoc, urlencodeImagePost, type ImagePost } from '@shared/imageUpload'
 import type {
@@ -193,7 +198,8 @@ export class AndroidTabView implements TabView {
     private readonly pages: ZenPageLookups = {
       reader: () => null,
       image: () => null,
-      pdf: () => null
+      pdf: () => null,
+      version: () => null
     },
     private readonly navigation: NavigationBridge = new NavigationBridge(bridge),
     private readonly placement: PlacementListener = noPlacementListener,
@@ -409,14 +415,16 @@ export class AndroidTabView implements TabView {
       this.bridge.send('view.loadHtml', {
         tabId: this.tabId,
         url,
-        // The error page lists Chrome Android's suggestions on this host (`ErrorPageHost`).
+        // The error page lists Chrome Android's suggestions on this host (`ErrorPageHost`);
+        // `zen://version` prints the facts the host answers when asked (`versionFacts.ts`).
         html: zenPageHtml(
           url,
           this.pages.reader,
           this.pages.image,
           this.pages.pdf,
           'system',
-          'android'
+          'android',
+          this.pages.version
         ),
         // The PDF viewer's document runs under the PDF's own URL, as Chrome's viewer presents
         // its tab (`pdfViewerBaseUrl`: the viewer's origin for a PDF with none); pdf.js fetches
@@ -986,12 +994,19 @@ export interface ZenPageLookups {
   image: ImagePageLookup
   /** `zen://pdf?id=…` → the download it shows (`core/pdf.ts`), or null once the file is gone. */
   pdf: PdfPageLookup
+  /** `zen://version`'s rows (SET-66), asked of the host when the page is opened; null before the core is bound. */
+  version: VersionPageLookup
 }
 
 /** Creates and tracks the JS mirrors of Kotlin's tab WebViews. */
 export class AndroidTabViewHost implements TabViewHost, PlacementListener {
   private readonly views = new Map<string, AndroidTabView>()
-  readonly pages: ZenPageLookups = { reader: () => null, image: () => null, pdf: () => null }
+  readonly pages: ZenPageLookups = {
+    reader: () => null,
+    image: () => null,
+    pdf: () => null,
+    version: () => null
+  }
   /** Shared by the views: what the host offers is learnt once for the run, not per view. */
   private readonly navigation: NavigationBridge
   /**

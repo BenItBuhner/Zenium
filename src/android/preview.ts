@@ -1305,6 +1305,18 @@ export function createPreviewBridge(): NativeBridge {
     // No jar or cache to measure in the preview, as on a device (the WebView cannot list cookies).
     'profile.browsingDataCounts': () => ({ cookieSites: null, cacheBytes: null }),
     'keys.setShortcuts': () => undefined,
+    // zen://version's rows (SET-66) as the preview stands in for a device: the payload's
+    // version, the release the `sdk` parameter names, the browser's own user agent.
+    'app.versionFacts': () => ({
+      version: 'preview',
+      debug: true,
+      sdkInt,
+      codename: 'REL',
+      model: 'Preview',
+      webViewPackage: 'com.android.webview',
+      userAgent: navigator.userAgent,
+      profilePath: '/data/user/0/app.zen.chromium/files/zen'
+    }),
     'window.setFullscreen': ({ fullscreen }) => {
       if (fullscreen) void document.documentElement.requestFullscreen?.()
       else void document.exitFullscreen?.()

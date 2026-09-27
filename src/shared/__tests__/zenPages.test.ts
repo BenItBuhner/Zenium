@@ -32,8 +32,10 @@ import {
   parseZenUrl,
   searchTermOf,
   suggestionsFor,
+  versionPageHtml,
   zenPageHtml,
-  type ErrorPageContent
+  type ErrorPageContent,
+  type VersionPageFacts
 } from '../zenPages'
 
 /** The Reload control's label span: the button carries the busy spinner beside it (ERR-06). */
@@ -1370,6 +1372,99 @@ describe('zenPageHtml', () => {
     expect(html).toContain('<title>Page blocked</title>')
     expect(html).toContain('Zenium blocked this page')
     expect(html).toContain('<strong>ads.example</strong>')
+  })
+
+  describe('zen://version (SET-66)', () => {
+    const FACTS: VersionPageFacts = {
+      app: '0.5.9 (Official Build) (64-bit)',
+      engine: 'com.google.android.webview 152.0.7977.89',
+      os: 'Android 14; Pixel 7 Build/UQ1A.240105.004; 34; REL',
+      versionCode: '50900',
+      targetSdkVersion: '35',
+      userAgent:
+        'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Mobile Safari/537.36',
+      executablePath: '/data/app/app.zen.chromium/base.apk',
+      profilePath: '/data/user/0/app.zen.chromium/files/zen'
+    }
+
+    it("lays the host's facts out as Chrome's rows, in Chrome's order and under its labels", () => {
+      const html = versionPageHtml(FACTS)
+      expect(html).toContain('<title>About Version</title>')
+      expect(html).toContain('<h1>About Version</h1>')
+      expect(html).toContain('<body data-surface="page">')
+      const labels = [...html.matchAll(/<th scope="row">([^<]+)<\/th>/g)].map((m) => m[1])
+      // Chrome Android's chrome://version (`about_version.html`, 152.0.7977.89): the product,
+      // then Revision (Zenium's engine row stands there), OS, APK versionCode, APK
+      // targetSdkVersion, JavaScript, User Agent, Command Line, Executable Path, Profile Path –
+      // the rows this host has no fact for (JavaScript, Command Line) left out as Chrome's
+      // platform builds leave rows out.
+      expect(labels).toEqual([
+        'Zenium',
+        'Engine',
+        'OS',
+        'APK versionCode',
+        'APK targetSdkVersion',
+        'User Agent',
+        'Executable Path',
+        'Profile Path'
+      ])
+      expect(html).toContain('<td>0.5.9 (Official Build) (64-bit)</td>')
+      expect(html).toContain('<td>Android 14; Pixel 7 Build/UQ1A.240105.004; 34; REL</td>')
+      expect(html).toContain('<td>/data/user/0/app.zen.chromium/files/zen</td>')
+    })
+
+    it("prints the desktop's rows – JavaScript and Command Line – when the host has them, and escapes every value", () => {
+      const html = versionPageHtml({
+        app: '0.5.9 (Developer Build) (x86_64)',
+        engine: 'Chromium 152.0.7977.89 (Electron 44.0.0)',
+        os: 'Linux 6.12.0',
+        javascript: 'V8 15.2.100.1',
+        userAgent: 'Mozilla/5.0 <script>',
+        commandLine: '/opt/zenium/zenium --flag="a & b"',
+        executablePath: '/opt/zenium/zenium',
+        profilePath: '/home/u/.config/zenium/zen'
+      })
+      const labels = [...html.matchAll(/<th scope="row">([^<]+)<\/th>/g)].map((m) => m[1])
+      expect(labels).toEqual([
+        'Zenium',
+        'Engine',
+        'OS',
+        'JavaScript',
+        'User Agent',
+        'Command Line',
+        'Executable Path',
+        'Profile Path'
+      ])
+      expect(html).toContain('<td>V8 15.2.100.1</td>')
+      expect(html).toContain('<td>Mozilla/5.0 &lt;script&gt;</td>')
+      expect(html).toContain('<td>/opt/zenium/zenium --flag=&quot;a &amp; b&quot;</td>')
+      expect(html).not.toContain('<script>')
+    })
+
+    it('serves the page through zenPageHtml with the lookup, the blank page without one, the other routes as before', () => {
+      expect(zenPageHtml('zen://version', undefined, undefined, undefined, 'system', 'android', () => FACTS)).toBe(
+        versionPageHtml(FACTS)
+      )
+      // A host that passes no lookup (or whose lookup has nothing) serves what it served before:
+      // the blank page – the routes of a host that never asked for the page are untouched.
+      expect(zenPageHtml('zen://version')).toBe(zenPageHtml('zen://blank'))
+      expect(zenPageHtml('zen://version', undefined, undefined, undefined, 'system', 'desktop', () => null)).toBe(
+        zenPageHtml('zen://blank')
+      )
+      // The lookup is asked only for the version page: every other route answers as it did
+      // with no lookup at all, byte for byte.
+      const asked: string[] = []
+      const lookup = (): VersionPageFacts => {
+        asked.push('version')
+        return FACTS
+      }
+      for (const url of ['zen://blank', 'zen://newtab', 'zen://nonsense', 'zen://settings', REFUSED, OFFLINE, DNS]) {
+        expect(zenPageHtml(url, undefined, undefined, undefined, 'system', 'desktop', lookup)).toBe(
+          zenPageHtml(url)
+        )
+      }
+      expect(asked).toEqual([])
+    })
   })
 
   it('resolves reader and image pages through the lookups', () => {

@@ -39,7 +39,8 @@ describe('the page registry', () => {
       'terms',
       'print',
       'pdf',
-      'tasks'
+      'tasks',
+      'version'
     ])
     expect(INTERNAL_PAGES.settings.title).toBe('Settings')
     // Zen's features, Autofill, Languages and then Privacy after Search; Apps (the installed web
@@ -217,6 +218,29 @@ describe('the page registry', () => {
     expect(pageOpensAsTab(INTERNAL_PAGES.tasks, { pageTabs: true }, 'tablet')).toBe(false)
     expect(pageOpensAsTab(INTERNAL_PAGES.tasks, { pageTabs: true }, 'phone')).toBe(false)
     expect(pageOpensAsTab(INTERNAL_PAGES.tasks, { pageTabs: false }, 'desktop')).toBe(false)
+  })
+
+  it('registers the version page as a document every host serves, titled and starred as chrome://version (SET-66)', () => {
+    expect(INTERNAL_PAGES.version).toMatchObject({
+      id: 'version',
+      title: 'About Version',
+      render: 'document',
+      singleton: false,
+      pill: { showStar: true },
+      splittable: true,
+      sections: []
+    })
+    // No overlay, no layouts, nothing required of the host: a tab wherever it is typed, the
+    // phone's included, and every open its own tab as Chrome's is.
+    expect(INTERNAL_PAGES.version.overlay).toBeUndefined()
+    expect(INTERNAL_PAGES.version.layouts).toBeUndefined()
+    expect(INTERNAL_PAGES.version.requires).toBeUndefined()
+    expect(INTERNAL_PAGES.version.glyph).toBeUndefined()
+    expect(pageOpensAsTab(INTERNAL_PAGES.version, NONE, 'phone')).toBe(true)
+    expect(pageOpensAsTab(INTERNAL_PAGES.version, NONE, 'desktop')).toBe(true)
+    expect(internalPageTitle('zen://version')).toBe('About Version')
+    expect(internalPageAliasUrl('zen://version')).toBe('zenium://version')
+    expect(parseInternalPageUrl('chrome://version')).toBeNull()
   })
 
   it('opens a chrome page as a tab where the host draws page tabs and the layout is one of its own', () => {

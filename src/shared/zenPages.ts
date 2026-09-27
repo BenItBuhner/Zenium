@@ -2,7 +2,8 @@
  * `zen://` internal pages. `zen://newtab` is the new tab page (its document lives in
  * `newTabPage.ts`; the host's preload fills it), `zen://blank` an empty page that picks up the
  * theme (new tabs on hosts without the page); `zen://error` renders navigation failures,
- * `zen://reader` shows Reader View articles and `zen://image` an image another app shared in.
+ * `zen://reader` shows Reader View articles, `zen://image` an image another app shared in and
+ * `zen://version` the build's facts (chrome://version).
  *
  * Pure HTML generation shared by every host: Electron serves these through a privileged protocol,
  * Android loads them straight into the tab's WebView. Reader articles and shared images live in
@@ -1330,6 +1331,96 @@ export type ReaderPageLookup = (id: string) => string | null
 export type ImagePageLookup = (id: string) => string | null
 
 /**
+ * What `zen://version` prints (SET-66): Chrome's chrome://version rows
+ * (`components/webui/version/resources/about_version.html`, 152.0.7977.89), as the host knows
+ * them. Each is a line of text; the page escapes and lays them out, nothing more. A row the host
+ * leaves undefined is not printed (Chrome's page is built per platform the same way).
+ */
+export interface VersionPageFacts {
+  /**
+   * The product row: the version, the build's kind in Chrome's words ("Official Build" /
+   * "Developer Build") and its bitness ("(64-bit)") – "0.5.9 (Official Build) (64-bit)".
+   */
+  app: string
+  /**
+   * The engine – Zenium's row where Chrome prints its Revision: the WebView package and its
+   * version (Android); Chromium's version and Electron's (the desktop).
+   */
+  engine: string
+  /**
+   * Chrome's OS row: "Android 14; Pixel 7 Build/UQ1A.240105.004; 34; REL" on Android
+   * (`AndroidAboutAppInfo::GetOsInfo` + the SDK and the codename, `version_ui.cc`), the OS and
+   * its release elsewhere.
+   */
+  os: string
+  /** Chrome Android's "APK versionCode" row. */
+  versionCode?: string
+  /** Chrome Android's "APK targetSdkVersion" row. */
+  targetSdkVersion?: string
+  /** The JavaScript engine, where the host knows it ("V8 15.2.x" on the desktop). */
+  javascript?: string
+  userAgent: string
+  /** Chrome's Command Line row, on a host that has one (the desktop's process arguments). */
+  commandLine?: string
+  /** The APK or the executable. */
+  executablePath?: string
+  /** The profile's directory. */
+  profilePath?: string
+}
+
+/** The host's facts for `zen://version`; null on a host that has none (the page is then blank). */
+export type VersionPageLookup = () => VersionPageFacts | null
+
+const VERSION_STYLE = `
+  :root { color-scheme: light dark; }
+  html, body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 14px; }
+  body { color: light-dark(#1e1e24, #f0f0f5); background: transparent; }
+  main { padding: 24px; max-width: 960px; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0 0 16px; }
+  table { border-collapse: collapse; }
+  th, td { padding: 6px 0; vertical-align: top; text-align: left; }
+  th { font-weight: 600; white-space: nowrap; padding-right: 20px; color: light-dark(#5c5c66, #b8b8c4); }
+  td { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; word-break: break-all; }
+`
+
+/**
+ * The `zen://version` document: Chrome's chrome://version, one row per fact in Chrome's order
+ * and under Chrome's labels (`version_ui_strings.grdp`: "OS", "User Agent", "Command Line",
+ * "Executable Path", "Profile Path"; the literal "APK versionCode" / "APK targetSdkVersion" /
+ * "JavaScript" of `about_version.html`) – the product row under Zenium's name, the engine row
+ * where Chrome prints its Revision – as a table a bug report is copied from. Chrome's title
+ * ("About Version"); a `data-surface="page"` root like the other documents in the tab.
+ */
+export function versionPageHtml(facts: VersionPageFacts): string {
+  const rows: [string, string | undefined][] = [
+    ['Zenium', facts.app],
+    ['Engine', facts.engine],
+    ['OS', facts.os],
+    ['APK versionCode', facts.versionCode],
+    ['APK targetSdkVersion', facts.targetSdkVersion],
+    ['JavaScript', facts.javascript],
+    ['User Agent', facts.userAgent],
+    ['Command Line', facts.commandLine],
+    ['Executable Path', facts.executablePath],
+    ['Profile Path', facts.profilePath]
+  ]
+  const body = rows
+    .filter((row): row is [string, string] => row[1] !== undefined)
+    .map(
+      ([label, value]) =>
+        `<tr><th scope="row">${escapeHtml(label)}</th><td>${escapeHtml(value)}</td></tr>`
+    )
+    .join('\n    ')
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>About Version</title><style>${VERSION_STYLE}</style></head>
+<body data-surface="page"><main>
+  <h1>About Version</h1>
+  <table>
+    ${body}
+  </table>
+</main></body></html>`
+}
+
+/**
  * A `zen://` URL as a `URL` whose `hostname` is the page name. Parsed as `http://` because
  * engines before Chromium 130 (the Android WebView that hosts the core on older devices and on
  * the emulator) give a non-special scheme no host at all, which turned every error page into the
@@ -1349,7 +1440,8 @@ export function parseZenUrl(rawUrl: string): URL | null {
  * colour scheme for the pages that paint a theme of their own (`errorPageAttributesScript`); a
  * host whose pages' `prefers-color-scheme` follows the setting already (Android's night mode)
  * leaves it out. `host` names the Android host, whose error page lists Chrome Android's
- * suggestions (`ErrorPageHost`); every other host is the desktop.
+ * suggestions (`ErrorPageHost`); every other host is the desktop. `version` answers
+ * `zen://version` with the host's facts; a host that passes none serves the blank page there.
  */
 export function zenPageHtml(
   rawUrl: string,
@@ -1357,13 +1449,18 @@ export function zenPageHtml(
   image?: ImagePageLookup,
   pdf?: PdfPageLookup,
   scheme: ColorScheme = 'system',
-  host: ErrorPageHost = 'desktop'
+  host: ErrorPageHost = 'desktop',
+  version?: VersionPageLookup
 ): string {
   const url = parseZenUrl(rawUrl)
   if (!url) return blankPageHtml()
   switch (url.hostname) {
     case 'newtab':
       return newTabPageHtml()
+    case 'version': {
+      const facts = version?.()
+      return facts ? versionPageHtml(facts) : blankPageHtml()
+    }
     case 'error':
       return errorPageHtml(url, scheme, host)
     case 'reader':

@@ -129,6 +129,7 @@ import {
   inputToUrl,
   isBlankTabUrl,
   isEmptyTabUrl,
+  isNewTabUrl,
   isWebPageUrl,
   presentedUrl,
   titleForUrl
@@ -2976,6 +2977,11 @@ export class Browser {
     }
     const url = inputToUrl(text)
     if (!url) return { url: buildSearchUrl(this.defaultSearchEngine(), text) }
+    // `chrome://newtab` (`zenium://newtab`, `about:newtab`) on a host without the served page
+    // – the phone – is the new tab that host opens: the empty one its chrome draws the page
+    // over (SET-66; Chrome Android's is its native new tab in the tab). The served page where
+    // the host has it, as typed.
+    if (isNewTabUrl(url) && !this.state.capabilities.newTabPage) return { url: BLANK_URL }
     const upgradedFrom =
       url.startsWith('https://') && !/^[a-z][a-z0-9+.-]*:/i.test(text) ? text : undefined
     return { url, upgradedFrom }

@@ -32,6 +32,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityManager
 import android.view.inputmethod.InputMethodManager
 import android.webkit.WebChromeClient
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.widget.FrameLayout
 import android.widget.Toast
@@ -844,7 +845,37 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         // The opaque state behind that stack (the string itself; null when there is none: a
         // private tab, no list, over the cap), from the mirror the view refreshes with each push.
         "view.navigationHostState" -> navigation.hostState(args.str("tabId"))
+        // zen://version's rows (SET-66), asked when the page is opened – never at boot: Chrome's
+        // chrome://version facts as this host knows them, laid out by `src/android/versionFacts.ts`.
+        "app.versionFacts" -> versionFacts()
         else -> throw IllegalArgumentException("Unknown sync method: $method")
+    }
+
+    /**
+     * The facts of zen://version – cheap reads, all of them (the bridge thread): the APK's
+     * version and code, the build's kind, the process's bitness, `Build.*` for Chrome's OS row,
+     * the WebView package, the tab's user agent (the WebView's default in Chrome's shape,
+     * `UserAgent.normalize`), the APK and the profile directory. What cannot be read is null.
+     */
+    private fun versionFacts(): JSONObject {
+        val webView = runCatching { WebViewCompat.getCurrentWebViewPackage(activity) }.getOrNull()
+        return json(
+            "version" to BuildConfig.VERSION_NAME,
+            "versionCode" to BuildConfig.VERSION_CODE,
+            "debug" to BuildConfig.DEBUG,
+            "targetSdk" to activity.applicationInfo.targetSdkVersion,
+            "is64Bit" to android.os.Process.is64Bit(),
+            "release" to Build.VERSION.RELEASE,
+            "sdkInt" to Build.VERSION.SDK_INT,
+            "codename" to Build.VERSION.CODENAME,
+            "model" to Build.MODEL,
+            "buildId" to Build.ID,
+            "webViewPackage" to webView?.packageName,
+            "webViewVersion" to webView?.versionName,
+            "userAgent" to runCatching { UserAgent.normalize(WebSettings.getDefaultUserAgent(activity)) }.getOrNull(),
+            "apkPath" to activity.applicationInfo.sourceDir,
+            "profilePath" to storage.root.absolutePath
+        )
     }
 
     /**

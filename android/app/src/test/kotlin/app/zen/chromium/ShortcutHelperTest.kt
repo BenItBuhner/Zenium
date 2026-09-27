@@ -129,6 +129,27 @@ class ShortcutHelperTest {
     }
 
     @Test
+    fun aDesktopOnlyRowIsListedOnNoTouchLayout() {
+        // A `layouts: ['desktop']` entry of the core's table (Name Window…, Screenshot…, Task
+        // Manager; #588's Report an issue…, Alt+Shift+I) travels with its layouts
+        // (`helperShortcuts`) and the helper lists it on the desktop's layout alone: the tablet's
+        // and the phone's Meta long-press never show it, whatever its group and however bound.
+        val reportIssue = row("help.reportIssue", "windowAndTabManagement", "Report an issue…", chord("i", alt = true, shift = true), layouts = listOf("desktop"))
+        val rows = table + reportIssue
+        for (layout in listOf("tablet", "phone")) {
+            val listed = ShortcutHelper.groups(rows, layout).flatMap { it.items }.map { it.action }
+            assertFalse("$layout lists no desktop-only row", listed.any { it in setOf("help.reportIssue", "window.name", "capture.start", "tasks.open") })
+        }
+        val desktop = ShortcutHelper.groups(rows, "desktop").flatMap { it.items }.map { it.action }
+        assertTrue("the desktop's own layout lists it", "help.reportIssue" in desktop)
+        // The key itself is untouched by the listing: a layout that hides the row keeps the chord routed.
+        val keys = Keys()
+        keys.setShortcuts(JSONArray().put(chordJson(reportIssue.chord!!)), JSONArray().put(rowJson(reportIssue)))
+        assertTrue(keys.routes(reportIssue.chord!!))
+        assertTrue(keys.helperRows.single().layouts == listOf("desktop"))
+    }
+
+    @Test
     fun zeniumsOwnRowsGoToChromesNearestGroupByTheTablesGroup() {
         val groups = ShortcutHelper.groups(table, "tablet")
         fun groupOf(action: String) = groups.first { g -> g.items.any { it.action == action } }.title
