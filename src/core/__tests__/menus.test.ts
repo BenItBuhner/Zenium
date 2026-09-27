@@ -432,7 +432,7 @@ describe('the app menu', () => {
       expect(commit).toHaveBeenCalledTimes(2)
     })
 
-    it("records nothing on the desktop while no update waits: no update, one found (`available`), one downloading – the menu opens, the record and the commit count stand", () => {
+    it('records nothing on the desktop while no update waits: no update, one found (`available`), one downloading – the menu opens, the record and the commit count stand', () => {
       const h = harness(DESKTOP)
       const { state } = h.browser
       const commit = vi.spyOn(state, 'commit')
