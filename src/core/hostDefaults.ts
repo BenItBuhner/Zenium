@@ -7,7 +7,8 @@ import type {
   SidePanelInfo,
   Suggestion,
   SyncDeviceTabs,
-  SyncStatus
+  SyncStatus,
+  WebDavProbe
 } from '../shared/types'
 import { emptyResourceSnapshot } from '../shared/defaults'
 import { updateOsOf, type UpdateTarget } from '../shared/updates'
@@ -210,7 +211,11 @@ export class NoSync implements SyncHost {
       syncing: false,
       devices: [],
       pendingMerge: false,
-      remoteTabsVersion: 0
+      remoteTabsVersion: 0,
+      transport: 'folder',
+      webdav: null,
+      webdavAvailable: false,
+      authRefused: false
     }
   }
 
@@ -222,6 +227,12 @@ export class NoSync implements SyncHost {
   async setup(_opts: unknown, win: ZenWindow): Promise<void> {
     this.browser.toast('Sync is not available on this device yet.', 'info', win)
   }
+
+  async testWebDav(): Promise<WebDavProbe> {
+    return { ok: false, kind: 'unavailable', status: 0 }
+  }
+
+  async setWebDavPassword(): Promise<void> {}
 
   setScope(): void {}
   setDeviceName(): void {}

@@ -109,6 +109,7 @@ import {
   relayedFrom
 } from './notificationRequests'
 import { createPasswordsHost } from './passwords'
+import { SafeStorageSecrets } from './secrets'
 import { attachWebAuthnHandlers, configurePlatformAuthenticators } from './webauthn'
 import { attachBluetoothChoosers, attachDeviceHandlers } from './devices'
 import {
@@ -266,6 +267,8 @@ export class ElectronPlatform implements Platform {
   readonly geolocation = new ElectronGeolocation()
   /** Cross-device sync: the system folder dialog, the hostname, a node:fs folder transport (ID-08). */
   readonly sync = new ElectronSyncHost()
+  /** The sync server's app password and the like, `safeStorage`-encrypted under the profile (ID-32). */
+  readonly secrets: SafeStorageSecrets
   /** Other browsers' profiles on this machine for Settings > Import (ID-23). */
   readonly importHost = new ElectronImportHost()
   /** The task manager page's process list (`zen://tasks`); its network count attaches in `start`. */
@@ -331,6 +334,7 @@ export class ElectronPlatform implements Platform {
     })
     this.profileDir = join(userDataDir, 'zen')
     this.io = new FileStoreIO(this.profileDir)
+    this.secrets = new SafeStorageSecrets(this.io)
     this.agentSkills = new SkillInstaller({ version: this.info.version, io: this.io })
     this.blocking = new ElectronBundledLists(bundledListsDirectory(), this.profileDir)
     this.newTabBackground = new ElectronNewTabBackground(join(this.profileDir, 'newtab'))

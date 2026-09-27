@@ -1,6 +1,6 @@
-import { dialog } from 'electron'
+import { dialog, net } from 'electron'
 import { hostname } from 'node:os'
-import type { SyncPlatformHost, SyncTransport } from '../../core/platform'
+import type { SyncFetch, SyncPlatformHost, SyncTransport } from '../../core/platform'
 import type { SyncDeviceKind } from '../../shared/types'
 import type { ZenWindow } from '../../core/window'
 import type { ElectronWindow } from '../platform/window'
@@ -20,6 +20,24 @@ export function defaultDeviceName(): string {
 /** The Electron pieces of sync: the system folder dialog, the hostname, node:fs, node's scrypt. */
 export class ElectronSyncHost implements SyncPlatformHost {
   readonly scrypt = nodeScrypt
+
+  /**
+   * The WebDAV transport's HTTP (ID-32): Electron's `net.fetch` rather than Node's – it goes
+   * through Chromium's network stack, so the system proxy, the OS certificate store and the
+   * user's own CA roots apply to the sync server as they do to every page, and it carries any
+   * method token (PROPFIND, MKCOL, MOVE) where the `NetHost` helper is GET/POST only. `no-store`
+   * keeps Chromium's cache out of a protocol that does its own ETag work.
+   */
+  readonly fetch: SyncFetch = (url, init) =>
+    net.fetch(url, {
+      method: init.method,
+      headers: init.headers,
+      body: init.body,
+      signal: init.signal,
+      cache: 'no-store',
+      redirect: 'manual',
+      credentials: 'omit'
+    })
 
   async chooseFolder(win: ZenWindow): Promise<string | null> {
     const result = await dialog.showOpenDialog((win.host as ElectronWindow).win, {

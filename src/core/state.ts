@@ -511,7 +511,11 @@ export class BrowserState {
       syncing: false,
       devices: [],
       pendingMerge: false,
-      remoteTabsVersion: 0
+      remoteTabsVersion: 0,
+      transport: 'folder',
+      webdav: null,
+      webdavAvailable: false,
+      authRefused: false
     },
     agents: [],
     agentServer: emptyAgentServerStatus(),

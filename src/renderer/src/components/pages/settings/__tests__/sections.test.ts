@@ -6886,6 +6886,10 @@ describe('ID-08’s Sync category on a phone', () => {
       devices: [],
       pendingMerge: false,
       remoteTabsVersion: 0,
+      transport: 'folder',
+      webdav: null,
+      webdavAvailable: false,
+      authRefused: false,
       ...patch
     }
   }
