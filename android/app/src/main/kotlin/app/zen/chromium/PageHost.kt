@@ -96,6 +96,13 @@ interface PageHost {
     /** Whether `window.open` popups become tabs of their own (false: they navigate the one page). */
     val popupsAsTabs: Boolean get() = true
     /**
+     * The Auth Tab's return (CCT-13), only on a custom tab another app opened for a sign-in
+     * result ([AuthTabVerifier]): a main-frame navigation it claims is the caller's redirect, not
+     * loaded but handed back. Read first in every navigation decision ([TabWebView]), so this
+     * default – one null – is the whole cost to the browser's tabs and the ordinary custom tab.
+     */
+    val authTab: AuthTab.Return? get() = null
+    /**
      * Whether the pages' `alert` / `confirm` / `prompt` and their `beforeunload` question are
      * Zenium's own sheet ([PageDialogSheet], drawn natively over the page: PUI-27, PUI-28) rather
      * than the WebView's own dialogs, which a host without a chrome (a custom tab) keeps.

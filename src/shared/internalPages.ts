@@ -238,6 +238,24 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
     label: 'Tab Management',
     keywords: ['tabs', 'pinned', 'essentials', 'unload', 'session', 'window']
   },
+  // Chrome's Performance (chrome://settings/performance: Memory Saver, Energy Saver, W8-2), the
+  // desktop and tablet shells' home for Zen's tab unloading – the phone keeps Edge's sleeping
+  // tabs under Tab Management (CT-22). Seated after Tab Management, whose rows it took, and
+  // before Downloads, as Chrome's nav puts Performance before Downloads.
+  {
+    id: 'performance',
+    label: 'Performance',
+    keywords: [
+      'memory saver',
+      'energy saver',
+      'battery',
+      'unload',
+      'inactive tabs',
+      'sleeping tabs',
+      'discard'
+    ],
+    layouts: ['desktop', 'tablet']
+  },
   {
     id: 'downloads',
     label: 'Downloads',
@@ -436,6 +454,15 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
     label: 'Updates',
     keywords: ['version', 'release', 'download', 'install'],
     requires: 'updates'
+  },
+  {
+    // Chrome's System (chrome://settings/system), the category before Reset settings in its
+    // list: the row that opens the computer's proxy settings – the OS panel, which is the
+    // desktop OSes' alone (Android's proxy is the network's, set in its Wi-Fi settings).
+    id: 'system',
+    label: 'System',
+    keywords: ['proxy', 'network', 'computer', 'operating system', 'os'],
+    platforms: ['win32', 'darwin', 'linux']
   },
   {
     // Chrome's "Reset settings" at the foot of its list (settings-70): the one row that restores

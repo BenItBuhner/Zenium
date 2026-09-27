@@ -2,12 +2,14 @@ import React, { type JSX } from 'react'
 import { App } from './App'
 import { DefaultBrowserLayer } from './components/defaultbrowser/DefaultBrowserPrompt'
 import { DownloadBubbleLayer } from './components/downloads/DownloadBubble'
+import { EnergySaverBubbleLayer } from './components/energysaver/EnergySaverBubble'
 import { MediaHubLayer } from './components/media/MediaHubPopover'
 import { MenuSheet } from './components/menus/MenuSheet'
 import { NewTabCustomizeLayer } from './components/newtab/CustomizeSheet'
 import { MagicStackCustomizeLayer } from './components/newtab/MagicStack'
 import { NewTabGrowLayer } from './components/newtab/NewTabGrowLayer'
 import { ExternalProtocolLayer } from './components/protocol/ExternalProtocolSheet'
+import { QrCodeLayer } from './components/qr/QrCodeSheet'
 import { QrScanLayer } from './components/qr/QrScanSheet'
 import { SharePanelLayer } from './components/share/SharePanelSheet'
 import { BarEditorLayer } from './components/phone/BarEditorSheet'
@@ -40,12 +42,14 @@ export function Root(): JSX.Element {
       <ExtensionsSheetLayer />
       <SendTabSheetLayer />
       <DownloadBubbleLayer />
+      <EnergySaverBubbleLayer />
       <MediaHubLayer />
       <MenuLayer />
       <ExternalProtocolLayer />
       <SharePanelLayer />
       <VoiceSearchLayer />
       <QrScanLayer />
+      <QrCodeLayer />
     </>
   )
 }

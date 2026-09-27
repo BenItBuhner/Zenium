@@ -164,6 +164,17 @@ export interface ValueRow extends RowBase {
   onChange(value: string): void
   /** The picker sheet's description: what the desktop row explained beside its menulist. */
   sheetDescription?: string
+  /**
+   * On the two-pane layout the row is §9.14's plain radio list rather than a menulist: one
+   * radio row per option across the row's content width (the §9.13 picker's rows: the 16
+   * circle, the label, the option's description under it), as Chrome's Performance page lists
+   * Memory Saver's tiers and Energy Saver's two conditions under their toggles (W8-2). The
+   * row's label names the group for assistive technology alone (pr-584 N2) – the options are
+   * the visible text; a description and a search's caption still stand over them. For 2–4
+   * options that fit on one screen and whose descriptions ARE the choice (§9.14; more become
+   * a menulist). The phone keeps its value row and picker sheet, which the same options fill.
+   */
+  radios?: boolean
 }
 
 /** A boolean: the whole row toggles the trailing 36 × 20 switch (§10.4). */
@@ -521,6 +532,14 @@ export interface RowGroup {
   rows: SettingsRow[]
   /** The §9.17 one-line empty state, when the group's rows come from a list that is empty. */
   empty?: string
+  /**
+   * The list's control is off (Memory Saver's exceptions while its switch is): the whole group
+   * – heading, description, rows or the empty line – dims as one dependent at §9.30's one .4,
+   * `aria-disabled` on it so the way out (the switch above) gets read (§10.4; pr-584's re-read,
+   * NEW 2, as ruled). The rows still say `disabled` for what it does – no press, no focus – and
+   * take no .4 of their own under the group's.
+   */
+  disabled?: boolean
   /** As a row's `layouts`: the whole group is one shell's (the bookmarks bar's rows). */
   layouts?: readonly FormFactor[]
 }

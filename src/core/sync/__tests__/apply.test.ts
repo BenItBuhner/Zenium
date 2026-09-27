@@ -6,6 +6,7 @@ import type {
 } from '../../../shared/types'
 import { DEFAULT_SETTINGS } from '../../../shared/defaults'
 import { DEFAULT_NEW_TAB_SETTINGS } from '../../../shared/newTab'
+import { DEFAULT_READER_PREFERENCES } from '../../../shared/reader'
 import { matchKeywordWord } from '../../../shared/search'
 import { Browser } from '../../../core/browser'
 import { createFolder, createSpace } from '../../../core/model'
@@ -234,6 +235,30 @@ describe('applyRemote: the settings record and the new tab page', () => {
     expect(b.state.settings.sidebarWidth).toBe(321)
   })
 
+  it("a peer's Memory Saver mode and timer and its Energy Saver mode never land – an older build still sends them – while the keep-active hosts and the rest apply (W8-2)", () => {
+    const b = browser()
+    // This laptop: Memory Saver at Balanced, Energy Saver at the threshold. The peer – a phone
+    // on a build from before the keys were device-local, or a tower – sends its own values.
+    b.state.settings.unloadEnabled = true
+    b.state.settings.unloadTimeoutMinutes = 240
+    b.state.settings.energySaver = 'low-battery'
+    applyRemote(b, [
+      settingsRecord({
+        ...b.state.settings,
+        unloadEnabled: false,
+        unloadTimeoutMinutes: 20,
+        energySaver: 'off',
+        unloadExcludedDomains: ['zen.test'],
+        colorScheme: 'dark'
+      })
+    ])
+    expect(b.state.settings.unloadEnabled).toBe(true)
+    expect(b.state.settings.unloadTimeoutMinutes).toBe(240)
+    expect(b.state.settings.energySaver).toBe('low-battery')
+    expect(b.state.settings.unloadExcludedDomains).toEqual(['zen.test'])
+    expect(b.state.settings.colorScheme).toBe('dark')
+  })
+
   it("a v6 device that turned Expand on hover off stays off when a peer's record applies (W5-F3)", () => {
     // The profile as a v6 build wrote it after the user turned the row off: a choice.
     const profile = {
@@ -424,6 +449,102 @@ describe('applyRemote: the settings record and the new tab page', () => {
     })
     expect('newTabPhone' in b.state.settings).toBe(false)
     expect(b.state.settings.searchEngineId).toBe('custom:peer')
+  })
+})
+
+/**
+ * Reader View's text preferences (services pass 12, seed 16): the peer's `reader` is read through
+ * `sanitizeReaderPreferences` at apply like every other object-valued setting, so a peer on an
+ * older build (fewer fields) or a garbage value never leaves a hole or an off-ladder value in
+ * `state.settings.reader` – what `ReaderService.preferences()` hands out as it stands.
+ */
+describe("applyRemote: the settings record and Reader View's text preferences (services pass 12)", () => {
+  /** The record this device would send now (`collectLocal`), settings data alone. */
+  const sent = (b: Browser): Record<string, unknown> =>
+    collectLocal(
+      {
+        model: b.state.model,
+        settings: b.state.settings,
+        shortcutOverrides: {},
+        bookmarks: [],
+        boosts: []
+      },
+      defaultScope()
+    ).get(SETTINGS_RECORD_ID)?.data as Record<string, unknown>
+
+  it('a peer on an older build sends fewer fields: its object lands whole with every missing field at the default, and the reader service hands out no hole', () => {
+    const b = browser()
+    b.reader.setPreferences({ fontSize: 22, theme: 'sepia', spacing: 'wide', syllables: true })
+    expect(b.state.settings.reader).toMatchObject({ spacing: 'wide', syllables: true })
+
+    // The peer's build knows two fields fewer (built from the defaults, so the fixture is an
+    // older build's before and after the next field is added); its own edits are the size and
+    // the font.
+    const { spacing: _spacing, syllables: _syllables, ...older } = DEFAULT_READER_PREFERENCES
+    void _spacing
+    void _syllables
+    const peer = { ...older, fontSize: 14, font: 'mono' }
+    expect(Object.keys(peer)).toHaveLength(Object.keys(DEFAULT_READER_PREFERENCES).length - 2)
+    applyRemote(b, [{ ...settingsRecord({ reader: peer }), keys: { reader: 900 } }])
+
+    // The peer's key won whole: its edits land, the fields it lacks read as the defaults – not
+    // this device's previous values – and nothing is `undefined`.
+    expect(b.state.settings.reader).toEqual({
+      ...DEFAULT_READER_PREFERENCES,
+      fontSize: 14,
+      font: 'mono'
+    })
+    expect(Object.keys(b.state.settings.reader).sort()).toEqual(
+      Object.keys(DEFAULT_READER_PREFERENCES).sort()
+    )
+    expect(b.reader.preferences()).toEqual(b.state.settings.reader)
+    // The record this device sends from now on carries the completed object.
+    expect(sent(b).reader).toEqual(b.state.settings.reader)
+  })
+
+  it('a garbage value – off the ladder, unknown names, no object at all – lands as the defaults; a valid value lands as it is', () => {
+    const b = browser()
+    applyRemote(b, [
+      settingsRecord({
+        reader: {
+          fontSize: 999,
+          font: 'comic',
+          theme: 'neon',
+          width: 'huge',
+          lineFocus: 2,
+          spacing: 'x',
+          syllables: 'yes'
+        }
+      })
+    ])
+    expect(b.state.settings.reader).toEqual(DEFAULT_READER_PREFERENCES)
+
+    applyRemote(b, [
+      settingsRecord({ reader: { ...DEFAULT_READER_PREFERENCES, fontSize: 24, theme: 'dark' } })
+    ])
+    expect(b.state.settings.reader).toEqual({
+      ...DEFAULT_READER_PREFERENCES,
+      fontSize: 24,
+      theme: 'dark'
+    })
+
+    // A value that is no object at all (a corrupted record) reads as the defaults, not a crash.
+    applyRemote(b, [settingsRecord({ reader: 'big' })])
+    expect(b.state.settings.reader).toEqual(DEFAULT_READER_PREFERENCES)
+    applyRemote(b, [settingsRecord({ reader: null })])
+    expect(b.state.settings.reader).toEqual(DEFAULT_READER_PREFERENCES)
+  })
+
+  it("a record without the key (a peer whose reader preferences did not win) leaves this device's alone", () => {
+    const b = browser()
+    b.reader.setPreferences({ fontSize: 22, theme: 'sepia', lineFocus: 3 })
+    const mine = structuredClone(b.state.settings.reader)
+    expect(mine).not.toEqual(DEFAULT_READER_PREFERENCES)
+
+    applyRemote(b, [{ ...settingsRecord({ colorScheme: 'dark' }), keys: { colorScheme: 900 } }])
+    expect(b.state.settings.colorScheme).toBe('dark')
+    expect(b.state.settings.reader).toEqual(mine)
+    expect(sent(b).reader).toEqual(mine)
   })
 })
 
@@ -785,5 +906,163 @@ describe('applyRemote: the reading list (services pass 11, ID-48)', () => {
     expect(b.readingList.get('rl_0002')).not.toBeNull()
     expect(b.readingList.get('rl_unread')).not.toBeNull()
     expect(b.readingList.unreadCount).toBe(1)
+  })
+})
+
+/**
+ * What a favicon may carry across the boundary (services pass 11, seed 6; `records.ts`
+ * `wireFavicon`), on the apply side: a peer's build may still send a `data:` icon's bytes or its
+ * cache's own address – neither lands – and a record WITHOUT a favicon keeps this device's own
+ * for the same page: a missing favicon is the peer's icon staying home, not a deletion.
+ */
+describe('applyRemote: favicons at the boundary (services pass 11, seed 6)', () => {
+  const DATA_ICON = 'data:image/png;base64,iVBORw0KGgo='
+  const CACHE_ICON = 'zen://favicon/0123456789abcdef0123456789abcdef01234567'
+
+  function bookmarkRecord(id: string, data: Record<string, unknown>, modified = 5000): SyncRecord {
+    return { id, type: 'bookmark', modified, deleted: false, data }
+  }
+
+  it("a bookmark record without a favicon keeps this device's own icon for the same page; one with an address takes it; a changed url drops it", () => {
+    const b = browser()
+    const mine = b.bookmarks.create({
+      title: 'Docs',
+      url: 'https://docs.example/',
+      favicon: DATA_ICON,
+      parentId: '1'
+    })!
+    expect(b.bookmarks.tree.get(mine.id)?.favicon).toBe(DATA_ICON)
+
+    // The peer renamed the node: its record carries no icon (its own is a data: URL too).
+    applyRemote(b, [
+      bookmarkRecord(mine.id, {
+        parentId: '1',
+        index: 0,
+        type: 'url',
+        title: 'The docs',
+        url: 'https://docs.example/',
+        dateAdded: mine.dateAdded
+      })
+    ])
+    const renamed = b.bookmarks.tree.get(mine.id)!
+    expect(renamed.title).toBe('The docs')
+    expect(renamed.favicon).toBe(DATA_ICON)
+
+    // A peer's build that still sends the bytes, or its cache's address: neither lands, and
+    // this device's icon stands.
+    for (const favicon of [DATA_ICON.replace('KGgo', 'PEER'), CACHE_ICON]) {
+      applyRemote(b, [
+        bookmarkRecord(mine.id, {
+          parentId: '1',
+          index: 0,
+          type: 'url',
+          title: 'The docs',
+          url: 'https://docs.example/',
+          favicon,
+          dateAdded: mine.dateAdded
+        })
+      ])
+      expect(b.bookmarks.tree.get(mine.id)?.favicon).toBe(DATA_ICON)
+    }
+
+    // An http(s) address travels and lands over this device's icon: the record won.
+    applyRemote(b, [
+      bookmarkRecord(mine.id, {
+        parentId: '1',
+        index: 0,
+        type: 'url',
+        title: 'The docs',
+        url: 'https://docs.example/',
+        favicon: 'https://docs.example/favicon.ico',
+        dateAdded: mine.dateAdded
+      })
+    ])
+    expect(b.bookmarks.tree.get(mine.id)?.favicon).toBe('https://docs.example/favicon.ico')
+
+    // The peer pointed the bookmark at another page, no icon: the old page's icon does not carry.
+    applyRemote(b, [
+      bookmarkRecord(mine.id, {
+        parentId: '1',
+        index: 0,
+        type: 'url',
+        title: 'The docs',
+        url: 'https://docs.example/v2/',
+        dateAdded: mine.dateAdded
+      })
+    ])
+    expect(b.bookmarks.tree.get(mine.id)).not.toHaveProperty('favicon')
+
+    // A node this device never had lands without an icon when the record carries none.
+    applyRemote(b, [
+      bookmarkRecord('bm_new', {
+        parentId: '1',
+        index: 1,
+        type: 'url',
+        title: 'New',
+        url: 'https://new.example/',
+        favicon: DATA_ICON,
+        dateAdded: 1
+      })
+    ])
+    expect(b.bookmarks.tree.get('bm_new')).not.toHaveProperty('favicon')
+
+    // What this device publishes back for the renamed node: no icon of its own (a data: URL
+    // stays home), the record hashing as the peer's did – nothing to bounce.
+    const local = collectLocal(
+      {
+        model: b.state.model,
+        settings: b.state.settings,
+        shortcutOverrides: {},
+        bookmarks: b.state.bookmarks,
+        boosts: []
+      },
+      defaultScope()
+    )
+    expect(local.get('bm_new')?.data).not.toHaveProperty('favicon')
+  })
+
+  it("a tab record's data: or host-local favicon never lands; a record without one leaves this device's icon; an address fills an empty one", () => {
+    const b = browser()
+    const space = b.state.model.spaces[0]
+    const pinned = (id: string, favicon: string | null): SyncRecord => ({
+      id,
+      type: 'tab',
+      modified: 5000,
+      deleted: false,
+      data: {
+        url: 'https://pinned.example/',
+        pinnedUrl: 'https://pinned.example/',
+        title: 'Pinned',
+        customTitle: null,
+        customIcon: null,
+        favicon,
+        pinned: true,
+        essential: false,
+        spaceId: space.id,
+        folderId: null,
+        containerId: space.containerId,
+        muted: false
+      }
+    })
+    // Landed new with the bytes: no icon (this device fetches its own when the page loads).
+    applyRemote(b, [pinned('tab_inline', DATA_ICON)])
+    expect(b.state.model.tabs['tab_inline'].favicon).toBeNull()
+    applyRemote(b, [pinned('tab_cached', CACHE_ICON)])
+    expect(b.state.model.tabs['tab_cached'].favicon).toBeNull()
+    // Landed new with an address: the address.
+    applyRemote(b, [pinned('tab_addressed', 'https://pinned.example/favicon.ico')])
+    expect(b.state.model.tabs['tab_addressed'].favicon).toBe('https://pinned.example/favicon.ico')
+    // This device's icon stands when the record carries none, or one that may not travel.
+    b.state.model.tabs['tab_inline'].favicon = DATA_ICON
+    applyRemote(b, [pinned('tab_inline', null)])
+    expect(b.state.model.tabs['tab_inline'].favicon).toBe(DATA_ICON)
+    applyRemote(b, [pinned('tab_inline', CACHE_ICON)])
+    expect(b.state.model.tabs['tab_inline'].favicon).toBe(DATA_ICON)
+    // An address fills an empty slot only: a tab with an icon keeps it (as before).
+    b.state.model.tabs['tab_cached'].favicon = null
+    applyRemote(b, [pinned('tab_cached', 'https://pinned.example/other.ico')])
+    expect(b.state.model.tabs['tab_cached'].favicon).toBe('https://pinned.example/other.ico')
+    applyRemote(b, [pinned('tab_cached', 'https://pinned.example/third.ico')])
+    expect(b.state.model.tabs['tab_cached'].favicon).toBe('https://pinned.example/other.ico')
   })
 })

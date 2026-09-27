@@ -10,6 +10,7 @@ import { BookmarkService } from '../../bookmarks'
 import type { ImportRow } from '../../credentials/store'
 import { BrowserState } from '../../state'
 import { LINUX_ITERATIONS, V10_SECRET } from '../chromiumLogins'
+import { PRIMARY_PASSWORD_NEEDED } from '../firefoxLogins'
 import type { HistoryImportSink } from '../historySink'
 import {
   ImportService,
@@ -19,6 +20,7 @@ import {
 } from '../service'
 import { FILE_SOURCE_IDS } from '../sources'
 import type { ImportedVisit } from '../types'
+import { firefoxLoginsJson, firefoxVault, type FirefoxVault } from './firefoxFixtures'
 import {
   FakeImportHost,
   chromiumHistorySchema,
@@ -216,6 +218,48 @@ function seedFirefox(
   if (options.running) host.symlink(`${FIREFOX_PROFILE}/lock`)
 }
 
+/** Give the seeded Firefox profile a login store: key4.db plus one sealed login in logins.json. */
+function seedFirefoxLogins(host: FakeImportHost, primaryPassword = ''): FirefoxVault {
+  const vault = firefoxVault({ password: primaryPassword })
+  host.sqlite(`${FIREFOX_PROFILE}/key4.db`, vault.key4)
+  host.file(
+    `${FIREFOX_PROFILE}/logins.json`,
+    firefoxLoginsJson([
+      {
+        hostname: 'https://accounts.mozilla.org',
+        formSubmitURL: 'https://accounts.mozilla.org',
+        encryptedUsername: vault.seal('bennett'),
+        encryptedPassword: vault.seal('correct horse'),
+        timeCreated: T0,
+        timeLastUsed: T0 + 5000
+      }
+    ])
+  )
+  return vault
+}
+
+/**
+ * Whether `needle` is held as a string anywhere on `root`'s own object graph – every own
+ * property, walked through plain objects, arrays, maps and sets. The service's `browser` is the
+ * browser's graph, not the service's, and is skipped.
+ */
+function holdsString(root: object, needle: string): boolean {
+  const seen = new Set<object>()
+  const walk = (value: unknown, depth: number): boolean => {
+    if (typeof value === 'string') return value === needle
+    if (!value || typeof value !== 'object' || depth > 12 || seen.has(value)) return false
+    seen.add(value)
+    if (value instanceof Map)
+      return [...value.entries()].some(([k, v]) => walk(k, depth + 1) || walk(v, depth + 1))
+    if (value instanceof Set) return [...value].some((v) => walk(v, depth + 1))
+    if (ArrayBuffer.isView(value)) return false
+    return Object.entries(value).some(
+      ([key, v]) => !(depth === 0 && key === 'browser') && walk(v, depth + 1)
+    )
+  }
+  return walk(root, 0)
+}
+
 describe('ImportService: browser profiles', () => {
   it('imports bookmarks, history and passwords from a Chrome profile, reading databases from a temp copy', async () => {
     const h = harness()
@@ -376,6 +420,126 @@ describe('ImportService: browser profiles', () => {
       { url: 'https://www.mozilla.org/', title: 'Mozilla', at: T0, transition: 'typed' }
     ])
     expect(h.bookmarks.tree.children(BOOKMARKS_BAR_ID).map((n) => n.title)).toEqual(['Mozilla'])
+  })
+
+  it('imports Firefox passwords from logins.json with key4.db read from a temp copy', async () => {
+    const h = harness()
+    seedFirefox(h.host)
+    seedFirefoxLogins(h.host)
+    const [source] = await h.service.sources()
+    expect(source).toMatchObject({
+      browser: 'firefox',
+      kinds: ['bookmarks', 'history', 'passwords']
+    })
+    expect(source.limits.passwords).toBeUndefined()
+    const result = (await h.service.run(source.id, ['passwords']))!
+    expect(result.status).toBe('done')
+    expect(result.results.passwords).toEqual({
+      imported: 1,
+      duplicates: 0,
+      unreadable: 0,
+      invalid: 0,
+      error: null
+    })
+    // Firefox's `hostname` is the login's origin as Firefox wrote it; the store normalizes the URL.
+    expect(h.vault.rows).toEqual([
+      {
+        url: 'https://accounts.mozilla.org',
+        username: 'bennett',
+        password: 'correct horse',
+        notes: '',
+        createdAt: T0,
+        lastUsedAt: T0 + 5000
+      }
+    ])
+    // The key store is copied with its companions and opened from the copy, like every database.
+    expect(h.host.copyRequests).toEqual([
+      [
+        `${FIREFOX_PROFILE}/key4.db`,
+        `${FIREFOX_PROFILE}/key4.db-wal`,
+        `${FIREFOX_PROFILE}/key4.db-shm`,
+        `${FIREFOX_PROFILE}/key4.db-journal`
+      ]
+    ])
+    expect(h.host.opened.every((p) => p.startsWith('/tmp/zenium-import-'))).toBe(true)
+    expect(h.host.removedDirs).toEqual(h.host.tempDirs)
+    // No keyring was asked: the primary password (empty by default) is the only secret.
+    expect(h.host.secretRequests).toEqual([])
+  })
+
+  it("reports a wrong Firefox primary password as that kind's error and takes the right one on a rerun", async () => {
+    const h = harness()
+    seedFirefox(h.host)
+    seedFirefoxLogins(h.host, 'hunter2')
+    const [source] = await h.service.sources()
+    const result = (await h.service.run(source.id, ['bookmarks', 'passwords']))!
+    // The wrong (empty) password fails only the passwords kind; bookmarks still land.
+    expect(result.status).toBe('done')
+    expect(result.error).toBeNull()
+    expect(result.results.bookmarks).toMatchObject({ imported: 1, error: null })
+    expect(result.results.passwords).toEqual({
+      imported: 0,
+      duplicates: 0,
+      unreadable: 0,
+      invalid: 0,
+      error: PRIMARY_PASSWORD_NEEDED
+    })
+    expect(h.vault.rows).toEqual([])
+    h.service.dismiss()
+    const wrong = (await h.service.run(source.id, ['passwords'], undefined, {
+      primaryPassword: 'hunter3'
+    }))!
+    expect(wrong.results.passwords?.error).toBe('The primary password is wrong.')
+    h.service.dismiss()
+    const again = (await h.service.run(source.id, ['passwords'], undefined, {
+      primaryPassword: 'hunter2'
+    }))!
+    expect(again.results.passwords).toMatchObject({ imported: 1, error: null })
+    expect(h.vault.rows.map((r) => [r.username, r.password])).toEqual([
+      ['bennett', 'correct horse']
+    ])
+  })
+
+  it('refuses Firefox passwords up front while Firefox runs, like its other kinds', async () => {
+    const h = harness()
+    seedFirefox(h.host, { running: true })
+    seedFirefoxLogins(h.host)
+    const [source] = await h.service.sources()
+    expect(source.kinds).toEqual(['bookmarks', 'history', 'passwords'])
+    const result = (await h.service.run(source.id, ['passwords']))!
+    expect(result.status).toBe('failed')
+    expect(result.error).toBe('Firefox is open. Close Firefox and try again.')
+    // Nothing was copied out from under the running browser, and the vault was not touched.
+    expect(h.host.copyRequests).toEqual([])
+    expect(h.vault.rows).toEqual([])
+  })
+
+  it('keeps the primary password nowhere once the run has ended', async () => {
+    const h = harness()
+    seedFirefox(h.host)
+    seedFirefoxLogins(h.host, 'hunter2')
+    const [source] = await h.service.sources()
+    for (const primaryPassword of ['hunter3', 'hunter2']) {
+      h.service.dismiss()
+      const result = (await h.service.run(source.id, ['passwords'], undefined, {
+        primaryPassword
+      }))!
+      expect(result.status).toBe('done')
+      // The service outlives every run (it is the browser's); the password it was handed travels
+      // down the call chain as a parameter and is on no field, in no progress, afterwards.
+      expect(holdsString(h.service, primaryPassword)).toBe(false)
+      expect(JSON.stringify(h.service.uiState())).not.toContain(primaryPassword)
+    }
+  })
+
+  it('offers no Firefox passwords when the profile has no login store', async () => {
+    const h = harness()
+    seedFirefox(h.host)
+    // logins.json without key4.db cannot be decrypted: the kind is not offered.
+    h.host.file(`${FIREFOX_PROFILE}/logins.json`, firefoxLoginsJson([]))
+    const [source] = await h.service.sources()
+    expect(source.kinds).toEqual(['bookmarks', 'history'])
+    expect(source.limits.passwords).toBeDefined()
   })
 
   it('falls back to the newest bookmark backup when places.sqlite is unreadable', async () => {

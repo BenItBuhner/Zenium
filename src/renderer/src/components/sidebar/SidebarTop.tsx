@@ -25,10 +25,12 @@ import {
   MapPinOff,
   Mic,
   MicOff,
+  MonitorDown,
   MoreHorizontal,
   RotateCw,
   ScreenShare,
   Search,
+  Share2,
   Sparkles,
   TriangleAlert,
   VenetianMask,
@@ -40,8 +42,9 @@ import { toolbarPinned, type ToolbarControl } from '@shared/toolbarPins'
 import { defaultSearchEngineOf } from '@shared/search'
 import { securityIndicator, type IndicatorState } from '@shared/siteInfo'
 import { addressParts, displayUrl, fullUrl, getDomain, isWebPageUrl, pillText } from '@shared/url'
+import { isInstallable, launcherName, pinnedAppFor } from '@shared/webApp'
 import { useElementWidth } from '@renderer/hooks/useElementWidth'
-import { updateReadyAt } from '@renderer/lib/about'
+import { updateDotAt, updateReadyAt } from '@renderer/lib/about'
 import { addressDragOf, writeAddressDrag } from '@renderer/lib/addressDrag'
 import { run } from '@renderer/lib/api'
 import { chipPrompt } from '@renderer/lib/autofill'
@@ -59,6 +62,7 @@ import {
   openQuietPrompt
 } from '@renderer/lib/security'
 import { isPrivateWindow, tabTitle } from '@renderer/lib/selectors'
+import { openShareFromChip, useShareChip } from '@renderer/lib/share'
 import {
   MEMORY_SAVER_LEAF_MS,
   siteChipName,
@@ -87,18 +91,26 @@ import { useLongPress } from '../phone/useLongPress'
 import { BlockedChip } from '../urlbar/BlockedChip'
 import { EngineFieldGlyph } from '../urlbar/EngineFieldGlyph'
 import { PillChip } from '../urlbar/PillChip'
-import { CHIP_WIDTH, fittingChips, type PillChipSpec } from '../urlbar/pillChipTiers'
+import {
+  CHIP_WIDTH,
+  fittingChips,
+  fittingUtilities,
+  labelFits,
+  type PillChipSpec
+} from '../urlbar/pillChipTiers'
 import { TOOLBAR_STROKE } from '../v2/controls'
 import { WindowControls } from '../WindowControls'
 import { Favicon } from './Favicon'
 import { isZoomed } from '../zoom/bubble'
 import { ZoomChip } from '../zoom/ZoomChip'
 import { DownloadButton } from '../downloads/DownloadButton'
+import { EnergySaverButton } from '../energysaver/EnergySaverButton'
 import { MediaHubButton, MediaLiveDot } from '../media/MediaHubButton'
 import { downloadButtonVisible, downloadsUi } from '@renderer/lib/downloads'
+import { energySaverLeafFits, energySaverLeafUp } from '@renderer/lib/energySaver'
 import { actionable } from '@renderer/lib/extensions/toolbar'
 import { useViewport } from '@renderer/lib/formFactor'
-import { pinsFor, publishToolbarTiering } from '@renderer/lib/toolbarPins'
+import { pinsFor, publishToolbarTiering, toolbarMenuMarks } from '@renderer/lib/toolbarPins'
 import {
   mediaHubButtonFits,
   mediaHubFoldedAt,
@@ -278,12 +290,46 @@ export function NavRow({
   const readerPinned = toolbarPinned(pins, 'reader')
   const translatePinned = toolbarPinned(pins, 'translate')
   const starPinned = toolbarPinned(pins, 'star')
+  const installPinned = toolbarPinned(pins, 'install')
   const mediaPinned = toolbarPinned(pins, 'media')
   const starred = Boolean(tab && !masked && (isWebPage || internalPageOf(tab.url)?.pill.showStar))
   const bookmarked = Boolean(tab && starred && tree.hasUrl(tab.url))
   // The chips the pins keep in the pill: the star, the translate glyph, an article's Reader View.
   const starUp = starred && starPinned
   const readerUp = Boolean(tab && !masked && !extension && tab.readerable) && readerPinned
+  // The Install-app chip (W8-6; Chrome's `kActionInstallPwa` page action, shown while the
+  // page is "probably promotable": a manifest that passes the install bar and an app not yet
+  // installed for the profile): the desktop layout's, on a page of the web in a regular window
+  // (Chrome hides its page actions in a popup's read-only bar, and Incognito never installs),
+  // while the host can write a launcher (`capabilities.pinShortcuts`) and the pin keeps it.
+  // Once the app is installed (`state.webApps` carries a record whose scope holds the page) the
+  // chip goes, as Chrome's does on the next visibility update; the app menu's "Open in <app>"
+  // takes over. The phone and the tablet keep their own install surfaces (v2 §10.1's pill).
+  const manifest = tab?.webApp ?? null
+  const installable =
+    tab !== null &&
+    manifest !== null &&
+    isWebPage &&
+    !isPrivate &&
+    !readOnly &&
+    formFactor === 'desktop' &&
+    Boolean(state.capabilities.pinShortcuts) &&
+    isInstallable(manifest) &&
+    pinnedAppFor(tab.url, state.webApps ?? []) === null
+  const installUp = installable && installPinned
+  const installName = manifest ? launcherName(manifest, 'desktop') : ''
+  const installOpen = uiStore.use((s) => s.install !== null && s.install.tabId === tab?.id)
+  // The Share chip (W8-6): Chrome's desktop omnibox has no share page action now (its sharing
+  // hub is the app menu's), so the chip is the house's – a hover-only utility beside Copy URL,
+  // never a resident chip – on a page of the web where the chrome has a share sheet to show
+  // (`shareSheet`, the desktop popover) or the host one of its own (`share`). Its popover hangs
+  // from the chip (`data-share-anchor` while its request is up, `lib/share.ts`).
+  const shareable =
+    tab !== null &&
+    isWebPage &&
+    formFactor === 'desktop' &&
+    Boolean(state.capabilities.shareSheet || state.capabilities.share)
+  const shareOpen = useShareChip(state, shareable ? tab.id : null)
   const menuButton = useRef<HTMLButtonElement>(null)
   // The hub's toolbar button is tiered by the row's width, as the pill's chips are (§9.29,
   // `mediaHubButtonFits`): at the 240 sidebar it is unmounted – never hidden with an opacity or
@@ -292,26 +338,45 @@ export function NavRow({
   // still holds the box the star returned at (126 / 110: the 302 sidebar with the always-there
   // buttons), so the pill reads the same on either side of the return. The buttons it makes
   // room against are the ones always in the row (back, forward, reload, ⋯), the puzzle piece
-  // while there are extensions and the downloads button while it is up; the compact column has
-  // no pill to keep, so there the button stays whenever there is media.
+  // while there are extensions, the downloads button while it is up and the Energy Saver leaf
+  // while it stands; the compact column has no pill to keep, so there the button stays
+  // whenever there is media.
   const downloadsUp = downloadButtonVisible(state, downloadsUiState)
   const puzzleUp = actionable(state.extensions).length > 0
   // Forward folded by its pin leaves the fixed set (the hub's tier and the extensions' overflow
   // count the buttons actually in the row); a trailing control joins it.
   const fixedButtons = FIXED_BUTTONS - (forwardUp ? 0 : 1) + (trailing ? 1 : 0)
+  // The buttons the width-tiered controls make room against: the ones always in the row, the
+  // puzzle piece while there are extensions, the downloads button while it is up. Each tiered
+  // control then counts the tiered ones standing ahead of it in the bar's order (W8-3's Home
+  // first, on `otherButtons` alone; the leaf; the hub last), so the row gives way from the back.
+  const otherButtons = fixedButtons - (puzzleUp ? 0 : 1) + (downloadsUp ? 1 : 0)
+  // The Energy Saver leaf (W8-2; Chrome's `BatterySaverButton`): the row's to draw while the
+  // governor says the mode is on and the control is pinned, ahead of the hub as Chrome's stands
+  // ahead of its media button – and tiered by the row's width on the hub's one rule
+  // (`energySaverLeafFits`, pr-584 L2): at the 240 sidebar it took the pill from "Settings" to
+  // "S…", so there it folds, unmounted like the hub's button, and returns at the 302 sidebar
+  // (the 286 row with the four always-there buttons; 32 more a button for the puzzle piece and
+  // the downloads button). The leaf counts the row's other buttons and not the hub, while the
+  // hub counts the leaf: where the row has room for one of the two, the leaf stands and the hub
+  // folds to its menu row – the leaf has no fold home, and the mode it speaks for runs on.
+  const saverPinned = energySaverLeafUp(state, pins)
+  const saverUp = saverPinned && (compact || energySaverLeafFits(rowWidth, otherButtons))
   const hubUp =
     mediaPinned &&
     mediaHubVisible(state) &&
-    (compact ||
-      mediaHubButtonFits(rowWidth, fixedButtons - (puzzleUp ? 0 : 1) + (downloadsUp ? 1 : 0)))
+    (compact || mediaHubButtonFits(rowWidth, otherButtons + (saverUp ? 1 : 0)))
   // The hub's toolbar button off the row (§9.29's fold): the ⋯ button then wears the hub's dot.
   // Decided here, from the same width the button is mounted by, so the dot and the button move
   // in one commit as the sidebar crosses 270 ↔ 240 – never both in a frame, never neither.
   const mediaFolded = mediaHubFoldedAt(state, hubUp)
   // An update downloaded and waiting (shortcuts-menus-101): the menu opens on its "Update
   // Zenium" row and ⋯ wears the dot for it – Chrome's dot on its ⋮ – over the hub's while
-  // both would show (one dot on the button; the menu's head row says which).
-  const updateReady = updateReadyAt(state)
+  // both would show (one dot on the button; the menu's head row says which). The tablet's
+  // button takes Chrome Android's cadence with the phone bar (TB-12): the dot clears once the
+  // menu has been opened for the waiting version and returns for another version's
+  // (`updateDotAt`); the desktop's reads the plain phase until W8-F3 wires it to the record.
+  const updateReady = formFactor === 'tablet' ? updateDotAt(state) : updateReadyAt(state)
   // The decision published for the hub's popover (`mediaHubUi.buttonUp`), from this commit's
   // layout phase: where the button returns or folds in the row's own observer pass – a sidebar
   // drag, no state push – the popover re-reads its anchor before the frame paints, so the hold
@@ -343,8 +408,12 @@ export function NavRow({
   // box and asks which of the chips present fit beside an address that keeps its minimum. The
   // site icon and the state chips – blocked pop-ups, a save prompt's key – are never hidden;
   // the star, the shield, the zoom chip and the informational chips (translate, Reader View)
-  // hide from the lowest priority up. The hover-only extras (Boost, Copy URL) are the
-  // stylesheet's container query's, as is the 130 px tier under which every tool after the
+  // hide from the lowest priority up. The hover-only utilities (Copy URL, Share, Boost, the
+  // translate offer) are the tier's lowest rank (`extra`): they mount with the pointer over the
+  // pill into the room the resident chips left the address over its floor, and never under it
+  // (the W8-6 lead's rule on #578's first line: Boost and Copy URL mounting on hover cut the
+  // address to 14 px while every chip stood). Their mounting itself stays the stylesheet's
+  // (`hidden group-hover/pill:flex`), as does the 130 px tier under which every tool after the
   // address goes (`zen-pill-chip`; §9.29's threshold, which the star's return here matches). A
   // hidden chip's action stays in the app menu and the tab's menu; a chip whose popover is up
   // stays put (§9.20). On a `zen://reader` tab the lit Reader View exit and the Text preferences
@@ -434,8 +503,28 @@ export function NavRow({
   if (savePrompt && savePrompt.tabId === tab?.id) {
     chipsPresent.push({ id: 'key', tier: 'state', width: CHIP_WIDTH.iconButton })
   }
+  // The indicator's word before the address ("Not secure", "Dangerous"): a state the tier never
+  // hides while it stands, counted at its 13 px width so the chips – the hover-only utilities
+  // first – never take the address under its floor into the word's room (the W8-6 round on
+  // #589: uncounted, three utilities mounting on an http page left the address 2 px). It folds
+  // as the Install word does (`labelFits` below): first, by the room, one way, and under the
+  // label tier whatever the room – the stylesheet drops the word there too.
+  const indicatorSpec: PillChipSpec | null =
+    tab && url && indicator.label
+      ? { id: 'indicator', tier: 'state', width: CHIP_WIDTH.indicatorLabel }
+      : null
+  if (indicatorSpec) chipsPresent.push(indicatorSpec)
   if (tab && starUp) chipsPresent.push({ id: 'star', tier: 'star', width: CHIP_WIDTH.star })
   if (zoomed) chipsPresent.push({ id: 'zoom', tier: 'zoom', width: CHIP_WIDTH.small })
+  // The Install chip is listed at its labelled width first: its "Install" shows while the pill
+  // has the label tier's room (the same container rule as "Not secure") and every resident chip
+  // fits beside the word (`labelFits` – a word is the first thing the pill gives up, before any
+  // chip hides, and one way: read on the labelled set, so no chip returns into the word's room
+  // only to send it away again); folded, the chip is measured at its glyph alone.
+  const installSpec: PillChipSpec | null = installUp
+    ? { id: 'install', tier: 'install', width: CHIP_WIDTH.small + CHIP_WIDTH.label }
+    : null
+  if (installSpec) chipsPresent.push(installSpec)
   if (translation) chipsPresent.push({ id: 'translate', tier: 'info', width: CHIP_WIDTH.small })
   if (tab && (readerUp || isReader)) {
     chipsPresent.push({ id: 'reader', tier: isReader ? 'state' : 'info', width: CHIP_WIDTH.small })
@@ -443,24 +532,60 @@ export function NavRow({
   if (tab && isReader) {
     chipsPresent.push({ id: 'reader-prefs', tier: 'state', width: CHIP_WIDTH.small })
   }
-  const fits = fittingChips(pillInner, chipsPresent)
+  // The lit Boost is a resident chip of the informational rank – a per-site state the user set
+  // and can undo from the app menu's Boosts – and folds with translate and Reader View.
+  if (boosted) chipsPresent.push({ id: 'boost', tier: 'info', width: CHIP_WIDTH.small })
+  // The hover-only utilities, lowest of all and let in last, in the order they hide from the
+  // end: the translate offer first, then Boost, then Share, and Copy URL the last to go. They
+  // are read against the residents at their LABELLED widths (`fittingUtilities`), whatever the
+  // word does on screen, so the mounted set only shrinks as the pill narrows: the word's fold
+  // (44 px, where a chip's is 26) never hands a utility room back under the pointer – a chip
+  // re-appearing as the sidebar narrows is jitter (the design lead's ruling on #589). (Under
+  // 170 the stylesheet's `zen-pill-extra` rule hides the utilities whatever the room.)
+  const hoverChips: PillChipSpec[] = []
+  if (url) hoverChips.push({ id: 'copy', tier: 'extra', width: CHIP_WIDTH.small })
+  if (shareable) hoverChips.push({ id: 'share', tier: 'extra', width: CHIP_WIDTH.small })
+  if (tab && isWebPage && !isPrivate && !boosted) {
+    hoverChips.push({ id: 'boost', tier: 'extra', width: CHIP_WIDTH.small })
+  }
+  if (tab && isWebPage && translatePinned && state.translate.available && !translation) {
+    hoverChips.push({ id: 'translate-offer', tier: 'extra', width: CHIP_WIDTH.small })
+  }
+  const utilityFits = fittingUtilities(pillInner, chipsPresent, hoverChips)
+  // The words fold first, by the room, one way – the offer's before the state's: the Install
+  // word while the indicator's stands, then the indicator's beside the Install glyph alone.
+  const installLabelUp = installSpec !== null && labelFits(pillInner, chipsPresent)
+  if (installSpec && !installLabelUp) installSpec.width = CHIP_WIDTH.small
+  const indicatorLabelUp = indicatorSpec !== null && labelFits(pillInner, chipsPresent)
+  const residents =
+    indicatorSpec && !indicatorLabelUp
+      ? chipsPresent.filter((c) => c !== indicatorSpec)
+      : chipsPresent
+  const fits = fittingChips(pillInner, residents)
+  // Boost's chip reads the set it belongs to: lit, the residents'; unlit, the utilities'.
+  const boostFits = boosted ? fits.has('boost') : utilityFits.has('boost')
   // What the width tier hid of the pinned controls, for the Customise toolbar dialog's "Hidden
-  // at this width" (settings-36): the chips present in the pill that did not fit, and the hub's
-  // button while media plays and the row has no room for it – never a control the pins folded,
-  // and never one the page has no chip for. From the layout phase, as the hub's own word is.
+  // at this width" (settings-36): the chips present in the pill that did not fit, the Energy
+  // Saver leaf while the mode is on and the row has no room for it, and the hub's button while
+  // media plays and the row has none for that – never a control the pins folded, and never one
+  // the page has no chip for. In the bar's order. From the layout phase, as the hub's own word is.
   const hiddenStar = Boolean(tab && starUp && !fits.has('star'))
   const hiddenTranslate = Boolean(translation && !fits.has('translate'))
   const hiddenReader = Boolean(tab && readerUp && !isReader && !fits.has('reader'))
+  const hiddenInstall = installUp && !fits.has('install')
+  const hiddenSaver = saverPinned && !saverUp
   const hiddenMedia = mediaPinned && mediaHubVisible(state) && !hubUp
   useLayoutEffect(() => {
     const hidden: ToolbarControl[] = []
     if (hiddenReader) hidden.push('reader')
     if (hiddenTranslate) hidden.push('translate')
+    if (hiddenInstall) hidden.push('install')
     if (hiddenStar) hidden.push('star')
+    if (hiddenSaver) hidden.push('energy-saver')
     if (hiddenMedia) hidden.push('media')
     publishToolbarTiering(hidden)
     return () => publishToolbarTiering([])
-  }, [hiddenReader, hiddenTranslate, hiddenStar, hiddenMedia])
+  }, [hiddenReader, hiddenTranslate, hiddenInstall, hiddenStar, hiddenSaver, hiddenMedia])
   return (
     // The row's buttons sit 4 apart (Firefox's 32 pitch: the 28 box plus its 2 px outer
     // padding each side, `TOOLBAR_GAP`); the pill takes the rest between them.
@@ -634,13 +759,17 @@ export function NavRow({
           </span>
           {/*
             Chrome's "Not secure" text before the address of an http page (or of a certificate
-            error's page, in the danger ink), drawn between the site icon and the address; a
-            narrow pill drops it before the address (see the container query on `.zen-pill`).
+            error's page, in the danger ink), drawn between the site icon and the address. The
+            tier counts it (`CHIP_WIDTH.indicatorLabel`) and folds it as it folds the Install
+            word – first, by the room, before any chip hides (`indicatorLabelUp`) – and a narrow
+            pill drops it whatever the room (the container query on `.zen-pill`). Its size is the
+            stylesheet's `.zen-pill-label` – §4's 13 px, one line for this word and the Install
+            chip's.
           */}
-          {indicator.label && url && tab && (
+          {indicatorLabelUp && indicator.label && (
             <span
               className={cn(
-                'zen-pill-label order-[-1] shrink-0 text-[11.5px]',
+                'zen-pill-label order-[-1] shrink-0',
                 indicator.state === 'certificate-error' ? 'text-[var(--v2-danger)]' : 'opacity-70'
               )}
               data-indicator={indicator.state}
@@ -816,6 +945,7 @@ export function NavRow({
                   // above); unlit it is a tool and goes with the rest under a 130 px pill.
                   isReader ? 'text-[var(--v2-control-accent)] opacity-100' : 'zen-pill-chip'
                 )}
+                {...toolbarMenuMarks('reader', formFactor)}
                 onActivate={() => run('reader.toggle', { tabId: tab.id })}
               >
                 <BookOpenText className="h-3.5 w-3.5" />
@@ -894,7 +1024,7 @@ export function NavRow({
               isWebPage &&
               translatePinned &&
               state.translate.available &&
-              (!translation || fits.has('translate')) && (
+              (translation ? fits.has('translate') : utilityFits.has('translate-offer')) && (
                 <PillChip
                   label={translateBarUp ? 'Hide the translation bar' : 'Translate this page'}
                   title={translateBarUp ? 'Hide the translation bar' : 'Translate this page'}
@@ -907,6 +1037,7 @@ export function NavRow({
                       ? 'flex'
                       : 'hidden group-hover/pill:flex group-focus-within/chips:flex'
                   )}
+                  {...toolbarMenuMarks('translate', formFactor)}
                   onActivate={() => {
                     if (translateBarUp) run('translate.dismiss', { tabId: tab.id })
                     else run('translate.offer', { tabId: tab.id })
@@ -915,7 +1046,9 @@ export function NavRow({
                   <Languages className="h-3.5 w-3.5" />
                 </PillChip>
               )}
-            {tab && isWebPage && !isPrivate && (
+            {tab && isWebPage && !isPrivate && (boostFits || boostsOpen) && (
+              // Lit, a resident chip of the tier's informational rank; unlit, a hover-only
+              // utility let in last. Either way the open Boosts overlay keeps its anchor (§9.20).
               <PillChip
                 label={boosted ? 'Edit Boost for this site' : 'Boost this site'}
                 title={boosted ? 'Edit Boost for this site' : 'Boost this site'}
@@ -932,17 +1065,83 @@ export function NavRow({
                 <Sparkles className="h-3.5 w-3.5" />
               </PillChip>
             )}
-            {url && (
+            {url && utilityFits.has('copy') && (
               <PillChip
                 label="Copy URL"
                 title={hint('Copy URL', state, 'tab.copyUrl')}
                 className="zen-pill-chip zen-pill-extra hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)] group-hover/pill:flex group-focus-within/chips:flex group-has-[[aria-expanded=true]]/chips:flex"
                 onActivate={() => tab && run('tab.copyUrl', { tabId: tab.id })}
               >
-                <Copy className="h-3 w-3" />
+                <Copy className="h-3.5 w-3.5" />
+              </PillChip>
+            )}
+            {shareable && (utilityFits.has('share') || shareOpen) && (
+              // Chrome's sharing hub icon (`IDS_SHARING_HUB_TOOLTIP`, "Share this page"; the
+              // Material share glyph its non-Mac icon was), a hover-only utility with Copy URL,
+              // let in by the tier's lowest rank: its popup is the share popover, hung from this
+              // chip while the request it raised is up (`data-share-anchor`; `aria-expanded`
+              // keeps the chip drawn under it and the tier keeps it mounted, §9.20).
+              <PillChip
+                label="Share this page"
+                title="Share this page"
+                popup="dialog"
+                expanded={shareOpen}
+                data-share-chip=""
+                data-share-anchor={shareOpen ? '' : undefined}
+                className={cn(
+                  'zen-pill-chip zen-pill-extra hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)] group-hover/pill:flex group-focus-within/chips:flex group-has-[[aria-expanded=true]]/chips:flex',
+                  // The anchor keeps its pressed fill while its popover is up (§9.20).
+                  shareOpen && 'bg-[var(--v2-control-fill-hover)] opacity-100'
+                )}
+                onActivate={() => {
+                  // A pointer press while the popover is up never gets here (the chrome layer
+                  // consumes it); the keyboard's second press leaves the popover to its Escape.
+                  if (!shareOpen) openShareFromChip(tab.id)
+                }}
+              >
+                <Share2 className="h-3.5 w-3.5" />
               </PillChip>
             )}
             {tab && !masked && <ZoomChip state={state} tab={tab} collapsed={!fits.has('zoom')} />}
+            {installUp && fits.has('install') && (
+              // Chrome's `kActionInstallPwa` page action between Zoom and the star (its
+              // `action_ids.h` order): the install-desktop glyph, the "Install" of its suggestion
+              // chip while the pill has the label's room (`zen-pill-label`, the "Not secure"
+              // tier), named "Install <app>" as its tooltip is (`IDS_OMNIBOX_PWA_INSTALL_ICON_TOOLTIP`).
+              // Its popup is the install dialog – Chrome's simple install dialog is tab-modal,
+              // so the house's frame dialog stands – and the chip keeps its pressed fill while
+              // the dialog is up (§9.20). The tier folds it after Translate and Reader View and
+              // before the shield (`pillChipTiers.ts`); folded or unpinned, the app menu's
+              // "Install <app>…" row runs the same command. A pinnable control, it carries the
+              // pinned button's right-click menu marks (context-menus-112; W8-1's
+              // `toolbarMenuMarks` – Unpin, Customise Toolbar…) as Reader View and Translate do.
+              <PillChip
+                label={`Install ${installName}`}
+                title={`Install ${installName}`}
+                popup="dialog"
+                expanded={installOpen}
+                data-install-chip=""
+                {...toolbarMenuMarks('install', formFactor)}
+                className={cn(
+                  'zen-pill-chip flex h-5 shrink-0 items-center justify-center gap-1 rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)]',
+                  installLabelUp ? 'px-1' : 'w-5',
+                  // The anchor keeps its pressed fill while its dialog is up (§9.20).
+                  installOpen && 'bg-[var(--v2-control-fill-hover)] opacity-100'
+                )}
+                onActivate={() => {
+                  if (!installOpen) run('webapp.openInstall', { tabId: tab.id })
+                }}
+              >
+                <MonitorDown className="h-3.5 w-3.5" />
+                {installLabelUp && (
+                  // The word's size is the stylesheet's `.zen-pill-label` (13 px, shared with
+                  // "Not secure"); its weight the button's 500 (§4).
+                  <span className="zen-pill-label leading-none font-medium" aria-hidden>
+                    Install
+                  </span>
+                )}
+              </PillChip>
+            )}
             {tab && isWebPage && <AutofillChip state={state} tab={tab} />}
             {tab && starUp && (
               <StarChip
@@ -954,19 +1153,21 @@ export function NavRow({
                   state,
                   'bookmark.add'
                 )}
+                control={toolbarMenuMarks('star', formFactor)['data-zen-menu-control']}
               />
             )}
           </span>
         </div>
       )}
-      {hubUp && <MediaHubButton state={state} />}
+      {saverUp && <EnergySaverButton menuMarks={toolbarMenuMarks('energy-saver', formFactor)} />}
+      {hubUp && <MediaHubButton state={state} menuMarks={toolbarMenuMarks('media', formFactor)} />}
       <DownloadButton state={state} activeTabId={tab?.id ?? null} />
       <ToolbarActions
         state={state}
         rowWidth={compact ? null : rowWidth}
-        // The media and downloads buttons join the fixed set while they are in the row – the
-        // hub's only while the tier has it up, not while it has folded into the menu.
-        fixedButtons={fixedButtons + (hubUp ? 1 : 0) + (downloadsUp ? 1 : 0)}
+        // The leaf, the media and the downloads buttons join the fixed set while they are in
+        // the row – the hub's only while the tier has it up, not while it has folded into the menu.
+        fixedButtons={fixedButtons + (saverUp ? 1 : 0) + (hubUp ? 1 : 0) + (downloadsUp ? 1 : 0)}
         compact={compact}
       />
       {trailing}

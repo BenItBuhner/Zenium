@@ -1,0 +1,69 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Shape detection</title>
+<style>
+  body { margin: 0; font-family: sans-serif; color: #15141a; background: #fff; }
+  h1 { font-size: 28px; padding: 40px 24px 8px; }
+  p { padding: 0 24px; font-size: 20px; }
+  img { display: block; margin: 16px 24px; width: 160px; height: 160px; image-rendering: pixelated; }
+  button { margin: 8px 24px; font-size: 20px; padding: 14px 24px; border: 0; border-radius: 12px; background: #1b4332; color: #fff; }
+  pre { margin: 16px 24px; padding: 12px; font-size: 13px; background: #f3f2f7; border-radius: 12px; white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body>
+<h1>Shape detection</h1>
+<p id="status">The page constructs a BarcodeDetector and runs detect() on the image.</p>
+<img id="img" src="/pattern.png" alt="">
+<button id="run" type="button">Detect</button>
+<pre id="out"></pre>
+<script>
+  window.__shape = { phase: 'idle', steps: [] };
+
+  function show() {
+    document.getElementById('out').textContent = JSON.stringify(window.__shape, null, 1);
+    document.getElementById('status').textContent = 'phase: ' + window.__shape.phase;
+  }
+
+  // One detector: its presence, the statics it has, the constructor, detect() on the image.
+  // Everything is caught and recorded; nothing here can reject unobserved.
+  async function probe(name) {
+    var r = { name: name, type: typeof window[name] };
+    if (r.type === 'undefined') { window.__shape.steps.push(r); show(); return; }
+    if (typeof window[name].getSupportedFormats === 'function') {
+      window.__shape.phase = name + '.getSupportedFormats'; show();
+      try {
+        r.formats = await window[name].getSupportedFormats();
+      } catch (e) { r.formatsError = e.name + ': ' + e.message; }
+    }
+    window.__shape.phase = 'new ' + name; show();
+    try {
+      var d = new window[name]();
+      r.constructed = true;
+      window.__shape.phase = name + '.detect'; show();
+      var results = await d.detect(document.getElementById('img'));
+      r.detect = 'resolved, ' + results.length + ' result(s)';
+    } catch (e) { r.detectError = e.name + ': ' + e.message; }
+    window.__shape.steps.push(r);
+    show();
+  }
+
+  window.runShape = async function () {
+    if (window.__shape.phase !== 'idle' && window.__shape.phase !== 'done') return;
+    window.__shape = { phase: 'start', steps: [] };
+    show();
+    var img = document.getElementById('img');
+    if (img.decode) { try { await img.decode(); } catch (e) {} }
+    var names = ['BarcodeDetector', 'FaceDetector', 'TextDetector'];
+    for (var i = 0; i < names.length; i++) await probe(names[i]);
+    window.__shape.phase = 'done';
+    show();
+  };
+
+  document.getElementById('run').addEventListener('click', function () { window.runShape(); });
+  show();
+</script>
+</body>
+</html>

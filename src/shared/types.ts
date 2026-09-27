@@ -12,6 +12,7 @@ import type {
 } from './translate'
 import type { EngineRelayRequest, EngineRelayResponse } from './translateEngine'
 import type { UpdateSettings, UpdateStatus } from './updates'
+import type { UpdateDotRecord } from '../core/updateDot'
 import type { ToolbarPins } from './toolbarPins'
 import type { BlockingSettings, BlockingStatus } from './blocking'
 import type {
@@ -33,7 +34,7 @@ import type { InternalPageId, InternalPageQuery } from './internalPages'
 import type { InstallSurface, InstalledWebApp, WebAppInfo } from './webApp'
 import type { ContentDefault } from './contentSettings'
 import type { VoiceEvent, VoiceStartOutcome } from './voice'
-import type { QrEvent, QrStartOutcome } from './qrScan'
+import type { QrCodeRequest, QrEvent, QrStartOutcome } from './qrScan'
 import type { MediaPositionInfo, MediaSessionAction, MediaSessionSourceKind } from './mediaSession'
 import type { SpellcheckSettings, SpellcheckStatus } from './spellcheck'
 import type { ReaderPreferences } from './reader'
@@ -2512,6 +2513,12 @@ export type ShortcutAction =
   | 'tasks.open'
   | 'settings.open'
   | 'addons.open'
+  /**
+   * Chrome's Help › Report an issue… (`IDC_FEEDBACK`, ⌥⇧⌘I on macOS, Alt+Shift+I on Windows
+   * and Linux): Zenium's issue tracker in the system browser (`ISSUES_URL`), the Help rows'
+   * command. Desktop layouts only – the touch shells' listings leave the row out.
+   */
+  | 'help.reportIssue'
   | 'boost.new'
 
 export interface Shortcut {
@@ -2553,6 +2560,18 @@ export type GlanceTrigger = 'alt' | 'ctrl' | 'shift'
 export type PinnedCloseBehavior =
   'reset-unload-switch' | 'reset-unload' | 'reset' | 'unload' | 'unload-switch' | 'switch' | 'close'
 export type ThirdPartyPinnedBehavior = 'new-tab' | 'glance' | 'same-tab'
+/**
+ * When Energy Saver is on (`Settings.energySaver`): Chrome's `BatterySaverModeState` less
+ * `kEnabled` (always on), which its page never offers – `kDisabled` → `off`,
+ * `kEnabledBelowThreshold` → `low-battery`, `kEnabledOnBattery` → `on-battery`.
+ */
+export type EnergySaverMode = 'off' | 'low-battery' | 'on-battery'
+/**
+ * Chrome's `BatterySaverModeManager::kLowBatteryThresholdPercent`: Energy Saver's
+ * `low-battery` mode turns on at this charge or lower (Chrome's row: "Turn on only when your
+ * battery is at 20% or lower").
+ */
+export const ENERGY_SAVER_LOW_BATTERY_PERCENT = 20
 export type ColorScheme = 'system' | 'light' | 'dark'
 export type SidebarSide = 'left' | 'right'
 /**
@@ -2916,9 +2935,32 @@ export interface Settings {
   pinnedCloseBehavior: PinnedCloseBehavior
   pinnedResetOnStartup: boolean
   thirdPartyOnPinned: ThirdPartyPinnedBehavior
+  /**
+   * Memory Saver's switch and timer (settings-69; the phone's sleeping-tabs rows read the same
+   * two keys): a tab hidden for `unloadTimeoutMinutes` is unloaded while `unloadEnabled`.
+   * Chrome's twins (`performance_tuning.high_efficiency_mode.state` / `.aggressiveness`) are
+   * local-state prefs it never syncs – device-local here too (`DEVICE_LOCAL_SETTINGS`, W8-2):
+   * each device keeps its own value, the phone's ladder and the desktop's tiers apart. The
+   * keep-active hosts (`unloadExcludedDomains`) sync, as Chrome's exceptions list does.
+   */
   unloadEnabled: boolean
   unloadTimeoutMinutes: number
   unloadExcludedDomains: string[]
+  /**
+   * Energy Saver (settings-26; Chrome's `performance_tuning.battery_saver_mode.state`, a
+   * local-state pref Chrome never syncs – device-local here too, `DEVICE_LOCAL_SETTINGS`):
+   * when the resource governor tightens its budgets by `resources.batteryFactor`. `on-battery`
+   * whenever the computer runs on its battery (Electron's `powerMonitor`); `low-battery` only
+   * once the battery is at `ENERGY_SAVER_LOW_BATTERY_PERCENT` or lower – Chrome's
+   * `kLowBatteryThresholdPercent`, 20 – where the host can read the level (Linux's sysfs,
+   * macOS's `pmset`; Windows exposes it to a native module alone, so there the mode waits and
+   * the row says so); `off` never. A fresh desktop profile takes Chrome's default, the
+   * threshold – `on-battery` on Windows, where the level cannot be read
+   * (`freshPerformanceDefaults`); the shipped default stays `on-battery`, Zenium's behaviour
+   * before the mode had a name, for every existing profile and the phone. Absent in profiles
+   * from before it existed (read as `on-battery`).
+   */
+  energySaver: EnergySaverMode
   /**
    * Inactive tabs (TAB-20, SET-34; Chrome's archive): a tab nobody has looked at for this many
    * days leaves the grid for the Inactive tabs list, its page kept as a recently-closed entry
@@ -3310,6 +3352,14 @@ export type AppLinkState = 'allowed' | 'disallowed' | 'unknown'
  */
 export type DefaultBrowserRequestSource = 'onboarding' | 'sheet' | 'banner' | 'settings' | 'newtab'
 
+/**
+ * What came of asking the host for the computer's proxy settings panel (Settings › System):
+ * `opened` – the OS panel is up (or the desktop's settings tool was launched); `unsupported` –
+ * the host has no door to it, as Chrome has none on a Linux desktop outside its table or whose
+ * tool is not on the PATH, and the page says so.
+ */
+export type ProxySettingsDoor = 'opened' | 'unsupported'
+
 // ---------------------------------------------------------------------------
 // Page controls (desktop site, dark theme for sites, page zoom)
 // ---------------------------------------------------------------------------
@@ -3653,6 +3703,28 @@ export interface ResourceSnapshot {
     totalMemoryMb: number
     cpuCount: number
     onBattery: boolean
+    /**
+     * The battery's charge, 0–100, where the host can read it (Linux's sysfs, macOS's `pmset`);
+     * null on a computer without a battery and on a host that cannot read the level (Windows
+     * without a native module) – Energy Saver's `low-battery` mode waits on it.
+     */
+    batteryPercent: number | null
+    /**
+     * Whether the computer has a battery to save: true / false where the host can tell (Linux's
+     * sysfs lists a `Battery` supply of the computer's own; macOS's `pmset` lists an
+     * InternalBattery), null where it cannot (Windows without a native module; a host before its
+     * first reading; the phone and tablet shells, which never sample). Chrome hides its Battery
+     * Saver section on a computer without one (`performance_page_index.ts`'s
+     * `showBatterySettings_`, off `BatterySaverModeManager::DeviceHasBattery`); Settings hides
+     * the Energy Saver group on `false` alone – a host that cannot tell shows it.
+     */
+    hasBattery: boolean | null
+    /**
+     * Energy Saver is on now – `Settings.energySaver` met by the power state – and the budgets
+     * are tightened by `batteryFactor` (Chrome's `BatterySaverModeManager::IsBatterySaverActive`,
+     * what its toolbar leaf shows).
+     */
+    energySaver: boolean
     /** System idle long enough for the idle-freeze rule to apply. */
     idle: boolean
   }
@@ -4326,6 +4398,14 @@ export interface UIState {
    */
   privateLockOnLeave: boolean
   /**
+   * The update dot's per-version 'seen' record, this device's (`BrowserState.updateDot`,
+   * `core/updateDot.ts`; TB-12): the waiting update's version the app menu was last opened for.
+   * The phone bar's ⋮ and the tablet toolbar's menu button read `updateDotShows(updates, updateDot)`
+   * – the dot clears on the menu's first open for a version and returns for another version's
+   * `ready`; the desktop's ⋯ reads the plain phase until W8-F3.
+   */
+  updateDot: UpdateDotRecord
+  /**
    * The new tab page's custom background: whether one is set, whether the host can open a file
    * picker for one (the phone's page reads the file itself and stores it through `set`), and
    * the colour the picture suggests for the space's accent (NTP-14; `#rrggbb`, fitted to read on
@@ -4805,6 +4885,12 @@ export interface Commands {
   'qr.setTorch': { args: { on: boolean }; result: void }
   /** The app's system settings screen, where a permanently refused camera is turned back on. */
   'qr.openSettings': { args: void; result: void }
+  /**
+   * The QR code sheet's Download (SH-06; the host sent `qr.code`): the host keeps the link's
+   * code as a picture in Downloads – the link written above the code, as Chrome's
+   * `QrCodeShareMediator.addUrlToBitmap` composes it – and says so through its toast.
+   */
+  'qr.download': { args: { url: string }; result: void }
   /** The external-protocol sheet's answer (`always` remembers the scheme in settings). */
   'externalProtocol.respond': {
     args: { requestId: string; allow: boolean; always: boolean }
@@ -5356,6 +5442,12 @@ export interface Commands {
   'resources.trim': { args: void; result: void }
   /** Restart the browser so changed startup switches take effect. */
   'resources.relaunch': { args: void; result: void }
+  /**
+   * Energy Saver's "Turn off now" (W8-2, the toolbar leaf's bubble; Chrome's
+   * `SetTemporaryBatterySaverDisabledForSession`): off until the charger is plugged in or the
+   * mode is changed, `Settings.energySaver` untouched. `disabled: false` puts it back.
+   */
+  'resources.energySaverSession': { args: { disabled: boolean }; result: void }
 
   // ---- The task manager (`zen://tasks`, `core/tasks.ts`) --------------------------------------
   /**
@@ -5735,9 +5827,14 @@ export interface Commands {
   /**
    * Import the chosen kinds from a source (`ImportSource.id`); one import runs at a time and its
    * progress is `UIState.import`. Resolves with the finished progress, or null for an unknown
-   * source or nothing to import.
+   * source or nothing to import. `primaryPassword` is Firefox's primary password when the user
+   * typed one for a Firefox source's passwords (ID-42): sent with this run only, used to unwrap
+   * `key4.db`'s master key and kept nowhere; absent, the empty default is tried.
    */
-  'import.run': { args: { source: string; kinds: ImportKind[] }; result: ImportProgress | null }
+  'import.run': {
+    args: { source: string; kinds: ImportKind[]; primaryPassword?: string }
+    result: ImportProgress | null
+  }
   /** Stop the running import after the kind in flight; false when none runs. */
   'import.cancel': { args: void; result: boolean }
   /** Drop the finished import from `UIState.import` (the dialog closed). */
@@ -6021,6 +6118,15 @@ export interface Commands {
   'defaultBrowser.dismiss': { args: { prompt: 'sheet' | 'banner' }; result: void }
   /** Read the role again (the settings row opens; the app came back from the system dialog). */
   'defaultBrowser.refresh': { args: void; result: boolean | null }
+
+  /**
+   * Settings › System › "Open your computer's proxy settings" (Chrome's System page): the OS
+   * panel where the computer's proxy is set – Windows Settings › Network & internet › Proxy,
+   * macOS System Settings › Network › Proxies, the Linux desktop's network settings by Chrome's
+   * table of desktops. `unsupported` when the host could not open one (a Linux desktop the
+   * table does not know, its tool not on the PATH, a host without the door): the page says so.
+   */
+  'system.openProxySettings': { args: void; result: ProxySettingsDoor }
 
   'boost.update': {
     args: { domain: string; patch: Partial<Omit<Boost, 'domain' | 'updatedAt'>> }
@@ -6697,6 +6803,11 @@ export interface Events {
   'voice.event': VoiceEvent
   /** The host's camera reports while a scan runs (after `qr.start` answered `scanning`). */
   'qr.event': QrEvent
+  /**
+   * The share sheet's "QR code" was picked (SH-06): the host encoded the link and the chrome
+   * draws the code sheet with it; its Download asks `qr.download`.
+   */
+  'qr.code': QrCodeRequest
   /**
    * The host put up the browser's own share panel for a share (Android below 14, SH-03): the
    * chrome draws it and answers with `share.panelAction`.

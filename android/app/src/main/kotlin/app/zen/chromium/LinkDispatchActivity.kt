@@ -36,8 +36,17 @@ class LinkDispatchActivity : Activity() {
         finish()
     }
 
-    /** The app behind the intent: what the system says sent it, else the app that owns the session. */
+    /**
+     * The app behind the intent: the one that started this for a result (an Auth Tab's caller,
+     * CCT-13 – `getCallingPackage`, the system's word, as Chrome's `LaunchIntentDispatcher` takes
+     * it), else what the system says sent it, else the app that owns the session.
+     */
     private fun callerPackage(intent: Intent): String? =
-        CustomTabIntents.packageOfReferrer(referrer?.toString())
-            ?: CustomTabSessions.packageOf(CustomTabsSessionToken.getSessionTokenFromIntent(intent))
+        callingPackage
+            ?: CustomTabIntents.packageOfReferrer(referrer?.toString())
+            ?: if (intent.getBooleanExtra(AuthTab.EXTRA_LAUNCH_AUTH_TAB, false)) {
+                CustomTabSessions.packageOfAuth(AuthTabSession.fromIntent(intent))
+            } else {
+                CustomTabSessions.packageOf(CustomTabsSessionToken.getSessionTokenFromIntent(intent))
+            }
 }

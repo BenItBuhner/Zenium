@@ -67,7 +67,12 @@ import { useSheetStack } from './useSheetStack'
  * screen, where Chrome's order has it one screen down; Chrome's `siteDetails?site=`, less the
  * page of its own – and `row`, a section asked for one of its rows (`zen://settings/sync?row=
  * sync-scope:openTabs`, the History page's "Open sync settings" row landing on the Open tabs
- * switch), which opens with that row's group on screen the same way.
+ * switch), which opens with that row itself at the column's top – `?row=` lands the row, where
+ * `?site=` lands the site's group; `group`, a section asked for one of its groups outright (the
+ * Privacy and security hub's cards; `?group=` lands the group); and `open`, a section
+ * asked to open one of its action rows' forms as the row's button would (`zen://settings/look?
+ * row=customize-toolbar&open=customize-toolbar`, the toolbar button's "Customise Toolbar…"
+ * row), honoured by the two-pane layout once per address and then spent (`desktop.tsx`).
  */
 
 /** Width from which the tab shows the two-pane layout (v2 §10.2, §10.5; the pages' shared one). */
@@ -86,19 +91,20 @@ const ROW_ID_RE = /^[\w:-]+$/
 const LANDING_PAD = '--zen-settings-landing-pad'
 
 /**
- * How far the column must pad its end for `group` to scroll to its top. A group near a section's
- * end reaches only as far as the content under it allows – the desktop's #356 measured Sync's
- * Open tabs group mid-page at a 1000 px window, the column's scroll maxed at 169 – so the column
- * pads by what is missing, as Chrome's settings pages pad the page for a deep link. The top is
- * the column's scroll padding where it has some (the desktop's sticky find field, §10.5), so
- * the landed group's heading shows under the field rather than behind it. 0 when the group can
- * already reach the top, or when the group is in no column (a test without layout).
+ * How far the column must pad its end for `landed` – the row or group a landing brings up – to
+ * scroll to its top. One near a section's end reaches only as far as the content under it
+ * allows – the desktop's #356 measured Sync's Open tabs group mid-page at a 1000 px window, the
+ * column's scroll maxed at 169 – so the column pads by what is missing, as Chrome's settings
+ * pages pad the page for a deep link. The top is the column's scroll padding where it has some
+ * (the desktop's sticky find field, §10.5), so the landed row or heading shows under the field
+ * rather than behind it. 0 when it can already reach the top, or when it is in no column (a
+ * test without layout).
  */
-function landingPad(group: HTMLElement): number {
-  const column = group.closest<HTMLElement>('.zen-settings-scroll, .zen-settings-content')
+function landingPad(landed: HTMLElement): number {
+  const column = landed.closest<HTMLElement>('.zen-settings-scroll, .zen-settings-content')
   if (!column) return 0
   const top =
-    group.getBoundingClientRect().top - column.getBoundingClientRect().top + column.scrollTop
+    landed.getBoundingClientRect().top - column.getBoundingClientRect().top + column.scrollTop
   const inset = parseFloat(getComputedStyle(column).scrollPaddingTop) || 0
   return Math.max(0, Math.ceil(top - inset + column.clientHeight - column.scrollHeight))
 }
@@ -140,20 +146,28 @@ export function SettingsPage({ state, tab }: Props): JSX.Element {
   // shows the section for it and opens the page's content as a dialog from its row (§10.5).
   const subpage = current?.pages?.find((p) => p.id === ref?.subpage) ?? null
   const twoPane = width >= TWO_PANE_MIN_WIDTH
-  // Privacy asked for a site, or a section for one of its rows: the row's group is scrolled on
-  // screen before the paint, once per address (and again should the layout change under it) – a
-  // later visit to the section from the landing or the nav has no `site` or `row` and opens at
-  // the top. The site's row is the opener's site's (`trackingGroups`); a restored tab without its
-  // opener has none, and the page opens at the top as it would, as it does for a row the section
-  // does not have. The column pads its end while the landing is asked (`landingPad`), so a
-  // group near the section's end reaches the top too; an ordinary section keeps its end.
+  // Privacy asked for a site, or a section for one of its rows: the landing is scrolled on screen
+  // before the paint, once per address (and again should the layout change under it) – a later
+  // visit to the section from the landing or the nav has no `site` or `row` and opens at the
+  // top. `?row=` lands the row itself – its top at the column's top, under the desktop's pinned
+  // find field (the #553 flush rule, the lead's L2 on #578) – not its group; `?site=` lands the
+  // site's group (`SITE_ROW`'s, the opener's site's row first in it, `trackingGroups`) – a
+  // restored tab without its opener has no such row, and the page opens at the top as it would,
+  // as it does for a row the section does not have. The column pads its end while the landing is
+  // asked (`landingPad`), so a row or group near the section's end reaches the top too; an
+  // ordinary section keeps its end.
   const site = current?.id === 'privacy' ? (ref?.query?.site ?? null) : null
   const asked = ref?.query?.row
-  const row = site ? SITE_ROW : asked && ROW_ID_RE.test(asked) ? asked : null
+  const row = !site && asked && ROW_ID_RE.test(asked) ? asked : null
   // A section asked for one of its groups outright (`?group=`, the Privacy and security hub's
-  // cards, W7-6): the group itself is the landing, where `?row=` lands on a row's group.
+  // cards, W7-6): the group itself is the landing – `?group=` lands the group.
   const askedGroup = ref?.query?.group
-  const groupId = !row && askedGroup && ROW_ID_RE.test(askedGroup) ? askedGroup : null
+  const groupId = !site && !row && askedGroup && ROW_ID_RE.test(askedGroup) ? askedGroup : null
+  // A section asked to open one of its action rows' forms (`?open=`, the toolbar button's
+  // Customise Toolbar… row, W8-1): the two-pane layout opens the row's dialog; the phone
+  // layout's rows are not that kind (the row is the desktop's), and it opens nothing.
+  const askedOpen = ref?.query?.open
+  const openRow = askedOpen && ROW_ID_RE.test(askedOpen) ? askedOpen : null
   // A card pressed while its address is already the landing (the user scrolled away and pressed
   // again) moves the address nowhere, so the press counts here and the landing runs again.
   const [landings, setLandings] = useState(0)
@@ -173,24 +187,33 @@ export function SettingsPage({ state, tab }: Props): JSX.Element {
   useLayoutEffect(() => {
     const page = root.current
     if (!page) return
-    // The pad is measured with none on, so a layout change under the landing re-measures it.
+    // The pad is measured with none on, so a layout change under the landing re-measures it;
+    // the landed element's mark (`data-landing` on the row `?row=` lands, or on the group) is
+    // the previous landing's no longer.
     page.style.removeProperty(LANDING_PAD)
-    const group = row
-      ? page.querySelector(`[data-row="${row}"]`)?.closest<HTMLElement>('[data-group]')
-      : groupId
-        ? page.querySelector<HTMLElement>(`[data-group="${groupId}"]`)
-        : null
-    if (!group) return
-    const pad = landingPad(group)
+    for (const marked of page.querySelectorAll('[data-landing]')) {
+      marked.removeAttribute('data-landing')
+    }
+    const landed = site
+      ? (page.querySelector(`[data-row="${SITE_ROW}"]`)?.closest<HTMLElement>('[data-group]') ??
+        null)
+      : row
+        ? page.querySelector<HTMLElement>(`[data-row="${row}"]`)
+        : groupId
+          ? page.querySelector<HTMLElement>(`[data-group="${groupId}"]`)
+          : null
+    if (!landed) return
+    const pad = landingPad(landed)
     if (pad > 0) page.style.setProperty(LANDING_PAD, `${pad}px`)
-    group.scrollIntoView({ block: 'start' })
-  }, [row, groupId, tab.url, twoPane, landings])
+    landed.setAttribute('data-landing', '')
+    landed.scrollIntoView({ block: 'start' })
+  }, [site, row, groupId, tab.url, twoPane, landings])
   return (
     <div
       ref={root}
       className="zen-settings-page"
       data-layout={twoPane ? 'two-pane' : 'phone'}
-      data-landing={row || groupId ? '' : undefined}
+      data-landing={site || row || groupId ? '' : undefined}
     >
       {twoPane ? (
         <DesktopSettings
@@ -199,6 +222,7 @@ export function SettingsPage({ state, tab }: Props): JSX.Element {
           page={page}
           sections={sections}
           current={current}
+          openRow={openRow}
           pointer={hover}
           formFactor={formFactor}
           land={land}

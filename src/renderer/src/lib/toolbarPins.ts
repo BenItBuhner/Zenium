@@ -48,3 +48,23 @@ export function hiddenAtThisWidth(
 export function foldedControls(pins: UIState['settings']['toolbarPins']): ToolbarControl[] {
   return TOOLBAR_CONTROLS.filter((control) => !toolbarPinned(pins, control))
 }
+
+/**
+ * The marks a pinnable control's button carries for its right-click menu (context-menus-112;
+ * Chrome's pinned toolbar button menu – Unpin, Customise Toolbar…): `data-zen-menu="toolbar"`
+ * with the control in `data-zen-menu-control`, read by the host under the pointer
+ * (`WindowHost.menuTargetAt`) and by the core (`showChromeContextMenu`). The desktop layout's
+ * alone, as the pins are: on the other form factors the button carries no mark. The star chip
+ * keeps its own `data-zen-menu="star"` (its bookmark rows come first) and takes the control
+ * mark alone. Forward carries none: its right-click is the back/forward stack's menu, as
+ * Chrome's Forward keeps its `BackForwardMenuModel` – a pref-toggled button, not one of
+ * Chrome's pinned action buttons – and its pin is Settings' "Show forward button" switch.
+ */
+export function toolbarMenuMarks(
+  control: ToolbarControl,
+  formFactor: FormFactor
+): { 'data-zen-menu'?: 'toolbar'; 'data-zen-menu-control'?: ToolbarControl } {
+  return formFactor === 'desktop'
+    ? { 'data-zen-menu': 'toolbar', 'data-zen-menu-control': control }
+    : {}
+}

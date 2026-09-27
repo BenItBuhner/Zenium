@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The search widget's fill in Material You's colours on Android 14+ (WID-03; see
+     res/color-v31/widget_search_fill.xml): the platform publishes the Material 3 roles themselves
+     from API 34, and MDC 1.12.0 reads colorSurfaceContainerHigh there (values-v34/tokens.xml:95),
+     so the fill is the system's own role – at Chrome's 0.9 over the wallpaper, the alpha on the
+     fill alone so the mark, the hint, the mic and the mask stay opaque. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:alpha="0.9"
+        android:color="@android:color/system_surface_container_high_light" />
+</selector>

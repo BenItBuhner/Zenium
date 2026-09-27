@@ -42,13 +42,15 @@ interface FakeView {
 /** Chrome's rule in the entry script: a document the user can still see stays where it is. */
 const VISIBILITY_GUARD = "if (document.visibilityState !== 'hidden') return 'visible'"
 
-/** A desktop window as the service sees it: what it shows, whether it has the focus. */
+/** A desktop window as the service sees it: what it shows, whether it has the focus, whether it is on the screen. */
 interface FakeWindow {
   id: string
   alive: boolean
   visible: string[]
   host: { isFocused(): boolean }
   focused: boolean
+  /** `ZenWindow.isOnScreen`: neither minimised nor hidden (W6-F6's signal). */
+  isOnScreen: boolean
 }
 
 interface Harness {
@@ -79,6 +81,11 @@ interface Harness {
   addWindow(id: string, visible: string[]): FakeWindow
   /** `win` shows `visible` now, and the tab manager says so. */
   show(win: FakeWindow, visible: string[]): void
+  /**
+   * `win` is minimised (`false`) or restored (`true`): the host's W6-F6 concealment refresh as
+   * `ZenWindow.onWindowVisibleChanged` forwards it, once per change.
+   */
+  onScreen(win: FakeWindow, visible: boolean): void
   setAlert(tabId: string, alert: string | undefined): void
   updateMedia: ReturnType<typeof vi.fn>
 }
@@ -227,6 +234,7 @@ function harness(
         alive: true,
         visible,
         focused: true,
+        isOnScreen: true,
         host: { isFocused: () => win.focused }
       }
       windows.set(id, win)
@@ -238,6 +246,11 @@ function harness(
       win.visible = visible
       for (const tabId of visible) owners.set(tabId, win)
       service.onVisibleTabsChanged(win as unknown as ZenWindow)
+    },
+    onScreen: (win, visible) => {
+      if (win.isOnScreen === visible) return
+      win.isOnScreen = visible
+      service.onWindowVisibleChanged(win as unknown as ZenWindow, visible)
     },
     setAlert: (tabId, alert) => {
       const tab = tabs.get(tabId)
@@ -1392,6 +1405,153 @@ describe('automatic picture-in-picture (MW-28)', () => {
       h.closeTab('film')
       await h.service.optOutAuto('film')
       expect(h.sets).toHaveLength(1)
+    })
+  })
+
+  describe('the first-time toast waits for a window the user can see (the entry on a minimise, W6-F6)', () => {
+    const TOAST = {
+      message: 'Video from video.example opened in a small window',
+      kind: 'info',
+      action: {
+        label: 'Turn off for this site',
+        command: 'media.autoPipOptOut',
+        args: { tabId: 'film' }
+      }
+    }
+    const SITE = `${AUTO_PIP_SETTING}|https://video.example`
+
+    /**
+     * The user minimises `w`: its pages go hidden with it (the host's concealment refresh, into
+     * the core as `onWindowVisibleChanged(false)`), the focus goes, the blur clock runs out.
+     */
+    const minimise = async (w: FakeWindow): Promise<void> => {
+      h.onScreen(w, false)
+      w.focused = false
+      h.service.onWindowFocusChanged(w as unknown as ZenWindow, false)
+      await vi.advanceTimersByTimeAsync(AUTO_PIP_BLUR_GRACE_MS)
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+
+    it('enters on the minimise but holds the toast and the mark; the window’s return shows it once, in that window, and marks the site', async () => {
+      await minimise(win)
+      expect(entered('film')).toBe(1)
+      expect(h.service.autoPictureInPictureTab).toBe('film')
+      // Nobody would see it: nothing said, nothing spent.
+      expect(h.toasts).toEqual([])
+      expect(h.noticed.size).toBe(0)
+      h.service.onPagePictureInPicture('film', true)
+      // Restored: the toast now, the memory written now.
+      h.onScreen(win, true)
+      expect(h.toasts).toEqual([{ ...TOAST, win }])
+      expect([...h.noticed]).toEqual([SITE])
+      // The focus comes back with the restore, the tab is in front: the video returns as before.
+      win.focused = true
+      h.service.onWindowFocusChanged(win as unknown as ZenWindow, true)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(left('film')).toBe(1)
+      expect(h.service.autoPictureInPictureTab).toBeNull()
+      // Minimised and restored again: the site was told; the second entry is silent.
+      await minimise(win)
+      expect(entered('film')).toBe(2)
+      h.onScreen(win, true)
+      expect(h.toasts).toHaveLength(1)
+    })
+
+    it('does not speak on another window’s return while the tab’s own window is still away', async () => {
+      const other = h.addWindow('w2', ['docs'])
+      other.focused = false
+      await minimise(win)
+      expect(entered('film')).toBe(1)
+      expect(h.toasts).toEqual([])
+      h.onScreen(other, false)
+      h.onScreen(other, true)
+      expect(h.toasts).toEqual([])
+      expect(h.noticed.size).toBe(0)
+      h.onScreen(win, true)
+      expect(h.toasts).toEqual([{ ...TOAST, win }])
+      expect([...h.noticed]).toEqual([SITE])
+    })
+
+    it('leaves the notice unspent when the video stops before the return: the next entry says so', async () => {
+      await minimise(win)
+      expect(entered('film')).toBe(1)
+      h.service.onPagePictureInPicture('film', true)
+      // Paused from the small window's own controls while the window is away.
+      play(h, 'film', report({ video: true, width: 1280, height: 720, playing: false }))
+      h.onScreen(win, true)
+      expect(h.toasts).toEqual([])
+      expect(h.noticed.size).toBe(0)
+      // The window back and the tab in front: the desktop's claim ends as before.
+      win.focused = true
+      h.service.onWindowFocusChanged(win as unknown as ZenWindow, true)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(h.service.autoPictureInPictureTab).toBeNull()
+      // The film plays on and its tab leaves the screen in a window the user sees: told now.
+      play(h, 'film', video())
+      h.show(win, ['docs'])
+      await vi.advanceTimersByTimeAsync(0)
+      expect(entered('film')).toBe(2)
+      expect(h.toasts).toEqual([{ ...TOAST, win }])
+      expect([...h.noticed]).toEqual([SITE])
+    })
+
+    it('leaves the notice unspent when the tab closes before the return', async () => {
+      await minimise(win)
+      expect(entered('film')).toBe(1)
+      h.closeTab('film')
+      h.service.refresh()
+      h.onScreen(win, true)
+      expect(h.toasts).toEqual([])
+      expect(h.noticed.size).toBe(0)
+    })
+
+    it('leaves the notice unspent when the window closes before the return', async () => {
+      await minimise(win)
+      expect(entered('film')).toBe(1)
+      win.alive = false
+      h.service.onWindowClosed(win as unknown as ZenWindow)
+      // A closed window never returns; were its signal to come, nothing would be said.
+      h.onScreen(win, true)
+      expect(h.toasts).toEqual([])
+      expect(h.noticed.size).toBe(0)
+    })
+
+    it('says nothing after dispose (the quit path)', async () => {
+      await minimise(win)
+      expect(entered('film')).toBe(1)
+      h.service.dispose()
+      h.onScreen(win, true)
+      expect(h.toasts).toEqual([])
+      expect(h.noticed.size).toBe(0)
+    })
+
+    it('speaks at once for an entry made while the window is on the screen – the tab trigger, a blur with the document covered – as before', async () => {
+      // The tab switched away in a window the user sees.
+      h.show(win, ['docs'])
+      await vi.advanceTimersByTimeAsync(0)
+      expect(entered('film')).toBe(1)
+      expect(h.toasts).toEqual([{ ...TOAST, win }])
+      expect([...h.noticed]).toEqual([SITE])
+      // A blur with the window on screen and the document hidden (covered where Chromium tracks
+      // occlusion): another site, told at once too.
+      h.service.onPagePictureInPicture('film', true)
+      h.show(win, ['film'])
+      await vi.advanceTimersByTimeAsync(0)
+      h.addTab('clip', 'https://clips.example/c/1', 'A clip')
+      h.activated.add('clip')
+      play(h, 'film', report({ video: false, playing: false }))
+      play(h, 'clip', video())
+      h.show(win, ['clip'])
+      win.focused = false
+      h.service.onWindowFocusChanged(win as unknown as ZenWindow, false)
+      await vi.advanceTimersByTimeAsync(AUTO_PIP_BLUR_GRACE_MS)
+      expect(entered('clip')).toBe(1)
+      expect(h.toasts).toHaveLength(2)
+      expect(h.toasts[1]!.message).toBe('Video from clips.example opened in a small window')
+      expect(h.noticed.has(`${AUTO_PIP_SETTING}|https://clips.example`)).toBe(true)
     })
   })
 })

@@ -175,6 +175,7 @@ export interface TabData {
   title: string
   customTitle: string | null
   customIcon: string | null
+  /** The icon's `http(s)` address, or null: what `wireFavicon` lets across (a `data:` icon reads as null). */
   favicon: string | null
   pinned: boolean
   essential: boolean
@@ -191,6 +192,30 @@ export interface ContainerData {
 }
 
 /**
+ * What a favicon may carry across the sync boundary – the engine's rule for every record that
+ * names an icon (a bookmark's, a tab record's, the `open-tabs` view's, a history visit's),
+ * argued from the receiver's need: an `http(s)` address MAY travel, the receiving device can
+ * fetch it (and its favicon cache keeps one copy, `core/favicons.ts`); a `data:` URL NEVER
+ * travels – it is the icon's bytes (a 32 px PNG is 2–6 KB of base64 per record, over thousands
+ * of bookmarks and visits in the device file and the history pages), and the receiver caches
+ * its own once it opens the page; a host-local address – the cache's `zen://favicon/<hash>`, a
+ * `file:`, `chrome:`, `about:` – never travels either, a peer cannot use it. Applied where a
+ * record is MADE (`collectLocal`, `collectOpenTabs`, `wireVisit`) and where one is READ
+ * (`readBookmarkData`, `readOpenTabs`, `readHistoryPage`, the tab apply): a peer's build may
+ * still send what this one does not. The reading list set the precedent (`readingListEntryData`:
+ * `favicon` never travels at all – the list resolves its icons by `url` from the cache). On the
+ * apply side, a landed record WITHOUT a favicon keeps this device's own for the same id and
+ * url (`BookmarkService.applySynced`, the tab apply): a missing favicon is not a deletion of
+ * the local one, it is the peer's icon staying home.
+ *
+ * Returns the address when it may travel, else `undefined`.
+ */
+export function wireFavicon(favicon: string | null | undefined): string | undefined {
+  if (typeof favicon !== 'string' || !favicon) return undefined
+  return /^https?:\/\//i.test(favicon) ? favicon : undefined
+}
+
+/**
  * One bookmark tree node (roots are fixed on every device and never replicate). Position is part
  * of the record: a move is a change of `parentId` / `index`, resolved last-writer-wins per node;
  * the receiving tree repairs index collisions and orphans (`normalizeBookmarkNodes`).
@@ -201,6 +226,11 @@ export interface BookmarkData {
   type: BookmarkNodeType
   title: string
   url?: string
+  /**
+   * The icon's `http(s)` address when the bookmark has one (`wireFavicon`): never the bytes of a
+   * `data:` URL nor a host-local address. A record without it says nothing about the receiver's
+   * own icon for the node (`BookmarkService.applySynced` keeps it).
+   */
   favicon?: string
   dateAdded: number
 }
@@ -232,7 +262,8 @@ export function readBookmarkData(data: unknown): BookmarkData | null {
     }
     if (r.type === 'url') {
       out.url = r.url
-      if (typeof r.favicon === 'string' && r.favicon) out.favicon = r.favicon
+      const favicon = wireFavicon(r.favicon)
+      if (favicon) out.favicon = favicon
     }
     return out
   }
@@ -245,7 +276,8 @@ export function readBookmarkData(data: unknown): BookmarkData | null {
       url: r.url,
       dateAdded: typeof r.createdAt === 'number' ? r.createdAt : Date.now()
     }
-    if (typeof r.favicon === 'string' && r.favicon) out.favicon = r.favicon
+    const favicon = wireFavicon(r.favicon)
+    if (favicon) out.favicon = favicon
     return out
   }
   return null
@@ -313,11 +345,27 @@ export function readReadingListData(id: string, data: unknown): ReadingListEntry
  *   since profile v6; a peer on v5 still stores that build's default `false`, no choice.
  * - `searchChoice`: the EEA's search-engine choice screen's record (W6-2) – each device's to
  *   answer once, as Chrome's; the engine it set travels as `searchEngineId`, the record does not.
+ * - `energySaver`, `unloadEnabled`, `unloadTimeoutMinutes`: Settings › Performance's modes and
+ *   timer (W8-2) – one class, each device's own: Energy Saver is a laptop's choice that means
+ *   nothing on a tower or a phone, and Memory Saver's switch and tier are sized to the device
+ *   running them. Chrome keeps all three twins (`performance_tuning.battery_saver_mode.state`,
+ *   `high_efficiency_mode.state`, `high_efficiency_mode.aggressiveness`) in local state, off
+ *   the sync list. The phone's sleeping-tabs mode and timer are these same two keys, so they
+ *   are each phone's own too: the desktop's tier no longer moves the phone's ladder, nor the
+ *   phone's the desktop's. No migration – each device keeps the value it holds: the two keys'
+ *   departure from this device's record stamps nothing (`diffSettings`), an older peer's copy
+ *   is stripped at apply (`withoutDeviceLocalSettings`) and never wins (`winningRemote`), and
+ *   older peers keep trading the keys among themselves, as `sidebarExpandOnHover`'s did. The
+ *   keep-active hosts (`unloadExcludedDomains`) stay synced: Chrome syncs its exceptions list
+ *   (`performance_tuning.tab_discarding.exceptions`, `syncer::PREFERENCES`).
  */
 export const DEVICE_LOCAL_SETTINGS = [
   'onboardingDone',
   'sidebarExpandOnHover',
-  'searchChoice'
+  'searchChoice',
+  'energySaver',
+  'unloadEnabled',
+  'unloadTimeoutMinutes'
 ] as const
 export type DeviceLocalSetting = (typeof DEVICE_LOCAL_SETTINGS)[number]
 const DEVICE_LOCAL = new Set<string>(DEVICE_LOCAL_SETTINGS)
@@ -992,7 +1040,7 @@ export function collectLocal(
         title: t.title,
         customTitle: t.customTitle,
         customIcon: t.customIcon,
-        favicon: t.favicon,
+        favicon: wireFavicon(t.favicon) ?? null,
         pinned: t.pinned,
         essential: t.essential,
         spaceId: t.essential ? null : t.spaceId,
@@ -1040,7 +1088,12 @@ export function collectLocal(
       }
       if (b.type === 'url') {
         data.url = b.url
-        if (b.favicon) data.favicon = b.favicon
+        // The icon's address only (`wireFavicon`): a `data:` icon or the cache's own address
+        // stays home. Its departure from a record this device published before is the build's
+        // change, not the user's – the boot seed (`SyncEngine.seedMeta`) adopts the new hash at
+        // the record's old `modified`, so the upgrade republishes the node as no edit.
+        const favicon = wireFavicon(b.favicon)
+        if (favicon) data.favicon = favicon
       }
       out.set(b.id, { type: 'bookmark', data })
     }

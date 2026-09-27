@@ -222,7 +222,7 @@ android {
             // WebAppDisclosureTest, ScreenClassTest, LockVeilTest, PrivateBrowsingTest, BackupRulesTest,
             // LocalDocumentsTest, ExternalProtocolsTest, StartupSplashTest, WebAppSplashTest,
             // PageDialogsTest, PrivateLockTest, NotificationsTest, SyncPeerTest, IndexDifferentialTest,
-            // BlockingTest) read these off the repository as TEXT – the core's and the chrome's
+            // BlockingTest, SearchWidgetFaceTest, AuthTabTest, ShapeDetectionManifestTest) read these off the repository as TEXT – the core's and the chrome's
             // TypeScript, the sync core's fixture, the bundled filter lists, this module's Kotlin,
             // manifest and resources – none of which is on the task's classpath in a form that changes
             // with them (a KDoc, a manifest attribute, a resource value). Undeclared, a change to one of
@@ -252,14 +252,19 @@ android {
             it.inputs.dir(webRoot.resolve("resources/blocking")).withPathSensitivity(PathSensitivity.RELATIVE)
             it.inputs.dir(projectDir.resolve("src/main/kotlin")).withPathSensitivity(PathSensitivity.RELATIVE)
             it.inputs.dir(projectDir.resolve("src/main/shortcuts")).withPathSensitivity(PathSensitivity.RELATIVE)
-            it.inputs.dir(projectDir.resolve("src/main/res/drawable")).withPathSensitivity(PathSensitivity.RELATIVE)
-            it.inputs.dir(projectDir.resolve("src/main/res/mipmap-anydpi-v26")).withPathSensitivity(PathSensitivity.RELATIVE)
-            it.inputs.dir(projectDir.resolve("src/main/res/values-night")).withPathSensitivity(PathSensitivity.RELATIVE)
-            it.inputs.dir(projectDir.resolve("src/main/res/xml")).withPathSensitivity(PathSensitivity.RELATIVE)
+            // This module's resources WHOLE, one input: the source-reading tests read them by
+            // configuration – `drawable`, `mipmap-anydpi-v26`, `values`, `values-night`, `anim`, `xml`,
+            // and SearchWidgetFaceTest the widget's `values-v31` / `values-night-v31` / `values-v34` /
+            // `values-night-v34`, `color-v31` / `color-night-v31` / `color-v34` / `color-night-v34` and
+            // `drawable-v31` – and a per-directory list drifts behind the next qualifier (#583's first
+            // read showed two pins served from the cache, the colour they pin changed). Not `src/main`
+            // itself: its assets are the built web bundle.
+            it.inputs.dir(projectDir.resolve("src/main/res")).withPathSensitivity(PathSensitivity.RELATIVE)
             // V2TokensPinTest reads the chrome's stylesheet, the sheet chassis (its motion module,
-            // its bottom inset) and this module's value and anim resources off the repository, not
-            // the classpath (the R class does not change with a colour's value), so they are the
-            // task's inputs: a re-tuned token re-runs the pin instead of a cached pass standing for it.
+            // its bottom inset) and this module's value and anim resources (covered by the whole
+            // `src/main/res` input above) off the repository, not the classpath (the R class does
+            // not change with a colour's value), so they are the task's inputs: a re-tuned token
+            // re-runs the pin instead of a cached pass standing for it.
             it.inputs.files(
                 webRoot.resolve("src/renderer/src/assets/main.css"),
                 webRoot.resolve("src/renderer/src/lib/motion/sheet.ts"),
@@ -273,8 +278,6 @@ android {
                 webRoot.resolve("src/renderer/src/lib/gestures/dismiss.ts"),
                 webRoot.resolve("src/renderer/src/components/messages/ToastCard.tsx")
             ).withPathSensitivity(PathSensitivity.RELATIVE)
-            it.inputs.dir(projectDir.resolve("src/main/res/values")).withPathSensitivity(PathSensitivity.RELATIVE)
-            it.inputs.dir(projectDir.resolve("src/main/res/anim")).withPathSensitivity(PathSensitivity.RELATIVE)
             // NotificationsTest scans every source set for a deleted channel id, and the drivers
             // (androidTest) are not on the unit tests' classpath: name them as an input so a
             // driver-only change re-runs the scan instead of a cached pass standing for it.
@@ -343,7 +346,9 @@ dependencies {
     implementation("androidx.webkit:webkit:1.17.0")
     implementation("com.google.android.material:material:1.12.0")
     // Custom Tabs provider: the service other apps bind and the intent extras they send
-    // (CustomTabsConnectionService.kt, CustomTabConfig.kt).
+    // (CustomTabsConnectionService.kt, CustomTabConfig.kt). Not 1.9.0: its AAR demands compileSdk
+    // 36 and AGP 8.9.1; the Auth Tab (CCT-13) it adds is honoured on 1.8.0 through the extras'
+    // strings and its two AIDL transactions written by hand (AuthTab.kt, AuthTabSession.kt).
     implementation("androidx.browser:browser:1.8.0")
     // The share sheet's "QR code" action draws the link as a code (Share.kt); pure Java, no camera.
     implementation("com.google.zxing:core:3.5.3")

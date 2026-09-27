@@ -152,6 +152,25 @@
         <meta-data android:name="com.samsung.android.keepalive.density" android:value="true" />
         <meta-data android:name="com.samsung.android.multidisplay.keep_process_alive" android:value="true" />
 
+        <!--
+          The Google Play services client version the WebView's shape-detection binding demands of
+          its host. When a page constructs a BarcodeDetector, the WebView (Chromium's
+          BarcodeDetectionProviderImpl, on its in-process GPU thread) asks GoogleApiAvailability
+          whether Play services are usable, and that client reads THIS value off our
+          ApplicationInfo first: absent, it throws GooglePlayServicesMissingManifestValueException,
+          which crosses the JNI boundary uncaught and kills the whole process (no promise ever
+          rejects). Present, the check proceeds: without Play (AOSP) it reports "missing", the
+          provider is not created and the page's detect() rejects with NotSupportedError; with Play
+          the detector works. The value is GOOGLE_PLAY_SERVICES_VERSION_CODE, an integer literal
+          the client compares against - we do not depend on play-services-basement, so it is spelled
+          out here (it has been 12451000 since play-services-basement 15.0.0 (2018), through the
+          18.10.0 Chromium 152 builds against and 18.12.0; any OTHER integer trips the client's
+          "incorrect manifest value" throw, the same death). aapt2 stores a numeric android:value as
+          an int, which is the type the client reads (metaData.getInt). Covered by
+          ShapeDetectionManifestTest.
+        -->
+        <meta-data android:name="com.google.android.gms.version" android:value="12451000" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -313,13 +332,16 @@
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|keyboard|navigation|uiMode|locale|layoutDirection|fontScale|colorMode" />
 
         <!-- The Custom Tabs provider service other apps bind before they open a custom tab
-             (CustomTabsConnectionService.kt): warmup, sessions, likely URLs. -->
+             (CustomTabsConnectionService.kt): warmup, sessions, likely URLs. The AuthTab category
+             is what `CustomTabsClient.isAuthTabSupported` looks for: this browser returns an Auth
+             Tab's redirect to its caller (CCT-13, AuthTab.kt). -->
         <service
             android:name=".CustomTabsConnectionService"
             android:exported="true"
             tools:ignore="ExportedService">
             <intent-filter>
                 <action android:name="android.support.customtabs.action.CustomTabsService" />
+                <category android:name="androidx.browser.auth.category.AuthTab" />
             </intent-filter>
         </service>
 

@@ -127,8 +127,10 @@ import {
 } from './model'
 import { newSearchChoiceSeed, sanitizeSearchChoice, searchChoiceState } from './searchChoice'
 import { sanitizeResourceSettings } from './resources/switches'
+import { freshPerformanceDefaults } from './resources/energySaver'
 import { sanitizeAgentSettings } from './agent/settings'
 import { migrateStartupSettings } from './startup'
+import { emptyUpdateDotRecord, sanitizeUpdateDotRecord, type UpdateDotRecord } from './updateDot'
 import {
   emptyUpdateStatus,
   sanitizeUpdateSettings,
@@ -184,6 +186,11 @@ import {
 import type { ZenWindow } from './window'
 
 const BOOKMARKS_BAR_MODES: ReadonlyArray<Settings['bookmarksBar']> = ['always', 'newtab', 'never']
+const ENERGY_SAVER_MODES: ReadonlyArray<Settings['energySaver']> = [
+  'off',
+  'low-battery',
+  'on-battery'
+]
 
 /** A synced window as remembered between sessions (blank / private windows are never restored). */
 export interface PersistedWindow {
@@ -271,6 +278,12 @@ export interface Persisted {
    * before the summary existed.
    */
   passwordsDevice?: PasswordsDeviceState
+  /**
+   * The update dot's device-local record (the same shape): the waiting update's version the app
+   * menu was last opened for, which clears the touch layouts' menu-button dot (TB-12). Never
+   * synced; missing before the dot had a cadence.
+   */
+  updateDot?: UpdateDotRecord
   /**
    * Where the pages' utility windows last stood, by page id (the task manager's, `WindowChrome`
    * `page`): normal bounds and display. Never synced – a window's place is this screen's; missing
@@ -420,6 +433,16 @@ export class BrowserState {
    * screen lock. The lock itself is the phone host's, in memory; the core keeps only the switch.
    */
   privateDevice: PrivateDeviceState = emptyPrivateDevice()
+  /**
+   * The update dot's device-local record, the same shape (`updateDot.ts`): the waiting update's
+   * version the app menu was last opened for on this device (TB-12 – Chrome Android's ⋮ badge
+   * clears on the menu's first open and returns on a state change). Written by
+   * `Menus.showAppMenu` on the touch layouts (`markUpdateMenuOpened`), read by the phone bar's
+   * ⋮ and the tablet toolbar's menu button (`updateDotShows`); the desktop's ⋯ reads the plain
+   * phase until W8-F3. Replaced whole, persisted with the profile, never synced – what this
+   * device's menu has shown is this device's.
+   */
+  updateDot: UpdateDotRecord = emptyUpdateDotRecord()
   /**
    * The password manager's device-local state, the same shape: the last Password Checkup's
    * counts and time (`PasswordsStatus.checkupSummary`, Safety Check's Passwords row), kept
@@ -713,6 +736,14 @@ export class BrowserState {
       // profile from before the list; the defaults name English for a host without locales.
       this.settings.languages = defaultLanguages(this.systemLocales)
       this.languagesDefaulted = true
+      // A fresh desktop profile takes Chrome's Performance defaults (W8-2; pr-584 §D (2)(3)):
+      // Memory Saver at Balanced, 4 hours; Energy Saver at the 20 % threshold where the host
+      // reads a battery level, on-battery on Windows, where it cannot. Here and not in
+      // `DEFAULT_SETTINGS`: an existing profile keeps what it had – `applyPersisted` reads its
+      // timer as stored (the shipped 20 minutes, "Custom – 20 minutes" on the page) and gives
+      // one from before the mode's key the on-battery its budgets ran on – and the phone reads
+      // `DEFAULT_SETTINGS` unchanged (`freshPerformanceDefaults` is null there).
+      Object.assign(this.settings, freshPerformanceDefaults(this.platform))
     }
     this.ensureValid()
     // The blobs' folder hears which ids the session refers to; the documents of the others go at
@@ -817,6 +848,11 @@ export class BrowserState {
     if (!BOOKMARKS_BAR_MODES.includes(this.settings.bookmarksBar)) {
       this.settings.bookmarksBar = DEFAULT_SETTINGS.bookmarksBar
     }
+    // Energy Saver's mode (W8-2): a profile from before the key reads the default; a value that
+    // is none of the three (a hand-edited profile) reads it too, as the bookmarks bar's does.
+    if (!ENERGY_SAVER_MODES.includes(this.settings.energySaver)) {
+      this.settings.energySaver = DEFAULT_SETTINGS.energySaver
+    }
     this.settings.toolbarLayout = sanitizeToolbarLayout(
       data.settings?.toolbarLayout,
       DEFAULT_SETTINGS.toolbarLayout
@@ -873,6 +909,7 @@ export class BrowserState {
       newTabPhone
     })
     this.privateDevice = sanitizePrivateDevice(data.privateDevice)
+    this.updateDot = sanitizeUpdateDotRecord(data.updateDot)
     this.passwordsDevice = sanitizePasswordsDevice(data.passwordsDevice)
     this.pageWindowsDevice = sanitizePageWindows(data.pageWindowsDevice)
     this.readingList = sanitizeReadingList(data.readingList)
@@ -1211,6 +1248,7 @@ export class BrowserState {
       newTabHiddenHosts: this.newTabDevice.hiddenHosts,
       newTabHiddenModules: this.newTabDevice.hiddenModules,
       privateLockOnLeave: this.privateDevice.lockOnLeave,
+      updateDot: this.updateDot,
       newTabBackground: this.newTabBackgroundFor(),
       recentlyClosedCount: this.recentlyClosed.length,
       recentlyClosed: this.recentlyClosed.slice(0, 10).map(summarizeClosed),
@@ -1349,6 +1387,7 @@ export class BrowserState {
       cleanExit: this.exiting,
       newTabDevice: this.newTabDevice,
       privateDevice: this.privateDevice,
+      updateDot: this.updateDot,
       passwordsDevice: this.passwordsDevice,
       pageWindowsDevice: this.pageWindowsDevice,
       readingList: this.readingList

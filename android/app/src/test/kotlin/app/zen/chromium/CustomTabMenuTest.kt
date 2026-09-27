@@ -125,6 +125,22 @@ class CustomTabMenuTest {
     }
 
     @Test
+    fun anAuthTabsMenuHasNoWayOutOfTheTab() {
+        // CCT-13, as Chrome's AUTH_TAB menu: no share, no Add to Home Screen, no Open in the browser
+        // (the sign-in must end in the tab that returns its result); the page's own rows stay.
+        val groups = CustomTabMenu.groups(emptyList(), share = false, addToHomeScreen = false, openInBrowser = false)
+        assertEquals(
+            listOf(listOf(CustomTabMenu.Item.CopyLink, CustomTabMenu.Item.FindInPage, CustomTabMenu.Item.DesktopSite(checked = false))),
+            groups
+        )
+        // The icon row without the star and Download, as the Auth Tab's config switches them off.
+        assertEquals(
+            listOf(CustomTabMenu.Icon.Forward, CustomTabMenu.Icon.Info, CustomTabMenu.Icon.Reload),
+            CustomTabMenu.iconRow(CustomTabMenu.PageState(), bookmarks = false, download = false).map { it.icon }
+        )
+    }
+
+    @Test
     fun reloadReadsStopWhileThePageLoads() {
         val still = CustomTabMenu.iconRow(CustomTabMenu.PageState(loading = false), bookmarks = true, download = true)
         val loading = CustomTabMenu.iconRow(CustomTabMenu.PageState(loading = true), bookmarks = true, download = true)

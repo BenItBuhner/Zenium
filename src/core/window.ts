@@ -22,6 +22,7 @@ import type { Browser } from './browser'
 import type { PersistedWindow } from './state'
 import { getSpace, tabVisibleIn } from './model'
 import { formatWindowTitle, normalizeWindowName } from '../shared/windowTitle'
+import { isToolbarControl } from '../shared/toolbarPins'
 import { captionDoubleClickEffect } from './captionDoubleClick'
 import {
   CHROME_MENU_TARGETS,
@@ -148,6 +149,12 @@ export class ZenWindow {
   lastFocusedAt = 0
   /** The host window's focus as of the last state change it reported, for telling a change. */
   private focused = false
+  /**
+   * The host window is on the user's screen – neither minimised nor hidden – as of the last
+   * concealment change it reported ({@link onWindowVisibleChanged}, W6-F6's signal). A window is
+   * made to be shown, so it starts on screen; a host without a minimise never says otherwise.
+   */
+  private onScreen = true
   /** The window-modal question the chrome is showing ("Close N tabs?"), owned by `WindowPrompts`. */
   prompt: WindowPrompt | null = null
   /** The quit chord held in this window ("Hold ⌘Q to Quit"), owned by `QuitHoldService`. */
@@ -367,6 +374,26 @@ export class ZenWindow {
     this.browser.state.commitVolatile()
   }
 
+  /**
+   * Whether the host window is on the user's screen: neither minimised nor hidden. Blur alone
+   * (the window on screen but not key) leaves this true, as it leaves the pages' visibility.
+   */
+  get isOnScreen(): boolean {
+    return this.onScreen
+  }
+
+  /**
+   * The host window was minimised or hidden (`visible` false), or restored or shown (true) – the
+   * same change the host forwards to the window's tab views so their pages read `hidden`
+   * (W6-F6). Told once per change: what waits for the window to be seen again – the first-time
+   * notice of an automatic picture-in-picture entry made on a minimise – hears the return here.
+   */
+  onWindowVisibleChanged(visible: boolean): void {
+    if (!this.alive || visible === this.onScreen) return
+    this.onScreen = visible
+    this.browser.mediaSession.onWindowVisibleChanged(this, visible)
+  }
+
   onFocused(): void {
     this.lastFocusedAt = Date.now()
     this.browser.onWindowFocused(this)
@@ -411,7 +438,7 @@ export class ZenWindow {
    * plain text fields get Chrome's menus for them. Asked for by the keyboard (Shift+F10, the
    * Menu key), the menu hangs from the focused element, whose box the host reads for it.
    */
-  onContextMenu(params: Omit<ChromeContextParams, 'target' | 'tabId'>): void {
+  onContextMenu(params: Omit<ChromeContextParams, 'target' | 'tabId' | 'control'>): void {
     if (!this.alive) return
     // Both reads go to the document at once; a host without one, or one that fails, reads null.
     const ask = <T>(read: (() => Promise<T>) | undefined): Promise<T | null> =>
@@ -428,12 +455,15 @@ export class ZenWindow {
     void Promise.all([lookup, focused]).then(([hit, rect]) => {
       if (!this.alive) return
       const target = CHROME_MENU_TARGETS.find((t): t is ChromeMenuTarget => t === hit?.target)
+      // A control the bar does not know (a newer chrome's attribute) is no control at all.
+      const control = hit?.control
       return this.browser.menus.showChromeContextMenu(
         {
           ...params,
           ...(rect ? { rect } : {}),
           target: target ?? null,
-          tabId: hit?.tabId ?? null
+          tabId: hit?.tabId ?? null,
+          control: isToolbarControl(control) ? control : null
         },
         this
       )

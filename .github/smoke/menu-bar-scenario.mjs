@@ -1,15 +1,19 @@
-// menu-bar (shortcuts-menus-160, -162, -123; W7-4): the application menu as the main process
-// holds it – `Menu.getApplicationMenu()`, read through the harness – judged against what the
-// model promises (`src/core/menuBar.ts`, vitest `menuBar.test.ts`): Chrome's menus in Chrome's
-// order with the Tab menu between Bookmarks and Window; the Tab menu's rows, their order, the
-// chords the key table binds (the Chrome preset's, a fresh profile's) and the enabled states
-// with a new tab page in front and then a site page with a tab below it; the toggles' words
-// following a pick of the row itself (Pin Tab → Unpin Tab, Mute Site → Unmute Site, picked
-// through the item's own `click` in the main process – the nearest a runner gets to the native
-// menu without UI scripting); the Help menu's rows under the `help` role (macOS's Search field)
-// with no Report Unsafe Site and no About; and About Zenium an enabled plain row of the
-// application menu that opens Settings › About as a page tab, closed again with the tab's
-// close chord. Off macOS Zenium draws no menu bar
+// menu-bar (shortcuts-menus-160, -162, -123; W7-4, W8-4): the application menu as the main
+// process holds it – `Menu.getApplicationMenu()`, read through the harness – judged against
+// what the model promises (`src/core/menuBar.ts`, vitest `menuBar.test.ts`): Chrome's menus in
+// Chrome's order with the Tab menu between Bookmarks and Window; the Tab menu's rows, their
+// order, the chords the key table binds (the Chrome preset's, a fresh profile's) and the
+// enabled states with a new tab page alone in front (Move Tab to New Window greyed with it, as
+// Chrome greys it) and then a site page with a tab below it; the two rows Chrome words by
+// direction reading "Below" beside the sidebar's strip and "to the Right" once the strip is
+// horizontal (`settings.update { toolbarLayout }`, flipped and flipped back); the toggles'
+// words following a pick of the row itself (Pin Tab → Unpin Tab, Mute Site → Unmute Site,
+// picked through the item's own `click` in the main process – the nearest a runner gets to
+// the native menu without UI scripting); the Help menu's rows under the `help` role (macOS's
+// Search field) – Report an Issue… on Chrome's chord, Report an Unsafe Site… greyed on the new
+// tab page and enabled on a site page – with no About; and About Zenium an enabled plain row
+// of the application menu that opens Settings › About as a page tab, closed again with the
+// tab's close chord. Off macOS Zenium draws no menu bar
 // (`Menu.setApplicationMenu(null)` in `src/main/index.ts`): the one step there reads null.
 //
 // No screenshots judge anything here: a native menu is not on the window's pixels until it is
@@ -42,51 +46,85 @@ export const TAB_MENU_CHORDS = {
   'Duplicate Tab': 'Cmd+Shift+K',
   'Pin Tab': 'Cmd+Ctrl+P',
   'Unpin Tab': 'Cmd+Ctrl+P',
+  'Add Tab to New Split View': 'Cmd+Shift+*',
   'Search Tabs…': 'Cmd+Shift+A'
 }
 
 /**
- * The Tab menu's rows in Chrome's order, as they read while the front tab is in no folder and
- * the space has none (a fresh profile): the two rows Chrome words by direction in their vertical
- * strip's words, Chrome's Group Tab as Zenium's folder rows.
+ * The two rows Chrome words by direction, per strip orientation (`tabDirectionLabels` in
+ * `src/core/menuBar.ts`): the sidebar's vertical strip – the desktop's single, multiple and
+ * collapsed layouts – reads Below, the horizontal layout reads to the Right.
  */
-export const TAB_MENU_ROWS = [
-  'New Tab Below',
-  'Select Next Tab',
-  'Select Previous Tab',
-  'Duplicate Tab',
-  'Mute Site',
-  'Pin Tab',
-  'Add Tab to New Folder',
-  'Remove from Folder',
-  'Close Other Tabs',
-  'Close Tabs Below',
-  'Move Tab to New Window',
-  'Search Tabs…'
-]
+export const TAB_DIRECTION_ROWS = {
+  vertical: { newTab: 'New Tab Below', closeAfter: 'Close Tabs Below' },
+  horizontal: { newTab: 'New Tab to the Right', closeAfter: 'Close Tabs to the Right' }
+}
 
-/** The Help menu's rows (the ⋯ menu's Help order less About Zenium, the application menu's). */
+/**
+ * The Tab menu's rows in Chrome's order, as they read while the front tab is in no folder and
+ * the space has none (a fresh profile), beside a strip of `orientation` (`vertical`, the
+ * default, or `horizontal`): Chrome's Group Tab as Zenium's folder rows, Chrome's Add Tab to
+ * New Split View as the key table's New Empty Split View under Chrome's words.
+ */
+export function tabMenuRows(orientation = 'vertical') {
+  const direction = TAB_DIRECTION_ROWS[orientation]
+  if (!direction) throw new Error(`no such strip orientation: ${orientation}`)
+  return [
+    direction.newTab,
+    'Select Next Tab',
+    'Select Previous Tab',
+    'Duplicate Tab',
+    'Mute Site',
+    'Pin Tab',
+    'Add Tab to New Folder',
+    'Remove from Folder',
+    'Close Other Tabs',
+    direction.closeAfter,
+    'Move Tab to New Window',
+    'Add Tab to New Split View',
+    'Search Tabs…'
+  ]
+}
+
+/** The Tab menu's rows beside the sidebar's strip, a fresh profile's. */
+export const TAB_MENU_ROWS = tabMenuRows('vertical')
+
+/**
+ * The Help menu's rows (the ⋯ menu's Help order less About Zenium, the application menu's; Report
+ * an Unsafe Site… last, as Chrome seats it after Report an Issue…).
+ */
 export const HELP_MENU_ROWS = [
   "What's New",
   '-',
   'Zenium Help',
   'Keyboard Shortcuts',
-  'Report an Issue…'
+  'Report an Issue…',
+  'Report an Unsafe Site…'
 ]
 
 /**
- * The Tab menu's expected rows for a front tab in one of two states: `new-tab-page` – a new tab
- * page alone in its window (no site to mute, nothing else to close) – and `site-among-others` –
- * a site page with another tab below it in the space. Each row: its label, whether it is
- * enabled, the chord it shows or null.
+ * The Help menu's one chord row: Report an Issue… on Chrome's ⌥⇧⌘I (`help.reportIssue` in the
+ * key table's Chrome preset). Chrome's other Help chord, ⇧⌘/ for help, names no action of the
+ * key table, so the other rows show none.
  */
-export function expectedTabMenu(state) {
+export const HELP_MENU_CHORDS = { 'Report an Issue…': 'Cmd+Alt+Shift+I' }
+
+/**
+ * The Tab menu's expected rows for a front tab in one of two states – `new-tab-page` – a new tab
+ * page alone in its window (no site to mute, nothing else to close, no other tab a move to a new
+ * window would leave behind) – and `site-among-others` – a site page with another tab below it
+ * in the space – beside a strip of `orientation` (`tabMenuRows`). Each row: its label, whether
+ * it is enabled, the chord it shows or null.
+ */
+export function expectedTabMenu(state, orientation = 'vertical') {
   if (state !== 'new-tab-page' && state !== 'site-among-others') {
     throw new Error(`no such Tab menu state: ${state}`)
   }
   const site = state === 'site-among-others'
+  const direction = TAB_DIRECTION_ROWS[orientation]
+  if (!direction) throw new Error(`no such strip orientation: ${orientation}`)
   const enabledByLabel = {
-    'New Tab Below': true,
+    [direction.newTab]: true,
     'Select Next Tab': true,
     'Select Previous Tab': true,
     'Duplicate Tab': true,
@@ -95,11 +133,12 @@ export function expectedTabMenu(state) {
     'Add Tab to New Folder': true,
     'Remove from Folder': false,
     'Close Other Tabs': site,
-    'Close Tabs Below': site,
-    'Move Tab to New Window': true,
+    [direction.closeAfter]: site,
+    'Move Tab to New Window': site,
+    'Add Tab to New Split View': true,
     'Search Tabs…': true
   }
-  return TAB_MENU_ROWS.map((label) => ({
+  return tabMenuRows(orientation).map((label) => ({
     label,
     enabled: enabledByLabel[label],
     accelerator: TAB_MENU_CHORDS[label] ?? null
@@ -159,11 +198,13 @@ export function tabMenuProblems(items, expected) {
 }
 
 /**
- * What is wrong with the Help menu: `HELP_MENU_ROWS` in order, every row enabled with no chord
- * (Chrome's Help chords name no action of the key table), no About Zenium (the application
- * menu's) and no Report Unsafe Site (Zenium has no Safe Browsing report path; services PS-01).
+ * What is wrong with the Help menu: `HELP_MENU_ROWS` in order; every row enabled but Report an
+ * Unsafe Site…, which is enabled with a web page in front (`reportable`: the report form takes
+ * an http(s) URL) and greyed on a new tab page or a `zen://` page – a menu bar greys rather than
+ * hides (§9.30); Report an Issue… on Chrome's chord (`HELP_MENU_CHORDS`) and the other rows
+ * without one; no About Zenium (the application menu's).
  */
-export function helpMenuProblems(items) {
+export function helpMenuProblems(items, { reportable }) {
   const problems = []
   const labels = rowLabels(items)
   if (JSON.stringify(labels) !== JSON.stringify(HELP_MENU_ROWS)) {
@@ -171,12 +212,19 @@ export function helpMenuProblems(items) {
   }
   for (const item of items ?? []) {
     if (item.type === 'separator') continue
-    if (!item.enabled) problems.push(`${item.label} is greyed`)
-    if (item.accelerator) problems.push(`${item.label} shows ${item.accelerator}`)
+    const wantEnabled = item.label === 'Report an Unsafe Site…' ? reportable : true
+    if (Boolean(item.enabled) !== wantEnabled) {
+      problems.push(
+        `${item.label} is ${item.enabled ? 'enabled' : 'greyed'}, expected ${wantEnabled ? 'enabled' : 'greyed'}`
+      )
+    }
+    const chord = item.accelerator ?? null
+    const want = HELP_MENU_CHORDS[item.label] ?? null
+    if (chord !== want) {
+      problems.push(`${item.label} shows ${chord ?? 'no chord'}, expected ${want ?? 'none'}`)
+    }
   }
-  for (const stray of ['About Zenium', 'Report Unsafe Site']) {
-    if (labels.includes(stray)) problems.push(`${stray} is in the Help menu`)
-  }
+  if (labels.includes('About Zenium')) problems.push('About Zenium is in the Help menu')
   return problems
 }
 
@@ -322,6 +370,40 @@ export async function scenarioMenuBar(h) {
         8000,
         `the Tab menu reading ${label}`
       )
+    /** A menu's rows as the step records them: label (`-` a separator), enabled, chord. */
+    const record = (items) =>
+      (items ?? []).map((i) => ({
+        label: i.type === 'separator' ? '-' : i.label,
+        enabled: i.enabled,
+        accelerator: i.accelerator
+      }))
+    /**
+     * The Tab menu once it reads as `expected` (`expectedTabMenu`), or the problems the last
+     * reading had, `what` naming the state waited for.
+     */
+    const tabMenuAs = (expected, what) =>
+      waitFor(
+        async () => {
+          const items = menuOf(await read(), 'Tab')
+          return items && tabMenuProblems(items, expected).length === 0 ? record(items) : null
+        },
+        10000,
+        `the Tab menu ${what}`
+      ).catch(async (e) => {
+        const items = menuOf(await read(), 'Tab')
+        throw withDetail(`${e.message}: ${tabMenuProblems(items ?? [], expected).join('; ')}`, {
+          rows: record(items)
+        })
+      })
+    /** The Help menu's rows against `helpMenuProblems`' expectation for the front page. */
+    const readHelp = async (expectation) => {
+      const bar = await read()
+      const items = menuOf(bar, 'Help')
+      const rows = record(items)
+      const problems = helpMenuProblems(items, expectation)
+      if (problems.length) throw withDetail(problems.join('; '), { rows })
+      return { role: bar.menus.find((m) => m.label === 'Help')?.role ?? null, rows }
+    }
 
     await s.step('menus', async () => {
       const bar = await readBuilt()
@@ -334,49 +416,49 @@ export async function scenarioMenuBar(h) {
 
     await s.step('tab-menu-new-tab-page', async () => {
       // A profile past onboarding boots to one new tab page (W5-F2): no site, nothing else to
-      // close, no folder in the space.
+      // close, no folder in the space, no other tab for Move Tab to New Window to leave behind.
       const bar = await readBuilt()
       const items = menuOf(bar, 'Tab')
-      const rows = items.map((i) => ({
-        label: i.label,
-        enabled: i.enabled,
-        accelerator: i.accelerator
-      }))
+      const rows = record(items)
       const problems = tabMenuProblems(items, expectedTabMenu('new-tab-page'))
       if (problems.length) throw withDetail(problems.join('; '), { rows })
       return { rows }
     })
 
+    await s.step('help-menu-new-tab-page', async () => {
+      // The Help menu with the new tab page in front: Report an Unsafe Site… has no http(s) URL
+      // to report and greys; Report an Issue… shows Chrome's chord.
+      return readHelp({ reportable: false })
+    })
+
     await s.step('tab-menu-site-page', async () => {
       // The fixture's first page in a new tab in front, then another tab below it: Mute Site
-      // has a site, Close Other Tabs and Close Tabs Below have a tab.
+      // has a site, Close Other Tabs and Close Tabs Below have a tab, Move Tab to New Window
+      // has tabs to leave behind.
       await invoke('tab.create', { url: fixture.first.url, active: true })
       await s.waitForTab(fixture.first.url, 20000)
       // Not waited for: a tab made inactive may load no page yet; the model holds it at once.
       await invoke('tab.create', { url: fixture.second.url, active: false })
-      const rows = await waitFor(
-        async () => {
-          const items = menuOf(await read(), 'Tab')
-          return items && tabMenuProblems(items, expectedTabMenu('site-among-others')).length === 0
-            ? items.map((i) => ({ label: i.label, enabled: i.enabled, accelerator: i.accelerator }))
-            : null
-        },
-        10000,
-        'the Tab menu on the site page'
-      ).catch(async (e) => {
-        const items = menuOf(await read(), 'Tab')
-        throw withDetail(
-          `${e.message}: ${tabMenuProblems(items ?? [], expectedTabMenu('site-among-others')).join('; ')}`,
-          {
-            rows: (items ?? []).map((i) => ({
-              label: i.label,
-              enabled: i.enabled,
-              accelerator: i.accelerator
-            }))
-          }
-        )
-      })
+      const rows = await tabMenuAs(expectedTabMenu('site-among-others'), 'on the site page')
       return { rows }
+    })
+
+    await s.step('tab-menu-orientation', async () => {
+      // The strip turned horizontal (Settings › Appearance's layout, written as the page writes
+      // it): the two direction rows read to the Right, the rest as before; turned back, Below
+      // again. Chrome's rule for its Tab menu (`app_controller_mac.mm`) and its tab context menu.
+      const before = (await s.appState())?.settings?.toolbarLayout ?? 'single'
+      await invoke('settings.update', { toolbarLayout: 'horizontal' })
+      const horizontal = await tabMenuAs(
+        expectedTabMenu('site-among-others', 'horizontal'),
+        'beside the horizontal strip'
+      )
+      await invoke('settings.update', { toolbarLayout: before })
+      const vertical = await tabMenuAs(
+        expectedTabMenu('site-among-others', 'vertical'),
+        `beside the ${before} layout's strip again`
+      )
+      return { layoutBefore: before, horizontal, vertical }
     })
 
     await s.step('tab-menu-toggles', async () => {
@@ -418,16 +500,9 @@ export async function scenarioMenuBar(h) {
     })
 
     await s.step('help-menu', async () => {
-      const bar = await read()
-      const items = menuOf(bar, 'Help')
-      const rows = (items ?? []).map((i) => ({
-        label: i.type === 'separator' ? '-' : i.label,
-        enabled: i.enabled,
-        accelerator: i.accelerator
-      }))
-      const problems = helpMenuProblems(items)
-      if (problems.length) throw withDetail(problems.join('; '), { rows })
-      return { role: bar.menus.find((m) => m.label === 'Help')?.role ?? null, rows }
+      // The site page is in front: Report an Unsafe Site… has an http(s) URL to report and is
+      // enabled; the rows, the role and the one chord as on the new tab page.
+      return readHelp({ reportable: true })
     })
 
     /** The front tab of the active space, as the core's state has it. */

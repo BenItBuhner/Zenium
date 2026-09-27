@@ -453,7 +453,8 @@ export class ElectronWindow implements WindowHost {
    * to Chromium or come back (W6-F6, `ElectronTabView.applyWindowVisible`) so its page's
    * `document.visibilityState` follows the window as a Chrome tab's does. Concealed is the window
    * minimised or not visible; a window merely blurred while on screen is not. Idempotent – the
-   * view ignores a state it already holds.
+   * view ignores a state it already holds, and the core window is told the same state once
+   * (`ZenWindow.onWindowVisibleChanged`: what waits for the window's return hears it there).
    */
   private refreshTabViewConcealment(): void {
     if (!this.alive) return
@@ -461,6 +462,7 @@ export class ElectronWindow implements WindowHost {
     for (const view of this.browser.tabs.viewsOwnedBy(this.zen).values()) {
       if (hasWindowVisibility(view)) view.applyWindowVisible(visible)
     }
+    this.zen.onWindowVisibleChanged(visible)
   }
 
   /** Whether a mouse button is down on the chrome page (`ElectronTabView.park`'s pointer moves wait). */
@@ -485,11 +487,15 @@ export class ElectronWindow implements WindowHost {
     if (this.alive) this.win.webContents.openDevTools({ mode: 'detach' })
   }
 
-  /** The `data-zen-menu` element under a chrome point, read from the chrome document itself. */
+  /**
+   * The `data-zen-menu` element under a chrome point, read from the chrome document itself –
+   * with its tab (`data-zen-menu-tab`) and, for a toolbar control's button, the control
+   * (`data-zen-menu-control`).
+   */
   async menuTargetAt(
     x: number,
     y: number
-  ): Promise<{ target: string; tabId: string | null } | null> {
+  ): Promise<{ target: string; tabId: string | null; control: string | null } | null> {
     if (!this.alive) return null
     const result: unknown = await this.win.webContents
       .executeJavaScript(
@@ -497,15 +503,23 @@ export class ElectronWindow implements WindowHost {
           const hit = document.elementFromPoint(${Math.round(x)}, ${Math.round(y)});
           const el = hit && hit.closest('[data-zen-menu]');
           if (!el) return null;
-          return { target: el.getAttribute('data-zen-menu'), tabId: el.getAttribute('data-zen-menu-tab') || null };
+          return {
+            target: el.getAttribute('data-zen-menu'),
+            tabId: el.getAttribute('data-zen-menu-tab') || null,
+            control: el.getAttribute('data-zen-menu-control') || null
+          };
         })()`,
         true
       )
       .catch(() => null)
     if (!result || typeof result !== 'object') return null
-    const hit = result as { target?: unknown; tabId?: unknown }
+    const hit = result as { target?: unknown; tabId?: unknown; control?: unknown }
     if (typeof hit.target !== 'string') return null
-    return { target: hit.target, tabId: typeof hit.tabId === 'string' ? hit.tabId : null }
+    return {
+      target: hit.target,
+      tabId: typeof hit.tabId === 'string' ? hit.tabId : null,
+      control: typeof hit.control === 'string' ? hit.control : null
+    }
   }
 
   /**

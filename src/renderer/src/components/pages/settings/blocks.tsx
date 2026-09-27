@@ -553,6 +553,9 @@ export function NewContainerForm({
  * One §9.14 radio option: a 20 px circle, the label to its right, the whole row the target. A
  * `leading` glyph (an engine's favicon) sits between the circle and the label. `font` – a CSS
  * `font-family` value – draws the label in that face (a font picker's row is its own sample).
+ * `tabIndex` is the group's roving stop where a group walks its options with the arrow keys
+ * (the desktop's radio-form value row, `rows.tsx`); `disabled` is a dependent row's option
+ * while its switch is off (§10.4: laid out, not pressable).
  */
 export function RadioOption({
   label,
@@ -560,6 +563,8 @@ export function RadioOption({
   leading,
   font,
   checked,
+  tabIndex,
+  disabled,
   onSelect
 }: {
   label: string
@@ -567,6 +572,8 @@ export function RadioOption({
   leading?: ReactNode
   font?: string
   checked: boolean
+  tabIndex?: number
+  disabled?: boolean
   onSelect: () => void
 }): JSX.Element {
   return (
@@ -574,6 +581,8 @@ export function RadioOption({
       type="button"
       role="radio"
       aria-checked={checked}
+      tabIndex={tabIndex}
+      disabled={disabled}
       className={cn(
         'zen-settings-row zen-settings-radio-row zen-v2-row',
         font && 'zen-settings-font-option'

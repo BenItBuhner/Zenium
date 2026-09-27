@@ -17,8 +17,10 @@ import type {
 import type { Browser } from '@core/browser'
 import { fileSources } from '@core/import/sources'
 import { READER_URL_PREFIX } from '@core/reader'
+import { emptyUpdateDotRecord, markUpdateMenuOpened } from '@core/updateDot'
 import type { ClearOnExitType, SiteDataList } from '@shared/siteData'
 import { isCertificateError } from '@shared/siteInfo'
+import type { UpdateStatus } from '@shared/updates'
 import { cmd, run } from '@renderer/lib/api'
 import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
 import { dismissOverview, openOverview, overviewIsOpen } from '@renderer/lib/gestures/stage'
@@ -92,6 +94,7 @@ import {
 } from '@shared/blocking'
 import { syncSetupStore } from '@renderer/lib/syncSetup'
 import { cancelVoiceSearch, startVoiceSearch } from '@renderer/lib/voiceSearch'
+import { dismissQrCode, downloadQrCode, showQrCode } from '@renderer/lib/qrCode'
 import { cancelQrScan, startQrScan } from '@renderer/lib/qrScan'
 import type { HostGlobal } from './boot'
 import {
@@ -144,7 +147,7 @@ import {
   type PreviewWebAppSurface
 } from './previewSpec'
 import { holdPreviewScreenshots, resetPreviewScreenshots } from './previewScreenshots'
-import { previewShareRequest } from './previewShare'
+import { PREVIEW_QR_LINK, previewQrCode, previewShareRequest } from './previewShare'
 import { hideUnresponsivePrompt, showUnresponsivePrompt } from './previewUnresponsive'
 import { EMPTY_MEDIA_REPORT, type MediaReport } from '@shared/mediaSession'
 
@@ -174,6 +177,19 @@ const SETTLE_TIMEOUT_MS = 4000
 const VOICE_EVENT_MARGIN_MS = 250
 /** Past a QR script's last event: the still's image decoding into the window, the torch's fill. */
 const QR_EVENT_MARGIN_MS = 250
+/** `qrcode=too-long`: a link this many characters past Chrome's 2331 (the query alone is over the limit). */
+const QR_TOO_LONG_LENGTH = 2331
+/** `qrcode=saved`: the sheet's rise before Download is taken, then the toast's own entrance before the still. */
+const QR_SHEET_RISE_MS = 600
+const QR_TOAST_SETTLE_MS = 700
+/**
+ * `qrcode=panel`: the panel's rise before its chip is pressed; the beat the host's encode takes
+ * (past the busy sign's due time, so the chip's spinner shows); the hand-off's fade and the
+ * sheet's re-detent before the still.
+ */
+const QR_PANEL_RISE_MS = 600
+const QR_HAND_OFF_ENCODE_MS = 300
+const QR_HAND_OFF_SETTLE_MS = 700
 
 /**
  * Chrome states selectable from outside the preview host (`npm run dev:android`), so screenshots
@@ -229,7 +245,8 @@ const QR_EVENT_MARGIN_MS = 250
  * playing that script into the listening sheet: `listening`, `listening-rest`, `partial`,
  * `no-match`, `denied`, …; see `previewVoiceScript`), `qr=<script>` (QR scanning started, the
  * stand-in camera playing that script into the scan sheet: `scanning`, `torch`, `text`,
- * `denied`, …; see `previewQrScript`), `overview` (the tab overview open over the active
+ * `denied`, …; see `previewQrScript`), `qrcode=<variant>` (the QR code sheet up for the
+ * preview's link: `link`, `too-long`, or `saved` – Download taken, the toast up), `overview` (the tab overview open over the active
  * page, its cards with whatever pictures the stand-in host has of the tabs; `then=` presses
  * its header and cards once it is up: `tap:More;tap:Select Tabs` enters the select-tabs mode,
  * `tap:<card's label>` picks a card in it, `press:<card title>` opens a card's hold sheet,
@@ -240,7 +257,11 @@ const QR_EVENT_MARGIN_MS = 250
  * presses its controls: `tap:Show`, `tap:Edit`, `tap:Refine`). `rules=<n>` on any spec seeds n
  * remembered site permissions for Settings › Security; `blocking=<variant>` may accompany any
  * spec too (see `seedBlocking`; `&blocked=<n>` sets the count blocked on the page), as may
- * `sync=<variant>` for Settings › Sync (see `seedSync`), `translate=<status>` (the active page
+ * `sync=<variant>` for Settings › Sync (see `seedSync`), `updates=<phase>` (the updater with a
+ * release `available`, `downloading` or `ready` – downloaded and waiting, the phase the menu
+ * button's dot and the app menu's Update Zenium row key on, TB-12 – or `ready-seen`, the menu
+ * already opened for that version: the dot cleared, the row kept; see `seedUpdates`),
+ * `translate=<status>` (the active page
  * `offered` for translation, `translated`, `translating` or `error`, or `idle` for none; the bar
  * stays down unless `&bar`; see `seedTranslate`), `readerTranslate=<status>` (Reader View's
  * article and the engine there, CT-36: `ready` for nothing asked yet, `detecting`,
@@ -292,6 +313,7 @@ function apply(browser: Browser, spec: string): void {
     unseedExtensions()
     unseedControls()
     unseedSync()
+    unseedUpdates(browser)
     unseedImport()
     unseedTranslate()
     unseedReaderTranslate()
@@ -319,12 +341,16 @@ function apply(browser: Browser, spec: string): void {
       sendTabSheet: null,
       barEditorOpen: false,
       bookmarkAllTabs: null,
-      // A share panel a `share=` state put up goes with it (its stand-in host holds nothing).
-      sharePanel: null
+      // A share panel a `share=` state put up goes with it (its stand-in host holds nothing), and
+      // a hand-off to the code sheet still under way (`qrcode=panel`) with the panel.
+      sharePanel: null,
+      qrCodeSeam: null
     })
     abortPull()
     cancelVoiceSearch()
     cancelQrScan()
+    // The QR code sheet a `qrcode=` state put up goes with the page it rose over.
+    dismissQrCode()
     resetBarHide()
     // A flash a `screenshot=` state held, and the long-screenshot editor it opened, go too.
     resetPreviewScreenshots()
@@ -1072,6 +1098,7 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   const extensions = params.get('extensions')
   const controls = parsePreviewControls(params.get('controls'))
   const sync = params.get('sync')
+  const updates = parsePreviewUpdates(params.get('updates'))
   const lastImport = params.get('import')
   const translate = params.get('translate')
   const readerTranslate = params.get('readerTranslate')
@@ -1082,6 +1109,7 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     if (extensions) seedExtensions(extensions)
     if (controls) seedControls(controls)
     if (sync) seedSync(sync, browser)
+    if (updates) seedUpdates(updates, browser)
     if (lastImport) seedImport(lastImport)
     if (translate) seedTranslate(translate, params.has('bar'))
     if (readerTranslate) seedReaderTranslate(readerTranslate, params.has('original'))
@@ -1203,7 +1231,9 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     if (target.article && tab) markArticle(browser, tab.id)
     // A seeded sync stands in the core before the menu is built (its Send to your devices item
     // reads the engine's status), the rest of the seed once the sheet is up, as for every menu.
+    // A seeded updater the same: the Update Zenium row reads the updater's phase (TB-12).
     if (sync) seedSync(sync, browser)
+    if (updates) seedUpdates(updates, browser)
     // The core answers with `menu.show`; the state is reached once the descriptor is in the store.
     const unsubscribe = uiStore.subscribe(() => {
       if (!uiStore.get().menu) return
@@ -1442,6 +1472,70 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
       whenStore(() => uiStore.get().qrScan !== null, spec, played + QR_EVENT_MARGIN_MS)
     } else {
       whenStore(() => uiStore.get().toasts.length > 0, spec)
+    }
+  } else if (target.kind === 'qrcode' && target.variant === 'panel' && state) {
+    // The chip's hand-off (§9.38, `beginQrCodeSeam`): the share panel up for the active tab on
+    // its own chassis, its QR code chip pressed once the sheet has risen – the panel stands, the
+    // chip busy – and the host's `qr.code` answered a beat later, as the Kotlin host's encode
+    // takes, so the code takes the panel's place on the same sheet. The state is reached once the
+    // code is hosted and the seam has faded; a panel without the chip is the state it got.
+    const now = browserStore.get().state ?? state
+    const request = previewShareRequest('link', activeTab(now) ?? null, false)
+    void openSharePanel(request)
+    const pressChip = (): void => {
+      window.setTimeout(() => {
+        const chip = document.querySelector<HTMLElement>('.zen-share-panel [data-kind="qr"]')
+        if (!chip) {
+          done(spec)
+          return
+        }
+        chip.click()
+        window.setTimeout(() => {
+          void showQrCode(previewQrCode(request.url ?? PREVIEW_QR_LINK, request.tabId))
+          whenStore(
+            () => uiStore.get().qrCodeSeam?.phase === 'hosting',
+            spec,
+            QR_HAND_OFF_SETTLE_MS
+          )
+        }, QR_HAND_OFF_ENCODE_MS)
+      }, QR_PANEL_RISE_MS)
+    }
+    if (uiStore.get().sharePanel?.id === request.id) pressChip()
+    else {
+      const unsubscribe = uiStore.subscribe(() => {
+        if (uiStore.get().sharePanel?.id !== request.id) return
+        unsubscribe()
+        pressChip()
+      })
+    }
+  } else if (target.kind === 'qrcode') {
+    // The share sheet's "QR code" as the host answers it (`qr.code`): the code sheet goes up with
+    // the preview's link, or with the too-long error for a link past Chrome's limit. `saved` then
+    // takes Download – the sheet leaves and the stand-in host's "Saved to Downloads" toast comes
+    // a beat later, as the Kotlin host's would after the write – so a still catches the toast.
+    const url =
+      target.variant === 'too-long'
+        ? `${PREVIEW_QR_LINK}?ref=${'x'.repeat(QR_TOO_LONG_LENGTH)}`
+        : PREVIEW_QR_LINK
+    void showQrCode(previewQrCode(url, tab?.id ?? null))
+    if (target.variant === 'saved') {
+      // Once the sheet is up (and has risen), Download: the sheet leaves and the toast follows.
+      const press = (): void => {
+        window.setTimeout(() => {
+          downloadQrCode()
+          whenStore(() => uiStore.get().toasts.length > 0, spec, QR_TOAST_SETTLE_MS)
+        }, QR_SHEET_RISE_MS)
+      }
+      if (uiStore.get().qrCode !== null) press()
+      else {
+        const unsubscribe = uiStore.subscribe(() => {
+          if (uiStore.get().qrCode === null) return
+          unsubscribe()
+          press()
+        })
+      }
+    } else {
+      whenStore(() => uiStore.get().qrCode !== null, spec, QR_EVENT_MARGIN_MS)
     }
   } else if (target.kind === 'popups' && tab) {
     seedPopups(browser, tab, target)
@@ -2060,6 +2154,103 @@ function unseedSync(): void {
   syncSeed?.()
   syncSeed = null
   syncSetupStore.set({ folder: null })
+}
+
+/** The updater's phases a preview can stand in (`updates=<phase>`); anything else is no seed. */
+const PREVIEW_UPDATE_PHASES = ['available', 'downloading', 'ready'] as const
+type PreviewUpdatePhase = (typeof PREVIEW_UPDATE_PHASES)[number]
+/**
+ * The seed: a phase, and whether the app menu has already been opened for the waiting version
+ * (`ready-seen` – the menu button's dot cleared, the row still there, TB-12).
+ */
+type PreviewUpdates = { phase: PreviewUpdatePhase; seen: boolean }
+
+function parsePreviewUpdates(value: string | null): PreviewUpdates | null {
+  if (value === 'ready-seen') return { phase: 'ready', seen: true }
+  return (PREVIEW_UPDATE_PHASES as readonly string[]).includes(value ?? '')
+    ? { phase: value as PreviewUpdatePhase, seen: false }
+    : null
+}
+
+/**
+ * The updater's status as the `updates=<phase>` seed has it: a release one major up from the
+ * running build – found (`available`), two fifths downloaded (`downloading`), or downloaded and
+ * waiting (`ready`, the phase the Update Zenium row and the menu button's dot key on, TB-12) –
+ * over the status the core holds, so the channel, the target and the mode stay the host's.
+ */
+export function updatesFixture(status: UpdateStatus, phase: PreviewUpdatePhase): UpdateStatus {
+  const major = Number.parseInt(status.currentVersion, 10)
+  const version = `${Number.isFinite(major) ? major + 1 : 2}.0.0`
+  const tag = `v${version}`
+  const releaseUrl = `https://github.com/BenItBuhner/Zenium/releases/tag/${tag}`
+  return {
+    ...status,
+    phase,
+    release: {
+      version,
+      tag,
+      prerelease: false,
+      publishedAt: '2026-09-24T09:00:00Z',
+      releaseUrl,
+      notesUrl: releaseUrl,
+      asset: null
+    },
+    progress:
+      phase === 'downloading'
+        ? { percent: 40, transferred: 38_400_000, total: 96_000_000, bytesPerSecond: 2_400_000 }
+        : null,
+    downloadedPath:
+      phase === 'ready'
+        ? `/data/user/0/app.zen.chromium/cache/updates/zenium-${version}.apk`
+        : null,
+    error: null
+  }
+}
+
+let updatesSeed: (() => void) | null = null
+
+/**
+ * While the `updates=<phase>` seed stands the core's updater stands in with the fixture's status
+ * (`updatesFixture`): the menus read it for the Update Zenium row, the state pushed to the chrome
+ * carries it for the menu button's dot and Settings › Updates, and `install` – the row's pick –
+ * says so in a toast and does nothing else, the stand-in host having no APK to hand the system.
+ * Every other call goes to the real updater. The status is pushed once on the seed, so a chrome
+ * already drawn picks the phase up. The dot's per-version record (`BrowserState.updateDot`) is
+ * set with the seed too – nothing seen, or the fixture's version seen for `ready-seen` – so a
+ * preview profile that opened the menu in an earlier shot does not carry its record into this
+ * one.
+ */
+function seedUpdates({ phase, seen }: PreviewUpdates, browser: Browser): void {
+  unseedUpdates(browser)
+  const real = browser.updates
+  browser.state.updateDot = seen
+    ? markUpdateMenuOpened(updatesFixture(real.status(), phase), emptyUpdateDotRecord())
+    : emptyUpdateDotRecord()
+  const standIn = new Proxy(real, {
+    get: (target, key) => {
+      if (key === 'status') return (): UpdateStatus => updatesFixture(real.status(), phase)
+      if (key === 'install')
+        return async (): Promise<void> => {
+          pushToast(
+            `Zenium ${updatesFixture(real.status(), phase).release?.version} would install now`
+          )
+        }
+      return Reflect.get(target, key)
+    }
+  })
+  Object.defineProperty(browser, 'updates', { value: standIn, configurable: true, writable: true })
+  updatesSeed = () => {
+    Object.defineProperty(browser, 'updates', { value: real, configurable: true, writable: true })
+  }
+  browser.state.commitVolatile()
+}
+
+/** Put the real updater back; its status is pushed again so the chrome drops the seeded phase. */
+function unseedUpdates(browser: Browser): void {
+  if (!updatesSeed) return
+  updatesSeed()
+  updatesSeed = null
+  browser.state.commitVolatile()
 }
 
 /**
