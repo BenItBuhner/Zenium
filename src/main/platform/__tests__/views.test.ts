@@ -2137,11 +2137,29 @@ describe('a hidden page an agent drives and the stage', () => {
     expect(stage.contentSize).toEqual([1200, 900])
     expect(stages).toHaveLength(1)
     expect(stage.children).toEqual([view.view])
-    // The same word with nothing moved changes nothing; a narrower window shrinks the view, not the stage.
+    // The same word with nothing moved changes nothing – no call into the engine's view or the
+    // stage either; a narrower window shrinks the view, not the stage.
+    const engineView = view.view as unknown as { setBounds(rect: unknown): void }
+    const setBounds = engineView.setBounds.bind(engineView)
+    let boundsCalls = 0
+    engineView.setBounds = (rect: unknown): void => {
+      boundsCalls++
+      setBounds(rect)
+    }
+    const stageWin = stage as unknown as { setContentSize(width: number, height: number): void }
+    const setContentSize = stageWin.setContentSize.bind(stageWin)
+    let sizeCalls = 0
+    stageWin.setContentSize = (width: number, height: number): void => {
+      sizeCalls++
+      setContentSize(width, height)
+    }
     view.setAgentDriven(true)
+    expect(boundsCalls).toBe(0)
+    expect(sizeCalls).toBe(0)
     expect(engine(view).bounds).toEqual({ x: 0, y: 0, width: 1200, height: 900 })
     window.contentRect = { x: 200, y: 60, width: 900, height: 700 }
     view.setAgentDriven(true)
+    expect(boundsCalls).toBe(1)
     expect(engine(view).bounds).toEqual({ x: 0, y: 0, width: 900, height: 700 })
     expect(stage.contentSize).toEqual([1200, 900])
   })
@@ -2193,6 +2211,118 @@ describe('a hidden page an agent drives and the stage', () => {
     view.setVisible(false)
     expect(stages).toHaveLength(1)
     expect(engine(view).visible).toBe(false)
+  })
+
+  /**
+   * The words a view's hide gives the engine, in order: the page's `setBackgroundThrottling`
+   * (`throttling on` / `off`) and the engine view's `setVisible` (`shown` / `hidden`).
+   */
+  const engineLog = (view: ElectronTabView): string[] => {
+    const log: string[] = []
+    const wc = (view as unknown as { webContents: Electron.WebContents }).webContents
+    Object.assign(wc, {
+      setBackgroundThrottling: (allowed: boolean) => {
+        log.push(`throttling ${allowed ? 'on' : 'off'}`)
+      }
+    })
+    const engineView = view.view as unknown as { setVisible(visible: boolean): void }
+    const setVisible = engineView.setVisible.bind(engineView)
+    engineView.setVisible = (visible: boolean): void => {
+      log.push(visible ? 'shown' : 'hidden')
+      setVisible(visible)
+    }
+    return log
+  }
+
+  it('hides a page whose throttling is off with the throttling on for the hide and off again after it, onto the stage or hidden in the window, and a page whose throttling is on plainly', () => {
+    const { create } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setVisible(true)
+    const log = engineLog(view)
+    // The session prepared the tab while the user looked at it: throttling off, not driven hidden.
+    view.setBackgroundThrottling(false)
+    view.setAgentDriven(false)
+    expect(log).toEqual(['throttling off'])
+    log.length = 0
+    // The user switches tabs: the hide within the throttling, the view hidden in the window.
+    view.setVisible(false)
+    expect(log).toEqual(['throttling on', 'hidden', 'throttling off'])
+    expect(stages).toHaveLength(0)
+    expect(engine(view).visible).toBe(false)
+    log.length = 0
+    // The session's next prepare stages it, with no word on the throttling.
+    view.setAgentDriven(true)
+    expect(staged()!.children).toEqual([view.view])
+    expect(log).toEqual(['shown'])
+    log.length = 0
+    // Back in front and away again, driven now: onto the stage within the throttling.
+    view.setVisible(true)
+    expect(log).toEqual(['hidden', 'shown'])
+    log.length = 0
+    view.setVisible(false)
+    expect(log).toEqual(['throttling on', 'hidden', 'shown', 'throttling off'])
+    expect(staged()!.children).toEqual([view.view])
+    expect(stages).toHaveLength(2)
+    // The session let go (throttling on again): the plain hide, as a page no agent holds.
+    view.setVisible(true)
+    view.setBackgroundThrottling(true)
+    view.setAgentDriven(false)
+    log.length = 0
+    view.setVisible(false)
+    expect(log).toEqual(['hidden'])
+    expect(view.isVisible()).toBe(false)
+    expect(stages).toHaveLength(2)
+  })
+
+  it('hides a page switched away from under a chrome cover the same way once the cover lifts: parked plainly first, then the hide within the throttling, onto the stage when driven', () => {
+    const { window, create } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setVisible(true)
+    const log = engineLog(view)
+    view.setBackgroundThrottling(false)
+    log.length = 0
+    // Switched away from under the omnibox dropdown: parked, the page kept visible, no word on
+    // the throttling.
+    window.zen.contentHidden = true
+    view.setVisible(false)
+    expect(view.parkedCorner()).toBe(0)
+    expect(log).toEqual([])
+    // The cover lifts without the layout showing it: the hide, within the throttling.
+    window.zen.contentHidden = false
+    view.coverLifted()
+    expect(view.parkedCorner()).toBeNull()
+    expect(log).toEqual(['throttling on', 'hidden', 'throttling off'])
+    expect(stages).toHaveLength(0)
+    // The same with the agent driving: onto the stage within the throttling.
+    view.setVisible(true)
+    view.setAgentDriven(true)
+    window.zen.contentHidden = true
+    view.setVisible(false)
+    log.length = 0
+    window.zen.contentHidden = false
+    view.coverLifted()
+    expect(log).toEqual(['throttling on', 'hidden', 'shown', 'throttling off'])
+    expect(staged()!.children).toEqual([view.view])
+  })
+
+  it('gives a held page its throttling back off even when the hide throws', () => {
+    const { create } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setVisible(true)
+    const log = engineLog(view)
+    view.setBackgroundThrottling(false)
+    log.length = 0
+    const engineView = view.view as unknown as { setVisible(visible: boolean): void }
+    const setVisible = engineView.setVisible.bind(engineView)
+    engineView.setVisible = (visible: boolean): void => {
+      setVisible(visible)
+      if (!visible) throw new Error('the engine balked')
+    }
+    expect(() => view.setVisible(false)).toThrow('the engine balked')
+    expect(log).toEqual(['throttling on', 'hidden', 'throttling off'])
   })
 
   it('leaves a page parked under a chrome cover where it is, and stages it once the cover lifts without the layout showing it', () => {
@@ -2389,6 +2519,7 @@ describe('a hidden page an agent drives and the stage', () => {
     ({
       isEmpty: () => false,
       getSize: () => ({ width: w, height: h }),
+      getScaleFactors: () => [1],
       crop: (r: { width: number; height: number }) => frame(r.width, r.height),
       toPNG: () => Buffer.from(`png-${w}x${h}`),
       toJPEG: (q: number) => Buffer.from(`jpeg-${w}x${h}-${q}`)
@@ -2441,6 +2572,85 @@ describe('a hidden page an agent drives and the stage', () => {
     expect(fakes.log).toEqual(['begin', 'end', 'begin', 'end'])
   })
 
+  it('gives every capture the page’s turn, staged or not: one begun in front, still in flight when the page goes onto the stage, holds the frame subscription of the next until it answers', async () => {
+    const { create } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setVisible(true)
+    const fakes = frameFakes(view)
+    let answer: (image: Electron.NativeImage) => void = () => undefined
+    fakes.capturePage.mockImplementation(
+      () =>
+        new Promise<Electron.NativeImage>((resolve) => {
+          answer = resolve
+        })
+    )
+    const first = view.capture({ mode: 'viewport', format: 'jpeg' })
+    await settled()
+    expect(fakes.capturePage).toHaveBeenCalledTimes(1)
+    // The user switches tabs while the copy is in flight: the page goes onto the stage, and the
+    // next capture is a frame's – begun only once the first has answered.
+    view.setAgentDriven(true)
+    view.setVisible(false)
+    expect(staged()!.children).toEqual([view.view])
+    const second = view.capture({ mode: 'viewport', format: 'jpeg' })
+    await settled()
+    expect(fakes.log).toEqual([])
+    answer(frame(1000, 740))
+    expect(await first).toMatchObject({ width: 1000, height: 740 })
+    await settled()
+    expect(fakes.log).toEqual(['begin'])
+    fakes.frames[0]!(frame(1000, 740))
+    expect(await second).toMatchObject({ width: 1000, height: 740 })
+    expect(fakes.log).toEqual(['begin', 'end'])
+    expect(fakes.capturePage).toHaveBeenCalledTimes(1)
+  })
+
+  it('holds the turn for 10 s at the most: a copy that never answers lets the next capture begin after that, and the one after it takes its own full turn', async () => {
+    vi.useFakeTimers()
+    try {
+      const { create } = setup()
+      const view = create()
+      view.setBounds(box)
+      view.setVisible(true)
+      const fakes = frameFakes(view)
+      fakes.capturePage.mockImplementation(() => new Promise<Electron.NativeImage>(() => undefined))
+      let stuckAnswered = false
+      const stuck = view.capture({ mode: 'viewport', format: 'jpeg' })
+      void stuck.then(() => (stuckAnswered = true))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fakes.capturePage).toHaveBeenCalledTimes(1)
+      // The page goes onto the stage under the copy, which never answers; the next capture, a
+      // frame's, waits the turn out and no longer.
+      view.setAgentDriven(true)
+      view.setVisible(false)
+      const next = view.capture({ mode: 'viewport', format: 'jpeg' })
+      await vi.advanceTimersByTimeAsync(9999)
+      expect(fakes.log).toEqual([])
+      await vi.advanceTimersByTimeAsync(1)
+      expect(fakes.log).toEqual(['begin'])
+      fakes.frames[0]!(frame(1000, 740))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(await next).toMatchObject({ width: 1000, height: 740 })
+      expect(fakes.log).toEqual(['begin', 'end'])
+      // The turn's clock runs from when a capture's work begins, not from when it queued: the
+      // one after has its own frame budget entire, and the stuck copy is left to itself.
+      const third = view.capture({ mode: 'viewport', format: 'jpeg' })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fakes.log).toEqual(['begin', 'end', 'begin'])
+      await vi.advanceTimersByTimeAsync(2799)
+      expect(fakes.log).toEqual(['begin', 'end', 'begin'])
+      fakes.frames[1]!(frame(1000, 740))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(await third).toMatchObject({ width: 1000, height: 740 })
+      expect(fakes.log).toEqual(['begin', 'end', 'begin', 'end'])
+      expect(stuckAnswered).toBe(false)
+      expect(fakes.capturePage).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('shows a staged renderer as painting before asking for its frame, with the throttling as it stands, once more when it paints nothing, and answers null when it still paints nothing', async () => {
     vi.useFakeTimers()
     try {
@@ -2469,6 +2679,62 @@ describe('a hidden page an agent drives and the stage', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('shows a staged renderer as painting with the throttling as it stands – `true` for a page no session holds – not a `false` of its own', async () => {
+    vi.useFakeTimers()
+    try {
+      const { create } = setup()
+      const view = create()
+      const fakes = frameFakes(view)
+      view.setAgentDriven(true)
+      const pending = view.capture({ mode: 'viewport', format: 'jpeg' })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fakes.throttling).toEqual([true])
+      await vi.advanceTimersByTimeAsync(800)
+      expect(fakes.throttling).toEqual([true, true])
+      fakes.frames[0]!(frame(1032, 732))
+      await vi.runAllTimersAsync()
+      expect(await pending).toMatchObject({ width: 1032, height: 732 })
+      expect(fakes.throttling).toEqual([true, true])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('pictures a staged page’s stand-in (snapshot: the screenshot tool’s fallback, the hover card) from a frame of its own on the page’s turn, never capturePage, and off the stage with capturePage as before', async () => {
+    const { create } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setAgentDriven(true)
+    const fakes = frameFakes(view)
+    const pending = view.snapshot()
+    await settled()
+    expect(fakes.log).toEqual(['begin'])
+    fakes.frames[0]!(frame(1000, 740))
+    expect(await pending).toBe(
+      `data:image/jpeg;base64,${Buffer.from('jpeg-1000x740-90').toString('base64')}`
+    )
+    expect(fakes.log).toEqual(['begin', 'end'])
+    expect(fakes.capturePage).not.toHaveBeenCalled()
+    // A stand-in and a capture take turns with each other too.
+    const standin = view.snapshot()
+    const capture = view.capture({ mode: 'viewport', format: 'jpeg' })
+    await settled()
+    expect(fakes.log).toEqual(['begin', 'end', 'begin'])
+    fakes.frames[1]!(frame(1000, 740))
+    expect(await standin).toContain('data:image/jpeg;base64,')
+    await settled()
+    expect(fakes.log).toEqual(['begin', 'end', 'begin', 'end', 'begin'])
+    fakes.frames[2]!(frame(1000, 740))
+    expect(await capture).toMatchObject({ width: 1000, height: 740 })
+    expect(fakes.log).toEqual(['begin', 'end', 'begin', 'end', 'begin', 'end'])
+    // Off the stage the stand-in is capturePage's copy, as before.
+    fakes.capturePage.mockImplementation(() => Promise.resolve(frame(1000, 740)))
+    view.setVisible(true)
+    expect(await view.snapshot()).toContain('data:image/jpeg;base64,')
+    expect(fakes.capturePage).toHaveBeenCalledTimes(1)
+    expect(fakes.log).toEqual(['begin', 'end', 'begin', 'end', 'begin', 'end'])
   })
 
   it('pictures the same page with capturePage once it is off the stage', async () => {
