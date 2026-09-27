@@ -2245,6 +2245,56 @@ describe('a hidden page an agent drives and the stage', () => {
     expect(stages).toHaveLength(2)
   })
 
+  it('hides a page switched away from under a chrome cover the same way once the cover lifts: parked plainly first, then the hide within the throttling, onto the stage when driven', () => {
+    const { window, create } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setVisible(true)
+    const log = engineLog(view)
+    view.setBackgroundThrottling(false)
+    log.length = 0
+    // Switched away from under the omnibox dropdown: parked, the page kept visible, no word on
+    // the throttling.
+    window.zen.contentHidden = true
+    view.setVisible(false)
+    expect(view.parkedCorner()).toBe(0)
+    expect(log).toEqual([])
+    // The cover lifts without the layout showing it: the hide, within the throttling.
+    window.zen.contentHidden = false
+    view.coverLifted()
+    expect(view.parkedCorner()).toBeNull()
+    expect(log).toEqual(['throttling on', 'hidden', 'throttling off'])
+    expect(stages).toHaveLength(0)
+    // The same with the agent driving: onto the stage within the throttling.
+    view.setVisible(true)
+    view.setAgentDriven(true)
+    window.zen.contentHidden = true
+    view.setVisible(false)
+    log.length = 0
+    window.zen.contentHidden = false
+    view.coverLifted()
+    expect(log).toEqual(['throttling on', 'hidden', 'shown', 'throttling off'])
+    expect(staged()!.children).toEqual([view.view])
+  })
+
+  it('gives a held page its throttling back off even when the hide throws', () => {
+    const { create } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setVisible(true)
+    const log = engineLog(view)
+    view.setBackgroundThrottling(false)
+    log.length = 0
+    const engineView = view.view as unknown as { setVisible(visible: boolean): void }
+    const setVisible = engineView.setVisible.bind(engineView)
+    engineView.setVisible = (visible: boolean): void => {
+      setVisible(visible)
+      if (!visible) throw new Error('the engine balked')
+    }
+    expect(() => view.setVisible(false)).toThrow('the engine balked')
+    expect(log).toEqual(['throttling on', 'hidden', 'throttling off'])
+  })
+
   it('leaves a page parked under a chrome cover where it is, and stages it once the cover lifts without the layout showing it', () => {
     const { window, create } = setup()
     const view = create()

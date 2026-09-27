@@ -1651,7 +1651,8 @@ export class ElectronTabView implements TabView {
    *
    * A page whose background throttling is off – an agent session's, the user looking at the
    * tab as the session prepared it (`setBackgroundThrottling(false)`) – is hidden with the
-   * throttling on for the hide and off again after it. Electron's
+   * throttling on for the hide and off again after it (`hide`; the hide a lifted cover leaves
+   * behind, `coverLifted`, is the same hide and takes the same way). Electron's
    * `allow_disabling_blink_scheduler_throttling_per_renderview` patch takes every
    * page-visibility update as `visible` while throttling is off, so a plain hide would leave
    * the page reading `visible` to its scripts (`document.visibilityState`, `visibilitychange`)
@@ -1685,11 +1686,7 @@ export class ElectronTabView implements TabView {
       this.park()
     } else {
       if (this.parked !== null) this.unpark()
-      const held = !this.throttling && !this.wc.isDestroyed()
-      if (held) this.wc.setBackgroundThrottling(true)
-      this.view.setVisible(false)
-      this.enterStage()
-      if (held) this.wc.setBackgroundThrottling(false)
+      this.hide()
     }
     if (flipped) {
       this.refreshHangWatch()
@@ -1698,15 +1695,39 @@ export class ElectronTabView implements TabView {
   }
 
   /**
+   * The engine's view down, then onto the stage if an agent drives the page (`enterStage`): the
+   * hide of a tab switch, a chrome page tab or a move between windows (`setVisible`), and of a
+   * cover lifting off a page switched away from under it (`coverLifted`). A page whose
+   * throttling is off is hidden with the throttling on and given it back off after, whatever
+   * the hide did (a `finally`; the page gone meanwhile is left alone) – see `setVisible` for why.
+   */
+  private hide(): void {
+    const wc = this.wc
+    const held = !this.throttling && !wc.isDestroyed()
+    if (held) wc.setBackgroundThrottling(true)
+    try {
+      this.view.setVisible(false)
+      this.enterStage()
+    } finally {
+      if (held && !wc.isDestroyed()) wc.setBackgroundThrottling(false)
+    }
+  }
+
+  /**
    * The view's window was minimised or hidden (`false`) or restored / shown (`true`), told by
    * the window host on the frame's own events (W6-F6). A concealed window's pages read `hidden`
    * as a Chrome tab's do: the engine's view goes down for real, a view parked under a chrome
    * cover (W6-F5) included – parking keeps a page visible under Zenium's own popup, not under a
-   * minimised or hidden window. The window back, the engine's view returns to where the core's
-   * layout left it: parked at its corner under a cover still up, shown, or hidden as the core's
-   * flag says. The core's flag (`visible`, `isVisible`, the `hid`/`shown` accounting the governor
-   * and snapshot logic read) is not touched, and no visibility flip is announced – the core's
-   * view of which page is in front does not change when its window is put away and brought back.
+   * minimised or hidden window. One page does not: a page whose throttling is off (a session's,
+   * the user looking at it as the window went away) reads `visible` in the concealed window
+   * until its next navigation – Electron's patch rewrites this hide as it does a tab switch's
+   * (`setVisible`), with no regard for what hid the widget; this hide is left plain for now, and
+   * the wrap `hide` puts round a tab switch's would close it. The window back, the engine's view
+   * returns to where the core's layout left it: parked at its corner under a cover still up,
+   * shown, or hidden as the core's flag says. The core's flag (`visible`, `isVisible`, the
+   * `hid`/`shown` accounting the governor and snapshot logic read) is not touched, and no
+   * visibility flip is announced – the core's view of which page is in front does not change
+   * when its window is put away and brought back.
    *
    * Occlusion by another application's window is Chromium's own to track (Windows and macOS
    * natively; none on X11, where Chrome itself does not); nothing is synthesised here for it, and
@@ -1852,13 +1873,13 @@ export class ElectronTabView implements TabView {
   /**
    * The chrome's cover lifted (a layout applied with `contentHidden` off) without the layout
    * showing this view: it was switched away from under the cover, and is hidden now the way a
-   * tab switch hides a page. Nothing for a view that is not parked.
+   * tab switch hides a page (`hide`: onto the stage if an agent drives it, with the throttling
+   * on for the hide if a session holds it). Nothing for a view that is not parked.
    */
   coverLifted(): void {
     if (this.parked === null) return
     this.unpark()
-    this.view.setVisible(false)
-    this.enterStage()
+    this.hide()
   }
 
   isVisible(): boolean {
