@@ -1,6 +1,12 @@
 import { JsonStore } from './store/JsonStore'
 import type { PermissionPromptHost, StoreIO } from './platform'
-import type { DeviceGrant, DeviceKind, PermissionPrompt, PermissionRule } from '../shared/types'
+import type {
+  DeviceGrant,
+  DeviceKind,
+  PermissionPrompt,
+  PermissionRule,
+  RevokedSitePermissions
+} from '../shared/types'
 import {
   FILE_SITE,
   MEDIA_ROWS,
@@ -9,6 +15,7 @@ import {
   contentSettingId,
   isDeviceKind,
   promptLabelFor,
+  tracksLastVisit,
   type ContentDecision,
   type ContentDefault
 } from '../shared/contentSettings'
@@ -17,6 +24,12 @@ import { isSameSite } from '../shared/url'
 
 export type PermissionDecision = PermissionRule['decision']
 type Decision = PermissionDecision
+
+/**
+ * What the unused-sites sweep knows of one `allow` (PS-41; Chrome's `RuleMetaData`): the coarse
+ * last-visit stamp, and whether the user allowed the site again after a revocation.
+ */
+type RuleMeta = Pick<PermissionRule, 'lastVisitedAt' | 'keepGranted'>
 
 interface Persisted {
   version: 1
@@ -29,6 +42,44 @@ interface Persisted {
    * files from before it.
    */
   noticed?: string[]
+  /**
+   * The unused-sites clock of the `allow` decisions the sweep can reach (PS-41), by decision key,
+   * beside `decisions` so the file's shape stays v1: a file from before it, or without any, loads
+   * as it did, and its rules carry no stamp until a visit stamps them.
+   */
+  meta?: Record<string, RuleMeta>
+  /** Permissions the sweep took, one record per site, kept 30 days (PS-41). Absent when none. */
+  revokedUnused?: RevokedSitePermissions[]
+}
+
+const DAY_MS = 24 * 3_600_000
+
+/**
+ * Safety check and the sweep: a granted permission on a site not visited for this long is unused
+ * (Chrome's `kUnusedSitePermissionsRevocationThreshold`, 60 days).
+ */
+export const UNUSED_PERMISSION_MS = 60 * DAY_MS
+
+/** How long a revoked-permissions record is kept for review (Chrome's clean-up threshold, 30 days). */
+export const REVOKED_PERMISSIONS_KEPT_MS = 30 * DAY_MS
+
+/**
+ * The visit stamp's precision (Chrome's `GetCoarseVisitedTimePrecision`, 7 days): a stamp names
+ * the week of the visit, never the moment, so `permissions.json` keeps no visit log.
+ */
+export const VISIT_STAMP_PRECISION_MS = 7 * DAY_MS
+
+/** `now` floored to the week (`VISIT_STAMP_PRECISION_MS` since the epoch): the stamp a visit leaves. */
+export function coarseVisitTime(now: number): number {
+  return Math.floor(now / VISIT_STAMP_PRECISION_MS) * VISIT_STAMP_PRECISION_MS
+}
+
+/** What one run of the unused-sites sweep did. */
+export interface UnusedPermissionsSweepResult {
+  /** The records the sweep made or grew this run, by site. */
+  revoked: RevokedSitePermissions[]
+  /** Records past their `expiresAt` that went. */
+  expired: number
 }
 
 /** What the host knows of a device when it asks whether a site is connected to it, or connects it. */
@@ -203,6 +254,18 @@ export class PermissionService {
    * kept with the answers, device-local as they are, gone with the site's reset as they are.
    */
   private notices: string[] = []
+  /**
+   * The unused-sites clock (PS-41), by decision key, of the `allow` decisions the sweep can reach
+   * (`tracksLastVisit`): stamped when the user allows, refreshed by every page visit to the site.
+   */
+  private meta: Record<string, RuleMeta> = {}
+  /** Permissions the sweep took, one record per site, in the order they were made. */
+  private revoked: RevokedSitePermissions[] = []
+  /**
+   * The records an "Allow again" removed this session, by site, so its Undo can put each back
+   * with its old times (Chrome's undo carries the row's data; ours remembers it). In memory only.
+   */
+  private readonly regranted = new Map<string, RevokedSitePermissions>()
   private override: PermissionOverride | null = null
 
   constructor(
@@ -219,6 +282,10 @@ export class PermissionService {
       this.notices = data.noticed
         .filter((key): key is string => typeof key === 'string' && key.includes('|'))
         .slice(-MAX_NOTICES)
+    if (data?.version === 1 && data.meta !== undefined)
+      this.meta = sanitizeMeta(data.meta, this.decisions)
+    if (data?.version === 1 && Array.isArray(data.revokedUnused))
+      this.revoked = sanitizeRevoked(data.revokedUnused)
   }
 
   /**
@@ -384,6 +451,8 @@ export class PermissionService {
     const out: Persisted = { version: 1, decisions: this.decisions }
     if (this.devices.length > 0) out.devices = this.devices
     if (this.notices.length > 0) out.noticed = this.notices
+    if (Object.keys(this.meta).length > 0) out.meta = this.meta
+    if (this.revoked.length > 0) out.revokedUnused = this.revoked
     return out
   }
 
@@ -554,7 +623,11 @@ export class PermissionService {
       if (split < 0) continue
       const origin = key.slice(0, split)
       if (origin === DEFAULT_ORIGIN) continue
-      out.push({ origin, permission: key.slice(split + 1), decision })
+      const rule: PermissionRule = { origin, permission: key.slice(split + 1), decision }
+      const meta = this.meta[key]
+      if (meta?.lastVisitedAt !== undefined) rule.lastVisitedAt = meta.lastVisitedAt
+      if (meta?.keepGranted) rule.keepGranted = true
+      out.push(rule)
     }
     return out.sort(
       (a, b) => a.permission.localeCompare(b.permission) || a.origin.localeCompare(b.origin)
@@ -745,6 +818,9 @@ export class PermissionService {
     this.decisions = {}
     this.devices = []
     this.notices = []
+    this.meta = {}
+    this.revoked = []
+    this.regranted.clear()
     this.savedFiles.clear()
     this.sessionAllows.clear()
     this.privateDecisions.clear()
@@ -780,6 +856,7 @@ export class PermissionService {
       removed.length === 0 &&
       goodbyes.length === 0 &&
       this.notices.length === 0 &&
+      this.revoked.length === 0 &&
       this.savedFiles.size === 0 &&
       this.sessionAllows.size === 0 &&
       this.privateDecisions.size === 0
@@ -788,6 +865,9 @@ export class PermissionService {
     for (const key of removed) delete this.decisions[key]
     this.devices = []
     this.notices = []
+    this.meta = {}
+    this.revoked = []
+    this.regranted.clear()
     this.savedFiles.clear()
     this.sessionAllows.clear()
     this.privateDecisions.clear()
@@ -892,14 +972,221 @@ export class PermissionService {
     this.store.flushSync()
   }
 
+  /**
+   * A decision the user made (a prompt's answer, a Settings row, a reset) lands here. An `allow`
+   * the sweep can reach starts its unused-sites clock now (a fresh grant is a fresh rule: no
+   * `keepGranted` survives it); a refusal or a forget carries none. And a change to any of a
+   * site's answers takes the site off the revoked list, as Chrome's `OnContentSettingChanged`
+   * does (`revoked_permissions_service.cc:263-268`): the user has looked at the site.
+   */
   private update(key: string, decision: Decision | null, change: PermissionChange): void {
     // A stored answer supersedes any "Allow once" for the same question.
     for (const grants of this.sessionAllows.values()) grants.delete(key)
     if ((this.decisions[key] ?? null) === decision) return
     if (decision === null) delete this.decisions[key]
     else this.decisions[key] = decision
+    if (decision === 'allow' && change.origin !== null && tracksLastVisit(change.permission))
+      this.meta[key] = { lastVisitedAt: coarseVisitTime(this.now()) }
+    else delete this.meta[key]
+    if (change.origin !== null) this.dropRevoked(change.origin)
     this.store.write(this.persisted())
     this.notify(change)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Unused sites (PS-41): the visit clock, the sweep, the revoked list and its review
+  // ---------------------------------------------------------------------------
+
+  /**
+   * A non-private tab committed a page of `url` (Chrome's `TabHelper::PrimaryPageChanged` →
+   * `UpdateLastVisitedTime`): every `allow` of the site the sweep can reach is stamped with this
+   * week. An allow from before the clock existed gets its first stamp here, so a site still
+   * visited eases into the sweep's reach and one never visited again stays out of it (Chrome
+   * 152 sweeps no unstamped rule either). Nothing is written when the week's stamp is already on;
+   * no change is announced – a stamp is not a decision, and the tab's commit pushes the state.
+   */
+  onPageVisited(url: string): void {
+    const origin = permissionSite(url)
+    if (!origin) return
+    const stamp = coarseVisitTime(this.now())
+    let changed = false
+    for (const [key, decision] of Object.entries(this.decisions)) {
+      if (decision !== 'allow' || !keyIsOf(key, origin)) continue
+      if (!tracksLastVisit(permissionOf(key))) continue
+      const meta = this.meta[key]
+      if (meta?.lastVisitedAt === stamp) continue
+      this.meta[key] = { ...meta, lastVisitedAt: stamp }
+      changed = true
+    }
+    if (changed) this.store.write(this.persisted())
+  }
+
+  /**
+   * The sweep (Chrome's `UnusedSitePermissionsManager`, daily): records past their 30 days go;
+   * then, when `revoke` (the "Automatically remove permissions from unused sites" setting), every
+   * `allow` the sweep can reach (`tracksLastVisit`) whose site's stamp is older than 60 days –
+   * never one the user allowed again (`keepGranted`), never one no visit has stamped, never a
+   * default, never a device grant, never anything answered in private (never stored) – is deleted,
+   * so the site asks again, and named in the site's record (`revokedAt` now, `expiresAt` 30 days
+   * on; an existing record grows and its clock restarts). One change per key, as a reset says it.
+   */
+  sweepUnused(revoke: boolean, now: number = this.now()): UnusedPermissionsSweepResult {
+    const kept = this.revoked.filter((record) => record.expiresAt > now)
+    const expired = this.revoked.length - kept.length
+    this.revoked = kept
+    const taken = new Map<string, string[]>()
+    if (revoke) {
+      const before = now - UNUSED_PERMISSION_MS
+      for (const [key, decision] of Object.entries(this.decisions)) {
+        if (decision !== 'allow') continue
+        const origin = originOf(key)
+        if (origin === null) continue
+        const meta = this.meta[key]
+        if (!meta || meta.keepGranted || meta.lastVisitedAt === undefined) continue
+        if (meta.lastVisitedAt >= before || !tracksLastVisit(permissionOf(key))) continue
+        const list = taken.get(origin) ?? []
+        list.push(permissionOf(key))
+        taken.set(origin, list)
+      }
+    }
+    const revoked: RevokedSitePermissions[] = []
+    for (const [origin, permissions] of taken) {
+      for (const permission of permissions) {
+        const key = `${origin}|${permission}`
+        delete this.decisions[key]
+        delete this.meta[key]
+      }
+      revoked.push(
+        this.putRevoked({
+          origin,
+          permissions,
+          revokedAt: now,
+          expiresAt: now + REVOKED_PERMISSIONS_KEPT_MS
+        })
+      )
+    }
+    if (expired > 0 || revoked.length > 0) this.store.write(this.persisted())
+    for (const record of revoked)
+      for (const permission of record.permissions)
+        this.notify({ permission, origin: record.origin })
+    return { revoked: revoked.map(copyRecord), expired }
+  }
+
+  /** The revoked list as the Safety check reviews it: the newest revocation first. */
+  revokedUnused(): RevokedSitePermissions[] {
+    return this.revoked
+      .map(copyRecord)
+      .sort((a, b) => b.revokedAt - a.revokedAt || a.origin.localeCompare(b.origin))
+  }
+
+  /**
+   * "Allow again" (Chrome's `RegrantPermissionsForOrigin`): every permission in the site's record
+   * is allowed once more, each marked `keepGranted` so no later sweep takes it, and the record
+   * goes – remembered for `undoRegrantRevoked`.
+   */
+  regrantRevoked(requestingOrigin: string): void {
+    const origin = permissionSite(requestingOrigin)
+    const record = origin ? this.takeRevoked(origin) : null
+    if (!origin || !record) return
+    const stamp = coarseVisitTime(this.now())
+    for (const permission of record.permissions) {
+      const key = `${origin}|${permission}`
+      for (const grants of this.sessionAllows.values()) grants.delete(key)
+      this.decisions[key] = 'allow'
+      this.meta[key] = { lastVisitedAt: stamp, keepGranted: true }
+    }
+    this.regranted.set(origin, record)
+    this.store.write(this.persisted())
+    for (const permission of record.permissions) this.notify({ permission, origin })
+  }
+
+  /**
+   * The Undo of "Allow again" (Chrome's `UndoRegrantPermissionsForOrigin`): the answers go back
+   * to the way the sweep left them (deleted, `keepGranted` cleared) and the record returns with
+   * its old times. Nothing happens when nothing was allowed again this session, or the user has
+   * since changed one of the site's answers (which forgets the undo, as it drops the record).
+   */
+  undoRegrantRevoked(requestingOrigin: string): void {
+    const origin = permissionSite(requestingOrigin)
+    const record = origin ? this.regranted.get(origin) : undefined
+    if (!origin || !record) return
+    this.regranted.delete(origin)
+    for (const permission of record.permissions) {
+      const key = `${origin}|${permission}`
+      delete this.decisions[key]
+      delete this.meta[key]
+    }
+    this.putRevoked(record)
+    this.store.write(this.persisted())
+    for (const permission of record.permissions) this.notify({ permission, origin })
+  }
+
+  /**
+   * "Got it" (Chrome's `ClearRevokedPermissionsList`): the whole list goes, the permissions stay
+   * revoked; the records are returned so the chrome's Undo can `restoreRevokedList` them.
+   */
+  acknowledgeRevoked(): RevokedSitePermissions[] {
+    if (this.revoked.length === 0) return []
+    const records = this.revokedUnused()
+    this.revoked = []
+    this.store.write(this.persisted())
+    return records
+  }
+
+  /**
+   * The Undo of "Got it" (Chrome's `RestoreDeletedRevokedPermissionsList`): the records go back
+   * as they were. A site the sweep has made a new record for meanwhile keeps that record's times
+   * and gains the restored permissions; a malformed record is dropped.
+   */
+  restoreRevokedList(records: RevokedSitePermissions[]): void {
+    const restored = sanitizeRevoked(records)
+    if (restored.length === 0) return
+    for (const record of restored) {
+      const current = this.revoked.find((r) => r.origin === record.origin)
+      if (current)
+        this.putRevoked({ ...record, revokedAt: current.revokedAt, expiresAt: current.expiresAt })
+      else this.putRevoked(record)
+    }
+    this.store.write(this.persisted())
+  }
+
+  /**
+   * Put a site's record in place: merged with the record the site has (its permissions joined,
+   * the incoming times taken), else appended. Returns the record as it stands.
+   */
+  private putRevoked(record: RevokedSitePermissions): RevokedSitePermissions {
+    const i = this.revoked.findIndex((r) => r.origin === record.origin)
+    const permissions =
+      i >= 0
+        ? [...new Set([...this.revoked[i].permissions, ...record.permissions])]
+        : [...record.permissions]
+    const merged: RevokedSitePermissions = {
+      origin: record.origin,
+      permissions,
+      revokedAt: record.revokedAt,
+      expiresAt: record.expiresAt
+    }
+    if (i >= 0) this.revoked[i] = merged
+    else this.revoked.push(merged)
+    return merged
+  }
+
+  /** Take a site's record off the list; null when it has none. */
+  private takeRevoked(origin: string): RevokedSitePermissions | null {
+    const i = this.revoked.findIndex((r) => r.origin === origin)
+    if (i < 0) return null
+    const [record] = this.revoked.splice(i, 1)
+    return record
+  }
+
+  /**
+   * The user changed one of the site's answers: its record goes (Chrome drops the origin from
+   * the list on any change of its settings), and so does the undo of an "Allow again" – the
+   * answers it would put back are no longer the sweep's. True when the list changed.
+   */
+  private dropRevoked(origin: string): boolean {
+    this.regranted.delete(origin)
+    return this.takeRevoked(origin) !== null
   }
 
   private notify(change: PermissionChange): void {
@@ -934,8 +1221,11 @@ export class PermissionService {
       if (split < 0 || key.slice(0, split) !== origin) continue
       if (permission !== undefined && key.slice(split + 1) !== permission) continue
       delete this.decisions[key]
+      delete this.meta[key]
       removed.push(key)
     }
+    // A reset is the user's look at the site: its revoked record goes with the answers.
+    const unlisted = this.dropRevoked(origin)
     if (permission === undefined || permission === 'fileSystem') {
       for (const file of this.savedFiles)
         if (file.startsWith(`${origin}|`)) this.savedFiles.delete(file)
@@ -952,7 +1242,7 @@ export class PermissionService {
     )
     if (dropped.length > 0) this.devices = this.devices.filter((g) => !dropped.includes(g))
     const forgotten = this.forgetNotices(origin, permission)
-    if (removed.length === 0 && dropped.length === 0 && !forgotten) return
+    if (removed.length === 0 && dropped.length === 0 && !forgotten && !unlisted) return
     this.store.write(this.persisted())
     for (const key of removed) this.notify(changeFor(key))
     for (const grant of dropped)
@@ -1002,6 +1292,106 @@ function sanitizeGrant(g: DeviceGrant): DeviceGrant {
     serialNumber: typeof g.serialNumber === 'string' ? g.serialNumber : null,
     grantedAt: typeof g.grantedAt === 'number' ? g.grantedAt : 0
   }
+}
+
+/** The site of a decision key; null for a default's (`DEFAULT_ORIGIN`) or a key without a site. */
+function originOf(key: string): string | null {
+  const split = key.lastIndexOf('|')
+  if (split <= 0) return null
+  const origin = key.slice(0, split)
+  return origin === DEFAULT_ORIGIN ? null : origin
+}
+
+/** The stored, qualified permission name of a decision key. */
+function permissionOf(key: string): string {
+  return key.slice(key.lastIndexOf('|') + 1)
+}
+
+/** Whether a decision key is one of `origin`'s. */
+function keyIsOf(key: string, origin: string): boolean {
+  return key.slice(0, key.lastIndexOf('|')) === origin
+}
+
+function copyRecord(record: RevokedSitePermissions): RevokedSitePermissions {
+  return { ...record, permissions: [...record.permissions] }
+}
+
+/**
+ * The unused-sites clock as the file holds it (`meta`), kept where it belongs: an `allow` the
+ * sweep can reach, a finite stamp floored to the week, the keep mark as exactly `true`. An
+ * entry for a decision that is gone, or that the sweep never reads, is dropped.
+ */
+function sanitizeMeta(
+  value: unknown,
+  decisions: Record<string, PermissionDecision>
+): Record<string, RuleMeta> {
+  const out: Record<string, RuleMeta> = {}
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return out
+  for (const [key, raw] of Object.entries(value)) {
+    if (decisions[key] !== 'allow' || originOf(key) === null) continue
+    if (!tracksLastVisit(permissionOf(key))) continue
+    if (typeof raw !== 'object' || raw === null) continue
+    const m = raw as Record<string, unknown>
+    const meta: RuleMeta = {}
+    if (
+      typeof m.lastVisitedAt === 'number' &&
+      Number.isFinite(m.lastVisitedAt) &&
+      m.lastVisitedAt >= 0
+    )
+      meta.lastVisitedAt = coarseVisitTime(m.lastVisitedAt)
+    if (m.keepGranted === true) meta.keepGranted = true
+    if (meta.lastVisitedAt !== undefined || meta.keepGranted) out[key] = meta
+  }
+  return out
+}
+
+function isRevokedRecord(value: unknown): value is RevokedSitePermissions {
+  if (typeof value !== 'object' || value === null) return false
+  const r = value as Record<string, unknown>
+  return (
+    typeof r.origin === 'string' &&
+    r.origin !== '' &&
+    r.origin !== DEFAULT_ORIGIN &&
+    !r.origin.includes('|') &&
+    Array.isArray(r.permissions) &&
+    r.permissions.length > 0 &&
+    r.permissions.every((p) => typeof p === 'string' && p !== '') &&
+    typeof r.revokedAt === 'number' &&
+    Number.isFinite(r.revokedAt) &&
+    typeof r.expiresAt === 'number' &&
+    Number.isFinite(r.expiresAt)
+  )
+}
+
+/**
+ * Revoked records as the file (or a chrome's Undo) hands them: well-formed ones only, one per
+ * site – a site named twice keeps the union of the permissions and the newer record's times.
+ */
+function sanitizeRevoked(value: unknown): RevokedSitePermissions[] {
+  const out: RevokedSitePermissions[] = []
+  if (!Array.isArray(value)) return out
+  for (const raw of value) {
+    if (!isRevokedRecord(raw)) continue
+    const record: RevokedSitePermissions = {
+      origin: raw.origin,
+      permissions: [...new Set(raw.permissions)],
+      revokedAt: raw.revokedAt,
+      expiresAt: raw.expiresAt
+    }
+    const i = out.findIndex((r) => r.origin === record.origin)
+    if (i < 0) {
+      out.push(record)
+      continue
+    }
+    const newer = record.revokedAt >= out[i].revokedAt ? record : out[i]
+    out[i] = {
+      origin: record.origin,
+      permissions: [...new Set([...out[i].permissions, ...record.permissions])],
+      revokedAt: newer.revokedAt,
+      expiresAt: newer.expiresAt
+    }
+  }
+  return out
 }
 
 /** The camera / microphone rows a `media` request names (both when the host does not say). */

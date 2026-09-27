@@ -935,10 +935,11 @@ export interface TabView {
    */
   frameDrawn?(): Promise<number>
   /**
-   * Chrome messages (toasts, banners) cover these strips of the view's edges. Hosts whose pages
-   * are layered above the chrome clip the page out of the strips – animating the clip so it
-   * moves with the message – and hand touches inside them to the chrome. Optional: on Electron
-   * the chrome draws over the page as it is.
+   * The message strips: chrome messages (toasts, banners) draw over these strips of the view's
+   * edges. Hosts whose pages are layered above the chrome clip the page out of the strips –
+   * animating the clip so it moves with the message – and hand touches inside them to the
+   * chrome. Optional: on Electron the chrome draws over the page as it is. (Not the reader's
+   * cover, `TabViewHost.createCover` – the glossary of the tree's "covers" is at `TabManager`.)
    */
   setCover?(cover: ContentCover): void
 
@@ -1148,10 +1149,11 @@ export interface TabViewHost {
   /** Create the live page for `tab`, attached to `host`'s window. */
   createView(tab: Tab, events: TabViewEvents, host: WindowHost): TabView
   /**
-   * Create a second live page for `tab` – the reader's cover (`TabManager.cover`): the
-   * `zen://reader` document drawn over the tab's own page, which stays alive and unmoved
-   * beneath it, so leaving the reader uncovers the page as it was – no load, no history entry
-   * (Chrome's immersive reading mode is an overlay over the tab's contents in the same way).
+   * Create a second live page for `tab` – the reader's cover (`TabManager.cover`; the glossary
+   * of the tree's four "covers" stands there): the `zen://reader` document drawn over the tab's
+   * own page, which stays alive and unmoved beneath it, so leaving the reader uncovers the page
+   * as it was – no load, no history entry (Chrome's immersive reading mode is an overlay over
+   * the tab's contents in the same way).
    * The cover is not the tab's page to the host's own maps (a request's `tabId`, the extension
    * API's view of the tab stay the page's). Hosts that hold one page per tab id (Android's
    * WebViews) leave it out; the reader then loads as a navigation of the tab.
@@ -2500,10 +2502,21 @@ export interface BundledFilterList {
 /**
  * The host side of ad and tracker blocking. Matching itself is the core's `RuleEngine` plus the
  * platform's text matcher (Ghostery's engine behind Electron's `webRequest`, the Kotlin engine
- * inside `shouldInterceptRequest`); this interface only hands over the bundled snapshot of the
- * default lists so the very first run is protected before any list has been downloaded.
+ * inside `shouldInterceptRequest`); this interface says whose engine decides the host's
+ * requests and hands over the bundled snapshot of the default lists so the very first run is
+ * protected before any list has been downloaded.
  */
 export interface BlockingHost {
+  /**
+   * Whose engine decides the host's requests. `'host'` (the default): the host's own engine
+   * reads the set documents the service writes and decides natively (Android's Kotlin engine
+   * inside `shouldInterceptRequest`); the core's `RuleEngine` counts and persists the sets and
+   * never builds a table of them. `'core'`: the host's request hook asks the core's engine
+   * (`engine.decide` behind Electron's `webRequest`), so the service warms the engine's tables
+   * the moment its sets are loaded – in the same synchronous tick as the startup windows, ahead
+   * of any request hook – and the first request after boot pays no build.
+   */
+  readonly requestEngine?: 'core' | 'host'
   /** The lists this build ships a snapshot of. */
   bundledLists(): Promise<BundledFilterList[]>
   /**

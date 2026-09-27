@@ -69,8 +69,9 @@ export const MEDIA_HUB_PILL = FOLDING_BUTTON_PILL
 /**
  * The row width at which the hub's button returns, given the count of the row's other buttons
  * (`foldingButtonReturnRow`): with the four always-there buttons (back, forward, reload, ⋯) that
- * is 286 – the 302 sidebar, its 8 px gutters aside – where the pill with the button is 126 and
- * the star is up with it; at 301 it would be 125.
+ * is 282 – the 298 sidebar, its 8 px gutters aside – where the pill with the button is 126 (the
+ * row's 122 and the 4 the pill takes of its neighbours' slots, `PILL_BLEED`) and the star is up
+ * with it; at 297 it would be 125.
  */
 export function mediaHubReturnRow(otherButtons: number): number {
   return foldingButtonReturnRow(otherButtons)
@@ -122,7 +123,7 @@ export const APP_MENU_BUTTON = '[data-zen-app-menu-button]'
  * toolbar's width tier's to make – at the 240 sidebar the hub "folds into the app menu as a
  * 'Media Controls…' row … with an accent dot on ⋯ while a session is live", and returns as a
  * button where the pill, with the button's slot back, still holds the star's box (§9.29; the
- * 302 sidebar with the always-there buttons) – and the row makes it from its own measured
+ * 298 sidebar with the always-there buttons) – and the row makes it from its own measured
  * width (`useElementWidth` on the row:
  * the ResizeObserver that follows a sidebar drag) with `mediaHubButtonFits`, in the render that
  * mounts or unmounts the

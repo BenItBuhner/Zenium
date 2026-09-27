@@ -6170,12 +6170,13 @@
  * else, as the phone pill is (v2 §10.1); the site icon keeps the favicon slot, and the blocked
  * pop-ups chip stays, a notice rather than a tool (#62). The queries read
  * the pill's content box, 16 px inside its border box (`px-2`, `PILL_PADDING`): 110 here is the
- * 270 px sidebar's pill – §9.29's "130 px pill", 126 wide now that the row's buttons sit 4
- * apart (§5). At the default sidebar width the pill's content box is 80 (the 100 px pill of
- * §9.29's arithmetic), and the star's 26 px are what "Settings" (48 px) is short of. 110: with
- * the star the field would keep under 58 px, which no host fits, and the shortest internal
- * address (`zenium://settings`, 102 px) still needs a 129 px content box without the star, so a
- * sidebar dragged wider never trades the address for the title and back.
+ * 266 px sidebar's pill – §9.29's "130 px pill", 126 wide with the row's buttons 4 apart (§5)
+ * and the pill filling its slot (`PILL_BLEED`, the `-mx-0.5` on it). At the default sidebar
+ * width the pill is §9.29's 100 and its content box 84, the address 58 beside the site icon;
+ * with the star it would keep 32, which no host fits. 110: with the star the field would keep
+ * 58 px, under the shortest internal address (`zenium://settings`, 106.7 px at the address's
+ * 13 px on the build's font stack), which still needs a ~133 px content box without the star,
+ * so a sidebar dragged wider never trades the address for the title and back.
  */
 @container (width < 110px) {
   .zen-pill-chip {
@@ -12719,6 +12720,20 @@
 .zen-settings-radios > .zen-settings-radio-row {
   margin: 0 -16px;
   width: calc(100% + 32px);
+}
+/*
+ * With nothing of the row's own in sight – the legend aria-only (pr-584 N2) and no description
+ * or caption – the row is its options and nothing else (`data-bare`, rows.tsx). The
+ * `--v2-row-pad` a row keeps around its text (6 on a mouse, 12 on a phone) would stand over and
+ * under the list with nothing to pad: the first option's label 18 off the switch's above where
+ * options stand 12 apart (pr-584's NEW 1). §10.3's rows are 0 apart, so the pad goes – the first
+ * option's box starts where the row before ends, the last ends where the next begins, and the
+ * options' own pads are the only ones. With a description or caption the pad stays: it is the
+ * text's.
+ */
+.zen-settings-radios-row[data-bare] {
+  padding-top: 0;
+  padding-bottom: 0;
 }
 /*
  * No `--v2-selected` band on the page's checked option (pr-584 L1 / Q6, ruled DROP): the

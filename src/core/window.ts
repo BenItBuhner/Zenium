@@ -508,6 +508,44 @@ export class ZenWindow {
     // The views this report takes down or brings back: told to the chrome once they are placed.
     const hid: string[] = []
     const shown: string[] = []
+    /**
+     * Place the tab's views at `rect` and show them, bottom to top (`TabManager.viewsOf`: the
+     * page, and the reader's cover over it while the two are laid out together – before the
+     * cover's first frame, and after the cover is taken down until the page's). A view shown
+     * from elsewhere joins the window on top (a page an agent held on its stage): the ones over
+     * it in the tab's order are raised over it again; `raise` orders them all over the rest.
+     * True when the view the layout owns (`viewsOwnedBy`) was hidden until now.
+     */
+    const place = (
+      tabId: string,
+      view: TabView,
+      rect: Rect,
+      radius: number,
+      cover: ContentCover,
+      raise = false
+    ): boolean => {
+      let shownNow = false
+      let reorder = raise
+      for (const v of tabs.viewsOf(tabId)) {
+        if (reorder) v.bringToFront()
+        v.setBounds(rect)
+        v.setBorderRadius(radius)
+        v.setCover?.(cover)
+        if (v.isVisible()) continue
+        v.setVisible(true)
+        if (v === view) shownNow = true
+        reorder = true
+      }
+      return shownNow
+    }
+    /**
+     * Hide the tab's views. The page beneath a cover goes with the cover, the cover taken down
+     * with the page: left shown, either would stand at the tab's place – over whatever this
+     * report shows there, where it is the younger view – until its handshake ends.
+     */
+    const hide = (tabId: string): void => {
+      for (const v of tabs.viewsOf(tabId)) if (v.isVisible()) v.setVisible(false)
+    }
     if (fullscreenTabId && owned.has(fullscreenTabId)) {
       // An element in HTML fullscreen covers the whole window, chrome included, save for the
       // strip a docked find bar asked for.
@@ -517,14 +555,10 @@ export class ZenWindow {
       for (const [tabId, view] of owned) {
         if (view.isDestroyed()) continue
         if (tabId === fullscreenTabId) {
-          view.bringToFront()
-          view.setBounds({ x: 0, y: 0, width, height })
-          view.setBorderRadius(0)
-          view.setCover?.(NO_COVER)
-          if (!view.isVisible()) shown.push(tabId)
-          view.setVisible(true)
+          if (place(tabId, view, { x: 0, y: 0, width, height }, 0, NO_COVER, true))
+            shown.push(tabId)
         } else if (view.isVisible()) {
-          view.setVisible(false)
+          hide(tabId)
           hid.push(tabId)
         }
       }
@@ -543,44 +577,52 @@ export class ZenWindow {
     }
     if (report.placements.length === 1) this.lastContentRect = roundRect(report.placements[0].rect)
     const glance = report.glance
-    // Whether a page that was showing goes away under this report (chrome UI covers it), and
-    // whether one of those pages held the keyboard as it went.
-    let covered = false
-    let coveredTyping = false
+    // Whether a page that was showing goes away under this report – under the chrome, which is
+    // over the content (`contentHidden`; the reader's cover is another thing, `TabManager.cover`)
+    // – and whether one of those pages held the keyboard as it went.
+    let hidUnderChrome = false
+    let typingHidUnderChrome = false
     for (const [tabId, view] of owned) {
       if (view.isDestroyed()) continue
       const placement = wanted.get(tabId)
       const isGlance = glance?.tabId === tabId
       if (isGlance) continue
       if (placement) {
-        view.setBounds(roundRect(placement.rect))
-        view.setBorderRadius(Math.round(placement.radius))
-        view.setCover?.(placement.cover)
-        if (!view.isVisible()) {
-          view.setVisible(true)
+        if (
+          place(
+            tabId,
+            view,
+            roundRect(placement.rect),
+            Math.round(placement.radius),
+            placement.cover
+          )
+        )
           shown.push(tabId)
-        }
       } else if (view.isVisible()) {
-        if (view.isFocused?.()) coveredTyping = true
-        view.setVisible(false)
+        if (view.isFocused?.()) typingHidUnderChrome = true
+        hide(tabId)
         hid.push(tabId)
-        covered = true
+        hidUnderChrome = true
       }
     }
     if (glance) {
       const view = owned.get(glance.tabId)
       if (view && !view.isDestroyed()) {
-        view.bringToFront()
-        view.setBounds(roundRect(glance.rect))
-        view.setBorderRadius(Math.round(glance.radius))
-        view.setCover?.(glance.cover ?? NO_COVER)
-        if (!view.isVisible()) {
-          view.setVisible(true)
+        if (
+          place(
+            glance.tabId,
+            view,
+            roundRect(glance.rect),
+            Math.round(glance.radius),
+            glance.cover ?? NO_COVER,
+            true
+          )
+        )
           shown.push(glance.tabId)
-        }
       }
     }
-    // The chrome sequences its page cover against the host's frames from this (lib/pageView.ts).
+    // The chrome sequences its page cover – the picture where the live page was – against the
+    // host's frames from this (lib/pageView.ts).
     this.send('layout.applied', { contentHidden: report.contentHidden, hid, shown })
     if (this.pendingContentFocus && !report.contentHidden) this.focusContent()
     // A view placed again may have come up above the popup surface: put it back on top.
@@ -590,7 +632,7 @@ export class ZenWindow {
     // otherwise shortcuts stop working.
     const showsOwnPage = [...wanted.keys()].some((id) => owned.has(id))
     if (report.contentHidden) {
-      // Chrome UI covers the page: the keyboard goes with it, but only when a page that was
+      // The chrome is over the page: the keyboard goes with it, but only when a page that was
       // showing loses its place under this report (one that hides nothing new leaves the
       // keyboard where it is) and never while a document of another surface holds it – an
       // extension popup's view, focused while still hidden, would blur and close. A page the
@@ -598,8 +640,8 @@ export class ZenWindow {
       // chrome that only rests over the page for a while (the tab hover card, the compact
       // sidebar's reveal) leaves no lost keyboard behind; chrome that asks for the page's focus
       // itself as it closes asks for the same thing.
-      if (covered && !this.keyboardHeldElsewhere(owned)) {
-        if (coveredTyping) this.pendingContentFocus = true
+      if (hidUnderChrome && !this.keyboardHeldElsewhere(owned)) {
+        if (typingHidUnderChrome) this.pendingContentFocus = true
         this.focusChrome()
       }
     } else if (!showsOwnPage && !glance && !this.keyboardHeldElsewhere(owned)) {

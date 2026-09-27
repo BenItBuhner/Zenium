@@ -2,11 +2,11 @@
   "id": "autofill",
   "order": 57,
   "class": "AutofillDemo",
-  "shard": "phone-c",
+  "shard": "phone-g",
   "mirrors": "(none: dispatch-only driver without a workflow)",
   "dir": "autofill-demo",
   "needs": ["pin"],
   "timeout": 900,
   "estimate": 6.5,
-  "note": "Needs a device PIN (the runner sets 1234 before and clears it after); the shop is served from the instrumentation."
+  "note": "Needs a device PIN (the runner sets 1234 before and clears it after); the shop is served from the instrumentation. Moved from phone-c (64 of its 68 minutes, 57.5 without it) to phone-g by W6-H's rebalance: the largest driver of phone-c that nothing ties there (fonts-languages-ui sits beside the translate drivers, qr reads phone-c's emulated camera); the PIN is the runner's own step on every shard."
 }

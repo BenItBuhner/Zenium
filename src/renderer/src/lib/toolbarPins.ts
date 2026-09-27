@@ -1,6 +1,10 @@
 import { TOOLBAR_CONTROLS, toolbarPinned, type ToolbarControl } from '@shared/toolbarPins'
 import type { FormFactor, UIState } from '@shared/types'
-import { PILL_PADDING, PILL_TOOLS_TIER } from '@renderer/components/urlbar/pillChipTiers'
+import {
+  PILL_BLEED,
+  PILL_PADDING,
+  PILL_TOOLS_TIER
+} from '@renderer/components/urlbar/pillChipTiers'
 import { TOOLBAR_BUTTON, TOOLBAR_GAP } from './extensions/toolbar'
 import { createStore } from './store'
 
@@ -40,13 +44,16 @@ const TOOLBAR_SLOT = TOOLBAR_BUTTON + TOOLBAR_GAP
 
 /**
  * The row width at which a folding button returns, given the count of the row's other buttons:
- * the pill's tier box, the other buttons' slots and the button's own. With the four always-there
- * buttons (back, forward, reload, ⋯) that is 286 – the 302 sidebar, its 8 px gutters aside –
- * where the pill with the button is 126 and the star is up with it; at 301 it would be 125.
- * Each further button in the row moves the return one slot (32) out.
+ * the pill's tier box less the 4 the pill takes of its neighbours' slots (`PILL_BLEED`: the
+ * pill is 4 wider than the row's flex share, so the share need only be 122 for a 126 pill), the
+ * other buttons' slots and the button's own. With the four always-there buttons (back, forward,
+ * reload, ⋯) that is 282 – the 298 sidebar, its 8 px gutters aside – where the pill with the
+ * button is 126 and the star is up with it; at 297 it would be 125. Each further button in the
+ * row moves the return one slot (32) out. (§9.29's "about 302 with today's button set" was the
+ * 96 pill's arithmetic; the 100 pill of the same section brings every crossing 4 in.)
  */
 export function foldingButtonReturnRow(otherButtons: number): number {
-  return FOLDING_BUTTON_PILL + (otherButtons + 1) * TOOLBAR_SLOT
+  return FOLDING_BUTTON_PILL - PILL_BLEED + (otherButtons + 1) * TOOLBAR_SLOT
 }
 
 /**
@@ -54,8 +61,8 @@ export function foldingButtonReturnRow(otherButtons: number): number {
  * buttons – back, forward, reload, ⋯, the puzzle piece and the downloads button while they are
  * up, and any folding button that has already returned; not the pinned actions, which fold by
  * the pill's own floor – and the button's own slot still holds `FOLDING_BUTTON_PILL`. The
- * button's slot is in the sum, so the pill reads the same on either side of the return: at 302
- * the button arrives over a 126 pill, the star up; at 270, where the star returned over the same
+ * button's slot is in the sum, so the pill reads the same on either side of the return: at 298
+ * the button arrives over a 126 pill, the star up; at 266, where the star returned over the same
  * 126, the button leaves it so. An unmeasured row (0) shows the button, as the pinned actions
  * show before the row has a width. Pure, for the unit tests; the row measures itself and asks.
  */

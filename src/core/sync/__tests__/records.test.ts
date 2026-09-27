@@ -243,6 +243,9 @@ describe('collectLocal', () => {
     src.settings.unloadTimeoutMinutes = 240
     // The touchpad swipe's Accessibility switch: Chrome's twin pref is Android-only and unsynced.
     src.settings.touchpadSwipeToNavigate = false
+    // …and turned the hover card's memory line on (W8-10; off by default): Chrome's
+    // browser.hovercard.memory_usage_enabled is local state too.
+    src.settings.hoverCardMemoryUsage = true
     const data = collectLocal(src, defaultScope()).get('settings')?.data as Record<string, unknown>
     expect(DEVICE_LOCAL_SETTINGS).toEqual([
       'onboardingDone',
@@ -252,7 +255,10 @@ describe('collectLocal', () => {
       'energySaver',
       'unloadEnabled',
       'unloadTimeoutMinutes',
-      'touchpadSwipeToNavigate'
+      'touchpadSwipeToNavigate',
+      'hoverCardMemoryUsage',
+      'bookmarkRowSortOrder',
+      'bookmarkRowDisplay'
     ])
     expect(data).not.toHaveProperty('sidebarExpandOnHover')
     expect(data).not.toHaveProperty('onboardingDone')
@@ -262,6 +268,7 @@ describe('collectLocal', () => {
     expect(data).not.toHaveProperty('unloadEnabled')
     expect(data).not.toHaveProperty('unloadTimeoutMinutes')
     expect(data).not.toHaveProperty('touchpadSwipeToNavigate')
+    expect(data).not.toHaveProperty('hoverCardMemoryUsage')
     // The keep-active hosts travel, as Chrome syncs tab_discarding.exceptions.
     expect(data).toHaveProperty('unloadExcludedDomains')
     // The Home pin syncs with the rest of the pins, as Chrome's `show_home_button` does.

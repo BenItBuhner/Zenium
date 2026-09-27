@@ -651,6 +651,35 @@ describe('settings.touchpadSwipeToNavigate on load', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Performance's "Show tab memory usage" (settings-29, W8-10): off until the switch says on –
+// Chrome 152's effective default, `browser.hovercard.memory_usage_enabled` registered true and
+// flipped to false once by `MigrateHoverCardMemoryPref` under Tab Declutter; a fresh setting
+// flips with no migration, read sanitised at load like the other device-local switches
+// ---------------------------------------------------------------------------
+
+describe('settings.hoverCardMemoryUsage on load', () => {
+  const stored = (value: unknown): BrowserState => {
+    const settings = structuredClone(DEFAULT_SETTINGS) as unknown as Record<string, unknown>
+    if (value === undefined) delete settings.hoverCardMemoryUsage
+    else settings.hoverCardMemoryUsage = value
+    return state(
+      fakeIo(legacyProfile(6, { settings: settings as unknown as Persisted['settings'] }))
+    )
+  }
+
+  it('ships off, keeps a stored true, and reads a missing key or anything but true as off', () => {
+    expect(DEFAULT_SETTINGS.hoverCardMemoryUsage).toBe(false)
+    expect(state(fakeIo()).settings.hoverCardMemoryUsage).toBe(false)
+    expect(stored(undefined).settings.hoverCardMemoryUsage).toBe(false)
+    expect(stored(true).settings.hoverCardMemoryUsage).toBe(true)
+    expect(stored(false).settings.hoverCardMemoryUsage).toBe(false)
+    expect(stored('on').settings.hoverCardMemoryUsage).toBe(false)
+    expect(stored(1).settings.hoverCardMemoryUsage).toBe(false)
+    expect(stored(null).settings.hoverCardMemoryUsage).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // The phone app menu's order (TB-22): a list loads as a list, the empty one included
 // ---------------------------------------------------------------------------
 

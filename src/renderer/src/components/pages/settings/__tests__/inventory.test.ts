@@ -574,8 +574,8 @@ const INVENTORY: Record<string, readonly string[]> = {
     'Edit your filters',
     'news.example',
     'Add a site',
-    // Clear Browsing Data (#135)
-    'Clear browsing data',
+    // Delete browsing data (#135; Chrome's words since M124, W8-7)
+    'Delete browsing data',
     // Cookies, HTTPS-only, secure DNS, signals (#156). The Third-party cookies row folded into
     // Cookies and site data's default radio on #322 (the lead's ruling on Q3): the mode is the
     // "Default behaviour" choice there and the private-only switch under it.
@@ -751,7 +751,7 @@ const HEADINGS: Record<string, readonly string[]> = {
     'Your lists',
     'Your filters',
     'Sites without blocking',
-    'Clear browsing data',
+    'Delete browsing data',
     // #156's Third-party cookies heading folded into #310's Cookies and site data (#322, Q3).
     'Cookies and site data',
     'Site settings',

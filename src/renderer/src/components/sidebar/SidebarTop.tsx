@@ -42,7 +42,15 @@ import type { SearchEngine, Tab, UIState } from '@shared/types'
 import { toolbarPinned, type ToolbarControl } from '@shared/toolbarPins'
 import { defaultSearchEngineOf } from '@shared/search'
 import { securityIndicator, type IndicatorState } from '@shared/siteInfo'
-import { addressParts, displayUrl, fullUrl, getDomain, isWebPageUrl, pillText } from '@shared/url'
+import {
+  addressParts,
+  displayUrl,
+  fullUrl,
+  getDomain,
+  isWebPageUrl,
+  pillText,
+  revealProbeText
+} from '@shared/url'
 import { isInstallable, launcherName, pinnedAppFor } from '@shared/webApp'
 import { useElementWidth } from '@renderer/hooks/useElementWidth'
 import { updateDotAt } from '@renderer/lib/about'
@@ -207,18 +215,33 @@ export function NavRow({
   const url = tab && !masked ? displayUrl(tab.url) : ''
   // The address at rest elides the scheme and `www.` (Chrome); the full URL shows while the
   // pointer or the keyboard is on the address, or always with the "Always show full URLs" setting.
+  // The reveal never costs the host (the FIRST LINE's L3 on #589): where the scheme it puts back
+  // would push the host's first character out of the field – a 56 px field read `http://…` –
+  // §9.29's trim stays under the pointer, measured before the reveal is drawn
+  // (`useRevealKeepsHost`); the setting's full URL is the user's word and is not measured.
   const [revealed, setRevealed] = useState(false)
+  const pill = useRef<HTMLDivElement>(null)
+  const field = useRef<HTMLSpanElement>(null)
+  const probe = useRef<HTMLSpanElement>(null)
+  const revealProbe = useRef<HTMLSpanElement>(null)
+  const revealText = tab && !masked ? revealProbeText(fullUrl(tab.url)) : ''
+  const revealKeepsHost = useRevealKeepsHost(
+    field,
+    revealProbe,
+    revealed && !state.settings.showFullUrls && revealText !== ''
+  )
   const shown =
-    tab && !masked ? (state.settings.showFullUrls || revealed ? fullUrl(tab.url) : url) : ''
+    tab && !masked
+      ? state.settings.showFullUrls || (revealed && revealKeepsHost)
+        ? fullUrl(tab.url)
+        : url
+      : ''
   // An internal page's address that the pill cannot fit gives way to the page's title, as the
   // phone pill names Zenium's own pages (v2 §10.1); a site's address never does – it truncates
   // from the end at any width, as Zen's and Firefox's sidebar bars do (§9.29; no browser's
   // address bar shows a site's title): `pillText`, from the field's width against the address at
   // its natural width (the probe span, drawn invisibly without truncation). The same `pill` ref
   // serves the chip tier below (`usePillInnerWidth`).
-  const pill = useRef<HTMLDivElement>(null)
-  const field = useRef<HTMLSpanElement>(null)
-  const probe = useRef<HTMLSpanElement>(null)
   const addressFits = useAddressFits(pill, field, probe, !compact)
   const text = tab && !masked ? pillText(tab.url, shown, addressFits) : ''
   // A title is one run of full ink; only an address dims what follows its site.
@@ -350,15 +373,15 @@ export function NavRow({
   // – Home folded away (its Customise toolbar row says "Hidden at this width."; there is no
   // app-menu row for it, the lead's word on #572), the hub folded into the app menu's "Media
   // Controls…" row; each returns where the pill, with the button's own slot back in the row,
-  // still holds the box the star returned at (126 / 110: the 302 sidebar with the always-there
-  // buttons), so the pill reads the same on either side of the return. Home at the 240 sidebar
-  // had taken the pill from 96 to 64 and the Settings tab's title to "S…" (the FIRST LINE's F1
-  // on #572; §9.29, §10.1). The buttons each makes room against are the ones always in the row
-  // (back, forward, reload, ⋯), the puzzle piece while there are extensions and the downloads
-  // button while it is up – and the tiered controls standing ahead of it in the bar's order
-  // (below): Home seats first in the row and is the first back, so with Home and the hub pinned
-  // the hub returns one slot (32) after Home (the 334 sidebar). The compact column has no pill
-  // to keep, so there they all stay.
+  // still holds the box the star returned at (126 / 110: the 298 sidebar with the always-there
+  // buttons, the pill's `PILL_BLEED` counted), so the pill reads the same on either side of the
+  // return. Home at the 240 sidebar had taken the pill from 96 to 64 and the Settings tab's
+  // title to "S…" (the FIRST LINE's F1 on #572; §9.29, §10.1). The buttons each makes room
+  // against are the ones always in the row (back, forward, reload, ⋯), the puzzle piece while
+  // there are extensions and the downloads button while it is up – and the tiered controls
+  // standing ahead of it in the bar's order (below): Home seats first in the row and is the
+  // first back, so with Home and the hub pinned the hub returns one slot (32) after Home (the
+  // 330 sidebar). The compact column has no pill to keep, so there they all stay.
   const downloadsUp = downloadButtonVisible(state, downloadsUiState)
   const puzzleUp = actionable(state.extensions).length > 0
   // Forward folded by its pin leaves the fixed set (the tiers and the extensions' overflow count
@@ -374,8 +397,8 @@ export function NavRow({
   // governor says the mode is on and the control is pinned, ahead of the hub as Chrome's stands
   // ahead of its media button – and tiered by the row's width on the hub's one rule
   // (`energySaverLeafFits`, pr-584 L2): at the 240 sidebar it took the pill from "Settings" to
-  // "S…", so there it folds, unmounted like the hub's button, and returns at the 302 sidebar
-  // (the 286 row with the four always-there buttons; 32 more a button for the puzzle piece and
+  // "S…", so there it folds, unmounted like the hub's button, and returns at the 298 sidebar
+  // (the 282 row with the four always-there buttons; 32 more a button for the puzzle piece and
   // the downloads button, and for Home while its own tier has it up). The leaf counts the row's
   // other buttons and Home, not the hub, while the hub counts the leaf: where the row has room
   // for one of the two, the leaf stands and the hub folds to its menu row – the leaf has no fold
@@ -389,7 +412,8 @@ export function NavRow({
     (compact || mediaHubButtonFits(rowWidth, otherButtons + (homeUp ? 1 : 0) + (saverUp ? 1 : 0)))
   // The hub's toolbar button off the row (§9.29's fold): the ⋯ button then wears the hub's dot.
   // Decided here, from the same width the button is mounted by, so the dot and the button move
-  // in one commit as the sidebar crosses 270 ↔ 240 – never both in a frame, never neither.
+  // in one commit as the sidebar crosses the button's return – never both in a frame, never
+  // neither.
   const mediaFolded = mediaHubFoldedAt(state, hubUp)
   // An update downloaded and waiting (shortcuts-menus-101): the menu opens on its "Update
   // Zenium" row and ⋯ wears the dot for it – Chrome's dot on its ⋮ – over the hub's while
@@ -683,7 +707,7 @@ export function NavRow({
           Chrome's Home button (settings-32; `HomeButton`, seated after Reload and before the
           location bar), shown by Appearance's "Show home button" – the `home` pin – where the
           row's width tier has room for it (`homeUp`: §9.29's hub-button rule; at the 240 sidebar
-          it is folded, back at 302 with the always-there buttons), and running `nav.home`, the
+          it is folded, back at 298 with the always-there buttons), and running `nav.home`, the
           one Home with Alt+Home and the menu bar's row: the home page set under Appearance (a
           page of the user's or the new tab page). Chrome's names: the accessible name "Home",
           the tooltip "Open the home page" – each carrying the chord, as the row's names and
@@ -721,9 +745,14 @@ export function NavRow({
           // A window surface's fill (§9.29: `--v2-window-fill`, its hover through the control
           // roles the row's `data-surface` resolves), 32 tall at Zen's medium radius, 8 of
           // padding each side (`PILL_PADDING`: the content box the chip tier and the container
-          // queries read).
+          // queries read). It fills its slot in the row, 2 into the gap either side
+          // (`-mx-0.5`, `PILL_BLEED`): the row's `gap-1` is the buttons' 2 px outer paddings
+          // meeting (§5's 32 pitch), and the pill's slot runs to the neighbours' boxes, so at
+          // the 240 sidebar it is §9.29's 100 (102–202, content 84, the address 58 beside the
+          // site icon) with Back, Forward, Reload and ⋯ on the same 32 slots as before
+          // (8–36, 40–68, 72–100, 204–232). The tablet's toolbar keeps its own margin.
           className={cn(
-            'zen-squircle zen-pill group/pill relative flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-[10px] bg-[var(--v2-control-fill)] px-2 text-left',
+            'zen-squircle zen-pill group/pill relative -mx-0.5 flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-[10px] bg-[var(--v2-control-fill)] px-2 text-left',
             !readOnly && 'hover:bg-[var(--v2-control-fill-hover)]'
           )}
           // The tooltip (lib/tooltip.ts; the chips inside carry their own) carries the whole
@@ -789,8 +818,12 @@ export function NavRow({
             )}
             <span
               ref={field}
+              // The address at §4's 13 px, the floor of the type scale – the size of the pill's
+              // two words (`.zen-pill-label`) and of every 13 px label in the chrome; 12.5 had
+              // been the one run under the floor (the FIRST LINE's L9 on #589). The probe below
+              // reads the same size, so `useAddressFits` measures the text the field draws.
               className={cn(
-                'min-w-0 flex-1 truncate text-[12.5px]',
+                'min-w-0 flex-1 truncate text-[13px]',
                 !url && !masked && 'text-[var(--v2-control-text-deemphasized)]'
               )}
               data-reads={url ? (text === shown ? 'address' : 'title') : undefined}
@@ -812,10 +845,23 @@ export function NavRow({
           <span
             ref={probe}
             aria-hidden="true"
-            className="pointer-events-none invisible absolute left-0 top-0 whitespace-nowrap text-[12.5px]"
+            className="pointer-events-none invisible absolute left-0 top-0 whitespace-nowrap text-[13px]"
             data-pill-probe
           >
             {shown}
+          </span>
+          {/*
+            The least the hover reveal must fit – the scheme, `www.`, the host's first character
+            and the ellipsis (`revealProbeText`) – for `useRevealKeepsHost`; the same size and
+            font as the field, out of flow, never seen.
+          */}
+          <span
+            ref={revealProbe}
+            aria-hidden="true"
+            className="pointer-events-none invisible absolute left-0 top-0 whitespace-nowrap text-[13px]"
+            data-reveal-probe
+          >
+            {revealText}
           </span>
           {/*
             Chrome's "Not secure" text before the address of an http page (or of a certificate
@@ -845,8 +891,13 @@ export function NavRow({
             scope rather than `:has(:focus-visible)`: Chromium blocks a Tab whose target is
             unfocusable in the instant between blurring the old chip and focusing the next, and
             only `:focus-within` on their common ancestor holds through that instant. They stay
-            as well while a chip has its popover up (`aria-expanded`), so the chips do not shift
-            under a popover that was placed on one of them (§9.20).
+            as well while a chip has a popover up that HANGS FROM THE PILL – the zoom bubble,
+            the share popover, site information, the star's bubble: a chip marked
+            `data-zen-anchored` (`PillChip`'s `anchored`) with `aria-expanded` – so the chips do
+            not shift under a surface that was placed on one of them (§9.20); never while a chip
+            has opened a FRAME DIALOG (the Install chip's install dialog, the Boosts dialog),
+            whose surface stands over the window with nothing hung from the pill – the
+            utilities drawn under its scrim as if hovered were the FIRST LINE's L7 on #589.
             Every tool after the address – Reader View, Boost, Copy, the zoom, the star – carries
             `zen-pill-chip`: a pill under 130 px drops them all for the address (the container
             query on `.zen-pill`). The site icon stays, and so does the blocked pop-ups chip: a
@@ -912,6 +963,7 @@ export function NavRow({
                 }
                 popup="dialog"
                 expanded={anchored}
+                anchored
                 data-site-chip=""
                 data-indicator={indicator.state}
                 data-slot-state={slot?.kind ?? (maskDraws ? 'private' : 'connection')}
@@ -1026,6 +1078,7 @@ export function NavRow({
                 title="Text preferences"
                 popup="dialog"
                 expanded={readerPrefsOpen}
+                anchored
                 data-reader-prefs-chip=""
                 className={cn(
                   'flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)]',
@@ -1058,6 +1111,7 @@ export function NavRow({
                 }
                 popup="dialog"
                 expanded={blockedOpen}
+                anchored
                 data-blocked-popups-chip=""
                 className={cn(
                   'zen-animate-pop flex h-7 min-w-7 shrink-0 items-center justify-center gap-1 rounded-md px-1.5 hover:bg-[var(--v2-control-fill)]',
@@ -1108,7 +1162,10 @@ export function NavRow({
               )}
             {tab && isWebPage && !isPrivate && (boostFits || boostsOpen) && (
               // Lit, a resident chip of the tier's informational rank; unlit, a hover-only
-              // utility let in last. Either way the open Boosts overlay keeps its anchor (§9.20).
+              // utility let in last. The Boosts dialog it opens is a frame dialog – a centred
+              // card over the content, hung from nothing – so the chip carries no `anchored`
+              // mark: its `aria-expanded` says what is open for the tree and keeps the chip
+              // mounted (`boostsOpen`), but does not hold the hover-only run drawn (L7).
               <PillChip
                 label={boosted ? 'Edit Boost for this site' : 'Boost this site'}
                 title={boosted ? 'Edit Boost for this site' : 'Boost this site'}
@@ -1118,7 +1175,7 @@ export function NavRow({
                   'zen-pill-chip h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)]',
                   boosted
                     ? 'flex text-[var(--v2-control-accent)] opacity-100'
-                    : 'zen-pill-extra hidden group-hover/pill:flex group-focus-within/chips:flex group-has-[[aria-expanded=true]]/chips:flex'
+                    : 'zen-pill-extra hidden group-hover/pill:flex group-focus-within/chips:flex group-has-[[data-zen-anchored][aria-expanded=true]]/chips:flex'
                 )}
                 onActivate={() => void openOverlay('boosts', tab.id)}
               >
@@ -1129,7 +1186,7 @@ export function NavRow({
               <PillChip
                 label="Copy URL"
                 title={hint('Copy URL', state, 'tab.copyUrl')}
-                className="zen-pill-chip zen-pill-extra hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)] group-hover/pill:flex group-focus-within/chips:flex group-has-[[aria-expanded=true]]/chips:flex"
+                className="zen-pill-chip zen-pill-extra hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)] group-hover/pill:flex group-focus-within/chips:flex group-has-[[data-zen-anchored][aria-expanded=true]]/chips:flex"
                 onActivate={() => tab && run('tab.copyUrl', { tabId: tab.id })}
               >
                 <Copy className="h-3.5 w-3.5" />
@@ -1146,10 +1203,11 @@ export function NavRow({
                 title="Share this page"
                 popup="dialog"
                 expanded={shareOpen}
+                anchored
                 data-share-chip=""
                 data-share-anchor={shareOpen ? '' : undefined}
                 className={cn(
-                  'zen-pill-chip zen-pill-extra hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)] group-hover/pill:flex group-focus-within/chips:flex group-has-[[aria-expanded=true]]/chips:flex',
+                  'zen-pill-chip zen-pill-extra hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)] group-hover/pill:flex group-focus-within/chips:flex group-has-[[data-zen-anchored][aria-expanded=true]]/chips:flex',
                   // The anchor keeps its pressed fill while its popover is up (§9.20).
                   shareOpen && 'bg-[var(--v2-control-fill-hover)] opacity-100'
                 )}
@@ -1170,7 +1228,9 @@ export function NavRow({
               // tier), named "Install <app>" as its tooltip is (`IDS_OMNIBOX_PWA_INSTALL_ICON_TOOLTIP`).
               // Its popup is the install dialog – Chrome's simple install dialog is tab-modal,
               // so the house's frame dialog stands – and the chip keeps its pressed fill while
-              // the dialog is up (§9.20). The tier folds it after Translate and Reader View and
+              // the dialog is up (§9.20); a frame dialog hangs from nothing, so the chip carries
+              // no `anchored` mark and its open state never holds the pill's hover-only run
+              // (L7). The tier folds it after Translate and Reader View and
               // before the shield (`pillChipTiers.ts`); folded or unpinned, the app menu's
               // "Install <app>…" row runs the same command. A pinnable control, it carries the
               // pinned button's right-click menu marks (context-menus-112; W8-1's
@@ -1195,8 +1255,12 @@ export function NavRow({
                 <MonitorDown className="h-3.5 w-3.5" />
                 {installLabelUp && (
                   // The word's size is the stylesheet's `.zen-pill-label` (13 px, shared with
-                  // "Not secure"); its weight the button's 500 (§4).
-                  <span className="zen-pill-label leading-none font-medium" aria-hidden>
+                  // "Not secure"); its weight the button's 500 (§4). Its line box is the pill's
+                  // own (19.5 at 13 px, centred in the chip's 20), the address's line box: a
+                  // `leading-none` line box centred in the chip put the word's baseline 1 px
+                  // under the address's (the FIRST LINE's N4 on #589 – ink row 62 to the
+                  // address's 61; both at 61 now).
+                  <span className="zen-pill-label font-medium" aria-hidden>
                     Install
                   </span>
                 )}
@@ -1312,6 +1376,42 @@ function useAddressFits(
     return () => observer.disconnect()
   }, [pill, field, probe, mounted])
   return fits
+}
+
+/**
+ * Whether the hover reveal keeps the host in view (the FIRST LINE's L3 on #589: "the reveal
+ * never costs the host"). The reveal puts the scheme and `www.` back before the host, and the
+ * field truncates from the end: near §9.29's 56 floor it read `http://…` – seven characters of
+ * scheme, none of host – where the rest address read `127.0.0.…`. Measured while the reveal is
+ * asked for (`measuring`), before its first paint: the least the reveal must fit
+ * (`revealProbeText`, drawn invisibly at the field's size – `probe`) against the field's box as
+ * the hover leaves it (`field`; the hover-only chips narrow it for the hover's duration), and
+ * again when either changes size. Where it does not fit, the trim stays under the pointer and
+ * the field reads as at rest. Like `useAddressFits`, it never feeds on its own result: the
+ * field is `flex: 1`, its width the room the chips leave, whatever text it holds. With nothing
+ * asking – no reveal, the "Always show full URLs" setting (the user's word, not measured), or a
+ * reveal that adds nothing before the host (an internal page's alias) – the answer is yes.
+ */
+function useRevealKeepsHost(
+  field: RefObject<HTMLElement | null>,
+  probe: RefObject<HTMLElement | null>,
+  measuring: boolean
+): boolean {
+  const [keeps, setKeeps] = useState(true)
+  useLayoutEffect(() => {
+    const slot = field.current
+    const text = probe.current
+    if (!measuring || !slot || !text) return
+    const measure = (): void => {
+      setKeeps(text.getBoundingClientRect().width <= slot.getBoundingClientRect().width)
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(slot)
+    observer.observe(text)
+    return () => observer.disconnect()
+  }, [field, probe, measuring])
+  return !measuring || keeps
 }
 
 /**

@@ -68,6 +68,9 @@ export function BlockedChip({
         title={label}
         popup="dialog"
         expanded={expanded}
+        // Site information hangs from the shield while the shield opened it (§9.20): the
+        // pill's hover-only run stays drawn under it (L7).
+        anchored
         data-state={siteState}
         className="zen-v2-blocked-chip -my-1"
         onActivate={(e) => {

@@ -4,6 +4,7 @@ import {
   CHIP_PRIORITY,
   CHIP_WIDTH,
   MIN_ADDRESS_WIDTH,
+  PILL_BLEED,
   PILL_LABEL_TIER,
   PILL_PADDING,
   addressWidth,
@@ -107,7 +108,7 @@ describe('the pill chip overflow rule (M8)', () => {
       { id: 'boost', tier: 'extra', width: CHIP_WIDTH.small }
     ]
     const at = (innerWidth: number): string[] => ids(fittingChips(innerWidth, http))
-    // Uncounted, the 240 inner of a 400 sidebar read 154 free over the residents and let three
+    // Uncounted, the 240 inner of a 396 sidebar read 154 free over the residents and let three
     // utilities in – the address at 2 px. Counted: site 26 + word 74 + shield 34 + star 26 = 160;
     // 240 − 160 = 80 over the floor's 56 – room for none of the 26 px utilities.
     expect(at(240)).toEqual(['indicator', 'shield', 'site', 'star'])
@@ -318,13 +319,19 @@ describe('the pill chip overflow rule (M8)', () => {
   })
 
   it('the 240 px sidebar with five chips: the state chips stay, star / zoom / translate hide, the address keeps its minimum', () => {
-    // 240 − 16 gutters − four 28 px buttons − four 4 px gaps (§5) = 96; its content box is 80.
-    const visible = fittingChips(inner(96), five)
-    expect(inner(96)).toBe(80)
+    // 240 − 16 gutters − four 28 px buttons − four 4 px gaps (§5) = 96, plus the 4 the pill takes
+    // of its neighbours' slots (`PILL_BLEED`, W8-F7) = §9.29's 100; its content box is 84.
+    expect(PILL_BLEED).toBe(4)
+    const visible = fittingChips(inner(100), five)
+    expect(inner(100)).toBe(84)
     expect(ids(visible)).toEqual(['popups', 'site'])
-    expect(addressWidth(inner(96), five, visible)).toBeGreaterThanOrEqual(0)
-    // Nothing that stays runs past the pill: the two never-hidden chips take 60 of the 80.
-    expect(addressWidth(inner(96), five, visible)).toBe(80 - 2 * CHIP_GAP - 20 - 28)
+    expect(addressWidth(inner(100), five, visible)).toBeGreaterThanOrEqual(0)
+    // Nothing that stays runs past the pill: the two never-hidden chips take 60 of the 84.
+    expect(addressWidth(inner(100), five, visible)).toBe(84 - 2 * CHIP_GAP - 20 - 28)
+    // With the site icon alone the address at 240 is 58, over its floor (the lead's 54 → 58).
+    const bare: PillChipSpec[] = [{ id: 'site', tier: 'site', width: CHIP_WIDTH.site }]
+    expect(addressWidth(inner(100), bare, fittingChips(inner(100), bare))).toBe(58)
+    expect(58).toBeGreaterThanOrEqual(MIN_ADDRESS_WIDTH)
   })
 
   it('the site icon and the state chips are never hidden, however narrow the pill', () => {
@@ -339,17 +346,17 @@ describe('the pill chip overflow rule (M8)', () => {
   })
 
   it('§9.29: the shield is not a state chip – its count lives in the site information – so it hides after the star', () => {
-    // The default 240 px sidebar's single-row toolbar leaves the pill 96 px (content box 80): the
-    // site icon and the address only (the #226 pill held site, shield, pop-ups, translate, zoom
-    // and star).
+    // The default 240 px sidebar's single-row toolbar leaves the pill 100 px (content box 84):
+    // the site icon and the address only (the #226 pill held site, shield, pop-ups, translate,
+    // zoom and star).
     const everyday: PillChipSpec[] = [
       { id: 'site', tier: 'site', width: CHIP_WIDTH.site },
       { id: 'shield', tier: 'shield', width: CHIP_WIDTH.iconButton },
       { id: 'star', tier: 'star', width: CHIP_WIDTH.star }
     ]
     const at = (pill: number): string[] => ids(fittingChips(inner(pill), everyday))
-    expect(at(96)).toEqual(['site'])
-    // The star returns at the 270 sidebar's 126 px pill (§9.29's "130": content box 110), the
+    expect(at(100)).toEqual(['site'])
+    // The star returns at the 266 sidebar's 126 px pill (§9.29's "130": content box 110), the
     // shield once it fits beside the star: 26 + 26 + 34 + 56 = 142 → pill 158.
     expect(at(126)).toEqual(['site', 'star'])
     expect(at(157)).toEqual(['site', 'star'])
@@ -359,9 +366,9 @@ describe('the pill chip overflow rule (M8)', () => {
       ...everyday,
       { id: 'popups', tier: 'state', width: CHIP_WIDTH.iconButton }
     ]
-    const visible = fittingChips(inner(96), withPopup)
+    const visible = fittingChips(inner(100), withPopup)
     expect(ids(visible)).toEqual(['popups', 'site'])
-    expect(addressWidth(inner(96), withPopup, visible)).toBe(80 - 26 - 34)
+    expect(addressWidth(inner(100), withPopup, visible)).toBe(84 - 26 - 34)
   })
 
   it('collapses from the lowest priority up: translate first, then zoom, then the star', () => {
@@ -390,7 +397,7 @@ describe('the pill chip overflow rule (M8)', () => {
     expect(ids(fittingChips(140, chips))).toEqual(['site'])
   })
 
-  it('§9.29: with the site icon alone beside it, the star returns at the 270 sidebar (a 126 px pill, content 110)', () => {
+  it('§9.29: with the site icon alone beside it, the star returns at the 266 sidebar (a 126 px pill, content 110; the pill fills its slot, W8-F7)', () => {
     const chips: PillChipSpec[] = [
       { id: 'site', tier: 'site', width: CHIP_WIDTH.site },
       { id: 'star', tier: 'star', width: CHIP_WIDTH.star }

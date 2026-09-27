@@ -82,6 +82,20 @@
       "budget-minutes": 68,
       "note": "The sixth phone shard (W6-6, OS-37): the five before it stand at 66 to 68 of their 68 minutes, and the memory-pressure driver's five would fit on none of them. Same recipe as phone-a; the room for what wave 6 adds after it."
     },
+    "phone-g": {
+      "title": "Phone G: API 34 Google APIs, pixel_6",
+      "api-level": "34",
+      "target": "google_apis",
+      "profile": "pixel_6",
+      "image": "system-images;android-34;google_apis;x86_64",
+      "webview": "com.google.android.webview 113.0.5672.136, the image's",
+      "emulator-gpu": "swangle",
+      "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
+      "display": "720x1600@280",
+      "timeout-minutes": 90,
+      "budget-minutes": 68,
+      "note": "The seventh phone shard (W6-H): the six before it stood at 64 to 68 of their 68 minutes and the last three merges each shuffled scenes by hand. Opened with a rebalance that leaves every phone shard at or under 58 minutes, a 10-minute headroom under the budget (nine drivers moved here, the largest movable of each shard; a driver a setup step, a first / last place or a sibling ties to its shard stayed). Same recipe as phone-a. The plan warns of any shard past 60 minutes (android-nightly-drivers.mjs check / estimate)."
+    },
     "api35": {
       "title": "Phone, API 35 Google APIs, pixel_6",
       "api-level": "35",

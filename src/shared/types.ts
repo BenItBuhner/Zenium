@@ -15,6 +15,7 @@ import type { UpdateSettings, UpdateStatus } from './updates'
 import type { UpdateDotRecord } from '../core/updateDot'
 import type { ToolbarPins } from './toolbarPins'
 import type { BlockingSettings, BlockingStatus } from './blocking'
+import type { BookmarkRowDisplay, BookmarkRowSortOrder } from './bookmarkRows'
 import type {
   PreloadPagesLevel,
   PrivacySettings,
@@ -3002,6 +3003,21 @@ export interface Settings {
    */
   energySaver: EnergySaverMode
   /**
+   * Whether the tab hover card says how much memory the page is using (settings-29; Chrome's
+   * `browser.hovercard.memory_usage_enabled`, "Show tab memory usage"): the card's last line,
+   * "Memory usage: 123 MB", read from the governor's snapshot (`ResourceSnapshot.tabs`). Off by
+   * default – Chrome 152's effective default after `MigrateHoverCardMemoryPref` (M131+): the pref
+   * registers true (`RegisterBrowserPrefs`, `browser_ui_prefs.cc`) and the one-time migration
+   * (`tab_strip_prefs.cc`) flips it to false under Tab Declutter, which every desktop platform
+   * has – on by an explicit switch. Off, a page past Chrome's high-usage threshold still gets its
+   * line ("High memory usage: 1.2 GB" – `TabResourceUsage::kHighMemoryUsageThresholdBytes`,
+   * 800 MiB), as Chrome's does; a sleeping tab's card says what it gave back instead
+   * (`sleepSavedMb`). Chrome registers the pref in local state, never synced – device-local here
+   * too (`DEVICE_LOCAL_SETTINGS`). The desktop's alone: the tablet chrome mounts no card. Absent
+   * in profiles from before it existed (read as false, as is anything but `true`).
+   */
+  hoverCardMemoryUsage: boolean
+  /**
    * Inactive tabs (TAB-20, SET-34; Chrome's archive): a tab nobody has looked at for this many
    * days leaves the grid for the Inactive tabs list, its page kept as a recently-closed entry
    * keeps one (`InactiveTabsService`). Chrome's ladder: 0 (Never), 7, 14 or 21, 21 by default
@@ -3129,6 +3145,15 @@ export interface Settings {
   /** The bookmarks bar above the content frame: always, only on the new tab page, or never. */
   bookmarksBar: BookmarksBarMode
   /**
+   * The phone's bookmarks panel (HB-13, `shared/bookmarkRows.ts`): how a folder's rows and
+   * search results are ordered (Chrome's `BookmarkRowSortOrder`, `manual` by default) and
+   * whether a row is an image tile or the favicon (Chrome's `BookmarkRowDisplayPref`; Chrome's
+   * default is Visual, Zenium seeds `compact` – the lead's stated deviation, recorded on the
+   * HB-13 row). Device-local, as Chrome keeps both in SharedPreferences.
+   */
+  bookmarkRowSortOrder: BookmarkRowSortOrder
+  bookmarkRowDisplay: BookmarkRowDisplay
+  /**
    * Which built-in key table the user's overrides sit on. New profiles follow Chrome; a profile
    * from before the setting existed keeps the Zen set when it had customised bindings.
    */
@@ -3141,6 +3166,15 @@ export interface Settings {
    * a profile from before it reads `standard` (`sanitizePreloadPages`).
    */
   preloadPages: PreloadPagesLevel
+  /**
+   * Chrome's "Automatically remove permissions from unused sites" (PS-41,
+   * `safety_hub.unused_site_permissions_revocation.enabled`, on by default): the daily sweep
+   * takes the ask-default permissions a site was allowed but not visited for 60 days, into a
+   * 30-day revoked list the Safety check reviews. Off: no sweep; the visit clock keeps running
+   * and the list already made stays. Its own synced key, as Chrome's pref; a profile from before
+   * it reads on (`applyPersisted`), and a peer's record without it says nothing about it.
+   */
+  autoRevokeUnusedPermissions: boolean
   /**
    * The new tab page, both platforms' (`shared/newTab.ts`): whether it opens (desktop), its
    * layout preset and sections, what its grid shows, what it paints behind. The user's shortcuts
@@ -4020,6 +4054,33 @@ export interface PermissionRule {
   origin: string
   permission: string
   decision: 'allow' | 'deny'
+  /**
+   * The unused-sites clock of an `allow` the sweep can reach (PS-41; Chrome's `last_visited`):
+   * set when the user allows, refreshed by every page visit to the site, floored to the week
+   * (`coarseVisitTime`) so the file keeps no visit log. Absent on a refusal, on a row the sweep
+   * never touches, and on an allow from before the clock that no visit has stamped since.
+   */
+  lastVisitedAt?: number
+  /**
+   * The user allowed the site again after the sweep took the permission (Chrome's
+   * `autorevocation_bypassed_by_user`): no later sweep touches this rule.
+   */
+  keepGranted?: true
+}
+
+/**
+ * Permissions the unused-sites sweep took from one site (PS-41; Chrome's
+ * `REVOKED_UNUSED_SITE_PERMISSIONS`): one record per site, kept 30 days for the Safety check's
+ * review, gone at `expiresAt` or when the user changes any of the site's answers.
+ */
+export interface RevokedSitePermissions {
+  origin: string
+  /** The stored, qualified names (`openExternal:zoommtg`), so an "Allow again" restores each as it was. */
+  permissions: string[]
+  /** Unix milliseconds. */
+  revokedAt: number
+  /** `revokedAt` + 30 days. */
+  expiresAt: number
 }
 
 /** The user's answer to a permission prompt; `dismiss` refuses this request without remembering. */
@@ -4211,10 +4272,15 @@ export interface SafetyCheckResult {
     /** When the last full checkup finished on this device; null when it never ran. */
     checkedAt: number | null
   }
-  /** Sites holding several granted permissions, or granted ones not visited for weeks. */
+  /**
+   * Sites holding several granted permissions, or granted ones whose site was not visited for
+   * weeks (the rules' own `lastVisitedAt`), and the permissions the unused-sites sweep took
+   * (PS-41): the revoked list as it stands after the sweep this check ran first.
+   */
   permissions: SafetyCheckRow & {
     grantedSites: number
     review: Array<{ origin: string; permissions: string[]; reason: 'many' | 'unused' }>
+    revoked: Array<{ origin: string; permissions: string[]; revokedAt: number }>
   }
   /** Sites allowed to send notifications, busiest first (`shown` counts this session). */
   notifications: SafetyCheckRow & { sites: Array<{ origin: string; shown: number }> }
@@ -4515,6 +4581,11 @@ export interface UIState {
   blockedPopups: Record<string, BlockedPopup[]>
   /** Every remembered per-site permission answer (Settings lists and revokes them). */
   permissionRules: PermissionRule[]
+  /**
+   * Permissions the unused-sites sweep took (PS-41), the newest revocation first: the Safety
+   * check's review reads it, and every change of the list is pushed.
+   */
+  revokedUnusedPermissions: RevokedSitePermissions[]
   /**
    * The effective default of every content-settings catalogue row (Settings › Site settings):
    * the user's choice where there is one, else the catalogue's. Keyed by the row's id.
@@ -4858,9 +4929,10 @@ export interface MenuDescriptor {
 // ---------------------------------------------------------------------------
 
 /**
- * Strips along a view's top and bottom edges (CSS px) that chrome messages – toasts, banners –
- * draw over. Hosts that layer pages above the chrome clip the page out of them and let touches
- * there through to the chrome (see `TabView.setCover`).
+ * The message strips: strips along a view's top and bottom edges (CSS px) that chrome messages –
+ * toasts, banners – draw over. Hosts that layer pages above the chrome clip the page out of them
+ * and let touches there through to the chrome (see `TabView.setCover`). Not the reader's cover
+ * over a tab's page (`TabManager.cover`, where the tree's "covers" are told apart).
  */
 export interface ContentCover {
   top: number
@@ -5710,6 +5782,12 @@ export interface Commands {
   'newtab.updateShortcut': { args: { id: string; title: string; url: string }; result: void }
   'newtab.removeShortcut': { args: { id: string }; result: void }
   'newtab.reorderShortcuts': { args: { ids: string[] }; result: void }
+  /**
+   * The Undo of the phone tile menu's Remove (NTP-07), the toast's one action: the tile back –
+   * a pin at the slot it held, a most visited site's host back among the most visited. False
+   * when `url` is not the last removal's (a later removal took the toast, or Undo ran already).
+   */
+  'newtab.undoRemove': { args: { url: string }; result: boolean }
   /** Hide or show one of the Magic Stack's modules on this device (NTP-16). */
   'newtab.setModuleHidden': { args: { id: MagicStackModuleId; hidden: boolean }; result: void }
   /** Pick a background image from disk (`capabilities` gate it; resolves false when cancelled). */
@@ -6556,6 +6634,20 @@ export interface Commands {
   }
   /** Forget every decision of a site (Settings' per-site list). */
   'permissions.resetOrigin': { args: { origin: string }; result: void }
+  /**
+   * The Safety check's review of the permissions the unused-sites sweep took (PS-41). "Allow
+   * again": every permission in the site's record is allowed once more, marked `keepGranted` so
+   * no later sweep takes it, and the record goes; its Undo puts the answers back the way the
+   * sweep left them and the record back with its old times.
+   */
+  'permissions.regrantRevoked': { args: { origin: string }; result: void }
+  'permissions.undoRegrantRevoked': { args: { origin: string }; result: void }
+  /**
+   * "Got it": the whole list goes (the permissions stay revoked); the records are returned so
+   * the chrome's Undo can put them back as they were with `restoreRevokedList`.
+   */
+  'permissions.acknowledgeRevoked': { args: void; result: RevokedSitePermissions[] }
+  'permissions.restoreRevokedList': { args: { records: RevokedSitePermissions[] }; result: void }
   /** Answer a pending HTTP authentication or client-certificate prompt (null cancels). */
   'security.respond': {
     args: { id: string; response: SecurityPromptResponse | null }
@@ -6877,9 +6969,11 @@ export interface Events {
   /**
    * A message in the chrome's toast slot; `action`, when the core sends one, is the toast's
    * trailing action and the command the chrome runs when it is picked (the action clock,
-   * §9.33). Absent for every toast that has none, as before.
+   * §9.33). Absent for every toast that has none, as before. `duration`, when the core sends
+   * one, is the toast's clock in ms in place of the chrome's default for its kind – §9.33's
+   * 8 s for a toast whose action is Undo (`TOAST_UNDO_MS`).
    */
-  toast: { message: string; kind?: 'info' | 'error'; action?: ToastAction }
+  toast: { message: string; kind?: 'info' | 'error'; action?: ToastAction; duration?: number }
   /**
    * Take Screenshot put the visible page in the gallery (SH-07): the chrome shows the preview
    * card in the toast's slot – the thumbnail, Share | Delete, Capture more – for `tabId`'s page.

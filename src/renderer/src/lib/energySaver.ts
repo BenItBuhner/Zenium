@@ -65,10 +65,11 @@ export function energySaverLeafUp(state: UIState, pins: ToolbarPins | undefined)
  * the leaf's own slot must still hold `MEDIA_HUB_PILL`, the 126 (110 in the row's padding) at
  * which the star and the tools return to the pill, so the pill reads the same on either side of
  * the leaf's return. With the four always-there buttons (back, forward, reload, ⋯) that is the
- * 286 row – the 302 sidebar – and 32 more for each button beside them (the puzzle piece, the
- * downloads button); at the 240 sidebar the leaf folds. Chrome's `BatterySaverButton` is not
- * tiered, but Chrome's toolbar has no pill to keep; here the leaf took the 240 pill from
- * "Settings" to "S…" (96 → 64). The leaf stands where the hub folds: `NavRow` counts the leaf
+ * 282 row – the 298 sidebar, the pill's `PILL_BLEED` counted – and 32 more for each button
+ * beside them (the puzzle piece, the downloads button); at the 240 sidebar the leaf folds.
+ * Chrome's `BatterySaverButton` is not tiered, but Chrome's toolbar has no pill to keep; here
+ * the leaf took the 240 pill from "Settings" to "S…" (96 → 64, in the row's arithmetic before
+ * W8-F7's 100 pill). The leaf stands where the hub folds: `NavRow` counts the leaf
  * among the buttons the hub makes room against and not the hub among the leaf's, so at a width
  * with room for one of them the leaf – the state the user is in – is the one drawn, and the hub
  * keeps its fold home in the app menu's "Media Controls…" row, which the leaf has none of

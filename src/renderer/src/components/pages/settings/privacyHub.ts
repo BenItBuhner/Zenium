@@ -17,11 +17,11 @@ import type { ThirdPartyCookieMode } from '@shared/privacy'
  * Chrome's list is Delete browsing data, Privacy Guide, Third-party cookies, Ad privacy,
  * Security, Site settings, Safety check. Privacy Guide (PS-40) has no page here yet and Ad
  * privacy no engine (no ad topics, no Privacy Sandbox), so neither has a card – an absent
- * feature is not a disabled card. Two names are the house's own: the first card follows the
- * dialog it opens, "Clear browsing data" today (one name for one thing – the F1 ruling; the
- * family's rename to Chrome's "Delete browsing data", the dialog, History's opener, the app
- * menu row and this card together, is a slice of its own), and the third names its landing,
- * "Safe Browsing", since the nav already has a Security category (F3 / Q4).
+ * feature is not a disabled card. The first card follows the dialog it opens, "Delete browsing
+ * data" – Chrome's words since M124 (`IDS_SETTINGS_CLEAR_BROWSING_DATA`), the family renamed
+ * together in W8-7 (the dialog, the phone's sheet, History's opener, Settings' row and this
+ * card; one name for one thing – the F1 ruling). One name is the house's own: the third names
+ * its landing, "Safe Browsing", since the nav already has a Security category (F3 / Q4).
  */
 export interface PrivacyHubCard {
   /** The row id, `hub-` prefixed so it stays unique beside the section's other programs. */
@@ -30,13 +30,13 @@ export interface PrivacyHubCard {
   glyph: LucideIcon
   /**
    * The group of the section the card lands on (`RowGroup.id`); null for the card whose press
-   * opens a dialog instead (Clear browsing data, the PS-13 sheet).
+   * opens a dialog instead (Delete browsing data, the PS-13 sheet).
    */
   group: string | null
 }
 
 export const PRIVACY_HUB_CARDS: readonly PrivacyHubCard[] = [
-  { id: 'hub-clear-data', label: 'Clear browsing data…', glyph: Trash2, group: null },
+  { id: 'hub-clear-data', label: 'Delete browsing data…', glyph: Trash2, group: null },
   { id: 'hub-cookies', label: 'Third-party cookies', glyph: Cookie, group: 'site-data' },
   { id: 'hub-security', label: 'Safe Browsing', glyph: ShieldHalf, group: 'safe-browsing' },
   {

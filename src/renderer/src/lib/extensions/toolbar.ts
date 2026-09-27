@@ -11,9 +11,11 @@ export const TOOLBAR_GAP = 4
 /**
  * Narrowest address pill worth keeping before actions start folding into the puzzle menu: the
  * site icon and about eight characters of host, close to where Firefox lets its toolbar overflow.
- * The default 240 sidebar leaves the pill (96 there, §9.29's tier pill) under this with no
- * actions at all, so there every pinned action lives in the puzzle panel until the sidebar is
- * widened past about 300.
+ * The default 240 sidebar's pill is exactly this (100, §9.29's pill filling its slot –
+ * `PILL_BLEED` in `pillChipTiers.ts`) with no room for an action's slot beside it, so there every
+ * pinned action lives in the puzzle panel until the sidebar is widened past about 300. (The fit
+ * below reads the row's flex share, 4 under the pill it draws: an action arrives over a pill
+ * of at least 104, never one under the floor.)
  */
 export const MIN_PILL_WIDTH = 100
 

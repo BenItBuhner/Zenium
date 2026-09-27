@@ -246,10 +246,12 @@ function describe(wc: WebContents): string {
  * A double `requestAnimationFrame`: the first callback runs before the next frame's style,
  * layout and paint, so the second runs only after that frame – with everything in the document
  * as it stands now – was committed to the compositor. Its answer is the document's clock
- * (`performance.now()`), for a log; a document that draws no frame (hidden, its animation
- * frames paused; a hung renderer) never answers. The leading comment names the script to the
- * drive's hook of the main frame's `executeJavaScript` – the order of the report's arrival and
- * the hide's issue is the evidence (`w8-5-reader.mjs`); the strip is the confirmation.
+ * (`performance.now()`), for a log; a document that draws no frame (a hung renderer; a hidden
+ * document with its animation frames paused – though a view hidden between its creation and
+ * its first frame was found to answer that frame all the same, Electron 44, W8-F8's drive)
+ * never answers. The leading comment names the script to the drive's hook of the main frame's
+ * `executeJavaScript` – the order of the report's arrival and the hide's issue is the evidence
+ * (`w8-5-reader.mjs`); the strip is the confirmation.
  */
 export const FRAME_DRAWN_SCRIPT = `/* zenium: frame drawn */ new Promise(function (resolve) {
   requestAnimationFrame(function () {
@@ -265,7 +267,11 @@ export const FRAME_DRAWN_SCRIPT = `/* zenium: frame drawn */ new Promise(functio
  * where Electron 44's frame evaluates and nowhere else: the script reads nothing of the page but
  * its clock and writes nothing, and a page that meddles with its own animation frames holds
  * nothing but its own swap, to the asker's ceiling. No user gesture goes with it. Rejects for
- * contents that are gone, or whose frame is; resolves `NaN` for an answer that is no number.
+ * contents that are gone, or whose frame is – the frame's throw included: a `WebFrameMain`
+ * disposed between the read and the ask (the document navigated away, the renderer gone)
+ * throws from `executeJavaScript` itself rather than rejecting, and an asker racing the word
+ * against its ceiling (`TabManager.afterFrame`) must find a rejection to swallow, not an
+ * exception out of the ask. Resolves `NaN` for an answer that is no number.
  */
 export function frameDrawn(wc: WebContents): Promise<number> {
   if (wc.isDestroyed()) return Promise.reject(new Error('The page is gone'))
@@ -276,9 +282,15 @@ export function frameDrawn(wc: WebContents): Promise<number> {
     return Promise.reject(new Error('The page has no main frame'))
   }
   if (!frame) return Promise.reject(new Error('The page has no main frame'))
-  return frame
-    .executeJavaScript(FRAME_DRAWN_SCRIPT, false)
-    .then((answer) => (typeof answer === 'number' ? answer : NaN))
+  let asked: Promise<unknown>
+  try {
+    asked = frame.executeJavaScript(FRAME_DRAWN_SCRIPT, false)
+  } catch (error) {
+    return Promise.reject(
+      error instanceof Error ? error : new Error('The page’s frame is gone', { cause: error })
+    )
+  }
+  return asked.then((answer) => (typeof answer === 'number' ? answer : NaN))
 }
 
 function sleep(ms: number): Promise<void> {

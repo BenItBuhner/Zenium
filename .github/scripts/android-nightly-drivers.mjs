@@ -32,10 +32,13 @@
 //     or a skip with a reason, every driver's class exists, ids unique and each driver's file
 //     named after its id, shards known, handshake directories as the classes declare them.
 //     Exits 1 with the problems listed. (android-nightly-drivers.test.mjs runs the same through
-//     vitest.)
+//     vitest.) A shard past its headroom line (less than 8 minutes left under its budget: 60
+//     minutes of drivers on a 68-minute shard) is a `::warning::` line naming it - the plan job's
+//     annotation, not a failure.
 //
 //   node android-nightly-drivers.mjs estimate
-//     The shard plan with the per-driver estimates summed, as Markdown (for a pull request body).
+//     The shard plan with the per-driver estimates summed, as Markdown (for a pull request body),
+//     the headroom warnings under it.
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -607,7 +610,45 @@ export function summarize(
   return { markdown: lines.join('\n'), failed: failures, notRun, counts }
 }
 
-// --- estimate ----------------------------------------------------------------------------------
+// --- estimate and headroom ---------------------------------------------------------------------
+
+/**
+ * The minutes a shard keeps free under its budget before the plan warns of it: a phone shard
+ * (budget 68) warns past 60 minutes of drivers, a tablet shard (45) past 37. The budget stays the
+ * cap the vitest holds every shard under; this is the early word - a shard past its line has less
+ * than the next 3-to-5-minute driver and the runner's slower page loads take, and the last three
+ * merges at the cap each shuffled scenes by hand.
+ */
+export const HEADROOM_MINUTES = 8
+
+/** The minutes of drivers on one shard: its estimates summed. */
+export function shardMinutes(manifest, shard) {
+  return driversOf(manifest, shard).reduce((sum, d) => sum + d.estimate, 0)
+}
+
+/** The minutes of drivers past which a shard has less than `headroom` left of its budget. */
+export function headroomLine(shard, headroom = HEADROOM_MINUTES) {
+  return shard['budget-minutes'] - headroom
+}
+
+/**
+ * One line per shard past its headroom line, naming the shard, its minutes and what is left of
+ * its budget; an empty list when every shard has its headroom. Printed by `check` (as a
+ * `::warning::` annotation) and under `estimate`'s table; never a failure.
+ */
+export function headroomWarnings(manifest, headroom = HEADROOM_MINUTES) {
+  const lines = []
+  for (const name of shardNames(manifest)) {
+    const shard = manifest.shards[name]
+    const minutes = shardMinutes(manifest, name)
+    const line = headroomLine(shard, headroom)
+    if (!(minutes > line)) continue
+    lines.push(
+      `shard ${name}: ${minutes.toFixed(1)} min of drivers, past the ${line}-minute headroom line (${(shard['budget-minutes'] - minutes).toFixed(1)} min left of its ${shard['budget-minutes']})`
+    )
+  }
+  return lines
+}
 
 export function estimate(manifest) {
   const lines = [
@@ -617,7 +658,7 @@ export function estimate(manifest) {
   let total = 0
   for (const [name, shard] of Object.entries(manifest.shards)) {
     const drivers = driversOf(manifest, name)
-    const minutes = drivers.reduce((sum, d) => sum + d.estimate, 0)
+    const minutes = shardMinutes(manifest, name)
     total += minutes
     lines.push(
       `| ${code(name)} | ${shard.title} (${code(shard.image)}) | ${shard.webview} | ${drivers.length} | ${minutes.toFixed(1)} min | ${shard['timeout-minutes']} min (budget ${shard['budget-minutes']}) |`
@@ -628,6 +669,14 @@ export function estimate(manifest) {
     const drivers = driversOf(manifest, name)
     lines.push(`${code(name)}: ${drivers.map((d) => `${d.id} ${d.estimate}`).join(' · ')}`, '')
   }
+  const warnings = headroomWarnings(manifest)
+  if (warnings.length)
+    lines.push(
+      `**Headroom:** ${warnings.length === 1 ? 'a shard' : `${warnings.length} shards`} with less than ${HEADROOM_MINUTES} minutes left under the budget – the next driver of three to five minutes will not fit without a move.`,
+      '',
+      ...warnings.map((w) => `- ${w}`),
+      ''
+    )
   return lines.join('\n')
 }
 
@@ -702,6 +751,9 @@ function main() {
           `${manifest.drivers.length} drivers cover ${sources.size} classes; ${manifest.skip.length} skipped with a reason`
         )
       }
+      // The headroom warnings whatever the outcome: GitHub Actions reads the `::warning::` lines
+      // off stdout as annotations of the plan job; on a terminal they are the same lines.
+      for (const warning of headroomWarnings(manifest)) console.log(`::warning::${warning}`)
       return
     }
     case 'estimate':

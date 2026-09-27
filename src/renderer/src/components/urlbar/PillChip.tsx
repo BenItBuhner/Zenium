@@ -22,11 +22,22 @@ type ChipSemantics =
       popup: 'dialog' | 'menu'
       /** The popup is up right now (`aria-expanded`). */
       expanded?: boolean
+      /**
+       * The popup hangs from the chip – a popover or bubble placed on it (§9.20: the zoom
+       * bubble, the share popover, site information, the star's bubble) – rather than standing
+       * as a frame dialog over the window (the Install chip's install dialog, the Boosts
+       * dialog). The house mark `data-zen-anchored`: the desktop pill keeps its hover-only run
+       * drawn while such a chip's popup is up, so the chips do not shift under a surface placed
+       * on one of them, and never for a frame dialog's opener, whose surface is nowhere near
+       * the pill (the design lead's ruling on #589, L7). Say it once on the chip, not per state.
+       */
+      anchored?: boolean
       pressed?: never
     }
   | {
       popup?: never
       expanded?: never
+      anchored?: never
       /** A toggle chip's state (`aria-pressed`), such as Reader View. */
       pressed?: boolean
     }
@@ -67,6 +78,7 @@ export function PillChip({
   title,
   popup,
   expanded,
+  anchored,
   pressed,
   onActivate,
   inert,
@@ -91,6 +103,7 @@ export function PillChip({
       aria-description={title && title !== label ? title : undefined}
       aria-haspopup={popup}
       aria-expanded={popup ? Boolean(expanded) : undefined}
+      data-zen-anchored={popup && anchored ? '' : undefined}
       aria-pressed={pressed}
       // The keyboard on a chip lifts it to full ink: chips rest at 70 % and a ring drawn at that
       // opacity would not read against the pill (a11y-10).

@@ -520,7 +520,7 @@ function lookSection({
                 kind: 'action',
                 id: 'theme',
                 label: 'Theme',
-                description: `${themeLabel} · ${spaceLabel(activeSpace)} space`,
+                description: `${themeLabel} · ${spaceLabel(activeSpace)} Space`,
                 keywords: ['theme', 'accent', 'colour', 'color', 'gradient', 'preset', 'reset'],
                 layouts: ['desktop', 'tablet'],
                 button: themed ? 'Reset to default' : 'Change…',
@@ -545,7 +545,7 @@ function lookSection({
                 id: 'use-system-accent',
                 label: 'Use system accent colour',
                 description: themed
-                  ? 'Controls take the colour your system uses while the space has the default look.'
+                  ? 'Controls take the colour your system uses while the Space has the default look.'
                   : 'Controls take the colour your system uses.',
                 keywords: ['accent', 'system colour', 'system color', 'follow device colours'],
                 layouts: ['desktop'],
@@ -1610,7 +1610,7 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
                 id: 'newtab-image-colour',
                 label: "Use the picture's colour",
                 description:
-                  'This space takes the colour your picture is mostly of, and follows a new one.',
+                  'This Space takes the colour your picture is mostly of, and follows a new one.',
                 keywords: ['theme', 'accent', 'colour', 'color', 'wallpaper'],
                 checked: activeSpace?.theme?.fromImage === true,
                 disabled: !image || !accent,
@@ -1642,7 +1642,7 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
           kind: 'action',
           id: 'newtab-reset-background',
           label: 'Reset background to default',
-          description: 'The space gradient; an image kept on this device is removed.',
+          description: 'The Space gradient; an image kept on this device is removed.',
           keywords: ['restore', 'theme', 'wallpaper'],
           button: 'Reset',
           disabled: background === DEFAULT_NEW_TAB_SETTINGS.background && !image,
@@ -2482,6 +2482,29 @@ function performanceSection({ state, tab, set }: SectionContext): RowGroup[] {
         }
       ]
     },
+    {
+      // The tab hover card's memory line (settings-29, W8-10; Chrome's "Show tab memory usage",
+      // `browser.hovercard.memory_usage_enabled` – off by default, Chrome 152's effective default
+      // after `MigrateHoverCardMemoryPref`). Chrome seats the switch in
+      // Appearance under "Tab hover preview card" and its Performance page only links there;
+      // the matrix seats the row here, with Chrome's words under Chrome's heading in §9.20's
+      // name for the card. The desktop's alone, as the card is (the tablet chrome mounts none).
+      id: 'hover-card',
+      heading: 'Tab hover card',
+      layouts: ['desktop'],
+      rows: [
+        {
+          kind: 'switch',
+          id: 'hover-card-memory',
+          label: 'Show tab memory usage',
+          description:
+            'The card that appears when you rest the pointer on a tab says how much memory its page is using.',
+          keywords: ['hover card', 'tab hover', 'preview card', 'memory usage', 'memory'],
+          checked: s.hoverCardMemoryUsage,
+          onChange: (v) => set({ hoverCardMemoryUsage: v })
+        }
+      ]
+    },
     ...(noBattery ? [] : [energySaver])
   ]
 }
@@ -3142,11 +3165,11 @@ function resourcesSection({ state, set, navigate }: SectionContext): RowGroup[] 
 
 /**
  * The hub at the top of the section (settings-12; Chrome's card list, `privacyHub.ts`): one
- * §10.4 action row per card in Chrome's order – Clear browsing data…, Third-party cookies,
+ * §10.4 action row per card in Chrome's order – Delete browsing data…, Third-party cookies,
  * Safe Browsing, Site settings, Safety check – the leading glyph, the title, one line under it.
  * A card brings its program's first group on screen (`ctx.reveal`, the section's `?group=`
  * landing) and trails the chevron that says so (Q5 of the #553 lead check: the four landings
- * keep it); Clear browsing data… opens the PS-13 dialog the Clear browsing data row opens, with
+ * keep it); Delete browsing data… opens the PS-13 dialog the Delete browsing data row opens, with
  * §9.1's ellipsis on its name and no chevron (F1). No heading: the cards stand under the
  * section's title as Chrome's do. The desktop and tablet shells' (`layouts`): the phone's
  * Privacy page keeps its plain list.
@@ -3179,8 +3202,10 @@ function privacyHubGroups(ctx: SectionContext): RowGroup[] {
           label: card.label,
           description: lines[card.id],
           leading: <Glyph className="zen-settings-glyph" aria-hidden="true" />,
+          // The dialog's card keeps its pre-M124 name as a search alias (W8-7): a hand that
+          // types "clear browsing data" still finds it.
           ...(group === null
-            ? { form: CLEAR_BROWSING_DATA_FORM }
+            ? { form: CLEAR_BROWSING_DATA_FORM, keywords: ['clear'] }
             : { leaves: 'chevron', onPress: () => reveal?.(group) })
         }
       })
@@ -3191,7 +3216,7 @@ function privacyHubGroups(ctx: SectionContext): RowGroup[] {
 /**
  * Groups in Chrome's Privacy and security order – the hub's cards (`privacyHubGroups`), then
  * Safety check, Safe Browsing, Tracking
- * prevention, Clear browsing data, Cookies and site data, Site settings, HTTPS-only, Secure
+ * prevention, Delete browsing data, Cookies and site data, Site settings, HTTPS-only, Secure
  * DNS, Privacy signals – each program's groups self-contained: the site-controls program's
  * (`siteControls/settingsRows`) at the safety-check, clear-browsing-data and site-settings
  * positions, the request engine's (`tracking.tsx`) at the tracking-prevention position, the

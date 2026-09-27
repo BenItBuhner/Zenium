@@ -271,6 +271,26 @@ export function displayUrl(url: string): string {
 }
 
 /**
+ * The least the hover reveal must fit to keep the host in view: what `displayUrl`'s trim takes
+ * off the address (the scheme, then `www.` – the run the reveal puts back before the host), the
+ * host's first character, and the ellipsis the field truncates with. The desktop pill draws it
+ * invisibly at the field's size and measures it against the field's box before it draws the
+ * reveal (the FIRST LINE's L3 on #589: "the reveal never costs the host" – a 56 px field read
+ * `http://…`, seven characters of scheme and none of host). Empty where the reveal adds nothing
+ * before the host – an internal page's alias, a `file:` address, an extension page – or where
+ * nothing follows the scheme; then there is nothing to measure.
+ */
+export function revealProbeText(full: string): string {
+  let cut = 0
+  if (full.startsWith('https://')) cut = 'https://'.length
+  else if (full.startsWith('http://')) cut = 'http://'.length
+  else return ''
+  if (full.startsWith('www.', cut)) cut += 4
+  const first = full.codePointAt(cut)
+  return first === undefined ? '' : `${full.slice(0, cut)}${String.fromCodePoint(first)}…`
+}
+
+/**
  * The address in full, as Chrome's "Always show full URLs" shows it and as a copy yields it:
  * scheme and `www.` kept, error and Reader View pages replaced by the address they stand in for,
  * an internal page as its user-facing `zenium://` alias (`zen://` never leaves `tab.url`), an

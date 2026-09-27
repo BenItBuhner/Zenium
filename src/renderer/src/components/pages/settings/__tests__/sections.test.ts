@@ -654,7 +654,7 @@ describe('the section model', () => {
 
   it('carries #115’s Privacy and security groups (tracking-*) at Chrome’s tracking-prevention position, behind requestBlocking', () => {
     const privacy = section('privacy', blockingState())
-    // The engine's groups sit between #135's Safety check and Clear browsing data groups; their
+    // The engine's groups sit between #135's Safety check and Delete browsing data groups; their
     // own order and content are asserted here (the whole category's order is #135's test).
     const tracking = privacy.groups.filter((g) => g.id.startsWith('tracking-'))
     expect(tracking.map((g) => g.id)).toEqual([
@@ -2039,7 +2039,7 @@ describe('the section model', () => {
     }
   })
 
-  it('carries #135’s site-controls rows in Chrome’s Privacy and security order: Safety check, then #115’s Tracking prevention, Clear browsing data, Site settings', () => {
+  it('carries #135’s site-controls rows in Chrome’s Privacy and security order: Safety check, then #115’s Tracking prevention, Delete browsing data, Site settings', () => {
     const c = context()
     const privacy = buildSection(
       PAGE.sections.find((x) => x.id === 'privacy')!,
@@ -2100,12 +2100,16 @@ describe('the section model', () => {
     now.onPress?.()
     expect(invoke).toHaveBeenCalledWith('privacy.safetyCheck', undefined)
 
-    // Clear browsing data is one action row whose sheet is the form.
+    // Delete browsing data is one action row whose sheet is the form – Chrome's words since
+    // M124 (W8-7: `IDS_SETTINGS_CLEAR_BROWSING_DATA` "Delete browsing data", the row's button
+    // Chrome's `IDS_SETTINGS_CLEAR` "Delete" with the opener's ellipsis).
     const clear = row(privacy, 'clear-data-open')
     if (clear.kind !== 'action') throw new Error('not an action')
-    expect(clear.label).toBe('Clear browsing data')
-    expect(clear.form?.title).toBe('Clear browsing data')
+    expect(clear.label).toBe('Delete browsing data')
+    expect(clear.button).toBe('Delete…')
+    expect(clear.form?.title).toBe('Delete browsing data')
     expect(clear.form?.description).toContain('time range')
+    expect(clear.form?.description).toContain('what to delete')
 
     // Site settings: the catalogue this host honours, each an item whose sheet holds the default
     // as a value row; a type with one possible default is a fact. Notifications are in it since
@@ -2246,7 +2250,8 @@ describe('the section model', () => {
         state: 'warning',
         summary: '1 site worth a look: unused permissions or several at once',
         grantedSites: 2,
-        review: [{ origin: 'https://meet.example', permissions: ['camera'], reason: 'unused' }]
+        review: [{ origin: 'https://meet.example', permissions: ['camera'], reason: 'unused' }],
+        revoked: []
       },
       notifications: {
         state: 'info',
@@ -5628,7 +5633,7 @@ describe('searching the rows', () => {
     expect(rowText(max)).toContain(max.kind === 'field' ? (max.display ?? max.value) : '')
   })
 
-  it('carries #156’s protection groups at Chrome’s positions: Safe Browsing after Safety check, cookies after Clear browsing data, HTTPS-only, secure DNS and the signals after Site settings', () => {
+  it('carries #156’s protection groups at Chrome’s positions: Safe Browsing after Safety check, cookies after Delete browsing data, HTTPS-only, secure DNS and the signals after Site settings', () => {
     const privacy = section('privacy', state({ privacy: PRIVACY_STATUS }))
     const ids = privacy.groups.map((g) => g.id)
     // The protection groups' own order and content are asserted here; the whole category's
@@ -5653,7 +5658,7 @@ describe('searching the rows', () => {
     const at = (id: string): number => ids.indexOf(id)
     expect(at('safe-browsing')).toBe(at('safety-check-actions') + 1)
     expect(at('safe-browsing-feeds')).toBe(at('tracking-prevention') - 1)
-    // #310's Cookies and site data groups (site-data-*) stand between Clear browsing data and
+    // #310's Cookies and site data groups (site-data-*) stand between Delete browsing data and
     // Site settings, where Chrome's cookies page sits, the related sites right under the default
     // they qualify; siteData.test.ts asserts their content.
     expect(at('site-data')).toBe(at('clear-data') + 1)
@@ -6365,12 +6370,13 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
     return { ...c, model }
   }
 
-  it('draws Chrome’s three groups in Chrome’s order on the desktop: Memory Saver, Always keep these sites active (with its Add group), Energy Saver', () => {
+  it('draws Chrome’s groups in Chrome’s order on the desktop: Memory Saver, Always keep these sites active (with its Add group), the tab hover card’s row (W8-10), Energy Saver', () => {
     const { model } = perf(DESKTOP_STATE({ unloadExcludedDomains: ['mail.example.com'] }))
     expect(model.groups.map((g) => [g.id, g.heading])).toEqual([
       ['memory-saver', 'Memory Saver'],
       ['keep-active', 'Always keep these sites active'],
       ['keep-active-add', null],
+      ['hover-card', 'Tab hover card'],
       ['energy-saver', 'Energy Saver']
     ])
     expect(allRows(model.groups).map((r) => [r.kind, r.id])).toEqual([
@@ -6380,6 +6386,7 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
       ['action', 'keep-active:mail.example.com:remove'],
       ['action', 'keep-active-add'],
       ['action', 'keep-active-current'],
+      ['switch', 'hover-card-memory'],
       ['switch', 'energy-saver'],
       ['value', 'energy-saver-mode'],
       ['value', 'energy-saver-factor']
@@ -6419,6 +6426,48 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
       expect(allRows(model.groups).some((r) => r.id.startsWith('energy-saver'))).toBe(false)
       expect(patches).toEqual([])
     }
+  })
+
+  it('seats the tab hover card’s memory switch on the desktop (settings-29, W8-10): Chrome’s "Show tab memory usage" under its "Tab hover card" heading, off by default, bound to hoverCardMemoryUsage; the tablet has none', () => {
+    const { model, patches } = perf(DESKTOP_STATE())
+    const group = model.groups.find((g) => g.id === 'hover-card')!
+    expect(group.heading).toBe('Tab hover card')
+    expect(group.layouts).toEqual(['desktop'])
+    expect(group.rows.map((r) => r.id)).toEqual(['hover-card-memory'])
+    const memory = row(model, 'hover-card-memory')
+    if (memory.kind !== 'switch') throw new Error('not a switch')
+    expect(memory.label).toBe('Show tab memory usage')
+    expect(memory.description).toBe(
+      'The card that appears when you rest the pointer on a tab says how much memory its page is using.'
+    )
+    // Chrome 152's effective default: browser.hovercard.memory_usage_enabled registers true in
+    // local state (RegisterBrowserPrefs) and MigrateHoverCardMemoryPref flips it to false once,
+    // under Tab Declutter, on every desktop platform – so the switch rests off.
+    expect(DEFAULT_SETTINGS.hoverCardMemoryUsage).toBe(false)
+    expect(memory.checked).toBe(false)
+    expect(memory.disabled).toBeFalsy()
+    memory.onChange(true)
+    expect(patches).toEqual([{ hoverCardMemoryUsage: true }])
+    const on = row(perf(DESKTOP_STATE({ hoverCardMemoryUsage: true })).model, 'hover-card-memory')
+    if (on.kind !== 'switch') throw new Error('not a switch')
+    expect(on.checked).toBe(true)
+    // Independent of Memory Saver: the switch stands whatever the mode.
+    const saverOff = row(
+      perf(DESKTOP_STATE({ unloadEnabled: false, hoverCardMemoryUsage: true })).model,
+      'hover-card-memory'
+    )
+    if (saverOff.kind !== 'switch') throw new Error('not a switch')
+    expect(saverOff.checked).toBe(true)
+    expect(saverOff.disabled).toBeFalsy()
+    // Found from Chrome's words and the card's.
+    for (const query of ['hover card', 'memory usage', 'preview card']) {
+      expect(
+        searchRows([model], query).map((r) => r.row.id),
+        query
+      ).toContain('hover-card-memory')
+    }
+    // The tablet chrome mounts no hover card: no row there.
+    expect(findRow(perf(DESKTOP_STATE(), 'tablet').model.groups, 'hover-card-memory')).toBeNull()
   })
 
   it('binds Memory Saver’s switch to unloadEnabled with Chrome’s three facts in two sentences that hold the row’s two lines (N1), Zenium named', () => {
@@ -6651,7 +6700,8 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
     expect(none.model.groups.map((g) => g.id)).toEqual([
       'memory-saver',
       'keep-active',
-      'keep-active-add'
+      'keep-active-add',
+      'hover-card'
     ])
     expect(allRows(none.model.groups).some((r) => r.id.startsWith('energy-saver'))).toBe(false)
     // The mode itself is left as it was: nothing is written for a group not drawn.
@@ -7672,7 +7722,7 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
       settings
     )
 
-  it('the theme row stands after Colour scheme on the desktop and the tablet, never on the phone, naming the active space’s theme and the space – "Default · Personal space" at rest (the picker’s own description, #572’s N5) – with the picker as its door (Chrome’s row opens Customize Chrome; no store is named), hung from the Change… button that opened it (§9.20, #572’s L8)', async () => {
+  it('the theme row stands after Colour scheme on the desktop and the tablet, never on the phone, naming the active space’s theme and the space – "Default · Personal Space" at rest (the picker’s own description, #572’s N5) – with the picker as its door (Chrome’s row opens Customize Chrome; no store is named), hung from the Change… button that opened it (§9.20, #572’s L8)', async () => {
     const { model } = look()
     const ids = appearanceIds(model)
     expect(ids.slice(0, 2)).toEqual(['color-scheme', 'theme'])
@@ -7680,7 +7730,7 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
     expect(theme).toMatchObject({
       kind: 'action',
       label: 'Theme',
-      description: 'Default · Personal space',
+      description: 'Default · Personal Space',
       layouts: ['desktop', 'tablet'],
       button: 'Change…',
       // The button hangs the `theme` overlay from itself (round C): the row's view draws it as
@@ -7718,7 +7768,7 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
     const { model } = look(themed())
     const theme = row(model, 'theme')
     expect(theme).toMatchObject({
-      description: 'Custom · Personal space',
+      description: 'Custom · Personal Space',
       button: 'Reset to default'
     })
     if (theme.kind !== 'action') throw new Error('not an action row')
@@ -7748,7 +7798,7 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
       ] as unknown as UIState['spaces']
     })
     expect(row(look(preset).model, 'theme').description).toBe(
-      `${THEME_PRESETS[1].name} · Work space`
+      `${THEME_PRESETS[1].name} · Work Space`
     )
   })
 
@@ -7889,7 +7939,7 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
     // A themed space keeps its own accent: the row says when the OS's shows.
     expect(
       row(look(themed({ systemAccent: '#0078d4' })).model, 'use-system-accent').description
-    ).toBe('Controls take the colour your system uses while the space has the default look.')
+    ).toBe('Controls take the colour your system uses while the Space has the default look.')
     for (const formFactor of ['phone', 'tablet'] as const)
       expect(
         findRow(
@@ -7924,10 +7974,11 @@ describe('the Privacy and security hub (W7-6, settings-12)', () => {
       layouts: ['desktop', 'tablet']
     })
     // The first card follows the dialog it opens by name (the #553 lead check's F1: one name
-    // for one thing today; the family's rename to "Delete browsing data" is its own slice), the
-    // third names its landing, Safe Browsing, since the nav has a Security category (F3 / Q4).
+    // for one thing) – Chrome's "Delete browsing data" since M124, the family renamed together
+    // in W8-7; the third names its landing, Safe Browsing, since the nav has a Security
+    // category (F3 / Q4).
     expect(cards.rows.map((r) => [r.id, r.label])).toEqual([
-      ['hub-clear-data', 'Clear browsing data…'],
+      ['hub-clear-data', 'Delete browsing data…'],
       ['hub-cookies', 'Third-party cookies'],
       ['hub-security', 'Safe Browsing'],
       ['hub-site-settings', 'Site settings'],
@@ -7953,7 +8004,7 @@ describe('the Privacy and security hub (W7-6, settings-12)', () => {
     ])
   })
 
-  it('lands each card on its program’s first group – present under the cards – and opens the PS-13 dialog from Clear browsing data…', () => {
+  it('lands each card on its program’s first group – present under the cards – and opens the PS-13 dialog from Delete browsing data…', () => {
     const { privacy, revealed } = hub()
     const groupIds = privacy.groups.map((g) => g.id)
     const targets = ['site-data', 'safe-browsing', 'sites-permissions', 'safety-check']
@@ -7974,8 +8025,8 @@ describe('the Privacy and security hub (W7-6, settings-12)', () => {
 
     const clear = cards[0]
     if (clear.kind !== 'action') throw new Error('not an action row')
-    // The same sheet as the Clear browsing data row's (`clear-data-open`), no landing.
-    expect(clear.form?.title).toBe('Clear browsing data')
+    // The same sheet as the Delete browsing data row's (`clear-data-open`), no landing.
+    expect(clear.form?.title).toBe('Delete browsing data')
     expect(clear.onPress).toBeUndefined()
     const existing = row(privacy, 'clear-data-open')
     if (existing.kind !== 'action') throw new Error('not an action row')
@@ -8024,9 +8075,15 @@ describe('the Privacy and security hub (W7-6, settings-12)', () => {
     )
     expect(ids('site settings')).toContain('hub-site-settings')
     expect(ids('third-party cookies')).toContain('hub-cookies')
-    // The dialog card is found by its own name and by Chrome's (its line's "Delete"), and a
-    // card's hit reads the category alone as its caption: the cards' group has no heading.
-    expect(ids('clear browsing data')).toContain('hub-clear-data')
+    // The dialog card is found by Chrome's M124+ name (its own since W8-7) and still by the
+    // pre-M124 one it kept as a search alias; the row under it the same. A card's hit reads
+    // the category alone as its caption: the cards' group has no heading.
+    expect(ids('clear browsing data')).toEqual(
+      expect.arrayContaining(['hub-clear-data', 'clear-data-open'])
+    )
+    expect(ids('delete browsing data')).toEqual(
+      expect.arrayContaining(['hub-clear-data', 'clear-data-open'])
+    )
     const hit = searchRows([privacy], 'delete browsing data').find(
       (h) => h.row.id === 'hub-clear-data'
     )

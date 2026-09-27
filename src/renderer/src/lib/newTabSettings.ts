@@ -15,7 +15,7 @@ export const NEW_TAB_PRESET_LABELS: Record<NewTabPreset, string> = {
 
 /** What each layout shows, for the phone-form picker sheet's option lines. */
 export const NEW_TAB_PRESET_DESCRIPTIONS: Record<NewTabPreset, string> = {
-  focused: 'The search field and the tiles on the space gradient',
+  focused: 'The search field and the tiles on the Space gradient',
   inspirational: 'A wallpaper and a greeting as well',
   informational: 'Not available: Zenium has no feed',
   custom: 'Exactly the sections the rows below say'

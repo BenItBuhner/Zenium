@@ -47,6 +47,7 @@ import type {
   Platform,
   Rect,
   ResourceSnapshot,
+  RevokedSitePermissions,
   SafetyCheckResult,
   SearchEngine,
   SearchEngineControl,
@@ -114,6 +115,7 @@ import {
   migrateLegacyBookmarks,
   normalizeBookmarkNodes
 } from '../shared/bookmarks'
+import { sanitizeBookmarkRowDisplay, sanitizeBookmarkRowSortOrder } from '../shared/bookmarkRows'
 import { emptyReadingList, sanitizeReadingList, sortReadingList } from '../shared/readingList'
 import { JsonStore } from './store/JsonStore'
 import {
@@ -333,6 +335,7 @@ export interface StateExtras {
   network: NetworkStatus
   blockedPopups: Record<string, BlockedPopup[]>
   permissionRules: PermissionRule[]
+  revokedUnusedPermissions: RevokedSitePermissions[]
   permissionDefaults: Record<string, ContentDefault>
   lastSafetyCheck: SafetyCheckResult | null
   permissionPrompts: PermissionPrompt[]
@@ -524,6 +527,7 @@ export class BrowserState {
     network: { online: true },
     blockedPopups: {},
     permissionRules: [],
+    revokedUnusedPermissions: [],
     permissionDefaults: {},
     lastSafetyCheck: null,
     permissionPrompts: [],
@@ -862,9 +866,22 @@ export class BrowserState {
     }
     // Energy Saver's mode (W8-2): a profile from before the key reads the default; a value that
     // is none of the three (a hand-edited profile) reads it too, as the bookmarks bar's does.
+    // The hover card's memory line (settings-29, W8-10): on only when the profile says so. Chrome
+    // 152's effective default is off – the local-state pref registers true (`RegisterBrowserPrefs`,
+    // `browser_ui_prefs.cc`) and `MigrateHoverCardMemoryPref` (`tab_strip_prefs.cc`, M131+) flips
+    // it to false once under Tab Declutter, on every desktop platform. A fresh setting flips with
+    // no migration: an older profile, or anything but a boolean, reads off.
+    this.settings.hoverCardMemoryUsage = data.settings?.hoverCardMemoryUsage === true
     if (!ENERGY_SAVER_MODES.includes(this.settings.energySaver)) {
       this.settings.energySaver = DEFAULT_SETTINGS.energySaver
     }
+    // The phone's bookmark rows (HB-13): a profile from before the keys, or a value that is
+    // none of Chrome's, reads the defaults – manual order, and the compact row (Chrome's default
+    // is Visual; Compact is the lead's stated deviation, `shared/bookmarkRows.ts`).
+    this.settings.bookmarkRowSortOrder = sanitizeBookmarkRowSortOrder(
+      data.settings?.bookmarkRowSortOrder
+    )
+    this.settings.bookmarkRowDisplay = sanitizeBookmarkRowDisplay(data.settings?.bookmarkRowDisplay)
     this.settings.toolbarLayout = sanitizeToolbarLayout(
       data.settings?.toolbarLayout,
       DEFAULT_SETTINGS.toolbarLayout
@@ -890,6 +907,9 @@ export class BrowserState {
     // Preload pages (PS-43): `standard` for a profile from before it (the fold of the desktop's
     // "Block prerendering" is a read of nothing – see `sanitizePreloadPages`).
     this.settings.preloadPages = sanitizePreloadPages(data.settings?.preloadPages)
+    // Off only when the profile says so (PS-41): an older profile, or anything but a boolean,
+    // reads on – Chrome's default.
+    this.settings.autoRevokeUnusedPermissions = data.settings?.autoRevokeUnusedPermissions !== false
     this.settings.spellcheck = sanitizeSpellcheck(data.settings?.spellcheck)
     this.settings.reader = sanitizeReaderPreferences(data.settings?.reader)
     this.settings.readAloud = sanitizeReadAloudSettings(data.settings?.readAloud)

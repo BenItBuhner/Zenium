@@ -5,6 +5,8 @@ import {
   awaitFirstPaint,
   FIRST_PAINT_DEADLINE_MS,
   FIRST_PAINT_POLL_MS,
+  FRAME_DRAWN_SCRIPT,
+  frameDrawn,
   hasPainted,
   PAINT_PROBE_TIMEOUT_MS,
   PAINT_STATE_SCRIPT,
@@ -256,5 +258,67 @@ describe('paintGatedCommand', () => {
     ]) {
       expect(paintGatedCommand(method, {})).toBe(false)
     }
+  })
+})
+
+/**
+ * The frame report (`TabView.frameDrawn`; the reader cover's paint handshake): the document's
+ * word that a frame is drawn, asked through the main frame, or a rejection – never a throw out
+ * of the ask, which the asker racing the word against its ceiling would not catch.
+ */
+describe('frameDrawn', () => {
+  it('asks the main frame for the double-rAF word with no gesture, and answers with the document’s clock', async () => {
+    const page = new FakePage()
+    page.mainFrame.executeJavaScript = (code, userGesture) => {
+      expect(userGesture).toBe(false)
+      page.probes.push(code)
+      return Promise.resolve(61.4)
+    }
+    await expect(frameDrawn(page.asWebContents())).resolves.toBe(61.4)
+    expect(page.probes).toEqual([FRAME_DRAWN_SCRIPT])
+    // An answer that is no number is NaN, not a throw.
+    page.mainFrame.executeJavaScript = () => Promise.resolve('soon')
+    await expect(frameDrawn(page.asWebContents())).resolves.toBeNaN()
+  })
+
+  it('a frame disposed between the read and the ask throws from executeJavaScript itself: the ask rejects with it, nothing escapes', async () => {
+    const page = new FakePage()
+    page.mainFrame.executeJavaScript = () => {
+      throw new Error('Render frame was disposed before WebFrameMain could be accessed')
+    }
+    let word: Promise<number> | undefined
+    expect(() => {
+      word = frameDrawn(page.asWebContents())
+    }).not.toThrow()
+    await expect(word).rejects.toThrow('Render frame was disposed')
+    // A throw that is no Error is wrapped, its cause kept.
+    page.mainFrame.executeJavaScript = () => {
+      throw 'disposed'
+    }
+    await expect(frameDrawn(page.asWebContents())).rejects.toMatchObject({
+      message: 'The page’s frame is gone',
+      cause: 'disposed'
+    })
+  })
+
+  it('contents that are gone, or without a main frame, are refused before any ask', async () => {
+    const gone = new FakePage()
+    gone.destroyed = true
+    await expect(frameDrawn(gone.asWebContents())).rejects.toThrow('The page is gone')
+    expect(gone.probes).toEqual([])
+    const frameless = new FakePage()
+    Object.defineProperty(frameless, 'mainFrame', {
+      get: () => {
+        throw new Error('disposed')
+      }
+    })
+    await expect(frameDrawn(frameless.asWebContents())).rejects.toThrow(
+      'The page has no main frame'
+    )
+    const nullFrame = new FakePage()
+    Object.defineProperty(nullFrame, 'mainFrame', { value: null })
+    await expect(frameDrawn(nullFrame.asWebContents())).rejects.toThrow(
+      'The page has no main frame'
+    )
   })
 })
