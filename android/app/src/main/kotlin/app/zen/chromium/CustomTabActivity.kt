@@ -111,6 +111,12 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
     /** The page (a fresh view after a renderer crash, see `TabHost.replaceCrashed`). */
     val page: TabWebView? get() = host.tabs.get(TAB_ID)
 
+    /**
+     * The Auth Tab's return (CCT-13), only when the caller asked for one: claims the redirect's
+     * navigation and answers through [returnToCaller]. Null on an ordinary custom tab.
+     */
+    private var authTab: AuthTabVerifier? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // The caller's colour scheme decides the scheme of every native piece (dialogs, the
         // menu), not the system's: applied before the theme is resolved.
@@ -121,6 +127,14 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
         super.onCreate(savedInstanceState)
         config = CustomTabConfig.from(this, intent)
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        config.authTab?.let { redirect ->
+            // Until the redirect arrives the caller's answer is the platform's own for a closed
+            // tab, RESULT_CANCELED (back, the close control, the task swiped away). The caller
+            // is the app that started the trampoline for a result – the result's addressee, the
+            // system's word (forwarded through LinkDispatchActivity) – else what it saw.
+            setResult(RESULT_CANCELED)
+            authTab = AuthTabVerifier(this, redirect, callerPackage = callingPackage ?: config.callerPackage, onResult = ::returnToCaller)
+        }
 
         shell = FrameLayout(this)
         pageContainer = FrameLayout(this)
@@ -128,7 +142,7 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
             setBackgroundColor(Color.BLACK)
             visibility = View.GONE
         }
-        host = CustomTabHost(this, this, pageContainer, fullscreenLayer, config.scheme.dark)
+        host = CustomTabHost(this, this, pageContainer, fullscreenLayer, config.scheme.dark, authTab = authTab)
         toolbar = CustomTabToolbar(this, config, this)
         statusStrip = View(this).apply { setBackgroundColor(config.scheme.toolbar) }
         bottomBar = CustomTabBottomBar(this, config.scheme, this)
@@ -219,20 +233,22 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
             "startLoading" -> {
                 pageLoading = true
                 showToolbar()
-                CustomTabSessions.navigationEvent(config.session, CustomTabsCallback.NAVIGATION_STARTED)
+                navigationEvent(CustomTabsCallback.NAVIGATION_STARTED)
             }
             "stopLoading" -> {
                 pageLoading = false
                 toolbar.setProgress(100)
-                CustomTabSessions.navigationEvent(config.session, CustomTabsCallback.NAVIGATION_FINISHED)
+                navigationEvent(CustomTabsCallback.NAVIGATION_FINISHED)
             }
             "failLoad" -> {
                 pageLoading = false
                 toolbar.setProgress(100)
-                CustomTabSessions.navigationEvent(config.session, CustomTabsCallback.NAVIGATION_FAILED)
+                navigationEvent(CustomTabsCallback.NAVIGATION_FAILED)
             }
             "found" -> findBar?.setCount(payload?.optInt("activeMatchOrdinal") ?: 0, payload?.optInt("matches") ?: 0)
-            "contextMenu" -> payload?.strOrNull("linkURL")?.takeIf { it.isNotEmpty() }?.let(::linkMenu)
+            // A long-press on a link: Chrome's Auth Tab has no context menu (the sign-in's page
+            // is not the user's to copy or share out of), so nothing opens on one.
+            "contextMenu" -> if (authTab == null) payload?.strOrNull("linkURL")?.takeIf { it.isNotEmpty() }?.let(::linkMenu)
             // The renderer died and TabHost swapped in a fresh view: place it and load again.
             "crashed" -> page?.let { fresh ->
                 attachPage(fresh)
@@ -496,7 +512,11 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
         val pins = ShortcutManagerCompat.isRequestPinShortcutSupported(this)
         CustomTabMenuSheet(
             this, config.scheme.dark,
-            CustomTabMenu.groups(titles, config.share, host.desktopSite, addToHomeScreen = pins), ::onMenuPick,
+            CustomTabMenu.groups(
+                titles, config.share, host.desktopSite,
+                // Chrome's Auth Tab menu has neither: the sign-in stays in the tab that returns it.
+                addToHomeScreen = pins && authTab == null, openInBrowser = authTab == null
+            ), ::onMenuPick,
             CustomTabMenu.iconRow(state, config.bookmarksButton, config.downloadButton), ::onIconPick
         ).show()
     }
@@ -802,6 +822,24 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
     }
 
     /**
+     * The Auth Tab's answer (CCT-13): the redirect the page reached, as the activity's result –
+     * `RESULT_OK` with the URL as the data, or the https verification's failure or timeout with
+     * none (`AuthTabIntent`'s codes) – and the tab closes into the caller, which hears it as the
+     * result of the activity it started (the trampoline forwarded the result to it).
+     */
+    private fun returnToCaller(code: Int, url: String?) {
+        if (isFinishing) return
+        setResult(code, url?.let { Intent().setData(Uri.parse(it)) })
+        closeToCaller()
+    }
+
+    /** A navigation event to whichever session the caller made: a custom tab's, or an Auth Tab's callback. */
+    private fun navigationEvent(event: Int) {
+        CustomTabSessions.navigationEvent(config.session, event)
+        CustomTabSessions.authNavigationEvent(config.authSession, event)
+    }
+
+    /**
      * Close (CCT-05): finish into the caller's task. A caller that sent `EXTRA_EXIT_ANIMATION_BUNDLE`
      * gets its own animations, which live in its package: `overridePendingTransition` resolves
      * them through [getPackageName], answered with that package for the duration of the call
@@ -827,12 +865,12 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
 
     override fun onStart() {
         super.onStart()
-        CustomTabSessions.navigationEvent(config.session, CustomTabsCallback.TAB_SHOWN)
+        navigationEvent(CustomTabsCallback.TAB_SHOWN)
         readBookmarks()
     }
 
     override fun onStop() {
-        CustomTabSessions.navigationEvent(config.session, CustomTabsCallback.TAB_HIDDEN)
+        navigationEvent(CustomTabsCallback.TAB_HIDDEN)
         super.onStop()
     }
 
@@ -841,6 +879,7 @@ class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabTo
         // being recreated for a configuration change: the session's engagement ends (CCT-14).
         if (isFinishing) CustomTabSessions.sessionEnded(config.session, engagement.didUserInteract)
         CustomTabSessions.detach(config.session, this)
+        authTab?.destroy()
         bottomBar.stopSettling()
         host.destroy()
         storage.close()
