@@ -25,11 +25,15 @@
  * The store is a subscriber of the engine: `setRuleSet` writes, `removeRuleSet` deletes. Filter
  * text is written once and never kept in memory by the core; hosts that need it again (the
  * desktop text matcher at startup) read it back through {@link RuleSetStore.readFilterText}.
+ * The structured rules go the same way on a host that never decides in JavaScript: once a set
+ * document stands on disk the store tells the engine so (`RuleEngine.rulesPersisted`), the
+ * engine lets its copy go, and the rare call that wants the rules reads the document back
+ * through {@link RuleSetStore.readRules}.
  */
 import type { StoreIO, StoreWriteOptions } from '../platform'
 import { JsonStore } from '../store/JsonStore'
 import type { Rule, RuleSet, RuleSetAttribution, RuleSetChange, RuleSetSource } from './rules'
-import type { RuleEngine } from './engine'
+import type { RuleDocumentSource, RuleEngine } from './engine'
 import { countNetworkFilters } from './lists'
 
 export const BLOCKING_DIR = 'blocking'
@@ -173,14 +177,24 @@ function entryOf(
   }
 }
 
-export class RuleSetStore {
+export class RuleSetStore implements RuleDocumentSource {
   private readonly index: JsonStore<IndexFile>
   private entries = new Map<string, IndexEntry>()
   private unsubscribe: (() => void) | null = null
+  /** The engine attached, told when a set document of its stands on disk. */
+  private engine: RuleEngine | null = null
+  /**
+   * Set documents (by path under the profile) that stand on disk as the index names them: read
+   * whole at `load()`, or landed by a write since (a failed write or a removal takes one out).
+   */
+  private readonly onDisk = new Set<string>()
   /** Set-document and text-file writes and removals started and not landed yet (see `whenSettled`). */
-  private readonly inflight = new Set<Promise<void>>()
-  /** Per document, the write or removal that must land before the next one of it starts. */
-  private readonly chains = new Map<string, Promise<void>>()
+  private readonly inflight = new Set<Promise<unknown>>()
+  /**
+   * Per document, the write or removal that must land before the next one of it starts;
+   * resolves to whether it landed.
+   */
+  private readonly chains = new Map<string, Promise<boolean>>()
   /** The text of every document write that has not landed yet, for a synchronous flush. */
   private readonly pending = new Map<string, { text: string; seq: number }>()
   private seq = 0
@@ -234,6 +248,7 @@ export class RuleSetStore {
     const data: unknown = this.index.readSync()
     const out: LoadedSet[] = []
     this.entries = new Map()
+    this.onDisk.clear()
     if (!isRecord(data) || !Array.isArray(data.sets)) return out
     const version = data.version
     if (version !== 1 && version !== INDEX_VERSION) return out
@@ -263,6 +278,7 @@ export class RuleSetStore {
         }
         rules = read.rules
         entry.ruleCount = rules.length
+        this.onDisk.add(`${BLOCKING_DIR}/${entry.document}`)
         if (entry.tag !== read.tag) {
           console.warn(
             `[zenium] blocking set ${entry.id}: ${entry.document} is not the version the index names; using it`
@@ -345,15 +361,70 @@ export class RuleSetStore {
     }
   }
 
+  /**
+   * The rules of a set's document as it stands on disk – what the engine reads back once it let
+   * its copy go ({@link RuleDocumentSource}); null when the set has no document here or the
+   * document cannot be read. Synchronous, as `load()` is: the store's reads are.
+   */
+  readRules(id: string): Rule[] | null {
+    const entry = this.entries.get(id)
+    if (!entry?.document) return null
+    const read = this.readDocument(id, entry.document)
+    if (!read) return null
+    if (read.tag !== entry.tag) {
+      console.warn(
+        `[zenium] blocking set ${id}: ${entry.document} is not the version the index names; using it`
+      )
+    }
+    return read.rules
+  }
+
   /** Mirror every change of `engine` to disk. */
   attach(engine: RuleEngine): void {
     this.unsubscribe?.()
+    this.engine = engine
     this.unsubscribe = engine.subscribe((change) => this.onChange(change))
   }
 
   detach(): void {
     this.unsubscribe?.()
     this.unsubscribe = null
+    this.engine = null
+  }
+
+  /**
+   * What to run once the set document of `id`, written from `rules`, stands on disk: the engine
+   * attached now (and still attached then) may let its copy of `rules` go. Undefined with no
+   * engine attached.
+   */
+  private landing(id: string, rules: Rule[]): (() => void) | undefined {
+    const engine = this.engine
+    if (!engine) return undefined
+    return () => {
+      if (this.engine === engine) engine.rulesPersisted(id, rules, this)
+    }
+  }
+
+  /**
+   * Run `landed` once the set document `name` stands on disk: behind the write in flight for
+   * it, only if that lands, or on a later tick when it already stands – never inside the
+   * engine's own notification, which is where this is called from. Nothing when neither holds
+   * (the document's write failed).
+   */
+  private confirm(name: string, landed: (() => void) | undefined): void {
+    if (!landed) return
+    const chain = this.chains.get(name)
+    let work: Promise<void>
+    if (chain) {
+      work = chain.then((ok) => {
+        if (ok) landed()
+      })
+    } else if (this.onDisk.has(name)) work = Promise.resolve().then(landed)
+    else return
+    const tracked: Promise<void> = work.finally(() => {
+      this.inflight.delete(tracked)
+    })
+    this.inflight.add(tracked)
   }
 
   private onChange(change: RuleSetChange): void {
@@ -374,14 +445,28 @@ export class RuleSetStore {
       hasFilterText: false,
       filterCount: 0
     }
-    const structured = set.rules ?? []
-    if (structured.length > 0) {
+    const structured = set.rules
+    if (
+      structured === undefined &&
+      change.persisted &&
+      previous?.document &&
+      previous.ruleCount > 0 &&
+      change.summary?.ruleCount === previous.ruleCount
+    ) {
+      // A change of metadata (an enable / disable flip, a re-scope) of a set whose rules the
+      // engine let go once this store confirmed its document: the rules ride along absent, the
+      // summary still counts them, and the document stands as it is.
+      rules.ruleCount = previous.ruleCount
+      rules.document = previous.document
+      rules.tag = previous.tag
+    } else if (structured && structured.length > 0) {
       if (change.persisted && previous?.document && previous.ruleCount === structured.length) {
         // The document is on disk as it is (startup, an enable / disable flip, a re-scope):
         // its name and tag stay, and megabytes of rules are neither serialised nor hashed.
         rules.ruleCount = previous.ruleCount
         rules.document = previous.document
         rules.tag = previous.tag
+        this.confirm(`${BLOCKING_DIR}/${previous.document}`, this.landing(set.id, structured))
       } else {
         const body = documentText(set.id, structured)
         const tag = tagOf(body)
@@ -389,10 +474,11 @@ export class RuleSetStore {
         rules.ruleCount = structured.length
         rules.document = document
         rules.tag = tag
+        const landed = this.landing(set.id, structured)
         // Only a set whose bytes changed is rewritten: a re-emission of the same rules is free.
         if (previous?.document !== document || previous.tag !== tag) {
-          this.enqueue(`${BLOCKING_DIR}/${document}`, body)
-        }
+          this.enqueue(`${BLOCKING_DIR}/${document}`, body, landed)
+        } else this.confirm(`${BLOCKING_DIR}/${document}`, landed)
       }
     } else if (previous?.document) {
       this.enqueue(`${BLOCKING_DIR}/${previous.document}`, null)
@@ -420,9 +506,10 @@ export class RuleSetStore {
    * Write (`text`) or remove (`null`) a document in the background. The first one for a name
    * starts now (a host whose write lands synchronously, like the tests' and Android's mirror,
    * has the bytes before this returns); a later one for the same name starts after the earlier
-   * has landed, so two quick changes of one set land in order. A failure is logged, not thrown.
+   * has landed, so two quick changes of one set land in order. A failure is logged, not thrown;
+   * `landed` runs only after a write that landed.
    */
-  private enqueue(name: string, text: string | null): void {
+  private enqueue(name: string, text: string | null, landed?: () => void): void {
     const previous = this.chains.get(name)
     const seq = ++this.seq
     if (text !== null) this.pending.set(name, { text, seq })
@@ -438,9 +525,19 @@ export class RuleSetStore {
         started = Promise.reject(error)
       }
     }
-    const work: Promise<void> = started
-      .catch((error: unknown) => {
-        console.warn('[zenium] blocking store write failed:', error)
+    const work: Promise<boolean> = started
+      .then(
+        () => true,
+        (error: unknown) => {
+          console.warn('[zenium] blocking store write failed:', error)
+          return false
+        }
+      )
+      .then((ok) => {
+        if (ok && text !== null) this.onDisk.add(name)
+        else this.onDisk.delete(name)
+        if (ok && landed) landed()
+        return ok
       })
       .finally(() => {
         if (this.pending.get(name)?.seq === seq) this.pending.delete(name)
