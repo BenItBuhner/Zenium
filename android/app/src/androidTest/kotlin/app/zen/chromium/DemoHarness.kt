@@ -134,6 +134,14 @@ abstract class DemoHarness(
     protected open fun launchOptions(): Bundle? = null
 
     /**
+     * The activity has started ([launch]'s `startActivitySync` returned: resumed, the chrome
+     * booting) and the harness is about to wait for the pill: a driver that reads or shoots the
+     * BOOT itself – the landing's frames, the marks as they are set – does it here, before the
+     * wait has let the boot settle. Every launch calls it, the first and any relaunch.
+     */
+    protected open fun onLaunched() {}
+
+    /**
      * Seed, launch, warm up, hand over to the recorder, run the sequence. Fails once the
      * recording is done when a touch a step injected did not take ([touchFault]). The stills
      * are flushed whether the sequence ran through or threw, so a failed run keeps the
@@ -365,6 +373,7 @@ abstract class DemoHarness(
         } else {
             instrumentation.startActivitySync(intent)
         }
+        onLaunched()
         // The chrome is a WebView booting the browser core: wait for the address pill to show up
         // (by either of its names: a state whose active tab is the new tab page has no address).
         val deadline = SystemClock.uptimeMillis() + 30_000

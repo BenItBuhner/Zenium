@@ -21,6 +21,7 @@ import org.json.JSONTokener
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.ByteArrayOutputStream
+import java.io.File
 import kotlin.math.abs
 
 /**
@@ -36,8 +37,14 @@ import kotlin.math.abs
  *     `ready` – `chrome.ready` heard, on this head armed on the served page's placement – and
  *     `frame` – the first frame confirmed drawn, `reportFullyDrawn`), each as ms from the
  *     `activity` mark (MainActivity.onCreate), in a process the instrumentation already held; on
- *     a host with the new tab page the window's first tab is the served page, placed and loaded
- *     before READY, and its own `performance.timing` says what the document cost; on main's tree
+ *     a host with the new tab page the window's first tab is the served page – MADE, LOADED and
+ *     placed after the FULLY DRAWN frame (the host's boot hold, #563's third half) – and its own
+ *     `performance.timing` says what the document cost. THE LANDING is watched from the
+ *     activity's start ([onLaunched], the lead's conditions of form): stills of the slot in the
+ *     space's ground before the page, of the page's first painted frame WHOLE (filled from the
+ *     state push, its icons in hand), and of the 120 ms fade mid-flight when the poll catches
+ *     it – light at the fresh boot, dark and with tiles at a relaunch off camera in the warm-up
+ *     ([darkLanding]: the session restored on a served tab). On main's tree
  *     (`newTabPage` off: `Browser.ensureFirstTab` opens no tab) the window comes up with no tab
  *     and the chrome's own surface, so the same driver on main is the 'before' run. The fresh
  *     tab COMES UP BARE on the tablet: the served page in view, its own field at rest – no URL
@@ -95,6 +102,18 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
 
     /** The tab the recording's served page is in, once the sidebar's row opened it. */
     private var pageTab: String? = null
+
+    /** The scheme the next launch's landing is captured in ([onLaunched]); null for a launch whose landing is not wanted. */
+    private var landingScheme: String? = "light"
+
+    /** The served tab the next launch's landing is expected in; null for a fresh profile's one and only tab. */
+    private var landingTab: String? = null
+
+    /** The landings' lines, taken before the findings have their head and written into section 0. */
+    private val landingLines = ArrayList<String>()
+
+    /** What each landing's watch saw, by scheme, for the checks once the findings are open. */
+    private val landings = HashMap<String, Landing>()
 
     /** Where the last hold's finger was on the screen ([holdTile]): the point the menu must NOT hang from. */
     private var lastHold: PointF? = null
@@ -167,6 +186,7 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
         for (site in sites) visit(warm, site)
         for (site in sites.take(3)) visit(warm, site)
         finding("history.topSites after the visits: ${summarise(coreInvoke("history.topSites", "{\"n\":8}"))}")
+        if (served) darkLanding()
         // The pill reads the site's address now: the one read of the tree the fingers are calibrated on.
         calibrate(ADDRESS_PILL, PILL_LABEL, prefix = true)
         // Pay for the first layout of a popover menu off camera (the emulator compiles and lays
@@ -199,6 +219,10 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
                 "READY +${since("ready")} ms, FULLY DRAWN (frame, reportFullyDrawn) +${since("frame")} ms"
         )
         check("the boot reached its first frame (the marks ready and frame are set)", since("ready") != null && since("frame") != null, marks)
+        // The landing as [onLaunched] watched it from the activity's start, and its stills.
+        for (line in landingLines) finding(line)
+        landingLines.clear()
+        if (served) landingChecks("light")
         val active = activeCoreTab()
         val url = active?.optString("url").orEmpty()
         if (served) {
@@ -239,6 +263,233 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
         coreInvoke("tab.navigate", JSONObject().put("tabId", tabId).put("input", site.url).toString())
         if (!awaitLoaded(tabId, site.url, 8_000)) finding("  visit of ${site.url} never finished: ${tabUrl(tabId)}")
         SystemClock.sleep(500)
+    }
+
+    // --- the landing (NTP-35: the lead's conditions of form on #563) ------------------------------------
+
+    /** One read of the served page's root during the landing, by the page's own word. */
+    private class LandingSample(
+        /** The document is the served page (`location.href` zen://newtab), not the view's empty first document. */
+        val served: Boolean,
+        /** The root carries `data-await-state`: the document is filling, transparent (`newTabPage.ts`). */
+        val awaiting: Boolean,
+        /** The root's computed opacity: 0 while awaiting, between 0 and 1 in the 120 ms fade, 1 whole. */
+        val opacity: Double,
+        val readyState: String,
+        val tiles: Int,
+        /** Every tile icon's `<img>` is complete with pixels: the icons in hand, not on their way. */
+        val iconsInHand: Boolean,
+        val icons: Int,
+        /** Letter fallbacks on the page: a tile whose icon failed, or a site with none cached. */
+        val letters: Int,
+        val emptyShown: Boolean,
+        val theme: String,
+        /** Uptime when the read was asked. */
+        val at: Long
+    ) {
+        fun describe(): String =
+            (if (served) "the served page" else "not the served page") +
+                ", ${if (awaiting) "awaiting its state" else "let in"} at opacity $opacity, $readyState, tiles $tiles (icons $icons ${if (iconsInHand) "in hand" else "on their way"}, letters $letters), empty line ${if (emptyShown) "shown" else "hidden"}, theme '$theme'"
+    }
+
+    /** What a landing's watch saw ([captureLanding]). */
+    private class Landing(
+        /** ms from the activity's start to the served view's first moment (made after the FULLY DRAWN frame). */
+        val viewAt: Long,
+        /** The first boot's `frame` mark was set when the view appeared; null when the marks are not this boot's (a relaunch). */
+        val frameSet: Boolean?,
+        /** The page at the moment the view was made (null: no document in it yet). */
+        val made: LandingSample?,
+        /** The page at the ground still, ~[LANDING_GROUND_MS] on (null: none taken – the page had come in already). */
+        val ground: LandingSample?,
+        /** The first sample with the attribute gone: the page's first painted frame, by the poll. */
+        val firstIn: LandingSample?,
+        /** The sample the mid-fade still was taken on, when the poll caught one. */
+        val mid: LandingSample?,
+        /** The sample the first-paint still was taken on: the page whole at opacity 1. */
+        val whole: LandingSample?,
+        /** ms from the view's first moment to the first sample with the attribute gone. */
+        val inAfterMs: Long?
+    )
+
+    /**
+     * The landing of the launch that just started: the served view is MADE only after the FULLY
+     * DRAWN frame (the host's boot hold), so the first moment it exists is a moment after the
+     * frame – a still is taken there (`landing-made`), and the GROUND still [LANDING_GROUND_MS]
+     * later, once the splash's own 180 ms exit is done, while the page still awaits its state:
+     * the slot in the space's ground, no cover, no card. Then the page's root is watched at a
+     * tight poll: the attribute gone with the opacity under 1 is the 120 ms fade in flight (a
+     * `landing-mid-fade` still when the poll lands a sample in it), and at opacity 1 the page
+     * whole (`landing-first-paint`). `tabId` names the served tab when known (a relaunch's), null
+     * for a fresh profile's one tab. The lines and the samples wait for the findings' head.
+     */
+    override fun onLaunched() {
+        val scheme = landingScheme ?: return
+        landingScheme = null
+        captureLanding(scheme, landingTab)
+        landingTab = null
+    }
+
+    private fun captureLanding(scheme: String, tabId: String?) {
+        val started = SystemClock.uptimeMillis()
+        var id: String? = null
+        val viewDeadline = started + 25_000
+        while (id == null && SystemClock.uptimeMillis() < viewDeadline) {
+            id = onMain { if (tabId != null) host.tabs.get(tabId)?.tabId else host.tabs.all().firstOrNull()?.tabId }
+            if (id == null) SystemClock.sleep(LANDING_POLL_MS)
+        }
+        val viewAt = SystemClock.uptimeMillis() - started
+        if (id == null) {
+            landingLines += "  landing ($scheme): no page view within 25 s of the activity's start – no stills of it"
+            landings[scheme] = Landing(viewAt, null, null, null, null, null, null, null)
+            return
+        }
+        val frameSet = if (tabId == null) BootMarks.get("frame") != null else null
+        still("landing-made-$scheme")
+        val made = landingSample(id)
+        var ground: LandingSample? = null
+        var firstIn: LandingSample? = null
+        var mid: LandingSample? = null
+        var whole: LandingSample? = null
+        val viewSeen = SystemClock.uptimeMillis()
+        val revealDeadline = viewSeen + 20_000
+        var groundDue = true
+        while (whole == null && SystemClock.uptimeMillis() < revealDeadline) {
+            val s = landingSample(id)
+            val letIn = s != null && s.served && !s.awaiting
+            if (groundDue && SystemClock.uptimeMillis() - viewSeen >= LANDING_GROUND_MS) {
+                groundDue = false
+                if (!letIn) {
+                    still("landing-ground-$scheme")
+                    ground = s
+                }
+            }
+            if (letIn) {
+                groundDue = false
+                if (firstIn == null) firstIn = s
+                if (s.opacity < 1.0) {
+                    if (mid == null) {
+                        still("landing-mid-fade-$scheme")
+                        mid = s
+                    }
+                } else {
+                    still("landing-first-paint-$scheme")
+                    whole = s
+                }
+            }
+            if (whole == null) SystemClock.sleep(LANDING_POLL_MS)
+        }
+        val inAfterMs = firstIn?.let { it.at - viewSeen }
+        landings[scheme] = Landing(viewAt, frameSet, made, ground, firstIn, mid, whole, inAfterMs)
+        landingLines += "  landing ($scheme): the served view $id exists +$viewAt ms after the activity's start" +
+            (if (frameSet == true) " – the FULLY DRAWN frame mark set before it (frame=${BootMarks.get("frame")} ms from the process's start)" else "") +
+            "; the page then: ${made?.describe() ?: "no document in the view yet"}"
+        landingLines += "  landing ($scheme): the ground still ${if (ground != null) "taken +${ground.at - viewSeen} ms after the view was made: ${ground.describe()}" else "not taken (the page had come in within $LANDING_GROUND_MS ms of the view)"}"
+        landingLines += "  landing ($scheme): the page let in ${inAfterMs?.let { "+$it ms after the view was made" } ?: "NEVER within 20 s"}" +
+            (firstIn?.let { ": ${it.describe()}" } ?: "") +
+            "; the fade ${if (mid != null) "caught at opacity ${mid.opacity} (the mid-fade still)" else "not caught by the poll (every sample after the attribute went read opacity 1)"}" +
+            (whole?.let { "; whole at opacity ${it.opacity} +${it.at - viewSeen} ms (the first-paint still)" } ?: "")
+    }
+
+    /** The served page's root read for the landing, or null while the view has no document that answers. */
+    private fun landingSample(tabId: String): LandingSample? {
+        val at = SystemClock.uptimeMillis()
+        val a = pageJson(
+            tabId,
+            "(function(){var r=document.documentElement;var e=document.getElementById('zen-empty');" +
+                "var im=Array.prototype.slice.call(document.querySelectorAll('img.zen-ntp-icon'));" +
+                "return [location.href,r.hasAttribute('data-await-state'),Number(getComputedStyle(r).opacity),document.readyState," +
+                "document.querySelectorAll('$TILE_SELECTOR').length,im.every(function(i){return i.complete&&i.naturalWidth>0}),im.length," +
+                "document.querySelectorAll('.zen-ntp-letter').length,!!e&&!e.hidden,r.dataset.theme||'']})()"
+        ) ?: return null
+        if (a.length() < 10) return null
+        return LandingSample(
+            served = a.optString(0).removeSuffix("/") == NEW_TAB_URL,
+            awaiting = a.optBoolean(1),
+            opacity = a.optDouble(2, 1.0),
+            readyState = a.optString(3),
+            tiles = a.optInt(4),
+            iconsInHand = a.optBoolean(5),
+            icons = a.optInt(6),
+            letters = a.optInt(7),
+            emptyShown = a.optBoolean(8),
+            theme = a.optString(9),
+            at = at
+        )
+    }
+
+    /** The lead's conditions of form, read off what the landing's watch saw. */
+    private fun landingChecks(scheme: String) {
+        val l = landings[scheme]
+        check("($scheme) the landing was watched: the served view seen, the ground still and the page's first-paint still taken", l?.whole != null, l?.let { "view +${it.viewAt} ms, ground ${it.ground != null}, whole ${it.whole != null}" } ?: "no landing")
+        if (l == null) return
+        // (1) The slot in the space's ground alone while the page is held: the view made after the
+        // frame, and at the ground still the document not in or awaiting its state transparent.
+        check(
+            "($scheme) the slot showed the space's ground alone before the page: the served view was made after the FULLY DRAWN frame, and at the ground still its document was not in or awaited its state transparent",
+            l.frameSet != false && (l.ground == null || !l.ground.served || l.ground.awaiting) && (l.made == null || !l.made.served || l.made.awaiting),
+            "frame set ${l.frameSet ?: "n/a (a relaunch: the marks are the first boot's)"}; made: ${l.made?.describe() ?: "no document"}; ground: ${l.ground?.describe() ?: "none"}"
+        )
+        // (2) The page arrives whole: at its first painted frame the state is applied and the document complete.
+        val f = l.firstIn
+        check(
+            "($scheme) the page came in whole: at its first painted frame the state was applied – the tiles or the empty line – and the document complete",
+            f != null && f.readyState == "complete" && (f.tiles > 0 || f.emptyShown),
+            f?.describe() ?: "never let in"
+        )
+        if (f != null && f.tiles > 0) {
+            check(
+                "($scheme) the icons were in hand at the first painted frame: every tile's icon complete, no letter turning into an icon",
+                f.icons == f.tiles && f.iconsInHand && f.letters == 0,
+                "tiles ${f.tiles}, icons ${f.icons} ${if (f.iconsInHand) "in hand" else "on their way"}, letters ${f.letters}"
+            )
+        }
+        // (3) The fade: 120 ms on the root's opacity, read where the poll caught it; a cut under reduced motion is the stylesheet's.
+        finding("  ($scheme) the first paint's fade: ${l.mid?.let { "caught at opacity ${it.opacity}, ${it.at - (f?.at ?: it.at)} ms after the first sample let in" } ?: "not caught (the poll's ${LANDING_POLL_MS} ms and a read's round trip: the 120 ms ran between samples)"}; the page whole +${l.inAfterMs ?: "n/a"} ms after the view was made (the emulator's number)")
+        if (scheme == "dark") check("(dark) the relaunch landed dark: the page's own theme at its first painted frame", f?.theme == "dark", "theme '${f?.theme}'")
+    }
+
+    /**
+     * The landing again, in DARK and WITH TILES, off camera in the warm-up: a served tab made in
+     * front through the core, the dark scheme through the core's setting, the profile on disk
+     * with both, and the activity started again ([launch]: the chrome and the core boot into a
+     * new session, the restore coming back on that tab, its tiles the visits') – so the second
+     * landing's stills carry the icons condition too, and its ground is the dark space's. Then
+     * the light scheme back and the tab closed: the sequence proper starts from the state it had.
+     * The boot marks stay the first boot's (the first of a name stands).
+     */
+    private fun darkLanding() {
+        val before = activeTabId()
+        coreInvoke("tab.create", JSONObject().put("url", NEW_TAB_URL).put("active", true).toString())
+        val id = if (awaitUntil(8_000) { activeTabId().let { it != null && it != before } }) activeTabId() else null
+        if (id == null) {
+            finding("  (dark landing: no served tab could be made in front; skipped)")
+            return
+        }
+        awaitServedPage(id)
+        if (!awaitUntil(15_000) { tileCount(id) >= 4 }) finding("  (dark landing: the tiles did not come before the relaunch: ${tileCaptions(id)})")
+        if (!setScheme("dark", id)) finding("  (dark landing: the dark scheme did not take on both the chrome and the page before the relaunch)")
+        // The profile on disk with the scheme and the tab: what the restore reads.
+        val state = File(app.filesDir, "zen/state.json")
+        val written = awaitUntil(10_000) {
+            val text = runCatching { state.readText() }.getOrDefault("")
+            text.contains(Regex("\"colorScheme\"\\s*:\\s*\"dark\"")) && text.contains("\"$id\"")
+        }
+        finding("  dark landing: the profile written with the dark scheme and the served tab $id before the relaunch: $written")
+        SystemClock.sleep(1_000)
+        landingScheme = "dark"
+        landingTab = id
+        launch()
+        for (line in landingLines) finding(line)
+        landingLines.clear()
+        landingChecks("dark")
+        // Back to the light scheme and the state the sequence expects.
+        val front = activeTabId()
+        if (front != null && !setScheme("light", front)) finding("  (dark landing: the light scheme did not come back on both the chrome and the page)")
+        coreInvoke("tab.close", JSONObject().put("tabId", id).toString())
+        if (!awaitUntil(8_000) { !tabExists(id) }) finding("  (dark landing: the served tab $id is still there)")
+        SystemClock.sleep(800)
+        ensureForeground()
     }
 
     // --- the sequence ------------------------------------------------------------------------------
@@ -859,6 +1110,10 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
         /** The tile the holds land on: the third, as the phone's demo holds its third. */
         private const val TILE = 2
         private const val TILE_SELECTOR = ".zen-tile:not(.zen-tile-add) a.zen-v2-shortcut"
+        /** The landing's poll ([captureLanding]): tight enough for samples inside the page's 120 ms fade. */
+        private const val LANDING_POLL_MS = 10L
+        /** The ground still this long after the served view was made: the splash's 180 ms exit done, the page ordinarily still awaiting its state. */
+        private const val LANDING_GROUND_MS = 240L
         /** The touch template's rows (`Menus.showNewTabTileMenu`: Open in Private Tab on `privateTabs && !windows`, Copy Link on `!windows`), the separator between them not a row. */
         private val TOUCH_ROWS = listOf("Open in New Tab", "Open in Private Tab", "Copy Link", "Remove")
         /** How far (screen px) a menu's edge may sit from the tile box's it is read against: a rounding each side. */
