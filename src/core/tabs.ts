@@ -3287,6 +3287,9 @@ export class TabManager {
     if (!tab) return
     tab.muted = !tab.muted
     this.pageView(tabId)?.setMuted(tab.muted)
+    // The tab's media entry carries the mute (`MediaState.muted`, W8-8): recomputed with the
+    // tab, in the same tick's broadcast.
+    this.browser.updateMedia()
     this.browser.state.commit()
   }
 
@@ -3336,7 +3339,9 @@ export class TabManager {
       this.pageView(t.id)?.setMuted(muted)
       changed = true
     }
-    if (changed) this.browser.state.commit()
+    if (!changed) return
+    this.browser.updateMedia()
+    this.browser.state.commit()
   }
 
   /**

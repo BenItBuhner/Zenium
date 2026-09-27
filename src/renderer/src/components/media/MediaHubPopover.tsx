@@ -10,7 +10,9 @@ import {
   RotateCcw,
   RotateCw,
   SkipBack,
-  SkipForward
+  SkipForward,
+  Volume2,
+  VolumeX
 } from 'lucide-react'
 import type { MediaState, Rect, Tab, UIState } from '@shared/types'
 import { DEFAULT_SEEK_OFFSET_S } from '@shared/mediaSession'
@@ -63,8 +65,11 @@ export function MediaHubLayer(): JSX.Element | null {
  * hub's name lives on the button that opens it – `aria-label` here): one player per tab with
  * media, the session first, parted by air alone: the artwork (the page's, else the kind's glyph
  * on the players' shared tile) beside the title and the artist and site – the title is the way
- * to the tab, as Chrome's card is – with picture-in-picture trailing for a video where the host
- * has it; the seek row (§10.4's slider row: the times in tabular numerals at the track's ends,
+ * to the tab, as Chrome's card is – with the tab's Mute / Unmute trailing (`tab.toggleMute`,
+ * the strip's mute; the sidebar card's control, retired here in W8-8 so one control per session
+ * stands – `MediaState.muted` beside `playing`, so a muted tab that plays keeps Pause) and
+ * picture-in-picture after it for a video where the host has it; the seek row (§10.4's slider
+ * row: the times in tabular numerals at the track's ends,
  * the position carried forward from the report while it plays, a drag scrubbing and a release
  * seeking there) when the media has a duration; and the transport – previous track, ten seconds
  * back, play or pause, ten seconds on, next track – as §9.3 icon buttons, the track buttons at
@@ -165,11 +170,15 @@ function Player({
   const artwork = media.artwork && !broken ? media.artwork : null
   const title = mediaTitle(media, tab)
   const detail = mediaDetail(media, tab, title)
+  // The tab's mute is the page's sound: a chrome player's voice (read aloud speaks through the
+  // app's own speech host, not the tab) would play on under it, so its entry offers none.
+  const mute = media.source !== 'chrome'
   return (
     <section
       className="zen-mhub-player"
       data-media-player={media.tabId}
       data-playing={media.playing || undefined}
+      data-muted={media.muted || undefined}
       aria-label={title}
     >
       <div className="zen-mhub-now">
@@ -200,17 +209,30 @@ function Player({
           <span className="zen-mhub-name truncate">{title}</span>
           {detail && <span className="zen-mhub-detail truncate">{detail}</span>}
         </button>
-        {pip && (
-          <V2IconButton
-            icon={PictureInPicture2}
-            label="Picture in picture"
-            data-media-pip=""
-            onClick={() => {
-              // The window shrinks to the video: the hub is gone with it.
-              run('media.pictureInPicture', { tabId: media.tabId })
-              closeMediaHub()
-            }}
-          />
+        {/* The tab's controls trail the line at §9.3's 8 apart: the mute, then the window's PiP. */}
+        {(mute || pip) && (
+          <span className="flex shrink-0 items-center gap-2">
+            {mute && (
+              <V2IconButton
+                icon={media.muted ? VolumeX : Volume2}
+                label={media.muted ? 'Unmute' : 'Mute'}
+                data-media-mute=""
+                onClick={() => run('tab.toggleMute', { tabId: media.tabId })}
+              />
+            )}
+            {pip && (
+              <V2IconButton
+                icon={PictureInPicture2}
+                label="Picture in picture"
+                data-media-pip=""
+                onClick={() => {
+                  // The window shrinks to the video: the hub is gone with it.
+                  run('media.pictureInPicture', { tabId: media.tabId })
+                  closeMediaHub()
+                }}
+              />
+            )}
+          </span>
         )}
       </div>
       <SeekRow media={media} />

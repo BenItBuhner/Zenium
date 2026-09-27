@@ -65,6 +65,8 @@ interface HostRecord {
 interface ViewRecord {
   tabId: string
   muted: boolean
+  /** What `isCurrentlyAudible()` answers: the page's sound as the engine hears it. */
+  audible: boolean
   /** Reparenting the core asked for: `attachTo` and `detach` calls. */
   attached: number
   detached: number
@@ -147,6 +149,7 @@ function fixture(
         const recorded: ViewRecord = {
           tabId: tab.id,
           muted: false,
+          audible: false,
           attached: 0,
           detached: 0,
           bounds: null,
@@ -172,6 +175,7 @@ function fixture(
           setMuted: (muted: boolean) => {
             recorded.muted = muted
           },
+          isCurrentlyAudible: () => recorded.audible,
           setBounds: (rect: Rect) => {
             recorded.bounds = rect
           },
@@ -1446,6 +1450,28 @@ describe('Mute Site', () => {
     // A `zen://` page has no site to mute.
     const zen = f.openPage(win, 'zen://settings')
     expect(f.browser.tabs.tab(zen.id)?.muted).toBe(false)
+  })
+
+  it("carries a mute into the tab's media entry in the same push (W8-8, `MediaState.muted`): Mute Tab, Mute Site and the sound setting alike", () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    const page = f.openPage(win, 'https://example.com/a')
+    const view = f.views.find((v) => v.tabId === page.id)!
+    view.audible = true
+    f.browser.updateMedia()
+    expect(f.browser.state.media).toEqual([{ tabId: page.id, playing: true, muted: false }])
+    // The tab's own mute: the entry says muted before any media refresh of its own – the same
+    // commit carries the tab and its entry, so the hub never shows a mute a push behind.
+    f.browser.handleCommand(win, 'tab.toggleMute', { tabId: page.id })
+    expect(f.browser.tabs.tab(page.id)?.muted).toBe(true)
+    expect(f.browser.state.media).toEqual([{ tabId: page.id, playing: true, muted: true }])
+    f.browser.handleCommand(win, 'tab.toggleMute', { tabId: page.id })
+    expect(f.browser.state.media).toEqual([{ tabId: page.id, playing: true, muted: false }])
+    // The site's mute (the sound setting, `followSoundSetting`) reaches the entry the same way.
+    f.browser.handleCommand(win, 'tab.toggleMuteSite', { tabId: page.id })
+    expect(f.browser.state.media).toEqual([{ tabId: page.id, playing: true, muted: true }])
+    f.browser.handleCommand(win, 'permissions.resetOrigin', { origin: 'https://example.com' })
+    expect(f.browser.state.media).toEqual([{ tabId: page.id, playing: true, muted: false }])
   })
 
   it('migrates the old mutedHosts list into sound blocks once, for the origins the old rule covered', () => {

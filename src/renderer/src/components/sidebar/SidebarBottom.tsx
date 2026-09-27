@@ -1,6 +1,6 @@
 import type { JSX } from 'react'
 import { useEffect } from 'react'
-import { Bot, Palette, Pause, Play, Plus, VenetianMask, Volume2, VolumeX } from 'lucide-react'
+import { Bot, Palette, Plus, VenetianMask } from 'lucide-react'
 import type { MediaState, Space, UIState } from '@shared/types'
 import { resolveTheme, rgbToHex } from '@shared/theme'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
@@ -16,7 +16,7 @@ import { claimMessageCards, openOverlay, pickToastAction, uiStore } from '@rende
 import { cn } from '@renderer/lib/utils'
 import { ToastCard } from '../messages/ToastCard'
 import { SpaceGlyph } from '../SpaceGlyph'
-import { TOOLBAR_STROKE, V2_TRAILING_GLYPH } from '../v2/controls'
+import { TOOLBAR_STROKE } from '../v2/controls'
 import { Favicon } from './Favicon'
 
 interface Props {
@@ -41,12 +41,11 @@ export function SidebarBottom({ state, compact, isDark, pose = 'regular' }: Prop
   const current = activeTab(state)
   const local = isLocalWindow(state)
   const privatePose = pose === 'private'
-  // Zen 1.21.11: every playing tab gets its own media control – of the pose's mode, on a host
+  // Zen 1.21.11: every playing tab gets its own media card – of the pose's mode, on a host
   // that keeps private browsing in tabs. The playing set alone (design language v2 §9.29, the
   // #552 ruling): a session that paused or ended is the media hub's to tell – its toolbar
-  // button and popover, where it lingers Chrome's hour with Play – and this card, a second
-  // control for the same session, would tell the one state twice; the card's retirement into
-  // the hub is the follow-up slice.
+  // button and popover, where it lingers Chrome's hour with Play. The card's controls retired
+  // into the hub in W8-8 (one control per session): it names the tab and goes to it.
   const mixed = privateInTabs(state)
   const media = state.media
     .filter((m) => {
@@ -258,6 +257,13 @@ function SpaceIcon({
   )
 }
 
+/**
+ * The foot's media card, one per playing tab: the tab's picture and title, the card itself the
+ * way to the tab. Its Play / Pause and Mute / Unmute retired into the media hub in W8-8 (the
+ * #552 ruling's follow-up; §9.29's one control per session): the hub's popover carries the
+ * session's transport and, on the now-playing line, the tab's mute, so the card says what
+ * plays and where, and controls nothing twice. Compact, the picture alone, the title its name.
+ */
 function MediaPlayer({
   state,
   media,
@@ -268,57 +274,30 @@ function MediaPlayer({
   compact: boolean
 }): JSX.Element | null {
   const tab = state.tabs[media.tabId]
-  // A private tab's player under the lock names nothing of its page (§9.19; `mediaMasked`'s
-  // rule for the phone's player): the mask and the placeholder, the transport as it is.
+  // A private tab's card under the lock names nothing of its page (§9.19; `mediaMasked`'s rule
+  // for the phone's player): the mask and the placeholder.
   const masked = useTabMasked(tab ?? { containerId: '' })
   if (!tab) return null
   const title = masked ? PRIVATE_TAB_PLACEHOLDER : tabTitle(tab)
   return (
-    <div
-      className={cn('zen-panel flex items-center gap-2 px-2 py-1.5', compact && 'flex-col')}
+    <button
+      type="button"
+      className={cn(
+        'zen-panel flex items-center gap-2 px-2 py-1.5 text-[12px]',
+        compact && 'justify-center px-0'
+      )}
+      data-media-card={tab.id}
       data-masked={masked || undefined}
+      data-tooltip={title}
+      aria-label={compact ? title : undefined}
+      onClick={() => run('tab.activate', { tabId: tab.id })}
     >
       {masked ? (
         <VenetianMask className="h-4 w-4 shrink-0 opacity-[0.69]" aria-hidden />
       ) : (
         <Favicon tab={tab} />
       )}
-      {!compact && (
-        <button
-          type="button"
-          className="min-w-0 flex-1 truncate text-left text-[12px]"
-          data-tooltip={title}
-          onClick={() => run('tab.activate', { tabId: tab.id })}
-        >
-          {title}
-        </button>
-      )}
-      <button
-        type="button"
-        className="zen-toolbar-button h-6 w-6"
-        aria-label={media.playing ? 'Pause' : 'Play'}
-        data-tooltip={media.playing ? 'Pause' : 'Play'}
-        onClick={() => run('media.toggle', { tabId: tab.id })}
-      >
-        {media.playing ? (
-          <Pause className={V2_TRAILING_GLYPH} />
-        ) : (
-          <Play className={V2_TRAILING_GLYPH} />
-        )}
-      </button>
-      <button
-        type="button"
-        className="zen-toolbar-button h-6 w-6"
-        aria-label={tab.muted ? 'Unmute' : 'Mute'}
-        data-tooltip={tab.muted ? 'Unmute' : 'Mute'}
-        onClick={() => run('tab.toggleMute', { tabId: tab.id })}
-      >
-        {tab.muted ? (
-          <VolumeX className={V2_TRAILING_GLYPH} />
-        ) : (
-          <Volume2 className={V2_TRAILING_GLYPH} />
-        )}
-      </button>
-    </div>
+      {!compact && <span className="min-w-0 flex-1 truncate text-left">{title}</span>}
+    </button>
   )
 }

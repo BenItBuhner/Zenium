@@ -3901,16 +3901,25 @@ export interface WindowState {
 }
 
 /**
- * A tab with media: on every host the tab and whether it is audible; on hosts whose page script
- * reports the Media Session (Android) also what the OS controls show – the page's metadata (or
- * the tab's title and site), the artwork, the position as of `positionAt` (epoch ms; the chrome
- * extrapolates from it at `playbackRate`), the actions the page handles, and whether the
- * window is in picture-in-picture for its video. A chrome player on the tab (the read-aloud
- * player, `source: 'chrome'`) is the tab's entry while its page has no media of its own.
+ * A tab with media: on every host the tab, whether it is audible and whether the tab is muted;
+ * on hosts whose page script reports the Media Session (Android) also what the OS controls
+ * show – the page's metadata (or the tab's title and site), the artwork, the position as of
+ * `positionAt` (epoch ms; the chrome extrapolates from it at `playbackRate`), the actions the
+ * page handles, and whether the window is in picture-in-picture for its video. A chrome player
+ * on the tab (the read-aloud player, `source: 'chrome'`) is the tab's entry while its page has
+ * no media of its own.
  */
 export interface MediaState {
   tabId: string
   playing: boolean
+  /**
+   * The tab's sound is off (`Tab.muted`, W8-8): the desktop host's `webContents.isAudioMuted()`,
+   * the Android host's WebView mute – the tab's mute, not the element's own (`MediaReport.muted`
+   * is the page's). Read with `playing`, so the hub tells a playing tab that is muted (Pause,
+   * the crossed speaker) from a paused one (Play, the speaker); a host's field arrives
+   * null-safe, false where the tab carries none.
+   */
+  muted: boolean
   title?: string
   artist?: string
   album?: string

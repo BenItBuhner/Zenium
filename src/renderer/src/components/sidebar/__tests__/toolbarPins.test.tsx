@@ -55,6 +55,7 @@ function media(over: Partial<MediaState> = {}): MediaState {
   return {
     tabId: 't1',
     playing: true,
+    muted: false,
     title: 'Nocturne',
     artist: 'The Band',
     artwork: null,

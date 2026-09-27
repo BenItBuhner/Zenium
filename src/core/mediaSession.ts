@@ -388,10 +388,12 @@ export class MediaSessionService {
         this.followLinger(tabId, tracked.report, playing)
         if (this.inactive.has(tabId)) continue
       }
-      const state: MediaState = { tabId, playing }
+      const tab = tabs.tab(tabId)
+      // The tab's mute beside its audibility (W8-8): the hub's one control per session reads
+      // both, and a host whose tab record carries no mute reads unmuted.
+      const state: MediaState = { tabId, playing, muted: tab?.muted ?? false }
       if (tracked) {
         const { report } = tracked
-        const tab = tabs.tab(tabId)
         const isPrivate = tab ? tabs.isPrivate(tab) : false
         state.title = isPrivate ? '' : report.metadata?.title || (tab?.title ?? '')
         state.artist = isPrivate ? '' : report.metadata?.artist || siteOf(tab?.url ?? '')
@@ -426,6 +428,7 @@ export class MediaSessionService {
       states.push({
         tabId: source.tabId,
         playing: source.playing,
+        muted: tab?.muted ?? false,
         title: isPrivate ? '' : source.title,
         artist: isPrivate ? '' : source.artist,
         album: '',

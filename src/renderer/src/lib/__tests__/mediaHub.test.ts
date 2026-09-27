@@ -41,7 +41,7 @@ function tab(id: string, url: string, title = ''): Tab {
 }
 
 function media(over: Partial<MediaState> & { tabId: string }): MediaState {
-  return { playing: false, ...over }
+  return { playing: false, muted: false, ...over }
 }
 
 function stateWith(entries: MediaState[], tabs: Tab[]): UIState {
