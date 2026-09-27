@@ -21,6 +21,10 @@ name: Android bookmarks sort and view demo
 # live in android-emulator-demo.yml; this file only picks the driver and the demo it runs.
 on:
   workflow_dispatch:
+  # TEMPORARY (W6-E1): the one granted run of PR #612's final tree on its own branch; removed before READY.
+  push:
+    branches:
+      - cursor/android-bookmarks-sort-view-9271
 
 permissions:
   contents: read
