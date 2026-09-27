@@ -2560,6 +2560,18 @@ export type GlanceTrigger = 'alt' | 'ctrl' | 'shift'
 export type PinnedCloseBehavior =
   'reset-unload-switch' | 'reset-unload' | 'reset' | 'unload' | 'unload-switch' | 'switch' | 'close'
 export type ThirdPartyPinnedBehavior = 'new-tab' | 'glance' | 'same-tab'
+/**
+ * When Energy Saver is on (`Settings.energySaver`): Chrome's `BatterySaverModeState` less
+ * `kEnabled` (always on), which its page never offers – `kDisabled` → `off`,
+ * `kEnabledBelowThreshold` → `low-battery`, `kEnabledOnBattery` → `on-battery`.
+ */
+export type EnergySaverMode = 'off' | 'low-battery' | 'on-battery'
+/**
+ * Chrome's `BatterySaverModeManager::kLowBatteryThresholdPercent`: Energy Saver's
+ * `low-battery` mode turns on at this charge or lower (Chrome's row: "Turn on only when your
+ * battery is at 20% or lower").
+ */
+export const ENERGY_SAVER_LOW_BATTERY_PERCENT = 20
 export type ColorScheme = 'system' | 'light' | 'dark'
 export type SidebarSide = 'left' | 'right'
 /**
@@ -2923,9 +2935,32 @@ export interface Settings {
   pinnedCloseBehavior: PinnedCloseBehavior
   pinnedResetOnStartup: boolean
   thirdPartyOnPinned: ThirdPartyPinnedBehavior
+  /**
+   * Memory Saver's switch and timer (settings-69; the phone's sleeping-tabs rows read the same
+   * two keys): a tab hidden for `unloadTimeoutMinutes` is unloaded while `unloadEnabled`.
+   * Chrome's twins (`performance_tuning.high_efficiency_mode.state` / `.aggressiveness`) are
+   * local-state prefs it never syncs – device-local here too (`DEVICE_LOCAL_SETTINGS`, W8-2):
+   * each device keeps its own value, the phone's ladder and the desktop's tiers apart. The
+   * keep-active hosts (`unloadExcludedDomains`) sync, as Chrome's exceptions list does.
+   */
   unloadEnabled: boolean
   unloadTimeoutMinutes: number
   unloadExcludedDomains: string[]
+  /**
+   * Energy Saver (settings-26; Chrome's `performance_tuning.battery_saver_mode.state`, a
+   * local-state pref Chrome never syncs – device-local here too, `DEVICE_LOCAL_SETTINGS`):
+   * when the resource governor tightens its budgets by `resources.batteryFactor`. `on-battery`
+   * whenever the computer runs on its battery (Electron's `powerMonitor`); `low-battery` only
+   * once the battery is at `ENERGY_SAVER_LOW_BATTERY_PERCENT` or lower – Chrome's
+   * `kLowBatteryThresholdPercent`, 20 – where the host can read the level (Linux's sysfs,
+   * macOS's `pmset`; Windows exposes it to a native module alone, so there the mode waits and
+   * the row says so); `off` never. A fresh desktop profile takes Chrome's default, the
+   * threshold – `on-battery` on Windows, where the level cannot be read
+   * (`freshPerformanceDefaults`); the shipped default stays `on-battery`, Zenium's behaviour
+   * before the mode had a name, for every existing profile and the phone. Absent in profiles
+   * from before it existed (read as `on-battery`).
+   */
+  energySaver: EnergySaverMode
   /**
    * Inactive tabs (TAB-20, SET-34; Chrome's archive): a tab nobody has looked at for this many
    * days leaves the grid for the Inactive tabs list, its page kept as a recently-closed entry
@@ -3668,6 +3703,28 @@ export interface ResourceSnapshot {
     totalMemoryMb: number
     cpuCount: number
     onBattery: boolean
+    /**
+     * The battery's charge, 0–100, where the host can read it (Linux's sysfs, macOS's `pmset`);
+     * null on a computer without a battery and on a host that cannot read the level (Windows
+     * without a native module) – Energy Saver's `low-battery` mode waits on it.
+     */
+    batteryPercent: number | null
+    /**
+     * Whether the computer has a battery to save: true / false where the host can tell (Linux's
+     * sysfs lists a `Battery` supply of the computer's own; macOS's `pmset` lists an
+     * InternalBattery), null where it cannot (Windows without a native module; a host before its
+     * first reading; the phone and tablet shells, which never sample). Chrome hides its Battery
+     * Saver section on a computer without one (`performance_page_index.ts`'s
+     * `showBatterySettings_`, off `BatterySaverModeManager::DeviceHasBattery`); Settings hides
+     * the Energy Saver group on `false` alone – a host that cannot tell shows it.
+     */
+    hasBattery: boolean | null
+    /**
+     * Energy Saver is on now – `Settings.energySaver` met by the power state – and the budgets
+     * are tightened by `batteryFactor` (Chrome's `BatterySaverModeManager::IsBatterySaverActive`,
+     * what its toolbar leaf shows).
+     */
+    energySaver: boolean
     /** System idle long enough for the idle-freeze rule to apply. */
     idle: boolean
   }
@@ -5385,6 +5442,12 @@ export interface Commands {
   'resources.trim': { args: void; result: void }
   /** Restart the browser so changed startup switches take effect. */
   'resources.relaunch': { args: void; result: void }
+  /**
+   * Energy Saver's "Turn off now" (W8-2, the toolbar leaf's bubble; Chrome's
+   * `SetTemporaryBatterySaverDisabledForSession`): off until the charger is plugged in or the
+   * mode is changed, `Settings.energySaver` untouched. `disabled: false` puts it back.
+   */
+  'resources.energySaverSession': { args: { disabled: boolean }; result: void }
 
   // ---- The task manager (`zen://tasks`, `core/tasks.ts`) --------------------------------------
   /**

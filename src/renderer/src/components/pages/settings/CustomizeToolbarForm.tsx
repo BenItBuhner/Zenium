@@ -4,6 +4,7 @@ import {
   BookOpenText,
   Download,
   Languages,
+  Leaf,
   MonitorDown,
   SquarePlay,
   Star
@@ -22,10 +23,11 @@ import { RowView, type RowContext } from './rows'
  * Customize): the body of the 400 form dialog the row opens (`FormSheet.body: 'list'` – the
  * title block over a list, the footer form under it, design language v2 §9.20). The lead's
  * spec (§10.5): §6's desktop checkbox form, one 32 row per optional control in the bar's own
- * order – Forward, then the pill's chips left to right, then the media hub and the downloads
- * button – each row leading with the control's 16 glyph after the box; checked = in the bar,
- * unchecked = folded into the app menu, whose row for the control is what runs it then. The
- * address pill, Back, Reload and the ⋯ menu are the bar, not its options, and have no row.
+ * order – Forward, then the pill's chips left to right, then the Energy Saver leaf, the media
+ * hub and the downloads button – each row leading with the control's 16 glyph after the box;
+ * checked = in the bar, unchecked = folded into the app menu, whose row for the control is what
+ * runs it then. The address pill, Back, Reload and the ⋯ menu are the bar, not its options, and
+ * have no row.
  * No preview: the bar over the dialog is the preview and every change applies as it is made.
  * A control the window's width has tiered away (§9.29, `toolbarTiering`) stays checked and
  * says "Hidden at this width." as its 13/69 % description, never disabled; a control the page
@@ -45,7 +47,10 @@ import { RowView, type RowContext } from './rows'
  * show downloads button", also Settings › Downloads' switch): one field, bound here as its
  * Downloads row. Unchecked, the button is not folded into the menu as the others are – it
  * still comes with the session's first download (`downloadButtonVisible`), which is what the
- * row's line says. The rest write `Settings.toolbarPins` (`shared/toolbarPins.ts`).
+ * row's line says. The Energy Saver leaf (W8-2; Chrome's `BatterySaverButton`) is the other
+ * row without a menu home: it shows while the mode is on, which its line says, and unchecked it
+ * is simply not drawn – the mode runs on, Settings › Performance holds its switch. The rest
+ * write `Settings.toolbarPins` (`shared/toolbarPins.ts`).
  */
 export function CustomizeToolbarForm({
   state,
@@ -84,6 +89,7 @@ export function CustomizeToolbarForm({
     controlRow('translate', 'Translate', <Languages />),
     controlRow('install', 'Install app', <MonitorDown />, 'Shows on pages that can be installed.'),
     controlRow('star', 'Bookmark this page', <Star />),
+    controlRow('energy-saver', 'Energy Saver', <Leaf />, ENERGY_SAVER_ROW),
     controlRow('media', 'Media', <SquarePlay />, 'Shows while media plays.'),
     {
       kind: 'switch',
@@ -122,6 +128,13 @@ export const HIDDEN_AT_THIS_WIDTH = 'Hidden at this width.'
  * says so whether the box is checked or not, so the row keeps its 52 across a toggle.
  */
 export const DOWNLOADS_UNCHECKED = 'Unchecked, shows once a download starts.'
+
+/**
+ * The Energy Saver row's line in both states: the leaf is a control the mode has to earn, like
+ * the hub's button media does, and the line says when it shows; the mode itself is Settings ›
+ * Performance's, whether the leaf is drawn or not.
+ */
+export const ENERGY_SAVER_ROW = 'Shows while Energy Saver is on.'
 
 /**
  * A check row toggles in place and asks the page for no sheet; the rows' context has nothing to

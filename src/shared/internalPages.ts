@@ -238,6 +238,24 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
     label: 'Tab Management',
     keywords: ['tabs', 'pinned', 'essentials', 'unload', 'session', 'window']
   },
+  // Chrome's Performance (chrome://settings/performance: Memory Saver, Energy Saver, W8-2), the
+  // desktop and tablet shells' home for Zen's tab unloading – the phone keeps Edge's sleeping
+  // tabs under Tab Management (CT-22). Seated after Tab Management, whose rows it took, and
+  // before Downloads, as Chrome's nav puts Performance before Downloads.
+  {
+    id: 'performance',
+    label: 'Performance',
+    keywords: [
+      'memory saver',
+      'energy saver',
+      'battery',
+      'unload',
+      'inactive tabs',
+      'sleeping tabs',
+      'discard'
+    ],
+    layouts: ['desktop', 'tablet']
+  },
   {
     id: 'downloads',
     label: 'Downloads',

@@ -75,6 +75,7 @@ function system(overrides: Partial<SystemSample> = {}): SystemSample {
     totalMemoryMb: 16_000,
     cpuCount: 4,
     onBattery: false,
+    energySaver: false,
     idleSeconds: 0,
     windowMinimized: false,
     ...overrides
@@ -120,14 +121,24 @@ describe('deriveBudgets', () => {
     expect(deriveBudgets(settings({ gpuMemoryMb: 512 }), system()).gpu.budget).toBe(512)
   })
 
-  it('tightens every budget on battery but keeps the configured value', () => {
+  it('tightens every budget while Energy Saver is active but keeps the configured value', () => {
     const b = deriveBudgets(
       settings({ memoryMb: 1000, cpuPercent: 50, gpuMemoryMb: 500, batteryFactor: 0.5 }),
-      system({ onBattery: true })
+      system({ onBattery: true, energySaver: true })
     )
     expect(b.memory).toEqual({ configured: 1000, budget: 500 })
     expect(b.cpu).toEqual({ configured: 50, budget: 25 })
     expect(b.gpu).toEqual({ configured: 500, budget: 250 })
+  })
+
+  it('leaves the budgets alone on battery while Energy Saver is off', () => {
+    const b = deriveBudgets(
+      settings({ memoryMb: 1000, cpuPercent: 50, gpuMemoryMb: 500, batteryFactor: 0.5 }),
+      system({ onBattery: true, energySaver: false })
+    )
+    expect(b.memory).toEqual({ configured: 1000, budget: 1000 })
+    expect(b.cpu).toEqual({ configured: 50, budget: 50 })
+    expect(b.gpu).toEqual({ configured: 500, budget: 500 })
   })
 })
 
