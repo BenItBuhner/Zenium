@@ -104,6 +104,21 @@ export function webDavDocumentUrl(settings: WebDavSyncSettings, name: string): s
   return webDavFolderUrl(settings) + encodeURIComponent(name)
 }
 
+/**
+ * What the status calls the folder (`SyncStatus.folderName`, the folder transport's base name):
+ * the last segment of the folder the user typed, or the server's host when the folder is the
+ * root itself.
+ */
+export function webDavFolderName(settings: WebDavSyncSettings): string {
+  const last = webDavFolderSegments(settings.folder).at(-1)
+  if (last) return last
+  try {
+    return new URL(webDavRootUrl(settings.url)).host || settings.url.trim()
+  } catch {
+    return settings.url.trim()
+  }
+}
+
 // ---------------------------------------------------------------------------
 // The multistatus scanner
 // ---------------------------------------------------------------------------
