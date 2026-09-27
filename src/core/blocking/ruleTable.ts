@@ -14,8 +14,9 @@
  *
  * The strings a row needs (its `urlFilter`, the hostname of a `||host^` selector) are interned
  * once per set in `strings`; a filter is the rule's own string object, so the table adds a
- * reference, not a copy. Domain lists are content-deduplicated: two rules with the same list
- * share one entry. `urlFilter` patterns that need a regular expression are compiled the first
+ * reference, not a copy. Domain lists are content-deduplicated – two rules with the same list
+ * share one entry – and held in one of the forms of {@link DomainListForm} (sorted arrays by
+ * default). `urlFilter` patterns that need a regular expression are compiled the first
  * time their row is a candidate and kept per row; `regexFilter` expressions are compiled when the
  * table is built (their validity decides whether the rule exists at all).
  *
@@ -132,7 +133,26 @@ export interface DomainList {
   domains(): Iterable<string>
 }
 
-/** A list as a `Set` of its strings (what `compileRule` held before the table). */
+/**
+ * The in-memory form of a set's domain lists. Every form answers the same membership questions;
+ * they differ in what they cost per listed domain next to the `Rule[]` the engine keeps anyway
+ * (whose strings, already lowercase, `toLowerCase()` hands back as the same objects):
+ *
+ * - `set`: a `Set` per list – what `compileRule` held before the table (~26 bytes of table per
+ *   entry on V8, the strings shared with the rules).
+ * - `sorted`: a sorted array of the strings per list, binary search – 8 bytes per entry, the
+ *   strings shared; the twin of the Kotlin engine's `SortedDomainSet`. The default.
+ * - `blob`: ONE sorted UTF-8 byte blob per set with an offsets array, binary search on the bytes
+ *   – no string objects of its own (~4 bytes of offsets plus the characters per entry), but the
+ *   characters are a second copy while the rules' strings are retained; the form for an engine
+ *   that lets the `Rule[]` go.
+ */
+export type DomainListForm = 'set' | 'sorted' | 'blob'
+
+/** Every form, for a measurement to try each. */
+export const DOMAIN_LIST_FORMS: readonly DomainListForm[] = ['set', 'sorted', 'blob']
+
+/** A list as a `Set` of its strings. */
 export class SetDomainList implements DomainList {
   constructor(private readonly set: ReadonlySet<string>) {}
 
@@ -154,11 +174,222 @@ export class SetDomainList implements DomainList {
   }
 }
 
+/** A list as a sorted array of its distinct strings, searched by bisection. */
+export class SortedDomainList implements DomainList {
+  /** @param sorted Distinct, in code unit order (`Array.prototype.sort` without a comparator). */
+  constructor(private readonly sorted: readonly string[]) {}
+
+  get size(): number {
+    return this.sorted.length
+  }
+
+  has(domain: string): boolean {
+    const sorted = this.sorted
+    let low = 0
+    let high = sorted.length - 1
+    while (low <= high) {
+      const mid = (low + high) >>> 1
+      const entry = sorted[mid]!
+      if (entry < domain) low = mid + 1
+      else if (entry > domain) high = mid - 1
+      else return true
+    }
+    return false
+  }
+
+  hasAny(suffixes: readonly string[]): boolean {
+    for (let i = 0; i < suffixes.length; i++) if (this.has(suffixes[i]!)) return true
+    return false
+  }
+
+  domains(): Iterable<string> {
+    return this.sorted
+  }
+}
+
+/**
+ * One set's domain lists as one UTF-8 byte blob: entry `k` is `bytes[offsets[k], offsets[k + 1])`,
+ * each list a run of consecutive entries in byte order. A key is compared to an entry byte by
+ * byte – its characters directly when it is ASCII (every domain a rule may name is), its UTF-8
+ * encoding otherwise.
+ */
+export class DomainBlob {
+  private constructor(
+    readonly bytes: Uint8Array,
+    readonly offsets: Int32Array
+  ) {}
+
+  /** Lay `lists` (each already lowercase) out as one blob; `ranges[i]` is list `i`'s first entry and count. */
+  static build(lists: readonly (readonly string[])[]): {
+    blob: DomainBlob
+    ranges: readonly [first: number, count: number][]
+  } {
+    const encoder = new TextEncoder()
+    const encoded: Uint8Array[][] = []
+    const ranges: [number, number][] = []
+    let entries = 0
+    let total = 0
+    for (const list of lists) {
+      const distinct = [...new Set(list)]
+      const parts = distinct.map((domain) => encoder.encode(domain))
+      parts.sort(compareBytes)
+      encoded.push(parts)
+      ranges.push([entries, parts.length])
+      entries += parts.length
+      for (const part of parts) total += part.length
+    }
+    const bytes = new Uint8Array(total)
+    const offsets = new Int32Array(entries + 1)
+    let at = 0
+    let entry = 0
+    for (const parts of encoded) {
+      for (const part of parts) {
+        offsets[entry++] = at
+        bytes.set(part, at)
+        at += part.length
+      }
+    }
+    offsets[entries] = at
+    return { blob: new DomainBlob(bytes, offsets), ranges }
+  }
+
+  /** How many entries the blob holds. */
+  get size(): number {
+    return this.offsets.length - 1
+  }
+
+  /** Entry `entry` compared to `key` as UTF-8: negative, zero or positive. */
+  compare(entry: number, key: string): number {
+    return isAscii(key)
+      ? this.compareAscii(entry, key)
+      : this.compareBytes(entry, new TextEncoder().encode(key))
+  }
+
+  /** `compare` for a key known to be ASCII: its code units are its bytes. */
+  private compareAscii(entry: number, key: string): number {
+    const bytes = this.bytes
+    const start = this.offsets[entry]!
+    const length = this.offsets[entry + 1]! - start
+    const n = Math.min(length, key.length)
+    for (let i = 0; i < n; i++) {
+      const d = bytes[start + i]! - key.charCodeAt(i)
+      if (d !== 0) return d
+    }
+    return length - key.length
+  }
+
+  /** `compare` for an encoded key. */
+  private compareBytes(entry: number, key: Uint8Array): number {
+    const bytes = this.bytes
+    const start = this.offsets[entry]!
+    const length = this.offsets[entry + 1]! - start
+    const n = Math.min(length, key.length)
+    for (let i = 0; i < n; i++) {
+      const d = bytes[start + i]! - key[i]!
+      if (d !== 0) return d
+    }
+    return length - key.length
+  }
+
+  /** Whether `key` is one of the entries `[first, first + count)`, by bisection. */
+  contains(first: number, count: number, key: string): boolean {
+    // Decided once per search, not per probe: a host's labels are ASCII (punycode) in practice.
+    const encoded = isAscii(key) ? null : new TextEncoder().encode(key)
+    let low = first
+    let high = first + count - 1
+    while (low <= high) {
+      const mid = (low + high) >>> 1
+      const d = encoded === null ? this.compareAscii(mid, key) : this.compareBytes(mid, encoded)
+      if (d < 0) low = mid + 1
+      else if (d > 0) high = mid - 1
+      else return true
+    }
+    return false
+  }
+
+  /** Entry `entry` decoded. */
+  entry(entry: number): string {
+    return new TextDecoder().decode(
+      this.bytes.subarray(this.offsets[entry]!, this.offsets[entry + 1]!)
+    )
+  }
+}
+
+function isAscii(text: string): boolean {
+  for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) > 0x7f) return false
+  return true
+}
+
+function compareBytes(a: Uint8Array, b: Uint8Array): number {
+  const n = Math.min(a.length, b.length)
+  for (let i = 0; i < n; i++) {
+    const d = a[i]! - b[i]!
+    if (d !== 0) return d
+  }
+  return a.length - b.length
+}
+
+/** One list as a run of entries of its set's {@link DomainBlob}. */
+export class BlobDomainList implements DomainList {
+  constructor(
+    private readonly blob: DomainBlob,
+    private readonly first: number,
+    readonly size: number
+  ) {}
+
+  has(domain: string): boolean {
+    return this.blob.contains(this.first, this.size, domain)
+  }
+
+  hasAny(suffixes: readonly string[]): boolean {
+    for (let i = 0; i < suffixes.length; i++)
+      if (this.blob.contains(this.first, this.size, suffixes[i]!)) return true
+    return false
+  }
+
+  /** Decoded from the blob: new strings, for the index to file a rule under. */
+  *domains(): Iterable<string> {
+    for (let k = 0; k < this.size; k++) yield this.blob.entry(this.first + k)
+  }
+}
+
 function lowerAll(list: readonly string[]): string[] {
   const out = new Array<string>(list.length)
   for (let i = 0; i < list.length; i++) out[i] = list[i]!.toLowerCase()
   return out
 }
+
+/** `list` without duplicates, in code unit order, in an array of exactly that length. */
+function distinctSorted(list: readonly string[]): string[] {
+  const distinct = new Set(list)
+  const out = new Array<string>(distinct.size)
+  let i = 0
+  for (const domain of distinct) out[i++] = domain
+  return out.sort()
+}
+
+/** The set's distinct lists (each lowercase) in `form`, in the same order. */
+function domainListsIn(lists: readonly (readonly string[])[], form: DomainListForm): DomainList[] {
+  switch (form) {
+    case 'set':
+      return lists.map((list) => new SetDomainList(new Set(list)))
+    case 'sorted':
+      return lists.map((list) => new SortedDomainList(distinctSorted(list)))
+    case 'blob': {
+      const { blob, ranges } = DomainBlob.build(lists)
+      return ranges.map(([first, count]) => new BlobDomainList(blob, first, count))
+    }
+  }
+}
+
+/** What {@link RuleTable.build} may be told. */
+export interface RuleTableOptions {
+  /** The in-memory form of the domain lists; {@link DEFAULT_DOMAIN_LIST_FORM} when omitted. */
+  readonly domainLists?: DomainListForm
+}
+
+/** The form the engine builds its tables with. */
+export const DEFAULT_DOMAIN_LIST_FORM: DomainListForm = 'sorted'
 
 // -------------------------------------------------------------------------------------------
 // The table
@@ -275,7 +506,8 @@ export class RuleTable implements IndexSource {
     readonly setId: string,
     setPriority: number,
     private readonly rules: readonly Rule[],
-    rows: readonly Row[]
+    rows: readonly Row[],
+    listForm: DomainListForm
   ) {
     const n = rows.length
     this.size = n
@@ -307,14 +539,16 @@ export class RuleTable implements IndexSource {
     this.regexes = new Array<RegExp | null>(n).fill(null)
 
     const strings = new Interner<string>()
-    const domainLists = new Interner<DomainList>()
+    // The lists are collected first and given their form at the end: the blob form lays every
+    // list of the set out together.
+    const domainLists = new Interner<readonly string[]>()
     const stringSets = new Interner<ReadonlySet<string>>()
     const headerConditions = new Interner<HeaderConditions>()
     const tokenRuns: number[] = []
     const domainList = (list: readonly string[] | undefined): number => {
       if (!list || list.length === 0) return -1
       const lowered = lowerAll(list)
-      return domainLists.intern(lowered.join('\n'), () => new SetDomainList(new Set(lowered)))
+      return domainLists.intern(lowered.join('\n'), () => lowered)
     }
     const stringSet = (list: readonly string[] | undefined, lower: boolean): number => {
       if (!list) return -1
@@ -401,7 +635,7 @@ export class RuleTable implements IndexSource {
     this.tokenStart[n] = tokenRuns.length
     this.tokens = Int32Array.from(tokenRuns)
     this.strings = strings.values
-    this.domainLists = domainLists.values
+    this.domainLists = domainListsIn(domainLists.values, listForm)
     this.stringSets = stringSets.values
     this.headerConditions = headerConditions.values
   }
@@ -410,7 +644,12 @@ export class RuleTable implements IndexSource {
    * Compile `rules` of the set `setId` at `setPriority`. Rules whose `regexFilter` does not
    * compile get no row (`compilableCount` agrees).
    */
-  static build(setId: string, setPriority: number, rules: readonly Rule[]): RuleTable {
+  static build(
+    setId: string,
+    setPriority: number,
+    rules: readonly Rule[],
+    options: RuleTableOptions = {}
+  ): RuleTable {
     const rows: Row[] = []
     for (let i = 0; i < rules.length; i++) {
       const rule = rules[i]!
@@ -423,7 +662,13 @@ export class RuleTable implements IndexSource {
     }
     // Stable: equal rows keep the set's own order (`Array.prototype.sort` is stable).
     rows.sort((a, b) => b.priority - a.priority || b.rank - a.rank)
-    return new RuleTable(setId, setPriority, rules, rows)
+    return new RuleTable(
+      setId,
+      setPriority,
+      rules,
+      rows,
+      options.domainLists ?? DEFAULT_DOMAIN_LIST_FORM
+    )
   }
 
   /** The rule a row compiled from. */

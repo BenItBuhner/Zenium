@@ -14,6 +14,7 @@ import {
   type Rule,
   type RuleSet
 } from '../rules'
+import { DOMAIN_LIST_FORMS, RuleTable, type DomainListForm } from '../ruleTable'
 import { siteExceptionRule } from '../service'
 import { RuleSetStore } from '../store'
 import {
@@ -27,7 +28,8 @@ import {
 
 /**
  * What the core's blocking engine retains for its compiled rule table, measured with
- * `process.memoryUsage().heapUsed` after a forced collection, for the realistic desktop shape:
+ * `process.memoryUsage()` after a forced collection – `heapUsed` plus `arrayBuffers`, since V8
+ * keeps typed arrays' backing stores off its heap – for the realistic desktop shape:
  * the sets the blocking service ships (the seven bundled ABP lists as the summaries the engine
  * keeps of them – their text is matched by the platform's text matcher and never held by the
  * core – plus the builtin structured sets) and one static declarativeNetRequest set of the
@@ -250,27 +252,97 @@ function decideAll(
   return { hash, notAllowed, ms: performance.now() - start }
 }
 
+/**
+ * Bytes held after a collection: the JavaScript heap plus the backing stores of typed arrays
+ * (V8 keeps those off its heap – `arrayBuffers` – so a table of typed-array columns or a byte
+ * blob would otherwise go unseen; a head without typed arrays reads the same either way).
+ */
+interface Mem {
+  total: number
+  /** The typed arrays' share of `total`. */
+  buffers: number
+}
+
+type Settle = () => Mem
+
+interface FormReading {
+  form: DomainListForm
+  bytes: number
+  buffers: number
+  ms: number
+}
+
+/** The census set's domain lists as the table holds them: distinct lists, their entries and characters. */
+interface ListShape {
+  lists: number
+  entries: number
+  chars: number
+}
+
 interface Readings {
   compiled: number
   rulesBytes: number
   setBytes: number
   phoneBytes: number
   indexBytes: number
+  /** The typed arrays' share of `indexBytes`. */
+  indexBuffers: number
   setMs: number
   indexMs: number
   documentChars: number
   biggest: number
+  /** The census set's table alone (no index), its domain lists in each form. */
+  forms: FormReading[]
+  lists: ListShape
+}
+
+/** The census set's table built in each list form next to its `Rule[]`, each in turn. */
+function measureForms(set: RuleSet, settled: Settle): { forms: FormReading[]; lists: ListShape } {
+  let forms: FormReading[] = []
+  const lists: ListShape = { lists: 0, entries: 0, chars: 0 }
+  // Two rounds, the second one's readings kept: the first warms the allocation sites, and a
+  // baseline is taken only once the previous build's garbage is gone (two collections).
+  for (let round = 0; round < 2; round++) {
+    forms = []
+    for (const form of DOMAIN_LIST_FORMS) {
+      settled()
+      const before = settled()
+      const start = performance.now()
+      let table: RuleTable | null = RuleTable.build(set.id, set.priority, set.rules ?? [], {
+        domainLists: form
+      })
+      const ms = performance.now() - start
+      const after = settled()
+      // Read after the reading so the table is live until then.
+      expect(table.size).toBe(set.rules?.length ?? 0)
+      if (lists.lists === 0) {
+        lists.lists = table.domainLists.length
+        for (const list of table.domainLists) {
+          lists.entries += list.size
+          for (const domain of list.domains()) lists.chars += domain.length
+        }
+      }
+      table = null
+      forms.push({
+        form,
+        bytes: after.total - before.total,
+        buffers: after.buffers - before.buffers,
+        ms
+      })
+    }
+  }
+  return { forms, lists }
 }
 
 /** One pass in its own frame, so nothing of it outlives the return but the numbers. */
-async function measure(count: number, settled: () => number, base: number): Promise<Readings> {
+async function measure(count: number, settled: Settle, base: Mem): Promise<Readings> {
   const census = censusEngineSet(count)
   const set: RuleSet | null = census.set
   const compiled = set.rules?.length ?? 0
   let biggest = 0
   for (const rule of set.rules ?? [])
     biggest = Math.max(biggest, rule.condition.requestDomains?.length ?? 0)
-  const rulesBytes = settled() - base
+  const rulesBytes = settled().total - base.total
 
   // The phone's path: a store attached, the set document written on `setRuleSet`, no `decide`.
   const io = discardingIo()
@@ -279,16 +351,16 @@ async function measure(count: number, settled: () => number, base: number): Prom
   store.attach(engine)
   serviceDefaults(engine)
   await store.whenSettled()
-  const defaultsBytes = settled() - base - rulesBytes
+  const defaultsBytes = settled().total - base.total - rulesBytes
   const setStart = performance.now()
   engine.setRuleSet(set)
   const setMs = performance.now() - setStart
   // The document's write lands (a microtask here; the host's disk on the phone) and the store
   // lets its text go: what is left is the engine's copy.
   await store.whenSettled()
-  const afterSet = settled() - base
+  const afterSet = settled()
   const documentChars = io.written.get(store.documentPathFor(set.id)) ?? 0
-  const phoneBytes = afterSet - rulesBytes - defaultsBytes
+  const phoneBytes = afterSet.total - base.total - rulesBytes - defaultsBytes
   store.detach()
   store = null
   io.written.clear()
@@ -297,19 +369,25 @@ async function measure(count: number, settled: () => number, base: number): Prom
   const indexStart = performance.now()
   engine.buildIndexes()
   const indexMs = performance.now() - indexStart
-  const afterIndex = settled() - base
-  const indexBytes = afterIndex - afterSet
+  const afterIndex = settled()
+  const indexBytes = afterIndex.total - afterSet.total
+  const indexBuffers = afterIndex.buffers - afterSet.buffers
   engine = null
+
+  const { forms, lists } = measureForms(set, settled)
   return {
     compiled,
     rulesBytes,
     setBytes: phoneBytes,
     phoneBytes,
     indexBytes,
+    indexBuffers,
     setMs,
     indexMs,
     documentChars,
-    biggest
+    biggest,
+    forms,
+    lists
   }
 }
 
@@ -317,13 +395,14 @@ describe("the core's compiled rule table", () => {
   test('bytes retained per rule on the phone path and the desktop path, the build time and the matcher rate', async () => {
     const count = Number(process.env['ZEN_RULES']) || CENSUS_RULES
     const gc = collector()
-    const settled = (): number => {
+    const settled: Settle = () => {
       if (gc) for (let i = 0; i < 3; i++) gc()
-      return process.memoryUsage().heapUsed
+      const usage = process.memoryUsage()
+      return { total: usage.heapUsed + usage.arrayBuffers, buffers: usage.arrayBuffers }
     }
     const base = settled()
     const m = await measure(count, settled, base)
-    const after = settled() - base
+    const after = settled().total - base.total
     expect(m.compiled).toBeGreaterThan((count * 9) / 10)
     expect(m.biggest).toBe(Math.max(1, Math.round((HOSTS_RULE_DOMAINS * count) / CENSUS_RULES)))
 
@@ -347,16 +426,38 @@ describe("the core's compiled rule table", () => {
     const rate = (r: { ms: number }, n: number): string =>
       `${Math.round((n / r.ms) * 1000)} requests/s`
 
+    // The same corpus through an engine building its tables in each list form: the forms may
+    // differ in speed, never in a decision.
+    const byForm = DOMAIN_LIST_FORMS.map((form) => {
+      const formEngine = new RuleEngine({ domainLists: form })
+      serviceDefaults(formEngine)
+      formEngine.setRuleSet(census.set)
+      formEngine.buildIndexes()
+      for (let i = 0; i < 2_000; i++) formEngine.decide(requests[i]!)
+      const result = decideAll(formEngine, requests)
+      expect(result.hash, `decisions with ${form} lists`).toBe(all.hash)
+      return { form, ...result }
+    })
+
     const lines = [
       `=== the core's compiled rule table: ${m.compiled} census rules (of ${count} generated) through the translator + the service defaults (${BUNDLED.length} bundled text lists, ${structured} builtin rules); node ${process.version}${gc ? '' : ', no collector exposed: the numbers include garbage'} ===`,
       `set document written on the phone path: ${m.documentChars} chars; ${census.shape.lists} domain lists with ${census.shape.domainRefs} domain references, the biggest ${m.biggest}`,
       `Rule[] as the engine is handed it (rulesOf, the set document's source): ${mb(m.rulesBytes)} = ${perRule(m.rulesBytes, m.compiled)}`,
       `PHONE PATH – retained by setRuleSet beyond the Rule[] after the set document is written (the core's second copy): ${mb(m.phoneBytes)} = ${perRule(m.phoneBytes, m.compiled)}; setRuleSet ${ms(m.setMs)}`,
-      `DESKTOP PATH – added by the first decide (buildIndexes: the table the matcher reads + the index): ${mb(m.indexBytes)} = ${perRule(m.indexBytes, m.compiled)}; build ${ms(m.indexMs)}`,
+      `DESKTOP PATH – added by the first decide (buildIndexes: the table the matcher reads + the index): ${mb(m.indexBytes)} = ${perRule(m.indexBytes, m.compiled)} (${mb(m.indexBuffers)} of it typed arrays); build ${ms(m.indexMs)}`,
       `DESKTOP PATH – total beyond the Rule[]: ${mb(m.phoneBytes + m.indexBytes)} = ${perRule(m.phoneBytes + m.indexBytes, m.compiled)}`,
+      `the census set's ${m.lists.lists} distinct domain lists (${m.lists.entries} entries, ${m.lists.chars} characters) – its table alone (no index), next to its Rule[], by list form: ${m.forms
+        .map(
+          (f) =>
+            `${f.form} ${mb(f.bytes)} = ${perRule(f.bytes, m.compiled)} (${mb(f.buffers)} typed arrays; build ${ms(f.ms)})`
+        )
+        .join('; ')}`,
       `everything let go: ${mb(after)}`,
       `decide over ${requests.length} requests, service defaults alone: ${rate(defaults, requests.length)} (${ms(defaults.ms)}; ${defaults.notAllowed} decided by a rule), decisions ${hex(defaults.hash)}`,
-      `decide over ${requests.length} requests, defaults + census set: ${rate(all, requests.length)} (${ms(all.ms)}; ${all.notAllowed} decided by a rule), decisions ${hex(all.hash)}; decideLinear over ${linearSample.length}: ${rate(linear, linearSample.length)}, decisions ${hex(linear.hash)}`
+      `decide over ${requests.length} requests, defaults + census set: ${rate(all, requests.length)} (${ms(all.ms)}; ${all.notAllowed} decided by a rule), decisions ${hex(all.hash)}; decideLinear over ${linearSample.length}: ${rate(linear, linearSample.length)}, decisions ${hex(linear.hash)}`,
+      `defaults + census set by list form (decisions identical): ${byForm
+        .map((f) => `${f.form} ${rate(f, requests.length)}`)
+        .join('; ')}`
     ]
     console.info(lines.join('\n'))
   }, 900_000)

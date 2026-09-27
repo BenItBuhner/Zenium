@@ -34,6 +34,7 @@ import {
   compilableCount,
   effectivePriority,
   rankOf,
+  type RuleTableOptions,
   type UrlFacts
 } from './ruleTable'
 
@@ -468,6 +469,9 @@ export class RuleEngine implements BlockingEngine {
   /** Stamp of the current `decide`, marking the rules the index has visited for it. */
   private stamp = 0
 
+  /** @param tableOptions How the sets' tables are built (the domain lists' form). */
+  constructor(private readonly tableOptions: RuleTableOptions = {}) {}
+
   /**
    * Add or replace a set. `options.persisted` registers a set whose text already lives on disk
    * (startup, bundled snapshots) without re-writing it.
@@ -551,7 +555,8 @@ export class RuleEngine implements BlockingEngine {
     return (stored.table ??= RuleTable.build(
       stored.summary.id,
       stored.summary.priority,
-      stored.rules
+      stored.rules,
+      this.tableOptions
     ))
   }
 
