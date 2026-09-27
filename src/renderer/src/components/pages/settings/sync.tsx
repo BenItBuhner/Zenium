@@ -22,13 +22,16 @@ import {
   editWebDavDraft,
   probeLine,
   syncScopeRowId,
+  syncSetupRefusalLine,
   syncSetupStore,
   syncStatusLine,
   testWebDavConnection,
   webDavAddressProblem,
+  webDavAddressWarning,
   webDavCredentials,
   webDavDraftComplete,
   webDavFolderLine,
+  webDavOutcomeLine,
   webDavServerLine,
   type SyncSetupDraft
 } from '@renderer/lib/syncSetup'
@@ -65,14 +68,17 @@ import { SyncDisconnectForm, SyncMergeForm, SyncPassphraseForm } from './syncFor
  *
  * A host that can reach a WebDAV server (ID-32; `webdavAvailable`: a fetch and a secret store)
  * opens the setup with the transport choice – a folder on this device, or a WebDAV server such
- * as Nextcloud – and the server's rows take the folder row's place: the address, the user name,
+ * as Nextcloud – and the server's rows take the folder row's place: the address, the username,
  * the app password (a masked field), the folder under the account's files, and Test connection,
  * an action row that reports its answer in its description (§9.33) and is busy while the server
  * is asked (§9.30). Turn on sync waits on the form as it waits on a folder. Connected through a
  * server, the page's second group is Server and device – the account on the host and the folder,
  * facts to read (the server is set once; the way to another is Turn off sync and set up again)
  * – and a sign-in the server has stopped taking is the §9.33 message row over the App password
- * row that gives the engine a new one, as the folder-lost row stands over the folder row.
+ * row that gives the engine a new one, as the folder-lost row stands over the folder row. The
+ * server's answers reach the user in the page's sentences alone (`webDavOutcomeLine`, one
+ * mapping for the Test row, the Turn on refusal and the line under Sync now); the engine's
+ * method names and status codes never do (§9.33).
  */
 export function syncGroups({ state }: SectionContext): RowGroup[] {
   const sync = state.sync
@@ -192,9 +198,12 @@ function transportRow(transport: SyncTransportKind): SettingsRow {
  * The server form as rows (§9.12's fields in rows on the desktop – the address stacked, since
  * a DAV root is longer than the 160 inline field shows; the phone's one-field sheets): the
  * address, checked as a URL when the field is left (§9.12: a refusal under the field at fault,
- * never while typing); the user name; the app password, a masked field whose row shows dots
- * once it holds one and its hint before; the folder under the account's files; then Test
- * connection, at 40 % until the three details a connection needs are in.
+ * never while typing) and, left holding an `http://` address, carrying the one risk of that in
+ * the warn ink under the field (`warning`; the lead's Q1 ruling on #628: taken, not refused,
+ * the app password named as the one thing sent unprotected); the username; the app password, a
+ * masked field whose row shows dots once it holds one and its hint before; the folder under the
+ * account's files; then Test connection, at 40 % until the three details a connection needs
+ * are in.
  */
 function webDavRows(draft: SyncSetupDraft): SettingsRow[] {
   const { webdav, probe } = draft
@@ -210,7 +219,8 @@ function webDavRows(draft: SyncSetupDraft): SettingsRow[] {
       value: webdav.url,
       input: 'url',
       form: 'stacked',
-      placeholder: 'https://',
+      placeholder: SYNC_COPY.serverPlaceholder,
+      warning: webDavAddressWarning(webdav.url),
       onCommit: (value) => {
         // A refused address is not kept: the sheet clears it (§9.12), so the row does not
         // show what was refused, and Test connection never reaches for it.
@@ -341,8 +351,16 @@ function connectedGroups(sync: SyncStatus, held: UIState['tabs']): RowGroup[] {
   }
   // The error the engine keeps is the folder-lost sentence while the folder is lost, and the
   // server's answer while the sign-in is refused: the row above says it, so the status line does
-  // not say it twice.
-  const error = sync.folderLost || sync.authRefused ? null : sync.lastError
+  // not say it twice. A server's other answer is the page's sentence for its class
+  // (`lastErrorKind` through `webDavOutcomeLine`), never the engine's method and status; an
+  // error with no class – the folder transport's, a record that would not decrypt – is the
+  // engine's line, as before.
+  const error =
+    sync.folderLost || sync.authRefused
+      ? null
+      : sync.lastErrorKind
+        ? webDavOutcomeLine(sync.lastErrorKind)
+        : sync.lastError
   status.push({
     kind: 'action',
     id: 'sync-now',
@@ -410,8 +428,12 @@ function connectedGroups(sync: SyncStatus, held: UIState['tabs']): RowGroup[] {
  * sync and set up again (the engine keeps no command to move a configured device between
  * servers). While the server refuses the sign-in, the App password row stands first – the
  * status row's follow-up (§9.17) – a masked field whose commit hands the engine the new
- * password (`sync.setWebDavPassword`) and lets it sync again; at other times the row is not
- * drawn (§10.4: a row for a state most users never enter appears when its state does).
+ * password (`sync.setWebDavPassword`) and lets it sync again: the sheet is §9.30's busy form
+ * while the engine keeps the password and runs a round with it, and a secret store that
+ * cannot keep it is the field's refusal in the page's words (the typed `SyncSetupRefusal`);
+ * a password the server refuses in its turn leaves the status row standing, since the round
+ * reports it. At other times the row is not drawn (§10.4: a row for a state most users never
+ * enter appears when its state does).
  */
 function serverRows(
   server: Omit<WebDavSyncCredentials, 'password'>,
@@ -431,8 +453,11 @@ function serverRows(
       secret: true,
       onCommit: (value) => {
         if (value === '') return undefined
-        run('sync.setWebDavPassword', { password: value })
-        return undefined
+        return cmd('sync.setWebDavPassword', { password: value }).then(
+          (refusal) => (refusal ? syncSetupRefusalLine(refusal) : undefined),
+          // The host's channel failing: the password did not get kept, and the sentence says so.
+          () => SYNC_COPY.appPasswordNotKept
+        )
       }
     })
   }

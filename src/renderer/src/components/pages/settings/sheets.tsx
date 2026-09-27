@@ -407,10 +407,14 @@ function FieldSheet({
   const [busy, setBusy] = useState(false)
   const id = `settings-field-${row.id.replace(/[^a-z0-9-]/gi, '-')}`
   const titleId = `${id}-title`
-  // The line under the field – the error while one shows, the row's description otherwise – is
-  // the field's description (`aria-describedby`), so a reader on the field hears it.
+  // The line under the field – the error while one shows, the row's warning while the field
+  // holds the value the row kept (`FieldRow.warning`; never while typing), the row's
+  // description otherwise – is the field's description (`aria-describedby`), so a reader on
+  // the field hears it.
   const errorId = `${id}-error`
+  const warningId = `${id}-warning`
   const descriptionId = `${id}-description`
+  const warning = row.warning && !error && !busy && value === row.value ? row.warning : null
   const refuse = (message: string): void => {
     setError(message)
     setValue('')
@@ -464,7 +468,9 @@ function FieldSheet({
             readOnly={busy}
             aria-labelledby={titleId}
             aria-invalid={error ? true : undefined}
-            aria-describedby={error ? errorId : row.description ? descriptionId : undefined}
+            aria-describedby={
+              error ? errorId : warning ? warningId : row.description ? descriptionId : undefined
+            }
             value={value}
             onChange={(e) => {
               setValue(e.target.value)
@@ -476,6 +482,8 @@ function FieldSheet({
           />
           {error ? (
             <ValidationMessage id={errorId} message={error} />
+          ) : warning ? (
+            <ValidationMessage id={warningId} message={warning} tone="warn" />
           ) : (
             row.description && (
               <span id={descriptionId} className="zen-settings-description">

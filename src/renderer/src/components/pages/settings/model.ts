@@ -346,6 +346,16 @@ export interface FieldRow extends RowBase {
   /** A secret (an API key): the platform monospace in the field (§4), never shown on the row. */
   secret?: boolean
   /**
+   * What the value the row keeps costs (an `http://` server address sends the app password in
+   * the clear): §9.12's line under the field in the warn ink – not a refusal, so the field is
+   * not marked invalid and the value stands – shown for the committed value alone, never
+   * while typing (the three field renderers draw it while the field holds the row's value and
+   * no error; the phone's row, the field's stand-in, draws it under its value line). The builder
+   * sets it from the committed draft, so a field left holding the address shows it and one
+   * being edited does not.
+   */
+  warning?: string
+  /**
    * Commit an edited value; a returned string is a validation message that keeps the sheet up.
    * A promise makes the sheet a §9.30 busy form while it settles: the field read-only with the
    * typed value, Save busy, Cancel at .4; a message refuses (the field clears, takes the focus

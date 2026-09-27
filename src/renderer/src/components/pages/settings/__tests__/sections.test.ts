@@ -7846,7 +7846,7 @@ describe('ID-08’s Sync category on a phone', () => {
   const DAV_ROOT = 'https://cloud.example.com/remote.php/dav/files/alice/'
   const SERVER = { url: DAV_ROOT, username: 'alice', folder: 'Zenium' }
   const SERVER_INTRO =
-    'Keep your Spaces, folders, pinned tabs, bookmarks, passwords and settings the same on every device. Pick a folder that your cloud drive or Syncthing already keeps in sync – or a WebDAV server such as Nextcloud – and a passphrase: everything is encrypted on this device before it is written, so the folder only ever holds ciphertext.'
+    'Keep your Spaces, folders, pinned tabs, bookmarks, passwords and settings the same on every device. Pick a folder that your cloud drive or Syncthing already keeps in sync – or a WebDAV server such as Nextcloud – and a passphrase: everything is encrypted on this device before it is written, so what is stored there is only ever ciphertext.'
   const TEST_HINT = 'Reaches the server with these details; nothing is written yet.'
   const APP_PASSWORD_HINT =
     'Create one under Security in the server’s personal settings – never the account’s own password.'
@@ -7934,7 +7934,7 @@ describe('ID-08’s Sync category on a phone', () => {
     ])
   })
 
-  it('ID-32: picking the server swaps the folder row for the server form – Server address, User name, App password (masked), Folder – and Test connection; Turn on sync and Test connection wait at 40 % on the three details a connection needs', () => {
+  it('ID-32: picking the server swaps the folder row for the server form – Server address, Username, App password (masked), Folder – and Test connection; Turn on sync and Test connection wait at 40 % on the three details a connection needs; an http:// address is taken with its one risk under the field in the warn ink, never a refusal', () => {
     const build = (): Model => section('sync', withServer())
     const transport = row(build(), 'sync-transport')
     if (transport.kind !== 'value') throw new Error('not a value row')
@@ -7971,6 +7971,7 @@ describe('ID-08’s Sync category on a phone', () => {
       form: 'stacked',
       placeholder: 'https://'
     })
+    expect(url.warning).toBeUndefined()
     const invalid = 'Enter an address that starts with https:// or http://'
     expect(url.onCommit('cloud.example.com')).toBe(invalid)
     expect(url.onCommit('ftp://cloud.example.com/')).toBe(invalid)
@@ -7982,14 +7983,24 @@ describe('ID-08’s Sync category on a phone', () => {
       value: DAV_ROOT,
       display: DAV_ROOT
     })
+    expect(fieldRow(build(), 'sync-webdav-url').warning).toBeUndefined()
     expect(url.onCommit('')).toBeUndefined()
     expect(syncSetupStore.get().webdav.url).toBe('')
+    // An http:// address is taken (a home server on the LAN) – not a refusal, the row is not
+    // in a status ink – and the field left holding it carries the one risk in the warn ink
+    // under it: the app password, the one thing sent unprotected (the records are ciphertext
+    // either way). The line goes with the address.
     expect(url.onCommit(`http://192.168.1.10:8080/dav/`)).toBeUndefined()
+    const plain = fieldRow(build(), 'sync-webdav-url')
+    expect(plain.warning).toBe('Over http:// the app password is sent unprotected.')
+    expect(plain.tone).toBeUndefined()
+    expect(plain.display).toBe('http://192.168.1.10:8080/dav/')
     expect(url.onCommit(DAV_ROOT)).toBeUndefined()
+    expect(fieldRow(build(), 'sync-webdav-url').warning).toBeUndefined()
 
     const username = fieldRow(model, 'sync-webdav-username')
     expect(username).toMatchObject({
-      label: 'User name',
+      label: 'Username',
       description: 'Your account on the server.',
       display: 'Your account on the server.',
       value: '',
@@ -8027,7 +8038,7 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(syncSetupStore.get().webdav.folder).toBe('Backups/Zenium')
 
     // Test connection and Turn on sync, as the first build had them: laid out at 40 % (§10.4)
-    // until the address, the user name and the app password are in, whichever order they come;
+    // until the address, the username and the app password are in, whichever order they come;
     // the folder may stay as it is.
     const testBefore = actionRow(model, 'sync-webdav-test')
     expect(testBefore).toMatchObject({
@@ -8042,7 +8053,7 @@ describe('ID-08’s Sync category on a phone', () => {
     const turnOnBefore = actionRow(model, 'sync-turn-on')
     expect(turnOnBefore.disabled).toBe(true)
     expect(turnOnBefore.description).toBe(
-      'Fill in the server address, user name and app password first.'
+      'Fill in the server address, username and app password first.'
     )
     expect(turnOnBefore.form?.title).toBe('Create a passphrase')
     expect(turnOnBefore.form?.render(() => undefined)).toBeNull()
@@ -8127,22 +8138,28 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(test().description).toBe('Connected.')
 
     // The refusals, each the description in the danger ink and nothing else – an action row
-    // reporting its result carries no glyph (§9.33).
+    // reporting its result carries no glyph (§9.33) – and each the page's sentence for the
+    // answer's class (`webDavOutcomeLine`, the one mapping the Turn on refusal and the line
+    // under Sync now read too): no method name, no status code in any of them.
     const answers: Array<[WebDavProbe, string]> = [
       [{ ok: false, kind: 'auth', status: 401 }, 'The server refused the sign-in.'],
-      [{ ok: false, kind: 'auth', status: 403 }, 'The server refused the sign-in.'],
+      [
+        { ok: false, kind: 'forbidden', status: 403 },
+        'The server did not allow writing to the folder.'
+      ],
+      [
+        { ok: false, kind: 'conflict', status: 423 },
+        'The server did not allow writing to the folder.'
+      ],
       [{ ok: false, kind: 'unavailable', status: 0 }, 'The server could not be reached.'],
       [{ ok: false, kind: 'unavailable', status: 503 }, 'The server could not be reached.'],
+      [{ ok: false, kind: 'redirect', status: 301 }, 'The address redirected elsewhere.'],
       [
         { ok: false, kind: 'refused', status: 200 },
         'The address did not answer as a WebDAV server.'
       ],
       [
         { ok: false, kind: 'refused', status: 405 },
-        'The address did not answer as a WebDAV server.'
-      ],
-      [
-        { ok: false, kind: 'refused', status: 301 },
         'The address did not answer as a WebDAV server.'
       ],
       [
@@ -8157,6 +8174,7 @@ describe('ID-08’s Sync category on a phone', () => {
       await settle()
       const answered = test()
       expect(answered, line).toMatchObject({ description: line, tone: 'danger', busy: false })
+      expect(answered.description, line).not.toMatch(/PROPFIND|\b[1-5]\d\d\b/)
       expect(answered.leading, line).toBeUndefined()
       expect(answered.leaves, line).toBeUndefined()
     }
@@ -8250,18 +8268,29 @@ describe('ID-08’s Sync category on a phone', () => {
     const viaFolder = section('sync', syncState(connected()))
     expect(viaFolder.groups.find((g) => g.id === 'sync-where')?.heading).toBe('Folder and device')
     expect(row(viaFolder, 'sync-folder').kind).toBe('action')
-    // Sync now reads the status as with a folder, the engine's sentence in the danger ink when
-    // a round fails for a reason that is not the sign-in.
+    // Sync now reads the status as with a folder; a round that fails for a reason that is not
+    // the sign-in puts the page's sentence for the server's answer under it in the danger ink
+    // (`lastErrorKind` through the one mapping), never the engine's method and status; an
+    // error with no class – a record that would not decrypt – is the engine's own line, as
+    // the folder transport's are.
     expect(actionRow(model, 'sync-now')).toMatchObject({
       description: 'Last synced 5 min ago',
       disabled: false
     })
-    expect(
-      actionRow(
-        section('sync', syncState(onServer({ lastError: 'WebDAV PUT answered 423' }))),
-        'sync-now'
-      )
-    ).toMatchObject({ description: 'WebDAV PUT answered 423', tone: 'danger', disabled: false })
+    const failed: Array<[SyncStatus['lastErrorKind'], string, string]> = [
+      ['conflict', 'WebDAV PUT answered 423', 'The server did not allow writing to the folder.'],
+      ['forbidden', 'WebDAV MKCOL answered 403', 'The server did not allow writing to the folder.'],
+      ['unavailable', 'WebDAV PROPFIND answered 503', 'The server could not be reached.'],
+      ['redirect', 'WebDAV PROPFIND: the address redirected', 'The address redirected elsewhere.'],
+      ['missing', 'WebDAV GET answered 404', 'The address did not answer as a WebDAV server.'],
+      [null, 'Sync failed', 'Sync failed']
+    ]
+    for (const [lastErrorKind, lastError, line] of failed) {
+      expect(
+        actionRow(section('sync', syncState(onServer({ lastError, lastErrorKind }))), 'sync-now'),
+        line
+      ).toMatchObject({ description: line, tone: 'danger', disabled: false })
+    }
     // The desktop's buttons: Sync now and Turn off…; the server's rows carry none.
     expect(desktopButtons(syncState(onServer()))).toEqual([
       ['sync-now', 'Sync now'],
@@ -8272,10 +8301,16 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(row(model, 'sync-disconnect')).toMatchObject({ kind: 'action', label: 'Turn off sync' })
   })
 
-  it('ID-32: a sign-in the server has stopped taking is the lone status row over the App password row – the info row in the danger ink with the key glyph trailing, nothing to press; Sync now waits with its status line, not the engine’s sentence – and the masked field’s commit hands the engine the new password, an empty one nothing', () => {
+  it('ID-32: a sign-in the server has stopped taking is the lone status row over the App password row – the info row in the danger ink with the key glyph trailing, nothing to press; Sync now waits with its status line, not the engine’s sentence – and the masked field’s commit hands the engine the new password as a §9.30 busy commit, an empty one nothing; a secret store that cannot keep it is the field’s refusal in the page’s words', async () => {
     const model = section(
       'sync',
-      syncState(onServer({ authRefused: true, lastError: 'WebDAV PROPFIND answered 401' }))
+      syncState(
+        onServer({
+          authRefused: true,
+          lastError: 'WebDAV PROPFIND answered 401',
+          lastErrorKind: 'auth'
+        })
+      )
     )
     expect(model.groups[0]?.rows.map((r) => r.id)).toEqual(['sync-auth-refused', 'sync-now'])
     const notice = row(model, 'sync-auth-refused')
@@ -8316,9 +8351,24 @@ describe('ID-08’s Sync category on a phone', () => {
     invoke.mockClear()
     expect(password.onCommit('')).toBeUndefined()
     expect(invoke).not.toHaveBeenCalled()
-    expect(password.onCommit('new-app-pass')).toBeUndefined()
+    // The commit settles with the engine (§9.30's busy form while it keeps the password and
+    // runs a round): accepted when the engine answers nothing; a server that refuses the new
+    // password in its turn leaves the status row to say so, not the field.
+    const accepted = password.onCommit('new-app-pass')
+    expect(accepted).toBeInstanceOf(Promise)
     expect(invoke).toHaveBeenCalledWith('sync.setWebDavPassword', { password: 'new-app-pass' })
+    await expect(accepted).resolves.toBeUndefined()
     expect(rowText(password)).not.toContain('new-app-pass')
+    // The secret store could not keep it: the field's refusal, in the page's words.
+    invoke.mockResolvedValueOnce({ reason: 'secrets' } as never)
+    await expect(password.onCommit('new-app-pass')).resolves.toBe(
+      'The app password could not be kept on this device.'
+    )
+    // The host's channel failing is the same sentence: the password did not get kept.
+    invoke.mockRejectedValueOnce(new Error('channel closed'))
+    await expect(password.onCommit('new-app-pass')).resolves.toBe(
+      'The app password could not be kept on this device.'
+    )
 
     // Not refused: no password row – it appears with its state (§10.4) – and no status row.
     const fine = section('sync', syncState(onServer()))
@@ -8347,6 +8397,7 @@ describe('ID-08’s Sync category on a phone', () => {
     const hits = (query: string): string[] => searchRows(models, query).map((h) => h.row.id)
     expect(hits('nextcloud')).toEqual(expect.arrayContaining(['sync-transport', 'sync-webdav-url']))
     expect(hits('webdav')).toContain('sync-transport')
+    expect(hits('username')).toContain('sync-webdav-username')
     expect(hits('app password')).toContain('sync-webdav-password')
     expect(hits('test connection')).toContain('sync-webdav-test')
     expect(hits('app-pass')).toEqual([])

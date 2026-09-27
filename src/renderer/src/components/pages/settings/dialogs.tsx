@@ -453,6 +453,9 @@ function FieldDialog({
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const id = `settings-field-${row.id.replace(/[^a-z0-9-]/gi, '-')}`
+  // The row's warning (`FieldRow.warning`) under the field while it holds the value the row
+  // kept – never while typing, never beside a refusal – as the phone's sheet draws it.
+  const warning = row.warning && !error && !busy && value === row.value ? row.warning : null
   const refuse = (message: string): void => {
     setError(message)
     setValue('')
@@ -492,7 +495,11 @@ function FieldDialog({
       }}
     >
       <div className="zen-settings-form" aria-busy={busy || undefined}>
-        <Field id={id} label={row.label} description={error ? undefined : row.description}>
+        <Field
+          id={id}
+          label={row.label}
+          description={error || warning ? undefined : row.description}
+        >
           <input
             ref={input}
             id={id}
@@ -508,6 +515,7 @@ function FieldDialog({
             spellCheck={false}
             readOnly={busy}
             aria-invalid={error ? true : undefined}
+            aria-describedby={warning ? `${id}-warning` : undefined}
             value={value}
             onChange={(e) => {
               setValue(e.target.value)
@@ -518,6 +526,7 @@ function FieldDialog({
             }}
           />
           {error && <ValidationMessage message={error} />}
+          {warning && <ValidationMessage id={`${id}-warning`} message={warning} tone="warn" />}
         </Field>
         <SheetActions action="Save" busy={busy} onCancel={close} onAction={save} />
       </div>
