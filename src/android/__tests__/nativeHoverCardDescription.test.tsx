@@ -15,7 +15,10 @@ import { DEFAULT_CONTAINER_ID } from '@shared/types'
  * desktop row does by the DOM card. One home for every layout that raises the native card: the
  * tablet (its `TabletHoverCardHost` the card's host) and the desktop class under a mouse (the
  * chrome's own `TabHoverCard` the host, drawing nothing on the native path). One
- * `#zen-tab-hover-card` per document, the row's reference resolving, in each configuration.
+ * `#zen-tab-hover-card` per document, the row's reference resolving, in each configuration. And
+ * the card's dismissals bound from here while the native card is up – on the desktop class
+ * `TabHoverCard` binds them only for its own DOM card, so a press or Escape in the chrome's
+ * document would otherwise leave the host's card standing.
  */
 
 vi.mock('@renderer/lib/api', () => ({
@@ -269,6 +272,47 @@ describe('NativeHoverCardDescription', () => {
     act(() => hoverCard.hide())
     expect(nodes()).toBe(0)
     expect(row('b').hasAttribute('aria-describedby')).toBe(false)
+  })
+
+  it('Android’s desktop class: a press on the active row and Escape take the native card down – the frame null, no node, the host sent null; an arrow (the rows’ own key) does not', async () => {
+    const state = fixture([tab('a'), tab('b')], 'a')
+    browserStore.set({ state })
+    const host = sink()
+    setHoverCardHost(host)
+    render(
+      <>
+        {rows(state)}
+        <TabHoverCard state={state} />
+        <NativeHoverCardDescription />
+      </>
+    )
+
+    await raise('b')
+    expect(nodes()).toBe(1)
+    expect(host.frames.at(-1)?.tabId).toBe('b')
+    // `TabHoverCard` binds nothing on the native path (its own card never shows): the press
+    // reaches the description's binding, the only one in this document.
+    act(() => {
+      row('a').dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    })
+    expect(nativeHoverCard.get().frame).toBeNull()
+    expect(nodes()).toBe(0)
+    expect(host.frames.at(-1)).toBeNull()
+    expect(row('b').hasAttribute('aria-describedby')).toBe(false)
+
+    await raise('b')
+    expect(nodes()).toBe(1)
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }))
+    })
+    expect(nativeHoverCard.get().frame?.tabId).toBe('b')
+    expect(nodes()).toBe(1)
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    })
+    expect(nativeHoverCard.get().frame).toBeNull()
+    expect(nodes()).toBe(0)
+    expect(host.frames.at(-1)).toBeNull()
   })
 
   it('never two: the desktop card and the tablet host in one document with a native host – exactly one `#zen-tab-hover-card`, the description, and the row’s reference resolving to it', async () => {

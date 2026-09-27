@@ -1,5 +1,5 @@
-import type { ReactElement } from 'react'
-import { nativeHoverCard } from '@renderer/lib/hoverCard'
+import { useEffect, type ReactElement } from 'react'
+import { bindHoverCardDismissals, hoverCard, nativeHoverCard } from '@renderer/lib/hoverCard'
 
 /**
  * The native tab hover card's text in the chrome's document (TABLET-05, the lead's (g)): while
@@ -17,9 +17,20 @@ import { nativeHoverCard } from '@renderer/lib/hoverCard'
  * renders no node of its own on the native path. One `#zen-tab-hover-card` per document follows
  * from the controller writing exactly one of its two slices: the desktop card's node stands with
  * `ui.hoverCard`, this one with `nativeHoverCard`, never both.
+ *
+ * It also binds the card's dismissals for as long as the native card is up – a press or a
+ * context menu, a wheel or a scroll, Escape or typing, the window's blur or resize
+ * (`bindHoverCardDismissals`, the desktop card's own list). On the desktop class `TabHoverCard`
+ * binds them only while its DOM card shows (`ui.hoverCard`), never on the native path, and
+ * `Host.kt` takes the card down only as the window leaves or the private lock arms – so without
+ * this seat the host's card outlived every press and key in the chrome's document there. On the
+ * tablet `TabletHoverCardHost` binds them as well; `hide()` is idempotent, the second call a
+ * no-op.
  */
 export function NativeHoverCardDescription(): ReactElement | null {
   const frame = nativeHoverCard.use((s) => s.frame)
+  const up = frame !== null
+  useEffect(() => (up ? bindHoverCardDismissals(() => hoverCard.hide()) : undefined), [up])
   if (!frame) return null
   return (
     <div id="zen-tab-hover-card" role="tooltip" className="sr-only" data-tab-id={frame.tabId}>
