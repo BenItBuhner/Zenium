@@ -1836,6 +1836,49 @@
     }
   }
   /*
+   * The strip's states (parity tabs-61 / tabs-63; design language v2 §9.37, §9.29, §9.19, §11)
+   * are the sidebar's row's, laid along the caption band: rest, the hover fill, the pressed fill
+   * at full ink, the active pill separated, the group's line in the band's top inset (below) and
+   * the 24 px edge fades (`useFadeEdges` on the scroller) – with no strip surface and no
+   * hairline, so the frame colour under every state is the window's: the Space's gradient in the
+   * theme's ink, and in a private window the private theme with its accent
+   * (`.zen-window[data-window-kind='private']`, §9.19). Chromium (`chrome/browser/ui/views/tabs/
+   * tab.cc`, `.../horizontal_tab_style_views.cc`) is read for behaviour alone – what a state is
+   * and when it arrives – never for a shape or a colour.
+   *
+   * ACTIVE. The separated pill on `--v2-window-fill` (the `.zen-tab` rule above), never Chrome's
+   * merged tab-into-toolbar shape, which would need a toolbar surface the window family does not
+   * paint: the toolbar row under it is the same transparent window surface, so there is no seam
+   * to close. Like Chrome's active tab it takes no hover fill: `[data-active]` stands after
+   * `:hover` in the cascade at the same specificity.
+   *
+   * HOVER. `--v2-window-fill-hover`, arriving and leaving over §11's 120 ms on `--zen-ease` –
+   * the `.zen-tab` rule's own transition, one curve both ways (Chrome fades its hover over the
+   * `GlowHoverController`'s 200 ms; the strip keeps the sheet's one state duration) – and a cut
+   * under reduced motion: the remover at the sheet's end takes the transition, a fill change
+   * being none of the fades §11.3 keeps.
+   *
+   * PRESSED. §9.29: every window control's press takes the window's `--v2-control-fill-hover` at
+   * full ink, never `--v2-selected` – on the window family that is `--v2-window-fill-hover`, so
+   * under a pointer that hovers the press changes nothing the hover has not, and under a finger
+   * or a pen it brings the fill the hover would have. The row's ink is full at rest (§9.29:
+   * labels are full ink; the slot's glyphs are toolbar buttons on their own rule), so the press
+   * adds the fill alone. Chrome selects the tab on the press itself (`Tab::OnMousePressed` →
+   * `SelectTab`); Zenium's rows commit the activation on the click (`TabItem`), so the press is a
+   * state and not the activation, and the pill arrives with the release. The active pill changes
+   * nothing on a press, as the sidebar's does not; no scale: the press is also the drag's start
+   * (`startTabDrag`), whose ghost takes the row's box. A group's chip is a window control and
+   * takes the press; a press on a split row's segment is the row's (`:active` climbs).
+   *
+   * SEPARATORS. §9.37's are the 4 px gaps between the rows (`STRIP_GAP`, the lists' `gap-1`) –
+   * the sidebar's spacing turned, never Chrome's hairlines between inactive tabs; §9.35's 1 × 16
+   * hairline is the split group's shared edge inside one row and stays there.
+   */
+  .zen-tab-strip .zen-tab:not(.zen-split-seg, [data-active='true']):active,
+  .zen-tab-strip .zen-split-row:not([data-active='true']):active {
+    background: var(--v2-window-fill-hover);
+  }
+  /*
    * A group in the strip: the shell spans the band's height so the group's colour can run as
    * one continuous 2 px line in the band's top inset (y 2–4) from the chip's start to the last
    * member's end, bridging the 4 px gaps – never a dash per pill; the fold runs the shell's
