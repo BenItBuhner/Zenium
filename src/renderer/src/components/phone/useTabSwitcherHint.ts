@@ -71,13 +71,14 @@ export function useTabSwitcherHint(state: UIState, edge: PhoneBarPosition, calm:
     stamped.current = stampTabSwitcherHint(settings, Date.now())
   }, [armed, availableAt, shown])
 
-  // Due → up. `done` covers the moment between the write and the core's echo of `shown`.
-  const done = useRef(false)
+  // Due → up. The moment between the write and the core's echo of `shown` is covered by the
+  // session, spent as the bubble goes up: `tabSwitcherHintDue` reads it (so the preview host,
+  // which re-arms the bubble for a still, resets both the record and the session).
   const moment = useRef<{ tabId: string | null; edge: PhoneBarPosition; insets: Insets } | null>(
     null
   )
   useEffect(() => {
-    if (done.current || hintBubbleStore.get().bubble || cardsUp || barHidden) return
+    if (hintBubbleStore.get().bubble || cardsUp || barHidden) return
     const settings = { onboardingDone, iph: { tabSwitcher: { availableAt, shown } } }
     const due = tabSwitcherHintDue({
       settings,
@@ -91,7 +92,6 @@ export function useTabSwitcherHint(state: UIState, edge: PhoneBarPosition, calm:
     const anchor = document.querySelector<HTMLElement>(TAB_SWITCHER_ANCHOR)
     if (!anchor) return
     const r = anchor.getBoundingClientRect()
-    done.current = true
     moment.current = { tabId, edge, insets }
     spendIphSession()
     showHintBubble({
