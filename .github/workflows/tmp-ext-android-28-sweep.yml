@@ -49,6 +49,10 @@ name: TEMPORARY - compat round 22 sweep and frame budget trigger
 #     `app.getState` timeouts), the storage order probe (R22-4), Image Downloader (R22-9), Temp
 #     Mail (R22-10), Zoom for Google Chrome (R22-5), Bookmark Sidebar (R22-6), Extensity (R22-7)
 #     and Magical (R22-8)) for a runtime or driver change read on its own without the whole sweep.
+#     The driver runs the selected rows in ITS TABLE's order (SWEEP_ONLY does not reorder; round
+#     22's BEFORE read it), with the SWEEP_LAST ids moved to the end – so the lane's SWEEP_LAST
+#     names the other nine, and Adblock Ad Blocker Pro (table row 7521, after Temp Mail, Popup
+#     Blocker and Reader View) runs first, the nine behind it in the table's order.
 # One run per marker push; a re-run past the one attempt is the coordinator's to grant.
 # A sweep whose emulator went away under the driver (the shared workflow's `emulator-died`: qemu
 # gone or the guest frozen, or the runner action's SDK download coming down broken) boots once more
@@ -261,7 +265,7 @@ jobs:
       artifact-path: artifacts/android-ext-compat-sweep/
       script-env: |
         SWEEP_ONLY=dgjbaljgolmlcmmklmmeafecikidmjpi,ecabifbgmdmgdllomnfinbmaellmclnh,aefkmifgmaafnojlojpnekbpbmjiiogg,hnelfnelkfmbnhdelmcbkdcfedmjccjp,daeljdgmllhgmbdkpgnaojldjkdgkbjg,inojafojbhdpnehkhhfjalgjjobnhomj,lajondecmobodlejlcjllhojikagldgd,jdbnofccmhefkmjbkkdkfiicjkgofkdh,jjmflmamggggndanpgfnpelongoepncg,iibninhmiggehlcdolcilmhacighjamp
-        SWEEP_LAST=
+        SWEEP_LAST=ecabifbgmdmgdllomnfinbmaellmclnh,aefkmifgmaafnojlojpnekbpbmjiiogg,hnelfnelkfmbnhdelmcbkdcfedmjccjp,daeljdgmllhgmbdkpgnaojldjkdgkbjg,inojafojbhdpnehkhhfjalgjjobnhomj,lajondecmobodlejlcjllhojikagldgd,jdbnofccmhefkmjbkkdkfiicjkgofkdh,jjmflmamggggndanpgfnpelongoepncg,iibninhmiggehlcdolcilmhacighjamp
       timeout-minutes: 75
 
   lane-modern-webview:
@@ -278,7 +282,7 @@ jobs:
         WEBVIEW_APK=artifacts/webview/SystemWebView.apk
         SOFT_FAIL=1
         SWEEP_ONLY=dgjbaljgolmlcmmklmmeafecikidmjpi,ecabifbgmdmgdllomnfinbmaellmclnh,aefkmifgmaafnojlojpnekbpbmjiiogg,hnelfnelkfmbnhdelmcbkdcfedmjccjp,daeljdgmllhgmbdkpgnaojldjkdgkbjg,inojafojbhdpnehkhhfjalgjjobnhomj,lajondecmobodlejlcjllhojikagldgd,jdbnofccmhefkmjbkkdkfiicjkgofkdh,jjmflmamggggndanpgfnpelongoepncg,iibninhmiggehlcdolcilmhacighjamp
-        SWEEP_LAST=
+        SWEEP_LAST=ecabifbgmdmgdllomnfinbmaellmclnh,aefkmifgmaafnojlojpnekbpbmjiiogg,hnelfnelkfmbnhdelmcbkdcfedmjccjp,daeljdgmllhgmbdkpgnaojldjkdgkbjg,inojafojbhdpnehkhhfjalgjjobnhomj,lajondecmobodlejlcjllhojikagldgd,jdbnofccmhefkmjbkkdkfiicjkgofkdh,jjmflmamggggndanpgfnpelongoepncg,iibninhmiggehlcdolcilmhacighjamp
       setup-script: |
         base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
         rev=$(curl -fsSL "$base/LAST_CHANGE")
