@@ -192,16 +192,30 @@ describe('the picker hung from the Settings row’s Change… button (§9.20; #5
     expect(mainCss).toMatch(/--v2-panel: #1f1f1f;/)
   })
 
-  it('takes the focus as a popover does (§9.22): the container on open – no control preselected – and the button it hung from on close; today’s seated picker moves none, and a focus placed elsewhere on the way out is left alone', () => {
+  it('takes the focus as a popover does (§9.22): the container on open – once placed, never in the hidden measuring pass – no control preselected – and the button it hung from on close; today’s seated picker moves none, and a focus placed elsewhere on the way out is left alone', () => {
     sized()
     const opener = document.createElement('button')
     opener.textContent = 'Change…'
     document.body.appendChild(opener)
+    // Chromium refuses the focus to a `visibility: hidden` element and leaves it where it was;
+    // happy-dom does not. The panel's measuring pass is hidden (`measuringStyle`), so the focus
+    // must come with the placement – the drive on the packaged build read the container
+    // unfocused when it came in the measuring pass. The visibility at each call is recorded.
+    const nativeFocus = HTMLElement.prototype.focus
+    const panelFocusCalls: string[] = []
+    const focus = vi
+      .spyOn(HTMLElement.prototype, 'focus')
+      .mockImplementation(function (this: HTMLElement, options?: FocusOptions) {
+        if (this.hasAttribute('data-anchored')) panelFocusCalls.push(this.style.visibility)
+        if (this.style.visibility === 'hidden') return
+        nativeFocus.call(this, options)
+      })
     try {
       opener.focus()
       expect(document.activeElement).toBe(opener)
       mount(state(), 'space', button)
       const panel = document.querySelector<HTMLElement>('#zen-chrome-layer [data-anchored]')!
+      expect(panelFocusCalls).toEqual([''])
       expect(document.activeElement).toBe(panel)
       expect(panel.contains(document.activeElement)).toBe(true)
       expect([...panel.querySelectorAll('button')]).not.toContain(document.activeElement)
@@ -226,6 +240,7 @@ describe('the picker hung from the Settings row’s Change… button (§9.20; #5
       expect(host!.querySelector('.zen-panel')?.getAttribute('tabindex')).toBeNull()
       expect(host!.querySelector('.zen-panel')?.getAttribute('role')).toBeNull()
     } finally {
+      focus.mockRestore()
       opener.remove()
     }
   })

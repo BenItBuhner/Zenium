@@ -117,10 +117,14 @@ export function OverlayShell({
   // the opener gets it back, but only a focus the leave loses – one still on the panel, fallen
   // to `body`, or under an `inert` – and never one the user or a dialog opened over the way
   // out has already placed. The seat does none of this: the space menu's and the palette's
-  // picker leave the focus where it was, as they always did.
+  // picker leave the focus where it was, as they always did. The focus waits for the
+  // placement: the measuring pass holds the panel `visibility: hidden` (`measuringStyle`), and
+  // a hidden element refuses the focus – Chromium leaves it where it was – so it is taken in
+  // the commit that places the panel, once (`useMeasuredHeight` measures once per mount).
   const titleId = useId()
+  const placedNow = anchored && measured !== null
   useEffect(() => {
-    if (!anchored) return
+    if (!placedNow) return
     const root = panelRef.current
     if (!root) return
     const active = document.activeElement
@@ -139,7 +143,7 @@ export function OverlayShell({
         now.closest('[inert], [data-leaving]') !== null
       if (lost) returnFocusTo(opener)
     }
-  }, [anchored])
+  }, [placedNow])
   useBackDismissal('overlay', {
     travel: 360,
     render: (v) => {
