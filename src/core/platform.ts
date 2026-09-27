@@ -24,6 +24,7 @@ import type {
   ExtensionUpdateCheck,
   HapticKind,
   HostCapabilities,
+  ImageThumbnailBounds,
   KeyBinding,
   LongCapture,
   LongCaptureCrop,
@@ -104,7 +105,7 @@ import type { SpellcheckDictionaryStatus } from '../shared/spellcheck'
 import type { GeoPosition, GeolocationErrorCode, WifiAccessPoint } from '../shared/geolocation'
 import type { ShareFile, ShareOutcome } from '../shared/share'
 import type { ToolbarControl } from '../shared/toolbarPins'
-import type { ImagePost, ImageResource } from '../shared/imageUpload'
+import type { ImageFetchResult, ImagePost, ImageResource } from '../shared/imageUpload'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import type { AgentHttpRequest, AgentHttpResponse } from './agent/http'
@@ -1028,6 +1029,27 @@ export interface TabView {
    * client's. Hosts without it leave the read to the page's script.
    */
   readImageResource?(url: string, maxBytes: number): Promise<ImageResource | 'too-large' | null>
+  /**
+   * The phone's frame-owner protocol for the image-search upload
+   * (`internal/parity-services/frame-owner-protocol-interface.md`; `shared/imageOwner.ts` is
+   * the frame side): the host asks every frame of the page which holds the image at `src` – by
+   * a salted hash of the address, so the address itself reaches no frame that does not already
+   * have it – and has the owner frame thumbnail its own copy within `bounds`, a JPEG at
+   * `quality`, the encoded image refused above `maxBytes`. Resolves to the owner's answer –
+   * the thumbnail, or a typed refusal: the frame's `opaque` / `gone` / `no-canvas` /
+   * `too-large` / `fetch-failed` / `decode-failed`, or the host's own `no-owner` (no frame
+   * claimed it within the window), `timeout` (the owner did not answer, or a newer ask
+   * superseded this one) and `unsupported` (a WebView without the protocol's channel, where
+   * the core keeps today's script path) – or null when the host answered nothing the core
+   * could read (an APK before the verb rejects it; the core keeps today's path). The desktop
+   * has no such verb: the clicked frame's private world already serves its script.
+   */
+  imageThumbnailByOwner?(
+    src: string,
+    bounds: ImageThumbnailBounds,
+    quality: number,
+    maxBytes: number
+  ): Promise<ImageFetchResult | null>
   /**
    * Run `code` (one expression, awaited) in `frameId` – the top frame when omitted – in a
    * world of the browser's own where no page script and no extension has run

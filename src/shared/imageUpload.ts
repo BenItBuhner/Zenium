@@ -63,7 +63,45 @@ export function imageSearchSource(version: string, os: Platform): string {
 export type ImageFetchResult =
   { ok: true; thumbnail: ImageThumbnail } | { ok: false; reason: ImageFetchFailure }
 
-export type ImageFetchFailure = 'too-large' | 'fetch-failed' | 'decode-failed'
+/**
+ * Why there is no thumbnail. The first three are the page script's (`imageFetchScript`); the
+ * phone's frame-owner protocol (`shared/imageOwner.ts`, `frame-owner-protocol-interface.md`
+ * §2.4 and §4.2) adds the owner frame's – `opaque`: it holds the image but may not read its
+ * pixels (a cross-origin image without CORS: the canvas taints and its own fetch is refused);
+ * `gone`: no image of its matched the hash when the ask arrived; `no-canvas`: no 2D context to
+ * draw on – and the host's own, which no frame produces – `no-owner`: no frame claimed the
+ * image within the window; `timeout`: the owner did not answer in time, or a newer search
+ * superseded this one; `unsupported`: a WebView without the protocol's features (the legacy
+ * channel), where the core keeps today's path. Every refusal but `unsupported` sends the row
+ * down the address route it takes today when nothing could be read.
+ */
+export type ImageFetchFailure =
+  | 'too-large'
+  | 'fetch-failed'
+  | 'decode-failed'
+  | 'opaque'
+  | 'gone'
+  | 'no-canvas'
+  | 'no-owner'
+  | 'timeout'
+  | 'unsupported'
+
+const IMAGE_FETCH_FAILURES: ReadonlySet<string> = new Set<ImageFetchFailure>([
+  'too-large',
+  'fetch-failed',
+  'decode-failed',
+  'opaque',
+  'gone',
+  'no-canvas',
+  'no-owner',
+  'timeout',
+  'unsupported'
+])
+
+/** Whether `reason` is one of the typed refusals (a raw answer's field, checked before it is trusted). */
+export function isImageFetchFailure(reason: unknown): reason is ImageFetchFailure {
+  return typeof reason === 'string' && IMAGE_FETCH_FAILURES.has(reason)
+}
 
 export interface ImageThumbnail {
   /** The thumbnail's encoded bytes, base64 (how they cross from the page and over the bridge). */
@@ -122,9 +160,7 @@ export function parseImageFetchResult(
   if (!raw || typeof raw !== 'object') return null
   const r = raw as Record<string, unknown>
   if (r.ok === false) {
-    return r.reason === 'too-large' || r.reason === 'fetch-failed' || r.reason === 'decode-failed'
-      ? { ok: false, reason: r.reason }
-      : { ok: false, reason: 'decode-failed' }
+    return { ok: false, reason: isImageFetchFailure(r.reason) ? r.reason : 'decode-failed' }
   }
   if (r.ok !== true) return null
   const t = r.thumbnail
@@ -577,4 +613,329 @@ export function imageFetchScript(src: string, options: ImageFetchScriptOptions):
   if (!jpeg) return fail('decode-failed');
   return { ok: true, thumbnail: { base64: toBase64(await jpeg.arrayBuffer()), contentType: 'image/jpeg', width, height, originalWidth, originalHeight } };
 })()`
+}
+
+// ---------------------------------------------------------------------------
+// The read as a function: the frame-owner's path
+// ---------------------------------------------------------------------------
+//
+// The same read as `imageFetchScript`'s, step for step – a `data:` image decoded in place, else
+// the frame's fetch with the page's cookies and once more without them when refused, counted as
+// it streams and dropped at the cap; `createImageBitmap`, else a detached `Image`; Chrome's
+// downscale on a white canvas into a JPEG at the asked quality, base64 – as TypeScript the owner
+// frame's script calls with the address it already holds (`shared/imageOwner.ts`,
+// `frame-owner-protocol-interface.md` §4.2 step 2). It reaches for no global: every built-in
+// comes in through `ImageReadWorld`, which the owner fills with references it captured at
+// document start (§4.1), since it runs in the page's own world. The string above stays the
+// desktop's and the legacy phone path's, byte for byte: a script the host runs in a world of
+// the browser's own, where the world's built-ins are the browser's; generating it from this
+// function (`toString()`) would hand a minifier's renames to the tests that read it, and
+// building this function from the string (`new Function`) would meet the page's CSP.
+
+/**
+ * The world's built-ins the read calls, captured by the caller where it runs: the owner frame's
+ * answerer takes them at document start, before any page script (§4.1), so a page's patches to
+ * `fetch`, `Response`, `Blob`, `createImageBitmap` or the canvas neither see the read nor pick
+ * its bytes.
+ */
+export interface ImageReadWorld {
+  /** `fetch(url, { credentials, cache: 'force-cache' })`. */
+  fetch(
+    url: string,
+    init: { credentials: 'include' | 'omit'; cache: 'force-cache' }
+  ): Promise<Response>
+  /** `Response.prototype.blob`, applied to `response`. */
+  responseBlob(response: Response): Promise<Blob>
+  /** The response's body stream (`Response.prototype.body`); null where the world streams none. */
+  responseBody(response: Response): ReadableStream<Uint8Array<ArrayBuffer>> | null
+  /** `Blob.prototype.arrayBuffer`, applied to `blob`. */
+  arrayBuffer(blob: Blob): Promise<ArrayBuffer>
+  /** `new Blob(parts, { type })`. */
+  newBlob(parts: BlobPart[], type: string): Blob
+  /** `createImageBitmap(blob)`; null where the world lacks it (the element decodes instead). */
+  createImageBitmap: ((blob: Blob) => Promise<ImageBitmap>) | null
+  /** A detached `Image`, and an object URL for the blob it decodes – the format the bitmap path declines. */
+  newImage(): HTMLImageElement
+  createObjectURL(blob: Blob): string
+  revokeObjectURL(url: string): void
+  /**
+   * A 2D surface of the size – an `OffscreenCanvas` where the world has one, else a detached
+   * `<canvas>` – or null where neither gives a context (`no-canvas`).
+   */
+  canvas(width: number, height: number): ImageReadCanvas | null
+  /** `atob`, for a `data:` image's base64. */
+  atob(text: string): string
+}
+
+/** A surface the read paints the thumbnail on and encodes from. */
+export interface ImageReadCanvas {
+  context: ImageReadContext
+  /**
+   * The surface as a JPEG at `quality` (`convertToBlob` / `toBlob`); null when the encoder
+   * declines. Throws a `SecurityError` on a tainted surface – a cross-origin image drawn without
+   * CORS approval – which the read reports as `tainted`.
+   */
+  toJpeg(quality: number): Promise<Blob | null>
+}
+
+/** The 2D context's calls the read makes. */
+export interface ImageReadContext {
+  fillStyle: string | CanvasGradient | CanvasPattern
+  fillRect(x: number, y: number, w: number, h: number): void
+  drawImage(image: CanvasImageSource, dx: number, dy: number, dw: number, dh: number): void
+}
+
+/** What the read is told: the engine's bounds, the JPEG quality and the byte cap – the protocol's ask carries all three (§2.3). */
+export interface ImageReadOptions extends ImageThumbnailBounds {
+  quality: number
+  maxBytes: number
+}
+
+/** An image's encoded bytes, or why they could not be had. */
+export type ImageBytesResult =
+  { ok: true; blob: Blob } | { ok: false; reason: 'too-large' | 'fetch-failed' }
+
+/** An image decoded for the canvas: what to draw, its natural size, and `close` for a bitmap's memory. */
+export interface DecodedImage {
+  source: CanvasImageSource
+  width: number
+  height: number
+  close(): void
+}
+
+/**
+ * The encode's outcome: the result, or `tainted` – the surface refused to be read (a
+ * cross-origin source drawn without CORS approval) – for the caller to fall to a read of the
+ * bytes it may make itself. `tainted` never crosses the protocol: the owner maps it (§4.2 step 3).
+ */
+export type ImageEncodeResult = ImageFetchResult | { ok: false; reason: 'tainted' }
+
+const fail = <R extends string>(reason: R): { ok: false; reason: R } => ({ ok: false, reason })
+
+function mimeOf(header: string | null): string {
+  return (header || '').split(';')[0].trim().toLowerCase()
+}
+
+/** Standard base64 of the bytes, without a host's `Buffer` or `btoa` (the owner reaches for no page global). */
+export function encodeBase64(bytes: Uint8Array): string {
+  let out = ''
+  let i = 0
+  for (; i + 2 < bytes.length; i += 3) {
+    const n = (bytes[i] << 16) | (bytes[i + 1] << 8) | bytes[i + 2]
+    out += BASE64[(n >> 18) & 63] + BASE64[(n >> 12) & 63] + BASE64[(n >> 6) & 63] + BASE64[n & 63]
+  }
+  if (i < bytes.length) {
+    const n = (bytes[i] << 16) | ((i + 1 < bytes.length ? bytes[i + 1] : 0) << 8)
+    out += BASE64[(n >> 18) & 63] + BASE64[(n >> 12) & 63]
+    out += i + 1 < bytes.length ? BASE64[(n >> 6) & 63] : '='
+    out += '='
+  }
+  return out
+}
+
+/**
+ * A `data:` address's bytes, decoded in place – no request, so a page CSP whose `connect-src`
+ * leaves `data:` out sees nothing to refuse; base64 or percent-encoded, past the cap refused
+ * before it is decoded.
+ */
+export function readDataUrlBytes(
+  src: string,
+  maxBytes: number,
+  world: Pick<ImageReadWorld, 'atob' | 'newBlob'>
+): ImageBytesResult {
+  const comma = src.indexOf(',')
+  if (comma < 0) return fail('fetch-failed')
+  const meta = src.slice(5, comma)
+  const payload = src.slice(comma + 1)
+  const base64 = /;\s*base64$/i.test(meta)
+  const type = mimeOf(base64 ? meta.replace(/;\s*base64$/i, '') : meta)
+  let bytes: Uint8Array<ArrayBuffer>
+  if (base64) {
+    const clean = payload.replace(/\s+/g, '')
+    if (clean.length * 0.75 > maxBytes) return fail('too-large')
+    let binary: string
+    try {
+      binary = world.atob(clean)
+    } catch {
+      return fail('fetch-failed')
+    }
+    bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  } else {
+    if (payload.length > maxBytes) return fail('too-large')
+    const out: number[] = []
+    for (let i = 0; i < payload.length; i++) {
+      const escaped = payload.charCodeAt(i) === 37 ? payload.slice(i + 1, i + 3) : ''
+      if (/^[0-9A-Fa-f]{2}$/.test(escaped)) {
+        out.push(parseInt(escaped, 16))
+        i += 2
+      } else out.push(payload.charCodeAt(i) & 0xff)
+    }
+    bytes = new Uint8Array(out)
+  }
+  return { ok: true, blob: world.newBlob([bytes], type) }
+}
+
+/**
+ * The image's bytes: a `data:` image in place, else the frame's own fetch of the address with
+ * the page's cookies (`credentials: 'include'`, the page's referrer policy applying), once
+ * more without them when that is refused (a host that allows any origin refuses a
+ * credentialed read), the body counted as it streams and dropped at the cap. A response the
+ * frame may not read (cross-origin without CORS) is `fetch-failed`.
+ */
+export async function readImageBytes(
+  src: string,
+  maxBytes: number,
+  world: ImageReadWorld
+): Promise<ImageBytesResult> {
+  if (/^data:/i.test(src)) return readDataUrlBytes(src, maxBytes, world)
+  const read = async (credentials: 'include' | 'omit'): Promise<ImageBytesResult> => {
+    const response = await world.fetch(src, { credentials, cache: 'force-cache' })
+    if (!response.ok && response.status !== 0) return fail('fetch-failed')
+    const length = Number(response.headers.get('content-length'))
+    if (length > maxBytes) return fail('too-large')
+    const type = mimeOf(response.headers.get('content-type'))
+    const body = world.responseBody(response)
+    if (!body) {
+      const whole = await world.responseBlob(response)
+      return whole.size > maxBytes ? fail('too-large') : { ok: true, blob: whole }
+    }
+    const reader = body.getReader()
+    const chunks: Uint8Array<ArrayBuffer>[] = []
+    let size = 0
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      size += value.byteLength
+      if (size > maxBytes) {
+        reader.cancel().catch(() => {})
+        return fail('too-large')
+      }
+      chunks.push(value)
+    }
+    return { ok: true, blob: world.newBlob(chunks, type) }
+  }
+  try {
+    return await read('include')
+  } catch {
+    try {
+      return await read('omit')
+    } catch {
+      return fail('fetch-failed')
+    }
+  }
+}
+
+/**
+ * The bytes decoded: `createImageBitmap`, else – an SVG, or a format the bitmap path declines –
+ * a detached `Image` over an object URL; null when neither decodes them.
+ */
+export async function decodeImageBlob(
+  blob: Blob,
+  world: ImageReadWorld
+): Promise<DecodedImage | null> {
+  if (world.createImageBitmap) {
+    try {
+      const bitmap = await world.createImageBitmap(blob)
+      return {
+        source: bitmap,
+        width: bitmap.width,
+        height: bitmap.height,
+        close: () => {
+          if (typeof bitmap.close === 'function') bitmap.close()
+        }
+      }
+    } catch {
+      /* the element decodes it */
+    }
+  }
+  const url = world.createObjectURL(blob)
+  try {
+    const image = world.newImage()
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve()
+      image.onerror = () => reject(new Error('decode'))
+      image.src = url
+    })
+    return image.naturalWidth
+      ? { source: image, width: image.naturalWidth, height: image.naturalHeight, close: () => {} }
+      : null
+  } catch {
+    return null
+  } finally {
+    world.revokeObjectURL(url)
+  }
+}
+
+/**
+ * Chrome's thumbnail of a decoded image (`CoreTabHelper::DownscaleAndEncodeBitmap`): within
+ * `bounds` by its rule (`imageThumbnailSize`), drawn on white at that size, a JPEG at `quality`,
+ * base64. `no-canvas` where the world gives no 2D surface; `tainted` where the surface refuses
+ * to be read; `decode-failed` for an image without a size or an encoder that declines.
+ */
+export async function encodeImageThumbnail(
+  image: Pick<DecodedImage, 'source' | 'width' | 'height'>,
+  options: ImageReadOptions,
+  world: Pick<ImageReadWorld, 'canvas' | 'arrayBuffer'>
+): Promise<ImageEncodeResult> {
+  const originalWidth = Math.trunc(image.width)
+  const originalHeight = Math.trunc(image.height)
+  if (!(originalWidth > 0) || !(originalHeight > 0)) return fail('decode-failed')
+  const { width, height } = imageThumbnailSize(originalWidth, originalHeight, options)
+  const surface = world.canvas(width, height)
+  if (!surface) return fail('no-canvas')
+  let jpeg: Blob | null
+  try {
+    surface.context.fillStyle = '#fff'
+    surface.context.fillRect(0, 0, width, height)
+    surface.context.drawImage(image.source, 0, 0, width, height)
+    jpeg = await surface.toJpeg(options.quality)
+  } catch (error) {
+    return fail(isSecurityError(error) ? 'tainted' : 'decode-failed')
+  }
+  if (!jpeg) return fail('decode-failed')
+  const bytes = new Uint8Array(await world.arrayBuffer(jpeg))
+  return {
+    ok: true,
+    thumbnail: {
+      base64: encodeBase64(bytes),
+      contentType: 'image/jpeg',
+      width,
+      height,
+      originalWidth,
+      originalHeight
+    }
+  }
+}
+
+function isSecurityError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { name?: unknown }).name === 'SecurityError'
+  )
+}
+
+/**
+ * The whole read – bytes, decode, encode – `imageFetchScript`'s answer as a function: the owner
+ * frame's fetch of an address it holds (§4.2 step 2), the `ImageFetchResult` the core parses.
+ */
+export async function readImageThumbnail(
+  src: string,
+  options: ImageReadOptions,
+  world: ImageReadWorld
+): Promise<ImageFetchResult> {
+  const got = await readImageBytes(src, options.maxBytes, world)
+  if (!got.ok) return got
+  if (got.blob.size > options.maxBytes) return fail('too-large')
+  const image = await decodeImageBlob(got.blob, world)
+  if (!image) return fail('decode-failed')
+  try {
+    const encoded = await encodeImageThumbnail(image, options, world)
+    // A bitmap or an element decoded from bytes the frame read is the frame's own: it cannot
+    // taint. Should a world say otherwise, the read failed – not the surface's reading rights.
+    return encoded.ok || encoded.reason !== 'tainted' ? encoded : fail('decode-failed')
+  } finally {
+    image.close()
+  }
 }

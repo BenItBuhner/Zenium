@@ -2,6 +2,7 @@ import {
   DEFAULT_CONTAINER_ID,
   PRIVATE_CONTAINER_ID,
   type ContentCover,
+  type ImageThumbnailBounds,
   type KeyBinding,
   type NavigationSnapshot,
   type PageRules,
@@ -25,7 +26,13 @@ import {
   type VersionPageLookup
 } from '@shared/zenPages'
 import { pdfPageDownloadId, pdfViewerBaseUrl, type PdfPageLookup } from '@shared/pdfPage'
-import { imageUploadFormDoc, urlencodeImagePost, type ImagePost } from '@shared/imageUpload'
+import {
+  imageUploadFormDoc,
+  parseImageFetchResult,
+  urlencodeImagePost,
+  type ImageFetchResult,
+  type ImagePost
+} from '@shared/imageUpload'
 import type {
   AgentCapture,
   AgentCaptureOptions,
@@ -638,6 +645,45 @@ export class AndroidTabView implements TabView {
   executeJavaScript(code: string): Promise<unknown> {
     const shaped = looksLikeStatements(code) ? `(() => { ${code}\n })()` : code
     return this.bridge.call<unknown>('view.eval', { tabId: this.tabId, code: shaped })
+  }
+
+  /**
+   * The frame-owner protocol's verb (`frame-owner-protocol-interface.md` §6.1 hunk 5): Kotlin
+   * asks every frame of the page which holds the image at `src` by a salted hash, has the owner
+   * frame thumbnail its own copy, and replies the owner's `ImageFetchResult` JSON – or its own
+   * `no-owner` / `timeout` / `unsupported`. The reply is checked, never trusted raw: one the
+   * core cannot read is a decode failure (a refusal, never today's top-document script on a
+   * WebView that has the protocol). A host without the verb – an APK before it – rejects the
+   * call ("Unknown method"), and null hands the core today's path.
+   */
+  async imageThumbnailByOwner(
+    src: string,
+    bounds: ImageThumbnailBounds,
+    quality: number,
+    maxBytes: number
+  ): Promise<ImageFetchResult | null> {
+    let raw: unknown
+    try {
+      raw = await this.bridge.call<unknown>('view.imageThumbnail', {
+        tabId: this.tabId,
+        src,
+        bounds: { maxSide: bounds.maxSide, minArea: bounds.minArea },
+        quality,
+        maxBytes
+      })
+    } catch {
+      return null
+    }
+    if (raw === null || raw === undefined) return null
+    let value: unknown = raw
+    if (typeof raw === 'string') {
+      try {
+        value = JSON.parse(raw)
+      } catch {
+        return { ok: false, reason: 'decode-failed' }
+      }
+    }
+    return parseImageFetchResult(value, maxBytes) ?? { ok: false, reason: 'decode-failed' }
   }
 
   /** Trusted touch / key events synthesised by Kotlin on the tab's WebView. */

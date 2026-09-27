@@ -91,3 +91,114 @@ describe('AndroidTabView.postURL (CT-32, the image-search upload)', () => {
     expect(code).toContain("fetch(src, { credentials, cache: 'force-cache' })")
   })
 })
+
+/**
+ * The frame-owner protocol's verb (`frame-owner-protocol-interface.md` §6.1 hunk 5): the view
+ * sends `view.imageThumbnail` and reads the owner's `ImageFetchResult` back, trusting nothing
+ * of its shape.
+ */
+describe('AndroidTabView.imageThumbnailByOwner (CT-32, the phone’s frame-owner protocol)', () => {
+  const THUMB = {
+    base64: '/9j/2wBDAAM=',
+    contentType: 'image/jpeg',
+    width: 1000,
+    height: 500,
+    originalWidth: 1600,
+    originalHeight: 800
+  }
+  function answeringBridge(reply: unknown | (() => Promise<unknown>)): {
+    bridge: Bridge
+    calls: Call[]
+  } {
+    const calls: Call[] = []
+    const bridge = {
+      call: async (method: string, args: unknown) => {
+        calls.push({ method, args })
+        return typeof reply === 'function' ? (reply as () => Promise<unknown>)() : reply
+      },
+      send: () => undefined,
+      callSync: () => undefined
+    } as unknown as Bridge
+    return { bridge, calls }
+  }
+  const BOUNDS = { maxSide: 1000, minArea: 90000 }
+
+  it('sends the verb in the document’s shape: tabId, src, bounds { maxSide, minArea }, quality, maxBytes', async () => {
+    const { bridge, calls } = answeringBridge(JSON.stringify({ ok: true, thumbnail: THUMB }))
+    await viewOn(bridge).imageThumbnailByOwner(
+      'https://pics.example/a.png',
+      BOUNDS,
+      0.4,
+      20 * 1024 * 1024
+    )
+    expect(calls).toEqual([
+      {
+        method: 'view.imageThumbnail',
+        args: {
+          tabId: 'tab_1',
+          src: 'https://pics.example/a.png',
+          bounds: { maxSide: 1000, minArea: 90000 },
+          quality: 0.4,
+          maxBytes: 20 * 1024 * 1024
+        }
+      }
+    ])
+  })
+
+  it('reads the owner’s thumbnail from the JSON text the host relays, and from an object a host may hand over parsed', async () => {
+    const asText = await viewOn(
+      answeringBridge(JSON.stringify({ ok: true, thumbnail: THUMB })).bridge
+    ).imageThumbnailByOwner('https://pics.example/a.png', BOUNDS, 0.4, 20 * 1024 * 1024)
+    expect(asText).toEqual({ ok: true, thumbnail: THUMB })
+    const asObject = await viewOn(
+      answeringBridge({ ok: true, thumbnail: THUMB }).bridge
+    ).imageThumbnailByOwner('https://pics.example/a.png', BOUNDS, 0.4, 20 * 1024 * 1024)
+    expect(asObject).toEqual({ ok: true, thumbnail: THUMB })
+  })
+
+  it.each(['opaque', 'gone', 'no-canvas', 'no-owner', 'timeout', 'unsupported', 'too-large'])(
+    'passes the typed refusal %s through',
+    async (reason) => {
+      const result = await viewOn(
+        answeringBridge(JSON.stringify({ ok: false, reason })).bridge
+      ).imageThumbnailByOwner('https://pics.example/a.png', BOUNDS, 0.4, 20 * 1024 * 1024)
+      expect(result).toEqual({ ok: false, reason })
+    }
+  )
+
+  it('answers null when the host has no such verb (an APK before it rejects the call), so the core keeps today’s path', async () => {
+    const result = await viewOn(
+      answeringBridge(() => Promise.reject(new Error('Unknown method: view.imageThumbnail'))).bridge
+    ).imageThumbnailByOwner('https://pics.example/a.png', BOUNDS, 0.4, 20 * 1024 * 1024)
+    expect(result).toBeNull()
+    expect(
+      await viewOn(answeringBridge(null).bridge).imageThumbnailByOwner(
+        'https://pics.example/a.png',
+        BOUNDS,
+        0.4,
+        20 * 1024 * 1024
+      )
+    ).toBeNull()
+  })
+
+  it.each([
+    ['text that is not JSON', 'not json'],
+    ['a reason the core does not know', JSON.stringify({ ok: false, reason: 'stolen' })],
+    ['a thumbnail of no shape', JSON.stringify({ ok: true, thumbnail: { base64: 42 } })],
+    [
+      'a thumbnail past the cap',
+      JSON.stringify({ ok: true, thumbnail: { ...THUMB, base64: 'A'.repeat(64) } })
+    ]
+  ])(
+    'reads %s as a decode failure – a refusal, never today’s top-document script on a WebView that has the protocol',
+    async (_name, reply) => {
+      const result = await viewOn(answeringBridge(reply).bridge).imageThumbnailByOwner(
+        'https://pics.example/a.png',
+        BOUNDS,
+        0.4,
+        16
+      )
+      expect(result).toEqual({ ok: false, reason: 'decode-failed' })
+    }
+  )
+})

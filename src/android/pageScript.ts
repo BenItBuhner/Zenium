@@ -2,6 +2,7 @@ import { installPageScript, type PageScriptFlags, type WebAppHostMessage } from 
 import type { PageHint } from '@shared/fullscreenHint'
 import type { PageRules } from '@shared/types'
 import { installFormsScript } from '@shared/formsScript'
+import { installImageOwner } from '@shared/imageOwner'
 import { installPasskeyObserver } from '@shared/passkeyObserver'
 import type { FormsCommand } from '@shared/forms'
 import type { MediaSessionHostMessage } from '@shared/mediaSession'
@@ -284,6 +285,19 @@ function installGuards(
   }
   if (bridge.addEventListener) bridge.addEventListener('message', onMessage)
   else bridge.onmessage = onMessage
+
+  // The frame-owner protocol of the image-search row (`shared/imageOwner.ts`,
+  // frame-owner-protocol-interface.md): in every frame, this frame's answer to the host's
+  // "which of you holds this image?" and, when it is the owner, the thumbnail of its own <img>.
+  // Installed after the listener above – on a bridge with a single `onmessage` slot it chains
+  // that one rather than take it – and doing nothing until a message arrives: the built-ins it
+  // will call are captured now, before any page script, and no image is enumerated or hashed at
+  // load. Its answers ride up with the session token like every other message.
+  try {
+    installImageOwner(bridge, document, { token: TOKEN })
+  } catch {
+    /* a frame whose world lacks the protocol's built-ins answers nothing; the host's window lapses */
+  }
 
   // The document's DOMContentLoaded, for the core's `dom-ready` (Kotlin raises the view event
   // once per document): from the top frame only – the legacy bridge cannot tell frames apart –
