@@ -456,6 +456,15 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
     requires: 'updates'
   },
   {
+    // Chrome's System (chrome://settings/system), the category before Reset settings in its
+    // list: the row that opens the computer's proxy settings – the OS panel, which is the
+    // desktop OSes' alone (Android's proxy is the network's, set in its Wi-Fi settings).
+    id: 'system',
+    label: 'System',
+    keywords: ['proxy', 'network', 'computer', 'operating system', 'os'],
+    platforms: ['win32', 'darwin', 'linux']
+  },
+  {
     // Chrome's "Reset settings" at the foot of its list (settings-70): the one row that restores
     // the settings to their defaults. The desktop and tablet shells' – the phone's Settings has
     // no tail of Advanced categories to end with it (W7-6).

@@ -47,7 +47,8 @@ describe('the page registry', () => {
     // Security (the remembered per-site answers and the session's sign-ins) last among them; then
     // the browser-wide group past the first hairline: Sync, then Import beside it as Chrome keeps
     // its "Import bookmarks and settings" (ID-23), Accessibility, Keyboard Shortcuts, Default
-    // Browser (the desktop platforms alone), Updates, Reset Settings (Chrome's foot of the list,
+    // Browser (the desktop platforms alone), Updates, System (Chrome's System page: the computer's
+    // proxy settings, the desktop platforms alone), Reset Settings (Chrome's foot of the list,
     // the desktop and tablet shells'; settings-70); About past the second. Performance (Memory
     // Saver and Energy Saver, the desktop and tablet shells'; W8-2) sits right after Tab
     // Management, whose desktop Tab unloading rows it took over.
@@ -78,6 +79,7 @@ describe('the page registry', () => {
       'shortcuts',
       'default-browser',
       'updates',
+      'system',
       'reset',
       'about'
     ])
