@@ -12,6 +12,7 @@ import type {
 } from './translate'
 import type { EngineRelayRequest, EngineRelayResponse } from './translateEngine'
 import type { UpdateSettings, UpdateStatus } from './updates'
+import type { UpdateDotRecord } from '../core/updateDot'
 import type { ToolbarPins } from './toolbarPins'
 import type { BlockingSettings, BlockingStatus } from './blocking'
 import type {
@@ -4372,6 +4373,14 @@ export interface UIState {
    * memory (`lib/privateLock.ts`); the core only keeps the switch.
    */
   privateLockOnLeave: boolean
+  /**
+   * The update dot's per-version 'seen' record, this device's (`BrowserState.updateDot`,
+   * `core/updateDot.ts`; TB-12): the waiting update's version the app menu was last opened for.
+   * The phone bar's ⋮ and the tablet toolbar's menu button read `updateDotShows(updates, updateDot)`
+   * – the dot clears on the menu's first open for a version and returns for another version's
+   * `ready`; the desktop's ⋯ reads the plain phase until W8-F3.
+   */
+  updateDot: UpdateDotRecord
   /**
    * The new tab page's custom background: whether one is set, whether the host can open a file
    * picker for one (the phone's page reads the file itself and stores it through `set`), and

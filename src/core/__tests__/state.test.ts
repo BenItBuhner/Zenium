@@ -755,3 +755,31 @@ describe('Performance defaults – a fresh desktop profile vs an existing one (W
     expect(s.settings.energySaver).toBe('off')
   })
 })
+
+describe('the update dot’s seen record on load and on the write (TB-12)', () => {
+  /** A profile carrying `updateDot` as given (any shape – the sanitiser's input). */
+  const stored = (updateDot: unknown): BrowserState =>
+    state(fakeIo(legacyProfile(6, { updateDot } as Partial<Persisted>)))
+
+  it('starts empty on a fresh profile and one from before the record, reads a saved version back, and reads anything else as empty', () => {
+    expect(state(fakeIo()).updateDot).toEqual({ seenVersion: null })
+    expect(state(fakeIo(legacyProfile(6))).updateDot).toEqual({ seenVersion: null })
+    expect(stored({ seenVersion: '2.0.0' }).updateDot).toEqual({ seenVersion: '2.0.0' })
+    for (const bad of [null, '2.0.0', { seenVersion: 2 }, { seenVersion: '' }, []]) {
+      expect(stored(bad).updateDot, JSON.stringify(bad)).toEqual({ seenVersion: null })
+    }
+  })
+
+  it('writes the record with the profile, outside the synced settings, and reads it back on a relaunch', async () => {
+    const io = fakeIo(legacyProfile(6))
+    const s = state(io)
+    s.updateDot = { seenVersion: '2.0.0' }
+    s.commit()
+    await s.flush()
+    const written = JSON.parse(io.writes.at(-1) ?? '{}') as Persisted
+    expect(written.updateDot).toEqual({ seenVersion: '2.0.0' })
+    // Device-local: not a setting, so never in the sync record.
+    expect('updateDot' in written.settings).toBe(false)
+    expect(state(fakeIo(io.writes.at(-1) ?? '{}')).updateDot).toEqual({ seenVersion: '2.0.0' })
+  })
+})

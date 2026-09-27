@@ -41,7 +41,7 @@ import { defaultSearchEngineOf } from '@shared/search'
 import { securityIndicator, type IndicatorState } from '@shared/siteInfo'
 import { addressParts, displayUrl, fullUrl, getDomain, isWebPageUrl, pillText } from '@shared/url'
 import { useElementWidth } from '@renderer/hooks/useElementWidth'
-import { updateReadyAt } from '@renderer/lib/about'
+import { updateDotAt, updateReadyAt } from '@renderer/lib/about'
 import { addressDragOf, writeAddressDrag } from '@renderer/lib/addressDrag'
 import { run } from '@renderer/lib/api'
 import { chipPrompt } from '@renderer/lib/autofill'
@@ -328,8 +328,11 @@ export function NavRow({
   const mediaFolded = mediaHubFoldedAt(state, hubUp)
   // An update downloaded and waiting (shortcuts-menus-101): the menu opens on its "Update
   // Zenium" row and ⋯ wears the dot for it – Chrome's dot on its ⋮ – over the hub's while
-  // both would show (one dot on the button; the menu's head row says which).
-  const updateReady = updateReadyAt(state)
+  // both would show (one dot on the button; the menu's head row says which). The tablet's
+  // button takes Chrome Android's cadence with the phone bar (TB-12): the dot clears once the
+  // menu has been opened for the waiting version and returns for another version's
+  // (`updateDotAt`); the desktop's reads the plain phase until W8-F3 wires it to the record.
+  const updateReady = formFactor === 'tablet' ? updateDotAt(state) : updateReadyAt(state)
   // The decision published for the hub's popover (`mediaHubUi.buttonUp`), from this commit's
   // layout phase: where the button returns or folds in the row's own observer pass – a sidebar
   // drag, no state push – the popover re-reads its anchor before the frame paints, so the hold

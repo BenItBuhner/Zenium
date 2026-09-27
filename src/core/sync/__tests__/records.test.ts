@@ -23,12 +23,14 @@ import {
   settingsKeyTime,
   stableStringify,
   winningRemote,
+  wireFavicon,
   withoutDeviceLocalSettings,
   type BookmarkData,
   type MetaMap,
   type OrderData,
   type RecordMeta,
-  type SyncRecord
+  type SyncRecord,
+  type TabData
 } from '../records'
 import {
   createFolder,
@@ -1069,6 +1071,8 @@ describe('bookmark records', () => {
       type: 'bookmark',
       data: { parentId: BOOKMARKS_BAR_ID, index: 0, type: 'folder', title: 'Work', dateAdded: 10 }
     })
+    // The leaf's `data:` icon is the bytes: it stays home (`wireFavicon`), the record carries
+    // the node without it.
     expect(records.get('bm_leaf')).toEqual({
       type: 'bookmark',
       data: {
@@ -1077,13 +1081,145 @@ describe('bookmark records', () => {
         type: 'url',
         title: 'Docs',
         url: 'https://docs.test/',
-        favicon: 'data:image/png;base64,AAAA',
         dateAdded: 15
       }
     })
     // Device-local usage is not part of the record, so opening a bookmark never re-stamps it.
     expect(records.get('bm_leaf')?.data).not.toHaveProperty('dateLastUsed')
     expect(records.get('bm_folder')?.data).not.toHaveProperty('dateGroupModified')
+  })
+
+  describe('what a favicon may carry across the boundary (services pass 11, the wire rule)', () => {
+    it('wireFavicon lets an http(s) address through and nothing else', () => {
+      expect(wireFavicon('https://docs.test/favicon.ico')).toBe('https://docs.test/favicon.ico')
+      expect(wireFavicon('HTTP://Docs.Test/icon.png')).toBe('HTTP://Docs.Test/icon.png')
+      // The bytes never travel; the receiver caches its own.
+      expect(wireFavicon('data:image/png;base64,AAAA')).toBeUndefined()
+      // A host-local address is no use to a peer.
+      expect(wireFavicon('zen://favicon/abcdef0123456789')).toBeUndefined()
+      expect(wireFavicon('file:///home/me/icon.png')).toBeUndefined()
+      expect(wireFavicon('chrome://favicon/https://a.test/')).toBeUndefined()
+      expect(wireFavicon('about:blank')).toBeUndefined()
+      expect(wireFavicon('blob:https://a.test/0f3e')).toBeUndefined()
+      expect(wireFavicon('https:not-an-address')).toBeUndefined()
+      expect(wireFavicon('')).toBeUndefined()
+      expect(wireFavicon(null)).toBeUndefined()
+      expect(wireFavicon(undefined)).toBeUndefined()
+    })
+
+    it('a bookmark record carries an http(s) icon address and never a data: or host-local one', () => {
+      const src = sources()
+      const t = tree()
+      const addressed: BookmarkNode = {
+        ...t.leaf,
+        id: 'bm_addressed',
+        index: 1,
+        url: 'https://addressed.test/',
+        favicon: 'https://addressed.test/favicon.ico'
+      }
+      const cached: BookmarkNode = {
+        ...t.leaf,
+        id: 'bm_cached',
+        index: 2,
+        url: 'https://cached.test/',
+        favicon: 'zen://favicon/0123456789abcdef0123456789abcdef01234567'
+      }
+      src.bookmarks = [...t.nodes, addressed, cached]
+      const records = collectLocal(src, defaultScope())
+      expect((records.get('bm_addressed')?.data as BookmarkData).favicon).toBe(
+        'https://addressed.test/favicon.ico'
+      )
+      expect(records.get('bm_leaf')?.data).not.toHaveProperty('favicon')
+      expect(records.get('bm_cached')?.data).not.toHaveProperty('favicon')
+    })
+
+    it("a tab record's favicon is the address or null (the field's shape stands)", () => {
+      const src = sources()
+      const m = src.model
+      const space = m.spaces[0]
+      const addressed = createTabRecord({
+        id: 'tab_addressed',
+        spaceId: space.id,
+        containerId: space.containerId,
+        url: 'https://addressed.test/',
+        favicon: 'https://addressed.test/favicon.ico',
+        pinned: true
+      })
+      const inline = createTabRecord({
+        id: 'tab_inline',
+        spaceId: space.id,
+        containerId: space.containerId,
+        url: 'https://inline.test/',
+        favicon: 'data:image/png;base64,AAAA',
+        pinned: true
+      })
+      m.tabs[addressed.id] = addressed
+      m.tabs[inline.id] = inline
+      insertTabIntoSpace(m, space, addressed)
+      insertTabIntoSpace(m, space, inline)
+      const records = collectLocal(src, defaultScope())
+      expect((records.get('tab_addressed')?.data as TabData).favicon).toBe(
+        'https://addressed.test/favicon.ico'
+      )
+      expect((records.get('tab_inline')?.data as TabData).favicon).toBeNull()
+    })
+
+    it('the same icon in two forms hashes the same record: the cache keeping an inline icon (data: → zen://favicon/<hash>) is no edit of the bookmark', () => {
+      const src = sources()
+      const t = tree()
+      src.bookmarks = t.nodes
+      const first = diffLocal({}, collectLocal(src, defaultScope()), 1000)
+      t.leaf.favicon = 'zen://favicon/0123456789abcdef0123456789abcdef01234567'
+      const second = diffLocal(first.meta, collectLocal(src, defaultScope()), 2000)
+      expect(second.changed).toBe(false)
+      expect(second.records.find((r) => r.id === 'bm_leaf')?.modified).toBe(0)
+      // The icon gone altogether is the same record still.
+      delete t.leaf.favicon
+      const third = diffLocal(second.meta, collectLocal(src, defaultScope()), 3000)
+      expect(third.changed).toBe(false)
+    })
+
+    it("a record from a peer's build that still sends a data: or host-local icon reads without it", () => {
+      const inline = readBookmarkData({
+        parentId: 'p',
+        index: 0,
+        type: 'url',
+        title: 'A',
+        url: 'https://a.test/',
+        favicon: 'data:image/png;base64,AAAA',
+        dateAdded: 5
+      })
+      expect(inline).not.toHaveProperty('favicon')
+      const cached = readBookmarkData({
+        parentId: 'p',
+        index: 0,
+        type: 'url',
+        title: 'A',
+        url: 'https://a.test/',
+        favicon: 'zen://favicon/0123456789abcdef0123456789abcdef01234567',
+        dateAdded: 5
+      })
+      expect(cached).not.toHaveProperty('favicon')
+      const addressed = readBookmarkData({
+        parentId: 'p',
+        index: 0,
+        type: 'url',
+        title: 'A',
+        url: 'https://a.test/',
+        favicon: 'https://a.test/favicon.ico',
+        dateAdded: 5
+      })
+      expect(addressed?.favicon).toBe('https://a.test/favicon.ico')
+      // A pre-tree device's flat record, the same.
+      expect(
+        readBookmarkData({
+          url: 'https://a.test/',
+          title: 'A',
+          favicon: 'data:image/png;base64,AAAA',
+          createdAt: 5
+        })
+      ).not.toHaveProperty('favicon')
+    })
   })
 
   it('a move changes only the moved node, and the scope can turn bookmarks off', () => {
@@ -1123,10 +1259,12 @@ describe('bookmark records', () => {
   })
 
   it('readBookmarkData lands flat records from pre-tree devices in Other bookmarks', () => {
+    // A pre-tree device sent its icon as it held it; the bytes of a `data:` one stay out here
+    // as everywhere (`wireFavicon`), an address comes through.
     const legacy = readBookmarkData({
       url: 'https://old.test/',
       title: 'Old',
-      favicon: 'data:x',
+      favicon: 'https://old.test/favicon.ico',
       createdAt: 42
     })
     expect(legacy).toEqual({
@@ -1135,9 +1273,12 @@ describe('bookmark records', () => {
       type: 'url',
       title: 'Old',
       url: 'https://old.test/',
-      favicon: 'data:x',
+      favicon: 'https://old.test/favicon.ico',
       dateAdded: 42
     })
+    expect(
+      readBookmarkData({ url: 'https://old.test/', title: 'Old', favicon: 'data:x', createdAt: 42 })
+    ).not.toHaveProperty('favicon')
     expect(readBookmarkData({ url: 'https://old.test/', title: '', favicon: null })?.title).toBe(
       'https://old.test/'
     )
