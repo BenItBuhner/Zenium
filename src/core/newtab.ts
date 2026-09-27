@@ -864,13 +864,18 @@ export class NewTabService {
    * this): the layout preset and its sections, the shortcuts mode, the background and the
    * greeting as `DEFAULT_NEW_TAB_SETTINGS` has them, the pinned shortcuts and removed sites
    * cleared, the picked image let go. `enabled` – whether a new tab opens the page at all – is
-   * not the page's content and stays.
+   * not the page's content and stays; nor is the Safety check card's memory, which is Chrome's
+   * Safety Hub record (`safety_hub.menu_notifications`, not a new tab page pref): a card the
+   * user has seen enough of does not come back for a reset of the page.
    */
   async reset(): Promise<void> {
     const host = this.browser.platform.newTabBackground
     if (host?.current()) await host.clear()
     this.restoredFrom = null
-    this.browser.state.newTabDevice = emptyNewTabDevice()
+    this.browser.state.newTabDevice = {
+      ...emptyNewTabDevice(),
+      safetyHubCard: this.browser.state.newTabDevice.safetyHubCard
+    }
     this.setSettings({ ...DEFAULT_NEW_TAB_SETTINGS, enabled: this.settings.enabled })
   }
 

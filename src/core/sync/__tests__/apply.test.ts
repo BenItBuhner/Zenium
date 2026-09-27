@@ -116,7 +116,8 @@ describe('applyRemote: the settings record and the new tab page', () => {
     expect(b.state.newTabDevice).toEqual({
       shortcuts: [{ id: expect.any(String), title: 'Mine', url: 'https://mine.example/' }],
       hiddenHosts: [],
-      hiddenModules: []
+      hiddenModules: [],
+      safetyHubCard: {}
     })
   })
 
