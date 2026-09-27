@@ -23,17 +23,8 @@ name: Android tablet hover card demo
 # the theme. The instrumentation runs with --no-hidden-api-checks: a mouse button's press and
 # release name their button through MotionEvent.setActionButton, a test API. One more boot per
 # act when the emulator itself went away under the driver, never when the driver failed.
-#
-# TEMPORARY: GitHub knows a workflow only from an event on its branch, so this push trigger,
-# scoped to the branch that adds the file, is the one way to run it from a builder (the
-# tablet layout demo's #243 recipe): the second run of TABLET-05's budget, granted by the
-# coordinator at 18:00 UTC after the first run failed on two claims of the driver's own. It is
-# removed by the next commit, before the pull request is READY.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - cursor/android-tablet-native-hover-card-9271
 
 permissions:
   contents: read
