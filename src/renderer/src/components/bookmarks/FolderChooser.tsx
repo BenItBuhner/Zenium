@@ -13,6 +13,8 @@ interface Props {
   tree: BookmarkTree
   selectedId: string
   onSelect: (id: string) => void
+  /** The tree's accessible name: the row's label ("Folder"; "Parent folder" on a folder's editor). */
+  label?: string
   /** Folders that cannot be chosen (a folder being moved, and everything below it). */
   disabled?: Set<string>
   /** Offer "New folder" (created inside the selected folder, named in place). */
@@ -38,6 +40,7 @@ export function FolderChooser({
   tree,
   selectedId,
   onSelect,
+  label = 'Folder',
   disabled,
   allowCreate,
   onEscape,
@@ -191,7 +194,7 @@ export function FolderChooser({
       <ul
         ref={treeRef}
         role="tree"
-        aria-label="Folder"
+        aria-label={label}
         className="zen-bm-pick-tree"
         onKeyDown={onKeyDown}
       >

@@ -15,6 +15,11 @@ interface Props {
   onChange: (folderId: string) => void
   /** The control's id, for the form field's `<label for>` (§9.12). */
   id?: string
+  /**
+   * The row's label, the accessible name of the list and the tree ("Folder"; "Parent folder"
+   * on a folder's own editor, as the phone's row reads).
+   */
+  label?: string
   /** Folders that cannot be chosen (a folder being moved, and everything below it). */
   disabled?: Set<string>
   /** Whether a nested level (the list or the tree) is showing; Escape closes it before the dialog. */
@@ -41,6 +46,7 @@ export function FolderField({
   value,
   onChange,
   id,
+  label = 'Folder',
   disabled,
   onNestedChange,
   className
@@ -78,6 +84,7 @@ export function FolderField({
         tree={tree}
         selectedId={value}
         onSelect={onChange}
+        label={label}
         disabled={disabled}
         allowCreate
         onEscape={() => {
@@ -112,7 +119,7 @@ export function FolderField({
       {anchor && (
         <MenulistPopover
           anchor={anchor}
-          label="Folder"
+          label={label}
           value={value}
           options={options.map((f) => ({ value: f.id, label: f.title }))}
           actions={[
