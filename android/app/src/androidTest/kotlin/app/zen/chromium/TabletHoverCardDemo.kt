@@ -101,15 +101,20 @@ class TabletHoverCardDemo : GroupsDemoBase("tablet-hover-card-$THEME", "tablet-h
         val gamma = at(row(GAMMA))
         val delta = at(row(DELTA))
         val homeRow = at(row(HOME))
-        check("the page and the rows are on screen for the mouse", page != null && gamma != null && delta != null && homeRow != null, "page $page, Gamma $gamma, Delta $delta, Home $homeRow")
-        if (page == null || gamma == null || delta == null || homeRow == null) {
+        val asideRight = screen(domRect("$SIDEBAR aside"))?.right?.toFloat()
+        check(
+            "the page, the rows and the sidebar's edge are on screen for the mouse",
+            page != null && gamma != null && delta != null && homeRow != null && asideRight != null,
+            "page $page, Gamma $gamma, Delta $delta, Home $homeRow, sidebar's right edge $asideRight"
+        )
+        if (page == null || gamma == null || delta == null || homeRow == null || asideRight == null) {
             tail()
             return
         }
         withoutAccessibility {
             awaitUntil(6_000) { !accessibilityEnabled() }
             SystemClock.sleep(400)
-            restAct(page, gamma)
+            restAct(page, gamma, asideRight)
             section("2. Moving on: to Delta without the wait, to the active row without a picture")
             moveAct(delta, homeRow)
             section("3. Dismissals: the pointer leaving the rows, a click on the row")
@@ -123,28 +128,45 @@ class TabletHoverCardDemo : GroupsDemoBase("tablet-hover-card-$THEME", "tablet-h
         tail()
     }
 
-    private fun restAct(page: PointF, gamma: PointF) {
+    private fun restAct(page: PointF, gamma: PointF, asideRight: Float) {
         mouse.moveTo(page.x, page.y)
         SystemClock.sleep(300)
-        mouse.moveTo(gamma.x, gamma.y, 400)
-        // Read on arrival, off the main thread's own state (a JS round trip on the emulator can
-        // take a good part of the delay): the pointer has been on the row for a few frames.
+        // Over the page to just off the sidebar's edge, level with the row, so the way onto the row
+        // is short and straight and the delay is timed from the pointer setting out for it.
+        mouse.moveTo(asideRight + 40f, gamma.y, 300)
+        SystemClock.sleep(200)
+        val setOut = SystemClock.uptimeMillis()
+        mouse.moveTo(gamma.x, gamma.y, 100)
+        // Read on arrival, off the main thread's own state. Every injected step waits for the main
+        // thread (the harness's injection with accessibility off), so on a slow emulator the way
+        // onto the row can itself outlast the delay: the arrival read is a claim only when it
+        // came in time, the delay's claim is the one below, timed from the setting out.
         val onArrival = cardShown()
+        val arrivalMs = SystemClock.uptimeMillis() - setOut
         check(
             "the Gamma row is :hover under the pointer",
             awaitJs("(function(){var e=document.querySelector('${row(GAMMA)}');return !!e&&e.matches(':hover')})()", true, 2_000),
             ""
         )
-        check(
-            "no card as the pointer arrives on the row: it shows after Chrome's ~800 ms, not on entry",
-            !onArrival,
-            "host card on arrival $onArrival, chrome's native slice now ${jsText(NATIVE_CARD)}"
-        )
+        if (arrivalMs < 600) {
+            check(
+                "no card as the pointer arrives on the row, $arrivalMs ms after setting out from the sidebar's edge: it shows after Chrome's ~800 ms, not on entry",
+                !onArrival,
+                "host card on arrival $onArrival, chrome's native slice now ${jsText(NATIVE_CARD)}"
+            )
+        } else {
+            finding("  (the way onto the row took $arrivalMs ms under synchronous injection; the arrival read says nothing of the delay – the timed claim below does)")
+        }
         val up = awaitUntil(3_000) { shownTabId() == GAMMA }
-        check("the pointer resting on the row raises the host's card for Gamma", up, "host card ${shownTabId()} after the wait")
+        val shownMs = SystemClock.uptimeMillis() - setOut
+        check(
+            "the pointer resting on the row raises the host's card for Gamma after Chrome's delay: within 3 s, and not before 700 ms from the pointer setting out for the row",
+            up && shownMs >= 700,
+            "host card ${shownTabId()} at $shownMs ms"
+        )
         check(
             "the chrome's UI state holds no card – nothing over the content frame – while its native slice names Gamma: the card is the host's",
-            jsText(UI_CARD) == "null" && jsText(NATIVE_CARD) == "\"$GAMMA\"",
+            jsText(UI_CARD) == "null" && jsText(NATIVE_CARD) == GAMMA,
             "ui.hoverCard.tabId ${jsText(UI_CARD)}, nativeHoverCard.card.tabId ${jsText(NATIVE_CARD)}"
         )
         check(
