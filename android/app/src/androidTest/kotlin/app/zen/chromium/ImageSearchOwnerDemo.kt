@@ -205,6 +205,12 @@ class ImageSearchOwnerDemo : GroupsDemoBase("image-search-owner", "image-search-
         if (v.upload) uploadLanded(v, newTab, uploadsBefore) else addressRoute(v, newTab, uploadsBefore, byUrlBefore)
         SystemClock.sleep(1_000)
         still("${v.id}-result")
+        // The top document's words, read in the background where it answers, else brought to
+        // the front first (the search's tab is in front now).
+        if (hookLog(v.tabId).isEmpty()) {
+            finding("  (the top document did not answer in the background: activating it to read its logs)")
+            activate(v.tabId, v.url)
+        }
         topLog(v)
         route(v)
     }
