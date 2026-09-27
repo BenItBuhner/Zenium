@@ -2093,9 +2093,16 @@ export class ElectronTabView implements TabView {
    * resize and is what the target is reached with. The picture is drawn at the page's CSS size
    * whatever its pixels (`CoverImage`, `object-cover`), so a 1:1 capture at DPR 2 does not
    * double. The Android host's cover is its own copy and encode (`TabWebView.snapshot`).
+   *
+   * A staged page (an agent's, hidden from the user) is pictured from a frame of its renderer's
+   * own, on the page's capture turn, as `capture` pictures it – never `capturePage`'s copy,
+   * which would flip the page to `visible` (see `capture`). Two callers picture a hidden page
+   * this way: the agent's screenshot tool when `capture` answered nothing, and the tab strip's
+   * hover card (`ZenWindow.snapshot` with `fresh`) over the agent's tab. Encoded the same.
    */
   snapshot(): Promise<string | null> {
-    return snapshotOf(this.wc)
+    if (!this.staged) return snapshotOf(this.wc)
+    return this.onTurn(() => this.stagedFrame()).then(encodeSnapshot, () => null)
   }
 
   /**
@@ -2918,6 +2925,19 @@ async function snapshotOf(wc: WebContents, rect?: Rect): Promise<string | null> 
       rect ? wc.capturePage(rect) : wc.capturePage(),
       new Promise<null>((resolve) => setTimeout(() => resolve(null), SNAPSHOT_TIMEOUT_MS))
     ])
+    return encodeSnapshot(image)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The stand-in's encoding of a captured frame (`ElectronTabView.snapshot`): JPEG at
+ * `SNAPSHOT_JPEG_QUALITY`, 1:1 in device pixels up to `SNAPSHOT_MAX_PIXELS` and scaled down to
+ * `SNAPSHOT_TARGET_PIXELS` past it; null for no frame or an empty one.
+ */
+function encodeSnapshot(image: Electron.NativeImage | null): string | null {
+  try {
     if (!image || image.isEmpty()) return null
     const size = image.getSize()
     // `capturePage` hands the device pixels over as a 1x bitmap (`getScaleFactors()` is [1],

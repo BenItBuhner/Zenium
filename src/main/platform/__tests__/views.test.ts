@@ -2421,6 +2421,7 @@ describe('a hidden page an agent drives and the stage', () => {
     ({
       isEmpty: () => false,
       getSize: () => ({ width: w, height: h }),
+      getScaleFactors: () => [1],
       crop: (r: { width: number; height: number }) => frame(r.width, r.height),
       toPNG: () => Buffer.from(`png-${w}x${h}`),
       toJPEG: (q: number) => Buffer.from(`jpeg-${w}x${h}-${q}`)
@@ -2535,6 +2536,41 @@ describe('a hidden page an agent drives and the stage', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('pictures a staged page’s stand-in (snapshot: the screenshot tool’s fallback, the hover card) from a frame of its own on the page’s turn, never capturePage, and off the stage with capturePage as before', async () => {
+    const { create } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setAgentDriven(true)
+    const fakes = frameFakes(view)
+    const pending = view.snapshot()
+    await settled()
+    expect(fakes.log).toEqual(['begin'])
+    fakes.frames[0]!(frame(1000, 740))
+    expect(await pending).toBe(
+      `data:image/jpeg;base64,${Buffer.from('jpeg-1000x740-90').toString('base64')}`
+    )
+    expect(fakes.log).toEqual(['begin', 'end'])
+    expect(fakes.capturePage).not.toHaveBeenCalled()
+    // A stand-in and a capture take turns with each other too.
+    const standin = view.snapshot()
+    const capture = view.capture({ mode: 'viewport', format: 'jpeg' })
+    await settled()
+    expect(fakes.log).toEqual(['begin', 'end', 'begin'])
+    fakes.frames[1]!(frame(1000, 740))
+    expect(await standin).toContain('data:image/jpeg;base64,')
+    await settled()
+    expect(fakes.log).toEqual(['begin', 'end', 'begin', 'end', 'begin'])
+    fakes.frames[2]!(frame(1000, 740))
+    expect(await capture).toMatchObject({ width: 1000, height: 740 })
+    expect(fakes.log).toEqual(['begin', 'end', 'begin', 'end', 'begin', 'end'])
+    // Off the stage the stand-in is capturePage's copy, as before.
+    fakes.capturePage.mockImplementation(() => Promise.resolve(frame(1000, 740)))
+    view.setVisible(true)
+    expect(await view.snapshot()).toContain('data:image/jpeg;base64,')
+    expect(fakes.capturePage).toHaveBeenCalledTimes(1)
+    expect(fakes.log).toEqual(['begin', 'end', 'begin', 'end', 'begin', 'end'])
   })
 
   it('pictures the same page with capturePage once it is off the stage', async () => {
