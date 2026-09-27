@@ -891,6 +891,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 "qrScan" to qrScan.available,
                 // A speech engine on the device: Listen to this page and Read aloud show (A11Y-06).
                 "readAloud" to readAloud.available,
+                // This host answers `view.printPdf` (`PdfPrint.kt`): the PDF viewer's Print row shows (CT-44).
+                "pdfPrint" to true,
                 // TalkBack (or another service) explores by touch: the bar does not hide on scroll.
                 "touchExploration" to touchExploration,
                 // The same flag with the font scale, the menu's list variant's state (A11Y-04);
@@ -1261,6 +1263,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 reply(null)
             }
             "view.print" -> { tab?.let(::print); reply(null) }
+            // The PDF viewer's Print (CT-44): the document's bytes to the system print dialog
+            // (`PdfPrint.kt`); true once the dialog has the job, false for a job the verb refuses.
+            "view.printPdf" -> reply(PdfPrint.parse(args)?.let { job -> PdfPrint.print(activity, job, io) { main.post(it) } } == true)
             "view.savePage" -> if (tab == null) reply(null) else savePage(tab, args.str("name"), reply)
             "view.snapshot" -> if (tab == null) reply(null) else tab.snapshot(reply)
             "view.screenshot" -> if (tab == null) reply(null) else tab.screenshot(args.bool("fullPage")) { png -> saveToDownloads(args.str("name"), "image/png", png, reply) }

@@ -217,7 +217,8 @@ describe('the Android page script and the PDF viewer’s report (CT-02; the nigh
     fit: 'width',
     title: null,
     find: null,
-    outline: []
+    outline: [],
+    form: { fields: 0, modified: false }
   }
 
   it('relays the viewer document’s report with the session token intact and the document’s token under its own name', () => {

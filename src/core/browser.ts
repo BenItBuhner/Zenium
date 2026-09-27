@@ -3996,6 +3996,8 @@ export class Browser {
       'print.close': ({ tabId }) => this.print.close(tabId),
       'pdf.openWith': ({ tabId }) => this.pdf.openWith(tabId),
       'pdf.share': ({ tabId }) => this.pdf.share(tabId),
+      'pdf.save': ({ tabId }) => this.pdf.save(tabId),
+      'pdf.print': ({ tabId }) => this.pdf.print(tabId),
       'pdf.state': ({ tabId }) => this.pdf.report(tabId),
       'pdf.command': ({ tabId, command }) => this.pdf.command(tabId, command),
       'page.savePage': ({ tabId }, win) =>
