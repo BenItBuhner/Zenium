@@ -9,10 +9,13 @@
  * table, paragraphs with "tide" in them for the find bar, a nested outline, a titled Info
  * dictionary); `locked` is the same document behind the standard security handler (RC4 40-bit,
  * the password {@link PREVIEW_PDF_PASSWORD}); `broken` is not a PDF at all; `slow` is `sample`
- * again, which the dev server answers late, for the viewer's loading state.
+ * again, which the dev server answers late, for the viewer's loading state; `form` is a one-page
+ * mooring application with an AcroForm (text fields, a checkbox, a radio group, a combo box and
+ * a reset button: {@link PREVIEW_FORM_FIELDS}), the document the viewer's form layer, its save
+ * and the tests that round-trip a filled copy run on.
  */
 
-export const PREVIEW_PDF_VARIANTS = ['sample', 'locked', 'broken', 'slow'] as const
+export const PREVIEW_PDF_VARIANTS = ['sample', 'locked', 'broken', 'slow', 'form'] as const
 export type PreviewPdfVariant = (typeof PREVIEW_PDF_VARIANTS)[number]
 
 /** The file each variant "downloads" as; the preview host maps the path back to the variant. */
@@ -20,8 +23,30 @@ export const PREVIEW_PDF_FILES: Readonly<Record<PreviewPdfVariant, string>> = {
   sample: 'tide-tables.pdf',
   locked: 'harbour-accounts.pdf',
   broken: 'survey-scan.pdf',
-  slow: 'moorings-register.pdf'
+  slow: 'moorings-register.pdf',
+  form: 'mooring-application.pdf'
 }
+
+/**
+ * The `form` document's fields by their fully qualified names, in the AcroForm's order: what
+ * pdf.js's `getFieldObjects` keys on and what a test reads back from a saved copy.
+ */
+export const PREVIEW_FORM_FIELDS = {
+  /** A single-line text field, empty to begin with. */
+  applicant: 'applicant',
+  /** A single-line text field with a value already in it. */
+  vessel: 'vessel',
+  /** A radio group of two: `Pontoon` (on to begin with) and `Swinging`. */
+  berth: 'berth',
+  /** A combo box: Short stay, Season (chosen) or Annual. */
+  season: 'season',
+  /** A checkbox, off to begin with; its on state exports as `Yes`. */
+  electricity: 'electricity',
+  /** A multi-line text field. */
+  notes: 'notes',
+  /** A push button whose action resets the form. */
+  clear: 'clear'
+} as const
 
 /** The user password of the `locked` document. */
 export const PREVIEW_PDF_PASSWORD = 'zenium'
@@ -48,6 +73,8 @@ export function previewPdf(variant: PreviewPdfVariant): Uint8Array {
       return encode('Scan of the survey, page 1 of 1.\nThe scanner wrote no PDF header.\n')
     case 'locked':
       return writeTides({ password: PREVIEW_PDF_PASSWORD })
+    case 'form':
+      return writeForm()
     default:
       return writeTides(null)
   }
@@ -266,8 +293,11 @@ function draftTides(): { pages: PageDraft[]; outline: OutlineDraft[] } {
 // The writer
 // ---------------------------------------------------------------------------------------------
 
-/** A piece of an object's body: PDF syntax as is, a text string, or a stream's data. */
-type Piece = string | { text: string } | { stream: string }
+/**
+ * A piece of an object's body: PDF syntax as is, a text string, or a stream's data (with the
+ * entries of its dictionary besides `/Length`, for a form XObject's `/BBox` and resources).
+ */
+type Piece = string | { text: string } | { stream: string; dict?: string }
 
 interface Encryption {
   /** Encrypt `data` as part of object `num` (generation 0). */
@@ -368,15 +398,29 @@ function writeTides(security: { password: string } | null): Uint8Array {
   objects.set(catalog, [
     `<< /Type /Catalog /Pages ${pagesRoot} 0 R /Outlines ${outlines} 0 R /PageMode /UseOutlines >>`
   ])
+  return serialise({ objects, next, catalog, info }, security)
+}
 
+/** A document's objects, numbered from 1, with the two the trailer names. */
+interface Draft {
+  objects: Map<number, Piece[]>
+  /** One past the highest object number reserved. */
+  next: number
+  catalog: number
+  info: number
+}
+
+/** The file: header, the objects in number order, the cross-reference table, the trailer. */
+function serialise(draft: Draft, security: { password: string } | null): Uint8Array {
+  const { objects, catalog, info } = draft
+  let next = draft.next
   const encryption = security ? standardSecurity(security.password) : null
   let encrypt = 0
   if (encryption) {
-    encrypt = reserve()
+    encrypt = next++
     objects.set(encrypt, [encryption.dictionary])
   }
 
-  // Serialise: header, the objects in number order, the cross-reference table, the trailer.
   const chunks: Uint8Array[] = []
   const offsets = new Map<number, number>()
   let length = 0
@@ -399,7 +443,8 @@ function writeTides(security: { password: string } | null): Uint8Array {
       } else {
         const raw = encode(piece.stream)
         const data = encryption ? encryption.encrypt(num, raw) : raw
-        push(encode(`<< /Length ${data.length} >>\nstream\n`))
+        const dict = piece.dict ? `${piece.dict} ` : ''
+        push(encode(`<< ${dict}/Length ${data.length} >>\nstream\n`))
         push(data)
         push(encode('\nendstream'))
       }
@@ -423,6 +468,208 @@ function writeTides(security: { password: string } | null): Uint8Array {
     at += chunk.length
   }
   return out
+}
+
+// ---------------------------------------------------------------------------------------------
+// The mooring application: one page with an AcroForm (PDF 32000-1 §12.7)
+// ---------------------------------------------------------------------------------------------
+
+/** A form field's box on the page, in points: `[left, bottom, right, top]`. */
+type Rect = [number, number, number, number]
+
+const FORM_ROWS: Array<{ label: string; y: number }> = [
+  { label: 'Applicant', y: 648 },
+  { label: 'Vessel', y: 608 },
+  { label: 'Berth', y: 568 },
+  { label: 'Season', y: 528 },
+  { label: 'Electricity', y: 488 },
+  { label: 'Notes', y: 448 }
+]
+const FIELD_LEFT = 160
+const FIELD_RIGHT = PAGE_WIDTH - MARGIN
+const FIELD_COLOURS = '/MK << /BC [0.55 0.6 0.65] /BG [0.973 0.98 0.988] >> /BS << /W 1 /S /S >>'
+const TOGGLE_COLOURS = '/MK << /BC [0.55 0.6 0.65] /BG [1 1 1] >> /BS << /W 1 /S /S >>'
+
+/**
+ * The `form` document: a mooring application whose fields are every kind of widget pdf.js's
+ * form layer draws – two single-line text fields (one filled), a radio group, a combo box, a
+ * checkbox, a multi-line text field and a push button that resets the form. The page draws the
+ * band and the labels; the fields are the AcroForm's, each with its own appearance where a
+ * toggle needs one (a ZapfDingbats tick and dot), so a viewer that draws appearances rather
+ * than widgets shows the same form.
+ */
+function writeForm(): Uint8Array {
+  const objects = new Map<number, Piece[]>()
+  let next = 1
+  const reserve = (): number => next++
+  const catalog = reserve()
+  const pagesRoot = reserve()
+  const font = reserve()
+  const fontBold = reserve()
+  const dingbats = reserve()
+  const info = reserve()
+  const page = reserve()
+  const content = reserve()
+  const applicant = reserve()
+  const vessel = reserve()
+  const berth = reserve()
+  const pontoon = reserve()
+  const swinging = reserve()
+  const radioOn = reserve()
+  const radioOff = reserve()
+  const season = reserve()
+  const electricity = reserve()
+  const checkOn = reserve()
+  const checkOff = reserve()
+  const notes = reserve()
+  const clear = reserve()
+  const clearFace = reserve()
+
+  objects.set(font, [
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>'
+  ])
+  objects.set(fontBold, [
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>'
+  ])
+  objects.set(dingbats, ['<< /Type /Font /Subtype /Type1 /BaseFont /ZapfDingbats >>'])
+
+  // The page: the band, a line of guidance, a label per row, the footer.
+  const ops: string[] = []
+  const text = (s: string, f: string, size: number, x: number, y: number, rgb: string): void => {
+    ops.push(`BT ${rgb} rg /${f} ${size} Tf ${x} ${y} Td (${escapeLiteral(s)}) Tj ET`)
+  }
+  ops.push(`0.051 0.361 0.478 rg 0 ${PAGE_HEIGHT - 96} ${PAGE_WIDTH} 96 re f`)
+  text('Mooring application', 'F2', 26, MARGIN, PAGE_HEIGHT - 52, '1 1 1')
+  text(
+    'Estuary Harbour Office - berths for the coming season',
+    'F1',
+    12,
+    MARGIN,
+    PAGE_HEIGHT - 76,
+    '0.85 0.92 0.95'
+  )
+  text(
+    'Fill in the form and save a copy; the harbour office reads the saved file.',
+    'F1',
+    11,
+    MARGIN,
+    PAGE_HEIGHT - 96 - 26,
+    '0.114 0.153 0.2'
+  )
+  for (const row of FORM_ROWS) text(row.label, 'F2', 11, MARGIN, row.y, '0.114 0.153 0.2')
+  text('Pontoon', 'F1', 11, FIELD_LEFT + 24, 568, '0.114 0.153 0.2')
+  text('Swinging mooring', 'F1', 11, FIELD_LEFT + 164, 568, '0.114 0.153 0.2')
+  text('Hook-up at the berth', 'F1', 11, FIELD_LEFT + 24, 488, '0.114 0.153 0.2')
+  text(
+    'Berths are allocated in order of application once the season opens.',
+    'F1',
+    9,
+    MARGIN,
+    MARGIN,
+    '0.5 0.5 0.55'
+  )
+  objects.set(content, [{ stream: ops.join('\n') }])
+
+  const widget = (
+    name: string,
+    kind: string,
+    rect: Rect,
+    extra: string,
+    colours = FIELD_COLOURS
+  ): string =>
+    `<< /Type /Annot /Subtype /Widget ${kind} /T (${name}) /Rect [${rect.join(' ')}] /F 4 /P ${page} 0 R ${colours} ${extra} >>`
+  const textField = (name: string, rect: Rect, value: string, flags = 0): string =>
+    widget(
+      name,
+      '/FT /Tx' + (flags ? ` /Ff ${flags}` : ''),
+      rect,
+      `/DA (/Helv 11 Tf 0 g) /V (${escapeLiteral(value)})`
+    )
+  objects.set(applicant, [
+    textField(PREVIEW_FORM_FIELDS.applicant, [FIELD_LEFT, 640, FIELD_RIGHT, 666], '')
+  ])
+  objects.set(vessel, [
+    textField(PREVIEW_FORM_FIELDS.vessel, [FIELD_LEFT, 600, FIELD_RIGHT, 626], 'Grey Seal')
+  ])
+  // The radio group: the field is the parent (Radio and NoToggleToOff set), its kids the two
+  // widgets, each showing its own on state and the shared off state.
+  objects.set(berth, [
+    `<< /FT /Btn /Ff 49152 /T (${PREVIEW_FORM_FIELDS.berth}) /V /Pontoon /DA (/ZaDb 0 Tf 0 g) /Kids [${pontoon} 0 R ${swinging} 0 R] >>`
+  ])
+  const radio = (state: string, rect: Rect, as: string): string =>
+    `<< /Type /Annot /Subtype /Widget /Parent ${berth} 0 R /Rect [${rect.join(' ')}] /F 4 /P ${page} 0 R ${TOGGLE_COLOURS} /AS /${as} /AP << /N << /${state} ${radioOn} 0 R /Off ${radioOff} 0 R >> >> >>`
+  objects.set(pontoon, [radio('Pontoon', [FIELD_LEFT, 560, FIELD_LEFT + 16, 576], 'Pontoon')])
+  objects.set(swinging, [radio('Swinging', [FIELD_LEFT + 140, 560, FIELD_LEFT + 156, 576], 'Off')])
+  const face = (bbox: string, fonts: string, stream: string): Piece => ({
+    dict: `/Type /XObject /Subtype /Form /BBox [${bbox}] /Resources << /Font << ${fonts} >> >>`,
+    stream
+  })
+  const toggleFonts = `/ZaDb ${dingbats} 0 R`
+  // ZapfDingbats: "l" is the filled circle, "4" the tick.
+  objects.set(radioOn, [
+    face('0 0 16 16', toggleFonts, 'BT 0.114 0.153 0.2 rg /ZaDb 11 Tf 3.6 3.6 Td (l) Tj ET')
+  ])
+  objects.set(radioOff, [face('0 0 16 16', toggleFonts, '')])
+  objects.set(season, [
+    widget(
+      PREVIEW_FORM_FIELDS.season,
+      '/FT /Ch /Ff 131072',
+      [FIELD_LEFT, 520, FIELD_LEFT + 180, 546],
+      '/DA (/Helv 11 Tf 0 g) /Opt [(Short stay) (Season) (Annual)] /V (Season)'
+    )
+  ])
+  objects.set(electricity, [
+    widget(
+      PREVIEW_FORM_FIELDS.electricity,
+      '/FT /Btn',
+      [FIELD_LEFT, 480, FIELD_LEFT + 16, 496],
+      `/DA (/ZaDb 0 Tf 0 g) /V /Off /AS /Off /AP << /N << /Yes ${checkOn} 0 R /Off ${checkOff} 0 R >> >>`,
+      TOGGLE_COLOURS
+    )
+  ])
+  objects.set(checkOn, [
+    face('0 0 16 16', toggleFonts, 'BT 0.114 0.153 0.2 rg /ZaDb 12 Tf 2.4 3.2 Td (4) Tj ET')
+  ])
+  objects.set(checkOff, [face('0 0 16 16', toggleFonts, '')])
+  objects.set(notes, [
+    textField(PREVIEW_FORM_FIELDS.notes, [FIELD_LEFT, 340, FIELD_RIGHT, 456], '', 4096)
+  ])
+  objects.set(clear, [
+    widget(
+      PREVIEW_FORM_FIELDS.clear,
+      '/FT /Btn /Ff 65536',
+      [FIELD_LEFT, 296, FIELD_LEFT + 120, 322],
+      `/DA (/Helv 11 Tf 0 g) /A << /S /ResetForm >> /AP << /N ${clearFace} 0 R >>`,
+      '/MK << /CA (Clear form) /BC [0.051 0.361 0.478] /BG [0.902 0.941 0.961] >> /BS << /W 1 /S /S >>'
+    )
+  ])
+  objects.set(clearFace, [
+    face(
+      '0 0 120 26',
+      `/Helv ${font} 0 R`,
+      '0.902 0.941 0.961 rg 0 0 120 26 re f BT 0.051 0.361 0.478 rg /Helv 11 Tf 32 9 Td (Clear form) Tj ET'
+    )
+  ])
+
+  const annots = [applicant, vessel, pontoon, swinging, season, electricity, notes, clear]
+  const fields = [applicant, vessel, berth, season, electricity, notes, clear]
+  objects.set(page, [
+    `<< /Type /Page /Parent ${pagesRoot} 0 R /MediaBox [0 0 ${PAGE_WIDTH} ${PAGE_HEIGHT}] /Resources << /Font << /F1 ${font} 0 R /F2 ${fontBold} 0 R >> >> /Contents ${content} 0 R /Annots [${annots.map((n) => `${n} 0 R`).join(' ')}] >>`
+  ])
+  objects.set(pagesRoot, [`<< /Type /Pages /Kids [${page} 0 R] /Count 1 >>`])
+  objects.set(info, [
+    '<< /Title ',
+    { text: 'Mooring application' },
+    ' /Author ',
+    { text: 'Estuary Harbour Office' },
+    ' /Producer ',
+    { text: 'Zenium preview host' },
+    ' >>'
+  ])
+  objects.set(catalog, [
+    `<< /Type /Catalog /Pages ${pagesRoot} 0 R /AcroForm << /Fields [${fields.map((n) => `${n} 0 R`).join(' ')}] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv ${font} 0 R /ZaDb ${dingbats} 0 R >> >> >> >>`
+  ])
+  return serialise({ objects, next, catalog, info }, null)
 }
 
 /** Latin-1: every character of the drafts is one byte, and the PDF's own syntax is ASCII. */
