@@ -1,7 +1,7 @@
 // The Kotlin engine's fixture is compared here, test-only (the core itself never touches Node).
 // eslint-disable-next-line no-restricted-imports
 import { readFileSync } from 'node:fs'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import {
   DEFAULT_BLOCKING_SETTINGS,
   DEFAULT_FILTER_LISTS,
@@ -16,7 +16,7 @@ import type { BlockingHost, BundledFilterList, StoreIO } from '../../platform'
 import { DNR_OWNERSHIP } from '../../extensions/dnr/engineSink'
 import { engineSetId } from '../../extensions/dnr/sink'
 import { CONNECTIVITY_PROBES, connectivityProbesRuleSet } from '../connectivityProbes'
-import { TEXT_MATCH_SET_ID, type TextMatch } from '../engine'
+import { TEXT_MATCH_SET_ID, type RuleEngine, type TextMatch } from '../engine'
 import { BlockingService, siteExceptionRule, type RuleSetOwnership } from '../service'
 import { documentNameFor, tagOf, type IndexFile, type SetDocument } from '../store'
 import {
@@ -667,7 +667,10 @@ describe('BlockingService warm-up', () => {
   }
 
   /** The service started with `warm` watched from before `start()`. */
-  function startWatched(h: Harness) {
+  function startWatched(h: Harness): {
+    service: BlockingService
+    warm: MockInstance<RuleEngine['warm']>
+  } {
     const service = new BlockingService(h.browser)
     services.push(service)
     const warm = vi.spyOn(service.engine, 'warm')
