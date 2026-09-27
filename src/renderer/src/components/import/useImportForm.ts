@@ -30,8 +30,9 @@ export interface ImportForm {
   progress: ImportProgress | null
   /**
    * Firefox's primary password as typed, '' by default (most profiles have none): sent with the
-   * run when the source is Firefox and its passwords are checked, kept between attempts so a
-   * mistyped one is corrected rather than typed again.
+   * run when the source is Firefox and its passwords are checked. It stays while the form is up,
+   * so a run that failed on it is corrected rather than typed again; it is dropped with a change
+   * of browser or profile (it was that profile's) and dies with the dialog.
    */
   primaryPassword: string
   /** Whether the form asks for it: a Firefox source with its passwords checked. */
@@ -171,8 +172,12 @@ export function useImportForm(
     pickGroup: (key) => {
       setGroupKey(key)
       setSourceId(null)
+      setPrimaryPassword('')
     },
-    pickProfile: setSourceId,
+    pickProfile: (id) => {
+      setSourceId(id)
+      setPrimaryPassword('')
+    },
     toggle: (kind, on) => {
       if (on) unchecked.current.delete(kind)
       else unchecked.current.add(kind)

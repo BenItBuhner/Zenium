@@ -500,6 +500,20 @@ describe('ImportService: browser profiles', () => {
     ])
   })
 
+  it('refuses Firefox passwords up front while Firefox runs, like its other kinds', async () => {
+    const h = harness()
+    seedFirefox(h.host, { running: true })
+    seedFirefoxLogins(h.host)
+    const [source] = await h.service.sources()
+    expect(source.kinds).toEqual(['bookmarks', 'history', 'passwords'])
+    const result = (await h.service.run(source.id, ['passwords']))!
+    expect(result.status).toBe('failed')
+    expect(result.error).toBe('Firefox is open. Close Firefox and try again.')
+    // Nothing was copied out from under the running browser, and the vault was not touched.
+    expect(h.host.copyRequests).toEqual([])
+    expect(h.vault.rows).toEqual([])
+  })
+
   it('keeps the primary password nowhere once the run has ended', async () => {
     const h = harness()
     seedFirefox(h.host)

@@ -338,6 +338,47 @@ describe('the import dialog', () => {
     })
   })
 
+  it('a typed primary password is one profile’s: a change of profile or browser drops it', async () => {
+    const home: ImportSource = {
+      ...FIREFOX,
+      name: 'default-release',
+      kinds: ['bookmarks', 'history', 'passwords'],
+      limits: {}
+    }
+    const work: ImportSource = { ...home, id: 'firefox:efgh.work', name: 'work' }
+    await open([CHROME_1, home, work])
+    await pick(menulists()[0]!, 'Firefox')
+    const input = (): HTMLInputElement =>
+      document.querySelector<HTMLInputElement>('[data-testid="import-primary-password"] input')!
+    const type = (value: string): void =>
+      act(() => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+        setter.call(input(), value)
+        input().dispatchEvent(new Event('input', { bubbles: true }))
+      })
+    type('hunter2')
+    expect(input().value).toBe('hunter2')
+
+    // Another profile of the same browser: its store has its own primary password (or none).
+    await pick(menulists()[1]!, 'work')
+    expect(input().value).toBe('')
+    press(submitButton())
+    expect(vi.mocked(cmd)).toHaveBeenLastCalledWith('import.run', {
+      source: work.id,
+      kinds: ['bookmarks', 'history', 'passwords']
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    // Away to another browser and back: the value typed for Firefox before does not return.
+    type('hunter2')
+    await pick(menulists()[0]!, 'Google Chrome')
+    expect(document.querySelector('[data-testid="import-primary-password"]')).toBeNull()
+    await pick(menulists()[0]!, 'Firefox')
+    expect(input().value).toBe('')
+  })
+
   it('the status line’s slot stands blank under the form, so the press of Import moves nothing (§9.30)', async () => {
     await open()
     // Present and empty in the form phase: the same 28 px box the busy line fills, a live region

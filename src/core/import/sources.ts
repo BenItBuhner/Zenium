@@ -70,8 +70,10 @@ export function passwordLimit(
   os: PlatformOs
 ): string {
   const name = BROWSER_NAMES[browser]
-  if (browser === 'firefox')
-    return `This Firefox profile has no saved passwords to read. If Firefox keeps yours elsewhere, export them from Firefox (Passwords, then Export passwords) and import the CSV file here.`
+  // Firefox writes `logins.json` with the first login it saves and `key4.db` with the profile: a
+  // profile missing either has nothing this import can read, and another profile's passwords are
+  // that profile's, listed under From / Profile – so no export route is offered here.
+  if (browser === 'firefox') return `This Firefox profile has no saved passwords to read.`
   if (browser === 'safari')
     return `Safari keeps its passwords in the Keychain. Export them from Safari (File, Export, Passwords) and import the CSV file here.`
   if (os === 'win32')

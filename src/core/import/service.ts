@@ -95,6 +95,15 @@ function emptyOutcome(): ImportKindOutcome {
 }
 
 /**
+ * A Firefox key-store or login-store failure (a wrong primary password, a missing key, a store
+ * not in NSS's shape) reads as itself, not as a generic "could not read key4.db"; the copy and
+ * lock failures stay for `readFailure`.
+ */
+function firefoxFailure(error: unknown): unknown {
+  return error instanceof FirefoxLoginsError ? new ImportError(error.message) : error
+}
+
+/**
  * Chrome's "Import bookmarks and settings" (ID-23): the sources on the machine, one import at
  * a time from a browser profile or a picked file, its progress and result as `UIState.import`.
  * Browser databases are read from a temp copy (the host's `copyToTemp`), never in place; a
@@ -400,6 +409,10 @@ export class ImportService {
     outcome: ImportKindOutcome,
     primaryPassword: string
   ): Promise<void> {
+    // One rule for every Firefox kind: a running Firefox is refused up front. Its key store could
+    // be copied out from under it on Linux and macOS, but the copy fails on Windows anyway and a
+    // profile mid-write is not one to read.
+    this.refuseIfRunning(source)
     const host = this.requireHost()
     const loginsPath = joinPath(source.path, FIREFOX_FILES.logins)
     const keyPath = joinPath(source.path, FIREFOX_FILES.key)
@@ -409,14 +422,16 @@ export class ImportService {
       try {
         return deriveFirefoxKey(db, primaryPassword)
       } catch (error) {
-        // A key-store failure (a wrong primary password, a missing key) reads as itself, not as a
-        // generic "could not read key4.db"; the copy / lock failures stay for `readFailure`.
-        if (error instanceof FirefoxLoginsError) throw new ImportError(error.message)
-        throw error
+        throw firefoxFailure(error)
       }
     })
     const loginsText = await this.readText(source, loginsPath)
-    const read = firefoxLogins(loginsText, master, this.now())
+    let read: ImportedLogins
+    try {
+      read = firefoxLogins(loginsText, master, this.now())
+    } catch (error) {
+      throw firefoxFailure(error)
+    }
     outcome.unreadable += read.unreadable
     outcome.invalid += read.invalid
     if (read.logins.length === 0) return
@@ -450,7 +465,7 @@ export class ImportService {
     return host
   }
 
-  /** Firefox's places database is held exclusively while Firefox runs: refuse up front, as Chrome does. */
+  /** Firefox's databases are held exclusively while Firefox runs: refuse up front, as Chrome does. */
   private refuseIfRunning(source: ImportSource): void {
     if (source.browser === 'firefox' && source.running)
       throw new ImportError(lockedMessage(source.browserName), true)
