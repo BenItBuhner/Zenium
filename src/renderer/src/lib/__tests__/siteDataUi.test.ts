@@ -178,7 +178,7 @@ describe('clear on exit', () => {
   it('describes the group: the choice and the passwords line on both hosts, a pending clear', () => {
     const base = ui.clearOnExitDescription(status())
     expect(base).toBe(ui.SITE_DATA_TEXT.clearOnExit.description)
-    expect(base).toContain('Saved passwords are never cleared this way')
+    expect(base).toContain('Saved passwords are never deleted this way')
     expect(base.split('. ')).toHaveLength(2)
     // The next-start timing is the phone's Clear on exit row's to say, once (#322 Q6 and (d)):
     // the group's paragraph is the same two sentences on the host that clears at its next start,

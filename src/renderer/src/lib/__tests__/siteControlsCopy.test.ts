@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { BrowsingDataCount, PermissionRule, SafetyCheckResult, UIState } from '@shared/types'
 import { contentSetting } from '@shared/contentSettings'
-import { RANGE_OPTIONS, clearedToast, countLine } from '../browsingData'
+import { RANGE_OPTIONS, clearedToast, countLine, rangeLabel } from '../browsingData'
 import { headline, passwordsSummary, safetyRows, worstState } from '../safetyCheck'
 import {
   bySite,
@@ -112,22 +112,44 @@ describe('Site settings rows', () => {
   })
 })
 
-describe('Clear browsing data copy', () => {
+describe('Delete browsing data copy', () => {
   it("names Chrome's five ranges, the last hour first", () => {
     expect(RANGE_OPTIONS.map((o) => o.value)).toEqual(['hour', 'day', 'week', 'month', 'all'])
     expect(RANGE_OPTIONS[0].label).toBe('Last hour')
     expect(RANGE_OPTIONS[4].label).toBe('All time')
   })
 
-  it('lists what was cleared as a sentence', () => {
-    expect(clearedToast([])).toBe('Nothing to clear')
-    expect(clearedToast(['history'])).toBe('Cleared history')
-    expect(clearedToast(['history', 'cookies', 'cache'])).toBe(
-      'Cleared history, cookies and site data and the cache'
-    )
-    expect(clearedToast(['passwords', 'autofill'])).toBe(
-      'Cleared saved passwords and autofill data'
-    )
+  it("names the period deleted in Chrome Android's quick-delete shape, never the types", () => {
+    // `IDS_QUICK_DELETE_SNACKBAR_MESSAGE` "<TIME_PERIOD> deleted", the period the picker's own
+    // string (`TimePeriodUtils.getTimePeriodString` → `IDS_CLEAR_BROWSING_DATA_TAB_PERIOD_*`);
+    // `IDS_QUICK_DELETE_SNACKBAR_ALL_TIME_MESSAGE` "Deleted" for all time. A catalogue line
+    // (§9.33): no full stop. The types the user ticked are the form's, not the toast's (W8-7).
+    expect(clearedToast('hour', ['history'])).toBe('Last hour deleted')
+    expect(clearedToast('day', ['history', 'cookies', 'cache'])).toBe('Last 24 hours deleted')
+    expect(clearedToast('week', ['cache'])).toBe('Last 7 days deleted')
+    expect(clearedToast('month', ['passwords', 'downloads'])).toBe('Last 4 weeks deleted')
+    expect(clearedToast('all', ['history', 'cookies', 'cache'])).toBe('Deleted')
+    // Whatever was ticked, the same line for the same range.
+    expect(clearedToast('hour', ['passwords'])).toBe(clearedToast('hour', ['history', 'cache']))
+  })
+
+  it('takes the period from the one range-label source the picker uses, so a new range needs no second edit', () => {
+    for (const option of RANGE_OPTIONS) {
+      expect(rangeLabel(option.value)).toBe(option.label)
+      expect(clearedToast(option.value, ['history'])).toBe(
+        option.value === 'all' ? 'Deleted' : `${option.label} deleted`
+      )
+    }
+    for (const option of RANGE_OPTIONS) {
+      const toast = clearedToast(option.value, ['history'])
+      expect(toast).not.toMatch(/\.$/)
+      expect(toast).toMatch(/^(Last .+ deleted|Deleted)$/)
+    }
+  })
+
+  it('reads "Nothing deleted" in the same voice when nothing went', () => {
+    expect(clearedToast('hour', [])).toBe('Nothing deleted')
+    expect(clearedToast('all', [])).toBe('Nothing deleted')
   })
 
   it('counts each type in its unit, notes when the range does not apply, and why a type is unavailable', () => {

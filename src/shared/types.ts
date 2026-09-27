@@ -5757,6 +5757,12 @@ export interface Commands {
   'newtab.updateShortcut': { args: { id: string; title: string; url: string }; result: void }
   'newtab.removeShortcut': { args: { id: string }; result: void }
   'newtab.reorderShortcuts': { args: { ids: string[] }; result: void }
+  /**
+   * The Undo of the phone tile menu's Remove (NTP-07), the toast's one action: the tile back –
+   * a pin at the slot it held, a most visited site's host back among the most visited. False
+   * when `url` is not the last removal's (a later removal took the toast, or Undo ran already).
+   */
+  'newtab.undoRemove': { args: { url: string }; result: boolean }
   /** Hide or show one of the Magic Stack's modules on this device (NTP-16). */
   'newtab.setModuleHidden': { args: { id: MagicStackModuleId; hidden: boolean }; result: void }
   /** Pick a background image from disk (`capabilities` gate it; resolves false when cancelled). */
@@ -6938,9 +6944,11 @@ export interface Events {
   /**
    * A message in the chrome's toast slot; `action`, when the core sends one, is the toast's
    * trailing action and the command the chrome runs when it is picked (the action clock,
-   * §9.33). Absent for every toast that has none, as before.
+   * §9.33). Absent for every toast that has none, as before. `duration`, when the core sends
+   * one, is the toast's clock in ms in place of the chrome's default for its kind – §9.33's
+   * 8 s for a toast whose action is Undo (`TOAST_UNDO_MS`).
    */
-  toast: { message: string; kind?: 'info' | 'error'; action?: ToastAction }
+  toast: { message: string; kind?: 'info' | 'error'; action?: ToastAction; duration?: number }
   /**
    * Take Screenshot put the visible page in the gallery (SH-07): the chrome shows the preview
    * card in the toast's slot – the thumbnail, Share | Delete, Capture more – for `tabId`'s page.

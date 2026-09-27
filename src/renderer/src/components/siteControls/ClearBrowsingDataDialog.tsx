@@ -20,17 +20,19 @@ import {
 import { useClearForm, type ClearForm } from './useClearForm'
 
 /**
- * Clear browsing data on a mouse (design-language-v2-draft §9.5, §9.11–§9.14, §9.20, §9.23,
- * §9.30): a `--v2-dialog` through the frame dialog host at the 400 form width, the type list
- * being one column. A title block, the time range as a menulist, Basic or Advanced as plain
- * radios, then a checkbox per type with a line under it saying how much the range holds
+ * Delete browsing data on a mouse (design-language-v2-draft §9.5, §9.11–§9.14, §9.20, §9.23,
+ * §9.30; Chrome's words since M124 – `IDS_CLEAR_BROWSING_DATA_TITLE` "Delete browsing data",
+ * `IDS_SETTINGS_CLEAR_DATA` "Delete data" – over Chrome's own `clear` identifiers): a
+ * `--v2-dialog` through the frame dialog host at the 400 form width, the type list being one
+ * column. A title block, the time range as a menulist, Basic or Advanced as plain radios, then
+ * a checkbox per type with a line under it saying how much the range holds
  * (`privacy.clearBrowsingDataCounts`, read again for every range), and the dialog form of
- * footer: Cancel and the primary Clear data 16 under the last row, no hairline. Passwords need
+ * footer: Cancel and the primary Delete data 16 under the last row, no hairline. Passwords need
  * re-authentication: the outcome of `privacy.clearBrowsingData` says whether to ask for the
  * vault passphrase (a field appears under the list), to set one first, or that the OS refused;
- * nothing is cleared until it passes. While it clears the form is busy (§9.30): every field
+ * nothing is deleted until it passes. While it deletes the form is busy (§9.30): every field
  * keeps its value at full opacity and takes no edit, the range and the boxes read-only, the
- * passphrase masked in place; only Clear data is busy and Cancel sits at .4. A refused
+ * passphrase masked in place; only Delete data is busy and Cancel sits at .4. A refused
  * passphrase clears the field, which takes the focus back under its validation text; on success
  * the dialog closes with its values still shown until it is gone. Mounted by `TabDialogs`
  * while `clearBrowsingDataOpen` is set. The phone's form of the same surface is a sheet of the
@@ -63,8 +65,8 @@ function ClearDialog(): JSX.Element {
     >
       <TitleBlock
         id={titleId}
-        title="Clear browsing data"
-        description="Removes what Zenium kept from the time range you choose, in every container."
+        title="Delete browsing data"
+        description="Deletes what Zenium kept from the time range you choose, in every container."
         scrolled={scrolled}
       />
       <div
@@ -84,7 +86,7 @@ function ClearDialog(): JSX.Element {
           onClick={state.submit}
           data-testid="clear-data-submit"
         >
-          Clear data
+          Delete data
         </BusyButton>
       </Footer>
     </DesktopDialog>

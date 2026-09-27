@@ -103,7 +103,7 @@ describe('the media sheet', () => {
 })
 
 describe('chrome surfaces over the content', () => {
-  it('counts the Clear browsing data dialog as a surface that covers the page and holds the keyboard', () => {
+  it('counts the Delete browsing data dialog as a surface that covers the page and holds the keyboard', () => {
     expect(overlayCoversContent(idle())).toBe(false)
     expect(chromeNeedsKeyboard()).toBe(false)
     uiStore.set({ clearBrowsingDataOpen: true })
@@ -194,7 +194,7 @@ describe('chrome surfaces over the content', () => {
     }
   })
 
-  it('opens Clear browsing data once, taking the keyboard, and gives it back on close', async () => {
+  it('opens Delete browsing data once, taking the keyboard, and gives it back on close', async () => {
     await openClearBrowsingData(null)
     expect(idle().clearBrowsingDataOpen).toBe(true)
     expect(run).toHaveBeenCalledWith('focus.chrome', undefined)

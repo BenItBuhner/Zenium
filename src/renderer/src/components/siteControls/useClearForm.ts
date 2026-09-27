@@ -13,7 +13,7 @@ import { clearedToast } from '@renderer/lib/browsingData'
 import { pushToast } from '@renderer/lib/ui'
 
 /**
- * The state of the Clear browsing data form, shared by the desktop dialog
+ * The state of the Delete browsing data form, shared by the desktop dialog
  * (`ClearBrowsingDataDialog`) and the phone form sheet the Settings builder opens
  * (`ClearBrowsingDataForm`): the range, Basic or Advanced, the types checked, the counts for the
  * range (`privacy.clearBrowsingDataCounts`, read again for every range), and the submission
@@ -103,7 +103,8 @@ export function useClearForm(onDone: () => void): ClearForm {
       (outcome: ReauthOutcome<ClearBrowsingDataResult>) => {
         switch (outcome.status) {
           case 'ok':
-            pushToast(clearedToast(outcome.value.cleared))
+            // The toast names the period the form cleared, in the picker's words.
+            pushToast(clearedToast(args.range, outcome.value.cleared))
             onDone()
             return
           case 'passphrase':
@@ -129,7 +130,7 @@ export function useClearForm(onDone: () => void): ClearForm {
             setForm((f) => ({
               ...f,
               busy: false,
-              error: outcome.reason ?? 'Authentication did not pass; nothing was cleared'
+              error: outcome.reason ?? 'Authentication did not pass; nothing was deleted'
             }))
         }
       },
