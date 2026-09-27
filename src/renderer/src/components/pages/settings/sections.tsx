@@ -1241,7 +1241,7 @@ function touchpadSwipeGroup({ state, set }: SectionContext): RowGroup {
         kind: 'switch',
         id: 'touchpad-swipe-navigate',
         label: 'Swipe between pages using a touchpad',
-        description: 'Navigate back and forth by swiping with two fingers on the touchpad',
+        description: 'Navigate back and forth by swiping with two fingers on the touchpad.',
         keywords: ['trackpad', 'two fingers', 'back', 'forward', 'history', 'gesture'],
         checked: state.settings.touchpadSwipeToNavigate !== false,
         onChange: (v) => set({ touchpadSwipeToNavigate: v })

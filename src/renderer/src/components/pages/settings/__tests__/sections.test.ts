@@ -2767,7 +2767,7 @@ describe('Accessibility › Read aloud on a host with a speech engine', () => {
     expect(swipe).toMatchObject({
       kind: 'switch',
       label: 'Swipe between pages using a touchpad',
-      description: 'Navigate back and forth by swiping with two fingers on the touchpad',
+      description: 'Navigate back and forth by swiping with two fingers on the touchpad.',
       checked: true
     })
     expect(swipe.layouts).toBeUndefined()

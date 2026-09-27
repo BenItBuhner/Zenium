@@ -1317,7 +1317,7 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         const val SWIPE_STEP_MS = 8L
         /** Chrome's row (`browser_ui_strings.grd:1039-1044`): its title and its summary, verbatim. */
         const val TOUCHPAD_ROW_LABEL = "Swipe between pages using a touchpad"
-        const val TOUCHPAD_ROW_DESCRIPTION = "Navigate back and forth by swiping with two fingers on the touchpad"
+        const val TOUCHPAD_ROW_DESCRIPTION = "Navigate back and forth by swiping with two fingers on the touchpad."
         const val THREE_BUTTON = "threebutton"
         const val GESTURAL = "gestural"
         const val THREE_BUTTON_OVERLAY = "com.android.internal.systemui.navbar.threebutton"
