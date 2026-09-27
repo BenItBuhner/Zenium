@@ -322,6 +322,10 @@ export function harness(
         // `TabManager.afterFrame`); the phone's has no word to give. Not a recorded call: the
         // menus never ask it.
         frameDrawn: capabilities.windows ? () => Promise.resolve(0) : undefined,
+        // The phone's frame-owner protocol (`imageThumbnailByOwner`, `platform.ts`) is a verb
+        // of the host's, which neither harness has unless a test gives its view one: the
+        // desktop has no such verb, an APK before it none either.
+        imageThumbnailByOwner: undefined,
         ...(opts.view ?? {})
       } as unknown as TabView,
       {

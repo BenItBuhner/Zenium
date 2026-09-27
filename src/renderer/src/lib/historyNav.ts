@@ -1,3 +1,4 @@
+import type { Tab, UIState } from '@shared/types'
 import { run } from './api'
 import { rubberBand } from './gestures/swipe'
 import {
@@ -8,6 +9,7 @@ import {
   type SpringConfig
 } from './motion/spring'
 import { REDUCED_FADE_MS } from './motion/fade'
+import { dragBack, dragCloseTarget, type CloseTarget } from './back'
 import { activeTab } from './selectors'
 import { createStore } from './store'
 import { browserStore } from './ui'
@@ -35,6 +37,17 @@ import { browserStore } from './ui'
  * spring. The bubble is drawn by `HistoryNavBubble` off {@link onHistoryNavFrame}, on transform
  * and opacity only – in the chrome's DOM where the chrome is on top, or by a host that draws the
  * disc itself ({@link HistoryNavHost}) where the pages are layered above the chrome.
+ *
+ * A back drag is always a drag (Chrome's `NavigationHandler.canNavigate`: "navigating back is
+ * considered always possible – actual navigation, closing tab, or exiting app"): at the first
+ * page of the tab's history the release performs Chrome's back at the root (`lib/back.ts`,
+ * `dragBack`), and while the drag is armed the bubble carries the caption Chrome's
+ * `NavigationBubble` shows for it – 'Close tab' or 'Close Zenium' ({@link captionText}, Chrome's
+ * `CloseTarget`), the pill widening out of the disc on the growth's spring
+ * ({@link HistoryNavFrame.caption}) and closing again as the finger eases back under the
+ * threshold (`SideSlideLayout.pull()`: `showCaption` while `mWillNavigate`, `hideCloseIndicator`
+ * after). A page turn – the page's own back, the tab starting over as a new-tab page (Chrome's
+ * new-tab page history entry) – carries no caption.
  */
 
 export type HistoryNavEdge = 'left' | 'right'
@@ -60,6 +73,12 @@ export interface HistoryNavState {
   phase: HistoryNavPhase
   /** Letting go now would navigate: the motion is past the threshold. */
   armed: boolean
+  /**
+   * What the drag's release would close where the page has no back of its own – the caption the
+   * bubble carries while armed (Chrome's `CloseTarget`); `none` for a page turn, and for every
+   * forward drag. Fixed at the drag's start, as Chrome sets `CLOSE_INDICATOR` at `triggerUi`.
+   */
+  closeTarget: CloseTarget
 }
 
 /** What the bubble draws from, every frame while anything moves. */
@@ -73,6 +92,12 @@ export interface HistoryNavFrame {
    * (full, at the threshold). Under reduced motion 1 for the whole drag (v2 §11.9).
    */
   grow: number
+  /**
+   * How far the caption's pill has come out of the disc: 0 (a disc) to 1 (the whole caption),
+   * on the growth's spring while the drag is armed and has a close target ({@link captionShown}),
+   * back to 0 as the finger eases under the threshold. Under reduced motion 0 or 1 outright.
+   */
+  caption: number
 }
 
 /** Chrome's `RAW_SWIPE_LIMIT_DP`: one drag distance, CSS px. */
@@ -177,19 +202,145 @@ export function navGrowth(motion: number): number {
   return Math.min(1, Math.max(0, motion) / NAV_THRESHOLD)
 }
 
+/**
+ * Whether the bubble carries its caption: Chrome's `SideSlideLayout.pull()` shows the close
+ * indicator only while `mWillNavigate` and only when there is one (`CloseTarget.NONE` shows
+ * nothing) – the caption is the threshold's second sign, after the disc's growth and the tap,
+ * and goes again as the finger eases back under it.
+ */
+export function captionShown(armed: boolean, closeTarget: CloseTarget): boolean {
+  return armed && closeTarget !== 'none'
+}
+
+/**
+ * The caption's text: Chrome's `NavigationBubble.showCaption` – "Close tab" for the tab, "Close
+ * %app%" for the app (`android_chrome_strings.grd`: `IDS_OVERSCROLL_NAVIGATION_CLOSE_TAB`,
+ * `IDS_OVERSCROLL_NAVIGATION_CLOSE_CHROME`); null for a page turn.
+ */
+export function captionText(closeTarget: CloseTarget): string | null {
+  switch (closeTarget) {
+    case 'tab':
+      return 'Close tab'
+    case 'app':
+      return 'Close Zenium'
+    case 'none':
+      return null
+  }
+}
+
+/**
+ * Chrome's `COLOR_TRANSITION_DURATION_MS` (`NavigationBubble.java` l.51): the arrow's tint to the
+ * accent as the drag arms, and back as it disarms.
+ */
+export const TINT_MS = 250
+/** The tint under reduced motion: §11.3's 120 ms, a tween still (the lead's 04:34 ruling). */
+export const REDUCED_TINT_MS = REDUCED_FADE_MS
+/**
+ * The custom property the DOM disc writes the tint to, 0 the text ink to 1 the accent, and
+ * `main.css` mixes the glyph's and the caption's `color` from (`.zen-histnav-glyph`,
+ * `.zen-histnav-caption`).
+ */
+export const TINT_PROPERTY = '--zen-histnav-tint'
+
+/**
+ * The arrow's tint as the drag arms, on the frames the machine paints and the clock between
+ * them: Chrome's `NavigationBubble` runs its arrow's tint from the ink to the accent over 250 ms
+ * as `willNavigate()` turns true and back over 250 ms as it turns false (152.0.7977.89
+ * `NavigationBubble.java` l.51, l.101–102 the colour animator, l.201–206 `setImageTint`).
+ * Chrome's 250 ms; the reversal from the standing value is the lead's ruling (04:34, v2 §11.9
+ * amended), Chrome's own restarts from 0 – `setImageTint` swaps the two endpoints and `start()`s
+ * the animator afresh (l.205), so its arrow jumps to the far colour mid-tint and eases from
+ * there, where a finger that eases back under the threshold mid-tint here takes the colour back
+ * from where it is, with no jump. So: a value 0 (the text ink) to 1 (the accent) moving toward
+ * its target at the leg's rate, the rising `armed` setting the target to 1 and the falling one
+ * to 0, each leg starting from the value as it stands, the ends exact. Under reduced motion the
+ * leg is §11.3's 120 ms – a shorter tween, not a jump (the lead's 04:34 ruling, v2 §11.9
+ * amended for the arrow alone). A null frame (the bubble down) resets it, so the next drag
+ * starts in the ink.
+ *
+ * Written per frame, like `fadeOpacity`: the reduced-motion stylesheet removes every transition
+ * it does not re-declare and re-declares opacity fades alone (`reducedMotion.test.ts`), so a CSS
+ * transition could not carry a 120 ms colour tween; the same class in Kotlin drives the host's
+ * disc (`HistoryNavBubbleView.kt` `ArmedTint`), so both discs mix the one ink the one way. The
+ * DOM disc writes the value to `--zen-histnav-tint` for `main.css` to mix the arrow's and the
+ * caption's `color` from (one ink per pill); the fill and the hairline never tint.
+ */
+export class ArmedTint {
+  /** Where the tint stands: 0 the text ink, 1 the accent. */
+  value = 0
+  private target = 0
+  private durationMs = TINT_MS
+  /** The leg under way, as it started: the value it left from and when – each step lands where the clock says, no residue. */
+  private legFrom = 0
+  private legStartMs = 0
+
+  /** The tint has a way to go: the disc keeps stepping it between the machine's frames. */
+  get running(): boolean {
+    return this.value !== this.target
+  }
+
+  /**
+   * A frame's armed flag (null: the bubble is down – the tint is reset at once) and reduced flag,
+   * at `nowMs` on the animation clock; the value as it stands on this frame. A change of target
+   * starts a leg from the value as it stands; the same target lets the leg run on.
+   */
+  take(armed: boolean | null, reduced: boolean, nowMs: number): number {
+    if (armed === null) {
+      this.value = 0
+      this.target = 0
+      this.legFrom = 0
+      this.legStartMs = nowMs
+      return this.value
+    }
+    this.step(nowMs)
+    const duration = reduced ? REDUCED_TINT_MS : TINT_MS
+    if (duration !== this.durationMs) {
+      this.durationMs = duration
+      this.legFrom = this.value
+      this.legStartMs = nowMs
+    }
+    const next = armed ? 1 : 0
+    if (next !== this.target) {
+      this.target = next
+      this.legFrom = this.value
+      this.legStartMs = nowMs
+    }
+    return this.value
+  }
+
+  /** The clock at `nowMs`: the value the leg's rate puts between where it left from and its target, and no further. */
+  step(nowMs: number): number {
+    if (this.value === this.target) return this.value
+    const travel = Math.max(0, nowMs - this.legStartMs) / this.durationMs
+    this.value =
+      this.target > this.legFrom
+        ? Math.min(this.target, this.legFrom + travel)
+        : Math.max(this.target, this.legFrom - travel)
+    return this.value
+  }
+}
+
 // ---------------------------------------------------------------------------
 // The machine
 // ---------------------------------------------------------------------------
 
 export interface HistoryNavMachineOptions {
-  /** Go back (`left`) or forward (`right`) in the tab's history. */
+  /**
+   * Go back (`left`) or forward (`right`) in the tab's history – for a back with no page behind,
+   * Chrome's back at the root (close the tab, leave the app; `lib/back.ts`).
+   */
   navigate(tabId: string, edge: HistoryNavEdge): void
   /** The bubble is at `frame`; runs every frame while anything moves. */
   paint(tabId: string, frame: HistoryNavFrame): void
-  /** The phase or the armed flag changed. */
+  /** The phase, the armed flag or the close target changed. */
   onChange(state: HistoryNavState): void
   /** Whether motion is reduced (springs jump, the bubble fades over 120 ms instead). */
   reduced?(): boolean
+  /**
+   * What a release of this drag would close where the page has no back of its own: the caption
+   * the bubble carries while armed. Asked once, as the drag begins; none: `none`.
+   */
+  closeTarget?(tabId: string, edge: HistoryNavEdge): CloseTarget
 }
 
 export class HistoryNavMachine {
@@ -197,15 +348,19 @@ export class HistoryNavMachine {
   private edge: HistoryNavEdge = 'left'
   private phase: HistoryNavPhase = 'idle'
   private armed = false
+  private closeTarget: CloseTarget = 'none'
   private motion = 0
   private lastTravel = 0
   private offset = 0
   private hide = 0
   private grow = 0
+  private caption = 0
   /** The release's motion: the return home, or the exit fade after a navigation. */
   private readonly spring: SpringAnimation
   /** The growth, the one spring that runs while the finger is down: its target the finger's approach. */
   private readonly growth: SpringAnimation
+  /** The caption's pill, out of the disc and back on the growth's spring as the drag arms and disarms. */
+  private readonly captioning: SpringAnimation
   private timer: ReturnType<typeof setTimeout> | null = null
 
   constructor(private readonly options: HistoryNavMachineOptions) {
@@ -220,15 +375,26 @@ export class HistoryNavMachine {
       // At rest the spring stands a hair off its target: land exactly on 0 or 1.
       () => this.grown(this.growth.destination)
     )
+    this.captioning = new SpringAnimation(
+      SPRING_SNAPPY,
+      (x) => this.captioned(x),
+      () => this.captioned(this.captioning.destination)
+    )
   }
 
   get state(): HistoryNavState {
-    return { tabId: this.tabId, edge: this.edge, phase: this.phase, armed: this.armed }
+    return {
+      tabId: this.tabId,
+      edge: this.edge,
+      phase: this.phase,
+      armed: this.armed,
+      closeTarget: this.closeTarget
+    }
   }
 
   /** Where the bubble is right now. */
   get current(): HistoryNavFrame {
-    return { offset: this.offset, hide: this.hide, grow: this.grow }
+    return { offset: this.offset, hide: this.hide, grow: this.grow, caption: this.caption }
   }
 
   /** Host → machine. */
@@ -261,14 +427,16 @@ export class HistoryNavMachine {
     if (this.phase === 'idle') return
     this.spring.stop()
     this.growth.stop()
+    this.captioning.stop()
     this.clearTimer()
     const tabId = this.tabId
     this.offset = 0
     this.hide = 0
     this.grow = 0
+    this.caption = 0
     this.motion = 0
     if (tabId) this.options.paint(tabId, this.current)
-    this.setPhase('idle', false)
+    this.setPhase('idle', false, 'none')
     this.tabId = null
   }
 
@@ -282,10 +450,13 @@ export class HistoryNavMachine {
     this.lastTravel = 0
     this.offset = 0
     this.hide = 0
+    this.caption = 0
     // Under reduced motion the disc is drawn at its full size the moment the drag arms (v2
     // §11.9): the growth is movement, and movement goes.
     this.grow = this.reduced() ? 1 : 0
-    this.setPhase('dragging', false)
+    // Chrome sets the close indicator as the UI triggers (`NavigationHandler.triggerUi`): what
+    // the release would close is read once, here, and holds for the drag.
+    this.setPhase('dragging', false, this.options.closeTarget?.(tabId, edge) ?? 'none')
     this.options.paint(tabId, this.current)
   }
 
@@ -293,11 +464,13 @@ export class HistoryNavMachine {
     this.motion = navMotion(this.motion, travel, this.lastTravel)
     this.lastTravel = travel
     this.offset = bubbleOffset(this.motion)
-    this.setPhase('dragging', releaseNavigates(this.motion))
+    this.setPhase('dragging', releaseNavigates(this.motion), this.closeTarget)
     if (this.tabId) this.options.paint(this.tabId, this.current)
     // The growth follows the finger's approach to the threshold on its spring: out as the drag
     // comes in, back as it eases out.
     this.growTo(navGrowth(this.motion))
+    // The caption is the threshold's: out as the drag arms, back as it eases under.
+    this.captionTo(captionShown(this.armed, this.closeTarget) ? 1 : 0)
   }
 
   private release(): void {
@@ -308,19 +481,50 @@ export class HistoryNavMachine {
   private commit(): void {
     const tabId = this.tabId
     if (!tabId) return
-    this.setPhase('navigating', true)
+    this.setPhase('navigating', true, this.closeTarget)
     this.options.navigate(tabId, this.edge)
     // The growth is heading for full already (the motion is past the threshold) and runs on to
     // it; the disc leaves on the exit fade where it stands (v2 §11.9), the spring resting both.
+    // The caption leaves with it, as it stands: the fade takes the pill whole.
     this.animate(0, HIDE_RUN, SPRING_SNAPPY)
   }
 
   private retract(): void {
-    this.setPhase('settling', false)
+    this.setPhase('settling', false, this.closeTarget)
     // The disc shrinks back on the same spring it grew on while the return runs (v2 §11.9).
     if (this.grow !== 0 || this.growth.running) this.growTo(0)
+    // A cancel while armed lets go of the caption too (Chrome's `hideCloseIndicator` as the
+    // bubble resets); a release short of the threshold has none out.
+    if (this.caption !== 0 || this.captioning.running) this.captionTo(0)
     // Chrome's return: the bubble runs back out over the side it came from.
     this.animate(this.offset, 0, SPRING_GENTLE)
+  }
+
+  /**
+   * Head the caption's pill for `target` (1 out, 0 in) on `SPRING_SNAPPY`, retargeted in
+   * flight. Under reduced motion it is set outright: the caption is a state, and only its
+   * motion goes (v2 §11.3).
+   */
+  private captionTo(target: number): void {
+    if (this.reduced()) {
+      if (this.caption === target) return
+      this.caption = target
+      if (this.tabId) this.options.paint(this.tabId, this.current)
+      return
+    }
+    const to = target * GROW_RUN
+    if (this.captioning.running) {
+      this.captioning.retarget(to)
+      return
+    }
+    const from = this.caption * GROW_RUN
+    if (Math.abs(from - to) < 1e-6) return
+    this.captioning.start(from, 0, to)
+  }
+
+  private captioned(x: number): void {
+    this.caption = Math.min(1, Math.max(0, x / GROW_RUN))
+    if (this.tabId) this.options.paint(this.tabId, this.current)
   }
 
   /**
@@ -374,20 +578,23 @@ export class HistoryNavMachine {
     this.step(x)
     if (this.phase === 'settling' || this.phase === 'navigating') {
       this.growth.stop()
+      this.captioning.stop()
       this.offset = 0
       this.hide = 0
       this.grow = 0
+      this.caption = 0
       this.motion = 0
       if (this.tabId) this.options.paint(this.tabId, this.current)
-      this.setPhase('idle', false)
+      this.setPhase('idle', false, 'none')
       this.tabId = null
     }
   }
 
-  private setPhase(phase: HistoryNavPhase, armed: boolean): void {
-    if (this.phase === phase && this.armed === armed) return
+  private setPhase(phase: HistoryNavPhase, armed: boolean, closeTarget: CloseTarget): void {
+    if (this.phase === phase && this.armed === armed && this.closeTarget === closeTarget) return
     this.phase = phase
     this.armed = armed
+    this.closeTarget = closeTarget
     this.options.onChange(this.state)
   }
 
@@ -402,13 +609,13 @@ export class HistoryNavMachine {
 // ---------------------------------------------------------------------------
 
 export const historyNavStore = createStore<HistoryNavState>(
-  { tabId: null, edge: 'left', phase: 'idle', armed: false },
+  { tabId: null, edge: 'left', phase: 'idle', armed: false, closeTarget: 'none' },
   'historyNav'
 )
 
 type FrameListener = (frame: HistoryNavFrame, state: HistoryNavState) => void
 const frameListeners = new Set<FrameListener>()
-let lastPainted: HistoryNavFrame = { offset: 0, hide: 0, grow: 0 }
+let lastPainted: HistoryNavFrame = { offset: 0, hide: 0, grow: 0, caption: 0 }
 
 /**
  * Per-frame value for the bubble (write DOM styles through refs; this runs every frame while
@@ -461,6 +668,14 @@ export interface HistoryNavHostFrame {
    * it is not drawn – over the gutter between the frame and the window's edge, or the sidebar.
    */
   clip: BubbleClip
+  /**
+   * How far the caption's pill is out of the disc, 0 (a disc) to 1 (the whole caption): the
+   * pill widens from the disc's far side into the page, the arrow staying where it is
+   * ({@link HistoryNavFrame.caption}).
+   */
+  caption: number
+  /** The caption's text ({@link captionText}); null when the drag has none, and `caption` stays 0. */
+  captionText: string | null
 }
 
 /** A box in window CSS px, left / top / right / bottom as `DOMRect` has them. */
@@ -516,12 +731,36 @@ export function bubbleHostFrame(
     opacity,
     armed: state.armed,
     reduced,
-    clip: anchor.clip
+    clip: anchor.clip,
+    caption: frame.caption,
+    captionText: captionText(state.closeTarget)
   }
 }
 
+/** The tab a drag is on, as the chrome's state has it right now; null once it is gone. */
+function draggedTab(tabId: string): { tab: Tab; state: UIState } | null {
+  const state = browserStore.get().state
+  const tab = state?.tabs[tabId]
+  return state && tab ? { tab, state } : null
+}
+
 const machine = new HistoryNavMachine({
-  navigate: (tabId, edge) => run(edge === 'left' ? 'tab.back' : 'tab.forward', { tabId }),
+  navigate: (tabId, edge) => {
+    if (edge === 'right') {
+      run('tab.forward', { tabId })
+      return
+    }
+    // Chrome's `NavigationHandler.navigate(back)` through the `BackActionDelegate`: the page's
+    // own back, or Chrome's back at the root – the tab closed, the app to the background.
+    const dragged = draggedTab(tabId)
+    if (dragged) dragBack(dragged.tab, dragged.state)
+    else run('tab.back', { tabId })
+  },
+  closeTarget: (tabId, edge) => {
+    if (edge === 'right') return 'none'
+    const dragged = draggedTab(tabId)
+    return dragged ? dragCloseTarget(dragged.tab, dragged.state) : 'none'
+  },
   paint: (_tabId, frame) => {
     lastPainted = frame
     const state = machine.state
@@ -551,8 +790,11 @@ if (!flags.__zenHistoryNavWired) {
   historyNavStore.subscribe(() => {
     const { armed, phase } = historyNavStore.get()
     // Crossing the threshold is a landmark: one tick, on the way out only (Chrome's KEYBOARD_TAP
-    // as `willNavigate()` turns true).
-    if (armed && !wasArmed && phase === 'dragging') run('haptic', { kind: 'tick' })
+    // as `willNavigate()` turns true). A host that draws the disc performs Chrome's constant
+    // itself on the frame that arms (`HistoryNavBubbleLayer`, one message with the disc's full
+    // frame): the chrome's tick is for the DOM disc alone.
+    if (armed && !wasArmed && phase === 'dragging' && bubbleHost === null)
+      run('haptic', { kind: 'tick' })
     wasArmed = armed
   })
   browserStore.subscribe(() => {

@@ -277,3 +277,51 @@ describe('the Android page script and a Tab entering the page (A11Y-09’s remai
     }
   })
 })
+
+describe('the Android page script and the frame-owner protocol (the phone’s image search)', () => {
+  it('answers the host’s zen:image-owner? question from every frame through the same bridge, synchronously, with the session token, and the ask of a hash it never computed as gone', async () => {
+    document.body.insertAdjacentHTML(
+      'beforeend',
+      '<img id="owned" src="https://example.com/a.png#part"><img src="https://example.com/a.png">'
+    )
+    try {
+      const nonce = '0123456789abcdef0123456789abcdef'
+      down({ v: 1, type: 'zen:image-owner?', nonce, alg: 'sha256' })
+      const answer = sent().find((m) => m.type === 'zen:image-owner')
+      // §2.5's pinned vector: the fragment cut, the same image twice as one hash.
+      expect(answer).toEqual({
+        v: 1,
+        type: 'zen:image-owner',
+        nonce,
+        hashes: ['5008d908d5e08c6645f6aa651b540491afe63dde85ea320e6774c2808abbd885'],
+        truncated: false,
+        token: '__ZEN_TOKEN__'
+      })
+      // The dispatcher's own messages are untouched by the second listener on the slot.
+      posted.length = 0
+      down({ v: 2, type: 'zen:image-owner?', nonce, alg: 'sha256' })
+      expect(sent().filter((m) => m.type === 'zen:image-owner')).toEqual([])
+      down({
+        v: 1,
+        type: 'zen:image-thumbnail',
+        nonce,
+        hash: 'f'.repeat(64),
+        bounds: { maxSide: 1000, minArea: 90000 },
+        quality: 0.4,
+        maxBytes: 20971520
+      })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(sent().filter((m) => m.type === 'zen:image-thumbnail')).toEqual([
+        {
+          v: 1,
+          type: 'zen:image-thumbnail',
+          nonce,
+          result: { ok: false, reason: 'gone' },
+          token: '__ZEN_TOKEN__'
+        }
+      ])
+    } finally {
+      document.querySelectorAll('img').forEach((img) => img.remove())
+    }
+  })
+})

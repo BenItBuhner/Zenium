@@ -2767,29 +2767,64 @@
    * arrow in the text ink; position, scale and opacity are written per frame – the disc grows
    * from .6 to 1 on its spring as the drag approaches the threshold, and is full there. Under
    * reduced motion the bubble still tracks the finger and leaves on a 120 ms fade (v2 §11.3).
+   * At the history's first page the armed disc widens into a pill with Chrome's caption ('Close
+   * tab' / 'Close Zenium'): the width is written per frame from the caption's extent, the arrow
+   * keeping its 44 box at the start and the pill clipping the caption as it comes out; the
+   * scale stays about the disc's centre.
+   * Armed, the arrow wears the accent – Chrome's 250 ms tint as the drag arms and back as it
+   * disarms (`NavigationBubble.java` `COLOR_TRANSITION_DURATION_MS`; the lead's 04:34 ruling,
+   * §11.9 amended for the arrow alone) – and the caption wears the arrow's ink, one ink per
+   * pill; the disc's fill and hairline never tint. The tint is written per frame to the disc's
+   * `--zen-histnav-tint` (0 the ink, 1 the accent; `HistoryNavBubble.tsx` off `ArmedTint`), and
+   * the two colours are mixed from it here – no transition: under reduced motion the tint rides
+   * §11.3's 120 ms, a tween the component runs, as the reduced-motion stylesheet keeps its
+   * transitions to opacity fades. The disc sits in the content frame, under no `data-surface`
+   * root, so the control accent falls back to the page family's `--v2-accent`, the token the
+   * disc's panel and text ink come from.
    */
   .zen-histnav-disc {
+    /* One ink per pill: the text ink toward the control accent by the tint, mixed once here for the glyph and the caption both. */
+    --zen-histnav-ink: color-mix(
+      in srgb,
+      var(--v2-text),
+      var(--v2-control-accent, var(--v2-accent)) calc(var(--zen-histnav-tint, 0) * 100%)
+    );
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
+    overflow: hidden;
     background: var(--v2-panel);
     border: 1px solid var(--v2-border);
     border-radius: 999px;
     box-shadow: var(--v2-shadow-panel);
+    transform-origin: 22px 50%;
     will-change: transform, opacity;
   }
   .zen-histnav[data-reduced] .zen-histnav-disc {
     transition: opacity 120ms var(--zen-ease);
   }
   .zen-histnav-glyph {
-    position: absolute;
     display: flex;
-    color: var(--v2-text);
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    height: 42px;
+    color: var(--zen-histnav-ink);
   }
   .zen-histnav-glyph svg {
     width: 20px;
     height: 20px;
     stroke-width: 1.75;
+  }
+  .zen-histnav-caption {
+    flex: none;
+    padding-inline: 0 12px;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    color: var(--zen-histnav-ink);
   }
 
   .zen-space-strip {

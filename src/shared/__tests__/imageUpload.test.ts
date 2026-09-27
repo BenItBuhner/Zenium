@@ -6,6 +6,8 @@ import {
   LENS_IMAGE_THUMBNAIL,
   bakeImagePost,
   decodeBase64,
+  encodeBase64,
+  encodeImageThumbnail,
   expandImagePost,
   imageBase64Bound,
   imageFetchScript,
@@ -13,11 +15,15 @@ import {
   imageSearchSource,
   imageThumbnailSize,
   imageUploadFormDoc,
+  isImageFetchFailure,
   parseImageFetchResult,
   parseImagePostParams,
+  readImageThumbnail,
   urlencodeImagePost,
   type ImageFetchScriptOptions,
   type ImagePost,
+  type ImageReadOptions,
+  type ImageReadWorld,
   type ImageThumbnail
 } from '../imageUpload'
 import { DEFAULT_SEARCH_ENGINES } from '../search'
@@ -704,6 +710,365 @@ describe('the image search upload (CT-32, Chrome’s image_url_post_params)', ()
       )
       expect(inits.map((i) => i.credentials)).toEqual(['include', 'omit'])
       expect(result).toEqual({ ok: false, reason: 'too-large' })
+    })
+  })
+
+  describe('the read as a function (the frame-owner’s path)', () => {
+    const JPEG = new Uint8Array([0xff, 0xd8, 0xff])
+    interface Painted {
+      canvas: { width: number; height: number }
+      fill: { style: string; rect: number[] } | null
+      draw: number[] | null
+      encode: { type: string; quality: number } | null
+    }
+    interface Stood {
+      bitmap?: { width: number; height: number } | null
+      fetch?: (input: string, init: RequestInit) => Promise<Response>
+      /** What `toJpeg` does: the stood-in JPEG (default), a `SecurityError` (`'taint'`), or nothing (`'decline'`). */
+      encode?: 'jpeg' | 'taint' | 'decline'
+      /** No 2D surface at all. */
+      noCanvas?: boolean
+      /** A detached image that loads at the size, or errors. */
+      image?: { width: number; height: number } | 'error'
+    }
+    interface Seen {
+      blobs: Blob[]
+      fetches: string[]
+      inits: RequestInit[]
+      painted: Painted[]
+      images: number
+      revoked: string[]
+    }
+    /** A world of stand-ins that record what the read asked of them, the page-script test's twins. */
+    const worldOf = (stood: Stood = {}): { world: ImageReadWorld; seen: Seen } => {
+      const seen: Seen = { blobs: [], fetches: [], inits: [], painted: [], images: 0, revoked: [] }
+      const size = stood.bitmap === undefined ? { width: 1600, height: 800 } : stood.bitmap
+      const world: ImageReadWorld = {
+        fetch: (input, init) => {
+          seen.fetches.push(input)
+          seen.inits.push(init)
+          return stood.fetch
+            ? stood.fetch(input, init)
+            : Promise.reject(new Error('no network in the test'))
+        },
+        responseBlob: (response) => response.blob(),
+        responseBody: (response) => response.body,
+        arrayBuffer: (blob) => blob.arrayBuffer(),
+        newBlob: (parts, type) => new Blob(parts, { type }),
+        createImageBitmap: size
+          ? async (blob) => {
+              seen.blobs.push(blob)
+              return { ...size, close: () => undefined } as unknown as ImageBitmap
+            }
+          : null,
+        newImage: () => {
+          seen.images++
+          const image = { naturalWidth: 0, naturalHeight: 0 } as unknown as HTMLImageElement & {
+            onload: (() => void) | null
+            onerror: (() => void) | null
+          }
+          Object.defineProperty(image, 'src', {
+            set() {
+              queueMicrotask(() => {
+                if (stood.image && stood.image !== 'error') {
+                  Object.assign(image, {
+                    naturalWidth: stood.image.width,
+                    naturalHeight: stood.image.height
+                  })
+                  image.onload?.()
+                } else image.onerror?.()
+              })
+            }
+          })
+          return image
+        },
+        createObjectURL: () => 'blob:test/1',
+        revokeObjectURL: (url) => void seen.revoked.push(url),
+        canvas: (width, height) => {
+          if (stood.noCanvas) return null
+          const painted: Painted = {
+            canvas: { width, height },
+            fill: null,
+            draw: null,
+            encode: null
+          }
+          seen.painted.push(painted)
+          const context = {
+            fillStyle: '' as string | CanvasGradient | CanvasPattern,
+            fillRect(...rect: number[]) {
+              painted.fill = { style: String(context.fillStyle), rect }
+            },
+            drawImage(_source: unknown, ...rect: number[]) {
+              painted.draw = rect
+            }
+          }
+          return {
+            context,
+            toJpeg: (quality) => {
+              painted.encode = { type: 'image/jpeg', quality }
+              if (stood.encode === 'taint') {
+                const error = new Error('tainted')
+                error.name = 'SecurityError'
+                throw error
+              }
+              if (stood.encode === 'decline') return Promise.resolve(null)
+              return Promise.resolve(new Blob([JPEG], { type: 'image/jpeg' }))
+            }
+          }
+        },
+        // Node's `atob` refuses what the browser's refuses (`@@@@`), where `Buffer` would not.
+        atob: (text) => atob(text)
+      }
+      return { world, seen }
+    }
+    const OPTIONS: ImageReadOptions = {
+      ...LENS_IMAGE_THUMBNAIL,
+      quality: IMAGE_THUMBNAIL_JPEG_QUALITY,
+      maxBytes: IMAGE_UPLOAD_MAX_BYTES
+    }
+    const bytesOf = async (blob: Blob): Promise<number[]> => [
+      ...new Uint8Array(await blob.arrayBuffer())
+    ]
+
+    it('reads a base64 data: source in place and paints the string’s thumbnail: the same size, the same fill, the same JPEG at the same quality', async () => {
+      const { world, seen } = worldOf()
+      const result = await readImageThumbnail('data:image/png;base64,AQIDBA==', OPTIONS, world)
+      expect(seen.fetches).toEqual([])
+      expect(seen.blobs).toHaveLength(1)
+      expect(seen.blobs[0]!.type).toBe('image/png')
+      await expect(bytesOf(seen.blobs[0]!)).resolves.toEqual([1, 2, 3, 4])
+      expect(result).toEqual({
+        ok: true,
+        thumbnail: {
+          base64: '/9j/',
+          contentType: 'image/jpeg',
+          width: 1000,
+          height: 500,
+          originalWidth: 1600,
+          originalHeight: 800
+        }
+      })
+      expect(seen.painted).toEqual([
+        {
+          canvas: { width: 1000, height: 500 },
+          fill: { style: '#fff', rect: [0, 0, 1000, 500] },
+          draw: [0, 0, 1000, 500],
+          encode: { type: 'image/jpeg', quality: 0.4 }
+        }
+      ])
+      const generic = await readImageThumbnail(
+        'data:image/png;base64,AQIDBA==',
+        { ...OPTIONS, ...GENERIC_IMAGE_THUMBNAIL },
+        worldOf().world
+      )
+      expect(generic).toMatchObject({ ok: true, thumbnail: { width: 600, height: 300 } })
+    })
+
+    it('reads a percent-encoded data: source, refuses one above the cap before decoding it and one that is no data at all', async () => {
+      const svg = worldOf()
+      await readImageThumbnail('data:image/svg+xml,%3Csvg%3E%20%3C/svg%3E', OPTIONS, svg.world)
+      expect(svg.seen.blobs[0]!.type).toBe('image/svg+xml')
+      await expect(svg.seen.blobs[0]!.text()).resolves.toBe('<svg> </svg>')
+      const big = worldOf()
+      expect(
+        await readImageThumbnail(
+          `data:image/png;base64,${'A'.repeat(16)}`,
+          { ...OPTIONS, maxBytes: 10 },
+          big.world
+        )
+      ).toEqual({ ok: false, reason: 'too-large' })
+      expect(big.seen.blobs).toEqual([])
+      expect(await readImageThumbnail('data:image/png;base64', OPTIONS, worldOf().world)).toEqual({
+        ok: false,
+        reason: 'fetch-failed'
+      })
+      expect(
+        await readImageThumbnail('data:image/png;base64,@@@@', OPTIONS, worldOf().world)
+      ).toEqual({ ok: false, reason: 'fetch-failed' })
+    })
+
+    it('fetches an http(s) source with the page’s credentials from the world’s fetch, streams the body against the cap and tries once more without credentials when refused', async () => {
+      const streamed = worldOf({
+        fetch: () =>
+          Promise.resolve(
+            new Response(new Uint8Array(30).fill(7), {
+              headers: { 'content-type': 'Image/PNG; charset=binary' }
+            })
+          )
+      })
+      const result = await readImageThumbnail('https://pics.example/a.png', OPTIONS, streamed.world)
+      expect(streamed.seen.inits.map((i) => i.credentials)).toEqual(['include'])
+      expect(streamed.seen.inits[0]!.cache).toBe('force-cache')
+      expect(streamed.seen.blobs[0]!.size).toBe(30)
+      expect(streamed.seen.blobs[0]!.type).toBe('image/png')
+      expect(result).toMatchObject({ ok: true })
+
+      let cancelled = false
+      const endless = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          controller.enqueue(new Uint8Array(1000).fill(1))
+        },
+        cancel() {
+          cancelled = true
+        }
+      })
+      const capped = worldOf({
+        fetch: () =>
+          Promise.resolve(new Response(endless, { headers: { 'content-type': 'image/png' } }))
+      })
+      expect(
+        await readImageThumbnail(
+          'https://pics.example/big.png',
+          { ...OPTIONS, maxBytes: 2500 },
+          capped.world
+        )
+      ).toEqual({ ok: false, reason: 'too-large' })
+      expect(capped.seen.blobs).toEqual([])
+      expect(cancelled).toBe(true)
+
+      const retried = worldOf({
+        fetch: (_input, init) =>
+          init.credentials === 'include'
+            ? Promise.reject(new TypeError('Failed to fetch'))
+            : Promise.resolve(
+                new Response(new Uint8Array(10), {
+                  headers: { 'content-type': 'image/png', 'content-length': '5000' }
+                })
+              )
+      })
+      expect(
+        await readImageThumbnail(
+          'https://cdn.example/a.png',
+          { ...OPTIONS, maxBytes: 100 },
+          retried.world
+        )
+      ).toEqual({ ok: false, reason: 'too-large' })
+      expect(retried.seen.inits.map((i) => i.credentials)).toEqual(['include', 'omit'])
+
+      const refused = worldOf({ fetch: () => Promise.reject(new TypeError('Failed to fetch')) })
+      expect(await readImageThumbnail('https://cdn.example/a.png', OPTIONS, refused.world)).toEqual(
+        { ok: false, reason: 'fetch-failed' }
+      )
+      expect(refused.seen.inits.map((i) => i.credentials)).toEqual(['include', 'omit'])
+      const notFound = worldOf({ fetch: () => Promise.resolve(new Response('', { status: 404 })) })
+      expect(
+        await readImageThumbnail('https://cdn.example/a.png', OPTIONS, notFound.world)
+      ).toEqual({ ok: false, reason: 'fetch-failed' })
+    })
+
+    it('decodes with a detached image where the bitmap path declines, releases its object URL, and reports a decode failure when neither decodes', async () => {
+      const element = worldOf({ bitmap: null, image: { width: 120, height: 60 } })
+      const result = await readImageThumbnail(
+        'data:image/svg+xml,%3Csvg/%3E',
+        OPTIONS,
+        element.world
+      )
+      expect(element.seen.images).toBe(1)
+      expect(element.seen.revoked).toEqual(['blob:test/1'])
+      expect(result).toMatchObject({
+        ok: true,
+        thumbnail: { width: 120, height: 60, originalWidth: 120, originalHeight: 60 }
+      })
+      const neither = worldOf({ bitmap: null, image: 'error' })
+      expect(
+        await readImageThumbnail('data:image/svg+xml,%3Csvg/%3E', OPTIONS, neither.world)
+      ).toEqual({ ok: false, reason: 'decode-failed' })
+      expect(neither.seen.revoked).toEqual(['blob:test/1'])
+      // A bitmap without a size is no image.
+      const empty = worldOf({ bitmap: { width: 0, height: 0 } })
+      expect(await readImageThumbnail('data:image/png;base64,AQID', OPTIONS, empty.world)).toEqual({
+        ok: false,
+        reason: 'decode-failed'
+      })
+    })
+
+    it('reports no-canvas where the world gives no 2D surface, and a declined encode as a decode failure', async () => {
+      expect(
+        await readImageThumbnail(
+          'data:image/png;base64,AQID',
+          OPTIONS,
+          worldOf({ noCanvas: true }).world
+        )
+      ).toEqual({ ok: false, reason: 'no-canvas' })
+      expect(
+        await readImageThumbnail(
+          'data:image/png;base64,AQID',
+          OPTIONS,
+          worldOf({ encode: 'decline' }).world
+        )
+      ).toEqual({ ok: false, reason: 'decode-failed' })
+    })
+
+    it('encodes an element the frame holds without a request, reports a tainted surface as such, and a surface of bytes the frame read never as tainted', async () => {
+      const image = { source: {} as CanvasImageSource, width: 1200, height: 900 }
+      const drawn = worldOf()
+      expect(await encodeImageThumbnail(image, OPTIONS, drawn.world)).toEqual({
+        ok: true,
+        thumbnail: {
+          base64: '/9j/',
+          contentType: 'image/jpeg',
+          width: 1000,
+          height: 750,
+          originalWidth: 1200,
+          originalHeight: 900
+        }
+      })
+      expect(drawn.seen.fetches).toEqual([])
+      expect(drawn.seen.painted[0]!.encode).toEqual({ type: 'image/jpeg', quality: 0.4 })
+      expect(
+        await encodeImageThumbnail(image, OPTIONS, worldOf({ encode: 'taint' }).world)
+      ).toEqual({ ok: false, reason: 'tainted' })
+      expect(await encodeImageThumbnail({ ...image, width: 0 }, OPTIONS, worldOf().world)).toEqual({
+        ok: false,
+        reason: 'decode-failed'
+      })
+      expect(await encodeImageThumbnail(image, OPTIONS, worldOf({ noCanvas: true }).world)).toEqual(
+        { ok: false, reason: 'no-canvas' }
+      )
+      // The whole read's surface holds bytes the frame itself read: `tainted` is not a word it says.
+      expect(
+        await readImageThumbnail(
+          'data:image/png;base64,AQID',
+          OPTIONS,
+          worldOf({ encode: 'taint' }).world
+        )
+      ).toEqual({ ok: false, reason: 'decode-failed' })
+    })
+
+    it('encodes base64 as the platform does, and back through decodeBase64', () => {
+      for (const bytes of [
+        [],
+        [1],
+        [1, 2],
+        [1, 2, 3],
+        [0xff, 0xd8, 0xff],
+        [0xff, 0xd8, 0xff, 0xe0, 0, 16, 74, 70],
+        Array.from({ length: 1000 }, (_, i) => (i * 31) & 0xff)
+      ]) {
+        const encoded = encodeBase64(new Uint8Array(bytes))
+        expect(encoded).toBe(Buffer.from(bytes).toString('base64'))
+        expect(Array.from(decodeBase64(encoded))).toEqual(bytes)
+      }
+    })
+
+    it('reads the protocol’s refusals back – the owner frame’s and the host’s – and still an unknown one as a decode failure', () => {
+      for (const reason of [
+        'opaque',
+        'gone',
+        'no-canvas',
+        'no-owner',
+        'timeout',
+        'unsupported'
+      ] as const) {
+        expect(parseImageFetchResult({ ok: false, reason })).toEqual({ ok: false, reason })
+        expect(isImageFetchFailure(reason)).toBe(true)
+      }
+      expect(parseImageFetchResult({ ok: false, reason: 'tainted' })).toEqual({
+        ok: false,
+        reason: 'decode-failed'
+      })
+      expect(isImageFetchFailure('tainted')).toBe(false)
+      expect(isImageFetchFailure(undefined)).toBe(false)
     })
   })
 })
