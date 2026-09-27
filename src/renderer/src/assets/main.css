@@ -9612,20 +9612,25 @@
   transform: translate3d(0, calc((1 - var(--zen-bar-hide)) * var(--zen-bar-hide-travel)), 0);
 }
 /*
- * The toast frame lifted above the sheet host (v2 §9.33, `PhoneMessages`): a toast raised by an
- * act taken in an open sheet stands above that sheet for its clock, 8 over the sheet's edge –
- * the frame's bottom is the inset's line, where the sheet's own edge is (the sheet pads its
- * content 8 + inset; the keyboard is in the inset, so a raised keyboard lifts the toast with the
- * sheet's edge), the card the layer's usual 8 inside it, the same side insets, cap and centring
- * as under the bar – and does not recede: it is over the sheet, not under it. As the sheet
- * leaves, the frame rides the sheet's own progress up from the sheet's edge, `foot × (1 − p)`
- * (`--zen-recede` is written on the frame, a registered surface: the value does not inherit),
- * so its box at p = 0 is the normal seat's box, and at the landing, when the host seats it
- * normally again, the re-seat moves nothing: `--zen-recede` is 0 on the frame from the registry
- * clearing it to the host's re-seat (the property's initial value), and the box is the same.
- * `--zen-message-foot` is what the normal seat's bottom edge stands over the inset by – the bar
- * band on the bar's edge, the gutter elsewhere – said on the lifted frame alone; the normal
- * seat's rules above are #202's, unchanged.
+ * The toast frame lifted above the sheet host (v2 §9.33, `PhoneMessages`): a toast up while a
+ * sheet stands – raised by an act taken in it, or up already as it opened – stands above that
+ * sheet for its clock, 8 over the sheet's edge and its content – the frame's bottom is the
+ * inset's line, where the sheet's own edge is (the sheet pads its content 8 + inset; the
+ * keyboard is in the inset, so a raised keyboard lifts the toast with the sheet's edge), the
+ * card the layer's usual 8 inside it, the same side insets, cap and centring as under the bar –
+ * and never over a footer's actions: a sheet with a footer band publishes where the band's top
+ * edge stands over its bottom edge (the recede registry's `footer`, the host writes it on the
+ * frame as `--zen-sheet-footer`), and the frame's bottom stands there instead, the card 8 over
+ * the band. It does not recede: it is over the sheet, not under it. As the sheet moves, the
+ * frame rides the sheet's own progress between the seat over the sheet and the normal seat,
+ * `(foot − footer) × (p − 1)` (`--zen-recede` is written on the frame, a registered surface:
+ * the value does not inherit), so its box at p = 0 is the normal seat's box: a toast up as the
+ * sheet rises goes with it to the sheet's edge, and at the landing, when the host seats it
+ * normally again, the re-seat moves nothing – `--zen-recede` is 0 on the frame from the
+ * registry clearing it to the host's re-seat (the property's initial value), and the box is the
+ * same. `--zen-message-foot` is what the normal seat's bottom edge stands over the inset by –
+ * the bar band on the bar's edge, the gutter elsewhere – said on the lifted frame alone; the
+ * normal seat's rules above are #202's, unchanged.
  */
 :root[data-form-factor='phone'] .zen-message-frame[data-lifted][data-edge='bottom'] {
   --zen-message-foot: var(--zen-phone-band);
@@ -9635,8 +9640,12 @@
   --zen-message-foot: var(--zen-padding);
 }
 :root[data-form-factor='phone'] .zen-message-frame[data-lifted][data-edge] {
-  bottom: var(--zen-inset-bottom);
-  transform: translate3d(0, calc(var(--zen-message-foot) * (var(--zen-recede, 0) - 1)), 0);
+  bottom: calc(var(--zen-inset-bottom) + var(--zen-sheet-footer, 0px));
+  transform: translate3d(
+    0,
+    calc((var(--zen-message-foot) - var(--zen-sheet-footer, 0px)) * (var(--zen-recede, 0) - 1)),
+    0
+  );
 }
 
 /* Mobile hosts: keep the chrome out of the status bar, cutouts, gesture bar and keyboard. */

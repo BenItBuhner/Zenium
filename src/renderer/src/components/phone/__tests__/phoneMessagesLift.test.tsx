@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -6,14 +8,17 @@ import type { RecedeHandle } from '@renderer/lib/motion/recede'
 import { TOAST_UNDO_MS } from '@shared/toastCard'
 
 /*
- * The phone's toasts and the sheet host (v2 draft §9.33, ruled on #637): a toast raised by an
- * act taken in an open sheet – the Site settings review's "Permissions allowed again for
- * <host> · Undo" on Allow again, "Review complete for N sites · Undo" on Got it – stands above
- * the sheet, its Undo in reach; a toast raised before the sheet opened keeps its place under
- * it, inert with the rest of the chrome; at the sheet's landing the frame is seated normally
- * again with the toast's element untouched (one announcement, its clock running on); the
- * message frame's own cards – the banner stack, and the seat #641's hint bubble takes – stay
- * where they were. The sheet here is a layer on the recede registry, as every phone sheet is.
+ * The phone's toasts and the sheet host (v2 draft §9.33, ruled on #637 and #651): a toast up
+ * while a sheet stands – the Site settings review's "Permissions allowed again for <host> ·
+ * Undo" on Allow again, "Review complete for N sites · Undo" on Got it, or a toast up already
+ * as the sheet opened (Chrome's rule: whatever snackbar is showing is re-parented into an open
+ * sheet) – stands above the sheet, its Undo in reach, for the rest of its clock; at the sheet's
+ * landing the frame is seated normally again with the toast's element untouched (one
+ * announcement, its clock running on); the message frame's own cards – the banner stack, and
+ * the seat #641's hint bubble takes – stay where they were. The lifted frame's bottom edge
+ * stands at the sheet's edge, or on the top edge of the footer band the top sheet publishes to
+ * the recede registry (`RecedeHandle.footer`), so the toast never covers a footer's actions.
+ * The sheet here is a layer on the recede registry, as every phone sheet is.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -47,7 +52,10 @@ beforeEach(() => {
     addEventListener: () => undefined,
     removeEventListener: () => undefined
   })) as unknown as typeof window.matchMedia
-  Object.defineProperty(HTMLElement.prototype, 'offsetHeight', { configurable: true, get: () => 44 })
+  Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+    configurable: true,
+    get: () => 44
+  })
   uiStore.set({ toasts: [], banners: [], screenshotCards: [] })
   host = document.createElement('div')
   document.body.appendChild(host)
@@ -99,6 +107,8 @@ const messageFrame = (): HTMLElement => {
   return el
 }
 const lifted = (): boolean => toastFrame().hasAttribute('data-lifted')
+/** What the frame says its bottom edge stands over the inset's line by (`--zen-sheet-footer`). */
+const foot = (): string => toastFrame().style.getPropertyValue('--zen-sheet-footer')
 
 const allowAgain = (onPick: () => void): number =>
   pushToast('Permissions allowed again for meet.example', 'info', {
@@ -111,7 +121,7 @@ const reviewComplete = (onPick: () => void): number =>
     action: { label: 'Undo', onPick }
   })
 
-describe('a toast a sheet raised stands above the sheet', () => {
+describe('a toast up while a sheet stands stands above the sheet', () => {
   it("lifts the toast frame over the sheet host for Allow again's toast, its Undo in reach", () => {
     mount()
     openSheet()
@@ -123,8 +133,8 @@ describe('a toast a sheet raised stands above the sheet', () => {
     expect(lifted()).toBe(true)
     expect(frame.classList.contains('z-[60]')).toBe(true)
     expect(frame.classList.contains('z-[36]')).toBe(false)
-    // Never shell chrome, never inert while lifted: the hold on the window chrome must not
-    // reach it, and its Undo takes the press.
+    // Never shell chrome, never inert: the hold on the window chrome must not reach it, and its
+    // Undo takes the press.
     expect(frame.hasAttribute('data-shell-chrome')).toBe(false)
     expect(frame.hasAttribute('inert')).toBe(false)
     const card = frame.querySelector<HTMLElement>('[role="status"]')
@@ -140,19 +150,36 @@ describe('a toast a sheet raised stands above the sheet', () => {
     expect(messageFrame().hasAttribute('data-shell-chrome')).toBe(true)
   })
 
-  it('keeps a toast raised before the sheet opened under it, inert with the chrome', () => {
+  it("lifts a toast up before the sheet opened too, for the rest of its clock (Chrome's rule)", () => {
     mount()
     act(() => {
-      pushToast('Saved to Bookmarks')
+      pushToast('Saved to Bookmarks', 'info', { duration: TOAST_UNDO_MS })
     })
     expect(lifted()).toBe(false)
-    expect(toastFrame().hasAttribute('inert')).toBe(false)
+    expect(toastFrame().classList.contains('z-[36]')).toBe(true)
+    act(() => vi.advanceTimersByTime(3000))
     openSheet()
     const frame = toastFrame()
-    expect(lifted()).toBe(false)
-    expect(frame.classList.contains('z-[36]')).toBe(true)
-    expect(frame.hasAttribute('inert')).toBe(true)
+    expect(lifted()).toBe(true)
+    expect(frame.classList.contains('z-[60]')).toBe(true)
+    expect(frame.hasAttribute('inert')).toBe(false)
     expect(frame.querySelector('[role="status"]')?.textContent).toContain('Saved to Bookmarks')
+    // The rest of its clock, not a new one: 3 s of the 8 were spent under no sheet.
+    act(() => vi.advanceTimersByTime(TOAST_UNDO_MS - 3000 - 1))
+    expect(uiStore.get().toasts[0]?.leaving).toBeUndefined()
+    act(() => vi.advanceTimersByTime(1))
+    expect(uiStore.get().toasts[0]?.leaving).toBe(true)
+    // Its leave runs in the lifted frame, the seat it stood in.
+    expect(lifted()).toBe(true)
+  })
+
+  it('has nothing to lift with the slot empty: the frame stands at the normal seat under the sheet, and is never inert', () => {
+    mount()
+    openSheet()
+    expect(lifted()).toBe(false)
+    expect(toastFrame().classList.contains('z-[36]')).toBe(true)
+    expect(toastFrame().hasAttribute('inert')).toBe(false)
+    expect(foot()).toBe('')
   })
 
   it("re-seats at the sheet's landing with the toast's element untouched, its clock running", () => {
@@ -175,6 +202,7 @@ describe('a toast a sheet raised stands above the sheet', () => {
     expect(lifted()).toBe(false)
     expect(toastFrame().classList.contains('z-[36]')).toBe(true)
     expect(toastFrame().hasAttribute('inert')).toBe(false)
+    expect(foot()).toBe('')
     expect(toastFrame().querySelector('[role="status"]')).toBe(card)
     expect(uiStore.get().toasts[0]?.leaving).toBeUndefined()
     // The Undo is still there to take, on what is left of the 8 s.
@@ -184,7 +212,7 @@ describe('a toast a sheet raised stands above the sheet', () => {
     expect(uiStore.get().toasts[0]?.leaving).toBe(true)
   })
 
-  it('does not lift the re-seated toast again for a sheet that opens later', () => {
+  it('lifts the re-seated toast again for a sheet that opens later while it is still up', () => {
     mount()
     const sheet = openSheet()
     act(() => {
@@ -193,8 +221,8 @@ describe('a toast a sheet raised stands above the sheet', () => {
     closeSheet(sheet)
     expect(lifted()).toBe(false)
     openSheet()
-    expect(lifted()).toBe(false)
-    expect(toastFrame().hasAttribute('inert')).toBe(true)
+    expect(lifted()).toBe(true)
+    expect(toastFrame().hasAttribute('inert')).toBe(false)
   })
 
   it("stays lifted over the sheet under the one whose act raised it (§9.24's depth two)", () => {
@@ -225,17 +253,85 @@ describe('a toast a sheet raised stands above the sheet', () => {
     expect(toastFrame().querySelector('.zen-message-toast')).not.toBeNull()
   })
 
-  it('follows the live toast: a sheet\'s toast lifts the slot as an earlier one leaves', () => {
+  it("keeps the slot lifted as the sheet's toast sends an earlier one off", () => {
     mount()
     act(() => {
       pushToast('Saved to Bookmarks')
     })
     openSheet()
-    expect(lifted()).toBe(false)
+    expect(lifted()).toBe(true)
     act(() => {
       allowAgain(() => undefined)
     })
     expect(uiStore.get().toasts.map((t) => Boolean(t.leaving))).toEqual([true, false])
     expect(lifted()).toBe(true)
+    expect(toastFrame().querySelectorAll('.zen-message-toast')).toHaveLength(2)
+  })
+})
+
+describe("the lifted frame's bottom edge: the sheet's edge, or its footer band's top edge (Q1)", () => {
+  it("stands at the sheet's edge for a sheet without a footer band: the frame says 0", () => {
+    mount()
+    openSheet()
+    act(() => {
+      allowAgain(() => undefined)
+    })
+    expect(lifted()).toBe(true)
+    expect(foot()).toBe('0px')
+  })
+
+  it('stands on the footer band the sheet publishes to the registry, and follows it', () => {
+    mount()
+    const sheet = openSheet()
+    act(() => {
+      allowAgain(() => undefined)
+    })
+    // The sheet measures: a 56 band on the chassis's 8.
+    act(() => sheet.footer(64))
+    expect(lifted()).toBe(true)
+    expect(foot()).toBe('64px')
+    // The band grows (a larger text scale): the frame follows.
+    act(() => sheet.footer(72))
+    expect(foot()).toBe('72px')
+    // The sheet's actions go: the sheet's edge again.
+    act(() => sheet.footer(0))
+    expect(foot()).toBe('0px')
+  })
+
+  it("stands on the top sheet's band at depth two, and on the lower one's once the top has landed", () => {
+    mount()
+    const lower = openSheet()
+    act(() => lower.footer(64))
+    act(() => {
+      allowAgain(() => undefined)
+    })
+    expect(foot()).toBe('64px')
+    const upper = openSheet()
+    expect(foot()).toBe('0px')
+    act(() => upper.footer(40))
+    expect(foot()).toBe('40px')
+    closeSheet(upper)
+    expect(lifted()).toBe(true)
+    expect(foot()).toBe('64px')
+    closeSheet(lower)
+    expect(lifted()).toBe(false)
+    expect(foot()).toBe('')
+  })
+
+  it('the stylesheet seats the lifted frame on the inset plus the band, and rides the sheet between that and the normal seat', () => {
+    const css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
+    const at = css.indexOf(
+      ":root[data-form-factor='phone'] .zen-message-frame[data-lifted][data-edge] {"
+    )
+    expect(at).toBeGreaterThan(0)
+    const rule = css.slice(at, css.indexOf('\n}', at))
+    expect(rule).toContain('bottom: calc(var(--zen-inset-bottom) + var(--zen-sheet-footer, 0px));')
+    expect(rule.replace(/\s+/g, ' ')).toContain(
+      'transform: translate3d( 0, calc((var(--zen-message-foot) - var(--zen-sheet-footer, 0px)) * (var(--zen-recede, 0) - 1)), 0 );'
+    )
+    // The normal seat's rules are #202's, untouched: the band is read on the lifted frame alone.
+    expect(css).toContain(
+      ":root[data-form-factor='phone'] .zen-message-frame[data-edge='bottom'] {\n  top: calc(var(--zen-inset-top) + var(--zen-padding));\n  bottom: calc(var(--zen-inset-bottom) + var(--zen-phone-band));\n}"
+    )
   })
 })

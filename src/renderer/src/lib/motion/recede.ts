@@ -139,6 +139,14 @@ export function barFade(edge: 'top' | 'bottom', share: number): string {
 export interface RecedeHandle {
   /** The sheet's presence this frame: 0 away … 1 at its first detent. */
   progress(presence: number): void
+  /**
+   * The sheet's footer band (`.zen-sheet-footer`, its actions under the body): where its top
+   * edge stands over the sheet's bottom edge, in px, the host's bottom inset left out – the
+   * band's own height plus the chassis's padding under it; 0 for a sheet without one (the
+   * value until said otherwise). A message seated over the stack stands on this edge, never
+   * over the actions (v2 draft §9.33; `recedeFooter`). Said at the sheet's measure.
+   */
+  footer(px: number): void
   /** No sheet registered above this one: it holds the focus and answers the keyboard (§9.24). */
   onTop(): boolean
   /**
@@ -150,6 +158,8 @@ export interface RecedeHandle {
 
 interface Entry {
   presence: number
+  /** The sheet's footer band's top edge over its bottom edge (px, the inset left out); 0 with none. */
+  footer: number
   onFrame: ((frame: RecedeLayerFrame) => void) | undefined
   /** The last frame this layer was told of, so it hears only of changes to its own. */
   last: RecedeLayerFrame | null
@@ -188,6 +198,10 @@ let lastPage = 0
 /** Who hears the stack's depth as it changes (`subscribeRecedeDepth`), and what they last heard. */
 const depthListeners = new Set<(depth: number) => void>()
 let lastDepth = 0
+
+/** Who hears the top sheet's footer band as it changes (`subscribeRecedeFooter`), and what they last heard. */
+const footerListeners = new Set<(footer: number) => void>()
+let lastFooter = 0
 
 /** The surfaces registered by their components (`registerRecedeSurface`). */
 const surfaces = new Set<HTMLElement>()
@@ -256,6 +270,18 @@ function publish(): void {
     lastDepth = stack.length
     for (const listener of Array.from(depthListeners)) listener(stack.length)
   }
+  publishFooter()
+}
+
+/**
+ * The top sheet's footer band, to whoever seats by it – told only of a change: a sheet saying
+ * its band, the stack's top changing (a sheet registering or releasing) or emptying (0 again).
+ */
+function publishFooter(): void {
+  const footer = recedeFooter()
+  if (footer === lastFooter) return
+  lastFooter = footer
+  for (const listener of Array.from(footerListeners)) listener(footer)
 }
 
 /**
@@ -277,7 +303,7 @@ export function subscribePageRecede(listener: (page: number) => void): () => voi
  * own recede, scrim share and inertness whenever they change (at once on registering).
  */
 export function registerRecedeLayer(onFrame?: (frame: RecedeLayerFrame) => void): RecedeHandle {
-  const entry: Entry = { presence: 0, onFrame, last: null }
+  const entry: Entry = { presence: 0, footer: 0, onFrame, last: null }
   scrimAlpha = readScrimAlpha()
   stack.push(entry)
   findTagged()
@@ -290,6 +316,13 @@ export function registerRecedeLayer(onFrame?: (frame: RecedeLayerFrame) => void)
       if (next === entry.presence) return
       entry.presence = next
       publish()
+    },
+    footer(px) {
+      if (released) return
+      const next = Number.isFinite(px) && px > 0 ? px : 0
+      if (next === entry.footer) return
+      entry.footer = next
+      publishFooter()
     },
     onTop() {
       return !released && stack.at(-1) === entry
@@ -334,6 +367,29 @@ export function subscribeRecedeDepth(listener: (depth: number) => void): () => v
   depthListeners.add(listener)
   return () => {
     depthListeners.delete(listener)
+  }
+}
+
+/**
+ * The footer band of the sheet on top of the stack (`RecedeHandle.footer`): where its top edge
+ * stands over the sheet's bottom edge, in px, the host's inset left out; 0 for a sheet without
+ * one, or no sheet. The top sheet's, since a message seated over the stack stands over that
+ * one (§9.24, §9.33) – a sheet on its way out is still the top until its leave has landed.
+ */
+export function recedeFooter(): number {
+  return stack.at(-1)?.footer ?? 0
+}
+
+/**
+ * Hear the top sheet's footer band whenever it changes: a sheet saying its band at its measure,
+ * the top of the stack changing, the stack emptying (0 again). For the phone's toast frame,
+ * whose bottom edge stands on the band while it lifts a toast over the sheet (§9.33). Told only
+ * of a change; the returned function unsubscribes.
+ */
+export function subscribeRecedeFooter(listener: (footer: number) => void): () => void {
+  footerListeners.add(listener)
+  return () => {
+    footerListeners.delete(listener)
   }
 }
 
