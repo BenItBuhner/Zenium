@@ -2795,6 +2795,150 @@ describe('desktop pill on an internal page', () => {
   })
 })
 
+/*
+ * The hover reveal's trim (the FIRST LINE's L3 on #589, W8-F7): the pointer or the keyboard on
+ * the address puts the scheme and `www.` back, and a field near §9.29's 56 floor, truncating
+ * from the end, read `http://…` – the scheme and none of the host. The reveal never costs the
+ * host: the least it must fit (`revealProbeText` – the trimmed run, the host's first character,
+ * the ellipsis – drawn invisibly at the field's size) is measured against the field's box before
+ * the reveal is drawn, and where it does not fit the trim stays under the pointer.
+ */
+describe('desktop pill: the reveal never costs the host', () => {
+  const site = tab('https://www.example.com/some/path')
+  const widths = { reveal: 0, field: 0 }
+
+  beforeEach(() => {
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: Element
+    ) {
+      const width = this.hasAttribute('data-reveal-probe')
+        ? widths.reveal
+        : this.hasAttribute('data-reads')
+          ? widths.field
+          : 0
+      return { x: 0, y: 0, top: 0, left: 0, right: width, bottom: 0, width, height: 0 } as DOMRect
+    })
+  })
+
+  afterEach(() => vi.restoreAllMocks())
+
+  const parts = (
+    el: HTMLElement
+  ): { address: HTMLElement; field: HTMLElement; revealProbe: HTMLElement } => {
+    const pill = el.querySelector<HTMLElement>('[role="group"][aria-label="Address"]')!
+    return {
+      address: focusable(pill)[0],
+      field: pill.querySelector<HTMLElement>('[data-reads]')!,
+      revealProbe: pill.querySelector<HTMLElement>('[data-reveal-probe]')!
+    }
+  }
+  const hover = (address: HTMLElement): void => {
+    act(() => {
+      address.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+    })
+  }
+  const leave = (address: HTMLElement): void => {
+    act(() => {
+      address.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }))
+    })
+  }
+
+  it('reveals the full address under the pointer while the field holds the host’s first character', () => {
+    // `https://www.e…` at 13 px is about 76 wide; a 240 sidebar's rest field is 58, a 302's 120.
+    widths.reveal = 76
+    widths.field = 120
+    const el = render(<NavRow state={state(site)} tab={site} compact={false} />)
+    const { address, field, revealProbe } = parts(el)
+    expect(field.textContent).toBe('example.com/some/path')
+    // The probe holds the least the reveal must fit, out of the tree and never seen.
+    expect(revealProbe.textContent).toBe('https://www.e…')
+    expect(revealProbe.getAttribute('aria-hidden')).toBe('true')
+    expect(revealProbe.className).toContain('invisible')
+    expect(revealProbe.className).toContain('text-[13px]')
+    hover(address)
+    expect(field.textContent).toBe('https://www.example.com/some/path')
+    // The site in full ink is the scheme, `www.` and the host; the path dims after it.
+    expect(field.querySelector('.opacity-70')?.textContent).toBe('/some/path')
+    leave(address)
+    expect(field.textContent).toBe('example.com/some/path')
+  })
+
+  it('keeps §9.29’s trim under the pointer where the scheme would push the host’s first character out of the field', () => {
+    widths.reveal = 76
+    widths.field = 58
+    const el = render(<NavRow state={state(site)} tab={site} compact={false} />)
+    const { address, field } = parts(el)
+    hover(address)
+    expect(field.textContent).toBe('example.com/some/path')
+    expect(field.getAttribute('data-reads')).toBe('address')
+    // The keyboard's reveal is the same reveal.
+    leave(address)
+    act(() => address.focus())
+    expect(document.activeElement).toBe(address)
+    expect(field.textContent).toBe('example.com/some/path')
+    act(() => address.blur())
+    // The tooltip still carries the whole address, as it does at rest.
+    expect(
+      el
+        .querySelector<HTMLElement>('[role="group"][aria-label="Address"]')!
+        .getAttribute('data-tooltip')
+    ).toBe('https://www.example.com/some/path')
+  })
+
+  it('measures at the edge: the host’s first character just inside the field reveals, one pixel over keeps the trim', () => {
+    widths.reveal = 58
+    widths.field = 58
+    let el = render(<NavRow state={state(site)} tab={site} compact={false} />)
+    let { address, field } = parts(el)
+    hover(address)
+    expect(field.textContent).toBe('https://www.example.com/some/path')
+    leave(address)
+    act(() => root?.unmount())
+    host?.remove()
+    widths.reveal = 59
+    el = render(<NavRow state={state(site)} tab={site} compact={false} />)
+    ;({ address, field } = parts(el))
+    hover(address)
+    expect(field.textContent).toBe('example.com/some/path')
+  })
+
+  it('leaves the "Always show full URLs" setting’s full address unmeasured: the user’s word, at any width', () => {
+    widths.reveal = 76
+    widths.field = 40
+    const s = state(site)
+    s.settings = { ...s.settings, showFullUrls: true }
+    const el = render(<NavRow state={s} tab={site} compact={false} />)
+    const { address, field } = parts(el)
+    expect(field.textContent).toBe('https://www.example.com/some/path')
+    hover(address)
+    expect(field.textContent).toBe('https://www.example.com/some/path')
+  })
+
+  it('has nothing to measure on an internal page or an http page with nothing trimmed but the scheme it cannot hold', () => {
+    // An internal page's alias is the same text revealed and at rest: no probe text, no trim.
+    widths.reveal = 0
+    widths.field = 200
+    const settings = tab('zen://settings/privacy', { title: 'Settings' })
+    let el = render(<NavRow state={state(settings)} tab={settings} compact={false} />)
+    let { address, field, revealProbe } = parts(el)
+    expect(revealProbe.textContent).toBe('')
+    hover(address)
+    expect(field.textContent).toBe('zenium://settings/privacy')
+    leave(address)
+    act(() => root?.unmount())
+    host?.remove()
+    // The dev server's address at the 240 sidebar: `http://1…` measured against the 58 field.
+    const dev = tab('http://127.0.0.1:18560/some/path')
+    widths.reveal = 60
+    widths.field = 58
+    el = render(<NavRow state={state(dev)} tab={dev} compact={false} />)
+    ;({ address, field, revealProbe } = parts(el))
+    expect(revealProbe.textContent).toBe('http://1…')
+    hover(address)
+    expect(field.textContent).toBe('127.0.0.1:18560/some/path')
+  })
+})
+
 describe('phone pill (PillContent)', () => {
   const page = tab('https://example.com/some/path')
 

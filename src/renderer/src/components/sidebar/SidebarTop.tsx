@@ -42,7 +42,15 @@ import type { SearchEngine, Tab, UIState } from '@shared/types'
 import { toolbarPinned, type ToolbarControl } from '@shared/toolbarPins'
 import { defaultSearchEngineOf } from '@shared/search'
 import { securityIndicator, type IndicatorState } from '@shared/siteInfo'
-import { addressParts, displayUrl, fullUrl, getDomain, isWebPageUrl, pillText } from '@shared/url'
+import {
+  addressParts,
+  displayUrl,
+  fullUrl,
+  getDomain,
+  isWebPageUrl,
+  pillText,
+  revealProbeText
+} from '@shared/url'
 import { isInstallable, launcherName, pinnedAppFor } from '@shared/webApp'
 import { useElementWidth } from '@renderer/hooks/useElementWidth'
 import { updateDotAt, updateReadyAt } from '@renderer/lib/about'
@@ -207,18 +215,33 @@ export function NavRow({
   const url = tab && !masked ? displayUrl(tab.url) : ''
   // The address at rest elides the scheme and `www.` (Chrome); the full URL shows while the
   // pointer or the keyboard is on the address, or always with the "Always show full URLs" setting.
+  // The reveal never costs the host (the FIRST LINE's L3 on #589): where the scheme it puts back
+  // would push the host's first character out of the field – a 56 px field read `http://…` –
+  // §9.29's trim stays under the pointer, measured before the reveal is drawn
+  // (`useRevealKeepsHost`); the setting's full URL is the user's word and is not measured.
   const [revealed, setRevealed] = useState(false)
+  const pill = useRef<HTMLDivElement>(null)
+  const field = useRef<HTMLSpanElement>(null)
+  const probe = useRef<HTMLSpanElement>(null)
+  const revealProbe = useRef<HTMLSpanElement>(null)
+  const revealText = tab && !masked ? revealProbeText(fullUrl(tab.url)) : ''
+  const revealKeepsHost = useRevealKeepsHost(
+    field,
+    revealProbe,
+    revealed && !state.settings.showFullUrls && revealText !== ''
+  )
   const shown =
-    tab && !masked ? (state.settings.showFullUrls || revealed ? fullUrl(tab.url) : url) : ''
+    tab && !masked
+      ? state.settings.showFullUrls || (revealed && revealKeepsHost)
+        ? fullUrl(tab.url)
+        : url
+      : ''
   // An internal page's address that the pill cannot fit gives way to the page's title, as the
   // phone pill names Zenium's own pages (v2 §10.1); a site's address never does – it truncates
   // from the end at any width, as Zen's and Firefox's sidebar bars do (§9.29; no browser's
   // address bar shows a site's title): `pillText`, from the field's width against the address at
   // its natural width (the probe span, drawn invisibly without truncation). The same `pill` ref
   // serves the chip tier below (`usePillInnerWidth`).
-  const pill = useRef<HTMLDivElement>(null)
-  const field = useRef<HTMLSpanElement>(null)
-  const probe = useRef<HTMLSpanElement>(null)
   const addressFits = useAddressFits(pill, field, probe, !compact)
   const text = tab && !masked ? pillText(tab.url, shown, addressFits) : ''
   // A title is one run of full ink; only an address dims what follows its site.
@@ -827,6 +850,19 @@ export function NavRow({
             {shown}
           </span>
           {/*
+            The least the hover reveal must fit – the scheme, `www.`, the host's first character
+            and the ellipsis (`revealProbeText`) – for `useRevealKeepsHost`; the same size and
+            font as the field, out of flow, never seen.
+          */}
+          <span
+            ref={revealProbe}
+            aria-hidden="true"
+            className="pointer-events-none invisible absolute left-0 top-0 whitespace-nowrap text-[13px]"
+            data-reveal-probe
+          >
+            {revealText}
+          </span>
+          {/*
             Chrome's "Not secure" text before the address of an http page (or of a certificate
             error's page, in the danger ink), drawn between the site icon and the address. The
             tier counts it (`CHIP_WIDTH.indicatorLabel`) and folds it as it folds the Install
@@ -1335,6 +1371,42 @@ function useAddressFits(
     return () => observer.disconnect()
   }, [pill, field, probe, mounted])
   return fits
+}
+
+/**
+ * Whether the hover reveal keeps the host in view (the FIRST LINE's L3 on #589: "the reveal
+ * never costs the host"). The reveal puts the scheme and `www.` back before the host, and the
+ * field truncates from the end: near §9.29's 56 floor it read `http://…` – seven characters of
+ * scheme, none of host – where the rest address read `127.0.0.…`. Measured while the reveal is
+ * asked for (`measuring`), before its first paint: the least the reveal must fit
+ * (`revealProbeText`, drawn invisibly at the field's size – `probe`) against the field's box as
+ * the hover leaves it (`field`; the hover-only chips narrow it for the hover's duration), and
+ * again when either changes size. Where it does not fit, the trim stays under the pointer and
+ * the field reads as at rest. Like `useAddressFits`, it never feeds on its own result: the
+ * field is `flex: 1`, its width the room the chips leave, whatever text it holds. With nothing
+ * asking – no reveal, the "Always show full URLs" setting (the user's word, not measured), or a
+ * reveal that adds nothing before the host (an internal page's alias) – the answer is yes.
+ */
+function useRevealKeepsHost(
+  field: RefObject<HTMLElement | null>,
+  probe: RefObject<HTMLElement | null>,
+  measuring: boolean
+): boolean {
+  const [keeps, setKeeps] = useState(true)
+  useLayoutEffect(() => {
+    const slot = field.current
+    const text = probe.current
+    if (!measuring || !slot || !text) return
+    const measure = (): void => {
+      setKeeps(text.getBoundingClientRect().width <= slot.getBoundingClientRect().width)
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(slot)
+    observer.observe(text)
+    return () => observer.disconnect()
+  }, [field, probe, measuring])
+  return !measuring || keeps
 }
 
 /**
