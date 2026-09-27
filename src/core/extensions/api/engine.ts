@@ -496,7 +496,12 @@ export function createEmulatedEngine(
     const id = ++seq
     fenceId = id
     flow.fences += 1
-    pending.set(id, { resolve: () => undefined, reject: () => undefined, what: 'fence', since: now() })
+    pending.set(id, {
+      resolve: () => undefined,
+      reject: () => undefined,
+      what: 'fence',
+      since: now()
+    })
     const text = serialize({
       t: 'call',
       id,
@@ -620,7 +625,8 @@ export function createEmulatedEngine(
   const unanswered = (): UnansweredCall[] => {
     const at = now()
     const list: UnansweredCall[] = []
-    for (const [id, entry] of pending) list.push({ id, what: entry.what, ageMs: Math.max(0, at - entry.since) })
+    for (const [id, entry] of pending)
+      list.push({ id, what: entry.what, ageMs: Math.max(0, at - entry.since) })
     return list
   }
 

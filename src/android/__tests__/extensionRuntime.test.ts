@@ -2766,9 +2766,7 @@ describe('AndroidExtensionRuntime: chrome.management over the store', () => {
     expect(got.result).toMatchObject({ id: ID2, enabled: false, version: '2.3.4' })
     const missing = await call(h, 'bg1', 'management', 'get', ['dddddddddddddddddddddddddddddddd'])
     expect(missing.ok).toBe(false)
-    expect(missing.error).toBe(
-      'Failed to find extension with id dddddddddddddddddddddddddddddddd.'
-    )
+    expect(missing.error).toBe('Failed to find extension with id dddddddddddddddddddddddddddddddd.')
     // `getSelf` is the runtime's own reading, unchanged.
     const me = await call(h, 'bg1', 'management', 'getSelf', [])
     expect(me.result).toMatchObject({ id: ID, enabled: true, name: 'Runtime test' })
