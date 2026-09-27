@@ -254,7 +254,7 @@ class BackDemo {
         //    fell through to the scrim would only close the menu.
         tapLabel("Menu")
         SystemClock.sleep(1_200)
-        touchLabelExpecting("History", "the History panel is up") { findByLabel("Clear history") != null }
+        touchLabelExpecting("History", "the History panel is up") { findByLabel("Delete history") != null }
         SystemClock.sleep(1_200)
         blurChrome()
         dismissWithBack(0.30f * w, "05-panel-dragging")

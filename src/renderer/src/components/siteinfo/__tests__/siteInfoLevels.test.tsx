@@ -8,7 +8,7 @@ import type { SiteInfo } from '@shared/siteInfo'
 /*
  * The phone site-information sheet's levels, rendered on the chassis (W5-17): the slide paints
  * the pane arriving with its content from its first frame and measures the sheet on the level it
- * shows (seed 51); and "Clear cookies?" / "Clear site data?" are levels of the sheet wearing the
+ * shows (seed 51); and "Delete cookies?" / "Delete site data?" are levels of the sheet wearing the
  * §9.23 confirmation's keyboard contract exactly (§10.4, the design lead's seed-55 ruling): the
  * level's container takes the focus on entry, Tab reaches Cancel then the danger verb, Enter is
  * inert on the destructive question, Escape is one hop back to the row that opened it.
@@ -449,9 +449,9 @@ describe('the confirmations as levels (seed 55, §10.4, §9.22, §9.23)', () => 
     rest()
   }
 
-  it('"Clear cookies?" is a level one in from the row, a dialog of its own: a title block over the two-button footer, no header, named by its question', async () => {
+  it('"Delete cookies?" is a level one in from the row, a dialog of its own: a title block over the two-button footer, no header, named by its question', async () => {
     await openCookies()
-    const clear = byText('Clear cookies')
+    const clear = byText('Delete cookies')
     clear.focus()
     click(clear)
     const level = pane('clear-cookies')
@@ -462,8 +462,8 @@ describe('the confirmations as levels (seed 55, §10.4, §9.22, §9.23)', () => 
     expect(level.dataset.confirm).toBe('clear-cookies')
     const title = document.getElementById(level.getAttribute('aria-labelledby')!)!
     const detail = document.getElementById(level.getAttribute('aria-describedby')!)!
-    expect(title.textContent).toBe('Clear cookies?')
-    expect(detail.textContent).toBe('Removes 2 cookies and signs you out of github.com.')
+    expect(title.textContent).toBe('Delete cookies?')
+    expect(detail.textContent).toBe('Deletes 2 cookies and signs you out of github.com.')
     // The §9.23 form: a title block, then the footer with Cancel first and the danger verb, no
     // default and no primary; nothing else in the level.
     expect([...level.children].map((c) => c.className)).toEqual([
@@ -472,13 +472,13 @@ describe('the confirmations as levels (seed 55, §10.4, §9.22, §9.23)', () => 
     ])
     const [cancel, verb] = [...level.querySelectorAll<HTMLButtonElement>('button')]
     expect(cancel!.textContent).toBe('Cancel')
-    expect(verb!.getAttribute('aria-label')).toBe('Confirm clear cookies')
+    expect(verb!.getAttribute('aria-label')).toBe('Confirm delete cookies')
     expect(verb!.hasAttribute('data-danger')).toBe(true)
     expect(level.querySelector('[data-primary]')).toBeNull()
     // No header on a confirmation level: the back control went with the cookies level's header.
     expect(sheet().querySelector('.zen-sheet-header')).toBeNull()
     // The sheet is named by the question while the level stands.
-    expect(sheet().getAttribute('aria-label')).toBe('Clear cookies?')
+    expect(sheet().getAttribute('aria-label')).toBe('Delete cookies?')
     // Not a sheet over the sheet: one dialog on the chassis.
     expect(document.querySelectorAll('.zen-sheet')).toHaveLength(1)
     rest()
@@ -488,7 +488,7 @@ describe('the confirmations as levels (seed 55, §10.4, §9.22, §9.23)', () => 
 
   it('the container takes the focus on entry, no verb preselected; Tab reaches Cancel, then the verb, then the grabber; Shift+Tab from the container reaches the verb', async () => {
     await openCookies()
-    const clear = byText('Clear cookies')
+    const clear = byText('Delete cookies')
     clear.focus()
     click(clear)
     const level = pane('clear-cookies')
@@ -520,14 +520,14 @@ describe('the confirmations as levels (seed 55, §10.4, §9.22, §9.23)', () => 
 
   it('Enter is inert on the destructive question: swallowed from the container, confirming nothing; a focused button answers its own', async () => {
     await openCookies()
-    click(byText('Clear cookies'))
+    click(byText('Delete cookies'))
     const level = pane('clear-cookies')
     expect(active()).toBe(level)
     let e = key('Enter')
     expect(e.defaultPrevented).toBe(true)
     expect(commands()).not.toContain('site.clearCookies')
     expect(level.hidden).toBe(false)
-    expect(sheet().getAttribute('aria-label')).toBe('Clear cookies?')
+    expect(sheet().getAttribute('aria-label')).toBe('Delete cookies?')
     // Enter on the verb itself is the button's, left to the browser.
     const verb = level.querySelector<HTMLButtonElement>('[data-action="confirm"]')!
     verb.focus()
@@ -538,7 +538,7 @@ describe('the confirmations as levels (seed 55, §10.4, §9.22, §9.23)', () => 
 
   it('Escape is one hop back to the row that opened it, and so is Cancel', async () => {
     await openCookies()
-    const clear = byText('Clear cookies')
+    const clear = byText('Delete cookies')
     clear.focus()
     click(clear)
     rest()
@@ -566,7 +566,7 @@ describe('the confirmations as levels (seed 55, §10.4, §9.22, §9.23)', () => 
 
   it('the verb pops the level and then does the deed; the keyboard parks on the sheet, the row it was asked from may go with the cookies', async () => {
     await openCookies()
-    const clear = byText('Clear cookies')
+    const clear = byText('Delete cookies')
     clear.focus()
     click(clear)
     rest()
@@ -575,7 +575,7 @@ describe('the confirmations as levels (seed 55, §10.4, §9.22, §9.23)', () => 
     // The step from Cancel to the verb is the browser's.
     const verb = pane('clear-cookies').querySelector<HTMLButtonElement>('[data-action="confirm"]')!
     verb.focus()
-    expect(verb.getAttribute('aria-label')).toBe('Confirm clear cookies')
+    expect(verb.getAttribute('aria-label')).toBe('Confirm delete cookies')
     click(verb)
     expect(commands()).toContain('site.clearCookies')
     expect(invoke).toHaveBeenCalledWith('site.clearCookies', { tabId: 't1' })
@@ -586,24 +586,24 @@ describe('the confirmations as levels (seed 55, §10.4, §9.22, §9.23)', () => 
     expect(pane('clear-cookies').hidden).toBe(true)
   })
 
-  it('"Clear site data?" is the same level from the root, with its own words, back to its row on Cancel', async () => {
+  it('"Delete site data?" is the same level from the root, with its own words (the Delete family’s, W8-11), back to its row on Cancel', async () => {
     await open()
-    const clear = byText('Clear site data')
+    const clear = byText('Delete site data')
     clear.focus()
     click(clear)
     const level = pane('clear-data')
     expect(active()).toBe(level)
     expect(level.getAttribute('role')).toBe('alertdialog')
     expect(document.getElementById(level.getAttribute('aria-labelledby')!)!.textContent).toBe(
-      'Clear site data?'
+      'Delete site data?'
     )
     expect(document.getElementById(level.getAttribute('aria-describedby')!)!.textContent).toBe(
-      'Removes the cookies, stored data and permissions of github.com, then reloads the page.'
+      'Deletes the cookies, stored data and permissions of github.com, then reloads the page.'
     )
     const [cancel, verb] = [...level.querySelectorAll<HTMLButtonElement>('button')]
     expect(cancel!.textContent).toBe('Cancel')
-    expect(verb!.getAttribute('aria-label')).toBe('Confirm clear all site data')
-    expect(sheet().getAttribute('aria-label')).toBe('Clear site data?')
+    expect(verb!.getAttribute('aria-label')).toBe('Confirm delete site data')
+    expect(sheet().getAttribute('aria-label')).toBe('Delete site data?')
     expect(sheet().querySelector('.zen-sheet-header')).toBeNull()
     key('Enter')
     expect(commands()).not.toContain('site.clearData')

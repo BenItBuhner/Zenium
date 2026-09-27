@@ -2,6 +2,7 @@ import '@renderer/assets/passwords.css'
 import type { JSX } from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import { Dices, KeyRound, Plus, Settings2, ShieldCheck } from 'lucide-react'
+import { TOAST_UNDO_MS } from '@shared/toastCard'
 import type { CredentialSummary, UIState } from '@shared/types'
 import { cmd, onEvent } from '@renderer/lib/api'
 import { closeOverlay, pushToast, uiStore } from '@renderer/lib/ui'
@@ -108,12 +109,14 @@ function Manager({
     setPane({ kind: 'detail', id })
   }
 
-  // A deletion is offered back for as long as a toast with an action stays (the core keeps the
-  // login restorable for a minute); Undo restores it and opens it again.
+  // A deletion is offered back for as long as an Undo toast stays – §9.33's 8 s, by the one
+  // shared constant, never the action default by omission (the core keeps the login restorable
+  // for a minute); Undo restores it and opens it again.
   useEffect(
     () =>
       onEvent('passwords.removed', ({ id, site }) =>
         pushToast(`Deleted the login for ${site}`, 'info', {
+          duration: TOAST_UNDO_MS,
           action: {
             label: 'Undo',
             onPick: () => {

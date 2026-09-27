@@ -131,7 +131,7 @@ describe('createHistoryAdapter', () => {
     expect(core.calls).toEqual([['history.grouped', { query: { limit: 300 } }]])
   })
 
-  it('counts every visit there is, for what "Clear history" is about to remove', async () => {
+  it('counts every visit there is, for what "Delete history" is about to remove', async () => {
     const core = contractCore(groups)
     expect(await createHistoryAdapter(core.invoke, core.on).count()).toBe(2)
     expect(core.calls).toEqual([['history.count', { fromMs: 0, toMs: Number.MAX_SAFE_INTEGER }]])

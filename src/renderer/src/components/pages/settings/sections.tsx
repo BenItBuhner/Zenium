@@ -4479,13 +4479,15 @@ function containersSection({ state }: SectionContext): RowGroup[] {
                 kind: 'action',
                 id: `container:${c.id}:delete`,
                 label: 'Delete container',
-                description: 'Its cookies and site data are cleared.',
+                // A container's removal deletes site data: the Delete family's verb (W8-11, the
+                // design lead's ruling).
+                description: 'Its cookies and site data are deleted.',
                 button: 'Delete…',
                 destructive: true,
                 confirm: {
                   title: `Delete ${c.name}?`,
                   description:
-                    'Tabs in this container lose their sign-ins; its site data is cleared.',
+                    'Tabs in this container lose their sign-ins; its site data is deleted.',
                   action: 'Delete'
                 },
                 onPress: () => run('container.delete', { id: c.id })

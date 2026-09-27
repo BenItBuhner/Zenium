@@ -38,7 +38,7 @@ import kotlin.math.max
  * row's default to Allow through the core and reads the row on with nothing stored, a touch
  * writing the site's deny and a second forgetting it (W6-S12: the row reads the state in force,
  * §10.4), pushes each level – the connection, the
- * cookies (expanded and scrolled, then cleared through the "Clear cookies?" confirmation, a level
+ * cookies (expanded and scrolled, then cleared through the "Delete cookies?" confirmation, a level
  * of the sheet one in from the row: §10.4, the design lead's ruling on W5-17) and the
  * permissions, where the Location grant is reset – pops back with the system back gesture, drags
  * the sheet away by its grabber, and finishes on the tab overview and Settings so the sheet can be
@@ -213,7 +213,7 @@ class SiteInfoDemo {
         }
 
         // 3. Cookies and site data: expand the sheet, scroll the list, then clear the cookies
-        //    through the "Clear cookies?" confirmation – a level of the sheet, one in from the row.
+        //    through the "Delete cookies?" confirmation – a level of the sheet, one in from the row.
         if (tapUntil(f, "Cookies and site data", BACK_LABEL)) {
             SystemClock.sleep(1_800)
             shot("03-cookies")
@@ -221,12 +221,12 @@ class SiteInfoDemo {
             SystemClock.sleep(1_200)
             // Scroll only when the row to reach is below the fold: a level that fits has nothing
             // to scroll, and the pan would drag the sheet instead.
-            if (findByLabel("Clear cookies") == null) {
+            if (findByLabel("Delete cookies") == null) {
                 scrollSheet(f)
                 SystemClock.sleep(1_200)
             }
             shot("04-cookies-scrolled")
-            if (tapUntil(f, "Clear cookies", "Confirm clear cookies")) {
+            if (tapUntil(f, "Delete cookies", "Confirm delete cookies")) {
                 SystemClock.sleep(1_200)
                 shot("05-clear-cookies-confirm")
                 // The level's keyboard contract first, ending with Escape back on the row; then
@@ -237,12 +237,12 @@ class SiteInfoDemo {
                 // Kotlin, so a wait rather than a fixed time). The row still there means the
                 // touch did not take: the cookies were kept.
                 confirmKeyboard(f)
-                if (tapUntil(f, "Clear cookies", "Confirm clear cookies") && tapLabel(f, "Confirm clear cookies")) {
-                    awaitGone("Confirm clear cookies", 10_000)
+                if (tapUntil(f, "Delete cookies", "Confirm delete cookies") && tapLabel(f, "Confirm delete cookies")) {
+                    awaitGone("Confirm delete cookies", 10_000)
                     if (!awaitLabel(BACK_LABEL, 6_000)) {
                         touchFault("the cookies level did not come back into the tree after the confirm")
-                    } else if (!awaitGone("Clear cookies", 15_000)) {
-                        touchFault("the touch on the confirm's 'Confirm clear cookies' left the Clear cookies row: the jar was not cleared")
+                    } else if (!awaitGone("Delete cookies", 15_000)) {
+                        touchFault("the touch on the confirm's 'Confirm delete cookies' left the Delete cookies row: the jar was not cleared")
                     }
                 }
                 SystemClock.sleep(800)
@@ -531,7 +531,7 @@ class SiteInfoDemo {
 
     /**
      * The confirm level's keyboard contract (§9.22 as §10.4 applies it to a level; W5-17 seed 55),
-     * with the level up from a real touch on the Clear cookies row: the level's container holds
+     * with the level up from a real touch on the Delete cookies row: the level's container holds
      * the focus on entry and no verb is preselected; Enter from it is inert – the question is
      * destructive, so no default – and the level stands; Tab reaches Cancel, then the danger verb
      * (the shot with the ring on it); Shift+Tab steps back to Cancel; Escape is one hop back to
@@ -548,7 +548,7 @@ class SiteInfoDemo {
         }
         pressKey(KeyEvent.KEYCODE_ENTER)
         SystemClock.sleep(700)
-        if (findByLabel("Confirm clear cookies") == null) {
+        if (findByLabel("Confirm delete cookies") == null) {
             keyFault("Enter from the container answered the destructive question: the level went")
         } else if (focused()?.optString("tag") != "SECTION") {
             keyFault("Enter moved the focus off the container to ${focused()}")
@@ -565,16 +565,16 @@ class SiteInfoDemo {
         val back = focused()
         if (back?.optString("action") != "cancel") keyFault("Shift+Tab from the verb did not return to Cancel but $back")
         pressKey(KeyEvent.KEYCODE_ESCAPE)
-        if (!awaitGone("Confirm clear cookies", 6_000)) {
+        if (!awaitGone("Confirm delete cookies", 6_000)) {
             keyFault("Escape did not pop the confirm level")
             tapLabel(f, "Cancel")
-            awaitGone("Confirm clear cookies", 6_000)
+            awaitGone("Confirm delete cookies", 6_000)
         } else if (!awaitLabel(BACK_LABEL, 6_000)) {
             keyFault("the cookies level did not come back into the tree after Escape")
         } else {
             val home = focused()
-            if (home?.optString("level") != "cookies" || home.optString("text")?.startsWith("Clear cookies") != true) {
-                keyFault("Escape did not return the keyboard to the Clear cookies row but to $home")
+            if (home?.optString("level") != "cookies" || home.optString("text")?.startsWith("Delete cookies") != true) {
+                keyFault("Escape did not return the keyboard to the Delete cookies row but to $home")
             }
         }
         awaitRest()
