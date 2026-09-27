@@ -238,6 +238,28 @@ function seedFirefoxLogins(host: FakeImportHost, primaryPassword = ''): FirefoxV
   return vault
 }
 
+/**
+ * Whether `needle` is held as a string anywhere on `root`'s own object graph – every own
+ * property, walked through plain objects, arrays, maps and sets. The service's `browser` is the
+ * browser's graph, not the service's, and is skipped.
+ */
+function holdsString(root: object, needle: string): boolean {
+  const seen = new Set<object>()
+  const walk = (value: unknown, depth: number): boolean => {
+    if (typeof value === 'string') return value === needle
+    if (!value || typeof value !== 'object' || depth > 12 || seen.has(value)) return false
+    seen.add(value)
+    if (value instanceof Map)
+      return [...value.entries()].some(([k, v]) => walk(k, depth + 1) || walk(v, depth + 1))
+    if (value instanceof Set) return [...value].some((v) => walk(v, depth + 1))
+    if (ArrayBuffer.isView(value)) return false
+    return Object.entries(value).some(
+      ([key, v]) => !(depth === 0 && key === 'browser') && walk(v, depth + 1)
+    )
+  }
+  return walk(root, 0)
+}
+
 describe('ImportService: browser profiles', () => {
   it('imports bookmarks, history and passwords from a Chrome profile, reading databases from a temp copy', async () => {
     const h = harness()
@@ -476,6 +498,24 @@ describe('ImportService: browser profiles', () => {
     expect(h.vault.rows.map((r) => [r.username, r.password])).toEqual([
       ['bennett', 'correct horse']
     ])
+  })
+
+  it('keeps the primary password nowhere once the run has ended', async () => {
+    const h = harness()
+    seedFirefox(h.host)
+    seedFirefoxLogins(h.host, 'hunter2')
+    const [source] = await h.service.sources()
+    for (const primaryPassword of ['hunter3', 'hunter2']) {
+      h.service.dismiss()
+      const result = (await h.service.run(source.id, ['passwords'], undefined, {
+        primaryPassword
+      }))!
+      expect(result.status).toBe('done')
+      // The service outlives every run (it is the browser's); the password it was handed travels
+      // down the call chain as a parameter and is on no field, in no progress, afterwards.
+      expect(holdsString(h.service, primaryPassword)).toBe(false)
+      expect(JSON.stringify(h.service.uiState())).not.toContain(primaryPassword)
+    }
   })
 
   it('offers no Firefox passwords when the profile has no login store', async () => {
