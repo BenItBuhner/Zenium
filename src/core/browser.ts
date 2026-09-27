@@ -1379,6 +1379,7 @@ export class Browser {
     this.windows.delete(win.id)
     this.tabDrag.onWindowClosed(win)
     this.fullscreen.onWindowClosed(win)
+    this.mediaSession.onWindowClosed(win)
     this.newTab.onWindowClosed(win)
     for (const w of this.allWindows()) w.selection.delete(win.localSpace?.id ?? '')
     if (win.isPrivate) this.endPrivateSessionIfOver()

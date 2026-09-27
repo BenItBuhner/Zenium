@@ -29,6 +29,7 @@ import {
   readFolderAgentMark,
   readReadingListData,
   readSpaceAgentMark,
+  wireFavicon,
   withoutDeviceLocalSettings,
   type ContainerData,
   type FolderData,
@@ -177,6 +178,10 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
         const containerId = m.containers.some((c) => c.id === data.containerId)
           ? data.containerId
           : (space?.containerId ?? DEFAULT_CONTAINER_ID)
+        // The icon's address only (`wireFavicon`): a peer's build may still send a `data:`
+        // icon's bytes or its cache's own address, neither of which this tab takes. A record
+        // without one leaves this device's icon for the tab as it is.
+        const favicon = wireFavicon(data.favicon) ?? null
         let tab = m.tabs[r.id]
         if (!tab) {
           tab = createTabRecord({
@@ -185,7 +190,7 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
             containerId,
             url: data.url,
             title: data.title,
-            favicon: data.favicon,
+            favicon,
             pinned: data.pinned,
             essential: data.essential,
             pinnedUrl: data.pinnedUrl,
@@ -207,7 +212,7 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
           tab.customTitle = data.customTitle
           tab.customIcon = data.customIcon
           if (tab.muted !== data.muted) tabs.toggleMute(tab.id)
-          if (tab.favicon === null && data.favicon) tab.favicon = data.favicon
+          if (tab.favicon === null && favicon) tab.favicon = favicon
           const sectionChanged = tab.pinned !== data.pinned || tab.essential !== data.essential
           const spaceChanged = !data.essential && tab.spaceId !== space!.id
           if (sectionChanged || spaceChanged) {
