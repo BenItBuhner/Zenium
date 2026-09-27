@@ -80,7 +80,11 @@ export function literalsOfTs(file: string, source: string): Literal[] {
   const push = (node: ts.Node, text: string): void => {
     const trimmed = text.replace(/\s+/g, ' ').trim()
     if (!trimmed) return
-    out.push({ file, line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1, text: trimmed })
+    out.push({
+      file,
+      line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1,
+      text: trimmed
+    })
   }
   const visit = (node: ts.Node): void => {
     if (ts.isStringLiteral(node) || ts.isTemplateLiteralToken(node)) push(node, node.text)
@@ -112,7 +116,8 @@ export function literalsOfOther(file: string, source: string): Literal[] {
       return
     }
     if (NOT_THE_USERS.test(line)) return
-    for (const m of line.matchAll(KOTLIN_QUOTED)) if (m[1]) out.push({ file, line: i + 1, text: m[1] })
+    for (const m of line.matchAll(KOTLIN_QUOTED))
+      if (m[1]) out.push({ file, line: i + 1, text: m[1] })
   })
   return out
 }
@@ -141,18 +146,35 @@ describe('the Delete browsing data words (W8-7): Chrome M124+’s "Delete" on ev
     expect(paths).toContain('src/renderer/src/components/pages/history/HistoryPage.tsx')
     expect(paths).toContain('src/shared/shortcutReference.ts')
     expect(paths).toContain('src/core/menus.ts')
-    expect(paths).toContain('android/app/src/androidTest/kotlin/app/zen/chromium/SiteControlsDemo.kt')
+    expect(paths).toContain(
+      'android/app/src/androidTest/kotlin/app/zen/chromium/SiteControlsDemo.kt'
+    )
     expect(paths.some((p) => p.includes('__tests__') || /\.test\.tsx?$/.test(p))).toBe(false)
     // The extractor finds the words on each surface: a broken read would pass an empty sweep.
     const find = (file: string, text: string): boolean =>
       literals.some((l) => rel(l.file) === file && l.text === text)
-    expect(find('src/renderer/src/components/siteControls/ClearBrowsingDataDialog.tsx', 'Delete browsing data')).toBe(true)
-    expect(find('src/renderer/src/components/siteControls/ClearBrowsingDataDialog.tsx', 'Delete data')).toBe(true)
-    expect(find('src/renderer/src/components/siteControls/ClearBrowsingDataForm.tsx', 'Delete data')).toBe(true)
-    expect(find('src/renderer/src/components/siteControls/settingsRows.tsx', 'Delete browsing data')).toBe(true)
+    expect(
+      find(
+        'src/renderer/src/components/siteControls/ClearBrowsingDataDialog.tsx',
+        'Delete browsing data'
+      )
+    ).toBe(true)
+    expect(
+      find('src/renderer/src/components/siteControls/ClearBrowsingDataDialog.tsx', 'Delete data')
+    ).toBe(true)
+    expect(
+      find('src/renderer/src/components/siteControls/ClearBrowsingDataForm.tsx', 'Delete data')
+    ).toBe(true)
+    expect(
+      find('src/renderer/src/components/siteControls/settingsRows.tsx', 'Delete browsing data')
+    ).toBe(true)
     expect(find('src/renderer/src/components/siteControls/settingsRows.tsx', 'Delete…')).toBe(true)
-    expect(find('src/renderer/src/components/pages/settings/privacyHub.ts', 'Delete browsing data…')).toBe(true)
-    expect(find('src/renderer/src/components/pages/history/HistoryPage.tsx', 'Delete browsing data…')).toBe(true)
+    expect(
+      find('src/renderer/src/components/pages/settings/privacyHub.ts', 'Delete browsing data…')
+    ).toBe(true)
+    expect(
+      find('src/renderer/src/components/pages/history/HistoryPage.tsx', 'Delete browsing data…')
+    ).toBe(true)
     expect(find('src/shared/shortcutReference.ts', 'Delete browsing data')).toBe(true)
     expect(find('src/renderer/src/lib/browsingData.ts', 'Nothing to delete')).toBe(true)
     expect(find('src/renderer/src/lib/browsingData.ts', 'Deleted')).toBe(true)
@@ -161,7 +183,12 @@ describe('the Delete browsing data words (W8-7): Chrome M124+’s "Delete" on ev
     expect(find('src/core/menuBar.ts', 'Delete Browsing Data…')).toBe(true)
     expect(find('src/shared/shortcuts.ts', 'Delete Browsing Data…')).toBe(true)
     // The phone's demo driver looks the sheet up by the new words.
-    expect(find('android/app/src/androidTest/kotlin/app/zen/chromium/SiteControlsDemo.kt', 'Delete browsing data')).toBe(true)
+    expect(
+      find(
+        'android/app/src/androidTest/kotlin/app/zen/chromium/SiteControlsDemo.kt',
+        'Delete browsing data'
+      )
+    ).toBe(true)
   })
 
   it('leaves no user-facing "Clear browsing data" in any casing, on any surface', () => {
@@ -194,8 +221,12 @@ describe('the Delete browsing data words (W8-7): Chrome M124+’s "Delete" on ev
         .map((l) => l.text)
     expect(flag('const t = "Clear browsing data"')).toEqual(['Clear browsing data'])
     expect(flag("label: 'Clear Browsing Data…'")).toEqual(['Clear Browsing Data…'])
-    expect(flag('const t = `Clear browsing data for ${n} sites`')).toEqual(['Clear browsing data for'])
-    expect(flag('const x = <button>Clear browsing data…</button>')).toEqual(['Clear browsing data…'])
+    expect(flag('const t = `Clear browsing data for ${n} sites`')).toEqual([
+      'Clear browsing data for'
+    ])
+    expect(flag('const x = <button>Clear browsing data…</button>')).toEqual([
+      'Clear browsing data…'
+    ])
     expect(flag('const x = <b title="Clear browsing data" />')).toEqual(['Clear browsing data'])
     expect(flag('// Clear browsing data\nconst t = 1')).toEqual([])
     expect(flag('/** Clear browsing data */\nconst t = 1')).toEqual([])
