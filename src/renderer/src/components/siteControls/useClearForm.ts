@@ -57,11 +57,57 @@ export interface ClearForm {
 
 const INITIAL_CHECKED: BrowsingDataType[] = ['history', 'cookies', 'cache']
 
-export function useClearForm(onDone: () => void): ClearForm {
+/**
+ * What differs between the two surfaces the form serves: the desktop dialog (the defaults) and
+ * the phone's form, which is Chrome Android's Quick Delete (`QUICK_DELETE_FORM`).
+ */
+export interface ClearFormOptions {
+  /** The range the form opens on: the last hour (Chrome's desktop dialog), or Quick Delete's 15 minutes. */
+  initialRange?: BrowsingDataRange
+  /** The types a mode lists, in order. */
+  types?: (mode: ClearMode) => readonly BrowsingDataType[]
+  /** The types checked when the form opens. */
+  initialChecked?: readonly BrowsingDataType[]
+}
+
+function modeTypes(mode: ClearMode): readonly BrowsingDataType[] {
+  return mode === 'basic' ? BROWSING_DATA_BASIC : BROWSING_DATA_ADVANCED
+}
+
+/**
+ * The phone's list: the mode's set with the Tabs row after Cached images and files, the seat
+ * Chrome's Delete browsing data page gives its Tabs checkbox (`clear_browsing_data_preferences.xml`:
+ * history :20, cookies :26, cache :32, tabs :37, then passwords, form data, site settings;
+ * `ClearBrowsingDataFragment.java:472–475` adds `DialogOption.CLEAR_TABS` to the page's options),
+ * in Basic and Advanced alike (ADDENDUM D). The row is a switch of the form, so it goes after the
+ * three the form ticks by default, as Chrome's page has it.
+ */
+export function quickDeleteTypes(mode: ClearMode): BrowsingDataType[] {
+  const base = modeTypes(mode)
+  const at = base.indexOf('cache') + 1
+  return [...base.slice(0, at), 'tabs', ...base.slice(at)]
+}
+
+/**
+ * The phone form as Chrome Android's Quick Delete (HB-07): it opens on the last 15 minutes
+ * (Quick Delete's default period) and lists the Tabs row OFF – Chrome's `kCloseTabs` pref, the
+ * page's Tabs checkbox, starts false on Android (`pref_names.cc:66–68`;
+ * `browser.clear_data.close_tabs`, `pref_names.h:51`); the Quick Delete dialog itself, which
+ * always closes the period's tabs, has no switch, and the form is the page's shape. The toast
+ * once it is done is W8-7's `clearedToast(range, cleared)`, the period's words on every host.
+ */
+export const QUICK_DELETE_FORM: ClearFormOptions = {
+  initialRange: '15min',
+  types: quickDeleteTypes,
+  initialChecked: INITIAL_CHECKED
+}
+
+export function useClearForm(onDone: () => void, options: ClearFormOptions = {}): ClearForm {
+  const listTypes = options.types ?? modeTypes
   const [form, setForm] = useState<ClearFormState>({
-    range: 'hour',
+    range: options.initialRange ?? 'hour',
     mode: 'basic',
-    checked: new Set(INITIAL_CHECKED),
+    checked: new Set(options.initialChecked ?? INITIAL_CHECKED),
     counts: null,
     busy: false,
     passphrase: null,
@@ -85,7 +131,7 @@ export function useClearForm(onDone: () => void): ClearForm {
     }
   }, [form.range])
 
-  const types = form.mode === 'basic' ? BROWSING_DATA_BASIC : BROWSING_DATA_ADVANCED
+  const types = listTypes(form.mode)
   const unavailable = new Set(
     (form.counts ?? []).filter((c) => c.unavailable !== null).map((c) => c.type)
   )

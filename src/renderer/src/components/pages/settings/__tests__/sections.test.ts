@@ -2114,6 +2114,23 @@ describe('the section model', () => {
     expect(clear.form?.title).toBe('Delete browsing data')
     expect(clear.form?.description).toContain('time range')
     expect(clear.form?.description).toContain('what to delete')
+    // On the phone layout the sheet is Quick Delete's (HB-07, MOT-24 UI): the same title, its
+    // description saying what the Tabs row does since nothing else on the sheet does before the
+    // switch is on (the reviewer's N5); the wide layouts' sheet says nothing of tabs.
+    expect(clear.form?.description).not.toContain('Tabs')
+    const phonePrivacy = buildSection(
+      PAGE.sections.find((x) => x.id === 'privacy')!,
+      {
+        ...c.ctx,
+        formFactor: 'phone'
+      }
+    )
+    const phoneClear = row(phonePrivacy, 'clear-data-open')
+    if (phoneClear.kind !== 'action') throw new Error('not an action')
+    expect(phoneClear.form?.title).toBe('Delete browsing data')
+    expect(phoneClear.form?.description).toBe(
+      `${clear.form?.description} Turn on Tabs to close the tabs you used in that time as well.`
+    )
 
     // Site settings: the catalogue this host honours, each an item whose sheet holds the default
     // as a value row; a type with one possible default is a fact. Notifications are in it since

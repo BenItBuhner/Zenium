@@ -36,9 +36,20 @@ export function rangeLabel(range: BrowsingDataRange): string {
 }
 
 /**
- * The label of each type. Every `BrowsingDataType` has one, whether or not a surface lists the
- * row yet (`tabs` is Chrome Android's Quick Delete row, `IDS_CLEAR_TABS_TITLE`; the phone
- * form's row is the UI half's – MOT-24 UI).
+ * The range mid-sentence ("No tabs from the last 15 minutes"): the picker's label
+ * (`rangeLabel`, the one source) with its capital lowered, which is what Chrome Android's
+ * `IDS_QUICK_DELETE_TIME_PERIOD_*` say (`android_chrome_strings.grd:7118–7132`: "last 15
+ * minutes" … "last 4 weeks").
+ */
+function rangeInSentence(range: BrowsingDataRange): string {
+  const label = rangeLabel(range)
+  return label.charAt(0).toLowerCase() + label.slice(1)
+}
+
+/**
+ * The label of each type. Every `BrowsingDataType` has one; `tabs` is the phone form's row
+ * (Chrome Android's Quick Delete row, `IDS_CLEAR_TABS_TITLE`, `android_chrome_strings.grd:1265–
+ * 1267`), which the desktop dialog does not list.
  */
 export const TYPE_LABEL: Record<BrowsingDataType, string> = {
   history: 'Browsing history',
@@ -94,7 +105,24 @@ export function countLine(
     permissions: ['permission', 'permissions'],
     tabs: ['tab', 'tabs']
   }
+  if (c.unit === 'tabs') return tabsLine(c.count, range, unit.tabs)
   const [one, many] = unit[c.unit]
   const prefix = c.unit === 'sites' ? 'From ' : ''
   return `${prefix}${c.count.toLocaleString()} ${c.count === 1 ? one : many}${scope}`
+}
+
+/**
+ * The Tabs row's line, Chrome Android's Quick Delete words: "{1 tab on this device|# tabs on
+ * this device}" (`IDS_QUICK_DELETE_DIALOG_TABS_CLOSED_TEXT`, `android_chrome_strings.grd:7071–
+ * 7073`); with none, "No tabs on this device" for all time
+ * (`IDS_QUICK_DELETE_DIALOG_ZERO_TABS_CLOSED_ALL_TIME_TEXT`, `:7077–7079`) and "No tabs from the
+ * <period>" for a bounded range (`IDS_QUICK_DELETE_DIALOG_ZERO_TABS_CLOSED_TEXT`, `:7080–7082`).
+ * `words` is `countLine`'s own pair for the unit, so the two lines cannot drift apart.
+ */
+function tabsLine(count: number, range: BrowsingDataRange, words: [string, string]): string {
+  if (count === 0) {
+    return range === 'all' ? 'No tabs on this device' : `No tabs from the ${rangeInSentence(range)}`
+  }
+  const [one, many] = words
+  return `${count.toLocaleString()} ${count === 1 ? one : many} on this device`
 }

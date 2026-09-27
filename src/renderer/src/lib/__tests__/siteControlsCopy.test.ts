@@ -238,14 +238,36 @@ describe('Delete browsing data copy', () => {
         { type: 'history', count: 1, unit, rangeApplies: true, unavailable: null },
         { type: 'cookies', count: 2, unit, rangeApplies: true, unavailable: null }
       ]
-      expect(countLine('history', counts, 'all')).toMatch(/^(From )?1 [a-z]+$/)
-      expect(countLine('cookies', counts, 'all')).toMatch(/^(From )?2 [a-z]+s$/)
+      // The tabs unit reads Chrome Android's line ("1 tab on this device"), every other its count.
+      expect(countLine('history', counts, 'all')).toMatch(/^(From )?1 [a-z]+( on this device)?$/)
+      expect(countLine('cookies', counts, 'all')).toMatch(/^(From )?2 [a-z]+s( on this device)?$/)
     }
-    const tabs: BrowsingDataCount[] = [
-      { type: 'tabs', count: 2, unit: 'tabs', rangeApplies: true, unavailable: null }
+  })
+
+  it('reads the phone’s Tabs row in Chrome Android’s Quick Delete words (HB-07; the lead’s 4)', () => {
+    const tabs = (count: number): BrowsingDataCount[] => [
+      { type: 'tabs', count, unit: 'tabs', rangeApplies: true, unavailable: null }
     ]
-    expect(countLine('tabs', tabs, '15min')).toBe('2 tabs')
-    expect(countLine('tabs', [{ ...tabs[0], count: 1 }], '15min')).toBe('1 tab')
+    expect(TYPE_LABEL.tabs).toBe('Tabs')
+    expect(countLine('tabs', tabs(1), '15min')).toBe('1 tab on this device')
+    expect(countLine('tabs', tabs(3), 'hour')).toBe('3 tabs on this device')
+    expect(countLine('tabs', tabs(12), 'all')).toBe('12 tabs on this device')
+    expect(countLine('tabs', tabs(0), '15min')).toBe('No tabs from the last 15 minutes')
+    expect(countLine('tabs', tabs(0), 'day')).toBe('No tabs from the last 24 hours')
+    expect(countLine('tabs', tabs(0), 'all')).toBe('No tabs on this device')
+    expect(countLine('tabs', null, '15min')).toBe('Counting…')
+  })
+
+  it("says the period mid-sentence in the range list's own words – one place for them, the label with its capital lowered (ADDENDUM B3)", () => {
+    for (const { value, label } of RANGE_OPTIONS) {
+      if (value === 'all') continue
+      const zero: BrowsingDataCount[] = [
+        { type: 'tabs', count: 0, unit: 'tabs', rangeApplies: true, unavailable: null }
+      ]
+      expect(countLine('tabs', zero, value)).toBe(
+        `No tabs from the ${label.charAt(0).toLowerCase()}${label.slice(1)}`
+      )
+    }
   })
 })
 
