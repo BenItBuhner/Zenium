@@ -28,7 +28,8 @@ import { V2TitleBlock } from '../extensions/v2'
 const PILL = '.zen-pill'
 /**
  * A control that asked for the share and wants the popover on itself (§9.20: a popover hangs
- * from what opened it) – the capture card's Share, over the dimmed page – ahead of the pill.
+ * from what opened it) – the capture card's Share, over the dimmed page; the pill's own Share
+ * chip while its request is up (W8-6, `lib/share.ts`'s `shareChip`) – ahead of the pill.
  */
 const ANCHOR = '[data-share-anchor]'
 
@@ -209,10 +210,12 @@ function SharePopover({
  * What the popover hangs from: the anchor's viewport rect and its bar's – the pill is its own
  * bar; a control that asked for the share stands in a dialog's footer, whose bar is the dialog
  * (`role="dialog"`: the footer's halves are the dialog's, and its bottom edge is where the
- * popover hangs from, §9.20), or itself with no dialog around it. Both on whole pixels (§9.16:
- * the popover's hairline on one row, though the dialog is centred on a half). Measured after
- * layout, again on every state push (the pill's chips come and go with the page) and when the
- * anchor or the window resizes; null while neither is on screen.
+ * popover hangs from, §9.20), or in the pill, whose bar is the pill (the Share chip sits in the
+ * pill's trailing half, so the popover hangs from the pill's bottom edge end-aligned with the
+ * chip, as the zoom bubble hangs from its chip), or itself with neither around it. Both on
+ * whole pixels (§9.16: the popover's hairline on one row, though the dialog is centred on a
+ * half). Measured after layout, again on every state push (the pill's chips come and go with
+ * the page) and when the anchor or the window resizes; null while neither is on screen.
  */
 interface Seat {
   anchor: Rect
@@ -228,12 +231,12 @@ function useAnchorRect(state: UIState): Seat | null {
         setSeat(null)
         return
       }
-      const dialog = anchor.hasAttribute('data-share-anchor')
-        ? anchor.closest<HTMLElement>('[role="dialog"]')
+      const bar = anchor.hasAttribute('data-share-anchor')
+        ? (anchor.closest<HTMLElement>('[role="dialog"]') ?? anchor.closest<HTMLElement>(PILL))
         : null
       const next: Seat = {
         anchor: snap(toRect(anchor.getBoundingClientRect())),
-        bar: snap(toRect((dialog ?? anchor).getBoundingClientRect()))
+        bar: snap(toRect((bar ?? anchor).getBoundingClientRect()))
       }
       setSeat((prev) => (sameSeat(prev, next) ? prev : next))
     }
