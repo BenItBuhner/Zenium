@@ -1337,18 +1337,19 @@ export class Menus {
     // its menu's items beyond Cut / Copy / Paste / Share / Select all / Web search are the text
     // classifier's and the process-text apps', `SelectActionMenuHelper`): Wiktionary's definition
     // of a word or a short phrase (`core/define.ts` says what is a term), shown by the chrome's
-    // Define surface (`define.show`) – over the selection's box on the desktop, in a sheet on
-    // the phone. The mini menu's chip in this pass; the phone's toolbar item and the menu's stay
-    // off until the surface that shows the answer is in (4b), so no item stands with nothing
-    // behind it. Not for an address (`example.com` is one word with letters): the selection
-    // that reads as a link is offered as one above, not as a word.
+    // Define surface (`define.show`) – over the selection's box on the desktop (`DefinePopover`),
+    // in a sheet on the phone (the toolbar's touch anchors nothing). The mini menu's chip and
+    // the phone's toolbar item; the right-click menu stays without it, as Edge's does (Define is
+    // the mini menu's own action there, not the context menu's). Not for an address
+    // (`example.com` is one word with letters): the selection that reads as a link is offered
+    // as one above, not as a word.
     if (!asUrl && isDefinableTerm(selection)) {
       actions.push({
         id: 'define',
         label: 'Define',
         title: 'Define',
         menu: false,
-        toolbar: false,
+        toolbar: true,
         mini: true,
         run: (surface) =>
           this.browser.emit(

@@ -33,6 +33,15 @@ import {
 } from './platform'
 
 /**
+ * Who may ask for the popup surface (`ZenWindow.setPopupSurface`): the autofill picker
+ * (`core/autofill.ts`) and the mini menu over a text selection (`core/selectionMenu.ts`).
+ */
+export type PopupSurfaceOwner = 'autofill' | 'selectionMenu'
+
+/** The owners front to back: the surface stands where the first one with a place asks. */
+export const POPUP_SURFACE_OWNERS: readonly PopupSurfaceOwner[] = ['autofill', 'selectionMenu']
+
+/**
  * Whether `win`'s chrome has `surface` up to answer a page's request (`ZenWindow.surfaces`); a
  * window that is gone – or a host object that never registered any – has none.
  */
@@ -182,8 +191,12 @@ export class ZenWindow {
   private pendingContentFocus = false
   private closing = false
   private chromeReadyOnce = false
-  /** Where the popup surface (the autofill picker) stands, while it is up. */
-  private popupBounds: Rect | null = null
+  /**
+   * Where each owner of the popup surface wants it, while it does: the surface is one document
+   * (`?surface=popup`), so it stands where the owner in front (`POPUP_SURFACE_OWNERS`' order)
+   * asks, and falls back to the next one's place as that owner lets go.
+   */
+  private readonly popupWanted = new Map<PopupSurfaceOwner, Rect>()
 
   constructor(
     private readonly browser: Browser,
@@ -626,8 +639,11 @@ export class ZenWindow {
     // host's frames from this (lib/pageView.ts).
     this.send('layout.applied', { contentHidden: report.contentHidden, hid, shown })
     if (this.pendingContentFocus && !report.contentHidden) this.focusContent()
-    // A view placed again may have come up above the popup surface: put it back on top.
-    if (this.popupBounds) this.host.setPopupSurface?.(this.popupBounds)
+    // A view placed again may have come up above the popup surface: put it back on top. The
+    // mini menu's pill follows the view it hangs over (and goes down while chrome covers it).
+    const popup = this.popupBounds
+    if (popup) this.host.setPopupSurface?.(popup)
+    this.browser.selectionMenu.onLayout(this)
     // With no page visible (empty space / chrome overlay / preview of a page shown in another
     // window / a page tab the chrome itself draws) keyboard input must go to the chrome,
     // otherwise shortcuts stop working.
@@ -705,10 +721,27 @@ export class ZenWindow {
     return this.host.contentSize()
   }
 
-  /** Place the popup surface at `bounds` (window CSS pixels) or take it down (null). */
-  setPopupSurface(bounds: Rect | null): void {
-    this.popupBounds = bounds
-    if (this.alive) this.host.setPopupSurface?.(bounds)
+  /**
+   * Place the popup surface at `bounds` (window CSS pixels) for `owner`, or let go of it (null).
+   * One surface, two owners: the autofill picker (in front – a login being filled outranks a
+   * menu over the text beside it) and the mini menu over a selection. The surface stands where
+   * the owner in front asks; an owner behind it is remembered and takes over as the front one
+   * lets go; the surface goes down with the last owner. The surface's document draws the same
+   * order (`PopupSurface`: the picker when `UIState.autofill.picker` stands, else the menu).
+   */
+  setPopupSurface(bounds: Rect | null, owner: PopupSurfaceOwner = 'autofill'): void {
+    if (bounds) this.popupWanted.set(owner, bounds)
+    else this.popupWanted.delete(owner)
+    if (this.alive) this.host.setPopupSurface?.(this.popupBounds)
+  }
+
+  /** Where the popup surface stands – the front owner's bounds – or null while nobody wants it. */
+  private get popupBounds(): Rect | null {
+    for (const owner of POPUP_SURFACE_OWNERS) {
+      const bounds = this.popupWanted.get(owner)
+      if (bounds) return bounds
+    }
+    return null
   }
 
   haptic(kind: HapticKind): void {

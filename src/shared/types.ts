@@ -3213,6 +3213,13 @@ export interface Settings {
    */
   caretBrowsingConfirm?: boolean
   /**
+   * The mini menu comes up over text selected in a page (CT-39; Edge's Appearance › "Show mini
+   * menu when selecting text"): Copy, Search, Define, Translate, Listen as chips over the
+   * selection (`UIState.selectionMenu`). Hosts with `capabilities.selectionMenu` alone read it;
+   * absent in profiles from before it existed (read as true).
+   */
+  showSelectionMenu?: boolean
+  /**
    * Phone: the tab overview's "Close all tabs" asks first ("Close N tabs?"); its "Don't ask
    * again" turns this off. Absent in profiles from before it existed (read as true).
    */
@@ -6539,8 +6546,17 @@ export interface Commands {
    * the one list) and the state clears. False when the state is another tab's or gone.
    */
   'selectionMenu.run': { args: { tabId: string; id: SelectionMenuActionId }; result: boolean }
-  /** The mini menu was dismissed (Escape, a click elsewhere in the chrome): the state clears. */
+  /** The mini menu was dismissed (Escape in the pill's document): the state clears, the page has the keyboard back. */
   'selectionMenu.dismiss': { args: { tabId: string }; result: void }
+  /**
+   * The pill's document measured the size its content wants (CSS px, the pill's box without the
+   * surface's shadow margin) for the selection `UIState.selectionMenu` holds for `tabId`; the
+   * core places the popup surface to fit (`SelectionMenuService.surfaceSize`).
+   */
+  'selectionMenu.surfaceSize': {
+    args: { tabId: string; width: number; height: number }
+    result: void
+  }
   /**
    * A definition of `term` from Wiktionary (`core/define.ts`; English Wiktionary's REST
    * definitions, the reader's language section when it has one, `lang` defaulting to the first

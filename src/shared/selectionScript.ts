@@ -28,7 +28,10 @@
  * only maintains a menu a gesture raised: the fresh box when a script or a selection handle
  * moves the standing selection, the empty report when it collapses. What is sent at the
  * settle is always read fresh (`currentSelectionReport`) – the snapshot is compared, never
- * sent. This is Blink's own rule for its selection handles: `SetSelectionOptions`'
+ * sent. Escape and the context menu take a menu down for good over the selection that stands
+ * (Edge's mini menu answers Escape so; the context menu is the selection's menu then); only a
+ * gesture that makes or changes the selection brings one back. This is Blink's own rule for
+ * its selection handles: `SetSelectionOptions`'
  * `should_show_handle_` is false by default (`third_party/blink/renderer/core/editing/
  * set_selection_options.h:53`), every DOM API path in `dom_selection.cc` passes the default
  * (`:319`, `:325`, `:351`, `:358`), and only `SelectionController`'s pointer and gesture paths
@@ -328,11 +331,28 @@ export function installSelectionReporter(
     pointerDown = false
     settleGesture()
   }
-  const onKeyDown = (): void => {
+  /**
+   * A key goes down: the snapshot the up is measured against. Escape, on its way down (the page
+   * may stop its propagation later; the menu answers it first, as the chrome's Escape reaches
+   * the chrome), takes the menu down and keeps it down while this selection stands – Escape
+   * leaves the selection where it is, so its up changes nothing and raises nothing; no scroll
+   * or script brings the menu back, only a gesture that makes or changes the selection (Edge's
+   * mini menu answers Escape so). A page's Escape while nothing is shown or owed is the page's.
+   */
+  const onKeyDown = (event: KeyboardEvent): void => {
     beginGesture()
+    if (event.key === 'Escape') drop()
   }
   const onKeyUp = (): void => {
     settleGesture()
+  }
+  /**
+   * The context menu is opening over the page (a right-click, the keyboard's menu key): it is
+   * the selection's menu now; the pill goes and does not return over it – the right-click's up
+   * changed nothing, and the menu key's up neither.
+   */
+  const onContextMenu = (): void => {
+    drop()
   }
   /**
    * The page scrolled or the viewport changed: the box reported is stale, so the menu goes now
@@ -372,6 +392,7 @@ export function installSelectionReporter(
   win.addEventListener('pointercancel', onPointerUp, listen)
   win.addEventListener('keydown', onKeyDown, listen)
   win.addEventListener('keyup', onKeyUp, listen)
+  win.addEventListener('contextmenu', onContextMenu, listen)
   win.addEventListener('scroll', onMoved, listen)
   win.addEventListener('resize', onMoved, listen)
   win.addEventListener('blur', onBlur)
@@ -391,6 +412,7 @@ export function installSelectionReporter(
     win.removeEventListener('pointercancel', onPointerUp, listen)
     win.removeEventListener('keydown', onKeyDown, listen)
     win.removeEventListener('keyup', onKeyUp, listen)
+    win.removeEventListener('contextmenu', onContextMenu, listen)
     win.removeEventListener('scroll', onMoved, listen)
     win.removeEventListener('resize', onMoved, listen)
     win.removeEventListener('blur', onBlur)
