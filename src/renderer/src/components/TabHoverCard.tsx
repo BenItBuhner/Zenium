@@ -80,8 +80,9 @@ export function TabHoverCard({ state }: { state: UIState }): JSX.Element | null 
   }, [shown, card.anchor, card.sidebar, card.axis, title, host, stateText, preview])
 
   // This is the card's host: the rows raise no card while none is mounted (the tablet chrome
-  // mounts none, and a mouse there would otherwise capture and hide the page for a card that
-  // never shows; lib/hoverCard.ts).
+  // mounts `TabletHoverCardHost` where a native host is registered (Android); the desktop at
+  // `?formFactor=tablet` mounts none, and a mouse there would otherwise capture and hide the
+  // page for a card that never shows; lib/hoverCard.ts).
   useEffect(() => hostHoverCard(), [])
 
   // The page behind the card is a capture of the active tab; another tab coming to the front

@@ -21,10 +21,12 @@ const { cmd } = await import('@renderer/lib/api')
 const { browserStore, HOVER_CARD_HIDDEN, uiStore } = await import('@renderer/lib/ui')
 const {
   bindHoverCardDismissals,
+  domHoverCardHosted,
   HOVER_CARD_DELAY,
   hostHoverCard,
   hoverCard,
   hoverCardFrame,
+  hoverCardHosted,
   hoverCardNativeHost,
   nativeHoverCard,
   setHoverCardHost
@@ -111,7 +113,10 @@ const sidebar: Rect = { x: 0, y: 56, width: 240, height: 744 }
 const viewport = { width: 1280, height: 800 }
 
 /** A host that keeps every frame it was given. */
-function sink(): { frames: Array<HoverCardFrame | null>; apply(frame: HoverCardFrame | null): void } {
+function sink(): {
+  frames: Array<HoverCardFrame | null>
+  apply(frame: HoverCardFrame | null): void
+} {
   const frames: Array<HoverCardFrame | null> = []
   return { frames, apply: (frame) => frames.push(frame) }
 }
@@ -129,7 +134,7 @@ afterEach(() => {
   release = null
   setHoverCardHost(null)
   uiStore.set({ hoverCard: HOVER_CARD_HIDDEN })
-  nativeHoverCard.set({ card: HOVER_CARD_HIDDEN })
+  nativeHoverCard.set({ card: HOVER_CARD_HIDDEN, frame: null })
   vi.mocked(cmd).mockClear()
   vi.useRealTimers()
 })
@@ -174,7 +179,13 @@ describe('the native host seam (TABLET-05)', () => {
       viewport,
       by: 'pointer'
     })
-    expect(nativeHoverCard.get().card).toEqual({ tabId: 'b', anchor, sidebar, axis: undefined, by: 'pointer' })
+    expect(nativeHoverCard.get().card).toEqual({
+      tabId: 'b',
+      anchor,
+      sidebar,
+      axis: undefined,
+      by: 'pointer'
+    })
     expect(hoverCard.showing('b')).toBe(true)
     // The page keeps playing under the host's card: no cover of the active page, no fresh
     // picture of the hovered one, and nothing over the content frame in the UI state.
@@ -204,6 +215,44 @@ describe('the native host seam (TABLET-05)', () => {
     expect(uiStore.get().hoverCard).toEqual(HOVER_CARD_HIDDEN)
   })
 
+  it('keeps the frame it last sent beside the card – the text the row is described by – and none once the card is down', async () => {
+    const state = fixture([tab('a'), tab('b', { discarded: true })], 'a')
+    browserStore.set({ state })
+    const host = sink()
+    setHoverCardHost(host)
+    release = hostHoverCard('native')
+    expect(nativeHoverCard.get().frame).toBeNull()
+
+    hoverCard.pointerEnter('b', () => ({ anchor, sidebar }))
+    await rest()
+    expect(nativeHoverCard.get().frame).toBe(host.frames[0])
+    expect(nativeHoverCard.get().frame).toMatchObject({
+      tabId: 'b',
+      title: 'B',
+      host: 'b.example',
+      lines: ['Sleeping – click to wake']
+    })
+
+    hoverCard.hide()
+    expect(nativeHoverCard.get().frame).toBeNull()
+    expect(nativeHoverCard.get().card).toEqual(HOVER_CARD_HIDDEN)
+  })
+
+  it('tells the chrome’s own card apart from a host that draws nothing itself: `domHoverCardHosted` counts the DOM card alone', () => {
+    expect(hoverCardHosted()).toBe(false)
+    expect(domHoverCardHosted()).toBe(false)
+    const native = hostHoverCard('native')
+    expect(hoverCardHosted()).toBe(true)
+    expect(domHoverCardHosted()).toBe(false)
+    const dom = hostHoverCard()
+    expect(domHoverCardHosted()).toBe(true)
+    dom()
+    expect(domHoverCardHosted()).toBe(false)
+    expect(hoverCardHosted()).toBe(true)
+    native()
+    expect(hoverCardHosted()).toBe(false)
+  })
+
   it('keyboard focus sends the frame at once, by focus, along the strip with its axis', async () => {
     const state = fixture([tab('a'), tab('b')], 'a')
     browserStore.set({ state })
@@ -212,7 +261,11 @@ describe('the native host seam (TABLET-05)', () => {
     release = hostHoverCard()
 
     const band: Rect = { x: 0, y: 0, width: 1280, height: 36 }
-    hoverCard.focus('b', () => ({ anchor: { x: 300, y: 0, width: 180, height: 36 }, sidebar: band, axis: 'x' }))
+    hoverCard.focus('b', () => ({
+      anchor: { x: 300, y: 0, width: 180, height: 36 },
+      sidebar: band,
+      axis: 'x'
+    }))
     await vi.advanceTimersByTimeAsync(0)
     expect(host.frames).toHaveLength(1)
     expect(host.frames[0]).toMatchObject({ tabId: 'b', by: 'focus', axis: 'x', sidebar: band })
@@ -250,7 +303,13 @@ describe('the native host seam (TABLET-05)', () => {
 
     hoverCard.pointerEnter('b', () => ({ anchor, sidebar }))
     await rest()
-    expect(uiStore.get().hoverCard).toEqual({ tabId: 'b', anchor, sidebar, axis: undefined, by: 'pointer' })
+    expect(uiStore.get().hoverCard).toEqual({
+      tabId: 'b',
+      anchor,
+      sidebar,
+      axis: undefined,
+      by: 'pointer'
+    })
     expect(nativeHoverCard.get().card).toEqual(HOVER_CARD_HIDDEN)
     expect(cmd).toHaveBeenCalledWith('overlay.snapshot', { tabId: 'a' })
     expect(cmd).toHaveBeenCalledWith('overlay.snapshot', { tabId: 'b', fresh: true })
@@ -258,26 +317,43 @@ describe('the native host seam (TABLET-05)', () => {
 })
 
 describe('hoverCardFrame', () => {
-  const state = fixture([tab('a'), tab('b', { title: 'Beta – a long title' }), tab('c', { discarded: true })], 'a')
+  const state = fixture(
+    [tab('a'), tab('b', { title: 'Beta – a long title' }), tab('c', { discarded: true })],
+    'a'
+  )
 
   it('is null for no card, or a card whose tab has gone', () => {
     expect(hoverCardFrame(HOVER_CARD_HIDDEN, state, viewport)).toBeNull()
-    expect(hoverCardFrame({ tabId: 'zz', anchor, sidebar, by: 'pointer' }, state, viewport)).toBeNull()
-    expect(hoverCardFrame({ tabId: 'b', anchor, sidebar, by: 'pointer' }, null, viewport)).toBeNull()
+    expect(
+      hoverCardFrame({ tabId: 'zz', anchor, sidebar, by: 'pointer' }, state, viewport)
+    ).toBeNull()
+    expect(
+      hoverCardFrame({ tabId: 'b', anchor, sidebar, by: 'pointer' }, null, viewport)
+    ).toBeNull()
   })
 
   it('carries the desktop card’s text: the title, the host as the pill shows it, the state lines', () => {
     const frame = hoverCardFrame({ tabId: 'b', anchor, sidebar, by: 'pointer' }, state, viewport)
-    expect(frame).toMatchObject({ visible: true, tabId: 'b', title: 'Beta – a long title', host: 'b.example', lines: [] })
+    expect(frame).toMatchObject({
+      visible: true,
+      tabId: 'b',
+      title: 'Beta – a long title',
+      host: 'b.example',
+      lines: []
+    })
     expect(frame).not.toHaveProperty('axis')
   })
 
   it('no preview for a sleeping tab, and the axis when the row is on the strip', () => {
-    expect(hoverCardFrame({ tabId: 'c', anchor, sidebar, by: 'focus' }, state, viewport)).toMatchObject({
+    expect(
+      hoverCardFrame({ tabId: 'c', anchor, sidebar, by: 'focus' }, state, viewport)
+    ).toMatchObject({
       preview: false,
       by: 'focus'
     })
-    expect(hoverCardFrame({ tabId: 'b', anchor, sidebar, axis: 'x', by: 'pointer' }, state, viewport)).toMatchObject({
+    expect(
+      hoverCardFrame({ tabId: 'b', anchor, sidebar, axis: 'x', by: 'pointer' }, state, viewport)
+    ).toMatchObject({
       axis: 'x'
     })
   })

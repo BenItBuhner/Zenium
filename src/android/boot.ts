@@ -404,14 +404,18 @@ function syncHistoryNavBubble(bridge: Bridge): void {
  * beside the sidebar would never show over the pages layered above it, so the host draws it
  * (`TabHoverCardView`, above the pages and under the fullscreen layer) where the chrome says,
  * per change over the one-way channel, in CSS px it scales by its density; `{ visible: false }`
- * takes it down. The chrome keeps the card's machine and its dismissals (the tablet's headless
- * `TabletHoverCardHost` is what lets the rows raise one; the phone registers this too and
- * mounts no host, so nothing is ever sent there). Only the registration runs at boot – bounded,
- * no I/O; the host inflates nothing before the first frame.
+ * takes it down. The chrome keeps the card's machine and its dismissals (the tablet's
+ * `TabletHoverCardHost` is what lets the rows raise one; the phone mounts no host, so nothing
+ * is raised there). The card is the tablet's by rule as well: on the phone layout whatever
+ * reaches the host goes out as a take-down, so no frame can stand a 320 px card over a phone
+ * page whichever host raised it – read per frame, not at boot, since the layout changes with a
+ * fold (a foldable booted closed is a phone, opened a tablet). Only the registration runs at
+ * boot – bounded, no I/O; the host inflates nothing before the first frame.
  */
 function syncHoverCard(bridge: Bridge): void {
   setHoverCardHost({
-    apply: (frame) => bridge.post('chrome.hoverCard', frame ?? { visible: false })
+    apply: (frame) =>
+      bridge.post('chrome.hoverCard', frame && !isPhone() ? frame : { visible: false })
   })
 }
 

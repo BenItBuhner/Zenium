@@ -75,8 +75,11 @@ class TabHoverCardSpecTest {
         assertEquals(TabHoverCardSpec.POP_MS, pop.groupValues[1].toLong())
         val from = Regex("""@keyframes zen-pop \{\s*from \{\s*opacity: 0;\s*transform: scale\(([\d.]+)\)""").find(css) ?: error("zen-pop from")
         assertEquals(TabHoverCardSpec.POP_SCALE, from.groupValues[1].toFloat(), 0f)
-        val fade = Regex("""\.zen-animate-fade \{\s*animation: zen-fade (\d+)ms""").find(css) ?: error("reduced-motion fade")
-        assertEquals(TabHoverCardSpec.FADE_MS, fade.groupValues[1].toLong())
+        // The reduced-motion rule by its own marks – the fade declared `!important` past the foot's
+        // global rule, inside `@media (prefers-reduced-motion: reduce)` – not the plain 160 ms
+        // `.zen-animate-fade` that happens to follow it in the file.
+        val reduced = Regex("""@media \(prefers-reduced-motion: reduce\) \{[^}]*\.zen-animate-fade \{\s*animation: zen-fade (\d+)ms var\(--zen-ease\) !important""").find(css) ?: error("reduced-motion fade")
+        assertEquals(TabHoverCardSpec.FADE_MS, reduced.groupValues[1].toLong())
         val ease = Regex("""--zen-ease: cubic-bezier\(([\d.]+), ([\d.]+), ([\d.]+), ([\d.]+)\)""").find(css) ?: error("--zen-ease")
         for (i in 0 until 4) assertEquals(TabHoverCardSpec.EASE[i], ease.groupValues[i + 1].toFloat(), 0f)
     }
