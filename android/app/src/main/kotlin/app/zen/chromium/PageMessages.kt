@@ -53,7 +53,9 @@ sealed class PageMessageRoute {
      * the same as the desktop's preload, which runs in every frame). A frame's request
      * observation is heard too (the extension runtime's `requestObserver.ts`): an embedded
      * player's `fetch` / XHR are its frame's own, and a `webRequest` sniffer hears the tab's
-     * requests whichever frame made them, as Chrome reports them.
+     * requests whichever frame made them, as Chrome reports them. A frame's answers in the image
+     * search's frame-owner protocol are heard too ([ImageOwner]): the frame that holds the
+     * image says so, and thumbnails it, from its own document.
      */
     fun heardFrom(isMainFrame: Boolean): Boolean =
         isMainFrame || this is Fullscreen || (this is Forward && message.optString("type") in HEARD_FROM_FRAMES)
@@ -63,8 +65,12 @@ sealed class PageMessageRoute {
         const val CAPTURE_STATE = "capture-state"
         /** The page script's observation of a `fetch` / XHR response for the extension runtime (`requestObserver.ts`). */
         const val EXT_OBSERVATION = "ext-observation"
+        /** A frame's salted hashes of the image URLs it holds, answering `zen:image-owner?` ([ImageOwner], §2.2). */
+        const val IMAGE_OWNER = "zen:image-owner"
+        /** The owner frame's thumbnail or refusal ([ImageOwner], §2.4). */
+        const val IMAGE_THUMBNAIL = "zen:image-thumbnail"
         /** The forwarded messages a frame is heard on. */
-        private val HEARD_FROM_FRAMES = setOf(CAPTURE_STATE, EXT_OBSERVATION)
+        private val HEARD_FROM_FRAMES = setOf(CAPTURE_STATE, EXT_OBSERVATION, IMAGE_OWNER, IMAGE_THUMBNAIL)
     }
 }
 
