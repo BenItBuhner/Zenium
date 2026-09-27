@@ -28,9 +28,6 @@ name: Android widget demo
 # dispatch: the theme matrix has no single emulator-died output to key a second boot on.
 on:
   workflow_dispatch:
-  # TEMPORARY (W6-D13, PR #583): the nit round's one run on the branch for the stills; removed before review.
-  push:
-    branches: [cursor/android-widget-theming-resize-9271]
 
 permissions:
   contents: read
