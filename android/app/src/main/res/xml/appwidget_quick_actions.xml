@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Home-screen quick actions widget (QuickActionsWidgetProvider; WID-02): the omnibox pill with
+     the mic, the private mask and the QR scanner in one widget resized freely along both axes, as
+     Chrome's quick action search widget is – its info one for one
+     (chrome/android/java/res/xml/quick_action_search_widget_small_info.xml:8-18 in Chrome 152):
+     the initial layout is the small form; the floor along the row is widget_quick_actions_width
+     (Chrome's 300 / 220 / 260 dp by shortest side – 260 dp on every phone; values/dimens.xml and
+     the sw240dp / sw280dp pairs) and along the column the extra-small form's 48 dp, each named
+     twice (minWidth and minResizeWidth, minHeight and minResizeHeight) as Chrome names them; no
+     targetCell*, no maxResize*, as Chrome's has none – the launcher offers its default span and the
+     user resizes to any size at or above the floor, and the provider picks the form by the height
+     and the buttons by the width (the size map). The picker renders the small form itself where it
+     can (previewLayout, API 31); older pickers draw the vector under previewImage. Offered in the
+     searchbox category as well as the Home screen's, as Chrome's is. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:description="@string/widget_quick_actions_description"
+    android:initialLayout="@layout/widget_quick_actions_small"
+    android:minWidth="@dimen/widget_quick_actions_width"
+    android:minHeight="@dimen/widget_quick_actions_xsmall_height"
+    android:minResizeWidth="@dimen/widget_quick_actions_width"
+    android:minResizeHeight="@dimen/widget_quick_actions_xsmall_height"
+    android:previewImage="@drawable/widget_quick_actions_preview"
+    android:previewLayout="@layout/widget_quick_actions_preview"
+    android:resizeMode="vertical|horizontal"
+    android:updatePeriodMillis="0"
+    android:widgetCategory="home_screen|searchbox"
+    tools:targetApi="s" />

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The quick actions widget's bar in the small form on Android 12+ (WID-02): Chrome's inset pill
+     (quick_action_search_widget_small_search_bar_background.xml:8-30) in the system's
+     colorSurfaceContainerHigh alone, no hairline. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:insetLeft="@dimen/widget_quick_actions_small_bar_inset_horizontal"
+    android:insetTop="@dimen/widget_quick_actions_small_bar_inset_vertical"
+    android:insetRight="@dimen/widget_quick_actions_small_bar_inset_horizontal"
+    android:insetBottom="@dimen/widget_quick_actions_small_bar_inset_vertical">
+    <ripple android:color="?android:attr/colorControlHighlight">
+        <item android:id="@android:id/mask">
+            <shape android:shape="rectangle">
+                <solid android:color="@android:color/white" />
+                <corners android:radius="@dimen/widget_quick_actions_small_bar_radius" />
+            </shape>
+        </item>
+        <item>
+            <shape android:shape="rectangle">
+                <solid android:color="@color/widget_quick_actions_bar" />
+                <corners android:radius="@dimen/widget_quick_actions_small_bar_radius" />
+            </shape>
+        </item>
+    </ripple>
+</inset>

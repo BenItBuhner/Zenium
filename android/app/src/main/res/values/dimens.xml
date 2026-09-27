@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The quick actions widget's measures (QuickActionsWidgetProvider, res/layout/widget_quick_actions_*.xml;
+     WID-02): Chrome's quick action search widget's, one for one
+     (chrome/browser/ui/android/quickactionsearchwidget/java/res/values/dimens.xml:10-79 in Chrome 152;
+     the sw240dp and sw280dp widths :9 of their files). The widget's floor (widget_quick_actions_width)
+     is Chrome's: 300 dp, 220 dp from 240 dp of shortest side, 260 dp from 280 dp – so 260 dp on every
+     phone. The three forms are fixed heights the launcher's cells centre: 48 dp (extra small), 72 dp
+     (small), 155 dp (medium); the reference widths at which every button shows live in the provider
+     (Variant), since ours are Chrome's less the Dino slot. The card's radii are 20 dp (16 dp for the
+     extra-small form) here and the system's widget radius on Android 12+ (values-v31/dimens.xml), as
+     Chrome's are (values-v31/dimens.xml:9-13 there). -->
+<resources>
+    <dimen name="widget_quick_actions_width">300dp</dimen>
+    <dimen name="widget_quick_actions_radius">20dp</dimen>
+    <dimen name="widget_quick_actions_xsmall_radius">16dp</dimen>
+
+    <!-- The extra-small form: a 48 dp row, 8 dp in from the cells; the bar a 32 dp pill 3 dp from its neighbours,
+         the mark 16 dp, the hint 11 sp; 28 dp buttons 5 dp apart, a 16 dp glyph in each. -->
+    <dimen name="widget_quick_actions_xsmall_height">48dp</dimen>
+    <dimen name="widget_quick_actions_xsmall_margin">8dp</dimen>
+    <dimen name="widget_quick_actions_xsmall_bar_height">32dp</dimen>
+    <dimen name="widget_quick_actions_xsmall_bar_margin">3dp</dimen>
+    <dimen name="widget_quick_actions_xsmall_bar_radius">16dp</dimen>
+    <dimen name="widget_quick_actions_xsmall_mark">16dp</dimen>
+    <dimen name="widget_quick_actions_xsmall_mark_margin">8dp</dimen>
+    <dimen name="widget_quick_actions_xsmall_mark_margin_text">5dp</dimen>
+    <dimen name="widget_quick_actions_xsmall_hint">11sp</dimen>
+    <dimen name="widget_quick_actions_xsmall_button">28dp</dimen>
+    <dimen name="widget_quick_actions_xsmall_button_margin">5dp</dimen>
+    <dimen name="widget_quick_actions_xsmall_button_padding">6dp</dimen>
+
+    <!-- The small form: a 72 dp row, 8 dp in; the bar 48 dp tall with its pill inset 3.5 dp by 4.5 dp (a 39 dp
+         pill of radius 20), the mark 20 dp; 48 dp buttons touching, each a 41 dp disc (inset 3.5 dp, radius 21)
+         round a 17 dp glyph. -->
+    <dimen name="widget_quick_actions_small_height">72dp</dimen>
+    <dimen name="widget_quick_actions_small_margin">8dp</dimen>
+    <dimen name="widget_quick_actions_small_bar_height">48dp</dimen>
+    <dimen name="widget_quick_actions_small_bar_inset_horizontal">3.5dp</dimen>
+    <dimen name="widget_quick_actions_small_bar_inset_vertical">4.5dp</dimen>
+    <dimen name="widget_quick_actions_small_bar_radius">20dp</dimen>
+    <dimen name="widget_quick_actions_small_mark">20dp</dimen>
+    <dimen name="widget_quick_actions_small_mark_margin">8dp</dimen>
+    <dimen name="widget_quick_actions_small_mark_margin_text">5dp</dimen>
+    <dimen name="widget_quick_actions_small_button">48dp</dimen>
+    <dimen name="widget_quick_actions_small_button_margin">0dp</dimen>
+    <dimen name="widget_quick_actions_small_button_inset">3.5dp</dimen>
+    <dimen name="widget_quick_actions_small_button_radius">21dp</dimen>
+    <dimen name="widget_quick_actions_small_button_padding">15.5dp</dimen>
+
+    <!-- The medium form: a 155 dp column; the bar a 50 dp pill 15 dp in from the sides, 15 dp over the row; the mark
+         28 dp; 54 dp discs 3 dp apart round 20 dp glyphs. -->
+    <dimen name="widget_quick_actions_medium_height">155dp</dimen>
+    <dimen name="widget_quick_actions_medium_margin">15dp</dimen>
+    <dimen name="widget_quick_actions_medium_row_margin">15dp</dimen>
+    <dimen name="widget_quick_actions_medium_bar_height">50dp</dimen>
+    <dimen name="widget_quick_actions_medium_bar_radius">25dp</dimen>
+    <dimen name="widget_quick_actions_medium_mark">28dp</dimen>
+    <dimen name="widget_quick_actions_medium_mark_margin">11dp</dimen>
+    <dimen name="widget_quick_actions_medium_mark_margin_text">7dp</dimen>
+    <dimen name="widget_quick_actions_medium_button">54dp</dimen>
+    <dimen name="widget_quick_actions_medium_button_margin">3dp</dimen>
+    <dimen name="widget_quick_actions_medium_button_radius">27dp</dimen>
+    <dimen name="widget_quick_actions_medium_button_padding">17dp</dimen>
+</resources>

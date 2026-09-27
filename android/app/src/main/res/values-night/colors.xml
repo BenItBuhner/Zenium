@@ -8,4 +8,10 @@
     <color name="widget_search_hairline">@color/v2_border_dark</color>
     <color name="widget_search_ink">@color/v2_text_dark</color>
     <color name="widget_search_mark">#8284F0</color>
+
+    <!-- The quick actions widget's dark face below Android 12 (see values/colors.xml; WID-02): the v2 tokens' dark values. -->
+    <color name="widget_quick_actions_surface">@color/v2_page_dark</color>
+    <color name="widget_quick_actions_bar">@color/v2_panel_dark</color>
+    <color name="widget_quick_actions_button">@color/v2_panel_dark</color>
+    <color name="widget_quick_actions_hairline">@color/v2_border_dark</color>
 </resources>

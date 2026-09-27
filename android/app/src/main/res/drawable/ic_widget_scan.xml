@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lucide "scan-line" (the Scan QR code shortcut's glyph, ic_shortcut_scan_foreground.xml) on the
+     quick actions widget's face (WID-02): §9.3's glyph at stroke 1.75, in the ink of the system's
+     theme (widget_search_ink; the search widget's mic and mask take the same). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:strokeColor="@color/widget_search_ink"
+        android:strokeWidth="1.75"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M3 7V5a2 2 0 0 1 2-2h2" />
+    <path
+        android:strokeColor="@color/widget_search_ink"
+        android:strokeWidth="1.75"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M17 3h2a2 2 0 0 1 2 2v2" />
+    <path
+        android:strokeColor="@color/widget_search_ink"
+        android:strokeWidth="1.75"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M21 17v2a2 2 0 0 1-2 2h-2" />
+    <path
+        android:strokeColor="@color/widget_search_ink"
+        android:strokeWidth="1.75"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M7 21H5a2 2 0 0 1-2-2v-2" />
+    <path
+        android:strokeColor="@color/widget_search_ink"
+        android:strokeWidth="1.75"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M7 12h10" />
+</vector>

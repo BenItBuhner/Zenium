@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The quick actions widget's buttons in the medium form (WID-02): Chrome's 54 dp disc (radius 27)
+     under the system's ripple (quick_action_search_widget_medium_button_background.xml:8-22), in
+     Chrome's colorSurfaceContainer – the system's role on Android 12+
+     (res/color-v31/widget_quick_actions_button.xml and its pairs), the v2 panel below. -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="?android:attr/colorControlHighlight">
+    <item android:id="@android:id/mask">
+        <shape android:shape="rectangle">
+            <solid android:color="@android:color/white" />
+            <corners android:radius="@dimen/widget_quick_actions_medium_button_radius" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/widget_quick_actions_button" />
+            <corners android:radius="@dimen/widget_quick_actions_medium_button_radius" />
+        </shape>
+    </item>
+</ripple>

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The quick actions widget's buttons on Android 12+ (WID-02): Chrome's colorSurfaceContainer
+     (res/color/widget_button_bg.xml:8), MDC 1.12.0's neutral variant tone 94
+     (values-v31/tokens.xml:99 → color-v31/m3_ref_palette_dynamic_neutral_variant94.xml:18). -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:color="@android:color/system_neutral2_600"
+        android:lStar="94" />
+</selector>
