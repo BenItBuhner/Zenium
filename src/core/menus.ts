@@ -17,6 +17,7 @@ import {
   type ImageSearchByUpload
 } from '../shared/search'
 import {
+  IMAGE_THUMBNAIL_JPEG_QUALITY,
   IMAGE_UPLOAD_MAX_BYTES,
   expandImagePost,
   imageFetchScript,
@@ -2056,15 +2057,21 @@ export class Menus {
   }
 
   /**
-   * The image's thumbnail, read where the image can be read. For an http(s) image the host's
-   * copy first (`readImageResource`, the desktop's DevTools read of the bytes the renderer
-   * holds: the page's own response, no second request, a cross-origin image without CORS
-   * headers included), handed to the page's script as a `data:` address for the canvas; the
-   * host's copy comes before any fetch from the page because a refused cross-origin fetch
-   * evicts it. Then the page's own fetch of the address (`imageFetchScript`, run in the
-   * clicked frame: the page's cookies and referrer; a `data:`/`blob:` image read in place),
-   * downscaled within the engine's `bounds`. `'too-large'` past the cap, null when neither
-   * could read it.
+   * The image's thumbnail, read where the image can be read. On a phone whose host offers the
+   * frame-owner protocol (`TabView.imageThumbnailByOwner`, `frame-owner-protocol-interface.md`)
+   * the frame that holds the image thumbnails its own copy, the address reaching no frame that
+   * does not hold it – the host's verb takes the protocol's four scheme classes; `unsupported`
+   * (a WebView without the protocol's channel) and a host that answered nothing (an APK before
+   * the verb) keep today's path below, any other refusal is this row's usual "nothing could
+   * read it" (the address route for an http(s) image, the toast otherwise). Otherwise, for an
+   * http(s) image the host's copy first (`readImageResource`, the desktop's DevTools read of
+   * the bytes the renderer holds: the page's own response, no second request, a cross-origin
+   * image without CORS headers included), handed to the page's script as a `data:` address for
+   * the canvas; the host's copy comes before any fetch from the page because a refused
+   * cross-origin fetch evicts it. Then the page's own fetch of the address (`imageFetchScript`,
+   * run in the clicked frame: the page's cookies and referrer; a `data:`/`blob:` image read in
+   * place), downscaled within the engine's `bounds`. `'too-large'` past the cap, null when
+   * neither could read it.
    */
   private async imageThumbnail(
     view: TabView,
@@ -2072,6 +2079,23 @@ export class Menus {
     bounds: ImageThumbnailBounds,
     frameId?: number
   ): Promise<ImageThumbnail | 'too-large' | null> {
+    if (view.imageThumbnailByOwner && /^(?:https?|blob|data):/i.test(src)) {
+      const owned = await Promise.resolve()
+        .then(() =>
+          view.imageThumbnailByOwner!(
+            src,
+            bounds,
+            IMAGE_THUMBNAIL_JPEG_QUALITY,
+            IMAGE_UPLOAD_MAX_BYTES
+          )
+        )
+        .catch(() => null)
+      if (owned) {
+        if (owned.ok) return owned.thumbnail
+        if (owned.reason === 'too-large') return 'too-large'
+        if (owned.reason !== 'unsupported') return null
+      }
+    }
     if (view.readImageResource && /^https?:\/\//i.test(src)) {
       const held = await Promise.resolve()
         .then(() => view.readImageResource!(src, IMAGE_UPLOAD_MAX_BYTES))
