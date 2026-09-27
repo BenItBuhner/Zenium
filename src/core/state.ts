@@ -115,6 +115,7 @@ import {
   migrateLegacyBookmarks,
   normalizeBookmarkNodes
 } from '../shared/bookmarks'
+import { sanitizeBookmarkRowDisplay, sanitizeBookmarkRowSortOrder } from '../shared/bookmarkRows'
 import { emptyReadingList, sanitizeReadingList, sortReadingList } from '../shared/readingList'
 import { JsonStore } from './store/JsonStore'
 import {
@@ -874,6 +875,13 @@ export class BrowserState {
     if (!ENERGY_SAVER_MODES.includes(this.settings.energySaver)) {
       this.settings.energySaver = DEFAULT_SETTINGS.energySaver
     }
+    // The phone's bookmark rows (HB-13): a profile from before the keys, or a value that is
+    // none of Chrome's, reads the defaults – manual order, and the compact row (Chrome's default
+    // is Visual; Compact is the lead's stated deviation, `shared/bookmarkRows.ts`).
+    this.settings.bookmarkRowSortOrder = sanitizeBookmarkRowSortOrder(
+      data.settings?.bookmarkRowSortOrder
+    )
+    this.settings.bookmarkRowDisplay = sanitizeBookmarkRowDisplay(data.settings?.bookmarkRowDisplay)
     this.settings.toolbarLayout = sanitizeToolbarLayout(
       data.settings?.toolbarLayout,
       DEFAULT_SETTINGS.toolbarLayout

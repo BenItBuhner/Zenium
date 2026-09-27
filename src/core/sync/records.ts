@@ -373,6 +373,8 @@ export function readReadingListData(id: string, data: unknown): ReadingListEntry
  *   `browser_ui_prefs.cc`), never synced; the card is the desktop's alone, so the phone holds
  *   the key inert. Same mechanics as the three above: no migration, an older peer's copy
  *   stripped at apply and never winning.
+ * - `bookmarkRowSortOrder`, `bookmarkRowDisplay` (HB-13): the phone's bookmark rows' order and
+ *   display, Chrome's `BookmarkUiPrefs` – two SharedPreferences keys on the device, never synced.
  */
 export const DEVICE_LOCAL_SETTINGS = [
   'onboardingDone',
@@ -383,7 +385,9 @@ export const DEVICE_LOCAL_SETTINGS = [
   'unloadEnabled',
   'unloadTimeoutMinutes',
   'touchpadSwipeToNavigate',
-  'hoverCardMemoryUsage'
+  'hoverCardMemoryUsage',
+  'bookmarkRowSortOrder',
+  'bookmarkRowDisplay'
 ] as const
 export type DeviceLocalSetting = (typeof DEVICE_LOCAL_SETTINGS)[number]
 const DEVICE_LOCAL = new Set<string>(DEVICE_LOCAL_SETTINGS)

@@ -352,7 +352,7 @@ describe("the bookmark row's menu (HB-12)", () => {
     // The roots carry no menu (they neither move nor delete).
     expect(more('Mobile bookmarks')).toBeNull()
     await tap('Mobile bookmarks')
-    expect(titles()).toEqual(['Work', 'Home', 'News', 'Mail'])
+    expect(titles()).toEqual(['News', 'Mail', 'Work', 'Home'])
     await openMenu('News')
     expect(menu()).toEqual({
       title: 'News',
@@ -573,7 +573,7 @@ describe('Move to… and its folder picker', () => {
     await land()
     expect(sheet()).toBeNull()
     expect(of('bookmark.move')).toEqual([])
-    expect(titles()).toEqual(['Work', 'Home', 'News', 'Mail'])
+    expect(titles()).toEqual(['News', 'Mail', 'Work', 'Home'])
   })
 
   it('leaves a moved folder and everything under it out of the list', async () => {
@@ -606,7 +606,7 @@ describe('Move to… and its folder picker', () => {
     act(() => footerButton('Move').click())
     await land()
     expect(of('bookmark.move')).toEqual([
-      { ids: ['work', 'news', 'mail'], parentId: OTHER_BOOKMARKS_ID }
+      { ids: ['news', 'mail', 'work'], parentId: OTHER_BOOKMARKS_ID }
     ])
     expect(selectionHeader()).toBeNull()
   })

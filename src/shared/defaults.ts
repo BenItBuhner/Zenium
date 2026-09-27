@@ -21,6 +21,7 @@ import { DEFAULT_NEW_TAB_SETTINGS } from './newTab'
 import { DEFAULT_UPDATE_SETTINGS } from './updates'
 import { DEFAULT_PROMO_STATE } from './defaultBrowser'
 import { DEFAULT_BLOCKING_SETTINGS } from './blocking'
+import { DEFAULT_BOOKMARK_ROW_DISPLAY, DEFAULT_BOOKMARK_ROW_SORT_ORDER } from './bookmarkRows'
 import { DEFAULT_PAGE_CONTROLS } from './pageControls'
 import { DEFAULT_PRELOAD_PAGES, DEFAULT_PRIVACY_SETTINGS } from './privacy'
 import { DEFAULT_SPELLCHECK } from './spellcheck'
@@ -319,6 +320,8 @@ export const DEFAULT_SETTINGS: Settings = {
   blocking: structuredClone(DEFAULT_BLOCKING_SETTINGS),
   pageControls: structuredClone(DEFAULT_PAGE_CONTROLS),
   bookmarksBar: 'newtab',
+  bookmarkRowSortOrder: DEFAULT_BOOKMARK_ROW_SORT_ORDER,
+  bookmarkRowDisplay: DEFAULT_BOOKMARK_ROW_DISPLAY,
   shortcutPreset: 'chrome',
   privacy: structuredClone(DEFAULT_PRIVACY_SETTINGS),
   preloadPages: DEFAULT_PRELOAD_PAGES,

@@ -43,18 +43,19 @@ export function initialFolderStack(
   return [bottom]
 }
 
-/** Rows of a folder: folders first, then bookmarks, each in the user's own order. */
+/**
+ * Rows of a folder in the user's own order – folders and pages as stored, which is what Chrome's
+ * "Sort by manual order" shows (`ImprovedBookmarkQueryHandler.sortByStoredPref` returns the
+ * model's order untouched under MANUAL); the other orders group the folders first themselves
+ * (`sortBookmarkRows`).
+ */
 export function folderRows(
   tree: BookmarkTree,
   folderId: FolderId,
   platform: Platform
 ): BookmarkNode[] {
   if (folderId === null) return topLevelRoots(tree, platform)
-  const children = tree.children(folderId)
-  return [
-    ...children.filter((n) => n.type === 'folder'),
-    ...children.filter((n) => n.type === 'url')
-  ]
+  return tree.children(folderId)
 }
 
 /** The header title for a stack position. */
