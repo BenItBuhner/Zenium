@@ -731,9 +731,15 @@ class TabWebView(
     /**
      * With the pull on, the top edge's effect is the pull itself, so the WebView's own glow – which
      * would flash before the pull takes the finger – stays off; off, the stock edge glow returns.
+     * A `touchpad` two-finger swipe is never a pull (see `PullToRefreshGesture`), so for the
+     * gesture that begins with it the glow is the top edge's effect, as in Chrome, whose passive
+     * glow follows a touchpad overscroll there (`overscroll_controller_android.cc`,
+     * `OnOverscrolled`); the next finger's down puts the pull's mode back before the WebView
+     * sees that finger. Set only when it changes: the WebView builds its glow afresh per set.
      */
-    fun applyPullToRefreshMode() {
-        overScrollMode = if (host.pullToRefresh) View.OVER_SCROLL_NEVER else View.OVER_SCROLL_IF_CONTENT_SCROLLS
+    fun applyPullToRefreshMode(touchpad: Boolean = false) {
+        val mode = if (host.pullToRefresh && !touchpad) View.OVER_SCROLL_NEVER else View.OVER_SCROLL_IF_CONTENT_SCROLLS
+        if (overScrollMode != mode) overScrollMode = mode
     }
 
     private fun onPull(event: PullGestureClassifier.Pull) {
