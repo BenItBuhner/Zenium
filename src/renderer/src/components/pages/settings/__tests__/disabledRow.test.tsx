@@ -4,6 +4,8 @@ import { resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { V2CheckRow } from '../../../extensions/v2'
+import { Checkbox } from '../../../siteControls/primitives'
 import type { ActionRow, SliderRow, SwitchRow, ValueRow } from '../model'
 import { RowView } from '../rows'
 
@@ -16,8 +18,13 @@ import { RowView } from '../rows'
  * folder is picked – but the shortcut rows' Up / Down and any dependent control row still are).
  * The wrapper's rule gives the nested control its 1 back – the control keeps `disabled` for what
  * it does – so every disabled action, value, slider and shortcut row dims once, the way the
- * check-row primitive's `.zen-v2-checkbox:disabled { opacity: 1 }` and the translate pane's rules
- * already do for theirs. The Radix slider says `data-disabled` rather than `:disabled` (the zoom
+ * check-row primitive does for a box nested in its dimmed content (`.zen-v2-check-row > *
+ * .zen-v2-checkbox:disabled { opacity: 1 }`) and the translate pane's rules do for theirs. A box
+ * that is the check row's own child is the other way round: it is one of the children the row's
+ * rule dims, so it goes to .4 with its label and no rule holds it at 1 – the lead's 15 on #572,
+ * §9.30 as amended there; the blanket `.zen-v2-check-row .zen-v2-checkbox:disabled { opacity: 1 }`
+ * that did is gone, and the pins below hold both forms at .4 exactly once. The Radix slider says
+ * `data-disabled` rather than `:disabled` (the zoom
  * sheet's `.zen-zoom-slider[data-disabled] { opacity: .4 }`), so it is in the list by that name
  * (the desktop coordinator's nit on #297: Performance › Share of installed RAM read at .16).
  */
@@ -57,6 +64,26 @@ function declarations(css: string, selectors: string[]): string {
   const m = css.match(new RegExp(`(?:^|[}\\s])${list}\\s*\\{([^}]*)\\}`))
   if (!m) throw new Error(`no rule for ${selectors.join(', ')}`)
   return m[1].trim()
+}
+
+/**
+ * Every rule, in file order, whose selector matches `selector` and whose declarations set
+ * `property` – so a pin that injects them meets the cascade as the stylesheet has it, and a rule
+ * added to it later (or one put back) reaches the pin rather than slipping past a list the pin
+ * named itself.
+ */
+function rulesSetting(
+  css: string,
+  selector: RegExp,
+  property: string
+): { selector: string; declarations: string }[] {
+  const rules: { selector: string; declarations: string }[] = []
+  for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const sel = m[1].trim()
+    if (selector.test(sel) && new RegExp(`(?:^|;)\\s*${property}\\s*:`).test(m[2].trim()))
+      rules.push({ selector: sel, declarations: m[2].trim() })
+  }
+  return rules
 }
 
 describe('a disabled settings row dims once (§9.30)', () => {
@@ -149,12 +176,151 @@ describe('a disabled settings row dims once (§9.30)', () => {
     const sliderAt = css.indexOf('} .zen-zoom-slider[data-disabled] { opacity: 0.4; }')
     expect(resetAt).toBeGreaterThan(0)
     expect(sliderAt).toBeGreaterThan(resetAt)
-    // The desktop's check row is not a `.zen-settings-row-disabled` row: its primitive carries
-    // the same shape itself (the row's children at .4, the checkbox's own .4 undone).
+    // The desktop's check row is not a `.zen-settings-row-disabled` row: its primitive puts the
+    // .4 on the row's children – the box among them, when it is the row's own child – and undoes
+    // the box's own .4 only where the box sits inside a dimmed child (§9.30 as amended at #572).
+    expect(declarations(css, ['.zen-v2-checkbox:disabled'])).toBe('opacity: 0.4;')
     expect(declarations(css, ['.zen-v2-check-row:has(.zen-v2-checkbox:disabled) > *'])).toBe(
       'opacity: 0.4;'
     )
-    expect(declarations(css, ['.zen-v2-check-row .zen-v2-checkbox:disabled'])).toBe('opacity: 1;')
+    expect(declarations(css, ['.zen-v2-check-row > * .zen-v2-checkbox:disabled'])).toBe(
+      'opacity: 1;'
+    )
+    // No rule holds a box that is the row's own child at 1 beside its label at .4 (the lead's
+    // 15 on #572): the blanket descendant override is gone.
+    expect(() => declarations(css, ['.zen-v2-check-row .zen-v2-checkbox:disabled'])).toThrow(
+      /no rule/
+    )
+  })
+
+  it('a disabled desktop check row’s box dims with its label exactly once – .4 beside .4, not 1 and not a stacked .16 – whether the box is the row’s own child or sits inside a dimmed one (§9.30, the lead’s 15 on #572)', () => {
+    const css = stylesheet()
+    // Every opacity rule the stylesheet keys on the check row or its box, in the file's order –
+    // the three of the primitive today; one added or put back would land here too.
+    const rules = rulesSetting(css, /zen-v2-check(box|-row)|zen-settings-check-row/, 'opacity')
+    expect(rules.map((r) => `${r.selector} { ${r.declarations} }`)).toEqual([
+      '.zen-v2-checkbox:disabled { opacity: 0.4; }',
+      '.zen-v2-check-row:has(.zen-v2-checkbox:disabled) > * { opacity: 0.4; }',
+      '.zen-v2-check-row > * .zen-v2-checkbox:disabled { opacity: 1; }'
+    ])
+    const sheet = document.createElement('style')
+    sheet.textContent = rules.map((r) => `${r.selector} { ${r.declarations} }`).join('\n')
+    document.head.appendChild(sheet)
+    // happy-dom reports a property no rule set as '' – the initial 1 for opacity.
+    const opacity = (e: Element): number => parseFloat(getComputedStyle(e).opacity || '1')
+    // The opacity each rule that reaches `e` declares. happy-dom ranks the row's `:has()` rule
+    // above a descendant rule of the same class count, where Chromium ties them at (0,3,0) and
+    // lets the later one win – how the blanket override held the box at 1 in the stills – so the
+    // computed number alone would not see that override put back; the rules that match the
+    // element, read by `matches()`, do, in either engine.
+    const reaching = (e: Element): string[] =>
+      rules.filter((r) => e.matches(r.selector)).map((r) => r.declarations)
+    // What the eye gets: the element's opacity multiplied up the tree to the row, inclusive.
+    const effective = (e: Element, row: Element): number => {
+      let product = 1
+      for (let node: Element | null = e; node; node = node.parentElement) {
+        product *= opacity(node)
+        if (node === row) break
+      }
+      return product
+    }
+    try {
+      // The form the settings page draws (Appearance › Expand on hover while Expanded sidebar
+      // is on; every dependent check row): the box is the label's own child, beside the text.
+      const dependent: SwitchRow = {
+        kind: 'switch',
+        id: 'sidebar-hover-expand',
+        label: 'Expand on hover',
+        description: 'Widens the collapsed sidebar while the pointer rests on it.',
+        checked: true,
+        disabled: true,
+        onChange: () => undefined
+      }
+      const el = render(<RowView row={dependent} ctx={ctx} variant="desktop" />)
+      const row = el.querySelector<HTMLElement>('[data-row="sidebar-hover-expand"]')!
+      expect(row.classList.contains('zen-v2-check-row')).toBe(true)
+      const box = row.querySelector<HTMLInputElement>('.zen-v2-checkbox')!
+      const text = row.querySelector<HTMLElement>('.zen-settings-row-text')!
+      expect(box.disabled).toBe(true)
+      expect(box.parentElement).toBe(row)
+      // The box's own number and the label's are the same .4, each set once on its own element.
+      expect(opacity(box)).toBe(0.4)
+      expect(opacity(text)).toBe(0.4)
+      expect(opacity(row)).toBe(1)
+      expect(effective(box, row)).toBeCloseTo(0.4, 5)
+      expect(effective(text, row)).toBeCloseTo(0.4, 5)
+      expect(effective(box, row)).not.toBe(1)
+      expect(effective(box, row)).not.toBeCloseTo(0.16, 2)
+      // Two rules reach the row's own box – its own and the row's – and both say .4: whichever
+      // an engine lets win, the box resolves to .4, and none holds it at 1 beside the label.
+      expect(reaching(box)).toEqual(['opacity: 0.4;', 'opacity: 0.4;'])
+      expect(reaching(text)).toEqual(['opacity: 0.4;'])
+      expect(reaching(row)).toEqual([])
+      // An enabled row dims nothing.
+      act(() =>
+        root?.render(
+          <RowView row={{ ...dependent, disabled: false }} ctx={ctx} variant="desktop" />
+        )
+      )
+      const liveRow = el.querySelector<HTMLElement>('[data-row="sidebar-hover-expand"]')!
+      const liveBox = liveRow.querySelector<HTMLInputElement>('.zen-v2-checkbox')!
+      expect(liveBox.disabled).toBe(false)
+      expect(effective(liveBox, liveRow)).toBe(1)
+      expect(effective(liveRow.querySelector('.zen-settings-row-text')!, liveRow)).toBe(1)
+
+      // The nested form (the extensions' options rows, the sync turn-off prompt, the site
+      // controls' `Checkbox`): the box sits inside the row's one content child. The child carries
+      // the .4 and the box stays at 1 underneath it, so the box still reads at .4 – not .16.
+      act(() =>
+        root?.render(
+          <V2CheckRow
+            label="Allow in private windows"
+            description="Held by policy."
+            checked={false}
+            disabled
+            onChange={() => undefined}
+          />
+        )
+      )
+      const nestedRow = el.querySelector<HTMLElement>('.zen-v2-check-row')!
+      const nestedBox = nestedRow.querySelector<HTMLInputElement>('.zen-v2-checkbox')!
+      const nestedLabel = nestedRow.querySelector<HTMLElement>('.zen-v2-label')!
+      expect(nestedBox.disabled).toBe(true)
+      expect(nestedBox.parentElement).not.toBe(nestedRow)
+      expect(nestedBox.parentElement!.parentElement).toBe(nestedRow)
+      expect(opacity(nestedBox.parentElement!)).toBe(0.4)
+      expect(opacity(nestedBox)).toBe(1)
+      expect(effective(nestedBox, nestedRow)).toBeCloseTo(0.4, 5)
+      expect(effective(nestedLabel, nestedRow)).toBeCloseTo(0.4, 5)
+      expect(effective(nestedBox, nestedRow)).not.toBeCloseTo(0.16, 2)
+      // The wrapper takes the row's .4; the box takes its own .4 and the scoped 1 that outranks
+      // it (three simple selectors to two, in either engine).
+      expect(reaching(nestedBox.parentElement!)).toEqual(['opacity: 0.4;'])
+      expect(reaching(nestedBox)).toEqual(['opacity: 0.4;', 'opacity: 1;'])
+
+      // The site controls' `Checkbox` (Clear browsing data's types a range cannot clear) is the
+      // same nested form under a different wrapper class.
+      act(() =>
+        root?.render(
+          <Checkbox
+            label="Cached images and files"
+            disabled
+            data-type="cache"
+            onChange={() => undefined}
+          />
+        )
+      )
+      const siteRow = el.querySelector<HTMLElement>('.zen-v2-check-row')!
+      const siteBox = siteRow.querySelector<HTMLInputElement>('.zen-v2-checkbox')!
+      expect(siteBox.disabled).toBe(true)
+      expect(siteBox.parentElement!.parentElement).toBe(siteRow)
+      expect(opacity(siteBox.parentElement!)).toBe(0.4)
+      expect(opacity(siteBox)).toBe(1)
+      expect(effective(siteBox, siteRow)).toBeCloseTo(0.4, 5)
+      expect(effective(siteBox, siteRow)).not.toBeCloseTo(0.16, 2)
+    } finally {
+      sheet.remove()
+    }
   })
 
   it('gives a disabled row’s deemphasised parts the label’s ink, so under the .4 nothing falls to .276 (§9.30 as amended on #299)', () => {

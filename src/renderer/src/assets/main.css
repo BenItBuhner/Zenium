@@ -10988,11 +10988,17 @@
  * outranks `:checked` at 0,2,0, so it must step aside from every checked form itself (a checked
  * box under the pointer had lost its accent to `--v2-fill`). As a row's leading box it sits
  * (line − box) / 2 below the first text line's top (§9.2) and never grows the line. Disabled is
- * the one number (§9.30). A check row disabled as a dependent row puts the .4 on its content –
- * not on the row, whose hairline is structure (§0) – and the box inside that content stays at 1
- * so it does not compound to .16; the row says `aria-disabled`, which keeps the row primitive's
- * hover and press fill off it. Those two rules sit here, unlayered, because a layered exception
- * would lose to the unlayered `:disabled` above it. Besides the `<input>` read by `:checked`, the
+ * the one number (§9.30), and a check row disabled as a dependent row puts it on the row's
+ * children – not on the row, whose hairline is structure (§0). A box that is the row's own child
+ * (the settings and password check rows) is one of those children, so its border and check dim
+ * to .4 with the words beside it, once: the row's rule and the box's own name the same .4 of the
+ * same element, and no rule holds the box at 1 beside a label at .4 (the lead's 15 on #572;
+ * such a rule had, and the box read undimmed beside its dim label). Only a box nested inside a
+ * dimmed child – the site controls' `Checkbox`, the extensions' `V2CheckRow`, the confirm
+ * dialog's – stays at 1, so the child's .4 is the one dim and the two never compound to .16; the
+ * row says `aria-disabled`, which keeps the row primitive's hover and press fill off it. Those
+ * two rules sit here, unlayered, because a layered exception would lose to the unlayered
+ * `:disabled` above it. Besides the `<input>` read by `:checked`, the
  * class styles a `role="checkbox"` span by `[aria-checked]` – on itself or on the row that is
  * the checkbox for assistive technology and so cannot host a real input – as `.zen-v2-radio`
  * does (§9.34).
@@ -11043,7 +11049,7 @@
 .zen-v2-check-row:has(.zen-v2-checkbox:disabled) > * {
   opacity: 0.4;
 }
-.zen-v2-check-row .zen-v2-checkbox:disabled {
+.zen-v2-check-row > * .zen-v2-checkbox:disabled {
   opacity: 1;
 }
 /*
