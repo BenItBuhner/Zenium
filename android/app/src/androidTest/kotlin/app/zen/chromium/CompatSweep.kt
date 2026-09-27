@@ -12460,6 +12460,17 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * as buttons, so the same node test finds them. Called by [dismissDialog]'s callers and, under
      * the sweep's waits, by the [PageDialogWatch] thread (its reads are the accessibility tree's
      * and its writes the evidence the waiting sweep thread does not touch meanwhile).
+     *
+     * The WebView's STOCK dialog is met the same way: a WebView whose `WebChromeClient` leaves
+     * `onJsAlert` / `onJsConfirm` / `onJsPrompt` to it draws the framework's `JsDialogHelper`
+     * dialog, titled `The page at "<url>" says:` (its `js_dialog_title`, the colon ending it where
+     * the host's title line ends in the word), Cancel / OK as `Button`s. Round 22's targeted 156
+     * lane met one on Popup Blocker (strict)'s popup – the extension views' client had no dialog
+     * hooks then, so its health check's `confirm()` came up stock, the watch looked for the host's
+     * line alone through the row's whole 120 s wait, and the cleanup's [dismissDialog] pressed it
+     * five minutes on ([PageDialogWatch]). The runtime routes an extension page's dialogs through
+     * the host's sheet since (`ExtensionWebView`); the stock shape stays known here so a view the
+     * host does not route parks the sweep no more.
      */
     private fun dismissPageDialogSheet(): String? {
         val titleTail = app.getString(R.string.page_dialog_title_site).substringAfter("%1\$s")
@@ -12480,11 +12491,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 if (node.isClickable && node.className == "android.widget.Button") buttons.add(node)
                 for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
             }
-            if (webView || texts.none { it.endsWith(titleTail) || it in titles }) continue
+            val stock = texts.any { it.startsWith(STOCK_DIALOG_TITLE_HEAD) && it.endsWith(STOCK_DIALOG_TITLE_TAIL) }
+            if (webView || (!stock && texts.none { it.endsWith(titleTail) || it in titles })) continue
             val labels = buttons.map { it.text?.toString()?.trim().orEmpty() }
             val go = if (texts.any { it in leaving }) labels.indexOfFirst { label -> goes.any { it.equals(label, ignoreCase = true) } }.takeIf { it >= 0 } else null
             val button = go?.let(buttons::get) ?: dialogButton(labels)?.let(buttons::get) ?: continue
-            val text = "page dialog sheet: ${texts.joinToString(" | ").take(300)} || pressed: ${button.text?.toString()?.trim().orEmpty()}"
+            val shape = if (stock) "the WebView's stock dialog" else "page dialog sheet"
+            val text = "$shape: ${texts.joinToString(" | ").take(300)} || pressed: ${button.text?.toString()?.trim().orEmpty()}"
             dialogsDismissed.put(text)
             snap("page-dialog-dismissed")
             tapRect(Rect().also(button::getBoundsInScreen))
@@ -13087,6 +13100,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         /** The main thread not answering this long is a hang (the longest stalls the runs' `Davey!` frames show are two or three seconds): [MainThreadWatch]. */
         /** How often the page-dialog watch looks while a wait is under way ([PageDialogWatch]). */
         private const val PAGE_DIALOG_WATCH_MS = 2_000L
+        /**
+         * The framework's title of a WebView's stock JS dialog (`js_dialog_title`: `The page at
+         * "<url>" says:`), in the images' English – the resource is the framework's own, out of
+         * an app's reach; [dismissPageDialogSheet] tells the shape by its head and its tail.
+         */
+        private const val STOCK_DIALOG_TITLE_HEAD = "The page at \""
+        private const val STOCK_DIALOG_TITLE_TAIL = "\" says:"
         private const val HANG_MAIN_THREAD_MS = 90_000L
         /** The longest a row's heap reading waits for the extension's configures in flight to land ([settleUnits]); Adblock Ad Blocker Pro's 11-unit re-plan takes 8.1 s cold on the API 34 image. */
         private const val UNITS_SETTLE_MS = 30_000L
