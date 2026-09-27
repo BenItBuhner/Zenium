@@ -497,10 +497,11 @@ export function useMainEvents(): void {
         closeUrlbar()
         openTranslateSelection({ tabId, text, x, y })
       }),
-      // The Define surface (CT-39): the mini menu's chip or the phone's selection toolbar asked.
-      onEvent('define.show', ({ tabId, term, rect }) => {
+      // The Define surface (CT-39): the mini menu's chip, the desktop's page context menu or the
+      // phone's selection toolbar asked.
+      onEvent('define.show', ({ tabId, term, rect, at }) => {
         closeUrlbar()
-        openDefine({ tabId, term, rect })
+        openDefine(at ? { tabId, term, rect, at } : { tabId, term, rect })
       }),
       // The root's `--zen-inset-*` and the store, when the numbers changed (lib/insets.ts).
       onEvent('insets', (insets) => applyHostInsets(insets)),

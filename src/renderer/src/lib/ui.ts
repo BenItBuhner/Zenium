@@ -277,6 +277,8 @@ export interface DefineRequest {
   term: string
   /** The selection's box in CSS pixels of the page view; null when nothing anchors (the phone's toolbar). */
   rect: Rect | null
+  /** Where the context menu's click landed (the same pixels), for a popover without a box. */
+  at?: { x: number; y: number }
 }
 
 export interface UiState {

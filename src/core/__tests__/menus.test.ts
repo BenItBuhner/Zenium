@@ -3823,6 +3823,7 @@ describe('the page context menu', () => {
     expect(menu).toEqual([
       'Copy',
       'Search Google for “quantum foam”',
+      'Define',
       'Copy Link to Highlight',
       'Open Selection in Reader View',
       '-',
@@ -3864,9 +3865,10 @@ describe('the page context menu', () => {
 
     it('seats the row after Copy Link to Highlight and before Translate Selection on the desktop alone', () => {
       const h = pageHarness(DESKTOP, { translate: true })
-      expect(h.menu(pageParams({ selectionText: 'quantum foam' })).slice(0, 5)).toEqual([
+      expect(h.menu(pageParams({ selectionText: 'quantum foam' })).slice(0, 6)).toEqual([
         'Copy',
         'Search Google for “quantum foam”',
+        'Define',
         'Copy Link to Highlight',
         'Open Selection in Reader View',
         'Translate Selection'
@@ -4220,11 +4222,13 @@ describe('the selection toolbar', () => {
     ])
   })
 
-  it('carries Define on the phone\u2019s bar after Search and in the mini menu, and keeps it out of the page menu (CT-39)', () => {
+  it('carries Define on the phone\u2019s bar after Search, in the mini menu and in the desktop\u2019s page menu after Search; the phone\u2019s page menu unchanged (CT-39)', () => {
     // `SELECTION_TOOLBAR_ORDER`: search · define · glance · share · translate · readAloud. The
     // bar's touch anchors nothing, so the phone's Define shows its sheet (`define.show` with no
-    // box); the right-click menu stays without Define, as Edge's does – it is the mini menu's
-    // own action, not the context menu's.
+    // box). The lead's ruling: the desktop's right-click menu carries Define after the search
+    // (the one list – Copy · Search · Define · …), its popover hanging from the click (`at`, as
+    // the translate popover does); the phone's page menu stays as it was, its toolbar being the
+    // phone's surface for Define.
     const phone = pageHarness(ANDROID, PHONE)
     expect(phone.browser.menus.selectionToolbar(phone.tabId, 'foam').map((i) => i.id)).toEqual([
       'search',
@@ -4249,7 +4253,32 @@ describe('the selection toolbar', () => {
     ).toBe(false)
     expect(phone.menu(pageParams({ selectionText: 'foam' }))).not.toContain('Define')
     const desktop = pageHarness()
-    expect(desktop.menu(pageParams({ selectionText: 'foam' }))).not.toContain('Define')
+    // The desktop's page menu: Copy · Search · Define · … for a word; no Define for four words
+    // or an address (the address is offered as a link, Go to); the click's point rides the
+    // request so the popover hangs where the user asked, with no box to hang from.
+    expect(desktop.menu(pageParams({ selectionText: 'foam', x: 300, y: 180 })).slice(0, 3)).toEqual(
+      ['Copy', 'Search Google for “foam”', 'Define']
+    )
+    const desktopSend = vi.spyOn(desktop.win, 'send')
+    desktop.click('Define')
+    expect(desktopSend).toHaveBeenCalledWith('define.show', {
+      tabId: desktop.tabId,
+      term: 'foam',
+      rect: null,
+      at: { x: 300, y: 180 }
+    })
+    expect(desktop.menu(pageParams({ selectionText: 'the quantum foam theory' }))).not.toContain(
+      'Define'
+    )
+    expect(desktop.menu(pageParams({ selectionText: 'example.com' }))).not.toContain('Define')
+    // A text field's selection: the editing group's tail carries the search but – as with
+    // Translate, the popover hangs from a click the tail does not have, and the mini menu is
+    // not shown over a text field's selection – no Define. The field's menu stands as it was.
+    const field = desktop.menu(
+      pageParams({ selectionText: 'foam', isEditable: true, editFlags: ALL_EDITS })
+    )
+    expect(field).toContain('Search Google for “foam”')
+    expect(field).not.toContain('Define')
     expect(desktop.browser.menus.selectionMenuActions(desktop.tabId, 'foam', null)).toEqual([
       { id: 'copy', title: 'Copy' },
       { id: 'search', title: 'Search Google' },

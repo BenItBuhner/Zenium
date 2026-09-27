@@ -1338,9 +1338,13 @@ export class Menus {
     // classifier's and the process-text apps', `SelectActionMenuHelper`): Wiktionary's definition
     // of a word or a short phrase (`core/define.ts` says what is a term), shown by the chrome's
     // Define surface (`define.show`) – over the selection's box on the desktop (`DefinePopover`),
-    // in a sheet on the phone (the toolbar's touch anchors nothing). The mini menu's chip and
-    // the phone's toolbar item; the right-click menu stays without it, as Edge's does (Define is
-    // the mini menu's own action there, not the context menu's). Not for an address
+    // in a sheet on the phone (the toolbar's touch anchors nothing). The mini menu's chip, the
+    // phone's toolbar item and – the lead's ruling – the desktop's page context menu item, after
+    // the search (Copy · Search · Define · …): the one list, so the right-click reaches what the
+    // pill offers; its popover hangs from the click, as the translate popover does, so like
+    // Translate it is the page's own selection's item (a text field's tail comes without `at`
+    // and, as the mini menu is not shown over a text field's selection, offers no Define). The
+    // phone's page menu stands as it is (its toolbar carries Define). Not for an address
     // (`example.com` is one word with letters): the selection that reads as a link is offered
     // as one above, not as a word.
     if (!asUrl && isDefinableTerm(selection)) {
@@ -1348,19 +1352,22 @@ export class Menus {
         id: 'define',
         label: 'Define',
         title: 'Define',
-        menu: false,
+        menu: win.formFactor === 'desktop' && at !== undefined,
         toolbar: true,
         mini: true,
-        run: (surface) =>
+        run: (surface) => {
+          const point = surface === 'menu' ? anchorOf('menu') : null
           this.browser.emit(
             'define.show',
             {
               tabId: tab.id,
               term: normalizeTerm(selection),
-              rect: surface === 'mini' ? (rect ?? null) : null
+              rect: surface === 'mini' ? (rect ?? null) : null,
+              ...(point ? { at: point } : {})
             },
             win
           )
+        }
       })
     }
     // Chrome's Copy Link to Highlight: the menu's item for the link alone (the toolbar's Share

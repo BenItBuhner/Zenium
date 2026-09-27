@@ -7406,12 +7406,14 @@ export interface Events {
    */
   'translate.selection': { tabId: string; text: string; x: number | null; y: number | null }
   /**
-   * Show the definition surface for `term` in the tab (CT-39's Define, from the mini menu or
-   * the phone's selection toolbar): the chrome looks the term up (`define.lookup`) and shows the
-   * answer over `rect` – the selection's box in CSS pixels of the page view – or, with null
-   * (the toolbar's touch anchors nothing), in its sheet.
+   * Show the definition surface for `term` in the tab (CT-39's Define, from the mini menu, the
+   * desktop's page context menu or the phone's selection toolbar): the chrome looks the term up
+   * (`define.lookup`) and shows the answer over `rect` – the selection's box in CSS pixels of
+   * the page view, which the page's zoom scales – or, with null, hanging from `at` (the context
+   * menu's click in the view's own pixels, unscaled, as `translate.selection`'s point) when there
+   * is one, and in its sheet otherwise (the toolbar's touch anchors nothing).
    */
-  'define.show': { tabId: string; term: string; rect: Rect | null }
+  'define.show': { tabId: string; term: string; rect: Rect | null; at?: { x: number; y: number } }
   // ---- PROVISIONAL: extensions UI (PR #68), see the matching block in `Commands` --------------
   /** The popup's document asked for this size (CSS px); the renderer fits its frame around it. */
   'extension.popupSize': { id: string; width: number; height: number }

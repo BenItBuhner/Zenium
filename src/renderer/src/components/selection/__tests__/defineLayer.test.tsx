@@ -232,6 +232,26 @@ describe('the Define popover', () => {
     expect(dialog()).not.toBeNull()
     expect(text('.zen-v2-title-block-title')).toEqual(['foam'])
   })
+
+  it('hangs from the context menu’s click when the request brings a point and no box, and from the box when it brings one', async () => {
+    // The desktop's page menu item (the lead's ruling): no selection box rides the request, the
+    // click's point does – the popover's start edge aligns with it (`pointAnchor`, as the
+    // translate popover hangs). The box wins when both come (the mini menu's chip).
+    act(() => openDefine({ tabId: 't1', term: 'foam', rect: null, at: { x: 300, y: 180 } }))
+    await settle()
+    expect(dialog()!.style.left).toBe('300px')
+    expect(dialog()!.style.top).toBe('180px')
+    act(() => closeDefine())
+    // Without a point or a box, the page's middle, high (`pointAnchor`'s own default).
+    await open('foam', null)
+    expect(dialog()!.style.left).toBe(`${window.innerWidth / 2}px`)
+    expect(dialog()!.style.top).toBe(`${window.innerHeight / 3}px`)
+    act(() => closeDefine())
+    act(() => openDefine({ tabId: 't1', term: 'foam', rect: RECT, at: { x: 300, y: 180 } }))
+    await settle()
+    expect(dialog()!.style.left).toBe(`${RECT.x}px`)
+    expect(dialog()!.style.top).toBe(`${RECT.y + RECT.height}px`)
+  })
 })
 
 describe('the senses shown', () => {

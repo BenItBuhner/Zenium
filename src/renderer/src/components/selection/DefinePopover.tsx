@@ -5,7 +5,7 @@ import type { DefineResult } from '@shared/types'
 import { cmd, run } from '@renderer/lib/api'
 import { closeDefine, defineRefusalMessage, senses } from '@renderer/lib/define'
 import { useViewport } from '@renderer/lib/formFactor'
-import { commandErrorMessage, rectAnchor } from '@renderer/lib/selection'
+import { commandErrorMessage, pointAnchor, rectAnchor } from '@renderer/lib/selection'
 import { activeTab } from '@renderer/lib/selectors'
 import { browserStore, uiStore, type DefineRequest } from '@renderer/lib/ui'
 import { V2Button } from '../extensions/v2'
@@ -165,11 +165,18 @@ function SeeMoreButton({ definition }: { definition: Definition }): JSX.Element 
 /**
  * The chassis popover (`SelectionPopover`) with the title block – the dictionary glyph and the
  * term – over the body and See more in the footer, hanging under the selection's box
- * (`rectAnchor`: above it when the room below is short). Placed once for the request.
+ * (`rectAnchor`: above it when the room below is short) or, without a box, from the context
+ * menu's click (`pointAnchor`, as the translate popover hangs). Placed once for the request.
  */
 function Popover({ request, zoom }: { request: DefineRequest; zoom: number }): JSX.Element | null {
   const definition = useDefinition(request)
-  const anchor = useMemo(() => rectAnchor(request.rect, zoom), [request, zoom])
+  const anchor = useMemo(
+    () =>
+      request.rect
+        ? rectAnchor(request.rect, zoom)
+        : pointAnchor(request.at ?? { x: null, y: null }),
+    [request, zoom]
+  )
   return (
     <SelectionPopover
       name="define"
