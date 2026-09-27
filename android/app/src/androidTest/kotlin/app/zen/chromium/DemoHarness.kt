@@ -3020,42 +3020,63 @@ abstract class DemoHarness(
         private var x = 0f
         private var y = 0f
 
-        fun down(x: Float, y: Float) {
+        /** Events of this swipe the dispatcher did not take (a refused down makes any claim on it vacuous). */
+        var refused = 0
+            private set
+
+        /** How many moves the last [moveBy] injected, and how long it ran (ms): the swipe as delivered. */
+        var moves = 0
+            private set
+        var movedMs = 0L
+            private set
+
+        /** Whether the dispatcher took the down. */
+        fun down(x: Float, y: Float): Boolean {
             this.x = x
             this.y = y
             downTime = SystemClock.uptimeMillis()
-            inject(MotionEvent.ACTION_DOWN, downTime, 0f, 0f)
+            return inject(MotionEvent.ACTION_DOWN, downTime, 0f, 0f)
         }
 
-        /** Two fingers moving `dx`, `dy` on the pad over `durationMs`: the fake finger moves the same way. */
+        /**
+         * Two fingers moving `dx`, `dy` on the pad over `durationMs`: the fake finger moves the
+         * same way. Paced by the clock, not by a step count: an injected pointer stream from a
+         * `SOURCE_MOUSE` costs the dispatcher more per event than a touchscreen's on the
+         * emulator, and a swipe that was to take a second must still take about a second (a real
+         * pad's report rate is the pad's; what the app reads is the distance), so a slow injection
+         * gives fewer moves rather than a longer swipe.
+         */
         fun moveBy(dx: Float, dy: Float, durationMs: Long) {
             val fromX = x
             val fromY = y
             val toX = x + dx
             val toY = y + dy
-            val steps = max(1L, durationMs / STEP_MS)
             val start = SystemClock.uptimeMillis()
             var lastX = x
             var lastY = y
-            for (i in 1..steps) {
-                val due = start + (durationMs * i) / steps
-                val now = SystemClock.uptimeMillis()
-                if (due > now) SystemClock.sleep(due - now)
-                val t = i.toFloat() / steps
+            var count = 0
+            var t = 0f
+            while (t < 1f) {
+                val elapsed = SystemClock.uptimeMillis() - start
+                t = if (durationMs <= 0) 1f else minOf(1f, elapsed.toFloat() / durationMs)
                 x = fromX + (toX - fromX) * t
                 y = fromY + (toY - fromY) * t
                 inject(MotionEvent.ACTION_MOVE, SystemClock.uptimeMillis(), x - lastX, y - lastY)
+                count++
                 lastX = x
                 lastY = y
+                if (t < 1f) SystemClock.sleep(STEP_MS)
             }
+            moves = count
+            movedMs = SystemClock.uptimeMillis() - start
         }
 
         fun hold(ms: Long) = SystemClock.sleep(ms)
 
         fun up() = inject(MotionEvent.ACTION_UP, SystemClock.uptimeMillis(), 0f, 0f)
 
-        private fun inject(action: Int, eventTime: Long, scrollX: Float, scrollY: Float) {
-            if (!supported) return
+        private fun inject(action: Int, eventTime: Long, scrollX: Float, scrollY: Float): Boolean {
+            if (!supported) return false
             val properties = MotionEvent.PointerProperties().apply {
                 id = 0
                 toolType = MotionEvent.TOOL_TYPE_FINGER
@@ -3073,9 +3094,14 @@ abstract class DemoHarness(
                 downTime, eventTime, action, 1, arrayOf(properties), arrayOf(coords),
                 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_MOUSE, Display.DEFAULT_DISPLAY, 0,
                 MotionEvent.CLASSIFICATION_TWO_FINGER_SWIPE
-            ) ?: return
+            ) ?: return false
             try {
-                injectInput(event, false)
+                val taken = injectInput(event, false)
+                if (!taken) {
+                    refused++
+                    Log.w(tag, "the dispatcher refused the touchpad's ${MotionEvent.actionToString(action)}")
+                }
+                return taken
             } finally {
                 event.recycle()
             }

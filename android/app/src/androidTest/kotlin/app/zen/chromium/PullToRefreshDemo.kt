@@ -2,11 +2,13 @@ package app.zen.chromium
 
 import android.os.SystemClock
 import android.util.Log
+import android.view.MotionEvent
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.FileInputStream
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Shows pull-to-refresh on a device so the `android-ptr-demo` workflow can record it: a long page
@@ -190,8 +192,12 @@ class PullToRefreshDemo : DemoHarness("ptr-demo-state.json", "ptr-$THEME", "ptr-
      * platform's fake finger, see [Touchpad]) dragged well past the pull's threshold must leave the
      * page at home – its `translationY` is the pull's offset plus the bar's shift, both 0 at the
      * top of a page at rest – while the finger's drag right after moves it. Both read on the
-     * main thread mid-hold; a failed claim fails the run. Skipped below Android 14, where the
-     * platform delivers no classified swipe (Chrome there treats the touchpad as a finger too).
+     * main thread mid-hold; a failed claim fails the run. So that the first claim cannot hold for
+     * want of a swipe, the down is also read as the page's view receives it – through a touch
+     * listener the view's `dispatchTouchEvent` consults before its own `onTouchEvent` (nothing
+     * in the app sets one), which must see what the gate reads: no button, the two-finger
+     * classification – and the dispatcher must have taken it. Skipped below Android 14, where
+     * the platform delivers no classified swipe (Chrome there treats the touchpad as a finger too).
      */
     private fun touchpadSwipeIsNotAPull() {
         val touchpad = Touchpad()
@@ -200,14 +206,36 @@ class PullToRefreshDemo : DemoHarness("ptr-demo-state.json", "ptr-$THEME", "ptr-
             return
         }
         val view = activeTabView() ?: error("no view for the active tab")
-        touchpad.down(pageX, pageY)
+        val received = AtomicReference<String>()
+        onMain {
+            view.setOnTouchListener { _, e ->
+                if (e.actionMasked == MotionEvent.ACTION_DOWN && received.get() == null) {
+                    val touchpadSwipe = HistoryNavClassifier.isTouchpadSwipe(e.buttonState, e.classification)
+                    received.set(
+                        "source=${e.source} tool=${e.getToolType(0)} buttons=${e.buttonState} " +
+                            "classification=${e.classification} touchpad=$touchpadSwipe"
+                    )
+                }
+                false
+            }
+        }
+        val taken = touchpad.down(pageX, pageY)
         touchpad.moveBy(0f, PAST * density, 900)
         touchpad.hold(600)
         val swipeOffset = onMain { view.translationY }
         shot("11b-touchpad-swipe-no-pull")
         touchpad.up()
         SystemClock.sleep(1_200)
-        Log.i(tag, "touchpad swipe: page offset ${swipeOffset}px mid-hold (must be 0)")
+        onMain { view.setOnTouchListener(null) }
+        val down = received.get()
+        Log.i(
+            tag,
+            "touchpad swipe: down taken=$taken, the view's down read [$down]; ${touchpad.moves} moves over " +
+                "${touchpad.movedMs} ms, ${touchpad.refused} refused; page offset ${swipeOffset}px mid-hold (must be 0)"
+        )
+        if (!taken) error("the dispatcher refused the touchpad's down: nothing to claim")
+        if (down == null) error("the page's view never received the touchpad's down")
+        if (!down.endsWith("touchpad=true")) error("the view's down did not read as the touchpad's swipe: $down")
 
         val finger = Finger()
         finger.down(pageX, pageY)
