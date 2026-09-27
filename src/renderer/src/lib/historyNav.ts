@@ -246,14 +246,17 @@ export const TINT_PROPERTY = '--zen-histnav-tint'
  * The arrow's tint as the drag arms, on the frames the machine paints and the clock between
  * them: Chrome's `NavigationBubble` runs its arrow's tint from the ink to the accent over 250 ms
  * as `willNavigate()` turns true and back over 250 ms as it turns false (152.0.7977.89
- * `NavigationBubble.java` l.51, l.101–102 the colour animator, l.201–206 `setImageTint`) – a
- * `ValueAnimator` reversed from wherever it stands, so a finger that eases back under the
- * threshold mid-tint takes the colour back from where it is, with no jump. This keeps the same:
- * a value 0 (the text ink) to 1 (the accent) moving toward its target at the leg's rate, the
- * rising `armed` setting the target to 1 and the falling one to 0, each leg starting from the
- * value as it stands, the ends exact. Under reduced motion the leg is §11.3's 120 ms – a shorter
- * tween, not a jump (the lead's 04:34 ruling, v2 §11.9 amended for the arrow alone). A null
- * frame (the bubble down) resets it, so the next drag starts in the ink.
+ * `NavigationBubble.java` l.51, l.101–102 the colour animator, l.201–206 `setImageTint`).
+ * Chrome's 250 ms; the reversal from the standing value is the lead's ruling (04:34, v2 §11.9
+ * amended), Chrome's own restarts from 0 – `setImageTint` swaps the two endpoints and `start()`s
+ * the animator afresh (l.205), so its arrow jumps to the far colour mid-tint and eases from
+ * there, where a finger that eases back under the threshold mid-tint here takes the colour back
+ * from where it is, with no jump. So: a value 0 (the text ink) to 1 (the accent) moving toward
+ * its target at the leg's rate, the rising `armed` setting the target to 1 and the falling one
+ * to 0, each leg starting from the value as it stands, the ends exact. Under reduced motion the
+ * leg is §11.3's 120 ms – a shorter tween, not a jump (the lead's 04:34 ruling, v2 §11.9
+ * amended for the arrow alone). A null frame (the bubble down) resets it, so the next drag
+ * starts in the ink.
  *
  * Written per frame, like `fadeOpacity`: the reduced-motion stylesheet removes every transition
  * it does not re-declare and re-declares opacity fades alone (`reducedMotion.test.ts`), so a CSS

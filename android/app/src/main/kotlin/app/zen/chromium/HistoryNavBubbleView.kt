@@ -188,16 +188,19 @@ class BubbleThresholdTap {
  * Chrome's `NavigationBubble` runs its arrow's tint from the ink to the accent over 250 ms as
  * `willNavigate()` turns true and back over 250 ms as it turns false (152.0.7977.89
  * `NavigationBubble.java` l.51 `COLOR_TRANSITION_DURATION_MS`, l.101–102 the colour animator,
- * l.201–206 `setImageTint`) – a `ValueAnimator` reversed from wherever it stands, so a finger that
- * eases back under the threshold mid-tint takes the colour back from where it is, with no jump.
- * This keeps the same: a value 0 (the ink) to 1 (the accent) that moves toward its target at the
- * leg's rate, the rising `armed` setting the target to 1 and the falling one to 0, each leg
- * starting from the value as it stands. Under reduced motion the leg is v2 §11.3's 120 ms – a
- * shorter tween, not a jump. A null frame (the bubble down) resets it, so the next drag starts in
- * the ink. The lead's 04:34 ruling, v2 §11.9 amended for the arrow alone: the caption wears the
- * same ink, the pill's fill and hairline never tint ([bubbleInks]). A plain class on a clock it
- * is handed, so the JVM holds it without the view; the DOM disc runs the same class in TS
- * (`lib/historyNav.ts` `ArmedTint`), writing the value per frame for the stylesheet to mix.
+ * l.201–206 `setImageTint`). Chrome's 250 ms; the reversal from the standing value is the lead's
+ * ruling (04:34, v2 §11.9 amended), Chrome's own restarts from 0 – `setImageTint` swaps the two
+ * endpoints and `start()`s the animator afresh (l.205), so its arrow jumps to the far colour
+ * mid-tint and eases from there, where a finger that eases back under the threshold mid-tint
+ * here takes the colour back from where it is, with no jump. So: a value 0 (the ink) to 1 (the
+ * accent) that moves toward its target at the leg's rate, the rising `armed` setting the target
+ * to 1 and the falling one to 0, each leg starting from the value as it stands. Under reduced
+ * motion the leg is v2 §11.3's 120 ms – a shorter tween, not a jump. A null frame (the bubble
+ * down) resets it, so the next drag starts in the ink. The lead's 04:34 ruling, v2 §11.9 amended
+ * for the arrow alone: the caption wears the same ink, the pill's fill and hairline never tint
+ * ([bubbleInks]). A plain class on a clock it is handed, so the JVM holds it without the view;
+ * the DOM disc runs the same class in TS (`lib/historyNav.ts` `ArmedTint`), writing the value
+ * per frame for the stylesheet to mix.
  */
 class ArmedTint {
     /** Where the tint stands: 0 the text ink, 1 the accent. */
