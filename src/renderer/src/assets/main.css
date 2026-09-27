@@ -3526,9 +3526,9 @@
    * The anchor's pulse while its bubble is up (Chrome's `HighlightShape.CIRCLE` on the tab
    * switcher button: a circle in the accent at alpha 76 / 255, 16 dp growing to 19.2 dp and back
    * over 2.5 s – `PulseDrawable.java` l.39, l.208–231, l.263, `dimens.xml` l.129): §9.23's halo,
-   * the accent at 30 % as the listening mic's (`.zen-voice-halo`) – never `--v2-selection`,
-   * which is the page's – a 32 px disc scaled 1 → 1.2 and back over 1.25 s each way, Chrome's
-   * cycle (the lead's (i)). The bar carries the item the bubble is about (`data-iph-anchor`,
+   * the accent at 30 % as the listening mic's (`.zen-voice-halo`) – never the page's selection
+   * token – a 32 px disc scaled 1 → 1.2 and back over 1.25 s each way, Chrome's cycle (the
+   * lead's (i)). The bar carries the item the bubble is about (`data-iph-anchor`,
    * PhoneShell.tsx); the pulse is the bubble's and lives in its block, so the accent stays within
    * the messages' span. The alpha is in the colour because no rule of the bar's writes an
    * opacity but the sheet's recede (lib/__tests__/recede.test.ts). Under reduced motion the

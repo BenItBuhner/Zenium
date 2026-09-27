@@ -292,18 +292,27 @@ describe('the bubble comes down', () => {
   }
   const leaving = (): boolean => bubble().leaving
 
-  it('on a touch anywhere on the chrome, heard in the capture phase and not swallowed', () => {
+  it('on a touch anywhere on the chrome, heard in the capture phase and not swallowed: the touched control still runs', () => {
     up()
-    const seen = vi.fn()
-    document.body.addEventListener('pointerdown', seen)
+    // The finger lands on the Tabs button itself – Chrome's popup hears the touch and passes it
+    // on, so the one tap takes the bubble down and opens the switcher. The stood-in button's
+    // own handler stands for the control's: it must run, on an event nothing has cancelled,
+    // after the bubble has already heard the touch in the capture phase.
+    const button = bar!.querySelector<HTMLButtonElement>("[data-bar-item='tabs']")!
+    const pressed = vi.fn((e: Event) => ({
+      swallowed: e.defaultPrevented,
+      bubbleLeaving: leaving()
+    }))
+    button.addEventListener('pointerdown', pressed)
     act(() => {
-      document.body.dispatchEvent(new Event('pointerdown', { bubbles: true, cancelable: true }))
+      button.dispatchEvent(new Event('pointerdown', { bubbles: true, cancelable: true }))
     })
     expect(leaving()).toBe(true)
-    expect(seen).toHaveBeenCalledTimes(1)
+    expect(pressed).toHaveBeenCalledTimes(1)
+    expect(pressed).toHaveReturnedWith({ swallowed: false, bubbleLeaving: true })
     wait(HINT_BUBBLE_EXIT_MS)
     expect(bubble()).toEqual({ bubble: null, leaving: false })
-    document.body.removeEventListener('pointerdown', seen)
+    button.removeEventListener('pointerdown', pressed)
   })
 
   it("on the host's word of a finger landing on the page", () => {

@@ -38,9 +38,13 @@ export function coverFor(bannerStack: number, toast: number, inset = MESSAGE_INS
 /**
  * The in-product help bubble's width (HintBubbleCard.tsx): §9.20's notice, 320 – one of the
  * three fixed popover widths, never fitted to the sentence – so the words sit on two lines
- * inside its 288 (the lead's (c) on #641; the stylesheet carries the same number).
+ * inside its 288 (the lead's (c) on #641). The stylesheet's `.zen-hint-bubble` carries the same
+ * numbers; lib/__tests__/v2Tokens.test.ts pins its `width` and `padding` to these two.
  */
 export const HINT_BUBBLE_WIDTH = 320
+
+/** The bubble's padding a side: Chrome's 16 dp (`textbubble_text.xml` l.17–23). */
+export const HINT_BUBBLE_PADDING = 16
 
 /**
  * The `left` of a bubble `width` wide in §9.20's anchored pose: end-aligned with its anchor –

@@ -24,7 +24,8 @@ vi.mock('@renderer/lib/api', () => ({
 
 const { HintBubbleCard } = await import('../HintBubbleCard')
 const { MessageLayer } = await import('../MessageLayer')
-const { hintBubbleLeft, hintCoverFor, HINT_BUBBLE_WIDTH, MESSAGE_INSET } = await import('../stack')
+const { hintBubbleLeft, hintCoverFor, HINT_BUBBLE_PADDING, HINT_BUBBLE_WIDTH, MESSAGE_INSET } =
+  await import('../stack')
 const {
   dismissHintBubble,
   forgetHintBubble,
@@ -100,8 +101,11 @@ describe('the placement', () => {
   })
 
   it("is §9.20's notice width: 320, the sentence on two lines at 288", () => {
+    // The stylesheet's `width` and `padding` are pinned to these two constants in
+    // lib/__tests__/v2Tokens.test.ts; this is the arithmetic the lead's (c) states.
     expect(HINT_BUBBLE_WIDTH).toBe(320)
-    expect(HINT_BUBBLE_WIDTH - 2 * 16).toBe(288)
+    expect(HINT_BUBBLE_PADDING).toBe(16)
+    expect(HINT_BUBBLE_WIDTH - 2 * HINT_BUBBLE_PADDING).toBe(288)
   })
 
   it('covers the card at the edge and the inset over it, nothing while unmeasured', () => {
