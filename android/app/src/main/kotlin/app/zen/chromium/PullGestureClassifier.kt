@@ -85,9 +85,14 @@ class PullGestureClassifier(private val touchSlop: Float) {
     /**
      * A finger landed. `atTop`: the page cannot scroll up any further. `eligible`: this page
      * refreshes at all (the setting is on, the URL has something to reload, no other transition
-     * is moving the page).
+     * is moving the page). `touchpad`: the finger is a touchpad's two-finger swipe (Android 14+
+     * delivers it as one fake finger it classifies, see `TouchpadSwipe.kt`) – never a pull:
+     * Chrome's refresh is the touchscreen's alone (`ui/android/overscroll_refresh.cc`,
+     * `OnOverscrolled`: "pull-to-refresh should only work on touchscreen overscrolls, in
+     * particular, not by touchpad or mousewheel scrolls"), so the swipe is the WebView's for
+     * the rest of this finger, whatever the page reports of it at its top.
      */
-    fun down(x: Float, y: Float, atTop: Boolean, eligible: Boolean): Step {
+    fun down(x: Float, y: Float, atTop: Boolean, eligible: Boolean, touchpad: Boolean = false): Step {
         downX = x
         downY = y
         lastX = x
@@ -95,7 +100,7 @@ class PullGestureClassifier(private val touchSlop: Float) {
         caught = false
         overscrollSeen = false
         pageAllows = null
-        if (!eligible) {
+        if (!eligible || touchpad) {
             state = State.PASSTHROUGH
             return Step.FORWARD
         }

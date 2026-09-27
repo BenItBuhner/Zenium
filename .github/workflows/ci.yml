@@ -113,11 +113,14 @@ jobs:
         # user space with the agents' space still empty; the quit chord quitting without a
         # question with one tab and asking for "2 tabs" with two user tabs and an agent's; an
         # agent over the local MCP server taking the screen and ending its session, which moves
-        # the window back to the user space.
+        # the window back to the user space. os-settings (W8-F5 / F6; #572, #594): Linux reads
+        # no accent – Settings › Look and Feel shows no "Use system accent colour" row and the
+        # core holds systemAccent null – and Settings › System's proxy door answers
+        # `unsupported` with no shell call, the runner's shell naming no desktop.
         run: >
           xvfb-run -a -s '-screen 0 1600x1000x24'
           node .github/smoke/smoke.mjs --exe dist/linux-unpacked/zenium --label unpacked
-          --out "$SMOKE_OUT" --scenarios boot,restore,crash,walkthrough,pip,split,menu-bar,agent-space-restore
+          --out "$SMOKE_OUT" --scenarios boot,restore,crash,walkthrough,pip,split,menu-bar,agent-space-restore,os-settings
           --extra-args="--no-sandbox --disable-gpu"
       - name: Clear browsing data on exit under Xvfb (the quit run, the owed clear at launch)
         # The clear-on-exit scenario (#310) on its own run of the harness, so its four launches

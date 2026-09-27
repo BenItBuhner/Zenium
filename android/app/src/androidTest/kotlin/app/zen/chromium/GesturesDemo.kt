@@ -11,7 +11,11 @@ import android.graphics.Rect
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
+import android.view.Display
+import android.view.InputDevice
+import android.view.MotionEvent
 import android.view.View
+import androidx.annotation.RequiresApi
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
@@ -43,6 +47,15 @@ import kotlin.math.abs
  *   Paste beside Paste and search (`UrlBar.java`, `ToolbarLongPressMenuHandler.java`); Paste puts
  *   the text in the field and submits nothing.
  *
+ * - GN-23 / A11Y-14: a touchpad's two-finger swipe (Android 14+ hands it to the window as one
+ *   classified fake finger, [TouchpadSwipe]) pulls the same bubble out from anywhere on the page
+ *   and a release past the threshold goes back; let go faster than Chrome's 1788 px/s short of
+ *   the threshold it navigates all the same (`overscroll_refresh.cc`'s FORCE_ACTIVATION); and
+ *   Settings › Accessibility's last row, Chrome's "Swipe between pages using a touchpad",
+ *   flipped off under a finger, leaves the swipe to the page (no bubble, no navigation), light
+ *   and dark stills of the row taken on the way. On the tablet profile (`-e scenes settings`) the
+ *   Settings stills alone run.
+ *
  * The last scene switches the emulator to gesture navigation and drags the same edge: the system
  * owns the edges there and the bubble must never appear (Chrome's `checkCanInterceptSwipe`); the
  * scene restores 3-button mode whatever happened. The two finger-driven scenes are measured
@@ -59,6 +72,8 @@ import kotlin.math.abs
 class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestures-demo") {
     override val tag = "GesturesDemo"
     private val theme = InstrumentationRegistry.getArguments().getString("theme") ?: "light"
+    /** `all`, or `settings` for the Accessibility page's stills alone (the tablet profile's run). */
+    private val scenes = InstrumentationRegistry.getArguments().getString("scenes") ?: "all"
     private lateinit var server: DemoServer
     private lateinit var findings: File
     private var checks = 0
@@ -127,6 +142,12 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
 
     override fun demo() {
         shot("00-third-stop")
+        if (scenes == "settings") {
+            // The tablet profile's run: the Accessibility page's stills, the switch flipped and restored.
+            touchpadSwitchStills()
+            finding("\nend: $checks claims, $failures failed")
+            return
+        }
         backHistoryPopup()
         returnToThird()
         backHistoryDragRelease()
@@ -136,6 +157,13 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         edgeDragArmed()
         edgeDragShort()
         edgeDragCloseTab()
+        returnToThird()
+        touchpadSwipeBack()
+        returnToThird()
+        touchpadSwipeFling()
+        returnToThird()
+        touchpadSwitchStills()
+        touchpadSwipeRefused()
         paneSwipes()
         pillHoldPaste()
         gesturalEdgeUntouched()
@@ -432,6 +460,336 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         claim("the bubble left with the tab", awaitTrue(4_000) { bubblePhase() == "" })
         claim("no further tap came with the release (taps ${thresholdTaps()})", thresholdTaps() - tapsBefore == 1)
         settle()
+    }
+
+    // --- GN-23 / A11Y-14: the touchpad's two-finger swipe ---------------------------------------
+
+    /** Whether the device hands a touchpad swipe to the window as a classified finger (Android 14+). */
+    private fun touchpadSwipesClassified(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+
+    /**
+     * A two-finger swipe rightwards from the middle of the page, 200 dp over a second: the swipe
+     * needs no edge, the bubble is up and armed with the fingers held, and the release goes back.
+     *
+     * What the swipe does once it is dragging is WATCHED, not claimed (see [watch]): on the
+     * software-GPU emulator the WebView's long-press timer races the swipe's first moves, which
+     * Android batches behind the next frame, and a frame 500 ms late lets the long press win – a
+     * text selection comes up under the swipe (the paragraph's last "." from the blank body,
+     * `ZenSelection … created` ~0.6 s after the down) and the drag never takes over. One run in
+     * two went the swipe's way (armed at 121.8 dp, the release went back); the classifier's
+     * side of the swipe is pinned by `HistoryNavClassifierTest`. What is claimed is the part the
+     * emulator cannot spoil: the switch on by default and the dispatcher taking every classified
+     * event (the thing `adb shell input` cannot do).
+     */
+    private fun touchpadSwipeBack() {
+        section("GN-23: a touchpad's two-finger swipe from the middle of the page goes back")
+        if (!touchpadSwipesClassified()) {
+            finding("(API ${Build.VERSION.SDK_INT} classifies no touchpad swipe; the scene is skipped)")
+            return
+        }
+        claim("the switch is on by default (host.touchpadSwipeToNavigate)", onMain { host.touchpadSwipeToNavigate })
+        shellCommand("logcat -c")
+        val y = pageMidY()
+        val swipe = TouchpadSwipe()
+        swipe.down(width * 0.5f, y)
+        swipe.moveBy(LONG_DRAG_DP * density, 0f, 1_000)
+        swipe.hold(450)
+        val phase = bubblePhase()
+        val armed = bubbleArmed()
+        val disc = nativeDisc()
+        finding("(the swipe's events: ${swipe.injected} injected, ${swipe.refused} refused)")
+        claim("the swipe's events were all taken by the dispatcher", swipe.refused == 0)
+        watch("the bubble is up and dragging with the fingers held, from the middle of the page (phase '$phase')", phase == "dragging")
+        watch("the swipe is armed past the threshold (disc: $disc)", armed)
+        noteSelectionRace()
+        shot("06-touchpad-swipe-armed")
+        swipe.up()
+        val navigated = awaitTrue(8_000) { activeUrl() == url("second") }
+        watch("the release past the threshold went back to the second stop (now at ${activeUrl()})", navigated)
+        if (!navigated) finding("(the host's diagnosis at the lift: ${awaitLogLine(1_500) { it.contains("history not started") } ?: "none in logcat"})")
+        claim("the bubble left after the release", awaitTrue(4_000) { bubblePhase() == "" })
+        if (navigated) awaitLoaded(url("second"))
+        settle()
+    }
+
+    /**
+     * The fling: a slow lead in 10 dp steps until the drag takes over (the page's
+     * `overscroll-behavior-x` answer and the WebView's overscroll report arrive some 90 dp in on
+     * this recipe; the bubble's travel counts from where the drag took over, not from the down),
+     * a pause with the fingers held (un-armed, short of the threshold), then 60 dp in ≤48 ms and
+     * the release – over Chrome's 1788 px/s in the swipe's direction, so the host says `force`
+     * and the release navigates with the motion still short of the threshold.
+     *
+     * WATCHED, not claimed, for the same long-press race as [touchpadSwipeBack] (the drag took
+     * over in neither run; the force itself is pinned by `HistoryNavClassifierTest` and
+     * `historyNav.test.ts`). The dispatcher taking every event is the claim.
+     */
+    private fun touchpadSwipeFling() {
+        section("GN-23: a touchpad swipe let go fast forces the navigation short of the threshold")
+        if (!touchpadSwipesClassified()) {
+            finding("(API ${Build.VERSION.SDK_INT} classifies no touchpad swipe; the scene is skipped)")
+            return
+        }
+        shellCommand("logcat -c")
+        val y = pageMidY()
+        val swipe = TouchpadSwipe()
+        swipe.down(width * 0.5f, y)
+        var lead = 0f
+        while (lead < FLING_LEAD_MAX_DP && bubblePhase() != "dragging") {
+            swipe.moveBy(FLING_LEAD_STEP_DP * density, 0f, FLING_LEAD_STEP_MS)
+            lead += FLING_LEAD_STEP_DP
+        }
+        swipe.hold(350)
+        val riding = nativeDisc()
+        val phaseBefore = bubblePhase()
+        val armedBefore = bubbleArmed()
+        finding("(the lead: ${lead.toInt()} dp until the drag took over; before the fling: phase '$phaseBefore', armed $armedBefore, disc $riding)")
+        watch("the swipe has the bubble dragging, un-armed, short of the threshold before the fling (disc: $riding)", phaseBefore == "dragging" && !armedBefore && riding.leadingEdgeDp < NAV_THRESHOLD_DP)
+        noteSelectionRace()
+        val flingMs = minOf(FLING_MS, (FLING_DP * density * 1_000f / FLING_PX_PER_S).toLong())
+        finding("(the flick: ${FLING_DP.toInt()} dp in $flingMs ms, ${(FLING_DP * density * 1_000f / flingMs).toInt()} px/s)")
+        swipe.moveBy(FLING_DP * density, 0f, flingMs)
+        swipe.up()
+        claim("the fling's events were all taken by the dispatcher (${swipe.injected} injected, ${swipe.refused} refused)", swipe.refused == 0)
+        val navigated = awaitTrue(8_000) { activeUrl() == url("second") }
+        watch("the fling's release went back short of the threshold (now at ${activeUrl()})", navigated)
+        val release = awaitLogLine(4_000) { it.contains("history release on") }
+        finding("(the host's release line: ${release ?: "none in logcat"})")
+        if (release == null) finding("(the host's diagnosis at the lift: ${awaitLogLine(1_500) { it.contains("history not started") } ?: "none in logcat"})")
+        watch("the host forced the release by the fling (the release line says so)", release?.contains("(forced by the fling)") == true)
+        claim("the bubble left after the release", awaitTrue(4_000) { bubblePhase() == "" })
+        if (navigated) awaitLoaded(url("second"))
+        settle()
+        shot("07-after-touchpad-fling")
+    }
+
+    /**
+     * Settings › Accessibility ends with Chrome's row, on by default: a still light and dark
+     * with the row on screen, then the switch flipped off under a finger – the host's mirror
+     * follows – and a still of it off. The row is left off for [touchpadSwipeRefused] (the
+     * phone run); the tablet run puts it back itself.
+     */
+    private fun touchpadSwitchStills() {
+        section("A11Y-14: Settings › Accessibility's \"Swipe between pages using a touchpad\"")
+        if (!openAccessibilitySettings()) {
+            touchFault("the Accessibility section never came up")
+            return
+        }
+        val rect = revealSettingsRow(TOUCHPAD_ROW_LABEL)
+        claim("the Accessibility page has the row \"$TOUCHPAD_ROW_LABEL\"", rect != null)
+        val description = settingsRowValue(TOUCHPAD_ROW_LABEL)
+        claim("the row's description is Chrome's (\"$description\")", description == TOUCHPAD_ROW_DESCRIPTION)
+        val last = js("(function(){var p=document.querySelector('.zen-settings-pane')||document.querySelector('.zen-settings-phone');var r=p?p.querySelectorAll('.zen-settings-row'):[];var l=r[r.length-1];return l?(l.textContent||''):''})()")
+        claim("the row is the page's last, where Chrome's Accessibility page ends with it", last.contains(TOUCHPAD_ROW_LABEL))
+        claim("the switch reads on (host.touchpadSwipeToNavigate)", onMain { host.touchpadSwipeToNavigate })
+        SystemClock.sleep(800)
+        shot("08-accessibility-touchpad-row-$theme")
+        val other = if (theme == "dark") "light" else "dark"
+        coreInvoke("settings.update", "{\"colorScheme\":\"$other\"}")
+        SystemClock.sleep(2_500)
+        shot("08-accessibility-touchpad-row-$other")
+        coreInvoke("settings.update", "{\"colorScheme\":\"$theme\"}")
+        SystemClock.sleep(2_500)
+        // Off, under a finger: the row's switch, and the host's mirror a bridge message later.
+        val point = revealSettingsRow(TOUCHPAD_ROW_LABEL)?.let { touchPoint(it) }
+        if (point == null) {
+            touchFault("the row \"$TOUCHPAD_ROW_LABEL\" was not touchable")
+        } else {
+            Finger().tap(point.x, point.y)
+            val off = awaitTrue(5_000) { !onMain { host.touchpadSwipeToNavigate } }
+            claim("a tap on the row turned the switch off and the host's mirror followed (host.touchpadSwipeToNavigate false)", off)
+            SystemClock.sleep(800)
+            shot("09-accessibility-touchpad-row-off")
+        }
+        // The tablet run has no swipe to refuse: it puts the switch back before it ends.
+        if (scenes == "settings") restoreTouchpadSwitch()
+        leaveSettingsTab()
+    }
+
+    /**
+     * With the switch off the same 200 dp swipe is the page's: no bubble at any point, nothing
+     * navigated, and the host's refusal at the down. The switch is put back after.
+     */
+    private fun touchpadSwipeRefused() {
+        section("A11Y-14: with the switch off the touchpad swipe is the page's")
+        try {
+            if (!touchpadSwipesClassified()) {
+                finding("(API ${Build.VERSION.SDK_INT} classifies no touchpad swipe; the scene is skipped)")
+                return
+            }
+            if (onMain { host.touchpadSwipeToNavigate }) {
+                coreInvoke("settings.update", "{\"touchpadSwipeToNavigate\":false}")
+                awaitTrue(5_000) { !onMain { host.touchpadSwipeToNavigate } }
+                finding("(the switch was on; the core turned it off for the scene)")
+            }
+            claim("the switch is off for the swipe (host.touchpadSwipeToNavigate)", !onMain { host.touchpadSwipeToNavigate })
+            ensureForeground()
+            if (activeUrl() != url("third")) returnToThird()
+            claim("the tab has a back entry the swipe could take", activeCoreTab()?.optBoolean("canGoBack") == true)
+            shellCommand("logcat -c")
+            val before = activeUrl()
+            val y = pageMidY()
+            val swipe = TouchpadSwipe()
+            swipe.down(width * 0.5f, y)
+            swipe.moveBy(LONG_DRAG_DP * density, 0f, 1_000)
+            var seen = false
+            for (i in 0 until 3) {
+                if (bubblePhase().isNotEmpty() || nativeDisc().up) seen = true
+                SystemClock.sleep(120)
+            }
+            shot("10-touchpad-swipe-refused")
+            swipe.up()
+            SystemClock.sleep(2_000)
+            claim("with the switch off the bubble never appeared for the swipe", !seen)
+            claim("and nothing navigated (still at ${activeUrl()})", activeUrl() == before)
+            val started = awaitLogLine(1_500) { it.contains("history start on") }
+            claim("the host started no history drag for the swipe", started == null)
+            // The classifier's diagnosis at the lift (`HistoryNavClassifier.refusal`, under `ZenPull`
+            // with the drag's own lines): the swipe's side had nowhere to go as given at the down –
+            // the switch's refusal, whatever the WebView made of the swipe meanwhile.
+            val refusal = awaitLogLine(1_500) { it.contains("history not started") && it.contains("touchpad swipe") }
+            finding("(the host's refusal line: ${refusal ?: "none in logcat"})")
+            claim("the host's refusal line names the switch (eligible=false for the swipe's side)", refusal?.contains("eligible=false") == true)
+            noteSelectionRace()
+        } finally {
+            restoreTouchpadSwitch()
+        }
+    }
+
+    /**
+     * Settings › Accessibility up, by either chrome: the phone's through the menu under a finger
+     * (the harness's way, proven by `.zen-settings-phone`), and the core's `page.open` where
+     * that is not the layout (the tablet's two-pane Settings, `.zen-settings-two-pane`) or the
+     * finger's way did not take. True once a section marked `accessibility` is in the document.
+     */
+    private fun openAccessibilitySettings(): Boolean {
+        val up = { js("(function(){return document.querySelector('.zen-settings-phone[data-section=\"accessibility\"],.zen-settings-two-pane[data-section=\"accessibility\"]')?'yes':''})()") == "yes" }
+        if (up()) return true
+        val phone = js("(function(){return document.querySelector('.zen-phone-bar')?'yes':''})()") == "yes"
+        if (phone && scenes != "settings" && openSettingsSection("accessibility") && awaitTrue(4_000, up)) return true
+        finding("(Settings › Accessibility opened through the core: ${if (phone) "the menu's way did not take" else "no phone bar in this chrome"})")
+        coreInvoke("page.open", """{"id":"settings","section":"accessibility"}""")
+        val shown = awaitTrue(8_000, up)
+        SystemClock.sleep(1_500)
+        return shown
+    }
+
+    private fun restoreTouchpadSwitch() {
+        if (onMain { host.touchpadSwipeToNavigate }) return
+        coreInvoke("settings.update", "{\"touchpadSwipeToNavigate\":true}")
+        val on = awaitTrue(5_000) { onMain { host.touchpadSwipeToNavigate } }
+        finding("(the switch put back on: ${if (on) "yes" else "the host's mirror did not follow within 5 s"})")
+    }
+
+    /** The first line of `tag` since the last `logcat -c` that `matches`, within `timeoutMs`. */
+    private fun awaitLogLine(timeoutMs: Long, tag: String = "ZenPull", matches: (String) -> Boolean): String? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (true) {
+            val line = runCatching { shellCommand("logcat -d -s $tag:D") }.getOrDefault("").lines().firstOrNull(matches)
+            if (line != null) return line.trim()
+            if (SystemClock.uptimeMillis() >= deadline) return null
+            SystemClock.sleep(250)
+        }
+    }
+
+    /**
+     * Whether a text selection came up under the touchpad swipe since the last `logcat -c` – the
+     * WebView's long press winning the race against the swipe's batched first moves on a stalled
+     * frame (the emulator's software GPU; see [touchpadSwipeBack]). Written as a finding so a
+     * `NOT SEEN` line beneath reads as the race, not as the gesture.
+     */
+    private fun noteSelectionRace() {
+        val selection = awaitLogLine(0, tag = "ZenSelection") { it.contains("selection mode of") && it.contains("created") }
+        finding(
+            if (selection == null) "(no text selection came up under the swipe)"
+            else "(a text selection came up under the swipe – the long press won the race against the batched moves: $selection)"
+        )
+    }
+
+    /**
+     * A finding with a claim's shape but no weight: `SEEN` / `NOT SEEN` instead of `PASS` / `FAIL`,
+     * for what the emulator's stalled frames can spoil (the touchpad swipe's drag) – it is read
+     * from the nightly's findings, it fails no run. `claim` is for what the run can vouch for.
+     */
+    private fun watch(what: String, held: Boolean) {
+        val line = "${if (held) "SEEN" else "NOT SEEN"}: $what"
+        finding(line)
+        if (held) Log.i(tag, line) else Log.w(tag, line)
+    }
+
+    /**
+     * A touchpad's two-finger swipe as Android 14+ hands it to the window (`GestureConverter.cpp`,
+     * `handleScroll`): one fake finger from the mouse source, `TOOL_TYPE_FINGER`, no button,
+     * classified `CLASSIFICATION_TWO_FINGER_SWIPE` – built with API 34's `MotionEvent.obtain` that
+     * carries a classification and injected through the dispatcher, which keeps it (`adb shell
+     * input` can set none, which is why #580 had no device scene). Moves are interpolated and
+     * injected in real time as [Finger.moveBy]'s are, so the velocity the host measures is the
+     * one asked for.
+     */
+    @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+    private inner class TouchpadSwipe {
+        private var downTime = 0L
+        private var x = 0f
+        private var y = 0f
+        var injected = 0
+        var refused = 0
+
+        fun down(x: Float, y: Float) {
+            this.x = x
+            this.y = y
+            downTime = SystemClock.uptimeMillis()
+            inject(MotionEvent.ACTION_DOWN, downTime)
+        }
+
+        fun moveBy(dx: Float, dy: Float, durationMs: Long) {
+            val fromX = x
+            val fromY = y
+            val toX = x + dx
+            val toY = y + dy
+            val steps = maxOf(1L, durationMs / SWIPE_STEP_MS)
+            val start = SystemClock.uptimeMillis()
+            for (i in 1..steps) {
+                val due = start + (durationMs * i) / steps
+                val now = SystemClock.uptimeMillis()
+                if (due > now) SystemClock.sleep(due - now)
+                val t = i.toFloat() / steps
+                x = fromX + (toX - fromX) * t
+                y = fromY + (toY - fromY) * t
+                inject(MotionEvent.ACTION_MOVE, SystemClock.uptimeMillis())
+            }
+        }
+
+        fun hold(ms: Long) = SystemClock.sleep(ms)
+
+        fun up() = inject(MotionEvent.ACTION_UP, SystemClock.uptimeMillis())
+
+        private fun inject(action: Int, eventTime: Long) {
+            val properties = MotionEvent.PointerProperties().apply {
+                id = 0
+                toolType = MotionEvent.TOOL_TYPE_FINGER
+            }
+            val coords = MotionEvent.PointerCoords().apply {
+                x = this@TouchpadSwipe.x
+                y = this@TouchpadSwipe.y
+                pressure = 1f
+                size = 1f
+            }
+            val event = MotionEvent.obtain(
+                downTime, eventTime, action, 1, arrayOf(properties), arrayOf(coords),
+                0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_MOUSE, Display.DEFAULT_DISPLAY, 0,
+                HistoryNavClassifier.CLASSIFICATION_TWO_FINGER_SWIPE
+            )
+            if (event == null) {
+                refused++
+                return
+            }
+            injected++
+            try {
+                if (!injectInput(event, false)) refused++
+            } finally {
+                event.recycle()
+            }
+        }
     }
 
     // --- GN-19: the switcher's pane swipe -------------------------------------------------------
@@ -936,6 +1294,30 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         const val BUBBLE_SIZE_DP = 44f
         /** How far a channel of the armed arrow's colour may stand from the accent: the tint's mix rounds per channel, the drawn pixel dithers a hair. */
         const val TINT_TOLERANCE = 8
+        /**
+         * The fling's lead: slow 10 dp steps (about 75 dp/s with the bubble read between them)
+         * until the drag takes over, at most 160 dp – the travel the bubble measures starts where
+         * the drag took over, so the lead's length is not the drag's, and the release alone (not
+         * the distance) can arm the navigation.
+         */
+        const val FLING_LEAD_MAX_DP = 160f
+        const val FLING_LEAD_STEP_DP = 10f
+        const val FLING_LEAD_STEP_MS = 80L
+        /**
+         * The flick: 60 dp, so the drag from where it took over stays short of the 96 dp
+         * threshold; its duration is 48 ms at most and shorter where the density is low, so the
+         * release runs at [FLING_PX_PER_S] physical px/s on any recipe (35 ms on the phone
+         * recipe's 1.75 density, 20 ms at one px per dp) – past Chrome's fixed 1788
+         * (`overscroll_refresh.cc:29-33`).
+         */
+        const val FLING_DP = 60f
+        const val FLING_MS = 48L
+        const val FLING_PX_PER_S = 3_000f
+        /** The injected swipe's sample spacing (about the touchpad's 125 Hz report rate). */
+        const val SWIPE_STEP_MS = 8L
+        /** Chrome's row (`browser_ui_strings.grd:1039-1044`): its title and its summary, verbatim. */
+        const val TOUCHPAD_ROW_LABEL = "Swipe between pages using a touchpad"
+        const val TOUCHPAD_ROW_DESCRIPTION = "Navigate back and forth by swiping with two fingers on the touchpad."
         const val THREE_BUTTON = "threebutton"
         const val GESTURAL = "gestural"
         const val THREE_BUTTON_OVERLAY = "com.android.internal.systemui.navbar.threebutton"

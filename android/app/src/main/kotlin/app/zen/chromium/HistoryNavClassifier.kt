@@ -25,10 +25,15 @@ import kotlin.math.abs
  * `OnOverscrolled`): it needs no edge – it arms from anywhere on the page, in either
  * navigation-bar mode – and its side is the one it pulls the page in from, settled at activation
  * from the overscroll the page reports for that side. The cone, the page's veto and its
- * `overscroll-behavior-x` say are the same.
+ * `overscroll-behavior-x` say are the same. A swipe let go fast enough in its direction
+ * navigates whatever its travel (Chrome's `GetActivationStatus`, [FORCE_ACTIVATION_VELOCITY]),
+ * and one flung back out of the page at [DISALLOW_VELOCITY] or faster navigates never, whatever
+ * its travel: the caller hands [up] the release's horizontal velocity, and the finger's drag
+ * neither forces nor is disallowed (its release carries no velocity in Chrome,
+ * `overscroll_controller_android.cc:376-378`).
  *
  * Distances are in whatever unit the caller uses for the touches, [touchSlop] and [edgeWidth]
- * (device pixels on Android).
+ * (device pixels on Android); the velocity is in the same unit per second.
  */
 class HistoryNavClassifier(private val touchSlop: Float, private val edgeWidth: Float) {
     enum class State {
@@ -50,7 +55,14 @@ class HistoryNavClassifier(private val touchSlop: Float, private val edgeWidth: 
         data class Start(val edge: Edge) : Nav()
         /** The finger's travel since the drag began, positive into the page (away from its edge). */
         data class Move(val travel: Float, val time: Long) : Nav()
-        data class Release(val time: Long) : Nav()
+        /**
+         * The finger lifted. `force`: a touchpad swipe let go faster than [FORCE_ACTIVATION_VELOCITY]
+         * in its direction – the chrome navigates whatever the travel (Chrome's FORCE_ACTIVATION).
+         * `disallow`: a touchpad swipe let go flung back out of the page at [DISALLOW_VELOCITY] or
+         * faster – the chrome navigates never, whatever the travel (Chrome's DISALLOW_ACTIVATION).
+         * Never both: a fling has one direction.
+         */
+        data class Release(val time: Long, val force: Boolean = false, val disallow: Boolean = false) : Nav()
         data class Cancel(val time: Long) : Nav()
     }
 
@@ -166,11 +178,40 @@ class HistoryNavClassifier(private val touchSlop: Float, private val edgeWidth: 
         }
     }
 
-    fun up(time: Long): Step {
+    /**
+     * The finger lifted, moving at `velocityX` along the page (positive rightwards, the touches'
+     * unit per second; the caller's velocity tracker, 0 when it has none). A touchpad swipe
+     * released faster than [FORCE_ACTIVATION_VELOCITY] into the page forces the navigation; one
+     * released at [DISALLOW_VELOCITY] or faster back out of the page is disallowed it.
+     */
+    fun up(time: Long, velocityX: Float = 0f): Step {
         val was = state
         state = State.IDLE
-        return if (was == State.DRAGGING) Step(Disposition.CONSUME, Nav.Release(time)) else Step.FORWARD
+        return if (was == State.DRAGGING) {
+            Step(Disposition.CONSUME, Nav.Release(time, force = forces(velocityX), disallow = disallows(velocityX)))
+        } else {
+            Step.FORWARD
+        }
     }
+
+    /**
+     * Chrome's `OverscrollRefresh::GetActivationStatus` (`overscroll_refresh.cc:265-269`):
+     * FORCE_ACTIVATION when the active action is the touchpad's and the fling's velocity in its
+     * direction (`GetVelocityInActiveActionDirection`: `velocity.x` pulling in from the left,
+     * `-velocity.x` from the right) is over the threshold. A finger's drag is never forced,
+     * whatever its speed.
+     */
+    private fun forces(velocityX: Float): Boolean = touchpad && inward(velocityX) > FORCE_ACTIVATION_VELOCITY
+
+    /**
+     * Chrome's `GetActivationStatus` again (`overscroll_refresh.cc:272-276`): ALLOW_ACTIVATION
+     * when the fling's velocity in the action's direction is over `kMinFlingVelocityForActivation`
+     * (-500), DISALLOW_ACTIVATION otherwise – exactly -500 disallows. The rule is written for
+     * both devices, but a finger's release reaches it at zero velocity (`OnScrollEnd(Vector2dF())`,
+     * `overscroll_controller_android.cc:376-378`) and is never disallowed; the touchpad's fling
+     * alone can be, so the classifier says it for the touchpad alone.
+     */
+    private fun disallows(velocityX: Float): Boolean = touchpad && inward(velocityX) <= DISALLOW_VELOCITY
 
     /** The system took the touch away (a notification shade, a window change). */
     fun cancel(time: Long): Step {
@@ -227,22 +268,30 @@ class HistoryNavClassifier(private val touchSlop: Float, private val edgeWidth: 
     }
 
     /**
-     * Why a finger that landed in an edge window and dragged inward past the slop is no history
-     * drag – null when it became one, or when it was no such finger (a tap, a scroll, a touch
-     * away from the edges, a touchpad swipe). Read at the lift for the `ZenPull` log, so a
-     * refused drag names its cause on a device whose logcat is the only view of it: the edge's
-     * eligibility as given at the down, the page's `overscroll-behavior-x` answer (or that none
-     * came) and whether the WebView reported the clamped overscroll towards that side.
+     * Why a finger that landed in an edge window and dragged inward past the slop – or a touchpad
+     * swipe that ran level past the slop – is no history drag: null when it became one, or when
+     * it was no such gesture (a tap, a scroll, a touch away from the edges, a two-finger scroll).
+     * Read at the lift for the `ZenPull` log, so a refused drag names its cause on a device whose
+     * logcat is the only view of it: the eligibility as given at the down (for the swipe, the
+     * side it pulled the page in from – `eligible=false` both ways is Settings › Accessibility's
+     * switch off), the page's `overscroll-behavior-x` answer (or that none came) and whether the
+     * WebView reported the clamped overscroll towards that side.
      */
     fun refusal(): String? {
-        if (touchpad || started) return null
-        val side = landedEdge ?: return null
+        if (started) return null
         val dx = lastX - downX
+        if (touchpad) {
+            if (abs(dx) <= touchSlop || !level(dx, lastY - downY)) return null
+            val side = pulledFrom(dx)
+            return "touchpad swipe from the $side: eligible=${eligible(side)} page=${pageAnswer()} overscroll=${reported(side)}"
+        }
+        val side = landedEdge ?: return null
         val inward = if (side == Edge.LEFT) dx else -dx
         if (inward <= touchSlop) return null
-        val page = pageAllows?.toString() ?: "unanswered"
-        return "$side edge: eligible=${eligible(side)} page=$page overscroll=${reported(side)}"
+        return "$side edge: eligible=${eligible(side)} page=${pageAnswer()} overscroll=${reported(side)}"
     }
+
+    private fun pageAnswer(): String = pageAllows?.toString() ?: "unanswered"
 
     /** Whether a displacement past the slop may still become this gesture's drag. */
     private fun heading(dx: Float, dy: Float): Boolean =
@@ -269,6 +318,27 @@ class HistoryNavClassifier(private val touchSlop: Float, private val edgeWidth: 
         const val WEIGHT_ANGLE_30 = 1.73f
         /** Chrome's `kDefaultNavigationEdgeWidth`: how far in from a side a drag may begin (dp). */
         const val EDGE_WIDTH_DP = 24f
+        /**
+         * Chrome's `kMinFlingVelocityForForceActivation` (`ui/android/overscroll_refresh.cc`): a
+         * touchpad swipe let go faster than this in its direction navigates whatever its travel.
+         * Physical pixels per second, one fixed number on every device (Chrome derived it once,
+         * "1100 dp … about 1788 pixel" at a scale of 1.625, and compares it with the velocity
+         * `EventForwarder.java` measures in physical px/s), as [up]'s velocity is here.
+         */
+        const val FORCE_ACTIVATION_VELOCITY = 1788f
+        /**
+         * Chrome's `kMinFlingVelocityForActivation` (`ui/android/overscroll_refresh.cc:27`): a
+         * touchpad swipe let go flung back out of the page at this speed or faster (its velocity
+         * in the action's direction at or under -500) navigates never, whatever its travel
+         * (`GetActivationStatus`, `:272-276`: `> -500` allows). Physical pixels per second, as
+         * [FORCE_ACTIVATION_VELOCITY] and [up]'s velocity are.
+         */
+        const val DISALLOW_VELOCITY = -500f
+        /**
+         * Chrome's `EventForwarder.MAX_FLING_VELOCITY`: the cap the release's velocity is
+         * measured under (`VelocityTracker.computeCurrentVelocity(1000, 8000)`), px/s.
+         */
+        const val MAX_FLING_VELOCITY = 8000f
 
         /** `MotionEvent.CLASSIFICATION_NONE` (API 29; the value for an event nothing classified). */
         const val CLASSIFICATION_NONE = 0

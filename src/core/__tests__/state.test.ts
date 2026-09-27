@@ -624,6 +624,33 @@ describe('state.json v6 (Expand on hover on by default)', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Accessibility's "Swipe between pages using a touchpad" (Android; GN-23 / A11Y-14): on until
+// the profile says off, read sanitised at load like the other device-local switches
+// ---------------------------------------------------------------------------
+
+describe('settings.touchpadSwipeToNavigate on load', () => {
+  const stored = (value: unknown): BrowserState => {
+    const settings = structuredClone(DEFAULT_SETTINGS) as unknown as Record<string, unknown>
+    if (value === undefined) delete settings.touchpadSwipeToNavigate
+    else settings.touchpadSwipeToNavigate = value
+    return state(
+      fakeIo(legacyProfile(6, { settings: settings as unknown as Persisted['settings'] }))
+    )
+  }
+
+  it('ships on, keeps a stored value, and reads a missing key or anything but a boolean as on', () => {
+    expect(DEFAULT_SETTINGS.touchpadSwipeToNavigate).toBe(true)
+    expect(state(fakeIo()).settings.touchpadSwipeToNavigate).toBe(true)
+    expect(stored(undefined).settings.touchpadSwipeToNavigate).toBe(true)
+    expect(stored(false).settings.touchpadSwipeToNavigate).toBe(false)
+    expect(stored(true).settings.touchpadSwipeToNavigate).toBe(true)
+    expect(stored('off').settings.touchpadSwipeToNavigate).toBe(true)
+    expect(stored(0).settings.touchpadSwipeToNavigate).toBe(true)
+    expect(stored(null).settings.touchpadSwipeToNavigate).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // The phone app menu's order (TB-22): a list loads as a list, the empty one included
 // ---------------------------------------------------------------------------
 
