@@ -63,6 +63,14 @@ import kotlin.math.roundToInt
  *      new tab is C's `/byurl` with D's address, no POST, and the top log is still empty of B
  *      and D.
  *
+ * The route is read two ways, since #605 logs nothing: off the protocol message types the pages
+ * noted (above), and off the tab's own registry – `TabWebView.imageOwner` ([ImageOwner.frameCount],
+ * read in-process on the main thread by reflection, as the drivers read `lastRestore`), sampled
+ * through a tab's load ([RegistryWatch]) and read once more before the hold. `opaque` and
+ * `no-owner` end in the same address tab; only these tell the owner-frame route from the
+ * URL-only fallback. A registry that reads `1` then `0` through a load says the frame's hello was
+ * kept and then cleared (`ImageOwner.documentStarted()` ran after it).
+ *
  * Findings in `image-search-owner-findings.txt` (one `OK` or `FAIL` per claim; a claim that does
  * not hold fails the run at the end). The seeded profile is the tab-group drivers'
  * (`tab-groups-demo-state.json`) with the engine patched in. Driven by
@@ -87,8 +95,46 @@ class ImageSearchOwnerDemo : GroupsDemoBase("image-search-owner", "image-search-
         val framed: Boolean,
         val imageUrl: String,
         val upload: Boolean,
-        val heading: String
+        val heading: String,
+        /** The frame document's path at B (null when the image is in the top document). */
+        val framePath: String? = null
     )
+
+    /**
+     * Samples one tab's frame-owner registry ([registrySize]) every [SAMPLE_MS] on its own thread,
+     * from [start] to [stop], keeping the transitions with their offsets: `none @+0ms → 1 @+412ms
+     * → 0 @+430ms` reads "no registry yet, a sub-frame registered, the registry was cleared" – the
+     * order of the frame's hello against the document's `onPageStarted`.
+     */
+    private inner class RegistryWatch(private val tabId: String) {
+        private val transitions = ArrayList<String>()
+        private var last: Int? = SENTINEL
+        private val startedAt = SystemClock.uptimeMillis()
+        @Volatile private var stopped = false
+        private val thread = Thread {
+            while (!stopped) {
+                val n = registrySize(tabId)
+                synchronized(transitions) {
+                    if (n != last) {
+                        transitions += "${n ?: "none"} @+${SystemClock.uptimeMillis() - startedAt}ms"
+                        last = n
+                    }
+                }
+                SystemClock.sleep(SAMPLE_MS)
+            }
+        }
+
+        fun start(): RegistryWatch = apply {
+            thread.isDaemon = true
+            thread.start()
+        }
+
+        fun stop(): List<String> {
+            stopped = true
+            thread.join(3_000)
+            return synchronized(transitions) { transitions.toList() }
+        }
+    }
 
     /** The seeded profile with the fixture's engine as the default (the settings' user engines). */
     override fun patchState(json: String): String {
@@ -152,17 +198,20 @@ class ImageSearchOwnerDemo : GroupsDemoBase("image-search-owner", "image-search-
     }
 
     override fun demo() {
-        variant(Variant("b", HOME, "$ORIGIN/", framed = true, imageUrl = FRAME_IMAGE_URL, upload = true, heading = "the framed image (origin B, same-origin to its frame): the owner frame uploads, the top document sees nothing of B"))
+        // HOME loaded at boot, before any watch could start: its registry is read once, before the hold.
+        variant(Variant("b", HOME, "$ORIGIN/", framed = true, imageUrl = FRAME_IMAGE_URL, upload = true, heading = "the framed image (origin B, same-origin to its frame): the owner frame uploads, the top document sees nothing of B", framePath = FRAME_PATH))
+        val deltaWatch = RegistryWatch(DELTA).start()
         activate(DELTA, "$ORIGIN/delta.html")
-        variant(Variant("b2", DELTA, "$ORIGIN/delta.html", framed = false, imageUrl = "$ORIGIN$IMAGE_PATH", upload = true, heading = "the image in the top document: the main frame is the owner and the search still works"))
+        variant(Variant("b2", DELTA, "$ORIGIN/delta.html", framed = false, imageUrl = "$ORIGIN$IMAGE_PATH", upload = true, heading = "the image in the top document: the main frame is the owner and the search still works"), deltaWatch)
+        val gammaWatch = RegistryWatch(GAMMA).start()
         activate(GAMMA, "$ORIGIN/gamma.html")
-        variant(Variant("b3", GAMMA, "$ORIGIN/gamma.html", framed = true, imageUrl = FAR_IMAGE_URL, upload = false, heading = "the framed image cross-origin to its frame without CORS (origin D): opaque, the address route, the top log still empty"))
+        variant(Variant("b3", GAMMA, "$ORIGIN/gamma.html", framed = true, imageUrl = FAR_IMAGE_URL, upload = false, heading = "the framed image cross-origin to its frame without CORS (origin D): opaque, the address route, the top log still empty", framePath = FRAME_B3_PATH), gammaWatch)
         tail()
     }
 
     // --- one variant ------------------------------------------------------------------------------
 
-    private fun variant(v: Variant) {
+    private fun variant(v: Variant, watch: RegistryWatch? = null) {
         section("${v.id}. §7.3 ${v.heading}")
         ensureForeground()
         val loaded = if (v.framed) {
@@ -176,6 +225,24 @@ class ImageSearchOwnerDemo : GroupsDemoBase("image-search-owner", "image-search-
         check("${v.id}: the top document's hooks are live – its own ping went through them and reached the server", pinged, "log $logBefore, ping hits ${server.hits(PING_PATH)}")
         finding("  the top document's log before the hold: $logBefore")
         finding("  the address the old path would have fetched from this document's world: ${v.imageUrl}")
+        // The tab's registry, settled (the frame's hello is long past; the watch ran through the load).
+        SystemClock.sleep(500)
+        val registry = registrySize(v.tabId)
+        val sampled = watch?.stop()
+        val sampledWords = sampled?.let { "; sampled through the load: ${it.joinToString(" → ")}" } ?: ""
+        if (v.framed) {
+            val frameLoads = frameSite.hits(v.framePath ?: "")
+            finding("  B served ${v.framePath} $frameLoads time(s) – the frame's document loaded ${if (frameLoads == 1) "once" else "more than once"}; ${server.hits(v.url.removePrefix(ORIGIN))} load(s) of the top document")
+            finding("  the tab's frame-owner registry before the hold: ${registry ?: "none"} sub-frame(s)$sampledWords")
+            check(
+                "${v.id}: the frame is in the tab's registry before the hold (ImageOwner.frameCount 1: its hello was kept past the document's onPageStarted)",
+                registry == 1,
+                "registry ${registry ?: "none"}$sampledWords"
+            )
+        } else {
+            finding("  the tab's frame-owner registry before the hold: ${registry ?: "none"} (no sub-frame on this page; the registry is made on the first sub-frame hello or request)$sampledWords")
+        }
+        val farBefore = farSite.hits(IMAGE_PATH)
         still("${v.id}-page")
         val target = centreOnScreen(v.tabId, if (v.framed) "demo-frame" else "demo-image") ?: run {
             check("${v.id}: the image is on the screen", false, "no ${if (v.framed) "frame" else "image"} in ${v.tabId} (${describeSpace()})")
@@ -212,7 +279,7 @@ class ImageSearchOwnerDemo : GroupsDemoBase("image-search-owner", "image-search-
             activate(v.tabId, v.url)
         }
         topLog(v)
-        route(v)
+        route(v, farBefore)
     }
 
     /** (a): the POST at the engine's upload endpoint, read off the server's kept request. */
@@ -271,17 +338,43 @@ class ImageSearchOwnerDemo : GroupsDemoBase("image-search-owner", "image-search-
         }
     }
 
-    /** The route the search took, off the protocol messages the frames noted (not off host logs: #605 has none). */
-    private fun route(v: Variant) {
+    /**
+     * The route the search took, off the protocol messages the frames noted and the tab's registry
+     * (not off host logs: #605 has none). [farBefore]: D's `/image.jpg` hits before the hold – the
+     * owner's step-2 fetches (`cache: 'force-cache'`, include then omit) may add up to two, a
+     * cached copy none, and the URL-only route none: a finding, not a claim.
+     */
+    private fun route(v: Variant, farBefore: Int) {
         val bridge = bridgeLog(v.tabId)
         val frame = frameLog(v.tabId).filter { !it.startsWith("loaded ") }
-        finding("  protocol messages the top frame's bridge saw: $bridge${if (v.framed) "; the frame's: $frame" else ""}")
+        val registry = registrySize(v.tabId)
+        finding("  protocol messages the top frame's bridge saw: $bridge${if (v.framed) "; the frame's: $frame" else ""}; the tab's registry after the search: ${registry ?: "none"}")
         if (v.framed) {
+            if (!v.upload) finding("  D's ${IMAGE_PATH} hits: $farBefore before the hold, ${farSite.hits(IMAGE_PATH)} after the search")
             check("${v.id}: the host asked the top frame (zen:image-owner?) and never asked it for the thumbnail – it is not the owner", QUESTION in bridge && THUMBNAIL !in bridge, "top $bridge")
-            check("${v.id}: the frame was asked and then asked for the thumbnail – the owner-frame route, not the URL-only fallback", QUESTION in frame && THUMBNAIL in frame, "frame $frame")
+            check(
+                "${v.id}: the frame was asked and then asked for the thumbnail – the owner-frame route, not the URL-only fallback",
+                QUESTION in frame && THUMBNAIL in frame,
+                "frame $frame; registry ${registry ?: "none"}${if (frame.isEmpty() && registry == 0) " – the host asked the main frame alone and answered no-owner after 300 ms" else ""}"
+            )
         } else {
             check("${v.id}: the top frame – the image's holder – was asked and then asked for the thumbnail (the main frame is the owner)", QUESTION in bridge && THUMBNAIL in bridge, "top $bridge")
         }
+    }
+
+    /**
+     * The tab's frame-owner registry ([ImageOwner.frameCount]), read in-process on the main thread
+     * (`TabWebView.imageOwner`, private; the drivers read `lastRestore` the same way): null when
+     * the tab has no view yet or no registry – none is made before a sub-frame's hello or a request.
+     */
+    private fun registrySize(tabId: String): Int? {
+        val field = imageOwnerField ?: return null
+        var count: Int? = null
+        instrumentation.runOnMainSync {
+            val view = (activity as? MainActivity)?.host?.tabs?.get(tabId) ?: return@runOnMainSync
+            count = (field.get(view) as? ImageOwner<*>)?.frameCount
+        }
+        return count
     }
 
     // --- the pages' words -----------------------------------------------------------------------
@@ -374,6 +467,15 @@ class ImageSearchOwnerDemo : GroupsDemoBase("image-search-owner", "image-search-
         private const val PING_URL = "$ORIGIN$PING_PATH"
         private const val UPLOAD_URL = "$ENGINE_ORIGIN$UPLOAD_PATH"
         private const val BYURL_URL = "$ENGINE_ORIGIN$BYURL_PATH"
+
+        /** How often [RegistryWatch] samples a tab's registry. */
+        private const val SAMPLE_MS = 40L
+        /** [RegistryWatch]'s "no sample yet" (a registry reads null, 0 or more). */
+        private const val SENTINEL = -2
+        /** `TabWebView.imageOwner`, the orchestrator made on the first sub-frame hello or request (null when the field is not found). */
+        private val imageOwnerField: java.lang.reflect.Field? by lazy {
+            runCatching { TabWebView::class.java.getDeclaredField("imageOwner").apply { isAccessible = true } }.getOrNull()
+        }
 
         private const val ENGINE_ID = "lens-fixture"
         /** The row's words: `Search Image with ${imageSearch.name}` (menus.ts), the name Google's own engine gives its form. */
