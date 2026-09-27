@@ -102,7 +102,14 @@ import kotlin.math.roundToInt
  *    and without a hairline, as Chrome's quick action widget is; the floor scene at the
  *    provider's minimum width, where the scan button drops on xsmall and small as Chrome's Lens
  *    does; a finger on each part of the small form (voice search, the omnibox, a private tab or
- *    the toast, the QR scanner). A still of each form (`widget-<theme>-quick-actions-<form>.png`).
+ *    the toast, the QR scanner). A still of each form (`widget-<theme>-quick-actions-<form>.png`);
+ *  - the game widget (WID-04 / ERR-03, gate #607 (f)), Roll's one-cell face: its info read (one
+ *    cell, fixed, the gate's words), an id bound on the same host and the face laid at a
+ *    launcher's cell with the host's padding kept, the card read against the quick actions
+ *    widget's surface role (opaque, no hairline on Android 12+) and the glyph's indigo and ink
+ *    found on it, a still (`widget-<theme>-game.png`); a finger on the face (a new tab on
+ *    `zen://game` sent by another app, the stage's label in the tree), and the COLD landing with
+ *    the same frame read as the others.
  *
  * Every check is a finding line (`widget-findings.txt`); one that fails fails the run at the end,
  * after the stills are down. Handshake and screenshots (`widget-<theme>-*.png`) as in the other
@@ -230,6 +237,7 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
 
         shortcuts()
         quickActions()
+        gameWidget()
         finding("\nend: ${describeActive()}; ${failures.size} failed check(s)")
     }
 
@@ -757,7 +765,7 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
                 ", ${"%.0f".format(rate)} grabs/s" +
                 (if (result == PRIVATE_TOAST) " (the WebView-113 fallback: the restored tab in front, the toast said within the wait)" else "")
         )
-        shot("0${5 + COLD_ORDER.indexOf(landing)}-cold-$landing")
+        shot(if (landing in COLD_ORDER) "0${5 + COLD_ORDER.indexOf(landing)}-cold-$landing" else "21-cold-$landing")
         leaveLanding(result)
         backToThePrevious(tab?.optString("id"))
     }
@@ -1370,6 +1378,159 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
 
     private fun dpOf(px: Int): Int = (px / density).roundToInt()
 
+    // --- 10. the game widget (WID-04) ------------------------------------------------------------
+
+    /**
+     * Roll's one-cell face (ERR-03 / WID-04, gate #607 (f)): its provider as the picker lists it –
+     * one cell by one, fixed, the platform's one-cell minimum, the Home screen alone, the gate's
+     * words – then an id bound on the driver's host and the face laid at a launcher's cell with the
+     * host's default padding kept, so the PROVIDER is handed the cell a launcher hands it; the face's
+     * name in the tree, the card read against the quick actions widget's surface role and its top
+     * edge for the absent hairline (Android 12+), the glyph's indigo found on the card (the mark's
+     * brand colour, lifted for the dark theme); a still (`widget-<theme>-game.png`); then a finger
+     * on the face with Zenium in front – a new tab on `zen://game` sent by another app, Roll's
+     * document up (the stage's label in the tree) – and the COLD landing (the WID-07 rule), the
+     * browser's task removed and the widget's own `PendingIntent` sent: every frame read for the
+     * previous tab's page, which must never paint.
+     */
+    private fun gameWidget() {
+        ensureForeground()
+        val manager = AppWidgetManager.getInstance(app)
+        val provider = ComponentName(app, GameWidgetProvider::class.java)
+        val info = manager.getInstalledProvidersForPackage(app.packageName, null).firstOrNull { it.provider == provider }
+        expect("the game widget's provider is installed for ${app.packageName}", info != null)
+        info ?: return
+        finding("\ngame widget provider: ${describe(info)}")
+        expect("the widget asks for one cell (minWidth and minHeight the platform's 40 dp one-cell minimum)", info.minWidth == dp(GAME_MIN_DP) && info.minHeight == dp(GAME_MIN_DP))
+        expect("the widget does not resize: one cell, fixed", info.resizeMode == AppWidgetProviderInfo.RESIZE_NONE)
+        expect("the widget is for the home screen alone – a one-cell face is no search box", info.widgetCategory == AppWidgetProviderInfo.WIDGET_CATEGORY_HOME_SCREEN)
+        expect("the widget names itself for the picker as the gate ruled", info.loadLabel(app.packageManager) == GAME_LABEL)
+        expect("the widget asks for no periodic update", info.updatePeriodMillis == 0)
+        expect("a preview image for pickers without a preview layout", info.previewImage == R.drawable.widget_game_preview)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            expect(
+                "the picker's target is 1×1, its description the gate's, its preview the layout",
+                info.targetCellWidth == 1 && info.targetCellHeight == 1 && info.loadDescription(app) == GAME_DESCRIPTION && info.previewLayout == R.layout.widget_game_preview
+            )
+        }
+
+        val grant = shellCommand("appwidget grantbind --package ${app.packageName} --user 0").trim()
+        val widgetHost = AppWidgetHost(app, HOST_ID).also { widgetHost = it }
+        onMain { widgetHost.startListening() }
+        val id = widgetHost.allocateAppWidgetId().also { widgetId = it }
+        val bound = onMain { manager.bindAppWidgetIdIfAllowed(id, provider) }
+        finding("bind: grantbind '${grant.ifEmpty { "(no output)" }}', id $id bound $bound")
+        expect("the id binds to the game provider on the driver's host", bound)
+        if (!bound) {
+            takeDownTheHost()
+            return
+        }
+        val launcherContext = launcherContext()
+        val hostView = onMain { widgetHost.createView(launcherContext, id, info) }
+        val delivered = awaitTrue(8_000) { onMain { hostView.findViewById<View>(R.id.widget_game_face)?.hasOnClickListeners() == true } }
+        expect("the provider's RemoteViews reach the host after the bind (the face has its click)", delivered)
+        if (!delivered) onMain { hostView.updateAppWidget(GameWidgetProvider.views(launcherContext)) }
+        widgetView = hostView
+        showOnTheBackdrop(hostView, hostView, fourCells = false)
+        layTheFace(hostView, GAME_CELL_DP, GAME_CELL_DP)
+        SystemClock.sleep(1_500)
+
+        expect("the face reads its name in the tree – what a tap does", awaitTrue(8_000) { labelsInFrame(GAME_FACE_LABEL) })
+        val card = viewBounds(android.R.id.background)
+        val face = viewBounds(R.id.widget_game_face)
+        finding("face bounds on screen: frame ${frameBounds()}, card $card (${dpOf(card.width())} × ${dpOf(card.height())} dp for the $GAME_CELL_DP dp cell), face $face")
+        expect("the card fills the cell the launcher gives and the face is the whole card", card.width() == dp(GAME_CELL_DP) && card.height() == dp(GAME_CELL_DP) && face == card)
+        saveFace("widget-$THEME-game")
+        shot("19-game-face-on-a-launcher-backdrop")
+        theGameFacesColours(launcherContext)
+
+        touchTheGame()
+        takeDownTheHost()
+
+        coldLanding(GameWidgetProvider.FACE, "game") { gameLanded(30_000) }
+    }
+
+    /**
+     * The face's colours (gate #607 (f) on WID-02's roles): the card the quick actions widget's
+     * surface – read at its side padding, clear of the glyph – opaque, and on Android 12+ without a
+     * hairline (its top edge is the card's own colour, not the v2 border's); the glyph's ring in the
+     * mark's indigo, found among the drawn pixels of the glyph's box, and the ground in the ink.
+     */
+    private fun theGameFacesColours(launcherContext: Context) {
+        val res = launcherContext.resources
+        val theme = launcherContext.theme
+        val surface = res.getColor(R.color.widget_quick_actions_surface, theme)
+        val hairline = res.getColor(R.color.widget_quick_actions_hairline, theme)
+        val mark = res.getColor(R.color.widget_search_mark, theme)
+        val ink = res.getColor(R.color.widget_search_ink, theme)
+        finding("  game face colours in the launcher's configuration ($THEME): card ${hex(surface)} mark ${hex(mark)} ink ${hex(ink)}; the v2 border would be ${hex(hairline)}")
+        expect("the card and the mark are opaque", Color.alpha(surface) == 0xFF && Color.alpha(mark) == 0xFF)
+        expect("the mark keeps the brand indigo (${if (THEME == "dark") "#8284F0 lifted for the dark theme" else "#6264DC"})", rgb(mark) == (if (THEME == "dark") 0x8284F0 else 0x6264DC))
+        val (bitmap, band) = drawFace() ?: return
+        val card = viewBounds(android.R.id.background)
+        val cardX = card.left + dp(3) - band.left
+        val cardY = card.centerY() - band.top
+        val edgeX = card.centerX() - band.left
+        val edgeY = card.top + 1 - band.top
+        val cardPixel = pixelAt(bitmap, cardX, cardY)
+        val edge = pixelAt(bitmap, edgeX, edgeY)
+        // The glyph's 32 dp box at the card's centre: every pixel of it read for the ring's indigo and the ground's ink.
+        val glyph = dp(GAME_GLYPH_DP)
+        val left = card.centerX() - glyph / 2 - band.left
+        val top = card.centerY() - glyph / 2 - band.top
+        var indigo = 0
+        var inked = 0
+        for (y in top until top + glyph) for (x in left until left + glyph) {
+            val pixel = pixelAt(bitmap, x, y)
+            if (near(pixel, mark)) indigo++
+            if (near(pixel, ink)) inked++
+        }
+        bitmap.recycle()
+        finding("  the drawn face: card ${hex(cardPixel)} (+3 dp, mid-height), top edge ${hex(edge)}; in the glyph's box $indigo px of the mark's indigo, $inked px of the ink")
+        expect("the drawn card is the quick actions surface, nothing composited", near(cardPixel, surface))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            expect("no hairline on the dynamic face: the top edge is the card's colour", near(edge, surface) && !near(edge, hairline))
+        } else {
+            expect("below Android 12 the card wears the v2 border as its hairline", near(edge, hairline))
+        }
+        expect("the ring is drawn in the mark's indigo", indigo > 0)
+        expect("the ground line is drawn in the ink", inked > 0)
+    }
+
+    /** The face under a finger with Zenium in front: a new tab on `zen://game`, Roll's document up. */
+    private fun touchTheGame() {
+        val before = activeCoreTab()?.optString("id").orEmpty()
+        val intentBefore = onMain { activity.intent }
+        expect("a finger reaches the face", touchPart(R.id.widget_game_face))
+        SystemClock.sleep(150)
+        hideOverlay()
+        val landed = gameLanded(12_000)
+        expect("the face lands in a new tab on $GAME_URL with Roll's stage up ($landed)", landed == GAME_STAGED)
+        expect("the widget's intent arrived through onNewIntent (the running activity, no relaunch)", onMain { activity.intent } !== intentBefore && !onMain { activity.isDestroyed })
+        val tab = activeCoreTab()
+        expect("the game's tab is a new tab another app sent (fromIntent)", tab?.optString("id") != before && tab?.optBoolean("fromIntent") == true)
+        SystemClock.sleep(800)
+        shot("20-game-tab")
+        finding("after the face: ${describeActive()}, landing $landed")
+        backToThePrevious(tab?.optString("id"))
+        showOverlay()
+    }
+
+    /** A tab on `zen://game` active and sent by another app, Roll's stage in the tree: the game landing's word. */
+    private fun gameLanded(timeoutMs: Long): String? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        if (!awaitChromeUp(timeoutMs)) return null
+        while (SystemClock.uptimeMillis() < deadline) {
+            val tab = activeCoreTab()
+            if (tab?.optString("url") == GAME_URL && tab.optBoolean("fromIntent")) {
+                val staged = waitFor({ it.startsWith(GAME_STAGE_LABEL) }, 8_000) != null
+                return if (staged) GAME_STAGED else "Roll's tab on $GAME_URL, the stage not read in the tree"
+            }
+            SystemClock.sleep(100)
+        }
+        return null
+    }
+
     // --- what an intent started ------------------------------------------------------------------
 
     /**
@@ -1937,6 +2098,22 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         /** The Quick Actions widget's words (`strings.xml`): the picker's label and the scan button's name. */
         private const val QUICK_ACTIONS_LABEL = "Zenium quick actions"
         private const val SCAN_LABEL = "Scan a QR code"
+        /** The game widget's words (`strings.xml`, gate #607 (f)): the picker's label and description, the face's name. */
+        private const val GAME_LABEL = "Zenium Roll"
+        private const val GAME_DESCRIPTION = "Play Roll, Zenium's offline game"
+        private const val GAME_FACE_LABEL = "Play Roll"
+        /** Roll's page and its stage's label as `shared/game/page.ts` writes them (the region's aria-label, read from its start). */
+        private const val GAME_URL = "zen://game"
+        private const val GAME_STAGE_LABEL = "Roll, an offline game"
+        private const val GAME_STAGED = "Roll's tab on zen://game, the stage up"
+        /**
+         * The game widget's measures (`values/dimens.xml`): the platform's one-cell minimum the info
+         * declares, the glyph's box; and the cell handed to the provider – a launcher's 1×1 on a 412 dp
+         * phone (five columns, ~82 dp) less the host's 8 dp padding a side, near enough 72 dp square.
+         */
+        private const val GAME_MIN_DP = 40
+        private const val GAME_GLYPH_DP = 32
+        private const val GAME_CELL_DP = 72
         private const val LISTENING_TITLE = "Listening"
         private const val PRIVATE_TITLE = "You're browsing privately"
         private const val PRIVATE_UNAVAILABLE_TOAST = "Private tabs need a newer Android System WebView"
