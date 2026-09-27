@@ -5,6 +5,7 @@ import { GAME_BEST_CALLBACK, GAME_MESSAGE_KEY } from '../bridge'
 import { MS_PER_FRAME, OBSTACLE_TYPES, PLAYER_X, START_HINTS, type Obstacle } from '../logic'
 import {
   CARD_RADIUS,
+  RADIUS_INNER_TOKEN,
   cardScoreText,
   isOtherControl,
   meterBestText,
@@ -12,6 +13,7 @@ import {
   mountGames,
   nightThemeFor,
   pageThemeOf,
+  radiusOf,
   roundedRectPath,
   stageWidthFor,
   windowBestScoreHost,
@@ -24,8 +26,9 @@ import {
  * The runtime against a happy-dom document: the canvas stood in by a recording context (happy-dom
  * draws nothing), the tokens by a `getComputedStyle` that answers `THEME:--token` for the theme
  * the probe stands under – the region's own `data-theme` when the night set one, the document's
- * otherwise – so a paint's colours say which theme they were read from. Frames are the test's
- * to run (`requestFrame` queues, `tick` drains at the clock).
+ * otherwise – so a paint's colours say which theme they were read from, and `--v2-radius-inner`
+ * as the test sets it (`radiusToken`; the token block's 6px unless a test says otherwise).
+ * Frames are the test's to run (`requestFrame` queues, `tick` drains at the clock).
  */
 
 interface Call {
@@ -101,7 +104,23 @@ class RecordingContext {
       .filter((c) => c.op === 'fillText')
       .map((c) => String(c.args[0]))
   }
+  /**
+   * The last paint's sky: the calls from the `clearRect` to the first `fill` – the night's box
+   * when there is one (its path, then the fill in the page colour), nothing by day (`null`).
+   */
+  sky(): { path: Call[]; fill: Call } | null {
+    const paint = this.lastPaint()
+    const first = paint.findIndex(
+      (c) => c.op === 'fill' || c.op === 'stroke' || c.op === 'fillText'
+    )
+    if (first === -1 || paint[first]!.op !== 'fill') return null
+    const fill = paint[first]!
+    return fill.fillStyle.endsWith(':--v2-page') ? { path: paint.slice(1, first), fill } : null
+  }
 }
+
+/** What `getComputedStyle` answers for `--v2-radius-inner`: the token block's 6px by default. */
+let radiusToken = '6px'
 
 const canvasProto = HTMLCanvasElement.prototype as unknown as Record<string, unknown>
 const originalGetContext = canvasProto.getContext
@@ -215,6 +234,7 @@ beforeEach(() => {
   contexts = []
   frames.clear()
   clock = 1000
+  radiusToken = '6px'
   canvasProto.getContext = function (this: HTMLCanvasElement) {
     const ctx = new RecordingContext()
     contexts.push(ctx)
@@ -228,7 +248,13 @@ beforeEach(() => {
       color: token ? `${theme}:${token}` : '',
       fontFamily: 'Inter',
       getPropertyValue: (name: string) =>
-        name === '--v2-font-small' ? '13px' : name === '--v2-weight-heading' ? '600' : ''
+        name === '--v2-font-small'
+          ? '13px'
+          : name === '--v2-weight-heading'
+            ? '600'
+            : name === RADIUS_INNER_TOKEN
+              ? radiusToken
+              : ''
     }
   })
 })
@@ -250,10 +276,11 @@ describe('the mount', () => {
     // The meter reads 00000 in the page ink; no best yet, so no Best.
     expect(ctx.texts()).toEqual(['00000'])
     expect(ctx.lastPaint().find((c) => c.op === 'fillText')!.fillStyle).toBe('light:--v2-text')
-    // The runner in the accent; by day nothing behind the shapes.
+    // The runner in the accent; by day nothing behind the shapes: no sky, no box, no edge.
     expect(
       ctx.lastPaint().some((c) => c.op === 'arc' && c.strokeStyle === 'light:--v2-accent')
     ).toBe(true)
+    expect(ctx.sky()).toBeNull()
     expect(ctx.lastPaint().some((c) => c.op === 'fillRect')).toBe(false)
     expect(host.asks).toBe(1)
     // A second mount of the same root is refused; `mountGames` finds nothing left to mount.
@@ -288,6 +315,33 @@ describe('the mount', () => {
     expect(stageWidthFor(360)).toBe(360)
     expect(stageWidthFor(900)).toBe(600)
     expect(stageWidthFor(50)).toBe(120)
+  })
+
+  it('reads the boxes’ corner from `--v2-radius-inner` through the region, 6 where a document has none', () => {
+    expect(RADIUS_INNER_TOKEN).toBe('--v2-radius-inner')
+    expect(radiusOf('6px')).toBe(6)
+    expect(radiusOf(' 8px ')).toBe(8)
+    expect(radiusOf('0.5px')).toBe(0.5)
+    expect(radiusOf('')).toBe(CARD_RADIUS)
+    expect(radiusOf('6')).toBe(CARD_RADIUS)
+    expect(radiusOf('1rem')).toBe(CARD_RADIUS)
+    // The cards on the stage take the token's value, not a number of the runtime's own.
+    radiusToken = '8px'
+    const { handle, ctx } = mount()
+    key('keydown', 'Space')
+    handle.state.obstacles.push(card(400))
+    tick()
+    const arcs = ctx.lastPaint().filter((c) => c.op === 'arcTo')
+    expect(arcs.length).toBeGreaterThan(0)
+    for (const c of arcs) expect(c.args[4]).toBe(8)
+    handle.destroy()
+    // A document without the token block: the fallback, the token's own value.
+    radiusToken = ''
+    const plain = mount()
+    key('keydown', 'Space')
+    plain.handle.state.obstacles.push(card(400))
+    tick()
+    for (const c of plain.ctx.lastPaint().filter((c) => c.op === 'arcTo')) expect(c.args[4]).toBe(6)
   })
 })
 
@@ -386,6 +440,54 @@ describe('the crash and the card (§9.17 (e))', () => {
     expect(handle.state.phase).toBe('running')
   })
 
+  it('arrives on the 180 pop – a scale the stylesheet’s centring composes with, no translate of its own (B1) – and on the 120 fade alone under reduced motion (§11.3)', () => {
+    const { root, handle } = mount()
+    const card = root.querySelector<HTMLElement>('.zen-game-over')!
+    const animate = vi.fn()
+    card.animate = animate as unknown as HTMLElement['animate']
+    key('keydown', 'Space')
+    crash(handle)
+    expect(animate).toHaveBeenCalledTimes(1)
+    const [keyframes, options] = animate.mock.calls[0] as [
+      Array<Record<string, string | number>>,
+      KeyframeAnimationOptions
+    ]
+    expect(keyframes).toEqual([
+      { opacity: 0, transform: 'scale(0.96)' },
+      { opacity: 1, transform: 'none' }
+    ])
+    expect(options.duration).toBe(180)
+    // The keyframes carry no translate: the card is centred by the stylesheet's auto margins
+    // (`main.css`, held by `mark.test.ts`), so the pop scales in place instead of replacing a
+    // `translateX(-50%)` for its 180 ms and arriving half its width off.
+    for (const frame of keyframes) expect(String(frame.transform)).not.toContain('translate')
+    handle.destroy()
+
+    const reduced = mount({ reducedMotion: true })
+    const still = reduced.root.querySelector<HTMLElement>('.zen-game-over')!
+    const fade = vi.fn()
+    still.animate = fade as unknown as HTMLElement['animate']
+    key('keydown', 'Space')
+    tick()
+    // No parallax rings and no dashes under the ground: nothing is stroked in the fill ink.
+    expect(
+      reduced.ctx.lastPaint().some((c) => c.strokeStyle === 'light:--v2-fill' && c.op === 'stroke')
+    ).toBe(false)
+    expect(
+      reduced.ctx
+        .lastPaint()
+        .some((c) => c.strokeStyle === 'light:--v2-border' && c.op === 'stroke')
+    ).toBe(true)
+    crash(reduced.handle)
+    expect(fade).toHaveBeenCalledTimes(1)
+    const [fadeFrames, fadeOptions] = fade.mock.calls[0] as [
+      Array<Record<string, string | number>>,
+      KeyframeAnimationOptions
+    ]
+    expect(fadeFrames).toEqual([{ opacity: 0 }, { opacity: 1 }])
+    expect(fadeOptions).toEqual({ duration: 120, easing: 'ease-out' })
+  })
+
   it('reports no lesser run, and a run that matches the best is the profile’s to keep again', () => {
     const { handle, host } = mount()
     host.answer(500)
@@ -438,9 +540,20 @@ describe('the best from the browser (§9.17 (i))', () => {
     expect(heard).toEqual([321, 0, 99999])
     host.write(77.9)
     expect(posted[1]).toEqual([{ [GAME_MESSAGE_KEY]: { best: 77 } }, '*'])
+    // A second stage listening keeps the callback on the window; the last one gone takes it
+    // with it (N3: `destroy()` leaves no `zenGameBest` behind).
+    const other: number[] = []
+    const stopOther = windowBestScoreHost(win).read((best) => other.push(best))
     stop()
-    callback(5)
+    expect(typeof win[GAME_BEST_CALLBACK]).toBe('function')
+    ;(win[GAME_BEST_CALLBACK] as (best: unknown) => void)(5)
     expect(heard).toEqual([321, 0, 99999])
+    expect(other).toEqual([5])
+    stopOther()
+    expect(win[GAME_BEST_CALLBACK]).toBeUndefined()
+    callback(6)
+    expect(heard).toEqual([321, 0, 99999])
+    expect(other).toEqual([5])
   })
 })
 
@@ -460,9 +573,29 @@ describe('the night (§9.17 (g)): the stage flips, the page does not', () => {
     expect(root.dataset.theme).toBe('dark')
     expect(document.documentElement.dataset.theme).toBeUndefined()
     expect(document.body.dataset.theme).toBeUndefined()
-    const sky = ctx.lastPaint().find((c) => c.op === 'fillRect')!
-    expect(sky.fillStyle).toBe('dark:--v2-page')
-    expect(sky.args).toEqual([0, 0, 600, 150])
+    // The sky is §9.31's inner box (the lead's (g-look) on #607): the stage's rectangle with
+    // plain-arc corners at `--v2-radius-inner`, filled in the other theme's page colour and never
+    // stroked – no hairline on that edge – so the page shows at the corners; never a `fillRect`.
+    const sky = ctx.sky()!
+    expect(sky).not.toBeNull()
+    expect(sky.fill.fillStyle).toBe('dark:--v2-page')
+    expect(sky.path.map((c) => c.op)).toEqual([
+      'beginPath',
+      'moveTo',
+      'arcTo',
+      'arcTo',
+      'arcTo',
+      'arcTo',
+      'closePath'
+    ])
+    expect(sky.path[1]!.args).toEqual([6, 0])
+    expect(sky.path[2]!.args).toEqual([600, 0, 600, 150, 6])
+    expect(sky.path[3]!.args).toEqual([600, 150, 0, 150, 6])
+    for (const c of sky.path.filter((c) => c.op === 'arcTo')) expect(c.args[4]).toBe(6)
+    expect(ctx.lastPaint().some((c) => c.op === 'fillRect')).toBe(false)
+    expect(
+      ctx.lastPaint().some((c) => c.op === 'stroke' && c.strokeStyle === 'dark:--v2-page')
+    ).toBe(false)
     // The palette was read again under the flipped region: the runner in the night's accent.
     expect(
       ctx.lastPaint().some((c) => c.op === 'arc' && c.strokeStyle === 'dark:--v2-accent')
@@ -471,8 +604,22 @@ describe('the night (§9.17 (g)): the stage flips, the page does not', () => {
     for (let i = 0; i < 200 && handle.state.night; i++) tick(64)
     expect(handle.state.night).toBe(false)
     expect(root.hasAttribute('data-theme')).toBe(false)
-    expect(ctx.lastPaint().some((c) => c.op === 'fillRect')).toBe(false)
+    expect(ctx.sky()).toBeNull()
     expect(document.documentElement.dataset.theme).toBeUndefined()
+  })
+
+  it('rounds the night’s sky at the token’s radius, whatever the token says', () => {
+    radiusToken = '8px'
+    const { handle, ctx } = mount()
+    handle.state.config.clearTime = 1e9
+    key('keydown', 'Space')
+    tick()
+    handle.state.distance = 700 / 0.025
+    tick()
+    expect(handle.state.night).toBe(true)
+    const sky = ctx.sky()!
+    expect(sky.fill.fillStyle).toBe('dark:--v2-page')
+    for (const c of sky.path.filter((c) => c.op === 'arcTo')) expect(c.args[4]).toBe(8)
   })
 
   it('on a dark page the night is light, and a crash at night keeps it until the next run', () => {
@@ -483,7 +630,7 @@ describe('the night (§9.17 (g)): the stage flips, the page does not', () => {
     handle.state.distance = 700 / 0.025
     tick()
     expect(root.dataset.theme).toBe('light')
-    expect(ctx.lastPaint().find((c) => c.op === 'fillRect')!.fillStyle).toBe('light:--v2-page')
+    expect(ctx.sky()!.fill.fillStyle).toBe('light:--v2-page')
     expect(document.documentElement.dataset.theme).toBe('dark')
     crash(handle)
     expect(root.dataset.theme).toBe('light')

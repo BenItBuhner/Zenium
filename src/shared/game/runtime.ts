@@ -14,11 +14,14 @@
  *
  * Colours are the page's tokens, read once at mount and again at each theme flip through the
  * region itself as a probe (`--v2-accent` is a `color-mix()`, which only a computed `color`
- * resolves), so the stage repaints in the page's own inks and never carries a colour of its own.
- * The night (Chrome's inverted page every 700 points) is the stage's alone: the region's
+ * resolves), so the stage repaints in the page's own inks and never carries a colour of its own;
+ * the one length read the same way is `--v2-radius-inner`, the corner of every box the stage
+ * draws. The night (Chrome's inverted page every 700 points) is the stage's alone: the region's
  * `data-theme` flips, the tokens re-resolve under it (`zenPages.ts` restates them there), and
- * the canvas paints the other theme's `--v2-page` as its sky – a cut both ways (§11.6). The page
- * text and the chrome around it keep their colours.
+ * the canvas paints the other theme's `--v2-page` as its sky – §9.31's inner box at
+ * `--v2-radius-inner`, a plain arc and no hairline, so a lit stage on a dark page reads as a
+ * picture set into it and not a hole – a cut both ways (§11.6). The page text and the chrome
+ * around it keep their colours; by day no sky is painted, so no edge shows.
  */
 
 import {
@@ -75,7 +78,10 @@ export interface GameHandle {
   destroy(): void
 }
 
-/** The inks the stage draws in, resolved from the page's tokens. */
+/**
+ * The inks the stage draws in, resolved from the page's tokens – and the one length, the corner
+ * of its boxes (`--v2-radius-inner`; the cards' and the night sky's).
+ */
 export interface Palette {
   page: string
   text: string
@@ -86,9 +92,10 @@ export interface Palette {
   fill: string
   accent: string
   font: string
+  radiusInner: number
 }
 
-const PALETTE_TOKENS: ReadonlyArray<[keyof Omit<Palette, 'font'>, string]> = [
+const PALETTE_TOKENS: ReadonlyArray<[keyof Omit<Palette, 'font' | 'radiusInner'>, string]> = [
   ['page', '--v2-page'],
   ['text', '--v2-text'],
   ['textDeemphasized', '--v2-text-deemphasized'],
@@ -132,10 +139,16 @@ export const STAGE_HEIGHT = 150
 export const RING_STROKE = 3
 
 /**
- * The corner of a card on the stage: `--v2-radius-inner`, 6, as a PLAIN ARC – the language's
- * squircle goes on radius 8 and up (the game-over card, in the stylesheet), not here.
+ * The corner of every box on the stage – a card, the night's sky – is `--v2-radius-inner`, read
+ * from the page's tokens with the palette (`readPalette`), as a PLAIN ARC: the language's
+ * squircle goes on radius 8 and up (the game-over card, in the stylesheet), not here. This is
+ * the token's value, 6, for a document that does not carry the token block – the fallback
+ * alone; both documents that mount the game carry it (`zenPages.ts`, `errorDocumentStyle`).
  */
 export const CARD_RADIUS = 6
+
+/** The token the boxes' corner is read from. */
+export const RADIUS_INNER_TOKEN = '--v2-radius-inner'
 
 /** The obstacle a note is: two hairlines inside the card. */
 const NOTE_LINE_INSET = 8
@@ -180,6 +193,8 @@ export function windowBestScoreHost(win: Window = window): BestScoreHost {
       win.postMessage(gameWindowMessage({ ask: 'best' }), '*')
       return () => {
         bestListeners.delete(onBest)
+        // The last stage gone, the window keeps nothing of the game (`destroy()` leaves no trace).
+        if (bestListeners.size === 0) delete w[GAME_BEST_CALLBACK]
       }
     },
     write(best) {
@@ -188,7 +203,10 @@ export function windowBestScoreHost(win: Window = window): BestScoreHost {
   }
 }
 
-/** The page's inks for the stage, resolved through `probe` (the region itself). */
+/**
+ * The page's inks for the stage, resolved through `probe` (the region itself), and the boxes'
+ * corner from `--v2-radius-inner` (a `px` length; `CARD_RADIUS` where the document has none).
+ */
 function readPalette(probe: HTMLElement): Palette {
   const palette: Partial<Palette> = {}
   for (const [role, token] of PALETTE_TOKENS) {
@@ -200,7 +218,14 @@ function readPalette(probe: HTMLElement): Palette {
   const size = style.getPropertyValue('--v2-font-small').trim() || '13px'
   const weight = style.getPropertyValue('--v2-weight-heading').trim() || '600'
   palette.font = `${weight} ${size} ${style.fontFamily || 'system-ui, sans-serif'}`
+  palette.radiusInner = radiusOf(style.getPropertyValue(RADIUS_INNER_TOKEN))
   return palette as Palette
+}
+
+/** A token's `px` length as a number; the fallback for anything else (unset, another unit). */
+export function radiusOf(value: string, fallback = CARD_RADIUS): number {
+  const match = /^\s*(\d+(?:\.\d+)?)px\s*$/.exec(value)
+  return match ? Number(match[1]) : fallback
 }
 
 /** A rectangle with plain-arc corners of radius `r` (`--v2-radius-inner`; no squircle under 8). */
@@ -227,7 +252,7 @@ function drawCard(ctx: StageContext, p: Palette, o: Obstacle): void {
   ctx.lineWidth = 1
   for (let i = 0; i < o.count; i++) {
     const x = o.x + i * memberWidth
-    roundedRectPath(ctx, x + 0.5, o.y + 0.5, memberWidth - 1, o.height - 1, CARD_RADIUS)
+    roundedRectPath(ctx, x + 0.5, o.y + 0.5, memberWidth - 1, o.height - 1, p.radiusInner)
     ctx.fillStyle = p.card
     ctx.fill()
     ctx.strokeStyle = p.cardBorder
@@ -359,15 +384,19 @@ function drawMeter(ctx: StageContext, p: Palette, state: GameState): void {
 
 /**
  * One frame's paint. By day the stage is the page (nothing behind the shapes); at night it is
- * the other theme's page colour, the palette having been re-read under the flipped region. The
+ * the other theme's page colour, the palette having been re-read under the flipped region, laid
+ * as §9.31's inner box – the stage's rectangle with plain-arc corners at `--v2-radius-inner`,
+ * filled and never stroked (a hairline would vanish on that contrast edge), the page showing at
+ * the corners – so the lit stage reads as a picture set into the dark page and not a hole. The
  * meter hides while the game-over card stands (the card carries the score and the best).
  */
 export function draw(ctx: StageContext, state: GameState, p: Palette, reduced: boolean): void {
   const { width, height } = state.config
   ctx.clearRect(0, 0, width, height)
   if (state.night) {
+    roundedRectPath(ctx, 0, 0, width, height, p.radiusInner)
     ctx.fillStyle = p.page
-    ctx.fillRect(0, 0, width, height)
+    ctx.fill()
   }
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
@@ -487,6 +516,12 @@ export function mountGame(root: HTMLElement, deps: GameRuntimeDeps = {}): GameHa
     if (cardScore) cardScore.textContent = cardScoreText(state.score, state.best)
   }
 
+  /**
+   * The card's arrival: §11.3's 180 ms pop (a scale from .96 with the fade), the 120 ms fade
+   * alone under reduced motion. The keyframes touch `transform` – the stylesheet centres the
+   * card by its auto margins and never by a transform, so the pop composes with the centring
+   * instead of replacing it for its 180 ms (the first line's B1 on #607).
+   */
   const showCard = (): void => {
     if (!card) return
     writeCardScore()

@@ -1,7 +1,7 @@
 /**
  * Roll's bridge to the browser (ERR-03, §9.17): the one thing the game asks of its host is the
  * profile's best score – Chrome keeps its runner's in the profile's prefs
- * (`net.easter_egg_high_score`, `offline.ts:1520-1560`), never in a document origin's storage,
+ * (`net.easter_egg_high_score`, `offline.ts:1311-1343`), never in a document origin's storage,
  * and so does Zenium: the number is a synced setting (`Settings.gameBestScore`), one across the
  * no-connection page and `zen://game` on every device.
  *

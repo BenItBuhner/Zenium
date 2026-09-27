@@ -12,7 +12,7 @@
  * obstacles keep a gap of `width × speed + minGap × gapCoefficient` up to 1.5 of it
  * (`obstacle.ts:204-208`) and never repeat more than twice (`horizon.ts`), the score is the
  * distance × 0.025 in five digits (`distance_meter.ts:28-40`), the best is set at the crash and
- * stands through the run (`offline.ts:1520-1526`), night falls every 700 points for twelve
+ * stands through the run (`offline.ts:1384-1385`), night falls every 700 points for twelve
  * seconds (`offline.ts:903-924`), and after a crash a jump input restarts only past
  * `GAMEOVER_CLEAR_TIME` (`offline.ts:1136-1162`). The ART is Zenium's own: the runner is the
  * app's mark – a ring with a dot – rolling over a page, the obstacles standing cards and floating
@@ -114,7 +114,7 @@ export interface Box {
 
 /**
  * The runner's collision boxes, relative to its own box (Chrome's trex carries six,
- * `trex.ts:40-58`): standing, a cross that leaves the ring's empty corners out; ducking, the
+ * `trex.ts:96-105`): standing, a cross that leaves the ring's empty corners out; ducking, the
  * ellipse's middle band.
  */
 export const STANDING_BOXES: ReadonlyArray<Box> = [
@@ -134,7 +134,7 @@ export interface ObstacleType {
   minGap: number
   /** Appears only once the speed has reached this. */
   minSpeed: number
-  /** Comes in groups of up to three once the speed passes this (0: never grouped). */
+  /** Comes in groups of up to three once the speed reaches this (0: never grouped). */
   multipleSpeed: number
   /** Tops the kind may float at (stage `y`); empty for one standing on the ground. */
   yPositions: ReadonlyArray<number>
@@ -466,7 +466,7 @@ export function allowedByHistory(
 
 /**
  * The next obstacle at the stage's right edge: a kind the speed allows and the history does not
- * refuse, in a group once the speed passes the kind's `multipleSpeed`, a floating kind at one
+ * refuse, in a group once the speed reaches the kind's `multipleSpeed`, a floating kind at one
  * of its heights with its drift, and the gap the one after it keeps.
  */
 export function spawnObstacle(state: GameState, random: Random): Obstacle {
@@ -481,8 +481,10 @@ export function spawnObstacle(state: GameState, random: Random): Obstacle {
     tries++
   )
     type = eligible[randomInt(random, 0, eligible.length - 1)]
+  // Chrome draws a size of 1..3 and cuts it to one while `multipleSpeed > speed` (`obstacle.ts`,
+  // `Obstacle.init`): a group from the kind's speed itself, `>=`, not past it.
   const count =
-    type.multipleSpeed > 0 && speed > type.multipleSpeed
+    type.multipleSpeed > 0 && speed >= type.multipleSpeed
       ? randomInt(random, 1, MAX_OBSTACLE_LENGTH)
       : 1
   const width = type.width * count
@@ -573,7 +575,7 @@ export function step(state: GameState, dt: number, random: Random = Math.random)
   }
 
   // The best stands at the previous runs' while this one runs (Chrome sets its high score at
-  // the crash, `offline.ts:1520-1526`); the meter reads `Best` against a live score.
+  // the crash, `offline.ts:1384-1385`); the meter reads `Best` against a live score.
   state.score = Math.round(state.distance * config.scoreCoefficient)
 
   if (state.night) {

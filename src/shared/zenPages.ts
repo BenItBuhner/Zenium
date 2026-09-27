@@ -912,10 +912,12 @@ function interstitialHtml(interstitial: CertificateInterstitial, target: string)
  * `scheme` is the app's colour scheme (`errorPageAttributesScript`). The certificate
  * interstitial is the one page written this way (`TabsService.showInterstitial`); the offline
  * page, which carries Roll's inline runtime, is always served as a document (`zen://error`), so
- * the runtime runs as a script of the document's own on both hosts.
+ * the runtime runs as a script of the document's own on both hosts – and the in-place shape
+ * carries no game at all (`shape: 'in-place'`): a script written through `innerHTML` never runs,
+ * so a stage here would be a dead payload, the canvas standing with nothing behind it.
  */
 export function inPlaceErrorPageScript(url: URL, scheme: ColorScheme = 'system'): string {
-  const html = JSON.stringify(errorPageHtml(url, scheme))
+  const html = JSON.stringify(errorPageHtml(url, scheme, 'desktop', 'in-place'))
   return (
     "(function(html){if(location.protocol!=='chrome-error:')return false;" +
     "var doc=new DOMParser().parseFromString(html,'text/html'),root=document.documentElement;" +
@@ -929,12 +931,18 @@ export function inPlaceErrorPageScript(url: URL, scheme: ColorScheme = 'system')
  * `scheme` is the app's colour scheme, which the page's root takes (`errorPageAttributesScript`);
  * `host` decides the suggestion list (`suggestionsFor`). The body is a `data-surface="page"` root
  * (design language v2 §9.29): the document is a page inside the tab, so its controls draw in the
- * page family's ink and fill, never the window's.
+ * page family's ink and fill, never the window's. `shape` is how the page reaches the tab: the
+ * served document (the protocol's answer, where the offline page carries Roll's stage and inline
+ * runtime) or the in-place write of `inPlaceErrorPageScript`, which runs no script and so gets
+ * no game.
  */
+export type ErrorPageShape = 'document' | 'in-place'
+
 export function errorPageHtml(
   url: URL,
   scheme: ColorScheme = 'system',
-  host: ErrorPageHost = 'desktop'
+  host: ErrorPageHost = 'desktop',
+  shape: ErrorPageShape = 'document'
 ): string {
   const code = Number(url.searchParams.get('code') ?? 0)
   const target = url.searchParams.get('url') ?? ''
@@ -972,8 +980,8 @@ export function errorPageHtml(
   const name = content.code ? `\n  <p class="zen-error-code">${escapeHtml(content.code)}</p>` : ''
   // The offline page carries Roll above its title (ERR-03), where Chrome's carries its runner in
   // the icon's slot, and the game's runtime inline after its markup (`gameRuntimeScriptHtml`):
-  // the one error page that pays for the game's bytes.
-  const game = code === OFFLINE_CODE
+  // the one error page that pays for the game's bytes – as a served document alone.
+  const game = code === OFFLINE_CODE && shape === 'document'
   const stage = game ? `\n  ${gameMarkupHtml()}` : ''
   const runtime = game ? gameRuntimeScriptHtml() : ''
   return `<!doctype html><html class="zen-error-document"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(content.site || 'Problem loading page')}</title><script>${errorPageAttributesScript(scheme)}</script><style>${errorDocumentStyle(accent, game)}</style></head>

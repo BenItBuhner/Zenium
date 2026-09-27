@@ -3,6 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { ExtensionInfo, UIState } from '@shared/types'
+import {
+  ROLL_MARK,
+  ROLL_MARK_CSS_VARIABLE,
+  ROLL_MARK_GRID,
+  rollMarkDot,
+  rollMarkPathData
+} from '@shared/game/mark'
 
 /*
  * The favicon slot of a tab on an extension's page (v2 §10.1 applied to extension pages): the
@@ -187,5 +194,47 @@ describe('Favicon in Reader View', () => {
     const el = render(<Favicon tab={source('zen://reader?id=article_1')} size={20} />)
     expect(el.querySelector('svg.lucide-globe')).not.toBeNull()
     expect(el.textContent).toBe('')
+  })
+})
+
+describe('Favicon on the game tab (§9.17; the lead’s (β-2) on #607)', () => {
+  it('wears Roll’s picture from the one source, never the globe: the ring mid-roll in the mark colour, its dot on the inner orbit, on a short ground line in the slot’s ink', () => {
+    for (const url of ['zen://game', 'zenium://game']) {
+      const el = render(<Favicon tab={source(url)} size={16} />)
+      expect(el.querySelector('svg.lucide-globe')).toBeNull()
+      const svg = el.querySelector<SVGSVGElement>('svg.lucide-roll')!
+      expect(svg).not.toBeNull()
+      expect(svg.getAttribute('viewBox')).toBe(`0 0 ${ROLL_MARK_GRID} ${ROLL_MARK_GRID}`)
+      expect(svg.getAttribute('aria-hidden')).toBe('true')
+      expect(svg.style.width).toBe('16px')
+      const [line] = svg.querySelectorAll('line')
+      const [ring, dot] = svg.querySelectorAll('circle')
+      const paths = rollMarkPathData()
+      // The ground: the slot's ink (the root's `currentColor`), the vector's own stroke.
+      expect(line?.getAttribute('x1')).toBe(String(ROLL_MARK.ground.x1))
+      expect(line?.getAttribute('x2')).toBe(String(ROLL_MARK.ground.x2))
+      expect(line?.getAttribute('y1')).toBe(String(ROLL_MARK.ground.y))
+      expect(line?.getAttribute('stroke-width')).toBe(String(ROLL_MARK.ground.stroke))
+      expect(line?.getAttribute('stroke')).toBeNull()
+      // The ring and the dot in the brand indigo through the theme's `--zen-roll-mark`.
+      const mark = `var(${ROLL_MARK_CSS_VARIABLE}, currentColor)`
+      expect(ring?.getAttribute('cx')).toBe(String(ROLL_MARK.ring.cx))
+      expect(ring?.getAttribute('cy')).toBe(String(ROLL_MARK.ring.cy))
+      expect(ring?.getAttribute('r')).toBe(String(ROLL_MARK.ring.r))
+      expect(ring?.getAttribute('stroke')).toBe(mark)
+      expect(ring?.getAttribute('stroke-width')).toBe(String(ROLL_MARK.ring.stroke))
+      expect(ring?.getAttribute('fill')).toBeNull()
+      const centre = rollMarkDot()
+      expect(dot?.getAttribute('cx')).toBe(String(centre.cx))
+      expect(dot?.getAttribute('cy')).toBe(String(centre.cy))
+      expect(dot?.getAttribute('r')).toBe(String(centre.r))
+      expect(dot?.getAttribute('fill')).toBe(mark)
+      expect(dot?.getAttribute('stroke')).toBe('none')
+      // The same numbers the widget's vector writes (`mark.test.ts` holds the XML to them).
+      expect(paths.dot).toBe('M14.49,6.04 a2,2 0 1,0 0.01,0 Z')
+      expect(el.textContent).toBe('')
+      act(() => root?.unmount())
+      host?.remove()
+    }
   })
 })

@@ -1144,6 +1144,20 @@ describe('inPlaceErrorPageScript', () => {
     // net error), so the game's runtime travels inline with it and no mount message exists.
     const offline = inPlaceErrorPageScript(parseZenUrl(OFFLINE)!)
     expect(offline).toContain(`${ERROR_PAGE_ATTRIBUTES_SCRIPT};return true`)
+    // A script written through `innerHTML` never runs, so the in-place shape of the -106 page
+    // carries no stage and no runtime (a dead canvas otherwise): the page's title and controls
+    // alone, the served document being the one that carries Roll.
+    expect(offline).not.toContain(GAME_RUNTIME_ATTRIBUTE)
+    expect(offline).not.toContain(GAME_MOUNT_ATTRIBUTE)
+    expect(offline).not.toContain('<canvas')
+    expect(offline).not.toContain(GAME_ARIA_LABEL)
+    expect(offline).toContain('No internet')
+    expect(errorPageHtml(parseZenUrl(OFFLINE)!, 'system', 'desktop', 'in-place')).not.toContain(
+      GAME_RUNTIME_ATTRIBUTE
+    )
+    expect(errorPageHtml(parseZenUrl(OFFLINE)!, 'system', 'desktop', 'document')).toContain(
+      GAME_RUNTIME_ATTRIBUTE
+    )
     // The writer's own code posts nothing: the same writer around a page without the game.
     const refused = inPlaceErrorPageScript(parseZenUrl(REFUSED)!)
     expect(refused).toContain(`${ERROR_PAGE_ATTRIBUTES_SCRIPT};return true`)

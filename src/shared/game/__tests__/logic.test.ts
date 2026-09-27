@@ -310,17 +310,23 @@ describe('the obstacles', () => {
     }
   })
 
-  it("groups a kind only past its multiple speed, up to three (Chrome's MAX_OBSTACLE_LENGTH)", () => {
+  it("groups a kind from its multiple speed on, up to three (Chrome's MAX_OBSTACLE_LENGTH; `obstacle.ts` cuts the size to one while multipleSpeed > speed)", () => {
+    // Small cards group from 4: one below it, a group at 4 itself (`>=`, Chrome's letter).
     const slow = running()
-    slow.speed = 4
-    expect(spawnObstacle(slow, () => 0.999).count).toBe(1)
+    slow.speed = 3.999
+    expect(spawnObstacle(slow, sequence(0, 0.999)).count).toBe(1)
+    const at = running()
+    at.speed = 4
+    const group = spawnObstacle(at, sequence(0, 0.999))
+    expect(group.kind).toBe('card-small')
+    expect(group.count).toBe(3)
     const fast = running()
     fast.speed = 5
-    const group = spawnObstacle(fast, () => 0.999)
-    expect(group.kind).toBe('card-tall')
-    // Tall cards group only past 7: still one.
-    expect(group.count).toBe(1)
-    fast.speed = 7.5
+    const tall = spawnObstacle(fast, () => 0.999)
+    expect(tall.kind).toBe('card-tall')
+    // Tall cards group from 7: still one.
+    expect(tall.count).toBe(1)
+    fast.speed = 7
     fast.history = []
     const grouped = spawnObstacle(fast, () => 0.999)
     expect(grouped.count).toBe(3)
