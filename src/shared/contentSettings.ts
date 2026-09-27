@@ -257,7 +257,12 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     choices: ['ask', 'deny'],
     promptLabel: 'read from your clipboard',
     allowOnce: true,
-    support: { desktop: 'enforced', android: 'n-a' }
+    // Desktop: Electron's permission request handler asks this row. Android: the WebView's
+    // permission manager refuses every clipboard read, so the page script's shim over
+    // `navigator.clipboard.read` / `readText` asks through the same prompt and the host's
+    // clipboard answers (`core/clipboardRead.ts`; MW-38). Android 12+ shows the system's paste
+    // toast for the app's read, as it does for Chrome's.
+    support: { desktop: 'enforced', android: 'enforced' }
   },
   {
     id: 'payment-handler',

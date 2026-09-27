@@ -132,6 +132,24 @@ describe('contentSettingsFor', () => {
     }
   })
 
+  it('lists Clipboard on both hosts now that the phone’s page shim asks the row (MW-38)', () => {
+    // Desktop: Electron's request handler; Android: the page script's shim over
+    // `navigator.clipboard.read` / `readText` through the same prompt (`core/clipboardRead.ts`).
+    // The prompt copy is the row's – no new user-read string.
+    expect(contentSettingsFor('desktop').map((s) => s.id)).toContain('clipboard-read')
+    expect(contentSettingsFor('android').map((s) => s.id)).toContain('clipboard-read')
+    expect(contentSetting('clipboard-read')).toMatchObject({
+      label: 'Clipboard',
+      builtInDefault: 'ask',
+      choices: ['ask', 'deny'],
+      promptLabel: 'read from your clipboard',
+      allowOnce: true,
+      support: { desktop: 'enforced', android: 'enforced' }
+    })
+    // An asked row remembered per site: the unused-sites sweep and Safety check review it.
+    expect(tracksLastVisit('clipboard-read')).toBe(true)
+  })
+
   it('still hides a row a host has no feature for, and lists it when asked for everything', () => {
     const android = contentSettingsFor('android').map((s) => s.id)
     expect(android).not.toContain('pointerLock')
