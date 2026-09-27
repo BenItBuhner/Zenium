@@ -3715,12 +3715,22 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * shows the fixture's pictures. Four or more pictures listed is the pass; a surface that
      * renders without them ("cannot access the contents of this page") is PARTIAL with its
      * text; no surface is F. A popup that is a menu first (`tap`: ImageAssistant's "Extract
-     * Current Page", which opens its `imageExtractor.html` as a tab) has the item tapped.
+     * Current Page", which opens its `imageExtractor.html` as a tab) has the item tapped. The
+     * gallery is served from `base`: [BASE] – the emulator's host by its address – unless the
+     * list is built of `<img>` elements the popup itself loads from the page's URLs (Image
+     * Downloader - Save pictures: one `img.onload` per URL adds the item, `onerror` drops it):
+     * an image on an IP-literal host is mixed content Blink blocks in an https document whatever
+     * the embedder's mode – `MixedContentChecker::ShouldBlockFetch`'s optionally-blockable branch
+     * reads `!strict_mode && !GURL(url).HostIsIPAddress()` (crrev.com/c/4032146), the #448
+     * proof's control (round 16 §4.3.3) – so such a row reads the gallery under the fixture's
+     * public-looking name ([PUBLIC_NAME_BASE]), the host Chrome's own extension pages would load
+     * from as well; round 21's R22-9 laid the empty list at the WebView's mixed-content mode,
+     * which #132 had set to allow.
      */
-    private fun imageList(label: String, tap: String? = null): (Row, JSONObject) -> Grade = { row, entry ->
+    private fun imageList(label: String, tap: String? = null, base: String = BASE): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
-        fixture("gallery.html?images", factor, 2_500)
+        fixture("$base/gallery.html?images", factor, 2_500)
         val before = tabUrls().keys
         val since = StepEvidence(row)
         coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
@@ -7460,7 +7470,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("mdnleldcmiljblolnjhpnblkcekpdkpa", "Requestly", "requestly", core = popupMarker("Requestly", REQUESTLY_POPUP, settleMs = 30_000)),
         Row("lajondecmobodlejlcjllhojikagldgd", "Zoom for Google Chrome", "zoom-for-google-chrome", core = zoomPopup("Zoom for Google Chrome")),
         Row("jdbnofccmhefkmjbkkdkfiicjkgofkdh", "Bookmark Sidebar", "bookmark-sidebar", core = panelMarker("Bookmark Sidebar", "page-a.html?bookmarksidebar", BOOKMARK_SIDEBAR_PANEL, settleMs = 30_000)),
-        Row("daeljdgmllhgmbdkpgnaojldjkdgkbjg", "Image Downloader - Save pictures", "image-downloader-save-pictures", core = imageList("Image Downloader - Save pictures")),
+        // Its popup loads every collected URL as its own <img> before listing it: the gallery under the public name (Blink's IP-literal rule, see imageList).
+        Row("daeljdgmllhgmbdkpgnaojldjkdgkbjg", "Image Downloader - Save pictures", "image-downloader-save-pictures", core = imageList("Image Downloader - Save pictures", base = PUBLIC_NAME_BASE)),
         Row("immngomjofcbflgcckkfddnbpmjokbjh", "ZoogVPN - Free VPN for Chrome & Proxy", "zoogvpn", account = true, core = popupLogin("ZoogVPN")),
         Row("cpofhfeclnhnhodbcabgcihloffdpgpd", "Custom Cursor Trails", "custom-cursor-trails", core = domMarker("Custom Cursor Trails' shapes after pointer motion", "page-a.html?trails", CURSOR_TRAILS_DRAWN, settleMs = 20_000, prepare = { view -> tabEval(view, POINTER_MOTION) })),
         Row("eekailopagacbcdloonjhbiecobagjci", "Go Back With Backspace", "go-back-with-backspace", core = backspaceGoesBack("Go Back With Backspace")),
