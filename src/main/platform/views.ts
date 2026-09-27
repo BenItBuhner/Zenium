@@ -2651,12 +2651,16 @@ export class ElectronTabView implements TabView {
    *
    * A staged page (an agent's, hidden from the user) is pictured from a frame of its renderer's
    * own (`stagedFrame`), not `capturePage`'s copy: the copy counts as a capturer on the page –
-   * `stayHidden` or not – and the page-lifecycle update that count brings makes a page whose
-   * background throttling is off, an agent's page, read `visible` for good (Electron's
-   * `allow_disabling_blink_scheduler_throttling_per_renderview` patch takes every update as
-   * `visible` while throttling is off; measured on a staged page: `document.visibilityState`
-   * `hidden` until the first `capturePage`, `visible` after it and after each later update). A
-   * frame changes nothing about the page. Its captures take turns (`stagedTurn`): one frame
+   * `stayHidden` or not – and the page-visibility update that count brings makes a page whose
+   * background throttling is off, an agent's page, read `visible` until its next navigation
+   * (Electron's `allow_disabling_blink_scheduler_throttling_per_renderview` patch takes every
+   * update as `visible` while throttling is off; a new document starts from the window's real
+   * state again). Measured on a staged page (Electron 44, Linux): `document.visibilityState`
+   * `hidden` through any number of frame subscriptions, `visible` from the first `capturePage`
+   * on, with or without `stayHidden`, and after every later update. A frame changes nothing
+   * about the page. The same patch bounds what the stage keeps: a page hidden while its
+   * throttling is off – the user looked at the agent's tab and switched away – reads `visible`
+   * on the stage until it navigates. Its captures take turns (`stagedTurn`): one frame
    * subscription per page.
    */
   async capture(options: AgentCaptureOptions): Promise<AgentCapture | null> {
@@ -2762,6 +2766,7 @@ export class ElectronTabView implements TabView {
           resolve(image)
         })
       }
+      const unhide = (): void => wc.setBackgroundThrottling(this.throttling)
       const wait = (ms: number): void => {
         timer = setTimeout(() => {
           if (kicked || !this.staged || wc.isDestroyed()) {
@@ -2769,11 +2774,12 @@ export class ElectronTabView implements TabView {
             return
           }
           kicked = true
-          wc.setBackgroundThrottling(this.throttling)
+          unhide()
           wait(STAGED_FRAME_RETRY_MS)
         }, ms)
       }
       try {
+        unhide()
         wc.beginFrameSubscription(false, (image) => finish(image))
       } catch {
         finish(null)
