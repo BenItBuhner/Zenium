@@ -1,12 +1,20 @@
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { DEFAULT_ACCENT, DEFAULT_CONTROL_ACCENT_LIGHT, mix, rgbToHex } from '../../shared/theme'
 import {
   bytesToBase64,
   fillableFieldCount,
+  PDF_FORMS_ACCENT,
   PDF_FORMS_CSS,
+  PDF_FORMS_DANGER,
   PDF_FORMS_LAYER_CLASS,
   PdfFormGate,
   pdfFormLinkService
 } from '../pdfViewerForms'
+
+const here = dirname(fileURLToPath(import.meta.url))
 
 describe('the form layer’s stylesheet', () => {
   it('is flat CSS, every rule the viewer’s own, with nothing the WebView floor lacks', () => {
@@ -176,6 +184,32 @@ describe('PdfFormGate', () => {
     expect(PDF_FORMS_CSS).not.toMatch(/solid red/)
     // The widget's box is the document's: its corner stays the checkbox's 2, no larger radius.
     expect(PDF_FORMS_CSS).not.toMatch(/border-radius: (?!2px)/)
+  })
+
+  it('takes its accent from the chrome’s default control accent – the one named constant – and not from a stray hex', () => {
+    // The widget tint is the chrome's own default: `DEFAULT_CONTROL_ACCENT_LIGHT`, mixed from the
+    // default accent as `--v2-accent` mixes it (40 % accent into black), not a literal of its own.
+    expect(PDF_FORMS_ACCENT).toBe(rgbToHex(DEFAULT_CONTROL_ACCENT_LIGHT))
+    expect(DEFAULT_CONTROL_ACCENT_LIGHT).toEqual(mix([0, 0, 0], DEFAULT_ACCENT, 0.4))
+    expect(PDF_FORMS_CSS).toContain(`--zen-pdf-accent: ${PDF_FORMS_ACCENT};`)
+    expect(PDF_FORMS_CSS).toContain(`fill:rgba(${DEFAULT_CONTROL_ACCENT_LIGHT.join(', ')}, 0.12);`)
+    expect(PDF_FORMS_CSS).toContain(`flood-color='rgb(${DEFAULT_CONTROL_ACCENT_LIGHT.join(',')})'`)
+    // Pinned to the sources of truth on both sides of the bridge: the chrome's `--zen-accent`
+    // (`main.css`, the base window's value) is the default accent the constant names, and the
+    // host's stand-in for the control accent (`colors.xml` `v2_accent_light`) is the tint.
+    const css = readFileSync(resolve(here, '../../renderer/src/assets/main.css'), 'utf8')
+    expect(css).toMatch(new RegExp(`^\\s*--zen-accent: ${rgbToHex(DEFAULT_ACCENT)};`, 'm'))
+    expect(css).toMatch(/^\s*--v2-accent: color-mix\(in srgb, var\(--zen-accent\) 40%, #000\);/m)
+    const colors = readFileSync(
+      resolve(here, '../../../android/app/src/main/res/values/colors.xml'),
+      'utf8'
+    )
+    const hostAccent = /<color name="v2_accent_light">(#[0-9A-Fa-f]{6})<\/color>/.exec(colors)
+    expect(hostAccent?.[1].toLowerCase()).toBe(PDF_FORMS_ACCENT)
+    // The danger edge is the light scheme's danger ink on both sides too.
+    expect(css).toMatch(new RegExp(`^\\s*--zen-danger: ${PDF_FORMS_DANGER};`, 'm'))
+    const hostDanger = /<color name="v2_danger_light">(#[0-9A-Fa-f]{6})<\/color>/.exec(colors)
+    expect(hostDanger?.[1].toLowerCase()).toBe(PDF_FORMS_DANGER)
   })
 })
 
