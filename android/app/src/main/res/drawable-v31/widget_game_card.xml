@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The game widget's one-cell card on Android 12+ (WID-04): the fill alone – the quick actions widget's
+     surface role in the system's Material You colours – at the system's widget radius, no hairline, as
+     res/drawable-v31/widget_quick_actions_xsmall_card.xml. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/widget_quick_actions_surface" />
+    <corners android:radius="@dimen/widget_game_radius" />
+</shape>
