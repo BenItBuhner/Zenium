@@ -6,22 +6,39 @@
  * star; then the zoom chip (a per-page deviation the user has to undo); then the blocking
  * shield (its count is not a state, §9.29: the site information the site icon opens carries
  * it, and it marks the same state on every page); the informational chips (translate, Reader
- * View) lowest. Hiding order, first to last: translate and Reader View, shield, zoom, star
- * (design lead's ruling on #267, §9.29). The address truncates first – down to `MIN_ADDRESS_WIDTH` – and only then do
+ * View) lowest of the resident chips; under them the hover-only utilities (Copy URL, Share,
+ * Boost, the translate offer), which mount with the pointer over the pill into the room the
+ * address has to spare and never take the address under its floor. Hiding order, first to
+ * last: the hover-only utilities, translate and Reader View, the Install-app chip, shield,
+ * zoom, star (design lead's ruling on #267, §9.29; the W8-6 lead's rule on #578's first line for
+ * the utilities). The address truncates first – down to `MIN_ADDRESS_WIDTH` – and only then do
  * the chips hide, from the lowest priority up; once one does not fit, none below it shows. A
  * hidden chip's action stays reachable from the app menu and the tab's menu (Bookmark, Zoom,
- * Translate Page, Reader View) and from the site information (the blocking state).
+ * Translate Page, Reader View, Copy URL, Share…) and from the site information (the blocking
+ * state).
+ *
+ * The other axis of §9.29 is the row's: a toolbar BUTTON the width tiers (the media hub's, Home
+ * since #572, the Energy Saver leaf since #584) folds where the pill it would leave the row
+ * drops under `PILL_TOOLS_TIER` – `lib/toolbarPins.ts`'s `foldingButtonFits`, the one helper for
+ * every such button (the hub's `mediaHubButtonFits` and the leaf's `energySaverLeafFits` are
+ * its names), which reads its floor from here (`PILL_PADDING + PILL_TOOLS_TIER`). Buttons fold
+ * by that rule outside the pill; chips fold by this one inside it, and the two meet at the
+ * tools tier: a row that keeps a button keeps the pill at least 110 wide inside, where this
+ * rule still holds the site icon and the address's floor beside whatever chips fit.
  *
  * Pure, so the rule is unit-tested without a DOM; the pill measures itself and asks.
  */
 
-export type ChipTier = 'site' | 'state' | 'star' | 'shield' | 'zoom' | 'install' | 'info'
+export type ChipTier = 'site' | 'state' | 'star' | 'shield' | 'zoom' | 'install' | 'info' | 'extra'
 
 /**
  * Highest priority first: what hides when the pill runs out of room hides from the end. The
  * Install-app chip (Chrome's `kActionInstallPwa`, W8-6) sits above the informational chips – an
  * offer the page cannot make any other way once the chip is gone but the app menu – and below
- * the shield: translate and Reader View hide first, then Install, then the shield.
+ * the shield: translate and Reader View hide first, then Install, then the shield. Under them
+ * all the hover-only utilities (`extra`): they are let in last, into the room the resident
+ * chips left the address over its floor, so a pointer over the pill mounts only what the floor
+ * allows (at a 320 sidebar with an installable page: none of them, the address at its 56).
  */
 export const CHIP_PRIORITY: readonly ChipTier[] = [
   'site',
@@ -30,7 +47,8 @@ export const CHIP_PRIORITY: readonly ChipTier[] = [
   'zoom',
   'shield',
   'install',
-  'info'
+  'info',
+  'extra'
 ]
 
 /** The tiers no width ever hides: the address's own icon and the state the page cannot show. */
@@ -76,8 +94,9 @@ export const PILL_LABEL_TIER = 220
  * lead-in, the star's 28 less its 8 px trail, the 20 px chips (zoom, translate, Reader View,
  * the Install-app glyph), the 28 px icon buttons (blocked pop-ups, the shield, the autofill
  * key), what a count badge adds to one of them (the 4 px gap and a 20 px two-digit pill), and
- * what the Install chip's "Install" adds to its 20 while the label tier shows it (the word at
- * 11.5 px, its 4 px gap and the chip's 4 px padding either side).
+ * what the Install chip's "Install" adds to its 20 while the label tier shows it: the word at
+ * 11.5 px medium is 33 wide, its gap before it 4 and the chip's padding 4 either side – a 59 px
+ * chip (the W8-6 drive read 59.06 on the packaged build), 39 over the glyph's 20.
  */
 export const CHIP_WIDTH = {
   site: 20,
@@ -85,7 +104,7 @@ export const CHIP_WIDTH = {
   small: 20,
   iconButton: 28,
   badge: 28,
-  label: 48
+  label: 39
 } as const
 
 export interface PillChipSpec {
@@ -129,6 +148,20 @@ export function fittingChips(
     }
   }
   return visible
+}
+
+/**
+ * Whether the Install-app chip keeps its "Install" word: only while the pill's content box is at
+ * the label tier and every chip in `chips` (the Install chip listed at its labelled width) fits
+ * beside it with the address at its floor. The word is the first thing the pill gives up – before
+ * any chip hides – and it goes one way: a chip that would return only because the word left
+ * would take the word's room back, so the fold is read on the labelled set alone. Unmeasured (0)
+ * keeps the word, like `fittingChips` keeps every chip.
+ */
+export function installLabelFits(innerWidth: number, chips: readonly PillChipSpec[]): boolean {
+  if (innerWidth <= 0) return true
+  if (innerWidth < PILL_LABEL_TIER) return false
+  return fittingChips(innerWidth, chips).size === chips.length
 }
 
 /** The address's width once the visible chips have taken theirs; what the text truncates into. */

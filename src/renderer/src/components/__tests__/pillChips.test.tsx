@@ -40,7 +40,7 @@ const { browserStore, closeMemorySaverBubble, openUrlbar, uiStore } =
   await import('@renderer/lib/ui')
 const { closeSiteInfo, openSiteInfo, siteInfoStore } = await import('@renderer/lib/siteInfo')
 const { MEMORY_SAVER_LEAF_MS } = await import('@renderer/lib/siteChips')
-const { shareChip } = await import('@renderer/lib/share')
+const { shareChip, useShareChip } = await import('@renderer/lib/share')
 const { publishToolbarTiering, toolbarTiering } = await import('@renderer/lib/toolbarPins')
 const { viewportStore } = await import('@renderer/lib/formFactor')
 const { defaultShortcuts } = await import('@shared/shortcuts')
@@ -1921,10 +1921,26 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
       const el = render(<NavRow state={s} tab={installable} compact={false} />)
       expect(el.querySelector('[data-install-chip]')).not.toBeNull()
       expect(toolbarTiering.get().hidden).toEqual([])
-      // Wide: the label is up and measured (20 + 48); everything fits at a 320 pill.
+      // Wide: the label is up and measured (20 + 39); everything fits at a 320 pill, the
+      // hover-only utilities too (site 26 + star 26 + install 65 + translate 26 + Reader 26 =
+      // 169, + 56 = 225; Copy URL, Share and Boost's 78 on top at 303).
       act(() => emit!(304))
       expect(el.querySelector('[data-install-chip]')).not.toBeNull()
       expect(el.querySelector('[data-install-chip] .zen-pill-label')).not.toBeNull()
+      expect(el.querySelector('[aria-label="Copy URL"]')).not.toBeNull()
+      // The utilities yield first: at 225 every resident chip and the word stand, none of them.
+      act(() => emit!(225))
+      expect(el.querySelector('[data-install-chip] .zen-pill-label')).not.toBeNull()
+      expect(el.querySelector('[aria-label="Reader View"]')).not.toBeNull()
+      expect(el.querySelector('[aria-label="Copy URL"]')).toBeNull()
+      expect(el.querySelector('[data-share-chip]')).toBeNull()
+      expect(el.querySelector('[aria-label="Boost this site"]')).toBeNull()
+      // One pixel under, Reader View would hide: the word folds first and every chip stays.
+      act(() => emit!(224))
+      expect(el.querySelector('[data-install-chip] .zen-pill-label')).toBeNull()
+      expect(el.querySelector('[aria-label="Reader View"]')).not.toBeNull()
+      expect(el.querySelector('[aria-label="Translate this page"]')).not.toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual([])
       // Under the label tier the chip is the glyph alone: site 26 + star 26 + install 26 = 78,
       // + 56 for the address = 134 with translate's 26 on top at 160.
       act(() => emit!(160))
@@ -2017,6 +2033,184 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
     )
     expect(chip.getAttribute('aria-expanded')).toBe('false')
     expect(chip.hasAttribute('data-share-anchor')).toBe(false)
+  })
+
+  it('adopts the chip’s request in the render that first sees it, so the popover measures its anchor in that same commit', () => {
+    // The W8-6 drive found the popover hung from the pill: the chip adopted its request in a
+    // passive effect, one commit after `SharePopover`'s layout effect had read the anchors.
+    const seen: boolean[] = []
+    function Probe({ s }: { s: UIState }): null {
+      seen.push(useShareChip(s, 't1'))
+      return null
+    }
+    shareChip.set({ tabId: 't1', requestId: null })
+    render(<Probe s={desktop(page, { shareRequests: [pageShare()] })} />)
+    expect(seen[0]).toBe(true)
+    expect(shareChip.get()).toEqual({ tabId: 't1', requestId: 'r1' })
+    // Another share shown over the chip's (first in the list): the chip's popover is not up.
+    act(() =>
+      root!.render(<Probe s={desktop(page, { shareRequests: [pageShare('r9'), pageShare()] })} />)
+    )
+    expect(seen.at(-1)).toBe(false)
+    expect(shareChip.get()).toEqual({ tabId: 't1', requestId: 'r1' })
+  })
+
+  /*
+   * The W8-6 lead's rule (#578's first line, L4): the hover-only utilities mounted on hover and
+   * cut the address to 14 px while every chip stood. They are the tier's lowest rank now: let
+   * in only into the room the resident chips leave the address over its 56 px floor, and the
+   * first to go – the translate offer, then Boost, then Share, Copy URL last.
+   */
+  it('lets the hover-only utilities mount only into the room over the address floor, the translate offer, Boost and Share yielding before Copy URL', () => {
+    let emit: ((width: number) => void) | null = null
+    const Native = window.ResizeObserver
+    class FakeResizeObserver {
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      observe(): void {
+        emit = (width) =>
+          this.callback(
+            [{ contentRect: { width } } as unknown as ResizeObserverEntry],
+            this as unknown as ResizeObserver
+          )
+      }
+      unobserve(): void {
+        emit = null
+      }
+      disconnect(): void {
+        emit = null
+      }
+    }
+    window.ResizeObserver = FakeResizeObserver as unknown as typeof ResizeObserver
+    try {
+      const plain = tab('https://app.example/some/path')
+      const el = render(<NavRow state={desktop(plain)} tab={plain} compact={false} />)
+      const utilities = (): (string | null)[] =>
+        chipLabels(el).filter((l) =>
+          ['Copy URL', 'Share this page', 'Boost this site', 'Translate this page'].includes(
+            l ?? ''
+          )
+        )
+      // Unmeasured, everything is mounted (hidden at rest by the stylesheet's hover gate).
+      expect(utilities()).toEqual([
+        'Translate this page',
+        'Boost this site',
+        'Copy URL',
+        'Share this page'
+      ])
+      // Residents: site 26 + star 26 = 52; + 56 = 108; the four utilities' 104 on top at 212.
+      act(() => emit!(212))
+      expect(utilities()).toHaveLength(4)
+      act(() => emit!(211))
+      expect(utilities()).toEqual(['Boost this site', 'Copy URL', 'Share this page'])
+      act(() => emit!(185))
+      expect(utilities()).toEqual(['Copy URL', 'Share this page'])
+      act(() => emit!(159))
+      expect(utilities()).toEqual(['Copy URL'])
+      // The 320 sidebar's content box, 160, holds the star and two utilities on a page with no
+      // shield: 52 + 52 + 56 – the address exactly at its floor.
+      act(() => emit!(160))
+      expect(utilities()).toEqual(['Copy URL', 'Share this page'])
+      act(() => emit!(133))
+      expect(utilities()).toEqual([])
+      expect(el.querySelector('[data-bm-star]')).not.toBeNull()
+      // The residents never yield to a utility: the star stands where Copy URL is gone.
+      act(() => emit!(110))
+      expect(utilities()).toEqual([])
+      expect(el.querySelector('[data-bm-star]')).not.toBeNull()
+    } finally {
+      window.ResizeObserver = Native
+    }
+  })
+
+  it('keeps an open popup’s anchor mounted whatever the width: the Share chip under its popover, Boost under its overlay', () => {
+    let emit: ((width: number) => void) | null = null
+    const Native = window.ResizeObserver
+    class FakeResizeObserver {
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      observe(): void {
+        emit = (width) =>
+          this.callback(
+            [{ contentRect: { width } } as unknown as ResizeObserverEntry],
+            this as unknown as ResizeObserver
+          )
+      }
+      unobserve(): void {
+        emit = null
+      }
+      disconnect(): void {
+        emit = null
+      }
+    }
+    window.ResizeObserver = FakeResizeObserver as unknown as typeof ResizeObserver
+    try {
+      const plain = tab('https://app.example/some/path')
+      shareChip.set({ tabId: 't1', requestId: 'r1' })
+      const el = render(
+        <NavRow
+          state={desktop(plain, { shareRequests: [pageShare()] })}
+          tab={plain}
+          compact={false}
+        />
+      )
+      const chip = el.querySelector<HTMLElement>('[data-share-chip]')!
+      expect(chip.getAttribute('aria-expanded')).toBe('true')
+      // Narrow enough that no utility fits (site 26 + star 26 + 56 = 108): the anchor stays.
+      act(() => emit!(108))
+      expect(el.querySelector('[data-share-chip]')).toBe(chip)
+      expect(el.querySelector('[aria-label="Copy URL"]')).toBeNull()
+      // Its request gone, the chip folds with the rest.
+      act(() => root!.render(<NavRow state={desktop(plain)} tab={plain} compact={false} />))
+      expect(el.querySelector('[data-share-chip]')).toBeNull()
+      // Boost's overlay keeps the Boost chip the same way.
+      act(() => uiStore.set({ overlay: 'boosts' } as never))
+      expect(el.querySelector('[aria-label="Boost this site"]')).not.toBeNull()
+      act(() => uiStore.set({ overlay: null } as never))
+      expect(el.querySelector('[aria-label="Boost this site"]')).toBeNull()
+    } finally {
+      window.ResizeObserver = Native
+    }
+  })
+
+  it('folds a lit Boost with the informational chips: a resident of the tier, not a hover-only one', () => {
+    let emit: ((width: number) => void) | null = null
+    const Native = window.ResizeObserver
+    class FakeResizeObserver {
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      observe(): void {
+        emit = (width) =>
+          this.callback(
+            [{ contentRect: { width } } as unknown as ResizeObserverEntry],
+            this as unknown as ResizeObserver
+          )
+      }
+      unobserve(): void {
+        emit = null
+      }
+      disconnect(): void {
+        emit = null
+      }
+    }
+    window.ResizeObserver = FakeResizeObserver as unknown as typeof ResizeObserver
+    try {
+      const plain = tab('https://app.example/some/path')
+      const s = desktop(plain)
+      s.boosts = [{ id: 'b1', domain: 'app.example', enabled: true }] as never
+      const el = render(<NavRow state={s} tab={plain} compact={false} />)
+      const boost = (): HTMLElement | null =>
+        el.querySelector<HTMLElement>('[aria-label="Edit Boost for this site"]')
+      expect(boost()).not.toBeNull()
+      expect(boost()!.className).toContain('flex')
+      expect(boost()!.className).not.toContain('zen-pill-extra')
+      // site 26 + star 26 + boost 26 = 78; + 56 = 134: at 134 it stands, at 133 it folds and the
+      // star stays.
+      act(() => emit!(134))
+      expect(boost()).not.toBeNull()
+      act(() => emit!(133))
+      expect(boost()).toBeNull()
+      expect(el.querySelector('[data-bm-star]')).not.toBeNull()
+    } finally {
+      window.ResizeObserver = Native
+    }
   })
 
   it('offers no Share chip without a share surface, off a page of the web, or on the tablet layout; no Install chip there either', () => {

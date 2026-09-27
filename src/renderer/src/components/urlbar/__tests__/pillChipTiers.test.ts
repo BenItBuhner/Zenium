@@ -8,6 +8,7 @@ import {
   PILL_PADDING,
   addressWidth,
   fittingChips,
+  installLabelFits,
   type PillChipSpec
 } from '../pillChipTiers'
 
@@ -29,8 +30,17 @@ const inner = (pillWidth: number): number => pillWidth - PILL_PADDING
 const ids = (s: ReadonlySet<string>): string[] => [...s].sort()
 
 describe('the pill chip overflow rule (M8)', () => {
-  it('orders the tiers: site, state, star, zoom, shield, the Install-app chip, informational (§9.29; W8-6)', () => {
-    expect(CHIP_PRIORITY).toEqual(['site', 'state', 'star', 'zoom', 'shield', 'install', 'info'])
+  it('orders the tiers: site, state, star, zoom, shield, the Install-app chip, informational, the hover-only utilities (§9.29; W8-6)', () => {
+    expect(CHIP_PRIORITY).toEqual([
+      'site',
+      'state',
+      'star',
+      'zoom',
+      'shield',
+      'install',
+      'info',
+      'extra'
+    ])
   })
 
   /*
@@ -61,18 +71,88 @@ describe('the pill chip overflow rule (M8)', () => {
 
   it('measures the Install chip with its label while the pill has the label tier’s room', () => {
     expect(PILL_LABEL_TIER).toBe(220)
-    // The label's width is what the chip adds to its 20 px glyph box.
-    expect(CHIP_WIDTH.label).toBeGreaterThan(0)
+    // The label's width is what the chip adds to its 20 px glyph box: the 59 px chip the W8-6
+    // drive read on the packaged build (the word 33 at 11.5 px medium, its gap 4, padding 4 + 4).
+    expect(CHIP_WIDTH.label).toBe(39)
     const labelled: PillChipSpec[] = [
       { id: 'site', tier: 'site', width: CHIP_WIDTH.site },
       { id: 'install', tier: 'install', width: CHIP_WIDTH.small + CHIP_WIDTH.label }
     ]
     // At the label tier's own content box the labelled chip fits beside the address floor:
-    // 26 + (20 + 48 + 6) + 56 = 156 ≤ 220.
+    // 26 + (20 + 39 + 6) + 56 = 147 ≤ 220.
     expect(ids(fittingChips(PILL_LABEL_TIER, labelled))).toEqual(['install', 'site'])
     expect(addressWidth(PILL_LABEL_TIER, labelled, fittingChips(PILL_LABEL_TIER, labelled))).toBe(
       PILL_LABEL_TIER - 26 - (CHIP_WIDTH.small + CHIP_WIDTH.label + CHIP_GAP)
     )
+  })
+
+  it('keeps the "Install" label only while every chip fits beside it, and never under the label tier', () => {
+    const chips: PillChipSpec[] = [
+      { id: 'site', tier: 'site', width: CHIP_WIDTH.site },
+      { id: 'shield', tier: 'shield', width: CHIP_WIDTH.iconButton },
+      { id: 'install', tier: 'install', width: CHIP_WIDTH.small + CHIP_WIDTH.label },
+      { id: 'translate', tier: 'info', width: CHIP_WIDTH.small },
+      { id: 'star', tier: 'star', width: CHIP_WIDTH.star }
+    ]
+    // Unmeasured keeps the word, as the tier keeps every chip.
+    expect(installLabelFits(0, chips)).toBe(true)
+    // site 26 + star 26 + shield 34 + install 65 + translate 26 = 177; + 56 = 233.
+    expect(installLabelFits(233, chips)).toBe(true)
+    // One pixel under, translate would hide: the word goes first instead.
+    expect(installLabelFits(232, chips)).toBe(false)
+    // Never under the label tier, however few the chips: 26 + 65 + 56 = 147 would fit at 219.
+    const two: PillChipSpec[] = [
+      { id: 'site', tier: 'site', width: CHIP_WIDTH.site },
+      { id: 'install', tier: 'install', width: CHIP_WIDTH.small + CHIP_WIDTH.label }
+    ]
+    expect(installLabelFits(PILL_LABEL_TIER, two)).toBe(true)
+    expect(installLabelFits(PILL_LABEL_TIER - 1, two)).toBe(false)
+    // The word folded, the chip is its glyph: the freed room keeps translate for a while.
+    const bare = chips.map((c) => (c.id === 'install' ? { ...c, width: CHIP_WIDTH.small } : c))
+    expect(ids(fittingChips(232, bare))).toEqual(['install', 'shield', 'site', 'star', 'translate'])
+    // 26 + 26 + 34 + 26 + 26 = 138; + 56 = 194: at 193 translate goes, the glyph stays.
+    expect(ids(fittingChips(193, bare))).toEqual(['install', 'shield', 'site', 'star'])
+  })
+
+  /*
+   * The W8-6 lead's rule (#578's first line): the hover-only utilities – Copy URL, Share, Boost,
+   * the translate offer – mount into the room the resident chips left the address over its
+   * floor, and never under it. They are the tier's lowest rank, let in last and hidden first.
+   */
+  it('lets the hover-only utilities in last, into the room over the address floor, and hides them first', () => {
+    const chips: PillChipSpec[] = [
+      { id: 'site', tier: 'site', width: CHIP_WIDTH.site },
+      { id: 'shield', tier: 'shield', width: CHIP_WIDTH.iconButton },
+      { id: 'star', tier: 'star', width: CHIP_WIDTH.star },
+      { id: 'copy', tier: 'extra', width: CHIP_WIDTH.small },
+      { id: 'share', tier: 'extra', width: CHIP_WIDTH.small },
+      { id: 'boost', tier: 'extra', width: CHIP_WIDTH.small }
+    ]
+    const at = (innerWidth: number): string[] => ids(fittingChips(innerWidth, chips))
+    // site 26 + star 26 + shield 34 = 86; + 56 = 142 for the residents; each utility 26 more.
+    expect(at(220)).toEqual(['boost', 'copy', 'share', 'shield', 'site', 'star'])
+    expect(at(219)).toEqual(['copy', 'share', 'shield', 'site', 'star'])
+    expect(at(194)).toEqual(['copy', 'share', 'shield', 'site', 'star'])
+    expect(at(193)).toEqual(['copy', 'shield', 'site', 'star'])
+    expect(at(168)).toEqual(['copy', 'shield', 'site', 'star'])
+    // The 320 sidebar's 160: the residents alone, the address at 74 – no utility takes it under 56.
+    expect(at(167)).toEqual(['shield', 'site', 'star'])
+    expect(at(160)).toEqual(['shield', 'site', 'star'])
+    expect(addressWidth(160, chips, fittingChips(160, chips))).toBe(74)
+    // Whatever is let in, the address keeps its floor.
+    for (let innerWidth = 60; innerWidth <= 320; innerWidth += 1) {
+      const visible = fittingChips(innerWidth, chips)
+      const extraShown = [...visible].some(
+        (id) => id === 'copy' || id === 'share' || id === 'boost'
+      )
+      if (extraShown) {
+        expect(addressWidth(innerWidth, chips, visible)).toBeGreaterThanOrEqual(MIN_ADDRESS_WIDTH)
+      }
+    }
+    // A resident chip that does not fit closes the door on every utility.
+    const starless = chips.filter((c) => c.id !== 'star')
+    expect(ids(fittingChips(141, starless))).toEqual(['shield', 'site'])
+    expect(ids(fittingChips(115, starless))).toEqual(['site'])
   })
 
   it('hides nothing before the pill has been measured', () => {

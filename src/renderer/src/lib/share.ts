@@ -82,22 +82,35 @@ export function openShareFromChip(tabId: string): void {
   run('share.open', { tabId })
 }
 
-/** The share of `tabId`'s own page standing in the state (the menu's or the chip's, not a site's). */
-function pageShareRequest(
+/**
+ * The request the chip's mark stands for: the one it adopted (`requestId`), else – the mark
+ * just pressed, the core's request only now in the state – the share of `tabId`'s own page
+ * (origin `null`: the menu's or the chip's, never a site's `navigator.share`).
+ */
+function chipRequest(
   state: Pick<UIState, 'shareRequests'>,
-  tabId: string
+  tabId: string,
+  requestId: string | null
 ): ShareRequest | null {
-  return (state.shareRequests ?? []).find((r) => r.tabId === tabId && r.origin === null) ?? null
+  const requests = state.shareRequests ?? []
+  if (requestId !== null) {
+    return requests.find((r) => r.id === requestId && r.tabId === tabId) ?? null
+  }
+  return requests.find((r) => r.tabId === tabId && r.origin === null) ?? null
 }
 
 /**
  * Whether the pill's Share chip for `tabId` has its popover up: the request the chip raised is
- * the one the share layer shows (`shareRequests[0]`). Adopts the request as it arrives and
- * clears the mark once it has gone, or once the pill shows another tab.
+ * the one the share layer shows (`shareRequests[0]`). The request is adopted in the render that
+ * first sees it – the popover measures its anchor in a layout effect of that same commit, so
+ * the chip has to carry `data-share-anchor` then, not a commit later (the W8-6 drive found the
+ * popover hung from the pill otherwise); the effect only records the adoption in the store and
+ * clears the mark once the request has gone, or once the pill shows another tab.
  */
 export function useShareChip(state: Pick<UIState, 'shareRequests'>, tabId: string | null): boolean {
   const mark = shareChip.use((s) => s)
-  const request = tabId ? pageShareRequest(state, tabId) : null
+  const request =
+    tabId !== null && mark.tabId === tabId ? chipRequest(state, tabId, mark.requestId) : null
   useEffect(() => {
     if (mark.tabId === null) return
     if (mark.tabId !== tabId) {
@@ -108,16 +121,10 @@ export function useShareChip(state: Pick<UIState, 'shareRequests'>, tabId: strin
       if (request) shareChip.set({ tabId, requestId: request.id })
       return
     }
-    if (!request || request.id !== mark.requestId) shareChip.set({ tabId: null, requestId: null })
+    if (!request) shareChip.set({ tabId: null, requestId: null })
   }, [mark, tabId, request])
   const shown = (state.shareRequests ?? [])[0]
-  return Boolean(
-    tabId !== null &&
-    mark.tabId === tabId &&
-    mark.requestId !== null &&
-    shown !== undefined &&
-    shown.id === mark.requestId
-  )
+  return request !== null && shown !== undefined && shown.id === request.id
 }
 
 /**
