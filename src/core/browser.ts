@@ -4470,7 +4470,9 @@ export class Browser {
     s.sidebarWidth = Math.max(160, Math.min(520, s.sidebarWidth))
     s.splitEdgeZones = s.splitEdgeZones !== false
     s.useSystemAccent = s.useSystemAccent === true
-    s.hoverCardMemoryUsage = s.hoverCardMemoryUsage !== false
+    // On only by the switch (settings-29): Chrome 152's effective default is off, after
+    // `MigrateHoverCardMemoryPref`; anything but `true` reads off, as `BrowserState.load` reads it.
+    s.hoverCardMemoryUsage = s.hoverCardMemoryUsage === true
     s.unloadTimeoutMinutes = sanitizeUnloadTimeout(s.unloadTimeoutMinutes)
     s.inactiveTabsArchiveDays = sanitizeArchiveDays(s.inactiveTabsArchiveDays)
     s.inactiveTabsAutoClose = s.inactiveTabsAutoClose !== false

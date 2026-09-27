@@ -2484,7 +2484,8 @@ function performanceSection({ state, tab, set }: SectionContext): RowGroup[] {
     },
     {
       // The tab hover card's memory line (settings-29, W8-10; Chrome's "Show tab memory usage",
-      // `browser.hovercard.memory_usage_enabled`, on by default). Chrome seats the switch in
+      // `browser.hovercard.memory_usage_enabled` – off by default, Chrome 152's effective default
+      // after `MigrateHoverCardMemoryPref`). Chrome seats the switch in
       // Appearance under "Tab hover preview card" and its Performance page only links there;
       // the matrix seats the row here, with Chrome's words under Chrome's heading in §9.20's
       // name for the card. The desktop's alone, as the card is (the tablet chrome mounts none).

@@ -6423,7 +6423,7 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
     }
   })
 
-  it('seats the tab hover card’s memory switch on the desktop (settings-29, W8-10): Chrome’s "Show tab memory usage" under its "Tab hover card" heading, on by default, bound to hoverCardMemoryUsage; the tablet has none', () => {
+  it('seats the tab hover card’s memory switch on the desktop (settings-29, W8-10): Chrome’s "Show tab memory usage" under its "Tab hover card" heading, off by default, bound to hoverCardMemoryUsage; the tablet has none', () => {
     const { model, patches } = perf(DESKTOP_STATE())
     const group = model.groups.find((g) => g.id === 'hover-card')!
     expect(group.heading).toBe('Tab hover card')
@@ -6435,17 +6435,22 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
     expect(memory.description).toBe(
       'The card that appears when you rest the pointer on a tab says how much memory its page is using.'
     )
-    // Chrome's default: browser.hovercard.memory_usage_enabled registers true in local state.
-    expect(DEFAULT_SETTINGS.hoverCardMemoryUsage).toBe(true)
-    expect(memory.checked).toBe(true)
+    // Chrome 152's effective default: browser.hovercard.memory_usage_enabled registers true in
+    // local state (RegisterBrowserPrefs) and MigrateHoverCardMemoryPref flips it to false once,
+    // under Tab Declutter, on every desktop platform – so the switch rests off.
+    expect(DEFAULT_SETTINGS.hoverCardMemoryUsage).toBe(false)
+    expect(memory.checked).toBe(false)
     expect(memory.disabled).toBeFalsy()
-    memory.onChange(false)
-    expect(patches).toEqual([{ hoverCardMemoryUsage: false }])
-    expect(
-      row(perf(DESKTOP_STATE({ hoverCardMemoryUsage: false })).model, 'hover-card-memory')
-    ).toMatchObject({ checked: false })
+    memory.onChange(true)
+    expect(patches).toEqual([{ hoverCardMemoryUsage: true }])
+    const on = row(perf(DESKTOP_STATE({ hoverCardMemoryUsage: true })).model, 'hover-card-memory')
+    if (on.kind !== 'switch') throw new Error('not a switch')
+    expect(on.checked).toBe(true)
     // Independent of Memory Saver: the switch stands whatever the mode.
-    const saverOff = row(perf(DESKTOP_STATE({ unloadEnabled: false })).model, 'hover-card-memory')
+    const saverOff = row(
+      perf(DESKTOP_STATE({ unloadEnabled: false, hoverCardMemoryUsage: true })).model,
+      'hover-card-memory'
+    )
     if (saverOff.kind !== 'switch') throw new Error('not a switch')
     expect(saverOff.checked).toBe(true)
     expect(saverOff.disabled).toBeFalsy()

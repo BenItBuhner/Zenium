@@ -243,9 +243,9 @@ describe('collectLocal', () => {
     src.settings.unloadTimeoutMinutes = 240
     // The touchpad swipe's Accessibility switch: Chrome's twin pref is Android-only and unsynced.
     src.settings.touchpadSwipeToNavigate = false
-    // …and turned the hover card's memory line off (W8-10): Chrome's
+    // …and turned the hover card's memory line on (W8-10; off by default): Chrome's
     // browser.hovercard.memory_usage_enabled is local state too.
-    src.settings.hoverCardMemoryUsage = false
+    src.settings.hoverCardMemoryUsage = true
     const data = collectLocal(src, defaultScope()).get('settings')?.data as Record<string, unknown>
     expect(DEVICE_LOCAL_SETTINGS).toEqual([
       'onboardingDone',

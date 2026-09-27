@@ -451,11 +451,12 @@ export function formatHoverCardMemory(mb: number): string {
 /**
  * The card's memory line (settings-29; Chrome's `FadePerformanceFooterRow`): "Memory usage:
  * 123 MB" for a tab with a measured usage while Settings › Performance's Show tab memory usage
- * is on – the governor's last sample (`ResourceSnapshot.tabs`, working set, refreshed every few
- * seconds), so a tab the governor has not measured yet has no line – and "High memory usage:
- * 1.2 GB" past Chrome's threshold whatever the setting says. Never for a sleeping tab: its card
- * says what the page gave back instead (`tabStateLines`' "Memory saved"), as Chrome's discard
- * footer stands in for the memory row. Null where there is nothing to say.
+ * is on – off by default, Chrome 152's effective default after `MigrateHoverCardMemoryPref`, so
+ * only an explicit `true` shows it – the governor's last sample (`ResourceSnapshot.tabs`, working
+ * set, refreshed every few seconds), so a tab the governor has not measured yet has no line –
+ * and "High memory usage: 1.2 GB" past Chrome's threshold whatever the setting says. Never for a
+ * sleeping tab: its card says what the page gave back instead (`tabStateLines`' "Memory saved"),
+ * as Chrome's discard footer stands in for the memory row. Null where there is nothing to say.
  */
 export function hoverCardMemoryLine(state: UIState | null, tabId: string): string | null {
   const tab = state?.tabs[tabId]
@@ -464,6 +465,6 @@ export function hoverCardMemoryLine(state: UIState | null, tabId: string): strin
   if (!usage || !Number.isFinite(usage.memoryMb) || usage.memoryMb <= 0) return null
   if (usage.memoryMb > HOVER_CARD_HIGH_MEMORY_MB)
     return `High memory usage: ${formatHoverCardMemory(usage.memoryMb)}`
-  if (state.settings.hoverCardMemoryUsage === false) return null
+  if (state.settings.hoverCardMemoryUsage !== true) return null
   return `Memory usage: ${formatHoverCardMemory(usage.memoryMb)}`
 }

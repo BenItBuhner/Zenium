@@ -3004,13 +3004,16 @@ export interface Settings {
   /**
    * Whether the tab hover card says how much memory the page is using (settings-29; Chrome's
    * `browser.hovercard.memory_usage_enabled`, "Show tab memory usage"): the card's last line,
-   * "Memory usage: 123 MB", read from the governor's snapshot (`ResourceSnapshot.tabs`). On by
-   * default, as Chrome's is. Off, a page past Chrome's high-usage threshold still gets its line
-   * ("High memory usage: 1.2 GB" – `TabResourceUsage::kHighMemoryUsageThresholdBytes`, 800 MiB),
-   * as Chrome's does; a sleeping tab's card says what it gave back instead (`sleepSavedMb`).
-   * Chrome registers the pref in local state, never synced – device-local here too
-   * (`DEVICE_LOCAL_SETTINGS`). The desktop's alone: the tablet chrome mounts no card. Absent in
-   * profiles from before it existed (read as true).
+   * "Memory usage: 123 MB", read from the governor's snapshot (`ResourceSnapshot.tabs`). Off by
+   * default – Chrome 152's effective default after `MigrateHoverCardMemoryPref` (M131+): the pref
+   * registers true (`RegisterBrowserPrefs`, `browser_ui_prefs.cc`) and the one-time migration
+   * (`tab_strip_prefs.cc`) flips it to false under Tab Declutter, which every desktop platform
+   * has – on by an explicit switch. Off, a page past Chrome's high-usage threshold still gets its
+   * line ("High memory usage: 1.2 GB" – `TabResourceUsage::kHighMemoryUsageThresholdBytes`,
+   * 800 MiB), as Chrome's does; a sleeping tab's card says what it gave back instead
+   * (`sleepSavedMb`). Chrome registers the pref in local state, never synced – device-local here
+   * too (`DEVICE_LOCAL_SETTINGS`). The desktop's alone: the tablet chrome mounts no card. Absent
+   * in profiles from before it existed (read as false, as is anything but `true`).
    */
   hoverCardMemoryUsage: boolean
   /**
