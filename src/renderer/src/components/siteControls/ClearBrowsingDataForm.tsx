@@ -2,6 +2,7 @@ import type { JSX } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import type { BrowsingDataRange, BrowsingDataType } from '@shared/types'
 import { RANGE_OPTIONS, TYPE_LABEL, countLine } from '@renderer/lib/browsingData'
+import { isTouchLayout, useViewport } from '@renderer/lib/formFactor'
 import { Field, RadioOption, ValidationMessage } from '../pages/settings/blocks'
 import { choice, type SettingsRow, type ValueRow } from '../pages/settings/model'
 import { RowView, type RowContext } from '../pages/settings/rows'
@@ -24,12 +25,22 @@ import { useClearForm } from './useClearForm'
  * full opacity and takes no press, the passphrase stays masked in place, only Delete data is
  * busy and Cancel sits at .4; a refused passphrase clears the field, which takes the focus back
  * under its validation text; on success the sheet closes with its values shown until it is gone.
+ *
+ * On the desktop layout the form is the Settings dialog's (`FormDialog`), and the range is the
+ * builder's §10.5 value row there – the text, then the 32 px menulist the desktop dialog and the
+ * settings page trail (`MenulistRow`, `V2Menulist`), whose popup is the shared §9.13 popover
+ * under the control with §9.20's keyboard (the current option focused, arrows, Enter or Space
+ * pick, Escape back to the control) rather than a sheet in a dialog (W8-12, the lead's item);
+ * the same `RANGE_OPTIONS` words, and while the form is busy the control opens nothing
+ * (`readOnly`, §9.30) as the dialog's does. The layouts a finger drives (`isTouchLayout`: the
+ * phone's, the tablet's) keep the §10.4 value row and its sheet, unchanged.
  */
 export function ClearBrowsingDataForm({ close }: { close: () => void }): JSX.Element {
   const state = useClearForm(close)
   const { form, types, selected, unavailableFor, setRange, setMode, toggle, setPassphrase } = state
   const busy = form.busy
   const [picker, setPicker] = useState(false)
+  const desktop = !isTouchLayout(useViewport().formFactor)
   const fieldId = 'clear-data-passphrase'
   const passphraseShown = form.passphrase !== null && form.checked.has('passwords')
 
@@ -56,9 +67,11 @@ export function ClearBrowsingDataForm({ close }: { close: () => void }): JSX.Ele
     label: 'Time range',
     value: form.range,
     options: RANGE_OPTIONS,
-    onChange: setRange
+    onChange: setRange,
+    readOnly: busy
   })
-  // The range row's press opens the picker over this sheet; nothing else here opens a sheet.
+  // The range row's press opens the picker over this sheet (the phone's row; the desktop's
+  // menulist opens its own popover); nothing else here opens a sheet.
   const ctx: RowContext = {
     open: (request) => {
       if (request.kind === 'options' && !busy) setPicker(true)
@@ -85,7 +98,7 @@ export function ClearBrowsingDataForm({ close }: { close: () => void }): JSX.Ele
         data-busy={busy ? '' : undefined}
         data-testid="clear-browsing-data-form"
       >
-        <RowView row={range} ctx={ctx} />
+        <RowView row={range} ctx={ctx} variant={desktop ? 'desktop' : 'phone'} />
         <div
           role="radiogroup"
           aria-label="What to show"
