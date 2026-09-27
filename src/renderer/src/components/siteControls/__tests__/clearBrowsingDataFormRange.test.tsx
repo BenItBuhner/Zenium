@@ -19,6 +19,7 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const { ClearBrowsingDataForm } = await import('../ClearBrowsingDataForm')
+const { QUICK_DELETE_FORM } = await import('../useClearForm')
 const { RANGE_OPTIONS } = await import('@renderer/lib/browsingData')
 const { viewportStore } = await import('@renderer/lib/formFactor')
 const { FrameDialogHost } = await import('@renderer/lib/portals')
@@ -390,12 +391,16 @@ describe('the layouts a finger drives keep the §9.13 sheet', () => {
   for (const formFactor of ['phone', 'tablet'] as const) {
     it(`on the ${formFactor}: the pressable value row named "label, value" opens the picker sheet over the form, no menulist`, async () => {
       layout(formFactor)
+      // The phone's form is Quick Delete (#624): it opens on the last 15 minutes; the tablet's
+      // is the dialog's, on the last hour.
+      const opens: BrowsingDataRange =
+        formFactor === 'phone' ? (QUICK_DELETE_FORM.initialRange ?? 'hour') : 'hour'
       const host = render(<ClearBrowsingDataForm close={() => undefined} />)
       await settle()
 
       const range = row(host, 'clear-data-range')!
       expect(range.tagName).toBe('BUTTON')
-      expect(range.getAttribute('aria-label')).toBe(`Time range, ${label('hour')}`)
+      expect(range.getAttribute('aria-label')).toBe(`Time range, ${label(opens)}`)
       expect(range.getAttribute('aria-haspopup')).toBe('dialog')
       expect(menulist(host)).toBeNull()
       expect(sheet()).toBeNull()
@@ -409,7 +414,7 @@ describe('the layouts a finger drives keep the §9.13 sheet', () => {
       const radios = [...group.querySelectorAll<HTMLElement>('[role="radio"]')]
       expect(radios.map((r) => r.textContent)).toEqual(LABELS)
       expect(radios.find((r) => r.getAttribute('aria-checked') === 'true')?.textContent).toBe(
-        label('hour')
+        label(opens)
       )
 
       // The pick lands in the same range and closes the sheet.
