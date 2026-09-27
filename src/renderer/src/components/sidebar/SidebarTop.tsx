@@ -788,8 +788,12 @@ export function NavRow({
             )}
             <span
               ref={field}
+              // The address at §4's 13 px, the floor of the type scale – the size of the pill's
+              // two words (`.zen-pill-label`) and of every 13 px label in the chrome; 12.5 had
+              // been the one run under the floor (the FIRST LINE's L9 on #589). The probe below
+              // reads the same size, so `useAddressFits` measures the text the field draws.
               className={cn(
-                'min-w-0 flex-1 truncate text-[12.5px]',
+                'min-w-0 flex-1 truncate text-[13px]',
                 !url && !masked && 'text-[var(--v2-control-text-deemphasized)]'
               )}
               data-reads={url ? (text === shown ? 'address' : 'title') : undefined}
@@ -811,7 +815,7 @@ export function NavRow({
           <span
             ref={probe}
             aria-hidden="true"
-            className="pointer-events-none invisible absolute left-0 top-0 whitespace-nowrap text-[12.5px]"
+            className="pointer-events-none invisible absolute left-0 top-0 whitespace-nowrap text-[13px]"
             data-pill-probe
           >
             {shown}
