@@ -23,7 +23,8 @@ import type { Browser } from './browser'
  * 77 KB) reaches the chrome as a handful of lines.
  */
 
-export const WIKTIONARY_DEFINITION_ENDPOINT = 'https://en.wiktionary.org/api/rest_v1/page/definition/'
+export const WIKTIONARY_DEFINITION_ENDPOINT =
+  'https://en.wiktionary.org/api/rest_v1/page/definition/'
 export const WIKTIONARY_PAGE_BASE = 'https://en.wiktionary.org/wiki/'
 export const DEFINE_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 /** Wikimedia's API guidance: an `Api-User-Agent` naming the client for browser-borne requests. */
@@ -79,7 +80,9 @@ function decodeEntities(text: string): string {
   return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, body: string) => {
     if (body[0] === '#') {
       const code =
-        body[1] === 'x' || body[1] === 'X' ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10)
+        body[1] === 'x' || body[1] === 'X'
+          ? parseInt(body.slice(2), 16)
+          : parseInt(body.slice(1), 10)
       if (!Number.isFinite(code) || code <= 0 || code > 0x10ffff) return whole
       try {
         return String.fromCodePoint(code)
@@ -161,7 +164,11 @@ function parseEntry(raw: unknown): DefineEntry | null {
  * English's else, the first section failing both. Null when the text is not that JSON, or the
  * page has no sense with any text left once its HTML is stripped.
  */
-export function parseDefinitionResponse(text: string, term: string, lang: string): DefineResult | null {
+export function parseDefinitionResponse(
+  text: string,
+  term: string,
+  lang: string
+): DefineResult | null {
   let json: unknown
   try {
     json = JSON.parse(text)
@@ -186,7 +193,11 @@ export function parseDefinitionResponse(text: string, term: string, lang: string
       term: normalized,
       lang: code,
       entries,
-      attribution: { source: 'Wiktionary', licence: 'CC BY-SA 4.0', url: wiktionaryPageUrl(normalized) }
+      attribution: {
+        source: 'Wiktionary',
+        licence: 'CC BY-SA 4.0',
+        url: wiktionaryPageUrl(normalized)
+      }
     }
   }
   return null

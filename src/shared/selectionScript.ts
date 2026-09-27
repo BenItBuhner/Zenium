@@ -60,7 +60,12 @@ function foldText(text: string): string {
 
 function rectOf(box: { left: number; top: number; width: number; height: number }): SelectionRect {
   const round = (v: number): number => Math.round(v * 100) / 100
-  return { x: round(box.left), y: round(box.top), width: round(box.width), height: round(box.height) }
+  return {
+    x: round(box.left),
+    y: round(box.top),
+    width: round(box.width),
+    height: round(box.height)
+  }
 }
 
 /**
@@ -87,7 +92,8 @@ export function currentSelectionReport(doc: Document): SelectionReport | null {
   if (!text) return null
   const range = selection.getRangeAt(0)
   const anchor = selection.anchorNode
-  const element = anchor && anchor.nodeType === 1 ? (anchor as Element) : (anchor?.parentElement ?? null)
+  const element =
+    anchor && anchor.nodeType === 1 ? (anchor as Element) : (anchor?.parentElement ?? null)
   return {
     text,
     rect: rectOf(range.getBoundingClientRect()),

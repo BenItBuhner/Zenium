@@ -123,13 +123,23 @@ describe('parseDefinitionResponse on the captured answer for "foam"', () => {
   })
 
   it('is null for text that is not the definition JSON, or holds no sense with text', () => {
-    expect(parseDefinitionResponse('<!doctype html><p>Wikimedia Error</p>', 'foam', 'en')).toBeNull()
+    expect(
+      parseDefinitionResponse('<!doctype html><p>Wikimedia Error</p>', 'foam', 'en')
+    ).toBeNull()
     expect(parseDefinitionResponse('[]', 'foam', 'en')).toBeNull()
     expect(parseDefinitionResponse('null', 'foam', 'en')).toBeNull()
     expect(parseDefinitionResponse(NOT_FOUND_RESPONSE, 'foam', 'en')).toBeNull()
     expect(
       parseDefinitionResponse(
-        JSON.stringify({ en: [{ partOfSpeech: 'Noun', language: 'English', definitions: [{ definition: '<span></span>' }] }] }),
+        JSON.stringify({
+          en: [
+            {
+              partOfSpeech: 'Noun',
+              language: 'English',
+              definitions: [{ definition: '<span></span>' }]
+            }
+          ]
+        }),
         'foam',
         'en'
       )
@@ -167,7 +177,10 @@ describe('DefineService.lookup', () => {
   it('refuses a term that is not one to define without asking the network', async () => {
     const { define, fetchText } = service(() => ok(FOAM_RESPONSE))
     expect(await define.lookup('one two three four')).toEqual({ ok: false, reason: 'invalid-term' })
-    expect(await define.lookup('https://example.org')).toEqual({ ok: false, reason: 'invalid-term' })
+    expect(await define.lookup('https://example.org')).toEqual({
+      ok: false,
+      reason: 'invalid-term'
+    })
     expect(fetchText).not.toHaveBeenCalled()
   })
 
@@ -176,11 +189,16 @@ describe('DefineService.lookup', () => {
       ok: false,
       reason: 'not-found'
     })
-    expect(await service(() => Promise.reject(new Error('ENETDOWN'))).define.lookup('foam')).toEqual({
+    expect(
+      await service(() => Promise.reject(new Error('ENETDOWN'))).define.lookup('foam')
+    ).toEqual({
       ok: false,
       reason: 'offline'
     })
-    expect(await service(() => status(0)).define.lookup('foam')).toEqual({ ok: false, reason: 'offline' })
+    expect(await service(() => status(0)).define.lookup('foam')).toEqual({
+      ok: false,
+      reason: 'offline'
+    })
     expect(await service(() => status(501, NOT_FOUND_RESPONSE)).define.lookup('foam')).toEqual({
       ok: false,
       reason: 'unavailable'

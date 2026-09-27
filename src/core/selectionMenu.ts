@@ -102,7 +102,13 @@ export class SelectionMenuService {
       this.clear(tabId)
       return
     }
-    this.set({ tabId, text: report.text, rect: report.rect, isEditable: report.isEditable, actions })
+    this.set({
+      tabId,
+      text: report.text,
+      rect: report.rect,
+      isEditable: report.isEditable,
+      actions
+    })
   }
 
   /**

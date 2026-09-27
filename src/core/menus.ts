@@ -1333,12 +1333,14 @@ export class Menus {
         run: (surface) => open(buildSearchUrl(engine, selection), surface)
       })
     }
-    // Define (CT-39; Edge's mini menu item, Chrome for Android's "Define" is the Google app's
-    // process-text item): Wiktionary's definition of a word or a short phrase (`core/define.ts`
-    // says what is a term), shown by the chrome's Define surface (`define.show`) – over the
-    // selection's box on the desktop, in a sheet on the phone. The mini menu's chip in this
-    // pass; the phone's toolbar item and the menu's stay off until the surface that shows the
-    // answer is in (4b), so no item stands with nothing behind it.
+    // Define (CT-39; Edge's mini menu's "smart action" – Chrome for Android has none of its own:
+    // its menu's items beyond Cut / Copy / Paste / Share / Select all / Web search are the text
+    // classifier's and the process-text apps', `SelectActionMenuHelper`): Wiktionary's definition
+    // of a word or a short phrase (`core/define.ts` says what is a term), shown by the chrome's
+    // Define surface (`define.show`) – over the selection's box on the desktop, in a sheet on
+    // the phone. The mini menu's chip in this pass; the phone's toolbar item and the menu's stay
+    // off until the surface that shows the answer is in (4b), so no item stands with nothing
+    // behind it.
     if (isDefinableTerm(selection)) {
       actions.push({
         id: 'define',
@@ -1350,7 +1352,11 @@ export class Menus {
         run: (surface) =>
           this.browser.emit(
             'define.show',
-            { tabId: tab.id, term: normalizeTerm(selection), rect: surface === 'mini' ? (rect ?? null) : null },
+            {
+              tabId: tab.id,
+              term: normalizeTerm(selection),
+              rect: surface === 'mini' ? (rect ?? null) : null
+            },
             win
           )
       })
