@@ -4028,6 +4028,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * `proxied`, and a popup without its pass whose every answer from the host is a refusal (no
      * 2xx) is the gate, `n/m` with the statuses; one answered 2xx that still reads nothing, or one
      * whose request never reached the proxy, stays F with that said (the runtime's, to read).
+     * The record carries the proxy's every outcome since round 22 (`Extensions.recordProxy`: a
+     * status, `failed (<exception>); left to the WebView`, `<3xx> redirect left to the WebView`,
+     * `not proxied: no host permission for the URL`): a popup without its pass whose every
+     * request the proxy could not carry for the runner's network (an unknown host, a refused or
+     * timed-out connection) is the gate too, `n/m` with the words; a failure of another kind
+     * (TLS, a body that never came, a redirect, no permission) stays F with the lines quoted.
      */
     private fun popupMarker(label: String, expr: String, page: String = "page-a.html?popup", settleMs: Long = 20_000, notMeasurable: Regex? = null, gate: String = "its service", fixtureSettleMs: Long = 1_500, platformLimit: Regex? = null, limitNote: String = "", apiHost: String? = null): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
@@ -4055,23 +4061,30 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val refused = popup != null && !found.optBoolean("pass") && (challenged || notMeasurable != null && notMeasurable.containsMatchIn(extra.optString("popupText") + " " + found.optString("text")))
         val limited = popup != null && !found.optBoolean("pass") && platformLimit != null && platformLimit.containsMatchIn(extra.optString("popupText") + " " + found.optString("text"))
         val statuses = answers.mapNotNull { proxyStatus(it) }
+        val unreachable = answers.isNotEmpty() && answers.all { PROXY_UNREACHABLE.containsMatchIn(it) }
         val apiRefused = popup != null && !found.optBoolean("pass") && apiHost != null && statuses.isNotEmpty() && statuses.none { it in 200..299 }
+        val apiUnreachable = popup != null && !found.optBoolean("pass") && apiHost != null && unreachable
         val apiRead = when {
             apiHost == null || popup == null || found.optBoolean("pass") -> ""
             answers.isEmpty() -> "; no request of the extension's to $apiHost reached the host's proxy"
-            else -> "; $apiHost answered ${statuses.joinToString("/")} through the host's proxy"
+            statuses.isEmpty() -> "; the host's proxy carried none of the extension's requests to $apiHost through (${answers.takeLast(3).joinToString("; ") { it.substringAfter(' ').take(120) }})"
+            else -> "; $apiHost answered ${statuses.joinToString("/")} through the host's proxy${if (statuses.size < answers.size) " (and ${answers.size - statuses.size} request(s) not carried: ${answers.filter { proxyStatus(it) == null }.takeLast(2).joinToString("; ") { it.substringAfter(' ').take(120) }})" else ""}"
         }
         when {
             found.optBoolean("pass") -> Grade("P", "$label: popup ${found.toString().take(240)}", extra)
             refused -> Grade("n/m", "$label: popup renders and answers with $gate's ${if (challenged) "CAPTCHA" else "refusal"} (\"${extra.optString("popupText").take(100)}\"); the core needs $gate (not measurable here)", extra)
             apiRefused -> Grade("n/m", "$label: popup renders and $gate refused every request the runtime carried for it (${answers.takeLast(3).joinToString("; ") { it.substringAfter(' ').take(90) }}), the popup showing nothing for it; the core needs $gate (not measurable here)", extra)
+            apiUnreachable -> Grade("n/m", "$label: popup renders and the runner's network could not reach $gate for any request the runtime carried (${answers.takeLast(3).joinToString("; ") { it.substringAfter(' ').take(120) }}), the popup showing nothing for it; the core needs $gate (not measurable here)", extra)
             limited -> Grade("n/a", "$label: popup renders and reports the platform's refusal (\"${extra.optString("popupText").take(100)}\"; probe ${JSONObject(found.toString()).apply { remove("console"); remove("text") }.toString().take(160)}): $limitNote", extra)
             else -> Grade("F", "$label: popup ${if (popup == null) "did not render in the core check" else found.toString().take(240)}$apiRead", extra)
         }
     }
 
-    /** The status of a CORS-proxy log line ("id METHOD status url"), null for a line of another shape. */
+    /** The status of a CORS-proxy log line ("id METHOD status url"), null for a line of another shape (a failure, a redirect or a refusal in words). */
     private fun proxyStatus(line: String): Int? = line.split(' ').getOrNull(2)?.toIntOrNull()
+
+    /** A proxy line for a request the runner's network could not carry: the host unknown, the connection refused, unreachable or timed out (`Extensions.recordProxy`'s `failed (<exception>)` words). */
+    private val PROXY_UNREACHABLE = Regex("failed \\((UnknownHostException|ConnectException|SocketTimeoutException|NoRouteToHostException|SocketException: (Connection reset|Network is unreachable|Software caused connection abort))")
 
     /**
      * An effect the action click leaves on the fixture page (Turn Off the Lights' overlay over
