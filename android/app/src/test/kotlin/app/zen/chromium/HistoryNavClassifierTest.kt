@@ -628,12 +628,20 @@ class HistoryNavClassifierTest {
         // A `VelocityTracker` over the touchpad swipe's events alone, the up added, read under
         // Chromium's cap (`EventForwarder.onTrackpadScrollEvent`), and handed to the classifier's up.
         val gesture = File(repoRoot(), "android/app/src/main/kotlin/app/zen/chromium/HistoryNavGesture.kt").readText()
-        assertTrue(gesture.contains("if (touchpad) velocity = VelocityTracker.obtain().also { it.addMovement(event) }"))
+        // Which down is the touchpad's is the one shared test's (`TouchpadSwipe.kt`, the
+        // pull-to-refresh's too), not a private twin's.
+        assertTrue(gesture.contains("val touchpad = event.isTouchpadSwipe()"))
+        assertFalse(gesture.contains("fun isTouchpadSwipe("))
+        val obtain = "velocity = if (touchpad) VelocityTracker.obtain().also { it.addMovement(event) } else null"
+        assertTrue(gesture.contains(obtain))
         assertTrue(gesture.contains("velocity?.addMovement(event)"))
         assertTrue(gesture.contains("tracker.computeCurrentVelocity(1000, HistoryNavClassifier.MAX_FLING_VELOCITY)"))
         assertTrue(gesture.contains("classifier.up(event.eventTime, releaseVelocityX(event))"))
-        // Recycled with the touch, whichever way it ended.
-        assertTrue(gesture.contains("velocity?.recycle()"))
+        // Recycled with the touch, whichever way it ended – and, at a down, before the next is
+        // obtained, so a tracker still held (a touch whose end never came) never leaks.
+        val recycle = "velocity?.recycle()"
+        assertEquals(2, Regex(Regex.escape(recycle)).findAll(gesture).count())
+        assertTrue(gesture.indexOf(recycle) in 0 until gesture.indexOf(obtain))
     }
 
     private fun repoRoot(): File {

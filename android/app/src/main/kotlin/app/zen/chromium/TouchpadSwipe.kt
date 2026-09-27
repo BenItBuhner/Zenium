@@ -11,9 +11,10 @@ import android.view.MotionEvent
  * [HistoryNavClassifier.isTouchpadSwipe] on the event's buttons and – from API 29, where it
  * exists – its classification (before that nothing is classified, and no touch is the swipe).
  *
- * The gestures that tell the swipe from a finger read it here, at the same down: the overscroll
- * history navigation arms on it from anywhere (GN-23), the pull-to-refresh never does (GN-05,
- * Chrome's touchscreen-only refresh).
+ * The two gestures that tell the swipe from a finger read it here, at the same down, and nowhere
+ * else: [HistoryNavGesture], whose overscroll history navigation arms on it from anywhere
+ * (GN-23) and measures its release velocity for Chrome's flings, and [PullToRefreshGesture],
+ * whose pull-to-refresh never does (GN-05, Chrome's touchscreen-only refresh).
  */
 internal fun MotionEvent.isTouchpadSwipe(): Boolean {
     val classification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) this.classification else HistoryNavClassifier.CLASSIFICATION_NONE

@@ -22,7 +22,10 @@ import app.zen.chromium.PullGestureClassifier.Disposition
  * A touchpad swipe's release carries its velocity too, measured as Chromium's `EventForwarder`
  * measures a touchpad fling (a `VelocityTracker` over the swipe's events, `computeCurrentVelocity(1000,
  * 8000)`), for the fling that forces the navigation short of the threshold (Chrome's
- * `kMinFlingVelocityForForceActivation`; the classifier decides, the chrome's machine commits).
+ * `kMinFlingVelocityForForceActivation`) and the one back out of the page that disallows it past
+ * the threshold (`kMinFlingVelocityForActivation`); the classifier decides, the chrome's machine
+ * commits or retracts. Which down is the touchpad's is [isTouchpadSwipe]'s say, shared with the
+ * pull-to-refresh.
  *
  * Touch distances are device pixels here and CSS pixels on the bridge. The wrapper sits ahead
  * of the pull-to-refresh in the view's touch chain: [forward] is the pull's `onTouchEvent`, so
@@ -56,8 +59,11 @@ class HistoryNavGesture(
         val step = when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 remember(event)
-                val touchpad = isTouchpadSwipe(event)
-                if (touchpad) velocity = VelocityTracker.obtain().also { it.addMovement(event) }
+                val touchpad = event.isTouchpadSwipe()
+                // A down with a tracker still held (a swipe whose up or cancel never came, a
+                // down the WebView swallowed the end of) recycles it before the next is obtained.
+                velocity?.recycle()
+                velocity = if (touchpad) VelocityTracker.obtain().also { it.addMovement(event) } else null
                 val step = classifier.down(
                     event.x, event.y, view.width.toFloat(),
                     canBack = view.historyNavEligible(Edge.LEFT, touchpad),
@@ -181,16 +187,6 @@ class HistoryNavGesture(
         tracker.addMovement(up)
         tracker.computeCurrentVelocity(1000, HistoryNavClassifier.MAX_FLING_VELOCITY)
         return tracker.xVelocity
-    }
-
-    /**
-     * Whether `event` (a down) opens a touchpad's two-finger swipe rather than a finger's touch:
-     * the classifier's test on the event's buttons and – from API 29, where it exists – its
-     * classification (before that nothing is classified, and no touch is the swipe).
-     */
-    private fun isTouchpadSwipe(event: MotionEvent): Boolean {
-        val classification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) event.classification else HistoryNavClassifier.CLASSIFICATION_NONE
-        return HistoryNavClassifier.isTouchpadSwipe(event.buttonState, classification)
     }
 
     /** A single-pointer event for the first finger, at its latest position, with the given action. */
