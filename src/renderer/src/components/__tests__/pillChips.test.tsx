@@ -41,7 +41,8 @@ const { browserStore, closeMemorySaverBubble, openUrlbar, uiStore } =
 const { closeSiteInfo, openSiteInfo, siteInfoStore } = await import('@renderer/lib/siteInfo')
 const { MEMORY_SAVER_LEAF_MS } = await import('@renderer/lib/siteChips')
 const { shareChip, useShareChip } = await import('@renderer/lib/share')
-const { publishToolbarTiering, toolbarTiering } = await import('@renderer/lib/toolbarPins')
+const { publishToolbarTiering, toolbarMenuMarks, toolbarTiering } =
+  await import('@renderer/lib/toolbarPins')
 const { viewportStore } = await import('@renderer/lib/formFactor')
 const { defaultShortcuts } = await import('@shared/shortcuts')
 const { DEFAULT_PAGE_CONTROLS } = await import('@shared/pageControls')
@@ -1800,10 +1801,16 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
     expect(chip.getAttribute('aria-haspopup')).toBe('dialog')
     expect(chip.getAttribute('aria-expanded')).toBe('false')
     expect(chip.getAttribute('data-tooltip')).toBe('Install Example App')
-    // A resident chip of the tier (no hover gate), a pinnable control marked for the pinned
-    // button's menu, with Chrome's suggestion-chip word on the label tier.
+    // A resident chip of the tier (no hover gate), a pinnable control carrying the pinned
+    // button's menu marks from W8-1's helper – the `toolbar` target with its control – as
+    // Reader View and Translate do, with Chrome's suggestion-chip word on the label tier.
     expect(chip.classList.contains('zen-pill-chip')).toBe(true)
     expect(chip.className).not.toContain('hidden')
+    expect(toolbarMenuMarks('install', 'desktop')).toEqual({
+      'data-zen-menu': 'toolbar',
+      'data-zen-menu-control': 'install'
+    })
+    expect(chip.getAttribute('data-zen-menu')).toBe('toolbar')
     expect(chip.getAttribute('data-zen-menu-control')).toBe('install')
     const label = chip.querySelector<HTMLElement>('.zen-pill-label')!
     expect(label.textContent).toBe('Install')
@@ -1814,6 +1821,28 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
     // the button's medium.
     expect(label.className.split(/\s+/).some((c) => c.startsWith('text-['))).toBe(false)
     expect(label.classList.contains('font-medium')).toBe(true)
+  })
+
+  // The seam with W8-1 (#578), folded once it landed: the Install chip takes the shared
+  // `toolbarMenuMarks` for the pinned button's right-click menu (context-menus-112) in place of
+  // a bare control mark, so the host reads the `toolbar` target with `install` under the
+  // pointer and the core answers with Unpin / Customise Toolbar… as it does for Reader View and
+  // Translate (`core/menus.ts` `toolbarButtonItems`; `install` is a `ToolbarControl`).
+  it('carries the pinned button’s menu marks from W8-1’s helper beside Reader View’s and Translate’s', () => {
+    const el = render(<NavRow state={desktop(installable)} tab={installable} compact={false} />)
+    const marked = Array.from(el.querySelectorAll<HTMLElement>('[data-zen-menu="toolbar"]'))
+    expect(marked.map((b) => b.getAttribute('data-zen-menu-control'))).toEqual([
+      'reader',
+      'translate',
+      'install'
+    ])
+    const chip = el.querySelector<HTMLElement>('[data-install-chip]')!
+    expect(marked[2]).toBe(chip)
+    for (const [k, v] of Object.entries(toolbarMenuMarks('install', 'desktop')))
+      expect(chip.getAttribute(k), k).toBe(v)
+    // The tablet's chip would carry none (the helper is the desktop layout's) – it offers no
+    // Install chip at all, as the form-factor test below has it.
+    expect(toolbarMenuMarks('install', 'tablet')).toEqual({})
   })
 
   // The first line's N1 on #589: Chrome's page actions are one size, so every glyph in the
@@ -3014,9 +3043,8 @@ describe('PillChip', () => {
  * Toolbar… rows. The star keeps its own `star` target and takes the control alone. Forward
  * carries no mark: its right-click is the stack's menu, as Chrome's Forward keeps its
  * `BackForwardMenuModel`. The desktop layout's alone: on the tablet no button is marked.
+ * (`viewportStore` is the module's import at the top, shared with the W8-6 block above.)
  */
-const { viewportStore } = await import('@renderer/lib/formFactor')
-
 describe('the toolbar button menu marks (context-menus-112, W8-1)', () => {
   const page = tab('https://example.com/some/path', {
     readerable: true,

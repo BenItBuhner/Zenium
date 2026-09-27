@@ -1091,17 +1091,16 @@ export function NavRow({
               // so the house's frame dialog stands – and the chip keeps its pressed fill while
               // the dialog is up (§9.20). The tier folds it after Translate and Reader View and
               // before the shield (`pillChipTiers.ts`); folded or unpinned, the app menu's
-              // "Install <app>…" row runs the same command. A pinnable control, it carries its
-              // control mark for the pinned button's right-click menu (context-menus-112,
-              // W8-1's `toolbarMenuMarks`): until that menu is in, the mark alone, and the chip
-              // keeps the pill's own menu as every chip does.
+              // "Install <app>…" row runs the same command. A pinnable control, it carries the
+              // pinned button's right-click menu marks (context-menus-112; W8-1's
+              // `toolbarMenuMarks` – Unpin, Customise Toolbar…) as Reader View and Translate do.
               <PillChip
                 label={`Install ${installName}`}
                 title={`Install ${installName}`}
                 popup="dialog"
                 expanded={installOpen}
                 data-install-chip=""
-                data-zen-menu-control="install"
+                {...toolbarMenuMarks('install', formFactor)}
                 className={cn(
                   'zen-pill-chip flex h-5 shrink-0 items-center justify-center gap-1 rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)]',
                   installLabelUp ? 'px-1' : 'w-5',
