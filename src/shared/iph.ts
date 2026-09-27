@@ -11,8 +11,9 @@ import type { IphBubbleState, IphState } from './types'
  *
  * Each bubble's record is this device's own (`DEVICE_LOCAL_SETTINGS`): Chrome's feature
  * engagement tracker keeps its events in the profile's own LevelDB
- * (`components/feature_engagement/internal/persistent_event_store.cc`) with no sync layer, so a
- * phone that has seen a bubble says nothing about the phone beside it. The renderer's trigger
+ * (`components/feature_engagement/internal/persistent_event_store.cc` l.25–26: a
+ * `leveldb_proto::ProtoDatabase<Event>`; l.43 `WriteEvent`) with no sync layer, so a phone that
+ * has seen a bubble says nothing about the phone beside it. The renderer's trigger
  * model (`lib/iph.ts`) reads these; the core only sanitises them (`applyPersisted`,
  * `updateSettings`).
  */
