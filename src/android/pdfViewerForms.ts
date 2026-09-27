@@ -14,8 +14,10 @@
  * (no CSS nesting) for the WebView floor and with the layer's box set by the viewer, since pdf.js
  * sizes it with CSS `round()`, which Chromium 113 has not got.
  *
- * Chrome Android's reference: its PDF viewer (PDFium-based since Chrome 130) fills forms inline
- * and prints through the system print flow; Chrome desktop's saves through the download flow.
+ * Chrome's reference: Chrome Android's inline viewer (the Jetpack PDF library over PDFium, on by
+ * default from Chrome 135; form filling with its PDF V2 – `PdfCoordinator.java`) fills forms
+ * and offers Save copy and Print; Chrome desktop's viewer downloads a filled form "With your
+ * changes" (`SaveEditedPDFForm`, Chrome 85) and prints through the system print flow.
  */
 
 /** The class of the layer over each page; pdf.js's own name kept beside it for anyone reading the DOM. */
@@ -32,18 +34,30 @@ export const PDF_FORMS_LAYER_CLASS = 'zen-pdf-forms annotationLayer'
  * itself, which turns with the viewer's rotation, and on any element under it – a widget the
  * document rotates (`/MK /R`) gets the attribute on its own section (`AnnotationElement.setRotation`,
  * `display/annotation_layer.js`) and relies on the same rules.
+ *
+ * The inks are the design system's (v2 §1, §9.12) where pdf.js's are the system's: the page is
+ * white paper in either theme, so they are the light theme's, as literals – the viewer document
+ * has no tokens of the chrome's. A fillable field is tinted with the control accent (the default
+ * space colour, #6264dc, mixed 40 % towards black: `--v2-accent`) at the selected row's 12 %
+ * (`--v2-selected`) in place of pdf.js's blue; the focused widget draws the accent as its 2 px
+ * ring inside its edge, the text field's way, with no halo outside it; a required field is
+ * edged in the danger ink (`--v2-danger`) rather than red; a hovered field takes the .15
+ * hairline (`--v2-border`) rather than black. The widget's box is the document's – often 12 to
+ * 16 px tall at 100 % – so its corner stays pdf.js's 2, the checkbox's radius (§2).
  */
 export const PDF_FORMS_CSS = `
 .zen-pdf-page { --user-unit: 1; --total-scale-factor: calc(var(--scale-factor) * var(--user-unit)); --scale-round-x: 1px; --scale-round-y: 1px; }
 .zen-pdf-forms {
   color-scheme: only light;
-  --annotation-unfocused-field-background: url("data:image/svg+xml;charset=UTF-8,<svg width='1px' height='1px' xmlns='http://www.w3.org/2000/svg'><rect width='100%' height='100%' style='fill:rgba(0, 54, 255, 0.13);'/></svg>");
-  --annotation-unfocused-field-filter: url("data:image/svg+xml;charset=UTF-8,<svg xmlns='http://www.w3.org/2000/svg'><filter id='pdfjsFillableField' x='0%' y='0%' width='100%' height='100%' color-interpolation-filters='sRGB'><feFlood flood-color='rgb(0,54,255)' flood-opacity='0.13' result='f'/><feComposite in='f' in2='SourceGraphic' operator='over'/></filter></svg>#pdfjsFillableField");
-  --input-focus-border-color: Highlight;
-  --input-focus-outline: 1px solid Canvas;
+  --zen-pdf-accent: #272858;
+  --zen-pdf-danger: #b02a2a;
+  --annotation-unfocused-field-background: url("data:image/svg+xml;charset=UTF-8,<svg width='1px' height='1px' xmlns='http://www.w3.org/2000/svg'><rect width='100%' height='100%' style='fill:rgba(39, 40, 88, 0.12);'/></svg>");
+  --annotation-unfocused-field-filter: url("data:image/svg+xml;charset=UTF-8,<svg xmlns='http://www.w3.org/2000/svg'><filter id='pdfjsFillableField' x='0%' y='0%' width='100%' height='100%' color-interpolation-filters='sRGB'><feFlood flood-color='rgb(39,40,88)' flood-opacity='0.12' result='f'/><feComposite in='f' in2='SourceGraphic' operator='over'/></filter></svg>#pdfjsFillableField");
+  --input-focus-border-color: var(--zen-pdf-accent);
+  --input-focus-outline: none;
   --input-unfocused-border-color: transparent;
   --input-disabled-border-color: transparent;
-  --input-hover-border-color: black;
+  --input-hover-border-color: rgb(0 0 0 / 0.15);
   position: absolute;
   top: 0;
   left: 0;
@@ -83,7 +97,7 @@ export const PDF_FORMS_CSS = `
 }
 .zen-pdf-forms .textWidgetAnnotation :is(input, textarea):required,
 .zen-pdf-forms .choiceWidgetAnnotation select:required,
-.zen-pdf-forms .buttonWidgetAnnotation:is(.checkBox, .radioButton) input:required { outline: 1.5px solid red; }
+.zen-pdf-forms .buttonWidgetAnnotation:is(.checkBox, .radioButton) input:required { outline: 1px solid var(--zen-pdf-danger); }
 .zen-pdf-forms .choiceWidgetAnnotation select option { padding: 0; }
 .zen-pdf-forms .textWidgetAnnotation textarea { resize: none; }
 .zen-pdf-forms .textWidgetAnnotation :is(input, textarea)[disabled],

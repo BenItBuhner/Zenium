@@ -12,6 +12,11 @@ import {
   formatPdfZoom,
   isPdfViewerTab,
   parsePageNumber,
+  PDF_PRINT_REFUSED,
+  PDF_SAVE_REFUSED,
+  pdfPrintRow,
+  pdfSavedMessage,
+  pdfSaveRow,
   pdfViewerStore,
   pdfZoomIs,
   setPdfReport
@@ -135,5 +140,52 @@ describe('the bar’s arithmetic', () => {
     expect(parsePageNumber('2.5', 3)).toBeNull()
     expect(parsePageNumber('two', 3)).toBeNull()
     expect(parsePageNumber('', 3)).toBeNull()
+  })
+})
+
+describe('the overflow’s Save and Print rows (CT-44)', () => {
+  it('offers Save for a document with a form, enabled once a field changed, and not otherwise', () => {
+    // No form: nothing a copy would hold that the file does not – no row.
+    expect(pdfSaveRow(report())).toBe('absent')
+    expect(pdfSaveRow(null)).toBe('absent')
+    // A form untouched: the row at .4 until a field changes.
+    expect(pdfSaveRow(report({ form: { fields: 12, modified: false } }))).toBe('disabled')
+    expect(pdfSaveRow(report({ form: { fields: 12, modified: true } }))).toBe('enabled')
+    // Only an open document has a form to speak of.
+    for (const state of ['loading', 'password', 'error'] as const)
+      expect(pdfSaveRow(report({ state, form: { fields: 12, modified: true } }))).toBe('absent')
+  })
+
+  it('offers Print where the host prints, and like Share needs only the file', () => {
+    expect(pdfPrintRow(report(), false)).toBe('absent')
+    expect(pdfPrintRow(report({ form: { fields: 3, modified: true } }), false)).toBe('absent')
+    expect(pdfPrintRow(report(), true)).toBe('enabled')
+    // The file is there whatever the viewer made of it (Share's rule).
+    expect(pdfPrintRow(report({ state: 'password' }), true)).toBe('enabled')
+    expect(pdfPrintRow(report({ state: 'error' }), true)).toBe('enabled')
+    // Not before the document began to load, and not before it reported at all.
+    expect(pdfPrintRow(report({ state: 'loading' }), true)).toBe('disabled')
+    expect(pdfPrintRow(null, true)).toBe('disabled')
+  })
+
+  it('names the destination of a written copy as the capture card does, and states a refusal of the document', () => {
+    // Android's public collection: the directory `Download`, the Files app's "Downloads".
+    expect(pdfSavedMessage('/storage/emulated/0/Download/mooring (1).pdf')).toBe(
+      'Saved to Downloads'
+    )
+    // Below Android 10 the host writes under its own files: the same folder by name.
+    expect(
+      pdfSavedMessage('/storage/emulated/0/Android/data/app.zen/files/Download/mooring.pdf')
+    ).toBe('Saved to Downloads')
+    // A host that names no path answers the row's address: no folder to name.
+    expect(pdfSavedMessage('content://media/external/downloads/1042')).toBe('Saved to Downloads')
+    expect(pdfSavedMessage('mooring.pdf')).toBe('Saved to Downloads')
+    // Any other folder by its own name – the shared reading (`folderNameOf`).
+    expect(pdfSavedMessage('/storage/emulated/0/Documents/Forms/mooring.pdf')).toBe(
+      'Saved to Forms'
+    )
+    // One clause each, uncontracted, stated of the thing (the register).
+    expect(PDF_SAVE_REFUSED).toBe('This PDF cannot be saved.')
+    expect(PDF_PRINT_REFUSED).toBe('This PDF cannot be printed.')
   })
 })

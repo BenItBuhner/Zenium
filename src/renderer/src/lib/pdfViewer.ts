@@ -9,6 +9,7 @@ import {
   type PdfViewerReport
 } from '@shared/pdfViewerProtocol'
 import { cmd, run } from './api'
+import { folderNameOf } from './captureOverlay'
 import { createStore } from './store'
 import { browserStore } from './ui'
 
@@ -159,4 +160,52 @@ export function parsePageNumber(text: string, pageCount: number): number | null 
   if (!/^\d+$/.test(trimmed)) return null
   const page = Number(trimmed)
   return page >= 1 && page <= pageCount ? page : null
+}
+
+/**
+ * A row of the overflow that the document or the host may not offer: `absent`, no row at all;
+ * `disabled`, the row at .4 (§9.30) until the document lets it act; `enabled`.
+ */
+export type PdfRowState = 'absent' | 'disabled' | 'enabled'
+
+/**
+ * The Save row (CT-44: a filled form written as a copy through `pdf.save`): offered for a
+ * document with form fields, and enabled once one of them changed since the document opened
+ * or a copy was last written – the viewer's `form.modified`, the gate pdf.js's own viewer puts
+ * on its unsaved-changes warning; Chrome desktop's viewer offers its "With your changes"
+ * download only once there are changes. A document without a form has nothing a copy would
+ * hold that the file does not: no row.
+ */
+export function pdfSaveRow(report: PdfViewerReport | null): PdfRowState {
+  if (!report || report.state !== 'ready' || report.form.fields === 0) return 'absent'
+  return report.form.modified ? 'enabled' : 'disabled'
+}
+
+/**
+ * The Print row (`pdf.print`, the system print flow with the file – with the changes when the
+ * form holds any): offered where the host has the verb (`capabilities.pdfPrint`), and like
+ * Share it needs only the file, which is there once the document has begun to load whatever
+ * the viewer makes of it.
+ */
+export function pdfPrintRow(report: PdfViewerReport | null, hostPrints: boolean): PdfRowState {
+  if (!hostPrints) return 'absent'
+  return report === null || report.state === 'loading' ? 'disabled' : 'enabled'
+}
+
+/** `pdf.save` answered no path: the tab shows no viewer, the host writes no files, or the copy failed. */
+export const PDF_SAVE_REFUSED = 'This PDF cannot be saved.'
+
+/** `pdf.print` answered false: the host has no print verb after all, or the copy for it failed. */
+export const PDF_PRINT_REFUSED = 'This PDF cannot be printed.'
+
+/**
+ * What the toast says once the copy is written: the destination, as the capture card's Save and
+ * the share hub's name theirs (§9.33) – the folder the path landed in by its own name, with
+ * Android's public collection (`Environment.DIRECTORY_DOWNLOADS`, the directory `Download`)
+ * under the name its Files app gives it; "Downloads" where the path names no folder (a
+ * `content:` address from a host that could not read the row's path).
+ */
+export function pdfSavedMessage(path: string): string {
+  const folder = /^[a-z][a-z0-9+.-]+:/i.test(path) ? '' : folderNameOf(path)
+  return `Saved to ${folder === '' || folder === 'Download' ? 'Downloads' : folder}`
 }
