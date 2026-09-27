@@ -3,8 +3,11 @@ import { formatBytes } from '@shared/siteInfo'
 import type { MenulistOption } from '@renderer/components/siteControls/primitives'
 
 /**
- * The words of Clear browsing data (`components/siteControls/ClearBrowsingDataDialog`): the range
- * menulist, the type labels, the count line under each checkbox and the toast once it is done.
+ * The words of Delete browsing data (`components/siteControls/ClearBrowsingDataDialog`, the
+ * phone's `ClearBrowsingDataForm`): the range menulist, the type labels, the count line under
+ * each checkbox and the toast once it is done. Chrome's verb since M124 is "Delete"
+ * (`IDS_SETTINGS_CLEARED_DATA` "Data deleted.", Android's quick-delete snackbar "<period>
+ * deleted"); the identifiers keep Chrome's own `clear` names, as Chrome's string ids do.
  */
 
 export const RANGE_OPTIONS: ReadonlyArray<MenulistOption<BrowsingDataRange>> = [
@@ -26,7 +29,7 @@ export const TYPE_LABEL: Record<BrowsingDataType, string> = {
   recentlyClosed: 'Recently closed tabs'
 }
 
-/** "Cleared history, cookies and cache" */
+/** "Deleted history, cookies and site data and the cache" */
 export function clearedToast(cleared: BrowsingDataType[]): string {
   const words: Record<BrowsingDataType, string> = {
     history: 'history',
@@ -38,11 +41,11 @@ export function clearedToast(cleared: BrowsingDataType[]): string {
     sitePermissions: 'site settings',
     recentlyClosed: 'recently closed tabs'
   }
-  if (cleared.length === 0) return 'Nothing to clear'
+  if (cleared.length === 0) return 'Nothing to delete'
   const list = cleared.map((t) => words[t])
   const text =
     list.length === 1 ? list[0] : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`
-  return `Cleared ${text}`
+  return `Deleted ${text}`
 }
 
 /** The line under a type's checkbox: how much the range holds, or why it cannot go now. */

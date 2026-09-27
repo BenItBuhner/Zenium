@@ -75,10 +75,12 @@ export const SITE_DATA_TEXT = {
   clearOnExit: {
     heading: 'Delete browsing data on exit',
     // The choice and the passwords line, nothing more, on both hosts (the #322 ruling on Q6);
-    // the next-start timing is said once, on the phone's Clear on exit row (ruling (d)).
+    // the next-start timing is said once, on the phone's Clear on exit row (ruling (d)). The
+    // verb is the family's "delete" (W8-7, Chrome's words since M124); the option's own name
+    // stays Chrome's kept "Clear on exit" (`IDS_SETTINGS_SITE_SETTINGS_SESSION_ONLY`).
     description:
-      'Choose what to clear every time you close Zenium. Saved passwords are never cleared this way.',
-    pending: 'A clear owed from the last close is still running.'
+      'Choose what to delete every time you close Zenium. Saved passwords are never deleted this way.',
+    pending: 'A deletion owed from the last close is still running.'
   },
   viewer: {
     open: 'See all site data and permissions',
