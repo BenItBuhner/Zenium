@@ -246,6 +246,10 @@ describe('collectLocal', () => {
     // …and turned the hover card's memory line on (W8-10; off by default): Chrome's
     // browser.hovercard.memory_usage_enabled is local state too.
     src.settings.hoverCardMemoryUsage = true
+    // …and last deleted all time from the Delete browsing data dialog (services pass 13, seed
+    // #20): Chrome's browser.clear_data.time_period stopped syncing in CL 5398105 ("[CBD] Make
+    // options not syncable"), so the range the dialog opens on is this device's alone.
+    src.settings.clearBrowsingDataRange = 'all'
     const data = collectLocal(src, defaultScope()).get('settings')?.data as Record<string, unknown>
     expect(DEVICE_LOCAL_SETTINGS).toEqual([
       'onboardingDone',
@@ -259,8 +263,10 @@ describe('collectLocal', () => {
       'hoverCardMemoryUsage',
       'bookmarkRowSortOrder',
       'bookmarkRowDisplay',
-      'iph'
+      'iph',
+      'clearBrowsingDataRange'
     ])
+    expect(data).not.toHaveProperty('clearBrowsingDataRange')
     expect(data).not.toHaveProperty('sidebarExpandOnHover')
     expect(data).not.toHaveProperty('onboardingDone')
     expect(data).not.toHaveProperty('searchChoice')
@@ -293,6 +299,7 @@ describe('collectLocal', () => {
     expect(src.settings.unloadEnabled).toBe(false)
     expect(src.settings.unloadTimeoutMinutes).toBe(240)
     expect(src.settings.touchpadSwipeToNavigate).toBe(false)
+    expect(src.settings.clearBrowsingDataRange).toBe('all')
   })
 
   it('an edit of Memory Saver’s mode or timer, or of Energy Saver, stamps nothing – the per-key metadata holds no entry for a device-local key, and the record is unchanged by the edit (W8-2)', () => {

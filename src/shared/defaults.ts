@@ -23,7 +23,11 @@ import { DEFAULT_PROMO_STATE } from './defaultBrowser'
 import { DEFAULT_BLOCKING_SETTINGS } from './blocking'
 import { DEFAULT_BOOKMARK_ROW_DISPLAY, DEFAULT_BOOKMARK_ROW_SORT_ORDER } from './bookmarkRows'
 import { DEFAULT_PAGE_CONTROLS } from './pageControls'
-import { DEFAULT_PRELOAD_PAGES, DEFAULT_PRIVACY_SETTINGS } from './privacy'
+import {
+  DEFAULT_CLEAR_BROWSING_DATA_RANGE,
+  DEFAULT_PRELOAD_PAGES,
+  DEFAULT_PRIVACY_SETTINGS
+} from './privacy'
 import { DEFAULT_SPELLCHECK } from './spellcheck'
 import { DEFAULT_READER_PREFERENCES } from './reader'
 import { DEFAULT_READ_ALOUD_SETTINGS } from './readAloud'
@@ -327,6 +331,7 @@ export const DEFAULT_SETTINGS: Settings = {
   privacy: structuredClone(DEFAULT_PRIVACY_SETTINGS),
   preloadPages: DEFAULT_PRELOAD_PAGES,
   autoRevokeUnusedPermissions: true,
+  clearBrowsingDataRange: DEFAULT_CLEAR_BROWSING_DATA_RANGE,
   newTab: structuredClone(DEFAULT_NEW_TAB_SETTINGS),
   gestureHintDone: false,
   fullscreenHintDone: false,
