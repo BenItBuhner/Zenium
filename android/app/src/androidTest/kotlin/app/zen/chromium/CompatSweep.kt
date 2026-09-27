@@ -7814,9 +7814,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // whose "Log in" is login.zoominfo.com; AB Download Manager's worker hands the tab's
         // downloads to the desktop app over `runtime.connectNative` (its package name) or the
         // app's `http://localhost:15151` port; NotebookLM Web Importer's popup reads "Account not
-        // connected" without a Google session; Page Assist's click opens its side panel
-        // (`sidePanel.open({tabId})`, `sidepanel.html`), a chat composer over "Select a model" (a
-        // local Ollama the phone has not); Compose AI's popup signs in at compose.ai; Revision
+        // connected" without a Google session; Page Assist's click opens its Web UI as a TAB
+        // (`actionIconClick` unset reads `webui`, so `tabs.create({url: runtime.getURL('/options.html')})`;
+        // `sidePanel.open({tabId})` only once the setting is `sidePanel` – round 23's BEFORE
+        // waited for a side panel the default click never opens), a chat composer over "Select a
+        // model" (a local Ollama the phone has not); Compose AI's popup signs in at compose.ai; Revision
         // History's popup signs in at revisionhistory.com; WebRTC Control's options page
         // (`data/options/options.html`) sends `load` to its worker and renders the `storage`
         // answer – its `#method` select of four policies (`disable_non_proxied_udp` when never
@@ -7881,7 +7883,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("fofjcndophjadilglgimelemjkjblgpf", "ZoomInfo", "zoominfo", core = accountGate("ZoomInfo", Regex("zoominfo\\.com", RegexOption.IGNORE_CASE), gate = "a ZoomInfo account (its click opens its side panel for the tab, whose sign-in is login.zoominfo.com)")),
         Row("bbobopahenonfdgjgaleledndnnfhooj", "AB Download Manager Browser Integration", "ab-download-manager", core = serviceBacked("AB Download Manager Browser Integration", "its worker hands the tab's downloads to the AB Download Manager desktop app over `runtime.connectNative` (its package name) or the app's `http://localhost:15151` port; neither is on the phone", native = true)),
         Row("ijdefdijdmghafocfmmdojfghnpelnfn", "NotebookLM Web Importer", "notebooklm-web-importer", account = true, core = popupLogin("NotebookLM Web Importer")),
-        Row("jfgfiigpkhlkbnfnbobbkinehhfdhndo", "Page Assist - A Web UI for Local AI Models", "page-assist", core = panelMarker("Page Assist", "page-a.html?pageassist", PAGE_ASSIST_PANEL, settleMs = 35_000)),
+        Row("jfgfiigpkhlkbnfnbobbkinehhfdhndo", "Page Assist - A Web UI for Local AI Models", "page-assist", core = actionPage("Page Assist", Regex("options\\.html"), PAGE_ASSIST_PANEL, listOf("page-a.html?pageassist"), settleMs = 35_000)),
         Row("dlepebghjlnddgihakmnpoiifjjpmomh", "Revision History: Writing Process Visibility for Google Docs & Slides", "revision-history", account = true, core = popupLogin("Revision History")),
         Row("fjkmabmdepjfammlpliljpnbhleegehm", "WebRTC Control", "webrtc-control", core = ownPage("WebRTC Control", "data/options/options.html", WEBRTC_CONTROL_OPTIONS, gate = "a WebRTC IP handling policy the engine takes: the phone stores and publishes `privacy.network.webRTCIPHandlingPolicy` and the WebView has no policy API to hand it to (the standing WebView blocker)")),
         Row("pmjeegjhjdlccodhacdgbgfagbpmccpe", "Clockify Time Tracker", "clockify", account = true, core = popupLogin("Clockify Time Tracker")),
@@ -15493,7 +15495,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
 
         // --- the expressions of compat round 23 (ranks 571-600) ---------------------------------
 
-        /** Page Assist's side panel (`sidepanel.html`): its chat composer (a textarea or a contenteditable) or its form drawn, with the panel's text ("Select a model" over a local Ollama the phone has not). */
+        /** Page Assist's Web UI (`options.html`, the tab its click opens by default) or its side panel (`sidepanel.html`): its chat composer (a textarea or a contenteditable) or its form drawn, with the page's text ("Select a model" over a local Ollama the phone has not). */
         private const val PAGE_ASSIST_PANEL =
             "(function(){var ta=document.querySelector('textarea');var ce=document.querySelector('[contenteditable=\"true\"]');var form=document.querySelector('form');var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
                 "return JSON.stringify({pass:!!(ta||ce||form)&&t.length>0,textarea:!!ta,editable:!!ce,form:!!form,text:t.slice(0,140)})})()"
