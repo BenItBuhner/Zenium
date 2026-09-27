@@ -784,13 +784,18 @@ class TabWebView(
         val (phase, payload) = when (event) {
             is HistoryNavClassifier.Nav.Start -> "start" to json("edge" to if (event.edge == HistoryNavClassifier.Edge.LEFT) "left" else "right")
             is HistoryNavClassifier.Nav.Move -> "move" to json("travel" to event.travel.toDouble(), "time" to event.time)
-            // `force`: a touchpad swipe let go faster than Chrome's fling threshold navigates whatever its travel.
-            is HistoryNavClassifier.Nav.Release -> "release" to json("time" to event.time, "force" to event.force)
+            // `force`: a touchpad swipe let go faster than Chrome's fling threshold navigates whatever its travel;
+            // `disallow`: one flung back out of the page at Chrome's -500 px/s or faster navigates never.
+            is HistoryNavClassifier.Nav.Release -> "release" to json("time" to event.time, "force" to event.force, "disallow" to event.disallow)
             is HistoryNavClassifier.Nav.Cancel -> "cancel" to json("time" to event.time)
         }
         if (event !is HistoryNavClassifier.Nav.Move) {
-            val force = if (event is HistoryNavClassifier.Nav.Release && event.force) " (forced by the fling)" else ""
-            Log.d(PULL_TAG, "history $phase on $tabId (${url ?: "no url"})$force")
+            val fling = when {
+                event is HistoryNavClassifier.Nav.Release && event.force -> " (forced by the fling)"
+                event is HistoryNavClassifier.Nav.Release && event.disallow -> " (disallowed by the fling)"
+                else -> ""
+            }
+            Log.d(PULL_TAG, "history $phase on $tabId (${url ?: "no url"})$fling")
         }
         host.historyNavEvent(tabId, phase, payload)
     }

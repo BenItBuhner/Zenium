@@ -567,14 +567,81 @@ class HistoryNavClassifierTest {
         val forward = classifier()
         draggingSwipe(forward, Edge.RIGHT)
         assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, force = true)), forward.up(30L, velocityX = -2000f))
+        // Flicked the other way, back out of the page: not forced – and, at that speed, disallowed.
         val forwardBack = classifier()
         draggingSwipe(forwardBack, Edge.RIGHT)
-        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, force = false)), forwardBack.up(30L, velocityX = 2000f))
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, force = false, disallow = true)), forwardBack.up(30L, velocityX = 2000f))
 
-        // Pulling in from the left, let go flicking back towards the edge: not forced.
+        // Pulling in from the left, let go flicking back towards the edge: not forced (disallowed).
         val back = classifier()
         draggingSwipe(back)
-        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, force = false)), back.up(30L, velocityX = -3000f))
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, force = false, disallow = true)), back.up(30L, velocityX = -3000f))
+    }
+
+    // --- the fling back out of the page that disallows it (Chrome's DISALLOW_ACTIVATION) ----------
+
+    @Test
+    fun theDisallowsThresholdIsChromesMinFlingVelocityForActivation() {
+        // `kMinFlingVelocityForActivation` (`ui/android/overscroll_refresh.cc:27`): -500 px/s;
+        // `GetActivationStatus` (`:272-276`) allows a velocity over it and disallows one at or under.
+        assertEquals(-500f, HistoryNavClassifier.DISALLOW_VELOCITY)
+    }
+
+    @Test
+    fun aTouchpadSwipeFlungBackOutOfThePageIsDisallowedWhateverItsTravel() {
+        // Past the threshold (250 px of 240 at this density), let go flicking back towards the
+        // left edge at 600 px/s: disallowed – the chrome's machine retracts instead of navigating.
+        val c = classifier()
+        draggingSwipe(c, travel = 250f)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, force = false, disallow = true)), c.up(30L, velocityX = -600f))
+        assertEquals(State.IDLE, c.state)
+
+        // The rule is inclusive at -500 (`velocity > -500` allows): exactly -500 disallows, -499 not.
+        val at = classifier()
+        draggingSwipe(at, travel = 250f)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, disallow = true)), at.up(30L, velocityX = -500f))
+        val just = classifier()
+        draggingSwipe(just, travel = 250f)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, disallow = false)), just.up(30L, velocityX = -499f))
+
+        // Still, or drifting on into the page under the force threshold: the travel's alone.
+        val still = classifier()
+        draggingSwipe(still, travel = 250f)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L)), still.up(30L, velocityX = 0f))
+        val drifting = classifier()
+        draggingSwipe(drifting, travel = 250f)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L)), drifting.up(30L, velocityX = 300f))
+
+        // Short of the threshold the word is the same; the machine retracted anyway.
+        val short = classifier()
+        draggingSwipe(short)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, disallow = true)), short.up(30L, velocityX = -600f))
+    }
+
+    @Test
+    fun theDisallowReadsTheDirectionTheSwipePullsAndNeverMeetsTheForce() {
+        // Pulling in from the right (a forward): back out of the page is rightward, `+velocity.x`.
+        val forward = classifier()
+        draggingSwipe(forward, Edge.RIGHT, travel = 250f)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, disallow = true)), forward.up(30L, velocityX = 500f))
+        val forwardIn = classifier()
+        draggingSwipe(forwardIn, Edge.RIGHT, travel = 250f)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L)), forwardIn.up(30L, velocityX = -300f))
+        // One fling, one direction: a forced release is never disallowed, a disallowed one never forced.
+        val forced = classifier()
+        draggingSwipe(forced, travel = 250f)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, force = true, disallow = false)), forced.up(30L, velocityX = 2000f))
+    }
+
+    @Test
+    fun aFingersDragIsNeverDisallowed() {
+        // Chrome's rule is written for both devices, but a finger's release reaches it at zero
+        // velocity (`OnScrollEnd(gfx::Vector2dF())`, `overscroll_controller_android.cc:376-378`):
+        // the finger flicked back towards the edge at 5000 px/s navigates as its travel says.
+        val finger = classifier()
+        dragFromLeft(finger, 30f)
+        assertEquals(Step(Disposition.CONSUME, Nav.Move(20f, 20L)), finger.move(70f, 600f, 20L))
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, force = false, disallow = false)), finger.up(30L, velocityX = -5000f))
     }
 
     @Test
@@ -607,8 +674,8 @@ class HistoryNavClassifierTest {
         assertEquals(1, Regex(Regex.escape(guard)).findAll(tabWebView).count())
         val fingerRule = "if ((!touchpad && !host.threeButtonNavigation) || backTransition != null) return false"
         assertTrue(tabWebView.indexOf(guard) in 0 until tabWebView.indexOf(fingerRule))
-        // The release carries the fling's word to the chrome's machine.
-        assertTrue(tabWebView.contains("\"release\" to json(\"time\" to event.time, \"force\" to event.force)"))
+        // The release carries the fling's two words to the chrome's machine.
+        assertTrue(tabWebView.contains("\"release\" to json(\"time\" to event.time, \"force\" to event.force, \"disallow\" to event.disallow)"))
 
         // The host mirrors the chrome's setting (on until it says otherwise) on the same bridge
         // path as the pull-to-refresh's, and the interface's default keeps a chrome-less host on.
