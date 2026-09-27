@@ -1,10 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The search widget's fill in Material You's colours on Android 12+ (WID-03; values-v31/colors.xml):
-     Chrome's colorSurfaceContainerHigh, which MDC 1.12 resolves for dynamic colour to the neutral
-     variant palette at tone 92 (values-v31/tokens.xml:98 → color-v31/m3_ref_palette_dynamic_neutral_variant92.xml)
-     – system_neutral2_600 re-lit to L* 92, since the system publishes no step at 92. -->
+     Chrome's colorSurfaceContainerHigh, which MDC 1.12.0 resolves for dynamic colour to the neutral
+     variant palette at tone 92 (values-v31/tokens.xml:97 → color-v31/m3_ref_palette_dynamic_neutral_variant92.xml:18)
+     – system_neutral2_600 re-lit to L* 92, since the system publishes no step at 92 – at Chrome's
+     0.9 over the wallpaper (chrome/android/java/res/layout/search_widget_template.xml:19). Chrome
+     puts the 0.9 on its pill view, so its hint and mic fade with it; here the alpha rides the fill
+     alone, on this item, so the mark, the hint, the mic and the mask stay opaque. -->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item
+        android:alpha="0.9"
         android:color="@android:color/system_neutral2_600"
         android:lStar="92" />
 </selector>

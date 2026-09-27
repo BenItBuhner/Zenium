@@ -5,8 +5,9 @@ name: Android widget demo
 # stills, the frame sheets and the findings: the widget's 4x1 face bound on an AppWidgetHost of
 # the driver's (`appwidget grantbind`) and inflated as a launcher inflates it, in the system's
 # night mode over a wallpaper-like backdrop – Zenium's mark, the omnibox's hint, the mic, the
-# mask – its colours read against the system's Material You roles and the face re-laid at the
-# three-cell minimum and at the two cells no launcher offers (WID-03); a real finger on each part with Zenium in front (the mic lands in voice search on a
+# mask – its colours read against the system's Material You roles, the fill at Chrome's 0.9 over
+# the wallpaper and without a hairline, the provider's floor read as four cells (WID-03); a real
+# finger on each part with Zenium in front (the mic lands in voice search on a
 # stand-in recogniser, the pill in the omnibox with the keyboard up – its landing traced, RULING
 # 5's long tasks by the renderer's own clock – the mask in a new private tab); the COLD landings
 # with the browser's task removed and the widget's own PendingIntent replayed for search, private

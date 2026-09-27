@@ -63,9 +63,12 @@
       wallpaper, as a sheet floats over the page), the hairline the border's, the glyphs the text
       ink, the hint the text ink at 69 % (§9.29's deemphasised text; res/color/widget_search_hint.xml
       derives it from the ink), the mark the app icon's indigo (Theme.Zen's primary, lifted for
-      dark as the theme lifts it). On Android 12+ the fill, hairline, ink and hint take the
-      system's Material You colours instead (values-v31/colors.xml, values-v34/colors.xml and the
-      night pair; WID-03), as Chrome's widget does; the mark stays this indigo everywhere.
+      dark as the theme lifts it). On Android 12+ the fill, ink and hint take the system's
+      Material You colours instead (values-v31/colors.xml, values-v34/colors.xml and the night
+      pair, the fill in res/color-v31/widget_search_fill.xml and its pairs at Chrome's 0.9 over
+      the wallpaper; WID-03), as Chrome's widget does, and the pill loses its hairline
+      (res/drawable-v31/widget_search_pill.xml) – the hairline is the pre-31 face's alone; the
+      mark stays this indigo everywhere.
     -->
     <color name="widget_search_fill">@color/v2_panel_light</color>
     <color name="widget_search_hairline">@color/v2_border_light</color>
