@@ -60,14 +60,34 @@ export interface TextMatcher {
 /** Set id reported for text matches (the matcher works on all enabled text sets at once). */
 export const TEXT_MATCH_SET_ID = 'filter-text'
 
+/**
+ * Where a set's rules are read back from once the engine has let its copy go: the store that
+ * confirmed the set document is on disk (`RuleSetStore.readRules`).
+ */
+export interface RuleDocumentSource {
+  /** The rules of the set's document as it stands on disk; null when it cannot be read. */
+  readRules(id: string): Rule[] | null
+}
+
 interface StoredSet {
   summary: RuleSetSummary
-  rules: Rule[]
+  /**
+   * The rules as `setRuleSet` was handed them – the set document's source and what the table is
+   * built from – or null once the engine let them go: on a host that never decides in
+   * JavaScript (Android, whose Kotlin engine reads the set document), once the store confirmed
+   * the document is on disk ({@link RuleEngine.rulesPersisted}), the copy goes and the summary
+   * stays; the rare call that wants the rules (`rulesOf`; a table build on a host that decides
+   * after all) reads them back through `source`.
+   */
+  rules: Rule[] | null
+  /** Where let-go rules are read back from; set with the drop. */
+  source: RuleDocumentSource | null
   /**
    * The rules compiled as a struct-of-arrays table (`ruleTable.ts`), in resolution order: what
    * `decideLinear` scans and `index` is built from. Built by the first decision that reads the
    * set (or by `setRuleSet` once the engine indexes), so a host whose native engine decides
-   * (Android) never holds one: after `setRuleSet` it keeps the `rules` and the summary alone.
+   * (Android) never holds one: after `setRuleSet` it keeps the summary and – until the store
+   * confirms the set document is written – the `rules`.
    */
   table: RuleTable | null
   /** The set's index, or null while a large set's is still to be built (`decide` scans it then). */
@@ -447,7 +467,10 @@ function scanTable(table: RuleTable, setIndex: number, resolution: Resolution): 
  *
  * Pure and synchronous. Persistence is a subscriber (`RuleSetStore`), so the engine never holds
  * on to filter text: `setRuleSet` compiles, notifies listeners (who see the text once) and keeps
- * only the summary.
+ * only the summary and the structured rules – and on a host that never decides in JavaScript
+ * (Android) not even those: once the store confirms a set's document is written
+ * ({@link rulesPersisted}) they go too, and the rare call that wants them (`rulesOf`) reads the
+ * document back.
  *
  * Decisions go through a per-set {@link RuleIndex} (`decide`); the linear scan of every rule is
  * kept as `decideLinear`, the reference the index is tested against. Indexes are only built on
@@ -464,6 +487,14 @@ export class RuleEngine implements BlockingEngine {
   private readonly listeners = new Set<RuleSetListener>()
   /** Whether sets get indexes: on from the first `decide`. */
   private indexing = false
+  /**
+   * Whether this engine decides in JavaScript: on from the first decision (`decide`,
+   * `decideLinear`, `buildIndexes`) and from a text matcher's installation (the desktop installs
+   * Ghostery's before its sets load). An engine that decides builds its tables from the sets'
+   * rules, so it keeps them; one that never does (Android, whose Kotlin engine reads the set
+   * documents) lets them go once the store confirms the document is written.
+   */
+  private decides = false
   private readonly indexJobs: IndexJob[] = []
   private indexTimer: ReturnType<typeof setTimeout> | null = null
   /** Stamp of the current `decide`, marking the rules the index has visited for it. */
@@ -503,7 +534,7 @@ export class RuleEngine implements BlockingEngine {
     if (input.updatedAt !== undefined) summary.updatedAt = input.updatedAt
     if (input.attribution) summary.attribution = { ...input.attribution }
     if (input.partitions) summary.partitions = [...input.partitions]
-    const stored: StoredSet = { summary, rules, table: null, index: null }
+    const stored: StoredSet = { summary, rules, source: null, table: null, index: null }
     this.sets.set(input.id, stored)
     this.ordered = null
     if (this.indexing) this.indexSet(stored)
@@ -550,18 +581,33 @@ export class RuleEngine implements BlockingEngine {
     return stored ? stored.table : undefined
   }
 
-  /** The set's table, built now if it is not yet. */
+  /**
+   * The set's table, built now if it is not yet – from the rules the engine holds or, when it
+   * let them go, from the set document read back, which it then keeps alongside the table (a
+   * table's rows point into the rules it was built from).
+   */
   private table(stored: StoredSet): RuleTable {
-    return (stored.table ??= RuleTable.build(
+    if (stored.table) return stored.table
+    const rules = (stored.rules ??= this.reread(stored))
+    return (stored.table = RuleTable.build(
       stored.summary.id,
       stored.summary.priority,
-      stored.rules,
+      rules,
       this.tableOptions
     ))
   }
 
+  /** The let-go rules of `stored`, read back through its source; empty when they cannot be read. */
+  private reread(stored: StoredSet): Rule[] {
+    const rules = stored.source ? stored.source.readRules(stored.summary.id) : null
+    if (rules) return rules
+    console.error('[zenium] blocking set document could not be read back', stored.summary.id)
+    return []
+  }
+
   /** Turn indexing on: every set gets an index, small ones now and large ones in slices. */
   private startIndexing(): void {
+    this.decides = true
     this.indexing = true
     for (const stored of this.sets.values()) if (!stored.index) this.indexSet(stored)
   }
@@ -613,9 +659,41 @@ export class RuleEngine implements BlockingEngine {
     return this.orderedSets().map((s) => ({ ...s.summary }))
   }
 
-  /** The structured rules of a set (for persistence and hosts that compile them to text). */
+  /**
+   * The structured rules of a set (for persistence and hosts that compile them to text): the
+   * engine's copy or, once it let them go, the set document read back through the store on this
+   * call – and not kept: every call reads again (a table build is the one reader that keeps
+   * what it read, with the table).
+   */
   rulesOf(id: string): Rule[] | undefined {
-    return this.sets.get(id)?.rules
+    const stored = this.sets.get(id)
+    if (!stored) return undefined
+    return stored.rules ?? this.reread(stored)
+  }
+
+  /**
+   * The store confirms that the set document of `id`, written from `rules` – the array
+   * `setRuleSet` was handed – is on disk and can be read back through `source`. On a host that
+   * never decides in JavaScript the engine lets its copy go here: the summary stays, and
+   * `rulesOf` or a table build read the rules back through `source`. An engine that decides
+   * keeps them (its tables are built from them; letting go would only read them back at the
+   * first decision), as does a set that was replaced since (`rules` is not what it holds) and an
+   * empty set (nothing to let go).
+   */
+  rulesPersisted(id: string, rules: Rule[], source: RuleDocumentSource): void {
+    const stored = this.sets.get(id)
+    if (!stored || stored.rules !== rules || rules.length === 0 || this.decides) return
+    stored.rules = null
+    stored.source = source
+  }
+
+  /**
+   * Whether the engine holds the set's rules itself (false once it let them go and reads them
+   * back on demand); undefined for a set it does not have. For tests and diagnostics.
+   */
+  retainsRules(id: string): boolean | undefined {
+    const stored = this.sets.get(id)
+    return stored ? stored.rules !== null : undefined
   }
 
   has(id: string): boolean {
@@ -675,9 +753,14 @@ export class RuleEngine implements BlockingEngine {
     return stored ? { ...stored.summary } : undefined
   }
 
-  /** Install (or clear) the platform's matcher for `filterText` sets. */
+  /**
+   * Install (or clear) the platform's matcher for `filterText` sets. Installing one says the
+   * host decides in JavaScript (the desktop installs Ghostery's before its sets load), so the
+   * engine keeps its sets' rules from then on.
+   */
   setTextMatcher(matcher: TextMatcher | null): void {
     this.textMatcher = matcher
+    if (matcher) this.decides = true
   }
 
   /** Ids of enabled sets that have filter text, highest priority first. */
@@ -768,6 +851,7 @@ export class RuleEngine implements BlockingEngine {
    */
   decideLinear(ctx: RequestContext): Decision {
     if (isExtensionPageUrl(ctx.url)) return ALLOW
+    this.decides = true
     const resolution = new Resolution(ctx, factsFor(ctx))
     const ordered = this.orderedSets()
     for (let i = 0; i < ordered.length; i++) {
@@ -849,9 +933,12 @@ export class RuleEngine implements BlockingEngine {
       id: s.id,
       source: s.source,
       priority: s.priority,
-      enabled: s.enabled,
-      rules: stored.rules
+      enabled: s.enabled
     }
+    // Rules the engine let go ride along absent: the store, which confirmed the set document
+    // is written, keeps it for a change of metadata rather than have the rules read back and
+    // re-serialised for nothing.
+    if (stored.rules) out.rules = stored.rules
     if (s.version !== undefined) out.version = s.version
     if (s.updatedAt !== undefined) out.updatedAt = s.updatedAt
     if (s.attribution) out.attribution = s.attribution
