@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The search widget's pill: the panel fill under a 1 dp hairline (the v2 tokens, in the system's
-     theme), fully rounded at its 48 dp height. -->
+<!-- The search widget's pill below Android 12: the panel fill under a 1 dp hairline (the v2 tokens,
+     in the system's theme), fully rounded at its 48 dp height. On Android 12+ the dynamic face's
+     pill (res/drawable-v31/widget_search_pill.xml) is the fill alone, as Chrome's is (WID-03). -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
     <solid android:color="@color/widget_search_fill" />

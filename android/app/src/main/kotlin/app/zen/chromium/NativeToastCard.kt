@@ -17,6 +17,7 @@ import android.view.MotionEvent
 import android.view.VelocityTracker
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -44,7 +45,7 @@ object ToastCardSpec {
     const val MAX_WIDTH_DP = 560
     /** `TOAST_CARD.rowPx` (`--v2-row` on a phone): a card with nothing but its text is one row tall. */
     const val ROW_DP = 44
-    /** `TOAST_CARD.radiusPx` (`--v2-radius-card`). */
+    /** `TOAST_CARD.radiusPx` (`--v2-radius-card`); the corner's shape is `--zen-corner`'s squircle ([Squircle]), the control's under it a circle. */
     const val RADIUS_DP = 8
     /** `TOAST_CARD.gutterPx`: the padding on the text's side, inside the hairline. */
     const val GUTTER_DP = 14
@@ -167,8 +168,9 @@ object ToastSwipe {
  * renderer to draw it – an installed web app's own window ([WebAppActivity]), whose one message
  * so far is the first launch's disclosure ([WebAppDisclosure]). §9.33 names two twins drawn
  * outside the chrome, the fullscreen exit hint in the page's top layer and this one, held to the
- * same tokens and geometry: the panel fill with the 1 dp hairline at the card radius and the
- * panel shadow, 8 inside the host's edges over its bottom inset, capped at 560 and centred, the
+ * same tokens and geometry: the panel fill with the 1 dp hairline at the card radius on the
+ * chrome's squircle corner (`--zen-corner`, [Squircle]) and the panel shadow cast from that
+ * outline, 8 inside the host's edges over its bottom inset, capped at 560 and centred, the
  * text 15/400 in the ink at the row's inset, an action (when a message carries one) a secondary
  * button – the control's height, radius 6, the text's 10 % for a fill, the label in the accent
  * at 500 – and the same clocks. A finger on the card pauses its clock; a swipe takes it away
@@ -243,12 +245,11 @@ class NativeToastCard(
             dp(if (hasAction) ToastCardSpec.CONTROL_SIDE_DP else ToastCardSpec.GUTTER_DP) + hairline,
             dp(ToastCardSpec.PAD_DP) + hairline
         )
-        view.background = GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = dp(ToastCardSpec.RADIUS_DP).toFloat()
-            setColor(ink.panel)
-            setStroke(hairline, ink.border)
-        }
+        // The panel fill with the hairline inside its edge on the chrome's corner: `.zen-message`'s
+        // `corner-shape: var(--zen-corner)` at the card radius – the squircle (#575), not a circular
+        // arc – and the elevation shadow cast from the same outline (`Squircle`, `SquircleRectDrawable`).
+        view.background = SquircleRectDrawable(dp(ToastCardSpec.RADIUS_DP).toFloat(), hairline, ink.panel, ink.border)
+        view.outlineProvider = ViewOutlineProvider.BACKGROUND
         view.elevation = dp(ToastCardSpec.SHADOW_Y_DP).toFloat()
 
         textView = TextView(context).apply {

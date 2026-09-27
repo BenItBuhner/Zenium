@@ -69,7 +69,12 @@ import {
   type Tab
 } from '../shared/types'
 import { ZOOM_CEILING, ZOOM_FLOOR, formatZoom, siteKey } from '../shared/pageControls'
-import { MENU_KEY_CHANGE_MENU, applyMenuOrder, menuOrderOf } from '../shared/menuOrder'
+import {
+  MENU_KEY_CHANGE_MENU,
+  MENU_KEY_UPDATE,
+  applyMenuOrder,
+  menuOrderOf
+} from '../shared/menuOrder'
 import { phoneBarHas } from '../shared/phoneBar'
 import { newTabSections } from '../shared/newTab'
 import { FOLDER_COLOR_NAMES, FOLDER_COLOR_ORDER, spaceLabel } from '../shared/defaults'
@@ -95,6 +100,7 @@ import {
 } from './menuBar'
 import { isSendableUrl } from './sync/sendTab'
 import { unsafeSiteReportUrl } from './unsafeSiteReport'
+import { markUpdateMenuOpened } from './updateDot'
 import {
   folderTabs,
   isPrivateFolder,
@@ -3790,6 +3796,10 @@ export class Menus {
       this.showWebAppMenu(win, win.app, active, { ...anchor, keyboard: options.keyboard })
       return
     }
+    // The touch layouts' menu-button dot clears on the menu's open for the waiting version
+    // (TB-12, Chrome Android's ⋮ badge; `updateDot.ts`). The desktop's ⋯ keeps its plain read of
+    // the phase until W8-F3 wires it to the same record, so its open records nothing yet.
+    if (win.formFactor !== 'desktop') this.markUpdateMenuOpened()
 
     // --- The items, each once; the two layouts below put them in their order. ----------------
     const newTab: MenuItemTemplate = {
@@ -4377,6 +4387,14 @@ export class Menus {
         [
           ...applyMenuOrder(iconRow, keyOf, order),
           separator,
+          // Chrome's "Update Chrome" row as the first text row under the icon row, over a
+          // hairline of its own (TB-12; `TabbedAppMenuPropertiesDelegate.populatePageModeMenu`):
+          // the desktop's row, seated as structure – named `menu.update` for the sheet, outside
+          // the order and the edit mode like the Change Menu row (`lib/menuEdit.ts`) – while the
+          // update waits (`updateReadyRow`); nothing otherwise.
+          ...this.updateReadyRow().map((item) =>
+            item.type === 'separator' ? item : { ...item, key: MENU_KEY_UPDATE }
+          ),
           ...applyMenuOrder(list, keyOf, order),
           // Edge's "Change menu" as the list's last row, in a group of its own and outside the
           // order: the sheet opens its edit mode in place (`MenuSheet.tsx`); no pick reaches
@@ -4399,7 +4417,8 @@ export class Menus {
       [
         // Chrome's "Update Google Chrome" row at the menu's head (shortcuts-menus-101): while
         // an update is downloaded and waiting, one row that relaunches into it, over a hairline.
-        ...desktop(...this.updateReadyRow()),
+        // The tablet's menu opens on it too (TB-12), as Chrome's Android menu does.
+        ...sidebar(...this.updateReadyRow()),
         // The window's live media heads the menu while the media hub's toolbar button has
         // folded (design language v2 §9.29: the sidebar's width tier folds it at 240, and this
         // row is where it goes; with the button up, the button is the hub). The phone has its
@@ -4547,9 +4566,18 @@ export class Menus {
    * has. Nothing while an update is merely found (`available`) – Chrome shows nothing until
    * the update has downloaded – and nothing otherwise, so the menu keeps its resting count
    * (twenty rows, 661 px) and the row is a twenty-first only while an update is waiting; the
-   * "⋯" button wears the accent dot meanwhile (`SidebarTop`), Chrome's dot on its ⋮. The
-   * desktop's alone: the phone's flat list and the tablet keep Settings › Updates as their
-   * surface, and the updater's phases are the desktop main's to drive.
+   * "⋯" button wears the accent dot meanwhile (`SidebarTop`), Chrome's dot on its ⋮. Every
+   * host's (TB-12): the tablet's menu opens on it the same way, and the phone seats it as the
+   * first text row under its icon row, where Chrome's Android menu has "Update Chrome"
+   * (`TabbedAppMenuPropertiesDelegate.populatePageModeMenu`). THE DEVIATION FROM CHROME
+   * ANDROID, by design: Chrome's row shows on `UPDATE_AVAILABLE` because Play downloads AFTER
+   * the pick; Zenium downloads the APK itself, so its row shows once the update is downloaded
+   * and installable – `ready` – one rule across hosts, the pick always able to install. The row
+   * stays as long as the update waits, however often the menu opens; the dot on the touch
+   * layouts' menu buttons clears once the menu has been opened for the version
+   * (`markUpdateMenuOpened`, `updateDot.ts`) and returns for another version's `ready`.
+   * Settings › Updates stays every host's full surface; the updater's phases are the host's to
+   * drive.
    */
   private updateReadyRow(): Template {
     if (!this.browser.state.capabilities.updates) return []
@@ -4558,6 +4586,20 @@ export class Menus {
       { label: 'Update Zenium', click: () => void this.browser.updates.install() },
       { type: 'separator' }
     ]
+  }
+
+  /**
+   * The app menu opened on a touch layout: the waiting update's version becomes the one seen
+   * (`BrowserState.updateDot`, this device's, persisted with the profile), and the phone bar's ⋮
+   * and the tablet's menu button drop their dot. Nothing waiting, or the version already seen:
+   * no write, no commit.
+   */
+  private markUpdateMenuOpened(): void {
+    const { state, updates } = this.browser
+    const next = markUpdateMenuOpened(updates.status(), state.updateDot)
+    if (next === state.updateDot) return
+    state.updateDot = next
+    state.commit()
   }
 
   /**

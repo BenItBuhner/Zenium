@@ -7,7 +7,6 @@ import {
   Download,
   House,
   Mic,
-  MoreHorizontal,
   PanelLeft,
   PanelRight,
   Plus,
@@ -16,6 +15,7 @@ import {
 } from 'lucide-react'
 import type { PhoneBarItemId, PhoneBarLayout, Tab, UIState } from '@shared/types'
 import { phoneBarForHost, phoneBarItemEnabled, phoneBarOffered } from '@shared/phoneBar'
+import { updateDotAt } from '@renderer/lib/about'
 import { run } from '@renderer/lib/api'
 import { openSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import { toggleOverview } from '@renderer/lib/gestures/stage'
@@ -29,7 +29,7 @@ import {
 import { activeSpace, activeTab, essentialsFor, tabsOf } from '@renderer/lib/selectors'
 import { openFindBar, openOverlay, openUrlbar, prepareMenu } from '@renderer/lib/ui'
 import { startVoiceSearch } from '@renderer/lib/voiceSearch'
-import { ReloadStopGlyph, StarGlyph, TabCountBadge } from './BarGlyphs'
+import { MenuGlyph, ReloadStopGlyph, StarGlyph, TabCountBadge } from './BarGlyphs'
 
 /**
  * The catalogue behind `settings.phoneBar`: what each control of the phone's bar is called,
@@ -184,7 +184,13 @@ export const BAR_ITEMS: Record<PhoneBarItemId, BarItem> = {
   menu: {
     id: 'menu',
     label: 'Menu',
-    glyph: () => <MoreHorizontal className={glyph} />,
+    // The dot on the "⋯" while an update is downloaded and waiting (TB-12; the desktop's ⋯
+    // wears the same, `SidebarTop`), the menu opening on "Update Zenium" meanwhile; the name
+    // says it for the tree, as the desktop's button's does. Chrome Android's cadence: the dot
+    // clears once the menu has been opened for the waiting version (the core's per-version
+    // record, `updateDotAt`) and returns for another version's; the row stays while it waits.
+    name: ({ state }) => (updateDotAt(state) ? 'Menu, update ready' : 'Menu'),
+    glyph: ({ state }) => <MenuGlyph updateReady={updateDotAt(state)} />,
     // The sheet comes up over the page's picture: taken as the finger lands, so the tap's
     // round trip through the core and the host's capture run together (`prepareMenu`).
     press: ({ tab }) => prepareMenu(tab?.id ?? null),
