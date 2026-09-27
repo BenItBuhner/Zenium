@@ -280,8 +280,8 @@ export interface Persisted {
   passwordsDevice?: PasswordsDeviceState
   /**
    * The update dot's device-local record (the same shape): the waiting update's version the app
-   * menu was last opened for, which clears the touch layouts' menu-button dot (TB-12). Never
-   * synced; missing before the dot had a cadence.
+   * menu was last opened for, which clears the menu button's dot on every layout (TB-12; the
+   * desktop's since W8-F3). Never synced; missing before the dot had a cadence.
    */
   updateDot?: UpdateDotRecord
   /**
@@ -437,10 +437,10 @@ export class BrowserState {
    * The update dot's device-local record, the same shape (`updateDot.ts`): the waiting update's
    * version the app menu was last opened for on this device (TB-12 – Chrome Android's ⋮ badge
    * clears on the menu's first open and returns on a state change). Written by
-   * `Menus.showAppMenu` on the touch layouts (`markUpdateMenuOpened`), read by the phone bar's
-   * ⋮ and the tablet toolbar's menu button (`updateDotShows`); the desktop's ⋯ reads the plain
-   * phase until W8-F3. Replaced whole, persisted with the profile, never synced – what this
-   * device's menu has shown is this device's.
+   * `Menus.showAppMenu` on every host (`markUpdateMenuOpened`), read by the phone bar's ⋮, the
+   * tablet toolbar's menu button and the desktop's ⋯ (`updateDotShows`; W8-F3). Replaced whole,
+   * persisted with the profile, never synced – what this device's menu has shown is this
+   * device's.
    */
   updateDot: UpdateDotRecord = emptyUpdateDotRecord()
   /**
