@@ -9,14 +9,11 @@ name: Android auth tab demo
 # 303 to zeniumtest://done?code=1, which the tab never loads – it closes and the caller reads
 # RESULT_OK with the URI; back out of a tab reads RESULT_CANCELED; an https redirect the caller
 # cannot prove it owns reads RESULT_VERIFICATION_FAILED. Dispatch-only, like the custom tabs demo:
-# it takes about eight minutes (the driver under three after the boot) and says nothing about a
-# change being correct. The build, the emulator and the Gradle cache live in
+# it takes about seven minutes (the driver a minute after the boot: 64 s in its first run) and says
+# nothing about a change being correct. The build, the emulator and the Gradle cache live in
 # android-emulator-demo.yml; this file only picks the driver and the demo it runs.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - cursor/android-auth-tab-9271
 
 permissions:
   contents: read
